@@ -251,15 +251,20 @@ export function summarizeAnalysisInput(input = {}) {
   };
 }
 
-export function createAnalyzer({profileResolver, contextResolver, worldModelPromptResolver} = {}) {
+export function createAnalyzer({profileResolver, contextResolver, requestSettingsResolver, worldModelPromptResolver} = {}) {
+  function requestOptions(input = {}) {
+    return {
+      signal: input.signal,
+      context: contextResolver?.(),
+      requestSettings: requestSettingsResolver?.(),
+    };
+  }
+
   async function run(task, input = {}) {
     const profile = profileResolver?.(task);
     if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
     const content = buildPrompt({task, ...input});
-    return callOpenAICompatible(profile, [{role: 'system', content}], {
-      signal: input.signal,
-      context: contextResolver?.(),
-    });
+    return callOpenAICompatible(profile, [{role: 'system', content}], requestOptions(input));
   }
 
   async function analyzeWorldModel(input = {}) {
@@ -269,10 +274,7 @@ export function createAnalyzer({profileResolver, contextResolver, worldModelProm
       input.analysisInput ?? input,
       worldModelPromptResolver?.() ?? {},
     );
-    const raw = await callOpenAICompatible(profile, messages, {
-      signal: input.signal,
-      context: contextResolver?.(),
-    });
+    const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
     const model = parseWorldModelResponse(raw);
     return removeUnsupportedIntersexTypes(model, input.analysisInput ?? input);
   }

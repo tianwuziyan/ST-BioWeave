@@ -297,6 +297,8 @@ createSecretStore({fetchRef, getRequestHeaders,
 
 createApiProfileStore(adapter, {secretStore})
   .getSettings() -> SafeExtensionSettings
+  .getApiRequestSettings() -> {timeout: integer, retry_count: integer}
+  .saveApiRequestSettings(raw) -> Promise<{timeout: integer, retry_count: integer}>
   .listProfiles() -> SafeApiProfile[]
   .getProfile(profileId) -> SafeApiProfile | null
   .saveProfile(rawProfile) -> Promise<SafeApiProfile>
@@ -316,15 +318,17 @@ host `ChatCompletionService.processRequest()` with `chat_completion_source:
 ### 3. Contracts
 
 - A safe Profile contains `profile_id`, `name`, `provider`, `api_url`,
-  `model`, `context_size`, `max_output_tokens`, `temperature`, `timeout`,
-  `retry_count`, and nullable `secret_ref`; it never contains `api_key`.
+  `model`, `context_size`, `max_output_tokens`, `temperature`, and nullable
+  `secret_ref`; it never contains `api_key`, `timeout`, or `retry_count`.
 - Secret writes POST `{key: 'api_key_custom', value, label}` to
   `/api/secrets/write`; deletion POSTs `{key: 'api_key_custom', id}` to
   `/api/secrets/delete`. BioWeave never calls `/api/secrets/find`.
 - Extension-global API settings store the canonical `api_source` marker, an
-  optional `default_profile_id`, and four assignment slots. Assignment slots
-  store only the `default` marker, a stable Profile ID, the canonical
-  `sillytavern` marker, or `null`.
+  optional `default_profile_id`, four assignment slots, and
+  `api_request_settings: {timeout, retry_count}`. Assignment slots store only
+  the `default` marker, a stable Profile ID, the canonical `sillytavern`
+  marker, or `null`. `timeout` is integer milliseconds with a default of
+  `180000`; `retry_count` is an integer from `0` to `3` with a default of `1`.
 - Profile and assignment settings are saved under extension-global settings;
   Chat metadata, Floor data, Event, Snapshot, Projection, log, export, and
   Prompt Inspector payloads must not contain them.
@@ -348,12 +352,14 @@ input; a failed save or any test result keeps the draft for the next render.
 The public settings-state inspection also masks draft Key values. Drafts are
 never passed to Chat/Floor storage or written to extension settings.
 
-The API Profile form displays `timeout` as seconds for users, while the
-canonical Profile stores it as integer milliseconds (`250`–`600000`). The
-form boundary converts seconds to milliseconds before save/test and converts
-the saved value back to seconds when rendering. `retry_count` is displayed
-and stored as an integer from `0` to `3`; neither field is part of Chat-local
-data.
+The API source request-settings fields display `timeout` as seconds for users,
+while the canonical extension-global `api_request_settings` stores it as
+integer milliseconds (`250`–`600000`). The form boundary converts seconds to
+milliseconds before the immediate global save and converts the saved value
+back to seconds when rendering. `retry_count` is displayed and stored as an
+integer from `0` to `3`. Neither field is part of a saved Profile or Chat-local
+data, and every analysis/test/model request receives these global settings
+through `options.requestSettings`.
 
 ### 4. Validation & Error Matrix
 
@@ -368,8 +374,8 @@ data.
 | Profile deletion cleanup fails | Remove the Profile/assignments from settings, surface `ST_SECRET_DELETE_FAILED`, and do not expose the Secret value |
 | Profile has no Secret reference | Independent request uses a sentinel `secret_id`; it must not fall through to the host's active custom key |
 | Current API is selected | Call host `generateRaw`; do not read or copy the host API key |
-| Timeout input is a finite seconds value | Clamp to `1`–`600` seconds in the UI and persist the corresponding integer milliseconds |
-| Timeout or retry input is blank/non-numeric | Let Profile normalization apply the existing safe default; never persist the raw UI string |
+| Timeout input is a finite seconds value | Clamp to the safe range in the UI and persist the corresponding integer milliseconds in `api_request_settings` |
+| Timeout or retry input is blank/non-numeric | Let global request-settings normalization apply the safe default; never persist the raw UI string or copy it into a Profile |
 
 ### 5. Good / Base / Bad Cases
 
@@ -378,12 +384,18 @@ data.
   to the host custom backend.
 - Base: Edit non-secret fields while leaving the password input empty; retain
   the existing `secret_ref` without rendering the key back into the DOM.
+- Good: Change timeout or retry count in the API source section, save it
+  immediately under `extensionSettings.bioweave.api_request_settings`, close
+  and reopen the panel, and render the same values without opening a Profile
+  editor.
 - Bad: Put `api_key` in a Profile object, Chat metadata, a request error, or
   a test-result string, even if the object is later passed through a generic
   serializer.
 - Bad: Call `/api/secrets/find` in the browser or omit `secret_id` for a
   keyless custom Profile, because either action can expose or implicitly reuse
   a host secret.
+- Bad: Read `profile.timeout` or `profile.retry_count` as the request policy;
+  an old saved Profile can silently restore the former 30-second default.
 
 ### 6. Tests Required
 
@@ -401,9 +413,11 @@ data.
 - Exercise a test-only new Key and assert the callback receives only an opaque
   reference, the temporary reference is deleted, and extension settings are
   unchanged.
-- Render API Profile timeout/retry controls and assert timeout is presented in
-  seconds while the saved Profile/request boundary receives milliseconds and
-  an integer retry count.
+- Normalize and round-trip `api_request_settings`; assert legacy Profile
+  `timeout`/`retry_count` values are discarded and cannot control a request.
+- Render API request controls outside the Profile form and assert timeout is
+  presented in seconds, immediate global saves use milliseconds, and requests
+  receive the saved global timeout/retry values.
 - Render the settings page with a draft and assert the draft values survive a
   render, the password input is empty for a saved Profile, advanced settings
   are collapsed by default, and the four assignments include `default` and
@@ -431,6 +445,15 @@ await context.ChatCompletionService.processRequest({
   custom_url: profile.api_url,
   secret_id: profile.secret_ref,
 });
+```
+
+```js
+// Correct: request policy is global and saved immediately, independent of Profiles.
+const requestSettings = await profileStore.saveApiRequestSettings({
+  timeout: timeoutSeconds * 1000,
+  retry_count: retryCount,
+});
+await callOpenAICompatible(profile, messages, {requestSettings});
 ```
 
 ## Recent Story Regex Collection

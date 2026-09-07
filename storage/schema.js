@@ -97,8 +97,6 @@ export const API_PROFILE_FIELDS = [
   'context_size',
   'max_output_tokens',
   'temperature',
-  'timeout',
-  'retry_count',
 ];
 
 export const API_ASSIGNMENTS = [
@@ -120,16 +118,29 @@ export const DEFAULT_API_PROFILE = {
   context_size: 8192,
   max_output_tokens: 4096,
   temperature: 0.2,
-  timeout: 180000,
-  retry_count: 1,
   secret_ref: null,
 };
+
+// 请求超时和重试属于插件级配置，不随 API Profile 或 Chat 保存。
+export const DEFAULT_API_REQUEST_SETTINGS = Object.freeze({
+  timeout: 180000,
+  retry_count: 1,
+});
+
+export function normalizeApiRequestSettings(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    timeout: numberInRange(source.timeout ?? source.timeout_ms, DEFAULT_API_REQUEST_SETTINGS.timeout, 250, 600000, true),
+    retry_count: numberInRange(source.retry_count ?? source.retries, DEFAULT_API_REQUEST_SETTINGS.retry_count, 0, 3, true),
+  };
+}
 
 export const DEFAULT_EXTENSION_SETTINGS = {
   api_source: SILLYTAVERN_CURRENT_API,
   default_profile_id: null,
   api_profiles: {},
   assignments: Object.fromEntries(API_ASSIGNMENTS.map(slot => [slot, null])),
+  api_request_settings: {...DEFAULT_API_REQUEST_SETTINGS},
   recent_story_global: {regex_rules: []},
   world_analysis_prompt: {
     task: DEFAULT_WORLD_ANALYSIS_PROMPT.task,
@@ -321,8 +332,6 @@ export function normalizeApiProfile(raw = {}, {profileId = null, secretRef = und
     context_size: numberInRange(source.context_size ?? source.max_context, DEFAULT_API_PROFILE.context_size, 1, 10000000, true),
     max_output_tokens: numberInRange(source.max_output_tokens ?? source.max_tokens, DEFAULT_API_PROFILE.max_output_tokens, 1, 10000000, true),
     temperature: numberInRange(source.temperature, DEFAULT_API_PROFILE.temperature, 0, 2),
-    timeout: numberInRange(source.timeout ?? source.timeout_ms, DEFAULT_API_PROFILE.timeout, 250, 600000, true),
-    retry_count: numberInRange(source.retry_count ?? source.retries, DEFAULT_API_PROFILE.retry_count, 0, 3, true),
     secret_ref: existingSecretRef,
   };
 }
@@ -387,6 +396,7 @@ export function normalizeExtensionSettings(raw = {}) {
       : null,
     api_profiles: profiles,
     assignments,
+    api_request_settings: normalizeApiRequestSettings(source.api_request_settings),
     recent_story_global: normalizeRecentStoryGlobalSettings(source.recent_story_global),
     world_analysis_prompt: normalizeWorldAnalysisPrompt(source.world_analysis_prompt),
   };

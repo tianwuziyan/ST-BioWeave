@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {callOpenAICompatible, fetchModels, safeErrorSummary, testProfile} from '../ai/client.js';
+import {createAnalyzer} from '../ai/analyzer.js';
 import {
   BIOWEAVE_INDEPENDENT_API,
+  DEFAULT_API_REQUEST_SETTINGS,
   FOLLOW_DEFAULT_API,
   SILLYTAVERN_CURRENT_API,
   emptyChat,
   normalizeExtensionSettings,
+  normalizeApiRequestSettings,
 } from '../storage/schema.js';
 import {createApiProfileStore, createSecretStore} from '../storage/store.js';
 import {closeModelPicker} from '../ui/app.js';
@@ -21,6 +24,8 @@ test('global profile normalization removes API key values and emptyChat stays ch
         provider: 'OpenAI-compatible',
         api_url: 'https://api.example/v1',
         model: 'model-a',
+        timeout: 30000,
+        retry_count: 0,
         api_key: 'DO-NOT-PERSIST',
         nested: {apiKey: 'ALSO-DO-NOT-PERSIST'},
         secret_ref: 'secret-id-1',
@@ -32,9 +37,39 @@ test('global profile normalization removes API key values and emptyChat stays ch
   assert.equal(settings.api_profiles.stable.api_key, undefined);
   assert.equal(settings.api_profiles.stable.nested, undefined);
   assert.equal(settings.api_profiles.stable.secret_ref, 'secret-id-1');
+  assert.equal('timeout' in settings.api_profiles.stable, false);
+  assert.equal('retry_count' in settings.api_profiles.stable, false);
+  assert.deepEqual(settings.api_request_settings, DEFAULT_API_REQUEST_SETTINGS);
   assert.equal(settings.assignments.world_analysis, 'stable');
   assert.equal(JSON.stringify(settings).includes('DO-NOT-PERSIST'), false);
   assert.equal('api_profiles' in emptyChat('chat-a'), false);
+});
+
+test('global API request settings normalize and round-trip without Chat storage', async () => {
+  assert.deepEqual(normalizeApiRequestSettings(), DEFAULT_API_REQUEST_SETTINGS);
+  assert.deepEqual(normalizeApiRequestSettings({timeout: 45000, retry_count: 2}), {
+    timeout: 45000,
+    retry_count: 2,
+  });
+
+  let globalSettings = {};
+  let chatWrites = 0;
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value);
+    },
+    saveChatMetadata: async () => {
+      chatWrites += 1;
+    },
+  });
+
+  assert.deepEqual(profileStore.getApiRequestSettings(), DEFAULT_API_REQUEST_SETTINGS);
+  const saved = await profileStore.saveApiRequestSettings({timeout: 45000, retry_count: 2});
+  assert.deepEqual(saved, {timeout: 45000, retry_count: 2});
+  assert.deepEqual(profileStore.getApiRequestSettings(), saved);
+  assert.deepEqual(globalSettings.api_request_settings, saved);
+  assert.equal(chatWrites, 0);
 });
 
 test('profile URL normalization strips completion suffixes and rejects URL credentials', () => {
@@ -302,7 +337,7 @@ test('client uses SillyTavern host APIs and returns safe connection failures', a
     model: 'model-a',
     secret_ref: 'opaque-secret-id',
     api_key: 'SHOULD-NOT-REACH-CLIENT-RESULT',
-  }, {context, retryCount: 0});
+  }, {context, requestSettings: {retry_count: 0}});
 
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
@@ -315,7 +350,7 @@ test('client uses SillyTavern host APIs and returns safe connection failures', a
     api_url: 'https://api.example/v1',
     model: 'model-a',
   }, {
-    retryCount: 0,
+    requestSettings: {retry_count: 0},
     context: {
       ChatCompletionService: {
         async processRequest(payload) {
@@ -332,7 +367,7 @@ test('client uses SillyTavern host APIs and returns safe connection failures', a
     model: 'model-a',
     secret_ref: 'opaque-secret-id',
   }, {
-    retryCount: 0,
+    requestSettings: {retry_count: 0},
     context: {
       ChatCompletionService: {
         async processRequest() {
@@ -348,10 +383,63 @@ test('client uses SillyTavern host APIs and returns safe connection failures', a
   assert.equal(failingResult.error.includes('SHOULD-NOT-BE-SHOWN'), false);
 });
 
+test('client request settings override legacy Profile timeout and retry fields', async () => {
+  let requestCalls = 0;
+  await assert.rejects(
+    callOpenAICompatible({
+      api_url: 'https://api.example/v1',
+      model: 'model-a',
+      timeout: 30000,
+      retry_count: 0,
+    }, [{role: 'user', content: '测试'}], {
+      requestSettings: {timeout: 250, retry_count: 1},
+      context: {
+        ChatCompletionService: {
+          async processRequest(_payload, _options, _extractData, signal) {
+            requestCalls += 1;
+            await new Promise((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(new TypeError('Failed to fetch')), {once: true});
+            });
+          },
+        },
+      },
+    }),
+    error => error?.code === 'REQUEST_TIMEOUT',
+  );
+  // 超时不是可重试错误；旧 Profile 的 30000 也不应成为请求来源。
+  assert.equal(requestCalls, 1);
+});
+
+test('World Model analyzer forwards request settings from its resolver', async () => {
+  let requestCalls = 0;
+  const analyzer = createAnalyzer({
+    profileResolver: () => ({
+      api_url: 'https://api.example/v1',
+      model: 'model-a',
+      timeout: 30000,
+      retry_count: 1,
+    }),
+    requestSettingsResolver: () => ({timeout: 180000, retry_count: 0}),
+    contextResolver: () => ({
+      ChatCompletionService: {
+        async processRequest() {
+          requestCalls += 1;
+          const error = new Error('temporary server failure');
+          error.status = 503;
+          throw error;
+        },
+      },
+    }),
+  });
+
+  await assert.rejects(analyzer.analyzeWorldModel({analysisInput: {}}), error => error?.status === 503);
+  assert.equal(requestCalls, 1);
+});
+
 test('current API connection test uses generateRaw without copying a host key', async () => {
   let rawOptions;
   const result = await testProfile(SILLYTAVERN_CURRENT_API, {
-    retryCount: 0,
+    requestSettings: {retry_count: 0},
     context: {
       async generateRaw(options) {
         rawOptions = options;
@@ -369,7 +457,7 @@ test('current API connection test uses generateRaw without copying a host key', 
 test('current API world analysis does not pass an unsupported abort signal to generateRaw', async () => {
   let rawOptions;
   const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-    retryCount: 0,
+    requestSettings: {retry_count: 0},
     context: {
       async generateRaw(options) {
         rawOptions = options;
@@ -390,7 +478,7 @@ test('current API prefers the host chat completion service over generateRaw life
     {role: 'assistant', content: '楼层资料'},
     {role: 'user', content: '开始分析'},
   ], {
-    retryCount: 0,
+    requestSettings: {retry_count: 0},
     context: {
       chatCompletionSettings: {
         chat_completion_source: 'openai',
@@ -432,7 +520,7 @@ test('current API abort does not trigger an automatic second request', async () 
   let requestCalls = 0;
   await assert.rejects(
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-      retry_count: 1,
+      requestSettings: {retry_count: 1},
       context: {
         chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
         getChatCompletionModel: () => 'current-model',
@@ -453,7 +541,7 @@ test('current API caller abort does not trigger an automatic second request', as
   const controller = new AbortController();
   let requestCalls = 0;
   const request = callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-    retry_count: 1,
+    requestSettings: {retry_count: 1},
     signal: controller.signal,
     context: {
       chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
@@ -479,8 +567,7 @@ test('current API timeout-induced internal abort does not trigger an automatic s
   let requestCalls = 0;
   await assert.rejects(
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-      timeout: 10,
-      retry_count: 1,
+      requestSettings: {timeout: 250, retry_count: 1},
       context: {
         chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
         getChatCompletionModel: () => 'current-model',
@@ -506,7 +593,7 @@ test('transient 5xx and network errors retain one retry', async () => {
   ]) {
     let requestCalls = 0;
     const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-      retry_count: 1,
+      requestSettings: {retry_count: 1},
       context: {
         chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
         getChatCompletionModel: () => 'current-model',
@@ -524,6 +611,31 @@ test('transient 5xx and network errors retain one retry', async () => {
   }
 });
 
+test('global request settings override legacy Profile timeout and retry fields', async () => {
+  let requestCalls = 0;
+  const result = await callOpenAICompatible({
+    api_url: 'https://api.example/v1',
+    model: 'model-a',
+    timeout: 10,
+    retry_count: 0,
+  }, [{role: 'user', content: '测试'}], {
+    requestSettings: {timeout: 250, retry_count: 1},
+    context: {
+      ChatCompletionService: {
+        async processRequest() {
+          requestCalls += 1;
+          if (requestCalls === 1) throw Object.assign(new Error('temporary'), {status: 503});
+          await new Promise(resolve => setTimeout(resolve, 30));
+          return {content: 'OK'};
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(result, {content: 'OK'});
+  assert.equal(requestCalls, 2);
+});
+
 test('timeout-induced internal abort does not trigger an automatic second request', async () => {
   for (const abortError of [
     new TypeError('Failed to fetch'),
@@ -537,6 +649,7 @@ test('timeout-induced internal abort does not trigger an automatic second reques
         timeout: 10,
         retry_count: 1,
       }, [{role: 'user', content: '测试'}], {
+        requestSettings: {timeout: 250, retry_count: 1},
         context: {
           ChatCompletionService: {
             async processRequest(_payload, _options, _extractData, signal) {
@@ -557,7 +670,7 @@ test('timeout-induced internal abort does not trigger an automatic second reques
 test('host abort variants are normalized without exposing the raw aborted message', async () => {
   await assert.rejects(
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-      retryCount: 0,
+      requestSettings: {retry_count: 0},
       context: {
         async generateRaw() {
           throw new Error('aborted');
@@ -574,8 +687,8 @@ test('model refresh uses the SillyTavern custom status endpoint with only an opa
   const models = await fetchModels({
     api_url: 'https://api.example/v1/chat/completions',
     secret_ref: 'opaque-secret-id',
-    retry_count: 0,
   }, {
+    requestSettings: {retry_count: 0},
     context: {
       getRequestHeaders: () => ({'X-CSRF-Token': 'csrf-token'}),
     },
@@ -608,8 +721,8 @@ test('model refresh failures are safe and do not expose upstream error text', as
     fetchModels({
       api_url: 'https://api.example/v1',
       secret_ref: 'opaque-secret-id',
-      retry_count: 0,
     }, {
+      requestSettings: {retry_count: 0},
       fetchRef: async () => ({
         ok: false,
         status: 401,
@@ -695,10 +808,9 @@ test('settings markup renders the current draft without advanced API controls', 
       context_size: '12345',
       max_output_tokens: '678',
       temperature: '0.7',
-      timeout: '45000',
-      retry_count: '2',
       api_key: 'DRAFT-KEY',
     },
+    apiRequestSettings: {timeout: 45000, retry_count: 2},
   });
 
   assert.match(html, /value="Draft Name"/);

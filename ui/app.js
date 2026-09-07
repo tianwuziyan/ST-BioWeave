@@ -26,9 +26,11 @@ import {
 } from '../ai/worldbook.js';
 import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
 import {
+  DEFAULT_API_REQUEST_SETTINGS,
   DEFAULT_API_PROFILE,
   FOLLOW_DEFAULT_API,
   normalizeExternalMemorySettings,
+  normalizeApiRequestSettings,
   normalizeRecentStoryGlobalSettings,
   normalizeRecentStorySettings,
   normalizeWorldAnalysisPrompt,
@@ -374,6 +376,8 @@ export function createApp(runtime, options = {}) {
     assignments: {},
     apiSource: SILLYTAVERN_CURRENT_API,
     defaultProfileId: null,
+    apiRequestSettings: {...DEFAULT_API_REQUEST_SETTINGS},
+    apiRequestDraft: null,
     editingProfile: undefined,
     editingDraft: undefined,
     drafts: {},
@@ -403,6 +407,9 @@ export function createApp(runtime, options = {}) {
   const analyzer = options.analyzer ?? createAnalyzer({
     profileResolver: resolveWorldAnalysisProfile,
     contextResolver: () => runtime.st?.getContext?.() ?? hostContextForApp(),
+    requestSettingsResolver: () => settingsState.apiRequestDraft
+      ?? profileStore.getApiRequestSettings?.()
+      ?? settingsState.apiRequestSettings,
     worldModelPromptResolver: () => settingsState.worldAnalysisPromptDraft
       ?? profileStore.getWorldAnalysisPrompt?.()
       ?? settingsState.worldAnalysisPrompt,
@@ -427,6 +434,12 @@ export function createApp(runtime, options = {}) {
       assignments: settings.assignments ?? {},
       apiSource: settings.api_source ?? SILLYTAVERN_CURRENT_API,
       defaultProfileId: settings.default_profile_id ?? null,
+      apiRequestSettings: normalizeApiRequestSettings(
+        typeof profileStore.getApiRequestSettings === 'function'
+          ? profileStore.getApiRequestSettings()
+          : settings.api_request_settings,
+      ),
+      apiRequestDraft: settingsState.apiRequestDraft,
       worldAnalysisPrompt: normalizeWorldAnalysisPrompt(settings.world_analysis_prompt),
       worldAnalysisPromptDraft: settingsState.worldAnalysisPromptDraft,
       loaded: true,
@@ -1670,8 +1683,6 @@ export function createApp(runtime, options = {}) {
       context_size: profile?.context_size ?? DEFAULT_API_PROFILE.context_size,
       max_output_tokens: profile?.max_output_tokens ?? DEFAULT_API_PROFILE.max_output_tokens,
       temperature: profile?.temperature ?? DEFAULT_API_PROFILE.temperature,
-      timeout: profile?.timeout ?? DEFAULT_API_PROFILE.timeout,
-      retry_count: profile?.retry_count ?? DEFAULT_API_PROFILE.retry_count,
       api_key: '',
       clear_secret: false,
     };
@@ -1705,19 +1716,12 @@ export function createApp(runtime, options = {}) {
 
   function readSettingsForm(form) {
     const value = name => formField(form, name)?.value ?? '';
-    const timeoutSeconds = value('timeout') || root?.querySelector?.('[data-bioweave-api-timeout]')?.value || '';
-    const retryCount = value('retry_count') || root?.querySelector?.('[data-bioweave-api-retry-count]')?.value || '';
-    const timeout = timeoutSeconds === '' ? '' : Number.isFinite(Number(timeoutSeconds))
-      ? Math.round(Number(timeoutSeconds) * 1000)
-      : '';
     return {
       profile_id: value('profile_id'),
       name: value('name'),
       provider: value('provider'),
       api_url: value('api_url'),
       model: value('model'),
-      timeout,
-      retry_count: retryCount,
       api_key: value('api_key'),
       clear_secret: Boolean(formField(form, 'clear_secret')?.checked),
     };
@@ -1733,6 +1737,51 @@ export function createApp(runtime, options = {}) {
       drafts: {...settingsState.drafts, [key]: draft},
     };
     return draft;
+  }
+
+  function readApiRequestSettingsForm() {
+    const timeoutField = root?.querySelector?.('[data-bioweave-api-timeout]');
+    const retryField = root?.querySelector?.('[data-bioweave-api-retry-count]');
+    const timeoutSeconds = String(timeoutField?.value ?? '').trim();
+    const retryCount = String(retryField?.value ?? '').trim();
+    return normalizeApiRequestSettings({
+      timeout: timeoutSeconds === '' ? undefined : Number(timeoutSeconds) * 1000,
+      retry_count: retryCount === '' ? undefined : Number(retryCount),
+    });
+  }
+
+  function captureApiRequestSettingsDraft() {
+    const hasFields = root?.querySelector?.('[data-bioweave-api-timeout], [data-bioweave-api-retry-count]');
+    if (!hasFields) return settingsState.apiRequestDraft ?? settingsState.apiRequestSettings;
+    const draft = readApiRequestSettingsForm();
+    settingsState = {...settingsState, apiRequestDraft: draft};
+    return draft;
+  }
+
+  async function saveApiRequestSettings() {
+    const draft = captureApiRequestSettingsDraft();
+    if (typeof profileStore.saveApiRequestSettings !== 'function') {
+      settingsState = {...settingsState, notice: '当前宿主不支持保存全局请求设置。'};
+      render();
+      return;
+    }
+    settingsState = {...settingsState, notice: null};
+    try {
+      const saved = await profileStore.saveApiRequestSettings(draft);
+      settingsState = {
+        ...settingsState,
+        apiRequestSettings: normalizeApiRequestSettings(saved),
+        apiRequestDraft: null,
+        notice: '请求设置已即时保存。',
+      };
+    } catch (error) {
+      settingsState = {
+        ...settingsState,
+        apiRequestDraft: draft,
+        notice: settingsOperationError(error),
+      };
+    }
+    render();
   }
 
   function readWorldAnalysisPromptForm() {
@@ -1889,9 +1938,10 @@ export function createApp(runtime, options = {}) {
     settingsState = {...settingsState, busy: true, notice: null, testResult: null};
     try {
       const context = runtime.st?.getContext?.() ?? hostContextForApp();
+      const requestSettings = settingsState.apiRequestDraft ?? settingsState.apiRequestSettings;
       const result = typeof profileStore.withTestProfile === 'function'
-        ? await profileStore.withTestProfile(raw, profile => runTest(profile, {context}))
-        : await runTest(raw, {context});
+        ? await profileStore.withTestProfile(raw, profile => runTest(profile, {context, requestSettings}))
+        : await runTest(raw, {context, requestSettings});
       settingsState = {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
@@ -1998,7 +2048,10 @@ export function createApp(runtime, options = {}) {
       if (typeof profileStore.withTestProfile !== 'function') throw new Error('ST_MODEL_FETCH_UNAVAILABLE');
       const models = await profileStore.withTestProfile(
         raw,
-        profile => fetchModels.call(apiClient, profile, {context}),
+        profile => fetchModels.call(apiClient, profile, {
+          context,
+          requestSettings: settingsState.apiRequestDraft ?? settingsState.apiRequestSettings,
+        }),
         {requireModel: false},
       );
       if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
@@ -2139,7 +2192,7 @@ export function createApp(runtime, options = {}) {
     }
     if (target?.dataset?.bioweaveApiTimeout !== undefined
       || target?.dataset?.bioweaveApiRetryCount !== undefined) {
-      captureSettingsDraft();
+      captureApiRequestSettingsDraft();
       return;
     }
     if (target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();
@@ -2428,7 +2481,7 @@ export function createApp(runtime, options = {}) {
     }
     if (event.target?.dataset?.bioweaveApiTimeout !== undefined
       || event.target?.dataset?.bioweaveApiRetryCount !== undefined) {
-      captureSettingsDraft();
+      await saveApiRequestSettings();
       return;
     }
     if (event.target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();
@@ -2645,6 +2698,8 @@ export function createApp(runtime, options = {}) {
       modelRefreshBusy: false,
       apiSource: SILLYTAVERN_CURRENT_API,
       defaultProfileId: null,
+      apiRequestSettings: {...DEFAULT_API_REQUEST_SETTINGS},
+      apiRequestDraft: null,
       notice: null,
       testResult: null,
       busy: false,

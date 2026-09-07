@@ -1,6 +1,7 @@
 import {
   API_ASSIGNMENTS,
   BIOWEAVE_INDEPENDENT_API,
+  DEFAULT_API_REQUEST_SETTINGS,
   DEFAULT_API_PROFILE,
   FOLLOW_DEFAULT_API,
   normalizeRecentStorySettings,
@@ -126,8 +127,6 @@ function profileValues(profile, draft) {
     context_size: value('context_size') ?? DEFAULT_API_PROFILE.context_size,
     max_output_tokens: value('max_output_tokens') ?? DEFAULT_API_PROFILE.max_output_tokens,
     temperature: value('temperature') ?? DEFAULT_API_PROFILE.temperature,
-    timeout_seconds: timeoutSecondsForDisplay(value('timeout') ?? DEFAULT_API_PROFILE.timeout),
-    retry_count: value('retry_count') ?? DEFAULT_API_PROFILE.retry_count,
     api_key: typeof source.api_key === 'string' ? source.api_key : '',
     clear_secret: source.clear_secret === true,
     secret_ref: saved.secret_ref,
@@ -145,8 +144,6 @@ function normalizeApiProfileForDisplay(profile) {
     context_size: source.context_size ?? DEFAULT_API_PROFILE.context_size,
     max_output_tokens: source.max_output_tokens ?? DEFAULT_API_PROFILE.max_output_tokens,
     temperature: source.temperature ?? DEFAULT_API_PROFILE.temperature,
-    timeout: source.timeout ?? DEFAULT_API_PROFILE.timeout,
-    retry_count: source.retry_count ?? DEFAULT_API_PROFILE.retry_count,
     secret_ref: source.secret_ref ?? null,
   };
 }
@@ -174,19 +171,22 @@ function renderApiSource(
     modelRefreshBusy = false,
     testResult = null,
     busy = false,
+    apiRequestSettings = DEFAULT_API_REQUEST_SETTINGS,
     openSettingsSections = [],
   } = {},
 ) {
   const independent = apiSource === BIOWEAVE_INDEPENDENT_API;
   const defaultProfile = profiles.find(profile => profile.profile_id === defaultProfileId);
   const apiDisclosureOpen = editingProfile !== undefined || openSettingsSections.includes('api');
-  const profileSource = profileValues(editingProfile ?? defaultProfile, editingDraft);
+  const requestSource = apiRequestSettings && typeof apiRequestSettings === 'object'
+    ? apiRequestSettings
+    : DEFAULT_API_REQUEST_SETTINGS;
   const requestSettings = [
     '<section class="bioweave-api-source-module bioweave-api-request-settings" data-bioweave-api-request-settings>',
     '<header class="bioweave-api-module-header"><div><h3>请求设置</h3><p class="bioweave-muted">控制分析请求的等待时间和失败重试。</p></div></header>',
     '<div class="bioweave-settings-fields">',
-    field('超时（秒）', 'timeout', profileSource.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal" data-bioweave-api-timeout'),
-    field('重试次数', 'retry_count', profileSource.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric" data-bioweave-api-retry-count'),
+    field('超时（秒）', 'timeout', timeoutSecondsForDisplay(requestSource.timeout ?? DEFAULT_API_REQUEST_SETTINGS.timeout), 'number', ' min="0.25" step="0.25" inputmode="decimal" data-bioweave-api-timeout'),
+    field('重试次数', 'retry_count', requestSource.retry_count ?? DEFAULT_API_REQUEST_SETTINGS.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric" data-bioweave-api-retry-count'),
     '</div>',
     '</section>',
   ].join('');
@@ -807,6 +807,8 @@ export function settingsPage({
   assignments = {},
   apiSource = SILLYTAVERN_CURRENT_API,
   defaultProfileId = null,
+  apiRequestSettings = DEFAULT_API_REQUEST_SETTINGS,
+  apiRequestDraft = null,
   editingProfile = undefined,
   editingDraft = undefined,
   modelList = [],
@@ -852,6 +854,7 @@ export function settingsPage({
       modelRefreshBusy,
       testResult,
       busy,
+      apiRequestSettings: apiRequestDraft ?? apiRequestSettings,
       openSettingsSections: worldbookSources.openSettingsSections,
     }),
     '<details class="bioweave-settings-disclosure bioweave-assignments-disclosure" data-bioweave-settings-disclosure="assignments"' + (openSettingsSections.has('assignments') ? ' open' : '') + '>',

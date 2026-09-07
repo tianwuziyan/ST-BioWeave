@@ -1,5 +1,6 @@
 import {
   API_ASSIGNMENTS,
+  normalizeApiRequestSettings,
   FOLLOW_DEFAULT_API,
   SILLYTAVERN_CURRENT_API,
   cloneValue,
@@ -286,6 +287,17 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     return cloneValue(nextSettings.api_profiles[profile.profile_id]);
   }
 
+  function getApiRequestSettings() {
+    return cloneValue(read().api_request_settings);
+  }
+
+  async function saveApiRequestSettings(raw = {}) {
+    const settings = read();
+    const requestSettings = normalizeApiRequestSettings(raw);
+    await write({...settings, api_request_settings: requestSettings});
+    return cloneValue(requestSettings);
+  }
+
   async function withTestProfile(raw = {}, callback, options = {}) {
     if (typeof callback !== 'function') throw new TypeError('PROFILE_TEST_CALLBACK_REQUIRED');
     const settings = read();
@@ -403,6 +415,8 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     getProfile,
     saveProfile,
     upsertProfile: saveProfile,
+    getApiRequestSettings,
+    saveApiRequestSettings,
     withTestProfile,
     deleteProfile,
     removeProfile: deleteProfile,

@@ -1,7 +1,10 @@
-import {SILLYTAVERN_CURRENT_API, normalizeApiProfile} from '../storage/schema.js';
+import {
+  DEFAULT_API_REQUEST_SETTINGS,
+  SILLYTAVERN_CURRENT_API,
+  normalizeApiProfile,
+  normalizeApiRequestSettings,
+} from '../storage/schema.js';
 
-const DEFAULT_TIMEOUT = 180000;
-const DEFAULT_RETRY_COUNT = 1;
 const NO_SECRET_ID = '__bioweave_no_secret__';
 const MODELS_STATUS_ENDPOINT = '/api/backends/chat-completions/status';
 const SAFE_MODEL_ERROR_CODES = new Set([
@@ -36,12 +39,12 @@ function numeric(value, fallback, min, max, integer = false) {
   return integer ? Math.round(bounded) : bounded;
 }
 
-function requestTimeout(profile, options) {
-  return numeric(options.timeout ?? profile?.timeout, DEFAULT_TIMEOUT, 250, 600000, true);
+function requestTimeout(requestSettings) {
+  return numeric(requestSettings.timeout, DEFAULT_API_REQUEST_SETTINGS.timeout, 250, 600000, true);
 }
 
-function retryCount(profile, options) {
-  return numeric(options.retryCount ?? options.retry_count ?? profile?.retry_count, DEFAULT_RETRY_COUNT, 0, 3, true);
+function retryCount(requestSettings) {
+  return numeric(requestSettings.retry_count, DEFAULT_API_REQUEST_SETTINGS.retry_count, 0, 3, true);
 }
 
 function statusFromError(error) {
@@ -128,15 +131,16 @@ async function runWithTimeout(operation, {signal, timeout}) {
   }
 }
 
-async function requestWithRetry(operation, profile = {}, options = {}) {
+async function requestWithRetry(operation, options = {}) {
   const signal = options.signal;
-  const attempts = retryCount(profile, options) + 1;
+  const requestSettings = normalizeApiRequestSettings(options.requestSettings);
+  const attempts = retryCount(requestSettings) + 1;
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await runWithTimeout(operation, {
         signal,
-        timeout: requestTimeout(profile, options),
+        timeout: requestTimeout(requestSettings),
       });
     } catch (error) {
       lastError = error;
@@ -370,7 +374,6 @@ export async function callOpenAICompatible(profile, messages, options = {}) {
       signal => isCurrentApi(profile)
         ? runCurrentApi(profile, messages, context, signal)
         : runIndependentApi(normalized, messages, context, signal),
-      normalized,
       options,
     );
   } catch (error) {
@@ -465,7 +468,7 @@ export async function fetchModels(profile, options = {}) {
         throw modelRequestError('API_MODELS_RESPONSE_INVALID');
       }
       return modelList(await response.json());
-    }, normalized, requestOptions);
+    }, requestOptions);
 
     if (!payload.length) throw modelRequestError('API_MODELS_EMPTY');
     return payload;
