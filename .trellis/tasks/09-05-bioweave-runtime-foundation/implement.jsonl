@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for the existing vanilla DOM UI boundary."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Project directory and module-granularity guidance for preserving the lightweight layout."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "State ownership guidance relevant to Chat-local runtime/storage and UI theme state."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Testing and forbidden-pattern guidance for the foundation changes."}

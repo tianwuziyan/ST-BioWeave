@@ -1,0 +1,17 @@
+{
+  "display_name": "BioWeave",
+  "loading_order": 50,
+  "js": "index.js",
+  "css": "style.css",
+  "author": "BioWeave contributors",
+  "version": "0.2.2-dev",
+  "auto_update": false,
+  "hooks": {
+    "install": "onInstall",
+    "update": "onUpdate",
+    "delete": "onDelete",
+    "enable": "onEnable",
+    "disable": "onDisable",
+    "activate": "onActivate"
+  }
+}

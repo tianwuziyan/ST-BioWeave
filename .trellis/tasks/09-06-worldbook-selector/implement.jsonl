@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "遵循现有 plain DOM、单一 app owner 和集中事件委托约定。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "确认 Chat-local 状态、异步 Chat token 和现有 storage 边界。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "避免修改已验收入口/宿主，并执行移动端 UI 约束。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免新增重复的存储/服务抽象，复用现有模块。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审查宿主来源、目录 DTO、Chat 持久化和设置 UI 的数据边界。"}
+{"file": "docs/DATA-MODEL.md", "reason": "确认 Chat metadata 与 extension-global 的数据归属。"}
+{"file": "docs/UI.md", "reason": "遵循现有设置页、响应式与主题基础。"}
+{"file": "docs/DEVELOPMENT.md", "reason": "确认 ai/worldbook.js 与 story 适配器的职责和任务范围。"}
+{"file": ".trellis/tasks/09-06-worldbook-selector/research/host-worldbook-api.md", "reason": "记录已确认的 SillyTavern/SevenDaysCal 公开读取边界。"}
+{"file": ".trellis/tasks/09-06-worldbook-selector/research/external-memory-api.md", "reason": "记录构画、Anima、柏宝书和数据库记忆的公开接口审查与不可用边界。"}
+{"file": ".trellis/tasks/09-06-worldbook-selector/prd.md", "reason": "任务需求、非目标和验收标准。"}
+{"file": ".trellis/tasks/09-06-worldbook-selector/design.md", "reason": "来源 DTO、状态边界、宿主读取和 UI 设计。"}
+{"file": ".trellis/tasks/09-06-worldbook-selector/implement.md", "reason": "实施顺序、测试计划和真实手工验收步骤。"}

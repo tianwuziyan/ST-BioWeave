@@ -1,0 +1,1 @@
+export function createStoryTime(provider=null){return {current:()=>provider?.getCurrentTime?.()??null,atFloor:f=>provider?.getTimeAtFloor?.(f)??null,diff:(a,b)=>provider?.getDateDifference?.(a,b)??null,calendar:()=>provider?.getCalendar?.()??null};}

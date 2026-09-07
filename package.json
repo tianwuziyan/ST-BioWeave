@@ -1,0 +1,13 @@
+{
+  "name": "bioweave-sillytavern-extension",
+  "private": true,
+  "version": "0.2.2-dev",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check index.js && node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查 UI 宿主、响应式、测试和冻结模块边界"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查页面渲染与状态交互的一致性"}

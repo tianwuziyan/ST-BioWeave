@@ -1,0 +1,5 @@
+export const EVENT_STATUS = ['confirmed','probable','ambiguous','negated','fictional'];
+export const EVENT_TYPES = ['sexual_activity','conception','pregnancy_suspicion','pregnancy_confirmation','pregnancy_loss','abortion','labor','delivery','postpartum','menstrual_event','ovulation_event','fertility_change','physical_symptom','medical_event','other_biological'];
+export function normalizeEvent(raw={}) { return { ...raw, participants: Array.isArray(raw.participants) ? raw.participants : [], physical_effect: raw.physical_effect ?? {} }; }
+export function validateEvent(event) { const errors=[]; if(!event?.event_id) errors.push('event_id'); if(!EVENT_TYPES.includes(event?.type)) errors.push('type'); if(!EVENT_STATUS.includes(event?.status)) errors.push('status'); if(!event?.source?.chat_id) errors.push('source.chat_id'); return {ok:!errors.length,errors}; }
+export function sortEvents(events=[]) { return [...events].sort((a,b)=>(a.source?.floor??0)-(b.source?.floor??0) || String(a.event_id).localeCompare(String(b.event_id))); }

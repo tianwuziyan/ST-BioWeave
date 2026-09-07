@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality checklist for responsive settings UI verification."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify no API Secret or Profile state leaks into Chat-local storage."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that the implementation stays within existing lightweight modules."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review security and data flow across storage, client, UI, logs, exports, and prompt inspection."}

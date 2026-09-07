@@ -1,0 +1,1 @@
+export function statePage(){return '<section class="bioweave-page"><div class="bioweave-page-title"><div><h2>分析状态</h2><p class="bioweave-muted">当前 Chat 的分析任务状态</p></div></div><section class="bioweave-card bioweave-empty"><b>任务状态：空闲</b><p>成功/失败分析记录和重试操作将在业务分析层接入。</p></section></section>';}

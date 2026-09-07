@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "遵守现有 UI/宿主集成边界、中文 UI、测试要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复用现有页面渲染和轻量组件模式"}

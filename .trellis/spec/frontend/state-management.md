@@ -1,0 +1,524 @@
+# State Management
+
+BioWeave uses small, explicit state owners instead of a global store. The
+SillyTavern Chat is the dynamic-data boundary; the UI keeps only presentation
+state such as the focused route and theme choice.
+
+## 1. Scope / Trigger
+
+This contract applies whenever code reads or writes BioWeave data, responds to
+a SillyTavern lifecycle event, or starts an asynchronous operation that may
+finish after the user changes Chat, edits a message, or changes a swipe.
+
+The trigger is a cross-layer boundary change involving the host context,
+`runtime/`, `storage/`, `runtime/floor.js`, or `ui/app.js`.
+
+## 2. Signatures
+
+The existing modules own these contracts:
+
+```js
+createChatBoundary({getChatId})
+  .current() -> chatId
+  .token() -> {chatId, epoch}
+  .assert(token) -> true | throws Error('STALE_CHAT')
+  .subscribe(listener) -> unsubscribe()
+
+createStore(adapter, boundary)
+  .getChat(chatId) -> ChatData
+  .saveChat(chatId, data) -> Promise<void>
+  .getFloor(messageId, swipeId) -> FloorData | null
+  .saveFloor(messageId, swipeId, data) -> Promise<void>
+
+floorVersion({chatId, messageId, floor, swipeId, text, messageVersion})
+  -> {chat_id, message_id, floor, swipe_id, content_hash, message_version}
+```
+
+The host adapter reads the current context through
+`SillyTavern.getContext()` on each operation. It uses `chatId`, `chat`,
+`chatMetadata`, `saveMetadata`, `saveChat`, `eventSource`, and `eventTypes`.
+Long-lived references to `chatMetadata` or `chat` are forbidden because the
+host replaces them when Chat changes.
+
+## 3. Contracts
+
+### Chat data
+
+`chat_metadata.bioweave` must contain `chat_scope.chat_id` equal to the
+requested Chat ID. Missing data or a scope mismatch returns a fresh default
+Chat structure. The data is cloned at the storage boundary.
+
+### Floor data
+
+For a message without `swipes` or `swipe_info`, use
+`message.extra.bioweave`. When either swipe structure exists, every swipe,
+including swipe `0`, uses only
+`message.swipe_info[swipe_id].extra.bioweave`. A missing swipe does not fall
+back to another swipe's result.
+
+### Floor Version
+
+Automatic analysis may be skipped only when the saved result is successful and
+all six identity fields match: `chat_id`, `message_id`, `floor`, `swipe_id`,
+`content_hash`, and `message_version`. A changed message body or swipe must
+therefore produce a new version. Manual refresh always runs.
+
+### Asynchronous writes
+
+An async write captures `{chatId, epoch}` before it starts and asserts the same
+token after the host save finishes. A changed Chat throws `STALE_CHAT`; the
+caller must not copy the result into the new Chat.
+
+### Secrets
+
+Storage removes obvious secret value fields recursively, including `api_key`,
+`apiKey`, `authorization`, and bearer/token values. `secret_ref` and
+`secret_id` are safe references and remain. API keys must never be part of
+Chat metadata, Floor data, events, snapshots, projections, logs, exports, or
+Prompt Inspector payloads.
+
+### Worldbook source selection
+
+The settings UI owns an in-memory source catalog. The “世界书来源” view contains
+character-card fields and Worldbook entries; Recent Story and external memory
+providers have separate Chat-local settings and are not catalog entries. Only
+stable child selections and small settings are persisted; catalog content is
+not part of Chat data and is not an injection payload.
+
+#### Signatures
+
+```js
+loadAnalysisSources({context, fetchRef, getRequestHeaders})
+  -> Promise<{sources: AnalysisSource[], warning: string | null}>
+
+normalizeWorldbookSettings(raw)
+  -> {mode: 'selected_only' | 'all' | 'none',
+      selected: [
+        {source_id: string, entry_id: string, enabled: true},
+        {source_id: string, field_key: string, enabled: true}
+      ]}
+
+normalizeRecentStorySettings(raw)
+  -> {enabled: boolean, floor_count: integer,
+      regex_rules: [{pattern: string, type: 'extract' | 'exclude', enabled: boolean}]}
+
+normalizeRecentStoryGlobalSettings(raw)
+  -> {regex_rules: [{pattern: string, type: 'extract' | 'exclude', enabled: boolean}]}
+
+mergeRecentStorySettings(globalSettings, characterSettings)
+  -> current Chat settings with regex_rules ordered global then character
+
+normalizeExternalMemorySettings(raw)
+  -> {sevendayscal: boolean, anima: boolean,
+      baobaoshu: boolean, database_memory: boolean}
+
+worldbookSelectionState(source, selected)
+  -> {total_count: integer, selected_count: integer,
+      checked: boolean, indeterminate: boolean}
+
+setWorldbookEntriesSelection(selected, source, enabled)
+  -> enabled child selections for source entries only
+```
+
+#### Contracts
+
+- Every source has a stable `source_id` and one of the explicit
+  `source_type` values `character_card`, `worldbook`, `recent_story`, or
+  `sevendayscal`. The selector page renders only the first two; the latter two
+  are independent settings/status values.
+- A SillyTavern Worldbook source uses the host `file_id`/stable source key;
+  its display `label` is never the persisted identity.
+- A Worldbook child uses the host entry `uid`/`id`/object key as `entry_id`;
+  a character-card child uses the raw stable field key as `field_key`.
+- The character-card selector exposes only `description`, `opening:main`, and
+  `opening:alternate:<index>` fields. The opening fields preserve the source
+  order and remain separate selection items; internal card fields are not
+  user-facing selector rows.
+- The settings view has independent collapsible `character_card` and
+  `worldbook` sections. Worldbook sources are grouped using the loader's
+  `character_worldbook` scope, with unlinked available books in the global
+  group; display names are not used for grouping.
+- A worldbook parent checkbox is presentation state derived from entry
+  selections. `checked` means all stable entries are selected,
+  `indeterminate` means some are selected, and the parent control is never
+  persisted as a source-level selection. Batch changes remove stale
+  source-level selections and write only `{source_id, entry_id, enabled}`.
+- An opening-group parent checkbox is presentation state derived from
+  `opening:main` and `opening:alternate:<index>` field selections. Its batch
+  changes write only `{source_id, field_key, enabled}` child items; the group
+  itself is never persisted.
+- `chat_metadata.bioweave.settings.worldbooks` stores only `mode` and enabled
+  child selections. It does not store source labels, source content, request
+  headers, or token-estimate caches. `recent_story` stores only its toggle and
+  floor count; `external_memory` stores only provider toggles.
+- Extension settings store `recent_story_global.regex_rules` only. Global rules
+  have no floor-count or USER-floor switch and never carry Secret fields. The
+  existing `chat_metadata.bioweave.settings.recent_story.regex_rules` remains
+  the current Chat/character-card scope; old rules are not promoted. Analysis
+  merges global rules before current-Chat rules, while the floor-0 raw-content
+  and default USER-floor bypass remain unchanged.
+- 角色卡、最近剧情、构画数据和外部记忆是分析输入配置，不是最终 Tavern
+  Context 输出。
+- Analysis-source refresh and selection writes capture the current Chat token;
+  a stale Chat cannot apply its result to the new Chat.
+- `context/builder.js` and `setExtensionPrompt` are not called by the selector.
+
+#### Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Worldbook item has no `file_id`, `host_key`, or stable `source_id` | Skip the item; never use display `name` as its identity |
+| Unknown `source_type` | Reject the source DTO |
+| Worldbook list request fails but public names are available | Use the public host-name fallback and surface a safe warning |
+| Worldbook list request fails and no fallback exists | Keep the previous catalog; retain the current selection and show a safe warning |
+| Chat changes during refresh or save | Reject the stale result/write; do not copy it into the new Chat |
+| SevenDaysCal is absent | Keep an unavailable external-provider status; the selector remains usable |
+
+#### Good / Base / Bad Cases
+
+- Good: Store `st-worldbook:<file_id>` and its stable `entry_id` while
+  rendering the returned display name/title only as a label.
+- Base: Keep a selected ID whose source is temporarily unavailable, so a
+  transient refresh failure does not silently erase user intent.
+- Bad: Store a worldbook display name, loaded entries, or a SevenDaysCal
+  private Store snapshot in Chat metadata.
+
+#### Tests Required
+
+- Assert same-name Worldbooks with different `file_id` values receive
+  different `source_id` values.
+- Assert missing stable identifiers are skipped and unknown source types are
+  rejected.
+- Assert source search, selection, select-all/select-none and token estimates
+  do not mutate the persisted catalog content.
+- Assert the card source exposes only `description` and separate stable
+  opening field keys for the primary and every alternate greeting.
+- Assert linked/global groups use source scopes and parent selection derives
+  checked, unchecked, and indeterminate states without a parent DTO.
+- Assert Chat A and Chat B keep independent `settings.worldbooks` values and
+  stale async refresh/save results are rejected.
+
+#### Wrong vs Correct
+
+```js
+// Wrong: display text becomes the Chat identity and source content is saved.
+chat.settings.worldbooks = {selected: [{source_id: source.name, entries: source.content}]};
+```
+
+```js
+// Correct: persist only the stable source identity in the current Chat.
+chat.settings.worldbooks = {
+  mode: 'selected_only',
+  selected: [{source_id: source.source_id, entry_id: entry.entry_id, enabled: true}],
+};
+```
+
+## 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Requested Chat ID is not the current `chatId` | Return default on read; throw `STALE_CHAT` on async write |
+| `chat_scope.chat_id` does not match | Throw `CHAT_SCOPE_MISMATCH` on write; return default on read |
+| Floor Version is missing or changed | Automatic analysis is allowed |
+| Same successful Floor Version | Automatic analysis is skipped |
+| Analysis attempt fails with an older success | Keep the old result in `last_success`; retain it for display/recovery and allow retry |
+| Message has swipe structure | Read/write only the requested `swipe_info[swipe_id]` slot |
+| Message is deleted or unavailable | Do not create an independent BioWeave Floor database |
+| Host context or required save API is unavailable | Throw a descriptive `ST_*_UNAVAILABLE` error |
+
+## 5. Good / Base / Bad Cases
+
+- Good: Capture Chat A's token, save its Floor, and reject the completion after
+  the boundary moves to Chat B.
+- Good: Save swipe 0 and swipe 1 on the same message and retrieve each value
+  from its own `swipe_info` slot.
+- Base: A new Chat or message has no BioWeave data and receives the default
+  schema without sharing references with another Chat.
+- Bad: Store a `currentCharacter` object as the global BioWeave root or use a
+  character name as the dynamic-data key.
+- Bad: Treat a successful result for the previous text or previous swipe as a
+  match for the current Floor Version.
+- Bad: Put a provider API key in `chat_metadata.bioweave` or in
+  `message.extra.bioweave`.
+
+## 6. Tests Required
+
+- Chat boundary test: a token becomes invalid after `getChatId()` changes and
+  the error is `STALE_CHAT`.
+- Floor decision test: same successful version skips, edited version runs,
+  failed result retries, and a failed refresh preserves the previous success.
+- Storage round-trip test: ordinary message storage and swipe 0/1 storage do
+  not cross-read or cross-write.
+- Scope test: another Chat receives defaults and a stale async save rejects.
+- Secret test: `api_key`/`apiKey` values are absent after storage while
+  `secret_ref` remains.
+- Host smoke test: official lifecycle listeners use `removeListener` and are
+  all removed by `runtime.destroy()`.
+
+## 7. Wrong vs Correct
+
+### Wrong
+
+```js
+// Wrong: caches a Chat object and makes swipe 0 share message.extra.
+const chat = SillyTavern.getContext().chat;
+message.extra.bioweave = value;
+```
+
+### Correct
+
+```js
+// Correct: read the current host context per operation and isolate every swipe.
+const context = SillyTavern.getContext();
+context.chat[messageIndex].swipe_info[swipeId].extra.bioweave = value;
+await context.saveChat();
+```
+
+This contract intentionally leaves AI analysis, complete state reduction, and
+full UI v2 data wiring to later tasks.
+
+## API Profile and Secret Store Contract
+
+### 1. Scope / Trigger
+
+This contract applies when code adds or changes an API Profile, assigns a
+Profile to a BioWeave task, writes a provider secret, or tests an API
+connection. API Profiles are extension-global configuration; they are not
+Chat-instance-local biological data.
+
+### 2. Signatures
+
+```js
+createSecretStore({fetchRef, getRequestHeaders,
+  secretKey = 'api_key_custom', endpoint = '/api/secrets'})
+  .write(value) -> Promise<opaqueSecretId | null>
+  .remove(opaqueSecretId) -> Promise<boolean>
+  .get() -> throws Error('ST_SECRET_READ_DISABLED')
+
+createApiProfileStore(adapter, {secretStore})
+  .getSettings() -> SafeExtensionSettings
+  .listProfiles() -> SafeApiProfile[]
+  .getProfile(profileId) -> SafeApiProfile | null
+  .saveProfile(rawProfile) -> Promise<SafeApiProfile>
+  .withTestProfile(rawProfile, callback) -> Promise<callback result>
+  .deleteProfile(profileId) -> Promise<boolean>
+  .setApiSource(source) -> Promise<'sillytavern' | 'bioweave'>
+  .setDefaultProfile(profileId) -> Promise<string | null>
+  .setAssignment(slot, profileIdOrSillyTavern) -> Promise<string | null>
+```
+
+The SillyTavern adapter reads `context.extensionSettings.bioweave` and saves
+it through `context.saveSettingsDebounced()`. Independent requests use the
+host `ChatCompletionService.processRequest()` with `chat_completion_source:
+'custom'`, `custom_url`, and `secret_id`. The current-host API uses the public
+`context.generateRaw()` capability.
+
+### 3. Contracts
+
+- A safe Profile contains `profile_id`, `name`, `provider`, `api_url`,
+  `model`, `context_size`, `max_output_tokens`, `temperature`, `timeout`,
+  `retry_count`, and nullable `secret_ref`; it never contains `api_key`.
+- Secret writes POST `{key: 'api_key_custom', value, label}` to
+  `/api/secrets/write`; deletion POSTs `{key: 'api_key_custom', id}` to
+  `/api/secrets/delete`. BioWeave never calls `/api/secrets/find`.
+- Extension-global API settings store the canonical `api_source` marker, an
+  optional `default_profile_id`, and four assignment slots. Assignment slots
+  store only the `default` marker, a stable Profile ID, the canonical
+  `sillytavern` marker, or `null`.
+- Profile and assignment settings are saved under extension-global settings;
+  Chat metadata, Floor data, Event, Snapshot, Projection, log, export, and
+  Prompt Inspector payloads must not contain them.
+- `withTestProfile` never writes extension settings. A newly entered Key may be
+  written to the host Secret Store only long enough to run the callback, and
+  its opaque reference must be deleted in a `finally` path. The callback only
+  receives a safe Profile and never receives the plaintext Key.
+- Connection-test results may contain `ok`, safe status, configured/current
+  model, latency, and HTTP status or a fixed safe error summary. They must not
+  contain request bodies, response bodies, headers, URLs with secrets, or raw
+  exceptions.
+
+### UI draft state
+
+The settings route keeps an in-memory draft separate from the saved Profile.
+`ui/app.js` captures all form controls on `input` and keys the draft by stable
+`profile_id`, using `__new__` for a new Profile. Save and test operations read
+that draft rather than treating the DOM as the source of truth. A successful
+save replaces it with the normalized saved Profile and clears only the Key
+input; a failed save or any test result keeps the draft for the next render.
+The public settings-state inspection also masks draft Key values. Drafts are
+never passed to Chat/Floor storage or written to extension settings.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| API URL is not HTTP(S), contains credentials, or a secret query value | Normalize to invalid; saving throws `API_PROFILE_INVALID` |
+| API URL ends in `/chat/completions` or `/completions` | Strip the suffix before saving/requesting |
+| Required URL or Model is missing | Do not write Secret or extension settings; throw `API_PROFILE_INVALID` |
+| New Secret write fails or returns no opaque ID | Keep the previous Profile/reference; throw an `ST_SECRET_*` error |
+| Extension settings save fails after a new Secret write | Restore host settings when possible and remove the new reference |
+| Old Secret cleanup fails after a new reference is saved | Keep the new reference, surface `ST_SECRET_DELETE_FAILED`, never restore the old reference |
+| Profile deletion cleanup fails | Remove the Profile/assignments from settings, surface `ST_SECRET_DELETE_FAILED`, and do not expose the Secret value |
+| Profile has no Secret reference | Independent request uses a sentinel `secret_id`; it must not fall through to the host's active custom key |
+| Current API is selected | Call host `generateRaw`; do not read or copy the host API key |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Save an API key through the host Secret endpoint, persist only its
+  returned ID in `extensionSettings.bioweave.api_profiles`, then pass that ID
+  to the host custom backend.
+- Base: Edit non-secret fields while leaving the password input empty; retain
+  the existing `secret_ref` without rendering the key back into the DOM.
+- Bad: Put `api_key` in a Profile object, Chat metadata, a request error, or
+  a test-result string, even if the object is later passed through a generic
+  serializer.
+- Bad: Call `/api/secrets/find` in the browser or omit `secret_id` for a
+  keyless custom Profile, because either action can expose or implicitly reuse
+  a host secret.
+
+### 6. Tests Required
+
+- Normalize a Profile and assert that API key fields and nested secret values
+  are absent while `secret_ref` remains.
+- Exercise new-key, retain-key, replace-key, clear-key, delete, and cleanup
+  failure paths; assert settings contain no key and stale references are not
+  restored.
+- Capture Secret HTTP calls and assert only write/delete endpoints and
+  `api_key_custom` are used; assert `.get()` is disabled.
+- Capture custom-backend request data and assert `custom_url` is normalized,
+  `secret_id` is opaque/sentinel, and `api_key` is absent.
+- Capture `generateRaw` for current API testing and assert no host key is
+  copied; assert failure results do not include raw exception text.
+- Exercise a test-only new Key and assert the callback receives only an opaque
+  reference, the temporary reference is deleted, and extension settings are
+  unchanged.
+- Render the settings page with a draft and assert the draft values survive a
+  render, the password input is empty for a saved Profile, advanced settings
+  are collapsed by default, and the four assignments include `default` and
+  `null` options.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+// Wrong: reads a Secret into the extension and persists it with the Profile.
+const key = await secretStore.get(profile.secret_ref);
+await saveGlobalSettings({...settings, api_profiles: {...profile, api_key: key}});
+```
+
+#### Correct
+
+```js
+// Correct: write once, persist only the opaque reference, and let the host
+// resolve it while proxying the request.
+const secretRef = await secretStore.write(passwordInput.value);
+await profileStore.saveProfile({...formData, secret_ref: secretRef});
+await context.ChatCompletionService.processRequest({
+  chat_completion_source: 'custom',
+  custom_url: profile.api_url,
+  secret_id: profile.secret_ref,
+});
+```
+
+## Recent Story Regex Collection
+
+### 1. Scope / Trigger
+
+The recent-story settings and `AnalysisInput.recent_story.items` path apply
+the user's ordered extraction/cleaning rules independently to each Chat floor.
+
+### 2. Signatures
+
+```js
+normalizeRecentStorySettings(raw)
+  -> {enabled, floor_count, regex_rules, regex_user_enabled}
+
+applyRecentStoryRegex(content, rules)
+  -> string
+```
+
+### 3. Contracts
+
+- Each floor starts with its own raw content; floors remain in original order
+  and retain their original `floor` value.
+- Enabled `exclude` rules run first, in their stored order, against the floor's
+  original text and remove matching text.
+- Enabled `extract` rules all read the same cleaned text. Their results are
+  appended by rule order, then by match order, with one newline between blocks.
+- A capture-group rule emits all non-empty capture groups per match; a rule
+  without capture groups emits the full match. Regexes are global by default.
+- Empty or disabled rule sets return the floor text unchanged. Invalid rules
+  are skipped without aborting the remaining rules.
+- Floor `0` is the opening greeting and never receives recent-story regex
+  processing, regardless of `regex_user_enabled`.
+- USER floors remain raw by default. Regex processing for USER floors is only
+  enabled when the Chat-local `regex_user_enabled` flag is `true`; assistant and
+  system floors continue to use the ordered rules.
+- The World Model assistant message contains only the resulting floor text,
+  joined in order; it does not add a floor heading or `[Floor · role]` marker.
+- `extensionSettings.bioweave.recent_story_global.regex_rules` is plugin-level
+  configuration and applies to every character card. It contains only rules;
+  it must not acquire `floor_count`, `enabled`, or `regex_user_enabled`.
+- `chat_metadata.bioweave.settings.recent_story.regex_rules` remains the
+  current Chat/character-card scope. Existing rules stay in this scope and are
+  not promoted automatically. Before collection, merge global rules first and
+  Chat-local rules second; the merged list is then processed with the same
+  per-floor semantics below.
+- The settings UI must route every regex input, add, move, and remove action by
+  an explicit `global`/`character` scope marker. A missing marker defaults to
+  the Chat-local character scope for backward safety.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| `/pattern/flags` omits `g` | Add `g` before compiling |
+| Invalid pattern or flags | Skip that rule; preserve other processing |
+| Only cleaning rules remain | Return cleaned, trimmed floor text |
+| A floor becomes empty after processing | Omit that floor from `recent_story.items` |
+| Global settings contain an empty rule or non-rule field | Ignore the empty global rule and discard all non-rule fields; never persist Chat read controls at extension level |
+| Existing Chat-local rules are loaded after adding global rules | Keep them Chat-local and execute them after global rules; never rewrite them as global |
+
+### 5. Good / Base / Bad Cases
+
+- Good: date extraction and body extraction both read the same cleaned floor,
+  producing `date\nbody`.
+- Base: a debug-tag exclusion appears between two extraction rules; exclusion
+  still happens before extraction.
+- Bad: feed the first extraction result into the second extraction rule; this
+  loses independent fields from the original floor.
+
+### 6. Tests Required
+
+- Assert no-rule and disabled-rule inputs remain unchanged.
+- Assert cleaning runs before extraction even when the stored order interleaves
+  the two types.
+- Assert multiple extraction rules preserve rule order and collect from the same
+  cleaned source.
+- Assert two floors are processed independently and retain their floor IDs.
+- Assert floor `0` bypasses regex processing.
+- Assert USER floors bypass regex by default and are processed when the
+  Chat-local opt-in is enabled.
+- Assert global rules are stored in extension settings, while character rules
+  remain in Chat metadata.
+- Assert global rules run before character rules and both scopes preserve their
+  own order and enabled flags.
+- Assert adding or editing a rule in one scope does not change the other scope.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+let text = floorText;
+for (const rule of rules) text = applyOneRule(text, rule);
+```
+
+#### Correct
+
+```js
+const cleaned = applyAllExclusions(floorText, excludeRules);
+const parts = extractRules.flatMap(rule => extractAll(cleaned, rule));
+return parts.join('\n');
+```

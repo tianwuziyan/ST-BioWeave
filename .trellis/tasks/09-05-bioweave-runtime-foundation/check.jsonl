@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for reviewing the vanilla DOM UI boundary."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Project directory and module-granularity guidance for reviewing scope."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "State ownership guidance for checking Chat-local data isolation."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Testing and forbidden-pattern guidance for the quality review."}

@@ -1,0 +1,28 @@
+{
+  "id": "bioweave-runtime-foundation",
+  "name": "bioweave-runtime-foundation",
+  "title": "BioWeave engineering audit and runtime foundation",
+  "description": "Audit the existing BioWeave extension and implement the SillyTavern entry, UI lifecycle, chat scope, floor-version/swipe isolation, storage, themes, and lifecycle foundation.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-05-bioweave-ui-foundation-responsive"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend layer index and checklist for UI changes."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Keep UI state presentation-only and preserve Chat boundary contracts."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Search existing lifecycle, route, and theme patterns before adding helpers."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace the SillyTavern menu-to-overlay boundary and host lifecycle."}
+{"file": ".trellis/tasks/09-05-bioweave-ui-foundation-responsive/research/sillytavern-ui-lifecycle.md", "reason": "Use the real host DOM and mobile interception findings to implement the entry fix."}

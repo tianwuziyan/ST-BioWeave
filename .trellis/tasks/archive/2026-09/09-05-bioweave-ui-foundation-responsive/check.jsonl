@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality-check entry point for responsive UI changes."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify UI changes do not leak into Chat-local data state."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Review duplication, naming, and existing-module reuse."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review menu, overlay, host, and responsive boundary behavior."}
+{"file": ".trellis/tasks/09-05-bioweave-ui-foundation-responsive/research/sillytavern-ui-lifecycle.md", "reason": "Verify the implementation against observed SillyTavern DOM/lifecycle behavior."}

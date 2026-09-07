@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend layer entry point and pre-development checklist for settings UI changes."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keep API settings separate from Chat-local dynamic state and preserve scope boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Audit existing client, storage, settings, lifecycle, and validation helpers before adding abstractions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace Profile persistence, Secret boundary, settings UI, request client, and serialization consumers."}

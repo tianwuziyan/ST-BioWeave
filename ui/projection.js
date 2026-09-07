@@ -1,0 +1,1 @@
+export function projectionPage(){return '<section class="bioweave-page"><div class="bioweave-page-title"><div><h2>推演预测</h2><p class="bioweave-muted">未来可能发生的生理推演，不是事实账本</p></div></div><section class="bioweave-card bioweave-empty"><b>当前没有需要展示的推演</b><p>推演并非已发生事实，也不会自动成为 confirmed Event。</p></section></section>';}

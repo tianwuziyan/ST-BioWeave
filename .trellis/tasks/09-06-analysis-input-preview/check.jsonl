@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "检查前端规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查质量与响应式"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层数据流"}
+{"file": ".trellis/tasks/09-06-analysis-input-preview/research/anima-preview.md", "reason": "检查研究边界"}
