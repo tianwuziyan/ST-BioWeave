@@ -1705,7 +1705,8 @@ export function createApp(runtime, options = {}) {
 
   function readSettingsForm(form) {
     const value = name => formField(form, name)?.value ?? '';
-    const timeoutSeconds = value('timeout');
+    const timeoutSeconds = value('timeout') || root?.querySelector?.('[data-bioweave-api-timeout]')?.value || '';
+    const retryCount = value('retry_count') || root?.querySelector?.('[data-bioweave-api-retry-count]')?.value || '';
     const timeout = timeoutSeconds === '' ? '' : Number.isFinite(Number(timeoutSeconds))
       ? Math.round(Number(timeoutSeconds) * 1000)
       : '';
@@ -1716,7 +1717,7 @@ export function createApp(runtime, options = {}) {
       api_url: value('api_url'),
       model: value('model'),
       timeout,
-      retry_count: value('retry_count'),
+      retry_count: retryCount,
       api_key: value('api_key'),
       clear_secret: Boolean(formField(form, 'clear_secret')?.checked),
     };
@@ -2136,6 +2137,11 @@ export function createApp(runtime, options = {}) {
       applyModelSearch(target.value);
       return;
     }
+    if (target?.dataset?.bioweaveApiTimeout !== undefined
+      || target?.dataset?.bioweaveApiRetryCount !== undefined) {
+      captureSettingsDraft();
+      return;
+    }
     if (target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();
   }
 
@@ -2418,6 +2424,11 @@ export function createApp(runtime, options = {}) {
     }
     if (event.target?.dataset?.bioweaveExternalMemory !== undefined) {
       await toggleExternalMemory(event.target);
+      return;
+    }
+    if (event.target?.dataset?.bioweaveApiTimeout !== undefined
+      || event.target?.dataset?.bioweaveApiRetryCount !== undefined) {
+      captureSettingsDraft();
       return;
     }
     if (event.target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();

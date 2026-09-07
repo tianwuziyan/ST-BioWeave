@@ -709,6 +709,15 @@ test('settings markup renders the current draft without advanced API controls', 
   assert.match(html, /name="api_key" type="password" value="DRAFT-KEY"/);
   assert.match(html, /value="default" selected/);
   assert.match(html, /value="bioweave"[^>]*checked/);
+  const apiSourceIndex = html.indexOf('<section class="bioweave-card bioweave-api-source">');
+  const requestSettingsIndex = html.indexOf('data-bioweave-api-request-settings');
+  const connectionSettingsIndex = html.indexOf('<header class="bioweave-settings-card-header"><div><h3>连接设置</h3>');
+  const profileFormIndex = html.indexOf('<form data-bioweave-settings-form');
+  assert.ok(requestSettingsIndex > apiSourceIndex);
+  assert.ok(requestSettingsIndex < connectionSettingsIndex);
+  assert.ok(profileFormIndex > connectionSettingsIndex);
+  assert.equal(html.slice(profileFormIndex).includes('data-bioweave-api-timeout'), false);
+  assert.equal(html.slice(profileFormIndex).includes('data-bioweave-api-retry-count'), false);
   assert.equal(html.includes('bioweave-settings-advanced'), false);
   assert.equal(html.includes('Context Size'), false);
   assert.equal(html.includes('Max Output Tokens'), false);

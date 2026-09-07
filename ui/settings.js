@@ -180,6 +180,15 @@ function renderApiSource(
   const independent = apiSource === BIOWEAVE_INDEPENDENT_API;
   const defaultProfile = profiles.find(profile => profile.profile_id === defaultProfileId);
   const apiDisclosureOpen = editingProfile !== undefined || openSettingsSections.includes('api');
+  const profileSource = profileValues(editingProfile, editingDraft);
+  const requestSettings = editingProfile !== undefined ? [
+    '<div class="bioweave-api-request-settings" data-bioweave-api-request-settings>',
+    '<div class="bioweave-settings-fields">',
+    field('超时（秒）', 'timeout', profileSource.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal" data-bioweave-api-timeout'),
+    field('重试次数', 'retry_count', profileSource.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric" data-bioweave-api-retry-count'),
+    '</div>',
+    '</div>',
+  ].join('') : '';
   const profileDetails = [
     '<details class="bioweave-api-profiles"' + (editingProfile !== undefined ? ' open' : '') + '>',
     '<summary>独立 API 配置</summary>',
@@ -197,6 +206,7 @@ function renderApiSource(
     `<details class="bioweave-settings-disclosure bioweave-api-source-disclosure" data-bioweave-settings-disclosure="api"${apiDisclosureOpen ? ' open' : ''}>`,
     renderSettingsSummary('API 来源', '选择酒馆当前 API 或 BioWeave 独立 API'),
     '<section class="bioweave-card bioweave-api-source">',
+    requestSettings,
     '<header class="bioweave-settings-card-header"><div><h3>连接设置</h3><p class="bioweave-muted">默认只使用 SillyTavern 当前 API；独立 API 仅在需要时配置。</p></div></header>',
     '<p class="bioweave-api-security-note bioweave-muted">安全：独立 API Key 只写入 SillyTavern Secret Store；BioWeave 不读取、复制或显示 SillyTavern 当前 API 的密钥。</p>',
     '<div class="bioweave-source-options">',
@@ -234,8 +244,6 @@ function renderProfileEditor(profile, draft, testResult, busy, modelList, modelL
     field('API 地址（不含 /chat/completions）', 'api_url', source.api_url, 'url', ' autocomplete="url" required'),
     field('API 密钥', 'api_key', source.api_key, 'password', ' autocomplete="new-password" placeholder="不显示已保存密钥"'),
     renderModelPicker(source, modelList, modelListProfileKey, modelSearch, modelRefreshBusy),
-    field('超时（秒）', 'timeout', source.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal"'),
-    field('重试次数', 'retry_count', source.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric"'),
     '</div>',
     `<p class="bioweave-secret-status bioweave-muted">${existingSecret ? '已保存 API 密钥；留空表示保留。' : '尚未设置 API 密钥；留空将以无密钥配置保存。'}</p>`,
     existingSecret ? `<label class="bioweave-check"><input type="checkbox" name="clear_secret"${source.clear_secret ? ' checked' : ''}> 清除已保存 API 密钥</label>` : '',
