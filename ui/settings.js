@@ -182,12 +182,13 @@ function renderApiSource(
   const apiDisclosureOpen = editingProfile !== undefined || openSettingsSections.includes('api');
   const profileSource = profileValues(editingProfile, editingDraft);
   const requestSettings = editingProfile !== undefined ? [
-    '<div class="bioweave-api-request-settings" data-bioweave-api-request-settings>',
+    '<section class="bioweave-api-source-module bioweave-api-request-settings" data-bioweave-api-request-settings>',
+    '<header class="bioweave-api-module-header"><div><h3>请求设置</h3><p class="bioweave-muted">控制当前独立 API 请求的等待时间和失败重试。</p></div></header>',
     '<div class="bioweave-settings-fields">',
     field('超时（秒）', 'timeout', profileSource.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal" data-bioweave-api-timeout'),
     field('重试次数', 'retry_count', profileSource.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric" data-bioweave-api-retry-count'),
     '</div>',
-    '</div>',
+    '</section>',
   ].join('') : '';
   const profileDetails = [
     '<details class="bioweave-api-profiles"' + (editingProfile !== undefined ? ' open' : '') + '>',
@@ -207,7 +208,8 @@ function renderApiSource(
     renderSettingsSummary('API 来源', '选择酒馆当前 API 或 BioWeave 独立 API'),
     '<section class="bioweave-card bioweave-api-source">',
     requestSettings,
-    '<header class="bioweave-settings-card-header"><div><h3>连接设置</h3><p class="bioweave-muted">默认只使用 SillyTavern 当前 API；独立 API 仅在需要时配置。</p></div></header>',
+    '<section class="bioweave-api-source-module bioweave-api-connection-settings">',
+    '<header class="bioweave-api-module-header"><div><h3>连接设置</h3><p class="bioweave-muted">默认只使用 SillyTavern 当前 API；独立 API 仅在需要时配置。</p></div></header>',
     '<p class="bioweave-api-security-note bioweave-muted">安全：独立 API Key 只写入 SillyTavern Secret Store；BioWeave 不读取、复制或显示 SillyTavern 当前 API 的密钥。</p>',
     '<div class="bioweave-source-options">',
     `<label class="bioweave-source-option${!independent ? ' is-selected' : ''}"><input type="radio" name="api_source" value="${SILLYTAVERN_CURRENT_API}" data-bioweave-api-source${!independent ? ' checked' : ''}><span><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span></label>`,
@@ -219,6 +221,7 @@ function renderApiSource(
       '</label>',
       `<p class="bioweave-muted bioweave-source-hint">${defaultProfile ? `跟随默认的任务将使用「${escapeHtml(defaultProfile.name || defaultProfile.model)}」。` : '请选择一个独立 API 配置，或让任务单独指定 API。'}</p>`,
     ].join('') : '',
+    '</section>',
     profileDetails,
     '</section>',
     '</details>',

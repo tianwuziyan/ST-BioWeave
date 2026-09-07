@@ -1196,6 +1196,42 @@
   font-size: 12px;
 }
 
+.bioweave-api-source-module {
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface);
+}
+
+.bioweave-api-source-module:last-child {
+  margin-bottom: 0;
+}
+
+.bioweave-api-module-header {
+  align-items: flex-start;
+  justify-content: flex-start;
+  margin-bottom: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--bioweave-border);
+}
+
+.bioweave-api-module-header h3,
+.bioweave-api-module-header p {
+  margin: 0;
+}
+
+.bioweave-api-module-header h3 {
+  font-size: 14px;
+}
+
+.bioweave-api-module-header p {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .bioweave-api-source > header p,
 .bioweave-analysis-sources > header p {
   margin: 0;
