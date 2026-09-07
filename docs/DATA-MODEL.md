@@ -1,7 +1,7 @@
 # BioWeave 数据模型
 
 ## Extension Level
-`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用和四个分析任务的 Profile 选择。
+`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。
 
 最近剧情的全局正则也属于插件级配置，仅保存规则本身，不保存读取楼数或正文：
 

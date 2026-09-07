@@ -34,7 +34,12 @@ function assertToken(adapter, boundary, token) {
   if (adapter.getChatId() !== token.chatId) throw staleChatError();
 }
 
-const CHAT_PROFILE_CONFIGURATION_FIELDS = new Set(['api_profiles', 'profile_assignments', 'assignments']);
+const CHAT_PROFILE_CONFIGURATION_FIELDS = new Set([
+  'api_profiles',
+  'profile_assignments',
+  'assignments',
+  'api_request_settings',
+]);
 
 function stripChatProfileConfiguration(value) {
   if (Array.isArray(value)) return value.map(stripChatProfileConfiguration);

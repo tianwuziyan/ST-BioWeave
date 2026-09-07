@@ -92,16 +92,18 @@ test('stale async chat save is rejected after chat switch',async()=>{
   await assert.rejects(pending,new RegExp(STALE_CHAT));
 });
 
-test('chat storage removes secret values and profile configuration while preserving references',async()=>{
+test('chat storage removes secret values and global API configuration while preserving references',async()=>{
   const adapter=createAdapter();
   const store=createStore(adapter,createChatBoundary(adapter));
-  await store.saveChat('chat-a',{chat_scope:{chat_id:'chat-a'},api_key:'secret',nested:{apiKey:'nested-secret',api_profiles:{profile:{model:'must-not-persist'}}},secret_ref:'ref-1',api_profiles:{profile:{model:'must-not-persist'}},assignments:{world_analysis:'profile'}});
+  await store.saveChat('chat-a',{chat_scope:{chat_id:'chat-a'},api_key:'secret',nested:{apiKey:'nested-secret',api_profiles:{profile:{model:'must-not-persist'}},api_request_settings:{timeout:1,retry_count:0}},secret_ref:'ref-1',api_profiles:{profile:{model:'must-not-persist'}},assignments:{world_analysis:'profile'},api_request_settings:{timeout:1,retry_count:0}});
   assert.equal(adapter.metadata.bioweave.api_key,undefined);
   assert.equal(adapter.metadata.bioweave.nested.apiKey,undefined);
   assert.equal(adapter.metadata.bioweave.nested.api_profiles,undefined);
   assert.equal(adapter.metadata.bioweave.secret_ref,'ref-1');
   assert.equal(adapter.metadata.bioweave.api_profiles,undefined);
   assert.equal(adapter.metadata.bioweave.assignments,undefined);
+  assert.equal(adapter.metadata.bioweave.api_request_settings,undefined);
+  assert.equal(adapter.metadata.bioweave.nested.api_request_settings,undefined);
 });
 
 test('SillyTavern global settings rollback keeps the prior profile on save failure',async()=>{

@@ -312,8 +312,9 @@ createApiProfileStore(adapter, {secretStore})
 The SillyTavern adapter reads `context.extensionSettings.bioweave` and saves
 it through `context.saveSettingsDebounced()`. Independent requests use the
 host `ChatCompletionService.processRequest()` with `chat_completion_source:
-'custom'`, `custom_url`, and `secret_id`. The current-host API uses the public
-`context.generateRaw()` capability.
+'custom'`, `custom_url`, and `secret_id`. The current-host API uses the host
+`ChatCompletionService.processRequest()` request shape when available and
+falls back to the public `context.generateRaw()` capability on older hosts.
 
 ### 3. Contracts
 

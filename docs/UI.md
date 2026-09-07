@@ -8,7 +8,7 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 主 UI 由输入区魔法棒 → #extensionsMenu → BioWeave 打开；#extensionsMenu 只承载入口，主 UI 挂载在稳定的 `document.documentElement` 下，结构为 `bioweave-overlay / bioweave-panel`。入口 click 同步打开预挂载宿主，酒馆关闭菜单不会移除主 UI。
 
-设置页先选择 API 来源：使用 SillyTavern 当前 API，或使用 BioWeave 独立 API。独立 API 的 Profile 编辑器只显示 Profile、Provider、API URL、API Key 和 Model；其它连接参数使用 API 默认值，底层旧字段保留用于兼容既有 Profile。Model 优先通过“刷新模型”从 SillyTavern custom status 接口获取并在可搜索、可滚动列表中选择，手动输入只作为回退；“测试连接”与刷新模型分开，均不保存当前 draft。保存成功后只显示安全配置摘要，API Key 不回填。世界分析、事件分析、推演、历史扫描的任务分配独立于连接参数，可跟随默认、使用当前 API、指定独立 Profile 或不使用 API。
+设置页先选择 API 来源：使用 SillyTavern 当前 API，或使用 BioWeave 独立 API。独立 API 的 Profile 编辑器只显示 Profile、Provider、API URL、API Key 和 Model；超时和重试属于 API 来源下的全局请求设置，修改后通过 change 事件即时保存，不写入 Profile 或 Chat。超时对用户显示为秒，插件设置中保存为毫秒。Model 优先通过“刷新模型”从 SillyTavern custom status 接口获取并在可搜索、可滚动列表中选择，手动输入只作为回退；“测试连接”与刷新模型分开，均不保存当前 draft。保存成功后只显示安全配置摘要，API Key 不回填。世界分析、事件分析、推演、历史扫描的任务分配独立于连接参数，可跟随默认、使用当前 API、指定独立 Profile 或不使用 API。
 
 设置页的“世界书来源”区域读取当前 Chat 的角色卡字段、角色关联世界书和可用的全局世界书。世界书按书展开到条目，角色卡按实际字段拆分；每个条目/字段使用独立 checkbox，选择使用稳定 `source_id` + `entry_id` 或 `field_key`。搜索、全选、全不选、刷新、已选数量和 token estimate 都只作用于选择器内存目录。
 
