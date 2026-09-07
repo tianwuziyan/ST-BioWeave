@@ -6,6 +6,28 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
     {
       name: null,
       description: null,
+      sex_categories: [
+        {
+          name: null,
+          description: null,
+          capabilities: {
+            can_produce_sperm: null,
+            can_produce_ova: null,
+            can_be_fertilized: null,
+            can_fertilize: null,
+            can_carry_pregnancy: null,
+          },
+          reproduction_rules: {
+            fertilization: null,
+            pregnancy_or_carrying: null,
+            cycle: null,
+            ovulation: null,
+            gestation: null,
+            labor: null,
+          },
+        },
+      ],
+      // 仅为旧 Chat 数据保留的兼容字段；新 AI 结果应使用 sex_categories。
       capabilities: {
         can_produce_sperm: null,
         can_produce_ova: null,

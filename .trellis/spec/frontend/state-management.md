@@ -457,6 +457,87 @@ const requestSettings = await profileStore.saveApiRequestSettings({
 await callOpenAICompatible(profile, messages, {requestSettings});
 ```
 
+## World Model Biological Type Contract
+
+### 1. Scope / Trigger
+
+This contract applies when World Model analysis, validation, persistence, or
+editing reads or writes `chat_metadata.bioweave.world_model`.
+
+### 2. Signatures
+
+```js
+normalizeWorldModel(raw, {strict = false})
+  -> {schema_version, biological_types, medical_context, exceptions, unknowns}
+
+biological_types[].sex_categories[]
+  -> {name, description, capabilities, reproduction_rules}
+```
+
+### 3. Contracts
+
+- `biological_types[]` represents a species or biological type. Its
+  `sex_categories[]` represents that type's gender/sex categories; capabilities
+  and reproduction rules are stored independently per category.
+- New AI responses must include `sex_categories` for every biological type and
+  must not put new capability/rule data at the species level.
+- Humans default to separate male and female categories. Intersex categories
+  are added only when the AnalysisInput contains explicit actual identity,
+  body/reproductive evidence, or a world rule that establishes that category.
+  Optional transformation wording such as `双性化` alone is not evidence.
+- Legacy Chat models without `sex_categories` remain readable and retain their
+  old species-level `capabilities`/`reproduction_rules`; new analysis does not
+  infer or migrate those values into invented sex categories.
+- The view and editor render and edit the hierarchy `biological_type →
+  sex_category`; old unsplit models use a compatibility display.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Strict AI result omits `sex_categories` | Reject with `WORLD_MODEL_INVALID`; keep the previous model |
+| Sex capability is missing or unknown | Normalize that value to `null` |
+| Unsupported extra `gender` field | Drop it during normalization |
+| Only optional `双性化` evidence exists | Remove an AI-returned intersex category |
+| Legacy stored model has no sex categories | Read its species-level fields without splitting it |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one `人类` type contains separate `男性` and `女性` categories with
+  different capabilities.
+- Base: an old stored type has no categories and is shown as an unsplit legacy
+  model until the user or a successful new analysis replaces it.
+- Bad: merge male sperm capability and female pregnancy capability into one
+  species-level object and treat the aggregate as one sex.
+
+### 6. Tests Required
+
+- Assert one biological type preserves independent male/female categories and
+  capabilities.
+- Assert strict response validation requires `sex_categories` while legacy
+  non-strict normalization preserves old fields.
+- Assert explicit intersex evidence is preserved and optional transformation
+  wording is filtered.
+- Assert world-model view/editor expose the species-to-sex hierarchy.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: aggregate different sexes into one species-level capability object.
+{name: '人类', capabilities: {can_produce_sperm: true, can_carry_pregnancy: true}}
+```
+
+```js
+// Correct: keep each sex category independently evidence-based.
+{
+  name: '人类',
+  sex_categories: [
+    {name: '男性', capabilities: {...}},
+    {name: '女性', capabilities: {...}},
+  ],
+}
+```
+
 ## Recent Story Regex Collection
 
 ### 1. Scope / Trigger

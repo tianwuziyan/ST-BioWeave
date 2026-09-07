@@ -24,18 +24,24 @@
     {
       "name": null,
       "description": null,
-      "capabilities": {
-        "can_produce_sperm": null,
-        "can_produce_ova": null,
-        "can_be_fertilized": null,
-        "can_fertilize": null,
-        "can_carry_pregnancy": null
-      },
-      "reproduction_rules": {
-        "fertilization": null,
-        "pregnancy_or_carrying": null,
-        "cycle": null
-      },
+      "sex_categories": [
+        {
+          "name": null,
+          "description": null,
+          "capabilities": {
+            "can_produce_sperm": null,
+            "can_produce_ova": null,
+            "can_be_fertilized": null,
+            "can_fertilize": null,
+            "can_carry_pregnancy": null
+          },
+          "reproduction_rules": {
+            "fertilization": null,
+            "pregnancy_or_carrying": null,
+            "cycle": null
+          }
+        }
+      ],
       "lifecycle": {
         "maturation": null,
         "aging": null
