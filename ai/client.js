@@ -1,7 +1,6 @@
 import {SILLYTAVERN_CURRENT_API, normalizeApiProfile} from '../storage/schema.js';
 
 const DEFAULT_TIMEOUT = 30000;
-const DEFAULT_RETRY_COUNT = 1;
 const NO_SECRET_ID = '__bioweave_no_secret__';
 const MODELS_STATUS_ENDPOINT = '/api/backends/chat-completions/status';
 const SAFE_MODEL_ERROR_CODES = new Set([
@@ -41,7 +40,7 @@ function requestTimeout(profile, options) {
 }
 
 function retryCount(profile, options) {
-  return numeric(options.retryCount ?? options.retry_count ?? profile?.retry_count, DEFAULT_RETRY_COUNT, 0, 3, true);
+  return numeric(options.retryCount ?? options.retry_count ?? profile?.retry_count, 0, 0, 3, true);
 }
 
 function statusFromError(error) {
@@ -66,8 +65,7 @@ function isTimeoutError(error) {
 
 function isRetryable(error) {
   if (isAbortError(error) && !isTimeoutError(error)) {
-    // 宿主偶发返回 aborted 时允许按 Retry Count 重试；调用方主动取消的请求不重试。
-    return error?.bioweaveAbort !== true;
+    return false;
   }
   const status = statusFromError(error);
   if (status != null) return status >= 500;
@@ -86,25 +84,7 @@ function timeoutError() {
 function abortedError() {
   const error = new Error('REQUEST_ABORTED');
   error.code = 'REQUEST_ABORTED';
-  error.bioweaveAbort = true;
   return error;
-}
-
-function abortResponseText(value) {
-  if (typeof value === 'string') return value.trim();
-  if (!value || typeof value !== 'object') return '';
-  for (const candidate of [value.content, value.response, value.error?.message, value.error]) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
-  }
-  return '';
-}
-
-function rejectAbortResponse(value) {
-  const text = abortResponseText(value);
-  if (!/^\b(?:aborted|request aborted|operation aborted|canceled|cancelled)\b$/i.test(text)) return value;
-  const error = new Error(text);
-  error.code = 'ABORTED';
-  throw error;
 }
 
 async function waitBeforeRetry(attempt, signal) {
@@ -214,10 +194,10 @@ function apiUrlFrom(profile) {
 async function runCurrentApi(profile, messages, context) {
   if (typeof context?.generateRaw !== 'function') throw new Error('ST_CURRENT_API_UNAVAILABLE');
   // SillyTavern 的 generateRaw 不接收外部 AbortSignal，取消由宿主自身管理。
-  return rejectAbortResponse(await context.generateRaw({
+  return context.generateRaw({
     prompt: messagesForRequest(messages),
     responseLength: numeric(profile?.max_output_tokens, 4096, 1, 10000000, true),
-  }));
+  });
 }
 
 async function runIndependentApi(profile, messages, context, signal) {
@@ -233,7 +213,7 @@ async function runIndependentApi(profile, messages, context, signal) {
     error.code = 'ST_CHAT_COMPLETION_UNAVAILABLE';
     throw error;
   }
-  return rejectAbortResponse(await service.processRequest({
+  return service.processRequest({
     stream: false,
     messages: messagesForRequest(messages),
     model: profile.model,
@@ -244,7 +224,7 @@ async function runIndependentApi(profile, messages, context, signal) {
     secret_id: profile.secret_ref || NO_SECRET_ID,
     max_tokens: numeric(profile.max_output_tokens, 4096, 1, 10000000, true),
     temperature: numeric(profile.temperature, 0.2, 0, 2),
-  }, {}, true, signal));
+  }, {}, true, signal);
 }
 
 function modelName(item) {

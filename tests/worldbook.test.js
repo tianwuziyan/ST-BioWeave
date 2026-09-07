@@ -912,7 +912,7 @@ test('settings categories reuse the recent story disclosure shell and right-side
   for (const key of ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'world_analysis_prompt', 'api', 'assignments']) {
     assert.match(html, new RegExp('data-bioweave-settings-disclosure="' + key + '"[^>]* open'));
   }
-  for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '世界分析提示词与标签', 'API 来源', '任务分配']) {
+  for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '世界分析提示词', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
   assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 6);

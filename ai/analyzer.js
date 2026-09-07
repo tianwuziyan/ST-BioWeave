@@ -20,6 +20,7 @@ const WORLD_RULE_KEYS = Object.freeze([
 const LIFECYCLE_KEYS = Object.freeze(['maturation', 'aging']);
 const MEDICAL_CONTEXT_KEYS = Object.freeze(['childbirth_difficulty', 'care_level', 'evidence']);
 const UNKNOWN_TEXT = new Set(['unknown', 'null', 'undefined', 'n/a', '未知', '不确定']);
+const INTERSEX_EVIDENCE_PATTERN = /(?:双性(?!恋)|间性|雌雄同体|阴阳人|intersex|hermaphrodite)/iu;
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -34,6 +35,17 @@ function nullableText(value) {
   return UNKNOWN_TEXT.has(text.toLowerCase()) ? null : text || null;
 }
 
+// 归一化模型可能返回的常见人类标签，避免拉丁学名泄露到用户可见 World Model。
+function localizedWorldModelText(value) {
+  const text = nullableText(value);
+  if (!text) return text;
+  return text
+    .replace(/\bHomo\s+sapiens\b/gi, '人类')
+    .replace(/\bHumans?\b/gi, '人类')
+    .replace(/\bfemale\b/gi, '女性')
+    .replace(/\bmale\b/gi, '男性');
+}
+
 function nullableBoolean(value) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'boolean') return value;
@@ -45,13 +57,13 @@ function nullableBoolean(value) {
   throw invalidWorldModel();
 }
 
-function stringList(value) {
+function stringList(value, mapText = nullableText) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    if (typeof value === 'string' && value.trim()) return [value.trim()];
+    if (typeof value === 'string' && value.trim()) return [mapText(value)].filter(Boolean);
     throw invalidWorldModel();
   }
-  return [...new Set(value.map(item => nullableText(item)).filter(Boolean))];
+  return [...new Set(value.map(item => mapText(item)).filter(Boolean))];
 }
 
 function objectOrEmpty(value) {
@@ -66,12 +78,12 @@ function normalizeBiologicalType(raw, index) {
   const reproductionRules = objectOrEmpty(raw.reproduction_rules);
   const lifecycle = objectOrEmpty(raw.lifecycle);
   return {
-    name: nullableText(raw.name),
-    description: nullableText(raw.description),
+    name: localizedWorldModelText(raw.name),
+    description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [key, nullableBoolean(capabilities[key])])),
-    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, nullableText(reproductionRules[key])])),
-    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [key, nullableText(lifecycle[key])])),
-    special_rules: stringList(raw.special_rules),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, localizedWorldModelText(reproductionRules[key])])),
+    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [key, localizedWorldModelText(lifecycle[key])])),
+    special_rules: stringList(raw.special_rules, localizedWorldModelText),
   };
 }
 
@@ -80,20 +92,62 @@ function normalizeExceptions(value) {
   if (!Array.isArray(value)) throw invalidWorldModel();
   return value.map(item => {
     if (typeof item === 'string') {
-      return {statement: nullableText(item), applies_to: null, evidence: null};
+      return {statement: localizedWorldModelText(item), applies_to: null, evidence: null};
     }
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalidWorldModel();
     return {
-      statement: nullableText(item.statement),
-      applies_to: nullableText(item.applies_to),
-      evidence: nullableText(item.evidence),
+      statement: localizedWorldModelText(item.statement),
+      applies_to: localizedWorldModelText(item.applies_to),
+      evidence: localizedWorldModelText(item.evidence),
     };
   });
 }
 
 function normalizeMedicalContext(value) {
   const medicalContext = objectOrEmpty(value);
-  return Object.fromEntries(MEDICAL_CONTEXT_KEYS.map(key => [key, nullableText(medicalContext[key])]));
+  return Object.fromEntries(MEDICAL_CONTEXT_KEYS.map(key => [key, localizedWorldModelText(medicalContext[key])]));
+}
+
+// 只收集实际发送给 World Model 的正文，避免把用户人物设定或内部元数据当成世界证据。
+function worldModelEvidenceText(input = {}) {
+  const parts = [];
+  const character = input?.character && typeof input.character === 'object' ? input.character : {};
+  parts.push(character.description);
+  for (const greeting of Array.isArray(character.greetings) ? character.greetings : []) {
+    parts.push(greeting?.content);
+  }
+  for (const worldbook of Array.isArray(input?.worldbooks) ? input.worldbooks : []) {
+    for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : []) {
+      parts.push(entry?.content);
+    }
+  }
+  const recentStory = input?.recent_story && typeof input.recent_story === 'object' ? input.recent_story : {};
+  for (const item of Array.isArray(recentStory.items) ? recentStory.items : []) {
+    parts.push(item?.content);
+  }
+  for (const provider of Array.isArray(input?.external_memory) ? input.external_memory : []) {
+    for (const item of Array.isArray(provider?.items) ? provider.items : []) {
+      parts.push(item?.content);
+    }
+  }
+  return parts.filter(value => typeof value === 'string').join('\n');
+}
+
+function hasExplicitIntersexEvidence(input) {
+  return INTERSEX_EVIDENCE_PATTERN.test(worldModelEvidenceText(input));
+}
+
+function isIntersexType(type) {
+  return INTERSEX_EVIDENCE_PATTERN.test(typeof type?.name === 'string' ? type.name : '');
+}
+
+// AI 分析不能凭空新增双性/间性类型；手动编辑保存的 World Model 不经过此过滤。
+function removeUnsupportedIntersexTypes(model, analysisInput) {
+  if (hasExplicitIntersexEvidence(analysisInput)) return model;
+  return {
+    ...model,
+    biological_types: model.biological_types.filter(type => !isIntersexType(type)),
+  };
 }
 
 // 将 AI 或手动编辑结果收敛到唯一的 World Model v1 结构。
@@ -115,7 +169,7 @@ export function normalizeWorldModel(raw, {strict = false} = {}) {
     biological_types: biologicalTypes,
     medical_context: normalizeMedicalContext(raw.medical_context),
     exceptions: normalizeExceptions(raw.exceptions),
-    unknowns: stringList(raw.unknowns),
+    unknowns: stringList(raw.unknowns, localizedWorldModelText),
   };
 }
 
@@ -219,7 +273,8 @@ export function createAnalyzer({profileResolver, contextResolver, worldModelProm
       signal: input.signal,
       context: contextResolver?.(),
     });
-    return parseWorldModelResponse(raw);
+    const model = parseWorldModelResponse(raw);
+    return removeUnsupportedIntersexTypes(model, input.analysisInput ?? input);
   }
 
   return {

@@ -396,58 +396,6 @@ test('host abort variants are normalized without exposing the raw aborted messag
   assert.equal(safeErrorSummary(new Error('aborted')), '请求已取消');
 });
 
-test('current API retries a transient aborted error by default and returns the next success', async () => {
-  let calls = 0;
-  const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-    context: {
-      async generateRaw() {
-        calls += 1;
-        if (calls === 1) throw new Error('aborted');
-        return 'OK';
-      },
-    },
-  });
-
-  assert.equal(result, 'OK');
-  assert.equal(calls, 2);
-});
-
-test('current API retries an aborted response payload instead of sending it to the JSON parser', async () => {
-  let calls = 0;
-  const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-    context: {
-      async generateRaw() {
-        calls += 1;
-        if (calls === 1) return 'aborted';
-        return 'OK';
-      },
-    },
-  });
-
-  assert.equal(result, 'OK');
-  assert.equal(calls, 2);
-});
-
-test('current API does not request or retry when the caller signal is already aborted', async () => {
-  const controller = new AbortController();
-  controller.abort();
-  let calls = 0;
-
-  await assert.rejects(
-    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
-      context: {
-        async generateRaw() {
-          calls += 1;
-          return 'SHOULD-NOT-RETURN';
-        },
-      },
-      signal: controller.signal,
-    }),
-    error => error?.code === 'REQUEST_ABORTED',
-  );
-  assert.equal(calls, 0);
-});
-
 test('model refresh uses the SillyTavern custom status endpoint with only an opaque secret reference', async () => {
   let request;
   const models = await fetchModels({
@@ -506,7 +454,7 @@ test('model refresh failures are safe and do not expose upstream error text', as
   );
 });
 
-test('settings markup exposes nine fields, assignments, password input, and safe result text', () => {
+test('settings markup exposes basic API fields, assignments, password input, and safe result text', () => {
   const html = settingsPage({
     profiles: {
       stable: {
@@ -531,9 +479,13 @@ test('settings markup exposes nine fields, assignments, password input, and safe
     testResult: {ok: false, error: '认证失败（HTTP 401）'},
   });
 
-  for (const field of ['name', 'provider', 'api_url', 'model', 'context_size', 'max_output_tokens', 'temperature', 'timeout', 'retry_count']) {
+  for (const field of ['name', 'provider', 'api_url', 'model']) {
     assert.match(html, new RegExp(`name="${field}"`));
   }
+  for (const field of ['context_size', 'max_output_tokens', 'temperature', 'timeout', 'retry_count']) {
+    assert.doesNotMatch(html, new RegExp(`name="${field}"`));
+  }
+  assert.equal(html.includes('bioweave-settings-advanced'), false);
   assert.match(html, /name="api_key" type="password" value=""/);
   for (const slot of ['world_analysis', 'event_analysis', 'projection', 'history_scan']) {
     assert.match(html, new RegExp(`data-bioweave-assignment="${slot}"`));
@@ -542,7 +494,7 @@ test('settings markup exposes nine fields, assignments, password input, and safe
   assert.equal(html.includes('NOT-IN-MARKUP'), false);
 });
 
-test('settings markup renders the current draft and keeps advanced settings collapsed', () => {
+test('settings markup renders the current draft without advanced API controls', () => {
   const html = settingsPage({
     apiSource: BIOWEAVE_INDEPENDENT_API,
     defaultProfileId: 'stable',
@@ -578,8 +530,10 @@ test('settings markup renders the current draft and keeps advanced settings coll
   assert.match(html, /name="api_key" type="password" value="DRAFT-KEY"/);
   assert.match(html, /value="default" selected/);
   assert.match(html, /value="bioweave"[^>]*checked/);
-  assert.match(html, /<details class="bioweave-settings-advanced">/);
-  assert.equal(html.includes('<details class="bioweave-settings-advanced" open>'), false);
+  assert.equal(html.includes('bioweave-settings-advanced'), false);
+  assert.equal(html.includes('Context Size'), false);
+  assert.equal(html.includes('Max Output Tokens'), false);
+  assert.equal(html.includes('Retry Count'), false);
 });
 
 test('independent API configuration is a Chinese disclosure nested inside API source', () => {
@@ -611,7 +565,7 @@ test('independent API configuration is a Chinese disclosure nested inside API so
   assert.equal(html.includes('独立 API Profiles'), false);
 });
 
-test('world analysis prompt settings expose editable blocks and labels without secrets', () => {
+test('world analysis prompt settings expose editable blocks without segment-name controls or secrets', () => {
   const html = settingsPage({
     worldAnalysisPrompt: {
       task: '只检查能力证据',
@@ -620,9 +574,11 @@ test('world analysis prompt settings expose editable blocks and labels without s
       labels: {character: '角色资料'},
     },
   });
-  assert.match(html, /世界分析提示词与标签/);
+  assert.match(html, /世界分析提示词/);
+  assert.doesNotMatch(html, /世界分析提示词与标签/);
   assert.match(html, /data-bioweave-world-analysis-prompt-field="task"[^>]*>只检查能力证据/);
-  assert.match(html, /data-bioweave-world-analysis-label="character"[^>]*value="角色资料"/);
+  assert.equal(html.includes('输入分段名称'), false);
+  assert.equal(html.includes('data-bioweave-world-analysis-label'), false);
   assert.match(html, /data-bioweave-action="save-world-analysis-prompt"/);
   assert.equal(html.includes('api_key'), false);
 });

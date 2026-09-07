@@ -1711,11 +1711,6 @@ export function createApp(runtime, options = {}) {
       provider: value('provider'),
       api_url: value('api_url'),
       model: value('model'),
-      context_size: value('context_size'),
-      max_output_tokens: value('max_output_tokens'),
-      temperature: value('temperature'),
-      timeout: value('timeout'),
-      retry_count: value('retry_count'),
       api_key: value('api_key'),
       clear_secret: Boolean(formField(form, 'clear_secret')?.checked),
     };
@@ -1735,17 +1730,12 @@ export function createApp(runtime, options = {}) {
 
   function readWorldAnalysisPromptForm() {
     const field = key => root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`);
-    const label = key => root?.querySelector?.(`[data-bioweave-world-analysis-label="${key}"]`);
     return normalizeWorldAnalysisPrompt({
       task: field('task')?.value ?? settingsState.worldAnalysisPrompt?.task,
       input_prefix: field('input_prefix')?.value ?? settingsState.worldAnalysisPrompt?.input_prefix,
       input_suffix: field('input_suffix')?.value ?? settingsState.worldAnalysisPrompt?.input_suffix,
-      labels: {
-        character: label('character')?.value ?? settingsState.worldAnalysisPrompt?.labels?.character,
-        worldbooks: label('worldbooks')?.value ?? settingsState.worldAnalysisPrompt?.labels?.worldbooks,
-        recent_story: label('recent_story')?.value ?? settingsState.worldAnalysisPrompt?.labels?.recent_story,
-        external_memory: label('external_memory')?.value ?? settingsState.worldAnalysisPrompt?.labels?.external_memory,
-      },
+      // 保留旧设置中的内部标签兼容性，但不再向用户展示或提供编辑入口。
+      labels: settingsState.worldAnalysisPrompt?.labels,
     });
   }
 
