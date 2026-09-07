@@ -381,6 +381,179 @@ test('current API world analysis does not pass an unsupported abort signal to ge
   assert.equal('signal' in rawOptions, false);
 });
 
+test('current API prefers the host chat completion service over generateRaw lifecycle hooks', async () => {
+  let generateRawCalls = 0;
+  let requestCalls = 0;
+  let request;
+  const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [
+    {role: 'system', content: '系统约束'},
+    {role: 'assistant', content: '楼层资料'},
+    {role: 'user', content: '开始分析'},
+  ], {
+    retryCount: 0,
+    context: {
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        openai_max_tokens: 1200,
+        temp_openai: 0.2,
+      },
+      getChatCompletionModel: () => 'current-model',
+      async generateRaw() {
+        generateRawCalls += 1;
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      },
+      ChatCompletionService: {
+        async processRequest(payload, _options, extractData, signal) {
+          requestCalls += 1;
+          request = {payload, extractData, signal};
+          return {content: 'OK'};
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(result, {content: 'OK'});
+  assert.equal(generateRawCalls, 0);
+  assert.equal(requestCalls, 1);
+  assert.equal(request.payload.stream, false);
+  assert.equal(request.payload.model, 'current-model');
+  assert.equal(request.payload.chat_completion_source, 'openai');
+  assert.equal(request.payload.max_tokens, 1200);
+  assert.deepEqual(request.payload.messages, [
+    {role: 'system', content: '系统约束'},
+    {role: 'assistant', content: '楼层资料'},
+    {role: 'user', content: '开始分析'},
+  ]);
+  assert.equal(request.extractData, true);
+  assert.equal(request.signal?.aborted, false);
+});
+
+test('current API abort does not trigger an automatic second request', async () => {
+  let requestCalls = 0;
+  await assert.rejects(
+    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
+      retry_count: 1,
+      context: {
+        chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest() {
+            requestCalls += 1;
+            throw new DOMException('The operation was aborted.', 'AbortError');
+          },
+        },
+      },
+    }),
+    error => error?.code === 'REQUEST_ABORTED',
+  );
+  assert.equal(requestCalls, 1);
+});
+
+test('current API caller abort does not trigger an automatic second request', async () => {
+  const controller = new AbortController();
+  let requestCalls = 0;
+  const request = callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
+    retry_count: 1,
+    signal: controller.signal,
+    context: {
+      chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
+      getChatCompletionModel: () => 'current-model',
+      ChatCompletionService: {
+        async processRequest(_payload, _options, _extractData, signal) {
+          requestCalls += 1;
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), {once: true});
+          });
+        },
+      },
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(request, error => error?.code === 'REQUEST_ABORTED');
+  assert.equal(requestCalls, 1);
+});
+
+test('current API timeout-induced internal abort does not trigger an automatic second request', async () => {
+  let requestCalls = 0;
+  await assert.rejects(
+    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
+      timeout: 10,
+      retry_count: 1,
+      context: {
+        chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest(_payload, _options, _extractData, signal) {
+            requestCalls += 1;
+            await new Promise((_resolve, reject) => {
+              signal.addEventListener('abort', () => reject(new TypeError('Failed to fetch')), {once: true});
+            });
+          },
+        },
+      },
+    }),
+    error => error?.code === 'REQUEST_TIMEOUT',
+  );
+  assert.equal(requestCalls, 1);
+});
+
+test('transient 5xx and network errors retain one retry', async () => {
+  for (const firstError of [
+    Object.assign(new Error('temporary server failure'), {status: 503}),
+    new TypeError('Failed to fetch'),
+  ]) {
+    let requestCalls = 0;
+    const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
+      retry_count: 1,
+      context: {
+        chatCompletionSettings: {chat_completion_source: 'openai', openai_max_tokens: 1200},
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest() {
+            requestCalls += 1;
+            if (requestCalls === 1) throw firstError;
+            return {content: 'OK'};
+          },
+        },
+      },
+    });
+    assert.deepEqual(result, {content: 'OK'});
+    assert.equal(requestCalls, 2);
+  }
+});
+
+test('timeout-induced internal abort does not trigger an automatic second request', async () => {
+  for (const abortError of [
+    new TypeError('Failed to fetch'),
+    new DOMException('The operation was aborted.', 'AbortError'),
+  ]) {
+    let requestCalls = 0;
+    await assert.rejects(
+      callOpenAICompatible({
+        api_url: 'https://api.example/v1',
+        model: 'model-a',
+        timeout: 10,
+        retry_count: 1,
+      }, [{role: 'user', content: '测试'}], {
+        context: {
+          ChatCompletionService: {
+            async processRequest(_payload, _options, _extractData, signal) {
+              requestCalls += 1;
+              await new Promise((_resolve, reject) => {
+                signal.addEventListener('abort', () => reject(abortError), {once: true});
+              });
+            },
+          },
+        },
+      }),
+      error => error?.code === 'REQUEST_TIMEOUT',
+    );
+    assert.equal(requestCalls, 1);
+  }
+});
+
 test('host abort variants are normalized without exposing the raw aborted message', async () => {
   await assert.rejects(
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
@@ -482,9 +655,13 @@ test('settings markup exposes basic API fields, assignments, password input, and
   for (const field of ['name', 'provider', 'api_url', 'model']) {
     assert.match(html, new RegExp(`name="${field}"`));
   }
-  for (const field of ['context_size', 'max_output_tokens', 'temperature', 'timeout', 'retry_count']) {
+  for (const field of ['context_size', 'max_output_tokens', 'temperature']) {
     assert.doesNotMatch(html, new RegExp(`name="${field}"`));
   }
+  assert.match(html, /<input class="bioweave-input" name="timeout" type="number" value="30"/);
+  assert.match(html, /<input class="bioweave-input" name="retry_count" type="number" value="1"/);
+  assert.match(html, /超时（秒）/);
+  assert.match(html, /重试次数/);
   assert.equal(html.includes('bioweave-settings-advanced'), false);
   assert.match(html, /name="api_key" type="password" value=""/);
   for (const slot of ['world_analysis', 'event_analysis', 'projection', 'history_scan']) {
@@ -527,13 +704,15 @@ test('settings markup renders the current draft without advanced API controls', 
   assert.match(html, /value="Draft Name"/);
   assert.match(html, /value="https:\/\/draft\.example\/v1"/);
   assert.match(html, /value="draft-model"/);
+  assert.match(html, /name="timeout" type="number" value="45"/);
+  assert.match(html, /name="retry_count" type="number" value="2"/);
   assert.match(html, /name="api_key" type="password" value="DRAFT-KEY"/);
   assert.match(html, /value="default" selected/);
   assert.match(html, /value="bioweave"[^>]*checked/);
   assert.equal(html.includes('bioweave-settings-advanced'), false);
   assert.equal(html.includes('Context Size'), false);
   assert.equal(html.includes('Max Output Tokens'), false);
-  assert.equal(html.includes('Retry Count'), false);
+  assert.equal(html.includes('Temperature'), false);
 });
 
 test('independent API configuration is a Chinese disclosure nested inside API source', () => {

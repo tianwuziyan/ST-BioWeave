@@ -348,6 +348,13 @@ input; a failed save or any test result keeps the draft for the next render.
 The public settings-state inspection also masks draft Key values. Drafts are
 never passed to Chat/Floor storage or written to extension settings.
 
+The API Profile form displays `timeout` as seconds for users, while the
+canonical Profile stores it as integer milliseconds (`250`–`600000`). The
+form boundary converts seconds to milliseconds before save/test and converts
+the saved value back to seconds when rendering. `retry_count` is displayed
+and stored as an integer from `0` to `3`; neither field is part of Chat-local
+data.
+
 ### 4. Validation & Error Matrix
 
 | Condition | Result |
@@ -361,6 +368,8 @@ never passed to Chat/Floor storage or written to extension settings.
 | Profile deletion cleanup fails | Remove the Profile/assignments from settings, surface `ST_SECRET_DELETE_FAILED`, and do not expose the Secret value |
 | Profile has no Secret reference | Independent request uses a sentinel `secret_id`; it must not fall through to the host's active custom key |
 | Current API is selected | Call host `generateRaw`; do not read or copy the host API key |
+| Timeout input is a finite seconds value | Clamp to `1`–`600` seconds in the UI and persist the corresponding integer milliseconds |
+| Timeout or retry input is blank/non-numeric | Let Profile normalization apply the existing safe default; never persist the raw UI string |
 
 ### 5. Good / Base / Bad Cases
 
@@ -392,6 +401,9 @@ never passed to Chat/Floor storage or written to extension settings.
 - Exercise a test-only new Key and assert the callback receives only an opaque
   reference, the temporary reference is deleted, and extension settings are
   unchanged.
+- Render API Profile timeout/retry controls and assert timeout is presented in
+  seconds while the saved Profile/request boundary receives milliseconds and
+  an integer retry count.
 - Render the settings page with a draft and assert the draft values survive a
   render, the password input is empty for a saved Profile, advanced settings
   are collapsed by default, and the four assignments include `default` and

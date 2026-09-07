@@ -1,6 +1,7 @@
 import {SILLYTAVERN_CURRENT_API, normalizeApiProfile} from '../storage/schema.js';
 
 const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_RETRY_COUNT = 1;
 const NO_SECRET_ID = '__bioweave_no_secret__';
 const MODELS_STATUS_ENDPOINT = '/api/backends/chat-completions/status';
 const SAFE_MODEL_ERROR_CODES = new Set([
@@ -40,7 +41,7 @@ function requestTimeout(profile, options) {
 }
 
 function retryCount(profile, options) {
-  return numeric(options.retryCount ?? options.retry_count ?? profile?.retry_count, 0, 0, 3, true);
+  return numeric(options.retryCount ?? options.retry_count ?? profile?.retry_count, DEFAULT_RETRY_COUNT, 0, 3, true);
 }
 
 function statusFromError(error) {
@@ -64,12 +65,9 @@ function isTimeoutError(error) {
 }
 
 function isRetryable(error) {
-  if (isAbortError(error) && !isTimeoutError(error)) {
-    return false;
-  }
+  if (isAbortError(error) || isTimeoutError(error)) return false;
   const status = statusFromError(error);
   if (status != null) return status >= 500;
-  if (isTimeoutError(error)) return true;
   if (error?.code === 'ECONNRESET' || error?.code === 'ECONNREFUSED' || error?.code === 'ETIMEDOUT') return true;
   return error?.name === 'TypeError' || /network|fetch failed|connection/i.test(String(error?.message ?? ''));
 }
@@ -121,6 +119,8 @@ async function runWithTimeout(operation, {signal, timeout}) {
   } catch (error) {
     if (timedOut) throw timeoutError();
     if (signal?.aborted) throw abortedError();
+    // fetch 在内部 controller.abort() 后可能返回原生 TypeError，而不是 AbortError；按超时归类。
+    if (controller.signal.aborted) throw timeoutError();
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
@@ -191,9 +191,95 @@ function apiUrlFrom(profile) {
   return String(profile?.api_url ?? profile?.base_url ?? profile?.custom_url ?? '').trim();
 }
 
-async function runCurrentApi(profile, messages, context) {
+function setDefinedRequestField(target, key, value) {
+  if (value === undefined || value === null || value === '') return;
+  target[key] = value;
+}
+
+async function currentApiRequest(profile, messages, context) {
+  const settings = context?.chatCompletionSettings;
+  if (!settings || typeof settings !== 'object') return null;
+  const service = context?.ChatCompletionService;
+  if (typeof service?.processRequest !== 'function') return null;
+  const source = String(settings.chat_completion_source ?? settings.chatCompletionSource ?? 'openai').trim() || 'openai';
+  const model = typeof context?.getChatCompletionModel === 'function'
+    ? await context.getChatCompletionModel()
+    : settings.openai_model ?? settings.custom_model ?? settings.model;
+  if (!String(model ?? '').trim()) return null;
+
+  const outputTokens = profile && typeof profile === 'object'
+    ? profile.max_output_tokens ?? settings.openai_max_tokens
+    : settings.openai_max_tokens;
+  const request = {
+    stream: false,
+    messages: messagesForRequest(messages),
+    model: String(model).trim(),
+    chat_completion_source: source,
+    max_tokens: numeric(outputTokens, 4096, 1, 10000000, true),
+    temperature: numeric(settings.temp_openai ?? settings.temperature, 0.2, 0, 2),
+  };
+
+  const settingFields = {
+    frequency_penalty: settings.freq_openai,
+    presence_penalty: settings.pres_openai,
+    top_p: settings.top_p_openai,
+    top_k: settings.top_k_openai,
+    min_p: settings.min_p_openai,
+    top_a: settings.top_a_openai,
+    repetition_penalty: settings.repetition_penalty_openai,
+    reasoning_effort: settings.reasoning_effort,
+    verbosity: settings.verbosity,
+    include_reasoning: settings.show_thoughts,
+    enable_web_search: settings.enable_web_search,
+    request_images: settings.request_images,
+    request_image_resolution: settings.request_image_resolution,
+    request_image_aspect_ratio: settings.request_image_aspect_ratio,
+    use_sysprompt: settings.use_sysprompt,
+    custom_prompt_post_processing: settings.custom_prompt_post_processing,
+  };
+  for (const [key, value] of Object.entries(settingFields)) setDefinedRequestField(request, key, value);
+
+  // 只复制当前 SillyTavern 请求所需的连接参数；不把整份宿主设置或密钥写入消息、Chat 数据或调试预览。
+  const connectionFields = [
+    'reverse_proxy',
+    'proxy_password',
+    'custom_url',
+    'custom_include_body',
+    'custom_exclude_body',
+    'custom_include_headers',
+    'azure_base_url',
+    'azure_deployment_name',
+    'azure_api_version',
+    'vertexai_auth_mode',
+    'vertexai_region',
+    'vertexai_express_project_id',
+    'siliconflow_endpoint',
+    'minimax_endpoint',
+    'zai_endpoint',
+    'workers_ai_account_id',
+  ];
+  for (const key of connectionFields) setDefinedRequestField(request, key, settings[key]);
+
+  if (Array.isArray(settings.openrouter_providers) && settings.openrouter_providers.length) {
+    request.provider = settings.openrouter_providers;
+  }
+  if (Array.isArray(settings.openrouter_quantizations) && settings.openrouter_quantizations.length) {
+    request.quantizations = settings.openrouter_quantizations;
+  }
+  setDefinedRequestField(request, 'allow_fallbacks', settings.openrouter_allow_fallbacks);
+  setDefinedRequestField(request, 'use_fallback', settings.openrouter_use_fallback);
+  setDefinedRequestField(request, 'middleout', settings.openrouter_middleout);
+  return {service, request};
+}
+
+async function runCurrentApi(profile, messages, context, signal) {
+  const currentRequest = await currentApiRequest(profile, messages, context);
+  if (currentRequest) {
+    // ChatCompletionService 不挂接 GENERATION_STOPPED，避免宿主结束主楼生成时取消本次分析。
+    return currentRequest.service.processRequest(currentRequest.request, {}, true, signal);
+  }
   if (typeof context?.generateRaw !== 'function') throw new Error('ST_CURRENT_API_UNAVAILABLE');
-  // SillyTavern 的 generateRaw 不接收外部 AbortSignal，取消由宿主自身管理。
+  // 兼容没有公开 ChatCompletionService 的旧版 SillyTavern；取消仍由宿主自身管理。
   return context.generateRaw({
     prompt: messagesForRequest(messages),
     responseLength: numeric(profile?.max_output_tokens, 4096, 1, 10000000, true),
@@ -282,7 +368,7 @@ export async function callOpenAICompatible(profile, messages, options = {}) {
   try {
     return await requestWithRetry(
       signal => isCurrentApi(profile)
-        ? runCurrentApi(profile, messages, context)
+        ? runCurrentApi(profile, messages, context, signal)
         : runIndependentApi(normalized, messages, context, signal),
       normalized,
       options,

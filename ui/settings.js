@@ -57,6 +57,12 @@ function modelDraftKey(profileId) {
   return id || '__new__';
 }
 
+function timeoutSecondsForDisplay(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  const milliseconds = Number(value);
+  return Number.isFinite(milliseconds) ? milliseconds / 1000 : '';
+}
+
 export function normalizeModelList(rawModels) {
   const candidates = Array.isArray(rawModels)
     ? rawModels
@@ -120,7 +126,7 @@ function profileValues(profile, draft) {
     context_size: value('context_size') ?? DEFAULT_API_PROFILE.context_size,
     max_output_tokens: value('max_output_tokens') ?? DEFAULT_API_PROFILE.max_output_tokens,
     temperature: value('temperature') ?? DEFAULT_API_PROFILE.temperature,
-    timeout: value('timeout') ?? DEFAULT_API_PROFILE.timeout,
+    timeout_seconds: timeoutSecondsForDisplay(value('timeout') ?? DEFAULT_API_PROFILE.timeout),
     retry_count: value('retry_count') ?? DEFAULT_API_PROFILE.retry_count,
     api_key: typeof source.api_key === 'string' ? source.api_key : '',
     clear_secret: source.clear_secret === true,
@@ -228,6 +234,8 @@ function renderProfileEditor(profile, draft, testResult, busy, modelList, modelL
     field('API 地址（不含 /chat/completions）', 'api_url', source.api_url, 'url', ' autocomplete="url" required'),
     field('API 密钥', 'api_key', source.api_key, 'password', ' autocomplete="new-password" placeholder="不显示已保存密钥"'),
     renderModelPicker(source, modelList, modelListProfileKey, modelSearch, modelRefreshBusy),
+    field('超时（秒）', 'timeout', source.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal"'),
+    field('重试次数', 'retry_count', source.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric"'),
     '</div>',
     `<p class="bioweave-secret-status bioweave-muted">${existingSecret ? '已保存 API 密钥；留空表示保留。' : '尚未设置 API 密钥；留空将以无密钥配置保存。'}</p>`,
     existingSecret ? `<label class="bioweave-check"><input type="checkbox" name="clear_secret"${source.clear_secret ? ' checked' : ''}> 清除已保存 API 密钥</label>` : '',

@@ -1705,12 +1705,18 @@ export function createApp(runtime, options = {}) {
 
   function readSettingsForm(form) {
     const value = name => formField(form, name)?.value ?? '';
+    const timeoutSeconds = value('timeout');
+    const timeout = timeoutSeconds === '' ? '' : Number.isFinite(Number(timeoutSeconds))
+      ? Math.round(Number(timeoutSeconds) * 1000)
+      : '';
     return {
       profile_id: value('profile_id'),
       name: value('name'),
       provider: value('provider'),
       api_url: value('api_url'),
       model: value('model'),
+      timeout,
+      retry_count: value('retry_count'),
       api_key: value('api_key'),
       clear_secret: Boolean(formField(form, 'clear_secret')?.checked),
     };
