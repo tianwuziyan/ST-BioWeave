@@ -658,7 +658,7 @@ test('settings markup exposes basic API fields, assignments, password input, and
   for (const field of ['context_size', 'max_output_tokens', 'temperature']) {
     assert.doesNotMatch(html, new RegExp(`name="${field}"`));
   }
-  assert.match(html, /<input class="bioweave-input" name="timeout" type="number" value="30"/);
+  assert.match(html, /<input class="bioweave-input" name="timeout" type="number" value="180"/);
   assert.match(html, /<input class="bioweave-input" name="retry_count" type="number" value="1"/);
   assert.match(html, /超时（秒）/);
   assert.match(html, /重试次数/);
@@ -750,6 +750,8 @@ test('independent API configuration is a Chinese disclosure nested inside API so
   assert.ok(profilesIndex > apiSourceIndex);
   assert.ok(assignmentsIndex > profilesIndex);
   assert.match(html, /<summary>独立 API 配置<\/summary>/);
+  assert.match(html, /data-bioweave-api-request-settings/);
+  assert.match(html, /name="timeout" type="number" value="180"/);
   assert.match(html, /data-bioweave-action="new-profile"[^>]*>新建 API 配置<\/button>/);
   assert.match(html, /bioweave-api-security-note/);
   assert.equal(html.includes('安全边界'), false);

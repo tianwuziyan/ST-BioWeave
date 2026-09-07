@@ -1,6 +1,6 @@
 import {SILLYTAVERN_CURRENT_API, normalizeApiProfile} from '../storage/schema.js';
 
-const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 180000;
 const DEFAULT_RETRY_COUNT = 1;
 const NO_SECRET_ID = '__bioweave_no_secret__';
 const MODELS_STATUS_ENDPOINT = '/api/backends/chat-completions/status';

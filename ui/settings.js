@@ -180,16 +180,16 @@ function renderApiSource(
   const independent = apiSource === BIOWEAVE_INDEPENDENT_API;
   const defaultProfile = profiles.find(profile => profile.profile_id === defaultProfileId);
   const apiDisclosureOpen = editingProfile !== undefined || openSettingsSections.includes('api');
-  const profileSource = profileValues(editingProfile, editingDraft);
-  const requestSettings = editingProfile !== undefined ? [
+  const profileSource = profileValues(editingProfile ?? defaultProfile, editingDraft);
+  const requestSettings = [
     '<section class="bioweave-api-source-module bioweave-api-request-settings" data-bioweave-api-request-settings>',
-    '<header class="bioweave-api-module-header"><div><h3>请求设置</h3><p class="bioweave-muted">控制当前独立 API 请求的等待时间和失败重试。</p></div></header>',
+    '<header class="bioweave-api-module-header"><div><h3>请求设置</h3><p class="bioweave-muted">控制分析请求的等待时间和失败重试。</p></div></header>',
     '<div class="bioweave-settings-fields">',
     field('超时（秒）', 'timeout', profileSource.timeout_seconds, 'number', ' min="0.25" step="0.25" inputmode="decimal" data-bioweave-api-timeout'),
     field('重试次数', 'retry_count', profileSource.retry_count, 'number', ' min="0" max="3" step="1" inputmode="numeric" data-bioweave-api-retry-count'),
     '</div>',
     '</section>',
-  ].join('') : '';
+  ].join('');
   const profileDetails = [
     '<details class="bioweave-api-profiles"' + (editingProfile !== undefined ? ' open' : '') + '>',
     '<summary>独立 API 配置</summary>',

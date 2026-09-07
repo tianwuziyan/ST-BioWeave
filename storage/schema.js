@@ -120,7 +120,7 @@ export const DEFAULT_API_PROFILE = {
   context_size: 8192,
   max_output_tokens: 4096,
   temperature: 0.2,
-  timeout: 30000,
+  timeout: 180000,
   retry_count: 1,
   secret_ref: null,
 };
