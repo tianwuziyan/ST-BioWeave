@@ -1,80 +1,65 @@
-# Technical Design: World Model Final Evidence and Consistency Guards
+# Technical Design: World Model Final Reproduction Consistency
 
 ## Boundary and data flow
 
-Keep the current analysis path unchanged:
+Keep the existing analysis-only path and add one final step:
 
 ```text
 AnalysisInput
   -> API response JSON
   -> parseWorldModelResponse (structural normalization)
-  -> applyWorldModelEvidenceGuard (AI-only evidence filtering)
-  -> final consistency guard
+  -> applyWorldModelEvidenceGuard (existing evidence/classification behavior)
+  -> applyWorldModelFinalConsistencyGuard
   -> Chat-local World Model
   -> World UI
 ```
 
-This task changes only the two analysis-only guards and the Prompt contract. The
-schema, parser shape, storage, API request, UI, and manual editor remain
-unchanged. `parseWorldModelResponse` continues to accept open type names for
-structural/manual use; semantic filtering stays on the `analyzeWorldModel`
-path.
+The new guard is used only by `createAnalyzer().analyzeWorldModel()`. Structural
+normalization, manual editor saves, schema shape, request construction, storage,
+and UI remain unchanged.
 
-## Type-name guard
+## Final guard contract
 
-Extend the existing observed/non-biological type check with one small semantic
-predicate:
+Add a small pure mapper over the normalized model. For each
+`species[].biological_types[]`, clone `reproduction_rules` and apply only these
+deterministic mappings:
 
-- compact the species and type names;
-- reject equality;
-- reject a species alias followed only by a small generic suffix such as `族`、
-  `修`、`修士`、`人` or `类`;
-- retain the existing explicit checks for known source/attribute/subtype labels.
-
-The predicate is not a gender enum and does not reject arbitrary open names. It
-only catches the case where the child is still a species/identity label in the
-parent context. It runs before capability sanitization, so an invalid type
-cannot act as a container for species-wide evidence.
-
-## Non-human field-local evidence
-
-The current single-type fallback makes `fieldEvidenceUnits` return all
-species-linked units. That is safe for neither a generic type nor multiple
-individuals. For non-human types, use `typeEvidenceUnits` for every field,
-including when the AI returned only one candidate type. Human types keep their
-existing baseline path and do not enter this scrub.
-
-This preserves the existing direct semantic case:
-`剑灵性别基本都为男性，极少女剑灵` produces direct type units for both
-`男性` and `女性`. It also means a species-level fact without a current type
-binding cannot populate a type's capability, rule, lifecycle, or special rule.
-
-## Final consistency guard
-
-Add a pure, small post-processing function over normalized analysis output. For
-each type, inspect only false capability values and the corresponding rule:
-
-| Capability | Conflicting positive rule |
+| Capability | Final rule effect |
 | --- | --- |
-| `can_carry_pregnancy: false` | explicit actual pregnancy/carrying wording in `pregnancy_or_carrying` |
-| `can_produce_ova: false` | explicit normal ovulation wording in `ovulation` |
-| `can_be_fertilized: false` | explicit wording that the type is a recipient of fertilization in `fertilization` |
+| `can_produce_ova === false` | `ovulation = null` |
+| `can_carry_pregnancy === false` | `pregnancy_or_carrying`, `gestation`, `labor` = `null` |
+| `can_be_fertilized === false` | clear recipient-role `fertilization` text |
+| `can_fertilize === false` | clear donor-role `fertilization` text |
 
-If the rule text is explicitly negative/unknown, it is not a conflict. If it
-is positive and conflicts, set only that rule to `null`. Do not alter a `true`
-or `null` capability, infer a capability from a rule, or rewrite unrelated
-fields. The function runs after the evidence guard so its priority is
-`field-local capability > contradictory reproduction rule`.
+The fertilization matcher distinguishes recipient wording such as “卵细胞可被
+精子受精” from donor wording such as “通过精子使卵细胞受精”. A generic rule such
+as “体内受精” has no role. When either fertilization capability is explicitly
+false, that generic rule is not retained because it cannot be proven to describe
+the allowed role. With `null` capabilities, the guard leaves the rule untouched.
 
-## Prompt and compatibility
+## Human baseline handling
 
-Add concise instructions for child-type semantic scope, no cross-individual
-aggregation, and final consistency precedence. Keep the existing human baseline
-precedence and fixed-vs-temporary dual evidence wording. No migration or schema
-version change is needed.
+Keep human baseline handling local to the final guard and keyed by the concrete
+human type, rather than defining one shared reproduction object:
 
-## Rollback
+- For a human male capability signature (`can_be_fertilized: false`,
+  `can_fertilize: true`), convert a roleless generic fertilization baseline to a
+  donor-role description and remove female baseline cycle wording such as
+  menstruation/28-day cycle. Universal false-capability mappings remove
+  ovulation, pregnancy, gestation, and labor.
+- For a human female capability signature (`can_be_fertilized: true`,
+  `can_fertilize: false`), convert a roleless generic fertilization baseline to a
+  recipient-role description and preserve existing female baseline rule fields.
+- Never fill a missing field with “无” or another negative placeholder. Never
+  replace an explicit role-specific rule or a non-baseline rule merely because
+  the type is human.
 
-Reverting the task commit removes only the new type predicate, the non-human
-single-type fallback change, the final rule guard, Prompt wording, tests, and
-the matching spec note. Existing stored World Models are not migrated.
+This gives the final output a type-specific baseline while preserving direct
+evidence and the existing capability values.
+
+## Compatibility and rollback
+
+No schema or migration change is required. Existing stored World Models are not
+rewritten; the new behavior applies to fresh analyzer results. Reverting the
+implementation removes only the final guard, type-specific baseline cleanup,
+regressions, and its minimal contract note.

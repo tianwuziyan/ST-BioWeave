@@ -655,6 +655,166 @@ test('World Model analysis applies only the named human-equivalence field to non
   });
 });
 
+test('World Model final guard separates human male and female reproduction baselines', async () => {
+  const result = await analyzeDescription('资料明确存在人类男性和女性。', [{
+    name: '人类',
+    biological_types: [
+      typeFixture('男性', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: false,
+          can_be_fertilized: false,
+          can_fertilize: true,
+          can_carry_pregnancy: false,
+        },
+        reproduction_rules: {
+          fertilization: '体内受精',
+          pregnancy_or_carrying: '妊娠',
+          cycle: '约28天',
+          ovulation: '排卵周期性发生',
+          gestation: '约40周',
+          labor: '分娩产程',
+        },
+      }),
+      typeFixture('女性', {
+        capabilities: {
+          can_produce_sperm: false,
+          can_produce_ova: true,
+          can_be_fertilized: true,
+          can_fertilize: false,
+          can_carry_pregnancy: true,
+        },
+        reproduction_rules: {
+          fertilization: '体内受精',
+          pregnancy_or_carrying: '妊娠',
+          cycle: '约28天',
+          ovulation: '约28天一次排卵',
+          gestation: '约40周',
+          labor: '分娩产程',
+        },
+      }),
+    ],
+  }]);
+  const [male, female] = result.species[0].biological_types;
+
+  assert.deepEqual(male.reproduction_rules, {
+    fertilization: '通过精子使卵细胞受精。',
+    pregnancy_or_carrying: null,
+    cycle: null,
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  });
+  assert.deepEqual(female.reproduction_rules, {
+    fertilization: '卵细胞可被精子受精。',
+    pregnancy_or_carrying: '妊娠',
+    cycle: '约28天',
+    ovulation: '约28天一次排卵',
+    gestation: '约40周',
+    labor: '分娩产程',
+  });
+});
+
+test('World Model final guard clears non-human rules blocked by false capabilities', async () => {
+  const result = await analyzeDescription(
+    '潮汐生物男性不能怀孕，但规则记载妊娠约40周和分娩产程；潮汐生物男性不能产生卵子，但记录会排卵；潮汐生物男性存在发情期和体内受精规则。',
+    [{
+      name: '潮汐生物',
+      biological_types: [typeFixture('男性', {
+        capabilities: {
+          can_produce_sperm: null,
+          can_produce_ova: null,
+          can_be_fertilized: null,
+          can_fertilize: null,
+          can_carry_pregnancy: null,
+        },
+        reproduction_rules: {
+          fertilization: '体内受精',
+          pregnancy_or_carrying: '可以妊娠。',
+          cycle: '存在发情期。',
+          ovulation: '会排卵。',
+          gestation: '约40周。',
+          labor: '分娩产程。',
+        },
+      })],
+    }],
+  );
+  const type = result.species[0].biological_types[0];
+
+  assert.equal(type.capabilities.can_produce_ova, false);
+  assert.equal(type.capabilities.can_carry_pregnancy, false);
+  assert.equal(type.reproduction_rules.fertilization, '体内受精');
+  assert.equal(type.reproduction_rules.pregnancy_or_carrying, null);
+  assert.equal(type.reproduction_rules.cycle, '存在发情期。');
+  assert.equal(type.reproduction_rules.ovulation, null);
+  assert.equal(type.reproduction_rules.gestation, null);
+  assert.equal(type.reproduction_rules.labor, null);
+});
+
+test('World Model final guard clears only conflicting fertilization roles', async () => {
+  const result = await analyzeDescription('资料明确存在人类男性和女性。', [{
+    name: '人类',
+    biological_types: [
+      typeFixture('男性', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: false,
+          can_be_fertilized: false,
+          can_fertilize: true,
+          can_carry_pregnancy: false,
+        },
+        reproduction_rules: {
+          fertilization: '卵细胞可在生殖道内被精子受精。',
+        },
+      }),
+      typeFixture('女性', {
+        capabilities: {
+          can_produce_sperm: false,
+          can_produce_ova: true,
+          can_be_fertilized: true,
+          can_fertilize: false,
+          can_carry_pregnancy: true,
+        },
+        reproduction_rules: {
+          fertilization: '通过精子使卵细胞受精。',
+        },
+      }),
+    ],
+  }]);
+  const [male, female] = result.species[0].biological_types;
+
+  assert.equal(male.reproduction_rules.fertilization, null);
+  assert.equal(female.reproduction_rules.fertilization, null);
+});
+
+test('World Model final guard keeps evidence-backed rules when capabilities are unknown', async () => {
+  const result = await analyzeDescription('潮汐生物男性存在体内受精规则，但该类型的具体能力未说明。', [{
+    name: '潮汐生物',
+    biological_types: [typeFixture('男性', {
+      capabilities: {
+        can_produce_sperm: null,
+        can_produce_ova: null,
+        can_be_fertilized: null,
+        can_fertilize: null,
+        can_carry_pregnancy: null,
+      },
+      reproduction_rules: {
+        fertilization: '体内受精',
+      },
+    })],
+  }]);
+  const type = result.species[0].biological_types[0];
+
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+  assert.equal(type.reproduction_rules.fertilization, '体内受精');
+});
+
 test('World Analysis request uses ordinary chat messages for current and independent APIs', async () => {
   const analysisInput = {
     persona: {name: '用户甲', description: '用户人物设定私密内容，不应发送'},

@@ -513,6 +513,83 @@ function applyWorldModelEvidenceGuard(model, analysisInput) {
   };
 }
 
+const FERTILIZATION_RECIPIENT_PATTERN = /(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)|(?:卵子|卵细胞|雌性配子)[^。！？!?；;，,、\n]{0,16}(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)/iu;
+const FERTILIZATION_DONOR_PATTERN = /(?:使|让|令)[^。！？!?；;，,、\n]{0,20}受精|(?:通过|利用|依靠|凭借)[^。！？!?；;，,、\n]{0,16}(?:精子|精液|雄性配子)[^。！？!?；;，,\n]{0,16}(?:使|让|令)[^。！？!?；;，,\n]{0,16}受精|(?:向|给|对)[^。！？!?；;，,、\n]{0,16}授精|作为(?:施受精者|施受精方|供体)/iu;
+const HUMAN_FEMALE_BASELINE_CYCLE_PATTERN = /(?:月经|经期|生理期|排卵周期|(?:约\s*)?(?:28|二十八)\s*(?:天|日)|(?:28|二十八)\s*[-－~～至到]?\s*day)/iu;
+
+function fertilizationRoleFlags(value) {
+  const text = String(value ?? '');
+  return {
+    recipient: FERTILIZATION_RECIPIENT_PATTERN.test(text),
+    donor: FERTILIZATION_DONOR_PATTERN.test(text),
+  };
+}
+
+function isGenericHumanFertilizationRule(value) {
+  const text = String(value ?? '')
+    .replace(/\s+/gu, '')
+    .replace(/[。！？!?]/gu, '');
+  return /^(?:通常|一般|人类通常|按人类方式)?(?:为|是)?(?:体内)?受精(?:方式|机制)?$/u.test(text);
+}
+
+function humanBaselineRole(type, speciesName) {
+  if (!isHumanSpeciesName(speciesName)) return null;
+  const capabilities = type.capabilities ?? {};
+  if (type.name === '男性'
+    && capabilities.can_be_fertilized === false
+    && capabilities.can_fertilize === true) {
+    return 'donor';
+  }
+  if (type.name === '女性'
+    && capabilities.can_be_fertilized === true
+    && capabilities.can_fertilize === false) {
+    return 'recipient';
+  }
+  return null;
+}
+
+function applyWorldModelFinalConsistencyGuard(model) {
+  return {
+    ...model,
+    species: model.species.map(species => ({
+      ...species,
+      biological_types: species.biological_types.map(type => {
+        const capabilities = type.capabilities ?? {};
+        const reproductionRules = {...(type.reproduction_rules ?? {})};
+        const baselineRole = humanBaselineRole(type, species.name);
+
+        if (baselineRole && isGenericHumanFertilizationRule(reproductionRules.fertilization)) {
+          reproductionRules.fertilization = baselineRole === 'donor'
+            ? '通过精子使卵细胞受精。'
+            : '卵细胞可被精子受精。';
+        }
+        if (baselineRole === 'donor'
+          && HUMAN_FEMALE_BASELINE_CYCLE_PATTERN.test(String(reproductionRules.cycle ?? ''))) {
+          reproductionRules.cycle = null;
+        }
+
+        if (capabilities.can_produce_ova === false) reproductionRules.ovulation = null;
+        if (capabilities.can_carry_pregnancy === false) {
+          reproductionRules.pregnancy_or_carrying = null;
+          reproductionRules.gestation = null;
+          reproductionRules.labor = null;
+        }
+
+        if (reproductionRules.fertilization) {
+          const roles = fertilizationRoleFlags(reproductionRules.fertilization);
+          const roleConflict = (capabilities.can_be_fertilized === false && roles.recipient)
+            || (capabilities.can_fertilize === false && roles.donor)
+            || (!roles.recipient && !roles.donor
+              && (capabilities.can_be_fertilized === false || capabilities.can_fertilize === false));
+          if (roleConflict) reproductionRules.fertilization = null;
+        }
+
+        return {...type, reproduction_rules: reproductionRules};
+      }),
+    })),
+  };
+}
+
 // 将 AI 或手动编辑结果收敛到唯一的 World Model v1 结构。
 export function normalizeWorldModel(raw, {strict = false} = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel();
@@ -641,7 +718,8 @@ export function createAnalyzer({profileResolver, contextResolver, requestSetting
     );
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
     const model = parseWorldModelResponse(raw);
-    return applyWorldModelEvidenceGuard(model, input.analysisInput ?? input);
+    const evidenceGuardedModel = applyWorldModelEvidenceGuard(model, input.analysisInput ?? input);
+    return applyWorldModelFinalConsistencyGuard(evidenceGuardedModel);
   }
 
   return {

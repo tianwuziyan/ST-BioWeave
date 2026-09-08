@@ -1,27 +1,20 @@
-# Implementation Plan: World Model Final Evidence and Consistency Guards
+# Implementation Plan: World Model Final Reproduction Consistency
 
 ## Ordered checklist
 
-1. Inspect the current analyzer guard, the attached API response, and existing
-   World Model tests; replay the fixture through `createAnalyzer` to establish
-   the raw-response versus post-guard boundary.
-2. Add a small species-alias/generic-suffix final type guard and remove the
-   non-human single-type fallback to species-wide field evidence. Preserve
-   human baseline handling and Sword Spirit semantic type recognition.
-3. Add a pure final consistency guard for the three requested
-   capability/reproduction-rule conflicts. Keep capability values authoritative;
-   clear only contradictory positive rules.
-4. Update the World Model Prompt and frontend World Model contract with the
-   type-local evidence, no cross-individual aggregation, and consistency
-   precedence rules.
-5. Add focused regressions for `妖修`, `魔族`, cross-individual evidence,
-   conflict cleanup, fixed/temporary dual evidence, Sword Spirit male/female,
-   and non-human unknown capabilities.
-6. Run focused tests, full tests, `npm run check`, changed-file syntax checks,
+1. Keep the current species/type and Evidence Gate code unchanged; add a pure
+   final consistency helper in `ai/analyzer.js` after the existing analysis guard.
+2. Implement the four false-capability mappings, role-aware fertilization
+   filtering, and human male/female baseline separation without changing the
+   structural parser or manual save path.
+3. Add analyzer-level regressions for human male and female baselines, non-human
+   carrying/ovulation conflicts, donor/recipient fertilization conflicts,
+   roleless human baseline text, and capability-`null` preservation.
+4. Run focused tests, full tests, `npm run check`, changed-file syntax checks,
    and `git diff --check`.
-7. Run the Trellis quality check, update acceptance criteria, commit the scoped
-   changes, archive the task, record the session, and stop for the user's real
-   retest.
+5. Run the Trellis quality check, update the frontend contract note, commit the
+   scoped changes, archive the task, record the session, and stop for the user's
+   real retest.
 
 ## Validation commands
 
@@ -30,19 +23,16 @@ node --test tests/world-model.test.js
 npm test
 npm run check
 node --check ai/analyzer.js
-node --check ai/prompts.js
 node --check tests/world-model.test.js
 git diff --check
 ```
 
 ## Risky files and rollback points
 
-- `ai/analyzer.js`: keep the semantic type guard analysis-only; do not alter
-  structural normalization or manual editor behavior. Verify human baseline and
-  non-human field locality separately.
-- `ai/prompts.js`: add only coherent World Model evidence/consistency wording;
-  do not append contradictory instructions.
-- `tests/world-model.test.js`: assert output behavior through
-  `analyzeWorldModel`, not only helper internals or raw API JSON.
-- `.trellis/spec/frontend/state-management.md`: document the final guard without
-  changing the schema/storage contract.
+- `ai/analyzer.js`: final guard must run only after `applyWorldModelEvidenceGuard`; do
+  not alter `normalizeWorldModel`, `parseWorldModelResponse`, species/type filtering,
+  or Evidence Gate behavior.
+- `tests/world-model.test.js`: assert results through `analyzeWorldModel`, not only
+  helper internals or raw API JSON.
+- `.trellis/spec/frontend/state-management.md`: document only the final consistency
+  contract; do not change schema/storage contracts.

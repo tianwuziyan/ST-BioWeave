@@ -515,6 +515,14 @@ species[].biological_types[].capabilities
   precedence is explicit story fact > explicit world/Worldbook rule > explicit
   individual exception > ordinary human baseline. They do not merge
   capabilities across types or apply to an identified non-human species.
+- After the AI-only evidence guard, `analyzeWorldModel()` applies a final
+  consistency pass to every biological type. `can_produce_ova: false` clears
+  `ovulation`; `can_carry_pregnancy: false` clears
+  `pregnancy_or_carrying`, `gestation`, and `labor`; and false
+  `can_be_fertilized` / `can_fertilize` clear only conflicting recipient / donor
+  `fertilization` wording. A `null` capability never clears a rule by itself.
+  Human male and female generic baseline fertilization text is role-specific in
+  the final result, and female baseline cycle text is not copied to a male type.
 - BioWeave's canonical fixed dual type name is `双性`. Temporary dualization,
   body modification, an ambiguous individual state, or a source/attribute
   alias is not fixed-type evidence. The analysis-only guard may remove such
@@ -538,6 +546,8 @@ species[].biological_types[].capabilities
 | Non-human capability is only absent, unobserved, unrecorded, or pseudo-pregnancy evidence | Keep the capability `null`; do not infer `false` |
 | Non-human capability has explicit same-type inability evidence | Allow that individual capability to be `false` |
 | AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
+| AI analysis returns a rule that conflicts with a `false` capability | Clear only the conflicting downstream reproduction rule after the evidence guard |
+| Capability is `null` while a reproduction rule has direct evidence | Preserve the rule; do not infer `false` |
 
 ### 5. Good / Base / Bad Cases
 
@@ -549,12 +559,17 @@ species[].biological_types[].capabilities
 - Good: a non-human type with direct sperm, cycle, or lifespan evidence keeps
   only those corresponding fields; unrelated capabilities and rules remain
   `null`.
+- Good: a human male with `can_produce_ova: false` and
+  `can_carry_pregnancy: false` has `cycle`, `ovulation`, gestation, and labor
+  set to `null`, while a human female keeps the applicable baseline rules.
 - Base: a species is identified but no type is explicitly present; retain the
   species with an empty `biological_types` array and do not invent one.
 - Bad: identify `人类` and then add male, female, and dual types merely
   because they are common human categories.
 - Bad: set all capabilities to `true` because a type is called `双性`, `Alpha`,
   or `Omega`.
+- Bad: return the same roleless `fertilization: "体内受精"` text for human male
+  and female types, or retain pregnancy rules after a false carrying capability.
 
 ### 6. Tests Required
 
@@ -565,6 +580,10 @@ species[].biological_types[].capabilities
   species examples preserve exactly the types represented by evidence.
 - Assert open type names survive normalization and missing capabilities become
   `null` instead of inferred values.
+- Assert the analysis-only final consistency pass clears the four requested
+  false-capability conflicts, keeps non-conflicting fertilization roles, splits
+  human male/female baseline rules, and preserves directly evidenced rules when
+  capabilities are `null`.
 - Assert the prompt states the two-step recognition rule and the UI renders and
   edits the same species → type hierarchy.
 - Assert existing AnalysisInput, request message roles, Chat-local writes,

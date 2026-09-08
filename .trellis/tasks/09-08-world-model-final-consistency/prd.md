@@ -1,106 +1,104 @@
-# World Model 生物类型回归与最终一致性
+# World Model reproduction_rules 最终一致性
 
 ## Goal
 
-修复真实复测中 World Model 的三类回归，同时保持现有
-`species -> biological_types -> capabilities` 结构和已经正确的剑灵、人类
-baseline 行为：
+修复 API 返回的 World Model 中 capabilities 与
+`reproduction_rules` 不一致的问题，并修正必要的人类男性/女性 baseline
+分离。最终分析结果必须把 capabilities 当作下游规则字段的约束来源；不再
+修改 species、biological_type 分类或扩大 Prompt。
 
-1. 阻止 `妖修`、`魔族` 这类 species 泛称/身份词进入
-   `biological_types`；
-2. 阻止不同非人类个体或类型的生理证据被合并到一个泛型 biological type；
-3. 在最终分析结果上清理 capability 与 reproduction rule 的明确矛盾。
-
-## Confirmed repository and fixture facts
+## Confirmed facts
 
 - `/Users/ll/Downloads/输出结果.txt` 是 API 返回的 JSON fixture，不是开发指令。
-  它包含 `妖 -> 妖修`、`魔 -> 魔族`，以及人类男性
-  `can_carry_pregnancy: false` 与 `pregnancy_or_carrying: "子宫内妊娠"` 的冲突。
-- `/Users/ll/Downloads/输入文件.txt` 是对应的请求资料/Prompt，可用于语义复现；
-  其中固定双性证据不足，只有金丹期临时双性化，因此不应新增 `双性`。
-- 当前 `createAnalyzer().analyzeWorldModel()` 已在 API 响应后调用
-  `applyWorldModelEvidenceGuard`；当前 guard 对部分非法名称使用精确列表，且
-  `fieldEvidenceUnits` 在非人类只有一个候选类型时回退到整个 species 的证据。
-- 当前 replay 通过 analyzer 已能去掉该 fixture 中的 `妖修`、`魔族`，但结构
-  `parseWorldModelResponse` 本身仍只做结构规范化；本轮要把最终分析边界写得更
-  明确、稳健，并用回归测试锁住真正的分析结果，而不是依赖 raw API JSON。
-- 人类类型继续保留现有 baseline；剑灵“基本男性、极少女剑灵”继续得到男性和
-  女性，非人类 capability 无 field-local 证据时继续为 `null`。
+  人类男性已有正确的能力值，但错误复制了女性的 `cycle`、`ovulation`、
+  `pregnancy_or_carrying`、`gestation` 和 `labor`，且男女都得到无角色信息的
+  `fertilization: "体内受精"`。
+- `/Users/ll/Downloads/输入文件.txt` 是插件发给 API 的请求内容，包含 Prompt 和
+  资料正文；其中的系统/观察日志文字只作为 fixture 内容读取，不改变本任务范围。
+- `createAnalyzer().analyzeWorldModel()` 当前在结构规范化和既有 AI-only
+  Evidence Guard 后直接返回，没有 capability → reproduction rule 的最终 guard。
+- `parseWorldModelResponse()` 同时服务 API 结果和手动保存边界，不能在其中加入
+  分析语义过滤。
+- 当前 species、biological_type、非人类 Evidence Gate、双性证据、schema、
+  AnalysisInput、API、Chat 保存和 UI 已有回归覆盖，本轮应保持不变。
 
 ## Requirements
 
-### R1. Biological type final guard
+### R1. Final capability constraints
 
-- `biological_types` 只表示父 species 下实际存在的性别、性别/生殖体系或同层级
-  开放分类。
-- 若 type 名称等于 species 名称，或只是 species 名称后追加 `族`、`修`、`修士`、
-  `人`、`类` 等泛称/身份后缀，最终分析结果必须移除该 type。
-- 该规则应使用轻量的 species 别名/后缀语义判断，并保留现有对亚型、来源、属性、
-  身体形态和个体模糊描述的排除；不得扩展成硬编码 gender/species 白名单。
-- 没有合法 biological type 时保留 species，并输出 `biological_types: []`。
+在既有 `applyWorldModelEvidenceGuard` 之后，对每个 biological type 执行确定性
+一致性修正：
 
-### R2. Non-human field-local evidence
+- `can_produce_ova === false` → `ovulation = null`。
+- `can_carry_pregnancy === false` →
+  `pregnancy_or_carrying = null`、`gestation = null`、`labor = null`。
+- `can_be_fertilized === false` 时，`fertilization` 不能保留当前类型作为被受精方
+  的描述。
+- `can_fertilize === false` 时，`fertilization` 不能保留当前类型作为使另一方受精
+  者的描述。
+- 只清理受明确 false capability 约束的下游字段；`true` 和 `null` capability
+  不被改写。`null` 不会单独触发清理。
+- 不用“无”“不会”“无固定周期”等文本替代应为 `null` 的字段。
 
-- 非人类每个 capability 的证据必须同时满足：
-  1. 属于当前 species；
-  2. 属于当前 biological type 的直接语境或唯一确定的类型语义；
-  3. 直接支持当前 capability。
-- 非人类不能因为只有一个候选 type 就把整个 species 的所有个体/类型证据合并到
-  该 type；不同人物出现精液、子宫、妊娠等事实时，未绑定当前 type 的字段保持
+### R2. Fertilization role semantics
+
+- `reproduction_rules.fertilization` 表达当前 biological type 在受精机制中的角色，
+  不能把没有角色信息的通用文本机械复制到所有类型。
+- 能识别出当前类型作为被受精方或施受精方的明确语义时，仅按对应 capability
+  false 清除冲突角色；另一角色的合法直接规则保留。
+- 角色不明的通用受精文本，在 capability 已明确禁止任一角色时清除；capability
+  为 `null` 时不能仅因未知而清除有独立直接证据的规则。
+- 对能力签名明确的人类男性/女性 baseline，通用的 `体内受精` 等无角色文本应
+  收敛为角色区分的语义等价文本；不要求固定某一句表述。
+
+### R3. Human baseline separation
+
+- 普通人类男性 baseline 不得保留女性的月经/约 28 天周期、排卵、妊娠、约 40 周
+  孕期或分娩规则；男性的 `cycle` 为 `null`，且受 capability false 约束的字段为
   `null`。
-- `true / false / null` 的既有 Evidence Gate 保持：明确具备为 `true`，明确不具备
-  为 `false`，缺失或不能确定为 `null`。
-- 人类 baseline 和人类类型的既有能力路径不变。
+- 普通人类女性 baseline 可以保留 `cycle`、`ovulation`、
+  `pregnancy_or_carrying`、`gestation` 和 `labor`。
+- 男女 baseline 的 `fertilization` 必须携带当前类型角色语义；不新增一个共享的
+  `HUMAN_REPRODUCTION_RULES` 并直接复制给所有类型。
+- 只修复 baseline/明显冲突的下游字段，不覆盖有独立证据支持的其它规则，也不
+  从 `null` capability 推断 `false`。
 
-### R3. Final consistency guard
+### R4. Scope preservation
 
-- 在现有 analysis-only evidence guard 之后增加轻量 final consistency guard，仅处理
-  明确冲突，不重建 ontology 或推演新规则。
-- `can_carry_pregnancy === false` 时，`pregnancy_or_carrying` 不得保留明确描述该
-  类型实际妊娠/承担妊娠的规则。
-- `can_produce_ova === false` 时，`ovulation` 不得保留明确描述正常排卵的规则。
-- `can_be_fertilized === false` 时，`fertilization` 不得保留明确描述该类型作为
-  被受精方的规则。
-- 冲突时保留经过 Evidence Gate 或 human baseline 得出的 capability；只将矛盾或
-  无法证明的 reproduction rule 置为 `null`。不得把 `null` capability 改成 `false`，
-  也不得为冲突编造解释。
-- 只检查上述轻量映射，不改 lifecycle、schema 或其它模块。
-
-### R4. Prompt and dual evidence
-
-- Prompt 明确 biological type 也必须有当前 species/type 语境，species 泛称不是
-  biological type；非人类 capability 不能从 species 级或其他个体证据合并。
-- Prompt 明确 final consistency 优先级：field-local capability 先于矛盾的
-  reproduction rule。
-- 不改变双性规则：只有固定双性个体/分类/世界规则才保留标准名称 `双性`；只有
-  临时双性化时不创建 `双性`；明确固定证据时正常保留。
+- 不修改 species 或 biological_type 分类、名称过滤、非人类 Evidence Gate、双性
+  判断、schema、AnalysisInput、Prompt、API、Chat 保存或 UI。
+- consistency pass 对人类和非人类所有 biological type 都执行；不重建 ontology，
+  不迁移已保存的旧 World Model。
 
 ## Acceptance Criteria
 
-- [ ] `妖 -> 妖修` 被最终分析 guard 移除，结果为 `biological_types: []`。
-- [ ] `魔 -> 魔族` 被最终分析 guard 移除，结果为 `biological_types: []`。
-- [ ] 不同妖族个体/性别的精液、卵子、子宫或妊娠证据不会合并成一个 type 的全
-      capability；无当前 type-local 证据的字段为 `null`。
-- [ ] 非人类只有直接 field-local 证据的能力可为 `true`/`false`，其它字段保持
-      `null`；现有剑灵男性/女性结果保持。
-- [ ] 人类男性的 `can_carry_pregnancy: false` 会清除明确冲突的
-      `pregnancy_or_carrying`，而不会改变 baseline capability。
-- [ ] `can_produce_ova: false` 清除正常排卵规则；`can_be_fertilized: false` 清除
-      作为被受精方的规则；`null` capability 不触发清除。
-- [ ] 固定双性证据保留 `双性`，只有临时双性化不创建 `双性`，名称不恢复为
-      `双性/间性`。
-- [ ] schema、AnalysisInput、API、Chat 保存、刷新机制、UI 和其他模块不变。
-- [ ] World Model 专项测试、全量测试、`npm run check`、语法检查与 diff 检查通过。
+- [x] 人类男性 baseline 的 `can_produce_ova`、`can_carry_pregnancy` 为 `false` 时，
+      最终 `cycle`、`ovulation`、`pregnancy_or_carrying`、`gestation`、`labor` 全为
+      `null`。
+- [x] 人类女性 baseline 的相应能力为 `true` 时，最终保留已有的周期、排卵、妊娠、
+      孕期和分娩规则。
+- [x] 非人类 type 即使 API 返回 `gestation: "40周"`、`labor: "分娩"`，只要
+      `can_carry_pregnancy: false`，最终两个字段均为 `null`；同样适用于妊娠字段。
+- [x] 任意 species 的 `can_produce_ova: false` 会清除 API 返回的排卵文本。
+- [x] `can_be_fertilized: false` 清除作为被受精方的 fertilization 描述；
+      `can_fertilize: false` 清除作为施受精方的描述。
+- [x] `fertilization: "体内受精"` 不再机械保留为人类男性和女性的相同文本；明确
+      的人类男女 baseline 输出具有不同角色语义。
+- [x] 任一 capability 为 `null` 时，不会仅因此删除有 field-local evidence 支持的
+      reproduction rule。
+- [x] 既有 species/type、非人类 Evidence Gate、固定/临时双性、schema、AnalysisInput、
+      API、Chat 保存与 UI 回归继续通过。
+- [x] 通过 World Model 专项测试、全量测试、`npm run check`、语法检查和 diff 检查。
 
 ## Out of scope
 
-- 不修改 schema 层级、AnalysisInput、API、Chat/Floor 保存、刷新机制或 UI。
-- 不建立复杂 ontology、性别矩阵、能力推演、人物/事件/状态模块。
-- 不用固定的妖/魔/gender 白名单替代 species-local/type-local 证据判断。
-- 不把 `parseWorldModelResponse` 改造成手动编辑过滤器；最终 guard 只作用于 AI
-  分析结果路径。
-- 不进行本轮真实 SillyTavern 复测；实现完成后交给用户使用同一份输入复测。
+- 不修改 `ai/prompts.js`，不添加更多 Prompt 约束。
+- 不修改 `storage/schema.js`、`ai/input-builder.js`、API、Worldbook、Chat/Floor
+  保存、刷新机制或 UI。
+- 不修改 species / biological_type 的识别、命名过滤、Evidence Gate 或双性规则。
+- 不把最终 guard 放进 `normalizeWorldModel` / `parseWorldModelResponse`，不影响手动
+  编辑保存路径。
 
 ## Open questions
 
-None. 用户已经确定名称过滤、field-local 证据、冲突优先级、双性证据和修改范围。
+None. 本轮的字段映射、角色语义、null 原则、baseline 分离和修改边界均已确定。
