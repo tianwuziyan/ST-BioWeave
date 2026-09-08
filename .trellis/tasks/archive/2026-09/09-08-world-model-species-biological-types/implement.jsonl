@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"World Model UI must preserve the plain-DOM, host-integration, selector, lifecycle, and required validation conventions."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"The nested species/type editor remains an existing page module and must follow the current DOM fragment and delegated-action conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"World Model save and analysis must preserve Chat-local scope, async token checks, and storage boundaries while changing the payload shape."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The requested contract crosses schema, prompt, analyzer, UI form decoding, persistence, and tests; use the repository's boundary checklist."}
