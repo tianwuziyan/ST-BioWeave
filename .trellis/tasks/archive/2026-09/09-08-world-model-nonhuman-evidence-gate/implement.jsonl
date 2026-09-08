@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"Defines the World Model analysis-only evidence boundary, human baseline precedence, and the requirement that manual edits remain structural-only."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Defines required focused/full test, syntax, and host-integration verification for scoped UI-adjacent changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Requires tracing AnalysisInput -> provider response -> normalization -> guard -> persistence/UI and keeping contracts at one boundary."}
