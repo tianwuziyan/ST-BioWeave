@@ -121,13 +121,19 @@ function renderBiologicalTypeView(type, index) {
   ].join('');
 }
 
+function renderBiologicalTypeList(types) {
+  return (Array.isArray(types) ? types : [])
+    .map((type, index) => renderBiologicalTypeView(type, index))
+    .join('');
+}
+
 function renderWorldModelView(model) {
   const species = Array.isArray(model?.species) ? model.species : [];
   const speciesMarkup = species.length
     ? species.map((item, speciesIndex) => {
       const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
       const typeMarkup = types.length
-        ? types.map(renderBiologicalTypeView).join('')
+        ? renderBiologicalTypeList(types)
         : '<p class="bioweave-empty">本次资料只识别出该物种，尚未识别出具体性别 / 生殖类型。</p>';
       return [
         '<article class="bioweave-world-model-species">',

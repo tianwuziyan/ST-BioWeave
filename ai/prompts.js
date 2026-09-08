@@ -18,6 +18,7 @@ const WORLD_MODEL_CORE_INSTRUCTIONS = [
   '不要把种族/亚种、血统、职业、修炼身份、门派、阵营、来源、属性、身体形态、临时身体状态、身体改造、人格、性偏好或单个人的描述放进 biological_types。比如性别模糊、妖修、半兽人、重复父 species 的魔族、妖剑剑灵和魔剑灵应留在 species 说明或规则位置；“男性剑灵”“女性剑灵”应规范为剑灵下的男性、女性。',
   'BioWeave 的固定双性分类只使用名称“双性”。只有 AnalysisInput 明确说明固定的双性个体、species 分类或世界规则（例如“存在双性个体”“角色本身是双性”）时，才建立“双性”；可以双性化、临时双性状态、变身/改造能力、持续时间或单次身体状态都不是固定类型证据。双性不是全部生殖能力的结论，旧式复合称呼不要作为输出名称。',
   '每个 biological_type 的 capabilities 必须逐项依据证据独立填写 true、false 或 null；不能从类型名称、性别标签、代词、称谓、外貌或身体形态推断，也不能因为双性、Alpha、Beta 或 Omega 自动把所有能力设为 true。ABO 等开放类型不得自动生成男性/女性组合。',
+  'capability 的三态 Evidence Gate 同时约束 true 和 false：true 必须有同一 species 与 biological_type 上下文中明确具备该项能力的证据；false 必须有明确不能、无法、不具备或其它等价的该项能力不可能证据。没有证据证明可以、没有观察到、没有实际记录、未说明或仅存在假孕，都只能填写 null，不能把未知当成 false。',
   '人类基线只在对应的人类 biological_type 已由当前资料建立后才可使用。事实优先级固定为：明确剧情事实 > 明确世界/世界书规则 > 明确个人例外 > 普通人类基线。世界规则覆盖约 40 周等一般基线；个人例外记录为 exception，不得改写 species 的基线。人类基线可说明通常的配子、受精（fertilization）、排卵（ovulation）、周期（默认可参考约 28 天）、妊娠/孕期（gestation，通常约 40 周）和分娩/产程周期（labor，labor cycle），但不用于创造缺失的类型；已建立的人类类型应在对应 reproduction_rules 中分别填写这些有证据或基线支持的字段，证据不足的其它字段仍为 null。',
   '对妖、魔、剑灵、精灵、兽人和其它非人类 species，capabilities、reproduction_rules、lifecycle 和 special_rules 都必须逐项回到同一 species 的 AnalysisInput 证据；缺少对应机制证据就保留 null。只有资料明确说明某一项生理结构与人类相同，才继承该项对应的基线部分（对应字段），不能扩大到其它能力或规则。',
   '资料中明确描述的当前世界医疗条件，包括疾病、医疗设施、照护资源、医疗可及性和既有治疗，才是 medical_context 的证据；证据不足时不要推测诊断或确定分娩难度。',

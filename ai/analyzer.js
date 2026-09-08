@@ -47,7 +47,8 @@ const LIFECYCLE_EVIDENCE_PATTERNS = Object.freeze({
   maturation: /成熟|性成熟|成年|发育|maturation/iu,
   aging: /衰老|老化|寿命|长生|老去|aging|lifespan/iu,
 });
-const NEGATIVE_CAPABILITY_PATTERN = /(?:不能|无法|不可|不会|不具备|不产生|没有|无|缺乏|不存在|未(?:能|有|具备|产生)|并非|不是|否认)/u;
+const EXPLICIT_NEGATIVE_CAPABILITY_PATTERN = /(?:不能|无法|不可|不会|不具备|未具备|不产生|不生成|不制造|不分泌|不孕育|不可能|不支持|不具有|不含有|(?:不被|不接受)(?:受精|授精)|(?:没有|无(?!法)|不存在)(?:任何|该|其)?(?:产生精子|产生卵子|怀孕|妊娠|生育|受精)(?:能力|可能性|资格|条件))/u;
+const NON_EVIDENCE_CAPABILITY_PATTERN = /(?:仅(?:存在|有)?[^。！？!?；;\n，,、]{0,16}(?:假孕|假性妊娠)|(?:无(?!法)|没有|未(?:有|能|观察到|记录|发现|实际)?|尚无|暂无|目前没有|没有实际|无实际)[^。！？!?；;\n，,、]{0,16}(?:妊娠|怀孕|生育|精子|卵子|受精|能力|记录|证据|观察))/u;
 const UNSPECIFIED_FIELD_CONTEXT_PATTERN = /(?:没有(?:明确|说明|提及|描述|提供)|未(?:明确|说明|提及|描述|提供)|不确定|不明确|不清楚|未知|尚未(?:明确|说明)|无从判断)[^。！？!?；;，,、\n]{0,10}$/u;
 const HUMAN_SPECIES_NAMES = new Set(['人类', '人', 'human', 'humans']);
 const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
@@ -347,25 +348,41 @@ function isHumanSpeciesName(speciesName) {
   return HUMAN_SPECIES_NAMES.has(compactEvidenceText(speciesName).toLowerCase());
 }
 
-function isNegativeCapabilityEvidence(unit, match) {
+function capabilityEvidenceContext(unit, match) {
+  const start = Math.max(0, (match.index ?? 0) - 24);
+  const end = Math.min(unit.length, (match.index ?? 0) + match[0].length + 24);
+  return unit.slice(start, end);
+}
+
+function isNonEvidenceCapabilityContext(unit, match) {
+  return NON_EVIDENCE_CAPABILITY_PATTERN.test(capabilityEvidenceContext(unit, match));
+}
+
+function isExplicitNegativeCapabilityEvidence(unit, match) {
   const before = unit.slice(0, match.index ?? 0).slice(-16);
   const after = unit.slice((match.index ?? 0) + match[0].length).slice(0, 16);
-  return NEGATIVE_CAPABILITY_PATTERN.test(match[0])
-    || NEGATIVE_CAPABILITY_PATTERN.test(before)
-    || NEGATIVE_CAPABILITY_PATTERN.test(after);
+  return EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(match[0])
+    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(before)
+    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(after)
+    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(capabilityEvidenceContext(unit, match));
 }
 
 function capabilityEvidenceValue(units, pattern) {
-  let found = false;
+  let explicitNegative = false;
   let positive = false;
   for (const unit of units) {
     const match = unit.match(pattern);
     if (!match) continue;
-    found = true;
-    if (!isNegativeCapabilityEvidence(unit, match)) positive = true;
+    if (isExplicitNegativeCapabilityEvidence(unit, match)) {
+      explicitNegative = true;
+      continue;
+    }
+    if (isNonEvidenceCapabilityContext(unit, match)) continue;
+    positive = true;
   }
-  if (!found) return null;
-  return positive;
+  if (positive) return true;
+  if (explicitNegative) return false;
+  return null;
 }
 
 function textEvidenceState(units, pattern) {

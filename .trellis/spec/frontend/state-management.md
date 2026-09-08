@@ -504,6 +504,13 @@ species[].biological_types[].capabilities
 - Capabilities exist only on an individual biological type and are each
   independently `true`, `false`, or `null`. A type name, gender label, pronoun,
   title, appearance, or body shape does not fill them automatically.
+- The non-human capability Evidence Gate applies to both boolean directions:
+  `true` requires same-species/type field-local evidence of the ability, and
+  `false` requires same-species/type field-local evidence of explicit inability
+  or impossibility. No evidence, no observation, no actual record, an
+  unspecified field, or pseudo-pregnancy alone is non-evidence and remains
+  `null`; it must not be converted to `false`. The human baseline exception
+  remains unchanged.
 - Human baseline reproduction rules apply only after an identified human type;
   precedence is explicit story fact > explicit world/Worldbook rule > explicit
   individual exception > ordinary human baseline. They do not merge
@@ -528,6 +535,8 @@ species[].biological_types[].capabilities
 | Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
 | Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
 | Capability or non-human rule evidence is missing | Normalize that individual field to `null` |
+| Non-human capability is only absent, unobserved, unrecorded, or pseudo-pregnancy evidence | Keep the capability `null`; do not infer `false` |
+| Non-human capability has explicit same-type inability evidence | Allow that individual capability to be `false` |
 | AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
 
 ### 5. Good / Base / Bad Cases

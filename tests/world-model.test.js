@@ -583,6 +583,32 @@ test('World Model analysis preserves explicit negative non-human capability evid
   assert.equal(result.species[0].biological_types[0].capabilities.can_fertilize, null);
 });
 
+test('World Model analysis keeps absent or pseudo-pregnancy evidence unknown', async () => {
+  const result = await analyzeDescription('女性剑灵没有证据证明可以怀孕；仅存在假孕现象，无实际妊娠记录。', [
+    {name: '剑灵', biological_types: [typeFixture('女性')]},
+  ]);
+  assert.deepEqual(result.species[0].biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+});
+
+test('World Model analysis accepts field-local explicit non-human inability', async () => {
+  const result = await analyzeDescription('女性剑灵不能怀孕，也无法被受精。', [
+    {name: '剑灵', biological_types: [typeFixture('女性')]},
+  ]);
+  assert.deepEqual(result.species[0].biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: false,
+    can_fertilize: null,
+    can_carry_pregnancy: false,
+  });
+});
+
 test('World Model analysis applies only the named human-equivalence field to non-human types', async () => {
   const result = await analyzeDescription('女性剑灵的妊娠规律与人类相同。', [
     {
@@ -787,6 +813,8 @@ test('World Model prompt distinguishes fixed dual evidence from temporary dualiz
   assert.match(messages[1].content, /角色本身是双性/);
   assert.match(prompt, /每个 biological_type 的 capabilities 必须逐项依据证据独立填写 true、false 或 null/);
   assert.match(prompt, /不能因为双性、Alpha、Beta 或 Omega 自动把所有能力设为 true/);
+  assert.match(prompt, /capability 的三态 Evidence Gate 同时约束 true 和 false/);
+  assert.match(prompt, /没有证据证明可以.*没有观察到.*没有实际记录.*仅存在假孕.*null/);
 });
 
 test('World Model prompt rejects dual types inferred from default male/female input', () => {
@@ -962,6 +990,27 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   const dualHtml = worldPage({worldModel: canonicalDualModel});
   assert.match(dualHtml, /双性/);
   assert.doesNotMatch(dualHtml, /双性\/间性/);
+
+  const visibleTypesModel = normalizeWorldModel({
+    ...modelFixture,
+    species: [{
+      ...modelFixture.species[0],
+      name: '人类',
+      biological_types: [
+        typeFixture('男性'),
+        typeFixture('女性'),
+        typeFixture('双性/间性'),
+        typeFixture('Alpha'),
+      ],
+    }],
+  });
+  const visibleTypesHtml = worldPage({worldModel: visibleTypesModel});
+  assert.equal((visibleTypesHtml.match(/<article class="bioweave-world-model-type">/g) ?? []).length, 4);
+  assert.match(visibleTypesHtml, /<h5>男性<\/h5>/);
+  assert.match(visibleTypesHtml, /<h5>女性<\/h5>/);
+  assert.match(visibleTypesHtml, /<h5>双性<\/h5>/);
+  assert.match(visibleTypesHtml, /<h5>Alpha<\/h5>/);
+  assert.doesNotMatch(visibleTypesHtml, /双性\/间性/);
 });
 
 test('World Model page preserves a species with no inferred biological type', () => {
