@@ -493,12 +493,14 @@ species[].biological_types[].capabilities
   may create the default species `人类`, but recognizing that species does not
   create any biological type.
 - During AI analysis, a biological type is saved only when the current
-  `AnalysisInput` contains it or explicitly describes that it exists. Type
-  names are open; the schema does not enumerate `男性` / `女性` / `双性`, and
-  it can represent classifications such as `Alpha`, `Beta`, and `Omega`
-  without inventing combinations. A manual editor change is explicit user
-  intent and remains subject to structural normalization, not AI evidence
-  filtering.
+  `AnalysisInput` contains it or explicitly describes that it exists in the
+  same species context. Evidence for one species cannot authorize a type in a
+  different species; deterministic semantic evidence such as `极少女剑灵`
+  still supports `女性` under `剑灵`. Type names are open; the schema does not
+  enumerate `男性` / `女性` / `双性`, and it can represent classifications such
+  as `Alpha`, `Beta`, and `Omega` without inventing combinations. A manual
+  editor change is explicit user intent and remains subject to structural
+  normalization, not AI evidence filtering.
 - Capabilities exist only on an individual biological type and are each
   independently `true`, `false`, or `null`. A type name, gender label, pronoun,
   title, appearance, or body shape does not fill them automatically.
@@ -511,9 +513,11 @@ species[].biological_types[].capabilities
   alias is not fixed-type evidence. The analysis-only guard may remove such
   unsupported familiar labels and close matching `unknowns`; manual edits are
   not evidence-filtered.
-- Non-human capabilities, cycles, gestation, and fertilization remain `null`
-  without direct mechanism evidence. An explicit statement that one specific
-  human baseline portion is shared can fill only that portion.
+- Non-human capabilities, reproduction rules, lifecycle, and special rules
+  remain `null` without corresponding species-linked mechanism evidence. An
+  explicit statement that one specific human baseline portion is shared can
+  fill only that portion; a non-human type name or humanoid anatomy never
+  authorizes the rest of the human template.
 
 ### 4. Validation & Error Matrix
 
@@ -523,14 +527,19 @@ species[].biological_types[].capabilities
 | Strict response has no `species` array or a species has no `biological_types` array | Throw `WORLD_MODEL_INVALID` |
 | Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
 | Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
-| Capability evidence is missing | Normalize that individual capability to `null` |
-| AI returns an unsupported familiar biological type or dual unknown | Remove it from analysis output; manual editing is not filtered |
+| Capability or non-human rule evidence is missing | Normalize that individual field to `null` |
+| AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: male evidence produces `人类 → 男性`; male plus female evidence
   produces `人类 → 男性、女性`.
 - Good: “剑灵基本为男性，极少女剑灵” produces `剑灵 → 男性、女性`.
+- Good: human male/female evidence elsewhere does not authorize `妖 → 男性`
+  or `魔 → 女性`; without species-linked evidence those arrays stay empty.
+- Good: a non-human type with direct sperm, cycle, or lifespan evidence keeps
+  only those corresponding fields; unrelated capabilities and rules remain
+  `null`.
 - Base: a species is identified but no type is explicitly present; retain the
   species with an empty `biological_types` array and do not invent one.
 - Bad: identify `人类` and then add male, female, and dual types merely

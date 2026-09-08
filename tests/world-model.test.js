@@ -70,13 +70,17 @@ function worldResponse(species, unknowns = []) {
   };
 }
 
-async function analyzeDescription(description, species, unknowns = []) {
+async function analyzeInput(analysisInput, species, unknowns = []) {
   const response = worldResponse(species, unknowns);
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
     contextResolver: () => ({generateRaw: () => JSON.stringify(response)}),
   });
-  return analyzer.analyzeWorldModel({analysisInput: {character: {description}}});
+  return analyzer.analyzeWorldModel({analysisInput});
+}
+
+async function analyzeDescription(description, species, unknowns = []) {
+  return analyzeInput({character: {description}}, species, unknowns);
 }
 
 test('World Model schema keeps capability unknowns as null and drops extra fields', () => {
@@ -213,7 +217,7 @@ test('World Model analysis does not keep an unsupported fixed dual type', async 
   const result = await analyzer.analyzeWorldModel({
     analysisInput: {
       persona: {description: '用户自述为双性，但人物设定不参与 World Model。'},
-      character: {description: '资料只出现男性和女性。'},
+      character: {description: '资料只出现男性和女性；潮汐生物存在潮汐生物型，但不确定双性。'},
     },
   });
 
@@ -235,7 +239,7 @@ test('World Model analysis keeps and canonicalizes a fixed dual type when source
 
   const result = await analyzer.analyzeWorldModel({
     analysisInput: {
-      character: {description: '角色是明确的双性人类。'},
+      character: {description: '潮汐生物型存在；潮汐生物明确存在双性个体。'},
     },
   });
 
@@ -471,7 +475,7 @@ test('World Model analysis keeps non-human female mechanisms unknown without evi
   const result = await analyzeDescription('资料明确存在女性剑灵，但没有说明其生殖机制。', [
     {
       name: '剑灵',
-      biological_types: [typeFixture('女性', {capabilities: {}, reproduction_rules: {}})],
+      biological_types: [typeFixture('女性')],
     },
   ]);
   const type = result.species[0].biological_types[0];
@@ -493,16 +497,162 @@ test('World Model analysis keeps non-human female mechanisms unknown without evi
   });
 });
 
+test('World Model analysis does not leak human sex evidence into non-human species', async () => {
+  const result = await analyzeInput({
+    character: {description: '人类资料明确出现男性和女性。妖：只确认存在这个种族，未说明性别分类。魔：只确认存在这个种族，未说明性别分类。'},
+  }, [
+    {name: '人类', biological_types: [typeFixture('男性'), typeFixture('女性'), typeFixture('Alpha')]},
+    {name: '妖', biological_types: [typeFixture('男性'), typeFixture('女性')]},
+    {name: '魔', biological_types: [typeFixture('男性'), typeFixture('女性')]},
+  ], ['妖族男性的具体机制未知', '妖族的生殖机制未知']);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+  assert.deepEqual(result.species.slice(1).map(species => species.biological_types), [[], []]);
+  assert.deepEqual(result.unknowns, ['妖族的生殖机制未知']);
+});
+
+test('World Model analysis keeps female sword spirits from deterministic semantic evidence', async () => {
+  const result = await analyzeDescription('剑灵性别基本都为男性，极少女剑灵。', [
+    {name: '剑灵', biological_types: [typeFixture('男性'), typeFixture('女性')]},
+  ]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+  assert.ok(result.species[0].biological_types.every(type => Object.values(type.capabilities).every(value => value === null)));
+});
+
+test('World Model analysis does not treat unrelated partners or individual labels as species types', async () => {
+  const result = await analyzeDescription('妖兽会与男人交配，也会与人类女性性交；某个剑灵角色是男性。', [
+    {name: '妖', biological_types: [typeFixture('女性')]},
+    {name: '剑灵', biological_types: [typeFixture('男性')]},
+  ]);
+  assert.deepEqual(result.species.map(species => species.biological_types), [[], []]);
+});
+
+test('World Model analysis keeps only directly evidenced non-human fields', async () => {
+  const result = await analyzeDescription('妖族男性会产生精液；妖族存在发情期；妖族寿命通常为六百年。', [
+    {
+      name: '妖',
+      biological_types: [typeFixture('男性', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: false,
+          can_be_fertilized: false,
+          can_fertilize: true,
+          can_carry_pregnancy: false,
+        },
+        reproduction_rules: {
+          fertilization: '按人类方式受精。',
+          pregnancy_or_carrying: '可以妊娠。',
+          cycle: '存在发情期。',
+          ovulation: '会排卵。',
+          gestation: '妊娠六个月。',
+          labor: '按人类方式分娩。',
+        },
+        lifecycle: {maturation: '达到成年后成熟。', aging: '寿命通常为六百年。'},
+        special_rules: ['妖族存在发情期。', '成结用于提高受精成功率。'],
+      })],
+    },
+  ]);
+  const type = result.species[0].biological_types[0];
+
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+  assert.deepEqual(type.reproduction_rules, {
+    fertilization: null,
+    pregnancy_or_carrying: null,
+    cycle: '存在发情期。',
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  });
+  assert.deepEqual(type.lifecycle, {maturation: null, aging: '寿命通常为六百年。'});
+  assert.deepEqual(type.special_rules, ['妖族存在发情期。']);
+});
+
+test('World Model analysis preserves explicit negative non-human capability evidence', async () => {
+  const result = await analyzeDescription('妖族男性不能产生精子，也不能被受精。', [
+    {name: '妖', biological_types: [typeFixture('男性')]},
+  ]);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_sperm, false);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_be_fertilized, false);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_fertilize, null);
+});
+
+test('World Model analysis applies only the named human-equivalence field to non-human types', async () => {
+  const result = await analyzeDescription('女性剑灵的妊娠规律与人类相同。', [
+    {
+      name: '剑灵',
+      biological_types: [typeFixture('女性', {
+        capabilities: {
+          can_produce_sperm: false,
+          can_produce_ova: true,
+          can_be_fertilized: true,
+          can_fertilize: false,
+          can_carry_pregnancy: true,
+        },
+        reproduction_rules: {
+          fertilization: '按人类方式受精。',
+          pregnancy_or_carrying: '按人类方式妊娠。',
+          cycle: '约28天。',
+          ovulation: '排卵。',
+          gestation: '约40周。',
+          labor: '按人类方式分娩。',
+        },
+      })],
+    },
+  ]);
+  const type = result.species[0].biological_types[0];
+
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: true,
+  });
+  assert.deepEqual(type.reproduction_rules, {
+    fertilization: null,
+    pregnancy_or_carrying: '按人类方式妊娠。',
+    cycle: null,
+    ovulation: null,
+    gestation: '约40周。',
+    labor: null,
+  });
+});
+
 test('World Analysis request uses ordinary chat messages for current and independent APIs', async () => {
   const analysisInput = {
     persona: {name: '用户甲', description: '用户人物设定私密内容，不应发送'},
-    character: {description: '只作为输入证据 {{user}}'},
+    character: {description: '只作为输入证据 {{user}}；潮汐生物存在潮汐生物型'},
     worldbooks: [{source_id: 'book-1', name: '内部书名不应发送', entries: [{entry_id: 'entry-1', label: '内部条目名不应发送', token_estimate: 8, content: '规则证据 {{user}}'}]}],
     recent_story: {enabled: true, items: [{floor: 81, role: 'assistant', content: '楼层证据 {{user}}'}]},
     external_memory: [],
     meta: {chat_id: 'chat-a', user_name: '用户甲', character_name: '角色甲'},
   };
   const requests = [];
+  const expectedModel = structuredClone(modelFixture);
+  expectedModel.species[0].biological_types[0].capabilities = {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  };
+  expectedModel.species[0].biological_types[0].reproduction_rules = {
+    fertilization: null,
+    pregnancy_or_carrying: null,
+    cycle: null,
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  };
+  expectedModel.species[0].biological_types[0].lifecycle = {maturation: null, aging: null};
+  expectedModel.species[0].biological_types[0].special_rules = [];
   const cases = [
     {
       profile: SILLYTAVERN_CURRENT_API,
@@ -532,7 +682,7 @@ test('World Analysis request uses ordinary chat messages for current and indepen
       contextResolver: () => item.context,
     });
     const result = await analyzer.analyzeWorldModel({analysisInput});
-    assert.deepEqual(result, modelFixture);
+    assert.deepEqual(result, expectedModel);
   }
 
   assert.equal(requests.length, 2);
@@ -601,6 +751,9 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   assert.match(prompt, /先独立识别 species，再在每个 species 内识别 biological_types/);
   assert.match(prompt, /识别出“人类”本身绝不能自动补齐任何 biological_type/);
   assert.match(prompt, /非人类 species/);
+  assert.match(prompt, /非人类 Evidence Gate/);
+  assert.match(prompt, /极少女剑灵/);
+  assert.match(prompt, /没有字段级证据时对应字段使用 null/);
   assert.match(prompt, /性别标签.*代词.*称谓.*外貌.*身体形态/);
   assert.match(prompt, /明确说明某一项生理结构与人类相同.*继承该项对应的基线部分/);
   assert.match(prompt, /medical_context/);

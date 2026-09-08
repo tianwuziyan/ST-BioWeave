@@ -28,6 +28,28 @@ const MALE_EVIDENCE_PATTERN = /(?:男性|男人|男孩|男生|雄性|男子|男�
 const FEMALE_EVIDENCE_PATTERN = /(?:女性|女人|女孩|女生|少女|雌性|女子|女剑灵|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*女(?:性)?|\bfemale\b|\bwoman\b|\bgirl\b)/iu;
 const NEGATED_LABEL_CONTEXT_PATTERN = /(?:没有|无|不存在|并非|不是|非|未(?:有|见|说明|提及|发现|出现)|不含|不确定|不明确|不清楚|可能|或许|也许|是否)[^。！？!?；;，,、\n]{0,24}$/u;
 const UNKNOWN_LABEL_SUFFIX_PATTERN = /(?:未知|不确定|不明确|不清楚|模糊)\s*$/u;
+const CAPABILITY_EVIDENCE_PATTERNS = Object.freeze({
+  can_produce_sperm: /(?:产生|生成|制造|分泌|拥有|含有|具备)[^。！？!?；;\n，,]{0,8}(?:精子|精液|雄性配子)|(?:精子|精液|雄性配子)[^。！？!?；;\n，,]{0,8}(?:产生|生成|制造|分泌|拥有|含有|具备)/iu,
+  can_produce_ova: /(?:产生|生成|制造|分泌|拥有|含有|具备)[^。！？!?；;\n，,]{0,8}(?:卵子|卵细胞|雌性配子)|(?:卵子|卵细胞|雌性配子)[^。！？!?；;\n，,]{0,8}(?:产生|生成|制造|分泌|拥有|含有|具备)/iu,
+  can_be_fertilized: /(?:被|接受|可被|能被|能够被|可以被)[^。！？!?；;\n，,]{0,8}受精|(?:可|能|能够|可以|会|不能|无法|不可|不会)受精(?:能力)?|受精[^。！？!?；;\n，,]{0,8}(?:能力|资格)/iu,
+  can_fertilize: /(?:使|让|令)[^。！？!?；;\n，,]{0,8}受精|授精|(?:可|能|能够|可以|会|不能|无法|不可|不会)[^。！？!?；;\n，,]{0,8}(?:使|让|令)[^。！？!?；;\n，,]{0,8}受精/iu,
+  can_carry_pregnancy: /(?:怀孕|妊娠|孕育|携带胎儿|承担妊娠|妊娠能力|生育)/iu,
+});
+const REPRODUCTION_RULE_EVIDENCE_PATTERNS = Object.freeze({
+  fertilization: /受精|授精|配子结合|精卵结合|fertiliz/iu,
+  pregnancy_or_carrying: /怀孕|妊娠|孕育|受孕|携带胎儿|承担妊娠|母体|pregnan|carrying/iu,
+  cycle: /发情期|发情周期|生理期|月经(?:周期)?|排卵周期|繁殖周期|生殖周期|性周期|热期|cycle/iu,
+  ovulation: /排卵|卵巢排出|ovulation/iu,
+  gestation: /孕期|妊娠期|妊娠时长|妊娠|孕周|孕期时长|(?:孕育|怀孕)[^。！？!?；;\n，,]{0,8}(?:月|周|天)|gestation/iu,
+  labor: /分娩|产程|生产|接生|labor/iu,
+});
+const LIFECYCLE_EVIDENCE_PATTERNS = Object.freeze({
+  maturation: /成熟|性成熟|成年|发育|maturation/iu,
+  aging: /衰老|老化|寿命|长生|老去|aging|lifespan/iu,
+});
+const NEGATIVE_CAPABILITY_PATTERN = /(?:不能|无法|不可|不会|不具备|不产生|没有|无|缺乏|不存在|未(?:能|有|具备|产生)|并非|不是|否认)/u;
+const UNSPECIFIED_FIELD_CONTEXT_PATTERN = /(?:没有(?:明确|说明|提及|描述|提供)|未(?:明确|说明|提及|描述|提供)|不确定|不明确|不清楚|未知|尚未(?:明确|说明)|无从判断)[^。！？!?；;，,、\n]{0,10}$/u;
+const HUMAN_SPECIES_NAMES = new Set(['人类', '人', 'human', 'humans']);
 const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
 const FAMILIAR_TYPE_NAMES = new Set(['男性', '女性', '双性']);
 
@@ -172,20 +194,21 @@ function worldModelEvidenceText(input = {}) {
   return parts.filter(value => typeof value === 'string').join('\n');
 }
 
-function evidenceClauses(input) {
+function evidenceUnits(input) {
   return worldModelEvidenceText(input)
     .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性')
-    .split(/[。！？!?；;，,、\n]+/u)
+    // 保留逗号连接的同一语义单元，例如“剑灵性别基本都为男性，极少女剑灵”。
+    .split(/[。！？!?；;\n]+/u)
     .map(value => value.trim())
     .filter(Boolean);
 }
 
-function hasLabelEvidence(input, pattern) {
-  return evidenceClauses(input).some(clause => {
-    const match = clause.match(pattern);
+function hasLabelEvidenceInUnits(units, pattern) {
+  return units.some(unit => {
+    const match = unit.match(pattern);
     if (!match) return false;
-    const before = clause.slice(0, match.index ?? 0).slice(-12);
-    const after = clause.slice((match.index ?? 0) + match[0].length).slice(0, 12);
+    const before = unit.slice(0, match.index ?? 0).slice(-12);
+    const after = unit.slice((match.index ?? 0) + match[0].length).slice(0, 12);
     if (NEGATED_LABEL_CONTEXT_PATTERN.test(before)) return false;
     if (/^\s*(?:不存在|没有|未(?:有|见|说明|提及|发现|出现)|不确定|不明确|不清楚|模糊)/u.test(after)) return false;
     if (UNKNOWN_LABEL_SUFFIX_PATTERN.test(after)) return false;
@@ -193,15 +216,204 @@ function hasLabelEvidence(input, pattern) {
   });
 }
 
-function hasFixedDualEvidence(input) {
-  return evidenceClauses(input).some(clause => {
-    const stableClause = clause.replace(TEMPORARY_DUAL_PHRASE_PATTERN, '').trim();
+function hasMentionedLabelInUnits(units, pattern) {
+  return units.some(unit => {
+    const match = unit.match(pattern);
+    if (!match) return false;
+    const before = unit.slice(0, match.index ?? 0).slice(-12);
+    return !NEGATED_LABEL_CONTEXT_PATTERN.test(before);
+  });
+}
+
+function hasFixedDualEvidenceInUnits(units) {
+  return units.some(unit => {
+    const stableClause = unit.replace(TEMPORARY_DUAL_PHRASE_PATTERN, '').trim();
     const dualMatch = stableClause.match(DUAL_TERM_PATTERN);
     if (!dualMatch) return false;
     const beforeDual = stableClause.slice(0, dualMatch.index ?? 0).slice(-20);
     if (NEGATED_DUAL_CONTEXT_PATTERN.test(beforeDual)) return false;
     return /(?:^|[：:])\s*双性|双性(?:个体|人|生物|类型|分类|性别|身份|体质|特征|存在者|者|体|存在|是|为|属于)|(?:是|为|属于|定义为|分类为|归类为|存在(?:着)?|包括|包含|出现|有|分为|明确为|固定(?:为)?|本身(?:是|为)?|角色(?:本身)?(?:是|为)?|个体(?:是|为)?|物种(?:是|为)?|种族(?:是|为)?|性别|世界规则|规则|设定|具有|具备|呈现|表现为|规定|记载|说明|明确)[^。！？!?；;，,、\n]{0,16}双性/u.test(stableClause);
   });
+}
+
+function compactEvidenceText(value) {
+  return String(value ?? '').replace(/\s+/gu, '');
+}
+
+function speciesEvidenceAliases(speciesName) {
+  const normalizedSpecies = compactEvidenceText(speciesName);
+  if (normalizedSpecies === '妖') return ['妖族', '妖修', '妖兽', '妖怪', '妖类', '妖'];
+  if (normalizedSpecies === '魔') return ['魔族', '天魔', '魔物', '魔'];
+  if (normalizedSpecies === '剑灵') return ['剑灵'];
+  return normalizedSpecies ? [normalizedSpecies] : [];
+}
+
+function matchesSpeciesAlias(text, alias) {
+  if (alias.length > 1) return text.includes(alias);
+  const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`(?:^|[\\s\\[\\]（）()<>：:、，,])${escapedAlias}(?=$|[\\s\\[\\]（）()<>：:、，,族类种性修兽怪])`, 'u').test(text);
+}
+
+function speciesEvidenceUnits(units, speciesName) {
+  const aliases = speciesEvidenceAliases(speciesName);
+  return units.filter(unit => {
+    const compactUnit = compactEvidenceText(unit);
+    return aliases.some(alias => matchesSpeciesAlias(compactUnit, alias));
+  });
+}
+
+function hasDirectTypeEvidence(unit, typeName) {
+  if (typeName === '男性') return hasLabelEvidenceInUnits([unit], MALE_EVIDENCE_PATTERN);
+  if (typeName === '女性') return hasLabelEvidenceInUnits([unit], FEMALE_EVIDENCE_PATTERN);
+  if (typeName === '双性') return hasFixedDualEvidenceInUnits([unit]);
+  const normalizedType = compactEvidenceText(typeName);
+  if (!normalizedType) return false;
+  const typeIndex = compactEvidenceText(unit).indexOf(normalizedType);
+  if (typeIndex < 0) return false;
+  const before = compactEvidenceText(unit).slice(0, typeIndex).slice(-18);
+  const after = compactEvidenceText(unit).slice(typeIndex + normalizedType.length, typeIndex + normalizedType.length + 18);
+  return !NEGATED_LABEL_CONTEXT_PATTERN.test(before) && !/^(?:不存在|没有|未(?:有|见|说明|提及|发现|出现)|不确定|不明确|不清楚|模糊)/u.test(after);
+}
+
+function typeEvidenceMatch(unit, typeName) {
+  if (typeName === '男性') return unit.match(MALE_EVIDENCE_PATTERN);
+  if (typeName === '女性') return unit.match(FEMALE_EVIDENCE_PATTERN);
+  if (typeName === '双性') return unit.match(DUAL_TERM_PATTERN);
+  const normalizedType = compactEvidenceText(typeName);
+  if (!normalizedType) return null;
+  const compactUnit = compactEvidenceText(unit);
+  const typeIndex = compactUnit.indexOf(normalizedType);
+  return typeIndex < 0 ? null : {index: typeIndex, 0: normalizedType};
+}
+
+function hasSpeciesLinkedTypeEvidence(unit, speciesName, typeName) {
+  const typeMatch = typeEvidenceMatch(unit, typeName);
+  if (!typeMatch) return false;
+  const compactUnit = compactEvidenceText(unit);
+  const typeStart = typeMatch.index ?? 0;
+  const typeEnd = typeStart + String(typeMatch[0] ?? '').length;
+  const relationPattern = /性别|生殖分类|分类|类型|存在|包括|包含|分为|基本|主要|多数|少数|极少|少量|大多|通常|均为|都是|为主|有|属于|明确/u;
+  const individualPattern = /某(?:个|位|名)|一(?:个|位|名)|这个角色|该角色|某人物|单个/u;
+  const externalHumanPattern = /人类|人族/u;
+  const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣/u;
+
+  for (const alias of speciesEvidenceAliases(speciesName)) {
+    let aliasStart = compactUnit.indexOf(alias);
+    while (aliasStart >= 0) {
+      const aliasEnd = aliasStart + alias.length;
+      const contextStart = Math.min(aliasStart, typeStart);
+      const contextEnd = Math.max(aliasEnd, typeEnd);
+      const between = compactUnit.slice(Math.min(aliasEnd, typeEnd), Math.max(aliasStart, typeStart));
+      const context = compactUnit.slice(Math.max(0, contextStart - 8), Math.min(compactUnit.length, contextEnd + 8));
+      if (!externalHumanPattern.test(between)
+        && !(interactionPattern.test(between) && !relationPattern.test(between))
+        && !(individualPattern.test(context) && !relationPattern.test(between))) {
+        if (between.length <= 6 || relationPattern.test(between)) return true;
+      }
+      aliasStart = compactUnit.indexOf(alias, aliasStart + 1);
+    }
+  }
+  return false;
+}
+
+function typeEvidenceUnits(units, speciesName, typeName) {
+  const speciesUnits = speciesEvidenceUnits(units, speciesName);
+  const directUnits = speciesUnits.filter(unit => (
+    hasDirectTypeEvidence(unit, typeName)
+      && hasSpeciesLinkedTypeEvidence(unit, speciesName, typeName)
+  ));
+  return directUnits;
+}
+
+function hasNonHumanTypeEvidence(units, speciesName, typeName) {
+  return typeEvidenceUnits(units, speciesName, typeName).length > 0;
+}
+
+function hasBiologicalTypeEvidence(units, speciesName, typeName) {
+  if (isHumanSpeciesName(speciesName)) {
+    return units.some(unit => hasDirectTypeEvidence(unit, typeName));
+  }
+  return hasNonHumanTypeEvidence(units, speciesName, typeName);
+}
+
+function fieldEvidenceUnits(units, speciesName, typeName, typeCount) {
+  const speciesUnits = speciesEvidenceUnits(units, speciesName);
+  const directUnits = typeEvidenceUnits(units, speciesName, typeName);
+  // 单一已建立类型时，物种级机制陈述可以唯一指向它；多个类型仍需类型上下文。
+  return typeCount === 1 ? speciesUnits : directUnits;
+}
+
+function isHumanSpeciesName(speciesName) {
+  return HUMAN_SPECIES_NAMES.has(compactEvidenceText(speciesName).toLowerCase());
+}
+
+function isNegativeCapabilityEvidence(unit, match) {
+  const before = unit.slice(0, match.index ?? 0).slice(-16);
+  const after = unit.slice((match.index ?? 0) + match[0].length).slice(0, 16);
+  return NEGATIVE_CAPABILITY_PATTERN.test(match[0])
+    || NEGATIVE_CAPABILITY_PATTERN.test(before)
+    || NEGATIVE_CAPABILITY_PATTERN.test(after);
+}
+
+function capabilityEvidenceValue(units, pattern) {
+  let found = false;
+  let positive = false;
+  for (const unit of units) {
+    const match = unit.match(pattern);
+    if (!match) continue;
+    found = true;
+    if (!isNegativeCapabilityEvidence(unit, match)) positive = true;
+  }
+  if (!found) return null;
+  return positive;
+}
+
+function textEvidenceState(units, pattern) {
+  let found = false;
+  let positive = false;
+  for (const unit of units) {
+    const match = unit.match(pattern);
+    if (!match) continue;
+    found = true;
+    const before = unit.slice(0, match.index ?? 0).slice(-18);
+    if (!UNSPECIFIED_FIELD_CONTEXT_PATTERN.test(before)) positive = true;
+  }
+  if (!found || !positive) return null;
+  return 'positive';
+}
+
+function hasDirectRuleEvidence(value, units) {
+  const ruleText = compactEvidenceText(value);
+  if (!ruleText) return false;
+  const sourceText = units.map(compactEvidenceText).join('\n');
+  if (ruleText.length <= 3) return sourceText.includes(ruleText);
+  const runs = ruleText.match(/[\u4e00-\u9fffA-Za-z0-9]{4,}/gu) ?? [];
+  return runs.some(run => [...Array(run.length - 3)].some((_, index) => sourceText.includes(run.slice(index, index + 4))));
+}
+
+function sanitizeNonHumanType(type, units, speciesName, typeCount) {
+  const fieldUnits = fieldEvidenceUnits(units, speciesName, type.name, typeCount);
+  const speciesUnits = speciesEvidenceUnits(units, speciesName);
+  return {
+    ...type,
+    capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [
+      key,
+      capabilityEvidenceValue(fieldUnits, CAPABILITY_EVIDENCE_PATTERNS[key]),
+    ])),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [
+      key,
+      textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key])
+        ? type.reproduction_rules[key]
+        : null,
+    ])),
+    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [
+      key,
+      textEvidenceState(fieldUnits, LIFECYCLE_EVIDENCE_PATTERNS[key])
+        ? type.lifecycle[key]
+        : null,
+    ])),
+    special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, speciesUnits)),
+  };
 }
 
 function normalizeAnalysisType(type, speciesName) {
@@ -219,11 +431,15 @@ function isObservedNonBiologicalType(name, speciesName) {
   return false;
 }
 
-function isUnsupportedFamiliarType(name, evidence) {
+function isUnsupportedFamiliarType(name, speciesName, evidence) {
   if (!FAMILIAR_TYPE_NAMES.has(name)) return false;
-  if (name === '男性') return !hasLabelEvidence(evidence, MALE_EVIDENCE_PATTERN);
-  if (name === '女性') return !hasLabelEvidence(evidence, FEMALE_EVIDENCE_PATTERN);
-  return !hasFixedDualEvidence(evidence);
+  const units = evidenceUnits(evidence);
+  if (isHumanSpeciesName(speciesName)) {
+    if (name === '男性') return !hasLabelEvidenceInUnits(units, MALE_EVIDENCE_PATTERN);
+    if (name === '女性') return !hasLabelEvidenceInUnits(units, FEMALE_EVIDENCE_PATTERN);
+    return !hasFixedDualEvidenceInUnits(units);
+  }
+  return !hasNonHumanTypeEvidence(units, speciesName, name);
 }
 
 function isDualTypeName(name) {
@@ -235,22 +451,48 @@ function isUnsupportedDualUnknown(value) {
   return /双性(?:个体|个人|人|生物|类型|分类|性别|能力|生育|受精)/u.test(String(value ?? ''));
 }
 
+function isUnsupportedUnknownType(value, species) {
+  const text = String(value ?? '');
+  return species.some(item => {
+    if (isHumanSpeciesName(item.name)) return false;
+    if (!speciesEvidenceUnits([text], item.name).length) return false;
+    const names = new Set(item.biological_types.map(type => type.name));
+    return [...FAMILIAR_TYPE_NAMES].some(typeName => {
+      if (typeName === '双性' && !hasFixedDualEvidenceInUnits([text])) return false;
+      if (typeName === '男性' && !hasMentionedLabelInUnits([text], MALE_EVIDENCE_PATTERN)) return false;
+      if (typeName === '女性' && !hasMentionedLabelInUnits([text], FEMALE_EVIDENCE_PATTERN)) return false;
+      return !names.has(typeName);
+    });
+  });
+}
+
 // AI 分析才经过证据边界；手动编辑保存的 World Model 只经过结构规范化。
 function applyWorldModelEvidenceGuard(model, analysisInput) {
-  const hasFixedDual = hasFixedDualEvidence(analysisInput);
+  const evidence = evidenceUnits(analysisInput);
+  const hasFixedDual = hasFixedDualEvidenceInUnits(evidence);
   const species = [];
   for (const item of model.species) {
-    const biologicalTypes = item.biological_types
+    const normalizedTypes = item.biological_types
       .map(type => normalizeAnalysisType(type, item.name))
-      .filter(type => !isObservedNonBiologicalType(type.name, item.name))
-      .filter(type => !isUnsupportedFamiliarType(type.name, analysisInput))
-      .filter(type => hasFixedDual || !isDualTypeName(type.name));
+      .filter(type => !isObservedNonBiologicalType(type.name, item.name));
+    const humanSpecies = isHumanSpeciesName(item.name);
+    const localFixedDual = humanSpecies ? hasFixedDual : hasNonHumanTypeEvidence(evidence, item.name, '双性');
+    const supportedTypes = normalizedTypes
+      .filter(type => !isUnsupportedFamiliarType(type.name, item.name, analysisInput))
+      .filter(type => hasBiologicalTypeEvidence(evidence, item.name, type.name))
+      .filter(type => localFixedDual || !isDualTypeName(type.name));
+    const biologicalTypes = humanSpecies
+      ? supportedTypes
+      : supportedTypes.map(type => sanitizeNonHumanType(type, evidence, item.name, supportedTypes.length));
     species.push({...item, biological_types: biologicalTypes});
   }
   return {
     ...model,
     species,
-    unknowns: hasFixedDual ? model.unknowns : model.unknowns.filter(value => !isUnsupportedDualUnknown(value)),
+    unknowns: model.unknowns.filter(value => {
+      if (!hasFixedDual && isUnsupportedDualUnknown(value)) return false;
+      return !isUnsupportedUnknownType(value, species);
+    }),
   };
 }
 
