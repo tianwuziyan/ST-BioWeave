@@ -71,3 +71,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 修复 World UI 类型展示与非人类能力证据
+<!-- trellis-session: v=2 fp=01fb0da971fbc38b -->
+
+**Date**: 2026-09-08
+**Task**: 修复 World UI 类型展示与非人类能力证据
+**Branch**: `main`
+
+### Summary
+
+World UI 动态渲染 species 下全部 biological_types，补充男性/女性/双性与 Alpha 回归；非人类 capability 仅在字段级明确证据下写入 true/false，缺失、无记录和假孕保持 null；同步 Prompt、frontend spec 与测试。聚焦 47 项、全量 147 项测试及 npm run check 通过，等待 SillyTavern 真实复测。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce1d095` | 修复 World UI 类型展示与非人类能力三态证据 |
+
+### Status
+
+[OK] **Completed**
