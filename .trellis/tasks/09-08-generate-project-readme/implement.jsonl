@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/index.md","reason":"共享开发思考指南，要求修改前搜索证据、保持跨层边界并完成验证。"}
+{"file":".trellis/spec/frontend/index.md","reason":"当前项目原生 DOM 前端层的规范入口，帮助 README 准确描述 UI 边界和验证方式。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"项目目录与模块边界说明，支持 README 的目录树和模块职责描述。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"质量检查、测试命令和范围纪律，支持 README 的开发贡献与验证章节。"}
+{"file":"docs/DATA-MODEL.md","reason":"确认全局扩展设置、Chat metadata、楼层 extra、World Model 和领域链路的数据边界。"}
+{"file":"docs/DEVELOPMENT.md","reason":"确认模块职责、开发顺序、轻量原生 JS 约束和手动 UI 验收范围。"}
+{"file":"docs/UI.md","reason":"确认路由、响应式导航、设置、World Model 编辑和页面占位状态。"}
+{"file":"docs/references/BioWeave_UI_v2.0_design.md","reason":"确认 UI 设计模型、Chat 作用域、响应式断点、导航和数据契约；只把设计目标写成路线图。"}
+{"file":"docs/references/BioWeave_World_UI_开发规范_v2.md","reason":"确认 World Model 模块级编辑、保存隔离、证据边界与响应式 UI 设计约束。"}

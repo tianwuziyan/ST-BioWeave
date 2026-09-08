@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/index.md","reason":"按共享指南检查 README 事实来源、跨层关系和变更范围。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按项目质量规范运行语法、测试、空白和范围检查。"}
+{"file":"README.md","reason":"检查中文完整性、标题层级、代码示例、Mermaid、内部链接、安装说明和功能状态表述。"}
+{"file":"docs/DATA-MODEL.md","reason":"逐项核对 README 的数据存储、Chat/Floor 作用域和 World Model schema 描述。"}
+{"file":"docs/DEVELOPMENT.md","reason":"核对 README 的开发脚本、模块边界、测试和未完成路线图。"}
+{"file":"docs/UI.md","reason":"核对 README 的 UI 页面、响应式行为、设置和当前页面实现状态。"}
+{"file":"docs/references/BioWeave_UI_v2.0_design.md","reason":"检查设计参考链接和规划能力是否被误写成已完成功能。"}
+{"file":"docs/references/BioWeave_World_UI_开发规范_v2.md","reason":"检查 World Model UI 细节、模块编辑与保存失败语义是否准确。"}
