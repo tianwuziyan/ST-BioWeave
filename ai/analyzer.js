@@ -20,8 +20,7 @@ const WORLD_RULE_KEYS = Object.freeze([
 const LIFECYCLE_KEYS = Object.freeze(['maturation', 'aging']);
 const MEDICAL_CONTEXT_KEYS = Object.freeze(['childbirth_difficulty', 'care_level', 'evidence']);
 const UNKNOWN_TEXT = new Set(['unknown', 'null', 'undefined', 'n/a', '未知', '不确定']);
-// “双性化”只是可选身体改造规则，不能单独证明世界存在双性/间性类别。
-const INTERSEX_EVIDENCE_PATTERN = /(?:双性(?!恋|化)|间性|雌雄同体|阴阳人|intersex|hermaphrodite)/iu;
+const INTERSEX_EVIDENCE_PATTERN = /(?:双性(?!恋)|间性|雌雄同体|阴阳人|intersex|hermaphrodite)/iu;
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -44,9 +43,7 @@ function localizedWorldModelText(value) {
     .replace(/\bHomo\s+sapiens\b/gi, '人类')
     .replace(/\bHumans?\b/gi, '人类')
     .replace(/\bfemale\b/gi, '女性')
-    .replace(/\bmale\b/gi, '男性')
-    .replace(/\bintersex\b/gi, '双性/间性')
-    .replace(/\bhermaphrodite\b/gi, '双性/间性');
+    .replace(/\bmale\b/gi, '男性');
 }
 
 function nullableBoolean(value) {
@@ -75,43 +72,19 @@ function objectOrEmpty(value) {
   return value;
 }
 
-function normalizeSexCategory(raw, index) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_SEX_CATEGORY_${index}`);
+function normalizeBiologicalType(raw, index) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}`);
   const capabilities = objectOrEmpty(raw.capabilities);
   const reproductionRules = objectOrEmpty(raw.reproduction_rules);
+  const lifecycle = objectOrEmpty(raw.lifecycle);
   return {
     name: localizedWorldModelText(raw.name),
     description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [key, nullableBoolean(capabilities[key])])),
     reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, localizedWorldModelText(reproductionRules[key])])),
-  };
-}
-
-function normalizeBiologicalType(raw, index, {strict = false} = {}) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}`);
-  const hasSexCategories = Object.hasOwn(raw, 'sex_categories');
-  if (strict && !hasSexCategories) throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}_SEX_CATEGORIES`);
-  if (hasSexCategories && !Array.isArray(raw.sex_categories)) throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}_SEX_CATEGORIES`);
-  const capabilities = objectOrEmpty(raw.capabilities);
-  const reproductionRules = objectOrEmpty(raw.reproduction_rules);
-  const lifecycle = objectOrEmpty(raw.lifecycle);
-  const normalized = {
-    name: localizedWorldModelText(raw.name),
-    description: localizedWorldModelText(raw.description),
-    sex_categories: Array.isArray(raw.sex_categories)
-      ? raw.sex_categories.map(normalizeSexCategory)
-      : [],
     lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [key, localizedWorldModelText(lifecycle[key])])),
     special_rules: stringList(raw.special_rules, localizedWorldModelText),
   };
-  // 旧 Chat 的种族层能力/规则不能丢失；新结构优先使用 sex_categories。
-  if (Object.hasOwn(raw, 'capabilities')) {
-    normalized.capabilities = Object.fromEntries(CAPABILITY_KEYS.map(key => [key, nullableBoolean(capabilities[key])]));
-  }
-  if (Object.hasOwn(raw, 'reproduction_rules')) {
-    normalized.reproduction_rules = Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, localizedWorldModelText(reproductionRules[key])]));
-  }
-  return normalized;
 }
 
 function normalizeExceptions(value) {
@@ -168,21 +141,12 @@ function isIntersexType(type) {
   return INTERSEX_EVIDENCE_PATTERN.test(typeof type?.name === 'string' ? type.name : '');
 }
 
-function isIntersexSexCategory(category) {
-  return INTERSEX_EVIDENCE_PATTERN.test(typeof category?.name === 'string' ? category.name : '');
-}
-
-// AI 分析不能凭空新增双性/间性种族或性别类别；手动编辑保存的 World Model 不经过此过滤。
+// AI 分析不能凭空新增双性/间性类型；手动编辑保存的 World Model 不经过此过滤。
 function removeUnsupportedIntersexTypes(model, analysisInput) {
   if (hasExplicitIntersexEvidence(analysisInput)) return model;
   return {
     ...model,
-    biological_types: model.biological_types
-      .filter(type => !isIntersexType(type))
-      .map(type => ({
-        ...type,
-        sex_categories: type.sex_categories.filter(category => !isIntersexSexCategory(category)),
-      })),
+    biological_types: model.biological_types.filter(type => !isIntersexType(type)),
   };
 }
 
@@ -198,7 +162,7 @@ export function normalizeWorldModel(raw, {strict = false} = {}) {
   }
   if (raw.biological_types !== undefined && !Array.isArray(raw.biological_types)) throw invalidWorldModel();
   const biologicalTypes = Array.isArray(raw.biological_types)
-    ? raw.biological_types.map((type, index) => normalizeBiologicalType(type, index, {strict}))
+    ? raw.biological_types.map(normalizeBiologicalType)
     : [];
   return {
     schema_version: WORLD_MODEL_SCHEMA.schema_version,

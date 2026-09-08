@@ -3,7 +3,7 @@ import {charactersPage} from './characters.js';
 import {eventsPage} from './events.js';
 import {projectionPage} from './projection.js';
 import {genealogyPage} from './genealogy.js';
-import {emptyWorldModelSexCategory, emptyWorldModelType, worldPage} from './world.js';
+import {emptyWorldModelType, worldPage} from './world.js';
 import {normalizeModelList, settingsPage} from './settings.js';
 import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
@@ -1157,40 +1157,33 @@ export function createApp(runtime, options = {}) {
     const readValue = node => String(node?.value ?? '').trim();
     const readLines = node => readValue(node).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
     const readIn = (parent, selector) => parent?.querySelector?.(selector);
-    const capabilityKeys = ['can_produce_sperm', 'can_produce_ova', 'can_be_fertilized', 'can_fertilize', 'can_carry_pregnancy'];
-    const ruleKeys = ['ovulation', 'fertilization', 'pregnancy_or_carrying', 'gestation', 'labor', 'cycle'];
-    const readCapabilities = (parent, attribute = 'data-bioweave-world-capability') => Object.fromEntries(capabilityKeys.map(key => {
-      const value = readValue(readIn(parent, `[${attribute}="${key}"]`));
-      return [key, value === '' ? null : value === 'true'];
-    }));
-    const readRules = (parent, attribute = 'data-bioweave-world-rule') => Object.fromEntries(ruleKeys.map(key => [
-      key,
-      readValue(readIn(parent, `[${attribute}="${key}"]`)) || null,
-    ]));
-    const readSexCategories = typeNode => [...(typeNode?.querySelectorAll?.('[data-bioweave-world-sex]') ?? [])].map(sexNode => ({
-      name: readValue(readIn(sexNode, '[data-bioweave-world-sex-field="name"]')) || null,
-      description: readValue(readIn(sexNode, '[data-bioweave-world-sex-field="description"]')) || null,
-      capabilities: readCapabilities(sexNode),
-      reproduction_rules: readRules(sexNode),
-    }));
     const types = [...(form?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].map(typeNode => {
-      const sexCategories = readSexCategories(typeNode);
+      const capabilities = Object.fromEntries(Object.keys({
+        can_produce_sperm: true,
+        can_produce_ova: true,
+        can_be_fertilized: true,
+        can_fertilize: true,
+        can_carry_pregnancy: true,
+      }).map(key => {
+        const value = readValue(readIn(typeNode, `[data-bioweave-world-capability="${key}"]`));
+        return [key, value === '' ? null : value === 'true'];
+      }));
+      const reproductionRules = Object.fromEntries(['ovulation', 'fertilization', 'pregnancy_or_carrying', 'gestation', 'labor', 'cycle'].map(key => [
+        key,
+        readValue(readIn(typeNode, `[data-bioweave-world-rule="${key}"]`)) || null,
+      ]));
       const lifecycle = Object.fromEntries(['maturation', 'aging'].map(key => [
         key,
         readValue(readIn(typeNode, `[data-bioweave-world-lifecycle="${key}"]`)) || null,
       ]));
-      const type = {
+      return {
         name: readValue(readIn(typeNode, '[data-bioweave-world-field="name"]')) || null,
         description: readValue(readIn(typeNode, '[data-bioweave-world-field="description"]')) || null,
-        sex_categories: sexCategories,
+        capabilities,
+        reproduction_rules: reproductionRules,
         lifecycle,
         special_rules: readLines(readIn(typeNode, '[data-bioweave-world-special-rules]')),
       };
-      if (readIn(typeNode, '[data-bioweave-world-legacy-capability]')) {
-        type.capabilities = readCapabilities(typeNode, 'data-bioweave-world-legacy-capability');
-        type.reproduction_rules = readRules(typeNode, 'data-bioweave-world-legacy-rule');
-      }
-      return type;
     });
     const medicalContextNode = form?.querySelector?.('[data-bioweave-world-medical-context]');
     const medicalContext = Object.fromEntries(['childbirth_difficulty', 'care_level', 'evidence'].map(key => [
@@ -2356,34 +2349,6 @@ export function createApp(runtime, options = {}) {
     if (action === 'world-model-add-type') {
       event.preventDefault();
       updateWorldModelDraft(draft => ({...draft, biological_types: [...draft.biological_types, emptyWorldModelType()]}));
-      return;
-    }
-    if (action === 'world-model-add-sex') {
-      event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const typeNode = target.closest?.('[data-bioweave-world-type]');
-      const typeIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].indexOf(typeNode);
-      updateWorldModelDraft(draft => ({
-        ...draft,
-        biological_types: draft.biological_types.map((type, itemIndex) => itemIndex === typeIndex
-          ? {...type, sex_categories: [...(type.sex_categories ?? []), emptyWorldModelSexCategory()]}
-          : type),
-      }));
-      return;
-    }
-    if (action === 'world-model-remove-sex') {
-      event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const typeNode = target.closest?.('[data-bioweave-world-type]');
-      const sexNode = target.closest?.('[data-bioweave-world-sex]');
-      const typeIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].indexOf(typeNode);
-      const sexIndex = [...(typeNode?.querySelectorAll?.('[data-bioweave-world-sex]') ?? [])].indexOf(sexNode);
-      updateWorldModelDraft(draft => ({
-        ...draft,
-        biological_types: draft.biological_types.map((type, itemIndex) => itemIndex === typeIndex
-          ? {...type, sex_categories: (type.sex_categories ?? []).filter((_, categoryIndex) => categoryIndex !== sexIndex)}
-          : type),
-      }));
       return;
     }
     if (action === 'world-model-remove-type') {

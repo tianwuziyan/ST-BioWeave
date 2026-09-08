@@ -104,29 +104,6 @@ function renderRuleRows(rules = {}, labels = {}) {
   ].join('')).join('');
 }
 
-function renderSexCategoryView(category, index) {
-  return [
-    '<article class="bioweave-world-model-sex">',
-    '<header><h4>' + (category?.name ? displayText(category.name) : '性别类别 ' + (index + 1)) + '</h4></header>',
-    '<p class="bioweave-world-model-description">' + displayText(category?.description) + '</p>',
-    '<h5>生殖能力</h5>',
-    '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(category?.capabilities) + '</dl>',
-    '<h5>生殖与周期规则</h5>',
-    '<dl class="bioweave-world-model-properties">' + renderRuleRows(category?.reproduction_rules, RULE_LABELS) + '</dl>',
-    '</article>',
-  ].join('');
-}
-
-function renderLegacyTypeRules(type) {
-  if (!type || (!Object.hasOwn(type, 'capabilities') && !Object.hasOwn(type, 'reproduction_rules'))) return '';
-  return [
-    '<h4>旧模型共通生殖规则</h4>',
-    '<p class="bioweave-world-model-unknown">此种族尚未拆分性别，以下内容仅为旧版本兼容数据。</p>',
-    '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(type.capabilities) + '</dl>',
-    '<dl class="bioweave-world-model-properties">' + renderRuleRows(type.reproduction_rules, RULE_LABELS) + '</dl>',
-  ].join('');
-}
-
 function renderWorldModelView(model) {
   const types = Array.isArray(model?.biological_types) ? model.biological_types : [];
   const typeMarkup = types.length
@@ -134,11 +111,10 @@ function renderWorldModelView(model) {
       '<article class="bioweave-world-model-type">',
       '<header><h3>' + (type?.name ? displayText(type.name) : '生物类型 ' + (index + 1)) + '</h3></header>',
       '<p class="bioweave-world-model-description">' + displayText(type?.description) + '</p>',
-      '<h4>性别类别</h4>',
-      Array.isArray(type?.sex_categories) && type.sex_categories.length
-        ? '<div class="bioweave-world-model-sex-list">' + type.sex_categories.map(renderSexCategoryView).join('') + '</div>'
-        : '<p class="bioweave-world-model-unknown">未知</p>',
-      renderLegacyTypeRules(type),
+      '<h4>生殖能力</h4>',
+      '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(type?.capabilities) + '</dl>',
+      '<h4>生殖与周期规则</h4>',
+      '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.reproduction_rules, RULE_LABELS) + '</dl>',
       '<h4>成熟与衰老</h4>',
       '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.lifecycle, LIFECYCLE_LABELS) + '</dl>',
       '<h4>特殊生物规则</h4>',
@@ -168,22 +144,15 @@ function renderWorldModelView(model) {
   ].join('');
 }
 
-function emptyWorldModelSexCategory() {
+function emptyWorldModelType() {
   return {
     name: null,
     description: null,
     capabilities: Object.fromEntries(Object.keys(CAPABILITY_LABELS).map(key => [key, null])),
     reproduction_rules: Object.fromEntries(Object.keys(RULE_LABELS).map(key => [key, null])),
-  };
-}
-
-function emptyWorldModelType() {
-  return {
-    name: null,
-    description: null,
-    sex_categories: [emptyWorldModelSexCategory()],
     lifecycle: Object.fromEntries(Object.keys(LIFECYCLE_LABELS).map(key => [key, null])),
     special_rules: [],
+    medical_context: Object.fromEntries(Object.keys(MEDICAL_CONTEXT_LABELS).map(key => [key, null])),
   };
 }
 
@@ -191,9 +160,9 @@ function option(value, label, selected) {
   return `<option value="${value}"${selected ? ' selected' : ''}>${label}</option>`;
 }
 
-function triStateSelect(key, value, attribute = 'data-bioweave-world-capability') {
+function triStateSelect(key, value) {
   return [
-    `<select class="bioweave-select" ${attribute}="${key}">`,
+    `<select class="bioweave-select" data-bioweave-world-capability="${key}">`,
     option('', '未知', value !== true && value !== false),
     option('true', '是', value === true),
     option('false', '否', value === false),
@@ -201,60 +170,26 @@ function triStateSelect(key, value, attribute = 'data-bioweave-world-capability'
   ].join('');
 }
 
-function renderSexCategoryEditor(category, index) {
-  return [
-    '<article class="bioweave-world-model-edit-sex" data-bioweave-world-sex>',
-    '<header><h5>性别类别 ' + (index + 1) + '</h5>',
-    '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-sex">删除</button></header>',
-    '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-sex-field="name" value="' + escapeHtml(category?.name ?? '') + '"></label>',
-    '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-sex-field="description">' + escapeHtml(category?.description ?? '') + '</textarea></label>',
-    '<h6>生殖能力</h6>',
-    '<div class="bioweave-world-model-capability-edit">',
-    Object.entries(CAPABILITY_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span>' + triStateSelect(key, category?.capabilities?.[key]) + '</label>').join(''),
-    '</div>',
-    '<h6>生殖与周期规则</h6>',
-    Object.entries(RULE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-rule="' + key + '">' + escapeHtml(category?.reproduction_rules?.[key] ?? '') + '</textarea></label>').join(''),
-    '</article>',
-  ].join('');
-}
-
-function renderLegacyTypeEditor(type) {
-  if (!type || (!Object.hasOwn(type, 'capabilities') && !Object.hasOwn(type, 'reproduction_rules'))) return '';
-  return [
-    '<section class="bioweave-world-model-legacy-edit">',
-    '<h4>旧模型共通生殖规则</h4>',
-    '<p class="bioweave-world-model-unknown">此种族尚未拆分性别，以下内容仅用于兼容旧 Chat 数据。</p>',
-    '<div class="bioweave-world-model-capability-edit">',
-    Object.entries(CAPABILITY_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span>' + triStateSelect(key, type?.capabilities?.[key], 'data-bioweave-world-legacy-capability') + '</label>').join(''),
-    '</div>',
-    Object.entries(RULE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-legacy-rule="' + key + '">' + escapeHtml(type?.reproduction_rules?.[key] ?? '') + '</textarea></label>').join(''),
-    '</section>',
-  ].join('');
-}
-
 function renderWorldModelEditor(model = {}) {
   const types = Array.isArray(model.biological_types) ? model.biological_types : [];
   const exceptions = Array.isArray(model.exceptions) ? model.exceptions : [];
-  const typeMarkup = types.map((type, index) => {
-    const sexCategories = Array.isArray(type?.sex_categories) ? type.sex_categories : [];
-    return [
-      '<article class="bioweave-world-model-edit-type" data-bioweave-world-type>',
-      '<header><h3>生物类型 ' + (index + 1) + '</h3>',
-      '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-type">删除</button></header>',
-      '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-field="name" value="' + escapeHtml(type?.name ?? '') + '"></label>',
-      '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-field="description">' + escapeHtml(type?.description ?? '') + '</textarea></label>',
-      '<h4>性别类别</h4>',
-      sexCategories.length
-        ? '<div class="bioweave-world-model-edit-sex-list">' + sexCategories.map(renderSexCategoryEditor).join('') + '</div>'
-        : '<p class="bioweave-world-model-unknown">暂无性别类别。</p>',
-      '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-sex">添加性别类别</button>',
-      renderLegacyTypeEditor(type),
-      '<h4>成熟与衰老</h4>',
-      Object.entries(LIFECYCLE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-lifecycle="' + key + '">' + escapeHtml(type?.lifecycle?.[key] ?? '') + '</textarea></label>').join(''),
-      '<label class="bioweave-settings-field"><span>特殊生物规则（每行一条）</span><textarea class="bioweave-input" data-bioweave-world-special-rules>' + escapeHtml((type?.special_rules ?? []).join('\n')) + '</textarea></label>',
-      '</article>',
-    ].join('');
-  }).join('');
+  const typeMarkup = types.map((type, index) => [
+    '<article class="bioweave-world-model-edit-type" data-bioweave-world-type>',
+    '<header><h3>生物类型 ' + (index + 1) + '</h3>',
+    '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-type">删除</button></header>',
+    '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-field="name" value="' + escapeHtml(type?.name ?? '') + '"></label>',
+    '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-field="description">' + escapeHtml(type?.description ?? '') + '</textarea></label>',
+    '<h4>生殖能力</h4>',
+    '<div class="bioweave-world-model-capability-edit">',
+    Object.entries(CAPABILITY_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span>' + triStateSelect(key, type?.capabilities?.[key]) + '</label>').join(''),
+    '</div>',
+    '<h4>生殖与周期规则</h4>',
+    Object.entries(RULE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-rule="' + key + '">' + escapeHtml(type?.reproduction_rules?.[key] ?? '') + '</textarea></label>').join(''),
+    '<h4>成熟与衰老</h4>',
+    Object.entries(LIFECYCLE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-lifecycle="' + key + '">' + escapeHtml(type?.lifecycle?.[key] ?? '') + '</textarea></label>').join(''),
+    '<label class="bioweave-settings-field"><span>特殊生物规则（每行一条）</span><textarea class="bioweave-input" data-bioweave-world-special-rules>' + escapeHtml((type?.special_rules ?? []).join('\n')) + '</textarea></label>',
+    '</article>',
+  ].join('')).join('');
   const medicalContext = model?.medical_context ?? {};
   const medicalMarkup = [
     '<section class="bioweave-world-model-edit-section" data-bioweave-world-medical-context><h3>世界医疗条件</h3>',
@@ -336,4 +271,4 @@ export function worldPage({
   ].join('');
 }
 
-export {emptyWorldModelSexCategory, emptyWorldModelType};
+export {emptyWorldModelType};

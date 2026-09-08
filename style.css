@@ -530,10 +530,7 @@
 
 .bioweave-world-model-type,
 .bioweave-world-model-edit-type,
-.bioweave-world-model-edit-exception,
-.bioweave-world-model-sex,
-.bioweave-world-model-edit-sex,
-.bioweave-world-model-legacy-edit {
+.bioweave-world-model-edit-exception {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -543,19 +540,8 @@
   background: var(--bioweave-surface);
 }
 
-.bioweave-world-model-sex,
-.bioweave-world-model-edit-sex,
-.bioweave-world-model-legacy-edit {
-  margin-left: 12px;
-  padding: 8px;
-  border-color: var(--bioweave-border);
-  background: var(--bioweave-surface-raised);
-}
-
 .bioweave-world-model-type > header,
-.bioweave-world-model-edit-type > header,
-.bioweave-world-model-sex > header,
-.bioweave-world-model-edit-sex > header {
+.bioweave-world-model-edit-type > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -564,23 +550,9 @@
 }
 
 .bioweave-world-model-type > header h3,
-.bioweave-world-model-edit-type > header h3,
-.bioweave-world-model-sex h4,
-.bioweave-world-model-edit-sex h5 {
+.bioweave-world-model-edit-type > header h3 {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.bioweave-world-model-sex-list,
-.bioweave-world-model-edit-sex-list {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.bioweave-world-model-sex h5,
-.bioweave-world-model-edit-sex h6 {
-  margin: 0;
 }
 
 .bioweave-world-model-description {
