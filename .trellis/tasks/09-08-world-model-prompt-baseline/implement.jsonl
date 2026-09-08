@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"Defines the World Model nested payload, human baseline precedence, non-human type-local Evidence Gate, and final capability-to-rule consistency contract."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Defines focused regression coverage, syntax checks, full tests, and scope discipline for analyzer and prompt changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keeps generic Prompt, raw API normalization, analysis-only semantic guard, Chat-local result, and UI consumer boundaries distinct."}

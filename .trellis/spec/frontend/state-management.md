@@ -493,14 +493,17 @@ species[].biological_types[].capabilities
   may create the default species `人类`, but recognizing that species does not
   create any biological type.
 - During AI analysis, a biological type is saved only when the current
-  `AnalysisInput` contains it or explicitly describes that it exists in the
-  same species context. Evidence for one species cannot authorize a type in a
-  different species; deterministic semantic evidence such as `极少女剑灵`
-  still supports `女性` under `剑灵`. Type names are open; the schema does not
-  enumerate `男性` / `女性` / `双性`, and it can represent classifications such
-  as `Alpha`, `Beta`, and `Omega` without inventing combinations. A manual
-  editor change is explicit user intent and remains subject to structural
-  normalization, not AI evidence filtering.
+  `AnalysisInput` contains it or directly describes that it exists in the same
+  species context. Evidence for one species cannot authorize a type in a
+  different species. Type names are open; the schema does not enumerate
+  familiar sex labels or invent combinations. A manual editor change is
+  explicit user intent and remains subject to structural normalization, not AI
+  evidence filtering.
+- A biological type that repeats its parent species name, or only appends a
+  generic species/group/identity suffix to that name, is rejected by the
+  analysis-only guard. This predicate is normalized and generic; it must not
+  be a list of fixture-specific species aliases and must not reject an open
+  type merely because it shares a substring with its parent.
 - Capabilities exist only on an individual biological type and are each
   independently `true`, `false`, or `null`. A type name, gender label, pronoun,
   title, appearance, or body shape does not fill them automatically.
@@ -511,9 +514,11 @@ species[].biological_types[].capabilities
   unspecified field, or pseudo-pregnancy alone is non-evidence and remains
   `null`; it must not be converted to `false`. The human baseline exception
   remains unchanged.
-- Human baseline reproduction rules apply only after an identified human type;
-  precedence is explicit story fact > explicit world/Worldbook rule > explicit
-  individual exception > ordinary human baseline. They do not merge
+- Human baseline capabilities and reproduction rules may be used after an
+  identified human male/female type without field-by-field source evidence;
+  male and female baselines remain separate and do not create missing types.
+  Precedence is explicit story fact > explicit world/Worldbook rule > explicit
+  individual exception > ordinary human baseline. Baseline values never merge
   capabilities across types or apply to an identified non-human species.
 - After the AI-only evidence guard, `analyzeWorldModel()` applies a final
   consistency pass to every biological type. `can_produce_ova: false` clears
@@ -528,11 +533,16 @@ species[].biological_types[].capabilities
   alias is not fixed-type evidence. The analysis-only guard may remove such
   unsupported familiar labels and close matching `unknowns`; manual edits are
   not evidence-filtered.
-- Non-human capabilities, reproduction rules, lifecycle, and special rules
-  remain `null` without corresponding species-linked mechanism evidence. An
-  explicit statement that one specific human baseline portion is shared can
-  fill only that portion; a non-human type name or humanoid anatomy never
-  authorizes the rest of the human template.
+- Non-human capabilities, reproduction rules, lifecycle, and type-level special
+  rules remain `null` without corresponding species-and-type-local mechanism
+  evidence. Even when a species has only one candidate type, species-wide
+  evidence is not promoted to that type. An explicit statement that one
+  specific human baseline portion is shared can fill only that portion; a
+  non-human type name or humanoid anatomy never authorizes the rest of the
+  human template.
+- `fertilization` records an actual fertilization mechanism and the current
+  type's donor/recipient role. Intercourse, energy exchange, cultivation,
+  corruption, or other interaction text alone is not fertilization evidence.
 
 ### 4. Validation & Error Matrix
 

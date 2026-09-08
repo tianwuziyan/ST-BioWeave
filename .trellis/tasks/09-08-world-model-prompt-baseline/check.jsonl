@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify the human baseline is not subjected to non-human evidence filtering, duplicate parent/type labels are rejected, and final consistency remains capability-driven."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify fixture-independent World Model tests, prompt genericity assertions, full checks, and no unrelated module changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the change remains at the Prompt/analyzer boundary without changing schema, AnalysisInput, API, storage, UI, or refresh flow."}

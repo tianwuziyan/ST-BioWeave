@@ -53,6 +53,7 @@ const UNSPECIFIED_FIELD_CONTEXT_PATTERN = /(?:没有(?:明确|说明|提及|描�
 const HUMAN_SPECIES_NAMES = new Set(['人类', '人', 'human', 'humans']);
 const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
 const FAMILIAR_TYPE_NAMES = new Set(['男性', '女性', '双性']);
+const GENERIC_SPECIES_TYPE_SUFFIXES = Object.freeze(['族', '类', '种', '人', '修', '修士']);
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -337,11 +338,9 @@ function hasBiologicalTypeEvidence(units, speciesName, typeName) {
   return hasNonHumanTypeEvidence(units, speciesName, typeName);
 }
 
-function fieldEvidenceUnits(units, speciesName, typeName, typeCount) {
-  const speciesUnits = speciesEvidenceUnits(units, speciesName);
-  const directUnits = typeEvidenceUnits(units, speciesName, typeName);
-  // 单一已建立类型时，物种级机制陈述可以唯一指向它；多个类型仍需类型上下文。
-  return typeCount === 1 ? speciesUnits : directUnits;
+function fieldEvidenceUnits(units, speciesName, typeName) {
+  // 非人类字段始终需要当前 species + biological_type 的直接上下文。
+  return typeEvidenceUnits(units, speciesName, typeName);
 }
 
 function isHumanSpeciesName(speciesName) {
@@ -408,9 +407,8 @@ function hasDirectRuleEvidence(value, units) {
   return runs.some(run => [...Array(run.length - 3)].some((_, index) => sourceText.includes(run.slice(index, index + 4))));
 }
 
-function sanitizeNonHumanType(type, units, speciesName, typeCount) {
-  const fieldUnits = fieldEvidenceUnits(units, speciesName, type.name, typeCount);
-  const speciesUnits = speciesEvidenceUnits(units, speciesName);
+function sanitizeNonHumanType(type, units, speciesName) {
+  const fieldUnits = fieldEvidenceUnits(units, speciesName, type.name);
   return {
     ...type,
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [
@@ -429,7 +427,7 @@ function sanitizeNonHumanType(type, units, speciesName, typeCount) {
         ? type.lifecycle[key]
         : null,
     ])),
-    special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, speciesUnits)),
+    special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, fieldUnits)),
   };
 }
 
@@ -438,12 +436,20 @@ function normalizeAnalysisType(type, speciesName) {
   return name === type?.name ? type : {...type, name};
 }
 
+function isSpeciesNameOrGenericDerivative(name, speciesName) {
+  const normalizedName = compactEvidenceText(name);
+  const normalizedSpecies = compactEvidenceText(speciesName);
+  if (!normalizedName || !normalizedSpecies || normalizedName === normalizedSpecies) return true;
+  if (isHumanSpeciesName(speciesName) && ['人类', '人'].includes(normalizedName)) return true;
+  return GENERIC_SPECIES_TYPE_SUFFIXES.some(suffix => normalizedName === `${normalizedSpecies}${suffix}`);
+}
+
 function isObservedNonBiologicalType(name, speciesName) {
-  const normalizedName = String(name ?? '').replace(/\s+/gu, '');
-  const normalizedSpecies = String(speciesName ?? '').replace(/\s+/gu, '');
-  if (!normalizedName || normalizedName === normalizedSpecies || normalizedName === DIRECT_AMBIGUOUS_TYPE) return true;
-  if (normalizedSpecies === '妖' && ['妖修', '半兽人'].includes(normalizedName)) return true;
-  if (normalizedSpecies === '魔' && normalizedName === '魔族') return true;
+  const normalizedName = compactEvidenceText(name);
+  const normalizedSpecies = compactEvidenceText(speciesName);
+  if (isSpeciesNameOrGenericDerivative(name, speciesName) || normalizedName === DIRECT_AMBIGUOUS_TYPE) return true;
+  // Preserve the existing semantic exclusions for observed subtype/source labels.
+  if (normalizedSpecies === '妖' && normalizedName === '半兽人') return true;
   if (normalizedSpecies === '剑灵' && ['妖剑剑灵', '魔剑灵'].includes(normalizedName)) return true;
   return false;
 }
@@ -500,7 +506,7 @@ function applyWorldModelEvidenceGuard(model, analysisInput) {
       .filter(type => localFixedDual || !isDualTypeName(type.name));
     const biologicalTypes = humanSpecies
       ? supportedTypes
-      : supportedTypes.map(type => sanitizeNonHumanType(type, evidence, item.name, supportedTypes.length));
+      : supportedTypes.map(type => sanitizeNonHumanType(type, evidence, item.name));
     species.push({...item, biological_types: biologicalTypes});
   }
   return {
@@ -532,6 +538,10 @@ function isGenericHumanFertilizationRule(value) {
   return /^(?:通常|一般|人类通常|按人类方式)?(?:为|是)?(?:体内)?受精(?:方式|机制)?$/u.test(text);
 }
 
+function hasFertilizationMechanism(value) {
+  return REPRODUCTION_RULE_EVIDENCE_PATTERNS.fertilization.test(String(value ?? ''));
+}
+
 function humanBaselineRole(type, speciesName) {
   if (!isHumanSpeciesName(speciesName)) return null;
   const capabilities = type.capabilities ?? {};
@@ -557,6 +567,10 @@ function applyWorldModelFinalConsistencyGuard(model) {
         const capabilities = type.capabilities ?? {};
         const reproductionRules = {...(type.reproduction_rules ?? {})};
         const baselineRole = humanBaselineRole(type, species.name);
+
+        if (reproductionRules.fertilization && !hasFertilizationMechanism(reproductionRules.fertilization)) {
+          reproductionRules.fertilization = null;
+        }
 
         if (baselineRole && isGenericHumanFertilizationRule(reproductionRules.fertilization)) {
           reproductionRules.fertilization = baselineRole === 'donor'
