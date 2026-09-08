@@ -49,3 +49,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 收紧非人类 World Model 证据门槛
+<!-- trellis-session: v=2 fp=8a55e16d90395173 -->
+
+**Date**: 2026-09-08
+**Task**: 收紧非人类 World Model 证据门槛
+**Branch**: `main`
+
+### Summary
+
+完成 World Model 非人类 Evidence Gate：按 species 上下文保留 biological_types，支持‘极少女剑灵’的确定性语义证据；非人类 capabilities、reproduction_rules、lifecycle 与 special_rules 按字段证据清理，缺证据为 null，保留人类 baseline。新增回归测试与 Prompt/文档/spec 同步。World Model 45/45、全量 npm test 145/145、npm run check、语法检查和 git diff --check 均通过；已用附件输出做本地 guard 回放，等待用户在 SillyTavern 真实复测。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `784cd12` | 收紧非人类世界模型证据门槛 |
+
+### Status
+
+[OK] **Completed**
