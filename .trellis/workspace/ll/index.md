@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~139 | Active |
+| `journal-1.md` | ~161 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-09-08 | 完善 BioWeave 项目 README | `ac039d1` | `fix/world-model-prompt-baseline` |
 | 6 | 2026-09-08 | 修复 World Model 生殖规则一致性 | `0c52e54` | `fix/world-model-final-consistency` |
 | 5 | 2026-09-08 | World UI v3 模块化编辑 | `c8cafab` | `main` |
 | 4 | 2026-09-08 | 修复 World UI 类型展示与非人类能力证据 | `ce1d095` | `main` |

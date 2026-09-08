@@ -137,3 +137,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 完善 BioWeave 项目 README
+<!-- trellis-session: v=2 fp=604e3c13855310a9 -->
+
+**Date**: 2026-09-08
+**Task**: 完善 BioWeave 项目 README
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+深度分析 BioWeave 源码、配置、测试与已有文档，生成完整中文 README，补充安装、快速开始、架构、AI World Model 工作流、配置、安全、性能、路线图、贡献和 FAQ；npm test/npm run check 共 154 项通过，Markdown/Mermaid/链接检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ac039d1` | 完善 BioWeave 中文 README 与使用文档 |
+
+### Status
+
+[OK] **Completed**
