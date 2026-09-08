@@ -30,6 +30,27 @@ survives a mobile viewport or host drawer overlay.
 - Keep mobile More as a real DOM menu with route actions, not a visual-only
   class toggle.
 
+### World page reference alignment
+
+When a provided static HTML reference is the visual source of truth, keep the
+override local to `.bioweave-world-model-page` and explicitly reset inherited
+BioWeave/SillyTavern styles that affect the reference measurements. This
+includes margins, borders, display modes, grid gaps, and native control font
+properties; do not rely on the existing generic `.bioweave-*` rules winning by
+order alone.
+
+```css
+.bioweave-world-model-page .bioweave-world-model-title-copy {
+  margin-top: 0;
+  border-top: 0;
+}
+```
+
+Map colors through the existing BioWeave theme tokens, but keep reference
+values such as `14px/1.5`, `38px` controls, and the `768px` / `1200px`
+responsive boundaries in the page-scoped block. Never use a global `body`,
+`button`, or generic BioWeave selector to repair World UI appearance.
+
 ## Testing Requirements
 
 - Run npm test, npm run check, and node --check for changed JavaScript.
