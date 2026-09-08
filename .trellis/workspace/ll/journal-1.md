@@ -159,3 +159,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 收敛 World Model Prompt 与生物学证据边界
+<!-- trellis-session: v=2 fp=8eb09793fd568094 -->
+
+**Date**: 2026-09-09
+**Task**: 收敛 World Model Prompt 与生物学证据边界
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+精简生产 World Model Prompt，移除测试物种先验；保留人类男女分离 baseline；收紧非人类 species/type-local Evidence Gate、父级重复类型过滤和 fertilization 语义；补充通用回归测试与契约文档。全量测试 159/159，npm run check 通过，等待 SillyTavern 真实复测。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `22d1379` | 精简 World Model Prompt 并收敛人类基线与非人类证据边界 |
+
+### Status
+
+[OK] **Completed**
