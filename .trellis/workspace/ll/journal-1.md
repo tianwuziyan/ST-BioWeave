@@ -115,3 +115,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 修复 World Model 生殖规则一致性
+<!-- trellis-session: v=2 fp=696761b58168d0fb -->
+
+**Date**: 2026-09-08
+**Task**: 修复 World Model 生殖规则一致性
+**Branch**: `fix/world-model-final-consistency`
+
+### Summary
+
+在 ai/analyzer.js 增加最终 World Model consistency guard：按 false capability 将 ovulation、pregnancy_or_carrying、gestation、labor 收敛为 null，并清理 fertilization 的角色冲突；为人类男性/女性分离 fertilization 与 cycle baseline。新增人类、非人类、角色冲突和未知 capability 回归测试。node --test tests/world-model.test.js、npm test、npm run check、node --check 与 git diff --check 均通过。已完成本地提交，等待真实复测。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c52e54` | 修复 World Model 生殖规则与能力字段不一致 |
+
+### Status
+
+[OK] **Completed**
