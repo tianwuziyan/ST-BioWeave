@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "World Model nested species/type contract and Chat-local boundary"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Required tests and UI regression checks"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace AnalysisInput to prompt, validator, storage, and UI"}
