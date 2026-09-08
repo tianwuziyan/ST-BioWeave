@@ -14,26 +14,30 @@ import {worldPage} from '../ui/world.js';
 
 const modelFixture = {
   schema_version: 1,
-  biological_types: [{
+  species: [{
     name: '潮汐生物',
-    description: '具有双向受精能力的生物类型。',
-    capabilities: {
-      can_produce_sperm: true,
-      can_produce_ova: null,
-      can_be_fertilized: false,
-      can_fertilize: true,
-      can_carry_pregnancy: null,
-    },
-    reproduction_rules: {
-      fertilization: '需要两种配子接触。',
-      pregnancy_or_carrying: null,
-      cycle: '周期尚未明确。',
-      ovulation: '排卵时机尚未明确。',
-      gestation: '妊娠时长尚未明确。',
-      labor: '产程规则尚未明确。',
-    },
-    lifecycle: {maturation: null, aging: '寿命尚未明确。'},
-    special_rules: ['潮汐期能力会变化。'],
+    description: '具有特殊生殖规则的物种。',
+    biological_types: [{
+      name: '潮汐生物型',
+      description: '具有双向受精能力的生物类型。',
+      capabilities: {
+        can_produce_sperm: true,
+        can_produce_ova: null,
+        can_be_fertilized: false,
+        can_fertilize: true,
+        can_carry_pregnancy: null,
+      },
+      reproduction_rules: {
+        fertilization: '需要两种配子接触。',
+        pregnancy_or_carrying: null,
+        cycle: '周期尚未明确。',
+        ovulation: '排卵时机尚未明确。',
+        gestation: '妊娠时长尚未明确。',
+        labor: '产程规则尚未明确。',
+      },
+      lifecycle: {maturation: null, aging: '寿命尚未明确。'},
+      special_rules: ['潮汐期能力会变化。'],
+    }],
   }],
   medical_context: {
     childbirth_difficulty: '当前资料不足以确定难度。',
@@ -49,18 +53,27 @@ const modelFixture = {
 };
 
 test('World Model schema keeps capability unknowns as null and drops extra fields', () => {
-  const model = normalizeWorldModel({...modelFixture, gender: '不要推断', extra: '不要保存'});
+  const model = normalizeWorldModel({
+    ...modelFixture,
+    species: modelFixture.species.map(species => ({...species, capabilities: {can_fertilize: true}})),
+    gender: '不要推断',
+    extra: '不要保存',
+  });
   assert.deepEqual(model, modelFixture);
   assert.equal(Object.hasOwn(model, 'gender'), false);
-  assert.equal(Object.hasOwn(model.biological_types[0], 'gender'), false);
-  assert.deepEqual(WORLD_MODEL_SCHEMA.biological_types[0].capabilities, {
+  assert.equal(Object.hasOwn(model.species[0], 'gender'), false);
+  assert.equal(Object.hasOwn(model.species[0].biological_types[0], 'gender'), false);
+  assert.equal(Object.hasOwn(model.species[0], 'capabilities'), false);
+  assert.equal(Object.hasOwn(WORLD_MODEL_SCHEMA, 'biological_types'), false);
+  assert.equal(Object.hasOwn(WORLD_MODEL_SCHEMA.species[0], 'capabilities'), false);
+  assert.deepEqual(WORLD_MODEL_SCHEMA.species[0].biological_types[0].capabilities, {
     can_produce_sperm: null,
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
     can_carry_pregnancy: null,
   });
-  assert.deepEqual(WORLD_MODEL_SCHEMA.biological_types[0].reproduction_rules, {
+  assert.deepEqual(WORLD_MODEL_SCHEMA.species[0].biological_types[0].reproduction_rules, {
     fertilization: null,
     pregnancy_or_carrying: null,
     cycle: null,
@@ -75,14 +88,14 @@ test('World Model schema keeps capability unknowns as null and drops extra field
   });
 });
 
-test('World Model legacy fixtures keep old fields and default new fields to null', () => {
+test('World Model nested fixtures keep old fields and default new fields to null', () => {
   const legacy = structuredClone(modelFixture);
   delete legacy.medical_context;
-  delete legacy.biological_types[0].reproduction_rules.ovulation;
-  delete legacy.biological_types[0].reproduction_rules.gestation;
-  delete legacy.biological_types[0].reproduction_rules.labor;
+  delete legacy.species[0].biological_types[0].reproduction_rules.ovulation;
+  delete legacy.species[0].biological_types[0].reproduction_rules.gestation;
+  delete legacy.species[0].biological_types[0].reproduction_rules.labor;
   const normalized = normalizeWorldModel(legacy);
-  assert.deepEqual(normalized.biological_types[0].reproduction_rules, {
+  assert.deepEqual(normalized.species[0].biological_types[0].reproduction_rules, {
     fertilization: '需要两种配子接触。',
     pregnancy_or_carrying: null,
     cycle: '周期尚未明确。',
@@ -127,8 +140,8 @@ test('World Model response parser accepts JSON object content and rejects invali
 
 test('World Model parser keeps bisexual/intersex capabilities independently evidence-based', () => {
   const rawModel = structuredClone(modelFixture);
-  rawModel.biological_types[0] = {
-    ...rawModel.biological_types[0],
+  rawModel.species[0].biological_types[0] = {
+    ...rawModel.species[0].biological_types[0],
     name: '双性/间性人类',
     description: '资料明确说明可产生精子，明确不能被受精，其余能力没有足够证据。',
     capabilities: {
@@ -141,8 +154,8 @@ test('World Model parser keeps bisexual/intersex capabilities independently evid
   };
 
   const parsed = parseWorldModelResponse(JSON.stringify(rawModel));
-  assert.equal(parsed.biological_types[0].name, '双性/间性人类');
-  assert.deepEqual(parsed.biological_types[0].capabilities, {
+  assert.equal(parsed.species[0].biological_types[0].name, '双性/间性人类');
+  assert.deepEqual(parsed.species[0].biological_types[0].capabilities, {
     can_produce_sperm: true,
     can_produce_ova: null,
     can_be_fertilized: false,
@@ -153,9 +166,17 @@ test('World Model parser keeps bisexual/intersex capabilities independently evid
 
 test('World Model analysis does not keep an unsupported bisexual/intersex type', async () => {
   const response = structuredClone(modelFixture);
-  response.biological_types.push({
-    ...structuredClone(modelFixture.biological_types[0]),
+  response.species[0].biological_types.push({
+    ...structuredClone(modelFixture.species[0].biological_types[0]),
     name: '双性/间性人类',
+  });
+  response.species.push({
+    name: '仅有未获证据的类型',
+    description: null,
+    biological_types: [{
+      ...structuredClone(modelFixture.species[0].biological_types[0]),
+      name: '双性/间性类型',
+    }],
   });
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
@@ -169,13 +190,14 @@ test('World Model analysis does not keep an unsupported bisexual/intersex type',
     },
   });
 
-  assert.deepEqual(result.biological_types.map(type => type.name), ['潮汐生物']);
+  assert.deepEqual(result.species.map(species => species.name), ['潮汐生物']);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['潮汐生物型']);
 });
 
 test('World Model analysis keeps a bisexual/intersex type when source evidence is explicit', async () => {
   const response = structuredClone(modelFixture);
-  response.biological_types.push({
-    ...structuredClone(modelFixture.biological_types[0]),
+  response.species[0].biological_types.push({
+    ...structuredClone(modelFixture.species[0].biological_types[0]),
     name: '双性/间性人类',
   });
   const analyzer = createAnalyzer({
@@ -189,17 +211,21 @@ test('World Model analysis keeps a bisexual/intersex type when source evidence i
     },
   });
 
-  assert.deepEqual(result.biological_types.map(type => type.name), ['潮汐生物', '双性/间性人类']);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['潮汐生物型', '双性/间性人类']);
 });
 
 test('World Model parser localizes common English human labels before saving', () => {
   const parsed = normalizeWorldModel({
     ...modelFixture,
-    biological_types: [{
-      ...modelFixture.biological_types[0],
-      name: 'Homo sapiens (男性)',
-      description: 'Human male type',
-      special_rules: ['Humans have a known rule.'],
+    species: [{
+      ...modelFixture.species[0],
+      name: 'Homo sapiens',
+      biological_types: [{
+        ...modelFixture.species[0].biological_types[0],
+        name: 'Human male type',
+        description: 'Human male type',
+        special_rules: ['Humans have a known rule.'],
+      }],
     }],
     medical_context: {
       ...modelFixture.medical_context,
@@ -209,13 +235,76 @@ test('World Model parser localizes common English human labels before saving', (
     unknowns: ['Human cycle unknown'],
   });
 
-  assert.equal(parsed.biological_types[0].name, '人类 (男性)');
-  assert.equal(parsed.biological_types[0].description, '人类 男性 type');
-  assert.equal(parsed.biological_types[0].special_rules[0], '人类 have a known rule.');
+  assert.equal(parsed.species[0].name, '人类');
+  assert.equal(parsed.species[0].biological_types[0].name, '人类 男性 type');
+  assert.equal(parsed.species[0].biological_types[0].description, '人类 男性 type');
+  assert.equal(parsed.species[0].biological_types[0].special_rules[0], '人类 have a known rule.');
   assert.equal(parsed.medical_context.evidence, '人类 childbirth evidence');
   assert.equal(parsed.exceptions[0].statement, '人类 exception');
   assert.equal(parsed.unknowns[0], '人类 cycle unknown');
   assert.doesNotMatch(JSON.stringify(parsed), /\bHomo\s+sapiens\b|\bHumans?\b|\bmale\b|\bfemale\b/i);
+});
+
+test('World Model rejects the old flat biological_types contract without guessing a species', () => {
+  const legacy = {
+    schema_version: 1,
+    biological_types: structuredClone(modelFixture.species[0].biological_types),
+    medical_context: modelFixture.medical_context,
+    exceptions: [],
+    unknowns: [],
+  };
+  assert.throws(() => normalizeWorldModel(legacy), error => error?.code === 'WORLD_MODEL_INVALID');
+  assert.throws(() => parseWorldModelResponse(JSON.stringify(legacy)), error => error?.code === 'WORLD_MODEL_INVALID');
+});
+
+test('World Model keeps species and biological type recognition separate and supports open type names', () => {
+  const raw = {
+    schema_version: 1,
+    species: [
+      {
+        name: '人类',
+        description: '资料明确出现人类常规类型和双性/间性类型。',
+        biological_types: [
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '男性'},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '女性'},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '双性/间性'},
+        ],
+      },
+      {name: '仅识别出的物种', description: '资料只识别出物种，没有具体类型。', biological_types: []},
+      {
+        name: '剑灵',
+        description: '明确的非人类物种，性别基本为男性，极少数为女性。',
+        biological_types: [
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '男性', capabilities: {}},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '女性', capabilities: {}},
+        ],
+      },
+      {
+        name: '人类 ABO',
+        description: null,
+        biological_types: [
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: 'Alpha', capabilities: {}},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: 'Beta', capabilities: {}},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: 'Omega', capabilities: {}},
+        ],
+      },
+    ],
+    medical_context: null,
+    exceptions: [],
+    unknowns: [],
+  };
+  const parsed = parseWorldModelResponse(JSON.stringify(raw));
+  assert.deepEqual(parsed.species[0].biological_types.map(type => type.name), ['男性', '女性', '双性/间性']);
+  assert.deepEqual(parsed.species[1].biological_types, []);
+  assert.deepEqual(parsed.species[2].biological_types.map(type => type.name), ['男性', '女性']);
+  assert.deepEqual(parsed.species[3].biological_types.map(type => type.name), ['Alpha', 'Beta', 'Omega']);
+  assert.deepEqual(parsed.species[3].biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
 });
 
 test('World Analysis request uses ordinary chat messages for current and independent APIs', async () => {
@@ -323,6 +412,8 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   assert.match(prompt, /28 天月经周期/);
   assert.match(prompt, /妊娠约 40 周/);
   assert.match(prompt, /该人类基线只适用于明确识别的人类类型/);
+  assert.match(prompt, /先独立识别 species，再在每个 species 内识别 biological_types/);
+  assert.match(prompt, /识别出 species 本身绝不能自动创建任何 biological_type/);
   assert.match(prompt, /未知.*非人类/);
   assert.match(prompt, /性别.*gender.*外貌.*身体形态/);
   assert.match(prompt, /medical_context/);
@@ -336,6 +427,11 @@ test('World Model prompt treats default male/female资料 as human without non-h
   });
   const prompt = messages[0].content;
   assert.match(prompt, /只呈现默认男性\/女性二元、且没有明确非人类证据，则物种识别按人类处理/);
+  assert.match(prompt, /只创建资料实际出现或规则明确描述存在的 biological_type/);
+  assert.match(prompt, /不因“人类”自动补齐男性、女性或双性\/间性/);
+  assert.match(prompt, /只出现男性→人类\/男性/);
+  assert.match(prompt, /出现男性\+女性→人类\/男性、女性/);
+  assert.match(prompt, /明确“剑灵基本为男性，极少女剑灵”→剑灵\/男性、女性/);
   assert.match(prompt, /明确非人类证据优先/);
   assert.match(prompt, /capabilities.*不能从 gender/);
 });
@@ -345,9 +441,9 @@ test('World Model prompt adds bisexual/intersex types only with explicit Analysi
     character: {description: '明确证据：角色是双性/间性，并明确可产生精子。'},
   });
   const prompt = messages[0].content;
-  assert.match(prompt, /只有当本次 AnalysisInput 出现明确的双性\/间性身份、身体\/生殖特征或规则证据时，才在 biological_types 中加入对应类型/);
+  assert.match(prompt, /只有当本次 AnalysisInput 出现明确的双性\/间性身份、身体\/生殖特征或规则证据时，才在对应 species 的 biological_types 中加入对应类型/);
   assert.match(messages[1].content, /明确证据：角色是双性\/间性，并明确可产生精子/);
-  assert.match(prompt, /双性\/间性类型只有在有明确证据并被加入后才参与规则分析/);
+  assert.match(prompt, /双性\/间性类型只有当本次 AnalysisInput.*才在对应 species 的 biological_types 中加入对应类型/);
   assert.match(prompt, /必须逐项依据明确证据判断 can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_carry_pregnancy/);
   assert.match(prompt, /每个能力独立判断，证据不足的单项使用 null/);
   assert.match(prompt, /不能因为双性\/间性标签自动把所有能力设为 true 或 false/);
@@ -358,8 +454,8 @@ test('World Model prompt rejects bisexual/intersex types inferred from default m
     character: {description: '资料只呈现默认男性/女性二元，没有其它生殖类型描述。'},
   });
   const prompt = messages[0].content;
-  assert.match(prompt, /默认人类基础类型只包含男性和女性；双性\/间性不是默认类型/);
   assert.match(prompt, /默认男性\/女性且没有明确双性\/间性证据时，绝不能生成双性\/间性类型/);
+  assert.match(prompt, /类型名是开放的资料分类/);
   assert.doesNotMatch(prompt, /默认人类基础类型包含男性、女性和双性\/间性/);
   assert.match(messages[1].content, /资料只呈现默认男性\/女性二元/);
   assert.doesNotMatch(messages[1].content, /双性\/间性/);
@@ -368,13 +464,15 @@ test('World Model prompt rejects bisexual/intersex types inferred from default m
 test('World Model prompt requires Chinese string values and human type names', () => {
   const prompt = buildWorldModelMessages()[0].content;
   assert.match(prompt, /JSON 的 key 必须严格保持 schema 规定的英文/);
-  assert.match(prompt, /所有字符串值必须使用中文/);
-  assert.match(prompt, /name、description、生殖规则、生命周期、special_rules、exceptions、unknowns、medical_context/);
-  assert.match(prompt, /默认人类基础类型只包含男性和女性/);
+  assert.match(prompt, /说明、规则和列表字符串必须使用中文/);
+  assert.match(prompt, /species 是数组；每项包含 name、description、biological_types/);
+  assert.match(prompt, /name、description、capabilities、reproduction_rules、lifecycle、special_rules/);
+  assert.match(prompt, /species 识别与 biological_type 识别必须分开/);
   assert.match(prompt, /只有当本次 AnalysisInput 出现明确的双性\/间性身份、身体\/生殖特征或规则证据时/);
-  assert.match(prompt, /name 只能写“人类”“男性”“女性”“双性\/间性”等中文名称/);
-  assert.match(prompt, /Homo sapiens、Human 或其它英文标签/);
-  assert.match(prompt, /不得把这些英文标签写入任何字符串值/);
+  assert.match(prompt, /资料定义的 biological_type\.name 是开放分类名/);
+  assert.match(prompt, /Alpha、Beta、Omega/);
+  assert.match(prompt, /Homo sapiens 或 Human/);
+  assert.match(prompt, /不得把未翻译的 Homo sapiens 或 Human 写入名称或说明/);
 });
 
 test('settings debug preview groups the actual World Model messages by role', () => {
@@ -502,12 +600,31 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
     },
   });
   assert.match(html, /世界模型/);
+  assert.match(html, /物种/);
+  assert.match(html, /潮汐生物/);
+  assert.match(html, /潮汐生物型/);
+  assert.match(html, /生物学 \/ 生殖类型/);
   assert.match(html, /可承担妊娠/);
   assert.match(html, /世界医疗条件/);
   assert.match(html, /生育难易度/);
   assert.match(html, /当前资料不足以确定难度/);
   assert.match(html, /未知/);
   assert.equal(/\b(?:unknown|null|undefined|N\/A)\b/i.test(html), false);
+});
+
+test('World Model page preserves a species with no inferred biological type', () => {
+  const html = worldPage({
+    worldModel: {
+      schema_version: 1,
+      species: [{name: '人类', description: null, biological_types: []}],
+      medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+      exceptions: [],
+      unknowns: [],
+    },
+  });
+  assert.match(html, /人类/);
+  assert.match(html, /尚未识别出具体生物学 \/ 生殖类型/);
+  assert.doesNotMatch(html, /可产生精子/);
 });
 
 test('World Model page input preview shows the actual request messages', () => {
@@ -538,6 +655,10 @@ test('World Model editor exposes structured fields and safe save actions', () =>
     worldModelDraft: modelFixture,
   });
   assert.match(html, /data-bioweave-world-model-form/);
+  assert.match(html, /data-bioweave-world-species/);
+  assert.match(html, /data-bioweave-world-species-field="name"/);
+  assert.match(html, /data-bioweave-action="world-model-add-species"/);
+  assert.match(html, /data-bioweave-action="world-model-add-type"/);
   assert.match(html, /data-bioweave-world-capability="can_carry_pregnancy"/);
   assert.match(html, /data-bioweave-world-rule="ovulation"/);
   assert.match(html, /data-bioweave-world-rule="gestation"/);

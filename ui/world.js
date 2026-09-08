@@ -104,28 +104,45 @@ function renderRuleRows(rules = {}, labels = {}) {
   ].join('')).join('');
 }
 
+function renderBiologicalTypeView(type, index) {
+  return [
+    '<article class="bioweave-world-model-type">',
+    '<header><h5>' + (type?.name ? displayText(type.name) : '生物学 / 生殖类型 ' + (index + 1)) + '</h5></header>',
+    '<p class="bioweave-world-model-description">' + displayText(type?.description) + '</p>',
+    '<h6>生殖能力</h6>',
+    '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(type?.capabilities) + '</dl>',
+    '<h6>生殖与周期规则</h6>',
+    '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.reproduction_rules, RULE_LABELS) + '</dl>',
+    '<h6>成熟与衰老</h6>',
+    '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.lifecycle, LIFECYCLE_LABELS) + '</dl>',
+    '<h6>特殊生物规则</h6>',
+    displayList(type?.special_rules),
+    '</article>',
+  ].join('');
+}
+
 function renderWorldModelView(model) {
-  const types = Array.isArray(model?.biological_types) ? model.biological_types : [];
-  const typeMarkup = types.length
-    ? types.map((type, index) => [
-      '<article class="bioweave-world-model-type">',
-      '<header><h3>' + (type?.name ? displayText(type.name) : '生物类型 ' + (index + 1)) + '</h3></header>',
-      '<p class="bioweave-world-model-description">' + displayText(type?.description) + '</p>',
-      '<h4>生殖能力</h4>',
-      '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(type?.capabilities) + '</dl>',
-      '<h4>生殖与周期规则</h4>',
-      '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.reproduction_rules, RULE_LABELS) + '</dl>',
-      '<h4>成熟与衰老</h4>',
-      '<dl class="bioweave-world-model-properties">' + renderRuleRows(type?.lifecycle, LIFECYCLE_LABELS) + '</dl>',
-      '<h4>特殊生物规则</h4>',
-      displayList(type?.special_rules),
-      '</article>',
-    ].join('')).join('')
-    : '<p class="bioweave-empty">当前没有足够信息建立生物类型规则。</p>';
+  const species = Array.isArray(model?.species) ? model.species : [];
+  const speciesMarkup = species.length
+    ? species.map((item, speciesIndex) => {
+      const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
+      const typeMarkup = types.length
+        ? types.map(renderBiologicalTypeView).join('')
+        : '<p class="bioweave-empty">本次资料只识别出该物种，尚未识别出具体生物学 / 生殖类型。</p>';
+      return [
+        '<article class="bioweave-world-model-species">',
+        '<header><h3>' + (item?.name ? displayText(item.name) : '物种 ' + (speciesIndex + 1)) + '</h3></header>',
+        '<p class="bioweave-world-model-description">' + displayText(item?.description) + '</p>',
+        '<h4>生物学 / 生殖类型</h4>',
+        typeMarkup,
+        '</article>',
+      ].join('');
+    }).join('')
+    : '<p class="bioweave-empty">当前没有足够信息建立物种规则。</p>';
   return [
     '<section class="bioweave-world-model-section">',
-    '<h3>物种 / 生物类型</h3>',
-    typeMarkup,
+    '<h3>物种</h3>',
+    speciesMarkup,
     '</section>',
     '<section class="bioweave-world-model-section">',
     '<h3>世界医疗条件</h3>',
@@ -152,7 +169,14 @@ function emptyWorldModelType() {
     reproduction_rules: Object.fromEntries(Object.keys(RULE_LABELS).map(key => [key, null])),
     lifecycle: Object.fromEntries(Object.keys(LIFECYCLE_LABELS).map(key => [key, null])),
     special_rules: [],
-    medical_context: Object.fromEntries(Object.keys(MEDICAL_CONTEXT_LABELS).map(key => [key, null])),
+  };
+}
+
+function emptyWorldModelSpecies() {
+  return {
+    name: null,
+    description: null,
+    biological_types: [],
   };
 }
 
@@ -171,25 +195,39 @@ function triStateSelect(key, value) {
 }
 
 function renderWorldModelEditor(model = {}) {
-  const types = Array.isArray(model.biological_types) ? model.biological_types : [];
+  const species = Array.isArray(model.species) ? model.species : [];
   const exceptions = Array.isArray(model.exceptions) ? model.exceptions : [];
-  const typeMarkup = types.map((type, index) => [
-    '<article class="bioweave-world-model-edit-type" data-bioweave-world-type>',
-    '<header><h3>生物类型 ' + (index + 1) + '</h3>',
-    '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-type">删除</button></header>',
-    '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-field="name" value="' + escapeHtml(type?.name ?? '') + '"></label>',
-    '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-field="description">' + escapeHtml(type?.description ?? '') + '</textarea></label>',
-    '<h4>生殖能力</h4>',
-    '<div class="bioweave-world-model-capability-edit">',
-    Object.entries(CAPABILITY_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span>' + triStateSelect(key, type?.capabilities?.[key]) + '</label>').join(''),
-    '</div>',
-    '<h4>生殖与周期规则</h4>',
-    Object.entries(RULE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-rule="' + key + '">' + escapeHtml(type?.reproduction_rules?.[key] ?? '') + '</textarea></label>').join(''),
-    '<h4>成熟与衰老</h4>',
-    Object.entries(LIFECYCLE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-lifecycle="' + key + '">' + escapeHtml(type?.lifecycle?.[key] ?? '') + '</textarea></label>').join(''),
-    '<label class="bioweave-settings-field"><span>特殊生物规则（每行一条）</span><textarea class="bioweave-input" data-bioweave-world-special-rules>' + escapeHtml((type?.special_rules ?? []).join('\n')) + '</textarea></label>',
-    '</article>',
-  ].join('')).join('');
+  const speciesMarkup = species.map((item, speciesIndex) => {
+    const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
+    const typeMarkup = types.map((type, typeIndex) => [
+      '<article class="bioweave-world-model-edit-type" data-bioweave-world-type>',
+      '<header><h4>生物学 / 生殖类型 ' + (typeIndex + 1) + '</h4>',
+      '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-type">删除</button></header>',
+      '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-field="name" value="' + escapeHtml(type?.name ?? '') + '"></label>',
+      '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-field="description">' + escapeHtml(type?.description ?? '') + '</textarea></label>',
+      '<h5>生殖能力</h5>',
+      '<div class="bioweave-world-model-capability-edit">',
+      Object.entries(CAPABILITY_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span>' + triStateSelect(key, type?.capabilities?.[key]) + '</label>').join(''),
+      '</div>',
+      '<h5>生殖与周期规则</h5>',
+      Object.entries(RULE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-rule="' + key + '">' + escapeHtml(type?.reproduction_rules?.[key] ?? '') + '</textarea></label>').join(''),
+      '<h5>成熟与衰老</h5>',
+      Object.entries(LIFECYCLE_LABELS).map(([key, label]) => '<label class="bioweave-settings-field"><span>' + label + '</span><textarea class="bioweave-input" data-bioweave-world-lifecycle="' + key + '">' + escapeHtml(type?.lifecycle?.[key] ?? '') + '</textarea></label>').join(''),
+      '<label class="bioweave-settings-field"><span>特殊生物规则（每行一条）</span><textarea class="bioweave-input" data-bioweave-world-special-rules>' + escapeHtml((type?.special_rules ?? []).join('\n')) + '</textarea></label>',
+      '</article>',
+    ].join('')).join('');
+    return [
+      '<article class="bioweave-world-model-edit-species" data-bioweave-world-species>',
+      '<header><h3>物种 ' + (speciesIndex + 1) + '</h3>',
+      '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-species">删除物种</button></header>',
+      '<label class="bioweave-settings-field"><span>物种名称</span><input class="bioweave-input" data-bioweave-world-species-field="name" value="' + escapeHtml(item?.name ?? '') + '"></label>',
+      '<label class="bioweave-settings-field"><span>物种说明</span><textarea class="bioweave-input" data-bioweave-world-species-field="description">' + escapeHtml(item?.description ?? '') + '</textarea></label>',
+      '<h4>生物学 / 生殖类型</h4>',
+      typeMarkup || '<p class="bioweave-empty">暂无生物学 / 生殖类型，请只在资料有证据时添加。</p>',
+      '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-type">添加生物学 / 生殖类型</button>',
+      '</article>',
+    ].join('');
+  }).join('');
   const medicalContext = model?.medical_context ?? {};
   const medicalMarkup = [
     '<section class="bioweave-world-model-edit-section" data-bioweave-world-medical-context><h3>世界医疗条件</h3>',
@@ -206,8 +244,8 @@ function renderWorldModelEditor(model = {}) {
   ].join('')).join('');
   return [
     '<form class="bioweave-world-model-editor" data-bioweave-world-model-form>',
-    typeMarkup || '<p class="bioweave-empty">暂无生物类型，请点击“添加生物类型”。</p>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-type">添加生物类型</button>',
+    speciesMarkup || '<p class="bioweave-empty">暂无物种，请点击“添加物种”。</p>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-species">添加物种</button>',
     medicalMarkup,
     '<section class="bioweave-world-model-edit-section"><h3>明确例外</h3>',
     exceptionMarkup || '<p class="bioweave-empty">暂无明确例外。</p>',
@@ -253,7 +291,7 @@ export function worldPage({
     '</section>',
   ].join('') : '';
   const body = worldModelEditing
-    ? renderWorldModelEditor(worldModelDraft ?? model ?? {schema_version: 1, biological_types: [], exceptions: [], unknowns: []})
+    ? renderWorldModelEditor(worldModelDraft ?? model ?? {schema_version: 1, species: [], exceptions: [], unknowns: []})
     : model
       ? renderWorldModelView(model)
       : '<section class="bioweave-card bioweave-empty"><b>世界模型尚未建立</b><p>点击“开始分析”，使用当前已选择的分析来源生成 Chat 独立的生物学规则。</p></section>';
@@ -271,4 +309,4 @@ export function worldPage({
   ].join('');
 }
 
-export {emptyWorldModelType};
+export {emptyWorldModelSpecies, emptyWorldModelType};

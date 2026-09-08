@@ -457,6 +457,114 @@ const requestSettings = await profileStore.saveApiRequestSettings({
 await callOpenAICompatible(profile, messages, {requestSettings});
 ```
 
+## World Model Species / Biological Type Contract
+
+### 1. Scope / Trigger
+
+This contract applies when the World Model schema, AI response normalizer,
+Chat-local save path, or World Model view/editor reads or writes biological
+classification data. The trigger is a cross-layer payload change where species
+recognition and biological-type recognition must remain independent.
+
+### 2. Signatures
+
+```js
+normalizeWorldModel(raw, options?)
+  -> {schema_version, species, medical_context, exceptions, unknowns}
+
+parseWorldModelResponse(raw)
+  -> normalized World Model or throws Error('WORLD_MODEL_INVALID')
+
+species[].biological_types[].capabilities
+  -> {can_produce_sperm, can_produce_ova, can_be_fertilized,
+      can_fertilize, can_carry_pregnancy}
+```
+
+### 3. Contracts
+
+- The top-level World Model contains `schema_version`, `species`,
+  `medical_context`, `exceptions`, and `unknowns`. `biological_types` never
+  appears at the top level.
+- Each `species` item contains `name`, `description`, and its own
+  `biological_types` array. Species must not carry an aggregate
+  `capabilities` object.
+- Species recognition and type recognition are separate decisions. Human
+  ordinary sex/body/reproductive evidence with no explicit non-human evidence
+  may create the default species `人类`, but recognizing that species does not
+  create any biological type.
+- A biological type is saved only when the current `AnalysisInput` contains it
+  or explicitly describes that it exists. Type names are open; the schema does
+  not enumerate `男性` / `女性` / `双性/间性`, and it can represent
+  classifications such as `Alpha`, `Beta`, and `Omega`.
+- Capabilities exist only on an individual biological type and are each
+  independently `true`, `false`, or `null`. A type name, gender label, pronoun,
+  title, appearance, or body shape does not fill them automatically.
+- Human baseline reproduction rules apply only to an identified human type or
+  the explicitly allowed default-human context; they do not merge capabilities
+  across types or apply to an identified non-human species.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Top-level `biological_types` is present | Throw `WORLD_MODEL_INVALID`; never guess a species owner |
+| Strict response has no `species` array or a species has no `biological_types` array | Throw `WORLD_MODEL_INVALID` |
+| Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
+| Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
+| Capability evidence is missing | Normalize that individual capability to `null` |
+| AI returns an intersex type without matching AnalysisInput evidence | Remove that unsupported type from analysis output; manual editing is not filtered |
+
+### 5. Good / Base / Bad Cases
+
+- Good: male evidence produces `人类 → 男性`; male plus female evidence
+  produces `人类 → 男性、女性`.
+- Good: “剑灵基本为男性，极少女剑灵” produces `剑灵 → 男性、女性`.
+- Base: a species is identified but no type is explicitly present; retain the
+  species with an empty `biological_types` array and do not invent one.
+- Bad: identify `人类` and then add male, female, and intersex types merely
+  because they are common human categories.
+- Bad: set all capabilities to `true` because a type is called
+  `双性/间性`, `Alpha`, or `Omega`.
+
+### 6. Tests Required
+
+- Assert the schema and normalized payload have nested species and no
+  top-level `biological_types` or species-level capabilities.
+- Assert the old flat payload is rejected rather than migrated.
+- Assert one-type, two-type, human default, explicit non-human, and empty-type
+  species examples preserve exactly the types represented by evidence.
+- Assert open type names survive normalization and missing capabilities become
+  `null` instead of inferred values.
+- Assert the prompt states the two-step recognition rule and the UI renders and
+  edits the same species → type hierarchy.
+- Assert existing AnalysisInput, request message roles, Chat-local writes,
+  failure retention, and source summaries remain unchanged.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+{
+  biological_types: [{name: '男性', capabilities: {}}],
+  species: [{name: '人类'}]
+}
+```
+
+#### Correct
+
+```js
+{
+  species: [{
+    name: '人类',
+    biological_types: [{
+      name: '男性',
+      capabilities: {can_produce_sperm: null, can_carry_pregnancy: null}
+    }]
+  }]
+}
+```
+
 ## Recent Story Regex Collection
 
 ### 1. Scope / Trigger

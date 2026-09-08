@@ -3,7 +3,7 @@ import {charactersPage} from './characters.js';
 import {eventsPage} from './events.js';
 import {projectionPage} from './projection.js';
 import {genealogyPage} from './genealogy.js';
-import {emptyWorldModelType, worldPage} from './world.js';
+import {emptyWorldModelSpecies, emptyWorldModelType, worldPage} from './world.js';
 import {normalizeModelList, settingsPage} from './settings.js';
 import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
@@ -1157,7 +1157,7 @@ export function createApp(runtime, options = {}) {
     const readValue = node => String(node?.value ?? '').trim();
     const readLines = node => readValue(node).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
     const readIn = (parent, selector) => parent?.querySelector?.(selector);
-    const types = [...(form?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].map(typeNode => {
+    const readType = typeNode => {
       const capabilities = Object.fromEntries(Object.keys({
         can_produce_sperm: true,
         can_produce_ova: true,
@@ -1184,7 +1184,12 @@ export function createApp(runtime, options = {}) {
         lifecycle,
         special_rules: readLines(readIn(typeNode, '[data-bioweave-world-special-rules]')),
       };
-    });
+    };
+    const species = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].map(speciesNode => ({
+      name: readValue(readIn(speciesNode, '[data-bioweave-world-species-field="name"]')) || null,
+      description: readValue(readIn(speciesNode, '[data-bioweave-world-species-field="description"]')) || null,
+      biological_types: [...(speciesNode.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].map(readType),
+    }));
     const medicalContextNode = form?.querySelector?.('[data-bioweave-world-medical-context]');
     const medicalContext = Object.fromEntries(['childbirth_difficulty', 'care_level', 'evidence'].map(key => [
       key,
@@ -1197,7 +1202,7 @@ export function createApp(runtime, options = {}) {
     }));
     return {
       schema_version: 1,
-      biological_types: types,
+      species,
       medical_context: medicalContext,
       exceptions,
       unknowns: readLines(form?.querySelector?.('[data-bioweave-world-unknowns]')),
@@ -1239,7 +1244,7 @@ export function createApp(runtime, options = {}) {
     captureWorldModelDraft();
     const draft = normalizeWorldModel(worldModelState.draft ?? {
       schema_version: 1,
-      biological_types: [],
+      species: [],
       exceptions: [],
       unknowns: [],
     });
@@ -2346,17 +2351,45 @@ export function createApp(runtime, options = {}) {
       await saveWorldModel();
       return;
     }
+    if (action === 'world-model-add-species') {
+      event.preventDefault();
+      updateWorldModelDraft(draft => ({...draft, species: [...draft.species, emptyWorldModelSpecies()]}));
+      return;
+    }
+    if (action === 'world-model-remove-species') {
+      event.preventDefault();
+      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
+      const speciesNode = target.closest?.('[data-bioweave-world-species]');
+      const index = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
+      updateWorldModelDraft(draft => ({...draft, species: draft.species.filter((_, itemIndex) => itemIndex !== index)}));
+      return;
+    }
     if (action === 'world-model-add-type') {
       event.preventDefault();
-      updateWorldModelDraft(draft => ({...draft, biological_types: [...draft.biological_types, emptyWorldModelType()]}));
+      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
+      const speciesNode = target.closest?.('[data-bioweave-world-species]');
+      const speciesIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
+      updateWorldModelDraft(draft => ({
+        ...draft,
+        species: draft.species.map((species, itemIndex) => itemIndex === speciesIndex
+          ? {...species, biological_types: [...species.biological_types, emptyWorldModelType()]}
+          : species),
+      }));
       return;
     }
     if (action === 'world-model-remove-type') {
       event.preventDefault();
       const form = root?.querySelector?.('[data-bioweave-world-model-form]');
       const typeNode = target.closest?.('[data-bioweave-world-type]');
-      const index = [...(form?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].indexOf(typeNode);
-      updateWorldModelDraft(draft => ({...draft, biological_types: draft.biological_types.filter((_, itemIndex) => itemIndex !== index)}));
+      const speciesNode = target.closest?.('[data-bioweave-world-species]');
+      const speciesIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
+      const localIndex = [...(speciesNode?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].indexOf(typeNode);
+      updateWorldModelDraft(draft => ({
+        ...draft,
+        species: draft.species.map((species, itemIndex) => itemIndex === speciesIndex
+          ? {...species, biological_types: species.biological_types.filter((_, typeIndex) => typeIndex !== localIndex)}
+          : species),
+      }));
       return;
     }
     if (action === 'world-model-add-exception') {

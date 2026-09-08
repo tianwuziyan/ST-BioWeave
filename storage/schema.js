@@ -2,30 +2,36 @@ export const SCHEMA_VERSION = 1;
 // World Model v1 的固定轻量结构；缺少证据的标量统一由分析器规范化为 null。
 export const WORLD_MODEL_SCHEMA = Object.freeze({
   schema_version: 1,
-  biological_types: [
+  species: [
     {
       name: null,
       description: null,
-      capabilities: {
-        can_produce_sperm: null,
-        can_produce_ova: null,
-        can_be_fertilized: null,
-        can_fertilize: null,
-        can_carry_pregnancy: null,
-      },
-      reproduction_rules: {
-        fertilization: null,
-        pregnancy_or_carrying: null,
-        cycle: null,
-        ovulation: null,
-        gestation: null,
-        labor: null,
-      },
-      lifecycle: {
-        maturation: null,
-        aging: null,
-      },
-      special_rules: [],
+      biological_types: [
+        {
+          name: null,
+          description: null,
+          capabilities: {
+            can_produce_sperm: null,
+            can_produce_ova: null,
+            can_be_fertilized: null,
+            can_fertilize: null,
+            can_carry_pregnancy: null,
+          },
+          reproduction_rules: {
+            fertilization: null,
+            pregnancy_or_carrying: null,
+            cycle: null,
+            ovulation: null,
+            gestation: null,
+            labor: null,
+          },
+          lifecycle: {
+            maturation: null,
+            aging: null,
+          },
+          special_rules: [],
+        },
+      ],
     },
   ],
   medical_context: {

@@ -87,6 +87,20 @@ function normalizeBiologicalType(raw, index) {
   };
 }
 
+function normalizeSpecies(raw, index, {strict = false} = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
+  if (strict && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
+  if (raw.biological_types !== undefined && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
+  const biologicalTypes = Array.isArray(raw.biological_types)
+    ? raw.biological_types.map(normalizeBiologicalType)
+    : [];
+  return {
+    name: localizedWorldModelText(raw.name),
+    description: localizedWorldModelText(raw.description),
+    biological_types: biologicalTypes,
+  };
+}
+
 function normalizeExceptions(value) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw invalidWorldModel();
@@ -144,9 +158,16 @@ function isIntersexType(type) {
 // AI 分析不能凭空新增双性/间性类型；手动编辑保存的 World Model 不经过此过滤。
 function removeUnsupportedIntersexTypes(model, analysisInput) {
   if (hasExplicitIntersexEvidence(analysisInput)) return model;
+  const species = [];
+  for (const item of model.species) {
+    const biologicalTypes = item.biological_types.filter(type => !isIntersexType(type));
+    // 保留仅识别出物种、尚未识别具体类型的结果；只有安全过滤移除该物种原有的全部类型时才删除物种。
+    if (item.biological_types.length && !biologicalTypes.length) continue;
+    species.push({...item, biological_types: biologicalTypes});
+  }
   return {
     ...model,
-    biological_types: model.biological_types.filter(type => !isIntersexType(type)),
+    species,
   };
 }
 
@@ -157,16 +178,18 @@ export function normalizeWorldModel(raw, {strict = false} = {}) {
   if (raw.schema_version !== undefined && Number(raw.schema_version) !== WORLD_MODEL_SCHEMA.schema_version) {
     throw invalidWorldModel();
   }
-  if (strict && (!Array.isArray(raw.biological_types) || !Array.isArray(raw.exceptions) || !Array.isArray(raw.unknowns))) {
+  // v1 曾把 biological_types 放在顶层，但无法从旧结果安全推断 species 归属，因此不做迁移。
+  if (Object.hasOwn(raw, 'biological_types')) throw invalidWorldModel();
+  if (strict && (!Array.isArray(raw.species) || !Array.isArray(raw.exceptions) || !Array.isArray(raw.unknowns))) {
     throw invalidWorldModel();
   }
-  if (raw.biological_types !== undefined && !Array.isArray(raw.biological_types)) throw invalidWorldModel();
-  const biologicalTypes = Array.isArray(raw.biological_types)
-    ? raw.biological_types.map(normalizeBiologicalType)
+  if (raw.species !== undefined && !Array.isArray(raw.species)) throw invalidWorldModel();
+  const species = Array.isArray(raw.species)
+    ? raw.species.map((item, index) => normalizeSpecies(item, index, {strict}))
     : [];
   return {
     schema_version: WORLD_MODEL_SCHEMA.schema_version,
-    biological_types: biologicalTypes,
+    species,
     medical_context: normalizeMedicalContext(raw.medical_context),
     exceptions: normalizeExceptions(raw.exceptions),
     unknowns: stringList(raw.unknowns, localizedWorldModelText),
