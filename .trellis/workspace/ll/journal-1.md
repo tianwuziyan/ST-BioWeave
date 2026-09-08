@@ -93,3 +93,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: World UI v3 模块化编辑
+<!-- trellis-session: v=2 fp=1f8f36449e0e9863 -->
+
+**Date**: 2026-09-08
+**Task**: World UI v3 模块化编辑
+**Branch**: `main`
+
+### Summary
+
+按 reference v3 对齐 World UI 的物种卡片、生物类型详情、世界级规则与 PC/Tablet/Mobile 响应式结构；保留七个模块独立 draft/cancel/save、动态 biological type、中文三态显示和 section 隔离保存。通过 World Model 48 项、UI 7 项、全量 148 项测试及 npm run check，未修改 schema、Prompt、Analyzer 或 AnalysisInput。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c8cafab` | 按 v3 参考重构 World UI 模块化编辑 |
+
+### Status
+
+[OK] **Completed**
