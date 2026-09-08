@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify type-local evidence, final capability/rule consistency, and unchanged human baseline contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify regression tests, project checks, syntax checks, and no unrelated module changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the fix stays at the analysis guard boundary and does not alter schema, storage, or UI flow."}
