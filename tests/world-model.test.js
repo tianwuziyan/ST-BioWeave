@@ -974,7 +974,9 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   });
   assert.match(html, /世界模型/);
   assert.match(html, /bioweave-world-model-top/);
-  assert.match(html, /状态：已建立/);
+  assert.match(html, /最后分析：<\/strong>\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+  assert.match(html, /来源：<\/strong>角色卡 · 1 本世界书/);
+  assert.doesNotMatch(html, /角色卡 1 项|条目|令牌|最后保存|AI 分析/);
   assert.match(html, /物种与生物类型/);
   assert.match(html, /当前世界中已识别的物种及其生物类型/);
   assert.match(html, /bioweave-world-model-content-grid/);
@@ -1027,6 +1029,56 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(visibleTypesHtml, />Alpha<\/button>/);
   assert.match(visibleTypesHtml, />Beta<\/button>/);
   assert.match(visibleTypesHtml, />Omega<\/button>/);
+});
+
+test('World Model page keeps the main source summary compact and filters unused sources', () => {
+  const html = worldPage({
+    worldModel: modelFixture,
+    worldModelMeta: {
+      last_analyzed_at: '2026-09-08T19:18:42+08:00',
+      last_saved_at: '2026-09-08T19:18:42+08:00',
+      last_saved_by: 'manual',
+      source_summary: {
+        character_fields: 0,
+        worldbooks: 1,
+        worldbook_entries: 23,
+        recent_story: {
+          enabled: true,
+          floor_start: 57,
+          floor_end: 60,
+          floors_read: 4,
+        },
+        external_memory: [
+          {key: 'anima', label: 'Anima', enabled: false, read_status: 'disabled'},
+          {key: 'baobaoshu', label: '柏宝书', enabled: true, read_status: 'success'},
+          {key: 'database_memory', label: '数据库记忆', enabled: true, read_status: 'empty'},
+        ],
+        token_estimate: 9757,
+      },
+    },
+  });
+
+  assert.match(html, /最后分析：<\/strong>2026\/09\/08 19:18/);
+  assert.match(html, /来源：<\/strong>1 本世界书 · 最近剧情 F57-F60 · 柏宝书/);
+  assert.doesNotMatch(html, /角色卡/);
+  assert.doesNotMatch(html, /Anima|数据库记忆/);
+  assert.doesNotMatch(html, /23 条目|9757|最后保存|手动|AI 分析/);
+});
+
+test('World Model page shows a recent-story count when its floor range is unavailable', () => {
+  const html = worldPage({
+    worldModel: modelFixture,
+    worldModelMeta: {
+      last_analyzed_at: '2026-09-08T19:18:42+08:00',
+      source_summary: {
+        character_fields: 0,
+        worldbooks: 0,
+        recent_story: {enabled: true, floor_start: null, floor_end: null, floors_read: 4},
+      },
+    },
+  });
+
+  assert.match(html, /来源：<\/strong>最近剧情 4 楼/);
 });
 
 test('World Model page preserves a species with no inferred biological type', () => {

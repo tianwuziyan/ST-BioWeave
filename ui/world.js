@@ -108,44 +108,52 @@ function displayList(values) {
   return '<ul>' + items.map(value => '<li>' + displayText(value) + '</li>').join('') + '</ul>';
 }
 
-function formatTime(value) {
+function formatAnalysisTime(value) {
   if (!value) return '未知';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '未知' : escapeHtml(date.toLocaleString('zh-CN'));
+  if (Number.isNaN(date.getTime())) return '未知';
+  const pad = part => String(part).padStart(2, '0');
+  return escapeHtml([
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('/') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}`);
 }
 
 function renderSourceSummary(meta = {}) {
   const summary = meta?.source_summary ?? {};
   const recent = summary.recent_story ?? {};
   const external = Array.isArray(summary.external_memory) ? summary.external_memory : [];
-  const statusLabels = {
-    available: '可用',
-    enabled: '已启用',
-    disabled: '未启用',
-    unavailable: '不可用',
-    error: '异常',
-    unknown: '未知',
-    null: '未知',
-    undefined: '未知',
-    'n/a': '未知',
-  };
-  const externalText = external.length
-    ? external.map(item => {
-      const rawStatus = String(item.status ?? '').trim().toLowerCase();
-      const status = statusLabels[rawStatus] ?? (rawStatus ? item.status : '未知');
-      return `${item.label || item.key || '外部来源'}：${status}`;
-    }).join('；')
-    : '无外部记忆来源';
-  const recentText = recent.enabled
-    ? `最近剧情 ${recent.floor_start ?? '未知'}-${recent.floor_end ?? '未知'} 楼`
-    : '最近剧情未启用';
-  return [
-    `角色卡 ${Number(summary.character_fields) || 0} 项`,
-    `世界书 ${Number(summary.worldbooks) || 0} 本 / ${Number(summary.worldbook_entries) || 0} 条目`,
-    recentText,
-    externalText,
-    `约 ${Number(summary.token_estimate) || 0} 个令牌`,
-  ].map(escapeHtml).join(' · ');
+  const sources = [];
+  if (Number(summary.character_fields) > 0) sources.push('角色卡');
+  if (Number(summary.worldbooks) > 0) sources.push(`${Number(summary.worldbooks)} 本世界书`);
+
+  const toFloorNumber = value => (
+    value === null || value === undefined || value === ''
+      ? null
+      : (Number.isFinite(Number(value)) ? Number(value) : null)
+  );
+  const floorStart = toFloorNumber(recent.floor_start);
+  const floorEnd = toFloorNumber(recent.floor_end);
+  const floorsRead = Number(recent.floors_read) || (
+    floorStart !== null && floorEnd !== null
+      ? Math.max(0, floorEnd - floorStart + 1)
+      : 0
+  );
+  if (recent.enabled === true && (floorsRead > 0 || (floorStart !== null && floorEnd !== null))) {
+    const recentText = floorStart !== null && floorEnd !== null && floorStart !== floorEnd
+      ? `最近剧情 F${floorStart}-F${floorEnd}`
+      : `最近剧情 ${floorsRead} 楼`;
+    sources.push(recentText);
+  }
+
+  external
+    .filter(item => item?.enabled === true && item?.read_status === 'success')
+    .forEach(item => sources.push(item.label || item.key || '外部来源'));
+
+  return sources.length
+    ? sources.map(escapeHtml).join(' · ')
+    : '暂无已记录来源';
 }
 
 function renderPropertyRows(values, labels) {
@@ -571,11 +579,9 @@ export function worldPage({
     '</button>',
   ].join('');
   const metadata = model ? [
-    '<div class="bioweave-world-model-meta" aria-label="世界模型状态">',
-    '<span class="bioweave-world-model-status"><i class="fa-solid fa-circle-check" aria-hidden="true"></i><strong>状态：已建立</strong></span>',
-    '<span><strong>最后分析：</strong>' + formatTime(worldModelMeta?.last_analyzed_at) + '</span>',
+    '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',
+    '<span><strong>最后分析：</strong>' + formatAnalysisTime(worldModelMeta?.last_analyzed_at) + '</span>',
     '<span class="bioweave-world-model-meta-source"><strong>来源：</strong>' + renderSourceSummary(worldModelMeta) + '</span>',
-    '<span class="bioweave-world-model-meta-saved"><strong>最后保存：</strong>' + formatTime(worldModelMeta?.last_saved_at) + ' · ' + (worldModelMeta?.last_saved_by === 'manual' ? '手动编辑' : 'AI 分析') + '</span>',
     '</div>',
   ].join('') : '';
   const body = model

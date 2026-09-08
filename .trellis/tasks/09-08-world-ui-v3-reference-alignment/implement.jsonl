@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Keep the World page in plain DOM/ui/world.js with delegated ui/app.js events and no new UI architecture layer."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Preserve Chat-local World Model metadata, presentation-only rendering, dynamic species/type data, and section-save boundaries."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Enforce scoped selectors, theme/host boundaries, responsive breakpoints, overflow checks, and browser smoke validation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify metadata presentation reduction does not change AnalysisInput, analyzer, storage, or source data contracts."}

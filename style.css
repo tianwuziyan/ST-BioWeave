@@ -3616,6 +3616,8 @@
 
 .bioweave-world-model-top .bioweave-world-model-title-copy {
   min-width: 0;
+  margin-top: 0;
+  border-top: 0;
 }
 
 .bioweave-world-model-top .bioweave-world-model-title-copy h2 {
@@ -4025,5 +4027,691 @@
   .bioweave-world-model-switch-button,
   .bioweave-world-model-section-actions button {
     min-height: 40px;
+  }
+}
+
+/* Exact v3 reference values, scoped to World UI controls only. */
+.bioweave-world-model-page,
+.bioweave-world-model-page * {
+  box-sizing: border-box;
+}
+
+.bioweave-world-model-page {
+  display: block;
+  min-width: 0;
+  color: var(--bioweave-text);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-rendering: optimizeLegibility;
+}
+
+.bioweave-world-model-page button,
+.bioweave-world-model-page input,
+.bioweave-world-model-page textarea,
+.bioweave-world-model-page select {
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  color: var(--bioweave-text);
+  text-shadow: none;
+  box-shadow: none;
+}
+
+.bioweave-world-model-page button {
+  cursor: pointer;
+}
+
+.bioweave-world-model-page button:disabled {
+  cursor: default;
+  opacity: .65;
+}
+
+.bioweave-world-model-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 0;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--bioweave-border);
+}
+
+.bioweave-world-model-top .bioweave-world-model-title-copy {
+  min-width: 0;
+}
+
+.bioweave-world-model-top .bioweave-world-model-title-copy h2 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-top .bioweave-world-model-title-copy p {
+  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-top .bioweave-world-model-meta {
+  display: block;
+  align-self: auto;
+  justify-self: auto;
+  margin-left: auto;
+  min-width: 0;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.bioweave-world-model-top .bioweave-world-model-meta > span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.bioweave-world-model-top .bioweave-world-model-meta strong {
+  color: var(--bioweave-text-muted);
+  font-weight: 400;
+}
+
+.bioweave-world-model-top .bioweave-world-model-meta-source {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bioweave-world-model-top .bioweave-page-actions {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.bioweave-world-model-page .bioweave-primary-action,
+.bioweave-world-model-page .bioweave-secondary-action,
+.bioweave-world-model-page .bioweave-danger-action,
+.bioweave-world-model-page .bioweave-world-model-edit-button,
+.bioweave-world-model-page .bioweave-world-model-switch-button,
+.bioweave-world-model-page .bioweave-world-model-section-actions button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-raised);
+  color: var(--bioweave-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.bioweave-world-model-page .bioweave-primary-action {
+  border-color: var(--bioweave-accent);
+  background: var(--bioweave-accent-soft);
+  color: var(--bioweave-accent);
+}
+
+.bioweave-world-model-page .bioweave-danger-action {
+  border-color: var(--bioweave-danger);
+  background: var(--bioweave-danger-soft);
+  color: var(--bioweave-danger);
+}
+
+.bioweave-world-model-page .bioweave-primary-action:hover,
+.bioweave-world-model-page .bioweave-secondary-action:hover,
+.bioweave-world-model-page .bioweave-danger-action:hover,
+.bioweave-world-model-page .bioweave-world-model-edit-button:hover,
+.bioweave-world-model-page .bioweave-world-model-switch-button:hover,
+.bioweave-world-model-page .bioweave-world-model-section-actions button:hover {
+  border-color: var(--bioweave-accent);
+}
+
+.bioweave-world-model-page .bioweave-world-model-edit-button,
+.bioweave-world-model-page .bioweave-world-model-switch-button,
+.bioweave-world-model-page .bioweave-world-model-section-actions button {
+  min-height: 31px;
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-edit-button {
+  gap: 6px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-heading {
+  display: block;
+  margin: 16px 0 9px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-heading h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-heading p {
+  margin: 2px 0 0;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-selector {
+  display: block;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  gap: 0;
+  padding: 13px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 10px;
+  background: var(--bioweave-surface);
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-card.active {
+  border-color: var(--bioweave-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bioweave-accent) 22%, transparent);
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-card > header {
+  display: flex;
+  align-items: center;
+  min-height: 31px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 31px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--bioweave-text);
+  text-align: left;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-button i {
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  background: var(--bioweave-accent-soft);
+  color: var(--bioweave-accent);
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-button span {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-card > .bioweave-world-model-description {
+  display: -webkit-box;
+  max-height: 4.5em;
+  margin: 8px 0;
+  overflow: hidden;
+  color: var(--bioweave-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: auto;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-button {
+  min-height: 31px;
+  padding: 5px 12px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 999px;
+  background: var(--bioweave-bg);
+  color: var(--bioweave-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-button:hover {
+  border-color: var(--bioweave-accent);
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-button.active,
+.bioweave-world-model-page .bioweave-world-model-type-button[aria-pressed="true"] {
+  border-color: var(--bioweave-accent);
+  background: var(--bioweave-accent);
+  color: var(--bioweave-bg);
+  font-weight: 700;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-selector > .bioweave-empty {
+  width: 100%;
+  margin-top: auto;
+  padding: 7px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.bioweave-world-model-page .bioweave-world-model-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(290px, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-detail-column,
+.bioweave-world-model-page .bioweave-world-model-world-column {
+  min-width: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-detail,
+.bioweave-world-model-page .bioweave-world-model-world-rules {
+  display: block;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--bioweave-border);
+  border-color: var(--bioweave-border);
+  border-radius: 10px;
+  background: var(--bioweave-surface);
+}
+
+.bioweave-world-model-page .bioweave-world-model-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 43px;
+  margin: 0 0 11px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-detail-header h3,
+.bioweave-world-model-page .bioweave-world-model-world-title h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-detail-header p {
+  margin: 2px 0 0;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-detail-header strong {
+  color: var(--bioweave-accent);
+  font-weight: 700;
+}
+
+.bioweave-world-model-page .bioweave-world-model-description {
+  margin: 0 0 11px;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-detail > .bioweave-world-model-description {
+  display: none;
+}
+
+.bioweave-world-model-page .bioweave-world-model-type-sections {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-world-model-page .bioweave-world-model-module-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 43px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bioweave-border);
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-world-model-page .bioweave-world-model-module-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--bioweave-accent-soft);
+  color: var(--bioweave-accent);
+}
+
+.bioweave-world-model-page .bioweave-world-model-module-title {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property {
+  display: grid;
+  grid-template-columns: minmax(110px, .85fr) 1.4fr;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--bioweave-border) 65%, transparent);
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property:last-child {
+  border-bottom: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property dt {
+  min-width: 0;
+  margin: 0;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--bioweave-text-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.bioweave-world-model-page .bioweave-world-model-properties {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module > ul {
+  margin: 0;
+  padding: 10px 12px 10px 28px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module > ul li {
+  margin: 3px 0;
+  color: var(--bioweave-text-secondary);
+}
+
+.bioweave-world-model-page .bioweave-world-model-module > ul small {
+  display: block;
+  margin-top: 2px;
+  color: var(--bioweave-text-muted);
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-form,
+.bioweave-world-model-page .bioweave-world-model-section-editor {
+  min-width: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-settings-field {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--bioweave-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-input,
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 7px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 6px;
+  background: var(--bioweave-input-bg);
+  color: var(--bioweave-text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-editor textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.bioweave-world-model-page .bioweave-world-model-list-editor-row,
+.bioweave-world-model-page .bioweave-world-model-exception-editor {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 6px;
+  background: var(--bioweave-surface);
+}
+
+.bioweave-world-model-page .bioweave-world-model-list-editor-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.bioweave-world-model-page button[data-bioweave-action="world-model-cancel-section"] {
+  background: transparent;
+}
+
+.bioweave-world-model-page button[data-bioweave-action="world-model-add-row"],
+.bioweave-world-model-page button[data-bioweave-action="world-model-remove-row"] {
+  min-height: 31px;
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bioweave-world-model-page button[data-bioweave-action="world-model-remove-row"] {
+  border-color: var(--bioweave-danger);
+  background: var(--bioweave-danger-soft);
+  color: var(--bioweave-text);
+}
+
+.bioweave-world-model-page .bioweave-world-model-world-rules {
+  height: 100%;
+}
+
+.bioweave-world-model-page .bioweave-world-model-world-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 43px;
+  margin: 0 0 9px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-world-stack {
+  display: grid;
+  gap: 10px;
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-world-model-meta {
+    display: none;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-species-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-world-stack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .bioweave-world-model-page .bioweave-world-model-top,
+  .bioweave-world-model-page .bioweave-world-model-top-empty {
+    align-items: center;
+    gap: 0;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-world-model-title-copy h2 {
+    font-size: 18px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-world-model-title-copy p,
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-world-model-meta,
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-page-actions .bioweave-secondary-action {
+    display: none;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-page-actions {
+    margin-left: auto;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-top .bioweave-primary-action {
+    min-height: 38px;
+    padding: 8px 12px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-section-heading p {
+    display: none;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-species-grid {
+    display: flex;
+    gap: 8px;
+    padding-bottom: 4px;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-species-card {
+    flex: 0 0 250px;
+    min-height: 130px;
+    scroll-snap-align: start;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-species-card > .bioweave-world-model-description {
+    display: none;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-content-grid {
+    display: block;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-world-column {
+    margin-top: 10px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-type-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    padding: 4px 0 8px;
+    background: var(--bioweave-surface);
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-switch-button {
+    display: none;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-property {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-property dt {
+    color: var(--bioweave-text-muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-settings-field,
+  .bioweave-world-model-page .bioweave-world-model-capability-edit .bioweave-settings-field {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-list-editor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-world-rules {
+    padding: 12px;
+  }
+
+  .bioweave-world-model-page .bioweave-world-model-world-stack {
+    grid-template-columns: 1fr;
   }
 }

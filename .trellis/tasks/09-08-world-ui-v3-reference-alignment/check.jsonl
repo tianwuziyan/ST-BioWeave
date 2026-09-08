@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review reference-aligned DOM reuse and plain-DOM component boundaries."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Review that metadata is only hidden from presentation and World Model state/save behavior is unchanged."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review CSS reset scope, responsive behavior, theme compatibility, overflow, and real browser acceptance requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review forbidden business-layer changes and preservation of source/meta data flow."}
