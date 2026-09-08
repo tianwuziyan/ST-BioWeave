@@ -1,5 +1,6 @@
 export const SCHEMA_VERSION = 1;
-// World Model v1 的固定轻量结构；缺少证据的标量统一由分析器规范化为 null。
+// World Model v1 的固定轻量结构；biological_types 是父 species 下开放的
+// 性别/生殖分类数组，不枚举具体名称；缺少证据的标量由分析器规范化为 null。
 export const WORLD_MODEL_SCHEMA = Object.freeze({
   schema_version: 1,
   species: [

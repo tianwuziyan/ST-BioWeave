@@ -8,18 +8,17 @@ export const CORE_PROMPTS = {
 export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(WORLD_MODEL_SCHEMA, null, 2)
 const WORLD_MODEL_CORE_INSTRUCTIONS = [
   '你是 BioWeave 的 World Model 分析器。',
-  '只依据本次提供的 AnalysisInput 判断当前 Chat 的生物学世界规则，不要补写输入中没有证据的事实。',
-  '输出 JSON 的 key 必须严格保持 schema 规定的英文；除 null、布尔值和数字外，说明、规则和列表字符串必须使用中文。资料定义的 biological_type.name 是开放分类名，可保留资料中的 Alpha、Beta、Omega 等分类名称；普通人类物种与性别标签仍应规范为中文，不得把未翻译的 Homo sapiens 或 Human 写入名称或说明。',
-  'species 识别与 biological_type 识别必须分开：先独立识别 species，再在每个 species 内识别 biological_types。资料出现男性、女性、双性/间性或其它人类常规身体/生殖证据，且没有明确非人类证据时，可以建立 species“人类”；只呈现默认男性/女性二元、且没有明确非人类证据，则物种识别按人类处理。识别出 species 本身绝不能自动创建任何 biological_type，不因“人类”自动补齐男性、女性或双性/间性；只创建资料实际出现或规则明确描述存在的 biological_type。每个 biological_type 只能来自本次 AnalysisInput 实际出现或规则明确描述存在的类型。示例：只出现男性→人类/男性；出现男性+女性→人类/男性、女性；明确“剑灵基本为男性，极少女剑灵”→剑灵/男性、女性。',
-  '明确非人类证据优先；妖、魔、剑灵、精灵、兽人或其它明确种族分别建立各自 species，并且每个 species 只记录资料实际出现或规则明确描述的 biological_types。类型名是开放的资料分类，不得由 schema 或校验枚举为男性、女性、双性/间性；应支持 Alpha、Beta、Omega 及资料定义的其它分类。',
-  '不要仅凭 biological_type 名称、男性/女性/双性/间性标签推断 capabilities，不要默认男性一定产精、女性一定妊娠或双性/间性具备全部能力，也不要套用现实世界固定周期；若资料只呈现默认男性/女性二元、且没有明确非人类证据，则 species 按人类处理，但仍只建立资料实际出现的类型。',
-  '双性/间性类型只有当本次 AnalysisInput 出现明确的双性/间性身份、身体/生殖特征或规则证据时，才在对应 species 的 biological_types 中加入对应类型；加入后才参与规则分析。默认男性/女性且没有明确双性/间性证据时，绝不能生成双性/间性类型。它不是全部生殖能力的结论。必须逐项依据明确证据判断 can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_carry_pregnancy，每个能力独立判断，证据不足的单项使用 null，不能因为双性/间性标签自动把所有能力设为 true 或 false。',
-  '明确非人类证据优先；除上述默认男性/女性二元且无明确非人类证据的情况外，身份未知、一般未知或明确非人类的生物按未知/非人类规则处理，不得仅凭性别、gender、代词、称谓、外貌或身体形态套用人类规则。',
-  '资料明确识别为人类，或只呈现默认男性/女性二元且没有明确非人类证据时，才使用人类生殖基线；明确非人类证据优先，不得套用人类基线。此时必须在对应人类 biological_type 的 reproduction_rules 中分别输出排卵（ovulation）、受精（fertilization）、妊娠/孕期（gestation）和分娩/产程周期（labor cycle，字段 labor）的常见人类过程/周期说明。可用约 28 天月经周期中期排卵、妊娠约 40 周（约 280 天，从末次月经起算；约 38 周从受精起算）作为一般基线，受精窗口受排卵影响，产程按阶段描述并保留个体与医疗条件差异；资料未提供具体参数时，在相应字段写明具体参数未知，但这四个基线字段都必须是非空说明，不得为 null。',
-  '该人类基线只适用于明确识别的人类类型，以及上述默认男性/女性二元且无明确非人类证据的资料；对明确非人类类型不得套用，capabilities 仍只能依据明确证据填写，绝不能从 gender、性别、代词、称谓、外貌或身体形态推断。',
-  '资料中明确描述的当前世界医疗条件，包括疾病、医疗设施、照护资源、医疗可及性和既有治疗，都是 medical_context 的证据；证据不足时不要推测诊断或确定分娩难度。',
-  '请区分一般规则与剧情中明确出现的例外；不确定或没有证据的值使用 null，并在 unknowns 中说明缺失信息。',
-  'capabilities 必须使用布尔值或 null，不得通过 gender 推断能力。',
+  '只依据本次提供的 AnalysisInput 判断当前 Chat 的生物学世界规则，不要补写输入中没有证据的事实。输出 JSON 的 key 必须严格保持 schema 规定的英文；除 null、布尔值和数字外，说明、规则和列表字符串必须使用中文。普通人类物种与性别标签规范为中文，不得把未翻译的 Homo sapiens 或 Human 写入名称或说明。',
+  'species 识别与 biological_type 识别必须分开，严格按两步判断：先独立识别 species，再在每个 species 内识别 biological_types，最后才在具体 biological_type 下判断 capabilities。男性、女性、双性、Alpha、Beta、Omega、无性等是性别/生殖分类，不会因为先被识别就成为 species。',
+  '默认人类回退只用于物种识别：资料只呈现默认男性/女性二元或其它普通人类的性别、身体或生殖证据，且没有明确非人类证据时，可以建立 species“人类”；识别出“人类”本身绝不能自动补齐任何 biological_type。只出现男性时输出人类→男性；出现男性和女性时输出人类→男性、女性；缺少证据的类型不要为了完整性添加。',
+  '明确非人类证据优先；妖、魔、剑灵、精灵、兽人及资料定义的其它种类分别建立各自 species。biological_types 只表示其父 species 的性别、性别生殖或直接生殖分类，类型名称保持开放，不得枚举或改造成固定本体。',
+  '不要把种族/亚种、血统、职业、修炼身份、门派、阵营、来源、属性、身体形态、临时身体状态、身体改造、人格、性偏好或单个人的描述放进 biological_types。比如性别模糊、妖修、半兽人、重复父 species 的魔族、妖剑剑灵和魔剑灵应留在 species 说明或规则位置；“男性剑灵”“女性剑灵”应规范为剑灵下的男性、女性。',
+  'BioWeave 的固定双性分类只使用名称“双性”。只有 AnalysisInput 明确说明固定的双性个体、species 分类或世界规则（例如“存在双性个体”“角色本身是双性”）时，才建立“双性”；可以双性化、临时双性状态、变身/改造能力、持续时间或单次身体状态都不是固定类型证据。双性不是全部生殖能力的结论，旧式复合称呼不要作为输出名称。',
+  '每个 biological_type 的 capabilities 必须逐项依据证据独立填写 true、false 或 null；不能从类型名称、性别标签、代词、称谓、外貌或身体形态推断，也不能因为双性、Alpha、Beta 或 Omega 自动把所有能力设为 true。ABO 等开放类型不得自动生成男性/女性组合。',
+  '人类基线只在对应的人类 biological_type 已由当前资料建立后才可使用。事实优先级固定为：明确剧情事实 > 明确世界/世界书规则 > 明确个人例外 > 普通人类基线。世界规则覆盖约 40 周等一般基线；个人例外记录为 exception，不得改写 species 的基线。人类基线可说明通常的配子、受精（fertilization）、排卵（ovulation）、周期（默认可参考约 28 天）、妊娠/孕期（gestation，通常约 40 周）和分娩/产程周期（labor，labor cycle），但不用于创造缺失的类型；已建立的人类类型应在对应 reproduction_rules 中分别填写这些有证据或基线支持的字段，证据不足的其它字段仍为 null。',
+  '对妖、魔、剑灵、精灵、兽人和其它非人类 species，不得因为类人外貌、男性/女性标签、性交或妊娠套用人类能力、周期、妊娠或受精规则；缺少机制证据就保留 null。只有资料明确说明某一项生理结构与人类相同，才继承该项对应的基线部分，不能扩大到其它字段。',
+  '资料中明确描述的当前世界医疗条件，包括疾病、医疗设施、照护资源、医疗可及性和既有治疗，才是 medical_context 的证据；证据不足时不要推测诊断或确定分娩难度。',
+  'unknowns 只能描述已经建立的 species、biological_type 或已知规则的未知机制，不能重新引入被拒绝或从未建立的类型；临时双性化规则留在 species 说明或已有 special_rules，不要放回 unknowns。',
 ].join('\n')
 // 只用普通文字描述输出字段，避免把格式围栏或大段 schema 代码发送给后端。
 const WORLD_MODEL_OUTPUT_CONTRACT = [
@@ -27,6 +26,7 @@ const WORLD_MODEL_OUTPUT_CONTRACT = [
   '顶层字段固定为：schema_version、species、medical_context、exceptions、unknowns；顶层不得出现 biological_types 或 species 级 capabilities。',
   'schema_version 固定为 1。',
   'species 是数组；每项包含 name、description、biological_types。biological_types 是该 species 内的数组；每项包含 name、description、capabilities、reproduction_rules、lifecycle、special_rules。',
+  '资料定义的 biological_type.name 是开放字符串；只保留资料实际出现或明确规则建立的分类。固定双性分类的标准名称是“双性”，不得输出旧式复合别名。',
   'capabilities 只能位于 species[].biological_types[].capabilities；species 不承载合并 capabilities。固定包含 can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_carry_pregnancy；每项依据证据或适用的人类基线独立填写 true、false 或 null，不能由名称触发补全。',
   'reproduction_rules 固定包含：fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor；证据不足时使用 null。',
   'lifecycle 固定包含：maturation、aging；special_rules、exceptions、unknowns 使用数组。',

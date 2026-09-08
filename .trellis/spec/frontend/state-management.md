@@ -492,16 +492,28 @@ species[].biological_types[].capabilities
   ordinary sex/body/reproductive evidence with no explicit non-human evidence
   may create the default species `人类`, but recognizing that species does not
   create any biological type.
-- A biological type is saved only when the current `AnalysisInput` contains it
-  or explicitly describes that it exists. Type names are open; the schema does
-  not enumerate `男性` / `女性` / `双性/间性`, and it can represent
-  classifications such as `Alpha`, `Beta`, and `Omega`.
+- During AI analysis, a biological type is saved only when the current
+  `AnalysisInput` contains it or explicitly describes that it exists. Type
+  names are open; the schema does not enumerate `男性` / `女性` / `双性`, and
+  it can represent classifications such as `Alpha`, `Beta`, and `Omega`
+  without inventing combinations. A manual editor change is explicit user
+  intent and remains subject to structural normalization, not AI evidence
+  filtering.
 - Capabilities exist only on an individual biological type and are each
   independently `true`, `false`, or `null`. A type name, gender label, pronoun,
   title, appearance, or body shape does not fill them automatically.
-- Human baseline reproduction rules apply only to an identified human type or
-  the explicitly allowed default-human context; they do not merge capabilities
-  across types or apply to an identified non-human species.
+- Human baseline reproduction rules apply only after an identified human type;
+  precedence is explicit story fact > explicit world/Worldbook rule > explicit
+  individual exception > ordinary human baseline. They do not merge
+  capabilities across types or apply to an identified non-human species.
+- BioWeave's canonical fixed dual type name is `双性`. Temporary dualization,
+  body modification, an ambiguous individual state, or a source/attribute
+  alias is not fixed-type evidence. The analysis-only guard may remove such
+  unsupported familiar labels and close matching `unknowns`; manual edits are
+  not evidence-filtered.
+- Non-human capabilities, cycles, gestation, and fertilization remain `null`
+  without direct mechanism evidence. An explicit statement that one specific
+  human baseline portion is shared can fill only that portion.
 
 ### 4. Validation & Error Matrix
 
@@ -512,7 +524,7 @@ species[].biological_types[].capabilities
 | Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
 | Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
 | Capability evidence is missing | Normalize that individual capability to `null` |
-| AI returns an intersex type without matching AnalysisInput evidence | Remove that unsupported type from analysis output; manual editing is not filtered |
+| AI returns an unsupported familiar biological type or dual unknown | Remove it from analysis output; manual editing is not filtered |
 
 ### 5. Good / Base / Bad Cases
 
@@ -521,10 +533,10 @@ species[].biological_types[].capabilities
 - Good: “剑灵基本为男性，极少女剑灵” produces `剑灵 → 男性、女性`.
 - Base: a species is identified but no type is explicitly present; retain the
   species with an empty `biological_types` array and do not invent one.
-- Bad: identify `人类` and then add male, female, and intersex types merely
+- Bad: identify `人类` and then add male, female, and dual types merely
   because they are common human categories.
-- Bad: set all capabilities to `true` because a type is called
-  `双性/间性`, `Alpha`, or `Omega`.
+- Bad: set all capabilities to `true` because a type is called `双性`, `Alpha`,
+  or `Omega`.
 
 ### 6. Tests Required
 

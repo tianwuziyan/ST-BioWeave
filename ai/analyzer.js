@@ -20,7 +20,16 @@ const WORLD_RULE_KEYS = Object.freeze([
 const LIFECYCLE_KEYS = Object.freeze(['maturation', 'aging']);
 const MEDICAL_CONTEXT_KEYS = Object.freeze(['childbirth_difficulty', 'care_level', 'evidence']);
 const UNKNOWN_TEXT = new Set(['unknown', 'null', 'undefined', 'n/a', '未知', '不确定']);
-const INTERSEX_EVIDENCE_PATTERN = /(?:双性(?!恋)|间性|雌雄同体|阴阳人|intersex|hermaphrodite)/iu;
+const COMPOSITE_DUAL_LABEL_PATTERN = /双性\s*[\/／]\s*间性/gu;
+const DUAL_TERM_PATTERN = /双性(?!化|恋)/u;
+const NEGATED_DUAL_CONTEXT_PATTERN = /(?:没有|无|不存在|不是|并非|不属于|未(?:说明|提及|发现)|不确定|可能|或许|也许|模糊|不要|不应|不生成|不创建|不能|无法|禁止)[^。！？!?；;，,、\n]{0,8}\s*$/u;
+const TEMPORARY_DUAL_PHRASE_PATTERN = /(?:(?:临时|暂时|短暂)(?:地)?\s*)?(?:(?:可以|能够|能|可|会|允许|可能|或许|也许)(?:\s*(?:临时|暂时|短暂)(?:地)?)?\s*)?(?:(?:变为|变成|转为|转换为|转化为|变化为|修改为|改造成)\s*)双性|(?:(?:临时|暂时|短暂)(?:地)?\s*)?(?:(?:可以|能够|能|可|会|允许|可能|或许|也许)(?:\s*(?:临时|暂时|短暂)(?:地)?)?\s*)?(?:(?:是|为)\s*)?双性(?:化|状态)|(?:(?:临时|暂时|短暂)(?:地)?\s*|(?:可以|能够|能|可|会|允许|可能|或许|也许)\s*)(?:是|为)\s*双性/gu;
+const MALE_EVIDENCE_PATTERN = /(?:男性|男人|男孩|男生|雄性|男子|男剑灵|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*男(?:性)?|\bmale\b|\bman\b|\bboy\b)/iu;
+const FEMALE_EVIDENCE_PATTERN = /(?:女性|女人|女孩|女生|少女|雌性|女子|女剑灵|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*女(?:性)?|\bfemale\b|\bwoman\b|\bgirl\b)/iu;
+const NEGATED_LABEL_CONTEXT_PATTERN = /(?:没有|无|不存在|并非|不是|非|未(?:有|见|说明|提及|发现|出现)|不含|不确定|不明确|不清楚|可能|或许|也许|是否)[^。！？!?；;，,、\n]{0,24}$/u;
+const UNKNOWN_LABEL_SUFFIX_PATTERN = /(?:未知|不确定|不明确|不清楚|模糊)\s*$/u;
+const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
+const FAMILIAR_TYPE_NAMES = new Set(['男性', '女性', '双性']);
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -43,7 +52,8 @@ function localizedWorldModelText(value) {
     .replace(/\bHomo\s+sapiens\b/gi, '人类')
     .replace(/\bHumans?\b/gi, '人类')
     .replace(/\bfemale\b/gi, '女性')
-    .replace(/\bmale\b/gi, '男性');
+    .replace(/\bmale\b/gi, '男性')
+    .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性');
 }
 
 function nullableBoolean(value) {
@@ -72,13 +82,27 @@ function objectOrEmpty(value) {
   return value;
 }
 
-function normalizeBiologicalType(raw, index) {
+function normalizeBiologicalTypeName(value, parentSpeciesName) {
+  const name = localizedWorldModelText(value);
+  if (!name) return name;
+  const compactName = name.replace(/\s+/gu, '');
+  const compactParent = String(parentSpeciesName ?? '').replace(/\s+/gu, '');
+  if (/^双性(?:人类|类型|分类|个体|生物|性别|身份|体质|特征|者|体)$/.test(compactName)) return '双性';
+  for (const familiarName of FAMILIAR_TYPE_NAMES) {
+    if (compactName === `${familiarName}人类` || (compactParent && compactName === `${familiarName}${compactParent}`)) {
+      return familiarName;
+    }
+  }
+  return name;
+}
+
+function normalizeBiologicalType(raw, index, parentSpeciesName) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}`);
   const capabilities = objectOrEmpty(raw.capabilities);
   const reproductionRules = objectOrEmpty(raw.reproduction_rules);
   const lifecycle = objectOrEmpty(raw.lifecycle);
   return {
-    name: localizedWorldModelText(raw.name),
+    name: normalizeBiologicalTypeName(raw.name, parentSpeciesName),
     description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [key, nullableBoolean(capabilities[key])])),
     reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, localizedWorldModelText(reproductionRules[key])])),
@@ -91,11 +115,12 @@ function normalizeSpecies(raw, index, {strict = false} = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
   if (strict && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
   if (raw.biological_types !== undefined && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
+  const speciesName = localizedWorldModelText(raw.name);
   const biologicalTypes = Array.isArray(raw.biological_types)
-    ? raw.biological_types.map(normalizeBiologicalType)
+    ? raw.biological_types.map((item, typeIndex) => normalizeBiologicalType(item, typeIndex, speciesName))
     : [];
   return {
-    name: localizedWorldModelText(raw.name),
+    name: speciesName,
     description: localizedWorldModelText(raw.description),
     biological_types: biologicalTypes,
   };
@@ -147,27 +172,85 @@ function worldModelEvidenceText(input = {}) {
   return parts.filter(value => typeof value === 'string').join('\n');
 }
 
-function hasExplicitIntersexEvidence(input) {
-  return INTERSEX_EVIDENCE_PATTERN.test(worldModelEvidenceText(input));
+function evidenceClauses(input) {
+  return worldModelEvidenceText(input)
+    .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性')
+    .split(/[。！？!?；;，,、\n]+/u)
+    .map(value => value.trim())
+    .filter(Boolean);
 }
 
-function isIntersexType(type) {
-  return INTERSEX_EVIDENCE_PATTERN.test(typeof type?.name === 'string' ? type.name : '');
+function hasLabelEvidence(input, pattern) {
+  return evidenceClauses(input).some(clause => {
+    const match = clause.match(pattern);
+    if (!match) return false;
+    const before = clause.slice(0, match.index ?? 0).slice(-12);
+    const after = clause.slice((match.index ?? 0) + match[0].length).slice(0, 12);
+    if (NEGATED_LABEL_CONTEXT_PATTERN.test(before)) return false;
+    if (/^\s*(?:不存在|没有|未(?:有|见|说明|提及|发现|出现)|不确定|不明确|不清楚|模糊)/u.test(after)) return false;
+    if (UNKNOWN_LABEL_SUFFIX_PATTERN.test(after)) return false;
+    return true;
+  });
 }
 
-// AI 分析不能凭空新增双性/间性类型；手动编辑保存的 World Model 不经过此过滤。
-function removeUnsupportedIntersexTypes(model, analysisInput) {
-  if (hasExplicitIntersexEvidence(analysisInput)) return model;
+function hasFixedDualEvidence(input) {
+  return evidenceClauses(input).some(clause => {
+    const stableClause = clause.replace(TEMPORARY_DUAL_PHRASE_PATTERN, '').trim();
+    const dualMatch = stableClause.match(DUAL_TERM_PATTERN);
+    if (!dualMatch) return false;
+    const beforeDual = stableClause.slice(0, dualMatch.index ?? 0).slice(-20);
+    if (NEGATED_DUAL_CONTEXT_PATTERN.test(beforeDual)) return false;
+    return /(?:^|[：:])\s*双性|双性(?:个体|人|生物|类型|分类|性别|身份|体质|特征|存在者|者|体|存在|是|为|属于)|(?:是|为|属于|定义为|分类为|归类为|存在(?:着)?|包括|包含|出现|有|分为|明确为|固定(?:为)?|本身(?:是|为)?|角色(?:本身)?(?:是|为)?|个体(?:是|为)?|物种(?:是|为)?|种族(?:是|为)?|性别|世界规则|规则|设定|具有|具备|呈现|表现为|规定|记载|说明|明确)[^。！？!?；;，,、\n]{0,16}双性/u.test(stableClause);
+  });
+}
+
+function normalizeAnalysisType(type, speciesName) {
+  const name = normalizeBiologicalTypeName(type?.name, speciesName);
+  return name === type?.name ? type : {...type, name};
+}
+
+function isObservedNonBiologicalType(name, speciesName) {
+  const normalizedName = String(name ?? '').replace(/\s+/gu, '');
+  const normalizedSpecies = String(speciesName ?? '').replace(/\s+/gu, '');
+  if (!normalizedName || normalizedName === normalizedSpecies || normalizedName === DIRECT_AMBIGUOUS_TYPE) return true;
+  if (normalizedSpecies === '妖' && ['妖修', '半兽人'].includes(normalizedName)) return true;
+  if (normalizedSpecies === '魔' && normalizedName === '魔族') return true;
+  if (normalizedSpecies === '剑灵' && ['妖剑剑灵', '魔剑灵'].includes(normalizedName)) return true;
+  return false;
+}
+
+function isUnsupportedFamiliarType(name, evidence) {
+  if (!FAMILIAR_TYPE_NAMES.has(name)) return false;
+  if (name === '男性') return !hasLabelEvidence(evidence, MALE_EVIDENCE_PATTERN);
+  if (name === '女性') return !hasLabelEvidence(evidence, FEMALE_EVIDENCE_PATTERN);
+  return !hasFixedDualEvidence(evidence);
+}
+
+function isDualTypeName(name) {
+  const text = String(name ?? '');
+  return DUAL_TERM_PATTERN.test(text) || /双性(?:化|状态)/u.test(text);
+}
+
+function isUnsupportedDualUnknown(value) {
+  return /双性(?:个体|个人|人|生物|类型|分类|性别|能力|生育|受精)/u.test(String(value ?? ''));
+}
+
+// AI 分析才经过证据边界；手动编辑保存的 World Model 只经过结构规范化。
+function applyWorldModelEvidenceGuard(model, analysisInput) {
+  const hasFixedDual = hasFixedDualEvidence(analysisInput);
   const species = [];
   for (const item of model.species) {
-    const biologicalTypes = item.biological_types.filter(type => !isIntersexType(type));
-    // 保留仅识别出物种、尚未识别具体类型的结果；只有安全过滤移除该物种原有的全部类型时才删除物种。
-    if (item.biological_types.length && !biologicalTypes.length) continue;
+    const biologicalTypes = item.biological_types
+      .map(type => normalizeAnalysisType(type, item.name))
+      .filter(type => !isObservedNonBiologicalType(type.name, item.name))
+      .filter(type => !isUnsupportedFamiliarType(type.name, analysisInput))
+      .filter(type => hasFixedDual || !isDualTypeName(type.name));
     species.push({...item, biological_types: biologicalTypes});
   }
   return {
     ...model,
     species,
+    unknowns: hasFixedDual ? model.unknowns : model.unknowns.filter(value => !isUnsupportedDualUnknown(value)),
   };
 }
 
@@ -299,7 +382,7 @@ export function createAnalyzer({profileResolver, contextResolver, requestSetting
     );
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
     const model = parseWorldModelResponse(raw);
-    return removeUnsupportedIntersexTypes(model, input.analysisInput ?? input);
+    return applyWorldModelEvidenceGuard(model, input.analysisInput ?? input);
   }
 
   return {

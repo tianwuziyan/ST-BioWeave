@@ -107,7 +107,7 @@ function renderRuleRows(rules = {}, labels = {}) {
 function renderBiologicalTypeView(type, index) {
   return [
     '<article class="bioweave-world-model-type">',
-    '<header><h5>' + (type?.name ? displayText(type.name) : '生物学 / 生殖类型 ' + (index + 1)) + '</h5></header>',
+    '<header><h5>' + (type?.name ? displayText(type.name) : '性别 / 生殖类型 ' + (index + 1)) + '</h5></header>',
     '<p class="bioweave-world-model-description">' + displayText(type?.description) + '</p>',
     '<h6>生殖能力</h6>',
     '<dl class="bioweave-world-model-properties">' + renderCapabilityRows(type?.capabilities) + '</dl>',
@@ -128,12 +128,12 @@ function renderWorldModelView(model) {
       const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
       const typeMarkup = types.length
         ? types.map(renderBiologicalTypeView).join('')
-        : '<p class="bioweave-empty">本次资料只识别出该物种，尚未识别出具体生物学 / 生殖类型。</p>';
+        : '<p class="bioweave-empty">本次资料只识别出该物种，尚未识别出具体性别 / 生殖类型。</p>';
       return [
         '<article class="bioweave-world-model-species">',
         '<header><h3>' + (item?.name ? displayText(item.name) : '物种 ' + (speciesIndex + 1)) + '</h3></header>',
         '<p class="bioweave-world-model-description">' + displayText(item?.description) + '</p>',
-        '<h4>生物学 / 生殖类型</h4>',
+        '<h4>性别 / 生殖类型</h4>',
         typeMarkup,
         '</article>',
       ].join('');
@@ -201,7 +201,7 @@ function renderWorldModelEditor(model = {}) {
     const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
     const typeMarkup = types.map((type, typeIndex) => [
       '<article class="bioweave-world-model-edit-type" data-bioweave-world-type>',
-      '<header><h4>生物学 / 生殖类型 ' + (typeIndex + 1) + '</h4>',
+      '<header><h4>性别 / 生殖类型 ' + (typeIndex + 1) + '</h4>',
       '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-type">删除</button></header>',
       '<label class="bioweave-settings-field"><span>名称</span><input class="bioweave-input" data-bioweave-world-field="name" value="' + escapeHtml(type?.name ?? '') + '"></label>',
       '<label class="bioweave-settings-field"><span>说明</span><textarea class="bioweave-input" data-bioweave-world-field="description">' + escapeHtml(type?.description ?? '') + '</textarea></label>',
@@ -222,9 +222,9 @@ function renderWorldModelEditor(model = {}) {
       '<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-remove-species">删除物种</button></header>',
       '<label class="bioweave-settings-field"><span>物种名称</span><input class="bioweave-input" data-bioweave-world-species-field="name" value="' + escapeHtml(item?.name ?? '') + '"></label>',
       '<label class="bioweave-settings-field"><span>物种说明</span><textarea class="bioweave-input" data-bioweave-world-species-field="description">' + escapeHtml(item?.description ?? '') + '</textarea></label>',
-      '<h4>生物学 / 生殖类型</h4>',
-      typeMarkup || '<p class="bioweave-empty">暂无生物学 / 生殖类型，请只在资料有证据时添加。</p>',
-      '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-type">添加生物学 / 生殖类型</button>',
+      '<h4>性别 / 生殖类型</h4>',
+      typeMarkup || '<p class="bioweave-empty">暂无性别 / 生殖类型，请只在资料有证据时添加。</p>',
+      '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-add-type">添加性别 / 生殖类型</button>',
       '</article>',
     ].join('');
   }).join('');
