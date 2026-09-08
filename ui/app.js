@@ -3,7 +3,14 @@ import {charactersPage} from './characters.js';
 import {eventsPage} from './events.js';
 import {projectionPage} from './projection.js';
 import {genealogyPage} from './genealogy.js';
-import {emptyWorldModelSpecies, emptyWorldModelType, worldPage} from './world.js';
+import {
+  applyWorldModelSection,
+  extractWorldModelSection,
+  getWorldModelSection,
+  resolveWorldModelSelection,
+  worldPage,
+  WORLD_MODEL_SECTION_KEYS,
+} from './world.js';
 import {normalizeModelList, settingsPage} from './settings.js';
 import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
@@ -132,8 +139,11 @@ function createWorldModelState() {
     chatId: null,
     model: null,
     meta: null,
-    editing: false,
-    draft: null,
+    selectedSpeciesIndex: null,
+    selectedTypeIndex: null,
+    editingSection: null,
+    sectionDraft: null,
+    sectionDirty: false,
     notice: null,
     showAnalysisInput: false,
   };
@@ -1125,12 +1135,15 @@ export function createApp(runtime, options = {}) {
         notice = '已保存的世界模型格式无效，请重新分析。';
       }
     }
+    const selection = resolveWorldModelSelection(model);
     worldModelState = {
       ...createWorldModelState(),
       loaded: true,
       chatId,
       model,
       meta: chatData?.world_model_meta ?? null,
+      selectedSpeciesIndex: selection.speciesIndex,
+      selectedTypeIndex: selection.typeIndex,
       notice,
     };
   }
@@ -1144,8 +1157,12 @@ export function createApp(runtime, options = {}) {
       ST_CHAT_COMPLETION_UNAVAILABLE: '独立 API 服务不可用，请检查 API 来源设置。',
       WORLD_ANALYZER_UNAVAILABLE: '世界分析功能暂不可用，请重新加载 BioWeave。',
       WORLD_MODEL_INVALID: 'AI 返回的世界模型无法通过 JSON 校验，上一份模型已保留。',
-      ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，世界模型未保存。',
+      ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
       STALE_CHAT: 'Chat 已切换，本次世界模型结果未保存。',
+      WORLD_MODEL_SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
+      SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
+      ST_SAVE_CHAT_FAILED: '保存失败，当前模块草稿仍保留。',
+      ST_CHAT_SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
       REQUEST_TIMEOUT: '世界模型分析请求超时，上一份模型已保留。',
       REQUEST_ABORTED: '世界模型分析请求已取消，上一份模型已保留。',
     };
@@ -1153,111 +1170,126 @@ export function createApp(runtime, options = {}) {
     return messages[matchedCode] ?? '世界模型操作失败，上一份模型已保留。';
   }
 
-  function readWorldModelForm(form) {
-    const readValue = node => String(node?.value ?? '').trim();
-    const readLines = node => readValue(node).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
-    const readIn = (parent, selector) => parent?.querySelector?.(selector);
-    const readType = typeNode => {
-      const capabilities = Object.fromEntries(Object.keys({
-        can_produce_sperm: true,
-        can_produce_ova: true,
-        can_be_fertilized: true,
-        can_fertilize: true,
-        can_carry_pregnancy: true,
-      }).map(key => {
-        const value = readValue(readIn(typeNode, `[data-bioweave-world-capability="${key}"]`));
-        return [key, value === '' ? null : value === 'true'];
-      }));
-      const reproductionRules = Object.fromEntries(['ovulation', 'fertilization', 'pregnancy_or_carrying', 'gestation', 'labor', 'cycle'].map(key => [
-        key,
-        readValue(readIn(typeNode, `[data-bioweave-world-rule="${key}"]`)) || null,
-      ]));
-      const lifecycle = Object.fromEntries(['maturation', 'aging'].map(key => [
-        key,
-        readValue(readIn(typeNode, `[data-bioweave-world-lifecycle="${key}"]`)) || null,
-      ]));
-      return {
-        name: readValue(readIn(typeNode, '[data-bioweave-world-field="name"]')) || null,
-        description: readValue(readIn(typeNode, '[data-bioweave-world-field="description"]')) || null,
-        capabilities,
-        reproduction_rules: reproductionRules,
-        lifecycle,
-        special_rules: readLines(readIn(typeNode, '[data-bioweave-world-special-rules]')),
-      };
-    };
-    const species = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].map(speciesNode => ({
-      name: readValue(readIn(speciesNode, '[data-bioweave-world-species-field="name"]')) || null,
-      description: readValue(readIn(speciesNode, '[data-bioweave-world-species-field="description"]')) || null,
-      biological_types: [...(speciesNode.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].map(readType),
-    }));
-    const medicalContextNode = form?.querySelector?.('[data-bioweave-world-medical-context]');
-    const medicalContext = Object.fromEntries(['childbirth_difficulty', 'care_level', 'evidence'].map(key => [
-      key,
-      readValue(readIn(medicalContextNode, `[data-bioweave-world-medical="${key}"]`)) || null,
-    ]));
-    const exceptions = [...(form?.querySelectorAll?.('[data-bioweave-world-exception]') ?? [])].map(exceptionNode => ({
-      statement: readValue(readIn(exceptionNode, '[data-bioweave-world-exception-field="statement"]')) || null,
-      applies_to: readValue(readIn(exceptionNode, '[data-bioweave-world-exception-field="applies_to"]')) || null,
-      evidence: readValue(readIn(exceptionNode, '[data-bioweave-world-exception-field="evidence"]')) || null,
-    }));
-    return {
-      schema_version: 1,
-      species,
-      medical_context: medicalContext,
-      exceptions,
-      unknowns: readLines(form?.querySelector?.('[data-bioweave-world-unknowns]')),
-    };
+  function currentWorldModelSelection() {
+    return resolveWorldModelSelection(
+      worldModelState.model,
+      worldModelState.selectedSpeciesIndex,
+      worldModelState.selectedTypeIndex,
+    );
   }
 
-  function captureWorldModelDraft() {
-    if (!worldModelState.editing) return worldModelState.draft;
-    const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-    if (!form) return worldModelState.draft;
-    const draft = readWorldModelForm(form);
-    worldModelState = {...worldModelState, draft};
+  function captureWorldModelSectionDraft() {
+    const section = worldModelState.editingSection;
+    if (!section) return worldModelState.sectionDraft;
+    const form = root?.querySelector?.('[data-bioweave-world-section-form]');
+    if (!form) return worldModelState.sectionDraft;
+    const draft = extractWorldModelSection(form, section);
+    if (draft === null) return worldModelState.sectionDraft;
+    const original = getWorldModelSection(
+      worldModelState.model,
+      section,
+      currentWorldModelSelection(),
+    );
+    worldModelState = {
+      ...worldModelState,
+      sectionDraft: draft,
+      sectionDirty: JSON.stringify(draft) !== JSON.stringify(original),
+    };
     return draft;
   }
 
-  function beginWorldModelEdit() {
-    if (!worldModelState.model) return;
+  function canDiscardWorldModelSectionDraft() {
+    if (!worldModelState.editingSection || !worldModelState.sectionDirty) return true;
+    const confirmRef = documentRef?.defaultView?.confirm ?? globalThis.confirm;
+    return typeof confirmRef === 'function'
+      ? confirmRef('当前修改尚未保存，是否放弃？')
+      : true;
+  }
+
+  function clearWorldModelSectionDraft() {
     worldModelState = {
       ...worldModelState,
-      editing: true,
-      draft: normalizeWorldModel(worldModelState.model),
+      editingSection: null,
+      sectionDraft: null,
+      sectionDirty: false,
+    };
+  }
+
+  function beginWorldModelSectionEdit(section) {
+    if (!worldModelState.model || !WORLD_MODEL_SECTION_KEYS.includes(section)) return false;
+    if (worldModelState.editingSection === section) return true;
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
+    if (!canDiscardWorldModelSectionDraft()) return false;
+    const selection = currentWorldModelSelection();
+    worldModelState = {
+      ...worldModelState,
+      selectedSpeciesIndex: selection.speciesIndex,
+      selectedTypeIndex: selection.typeIndex,
+      editingSection: section,
+      sectionDraft: getWorldModelSection(worldModelState.model, section, selection),
+      sectionDirty: false,
       notice: null,
       showAnalysisInput: false,
     };
     render();
+    return true;
   }
 
-  function cancelWorldModelEdit() {
+  function cancelWorldModelSectionEdit() {
+    clearWorldModelSectionDraft();
+    worldModelState = {...worldModelState, notice: null};
+    render();
+  }
+
+  function selectWorldModelType(speciesIndex, typeIndex = null) {
+    if (!worldModelState.model) return false;
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
+    if (!canDiscardWorldModelSectionDraft()) return false;
+    const selection = resolveWorldModelSelection(worldModelState.model, speciesIndex, typeIndex);
     worldModelState = {
       ...worldModelState,
-      editing: false,
-      draft: null,
+      selectedSpeciesIndex: selection.speciesIndex,
+      selectedTypeIndex: selection.typeIndex,
+      editingSection: null,
+      sectionDraft: null,
+      sectionDirty: false,
+      notice: null,
+    };
+    render();
+    return true;
+  }
+
+  function updateWorldModelSectionDraft(mutator) {
+    if (!worldModelState.editingSection) return;
+    captureWorldModelSectionDraft();
+    const current = worldModelState.sectionDraft ?? getWorldModelSection(
+      worldModelState.model,
+      worldModelState.editingSection,
+      currentWorldModelSelection(),
+    );
+    const next = mutator(current);
+    worldModelState = {
+      ...worldModelState,
+      sectionDraft: next,
+      sectionDirty: true,
       notice: null,
     };
     render();
   }
 
-  function updateWorldModelDraft(mutator) {
-    captureWorldModelDraft();
-    const draft = normalizeWorldModel(worldModelState.draft ?? {
-      schema_version: 1,
-      species: [],
-      exceptions: [],
-      unknowns: [],
-    });
-    worldModelState = {...worldModelState, draft: mutator(draft)};
-    render();
-  }
-
-  async function saveWorldModel() {
-    const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-    const raw = form ? readWorldModelForm(form) : worldModelState.draft;
+  async function saveWorldModelSection() {
+    const section = worldModelState.editingSection;
+    if (!section || !worldModelState.model) return;
+    captureWorldModelSectionDraft();
+    const selection = currentWorldModelSelection();
     let model;
     try {
-      model = normalizeWorldModel(raw);
+      const base = normalizeWorldModel(worldModelState.model);
+      const patched = applyWorldModelSection(base, section, worldModelState.sectionDraft, {
+        selectedSpeciesIndex: selection.speciesIndex,
+        selectedTypeIndex: selection.typeIndex,
+      });
+      model = normalizeWorldModel(patched);
     } catch (error) {
       worldModelState = {...worldModelState, notice: worldModelOperationError(error)};
       render();
@@ -1269,27 +1301,36 @@ export function createApp(runtime, options = {}) {
     try {
       const currentChat = runtime.store?.getChat?.(chatId);
       if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
-      const savedAt = new Date().toISOString();
-      const meta = {
-        ...(worldModelState.meta ?? {}),
-        last_saved_at: savedAt,
-        last_saved_by: 'manual',
-        source_summary: worldModelState.meta?.source_summary ?? {},
-      };
-      await runtime.store.saveChat(chatId, {
-        ...currentChat,
-        world_model: model,
-        world_model_meta: meta,
-      });
+      const hasPersistedMeta = Object.prototype.hasOwnProperty.call(currentChat, 'world_model_meta');
+      const currentMeta = hasPersistedMeta ? currentChat.world_model_meta : worldModelState.meta;
+      const existingMeta = currentMeta && typeof currentMeta === 'object'
+        ? currentMeta
+        : null;
+      const nextMeta = existingMeta ? {...existingMeta} : null;
+      let metadataChanged = false;
+      if (nextMeta && Object.prototype.hasOwnProperty.call(nextMeta, 'last_saved_at')) {
+        nextMeta.last_saved_at = new Date().toISOString();
+        metadataChanged = true;
+      }
+      if (nextMeta && Object.prototype.hasOwnProperty.call(nextMeta, 'last_saved_by')) {
+        nextMeta.last_saved_by = 'manual';
+        metadataChanged = true;
+      }
+      const nextChat = {...currentChat, world_model: model};
+      if (metadataChanged && hasPersistedMeta) {
+        nextChat.world_model_meta = nextMeta;
+      }
+      await runtime.store.saveChat(chatId, nextChat);
       assertAnalysisChatToken(token);
       worldModelState = {
         ...worldModelState,
         busy: false,
         model,
-        meta,
-        editing: false,
-        draft: null,
-        notice: '世界模型已保存，当前版本已成为 Chat 的权威规则。',
+        meta: metadataChanged && hasPersistedMeta ? nextMeta : worldModelState.meta,
+        editingSection: null,
+        sectionDraft: null,
+        sectionDirty: false,
+        notice: '当前模块已保存。',
       };
     } catch (error) {
       try {
@@ -1297,13 +1338,20 @@ export function createApp(runtime, options = {}) {
       } catch {
         return;
       }
-      worldModelState = {...worldModelState, busy: false, notice: worldModelOperationError(error)};
+      worldModelState = {
+        ...worldModelState,
+        busy: false,
+        notice: worldModelOperationError(error),
+      };
     }
     render();
   }
 
   async function analyzeWorldModel() {
     if (worldModelState.busy) return;
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
+    if (!canDiscardWorldModelSectionDraft()) return;
+    if (worldModelState.editingSection) clearWorldModelSectionDraft();
     const {chatId, token} = currentAnalysisChatToken();
     worldModelState = {...worldModelState, busy: true, notice: null, showAnalysisInput: false};
     if (route === 'world') render();
@@ -1344,8 +1392,10 @@ export function createApp(runtime, options = {}) {
         model,
         meta,
         chatId,
-        editing: false,
-        draft: null,
+        ...resolveWorldModelSelection(model),
+        editingSection: null,
+        sectionDraft: null,
+        sectionDirty: false,
         notice: '世界模型分析成功并已保存。',
       };
     } catch (error) {
@@ -1589,8 +1639,10 @@ export function createApp(runtime, options = {}) {
         worldModel: worldModelState.model,
         worldModelMeta: worldModelState.meta,
         worldModelBusy: worldModelState.busy,
-        worldModelEditing: worldModelState.editing,
-        worldModelDraft: worldModelState.draft,
+        selectedSpeciesIndex: worldModelState.selectedSpeciesIndex,
+        selectedTypeIndex: worldModelState.selectedTypeIndex,
+        editingSection: worldModelState.editingSection,
+        sectionDraft: worldModelState.sectionDraft,
         worldModelNotice: worldModelState.notice,
         showAnalysisInput: worldModelState.showAnalysisInput,
         analysisPreview: analysisPreviewState,
@@ -2161,8 +2213,8 @@ export function createApp(runtime, options = {}) {
   function handleSettingsInput(event) {
     if (!root?.contains(event.target)) return;
     const target = event.target;
-    if (target.closest?.('[data-bioweave-world-model-form]')) {
-      captureWorldModelDraft();
+    if (target.closest?.('[data-bioweave-world-section-form]')) {
+      captureWorldModelSectionDraft();
       return;
     }
     if (target?.dataset?.bioweaveAnalysisSourceSearch !== undefined) {
@@ -2336,73 +2388,61 @@ export function createApp(runtime, options = {}) {
       await toggleWorldModelInputPreview();
       return;
     }
-    if (action === 'world-model-edit') {
+    if (action === 'world-model-select-species') {
       event.preventDefault();
-      beginWorldModelEdit();
+      selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null);
       return;
     }
-    if (action === 'world-model-cancel') {
+    if (action === 'world-model-select-type') {
       event.preventDefault();
-      cancelWorldModelEdit();
+      selectWorldModelType(
+        Number(target.dataset.bioweaveWorldSpeciesIndex),
+        Number(target.dataset.bioweaveWorldTypeIndex),
+      );
       return;
     }
-    if (action === 'world-model-save') {
+    if (action === 'world-model-focus-selector') {
       event.preventDefault();
-      await saveWorldModel();
+      const selector = root?.querySelector?.('.bioweave-world-model-species-selector');
+      selector?.scrollIntoView?.({behavior: 'smooth', block: 'nearest'});
+      selector?.querySelector?.('[aria-pressed="true"]')?.focus?.({preventScroll: true});
       return;
     }
-    if (action === 'world-model-add-species') {
+    if (action === 'world-model-edit-section') {
       event.preventDefault();
-      updateWorldModelDraft(draft => ({...draft, species: [...draft.species, emptyWorldModelSpecies()]}));
+      beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''));
       return;
     }
-    if (action === 'world-model-remove-species') {
+    if (action === 'world-model-cancel-section') {
       event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const speciesNode = target.closest?.('[data-bioweave-world-species]');
-      const index = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
-      updateWorldModelDraft(draft => ({...draft, species: draft.species.filter((_, itemIndex) => itemIndex !== index)}));
+      cancelWorldModelSectionEdit();
       return;
     }
-    if (action === 'world-model-add-type') {
+    if (action === 'world-model-save-section') {
       event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const speciesNode = target.closest?.('[data-bioweave-world-species]');
-      const speciesIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
-      updateWorldModelDraft(draft => ({
-        ...draft,
-        species: draft.species.map((species, itemIndex) => itemIndex === speciesIndex
-          ? {...species, biological_types: [...species.biological_types, emptyWorldModelType()]}
-          : species),
-      }));
+      await saveWorldModelSection();
       return;
     }
-    if (action === 'world-model-remove-type') {
+    if (action === 'world-model-add-row') {
       event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const typeNode = target.closest?.('[data-bioweave-world-type]');
-      const speciesNode = target.closest?.('[data-bioweave-world-species]');
-      const speciesIndex = [...(form?.querySelectorAll?.('[data-bioweave-world-species]') ?? [])].indexOf(speciesNode);
-      const localIndex = [...(speciesNode?.querySelectorAll?.('[data-bioweave-world-type]') ?? [])].indexOf(typeNode);
-      updateWorldModelDraft(draft => ({
-        ...draft,
-        species: draft.species.map((species, itemIndex) => itemIndex === speciesIndex
-          ? {...species, biological_types: species.biological_types.filter((_, typeIndex) => typeIndex !== localIndex)}
-          : species),
-      }));
+      const section = String(target.dataset.bioweaveWorldSection ?? '');
+      if (section === 'exceptions') {
+        updateWorldModelSectionDraft(value => [...(Array.isArray(value) ? value : []), {
+          statement: null,
+          applies_to: null,
+          evidence: null,
+        }]);
+      } else if (section === 'special_rules' || section === 'unknowns') {
+        updateWorldModelSectionDraft(value => [...(Array.isArray(value) ? value : []), '']);
+      }
       return;
     }
-    if (action === 'world-model-add-exception') {
+    if (action === 'world-model-remove-row') {
       event.preventDefault();
-      updateWorldModelDraft(draft => ({...draft, exceptions: [...draft.exceptions, {statement: null, applies_to: null, evidence: null}]}));
-      return;
-    }
-    if (action === 'world-model-remove-exception') {
-      event.preventDefault();
-      const form = root?.querySelector?.('[data-bioweave-world-model-form]');
-      const exceptionNode = target.closest?.('[data-bioweave-world-exception]');
-      const index = [...(form?.querySelectorAll?.('[data-bioweave-world-exception]') ?? [])].indexOf(exceptionNode);
-      updateWorldModelDraft(draft => ({...draft, exceptions: draft.exceptions.filter((_, itemIndex) => itemIndex !== index)}));
+      const section = String(target.dataset.bioweaveWorldSection ?? '');
+      const index = Number(target.dataset.bioweaveWorldRowIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      updateWorldModelSectionDraft(value => (Array.isArray(value) ? value.filter((_, itemIndex) => itemIndex !== index) : value));
       return;
     }
     if (action === 'select-all-analysis-sources') {
@@ -2478,8 +2518,8 @@ export function createApp(runtime, options = {}) {
   async function handleChange(event) {
     if (!root?.contains(event.target)) return;
     captureAnalysisSourceDisclosure();
-    if (event.target.closest?.('[data-bioweave-world-model-form]')) {
-      captureWorldModelDraft();
+    if (event.target.closest?.('[data-bioweave-world-section-form]')) {
+      captureWorldModelSectionDraft();
       return;
     }
     const characterOpeningToggle = event.target.closest?.('[data-bioweave-analysis-character-opening-toggle]');
@@ -2533,6 +2573,12 @@ export function createApp(runtime, options = {}) {
     await changeAssignment(target);
   }
 
+  function handleSubmit(event) {
+    if (event.target?.closest?.('[data-bioweave-world-section-form]')) {
+      event.preventDefault();
+    }
+  }
+
   function handleOverlayClick(event) {
     if (event.target === overlay) closeBioWeave();
   }
@@ -2549,6 +2595,7 @@ export function createApp(runtime, options = {}) {
     node.removeEventListener?.('click', handleClick);
     node.removeEventListener?.('input', handleSettingsInput);
     node.removeEventListener?.('change', handleChange);
+    node.removeEventListener?.('submit', handleSubmit);
     node.removeEventListener?.('keydown', handleKeydown);
     const surface = overlay;
     surface?.removeEventListener?.('click', handleOverlayClick);
@@ -2640,6 +2687,7 @@ export function createApp(runtime, options = {}) {
     root.addEventListener('click', handleClick);
     root.addEventListener('input', handleSettingsInput);
     root.addEventListener('change', handleChange);
+    root.addEventListener('submit', handleSubmit);
     root.addEventListener('keydown', handleKeydown);
     surface.addEventListener('click', handleOverlayClick);
     root[APP_TEARDOWN_PROPERTY] = teardownRootListeners;

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>BioWeave 世界模型 UI 参考实现 v3</title>
+<style>
+:root{
+  --bg:#101820; --panel:#17232d; --panel-2:#1d2a35; --panel-3:#22313d;
+  --text:#eaf0f5; --muted:#9caab6; --line:#334858; --accent:#58aefc;
+  --accent-soft:#173a55; --good:#67d8a0; --warn:#f1b45c; --danger:#ef7d86;
+  --shadow:0 14px 36px rgba(0,0,0,.22); --radius:10px; --radius-sm:7px;
+  --nav-w:176px; --gap:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.bw-shell{min-height:100dvh;display:grid;grid-template-columns:var(--nav-w) 1fr;background:var(--bg)}
+.bw-sidebar{position:sticky;top:0;height:100dvh;padding:14px 10px;border-right:1px solid var(--line);background:#15212b;display:flex;flex-direction:column;gap:14px}
+.bw-brand{display:flex;gap:10px;align-items:center;padding:4px 8px 10px}.bw-brand-mark{width:34px;height:34px;border:1px solid var(--accent);border-radius:50%;display:grid;place-items:center;color:var(--accent);font-weight:800}.bw-brand b{font-size:18px}.bw-brand small{display:block;color:var(--muted)}
+.bw-nav{display:grid;gap:3px}.bw-nav button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;color:var(--text);padding:10px;border-radius:7px;text-align:left}.bw-nav button.active{background:var(--accent-soft);color:#fff}.bw-nav .ico{width:18px;text-align:center;opacity:.9}
+.bw-side-foot{margin-top:auto;padding:12px 8px;border-top:1px solid var(--line);display:grid;gap:3px}.bw-side-foot span{color:var(--muted);font-size:12px}.bw-side-foot strong{font-size:15px}.bw-enabled{color:var(--good)!important}
+.bw-main{min-width:0;padding:18px 22px 28px;max-width:1500px;width:100%;margin:0 auto}
+.bw-top{display:flex;gap:16px;align-items:flex-start;padding-bottom:14px;border-bottom:1px solid var(--line)}.bw-top h1{margin:0;font-size:23px}.bw-top p{margin:2px 0 0;color:var(--muted)}.bw-top-meta{margin-left:auto;color:var(--muted);font-size:12px;text-align:right}.bw-actions{display:flex;gap:8px;margin-left:8px}
+.bw-btn{border:1px solid var(--line);background:var(--panel-2);border-radius:7px;padding:8px 12px;min-height:38px}.bw-btn.primary{border-color:#3978a6;background:#173752}.bw-btn:hover{border-color:#5a7a90}.bw-btn.small{padding:5px 9px;min-height:31px;font-size:12px}.bw-btn.ghost{background:transparent}
+.bw-section-title{margin:16px 0 9px}.bw-section-title h2{margin:0;font-size:17px}.bw-section-title p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.bw-species-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.bw-species{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:13px;min-height:150px;display:flex;flex-direction:column}.bw-species.active{border-color:var(--accent);box-shadow:inset 0 0 0 1px rgba(88,174,252,.22)}.bw-species-head{display:flex;align-items:center;gap:9px}.bw-species-icon{width:31px;height:31px;border-radius:8px;background:#203b50;color:var(--accent);display:grid;place-items:center;font-weight:800}.bw-species h3{margin:0;font-size:16px}.bw-species p{margin:8px 0;color:#bac6cf;font-size:12px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.bw-type-row{margin-top:auto;display:flex;flex-wrap:wrap;gap:7px}.bw-type{border:1px solid #486273;background:#16222c;border-radius:999px;padding:5px 12px;min-height:31px}.bw-type.active{background:var(--accent);border-color:var(--accent);color:#08141d;font-weight:700}.bw-empty-chip{margin-top:auto;border:1px solid var(--line);border-radius:7px;padding:7px;text-align:center;color:var(--muted);font-size:12px}
+.bw-workspace{display:grid;grid-template-columns:minmax(0,2fr) minmax(290px,1fr);gap:12px;margin-top:12px}.bw-detail,.bw-world{min-width:0}.bw-frame{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:12px}.bw-current{display:flex;align-items:center;gap:10px;margin-bottom:11px}.bw-current h2{margin:0;font-size:17px}.bw-current b{color:var(--accent)}.bw-current p{margin:2px 0 0;color:var(--muted);font-size:12px}.bw-current .spacer{flex:1}
+.bw-module-grid{display:grid;grid-template-columns:1fr 1.25fr;gap:10px}.bw-module{border:1px solid var(--line);background:var(--panel-2);border-radius:var(--radius-sm);overflow:hidden}.bw-module.wide{grid-column:1/-1}.bw-module-head{min-height:43px;padding:8px 10px;display:flex;align-items:center;gap:8px;background:#22323f;border-bottom:1px solid var(--line)}.bw-module-head h3{font-size:14px;margin:0}.bw-module-head .dot{width:26px;height:26px;border-radius:7px;background:#1b4561;color:var(--accent);display:grid;place-items:center}.bw-module-head .spacer{flex:1}
+.bw-kv{display:grid}.bw-kv-row{display:grid;grid-template-columns:minmax(110px,.85fr) 1.4fr;gap:10px;padding:7px 9px;border-bottom:1px solid rgba(51,72,88,.65)}.bw-kv-row:last-child{border-bottom:0}.bw-kv-row dt{font-weight:650}.bw-kv-row dd{margin:0;color:#dce5ec}.bw-value.yes{color:var(--good)}.bw-value.no{color:#d7e1e8}.bw-value.unknown{color:var(--muted)}
+.bw-list{margin:0;padding:10px 12px 10px 28px}.bw-list li{margin:3px 0;color:#dce5ec}.bw-editor{padding:10px;display:grid;gap:8px}.bw-field{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center}.bw-field input,.bw-field textarea,.bw-field select{width:100%;border:1px solid var(--line);background:#121d25;border-radius:6px;padding:7px}.bw-field textarea{min-height:72px;resize:vertical}.bw-editor-actions{display:flex;justify-content:flex-end;gap:7px}.bw-list-editor{display:grid;gap:6px}.bw-list-edit-row{display:grid;grid-template-columns:1fr auto;gap:6px}.bw-list-edit-row input{border:1px solid var(--line);background:#121d25;border-radius:6px;padding:7px}.bw-danger{border-color:#71444b;background:#3b2025}
+.bw-world>.bw-frame{height:100%}.bw-world-title{display:flex;align-items:center;gap:8px;margin-bottom:9px}.bw-world-title h2{margin:0;font-size:17px}.bw-world-stack{display:grid;gap:10px}.bw-world .bw-module{background:#1a2731}
+.bw-footer-note{margin-top:13px;color:var(--muted);font-size:12px}
+.bw-mobile-nav{display:none}
+@media(max-width:1199px){
+  :root{--nav-w:0px}.bw-shell{grid-template-columns:1fr}.bw-sidebar{position:static;height:auto;display:block;padding:7px 12px;border-right:0;border-bottom:1px solid var(--line)}.bw-brand{display:none}.bw-nav{display:flex;overflow:auto}.bw-nav button{width:auto;white-space:nowrap}.bw-side-foot{display:none}.bw-main{padding:14px 16px 24px}.bw-species-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.bw-workspace{grid-template-columns:1fr}.bw-world-stack{grid-template-columns:repeat(3,minmax(0,1fr))}.bw-world .bw-module{min-width:0}.bw-top-meta{display:none}
+}
+@media(max-width:767px){
+  body{padding-bottom:max(58px,env(safe-area-inset-bottom))}.bw-sidebar{display:none}.bw-main{padding:10px 10px 18px}.bw-top{align-items:center}.bw-top h1{font-size:18px}.bw-top p{display:none}.bw-actions .bw-btn:not(.primary){display:none}.bw-actions{margin-left:auto}.bw-species-grid{display:flex;overflow-x:auto;gap:8px;padding-bottom:4px;scroll-snap-type:x proximity}.bw-species{min-width:250px;min-height:130px;scroll-snap-align:start}.bw-workspace{display:block}.bw-world{margin-top:10px}.bw-module-grid{grid-template-columns:1fr}.bw-module.wide{grid-column:auto}.bw-world-stack{display:grid;grid-template-columns:1fr}.bw-kv-row{grid-template-columns:1fr;gap:2px}.bw-kv-row dt{font-size:12px;color:var(--muted)}.bw-field{grid-template-columns:1fr}.bw-current{position:sticky;top:0;z-index:5;background:var(--panel);padding:4px 0 8px}.bw-current .bw-btn{display:none}.bw-mobile-nav{position:fixed;left:0;right:0;bottom:0;height:58px;padding-bottom:env(safe-area-inset-bottom);display:flex;background:#14212b;border-top:1px solid var(--line);z-index:30}.bw-mobile-nav button{flex:1;border:0;background:transparent;color:var(--muted);font-size:11px;display:grid;place-items:center}.bw-mobile-nav button.active{color:var(--accent)}
+}
+</style>
+</head>
+<body>
+<div class="bw-shell">
+  <aside class="bw-sidebar">
+    <div class="bw-brand"><div class="bw-brand-mark">BW</div><div><b>BioWeave</b><small>生理状态追踪与推演</small></div></div>
+    <nav class="bw-nav">
+      <button><span class="ico">⌂</span>总览</button><button><span class="ico">♙</span>人物列表</button><button><span class="ico">▦</span>历史事件</button><button><span class="ico">✦</span>推演预测</button><button><span class="ico">⌘</span>家系图谱</button><button class="active"><span class="ico">◎</span>世界模型</button><button><span class="ico">⚙</span>设置</button>
+    </nav>
+    <div class="bw-side-foot"><span>当前聊天</span><strong>New World</strong><span>Floor 42 · 6 人物</span><span class="bw-enabled">● 已启用</span><span>v2.0.0</span></div>
+  </aside>
+
+  <main class="bw-main">
+    <header class="bw-top">
+      <div><h1>世界模型</h1><p>探索并管理当前聊天的世界观设定与生物规则</p></div>
+      <div class="bw-top-meta">最后分析：2026/09/08 18:11<br>来源：2 个角色卡 · 1 本世界书 · 最近剧情 20 楼</div>
+      <div class="bw-actions"><button class="bw-btn primary">↻ 重新分析</button><button class="bw-btn">查看本次输入</button><button class="bw-btn">•••</button></div>
+    </header>
+
+    <section>
+      <div class="bw-section-title"><h2>物种与生物类型</h2><p>当前世界中已识别的物种及其生物类型；点击类型查看详细规则。</p></div>
+      <div class="bw-species-grid" id="speciesGrid"></div>
+    </section>
+
+    <section class="bw-workspace">
+      <div class="bw-detail">
+        <div class="bw-frame">
+          <div class="bw-current"><div><h2>生物类型详情</h2><p>当前选择：<b id="currentLabel">人类 / 女性</b></p></div><div class="spacer"></div><button class="bw-btn small">切换类型</button></div>
+          <div class="bw-module-grid" id="detailModules"></div>
+        </div>
+      </div>
+      <aside class="bw-world">
+        <div class="bw-frame">
+          <div class="bw-world-title"><h2>世界级规则</h2></div>
+          <div class="bw-world-stack" id="worldModules"></div>
+        </div>
+      </aside>
+    </section>
+    <div class="bw-footer-note">参考实现：模块级编辑；不提供“编辑整个世界模型”的全局编辑模式。</div>
+  </main>
+</div>
+<nav class="bw-mobile-nav"><button>总览</button><button>人物</button><button>事件</button><button>推演</button><button class="active">更多</button></nav>
+
+<script>
+const model={
+ species:[
+  {name:'人类',desc:'灵欲界的主要种族，分为凡人与修士。修士可通过修炼提升境界，并在体内气海温养剑灵。',types:['男性','女性','双性']},
+  {name:'妖',desc:'由兽或草木成精而成的种族，保留原始野性与部分兽类特征。',types:['男性','女性']},
+  {name:'剑灵',desc:'由灵剑觉醒化形而成的特殊生命体，寄宿于剑修体内，通过体液交换获取灵力。',types:['男性','女性']},
+  {name:'魔',desc:'来自域外天魔界的生物，具有极强侵蚀性与异形特征。',types:[]}
+ ],
+ detail:{
+  '人类/女性':{
+   desc:'普通人类女性，部分具有炉鼎体质。',
+   capabilities:{'可产生精子':'否','可产生卵子':'是','可使其受精':'否','可被受精':'是','可承担妊娠':'是'},
+   reproduction:{'受精方式':'异性性交受精','妊娠方式':'宫内妊娠','生理周期':'约 28 天','排卵机制':'周期性排卵','妊娠周期':'约 40 周','分娩方式':'标准分娩产程'},
+   lifecycle:{'成熟':'符合普通人类发育基线','衰老':'符合普通人类衰老基线，高阶修士可延长寿命'},
+   special:['气海 / 宫房可温养剑灵。','特定环境下（如灵泉）极易受孕或产生假孕。','部分女修习得采阳补阴之术。']
+  }
+ },
+ medical:{'分娩难度':'较低','照护水平':'极高','判断依据':'丹泉门擅长医术与药理，能修复身体撕裂伤并提供固本培元药物；血剑门具备高超急救技术。'},
+ exceptions:['炉鼎体质：部分人类个体体质特殊。','金丹期身体改造：可进行临时局部改造。','假孕：高浓度灵气环境下可能产生受孕错觉。'],
+ unknowns:['剑灵是否具备与人类产生后代的生物学基础。','魔族多重性器的具体生殖功能与遗传机制。','长期服用泌乳丹的潜在副作用。']
+};
+let selectedSpecies='人类',selectedType='女性',editing=null,drafts={};
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+function renderSpecies(){speciesGrid.innerHTML=model.species.map(s=>`<article class="bw-species ${s.name===selectedSpecies?'active':''}"><div class="bw-species-head"><div class="bw-species-icon">${esc(s.name.slice(0,1))}</div><h3>${esc(s.name)}</h3></div><p>${esc(s.desc)}</p>${s.types.length?`<div class="bw-type-row">${s.types.map(t=>`<button class="bw-type ${s.name===selectedSpecies&&t===selectedType?'active':''}" data-species="${esc(s.name)}" data-type="${esc(t)}">${esc(t)}</button>`).join('')}</div>`:`<div class="bw-empty-chip">尚未识别出生物类型</div>`}</article>`).join('');
+ document.querySelectorAll('.bw-type').forEach(b=>b.onclick=()=>{if(editing&&!confirm('当前修改尚未保存，是否放弃？'))return;editing=null;selectedSpecies=b.dataset.species;selectedType=b.dataset.type;render();});}
+function defaultDetail(){return {desc:`${selectedSpecies} / ${selectedType}`,capabilities:{'可产生精子':'未知','可产生卵子':'未知','可使其受精':'未知','可被受精':'未知','可承担妊娠':'未知'},reproduction:{'受精方式':'未知','妊娠方式':'未知','生理周期':'未知','排卵机制':'未知','妊娠周期':'未知','分娩方式':'未知'},lifecycle:{'成熟':'未知','衰老':'未知'},special:[]}}
+function detail(){return model.detail[`${selectedSpecies}/${selectedType}`]||defaultDetail()}
+function kvRead(obj){return `<dl class="bw-kv">${Object.entries(obj).map(([k,v])=>`<div class="bw-kv-row"><dt>${esc(k)}</dt><dd class="bw-value ${v==='是'?'yes':v==='否'?'no':v==='未知'?'unknown':''}">${esc(v)}</dd></div>`).join('')}</dl>`}
+function moduleCard(key,title,icon,content,wide=false){return `<section class="bw-module ${wide?'wide':''}" data-section="${key}"><header class="bw-module-head"><span class="dot">${icon}</span><h3>${title}</h3><span class="spacer"></span><button class="bw-btn small" data-edit="${key}">✎ 编辑</button></header>${content}</section>`}
+function kvEditor(key,obj,tri=false){const draft=drafts[key]||structuredClone(obj);drafts[key]=draft;return `<div class="bw-editor">${Object.entries(draft).map(([k,v])=>`<label class="bw-field"><span>${esc(k)}</span>${tri?`<select data-field="${esc(k)}"><option ${v==='是'?'selected':''}>是</option><option ${v==='否'?'selected':''}>否</option><option ${v==='未知'?'selected':''}>未知</option></select>`:`<textarea data-field="${esc(k)}">${esc(v)}</textarea>`}</label>`).join('')}<div class="bw-editor-actions"><button class="bw-btn small ghost" data-cancel>取消</button><button class="bw-btn small primary" data-save>保存</button></div></div>`}
+function listEditor(key,arr){const draft=drafts[key]||structuredClone(arr);drafts[key]=draft;return `<div class="bw-editor"><div class="bw-list-editor">${draft.map((v,i)=>`<div class="bw-list-edit-row"><input data-index="${i}" value="${esc(v)}"><button class="bw-btn small bw-danger" data-remove="${i}">删除</button></div>`).join('')}</div><button class="bw-btn small" data-add>+ 添加</button><div class="bw-editor-actions"><button class="bw-btn small ghost" data-cancel>取消</button><button class="bw-btn small primary" data-save>保存</button></div></div>`}
+function renderDetail(){const d=detail();currentLabel.textContent=`${selectedSpecies} / ${selectedType}`;detailModules.innerHTML=[
+ moduleCard('capabilities','生殖能力','◈',editing==='capabilities'?kvEditor('capabilities',d.capabilities,true):kvRead(d.capabilities)),
+ moduleCard('reproduction','生殖规则','⌁',editing==='reproduction'?kvEditor('reproduction',d.reproduction):kvRead(d.reproduction)),
+ moduleCard('lifecycle','生命周期','◷',editing==='lifecycle'?kvEditor('lifecycle',d.lifecycle):kvRead(d.lifecycle)),
+ moduleCard('special','特殊规则','★',editing==='special'?listEditor('special',d.special):`<ul class="bw-list">${d.special.length?d.special.map(x=>`<li>${esc(x)}</li>`).join(''):'<li class="bw-value unknown">未知</li>'}</ul>`)
+ ].join('');bindEditors();}
+function renderWorld(){worldModules.innerHTML=[
+ moduleCard('medical','医疗与照护','✚',editing==='medical'?kvEditor('medical',model.medical):kvRead(model.medical),true),
+ moduleCard('exceptions','特殊例外','!',editing==='exceptions'?listEditor('exceptions',model.exceptions):`<ul class="bw-list">${model.exceptions.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`,true),
+ moduleCard('unknowns','尚未确定','?',editing==='unknowns'?listEditor('unknowns',model.unknowns):`<ul class="bw-list">${model.unknowns.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`,true)
+ ].join('');bindEditors();}
+function bindEditors(){document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{if(editing&&editing!==b.dataset.edit&&!confirm('当前修改尚未保存，是否放弃？'))return;editing=b.dataset.edit;drafts[editing]=undefined;renderDetail();renderWorld();});document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>{drafts[editing]=undefined;editing=null;renderDetail();renderWorld();});document.querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>saveSection(b.closest('.bw-module')));document.querySelectorAll('.bw-editor textarea,.bw-editor select').forEach(el=>el.oninput=()=>{drafts[editing][el.dataset.field]=el.value});document.querySelectorAll('.bw-list-editor input').forEach(el=>el.oninput=()=>{drafts[editing][+el.dataset.index]=el.value});document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{drafts[editing].splice(+b.dataset.remove,1);renderDetail();renderWorld();});document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{drafts[editing].push('');renderDetail();renderWorld();});}
+function saveSection(){const d=detail(),v=structuredClone(drafts[editing]);if(editing==='capabilities')d.capabilities=v;else if(editing==='reproduction')d.reproduction=v;else if(editing==='lifecycle')d.lifecycle=v;else if(editing==='special')d.special=v;else if(editing==='medical')model.medical=v;else if(editing==='exceptions')model.exceptions=v;else if(editing==='unknowns')model.unknowns=v;model.detail[`${selectedSpecies}/${selectedType}`]=d;drafts[editing]=undefined;editing=null;render();}
+function render(){renderSpecies();renderDetail();renderWorld()}
+render();
+</script>
+</body>
+</html>

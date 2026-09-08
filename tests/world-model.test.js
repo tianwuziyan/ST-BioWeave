@@ -10,7 +10,11 @@ import {
 } from '../ai/analyzer.js';
 import {SILLYTAVERN_CURRENT_API, emptyChat} from '../storage/schema.js';
 import {settingsPage} from '../ui/settings.js';
-import {worldPage} from '../ui/world.js';
+import {
+  applyWorldModelSection,
+  WORLD_MODEL_SECTION_KEYS,
+  worldPage,
+} from '../ui/world.js';
 
 const modelFixture = {
   schema_version: 1,
@@ -969,13 +973,21 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
     },
   });
   assert.match(html, /世界模型/);
-  assert.match(html, /物种/);
+  assert.match(html, /bioweave-world-model-top/);
+  assert.match(html, /状态：已建立/);
+  assert.match(html, /物种与生物类型/);
+  assert.match(html, /当前世界中已识别的物种及其生物类型/);
+  assert.match(html, /bioweave-world-model-content-grid/);
+  assert.match(html, /bioweave-world-model-module-grid/);
+  assert.match(html, /bioweave-world-model-world-stack/);
   assert.match(html, /潮汐生物/);
   assert.match(html, /潮汐生物型/);
-  assert.match(html, /性别 \/ 生殖类型/);
+  assert.match(html, /生物类型详情/);
+  assert.match(html, /切换类型/);
+  assert.match(html, /生殖能力/);
   assert.match(html, /可承担妊娠/);
-  assert.match(html, /世界医疗条件/);
-  assert.match(html, /生育难易度/);
+  assert.match(html, /医疗与照护/);
+  assert.match(html, /分娩难度/);
   assert.match(html, /当前资料不足以确定难度/);
   assert.match(html, /未知/);
   assert.equal(/\b(?:unknown|null|undefined|N\/A)\b/i.test(html), false);
@@ -999,18 +1011,22 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
       biological_types: [
         typeFixture('男性'),
         typeFixture('女性'),
-        typeFixture('双性/间性'),
+        typeFixture('双性'),
         typeFixture('Alpha'),
+        typeFixture('Beta'),
+        typeFixture('Omega'),
       ],
     }],
   });
   const visibleTypesHtml = worldPage({worldModel: visibleTypesModel});
-  assert.equal((visibleTypesHtml.match(/<article class="bioweave-world-model-type">/g) ?? []).length, 4);
-  assert.match(visibleTypesHtml, /<h5>男性<\/h5>/);
-  assert.match(visibleTypesHtml, /<h5>女性<\/h5>/);
-  assert.match(visibleTypesHtml, /<h5>双性<\/h5>/);
-  assert.match(visibleTypesHtml, /<h5>Alpha<\/h5>/);
-  assert.doesNotMatch(visibleTypesHtml, /双性\/间性/);
+  assert.equal((visibleTypesHtml.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 6);
+  assert.equal((visibleTypesHtml.match(/<section class="[^"]*bioweave-world-model-type-detail[^"]*">/g) ?? []).length, 1);
+  assert.match(visibleTypesHtml, />男性<\/button>/);
+  assert.match(visibleTypesHtml, />女性<\/button>/);
+  assert.match(visibleTypesHtml, />双性<\/button>/);
+  assert.match(visibleTypesHtml, />Alpha<\/button>/);
+  assert.match(visibleTypesHtml, />Beta<\/button>/);
+  assert.match(visibleTypesHtml, />Omega<\/button>/);
 });
 
 test('World Model page preserves a species with no inferred biological type', () => {
@@ -1024,7 +1040,7 @@ test('World Model page preserves a species with no inferred biological type', ()
     },
   });
   assert.match(html, /人类/);
-  assert.match(html, /尚未识别出具体性别 \/ 生殖类型/);
+  assert.match(html, /尚未识别出生物类型/);
   assert.doesNotMatch(html, /可产生精子/);
 });
 
@@ -1049,26 +1065,71 @@ test('World Model page input preview shows the actual request messages', () => {
   assert.match(html, /楼层预览/);
 });
 
-test('World Model editor exposes structured fields and safe save actions', () => {
-  const html = worldPage({
+test('World UI uses seven independent section editors and keeps the global editor removed', () => {
+  const viewHtml = worldPage({
     worldModel: modelFixture,
-    worldModelEditing: true,
-    worldModelDraft: modelFixture,
   });
-  assert.match(html, /data-bioweave-world-model-form/);
-  assert.match(html, /data-bioweave-world-species/);
-  assert.match(html, /data-bioweave-world-species-field="name"/);
-  assert.match(html, /data-bioweave-action="world-model-add-species"/);
-  assert.match(html, /data-bioweave-action="world-model-add-type"/);
-  assert.match(html, /data-bioweave-world-capability="can_carry_pregnancy"/);
-  assert.match(html, /data-bioweave-world-rule="ovulation"/);
-  assert.match(html, /data-bioweave-world-rule="gestation"/);
-  assert.match(html, /data-bioweave-world-rule="labor"/);
-  assert.match(html, /data-bioweave-world-medical="childbirth_difficulty"/);
-  assert.match(html, /data-bioweave-action="world-model-save"/);
-  assert.match(html, /保存世界模型/);
-  assert.match(html, /data-bioweave-action="world-model-cancel"/);
-  assert.equal(html.includes('api_key'), false);
+  assert.deepEqual(WORLD_MODEL_SECTION_KEYS, [
+    'capabilities',
+    'reproduction_rules',
+    'lifecycle',
+    'special_rules',
+    'medical_context',
+    'exceptions',
+    'unknowns',
+  ]);
+  assert.equal((viewHtml.match(/data-bioweave-action="world-model-edit-section"/g) ?? []).length, 7);
+  assert.doesNotMatch(viewHtml, /data-bioweave-world-model-form/);
+  assert.doesNotMatch(viewHtml, /保存世界模型/);
+  assert.equal(viewHtml.includes('api_key'), false);
+
+  const editingHtml = worldPage({
+    worldModel: modelFixture,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
+    editingSection: 'capabilities',
+    sectionDraft: modelFixture.species[0].biological_types[0].capabilities,
+  });
+  assert.equal((editingHtml.match(/data-bioweave-world-section-form/g) ?? []).length, 1);
+  assert.match(editingHtml, /data-bioweave-world-section="capabilities"/);
+  assert.match(editingHtml, /data-bioweave-action="world-model-cancel-section"/);
+  assert.match(editingHtml, /data-bioweave-action="world-model-save-section"/);
+  assert.match(editingHtml, />是<\/option>/);
+  assert.match(editingHtml, />否<\/option>/);
+  assert.match(editingHtml, />未知<\/option>/);
+  assert.equal((editingHtml.match(/data-bioweave-action="world-model-edit-section"/g) ?? []).length, 6);
+});
+
+test('World UI section patches only the selected type or world-level section', () => {
+  const base = normalizeWorldModel(modelFixture);
+  const capabilityDraft = {
+    ...base.species[0].biological_types[0].capabilities,
+    can_produce_ova: true,
+  };
+  const typePatched = applyWorldModelSection(base, 'capabilities', capabilityDraft, {
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
+  });
+
+  assert.equal(typePatched.species[0].biological_types[0].capabilities.can_produce_ova, true);
+  assert.deepEqual(
+    typePatched.species[0].biological_types[0].reproduction_rules,
+    base.species[0].biological_types[0].reproduction_rules,
+  );
+  assert.deepEqual(typePatched.medical_context, base.medical_context);
+  assert.deepEqual(base, normalizeWorldModel(modelFixture));
+
+  const medicalDraft = {
+    ...base.medical_context,
+    care_level: '需要专门照护。',
+  };
+  const worldPatched = applyWorldModelSection(base, 'medical_context', medicalDraft, {
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
+  });
+  assert.equal(worldPatched.medical_context.care_level, '需要专门照护。');
+  assert.deepEqual(worldPatched.species, base.species);
+  assert.deepEqual(worldPatched.exceptions, base.exceptions);
 });
 
 test('empty Chat reserves only Chat-local World Model slots', () => {

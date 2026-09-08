@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Keep the World page in the existing plain-DOM ui/world.js and delegated ui/app.js architecture without a component framework or new service layer."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Preserve the nested World Model contract, Chat-local boundary, stale Chat token behavior, and presentation-only UI state."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify responsive host-integrated UI, theme boundaries, mobile overflow, focused regressions, and required checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep section draft normalization, UI merge, and existing Chat storage boundaries explicit without changing the schema or analyzer."}

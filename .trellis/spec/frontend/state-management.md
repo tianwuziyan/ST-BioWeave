@@ -595,6 +595,94 @@ species[].biological_types[].capabilities
 }
 ```
 
+## World UI module draft contract
+
+### 1. Scope / Trigger
+
+This contract applies when `ui/world.js` and `ui/app.js` render or edit the
+existing Chat-local World Model. It covers presentation-only section drafts;
+it does not change the World Model schema or its analyzer contract.
+
+### 2. Signatures
+
+```js
+resolveWorldModelSelection(model, speciesIndex?, typeIndex?)
+  -> {speciesIndex: integer | null, typeIndex: integer | null}
+
+getWorldModelSection(model, section, selection)
+  -> cloned section value
+
+applyWorldModelSection(model, section, draft, selection)
+  -> cloned World Model with exactly one section replaced
+
+extractWorldModelSection(form, section)
+  -> normalized section value
+```
+
+### 3. Contracts
+
+- `worldModelState` may hold `selectedSpeciesIndex`, `selectedTypeIndex`,
+  `editingSection`, `sectionDraft`, and `sectionDirty` as UI state only.
+- `editingSection` is one of the seven known section keys or `null`; the UI
+  renders one active form at a time and never creates a whole-model editor.
+- Type-level sections are read from the selected
+  `species[].biological_types[]`; `medical_context`, `exceptions`, and
+  `unknowns` remain top-level sections. Biological type names are open strings
+  and must be rendered without a fixed male/female filter.
+- A successful save normalizes a cloned current model, replaces only the
+  selected section, and persists the existing Chat object with that model.
+  Existing `last_saved_at` / `last_saved_by` metadata may be updated only when
+  those properties already exist; no metadata field is created by the UI.
+- A failed save leaves the previously persisted model, the active section,
+  and the current draft available for the next render. Switching type, section,
+  or running analysis checks dirty draft state before discarding it.
+- Capability values are rendered as `是` / `否` / `未知` for `true` / `false` /
+  `null` and all World UI labels and controls are Chinese.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Unknown section key | Reject the UI action; do not mutate the model |
+| Save a type-level section | Replace only the selected type's matching key |
+| Save a world-level section | Replace only `medical_context`, `exceptions`, or `unknowns` |
+| Save normalization or Chat persistence fails | Keep old model and current draft; show a safe notice |
+| `last_saved_at` / `last_saved_by` is absent | Do not add either property |
+| Dirty draft and type/section switch | Ask for confirmation before discarding |
+
+### 5. Good / Base / Bad Cases
+
+- Good: edit `capabilities` for one selected type and keep every other type,
+  section, and world-level value byte-for-byte equivalent after save.
+- Base: an identified species has an empty `biological_types` array; render an
+  empty state without inventing a type.
+- Bad: serialize the whole page form as a replacement World Model or add
+  default biological types because the UI knows common labels.
+
+### 6. Tests Required
+
+- Render all seven section edit actions and exactly one active section form.
+- Assert dynamic names such as `双性`, `Alpha`, `Beta`, and `Omega` remain
+  visible without filtering, and assert all tri-state labels are Chinese.
+- Apply a type-level and a world-level section patch and assert every other
+  section remains unchanged.
+- Exercise failed-save and cancel paths and assert the old model and active
+  draft are retained appropriately.
+- Run the World UI responsive-contract, syntax, focused, and full test suites.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: replace all sections from a page-wide draft.
+await runtime.store.saveChat(chatId, {...chat, world_model: pageDraft});
+```
+
+```js
+// Correct: clone and replace one selected section before saving.
+const nextModel = applyWorldModelSection(currentModel, section, draft, selection);
+await runtime.store.saveChat(chatId, {...chat, world_model: nextModel});
+```
+
 ## Recent Story Regex Collection
 
 ### 1. Scope / Trigger

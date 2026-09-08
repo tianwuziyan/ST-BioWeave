@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review renderer decomposition, delegated actions, and prohibition on introducing a new UI architecture layer."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Review preservation of dynamic species/type nesting, null semantics, Chat-local writes, and stale-save handling."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review no-global-editor acceptance, CSS/theme/host boundaries, tests, syntax checks, and responsive smoke requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review that only the selected section crosses from draft to normalized Chat data and all other sections survive unchanged."}
