@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-09-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~316 | Active |
+| `journal-1.md` | ~338 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-09-10 | 修复 World Model 受精冲突与 Human 基线覆盖 | `91cdaed` | `fix/world-model-prompt-baseline` |
 | 14 | 2026-09-10 | World Model Raw 到 Canonical 审计修正 | `f4af442` | `fix/world-model-prompt-baseline` |
 | 13 | 2026-09-10 | 完成 World Model 三态语义与 Human 基线实现 | `184610c` | `fix/world-model-prompt-baseline` |
 | 12 | 2026-09-09 | 扩展 World Model 隐含人类基线 | `fca9d74` | `fix/world-model-prompt-baseline` |

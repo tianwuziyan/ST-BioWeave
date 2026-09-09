@@ -314,3 +314,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 修复 World Model 受精冲突与 Human 基线覆盖
+<!-- trellis-session: v=2 fp=97fcbaf0246c1ce9 -->
+
+**Date**: 2026-09-10
+**Task**: 修复 World Model 受精冲突与 Human 基线覆盖
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 world-model-null-description-guard：收窄 fertilization role conflict，只处理明确 recipient/donor 与 false capability 的结构冲突；Human Male/Female baseline 改为逐字段只填充 null，保留 false、无和非空当前规则；补充原创回归并验证 World Model 122/122、全项目 222/222。真实 SillyTavern 黑盒未执行，远程安装版本与本地 checkout 不同。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `91cdaed` | 修复 World Model 受精冲突与 Human 基线覆盖 |
+
+### Status
+
+[OK] **Completed**
