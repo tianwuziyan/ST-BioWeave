@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵守 JavaScript 检查、回归测试和不扩大 UI/宿主范围的项目质量约束。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 AnalysisInput → Prompt → Analyzer → canonical World Model 的字段责任和 schema 边界。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"避免为 Human 来源推断新增 registry、重复 helper 或第二套字段归一化逻辑。"}
+{"step":"implementation","status":"done","result":"Prompt 使用条件性 implicit Human baseline 与 Baseline + Delta；Analyzer 仅放宽 Human type-local delta 的通用证据 gate；同步 DATA-MODEL 并加入原创回归测试。"}

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按项目要求执行 npm test、npm run check、node --check 和 focused regression 验证。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 baseline/delta 没有泄漏到 schema、UI、Event、State 或 Projection。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查最终 diff 没有新增世界观词典、重复证据解析或无必要 abstraction。"}
+{"command":"node --test tests/world-model.test.js","result":"pass","summary":"106 tests passed"}
+{"command":"npm test","result":"pass","summary":"206 tests passed"}
+{"command":"npm run check","result":"pass","summary":"node --check index.js and 206 tests passed"}
+{"command":"node --check ai/prompts.js && node --check ai/analyzer.js && git diff --check","result":"pass"}
