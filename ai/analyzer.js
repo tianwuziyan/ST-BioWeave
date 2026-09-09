@@ -50,10 +50,24 @@ const LIFECYCLE_EVIDENCE_PATTERNS = Object.freeze({
 const EXPLICIT_NEGATIVE_CAPABILITY_PATTERN = /(?:不能|无法|不可|不会|不具备|未具备|不产生|不生成|不制造|不分泌|不孕育|不可能|不支持|不具有|不含有|(?:不被|不接受)(?:受精|授精)|(?:没有|无(?!法)|不存在)(?:任何|该|其)?(?:产生精子|产生卵子|怀孕|妊娠|生育|受精)(?:能力|可能性|资格|条件))/u;
 const NON_EVIDENCE_CAPABILITY_PATTERN = /(?:仅(?:存在|有)?[^。！？!?；;\n，,、]{0,16}(?:假孕|假性妊娠)|(?:无(?!法)|没有|未(?:有|能|观察到|记录|发现|实际)?|尚无|暂无|目前没有|没有实际|无实际)[^。！？!?；;\n，,、]{0,16}(?:妊娠|怀孕|生育|精子|卵子|受精|能力|记录|证据|观察))/u;
 const UNSPECIFIED_FIELD_CONTEXT_PATTERN = /(?:没有(?:明确|说明|提及|描述|提供)|未(?:明确|说明|提及|描述|提供)|不确定|不明确|不清楚|未知|尚未(?:明确|说明)|无从判断)[^。！？!?；;，,、\n]{0,10}$/u;
-const HUMAN_SPECIES_NAMES = new Set(['人类', '人', 'human', 'humans']);
+const HUMAN_SPECIES_NAMES = new Set([
+  '人类',
+  '人',
+  'human',
+  'humans',
+  '人类human',
+  'human人类',
+  '人类人类',
+  'homosapiens',
+]);
+const UNKNOWN_RULE_TEXT_PATTERN = /^(?:未知|不确定|不知道|未(?:说明|提及|提到|描述|提供)|没有(?:说明|提及|提到|描述|提供|资料|相关资料|对应资料)|资料不足|证据不足|无法(?:判断|确定)|不能(?:判断|确定)|不明确|不清楚|不明|尚未(?:明确|说明)|暂无(?:资料|记录|证据))$/u;
+const KNOWN_ABSENT_RULE_PATTERN = /^(?:无|无(?:此|该|相关)?(?:功能|机制|规则|过程|能力)|(?:不具备|不具有|不含有|不适用|不存在)(?:此|该|相关)?(?:功能|机制|规则|过程|能力)?|没有(?:此|该|相关)?(?:功能|机制|规则|过程|能力))$/u;
 const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
 const FAMILIAR_TYPE_NAMES = new Set(['男性', '女性', '双性']);
 const GENERIC_SPECIES_TYPE_SUFFIXES = Object.freeze(['族', '类', '种', '人']);
+const TYPE_PARENT_SPECIES = Symbol('world_model_parent_species');
+const TYPE_KNOWN_SPECIES = Symbol('world_model_known_species');
+const TYPE_SIBLING_NAMES = Symbol('world_model_sibling_names');
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -78,6 +92,16 @@ function localizedWorldModelText(value) {
     .replace(/\bfemale\b/gi, '女性')
     .replace(/\bmale\b/gi, '男性')
     .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性');
+}
+
+function normalizeRuleText(value) {
+  const text = localizedWorldModelText(value);
+  if (!text) return text;
+  const compact = text
+    .replace(/\s+/gu, '')
+    .replace(/[。！？!?]+$/gu, '');
+  if (UNKNOWN_RULE_TEXT_PATTERN.test(compact)) return null;
+  return KNOWN_ABSENT_RULE_PATTERN.test(compact) ? '无' : text;
 }
 
 function nullableBoolean(value) {
@@ -129,17 +153,29 @@ function normalizeBiologicalType(raw, index, parentSpeciesName) {
     name: normalizeBiologicalTypeName(raw.name, parentSpeciesName),
     description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [key, nullableBoolean(capabilities[key])])),
-    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, localizedWorldModelText(reproductionRules[key])])),
-    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [key, localizedWorldModelText(lifecycle[key])])),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [key, normalizeRuleText(reproductionRules[key])])),
+    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [key, normalizeRuleText(lifecycle[key])])),
     special_rules: stringList(raw.special_rules, localizedWorldModelText),
   };
+}
+
+function humanSpeciesAliasKey(value) {
+  return compactEvidenceText(value)
+    .replace(/[()\uFF08\uFF09]/gu, '')
+    .toLowerCase();
+}
+
+function canonicalSpeciesName(value) {
+  const text = nullableText(value);
+  if (!text) return text;
+  return isHumanSpeciesName(text) ? '人类' : localizedWorldModelText(text);
 }
 
 function normalizeSpecies(raw, index, {strict = false} = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
   if (strict && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
   if (raw.biological_types !== undefined && !Array.isArray(raw.biological_types)) throw invalidWorldModel(`WORLD_MODEL_SPECIES_${index}`);
-  const speciesName = localizedWorldModelText(raw.name);
+  const speciesName = canonicalSpeciesName(raw.name);
   const biologicalTypes = Array.isArray(raw.biological_types)
     ? raw.biological_types.map((item, typeIndex) => normalizeBiologicalType(item, typeIndex, speciesName))
     : [];
@@ -150,6 +186,63 @@ function normalizeSpecies(raw, index, {strict = false} = {}) {
   };
 }
 
+function mergeKnownValue(first, second) {
+  return first === null || first === undefined ? second ?? null : first;
+}
+
+function mergeBiologicalTypes(first, second) {
+  return {
+    ...first,
+    description: mergeKnownValue(first.description, second.description),
+    capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [
+      key,
+      first.capabilities[key] === null ? second.capabilities[key] : first.capabilities[key],
+    ])),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [
+      key,
+      mergeKnownValue(first.reproduction_rules[key], second.reproduction_rules[key]),
+    ])),
+    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [
+      key,
+      mergeKnownValue(first.lifecycle[key], second.lifecycle[key]),
+    ])),
+    special_rules: [...new Set([...first.special_rules, ...second.special_rules])],
+  };
+}
+
+function mergeHumanSpeciesEntries(species) {
+  const merged = [];
+  let humanIndex = -1;
+  for (const item of species) {
+    if (!isHumanSpeciesName(item.name)) {
+      merged.push(item);
+      continue;
+    }
+    const canonical = {...item, name: '人类'};
+    if (humanIndex < 0) {
+      humanIndex = merged.length;
+      merged.push(canonical);
+      continue;
+    }
+    const current = merged[humanIndex];
+    const biologicalTypes = [...current.biological_types];
+    for (const type of canonical.biological_types) {
+      const existingIndex = biologicalTypes.findIndex(existing => existing.name === type.name);
+      if (existingIndex < 0) {
+        biologicalTypes.push(type);
+      } else {
+        biologicalTypes[existingIndex] = mergeBiologicalTypes(biologicalTypes[existingIndex], type);
+      }
+    }
+    merged[humanIndex] = {
+      ...current,
+      description: mergeKnownValue(current.description, canonical.description),
+      biological_types: biologicalTypes,
+    };
+  }
+  return merged;
+}
+
 function normalizeExceptions(value) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw invalidWorldModel();
@@ -158,8 +251,11 @@ function normalizeExceptions(value) {
       return {statement: localizedWorldModelText(item), applies_to: null, evidence: null};
     }
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalidWorldModel();
+    const statement = [item.statement, item.description, item.name]
+      .map(localizedWorldModelText)
+      .find(Boolean) ?? null;
     return {
-      statement: localizedWorldModelText(item.statement),
+      statement,
       applies_to: localizedWorldModelText(item.applies_to),
       evidence: localizedWorldModelText(item.evidence),
     };
@@ -242,9 +338,21 @@ function compactEvidenceText(value) {
   return String(value ?? '').replace(/\s+/gu, '');
 }
 
+function hasHumanSpeciesEvidence(text) {
+  const compactText = compactEvidenceText(text);
+  if (/(?:人类|人族|普通人)/u.test(compactText)) return true;
+  const match = compactText.match(/humans?/iu);
+  if (!match) return false;
+  const start = match.index ?? 0;
+  const end = start + match[0].length;
+  return !/[A-Za-z0-9_-]/u.test(compactText[start - 1] ?? '')
+    && !/[A-Za-z0-9_-]/u.test(compactText[end] ?? '');
+}
+
 function matchesSpeciesName(text, speciesName) {
   const normalizedSpecies = compactEvidenceText(speciesName);
   if (!normalizedSpecies) return false;
+  if (isHumanSpeciesName(speciesName) && hasHumanSpeciesEvidence(text)) return true;
   if (normalizedSpecies.length > 1) return text.includes(normalizedSpecies);
   const escapedSpecies = normalizedSpecies.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   return new RegExp(`(?:^|[\\s\\[\\]（）()<>：:、，,])${escapedSpecies}(?=$|[\\s\\[\\]（）()<>：:、，,])`, 'u').test(text);
@@ -324,24 +432,58 @@ function hasNonHumanTypeEvidence(units, speciesName, typeName) {
   return typeEvidenceUnits(units, speciesName, typeName).length > 0;
 }
 
-function hasBiologicalTypeEvidence(units, speciesName, typeName) {
-  if (isHumanSpeciesName(speciesName)) {
-    return units.some(unit => hasDirectTypeEvidence(unit, typeName)
-      && hasHumanSpeciesEvidence([unit]));
-  }
-  return typeEvidenceUnits(units, speciesName, typeName).length > 0;
+function genericTypeLocalEvidenceUnits(units, type) {
+  const typeName = type?.name;
+  const textValues = [
+    type?.description,
+    ...Object.values(type?.reproduction_rules ?? {}),
+    ...Object.values(type?.lifecycle ?? {}),
+    ...(Array.isArray(type?.special_rules) ? type.special_rules : []),
+  ]
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => value.trim());
+  const textAnchors = textValues
+    .map(value => compactEvidenceText(value).replace(/[。！？!?；;，,、]+$/gu, ''))
+    .filter(Boolean);
+  const parentSpeciesName = type?.[TYPE_PARENT_SPECIES];
+  const siblingNames = type?.[TYPE_SIBLING_NAMES] ?? [];
+  const directlyEvidencedTextUnits = new Set(
+    textValues
+      .flatMap(value => directTextEvidenceUnits(value, units))
+      .filter(unit => !hasGenericDirectLabelEvidence(unit, parentSpeciesName))
+      .filter(unit => !siblingNames.some(siblingName => (
+        compactEvidenceText(siblingName) !== compactEvidenceText(typeName)
+          && hasGenericDirectLabelEvidence(unit, siblingName)
+      ))),
+  );
+  const capabilityPatterns = Object.values(CAPABILITY_EVIDENCE_PATTERNS);
+  const rulePatterns = [
+    ...Object.values(REPRODUCTION_RULE_EVIDENCE_PATTERNS),
+    ...Object.values(LIFECYCLE_EVIDENCE_PATTERNS),
+  ];
+
+  return units.filter(unit => {
+    if (directlyEvidencedTextUnits.has(unit)) return true;
+    const hasTypeName = Boolean(typeName) && hasGenericDirectLabelEvidence(unit, typeName);
+    const compactUnit = compactEvidenceText(unit);
+    const hasTypeText = hasTypeName && textAnchors.some(anchor => compactUnit.includes(anchor));
+    const hasCapabilityPattern = capabilityPatterns.some(pattern => pattern.test(unit));
+    const hasRuleOrLifecyclePattern = rulePatterns.some(pattern => pattern.test(unit));
+    // Pattern-only wording is local only when the same unit names this type;
+    // a bare capability sentence cannot be assigned to one sibling safely.
+    return hasTypeName && (hasTypeText || hasCapabilityPattern || hasRuleOrLifecyclePattern);
+  });
 }
 
 function fieldEvidenceUnits(units, speciesName, typeName) {
   if (isHumanSpeciesName(speciesName)) {
     return units.filter(unit => hasDirectTypeEvidence(unit, typeName));
   }
-  // 非人类字段始终需要当前 species + biological_type 的直接上下文。
   return typeEvidenceUnits(units, speciesName, typeName);
 }
 
 function isHumanSpeciesName(speciesName) {
-  return HUMAN_SPECIES_NAMES.has(compactEvidenceText(speciesName).toLowerCase());
+  return HUMAN_SPECIES_NAMES.has(humanSpeciesAliasKey(speciesName));
 }
 
 function capabilityEvidenceContext(unit, match) {
@@ -405,28 +547,8 @@ function hasDirectRuleEvidence(value, units) {
   return runs.some(run => [...Array(run.length - 3)].some((_, index) => sourceText.includes(run.slice(index, index + 4))));
 }
 
-function sanitizeNonHumanType(type, units, speciesName) {
-  const fieldUnits = fieldEvidenceUnits(units, speciesName, type.name);
-  return {
-    ...type,
-    capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => [
-      key,
-      capabilityEvidenceValue(fieldUnits, CAPABILITY_EVIDENCE_PATTERNS[key]),
-    ])),
-    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => [
-      key,
-      textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key])
-        ? type.reproduction_rules[key]
-        : null,
-    ])),
-    lifecycle: Object.fromEntries(LIFECYCLE_KEYS.map(key => [
-      key,
-      textEvidenceState(fieldUnits, LIFECYCLE_EVIDENCE_PATTERNS[key])
-        ? type.lifecycle[key]
-        : null,
-    ])),
-    special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, fieldUnits)),
-  };
+function sanitizeNonHumanType(type) {
+  return {...type};
 }
 
 function humanBaseline(typeName) {
@@ -441,11 +563,11 @@ function humanBaseline(typeName) {
       },
       reproduction_rules: {
         fertilization: '通过精子使卵细胞受精。',
-        pregnancy_or_carrying: null,
-        cycle: null,
-        ovulation: null,
-        gestation: null,
-        labor: null,
+        pregnancy_or_carrying: '无',
+        cycle: '无',
+        ovulation: '无',
+        gestation: '无',
+        labor: '无',
       },
     };
   }
@@ -481,18 +603,22 @@ function sanitizeHumanType(type, units, speciesName) {
       const evidenced = capabilityEvidenceValue(fieldUnits, CAPABILITY_EVIDENCE_PATTERNS[key]);
       return [key, evidenced === null ? baseline.capabilities[key] : evidenced];
     })),
-    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => (
-      textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key])
-        ? [key, type.reproduction_rules[key]]
-        : [key, baseline.reproduction_rules[key]]
-    ))),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => {
+      const hasEvidence = textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key]);
+      const value = type.reproduction_rules[key];
+      return [key, hasEvidence && value !== null ? value : baseline.reproduction_rules[key]];
+    })),
     special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, fieldUnits)),
   };
 }
 
-function normalizeAnalysisType(type, speciesName) {
+function normalizeAnalysisType(type, speciesName, knownSpeciesNames, siblingNames) {
   const name = normalizeBiologicalTypeName(type?.name, speciesName);
-  return name === type?.name ? type : {...type, name};
+  const normalized = name === type?.name ? {...type} : {...type, name};
+  Object.defineProperty(normalized, TYPE_PARENT_SPECIES, {value: speciesName});
+  Object.defineProperty(normalized, TYPE_KNOWN_SPECIES, {value: knownSpeciesNames});
+  Object.defineProperty(normalized, TYPE_SIBLING_NAMES, {value: siblingNames});
+  return normalized;
 }
 
 function isSpeciesNameOrGenericDerivative(name, speciesName) {
@@ -533,33 +659,147 @@ function isUnsupportedUnknownType(value, species) {
   });
 }
 
-function hasHumanSpeciesEvidence(units) {
-  return units.some(unit => /(?:人类|人族|普通人|\bhumans?\b)/iu.test(unit));
+function hasGenericDirectLabelEvidence(unit, value) {
+  return genericDirectLabelMatch(unit, value) !== null;
 }
 
-function hasSpeciesEvidence(units, speciesName) {
-  return isHumanSpeciesName(speciesName)
-    ? hasHumanSpeciesEvidence(units)
-    : speciesEvidenceUnits(units, speciesName).length > 0;
+function hasDirectNameEvidence(value, units) {
+  return Boolean(compactEvidenceText(value))
+    && units.some(unit => hasGenericDirectLabelEvidence(unit, value));
+}
+
+function genericLabelVariants(value) {
+  const label = compactEvidenceText(value);
+  if (!label) return [];
+  const baseLabel = label.replace(/(?:类型|分类|个体|性)$/u, '');
+  return baseLabel && baseLabel !== label ? [label, baseLabel] : [label];
+}
+
+function genericDirectLabelMatch(unit, value) {
+  const text = compactEvidenceText(unit);
+  for (const label of genericLabelVariants(value)) {
+    let labelIndex = text.indexOf(label);
+    while (labelIndex >= 0) {
+      const labelEnd = labelIndex + label.length;
+      const singleCharacterLabel = label.length === 1
+        && /[\u4e00-\u9fff]/u.test(label)
+        && !/[\u4e00-\u9fffA-Za-z0-9_-]/u.test(text[labelEnd] ?? '');
+      const matchesBoundary = matchesSpeciesName(text, label) || singleCharacterLabel;
+      if (matchesBoundary) {
+        const before = text.slice(0, labelIndex).slice(-18);
+        const after = text.slice(labelEnd, labelEnd + 18);
+        const asciiLabelBoundary = /^[A-Za-z0-9_-]+$/u.test(label)
+          && (/[A-Za-z0-9_-]/u.test(text[labelIndex - 1] ?? '')
+            || /[A-Za-z0-9_-]/u.test(text[labelEnd] ?? ''));
+        if (!asciiLabelBoundary
+          && !NEGATED_LABEL_CONTEXT_PATTERN.test(before)
+          && !/^(?:不存在|没有|未(?:有|见|说明|提及|发现|出现)|不确定|不明确|不清楚|模糊)/u.test(after)
+          && !/^(?:未知|不确定|不明确|不清楚|模糊)/u.test(after)) {
+          return {index: labelIndex, label};
+        }
+      }
+      labelIndex = text.indexOf(label, labelIndex + 1);
+    }
+  }
+  return null;
+}
+
+function directTextEvidenceUnits(value, units) {
+  const text = compactEvidenceText(value);
+  const punctuationTrimmedText = text.replace(/[。！？!?；;，,、]+$/gu, '');
+  if (typeof value !== 'string' || value.trim() === '' || !punctuationTrimmedText) return [];
+  if (!hasDirectRuleEvidence(value, units)) return [];
+  return units.filter(unit => compactEvidenceText(unit).includes(punctuationTrimmedText));
+}
+
+function hasDirectTextEvidence(value, units) {
+  return directTextEvidenceUnits(value, units).length > 0;
+}
+
+function hasDirectPatternTextEvidence(value, units, pattern) {
+  const directUnits = directTextEvidenceUnits(value, units);
+  return directUnits.length > 0 && textEvidenceState(directUnits, pattern) !== null;
+}
+
+function hasGenericScopedTypeEvidence(unit, speciesName, typeName) {
+  const speciesMatch = genericDirectLabelMatch(unit, speciesName);
+  const typeMatch = genericDirectLabelMatch(unit, typeName);
+  if (!speciesMatch || !typeMatch) return false;
+
+  const text = compactEvidenceText(unit);
+  const speciesStart = speciesMatch.index;
+  const speciesEnd = speciesStart + speciesMatch.label.length;
+  const typeStart = typeMatch.index;
+  const typeEnd = typeStart + typeMatch.label.length;
+  const between = text.slice(Math.min(speciesEnd, typeEnd), Math.max(speciesStart, typeStart));
+  const context = text.slice(
+    Math.max(0, Math.min(speciesStart, typeStart) - 8),
+    Math.min(text.length, Math.max(speciesEnd, typeEnd) + 8),
+  );
+  const relationPattern = /性别|生殖分类|分类|类型|存在|包括|包含|分为|基本|主要|多数|少数|极少|少量|大多|通常|均为|都是|为主|有|属于|明确|记录|记载|说明/u;
+  const individualPattern = /某(?:个|位|名)|一(?:个|位|名)|这个角色|该角色|某人物|单个/u;
+  const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣/u;
+
+  if (between.length > 6 && interactionPattern.test(between) && !relationPattern.test(between)) return false;
+  if (individualPattern.test(context) && !relationPattern.test(between)) return false;
+  return between.length <= 6 || relationPattern.test(between);
+}
+
+function hasTypeSubtreeEvidence(type, units) {
+  const parentSpeciesName = type[TYPE_PARENT_SPECIES];
+  const knownSpeciesNames = type[TYPE_KNOWN_SPECIES] ?? [];
+  const directNameUnits = units.filter(unit => hasGenericDirectLabelEvidence(unit, type.name));
+  const supportedNameUnits = directNameUnits.filter(unit => {
+    if (!parentSpeciesName || hasGenericScopedTypeEvidence(unit, parentSpeciesName, type.name)) return true;
+    if (hasGenericDirectLabelEvidence(unit, parentSpeciesName)) return false;
+    return !knownSpeciesNames.some(speciesName => (
+      compactEvidenceText(speciesName) !== compactEvidenceText(parentSpeciesName)
+        && hasGenericDirectLabelEvidence(unit, speciesName)
+    ));
+  });
+  if (supportedNameUnits.length > 0 || hasDirectTextEvidence(type.description, units)) return true;
+  if (WORLD_RULE_KEYS.some(key => type.reproduction_rules[key]
+    && hasDirectPatternTextEvidence(type.reproduction_rules[key], units, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key]))) return true;
+  if (LIFECYCLE_KEYS.some(key => type.lifecycle[key]
+    && hasDirectPatternTextEvidence(type.lifecycle[key], units, LIFECYCLE_EVIDENCE_PATTERNS[key]))) return true;
+  if (type.special_rules.some(rule => hasDirectTextEvidence(rule, units))) return true;
+  const scopedUnits = units.filter(unit => supportedNameUnits.includes(unit)
+    || hasGenericDirectLabelEvidence(unit, type.description));
+  if (CAPABILITY_KEYS.some(key => type.capabilities[key] !== null
+    && capabilityEvidenceValue(scopedUnits, CAPABILITY_EVIDENCE_PATTERNS[key]) !== null)) return true;
+  if (WORLD_RULE_KEYS.some(key => type.reproduction_rules[key]
+    && textEvidenceState(scopedUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key]))) return true;
+  if (LIFECYCLE_KEYS.some(key => type.lifecycle[key]
+    && textEvidenceState(scopedUnits, LIFECYCLE_EVIDENCE_PATTERNS[key]))) return true;
+  return false;
+}
+
+function hasSpeciesSubtreeEvidence(species, units) {
+  if (hasDirectNameEvidence(species.name, units) || hasDirectTextEvidence(species.description, units)) return true;
+  return species.biological_types.some(type => hasTypeSubtreeEvidence(type, units));
 }
 
 // AI 分析才经过证据边界；手动编辑保存的 World Model 只经过结构规范化。
 function applyWorldModelEvidenceGuard(model, analysisInput) {
   const evidence = evidenceUnits(analysisInput);
   const hasFixedDual = hasFixedDualEvidenceInUnits(evidence);
+  const knownSpeciesNames = model.species.map(item => item.name);
   const species = [];
   for (const item of model.species) {
-    if (!hasSpeciesEvidence(evidence, item.name)) continue;
+    const siblingNames = item.biological_types
+      .map(type => normalizeBiologicalTypeName(type?.name, item.name))
+      .filter(Boolean);
     const normalizedTypes = item.biological_types
-      .map(type => normalizeAnalysisType(type, item.name))
+      .map(type => normalizeAnalysisType(type, item.name, knownSpeciesNames, siblingNames))
       .filter(type => !isObservedNonBiologicalType(type.name, item.name));
+    if (!hasSpeciesSubtreeEvidence({...item, biological_types: normalizedTypes}, evidence)) continue;
     const humanSpecies = isHumanSpeciesName(item.name);
     const localSpeciesUnits = speciesEvidenceUnits(evidence, item.name);
     const localFixedDual = humanSpecies
       ? hasFixedDualEvidenceInUnits(localSpeciesUnits)
       : hasNonHumanTypeEvidence(evidence, item.name, '双性');
     const supportedTypes = normalizedTypes
-      .filter(type => hasBiologicalTypeEvidence(evidence, item.name, type.name))
+      .filter(type => hasTypeSubtreeEvidence(type, evidence))
       .filter(type => localFixedDual || !isDualTypeName(type.name));
     const biologicalTypes = supportedTypes.map(type => humanSpecies
       ? sanitizeHumanType(type, evidence, item.name)
@@ -625,7 +865,9 @@ function applyWorldModelFinalConsistencyGuard(model) {
         const reproductionRules = {...(type.reproduction_rules ?? {})};
         const baselineRole = humanBaselineRole(type, species.name);
 
-        if (reproductionRules.fertilization && !hasFertilizationMechanism(reproductionRules.fertilization)) {
+        if (reproductionRules.fertilization
+          && reproductionRules.fertilization !== '无'
+          && !hasFertilizationMechanism(reproductionRules.fertilization)) {
           reproductionRules.fertilization = null;
         }
 
@@ -636,17 +878,17 @@ function applyWorldModelFinalConsistencyGuard(model) {
         }
         if (baselineRole === 'donor'
           && HUMAN_FEMALE_BASELINE_CYCLE_PATTERN.test(String(reproductionRules.cycle ?? ''))) {
-          reproductionRules.cycle = null;
+          reproductionRules.cycle = '无';
         }
 
-        if (capabilities.can_produce_ova === false) reproductionRules.ovulation = null;
+        if (capabilities.can_produce_ova === false) reproductionRules.ovulation = '无';
         if (capabilities.can_carry_pregnancy === false) {
-          reproductionRules.pregnancy_or_carrying = null;
-          reproductionRules.gestation = null;
-          reproductionRules.labor = null;
+          reproductionRules.pregnancy_or_carrying = '无';
+          reproductionRules.gestation = '无';
+          reproductionRules.labor = '无';
         }
 
-        if (reproductionRules.fertilization) {
+        if (reproductionRules.fertilization && reproductionRules.fertilization !== '无') {
           const roles = fertilizationRoleFlags(reproductionRules.fertilization);
           const roleConflict = (capabilities.can_be_fertilized === false && roles.recipient)
             || (capabilities.can_fertilize === false && roles.donor)
@@ -675,7 +917,7 @@ export function normalizeWorldModel(raw, {strict = false} = {}) {
   }
   if (raw.species !== undefined && !Array.isArray(raw.species)) throw invalidWorldModel();
   const species = Array.isArray(raw.species)
-    ? raw.species.map((item, index) => normalizeSpecies(item, index, {strict}))
+    ? mergeHumanSpeciesEntries(raw.species.map((item, index) => normalizeSpecies(item, index, {strict})))
     : [];
   return {
     schema_version: WORLD_MODEL_SCHEMA.schema_version,

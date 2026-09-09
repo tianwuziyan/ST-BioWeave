@@ -13,9 +13,12 @@ import {SILLYTAVERN_CURRENT_API, emptyChat} from '../storage/schema.js';
 import {settingsPage} from '../ui/settings.js';
 import {
   applyWorldModelSection,
+  resolveWorldModelSelection,
   WORLD_MODEL_SECTION_KEYS,
   worldPage,
 } from '../ui/world.js';
+
+const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
 const modelFixture = {
   schema_version: 1,
@@ -81,6 +84,97 @@ function structuredFixtureType(name, description, overrides = {}) {
     ...overrides,
   };
 }
+
+// Fixture A: one species with two biological types, including every fixed field.
+const fixtureA = {
+  schema_version: 1,
+  species: [{
+    name: 'Fixture A 物种',
+    description: 'Fixture A 物种描述。\n第二行仍然可读。',
+    biological_types: [
+      structuredFixtureType('Fixture A 类型一', 'Fixture A 类型一描述。\n类型说明第二行。', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: false,
+          can_be_fertilized: null,
+          can_fertilize: true,
+          can_carry_pregnancy: false,
+        },
+        reproduction_rules: {
+          fertilization: 'Fixture A 受精方式',
+          pregnancy_or_carrying: 'Fixture A 妊娠方式',
+          cycle: 'Fixture A 生理周期',
+          ovulation: 'Fixture A 排卵机制',
+          gestation: 'Fixture A 妊娠周期',
+          labor: 'Fixture A 分娩方式',
+        },
+        lifecycle: {maturation: 'Fixture A 成熟', aging: 'Fixture A 衰老'},
+        special_rules: ['Fixture A 特殊规则'],
+      }),
+      structuredFixtureType('Fixture A 类型二', 'Fixture A 类型二描述。', {
+        capabilities: {
+          can_produce_sperm: null,
+          can_produce_ova: false,
+          can_be_fertilized: null,
+          can_fertilize: null,
+          can_carry_pregnancy: false,
+        },
+      }),
+    ],
+  }],
+  medical_context: {
+    childbirth_difficulty: 'Fixture A 分娩难度',
+    care_level: 'Fixture A 照护水平',
+    evidence: 'Fixture A 医疗依据',
+  },
+  exceptions: [{
+    statement: 'Fixture A 例外主文本',
+    applies_to: 'Fixture A 适用对象',
+    evidence: 'Fixture A 例外依据',
+  }, {
+    statement: 'Fixture A 无附加标签的例外',
+    applies_to: null,
+    evidence: null,
+  }],
+  unknowns: ['Fixture A 尚未确定项'],
+};
+
+// Fixture B: four species with different dynamic type counts, including an empty type list.
+const fixtureB = {
+  schema_version: 1,
+  species: [
+    {
+      name: 'Fixture B 物种一',
+      description: 'Fixture B 物种一描述。',
+      biological_types: [
+        structuredFixtureType('Fixture B 类型一甲', 'Fixture B 类型一甲描述。', {special_rules: ['Fixture B 规则甲']}),
+        structuredFixtureType('Fixture B 类型一乙', 'Fixture B 类型一乙描述。'),
+      ],
+    },
+    {
+      name: 'Fixture B 物种二',
+      description: 'Fixture B 物种二描述。',
+      biological_types: [structuredFixtureType('Fixture B 类型二甲', 'Fixture B 类型二甲描述。')],
+    },
+    {
+      name: 'Fixture B 物种三',
+      description: 'Fixture B 物种三描述。',
+      biological_types: [],
+    },
+    {
+      name: 'Fixture B 物种四',
+      description: 'Fixture B 物种四描述。',
+      biological_types: [
+        structuredFixtureType('Fixture B 类型四甲', 'Fixture B 类型四甲描述。'),
+        structuredFixtureType('Fixture B 类型四乙', 'Fixture B 类型四乙描述。'),
+        structuredFixtureType('Fixture B 类型四丙', 'Fixture B 类型四丙描述。'),
+      ],
+    },
+  ],
+  medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+  exceptions: [],
+  unknowns: [],
+};
 
 function typeFixture(name, overrides = {}) {
   return {
@@ -228,7 +322,7 @@ test('World Model parser keeps bisexual/intersex capabilities independently evid
   const rawModel = structuredClone(modelFixture);
   rawModel.species[0].biological_types[0] = {
     ...rawModel.species[0].biological_types[0],
-    name: '双性/间性',
+    name: '双性',
     description: '资料明确说明可产生精子，明确不能被受精，其余能力没有足够证据。',
     capabilities: {
       can_produce_sperm: true,
@@ -254,14 +348,14 @@ test('World Model analysis does not keep an unsupported fixed dual type', async 
   const response = structuredClone(modelFixture);
   response.species[0].biological_types.push({
     ...structuredClone(modelFixture.species[0].biological_types[0]),
-    name: '双性/间性类型',
+    name: '双性类型',
   });
   response.species.push({
     name: '仅有未获证据的类型',
     description: null,
     biological_types: [{
       ...structuredClone(modelFixture.species[0].biological_types[0]),
-      name: '双性/间性类型',
+      name: '双性类型',
     }],
   });
   const analyzer = createAnalyzer({
@@ -284,7 +378,7 @@ test('World Model analysis keeps and canonicalizes a fixed dual type when source
   const response = structuredClone(modelFixture);
   response.species[0].biological_types.push({
     ...structuredClone(modelFixture.species[0].biological_types[0]),
-    name: '双性/间性类型',
+    name: '双性类型',
   });
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
@@ -331,6 +425,106 @@ test('World Model parser localizes common English human labels before saving', (
   assert.doesNotMatch(JSON.stringify(parsed), /\bHomo\s+sapiens\b|\bHumans?\b|\bmale\b|\bfemale\b/i);
 });
 
+test('World Model rule normalization separates unknown from known absence', () => {
+  const parsed = normalizeWorldModel({
+    ...modelFixture,
+    species: [{
+      name: '雾核体',
+      description: null,
+      biological_types: [structuredFixtureType('甲型', null, {
+        reproduction_rules: {
+          fertilization: '无此机制',
+          pregnancy_or_carrying: '不适用',
+          cycle: '没有提到',
+          ovulation: '无此功能',
+          gestation: '资料不足',
+          labor: null,
+        },
+        lifecycle: {
+          maturation: '未提及',
+          aging: '不存在该机制',
+        },
+      })],
+    }],
+  });
+  const type = parsed.species[0].biological_types[0];
+
+  assert.deepEqual(type.reproduction_rules, {
+    fertilization: '无',
+    pregnancy_or_carrying: '无',
+    cycle: null,
+    ovulation: '无',
+    gestation: null,
+    labor: null,
+  });
+  assert.deepEqual(type.lifecycle, {maturation: null, aging: '无'});
+});
+
+test('World Model merges only explicit Human aliases and keeps conservative known values', () => {
+  const parsed = normalizeWorldModel({
+    ...modelFixture,
+    species: [
+      {name: '人类', description: null, biological_types: [structuredFixtureType('男性')]},
+      {name: 'Human', description: null, biological_types: [structuredFixtureType('男性', null, {
+        reproduction_rules: {cycle: '首个已知规则'},
+      })]},
+      {name: 'HUMAN', description: null, biological_types: [structuredFixtureType('男性', null, {
+        reproduction_rules: {cycle: '冲突规则'},
+      })]},
+      {name: '人类 (Human)', description: null, biological_types: [structuredFixtureType('女性')]},
+      {name: 'Human (人类)', description: null, biological_types: []},
+    ],
+  });
+
+  assert.equal(parsed.species.length, 1);
+  assert.equal(parsed.species[0].name, '人类');
+  assert.deepEqual(parsed.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+  assert.equal(parsed.species[0].biological_types[0].reproduction_rules.cycle, '首个已知规则');
+});
+
+test('World Model applies Human baseline after alias canonicalization', async () => {
+  const result = await analyzeDescription('Human 世界明确存在男性和女性。', [
+    {name: 'HUMAN (人类)', biological_types: [structuredFixtureType('男性')]},
+    {name: '人类 (Human)', biological_types: [structuredFixtureType('女性')]},
+  ]);
+  const species = result.species[0];
+  const male = species.biological_types.find(type => type.name === '男性');
+  const female = species.biological_types.find(type => type.name === '女性');
+
+  assert.deepEqual(result.species.map(item => item.name), ['人类']);
+  assert.deepEqual(species.biological_types.map(type => type.name), ['男性', '女性']);
+  assert.equal(male.reproduction_rules.cycle, '无');
+  assert.equal(male.reproduction_rules.ovulation, '无');
+  assert.equal(male.reproduction_rules.gestation, '无');
+  assert.equal(male.reproduction_rules.labor, '无');
+  assert.equal(female.reproduction_rules.cycle, '通常约28天一个周期。');
+  assert.equal(female.reproduction_rules.ovulation, '通常每个周期排卵。');
+  assert.equal(female.reproduction_rules.gestation, '通常约40周。');
+  assert.equal(female.reproduction_rules.labor, '通过分娩完成生产。');
+});
+
+test('World Model exception normalization keeps canonical fields and uses normalized fallback order', () => {
+  const parsed = normalizeWorldModel({
+    ...modelFixture,
+    exceptions: [
+      '旧字符串例外',
+      {description: '旧 description 例外', name: '不应覆盖 description'},
+      {statement: 'canonical 例外', description: '不应覆盖 statement', name: '不应覆盖 name', applies_to: '角色乙', evidence: '来源乙'},
+      {statement: '  ', description: 'description 回退例外', name: '不应覆盖 description'},
+      {statement: null, description: '  ', name: 'name 回退例外', applies_to: '角色丙', evidence: '来源丙'},
+    ],
+  });
+
+  assert.deepEqual(parsed.exceptions, [
+    {statement: '旧字符串例外', applies_to: null, evidence: null},
+    {statement: '旧 description 例外', applies_to: null, evidence: null},
+    {statement: 'canonical 例外', applies_to: '角色乙', evidence: '来源乙'},
+    {statement: 'description 回退例外', applies_to: null, evidence: null},
+    {statement: 'name 回退例外', applies_to: '角色丙', evidence: '来源丙'},
+  ]);
+  assert.ok(parsed.exceptions.every(item => Object.keys(item).sort().join(',') === 'applies_to,evidence,statement'));
+});
+
 test('World Model structural normalization removes species context from familiar type names', () => {
   const parsed = normalizeWorldModel({
     ...modelFixture,
@@ -340,7 +534,7 @@ test('World Model structural normalization removes species context from familiar
       biological_types: [
         typeFixture('男性镜生体'),
         typeFixture('女性镜生体'),
-        typeFixture('双性/间性人类'),
+        typeFixture('双性人类'),
       ],
     }],
   });
@@ -365,11 +559,11 @@ test('World Model keeps species and biological type recognition separate and sup
     species: [
       {
         name: '人类',
-        description: '资料明确出现人类常规类型和双性/间性类型。',
+        description: '资料明确出现人类常规类型和双性类型。',
         biological_types: [
           {...structuredClone(modelFixture.species[0].biological_types[0]), name: '男性'},
           {...structuredClone(modelFixture.species[0].biological_types[0]), name: '女性'},
-          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '双性/间性'},
+          {...structuredClone(modelFixture.species[0].biological_types[0]), name: '双性'},
         ],
       },
       {name: '仅识别出的物种', description: '资料只识别出物种，没有具体类型。', biological_types: []},
@@ -524,11 +718,11 @@ test('World Model analysis preserves open ABO names without inventing sex combin
   assert.ok(result.species[0].biological_types.every(type => Object.values(type.capabilities).every(value => value === null)));
 });
 
-test('World Model analysis keeps non-human female mechanisms unknown without evidence', async () => {
+test('World Model analysis keeps non-human female mechanisms unknown when raw fields are null', async () => {
   const result = await analyzeDescription('资料明确存在女性镜生体，但没有说明其生殖机制。', [
     {
       name: '镜生体',
-      biological_types: [typeFixture('女性')],
+      biological_types: [structuredFixtureType('女性')],
     },
   ]);
   const type = result.species[0].biological_types[0];
@@ -550,16 +744,16 @@ test('World Model analysis keeps non-human female mechanisms unknown without evi
   });
 });
 
-test('World Model analysis keeps only explicitly evidenced non-human capabilities', async () => {
+test('World Model analysis preserves schema-valid non-human capabilities without source re-filtering', async () => {
   const result = await analyzeDescription('晶巢种女性能够产生卵细胞，但不能承担妊娠。', [
     {name: '晶巢种', biological_types: [typeFixture('女性')]},
   ]);
   assert.deepEqual(result.species[0].biological_types[0].capabilities, {
-    can_produce_sperm: null,
-    can_produce_ova: true,
-    can_be_fertilized: null,
-    can_fertilize: null,
-    can_carry_pregnancy: false,
+    can_produce_sperm: true,
+    can_produce_ova: null,
+    can_be_fertilized: false,
+    can_fertilize: true,
+    can_carry_pregnancy: null,
   });
 });
 
@@ -585,7 +779,362 @@ test('World Model analysis keeps an arbitrary fantasy species empty without type
   assert.deepEqual(result.species[0].biological_types, []);
 });
 
-test('World Model analysis keeps arbitrary non-human male and female capabilities unknown', async () => {
+test('World Model analysis preserves generic raw fields after type-only retention', async () => {
+  const rawType = structuredFixtureType('Type-X', 'AI 改写后的类型摘要。', {
+    capabilities: {
+      can_produce_sperm: true,
+      can_produce_ova: true,
+      can_be_fertilized: true,
+      can_fertilize: true,
+      can_carry_pregnancy: true,
+    },
+    reproduction_rules: {
+      fertilization: 'AI 改写后的配子结合机制。',
+      pregnancy_or_carrying: 'AI 改写后的孕育总结。',
+      cycle: 'AI 改写后的周期总结。',
+      ovulation: 'AI 改写后的排卵总结。',
+      gestation: 'AI 改写后的妊娠总结。',
+      labor: 'AI 改写后的分娩总结。',
+    },
+    lifecycle: {
+      maturation: 'AI 改写后的成熟总结。',
+      aging: 'AI 改写后的衰老总结。',
+    },
+    special_rules: ['AI 改写后的特殊规则。'],
+  });
+  const result = await analyzeDescription('Type-X 是一种通用生物类型。', [{
+    name: 'Species-A',
+    description: 'Species-A 的通用描述。',
+    biological_types: [rawType],
+  }]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['Species-A']);
+  assert.deepEqual(result.species[0].biological_types[0], rawType);
+});
+
+test('World Model analysis preserves raw fields for custom types under human species', async () => {
+  const rawType = structuredFixtureType('自定义类型', 'AI 改写后的类型摘要。', {
+    capabilities: {
+      can_produce_sperm: true,
+      can_produce_ova: true,
+      can_be_fertilized: true,
+      can_fertilize: true,
+      can_carry_pregnancy: true,
+    },
+    reproduction_rules: {
+      fertilization: 'AI 改写后的配子结合机制。',
+      pregnancy_or_carrying: 'AI 改写后的孕育总结。',
+      cycle: 'AI 改写后的周期总结。',
+      ovulation: 'AI 改写后的排卵总结。',
+      gestation: 'AI 改写后的妊娠总结。',
+      labor: 'AI 改写后的分娩总结。',
+    },
+    lifecycle: {
+      maturation: 'AI 改写后的成熟总结。',
+      aging: 'AI 改写后的衰老总结。',
+    },
+    special_rules: ['AI 改写后的特殊规则。'],
+  });
+  const result = await analyzeDescription('人类资料明确存在自定义类型。', [{
+    name: '人类',
+    biological_types: [rawType],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types[0], rawType);
+});
+
+test('World Model analysis preserves generic null and empty raw fields', async () => {
+  const result = await analyzeDescription('Type-Y 是一种通用生物类型。', [{
+    name: 'Species-B',
+    biological_types: [structuredFixtureType('Type-Y')],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+  assert.deepEqual(result.species[0].biological_types[0].reproduction_rules, {
+    fertilization: null,
+    pregnancy_or_carrying: null,
+    cycle: null,
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  });
+  assert.deepEqual(result.species[0].biological_types[0].lifecycle, {maturation: null, aging: null});
+  assert.deepEqual(result.species[0].biological_types[0].special_rules, []);
+});
+
+test('World Model analysis retains arbitrary species from direct subtree evidence', async () => {
+  const cases = [
+    {
+      name: 'Species-A',
+      input: 'Type-X 作为一种生物类型被明确记录。',
+      type: structuredFixtureType('Type-X', null),
+    },
+    {
+      name: 'Species-B',
+      input: '一种可被直接引用的类型说明文本。',
+      type: structuredFixtureType('Type-Y', '一种可被直接引用的类型说明文本。'),
+    },
+    {
+      name: 'Species-C',
+      input: 'Type-Z 能够产生精子。',
+      type: structuredFixtureType('Type-Z', null, {capabilities: {can_produce_sperm: true}}),
+    },
+    {
+      name: 'Species-D',
+      input: '通过配子结合完成受精。',
+      type: structuredFixtureType('Type-R', null, {
+        reproduction_rules: {fertilization: '通过配子结合完成受精。'},
+      }),
+    },
+    {
+      name: 'Species-E',
+      input: '该生物达到成熟后进入下一阶段。',
+      type: structuredFixtureType('Type-L', null, {
+        lifecycle: {maturation: '该生物达到成熟后进入下一阶段。'},
+      }),
+    },
+    {
+      name: 'Species-F',
+      input: '该生物在月光下会改变生殖能力。',
+      type: structuredFixtureType('Type-S', null, {
+        special_rules: ['该生物在月光下会改变生殖能力。'],
+      }),
+    },
+    {
+      name: 'Species-G',
+      speciesDescription: '一种明确记录的物种描述文本。',
+      input: '一种明确记录的物种描述文本。',
+      type: structuredFixtureType('Type-G', null),
+    },
+  ];
+
+  for (const item of cases) {
+    const result = await analyzeDescription(item.input, [{
+      name: item.name,
+      description: item.speciesDescription ?? null,
+      biological_types: [item.type],
+    }]);
+    assert.deepEqual(result.species.map(species => species.name), [item.name], item.name);
+  }
+});
+
+test('World Model analysis keeps a generic species but filters an unsupported type', async () => {
+  const result = await analyzeDescription('Species-A 明确存在 Type-X。', [{
+    name: 'Species-A',
+    biological_types: [structuredFixtureType('Type-X', null), structuredFixtureType('Type-Y', null)],
+  }]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['Species-A']);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X']);
+});
+
+test('World Model analysis filters a generic species when only schema keys are present', async () => {
+  const result = await analyzeDescription(
+    'species biological_types capabilities reproduction_rules lifecycle special_rules',
+    [{
+      name: 'Species-A',
+      description: 'Species-A 的描述不在输入中。',
+      biological_types: [structuredFixtureType('Type-Y', 'Type-Y 的描述不在输入中。', {
+        capabilities: {can_produce_sperm: true},
+        reproduction_rules: {fertilization: '该类型的受精规则不在输入中。'},
+        lifecycle: {maturation: '该类型的成熟规则不在输入中。'},
+        special_rules: ['该类型的特殊规则不在输入中。'],
+      })],
+    }],
+  );
+
+  assert.deepEqual(result.species, []);
+});
+
+test('World Model analysis does not use an unscoped special rule as species evidence', async () => {
+  const result = await analyzeDescription('资料中只提到“特殊规则”四个字。', [{
+    name: 'Species-A',
+    biological_types: [structuredFixtureType('Type-X', null, {
+      special_rules: ['特殊规则：月光下会改变生殖能力。'],
+    })],
+  }]);
+
+  assert.deepEqual(result.species, []);
+});
+
+test('World Model analysis keeps arbitrary Alpha Beta Omega types under a generic species', async () => {
+  const result = await analyzeDescription('Species-A 明确存在 Alpha、Beta、Omega 三种生物类型。', [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Alpha', null),
+      structuredFixtureType('Beta', null),
+      structuredFixtureType('Omega', null),
+    ],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Alpha', 'Beta', 'Omega']);
+});
+
+test('World Model pipeline retains a type when species and type evidence are separate units', async () => {
+  const result = await analyzeInput({
+    character: {description: 'Species-A 已被记录为一个生物种群。\nType-X 的类型描述已在资料中明确记录。'},
+  }, [{
+    name: 'Species-A',
+    biological_types: [structuredFixtureType('Type-X', 'Type-X 的类型描述已在资料中明确记录。', {
+      capabilities: {can_produce_sperm: true},
+    })],
+  }]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['Species-A']);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X']);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_sperm, true);
+});
+
+test('World Model pipeline retains a type from a directly evidenced reproduction rule without its name', async () => {
+  const fertilizationRule = '通过配子结合完成受精。';
+  const result = await analyzeInput({
+    character: {description: 'Species-A 被明确记录为物种。\n资料记载受精方式为通过配子结合完成受精。'},
+  }, [{
+    name: 'Species-A',
+    biological_types: [structuredFixtureType('Type-X', null, {
+      reproduction_rules: {fertilization: fertilizationRule},
+    })],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X']);
+  assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, fertilizationRule);
+});
+
+test('World Model pipeline keeps nameless type field evidence isolated across siblings', async () => {
+  const fertilizationRule = '通过配子结合完成受精。';
+  const maturationRule = '该生物达到成熟后进入下一阶段。';
+  const specialRule = '该生物在月光下会改变生殖能力。';
+  const description = '该生物类型能够产生精子。';
+  const result = await analyzeInput({
+    character: {
+      description: [
+        'Species-A 已被记录为物种。',
+        fertilizationRule,
+        maturationRule,
+        specialRule,
+        description,
+      ].join('\n'),
+    },
+  }, [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Type-X', null, {
+        reproduction_rules: {fertilization: fertilizationRule},
+      }),
+      structuredFixtureType('Type-Y', null, {
+        lifecycle: {maturation: maturationRule},
+      }),
+      structuredFixtureType('Type-Z', null, {
+        special_rules: [specialRule],
+      }),
+      structuredFixtureType('Type-W', description, {
+        capabilities: {can_produce_sperm: true},
+      }),
+    ],
+  }]);
+
+  const [typeX, typeY, typeZ, typeW] = result.species[0].biological_types;
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X', 'Type-Y', 'Type-Z', 'Type-W']);
+  assert.equal(typeX.reproduction_rules.fertilization, fertilizationRule);
+  assert.equal(typeX.lifecycle.maturation, null);
+  assert.deepEqual(typeX.special_rules, []);
+  assert.equal(typeY.reproduction_rules.fertilization, null);
+  assert.equal(typeY.lifecycle.maturation, maturationRule);
+  assert.deepEqual(typeY.special_rules, []);
+  assert.equal(typeZ.reproduction_rules.fertilization, null);
+  assert.equal(typeZ.lifecycle.maturation, null);
+  assert.deepEqual(typeZ.special_rules, [specialRule]);
+  assert.equal(typeW.capabilities.can_produce_sperm, true);
+  assert.equal(typeW.reproduction_rules.fertilization, null);
+  assert.equal(typeW.lifecycle.maturation, null);
+  assert.deepEqual(typeW.special_rules, []);
+});
+
+test('World Model pipeline preserves each retained type raw field despite sibling evidence', async () => {
+  const fertilizationRule = '通过配子结合完成受精。';
+  const result = await analyzeInput({
+    character: {
+      description: `Species-A 已被记录为物种。Type-Y ${fertilizationRule}`,
+    },
+  }, [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Type-X', null, {
+        reproduction_rules: {fertilization: fertilizationRule},
+      }),
+      structuredFixtureType('Type-Y', null, {
+        reproduction_rules: {fertilization: fertilizationRule},
+      }),
+    ],
+  }]);
+
+  const [typeX, typeY] = result.species[0].biological_types;
+  assert.equal(typeX.reproduction_rules.fertilization, fertilizationRule);
+  assert.equal(typeY.reproduction_rules.fertilization, fertilizationRule);
+});
+
+test('World Model pipeline keeps the species while filtering a type with no subtree evidence', async () => {
+  const result = await analyzeInput({
+    character: {description: 'Species-A 明确存在 Type-X。'},
+  }, [{
+    name: 'Species-A',
+    biological_types: [structuredFixtureType('Type-X', null), structuredFixtureType('Type-Y', null)],
+  }]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['Species-A']);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X']);
+});
+
+test('World Model pipeline keeps only Type-X when Type-Y has no subtree evidence', async () => {
+  const result = await analyzeInput({
+    character: {description: 'Species-A 已被记录。\nType-X 的类型说明已被记录。'},
+  }, [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Type-X', 'Type-X 的类型说明已被记录。'),
+      structuredFixtureType('Type-Y', null),
+    ],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Type-X']);
+});
+
+test('World Model pipeline retains open Alpha Beta Omega names without male or female matching', async () => {
+  const result = await analyzeInput({
+    character: {description: 'Species-A 已被记录。\nAlpha 是一种生殖分类。\nBeta 是一种生殖分类。\nOmega 是一种生殖分类。'},
+  }, [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Alpha', 'Alpha 是一种生殖分类。'),
+      structuredFixtureType('Beta', 'Beta 是一种生殖分类。'),
+      structuredFixtureType('Omega', 'Omega 是一种生殖分类。'),
+    ],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Alpha', 'Beta', 'Omega']);
+  assert.equal(result.species[0].biological_types.some(type => ['男性', '女性'].includes(type.name)), false);
+});
+
+test('World Model pipeline retains human male and female types without human species wording', async () => {
+  const evidence = '角色甲的性别是男性，能够产生精子并使卵细胞受精。角色乙的性别是女性，可以怀孕并通过分娩完成生产。';
+  const result = await analyzeInput({
+    character: {description: evidence},
+  }, [{
+    name: '人类',
+    biological_types: [typeFixture('男性'), typeFixture('女性')],
+  }]);
+
+  assert.doesNotMatch(evidence, /人类/);
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+});
+
+test('World Model analysis preserves arbitrary non-human male and female capabilities', async () => {
   const result = await analyzeDescription('星海生物明确存在男性和女性，但资料没有说明其生殖能力。', [
     {
       name: '星海生物',
@@ -614,20 +1163,41 @@ test('World Model analysis keeps arbitrary non-human male and female capabilitie
 
   assert.deepEqual(result.species[0].biological_types.map(type => type.capabilities), [
     {
-      can_produce_sperm: null,
-      can_produce_ova: null,
-      can_be_fertilized: null,
-      can_fertilize: null,
-      can_carry_pregnancy: null,
+      can_produce_sperm: true,
+      can_produce_ova: true,
+      can_be_fertilized: true,
+      can_fertilize: true,
+      can_carry_pregnancy: true,
     },
     {
-      can_produce_sperm: null,
-      can_produce_ova: null,
-      can_be_fertilized: null,
-      can_fertilize: null,
-      can_carry_pregnancy: null,
+      can_produce_sperm: true,
+      can_produce_ova: true,
+      can_be_fertilized: true,
+      can_fertilize: true,
+      can_carry_pregnancy: true,
     },
   ]);
+});
+
+test('World Model keeps non-human unknown rules null but canonicalizes explicit absence to 无', async () => {
+  const result = await analyzeDescription('雾核体的甲型明确不存在受精机制、排卵机制和妊娠机制；周期资料没有说明。', [{
+    name: '雾核体',
+    biological_types: [structuredFixtureType('甲型', null, {
+      reproduction_rules: {
+        fertilization: '无此机制',
+        ovulation: '不具备该机制',
+        gestation: '不适用',
+        cycle: '没有对应资料',
+      },
+    })],
+  }]);
+  const rules = result.species[0].biological_types[0].reproduction_rules;
+
+  assert.equal(rules.fertilization, '无');
+  assert.equal(rules.ovulation, '无');
+  assert.equal(rules.gestation, '无');
+  assert.equal(rules.cycle, null);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_ova, null);
 });
 
 test('World Model analysis rejects exact and generic-suffix parent type duplicates', async () => {
@@ -678,7 +1248,7 @@ test('World Model analysis preserves a directly evidenced rule when capability i
 
 test('World Model analysis keeps arbitrary species sex types from deterministic semantic evidence', async () => {
   const result = await analyzeDescription('镜生体性别基本都为男性，极少数镜生体为女性。', [
-    {name: '镜生体', biological_types: [typeFixture('男性'), typeFixture('女性')]},
+    {name: '镜生体', biological_types: [structuredFixtureType('男性'), structuredFixtureType('女性')]},
   ]);
 
   assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
@@ -693,7 +1263,7 @@ test('World Model analysis does not treat unrelated partners or individual label
   assert.deepEqual(result.species.map(species => species.biological_types), [[], []]);
 });
 
-test('World Model analysis keeps only directly evidenced non-human fields', async () => {
+test('World Model analysis preserves generic fields while applying final contradictions', async () => {
   const result = await analyzeDescription('晶巢种男性会产生精液；晶巢种男性存在发情期；晶巢种男性寿命通常为六百年。', [
     {
       name: '晶巢种',
@@ -722,24 +1292,189 @@ test('World Model analysis keeps only directly evidenced non-human fields', asyn
 
   assert.deepEqual(type.capabilities, {
     can_produce_sperm: true,
-    can_produce_ova: null,
+    can_produce_ova: false,
+    can_be_fertilized: false,
+    can_fertilize: true,
+    can_carry_pregnancy: false,
+  });
+  assert.deepEqual(type.reproduction_rules, {
+    fertilization: null,
+    pregnancy_or_carrying: '无',
+    cycle: '存在发情期。',
+    ovulation: '无',
+    gestation: '无',
+    labor: '无',
+  });
+  assert.deepEqual(type.lifecycle, {maturation: '达到成年后成熟。', aging: '寿命通常为六百年。'});
+  assert.deepEqual(type.special_rules, ['晶巢种男性存在发情期。', '成结用于提高受精成功率。']);
+});
+
+test('World Model analysis keeps generic type-local fields across separate parent and type units', async () => {
+  const result = await analyzeInput({
+    character: {
+      description: [
+        'Species-A 已被记录为一个物种。',
+        'Type-X 是一种生殖分类。',
+        'Type-X 能够产生精子。',
+        'Type-X 的受精规则是通过配子结合完成受精。',
+        'Type-X 达到成熟后进入下一阶段。',
+        'Type-X 特殊规则：月光下会改变生殖能力。',
+        'Type-Y 是另一种生殖分类。',
+        'Type-Y 能够产生卵子。',
+        'Type-Y 可以承担妊娠。',
+        'Type-Y 的寿命通常为六百年。',
+        'Type-Y 特殊规则：白昼会改变颜色。',
+      ].join('\n'),
+    },
+  }, [{
+    name: 'Species-A',
+    biological_types: [
+      structuredFixtureType('Type-X', 'Type-X 是一种生殖分类。', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: true,
+          can_be_fertilized: null,
+          can_fertilize: null,
+          can_carry_pregnancy: null,
+        },
+        reproduction_rules: {
+          fertilization: 'Type-X 的受精规则是通过配子结合完成受精。',
+          pregnancy_or_carrying: 'Type-X 可以承担妊娠。',
+          cycle: 'Type-X 存在发情期。',
+        },
+        lifecycle: {
+          maturation: 'Type-X 达到成熟后进入下一阶段。',
+          aging: 'Type-X 的寿命通常为六百年。',
+        },
+        special_rules: [
+          'Type-X 特殊规则：月光下会改变生殖能力。',
+          '云脉休眠规则。',
+        ],
+      }),
+      structuredFixtureType('Type-Y', 'Type-Y 是另一种生殖分类。', {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: true,
+          can_be_fertilized: null,
+          can_fertilize: null,
+          can_carry_pregnancy: true,
+        },
+        reproduction_rules: {
+          fertilization: 'Type-Y 的受精规则是通过配子结合完成受精。',
+          pregnancy_or_carrying: 'Type-Y 可以承担妊娠。',
+          cycle: 'Type-Y 存在发情期。',
+        },
+        lifecycle: {
+          maturation: 'Type-Y 达到成熟后进入下一阶段。',
+          aging: 'Type-Y 的寿命通常为六百年。',
+        },
+        special_rules: [
+          'Type-Y 特殊规则：白昼会改变颜色。',
+          '银沙环境下保持静止。',
+        ],
+      }),
+    ],
+  }]);
+
+  const [typeX, typeY] = result.species[0].biological_types;
+  assert.deepEqual(typeX.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: true,
     can_be_fertilized: null,
     can_fertilize: null,
     can_carry_pregnancy: null,
   });
-  assert.deepEqual(type.reproduction_rules, {
-    fertilization: null,
-    pregnancy_or_carrying: null,
-    cycle: '存在发情期。',
+  assert.deepEqual(typeX.reproduction_rules, {
+    fertilization: 'Type-X 的受精规则是通过配子结合完成受精。',
+    pregnancy_or_carrying: 'Type-X 可以承担妊娠。',
+    cycle: 'Type-X 存在发情期。',
     ovulation: null,
     gestation: null,
     labor: null,
   });
-  assert.deepEqual(type.lifecycle, {maturation: null, aging: '寿命通常为六百年。'});
-  assert.deepEqual(type.special_rules, ['晶巢种男性存在发情期。']);
+  assert.deepEqual(typeX.lifecycle, {
+    maturation: 'Type-X 达到成熟后进入下一阶段。',
+    aging: 'Type-X 的寿命通常为六百年。',
+  });
+  assert.deepEqual(typeX.special_rules, [
+    'Type-X 特殊规则：月光下会改变生殖能力。',
+    '云脉休眠规则。',
+  ]);
+
+  assert.deepEqual(typeY.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: true,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: true,
+  });
+  assert.deepEqual(typeY.reproduction_rules, {
+    fertilization: 'Type-Y 的受精规则是通过配子结合完成受精。',
+    pregnancy_or_carrying: 'Type-Y 可以承担妊娠。',
+    cycle: 'Type-Y 存在发情期。',
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  });
+  assert.deepEqual(typeY.lifecycle, {
+    maturation: 'Type-Y 达到成熟后进入下一阶段。',
+    aging: 'Type-Y 的寿命通常为六百年。',
+  });
+  assert.deepEqual(typeY.special_rules, [
+    'Type-Y 特殊规则：白昼会改变颜色。',
+    '银沙环境下保持静止。',
+  ]);
 });
 
-test('World Model analysis does not widen a single type with species-level evidence', async () => {
+test('World Model analysis keeps Alpha Beta Omega fields under Species-B without name special cases', async () => {
+  const result = await analyzeInput({
+    character: {
+      description: [
+        'Species-B 已被记录为一个物种。',
+        'Alpha 是一种生殖分类。',
+        'Alpha 能够产生精子。',
+        'Beta 是一种生殖分类。',
+        'Beta 达到成熟后进入下一阶段。',
+        'Omega 是一种生殖分类。',
+        'Omega 特殊规则：月光下会改变生殖能力。',
+      ].join('\n'),
+    },
+  }, [{
+    name: 'Species-B',
+    biological_types: [
+      structuredFixtureType('Alpha', null, {
+        capabilities: {can_produce_sperm: true},
+        special_rules: ['仅在极端环境下休眠。'],
+      }),
+      structuredFixtureType('Beta', null, {
+        lifecycle: {
+          maturation: 'Beta 达到成熟后进入下一阶段。',
+          aging: 'Beta 的寿命通常为六百年。',
+        },
+      }),
+      structuredFixtureType('Omega', null, {
+        special_rules: [
+          'Omega 特殊规则：月光下会改变生殖能力。',
+          '银沙环境下保持静止。',
+        ],
+      }),
+    ],
+  }]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['Alpha', 'Beta', 'Omega']);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_sperm, true);
+  assert.deepEqual(result.species[0].biological_types[0].special_rules, ['仅在极端环境下休眠。']);
+  assert.deepEqual(result.species[0].biological_types[1].lifecycle, {
+    maturation: 'Beta 达到成熟后进入下一阶段。',
+    aging: 'Beta 的寿命通常为六百年。',
+  });
+  assert.deepEqual(result.species[0].biological_types[2].special_rules, [
+    'Omega 特殊规则：月光下会改变生殖能力。',
+    '银沙环境下保持静止。',
+  ]);
+});
+
+test('World Model analysis keeps a retained type raw while ignoring species-level contradiction guards', async () => {
   const result = await analyzeDescription('晶巢种存在甲型；晶巢种的体液会结晶，但没有说明该规则属于甲型。', [
     {
       name: '晶巢种',
@@ -759,21 +1494,21 @@ test('World Model analysis does not widen a single type with species-level evide
   const type = result.species[0].biological_types[0];
   assert.equal(type.name, '甲型');
   assert.deepEqual(type.capabilities, {
-    can_produce_sperm: null,
-    can_produce_ova: null,
-    can_be_fertilized: null,
-    can_fertilize: null,
-    can_carry_pregnancy: null,
+    can_produce_sperm: true,
+    can_produce_ova: false,
+    can_be_fertilized: true,
+    can_fertilize: true,
+    can_carry_pregnancy: false,
   });
   assert.deepEqual(type.reproduction_rules, {
     fertilization: null,
-    pregnancy_or_carrying: null,
+    pregnancy_or_carrying: '无',
     cycle: null,
-    ovulation: null,
-    gestation: null,
-    labor: null,
+    ovulation: '无',
+    gestation: '无',
+    labor: '无',
   });
-  assert.deepEqual(type.special_rules, []);
+  assert.deepEqual(type.special_rules, ['晶巢种的体液会结晶。']);
 });
 
 test('World Model analysis keeps reversible body changes out of fixed types for original species', async () => {
@@ -811,7 +1546,7 @@ test('World Model analysis keeps non-fertilization interaction null for original
   assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, null);
 });
 
-test('World Model analysis keeps original non-human sex labels from Human capabilities', async () => {
+test('World Model analysis preserves original non-human sex-label capabilities', async () => {
   const claimedCapabilities = {
     can_produce_sperm: true,
     can_produce_ova: true,
@@ -831,11 +1566,11 @@ test('World Model analysis keeps original non-human sex labels from Human capabi
 
   assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
   assert.ok(result.species[0].biological_types.every(type => (
-    Object.values(type.capabilities).every(value => value === null)
+    Object.values(type.capabilities).every(value => value === true)
   )));
 });
 
-test('World Model analysis does not classify progression as biological maturation for original species', async () => {
+test('World Model analysis preserves normalized lifecycle text for a retained original type', async () => {
   const result = await analyzeDescription('阶纹生物存在阶序型；阶序型通过修炼等级提升和力量进阶完成 progression。', [
     {
       name: '阶纹生物',
@@ -846,23 +1581,23 @@ test('World Model analysis does not classify progression as biological maturatio
   ]);
 
   assert.deepEqual(result.species[0].biological_types[0].lifecycle, {
-    maturation: null,
-    aging: null,
+    maturation: '修炼等级达到九阶。',
+    aging: '力量进阶持续进行。',
   });
 });
 
-test('World Model analysis preserves explicit negative non-human capability evidence', async () => {
+test('World Model analysis does not rewrite generic capabilities from source-only negatives', async () => {
   const result = await analyzeDescription('晶巢种男性不能产生精子，也不能被受精。', [
-    {name: '晶巢种', biological_types: [typeFixture('男性')]},
+    {name: '晶巢种', biological_types: [structuredFixtureType('男性')]},
   ]);
-  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_sperm, false);
-  assert.equal(result.species[0].biological_types[0].capabilities.can_be_fertilized, false);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_produce_sperm, null);
+  assert.equal(result.species[0].biological_types[0].capabilities.can_be_fertilized, null);
   assert.equal(result.species[0].biological_types[0].capabilities.can_fertilize, null);
 });
 
-test('World Model analysis keeps absent or pseudo-pregnancy evidence unknown', async () => {
+test('World Model analysis keeps absent or pseudo-pregnancy raw capabilities unknown', async () => {
   const result = await analyzeDescription('女性镜生体没有证据证明可以怀孕；仅存在假孕现象，无实际妊娠记录。', [
-    {name: '镜生体', biological_types: [typeFixture('女性')]},
+    {name: '镜生体', biological_types: [structuredFixtureType('女性')]},
   ]);
   assert.deepEqual(result.species[0].biological_types[0].capabilities, {
     can_produce_sperm: null,
@@ -873,16 +1608,16 @@ test('World Model analysis keeps absent or pseudo-pregnancy evidence unknown', a
   });
 });
 
-test('World Model analysis accepts field-local explicit non-human inability', async () => {
+test('World Model analysis keeps generic null capabilities despite source-only inability', async () => {
   const result = await analyzeDescription('女性镜生体不能怀孕，也无法被受精。', [
-    {name: '镜生体', biological_types: [typeFixture('女性')]},
+    {name: '镜生体', biological_types: [structuredFixtureType('女性')]},
   ]);
   assert.deepEqual(result.species[0].biological_types[0].capabilities, {
     can_produce_sperm: null,
     can_produce_ova: null,
-    can_be_fertilized: false,
+    can_be_fertilized: null,
     can_fertilize: null,
-    can_carry_pregnancy: false,
+    can_carry_pregnancy: null,
   });
 });
 
@@ -912,19 +1647,19 @@ test('World Model analysis applies only the named human-equivalence field to non
   const type = result.species[0].biological_types[0];
 
   assert.deepEqual(type.capabilities, {
-    can_produce_sperm: null,
-    can_produce_ova: null,
-    can_be_fertilized: null,
-    can_fertilize: null,
+    can_produce_sperm: false,
+    can_produce_ova: true,
+    can_be_fertilized: true,
+    can_fertilize: false,
     can_carry_pregnancy: true,
   });
   assert.deepEqual(type.reproduction_rules, {
     fertilization: null,
     pregnancy_or_carrying: '按人类方式妊娠。',
-    cycle: null,
-    ovulation: null,
+    cycle: '约28天。',
+    ovulation: '排卵。',
     gestation: '约40周。',
-    labor: null,
+    labor: '按人类方式分娩。',
   });
 });
 
@@ -972,11 +1707,11 @@ test('World Model final guard separates human male and female reproduction basel
 
   assert.deepEqual(male.reproduction_rules, {
     fertilization: '通过精子使卵细胞受精。',
-    pregnancy_or_carrying: null,
-    cycle: null,
-    ovulation: null,
-    gestation: null,
-    labor: null,
+    pregnancy_or_carrying: '无',
+    cycle: '无',
+    ovulation: '无',
+    gestation: '无',
+    labor: '无',
   });
   assert.deepEqual(female.reproduction_rules, {
     fertilization: '卵细胞可被精子受精。',
@@ -988,7 +1723,7 @@ test('World Model final guard separates human male and female reproduction basel
   });
 });
 
-test('World Model final guard clears non-human rules blocked by false capabilities', async () => {
+test('World Model final guard marks non-human rules absent when capabilities are false', async () => {
   const result = await analyzeDescription(
     '潮汐生物男性不能怀孕，但规则记载妊娠约40周和分娩产程；潮汐生物男性不能产生卵子，但记录会排卵；潮汐生物男性存在发情期和体内受精规则。',
     [{
@@ -996,10 +1731,10 @@ test('World Model final guard clears non-human rules blocked by false capabiliti
       biological_types: [typeFixture('男性', {
         capabilities: {
           can_produce_sperm: null,
-          can_produce_ova: null,
+          can_produce_ova: false,
           can_be_fertilized: null,
           can_fertilize: null,
-          can_carry_pregnancy: null,
+          can_carry_pregnancy: false,
         },
         reproduction_rules: {
           fertilization: '体内受精',
@@ -1017,11 +1752,11 @@ test('World Model final guard clears non-human rules blocked by false capabiliti
   assert.equal(type.capabilities.can_produce_ova, false);
   assert.equal(type.capabilities.can_carry_pregnancy, false);
   assert.equal(type.reproduction_rules.fertilization, '体内受精');
-  assert.equal(type.reproduction_rules.pregnancy_or_carrying, null);
+  assert.equal(type.reproduction_rules.pregnancy_or_carrying, '无');
   assert.equal(type.reproduction_rules.cycle, '存在发情期。');
-  assert.equal(type.reproduction_rules.ovulation, null);
-  assert.equal(type.reproduction_rules.gestation, null);
-  assert.equal(type.reproduction_rules.labor, null);
+  assert.equal(type.reproduction_rules.ovulation, '无');
+  assert.equal(type.reproduction_rules.gestation, '无');
+  assert.equal(type.reproduction_rules.labor, '无');
 });
 
 test('World Model final guard clears only conflicting fertilization roles', async () => {
@@ -1058,6 +1793,24 @@ test('World Model final guard clears only conflicting fertilization roles', asyn
 
   assert.equal(male.reproduction_rules.fertilization, null);
   assert.equal(female.reproduction_rules.fertilization, null);
+});
+
+test('World Model final guard preserves known absence for fertilization', async () => {
+  const result = await analyzeDescription('雾核体甲型明确不存在受精机制。', [{
+    name: '雾核体',
+    biological_types: [typeFixture('甲型', {
+      capabilities: {
+        can_produce_sperm: null,
+        can_produce_ova: null,
+        can_be_fertilized: false,
+        can_fertilize: false,
+        can_carry_pregnancy: null,
+      },
+      reproduction_rules: {fertilization: '无'},
+    })],
+  }]);
+
+  assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, '无');
 });
 
 test('World Model final guard keeps evidence-backed rules when capabilities are unknown', async () => {
@@ -1153,8 +1906,8 @@ test('World Model applies a Human delta to one capability and keeps other baseli
     can_carry_pregnancy: true,
   });
   assert.equal(type.reproduction_rules.pregnancy_or_carrying, '该路线允许男性承担妊娠。');
-  assert.equal(type.reproduction_rules.cycle, null);
-  assert.equal(type.reproduction_rules.gestation, null);
+  assert.equal(type.reproduction_rules.cycle, '无');
+  assert.equal(type.reproduction_rules.gestation, '无');
 });
 
 test('World Model applies a Human reproduction-rule delta without clearing the female baseline', async () => {
@@ -1252,23 +2005,7 @@ test('World Analysis request uses ordinary chat messages for current and indepen
   };
   const requests = [];
   const expectedModel = structuredClone(modelFixture);
-  expectedModel.species[0].biological_types[0].capabilities = {
-    can_produce_sperm: null,
-    can_produce_ova: null,
-    can_be_fertilized: null,
-    can_fertilize: null,
-    can_carry_pregnancy: null,
-  };
-  expectedModel.species[0].biological_types[0].reproduction_rules = {
-    fertilization: null,
-    pregnancy_or_carrying: null,
-    cycle: null,
-    ovulation: null,
-    gestation: null,
-    labor: null,
-  };
-  expectedModel.species[0].biological_types[0].lifecycle = {maturation: null, aging: null};
-  expectedModel.species[0].biological_types[0].special_rules = [];
+  expectedModel.species[0].biological_types[0].reproduction_rules.fertilization = null;
   const cases = [
     {
       profile: SILLYTAVERN_CURRENT_API,
@@ -1418,6 +2155,9 @@ test('World Model prompt states the complete generic field semantic contract', (
   assert.match(prompt, /lifecycle\.maturation 只描述生物成熟或生命阶段变化/);
   assert.match(prompt, /职业、修炼、技能、关系或力量 progression 不属于生命周期/);
   assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化/);
+  assert.match(prompt, /null 只表示未知、未提及、证据不足或无法判断/);
+  assert.match(prompt, /“无”只表示已经知道不存在、明确不具备或明确不适用/);
+  assert.match(prompt, /非 Human 没有资料时必须保持 null/);
   assert.match(prompt, /输出前进行内部自检（不要输出过程）/);
   assert.match(prompt, /没有可靠答案就把字段降为 null 或删除错误 type/);
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
@@ -1664,7 +2404,7 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
     ...modelFixture,
     species: [{
       ...modelFixture.species[0],
-      biological_types: [typeFixture('双性/间性')],
+      biological_types: [typeFixture('双性')],
     }],
   });
   const dualHtml = worldPage({worldModel: canonicalDualModel});
@@ -1695,6 +2435,124 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(visibleTypesHtml, />Alpha<\/button>/);
   assert.match(visibleTypesHtml, />Beta<\/button>/);
   assert.match(visibleTypesHtml, />Omega<\/button>/);
+});
+
+test('World UI Fixture A keeps one species, two types, descriptions, fixed fields, and exception labels', () => {
+  assert.equal(fixtureA.species.length, 1);
+  assert.equal(fixtureA.species[0].biological_types.length, 2);
+  assert.deepEqual(Object.keys(fixtureA.species[0].biological_types[0].capabilities).sort(), [
+    'can_be_fertilized',
+    'can_carry_pregnancy',
+    'can_fertilize',
+    'can_produce_ova',
+    'can_produce_sperm',
+  ]);
+  assert.deepEqual(Object.keys(fixtureA.species[0].biological_types[0].reproduction_rules).sort(), [
+    'cycle',
+    'fertilization',
+    'gestation',
+    'labor',
+    'ovulation',
+    'pregnancy_or_carrying',
+  ]);
+  assert.deepEqual(Object.keys(fixtureA.species[0].biological_types[0].lifecycle).sort(), ['aging', 'maturation']);
+
+  const firstTypeHtml = worldPage({
+    worldModel: fixtureA,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
+  });
+  assert.match(firstTypeHtml, /Fixture A 物种描述。/);
+  assert.match(firstTypeHtml, /第二行仍然可读。/);
+  assert.match(firstTypeHtml, /Fixture A 类型一描述。/);
+  assert.match(firstTypeHtml, /类型说明第二行。/);
+  assert.match(firstTypeHtml, /Fixture A 受精方式|Fixture A 妊娠方式|Fixture A 生理周期/);
+  assert.match(firstTypeHtml, /Fixture A 排卵机制|Fixture A 妊娠周期|Fixture A 分娩方式/);
+  assert.match(firstTypeHtml, /Fixture A 成熟|Fixture A 衰老|Fixture A 特殊规则/);
+  assert.match(firstTypeHtml, /Fixture A 分娩难度|Fixture A 照护水平|Fixture A 医疗依据/);
+  assert.match(firstTypeHtml, /Fixture A 例外主文本/);
+  assert.match(firstTypeHtml, /Fixture A 无附加标签的例外/);
+  assert.match(firstTypeHtml, /适用对象：Fixture A 适用对象/);
+  assert.match(firstTypeHtml, /依据：Fixture A 例外依据/);
+  assert.equal((firstTypeHtml.match(/适用对象：/g) ?? []).length, 1);
+  assert.equal((firstTypeHtml.match(/依据：/g) ?? []).length, 1);
+  assert.match(firstTypeHtml, /Fixture A 尚未确定项/);
+  assert.match(firstTypeHtml, />是<\/dd>/);
+  assert.match(firstTypeHtml, />否<\/dd>/);
+  assert.match(firstTypeHtml, />未知<\/dd>/);
+
+  const secondTypeHtml = worldPage({
+    worldModel: fixtureA,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 1,
+  });
+  assert.match(secondTypeHtml, /Fixture A 类型二描述。/);
+  assert.match(secondTypeHtml, /data-bioweave-world-section="special_rules"/);
+  assert.match(secondTypeHtml, /尚未确定|未知/);
+  assert.doesNotMatch(secondTypeHtml, /适用对象：<\/small>|依据：<\/small>/);
+});
+
+test('World UI Fixture B maps four species and all dynamic type descriptions', () => {
+  assert.equal(fixtureB.species.length, 4);
+  assert.deepEqual(fixtureB.species.map(species => species.biological_types.length), [2, 1, 0, 3]);
+
+  const html = worldPage({
+    worldModel: fixtureB,
+    selectedSpeciesIndex: 3,
+    selectedTypeIndex: 2,
+  });
+  assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 6);
+  for (const species of fixtureB.species) {
+    assert.match(html, new RegExp(species.name));
+    assert.match(html, new RegExp(species.description));
+    for (const type of species.biological_types) {
+      assert.match(html, new RegExp(type.name));
+    }
+  }
+  assert.match(html, /Fixture B 类型四丙描述。/);
+  assert.match(html, /尚未识别出生物类型/);
+  assert.match(html, /<h3 class="bioweave-world-model-module-title">特殊例外<\/h3>/);
+  assert.match(html, /<h3 class="bioweave-world-model-module-title">尚未确定<\/h3>/);
+  assert.match(html, /<p class="bioweave-empty">未知<\/p>/);
+
+  for (const [speciesIndex, species] of fixtureB.species.entries()) {
+    for (const [typeIndex] of species.biological_types.entries()) {
+      assert.deepEqual(resolveWorldModelSelection(fixtureB, speciesIndex, typeIndex), {
+        speciesIndex,
+        typeIndex,
+      });
+      const selectedHtml = worldPage({
+        worldModel: fixtureB,
+        selectedSpeciesIndex: speciesIndex,
+        selectedTypeIndex: typeIndex,
+      });
+      for (const section of ['capabilities', 'reproduction_rules', 'lifecycle', 'special_rules']) {
+        assert.equal(
+          (selectedHtml.match(new RegExp(`<section class="[^\"]*bioweave-world-model-module[^\"]*" data-bioweave-world-section="${section}"`, 'g')) ?? []).length,
+          1,
+          `${species.name} type ${typeIndex} should render ${section}`,
+        );
+      }
+      if (speciesIndex === 0 && typeIndex === 0) {
+        assert.match(selectedHtml, /Fixture B 规则甲/);
+      }
+      for (const label of [
+        '可产生精子', '可产生卵子', '可被受精', '可使其受精', '可承担妊娠',
+        '受精方式', '妊娠方式', '生理周期', '排卵机制', '妊娠周期', '分娩方式',
+        '成熟', '衰老',
+      ]) {
+        assert.equal((selectedHtml.match(new RegExp(`<dt>${label}<\\/dt>`, 'g')) ?? []).length, 1);
+      }
+    }
+  }
+});
+
+test('World UI description CSS keeps type and mobile species descriptions visible', () => {
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-description\s*\{[^}]*white-space:\s*pre-wrap[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-detail\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*block[^}]*max-height:\s*none[^}]*overflow:\s*visible/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-card\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*-webkit-box/s);
+  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-world-model(?:-page\s+)?(?:\.bioweave-world-model-)?type-detail\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*none/s);
+  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-world-model(?:-page\s+)?\.bioweave-world-model-species-card\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*none/s);
 });
 
 test('World Model page keeps the main source summary compact and filters unused sources', () => {

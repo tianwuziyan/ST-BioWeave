@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵守现有测试、静态检查、宿主边界和轻量修改要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审计 AI canonical model、Chat 持久化和 UI 展示之间的跨层数据语义。"}
+{"file":".trellis/tasks/09-09-world-model-rule-value-semantics/research/current-audit.md","reason":"提供当前 Prompt、Analyzer、schema、UI consumer 和 Human alias 黑盒结果的代码库审计证据。"}
+{"file":"docs/DATA-MODEL.md","reason":"同步 canonical rule value、Human baseline 与 species canonicalization 的正式语义。"}
