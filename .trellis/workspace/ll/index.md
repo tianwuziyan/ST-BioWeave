@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~205 | Active |
+| `journal-1.md` | ~228 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-09 | 重做通用 World Model 结构与证据边界 | `f2d7609`, `3d674d0` | `fix/world-model-prompt-baseline` |
 | 9 | 2026-09-09 | 清理 World Model fixture 污染 | `09b9b86` | `fix/world-model-prompt-baseline` |
 | 8 | 2026-09-09 | 收敛 World Model Prompt 与生物学证据边界 | `22d1379` | `fix/world-model-prompt-baseline` |
 | 7 | 2026-09-08 | 完善 BioWeave 项目 README | `ac039d1` | `fix/world-model-prompt-baseline` |

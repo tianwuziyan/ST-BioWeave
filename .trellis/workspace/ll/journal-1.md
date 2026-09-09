@@ -203,3 +203,26 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 重做通用 World Model 结构与证据边界
+<!-- trellis-session: v=2 fp=c5261e05c75151e2 -->
+
+**Date**: 2026-09-09
+**Task**: 重做通用 World Model 结构与证据边界
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+先撤回上一轮错误架构修改，再恢复通用 species/type 证据边界：保留固定五字段 schema，完善 Human Male/Female baseline，隔离非人类局部证据并删除 single-type fallback。更新 Prompt、Analyzer、World Model 测试与相关文档，World Model 66 项与全项目 166 项测试通过，npm run check 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f2d7609` | 撤回上一轮错误的 World Model 实现 |
+| `3d674d0` | 恢复通用 World Model 结构与证据边界 |
+
+### Status
+
+[OK] **Completed**
