@@ -24,8 +24,8 @@ const COMPOSITE_DUAL_LABEL_PATTERN = /双性\s*[\/／]\s*间性/gu;
 const DUAL_TERM_PATTERN = /双性(?!化|恋)/u;
 const NEGATED_DUAL_CONTEXT_PATTERN = /(?:没有|无|不存在|不是|并非|不属于|未(?:说明|提及|发现)|不确定|可能|或许|也许|模糊|不要|不应|不生成|不创建|不能|无法|禁止)[^。！？!?；;，,、\n]{0,8}\s*$/u;
 const TEMPORARY_DUAL_PHRASE_PATTERN = /(?:(?:临时|暂时|短暂)(?:地)?\s*)?(?:(?:可以|能够|能|可|会|允许|可能|或许|也许)(?:\s*(?:临时|暂时|短暂)(?:地)?)?\s*)?(?:(?:变为|变成|转为|转换为|转化为|变化为|修改为|改造成)\s*)双性|(?:(?:临时|暂时|短暂)(?:地)?\s*)?(?:(?:可以|能够|能|可|会|允许|可能|或许|也许)(?:\s*(?:临时|暂时|短暂)(?:地)?)?\s*)?(?:(?:是|为)\s*)?双性(?:化|状态)|(?:(?:临时|暂时|短暂)(?:地)?\s*|(?:可以|能够|能|可|会|允许|可能|或许|也许)\s*)(?:是|为)\s*双性/gu;
-const MALE_EVIDENCE_PATTERN = /(?:男性|男人|男孩|男生|雄性|男子|男剑灵|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*男(?:性)?|\bmale\b|\bman\b|\bboy\b)/iu;
-const FEMALE_EVIDENCE_PATTERN = /(?:女性|女人|女孩|女生|少女|雌性|女子|女剑灵|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*女(?:性)?|\bfemale\b|\bwoman\b|\bgirl\b)/iu;
+const MALE_EVIDENCE_PATTERN = /(?:男性|男人|男孩|男生|雄性|男子|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*男(?:性)?|\bmale\b|\bman\b|\bboy\b)/iu;
+const FEMALE_EVIDENCE_PATTERN = /(?:女性|女人|女孩|女生|少女|雌性|女子|(?:性别|角色|人物|个体)\s*(?:是|为|属于|[:：])?\s*女(?:性)?|\bfemale\b|\bwoman\b|\bgirl\b)/iu;
 const NEGATED_LABEL_CONTEXT_PATTERN = /(?:没有|无|不存在|并非|不是|非|未(?:有|见|说明|提及|发现|出现)|不含|不确定|不明确|不清楚|可能|或许|也许|是否)[^。！？!?；;，,、\n]{0,24}$/u;
 const UNKNOWN_LABEL_SUFFIX_PATTERN = /(?:未知|不确定|不明确|不清楚|模糊)\s*$/u;
 const CAPABILITY_EVIDENCE_PATTERNS = Object.freeze({
@@ -53,7 +53,7 @@ const UNSPECIFIED_FIELD_CONTEXT_PATTERN = /(?:没有(?:明确|说明|提及|描�
 const HUMAN_SPECIES_NAMES = new Set(['人类', '人', 'human', 'humans']);
 const DIRECT_AMBIGUOUS_TYPE = '性别模糊';
 const FAMILIAR_TYPE_NAMES = new Set(['男性', '女性', '双性']);
-const GENERIC_SPECIES_TYPE_SUFFIXES = Object.freeze(['族', '类', '种', '人', '修', '修士']);
+const GENERIC_SPECIES_TYPE_SUFFIXES = Object.freeze(['族', '类', '种', '人']);
 
 function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
   const error = new Error(message);
@@ -199,7 +199,7 @@ function worldModelEvidenceText(input = {}) {
 function evidenceUnits(input) {
   return worldModelEvidenceText(input)
     .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性')
-    // 保留逗号连接的同一语义单元，例如“剑灵性别基本都为男性，极少女剑灵”。
+    // 保留逗号连接的同一语义单元，避免拆开同一条 species/type 关系。
     .split(/[。！？!?；;\n]+/u)
     .map(value => value.trim())
     .filter(Boolean);
@@ -242,25 +242,18 @@ function compactEvidenceText(value) {
   return String(value ?? '').replace(/\s+/gu, '');
 }
 
-function speciesEvidenceAliases(speciesName) {
+function matchesSpeciesName(text, speciesName) {
   const normalizedSpecies = compactEvidenceText(speciesName);
-  if (normalizedSpecies === '妖') return ['妖族', '妖修', '妖兽', '妖怪', '妖类', '妖'];
-  if (normalizedSpecies === '魔') return ['魔族', '天魔', '魔物', '魔'];
-  if (normalizedSpecies === '剑灵') return ['剑灵'];
-  return normalizedSpecies ? [normalizedSpecies] : [];
-}
-
-function matchesSpeciesAlias(text, alias) {
-  if (alias.length > 1) return text.includes(alias);
-  const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`(?:^|[\\s\\[\\]（）()<>：:、，,])${escapedAlias}(?=$|[\\s\\[\\]（）()<>：:、，,族类种性修兽怪])`, 'u').test(text);
+  if (!normalizedSpecies) return false;
+  if (normalizedSpecies.length > 1) return text.includes(normalizedSpecies);
+  const escapedSpecies = normalizedSpecies.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`(?:^|[\\s\\[\\]（）()<>：:、，,])${escapedSpecies}(?=$|[\\s\\[\\]（）()<>：:、，,])`, 'u').test(text);
 }
 
 function speciesEvidenceUnits(units, speciesName) {
-  const aliases = speciesEvidenceAliases(speciesName);
   return units.filter(unit => {
     const compactUnit = compactEvidenceText(unit);
-    return aliases.some(alias => matchesSpeciesAlias(compactUnit, alias));
+    return matchesSpeciesName(compactUnit, speciesName);
   });
 }
 
@@ -299,21 +292,21 @@ function hasSpeciesLinkedTypeEvidence(unit, speciesName, typeName) {
   const externalHumanPattern = /人类|人族/u;
   const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣/u;
 
-  for (const alias of speciesEvidenceAliases(speciesName)) {
-    let aliasStart = compactUnit.indexOf(alias);
-    while (aliasStart >= 0) {
-      const aliasEnd = aliasStart + alias.length;
-      const contextStart = Math.min(aliasStart, typeStart);
-      const contextEnd = Math.max(aliasEnd, typeEnd);
-      const between = compactUnit.slice(Math.min(aliasEnd, typeEnd), Math.max(aliasStart, typeStart));
-      const context = compactUnit.slice(Math.max(0, contextStart - 8), Math.min(compactUnit.length, contextEnd + 8));
-      if (!externalHumanPattern.test(between)
-        && !(interactionPattern.test(between) && !relationPattern.test(between))
-        && !(individualPattern.test(context) && !relationPattern.test(between))) {
-        if (between.length <= 6 || relationPattern.test(between)) return true;
-      }
-      aliasStart = compactUnit.indexOf(alias, aliasStart + 1);
+  const speciesToken = compactEvidenceText(speciesName);
+  if (!speciesToken) return false;
+  let speciesStart = compactUnit.indexOf(speciesToken);
+  while (speciesStart >= 0) {
+    const speciesEnd = speciesStart + speciesToken.length;
+    const contextStart = Math.min(speciesStart, typeStart);
+    const contextEnd = Math.max(speciesEnd, typeEnd);
+    const between = compactUnit.slice(Math.min(speciesEnd, typeEnd), Math.max(speciesStart, typeStart));
+    const context = compactUnit.slice(Math.max(0, contextStart - 8), Math.min(compactUnit.length, contextEnd + 8));
+    if (!externalHumanPattern.test(between)
+      && !(interactionPattern.test(between) && !relationPattern.test(between))
+      && !(individualPattern.test(context) && !relationPattern.test(between))) {
+      if (between.length <= 6 || relationPattern.test(between)) return true;
     }
+    speciesStart = compactUnit.indexOf(speciesToken, speciesStart + 1);
   }
   return false;
 }
@@ -333,12 +326,16 @@ function hasNonHumanTypeEvidence(units, speciesName, typeName) {
 
 function hasBiologicalTypeEvidence(units, speciesName, typeName) {
   if (isHumanSpeciesName(speciesName)) {
-    return units.some(unit => hasDirectTypeEvidence(unit, typeName));
+    return units.some(unit => hasDirectTypeEvidence(unit, typeName)
+      && hasHumanSpeciesEvidence([unit]));
   }
-  return hasNonHumanTypeEvidence(units, speciesName, typeName);
+  return typeEvidenceUnits(units, speciesName, typeName).length > 0;
 }
 
 function fieldEvidenceUnits(units, speciesName, typeName) {
+  if (isHumanSpeciesName(speciesName)) {
+    return units.filter(unit => hasHumanSpeciesEvidence([unit]) && hasDirectTypeEvidence(unit, typeName));
+  }
   // 非人类字段始终需要当前 species + biological_type 的直接上下文。
   return typeEvidenceUnits(units, speciesName, typeName);
 }
@@ -359,11 +356,12 @@ function isNonEvidenceCapabilityContext(unit, match) {
 
 function isExplicitNegativeCapabilityEvidence(unit, match) {
   const before = unit.slice(0, match.index ?? 0).slice(-16);
-  const after = unit.slice((match.index ?? 0) + match[0].length).slice(0, 16);
+  const negatedAuxiliary = /(?:不|未|并不)\s*$/u.test(before)
+    && /^(?:能|可|会|被|接受|具备)/u.test(match[0]);
   return EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(match[0])
     || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(before)
-    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(after)
-    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(capabilityEvidenceContext(unit, match));
+    || negatedAuxiliary
+    || EXPLICIT_NEGATIVE_CAPABILITY_PATTERN.test(unit.slice(Math.max(0, (match.index ?? 0) - 4), match.index ?? 0));
 }
 
 function capabilityEvidenceValue(units, pattern) {
@@ -431,6 +429,67 @@ function sanitizeNonHumanType(type, units, speciesName) {
   };
 }
 
+function humanBaseline(typeName) {
+  if (typeName === '男性') {
+    return {
+      capabilities: {
+        can_produce_sperm: true,
+        can_produce_ova: false,
+        can_be_fertilized: false,
+        can_fertilize: true,
+        can_carry_pregnancy: false,
+      },
+      reproduction_rules: {
+        fertilization: '通过精子使卵细胞受精。',
+        pregnancy_or_carrying: null,
+        cycle: null,
+        ovulation: null,
+        gestation: null,
+        labor: null,
+      },
+    };
+  }
+  if (typeName === '女性') {
+    return {
+      capabilities: {
+        can_produce_sperm: false,
+        can_produce_ova: true,
+        can_be_fertilized: true,
+        can_fertilize: false,
+        can_carry_pregnancy: true,
+      },
+      reproduction_rules: {
+        fertilization: '卵细胞可被精子受精。',
+        pregnancy_or_carrying: '可以承担妊娠。',
+        cycle: '通常约28天一个周期。',
+        ovulation: '通常每个周期排卵。',
+        gestation: '通常约40周。',
+        labor: '通过分娩完成生产。',
+      },
+    };
+  }
+  return null;
+}
+
+function sanitizeHumanType(type, units, speciesName) {
+  const baseline = humanBaseline(type.name);
+  if (!baseline) return sanitizeNonHumanType(type, units, speciesName);
+  const fieldUnits = fieldEvidenceUnits(units, speciesName, type.name);
+  return {
+    ...type,
+    capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => {
+      const evidenced = capabilityEvidenceValue(fieldUnits, CAPABILITY_EVIDENCE_PATTERNS[key]);
+      return [key, evidenced === null ? baseline.capabilities[key] : evidenced];
+    })),
+    reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => (
+      textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key])
+        ? [key, type.reproduction_rules[key]]
+        : [key, baseline.reproduction_rules[key]]
+    ))),
+    special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, fieldUnits)),
+  };
+}
+
 function normalizeAnalysisType(type, speciesName) {
   const name = normalizeBiologicalTypeName(type?.name, speciesName);
   return name === type?.name ? type : {...type, name};
@@ -446,23 +505,8 @@ function isSpeciesNameOrGenericDerivative(name, speciesName) {
 
 function isObservedNonBiologicalType(name, speciesName) {
   const normalizedName = compactEvidenceText(name);
-  const normalizedSpecies = compactEvidenceText(speciesName);
   if (isSpeciesNameOrGenericDerivative(name, speciesName) || normalizedName === DIRECT_AMBIGUOUS_TYPE) return true;
-  // Preserve the existing semantic exclusions for observed subtype/source labels.
-  if (normalizedSpecies === '妖' && normalizedName === '半兽人') return true;
-  if (normalizedSpecies === '剑灵' && ['妖剑剑灵', '魔剑灵'].includes(normalizedName)) return true;
   return false;
-}
-
-function isUnsupportedFamiliarType(name, speciesName, evidence) {
-  if (!FAMILIAR_TYPE_NAMES.has(name)) return false;
-  const units = evidenceUnits(evidence);
-  if (isHumanSpeciesName(speciesName)) {
-    if (name === '男性') return !hasLabelEvidenceInUnits(units, MALE_EVIDENCE_PATTERN);
-    if (name === '女性') return !hasLabelEvidenceInUnits(units, FEMALE_EVIDENCE_PATTERN);
-    return !hasFixedDualEvidenceInUnits(units);
-  }
-  return !hasNonHumanTypeEvidence(units, speciesName, name);
 }
 
 function isDualTypeName(name) {
@@ -489,24 +533,37 @@ function isUnsupportedUnknownType(value, species) {
   });
 }
 
+function hasHumanSpeciesEvidence(units) {
+  return units.some(unit => /(?:人类|人族|普通人|\bhumans?\b)/iu.test(unit));
+}
+
+function hasSpeciesEvidence(units, speciesName) {
+  return isHumanSpeciesName(speciesName)
+    ? hasHumanSpeciesEvidence(units)
+    : speciesEvidenceUnits(units, speciesName).length > 0;
+}
+
 // AI 分析才经过证据边界；手动编辑保存的 World Model 只经过结构规范化。
 function applyWorldModelEvidenceGuard(model, analysisInput) {
   const evidence = evidenceUnits(analysisInput);
   const hasFixedDual = hasFixedDualEvidenceInUnits(evidence);
   const species = [];
   for (const item of model.species) {
+    if (!hasSpeciesEvidence(evidence, item.name)) continue;
     const normalizedTypes = item.biological_types
       .map(type => normalizeAnalysisType(type, item.name))
       .filter(type => !isObservedNonBiologicalType(type.name, item.name));
     const humanSpecies = isHumanSpeciesName(item.name);
-    const localFixedDual = humanSpecies ? hasFixedDual : hasNonHumanTypeEvidence(evidence, item.name, '双性');
+    const localSpeciesUnits = speciesEvidenceUnits(evidence, item.name);
+    const localFixedDual = humanSpecies
+      ? hasFixedDualEvidenceInUnits(localSpeciesUnits)
+      : hasNonHumanTypeEvidence(evidence, item.name, '双性');
     const supportedTypes = normalizedTypes
-      .filter(type => !isUnsupportedFamiliarType(type.name, item.name, analysisInput))
       .filter(type => hasBiologicalTypeEvidence(evidence, item.name, type.name))
       .filter(type => localFixedDual || !isDualTypeName(type.name));
-    const biologicalTypes = humanSpecies
-      ? supportedTypes
-      : supportedTypes.map(type => sanitizeNonHumanType(type, evidence, item.name));
+    const biologicalTypes = supportedTypes.map(type => humanSpecies
+      ? sanitizeHumanType(type, evidence, item.name)
+      : sanitizeNonHumanType(type, evidence, item.name));
     species.push({...item, biological_types: biologicalTypes});
   }
   return {

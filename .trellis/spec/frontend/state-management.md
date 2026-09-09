@@ -563,9 +563,10 @@ species[].biological_types[].capabilities
 
 - Good: male evidence produces `人类 → 男性`; male plus female evidence
   produces `人类 → 男性、女性`.
-- Good: “剑灵基本为男性，极少女剑灵” produces `剑灵 → 男性、女性`.
-- Good: human male/female evidence elsewhere does not authorize `妖 → 男性`
-  or `魔 → 女性`; without species-linked evidence those arrays stay empty.
+- Good: an original species with direct male/female evidence produces those
+  types under that species.
+- Good: human male/female evidence elsewhere does not authorize an unrelated
+  species' male/female types; without species-linked evidence those arrays stay empty.
 - Good: a non-human type with direct sperm, cycle, or lifespan evidence keeps
   only those corresponding fields; unrelated capabilities and rules remain
   `null`.
