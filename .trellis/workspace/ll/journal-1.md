@@ -226,3 +226,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 强化 World Model 通用字段语义 Contract
+<!-- trellis-session: v=2 fp=c53dd5650b1c8d84 -->
+
+**Date**: 2026-09-09
+**Task**: 强化 World Model 通用字段语义 Contract
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+重写 World Model Prompt 的通用 species/type/capability/fertilization/lifecycle/temporary state Contract；新增原创物种回归测试，保持 Analyzer、schema、UI 和下游模块不变。World Model 72/72、全项目 172/172，npm run check 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1553c6e` | 强化 World Model 通用字段语义约束 |
+
+### Status
+
+[OK] **Completed**
