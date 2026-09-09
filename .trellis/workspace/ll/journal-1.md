@@ -38,7 +38,7 @@
 
 ### Summary
 
-完成 World Model species → biological_types → capabilities 证据边界修正：重写 Prompt，加入仅分析阶段的类型证据 guard 与开放类型结构约束，区分现实人类 baseline 和非人类未知生理，修正双性/间性、临时双性化、个体特征及亚型误识别，更新中文 UI、文档和针对性测试。Focused 39/39、npm test 139/139、npm run check 全部通过；等待使用同一份 AnalysisInput 在 SillyTavern 做真实测试。
+完成 World Model species → biological_types → capabilities 证据边界修正：重写 Prompt，加入仅分析阶段的类型证据 guard 与开放类型结构约束，区分现实人类 baseline 和非人类未知生理，修正双性、临时双性化、个体特征及亚型误识别，更新中文 UI、文档和针对性测试。Focused 39/39、npm test 139/139、npm run check 全部通过；等待使用同一份 AnalysisInput 在 SillyTavern 做真实测试。
 
 ### Git Commits
 
@@ -244,6 +244,28 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 | Hash | Message |
 |------|---------|
 | `1553c6e` | 强化 World Model 通用字段语义约束 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 12: 扩展 World Model 隐含人类基线
+<!-- trellis-session: v=2 fp=b4d24e66df2b8bf4 -->
+
+**Date**: 2026-09-09
+**Task**: 扩展 World Model 隐含人类基线
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成条件性 implicit Human baseline 与 Baseline + Delta Prompt Contract；保留 Nonhuman Evidence Gate，补充逐字段 delta 回归测试并通过全量验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fca9d74` | 扩展 World Model 隐含人类基线与逐字段差分推断 |
 
 ### Status
 
