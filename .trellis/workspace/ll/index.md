@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-09-09
+- **Total Sessions**: 13
+- **Last Active**: 2026-09-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~272 | Active |
+| `journal-1.md` | ~294 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-09-10 | 完成 World Model 三态语义与 Human 基线实现 | `184610c` | `fix/world-model-prompt-baseline` |
 | 12 | 2026-09-09 | 扩展 World Model 隐含人类基线 | `fca9d74` | `fix/world-model-prompt-baseline` |
 | 11 | 2026-09-09 | 强化 World Model 通用字段语义 Contract | `1553c6e` | `fix/world-model-prompt-baseline` |
 | 10 | 2026-09-09 | 重做通用 World Model 结构与证据边界 | `f2d7609`, `3d674d0` | `fix/world-model-prompt-baseline` |

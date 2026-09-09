@@ -270,3 +270,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 完成 World Model 三态语义与 Human 基线实现
+<!-- trellis-session: v=2 fp=8677c0be6fd0dfa4 -->
+
+**Date**: 2026-09-10
+**Task**: 完成 World Model 三态语义与 Human 基线实现
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 World Model 规则字段 null/无/非空三态 Contract，补全 Human Male/Female reproduction baseline，加入 Human 专用 species canonicalization 与保守合并，保留 Nonhuman evidence boundary 和 final consistency guard；World Model 111/111、全项目 211/211、npm run check 与语法检查全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `184610c` | 统一 World Model 规则三态语义并补全 Human 生殖基线 |
+
+### Status
+
+[OK] **Completed**
