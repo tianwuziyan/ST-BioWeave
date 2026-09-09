@@ -181,3 +181,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 清理 World Model fixture 污染
+<!-- trellis-session: v=2 fp=9b5756099ba1ff3c -->
+
+**Date**: 2026-09-09
+**Task**: 清理 World Model fixture 污染
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+精简通用 World Model Prompt，删除 Analyzer 中的 fixture 物种别名与类型特判，恢复 exact species/type 证据边界；补充 Human Male/Female baseline、原创物种、single-type 隔离、fertilization 一致性和生产污染回归测试。World Model 68/68、全项目 168/168、npm run check 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `09b9b86` | 清理 World Model fixture 污染并恢复通用证据边界 |
+
+### Status
+
+[OK] **Completed**
