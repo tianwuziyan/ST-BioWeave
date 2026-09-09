@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-09-world-model-biological-type-contract/prd.md", "reason": "任务需求与验收边界"}
+{"file": ".trellis/tasks/09-09-world-model-biological-type-contract/design.md", "reason": "Prompt Contract 与职责边界设计"}
+{"file": ".trellis/tasks/09-09-world-model-biological-type-contract/implement.md", "reason": "实施顺序与验证命令"}
+{"file": "ai/prompts.js", "reason": "待收紧的生产 Prompt"}
+{"file": "tests/world-model.test.js", "reason": "现有 World Model 回归测试与原创 fixture 位置"}
