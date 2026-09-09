@@ -835,10 +835,6 @@ function isGenericHumanFertilizationRule(value) {
   return /^(?:通常|一般|人类通常|按人类方式)?(?:为|是)?(?:体内)?受精(?:方式|机制)?$/u.test(text);
 }
 
-function hasFertilizationMechanism(value) {
-  return REPRODUCTION_RULE_EVIDENCE_PATTERNS.fertilization.test(String(value ?? ''));
-}
-
 function humanBaselineRole(type, speciesName) {
   if (!isHumanSpeciesName(speciesName)) return null;
   const capabilities = type.capabilities ?? {};
@@ -864,12 +860,6 @@ function applyWorldModelFinalConsistencyGuard(model) {
         const capabilities = type.capabilities ?? {};
         const reproductionRules = {...(type.reproduction_rules ?? {})};
         const baselineRole = humanBaselineRole(type, species.name);
-
-        if (reproductionRules.fertilization
-          && reproductionRules.fertilization !== '无'
-          && !hasFertilizationMechanism(reproductionRules.fertilization)) {
-          reproductionRules.fertilization = null;
-        }
 
         if (baselineRole && isGenericHumanFertilizationRule(reproductionRules.fertilization)) {
           reproductionRules.fertilization = baselineRole === 'donor'
@@ -1006,7 +996,26 @@ export function summarizeAnalysisInput(input = {}) {
   };
 }
 
-export function createAnalyzer({profileResolver, contextResolver, requestSettingsResolver, worldModelPromptResolver} = {}) {
+export function createAnalyzer({
+  profileResolver,
+  contextResolver,
+  requestSettingsResolver,
+  worldModelPromptResolver,
+  onWorldModelTrace,
+} = {}) {
+  function emitWorldModelTrace(raw, normalizedModel, canonicalModel) {
+    if (typeof onWorldModelTrace !== 'function') return;
+    try {
+      onWorldModelTrace({
+        raw_output: responseText(raw),
+        normalized_model: normalizedModel,
+        canonical_model: canonicalModel,
+      });
+    } catch {
+      // 调试回调不能改变分析结果或让 canonical 保存失败。
+    }
+  }
+
   function requestOptions(input = {}) {
     return {
       signal: input.signal,
@@ -1032,7 +1041,9 @@ export function createAnalyzer({profileResolver, contextResolver, requestSetting
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
     const model = parseWorldModelResponse(raw);
     const evidenceGuardedModel = applyWorldModelEvidenceGuard(model, input.analysisInput ?? input);
-    return applyWorldModelFinalConsistencyGuard(evidenceGuardedModel);
+    const canonicalModel = applyWorldModelFinalConsistencyGuard(evidenceGuardedModel);
+    emitWorldModelTrace(raw, model, canonicalModel);
+    return canonicalModel;
   }
 
   return {

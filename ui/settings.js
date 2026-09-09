@@ -760,6 +760,38 @@ function renderWorldModelMessagePreview(input, promptSettings) {
   ].join('');
 }
 
+function traceValueText(value, emptyText = '暂无') {
+  if (value === null || value === undefined || value === '') return emptyText;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function renderWorldModelTrace(preview = {}) {
+  const trace = preview?.worldModelTrace;
+  if (!trace || typeof trace !== 'object') return '';
+  const rawResponse = trace.rawResponse ?? null;
+  const canonicalModel = trace.canonicalModel ?? null;
+  return [
+    '<section class="bioweave-world-model-trace" data-bioweave-world-model-trace>',
+    '<header><h4>世界模型调试信息</h4><p class="bioweave-muted">仅存在当前页面内存，不写入 Chat，也不进入普通世界模型页面。</p></header>',
+    '<div class="bioweave-world-model-trace-grid">',
+    '<section class="bioweave-world-model-trace-pane" data-bioweave-world-model-trace-raw>',
+    '<h5>AI 原始返回</h5>',
+    '<pre>' + escapeHtml(traceValueText(rawResponse)) + '</pre>',
+    '</section>',
+    '<section class="bioweave-world-model-trace-pane" data-bioweave-world-model-trace-canonical>',
+    '<h5>规范化后的世界模型</h5>',
+    '<pre>' + escapeHtml(traceValueText(canonicalModel)) + '</pre>',
+    '</section>',
+    '</div>',
+    '</section>',
+  ].join('');
+}
+
 export function renderAnalysisInputPreview(preview = {}) {
   const input = preview?.input;
   const mode = preview?.mode === 'raw' ? 'raw' : 'structure';
@@ -767,6 +799,7 @@ export function renderAnalysisInputPreview(preview = {}) {
   const messagePreview = input && preview?.messagePreview === true
     ? renderWorldModelMessagePreview(input, preview.promptSettings)
     : '';
+  const worldModelTrace = renderWorldModelTrace(preview);
   const open = Array.isArray(preview?.openSettingsSections)
     && preview.openSettingsSections.includes('analysis_preview');
   const content = input
@@ -788,6 +821,7 @@ export function renderAnalysisInputPreview(preview = {}) {
       '<button type="button" class="bioweave-secondary-action' + (mode === 'raw' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-mode" data-bioweave-preview-mode="raw" aria-pressed="' + (mode === 'raw') + '">原始内容</button>' +
       '</div></div>' : '',
     messagePreview,
+    worldModelTrace,
     '<div class="bioweave-analysis-preview-content">',
     content,
     '</div>',

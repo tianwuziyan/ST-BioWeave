@@ -128,6 +128,7 @@ function createAnalysisPreviewState() {
     input: null,
     chatId: null,
     error: null,
+    worldModelTrace: null,
   };
 }
 
@@ -402,6 +403,25 @@ export function createApp(runtime, options = {}) {
     worldAnalysisPromptDraft: null,
   };
 
+  let worldModelTraceChatId = null;
+
+  function receiveWorldModelTrace(trace) {
+    if (!trace || typeof trace !== 'object') return;
+    const currentChatId = runtime.chat.current();
+    if (worldModelTraceChatId !== null
+      && String(worldModelTraceChatId) !== String(currentChatId)) return;
+    const rawResponse = trace.raw_output ?? null;
+    const canonicalModel = trace.canonical_model ?? null;
+    if (rawResponse === null && canonicalModel === null) return;
+    analysisPreviewState = {
+      ...analysisPreviewState,
+      chatId: currentChatId,
+      error: null,
+      worldModelTrace: {rawResponse, canonicalModel},
+    };
+    if (route === 'settings') render();
+  }
+
   function resolveWorldAnalysisProfile() {
     const settings = profileStore.getSettings?.() ?? {};
     const assignment = settings.assignments?.world_analysis ?? null;
@@ -423,6 +443,7 @@ export function createApp(runtime, options = {}) {
     worldModelPromptResolver: () => settingsState.worldAnalysisPromptDraft
       ?? profileStore.getWorldAnalysisPrompt?.()
       ?? settingsState.worldAnalysisPrompt,
+    onWorldModelTrace: receiveWorldModelTrace,
   });
 
   function loadGlobalRecentStoryState() {
@@ -1092,6 +1113,7 @@ export function createApp(runtime, options = {}) {
       busy: true,
       chatId,
       error: null,
+      worldModelTrace: null,
     };
     if (route === 'settings' || route === 'world') render();
     try {
@@ -1104,6 +1126,7 @@ export function createApp(runtime, options = {}) {
         input: collected.input,
         chatId: collected.chatId,
         error: null,
+        worldModelTrace: null,
       };
     } catch (error) {
       if (requestId !== analysisPreviewSequence) return;
@@ -1353,6 +1376,13 @@ export function createApp(runtime, options = {}) {
     if (!canDiscardWorldModelSectionDraft()) return;
     if (worldModelState.editingSection) clearWorldModelSectionDraft();
     const {chatId, token} = currentAnalysisChatToken();
+    worldModelTraceChatId = chatId;
+    analysisPreviewState = {
+      ...analysisPreviewState,
+      chatId,
+      error: null,
+      worldModelTrace: null,
+    };
     worldModelState = {...worldModelState, busy: true, notice: null, showAnalysisInput: false};
     if (route === 'world') render();
     try {
@@ -1645,7 +1675,7 @@ export function createApp(runtime, options = {}) {
         sectionDraft: worldModelState.sectionDraft,
         worldModelNotice: worldModelState.notice,
         showAnalysisInput: worldModelState.showAnalysisInput,
-        analysisPreview: analysisPreviewState,
+        analysisPreview: {...analysisPreviewState, worldModelTrace: null},
       } : {}),
     });
     restoreScrollPositions(root, scrollPositions);
@@ -2750,6 +2780,7 @@ export function createApp(runtime, options = {}) {
     analysisSourceRequestSequence += 1;
     analysisSourceSaveSequence += 1;
     worldbookCache = createWorldbookCache();
+    worldModelTraceChatId = null;
     lifecycle.destroy();
     root = null;
     overlay = null;

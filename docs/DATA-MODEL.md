@@ -28,6 +28,8 @@ World Model v1 保存在 `world_model`，只包含经过规范化的生物学世
 
 `chat_metadata.bioweave.settings.worldbooks` 只保存当前 Chat 的世界书来源选择：`mode` 与 `selected` 中的稳定子项标识。世界书条目使用 `{source_id, entry_id, enabled}`，角色卡字段使用 `{source_id, field_key, enabled}`。来源名称、宿主 file 内容、请求头和 token estimate 不持久化；选择也不等于最终 BioWeave Context 注入。
 
+AI 原始返回只在当前分析调用中存在；若启用开发调试 trace，只临时保存在当前页面内存并显示在设置页高级/调试区域，不进入 Chat metadata、Floor、Event、Snapshot、Projection、Context 或 World Model schema。
+
 最近剧情和外部记忆是同一 Chat 下的独立配置，不属于世界书来源目录：
 
 ```json

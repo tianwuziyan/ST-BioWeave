@@ -1216,10 +1216,50 @@ test('World Model analysis does not treat interaction text as fertilization', as
     {
       name: '星海生物',
       biological_types: [typeFixture('男性', {
+        capabilities: {
+          can_be_fertilized: false,
+          can_fertilize: false,
+        },
         reproduction_rules: {fertilization: '性交、双修和补灵。'},
       })],
     },
   ]);
+
+  assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, null);
+});
+
+test('World Model preserves unfamiliar fertilization prose without a keyword admission gate', async () => {
+  const firstRule = '两类配子在专门器官内融合并形成新个体。';
+  const secondRule = '遗传材料在专门部位完成结合，随后形成新的生命个体。';
+  const result = await analyzeDescription(
+    '弧晶体的甲相和穗核型都是稳定的生殖分类；甲相的机制是两类配子在专门器官内融合并形成新个体；穗核型的机制是遗传材料在专门部位完成结合，随后形成新的生命个体。',
+    [{
+      name: '弧晶体',
+      biological_types: [
+        structuredFixtureType('甲相', null, {reproduction_rules: {fertilization: firstRule}}),
+        structuredFixtureType('穗核型', null, {reproduction_rules: {fertilization: secondRule}}),
+      ],
+    }],
+  );
+
+  const types = result.species[0].biological_types;
+  assert.deepEqual(types.map(type => type.name), ['甲相', '穗核型']);
+  assert.equal(types[0].reproduction_rules.fertilization, firstRule);
+  assert.equal(types[1].reproduction_rules.fertilization, secondRule);
+});
+
+test('World Model keeps interaction-only fertilization unknown when the AI follows the prompt contract', async () => {
+  const result = await analyzeDescription(
+    '弧晶体的甲相只通过液体交换激活能量循环，资料没有受精机制。',
+    [{
+      name: '弧晶体',
+      biological_types: [
+        structuredFixtureType('甲相', null, {
+          reproduction_rules: {fertilization: null},
+        }),
+      ],
+    }],
+  );
 
   assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, null);
 });
@@ -1244,6 +1284,71 @@ test('World Model analysis preserves a directly evidenced rule when capability i
   const type = result.species[0].biological_types[0];
   assert.equal(type.capabilities.can_fertilize, null);
   assert.equal(type.reproduction_rules.fertilization, '体内配子结合。');
+});
+
+test('World Model preserves a source-grounded unfamiliar biological type', async () => {
+  const result = await analyzeDescription(
+    '弧晶体内部稳定存在穗核型这一生殖生理分类；该分类直接影响身体机制。',
+    [{
+      name: '弧晶体',
+      biological_types: [structuredFixtureType('穗核型')],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['穗核型']);
+});
+
+test('World Model rejects an unfamiliar type without reliable source binding', async () => {
+  const result = await analyzeDescription(
+    '弧晶体存在一种稳定生殖分类，但资料没有记录该分类的名称或 type-local 规则。',
+    [{
+      name: '弧晶体',
+      biological_types: [{
+        ...structuredFixtureType('穗核型'),
+        description: '穗核型是弧晶体内稳定存在的生殖分类。',
+      }],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types, []);
+});
+
+test('World Model trace exposes raw and canonical models without request secrets', async () => {
+  const rule = '两类配子在专门器官内融合并形成新个体。';
+  const response = worldResponse([{
+    name: '弧晶体',
+    biological_types: [
+      structuredFixtureType('甲相', null, {
+        reproduction_rules: {fertilization: rule},
+      }),
+    ],
+  }]);
+  let trace = null;
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      api_key: 'should-not-enter-trace',
+      generateRaw: () => JSON.stringify(response),
+    }),
+    onWorldModelTrace: value => {
+      trace = value;
+    },
+  });
+
+  const result = await analyzer.analyzeWorldModel({
+    analysisInput: {
+      character: {description: '弧晶体的甲相是稳定生殖分类，机制描述已明确。'},
+    },
+  });
+
+  assert.ok(trace);
+  assert.match(trace.raw_output, /两类配子在专门器官内融合并形成新个体/);
+  assert.equal(trace.normalized_model.species[0].biological_types[0].reproduction_rules.fertilization, rule);
+  assert.equal(trace.canonical_model.species[0].biological_types[0].reproduction_rules.fertilization, rule);
+  assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, rule);
+  assert.equal(Object.hasOwn(result, 'raw_output'), false);
+  assert.equal(Object.hasOwn(result, 'canonical_model'), false);
+  assert.doesNotMatch(JSON.stringify(trace), /should-not-enter-trace|api_key|secret_ref|authorization/iu);
 });
 
 test('World Model analysis keeps arbitrary species sex types from deterministic semantic evidence', async () => {
@@ -1486,7 +1591,7 @@ test('World Model analysis keeps a retained type raw while ignoring species-leve
           can_fertilize: true,
           can_carry_pregnancy: false,
         },
-        reproduction_rules: {fertilization: '体液结晶会触发生殖。'},
+        reproduction_rules: {fertilization: null},
         special_rules: ['晶巢种的体液会结晶。'],
       })],
     },
@@ -2280,6 +2385,26 @@ test('settings debug preview groups the actual World Model messages by role', ()
   assert.match(html, /<summary><strong>ASSISTANT<\/strong>/);
   assert.match(html, /<summary><strong>USER<\/strong>/);
   assert.equal(html.includes('bioweave-analysis-preview-groups'), false);
+});
+
+test('settings debug preview shows temporary Raw and Canonical trace in Chinese', () => {
+  const html = settingsPage({
+    analysisPreview: {
+      worldModelTrace: {
+        rawResponse: '{"species":[{"name":"弧晶体","biological_types":[{"name":"甲相"}]}]}',
+        canonicalModel: {
+          schema_version: 1,
+          species: [{name: '弧晶体', biological_types: [{name: '甲相'}]}],
+        },
+      },
+    },
+  });
+
+  assert.match(html, /AI 原始返回/);
+  assert.match(html, /规范化后的世界模型/);
+  assert.match(html, /弧晶体/);
+  assert.match(html, /甲相/);
+  assert.doesNotMatch(html, /api_key|secret_ref|authorization/iu);
 });
 
 test('AnalysisInput carries current SillyTavern names for request placeholder replacement', () => {
