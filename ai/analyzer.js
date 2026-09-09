@@ -334,7 +334,7 @@ function hasBiologicalTypeEvidence(units, speciesName, typeName) {
 
 function fieldEvidenceUnits(units, speciesName, typeName) {
   if (isHumanSpeciesName(speciesName)) {
-    return units.filter(unit => hasHumanSpeciesEvidence([unit]) && hasDirectTypeEvidence(unit, typeName));
+    return units.filter(unit => hasDirectTypeEvidence(unit, typeName));
   }
   // 非人类字段始终需要当前 species + biological_type 的直接上下文。
   return typeEvidenceUnits(units, speciesName, typeName);

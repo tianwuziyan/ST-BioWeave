@@ -57,6 +57,31 @@ const modelFixture = {
   unknowns: ['是否存在其他生物类型。'],
 };
 
+function structuredFixtureType(name, description, overrides = {}) {
+  return {
+    name,
+    description,
+    capabilities: {
+      can_produce_sperm: null,
+      can_produce_ova: null,
+      can_be_fertilized: null,
+      can_fertilize: null,
+      can_carry_pregnancy: null,
+    },
+    reproduction_rules: {
+      fertilization: null,
+      pregnancy_or_carrying: null,
+      cycle: null,
+      ovulation: null,
+      gestation: null,
+      labor: null,
+    },
+    lifecycle: {maturation: null, aging: null},
+    special_rules: [],
+    ...overrides,
+  };
+}
+
 function typeFixture(name, overrides = {}) {
   return {
     ...structuredClone(modelFixture.species[0].biological_types[0]),
@@ -1086,6 +1111,118 @@ test('World Model Human baseline yields only the established female type', async
   });
 });
 
+test('World Model can use an implicit Human baseline without a Human label', async () => {
+  const result = await analyzeDescription('普通城市社会中的一名男性加入某条路线；资料没有声明独立物种来源。', [
+    {name: '人类', biological_types: [structuredFixtureType('男性'), structuredFixtureType('女性')]},
+  ]);
+
+  const [type] = result.species[0].biological_types;
+  assert.equal(type.name, '男性');
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: false,
+    can_be_fertilized: false,
+    can_fertilize: true,
+    can_carry_pregnancy: false,
+  });
+});
+
+test('World Model applies a Human delta to one capability and keeps other baseline fields', async () => {
+  const result = await analyzeDescription('男性加入某条路线后明确可以承担妊娠；没有说明其它基础机制改变。', [{
+    name: '人类',
+    biological_types: [structuredFixtureType('男性', null, {
+      capabilities: {
+        can_produce_sperm: null,
+        can_produce_ova: null,
+        can_be_fertilized: null,
+        can_fertilize: null,
+        can_carry_pregnancy: true,
+      },
+      reproduction_rules: {
+        pregnancy_or_carrying: '该路线允许男性承担妊娠。',
+      },
+    })],
+  }]);
+
+  const type = result.species[0].biological_types[0];
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: false,
+    can_be_fertilized: false,
+    can_fertilize: true,
+    can_carry_pregnancy: true,
+  });
+  assert.equal(type.reproduction_rules.pregnancy_or_carrying, '该路线允许男性承担妊娠。');
+  assert.equal(type.reproduction_rules.cycle, null);
+  assert.equal(type.reproduction_rules.gestation, null);
+});
+
+test('World Model applies a Human reproduction-rule delta without clearing the female baseline', async () => {
+  const result = await analyzeDescription('女性接受某项改造后，妊娠期明确为六个月；没有说明其它生理机制改变。', [{
+    name: '人类',
+    biological_types: [structuredFixtureType('女性', null, {
+      reproduction_rules: {gestation: '该改造后的妊娠期为六个月。'},
+    })],
+  }]);
+
+  const type = result.species[0].biological_types[0];
+  assert.equal(type.capabilities.can_produce_ova, true);
+  assert.equal(type.capabilities.can_carry_pregnancy, true);
+  assert.equal(type.reproduction_rules.gestation, '该改造后的妊娠期为六个月。');
+  assert.equal(type.reproduction_rules.cycle, '通常约28天一个周期。');
+  assert.equal(type.reproduction_rules.labor, '通过分娩完成生产。');
+});
+
+test('World Model does not use implicit Human fallback when an independent species is explicit', async () => {
+  const result = await analyzeInput({
+    character: {description: '璃穹体男性可以承担妊娠，但资料没有说明普通人类背景。'},
+  }, [
+    {name: '人类', biological_types: [structuredFixtureType('男性')]},
+    {name: '璃穹体', biological_types: [structuredFixtureType('男性')]},
+  ]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['璃穹体']);
+  assert.deepEqual(result.species[0].biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+});
+
+test('World Model keeps source unknown instead of defaulting an unsupported Human type', async () => {
+  const result = await analyzeDescription('一个陌生生命的来源、身体结构和生理体系均未说明。', [
+    {name: '人类', biological_types: [structuredFixtureType('男性')]},
+  ]);
+
+  assert.deepEqual(result.species, []);
+});
+
+test('World Model preserves the current transformed species label and its synthesized fields', async () => {
+  const result = await analyzeDescription('某角色永久变化后被明确称为沧烬种；沧烬种男性仍能产生精子，但不能承担妊娠。', [{
+    name: '沧烬种',
+    biological_types: [structuredFixtureType('男性', null, {
+      capabilities: {
+        can_produce_sperm: true,
+        can_produce_ova: false,
+        can_be_fertilized: false,
+        can_fertilize: true,
+        can_carry_pregnancy: false,
+      },
+    })],
+  }]);
+
+  assert.deepEqual(result.species.map(species => species.name), ['沧烬种']);
+  assert.deepEqual(result.species[0].biological_types[0].capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: false,
+    can_be_fertilized: false,
+    can_fertilize: true,
+    can_carry_pregnancy: false,
+  });
+});
+
 test('World Model Human world rules override the ordinary baseline', async () => {
   const result = await analyzeDescription('普通人类世界规则明确：人类男性可以承担妊娠。', [
     {name: '人类', biological_types: [typeFixture('男性', {
@@ -1217,9 +1354,10 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   });
   const prompt = messages[0].content;
   assert.match(prompt, /人类/);
-  assert.match(prompt, /已经被资料支持的“男性”或“女性”可以使用对应的普通现实人类 baseline/);
-  assert.match(prompt, /baseline 不创建缺失类型/);
-  assert.match(prompt, /明确剧情事实 > 明确世界\/世界书规则 > 明确个人例外 > 普通人类 baseline/);
+  assert.match(prompt, /Human baseline 与显式 delta/);
+  assert.match(prompt, /唯一内置的现实生物 baseline/);
+  assert.match(prompt, /Human baseline 不创建缺失 type/);
+  assert.match(prompt, /明确当前个体事实 > 明确转化后\/特殊体系规则 > 明确世界级规则 > 可靠推断的 Human baseline > 未知/);
   assert.match(prompt, /species → biological_types/);
   assert.match(prompt, /不从 biological_type 名称套用 Human template/);
   assert.match(prompt, /该 species 和该 type 的直接证据/);
@@ -1237,7 +1375,7 @@ test('World Model prompt keeps the Human fallback bounded and generic', () => {
   });
   const prompt = messages[0].content;
   assert.match(prompt, /只有当前资料支持普通人类背景时才建立“人类”/);
-  assert.match(prompt, /baseline 不创建缺失类型/);
+  assert.match(prompt, /Human baseline 不创建缺失 type/);
   assert.match(prompt, /只使用资料实际支持的内容，不把模型常识补写成 species、biological_type/);
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
 });
@@ -1304,6 +1442,20 @@ test('World Model prompt requires a full biological type candidate gate without 
   ]) {
     assert.match(prompt, pattern);
   }
+  assert.doesNotMatch(prompt, /例如|比如|示例/u);
+});
+
+test('World Model prompt defines conditional implicit Human baseline and field-level delta', () => {
+  const prompt = buildWorldModelMessages()[0].content;
+
+  assert.match(prompt, /完整 AnalysisInput.*Character Card、Worldbook、Recent Story、External Memory/u);
+  assert.match(prompt, /没有 Human 字样.*不是充分条件/u);
+  assert.match(prompt, /类人外形、男性\/女性称谓、性交行为或社会结构本身都不是充分条件/u);
+  assert.match(prompt, /明确当前个体事实 > 明确转化后\/特殊体系规则 > 明确世界级规则 > 可靠推断的 Human baseline > 未知/u);
+  assert.match(prompt, /delta 只覆盖明确改变的字段，其余稳定字段保留/u);
+  assert.match(prompt, /当前 species label.*不新增 source_species、origin 或 inheritance 字段/u);
+  assert.match(prompt, /个体 Human 来源也不能自动扩展为整个新 species 的来源/u);
+  assert.match(prompt, /gestation 只描述真实妊娠或孕育过程，非妊娠的身体转化不属于 gestation/u);
   assert.doesNotMatch(prompt, /例如|比如|示例/u);
 });
 
