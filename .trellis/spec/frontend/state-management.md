@@ -488,10 +488,9 @@ species[].biological_types[].capabilities
 - Each `species` item contains `name`, `description`, and its own
   `biological_types` array. Species must not carry an aggregate
   `capabilities` object.
-- Species recognition and type recognition are separate decisions. Human
-  ordinary sex/body/reproductive evidence with no explicit non-human evidence
-  may create the default species `人类`, but recognizing that species does not
-  create any biological type.
+- Species recognition and type recognition are separate decisions. Only
+  explicit ordinary-human background evidence may create the species `人类`;
+  recognizing that species does not create any biological type.
 - During AI analysis, a biological type is saved only when the current
   `AnalysisInput` contains it or directly describes that it exists in the same
   species context. Evidence for one species cannot authorize a type in a
@@ -500,7 +499,7 @@ species[].biological_types[].capabilities
   explicit user intent and remains subject to structural normalization, not AI
   evidence filtering.
 - A biological type that repeats its parent species name, or only appends a
-  generic species/group/identity suffix to that name, is rejected by the
+  generic species/group suffix to that name, is rejected by the
   analysis-only guard. This predicate is normalized and generic; it must not
   be a list of fixture-specific species aliases and must not reject an open
   type merely because it shares a substring with its parent.
@@ -531,8 +530,8 @@ species[].biological_types[].capabilities
 - BioWeave's canonical fixed dual type name is `双性`. Temporary dualization,
   body modification, an ambiguous individual state, or a source/attribute
   alias is not fixed-type evidence. The analysis-only guard may remove such
-  unsupported familiar labels and close matching `unknowns`; manual edits are
-  not evidence-filtered.
+  unsupported labels and close matching `unknowns`; manual edits are not
+  evidence-filtered.
 - Non-human capabilities, reproduction rules, lifecycle, and type-level special
   rules remain `null` without corresponding species-and-type-local mechanism
   evidence. Even when a species has only one candidate type, species-wide
@@ -551,21 +550,23 @@ species[].biological_types[].capabilities
 | Top-level `biological_types` is present | Throw `WORLD_MODEL_INVALID`; never guess a species owner |
 | Strict response has no `species` array or a species has no `biological_types` array | Throw `WORLD_MODEL_INVALID` |
 | Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
-| Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
+| Type name is outside the standard Human male/female baseline | Accept it as an open type name and keep capability values evidence-based |
 | Capability or non-human rule evidence is missing | Normalize that individual field to `null` |
 | Non-human capability is only absent, unobserved, unrecorded, or pseudo-pregnancy evidence | Keep the capability `null`; do not infer `false` |
 | Non-human capability has explicit same-type inability evidence | Allow that individual capability to be `false` |
-| AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
+| AI returns an unsupported type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
 | AI analysis returns a rule that conflicts with a `false` capability | Clear only the conflicting downstream reproduction rule after the evidence guard |
 | Capability is `null` while a reproduction rule has direct evidence | Preserve the rule; do not infer `false` |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: male evidence produces `人类 → 男性`; male plus female evidence
-  produces `人类 → 男性、女性`.
-- Good: “剑灵基本为男性，极少女剑灵” produces `剑灵 → 男性、女性`.
-- Good: human male/female evidence elsewhere does not authorize `妖 → 男性`
-  or `魔 → 女性`; without species-linked evidence those arrays stay empty.
+- Good: explicit ordinary-human background plus male evidence produces
+  `人类 → 男性`; adding female evidence produces `人类 → 男性、女性`.
+- Good: an explicitly described original species with male/female evidence produces
+  that species' two open biological types.
+- Good: human male/female evidence elsewhere does not authorize a separate
+  original species' male/female types; without species-linked evidence those
+  arrays stay empty.
 - Good: a non-human type with direct sperm, cycle, or lifespan evidence keeps
   only those corresponding fields; unrelated capabilities and rules remain
   `null`.

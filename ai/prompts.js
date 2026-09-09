@@ -7,25 +7,20 @@ export const CORE_PROMPTS = {
 }
 export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(WORLD_MODEL_SCHEMA, null, 2)
 const WORLD_MODEL_CORE_INSTRUCTIONS = [
-  '你是 BioWeave 的 World Model 分析器。',
-  '只依据本次 AnalysisInput 判断当前 Chat 的生物学规则；不得补写输入没有支持的 species、biological_type 或字段。JSON key 必须使用 schema 规定的英文，说明、规则和列表字符串使用中文。',
-  '按 species → biological_types → 具体类型字段的顺序分析：先识别当前资料实际存在的 species，再识别该 species 下有直接证据的性别/生殖分类，最后逐项判断 capabilities、reproduction_rules、lifecycle 和 special_rules。类型名称保持开放，不因名称相似、常见或为了完整性补类型。',
-  '若没有明确非人类证据，普通人类性别、身体或生殖描述可以建立 species“人类”；这只负责 species 兜底，不能自动创建任何 biological_type。species 名称或其通用重复标签也不能充当子类型。',
-  '当资料已建立人类男性或女性类型时，可使用对应的现实普通人类 biological baseline；男性与女性 baseline 分开，baseline 不创造缺失类型。明确剧情事实 > 明确世界/世界书规则 > 明确个人例外 > 普通人类 baseline；高优先级信息覆盖 baseline。',
-  '非人类 Evidence Gate 要求每个 type 和每个字段都有同一 species、同一 biological_type 的直接证据或唯一、低推断成本的语义归纳。类型名称、类人外形或单一身体线索不能套用人类模板；证据不足时填写 null，true 与 false 都不能由“没有观察到”推断。明确与人类相同的部分只继承对应字段。',
-  'fertilization 只描述真实受精机制以及当前 biological_type 在其中的供体/受体角色。性行为、能量交换、修炼或其它互动本身不是受精证据；没有机制或角色依据时填写 null。',
-  '固定生殖分类必须由资料明确支持；临时改造、一次性状态或单个人的特殊情况不创建世界级类型。固定双性统一使用名称“双性”。unknowns 只能描述已经建立的 species、type 或规则中仍未知的机制，不能重新引入未成立的类型。',
-  'medical_context 只记录资料明确描述的医疗条件及其影响；没有依据时使用 null。',
+  '你是 BioWeave 的 World Model 分析器：只依据本次 AnalysisInput 提取当前 Chat 的生物学世界模型，不补写资料未支持的 species、biological_type 或字段。JSON key 使用 schema 规定的英文，说明、规则和列表字符串使用中文。',
+  '按 species → biological_types → 字段分层：先识别资料实际支持的 species，再识别每个 species 下的性别/生殖分类，最后逐项分析 capabilities、reproduction_rules、lifecycle 和 special_rules。两层名称均为开放字符串；biological_type 不能是 species、亚种、血统、职业、身份、阵营、来源、属性、身体形态、临时状态或单个人的例外。',
+  '每个 species 和 biological_type 独立取证，不跨层借证据；没有字段依据就填 null，不能把没有观察到当作 false。固定生殖分类须有资料支持，临时改造、变身或个人状态不创建世界级类型；固定双性统一命名为“双性”。',
+  '只有资料支持普通人类背景时才建立 species“人类”。已成立的人类男性/女性可分别使用现实普通人类 baseline，但 baseline 不创建缺失类型；明确剧情事实 > 明确世界/世界书规则 > 明确个人例外 > 普通人类 baseline，其它 Human type 仍按资料分析。',
+  '非人类只按 AnalysisInput 分析，不使用模型自身的幻想生物常识或类型名称套用 Human template；只有同一 species、同一 biological_type 的直接证据才能填对应字段，明确声明与人类相同也只继承被声明的范围。',
+  'fertilization 只描述真实受精/配子结合机制及当前 biological_type 的供体或受体角色；普通性行为、能量交换、修炼或其它互动不等于受精。medical_context、exceptions 和 unknowns 只记录资料明确支持的内容。',
 ].join('\n')
 // 只用普通文字描述输出字段，避免把格式围栏或大段 schema 代码发送给后端。
 const WORLD_MODEL_OUTPUT_CONTRACT = [
-  '只输出一个结构化对象，不要输出解释文字、Markdown 或代码围栏。',
-  '顶层字段固定为：schema_version、species、medical_context、exceptions、unknowns；顶层不得出现 biological_types 或 species 级 capabilities。',
-  'schema_version 固定为 1。',
-  'species 是数组，每项包含 name、description、biological_types；每个 biological_type 包含 name、description、capabilities、reproduction_rules、lifecycle、special_rules。',
-  'biological_type.name 是开放字符串；capabilities 只能位于 biological_types 下，并固定包含五个 capability key，每项只能是 true、false 或 null。',
-  'reproduction_rules 固定包含 fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor；lifecycle 固定包含 maturation、aging；未知字段使用 null，数组字段使用数组。',
-  'medical_context 固定包含 childbirth_difficulty、care_level、evidence，均为 nullable string。',
+  '只输出一个结构化对象，不要输出解释文字、Markdown 或代码围栏；schema_version 固定为 1。',
+  '顶层只包含 schema_version、species、medical_context、exceptions、unknowns；不得出现顶层 biological_types 或 species 级 capabilities。',
+  'species[] 包含 name、description、biological_types[]；每个 biological_type 包含 name、description、capabilities、reproduction_rules、lifecycle、special_rules。',
+  'capabilities 只能位于 biological_types 下，固定包含五个 capability key，值只能是 true、false 或 null；reproduction_rules 固定包含 fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor，lifecycle 固定包含 maturation、aging。',
+  '未知标量使用 null，列表使用数组；medical_context 固定包含 childbirth_difficulty、care_level、evidence，均为 nullable string。',
 ].join('\n')
 const HISTORY_MEMORY_CONTEXT = [
   '【历史事件记忆库】',

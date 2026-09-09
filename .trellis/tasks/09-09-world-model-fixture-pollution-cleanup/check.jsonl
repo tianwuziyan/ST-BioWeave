@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按项目质量规范执行定向/全量测试、语法检查、diff 检查并确认没有无关 UI/宿主变更。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"复核最终实现是否仍满足开放 species/type、Human baseline 边界、nonhuman evidence gate 和 final consistency guard。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 World Model 数据流边界，防止清理 Prompt/Analyzer 时误改 AnalysisInput、schema、storage 或 UI。"}

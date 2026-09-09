@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证 Node 测试、npm run check、修改 JavaScript 的 node --check 和 git diff --check 质量门。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"验证 World Model 的 species/type 分层、Human baseline、非人类 type-local evidence、false/null consistency 和禁止 single-type fallback 契约。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认本轮只在 Prompt/Analyzer/测试及必要契约文档内修改，不改变 schema、AnalysisInput、API、storage、UI 和运行时数据流。"}
