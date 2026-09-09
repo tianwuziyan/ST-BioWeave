@@ -292,3 +292,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: World Model Raw 到 Canonical 审计修正
+<!-- trellis-session: v=2 fp=7c372bbd8b3732e1 -->
+
+**Date**: 2026-09-10
+**Task**: World Model Raw 到 Canonical 审计修正
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+移除 Analyzer 对 fertilization 非空文本的固定关键词准入，保留 capability 与 role consistency；保持 biological_type Evidence Gate 不变；增加只存在页面内存的 Raw/Canonical 调试 trace、原创回归测试与数据模型边界说明。World Model 117/117、全项目 217/217、npm run check 与语法检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4af442` | 修复 World Model 受精规则误删并增加 Raw/Canonical 追踪 |
+
+### Status
+
+[OK] **Completed**
