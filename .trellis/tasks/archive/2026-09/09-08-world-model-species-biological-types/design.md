@@ -8,7 +8,7 @@
 
 - `storage/schema.js`：把固定 schema 模板从顶层 `biological_types` 改为 `species[].biological_types[]`。
 - `ai/prompts.js`：更新固定中文约束和输出字段合同，说明 species 优先、开放 biological type、默认人类与 capability 归属。
-- `ai/analyzer.js`：规范化/严格校验嵌套 species；把现有仅用于分析响应的双性/间性证据过滤改为嵌套处理；不安全的旧扁平结构不自动迁移。
+- `ai/analyzer.js`：规范化/严格校验嵌套 species；把现有仅用于分析响应的双性证据过滤改为嵌套处理；不安全的旧扁平结构不自动迁移。
 - `ui/world.js`：按 species → biological type 渲染查看和编辑表单，提供对应中文层级文案及增删动作。
 - `ui/app.js`：读取/创建/增删/保存嵌套表单数据，保持已有异步 Chat token 和保存流程。
 - `tests/world-model.test.js`：重写 flat fixture 为嵌套 fixture，增加层级、开放分类、默认/非人类和中文 UI 回归。
@@ -72,7 +72,7 @@
 2. 固定 Prompt 明确两步识别不可合并：常规人类性别/身体/生殖证据且没有非人类证据时使用“人类”作为默认 species，但识别出人类本身不创建任何 biological type；只有输入实际出现或规则明确描述存在的类型才能加入。明确非人类证据优先并各自建立 species；类型名开放，支持 ABO 等资料分类。
 3. capability 规则明确放在 `species[].biological_types[].capabilities`，每项依据证据或适用的既定人类基线逐项填 `true` / `false` / `null`；species 或 biological type 名称本身不触发能力补全，species 本身不做能力汇总。
 4. 保留当前字符串中文化、unknown/null 规范化、医疗/例外/unknowns 和失败保留。
-5. 当前的防止 AI 凭空新增双性/间性逻辑只作为响应安全过滤适配到每个 species 的 biological types，并删除没有剩余 type 的空 species；它不构成 biological type 枚举，Alpha/Beta/Omega 等其它分类照常通过 schema。
+5. 当前的防止 AI 凭空新增双性逻辑只作为响应安全过滤适配到每个 species 的 biological types，并删除没有剩余 type 的空 species；它不构成 biological type 枚举，Alpha/Beta/Omega 等其它分类照常通过 schema。
 
 ## 4. UI 数据流
 

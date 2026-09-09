@@ -41,7 +41,7 @@ UI behavior.
 5. [x] Update World page wording/empty states to `性别 / 生殖类型` and verify
    all null-like values remain `未知`.
 6. [x] Update docs/spec wording and remove all stale default/composite
-   `双性/间性` claims.
+   `双性` claims.
 7. [x] Add or revise focused tests for:
    - male-only and male+female default-human evidence;
    - temporary versus fixed dualization;
@@ -76,7 +76,7 @@ git diff --check
 Also run targeted searches before the final report:
 
 ```bash
-rg -n "双性/间性|生物学 / 生殖类型|species-level.*capabil|top-level.*biological" \
+rg -n "双性|生物学 / 生殖类型|species-level.*capabil|top-level.*biological" \
   ai storage ui tests docs .trellis/spec/frontend/state-management.md
 ```
 

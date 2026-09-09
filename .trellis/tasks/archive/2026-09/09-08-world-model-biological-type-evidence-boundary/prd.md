@@ -21,7 +21,7 @@ own evidence or an explicit human-equivalence rule supports a value.
   `storage/schema.js`, `ai/analyzer.js`, and `ui/world.js`. The old flat
   top-level `biological_types` contract must stay rejected.
 - The current core prompt in `ai/prompts.js:13-19` describes the two-step
-  relationship, but still uses `双性/间性`, has conflicting capability/baseline
+  relationship, but still uses `双性`, has conflicting capability/baseline
   wording, and does not distinguish a fixed type from temporary body
   modification, individual ambiguity, identity, or subtype.
 - The current analyzer in `ai/analyzer.js:23,150-171` treats any occurrence of
@@ -29,7 +29,7 @@ own evidence or an explicit human-equivalence rule supports a value.
   temporary Jin Dan `双性化` rule, so the current guard can preserve the bad
   AI type. The attached output also demonstrates the observed misclassifications:
   `性别模糊`, `妖修`, `半兽人`, `魔族`, `男性剑灵`, `女性剑灵`, `妖剑剑灵`,
-  and `魔剑灵`, plus an unknown about `双性/间性个体`.
+  and `魔剑灵`, plus an unknown about `双性个体`.
 - The attached input explicitly says `剑灵性别：基本都为男性，极少女剑灵`
   and separately describes `妖剑`/`魔剑` attributes. It also says Jin Dan
   `双性化` is temporary for 1–3 days. These are evidence examples, not
@@ -92,7 +92,7 @@ explicitly defines the longer phrase as a formal classification.
 ### R4. Separate fixed `双性` from temporary modification and canonicalize its name
 
 - BioWeave's default visible name is `双性`; never generate or display
-  `双性/间性` as a composite alias.
+  `双性` as a composite alias.
 - `可以双性化`, a temporary body modification, a transformation ability, or
   a single ambiguous body state is not evidence that a fixed `双性` type
   exists.
@@ -138,7 +138,7 @@ explicitly defines the longer phrase as a formal classification.
   mechanism is not yet known.
 - `unknowns` must not introduce a type that was rejected or never established.
   For example, if only temporary `双性化` exists, do not emit an unknown about
-  `双性/间性个体` capability.
+  `双性个体` capability.
 
 ### R8. Prompt, validator, UI, documentation, and tests
 
@@ -165,7 +165,7 @@ explicitly defines the longer phrase as a formal classification.
 - [x] Temporary `双性化` alone yields no `双性` type, while the temporary rule
   remains representable as a special/body-modification rule; fixed explicit
   `双性` evidence can yield `双性`.
-- [x] `双性/间性` is not emitted as BioWeave's standard name, and UI/model
+- [x] `双性` is not emitted as BioWeave's standard name, and UI/model
   display uses `双性`.
 - [x] A single person's `性别模糊` does not create a world type.
 - [x] `妖修`, `半兽人`, `魔族`, `妖剑剑灵`, and `魔剑灵` do not become

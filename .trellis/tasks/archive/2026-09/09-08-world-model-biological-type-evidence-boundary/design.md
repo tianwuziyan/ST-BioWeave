@@ -58,7 +58,7 @@ the existing strict checks for:
 - nullable capability/rule values and open string type names.
 
 The normalizer will add only canonical text handling for the exact composite
-alias `双性/间性` (including spacing/slash variants), so saved/displayed
+alias `双性` (including spacing/slash variants), so saved/displayed
 BioWeave content uses `双性`. Plain source-defined `间性` is not globally
 rewritten when the source clearly treats it as an independent category.
 

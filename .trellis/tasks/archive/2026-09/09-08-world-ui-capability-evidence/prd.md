@@ -78,7 +78,7 @@
 ## Acceptance Criteria
 
 - [x] World UI 对 `[男性, 女性, 双性]` 三个 biological type 全部显示，且 `双性`
-      不显示为“双性/间性”。
+      不显示为“双性”。
 - [x] World UI 对 Alpha 或其它自定义 biological type 不依赖预定义映射即可显示。
 - [x] 非人类只有“无记录/未观察/仅假孕”等缺失性证据时，所有对应 capability 为
       `null`，不误写 `false`。
