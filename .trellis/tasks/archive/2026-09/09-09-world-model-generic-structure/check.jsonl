@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify that no Human-specific or fantasy-specific renderer was introduced."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify Chat scope, canonical model, and no unrelated Event/State/Projection changes."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify tests, diff scope, and forbidden speculative abstractions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify schema-to-analyzer-to-UI data flow and all consumers after implementation."}

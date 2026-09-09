@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"World Model UI is a plain DOM page module and must retain one shared renderer for every species/type."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"World Model is a Chat-scoped cross-layer payload; the task must preserve storage boundaries and keep unrelated consumers unchanged."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"The task changes cross-layer validation and needs the repository's test and scope-discipline rules."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The schema/analyzer/UI flow needs a consumer and boundary check before editing."}
