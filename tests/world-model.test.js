@@ -1285,6 +1285,71 @@ test('World Model prompt states the complete generic field semantic contract', (
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
 });
 
+test('World Model prompt requires a full biological type candidate gate without worldview examples', () => {
+  const prompt = buildWorldModelMessages()[0].content;
+
+  for (const pattern of [
+    /species.*这是什么生物/u,
+    /biological_type.*稳定.*生理.*生殖/u,
+    /必须同时满足/u,
+    /普通 taxonomy 子类/u,
+    /职业.*身份.*社会角色.*组织归属/u,
+    /等级.*成长阶段.*训练状态/u,
+    /疾病或异常.*个体特质.*行为模式/u,
+    /AnalysisInput.*充分.*证据/u,
+    /biological_types: \[\].*优于错误分类/u,
+    /只有一个.*候选.*不能.*自动/u,
+    /A\..*稳定生物分类/u,
+    /E\..*证据/u,
+  ]) {
+    assert.match(prompt, pattern);
+  }
+  assert.doesNotMatch(prompt, /例如|比如|示例/u);
+});
+
+test('World Model keeps an empty type list when original evidence only names other classification axes', async () => {
+  const result = await analyzeDescription(
+    '澄砂体是一种独立生命 species。资料只提到成员身份为巡航员、等级为第三阶，并描述某角色短暂进入短昼态后恢复原状；没有建立稳定生理分类。',
+    [{name: '澄砂体', biological_types: []}],
+  );
+
+  assert.deepEqual(result.species.map(species => species.name), ['澄砂体']);
+  assert.deepEqual(result.species[0].biological_types, []);
+});
+
+test('World Model does not turn a single derived member label into a biological type', async () => {
+  const result = await analyzeDescription(
+    '烁环体已被记录为一个 species；资料中只出现成员称呼“雾航者”，没有证明它是稳定的生理或生殖分类。',
+    [{name: '烁环体', biological_types: []}],
+  );
+
+  assert.deepEqual(result.species[0].biological_types, []);
+});
+
+test('World Model preserves multiple explicitly established stable biological classifications with null capabilities', async () => {
+  const result = await analyzeDescription(
+    '霜脉种稳定存在内核型和外壳型两种生殖生理分类；资料没有说明这两类的五项 capability。',
+    [{
+      name: '霜脉种',
+      biological_types: [structuredFixtureType('内核型'), structuredFixtureType('外壳型')],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['内核型', '外壳型']);
+  assert.ok(result.species[0].biological_types.every(type => (
+    Object.values(type.capabilities).every(value => value === null)
+  )));
+});
+
+test('World Model keeps progression outside lifecycle when the AI returns no biological lifecycle evidence', async () => {
+  const result = await analyzeDescription(
+    '纤潮体存在稳定生理分类“环核型”，但资料只描述训练阶级提升、技能等级和力量 progression，没有生物成熟或衰老事实。',
+    [{name: '纤潮体', biological_types: [structuredFixtureType('环核型')]}],
+  );
+
+  assert.deepEqual(result.species[0].biological_types[0].lifecycle, {maturation: null, aging: null});
+});
+
 test('World Model prompt requires Chinese string values and human type names', () => {
   const prompt = buildWorldModelMessages()[0].content;
   assert.match(prompt, /JSON key 使用 schema 规定的英文/);

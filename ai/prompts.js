@@ -8,11 +8,11 @@ export const CORE_PROMPTS = {
 export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(WORLD_MODEL_SCHEMA, null, 2)
 const WORLD_MODEL_CORE_INSTRUCTIONS = [
   '任务：从本次 AnalysisInput 提取当前 Chat 的生物学 World Model。只使用资料实际支持的内容，不把模型常识补写成 species、biological_type、能力或规则。',
-  '结构：按 species → biological_types → capabilities / reproduction_rules / lifecycle / special_rules 分层。species.name 和 biological_type.name 都是开放字符串；biological_type 只表示该 species 内稳定存在的性别、生殖角色或直接影响生殖机制的生物分类，不表示 species、亚种、血统、职业、身份、阵营、来源、属性、等级、形态或临时、可逆、条件性状态。固定生殖分类必须由资料支持；证据不足时保留 biological_types: []，不要猜测。',
+  '结构与 biological_type Contract：按 species → biological_types → capabilities / reproduction_rules / lifecycle / special_rules 分层。species.name 和 biological_type.name 都是开放字符串；species 回答“这是什么生物”；biological_type 只回答“该 species 内属于哪一种稳定的生理/生殖分类”，也就是该 species 内稳定存在的性别、生殖角色或直接影响生殖机制的生物分类。它不表示 species、亚种、血统、职业、身份、阵营、来源、属性、等级、形态等其它分类轴。固定生殖分类必须由资料支持；候选 type 必须同时满足以下 A–E 才能保留：A. 明确位于同一 species 内；B. 是稳定存在的分类，而非一次性或条件状态；C. 直接涉及身体结构、生理机制、生殖角色或生殖能力；D. 去掉职业、身份、社会角色、组织归属、文化群体、阵营、能力体系、等级或成长阶段等非生物背景后仍成立；E. 当前 AnalysisInput 对该分类有充分直接证据。species 别名、普通 taxonomy 子类、职业、身份、社会角色、组织归属、文化群体、阵营、能力体系、等级/境界、成长阶段、训练状态、临时或可逆身体变化、疾病或异常状态、个体特质、行为模式及其它非稳定生物分类均排除；任一条件不满足就不要建立 type。证据不足时保留 biological_types: []；空数组优于错误分类，不要猜测。',
   '证据：每个 species、biological_type 和字段独立分析；不跨 species 或跨 biological_type 借证据。五个 capability 逐字段独立举证：明确支持才写 true/false，其中 true 需要明确具备证据、false 需要明确不具备证据；未说明、未知或仅凭“通常/一般”不足以判断时写 null，不要把它们写成 false。除已建立的普通人类男性/女性 baseline 外，不从男性、女性、雄性、雌性等名称推导能力；固定双性统一使用名称“双性”。',
   'Human：只有当前资料支持普通人类背景时才建立“人类”。已经被资料支持的“男性”或“女性”可以使用对应的普通现实人类 baseline；baseline 不创建缺失类型，也不适用于其它 Human type。明确剧情事实 > 明确世界/世界书规则 > 明确个人例外 > 普通人类 baseline。',
   'Nonhuman 与字段语义：只依据本次 AnalysisInput，不使用模型自身常识，也不从 biological_type 名称套用 Human template；即使名称相同，非人类字段仍需该 species 和该 type 的直接证据。fertilization 只描述真实受精、授精或配子结合机制，并说明当前 type 的供体/受体角色；性交、体液/能量交换、感染/寄生、侵蚀/异化、身体改造、觉醒、个体生成、力量或关系变化本身都不等于 fertilization。lifecycle.maturation 只描述生物成熟或生命阶段变化，aging 只描述寿命、衰老或明确抗衰老生理；职业、修炼、技能、关系或力量 progression 不属于生命周期。资料明确声明与人类相同，也只继承被声明的范围。',
-  '临时状态与内部自检：临时、可逆或条件性的性征、器官或生殖能力变化留在已有 type 的规则/例外中，不能建立新的 biological_type。输出前进行内部自检（不要输出过程），逐个检查“这个 type 为什么成立”“每个非 null capability 的直接依据是什么”“fertilization 是否真的描述受精”“lifecycle 是否真的描述生命周期”；没有可靠答案就把字段降为 null 或删除错误 type。medical_context、exceptions、unknowns 只记录资料明确支持的内容。',
+  '临时状态与内部自检：临时、可逆或条件性的性征、器官或生殖能力变化留在已有 type 的规则/例外中，不能建立新的 biological_type。输出前进行内部自检（不要输出过程）：对每个候选执行 A–E；即使只有一个候选，也要额外确认它是独立且稳定的 biological classification，不能因数量为一自动保留；再检查每个非 null capability 的直接依据、fertilization 是否真的描述受精、lifecycle 是否真的描述生命周期。没有可靠答案就把字段降为 null 或删除错误 type。medical_context、exceptions、unknowns 只记录资料明确支持的内容。',
 ].join('\n')
 // 只用普通文字描述输出字段，避免把格式围栏或大段 schema 代码发送给后端。
 const WORLD_MODEL_OUTPUT_CONTRACT = [
