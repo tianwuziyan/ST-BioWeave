@@ -59,7 +59,7 @@ AI 原始返回只在当前分析调用中存在；若启用开发调试 trace�
 
 ## World Model 规则字段语义
 
-World Model 规则字段使用统一三态语义：`null` 表示未知、未提及、证据不足或无法判断；`"无"` 表示已经知道机制不存在、能力不具备或规则不适用；非空字符串表示已知存在对应机制。没有资料不能写成 `"无"`。普通 Human Male/Female 已建立后可以使用现实 baseline：Male 的 `pregnancy_or_carrying`、`cycle`、`ovulation`、`gestation`、`labor` 为 `"无"`，Female 的 `cycle`、`ovulation`、`gestation`、`labor` 使用简洁的普通 Human 描述；明确世界/个体规则按 Baseline + Delta 逐字段覆盖。Human species 的显示 canonical name 为“人类”，仅合并明确的 Human 显示别名，不建立其它 species 的同义词 registry。schema 不因该语义扩展，仍使用现有 `string | null` 字段。
+World Model 规则字段使用统一三态语义：`null` 表示未知、未提及、证据不足或无法判断；`"无"` 表示已经知道机制不存在、能力不具备或规则不适用；非空字符串表示已知存在对应机制。没有资料不能写成 `"无"`。普通 Human Male/Female 已建立后可以使用现实 baseline：Male 的 `pregnancy_or_carrying`、`cycle`、`ovulation`、`gestation`、`labor` 为 `"无"`，Female 的 `cycle`、`ovulation`、`gestation`、`labor` 使用简洁的普通 Human 描述；明确世界/个体规则按 Baseline + Delta 逐字段覆盖，Human baseline 只在当前字段为 `null` 时补值，不覆盖 `true`、`false`、`"无"` 或非空描述。独立的明确结构冲突仍可由 Final Consistency Guard 修正为已知 absence。Human species 的显示 canonical name 为“人类”，仅合并明确的 Human 显示别名，不建立其它 species 的同义词 registry。schema 不因该语义扩展，仍使用现有 `string | null` 字段。
 
 ## Floor Level
 `message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、Snapshot、Projections。

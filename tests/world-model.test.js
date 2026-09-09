@@ -1211,7 +1211,7 @@ test('World Model analysis rejects exact and generic-suffix parent type duplicat
   assert.deepEqual(result.species[0].biological_types, []);
 });
 
-test('World Model analysis does not treat interaction text as fertilization', async () => {
+test('World Model analysis keeps prompt-supplied unknown fertilization for interaction-only text', async () => {
   const result = await analyzeDescription('星海生物男性会性交、双修和补灵，但没有描述受精机制。', [
     {
       name: '星海生物',
@@ -1220,7 +1220,7 @@ test('World Model analysis does not treat interaction text as fertilization', as
           can_be_fertilized: false,
           can_fertilize: false,
         },
-        reproduction_rules: {fertilization: '性交、双修和补灵。'},
+        reproduction_rules: {fertilization: null},
       })],
     },
   ]);
@@ -1403,7 +1403,7 @@ test('World Model analysis preserves generic fields while applying final contrad
     can_carry_pregnancy: false,
   });
   assert.deepEqual(type.reproduction_rules, {
-    fertilization: null,
+    fertilization: '按人类方式受精。',
     pregnancy_or_carrying: '无',
     cycle: '存在发情期。',
     ovulation: '无',
@@ -1638,12 +1638,12 @@ test('World Model analysis rejects parent-name suffix types for original species
   assert.deepEqual(result.species[0].biological_types, []);
 });
 
-test('World Model analysis keeps non-fertilization interaction null for original species', async () => {
+test('World Model analysis keeps prompt-supplied unknown interaction rule for original species', async () => {
   const result = await analyzeDescription('回声囊体存在共鸣型；共鸣型会性交并交换能量，促进个体生成，但资料没有受精机制。', [
     {
       name: '回声囊体',
       biological_types: [typeFixture('共鸣型', {
-        reproduction_rules: {fertilization: '性交并交换能量，促进个体生成。'},
+        reproduction_rules: {fertilization: null},
       })],
     },
   ]);
@@ -1759,7 +1759,7 @@ test('World Model analysis applies only the named human-equivalence field to non
     can_carry_pregnancy: true,
   });
   assert.deepEqual(type.reproduction_rules, {
-    fertilization: null,
+    fertilization: '按人类方式受精。',
     pregnancy_or_carrying: '按人类方式妊娠。',
     cycle: '约28天。',
     ovulation: '排卵。',
@@ -1768,7 +1768,7 @@ test('World Model analysis applies only the named human-equivalence field to non
   });
 });
 
-test('World Model final guard separates human male and female reproduction baselines', async () => {
+test('World Model final guard preserves explicit Human rules while applying structural absences', async () => {
   const result = await analyzeDescription('资料明确存在人类男性和女性。', [{
     name: '人类',
     biological_types: [
@@ -1811,20 +1811,20 @@ test('World Model final guard separates human male and female reproduction basel
   const [male, female] = result.species[0].biological_types;
 
   assert.deepEqual(male.reproduction_rules, {
-    fertilization: '通过精子使卵细胞受精。',
+    fertilization: '体内受精',
     pregnancy_or_carrying: '无',
-    cycle: '无',
+    cycle: '约28天',
     ovulation: '无',
     gestation: '无',
     labor: '无',
   });
   assert.deepEqual(female.reproduction_rules, {
-    fertilization: '卵细胞可被精子受精。',
-    pregnancy_or_carrying: '可以承担妊娠。',
-    cycle: '通常约28天一个周期。',
-    ovulation: '通常每个周期排卵。',
-    gestation: '通常约40周。',
-    labor: '通过分娩完成生产。',
+    fertilization: '体内受精',
+    pregnancy_or_carrying: '妊娠',
+    cycle: '约28天',
+    ovulation: '约28天一次排卵',
+    gestation: '约40周',
+    labor: '分娩产程',
   });
 });
 
@@ -1946,9 +1946,199 @@ test('World Model final guard keeps evidence-backed rules when capabilities are 
   assert.equal(type.reproduction_rules.fertilization, '体内受精');
 });
 
+test('World Model final guard preserves roleless fertilization text for mixed capability states', async () => {
+  const cases = [
+    {can_be_fertilized: null, can_fertilize: false},
+    {can_be_fertilized: false, can_fertilize: null},
+  ];
+  const rule = '两种微粒在回声腔内完成结合并形成新个体。';
+
+  for (const capabilities of cases) {
+    const result = await analyzeDescription('澄屿体的黏炽型明确存在该生殖分类。', [{
+      name: '澄屿体',
+      biological_types: [structuredFixtureType('黏炽型', null, {
+        capabilities,
+        reproduction_rules: {fertilization: rule},
+      })],
+    }]);
+
+    assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, rule);
+  }
+});
+
+test('World Model final guard still clears direct fertilization role conflicts', async () => {
+  const cases = [
+    {
+      typeName: '受纳型',
+      capabilities: {can_be_fertilized: false},
+      rule: '卵细胞可在内囊中被精子受精。',
+    },
+    {
+      typeName: '供化型',
+      capabilities: {can_fertilize: false},
+      rule: '通过精子使卵细胞受精。',
+    },
+  ];
+
+  for (const item of cases) {
+    const result = await analyzeDescription(`澄屿体的${item.typeName}明确存在该生殖分类。`, [{
+      name: '澄屿体',
+      biological_types: [structuredFixtureType(item.typeName, null, {
+        capabilities: item.capabilities,
+        reproduction_rules: {fertilization: item.rule},
+      })],
+    }]);
+
+    assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, null);
+  }
+});
+
+test('World Model final guard preserves all non-empty rules when capabilities are unknown', async () => {
+  const reproductionRules = {
+    fertilization: '两种微粒在回声腔内完成结合。',
+    pregnancy_or_carrying: '黏炽型可以承载新生体。',
+    cycle: '黏炽型按潮汐阶段循环。',
+    ovulation: '黏炽型按阶段释放配子。',
+    gestation: '新生体在内囊中经历阶段性发育。',
+    labor: '成熟个体通过裂解过程离体。',
+  };
+  const lifecycle = {
+    maturation: '达到成熟阶段后进入稳定期。',
+    aging: '衰老过程随时间逐步发生。',
+  };
+  const result = await analyzeDescription('澄屿体的黏炽型明确存在。', [{
+    name: '澄屿体',
+    biological_types: [structuredFixtureType('黏炽型', null, {
+      reproduction_rules: reproductionRules,
+      lifecycle,
+    })],
+  }]);
+  const type = result.species[0].biological_types[0];
+
+  assert.deepEqual(type.capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+  assert.deepEqual(type.reproduction_rules, reproductionRules);
+  assert.deepEqual(type.lifecycle, lifecycle);
+});
+
+test('World Model Human baseline fills only null fields and preserves explicit deltas', async () => {
+  const result = await analyzeDescription('资料明确存在人类男性和女性。', [{
+    name: '人类',
+    biological_types: [
+      structuredFixtureType('男性', null, {
+        capabilities: {
+          can_produce_sperm: false,
+          can_produce_ova: true,
+          can_be_fertilized: null,
+          can_fertilize: false,
+          can_carry_pregnancy: true,
+        },
+        reproduction_rules: {
+          fertilization: '无',
+          pregnancy_or_carrying: '当前男性可承担妊娠。',
+          cycle: '当前男性周期描述。',
+          ovulation: '当前男性排卵描述。',
+          gestation: null,
+          labor: '无',
+        },
+      }),
+      structuredFixtureType('女性', null, {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: false,
+          can_be_fertilized: null,
+          can_fertilize: true,
+          can_carry_pregnancy: null,
+        },
+        reproduction_rules: {
+          fertilization: '当前女性受精描述。',
+          pregnancy_or_carrying: '无',
+          cycle: null,
+          ovulation: '无',
+          gestation: '当前女性妊娠描述。',
+          labor: null,
+        },
+      }),
+    ],
+  }]);
+  const [male, female] = result.species[0].biological_types;
+
+  assert.deepEqual(male.capabilities, {
+    can_produce_sperm: false,
+    can_produce_ova: true,
+    can_be_fertilized: false,
+    can_fertilize: false,
+    can_carry_pregnancy: true,
+  });
+  assert.deepEqual(male.reproduction_rules, {
+    fertilization: '无',
+    pregnancy_or_carrying: '当前男性可承担妊娠。',
+    cycle: '当前男性周期描述。',
+    ovulation: '当前男性排卵描述。',
+    gestation: '无',
+    labor: '无',
+  });
+  assert.deepEqual(female.capabilities, {
+    can_produce_sperm: true,
+    can_produce_ova: false,
+    can_be_fertilized: true,
+    can_fertilize: true,
+    can_carry_pregnancy: true,
+  });
+  assert.deepEqual(female.reproduction_rules, {
+    fertilization: '当前女性受精描述。',
+    pregnancy_or_carrying: '无',
+    cycle: '通常约28天一个周期。',
+    ovulation: '无',
+    gestation: '当前女性妊娠描述。',
+    labor: '通过分娩完成生产。',
+  });
+});
+
+test('World Model keeps non-human evidence boundaries without applying Human baseline', async () => {
+  const result = await analyzeDescription('澄屿体明确存在男性分类，但没有说明其生殖机制。', [{
+    name: '澄屿体',
+    biological_types: [
+      structuredFixtureType('男性'),
+      structuredFixtureType('女性', null, {
+        capabilities: {
+          can_produce_sperm: true,
+          can_produce_ova: true,
+          can_be_fertilized: true,
+          can_fertilize: true,
+          can_carry_pregnancy: true,
+        },
+      }),
+    ],
+  }]);
+  const species = result.species[0];
+
+  assert.deepEqual(species.biological_types.map(type => type.name), ['男性']);
+  assert.deepEqual(species.biological_types[0].capabilities, {
+    can_produce_sperm: null,
+    can_produce_ova: null,
+    can_be_fertilized: null,
+    can_fertilize: null,
+    can_carry_pregnancy: null,
+  });
+  assert.deepEqual(species.biological_types[0].reproduction_rules, {
+    fertilization: null,
+    pregnancy_or_carrying: null,
+    cycle: null,
+    ovulation: null,
+    gestation: null,
+    labor: null,
+  });
+});
+
 test('World Model Human baseline yields only the established female type', async () => {
   const result = await analyzeDescription('普通人类资料明确说明角色为女性。', [
-    {name: '人类', biological_types: [typeFixture('女性'), typeFixture('男性')]},
+    {name: '人类', biological_types: [structuredFixtureType('女性'), structuredFixtureType('男性')]},
   ]);
   const [type] = result.species[0].biological_types;
   assert.equal(type.name, '女性');
@@ -2110,7 +2300,6 @@ test('World Analysis request uses ordinary chat messages for current and indepen
   };
   const requests = [];
   const expectedModel = structuredClone(modelFixture);
-  expectedModel.species[0].biological_types[0].reproduction_rules.fertilization = null;
   const cases = [
     {
       profile: SILLYTAVERN_CURRENT_API,

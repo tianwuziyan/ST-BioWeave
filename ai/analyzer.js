@@ -600,13 +600,12 @@ function sanitizeHumanType(type, units, speciesName) {
   return {
     ...type,
     capabilities: Object.fromEntries(CAPABILITY_KEYS.map(key => {
-      const evidenced = capabilityEvidenceValue(fieldUnits, CAPABILITY_EVIDENCE_PATTERNS[key]);
-      return [key, evidenced === null ? baseline.capabilities[key] : evidenced];
+      const value = type.capabilities[key];
+      return [key, value === null ? baseline.capabilities[key] : value];
     })),
     reproduction_rules: Object.fromEntries(WORLD_RULE_KEYS.map(key => {
-      const hasEvidence = textEvidenceState(fieldUnits, REPRODUCTION_RULE_EVIDENCE_PATTERNS[key]);
       const value = type.reproduction_rules[key];
-      return [key, hasEvidence && value !== null ? value : baseline.reproduction_rules[key]];
+      return [key, value === null ? baseline.reproduction_rules[key] : value];
     })),
     special_rules: type.special_rules.filter(rule => hasDirectRuleEvidence(rule, fieldUnits)),
   };
@@ -818,7 +817,6 @@ function applyWorldModelEvidenceGuard(model, analysisInput) {
 
 const FERTILIZATION_RECIPIENT_PATTERN = /(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)|(?:卵子|卵细胞|雌性配子)[^。！？!?；;，,、\n]{0,16}(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)/iu;
 const FERTILIZATION_DONOR_PATTERN = /(?:使|让|令)[^。！？!?；;，,、\n]{0,20}受精|(?:通过|利用|依靠|凭借)[^。！？!?；;，,、\n]{0,16}(?:精子|精液|雄性配子)[^。！？!?；;，,\n]{0,16}(?:使|让|令)[^。！？!?；;，,\n]{0,16}受精|(?:向|给|对)[^。！？!?；;，,、\n]{0,16}授精|作为(?:施受精者|施受精方|供体)/iu;
-const HUMAN_FEMALE_BASELINE_CYCLE_PATTERN = /(?:月经|经期|生理期|排卵周期|(?:约\s*)?(?:28|二十八)\s*(?:天|日)|(?:28|二十八)\s*[-－~～至到]?\s*day)/iu;
 
 function fertilizationRoleFlags(value) {
   const text = String(value ?? '');
@@ -826,29 +824,6 @@ function fertilizationRoleFlags(value) {
     recipient: FERTILIZATION_RECIPIENT_PATTERN.test(text),
     donor: FERTILIZATION_DONOR_PATTERN.test(text),
   };
-}
-
-function isGenericHumanFertilizationRule(value) {
-  const text = String(value ?? '')
-    .replace(/\s+/gu, '')
-    .replace(/[。！？!?]/gu, '');
-  return /^(?:通常|一般|人类通常|按人类方式)?(?:为|是)?(?:体内)?受精(?:方式|机制)?$/u.test(text);
-}
-
-function humanBaselineRole(type, speciesName) {
-  if (!isHumanSpeciesName(speciesName)) return null;
-  const capabilities = type.capabilities ?? {};
-  if (type.name === '男性'
-    && capabilities.can_be_fertilized === false
-    && capabilities.can_fertilize === true) {
-    return 'donor';
-  }
-  if (type.name === '女性'
-    && capabilities.can_be_fertilized === true
-    && capabilities.can_fertilize === false) {
-    return 'recipient';
-  }
-  return null;
 }
 
 function applyWorldModelFinalConsistencyGuard(model) {
@@ -859,17 +834,6 @@ function applyWorldModelFinalConsistencyGuard(model) {
       biological_types: species.biological_types.map(type => {
         const capabilities = type.capabilities ?? {};
         const reproductionRules = {...(type.reproduction_rules ?? {})};
-        const baselineRole = humanBaselineRole(type, species.name);
-
-        if (baselineRole && isGenericHumanFertilizationRule(reproductionRules.fertilization)) {
-          reproductionRules.fertilization = baselineRole === 'donor'
-            ? '通过精子使卵细胞受精。'
-            : '卵细胞可被精子受精。';
-        }
-        if (baselineRole === 'donor'
-          && HUMAN_FEMALE_BASELINE_CYCLE_PATTERN.test(String(reproductionRules.cycle ?? ''))) {
-          reproductionRules.cycle = '无';
-        }
 
         if (capabilities.can_produce_ova === false) reproductionRules.ovulation = '无';
         if (capabilities.can_carry_pregnancy === false) {
@@ -881,9 +845,7 @@ function applyWorldModelFinalConsistencyGuard(model) {
         if (reproductionRules.fertilization && reproductionRules.fertilization !== '无') {
           const roles = fertilizationRoleFlags(reproductionRules.fertilization);
           const roleConflict = (capabilities.can_be_fertilized === false && roles.recipient)
-            || (capabilities.can_fertilize === false && roles.donor)
-            || (!roles.recipient && !roles.donor
-              && (capabilities.can_be_fertilized === false || capabilities.can_fertilize === false));
+            || (capabilities.can_fertilize === false && roles.donor);
           if (roleConflict) reproductionRules.fertilization = null;
         }
 

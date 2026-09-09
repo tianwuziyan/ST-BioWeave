@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查跨层三态值在 Analyzer、storage 和 UI 之间没有被重新解释"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行规定的测试、语法检查、diff 检查和范围审查"}
+{"file":".trellis/tasks/09-10-world-model-null-description-guard/research/current-audit.md","reason":"按已验证的复现路径检查实现是否只收窄 role conflict guard"}
+{"file":"docs/DATA-MODEL.md","reason":"验证三态规则文档与 canonical 行为一致"}

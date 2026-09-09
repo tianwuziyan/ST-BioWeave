@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 Raw、normalized、canonical 与 UI 显示之间的三态数据边界"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵守 World Model Analyzer、测试和 dirty work 范围约束"}
+{"file":".trellis/tasks/09-10-world-model-null-description-guard/research/current-audit.md","reason":"提供 final guard 第二层删除路径与上一轮测试缺口的函数级证据"}
+{"file":"docs/DATA-MODEL.md","reason":"同步 null、无、非空描述和 consistency guard 的正式语义"}
