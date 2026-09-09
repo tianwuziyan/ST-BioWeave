@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"World Model species/type hierarchy, local evidence gate, Human baseline, null semantics, and final consistency guard are the existing cross-layer contract to preserve while tightening Prompt semantics."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify that this small Prompt/test correction does not cross into schema, UI, Event, State, Projection, or storage layers."}
