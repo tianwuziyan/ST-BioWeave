@@ -751,6 +751,81 @@ test('World Model analysis does not widen a single type with species-level evide
   assert.deepEqual(type.special_rules, []);
 });
 
+test('World Model analysis keeps reversible body changes out of fixed types for original species', async () => {
+  const result = await analyzeDescription('澜壳体存在定常型；某角色可以暂时变为双性状态，结束后恢复原状。', [
+    {
+      name: '澜壳体',
+      biological_types: [typeFixture('定常型'), typeFixture('双性')],
+    },
+  ]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['定常型']);
+});
+
+test('World Model analysis rejects parent-name suffix types for original species', async () => {
+  const result = await analyzeDescription('雾棱群明确存在雾棱群族这一分类名称，但没有其它稳定生殖类型资料。', [
+    {
+      name: '雾棱群',
+      biological_types: [typeFixture('雾棱群族'), typeFixture('雾棱群')],
+    },
+  ]);
+
+  assert.deepEqual(result.species[0].biological_types, []);
+});
+
+test('World Model analysis keeps non-fertilization interaction null for original species', async () => {
+  const result = await analyzeDescription('回声囊体存在共鸣型；共鸣型会性交并交换能量，促进个体生成，但资料没有受精机制。', [
+    {
+      name: '回声囊体',
+      biological_types: [typeFixture('共鸣型', {
+        reproduction_rules: {fertilization: '性交并交换能量，促进个体生成。'},
+      })],
+    },
+  ]);
+
+  assert.equal(result.species[0].biological_types[0].reproduction_rules.fertilization, null);
+});
+
+test('World Model analysis keeps original non-human sex labels from Human capabilities', async () => {
+  const claimedCapabilities = {
+    can_produce_sperm: true,
+    can_produce_ova: true,
+    can_be_fertilized: true,
+    can_fertilize: true,
+    can_carry_pregnancy: true,
+  };
+  const result = await analyzeDescription('浮芯体稳定分为男性和女性，但没有说明其生殖能力。', [
+    {
+      name: '浮芯体',
+      biological_types: [
+        typeFixture('男性', {capabilities: claimedCapabilities}),
+        typeFixture('女性', {capabilities: claimedCapabilities}),
+      ],
+    },
+  ]);
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+  assert.ok(result.species[0].biological_types.every(type => (
+    Object.values(type.capabilities).every(value => value === null)
+  )));
+});
+
+test('World Model analysis does not classify progression as biological maturation for original species', async () => {
+  const result = await analyzeDescription('阶纹生物存在阶序型；阶序型通过修炼等级提升和力量进阶完成 progression。', [
+    {
+      name: '阶纹生物',
+      biological_types: [typeFixture('阶序型', {
+        lifecycle: {maturation: '修炼等级达到九阶。', aging: '力量进阶持续进行。'},
+      })],
+    },
+  ]);
+
+  assert.deepEqual(result.species[0].biological_types[0].lifecycle, {
+    maturation: null,
+    aging: null,
+  });
+});
+
 test('World Model analysis preserves explicit negative non-human capability evidence', async () => {
   const result = await analyzeDescription('晶巢种男性不能产生精子，也不能被受精。', [
     {name: '晶巢种', biological_types: [typeFixture('男性')]},
@@ -1148,7 +1223,7 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   assert.match(prompt, /species → biological_types/);
   assert.match(prompt, /不从 biological_type 名称套用 Human template/);
   assert.match(prompt, /该 species 和该 type 的直接证据/);
-  assert.match(prompt, /未说明写 null/);
+  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/);
   assert.match(prompt, /fertilization/);
   assert.match(prompt, /medical_context/);
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
@@ -1163,7 +1238,7 @@ test('World Model prompt keeps the Human fallback bounded and generic', () => {
   const prompt = messages[0].content;
   assert.match(prompt, /只有当前资料支持普通人类背景时才建立“人类”/);
   assert.match(prompt, /baseline 不创建缺失类型/);
-  assert.match(prompt, /不补写资料没有说明的 species、biological_type/);
+  assert.match(prompt, /只使用资料实际支持的内容，不把模型常识补写成 species、biological_type/);
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
 });
 
@@ -1173,11 +1248,11 @@ test('World Model prompt distinguishes fixed dual evidence from temporary dualiz
   });
   const prompt = messages[0].content;
   assert.match(prompt, /固定生殖分类必须由资料支持/);
-  assert.match(prompt, /临时变身、个人例外和一次性状态不能升级成世界级 biological_type/);
+  assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化.*不能建立新的 biological_type/);
   assert.match(prompt, /固定双性统一使用名称“双性”/);
   assert.match(messages[1].content, /角色本身是双性/);
   assert.match(prompt, /明确支持才写 true\/false/);
-  assert.match(prompt, /未说明写 null/);
+  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/);
 });
 
 test('World Model prompt rejects dual types inferred from default male/female input', () => {
@@ -1186,10 +1261,28 @@ test('World Model prompt rejects dual types inferred from default male/female in
   });
   const prompt = messages[0].content;
   assert.match(prompt, /biological_type\.name 都是开放字符串/);
-  assert.match(prompt, /临时变身.*不能升级成世界级 biological_type/);
+  assert.match(prompt, /证据不足时保留 biological_types: \[\]/);
   assert.doesNotMatch(prompt, /默认人类基础类型包含男性、女性和双性/);
   assert.match(messages[1].content, /资料只呈现默认男性\/女性二元/);
   assert.doesNotMatch(messages[1].content, /固定双性分类/);
+});
+
+test('World Model prompt states the complete generic field semantic contract', () => {
+  const prompt = buildWorldModelMessages()[0].content;
+
+  assert.match(prompt, /该 species 内稳定存在的性别、生殖角色或直接影响生殖机制/);
+  assert.match(prompt, /species、亚种、血统、职业、身份、阵营、来源、属性、等级、形态/);
+  assert.match(prompt, /证据不足时保留 biological_types: \[\]/);
+  assert.match(prompt, /五个 capability 逐字段独立举证/);
+  assert.match(prompt, /true 需要明确具备证据、false 需要明确不具备证据/);
+  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/);
+  assert.match(prompt, /性交、体液\/能量交换、感染\/寄生、侵蚀\/异化/);
+  assert.match(prompt, /lifecycle\.maturation 只描述生物成熟或生命阶段变化/);
+  assert.match(prompt, /职业、修炼、技能、关系或力量 progression 不属于生命周期/);
+  assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化/);
+  assert.match(prompt, /输出前进行内部自检（不要输出过程）/);
+  assert.match(prompt, /没有可靠答案就把字段降为 null 或删除错误 type/);
+  assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
 });
 
 test('World Model prompt requires Chinese string values and human type names', () => {

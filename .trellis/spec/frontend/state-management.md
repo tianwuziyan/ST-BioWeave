@@ -493,12 +493,13 @@ species[].biological_types[].capabilities
   may create the default species `人类`, but recognizing that species does not
   create any biological type.
 - During AI analysis, a biological type is saved only when the current
-  `AnalysisInput` contains it or directly describes that it exists in the same
-  species context. Evidence for one species cannot authorize a type in a
-  different species. Type names are open; the schema does not enumerate
-  familiar sex labels or invent combinations. A manual editor change is
-  explicit user intent and remains subject to structural normalization, not AI
-  evidence filtering.
+  `AnalysisInput` contains a stable sex/reproductive classification or directly
+  describes that it exists in the same species context. Evidence for one
+  species cannot authorize a type in a different species. Type names are open;
+  the schema does not enumerate familiar sex labels or invent combinations. If
+  the classification evidence is insufficient, the species keeps an empty
+  `biological_types` array. A manual editor change is explicit user intent and
+  remains subject to structural normalization, not AI evidence filtering.
 - A biological type that repeats its parent species name, or only appends a
   generic species/group/identity suffix to that name, is rejected by the
   analysis-only guard. This predicate is normalized and generic; it must not
@@ -528,11 +529,12 @@ species[].biological_types[].capabilities
   `fertilization` wording. A `null` capability never clears a rule by itself.
   Human male and female generic baseline fertilization text is role-specific in
   the final result, and female baseline cycle text is not copied to a male type.
-- BioWeave's canonical fixed dual type name is `双性`. Temporary dualization,
-  body modification, an ambiguous individual state, or a source/attribute
-  alias is not fixed-type evidence. The analysis-only guard may remove such
-  unsupported familiar labels and close matching `unknowns`; manual edits are
-  not evidence-filtered.
+- BioWeave's canonical fixed dual type name is `双性`. Temporary, reversible, or
+  conditional sex, organ, or reproductive-capability changes, body
+  modification, an ambiguous individual state, or a source/attribute alias is
+  not fixed-type evidence. The analysis-only guard may remove such unsupported
+  familiar labels and close matching `unknowns`; manual edits are not
+  evidence-filtered.
 - Non-human capabilities, reproduction rules, lifecycle, and type-level special
   rules remain `null` without corresponding species-and-type-local mechanism
   evidence. Even when a species has only one candidate type, species-wide
@@ -543,6 +545,10 @@ species[].biological_types[].capabilities
 - `fertilization` records an actual fertilization mechanism and the current
   type's donor/recipient role. Intercourse, energy exchange, cultivation,
   corruption, or other interaction text alone is not fertilization evidence.
+- `lifecycle.maturation` records biological maturity or life-stage change only;
+  `lifecycle.aging` records lifespan, aging, or explicit anti-aging physiology.
+  Career, cultivation, skill, relationship, or power progression is not
+  lifecycle evidence.
 
 ### 4. Validation & Error Matrix
 
