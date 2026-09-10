@@ -12,7 +12,7 @@
   "assignee": "ll",
   "createdAt": "2026-09-07",
   "completedAt": null,
-  "branch": null,
+  "branch": "fix/world-model-prompt-baseline",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,

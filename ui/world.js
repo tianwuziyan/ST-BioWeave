@@ -179,9 +179,12 @@ function renderExceptions(exceptions) {
   const items = Array.isArray(exceptions) ? exceptions : [];
   if (!items.length) return '<p class="bioweave-empty">未知</p>';
   return '<ul>' + items.map(item => {
-    const details = [item?.applies_to, item?.evidence]
-      .filter(value => String(value ?? '').trim())
-      .map(value => '<small>' + displayText(value) + '</small>')
+    const details = [
+      ['适用对象', item?.applies_to],
+      ['依据', item?.evidence],
+    ]
+      .filter(([, value]) => String(value ?? '').trim())
+      .map(([label, value]) => '<small>' + label + '：' + displayText(value) + '</small>')
       .join('');
     return '<li><strong>' + displayText(item?.statement) + '</strong>' + details + '</li>';
   }).join('') + '</ul>';
@@ -261,11 +264,18 @@ function normalizeStringList(value) {
 }
 
 function normalizeExceptions(value) {
-  return (Array.isArray(value) ? value : []).map(item => ({
-    statement: textOrNull(item?.statement),
-    applies_to: textOrNull(item?.applies_to),
-    evidence: textOrNull(item?.evidence),
-  }));
+  return (Array.isArray(value) ? value : []).map(item => {
+    const source = typeof item === 'string'
+      ? {statement: item}
+      : item && typeof item === 'object' && !Array.isArray(item)
+        ? item
+        : {};
+    return {
+      statement: textOrNull(source.statement ?? source.description),
+      applies_to: textOrNull(source.applies_to),
+      evidence: textOrNull(source.evidence),
+    };
+  });
 }
 
 function normalizeSectionValue(section, value) {

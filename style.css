@@ -3049,7 +3049,7 @@
   }
 
   .bioweave-world-model-species-card > .bioweave-world-model-description {
-    display: none;
+    display: -webkit-box;
   }
 
   .bioweave-world-model-type-button,
@@ -3976,7 +3976,7 @@
   }
 
   .bioweave-world-model-species-card > .bioweave-world-model-description {
-    display: none;
+    display: -webkit-box;
   }
 
   .bioweave-world-model-content-grid {
@@ -4394,7 +4394,10 @@
 }
 
 .bioweave-world-model-page .bioweave-world-model-type-detail > .bioweave-world-model-description {
-  display: none;
+  display: block;
+  max-height: none;
+  overflow: visible;
+  -webkit-line-clamp: unset;
 }
 
 .bioweave-world-model-page .bioweave-world-model-type-sections {
@@ -4659,7 +4662,7 @@
   }
 
   .bioweave-world-model-page .bioweave-world-model-species-card > .bioweave-world-model-description {
-    display: none;
+    display: -webkit-box;
   }
 
   .bioweave-world-model-page .bioweave-world-model-content-grid {
