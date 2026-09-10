@@ -114,6 +114,100 @@ For registration ownership, keep one unregister function per document:
 - Use empty states for unfinished business layers. Do not create mock storage
   or write demo DTOs into Chat metadata or Floor data.
 
+## Scenario: shared SillyTavern Analysis Debug Popup
+
+### 1. Scope / Trigger
+
+Use this contract whenever more than one BioWeave route opens the temporary
+AnalysisInput/World Model debug view through SillyTavern Popup.
+
+### 2. Signatures
+
+    openAnalysisDebugPopup({usePromptDraft = false})
+      -> Promise<boolean>
+
+    renderAnalysisDebugPopupContent({analysisPreview, worldAnalysisPrompt,
+      worldAnalysisPromptDraft, openSettingsSections, theme, documentRef})
+      -> HTMLElement | string
+
+### 3. Contracts
+
+- All entry points call one route-independent Popup helper. The helper uses the
+  host `Popup` with `POPUP_TYPE.DISPLAY`, empty title, `wide: true`, and
+  `allowVerticalScrolling: true`.
+- Settings entry points may capture the current prompt draft; other routes use
+  the saved prompt and must not inherit a stale settings draft.
+- Popup content must reuse `renderAnalysisDebugPopupContent()` and its
+  standalone `renderAnalysisInputPreview()`; message previews continue to use
+  the real `buildWorldModelMessages()`.
+- Because SillyTavern moves Popup content outside `#bioweave-panel`, refresh and
+  structure/raw mode actions are delegated on the Popup content element itself.
+- A page that opens this Popup must not also render an embedded copy of the
+  debug card or maintain a toggle state for Popup visibility.
+
+### 4. Message preview typography
+
+- `renderWorldModelMessagePreview()` must give every API message body
+  (including independent `system_top` and `system_bottom` SYSTEM messages) a
+  dedicated `.bioweave-world-model-message-content` element/class.
+- The message-preview container and body must explicitly use
+  `text-align: left`; do not rely on the host Popup's inherited text alignment.
+- Message bodies must preserve prompt newlines and wrap long URLs/JSON with
+  `white-space: pre-wrap`, `overflow-wrap: anywhere`, and
+  `word-break: break-word`.
+- Popup-wide `pre` rules must exclude the message-content class so raw/trace
+  formatting does not override message-preview wrapping. Keep all selectors
+  under BioWeave Analysis Debug/message-preview scope; never change global
+  SillyTavern Popup CSS.
+- When the message preview is enabled, `renderAnalysisInputPreview()` must
+  create one `messages = buildWorldModelMessages(input, promptSettings)` value
+  for that render. Structure cards and raw JSON must both consume this same
+  value; never stringify the `AnalysisInput` object as the API raw view.
+- If the debug view also exposes structured `AnalysisInput` details, keep them
+  as a separately labelled section; the structure/raw mode switch is reserved
+  for the actual World Model API messages.
+
+### 5. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Host Popup or DISPLAY type unavailable | Show the existing safe error Toast and do not create a custom modal |
+| Settings entry has unsaved prompt fields | Capture and render `draft ?? saved` values |
+| World Model entry has no settings page draft | Read saved prompt from the profile store/state fallback |
+| Popup content is moved by host | Content-local refresh/mode listener remains functional |
+| World page receives legacy preview/toggle props | Ignore them; do not render an embedded debug card |
+
+### 6. Good / Base / Bad Cases
+
+- Good: settings and World Model buttons construct the same Popup shape and
+  renderer while choosing their intended prompt source.
+- Base: closing the host Popup does not rerender or resize the underlying page.
+- Bad: keep a route guard that blocks World Model, duplicate the Popup listener
+  in `world.js`, or fake a Popup with an in-page overlay/CSS card.
+
+### 7. Tests Required
+
+- Exercise both root action paths and compare Popup type, title, options and
+  content markers.
+- Assert settings draft text appears only from the settings entry and saved
+  prompt text appears from the World Model entry.
+- Trigger refresh and structure/raw mode on the Popup content element and
+  assert its HTML updates without relying on root delegation.
+- Assert World Model HTML keeps the action button but contains no embedded
+  `data-bioweave-analysis-preview` card or dynamic “收起” label.
+
+### 8. Wrong vs Correct
+
+#### Wrong
+
+    if (route !== 'settings') return false;
+    worldPage({showAnalysisInput: true, analysisPreview});
+
+#### Correct
+
+    await openAnalysisDebugPopup({usePromptDraft: route === 'settings'});
+    // worldPage renders only its action button; Popup owns the debug view.
+
 ## Scenario: World Analysis prompt boundary SYSTEM messages
 
 ### 1. Scope / Trigger

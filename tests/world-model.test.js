@@ -26,6 +26,34 @@ import {
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
+function decodeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+function extractRawMessages(html) {
+  const match = String(html).match(/<pre[^>]*class="[^"]*bioweave-analysis-message-raw[^"]*"[^>]*>([\s\S]*?)<\/pre>/);
+  assert.ok(match, 'raw World Model messages should be rendered in a dedicated container');
+  return JSON.parse(decodeHtml(match[1]));
+}
+
+function extractStructuredMessages(html) {
+  const messages = [];
+  const pattern = /<details class="bioweave-world-model-message"[^>]*data-bioweave-world-model-message-index="(\d+)"[^>]*data-bioweave-world-model-message-role="([^"]+)"[\s\S]*?<pre class="bioweave-world-model-message-content"[^>]*>([\s\S]*?)<\/pre>/g;
+  for (const match of String(html).matchAll(pattern)) {
+    messages.push({
+      index: Number(match[1]),
+      role: decodeHtml(match[2]),
+      content: decodeHtml(match[3]),
+    });
+  }
+  return messages;
+}
+
 const modelFixture = {
   schema_version: 1,
   species: [{
@@ -2638,8 +2666,42 @@ test('debug Popup content is standalone, uses the real message builder, and has 
   assert.match(html, /data-bioweave-world-model-message-preview/);
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
   assert.doesNotMatch(html, /bioweave-analysis-debug-overlay|bioweave-analysis-debug-dialog|bioweave-analysis-debug-close/);
-  assert.match(STYLE_SOURCE, /\.bioweave-analysis-debug-popup-content pre\s*\{[\s\S]*?overflow-x: auto;/);
+  assert.match(STYLE_SOURCE, /\.bioweave-analysis-debug-popup-content pre:not\(\.bioweave-world-model-message-content\):not\(\.bioweave-analysis-message-raw\)\s*\{[\s\S]*?overflow-x: auto;/);
   assert.doesNotMatch(STYLE_SOURCE, /bioweave-analysis-debug-overlay|bioweave-analysis-debug-dialog|bioweave-analysis-debug-body/);
+});
+
+test('World Model message preview resets Popup alignment and wraps message content', () => {
+  const html = renderAnalysisDebugPopupContent({
+    worldAnalysisPrompt: {system_top: 'TOP', system_bottom: 'BOTTOM'},
+    analysisPreview: {
+      input: {
+        character: {description: '角色预览'},
+        worldbooks: [],
+        recent_story: {items: []},
+        external_memory: [],
+        meta: {user_name: '用户丙', character_name: '角色丙'},
+      },
+    },
+    documentRef: null,
+  });
+
+  assert.match(html, /<strong>SYSTEM<\/strong>/);
+  assert.match(html, /<strong>ASSISTANT<\/strong>/);
+  assert.match(html, /<strong>USER<\/strong>/);
+  assert.match(html, /class="bioweave-world-model-message-content"/);
+  assert.match(html, /data-bioweave-world-model-message-content/);
+
+  const messagePreviewRule = STYLE_SOURCE.match(/\.bioweave-world-model-message-preview\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  const messageContentRule = STYLE_SOURCE.match(/\.bioweave-world-model-message-content\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(messagePreviewRule, /text-align:\s*left/);
+  assert.match(messageContentRule, /text-align:\s*left/);
+  assert.match(messageContentRule, /white-space:\s*pre-wrap/);
+  assert.match(messageContentRule, /overflow-wrap:\s*anywhere/);
+  assert.match(messageContentRule, /word-break:\s*break-word/);
+  assert.match(STYLE_SOURCE, /\.bioweave-analysis-debug-popup-content \.bioweave-world-model-message-preview\s*\{[\s\S]*?text-align:\s*left/);
+  assert.match(STYLE_SOURCE, /\.bioweave-analysis-message-raw,[\s\S]*?\.bioweave-analysis-preview-raw\s*\{[\s\S]*?text-align:\s*left[\s\S]*?white-space:\s*pre-wrap[\s\S]*?overflow-wrap:\s*anywhere[\s\S]*?word-break:\s*break-word/);
+  assert.match(STYLE_SOURCE, /\.bioweave-analysis-debug-popup-content pre:not\(\.bioweave-world-model-message-content\):not\(\.bioweave-analysis-message-raw\)\s*\{[\s\S]*?white-space:\s*pre[;\s]*[\s\S]*?overflow-wrap:\s*normal/);
+  assert.doesNotMatch(STYLE_SOURCE, /(?:^|\n)\s*\.popup[^{]*\{[^}]*text-align:\s*center/);
 });
 
 test('settings debug preview keeps boundary SYSTEM messages aligned with the request', () => {
@@ -2657,10 +2719,10 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
     documentRef: null,
   });
   const preview = html;
-  const topIndex = preview.indexOf('<pre>TOP 用户丙</pre>');
-  const coreIndex = preview.indexOf('<pre>任务：从本次 AnalysisInput');
-  const userIndex = preview.indexOf('<pre>请根据以上资料完成 World Model 分析');
-  const bottomIndex = preview.indexOf('<pre>BOTTOM 角色丙</pre>');
+  const topIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>TOP 用户丙</pre>');
+  const coreIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>任务：从本次 AnalysisInput');
+  const userIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>请根据以上资料完成 World Model 分析');
+  const bottomIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>BOTTOM 角色丙</pre>');
 
   assert.equal((preview.match(/<details class="bioweave-world-model-message"/g) ?? []).length, 6);
   assert.ok(topIndex >= 0);
@@ -2669,6 +2731,76 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
   assert.ok(bottomIndex >= 0);
   assert.ok(topIndex < coreIndex);
   assert.ok(userIndex < bottomIndex);
+});
+
+test('World Model message structure and raw views share one final messages array', () => {
+  const input = {
+    character: {description: 'CHARACTER_SOURCE_MARKER', greetings: []},
+    worldbooks: [{entries: [{content: 'WORLDBOOK_SOURCE_MARKER'}]}],
+    recent_story: {items: [{floor: 8, role: 'assistant', content: 'RECENT_STORY_SOURCE_MARKER'}]},
+    external_memory: [],
+    meta: {user_name: '用户丁', character_name: '角色丁'},
+    token_estimate: 42,
+  };
+  const promptSettings = {
+    system_top: 'TOP {{user}}',
+    task: 'TASK {{char}}',
+    input_prefix: 'PREFIX',
+    input_suffix: 'SUFFIX',
+    system_bottom: 'BOTTOM {{char}}',
+  };
+  const expectedMessages = buildWorldModelMessages(input, promptSettings);
+  const structureHtml = renderAnalysisDebugPopupContent({
+    analysisPreview: {mode: 'structure', input},
+    worldAnalysisPrompt: promptSettings,
+    documentRef: null,
+  });
+  const rawHtml = renderAnalysisDebugPopupContent({
+    analysisPreview: {mode: 'raw', input},
+    worldAnalysisPrompt: promptSettings,
+    documentRef: null,
+  });
+  const structuredMessages = extractStructuredMessages(structureHtml);
+  const rawMessages = extractRawMessages(rawHtml);
+
+  assert.deepEqual(rawMessages, expectedMessages);
+  assert.equal(structuredMessages.length, expectedMessages.length);
+  assert.deepEqual(structuredMessages.map(({role, content}) => ({role, content})), expectedMessages);
+  assert.deepEqual(structuredMessages.map(message => message.index), expectedMessages.map((_, index) => index));
+  assert.deepEqual(rawMessages[0], {role: 'system', content: 'TOP 用户丁'});
+  assert.deepEqual(rawMessages.at(-1), {role: 'system', content: 'BOTTOM 角色丁'});
+  assert.equal(structuredMessages[0].content, rawMessages[0].content);
+  assert.equal(structuredMessages.at(-1).content, rawMessages.at(-1).content);
+  assert.match(rawHtml, /class="bioweave-analysis-message-raw[^\"]*"/);
+  assert.match(rawHtml, /CHARACTER_SOURCE_MARKER/);
+  assert.doesNotMatch(rawHtml, /"character"\s*:/);
+  assert.doesNotMatch(rawHtml, /"token_estimate"\s*:/);
+});
+
+test('World Model raw and structure views keep the four-message compatibility shape without boundaries', () => {
+  const input = {
+    character: {description: 'EMPTY_BOUNDARY_CHARACTER', greetings: []},
+    worldbooks: [],
+    recent_story: {items: []},
+    external_memory: [],
+    meta: {user_name: '用户戊', character_name: '角色戊'},
+  };
+  const promptSettings = {system_top: '', system_bottom: ''};
+  const expectedMessages = buildWorldModelMessages(input, promptSettings);
+  const structureHtml = renderAnalysisDebugPopupContent({
+    analysisPreview: {mode: 'structure', input},
+    worldAnalysisPrompt: promptSettings,
+    documentRef: null,
+  });
+  const rawHtml = renderAnalysisDebugPopupContent({
+    analysisPreview: {mode: 'raw', input},
+    worldAnalysisPrompt: promptSettings,
+    documentRef: null,
+  });
+
+  assert.equal(expectedMessages.length, 4);
+  assert.equal(extractStructuredMessages(structureHtml).length, 4);
+  assert.deepEqual(extractRawMessages(rawHtml), expectedMessages);
 });
 
 test('settings debug preview shows temporary Raw and Canonical trace in Chinese', () => {
@@ -3060,25 +3192,12 @@ test('World Model UI renders Human and an original species through the same rend
   assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 3);
 });
 
-test('World Model page input preview shows the actual request messages', () => {
-  const html = worldPage({
-    showAnalysisInput: true,
-    analysisPreview: {
-      input: {
-        character: {description: '角色预览'},
-        worldbooks: [],
-        recent_story: {items: [{floor: 7, role: 'assistant', content: '楼层预览'}]},
-        external_memory: [],
-        meta: {user_name: '用户丙', character_name: '角色丙'},
-      },
-    },
-  });
-  assert.equal((html.match(/<details class="bioweave-world-model-message"/g) ?? []).length, 4);
-  assert.match(html, /data-bioweave-world-model-message-role="system"/);
-  assert.match(html, /data-bioweave-world-model-message-role="assistant"/);
-  assert.match(html, /data-bioweave-world-model-message-role="user"/);
-  assert.match(html, /角色预览/);
-  assert.match(html, /楼层预览/);
+test('World Model page keeps the analysis input action without an embedded preview', () => {
+  const html = worldPage();
+  assert.match(html, /data-bioweave-action="world-model-view-input">查看本次分析输入<\/button>/);
+  assert.doesNotMatch(html, /收起本次分析输入/);
+  assert.doesNotMatch(html, /data-bioweave-analysis-preview/);
+  assert.doesNotMatch(html, /data-bioweave-world-model-message-preview/);
 });
 
 test('World UI uses seven independent section editors and keeps the global editor removed', () => {

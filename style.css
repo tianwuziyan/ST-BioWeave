@@ -2342,6 +2342,7 @@
   border: 1px solid var(--bioweave-border);
   border-radius: 5px;
   background: var(--bioweave-surface);
+  text-align: left;
 }
 
 .bioweave-world-model-message-preview h4,
@@ -2382,7 +2383,7 @@
   font-size: 11px;
 }
 
-.bioweave-world-model-message > pre {
+.bioweave-world-model-message-content {
   max-height: 300px;
   margin: 0;
   padding: 8px;
@@ -2391,8 +2392,10 @@
   font: inherit;
   font-size: 12px;
   line-height: 1.55;
+  text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bioweave-analysis-preview-content {
@@ -2402,10 +2405,10 @@
   border: 1px solid var(--bioweave-border);
   border-radius: 6px;
   background: var(--bioweave-surface-raised);
+  text-align: left;
 }
 
-.bioweave-analysis-preview-message-hint,
-.bioweave-analysis-preview-raw {
+.bioweave-analysis-preview-message-hint {
   margin: 0;
   padding: 8px 10px;
   border-top: 1px solid var(--bioweave-border);
@@ -2413,10 +2416,25 @@
   font: inherit;
   font-size: 12px;
   line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
+.bioweave-analysis-message-raw,
+.bioweave-analysis-preview-raw {
+  display: block;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--bioweave-border);
+  color: var(--bioweave-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bioweave-analysis-message-raw,
 .bioweave-analysis-preview-raw {
   max-height: 500px;
   overflow: auto;
@@ -2514,7 +2532,11 @@
   max-height: none;
 }
 
-.bioweave-analysis-debug-popup-content pre {
+.bioweave-analysis-debug-popup-content .bioweave-world-model-message-preview {
+  text-align: left;
+}
+
+.bioweave-analysis-debug-popup-content pre:not(.bioweave-world-model-message-content):not(.bioweave-analysis-message-raw) {
   max-width: 100%;
   overflow-x: auto;
   overflow-y: auto;

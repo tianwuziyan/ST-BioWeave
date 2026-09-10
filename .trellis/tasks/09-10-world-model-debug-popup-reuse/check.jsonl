@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复核统一 Popup/renderer 仍遵循现有 plain DOM 和页面边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核测试、宿主集成、变更边界和静态检查要求。"}
+{"file":".trellis/tasks/09-10-world-model-debug-popup-reuse/research/code-audit.md","reason":"独立检查时追踪所有旧状态、共享 helper、prompt 草稿与测试调用点。"}

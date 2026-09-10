@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"约束 plain DOM 页面模块、统一 renderer 和不引入第二套 UI 服务层。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"要求 host integration、测试、node --check、git diff --check 以及真实宿主限制记录。"}
+{"file":".trellis/tasks/09-10-world-model-debug-popup-reuse/research/code-audit.md","reason":"提供当前 Popup helper、World Model 旧状态链、prompt 来源风险和测试位置证据。"}

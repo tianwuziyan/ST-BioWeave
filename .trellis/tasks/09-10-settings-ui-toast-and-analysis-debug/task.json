@@ -21,7 +21,8 @@
   "children": [
     "09-10-analysis-debug-dialog",
     "09-10-settings-toast-notifications",
-    "09-10-sillytavern-popup-toast-correction"
+    "09-10-sillytavern-popup-toast-correction",
+    "09-10-world-model-debug-popup-reuse"
   ],
   "parent": null,
   "relatedFiles": [],

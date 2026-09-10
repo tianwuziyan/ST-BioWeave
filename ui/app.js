@@ -172,7 +172,6 @@ function createWorldModelState() {
     sectionDraft: null,
     sectionDirty: false,
     notice: null,
-    showAnalysisInput: false,
   };
 }
 
@@ -588,11 +587,10 @@ export function createApp(runtime, options = {}) {
       && 'innerHTML' in value);
   }
 
-  function renderDebugPopupContent(content) {
+  function renderDebugPopupContent(content, promptSettings = settingsState.worldAnalysisPrompt) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
-      worldAnalysisPrompt: settingsState.worldAnalysisPrompt,
-      worldAnalysisPromptDraft: settingsState.worldAnalysisPromptDraft,
+      worldAnalysisPrompt: promptSettings,
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
       documentRef,
@@ -603,8 +601,19 @@ export function createApp(runtime, options = {}) {
     return nextContent;
   }
 
-  async function openAnalysisDebug() {
-    if (route !== 'settings') return false;
+  function readStoredWorldAnalysisPrompt() {
+    try {
+      return profileStore.getWorldAnalysisPrompt?.() ?? settingsState.worldAnalysisPrompt;
+    } catch {
+      return settingsState.worldAnalysisPrompt;
+    }
+  }
+
+  async function openAnalysisDebugPopup({usePromptDraft = false} = {}) {
+    if (usePromptDraft) captureWorldAnalysisPromptDraft();
+    const promptSettings = usePromptDraft
+      ? settingsState.worldAnalysisPromptDraft ?? settingsState.worldAnalysisPrompt
+      : readStoredWorldAnalysisPrompt();
     const context = hostPopupContext();
     const Popup = context?.Popup;
     const popupType = context?.POPUP_TYPE?.DISPLAY;
@@ -613,8 +622,7 @@ export function createApp(runtime, options = {}) {
       return false;
     }
 
-    captureWorldAnalysisPromptDraft();
-    const content = renderDebugPopupContent();
+    const content = renderDebugPopupContent(null, promptSettings);
     const localContent = isPopupContentElement(content) ? content : null;
     const handlePopupClick = async event => {
       const target = event?.target?.closest?.('[data-bioweave-action]');
@@ -624,15 +632,15 @@ export function createApp(runtime, options = {}) {
       if (action === 'refresh-analysis-preview') {
         event.preventDefault?.();
         const pending = refreshAnalysisPreview();
-        renderDebugPopupContent(localContent);
+        renderDebugPopupContent(localContent, promptSettings);
         await pending;
-        renderDebugPopupContent(localContent);
+        renderDebugPopupContent(localContent, promptSettings);
         return;
       }
       if (action === 'analysis-preview-mode') {
         event.preventDefault?.();
         setAnalysisPreviewMode(target.dataset.bioweavePreviewMode);
-        renderDebugPopupContent(localContent);
+        renderDebugPopupContent(localContent, promptSettings);
       }
     };
 
@@ -1383,7 +1391,6 @@ export function createApp(runtime, options = {}) {
       sectionDraft: getWorldModelSection(worldModelState.model, section, selection),
       sectionDirty: false,
       notice: null,
-      showAnalysisInput: false,
     };
     render();
     return true;
@@ -1514,7 +1521,7 @@ export function createApp(runtime, options = {}) {
       error: null,
       worldModelTrace: null,
     };
-    worldModelState = {...worldModelState, busy: true, notice: null, showAnalysisInput: false};
+    worldModelState = {...worldModelState, busy: true, notice: null};
     if (route === 'world') render();
     try {
       const collected = await collectCurrentAnalysisInput();
@@ -1568,17 +1575,6 @@ export function createApp(runtime, options = {}) {
       worldModelState = {...worldModelState, busy: false, notice: worldModelOperationError(error)};
     }
     if (route === 'world') render();
-  }
-
-  async function toggleWorldModelInputPreview() {
-    if (worldModelState.showAnalysisInput && analysisPreviewState.input?.meta?.chat_id === runtime.chat.current()) {
-      worldModelState = {...worldModelState, showAnalysisInput: false};
-      render();
-      return;
-    }
-    worldModelState = {...worldModelState, showAnalysisInput: true};
-    render();
-    await refreshAnalysisPreview();
   }
 
   function setAnalysisPreviewMode(mode) {
@@ -1795,7 +1791,6 @@ export function createApp(runtime, options = {}) {
           visibleSources: searchAnalysisSources(analysisSourcesState.sources, analysisSourcesState.search),
           selected: analysisSourcesState.selected,
         },
-        analysisPreview: analysisPreviewState,
       } : {}),
       ...(route === 'world' ? {
         worldModel: worldModelState.model,
@@ -1806,8 +1801,6 @@ export function createApp(runtime, options = {}) {
         editingSection: worldModelState.editingSection,
         sectionDraft: worldModelState.sectionDraft,
         worldModelNotice: worldModelState.notice,
-        showAnalysisInput: worldModelState.showAnalysisInput,
-        analysisPreview: {...analysisPreviewState, worldModelTrace: null},
       } : {}),
     });
     restoreScrollPositions(root, scrollPositions);
@@ -2535,7 +2528,7 @@ export function createApp(runtime, options = {}) {
     const action = target.dataset.bioweaveAction;
     if (action === 'open-analysis-debug') {
       event.preventDefault();
-      await openAnalysisDebug();
+      await openAnalysisDebugPopup({usePromptDraft: true});
       return;
     }
     if (action === 'new-profile') {
@@ -2583,16 +2576,6 @@ export function createApp(runtime, options = {}) {
       await loadAnalysisSourcesState({forceRefresh: true});
       return;
     }
-    if (action === 'refresh-analysis-preview') {
-      event.preventDefault();
-      await refreshAnalysisPreview();
-      return;
-    }
-    if (action === 'analysis-preview-mode') {
-      event.preventDefault();
-      setAnalysisPreviewMode(target.dataset.bioweavePreviewMode);
-      return;
-    }
     if (action === 'world-model-reanalyze') {
       event.preventDefault();
       await analyzeWorldModel();
@@ -2600,7 +2583,7 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'world-model-view-input') {
       event.preventDefault();
-      await toggleWorldModelInputPreview();
+      await openAnalysisDebugPopup();
       return;
     }
     if (action === 'world-model-select-species') {

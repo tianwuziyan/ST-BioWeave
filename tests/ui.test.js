@@ -606,6 +606,154 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
   app.destroyBioWeave();
 });
 
+test('settings and World Model analysis debug actions share one Popup and prompt source boundary', async () => {
+  const documentRef = new AppFakeDocument();
+  const popupCalls = [];
+  let resolvePopup;
+  class Popup {
+    constructor(content, type, title, options) {
+      popupCalls.push({content, type, title, options});
+    }
+
+    show() {
+      return new Promise(resolve => {
+        resolvePopup = resolve;
+      });
+    }
+  }
+  const savedPrompt = {
+    system_top: 'SAVED TOP',
+    task: 'SAVED TASK',
+    input_prefix: '',
+    input_suffix: '',
+    system_bottom: 'SAVED BOTTOM',
+  };
+  const profileStore = {
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+      world_analysis_prompt: savedPrompt,
+    }),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => savedPrompt,
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  };
+  const runtime = {
+    chat: {
+      current: () => 'chat-debug-shared',
+      token: () => ({chatId: 'chat-debug-shared', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({settings: {}}),
+      saveChat: async () => {},
+    },
+    st: {
+      getContext: () => ({
+        chatId: 'chat-debug-shared',
+        characters: [],
+        Popup,
+        POPUP_TYPE: {DISPLAY: 'display'},
+      }),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  };
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
+  const root = app.openBioWeave();
+  app.go('settings');
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const promptForm = {};
+  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-settings]', [promptForm]);
+  for (const [key, value] of Object.entries({
+    system_top: 'DRAFT TOP',
+    task: 'DRAFT TASK',
+    input_prefix: '',
+    input_suffix: '',
+    system_bottom: 'DRAFT BOTTOM',
+  })) {
+    root.selectorNodes.set(`[data-bioweave-world-analysis-prompt-field="${key}"]`, [{value}]);
+  }
+
+  const click = [...root.listeners.get('click')][0];
+  const actionTarget = action => ({
+    __root: root,
+    dataset: {bioweaveAction: action},
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null;
+    },
+  });
+  const clickAction = async action => {
+    await click({
+      target: actionTarget(action),
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  };
+
+  const settingsOpen = clickAction('open-analysis-debug');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(popupCalls.length, 1);
+  const settingsPopup = popupCalls[0];
+  assert.equal(settingsPopup.type, 'display');
+  assert.equal(settingsPopup.title, '');
+  assert.deepEqual(settingsPopup.options, {wide: true, allowVerticalScrolling: true});
+  const popupActionTarget = (content, action, mode = undefined) => ({
+    __root: content,
+    dataset: {
+      bioweaveAction: action,
+      ...(mode ? {bioweavePreviewMode: mode} : {}),
+    },
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null;
+    },
+  });
+  const settingsPopupClick = [...settingsPopup.content.listeners.get('click')][0];
+  await settingsPopupClick({
+    target: popupActionTarget(settingsPopup.content, 'refresh-analysis-preview'),
+    preventDefault() {},
+  });
+  assert.match(settingsPopup.content.innerHTML, /DRAFT TOP/);
+  assert.match(settingsPopup.content.innerHTML, /DRAFT BOTTOM/);
+  assert.match(settingsPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
+  resolvePopup();
+  await settingsOpen;
+
+  app.go('world');
+  const worldPageMarkup = root.querySelector('.bioweave-main').innerHTML;
+  const worldOpen = clickAction('world-model-view-input');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, worldPageMarkup);
+  assert.equal(popupCalls.length, 2);
+  const worldPopup = popupCalls[1];
+  assert.equal(worldPopup.type, settingsPopup.type);
+  assert.equal(worldPopup.title, settingsPopup.title);
+  assert.deepEqual(worldPopup.options, settingsPopup.options);
+  assert.match(worldPopup.content.innerHTML, /SAVED TOP/);
+  assert.match(worldPopup.content.innerHTML, /SAVED BOTTOM/);
+  assert.doesNotMatch(worldPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/);
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-analysis-preview/);
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
+  const worldPopupClick = [...worldPopup.content.listeners.get('click')][0];
+  await worldPopupClick({
+    target: popupActionTarget(worldPopup.content, 'refresh-analysis-preview'),
+    preventDefault() {},
+  });
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
+  await worldPopupClick({
+    target: popupActionTarget(worldPopup.content, 'analysis-preview-mode', 'raw'),
+    preventDefault() {},
+  });
+  assert.match(worldPopup.content.innerHTML, /bioweave-analysis-preview-raw/);
+  resolvePopup();
+  await worldOpen;
+  app.destroyBioWeave();
+});
+
 test('analysis debug shows a safe Toast and no custom modal when Popup is unavailable', async () => {
   const documentRef = new AppFakeDocument();
   const toastCalls = [];

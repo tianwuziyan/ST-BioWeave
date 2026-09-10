@@ -748,18 +748,26 @@ function renderWorldAnalysisPromptSettings(prompt = {}, openSettingsSections = [
   ].join('');
 }
 
-function renderWorldModelMessagePreview(input, promptSettings) {
-  const messages = buildWorldModelMessages(input, promptSettings);
+function renderWorldModelMessagePreview(messages = [], mode = 'structure') {
   const roleLabels = {system: 'SYSTEM', assistant: 'ASSISTANT', user: 'USER'};
+  if (mode === 'raw') {
+    return [
+      '<section class="bioweave-world-model-message-preview" data-bioweave-world-model-message-preview data-bioweave-world-model-message-preview-mode="raw">',
+      '<h4>实际发送消息</h4>',
+      '<p class="bioweave-muted">以下是 World Model 本次请求实际使用的 messages 原始 JSON；与结构预览来自同一份请求数据。</p>',
+      '<pre class="bioweave-analysis-message-raw bioweave-analysis-preview-raw" data-bioweave-analysis-message-raw>' + escapeHtml(JSON.stringify(messages, null, 2)) + '</pre>',
+      '</section>',
+    ].join('');
+  }
   return [
-    '<section class="bioweave-world-model-message-preview" data-bioweave-world-model-message-preview>',
+    '<section class="bioweave-world-model-message-preview" data-bioweave-world-model-message-preview data-bioweave-world-model-message-preview-mode="structure">',
     '<h4>实际发送消息</h4>',
-    '<p class="bioweave-muted">以下是 World Model 本次请求的消息分层；这里只读，不包含 API Key。</p>',
+    '<p class="bioweave-muted">以下是 World Model 本次请求实际使用的消息分层；这里只读，不包含 API Key。</p>',
     '<div class="bioweave-world-model-message-list">',
     messages.map((message, index) => [
-      '<details class="bioweave-world-model-message" data-bioweave-world-model-message-role="' + escapeHtml(message.role) + '">',
+      '<details class="bioweave-world-model-message" data-bioweave-world-model-message-index="' + index + '" data-bioweave-world-model-message-role="' + escapeHtml(message.role) + '">',
       '<summary><strong>' + escapeHtml(roleLabels[message.role] || message.role) + '</strong><small>第 ' + (index + 1) + ' 段</small></summary>',
-      '<pre>' + escapeHtml(message.content) + '</pre>',
+      '<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>' + escapeHtml(message.content) + '</pre>',
       '</details>',
     ].join('')).join(''),
     '</div>',
@@ -803,16 +811,17 @@ export function renderAnalysisInputPreview(preview = {}) {
   const input = preview?.input;
   const mode = preview?.mode === 'raw' ? 'raw' : 'structure';
   const standalone = preview?.standalone === true;
-  const messagePreview = input && preview?.messagePreview === true
-    ? renderWorldModelMessagePreview(input, preview.promptSettings)
+  const messages = input && preview?.messagePreview === true
+    ? buildWorldModelMessages(input, preview.promptSettings)
+    : null;
+  const messagePreview = messages
+    ? renderWorldModelMessagePreview(messages, mode)
     : '';
   const worldModelTrace = renderWorldModelTrace(preview);
   const open = Array.isArray(preview?.openSettingsSections)
     && preview.openSettingsSections.includes('analysis_preview');
   const content = input
-    ? mode === 'raw'
-      ? '<pre class="bioweave-analysis-preview-raw">' + escapeHtml(JSON.stringify(input, null, 2)) + '</pre>'
-      : '<p class="bioweave-analysis-preview-message-hint">结构预览已按实际发送消息分段显示，请展开上方消息查看本次请求内容。</p>'
+    ? messagePreview || '<p class="bioweave-analysis-preview-message-hint">当前未启用实际 World Model messages 预览。</p>'
     : '<p class="bioweave-empty">点击“刷新预览”后，临时读取当前 Chat 的已选分析输入。</p>';
   const error = preview?.error
     ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(preview.error) + '</p>'
@@ -827,7 +836,6 @@ export function renderAnalysisInputPreview(preview = {}) {
       '<button type="button" class="bioweave-secondary-action' + (mode === 'structure' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-mode" data-bioweave-preview-mode="structure" aria-pressed="' + (mode === 'structure') + '">结构预览</button>' +
       '<button type="button" class="bioweave-secondary-action' + (mode === 'raw' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-mode" data-bioweave-preview-mode="raw" aria-pressed="' + (mode === 'raw') + '">原始内容</button>' +
       '</div></div>' : '',
-    messagePreview,
     worldModelTrace,
     '<div class="bioweave-analysis-preview-content">',
     content,

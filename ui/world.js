@@ -1,5 +1,3 @@
-import {renderAnalysisInputPreview} from './settings.js';
-
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
@@ -575,8 +573,6 @@ export function worldPage({
   editingSection = null,
   sectionDraft = null,
   worldModelNotice = null,
-  showAnalysisInput = false,
-  analysisPreview = {},
 } = {}) {
   const model = worldModel ?? null;
   const notice = worldModelNotice
@@ -584,9 +580,7 @@ export function worldPage({
     : '';
   const actions = [
     '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-reanalyze"' + (worldModelBusy ? ' disabled' : '') + '>' + (worldModelBusy ? '分析中…' : (model ? '重新分析' : '开始分析')) + '</button>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-view-input">',
-    showAnalysisInput ? '收起本次分析输入' : '查看本次分析输入',
-    '</button>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-view-input">查看本次分析输入</button>',
   ].join('');
   const metadata = model ? [
     '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',
@@ -603,15 +597,11 @@ export function worldPage({
       busy: worldModelBusy,
     })
     : '<section class="bioweave-card bioweave-empty"><b>世界模型尚未建立</b><p>点击“开始分析”，使用当前已选择的分析来源生成 Chat 独立的生物学规则。</p></section>';
-  const inputPreview = showAnalysisInput
-    ? renderAnalysisInputPreview({...analysisPreview, standalone: true, messagePreview: true})
-    : '';
   return [
     '<section class="bioweave-page bioweave-world-model-page">',
     '<header class="bioweave-page-title bioweave-world-model-titlebar bioweave-world-model-top' + (model ? '' : ' bioweave-world-model-top-empty') + '"><div class="bioweave-world-model-title-copy"><h2>世界模型</h2><p class="bioweave-muted">探索并管理当前聊天的世界观设定与生物规则</p></div>' + metadata + '<div class="bioweave-page-actions">' + actions + '</div></header>',
     notice,
     body,
-    inputPreview,
     '</section>',
   ].join('');
 }

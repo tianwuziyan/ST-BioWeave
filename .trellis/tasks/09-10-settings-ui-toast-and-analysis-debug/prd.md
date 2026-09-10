@@ -65,7 +65,8 @@
 
 - `09-10-analysis-debug-dialog`: R1、R2，以及设置结构/preview/交互/CSS 测试。
 - `09-10-settings-toast-notifications`: R3、R4，以及 Toast 分类、保存失败/上限/checkbox/提示词测试。
-- 父任务负责两个子任务的顺序协调、共享 `ui/app.js`/`ui/settings.js` 变更的整合审查和完整回归验收。
+- `09-10-world-model-debug-popup-reuse`: 让 World Model 的分析输入入口复用设置页原生 Popup，并删除旧页内 preview 状态；依赖前述 Popup helper 已落地。
+- 父任务负责三个子任务的顺序协调、共享 `ui/app.js`/`ui/settings.js` 变更的整合审查和完整回归验收。
 
 ## Acceptance Criteria
 
