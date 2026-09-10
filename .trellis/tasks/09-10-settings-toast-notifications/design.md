@@ -4,7 +4,7 @@
 
 - `notify(message, type)` 是唯一设置操作 Toast 入口：清理空文本，优先取 `documentRef.defaultView.toastr`，再取 `globalThis.toastr`，缺失时按类型调用 console fallback。
 - 成功/刷新/警告/错误的类型由操作语义决定，不从字符串猜测类型。
-- `settingsState.notice` 与 `analysisSourcesState.notice` 的瞬时写入迁移到 notify；`analysisPreviewState.error`、`settingsState.testResult`、`worldModelState.notice` 和 trace 数据继续由组件渲染。
+- `settingsState.notice` 与 `analysisSourcesState.notice` 的瞬时写入迁移到 notify；`analysisPreviewState.error`、`settingsState.testResult`、World Model 的持久无效模型 notice 和 trace 数据继续由组件渲染。World Model 分析/保存/取消/超时等瞬时结果不再写入 `worldModelState.notice`。
 
 ## 保存链
 

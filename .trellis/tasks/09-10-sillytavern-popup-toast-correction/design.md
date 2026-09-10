@@ -34,7 +34,12 @@
 
 - 保持现有 `notify(message, type, documentRef)` 作为业务唯一入口；只允许它接触 document window/global toastr 和 console fallback。
 - 世界书 checkbox 不新增 Popup 调用；保留立即 `render()`、Chat token 校验、串行保存链和 `renderAfterSave: false`，保存结束只调用 success/error Toast。
-- API test result、Preview error、World Model trace 和 world page notice 不因 Popup 调整而改变。
+- API test result、Preview error、World Model trace 等持续可读状态仍由所属组件渲染；它们不属于本任务的 transient Toast 迁移。
+- World Model 分析成功和手动模块保存成功使用 `notify(..., 'success', documentRef)`；请求超时、真实分析/保存失败使用 `notify(..., 'error', documentRef)`。
+- 用户确认终止后，请求实际进入 `REQUEST_ABORTED` 清理路径时才使用
+  `notify('世界模型分析请求已取消，上一份模型已保留。', 'info', documentRef)`。
+  取消、关闭或 Escape 确认 Popup 只返回 false，不发取消 Toast，也不改变进行中的请求。
+- `worldModelState.notice` 不承载上述 transient 结果；仅当已保存 World Model 本身无效、页面需要用户持续处理时保留 inline persistent notice。
 
 ## CSS 和清理边界
 

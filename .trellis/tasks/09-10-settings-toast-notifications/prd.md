@@ -9,7 +9,7 @@
 - 在 `ui/app.js` 增加一个薄 `notify(message, type)`，优先调用宿主 `toastr.success/info/warning/error`；无宿主时安全回退到对应 console 方法，不引入第三方库。
 - 保存/删除/切换/来源更新/任务分配/默认 API/API 配置/提示词等成功反馈使用 `success`；刷新完成使用 `info`；数量上限和可继续手填的空模型列表使用 `warning`；保存、API、Secret Store 和配置失败使用 `error`。
 - `settingsState.notice`、`analysisSourcesState.notice` 不再渲染设置页顶部和世界书来源卡片的瞬时 notice；对应保存生产者改为 Toast。可以保留状态字段用于非 UI 内部过渡，但不得让常规操作创建 `.bioweave-settings-notice`。
-- `renderAnalysisInputPreview()` 内部的 preview error、API `testResult`、World Model page notice/Trace/原始返回/normalize 结果和 loading/empty/result 状态不因本任务被删除或强制 Toast 化。
+- `renderAnalysisInputPreview()` 内部的 preview error、API `testResult`、World Model Trace/原始返回/normalize 结果和 loading/empty/result 状态不因本任务被删除或强制 Toast 化；World Model 页面只保留真正持久的无效已保存模型 notice，分析/保存/取消/超时等瞬时结果统一使用 Toast。
 - 世界书 checkbox 必须保留立即更新、保存函数、串行保存和 Chat token 保护；成功/失败改用 Toast，可减少保存完成后的无必要 render。
 - 提示词保存的数据和 draft 行为不变，只将成功/失败/宿主不支持反馈改为 Toast。
 

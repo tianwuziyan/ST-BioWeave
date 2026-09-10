@@ -1474,7 +1474,8 @@ export function createApp(runtime, options = {}) {
       });
       model = normalizeWorldModel(patched);
     } catch (error) {
-      worldModelState = {...worldModelState, notice: worldModelOperationError(error)};
+      worldModelState = {...worldModelState, notice: null};
+      notify(worldModelOperationError(error), 'error', documentRef);
       render();
       return;
     }
@@ -1513,8 +1514,9 @@ export function createApp(runtime, options = {}) {
         editingSection: null,
         sectionDraft: null,
         sectionDirty: false,
-        notice: '当前模块已保存。',
+        notice: null,
       };
+      notify('当前模块已保存。', 'success', documentRef);
     } catch (error) {
       try {
         assertAnalysisChatToken(token);
@@ -1524,8 +1526,9 @@ export function createApp(runtime, options = {}) {
       worldModelState = {
         ...worldModelState,
         busy: false,
-        notice: worldModelOperationError(error),
+        notice: null,
       };
+      notify(worldModelOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -1588,15 +1591,21 @@ export function createApp(runtime, options = {}) {
         editingSection: null,
         sectionDraft: null,
         sectionDirty: false,
-        notice: '世界模型分析成功并已保存。',
+        notice: null,
       };
+      notify('世界模型分析成功并已保存。', 'success', documentRef);
     } catch (error) {
       try {
         assertAnalysisChatToken(token);
       } catch {
         return;
       }
-      worldModelState = {...worldModelState, busy: false, notice: worldModelOperationError(error)};
+      const code = String(error?.code ?? error?.message ?? '');
+      const feedbackType = code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')
+        ? 'info'
+        : 'error';
+      worldModelState = {...worldModelState, busy: false, notice: null};
+      notify(worldModelOperationError(error), feedbackType, documentRef);
     } finally {
       if (worldModelAbortController === controller) worldModelAbortController = null;
     }

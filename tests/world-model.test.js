@@ -3200,6 +3200,12 @@ test('World Model page keeps the analysis input action without an embedded previ
   assert.doesNotMatch(html, /data-bioweave-world-model-message-preview/);
 });
 
+test('World Model page keeps invalid saved-model feedback as a persistent state notice', () => {
+  const html = worldPage({worldModelNotice: '已保存的世界模型格式无效，请重新分析。'});
+  assert.match(html, /class="bioweave-settings-notice"[^>]*role="status"/);
+  assert.match(html, /已保存的世界模型格式无效，请重新分析。/);
+});
+
 test('World UI uses seven independent section editors and keeps the global editor removed', () => {
   const viewHtml = worldPage({
     worldModel: modelFixture,

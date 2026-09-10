@@ -39,6 +39,8 @@
 - 世界书来源、提示词、API Profile、默认 API、任务分配、模型刷新、规则上限和普通保存失败继续按语义使用 Toast。
 - 世界书 checkbox 必须保持“立即更新状态 → 保存 → Toast”，不能每次切换显示阻塞 Popup。
 - 持续可阅读的 API 测试结果、Preview 错误、World Model Trace、AI 原始返回、normalize 结果和 loading/empty/result 状态继续留在组件内。
+- World Model 分析成功和手动模块保存成功使用 `success` Toast；`REQUEST_ABORTED` 仅在请求实际完成取消清理后使用 `info` Toast；`REQUEST_TIMEOUT` 及其他真实分析/保存失败使用 `error` Toast。上述 transient 结果不得通过 World Model 页面 notice 输出。
+- World Model 页面 inline notice 仅保留真正需要持续处理的 persistent 状态，例如已保存模型格式无效；确认 Popup 的取消、关闭或 Escape 不产生取消 Toast。
 
 ### R4. 明确确认使用 Popup
 

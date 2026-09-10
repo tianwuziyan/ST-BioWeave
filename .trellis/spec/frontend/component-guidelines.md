@@ -140,6 +140,20 @@ second BioWeave modal system.
   go through the shared `notify()` helper, which delegates to the
   SillyTavern/toastr notification system. Do not insert transient page notices
   that shift the current layout.
+- All transient operation results use this same path, including successful or
+  failed saves, API operation results, cancellations, timeouts, and ordinary
+  warnings or informational updates. The Toast type must preserve the business
+  meaning: successful analysis and manual World Model section saves use
+  `success`; a confirmed `REQUEST_ABORTED` uses `info`; `REQUEST_TIMEOUT` and
+  other genuine analysis or save failures use `error`.
+- A confirmed cancellation is reported only after the active request actually
+  reaches its `REQUEST_ABORTED` cleanup path. Canceling, closing, or dismissing
+  the confirmation Popup (including Escape) is not a cancellation and must not
+  emit a cancellation Toast or change the in-flight request.
+- Inline page notices are reserved for persistent page state that remains
+  relevant until the user repairs or reloads it, such as an invalid persisted
+  World Model. They must not be used for save success/failure, API success or
+  failure, cancellation, timeout, or other transient operation feedback.
 - Operations that require an explicit user decision must use
   `SillyTavern.getContext().Popup.show.confirm()` through the shared
   `confirmWithPopup()` helper. This includes deleting an API Profile,
@@ -183,6 +197,11 @@ second BioWeave modal system.
   affirmative gating for every confirmation action.
 - Cover cancel, close/dismiss, thrown/unavailable Popup, and repeated-click
   cases; assert no destructive action, state reset, or duplicate request.
+- Cover World Model success (`success` Toast), confirmed cancellation
+  (`REQUEST_ABORTED` with an `info` Toast), timeout and genuine failures
+  (`error` Toast), and manual section save outcomes. Assert that these
+  transient messages never appear in the World Model page notice DOM; if a
+  persistent invalid-model notice remains, test that it is still rendered.
 - Keep source-level regressions that reject custom confirmation
   modal/dialog/overlay selectors and `window.confirm()`.
 - Mock `Popup` plus `POPUP_TYPE.DISPLAY` for complex content and assert that

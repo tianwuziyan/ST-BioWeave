@@ -955,6 +955,12 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
 
 test('busy World Model analysis asks before aborting and keeps the button actionable', async () => {
   const documentRef = new AppFakeDocument();
+  const toastCalls = [];
+  documentRef.defaultView.toastr = {
+    info(message) {
+      toastCalls.push(['info', message]);
+    },
+  };
   const confirmCalls = [];
   const pendingConfirmations = [];
   const model = {
@@ -1058,6 +1064,7 @@ test('busy World Model analysis asks before aborting and keeps the button action
   await cancelledRequest;
   assert.equal(signal.aborted, false);
   assert.equal(abortCalls, 0);
+  assert.deepEqual(toastCalls, []);
   assert.equal(root.querySelector('.bioweave-main').innerHTML.includes('分析中…'), true);
 
   const closedRequest = clickAction('world-model-reanalyze');
@@ -1067,6 +1074,7 @@ test('busy World Model analysis asks before aborting and keeps the button action
   await closedRequest;
   assert.equal(signal.aborted, false);
   assert.equal(abortCalls, 0);
+  assert.deepEqual(toastCalls, []);
   assert.equal(analysisCalls, 1);
 
   const confirmedRequest = clickAction('world-model-reanalyze');
@@ -1079,10 +1087,13 @@ test('busy World Model analysis asks before aborting and keeps the button action
   assert.equal(signal.aborted, true);
   assert.equal(abortCalls, 1);
   assert.equal(analysisCalls, 1);
+  assert.deepEqual(toastCalls, [['info', '世界模型分析请求已取消，上一份模型已保留。']]);
   assert.equal(savedChat.world_model, model);
   const completedMarkup = root.querySelector('.bioweave-main').innerHTML;
   assert.match(completedMarkup, /已有模型/);
   assert.doesNotMatch(completedMarkup, /分析中…/);
+  assert.doesNotMatch(completedMarkup, /世界模型分析请求已取消，上一份模型已保留。/);
+  assert.doesNotMatch(completedMarkup, /class="bioweave-settings-notice"/);
   app.destroyBioWeave();
 });
 
@@ -1174,6 +1185,225 @@ test('busy World Model analysis safely cancels when the host confirm Popup is un
   assert.equal(abortCalls, 0);
   assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /分析中…/);
   app.destroyBioWeave();
+});
+
+test('World Model analysis routes success and failure feedback through semantic Toasts', async () => {
+  const previousModel = {
+    schema_version: 1,
+    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [],
+    unknowns: ['旧模型'],
+  };
+  const nextModel = {
+    ...previousModel,
+    unknowns: ['新模型'],
+  };
+  const scenarios = [
+    {
+      code: null,
+      type: 'success',
+      message: '世界模型分析成功并已保存。',
+    },
+    {
+      code: 'REQUEST_TIMEOUT',
+      type: 'error',
+      message: '世界模型分析请求超时，上一份模型已保留。',
+    },
+    {
+      code: 'API_PROFILE_INVALID',
+      type: 'error',
+      message: '世界分析 API 配置无效，请检查 URL 和模型。',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const documentRef = new AppFakeDocument();
+    const toastCalls = [];
+    documentRef.defaultView.toastr = {
+      success(message) {
+        toastCalls.push(['success', message]);
+      },
+      error(message) {
+        toastCalls.push(['error', message]);
+      },
+    };
+    let savedChat = {settings: {}, world_model: previousModel};
+    const profileStore = {
+      getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+      getApiRequestSettings: () => ({}),
+      getWorldAnalysisPrompt: () => ({}),
+      getRecentStoryGlobal: () => ({regex_rules: []}),
+    };
+    const runtime = {
+      chat: {
+        current: () => 'chat-world-feedback',
+        token: () => ({chatId: 'chat-world-feedback', epoch: 0}),
+        assert: () => {},
+      },
+      store: {
+        getChat: () => savedChat,
+        saveChat: async (_chatId, nextChat) => {
+          savedChat = nextChat;
+        },
+      },
+      st: {
+        getContext: () => ({chatId: 'chat-world-feedback', characters: []}),
+        fetch: async () => ({ok: true, json: async () => []}),
+        getRequestHeaders: () => ({}),
+      },
+      subscribe: () => () => {},
+    };
+    const analyzer = {
+      analyzeWorldModel: async () => {
+        if (!scenario.code) return nextModel;
+        const error = new Error(scenario.code);
+        error.code = scenario.code;
+        throw error;
+      },
+    };
+    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
+    const root = app.openBioWeave();
+    app.go('world');
+    const click = [...root.listeners.get('click')][0];
+    await click({
+      target: {
+        __root: root,
+        dataset: {bioweaveAction: 'world-model-reanalyze'},
+        closest(selector) {
+          return selector.includes('[data-bioweave-action]') ? this : null;
+        },
+      },
+      preventDefault() {},
+    });
+
+    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]], scenario.code ?? 'success');
+    const markup = root.querySelector('.bioweave-main').innerHTML;
+    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/);
+    assert.doesNotMatch(markup, new RegExp(scenario.message));
+    if (scenario.code) {
+      assert.match(markup, /旧模型/);
+      assert.equal(savedChat.world_model, previousModel);
+    } else {
+      assert.match(markup, /新模型/);
+      assert.deepEqual(savedChat.world_model, nextModel);
+    }
+    app.destroyBioWeave();
+  }
+});
+
+test('World Model section save routes success and failure feedback through Toasts', async () => {
+  const baseModel = {
+    schema_version: 1,
+    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [],
+    unknowns: ['旧模块内容'],
+  };
+  const scenarios = [
+    {
+      errorCode: null,
+      type: 'success',
+      message: '当前模块已保存。',
+    },
+    {
+      errorCode: 'WORLD_MODEL_SAVE_FAILED',
+      type: 'error',
+      message: '保存失败，当前模块草稿仍保留。',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const documentRef = new AppFakeDocument();
+    const toastCalls = [];
+    documentRef.defaultView.toastr = {
+      success(message) {
+        toastCalls.push(['success', message]);
+      },
+      error(message) {
+        toastCalls.push(['error', message]);
+      },
+    };
+    let savedChat = {settings: {}, world_model: baseModel};
+    const profileStore = {
+      getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+      getApiRequestSettings: () => ({}),
+      getWorldAnalysisPrompt: () => ({}),
+      getRecentStoryGlobal: () => ({regex_rules: []}),
+    };
+    const runtime = {
+      chat: {
+        current: () => 'chat-world-section-feedback',
+        token: () => ({chatId: 'chat-world-section-feedback', epoch: 0}),
+        assert: () => {},
+      },
+      store: {
+        getChat: () => savedChat,
+        saveChat: async (_chatId, nextChat) => {
+          if (scenario.errorCode) {
+            const error = new Error(scenario.errorCode);
+            error.code = scenario.errorCode;
+            throw error;
+          }
+          savedChat = nextChat;
+        },
+      },
+      st: {
+        getContext: () => ({chatId: 'chat-world-section-feedback', characters: []}),
+        fetch: async () => ({ok: true, json: async () => []}),
+        getRequestHeaders: () => ({}),
+      },
+      subscribe: () => () => {},
+    };
+    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
+    const root = app.openBioWeave();
+    app.go('world');
+    const actionTarget = (action, section = undefined) => ({
+      __root: root,
+      dataset: {
+        bioweaveAction: action,
+        ...(section ? {bioweaveWorldSection: section} : {}),
+      },
+      closest(selector) {
+        return selector.includes('[data-bioweave-action]') ? this : null;
+      },
+    });
+    const click = [...root.listeners.get('click')][0];
+    await click({target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {}});
+
+    const row = {
+      querySelector(selector) {
+        return selector.includes('data-bioweave-world-section-field="value"') ? {value: '新模块内容'} : null;
+      },
+    };
+    const form = {
+      querySelectorAll(selector) {
+        return selector.includes('data-bioweave-world-section-row="unknowns"') ? [row] : [];
+      },
+    };
+    root.selectorNodes.set('[data-bioweave-world-section-form]', [form]);
+    const input = [...root.listeners.get('input')][0];
+    input({
+      target: {
+        __root: root,
+        closest(selector) {
+          return selector === '[data-bioweave-world-section-form]' ? form : null;
+        },
+      },
+    });
+    await click({target: actionTarget('world-model-save-section'), preventDefault() {}});
+
+    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]]);
+    const markup = root.querySelector('.bioweave-main').innerHTML;
+    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/);
+    assert.doesNotMatch(markup, new RegExp(scenario.message));
+    if (scenario.errorCode) {
+      assert.deepEqual(savedChat.world_model, baseModel);
+    } else {
+      assert.deepEqual(savedChat.world_model.unknowns, ['新模块内容']);
+    }
+    app.destroyBioWeave();
+  }
 });
 
 test('worldbook source checkbox updates immediately and saves with a success Toast without a page notice', async () => {
