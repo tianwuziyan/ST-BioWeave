@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"按 UI 组件与真实 message builder 共用契约审查实现。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按 overlay、移动端和宿主集成质量清单复核。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"复核 debug 临时状态未泄漏到 Chat 或存储。"}

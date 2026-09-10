@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"保持 plain DOM 页面模块和 ui/app.js 事件委托边界；Popup 内容需要脱离 BioWeave root 后仍可自处理。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵循宿主集成验证、禁止全局样式污染、必须运行 Node 测试和真实宿主 smoke 的质量要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"避免重复实现 Popup/modal/toast，并要求先搜索现有 confirm、notify 和 Preview 路径。"}

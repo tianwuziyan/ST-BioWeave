@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"审查 Toast 迁移不破坏设置页事件委托与持续组件状态。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"审查通知迁移、滚动稳定性和宿主集成验证边界。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"复核 checkbox 保存链和 Chat 数据边界未改变。"}

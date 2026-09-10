@@ -1,0 +1,30 @@
+{
+  "id": "settings-ui-toast-and-analysis-debug",
+  "name": "settings-ui-toast-and-analysis-debug",
+  "title": "设置页高级调试弹窗与 Toast 通知改造",
+  "description": "将设置页高级调试预览改为二级弹窗，并将瞬时操作反馈迁移到 SillyTavern Toast，保持现有业务数据与请求行为不变。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-10-analysis-debug-dialog",
+    "09-10-settings-toast-notifications",
+    "09-10-sillytavern-popup-toast-correction"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

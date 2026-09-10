@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵循 plain DOM 页面模块、app 事件委托和 settings/World Model preview 的既有契约。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵循 host-integrated UI、bioweave 选择器、overlay 和响应式验证要求。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"确认 UI 临时状态与 Chat/extensionSettings 持久化边界。"}
