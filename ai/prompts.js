@@ -111,12 +111,17 @@ export function buildWorldModelMessages(analysisInput = {}, promptSettings = {})
   const systemLines = [WORLD_MODEL_CORE_INSTRUCTIONS, expandPlaceholders(settings.task, names), WORLD_MODEL_OUTPUT_CONTRACT].filter(value =>
     readableText(value),
   )
-  return [
+  const messages = [
     { role: 'system', content: systemLines.join('\n\n') },
     { role: 'system', content: formatWorldModelSystemContext(input, settings) },
     { role: 'assistant', content: formatWorldModelAssistantContext(input, names, settings.labels) },
     { role: 'user', content: '请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。' },
   ]
+  const systemTop = expandPlaceholders(settings.system_top, names)
+  if (systemTop) messages.unshift({ role: 'system', content: systemTop })
+  const systemBottom = expandPlaceholders(settings.system_bottom, names)
+  if (systemBottom) messages.push({ role: 'system', content: systemBottom })
+  return messages
 }
 export function buildPrompt({
   task,

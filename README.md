@@ -158,7 +158,7 @@ npm run check    # index.js 语法检查 + 全部 Node 测试
 2. **配置分析 API**：打开设置，选择 SillyTavern 当前 API，或创建独立 API Profile，填写 Provider、API URL、模型和临时 API Key。
 3. **配置任务分配**：确认 world_analysis 使用当前 API 或目标 Profile；其他任务可按需要配置。
 4. **选择分析输入**：在设置中选择当前角色卡字段、已启用的世界书及条目；需要时设置最近剧情楼层、正则规则和可用的外部公开记忆。
-5. **预览输入**：先查看 AnalysisInput 的结构和实际 World Model 四段消息，确认没有不需要的剧情或来源。
+5. **预览输入**：先查看 AnalysisInput 的结构和实际 World Model 消息，确认没有不需要的剧情或来源；可编辑的首尾 SYSTEM 会按真实请求位置显示。
 6. **分析世界模型**：进入世界模型，点击重新分析。成功后，结果才会写入当前 Chat 的 chat_metadata.bioweave。
 7. **按模块维护**：选择一个物种和生物类型，按需编辑生殖能力、生殖规则、生命周期、特殊规则、医疗与照护、例外或未知项；每个模块独立保存或取消。
 
@@ -274,17 +274,19 @@ Floor Version → BiologicalEvent → State Reducer → Current State
 
 ### 请求流程
 
-World Model 分析不是把所有宿主上下文直接拼给模型。ai/input-builder.js 先依据当前 Chat 设置收集和清洗输入，ai/prompts.js 再生成四条普通 Chat Completion 消息：
+World Model 分析不是把所有宿主上下文直接拼给模型。ai/input-builder.js 先依据当前 Chat 设置收集和清洗输入，ai/prompts.js 再生成可选首尾 SYSTEM 包围的四条普通 Chat Completion 消息：
 
 ```mermaid
 flowchart TD
     Sources["当前 Chat / 角色卡 / Worldbook / 最近剧情"]
     Memory["可选公开记忆适配器"]
     Input["AnalysisInput<br/>来源分组 / 稳定选择 / token estimate"]
+    Top["可选 system_top<br/>messages[0]"]
     M1["system 1<br/>固定世界规则 + 可编辑任务"]
     M2["system 2<br/>角色卡、世界书、外部记忆"]
     M3["assistant<br/>最近剧情，或无最近剧情提示"]
     M4["user<br/>要求输出结构化 World Model"]
+    Bottom["可选 system_bottom<br/>最后一项"]
     Client["ChatCompletionService<br/>当前 API 或独立 Profile"]
     Parse["响应解析<br/>对象 / JSON 文本 / 容错代码围栏"]
     Guard["schema + normalize<br/>证据边界 + 一致性校验"]
@@ -293,14 +295,17 @@ flowchart TD
 
     Sources --> Input
     Memory --> Input
-    Input --> M1
+    Input --> Top
+    Top --> M1
     Input --> M2
     Input --> M3
     Input --> M4
+    M4 --> Bottom
     M1 --> Client
     M2 --> Client
     M3 --> Client
     M4 --> Client
+    Bottom --> Client
     Client --> Parse
     Parse --> Guard
     Guard -->|通过| Save
@@ -310,7 +315,7 @@ flowchart TD
 
 ### 分析约束
 
-- 固定核心提示词负责保持输出边界；用户可编辑任务、输入前缀、输入后缀和显示标签，但不能删除代码层的 schema 与证据规则。
+- 固定核心提示词负责保持输出边界；用户可编辑顶部/尾部 SYSTEM、任务、输入前缀、输入后缀和显示标签，但不能删除代码层的 schema 与证据规则。
 - AI 只提取资料中有证据的事实。非人类物种的能力字段不会因为名称或人类常识自动补全。
 - 解析器接受对象、普通 JSON 文本及部分容错文本，但写入前必须通过结构校验。
 - 当前 API 优先复用 SillyTavern 的 ChatCompletionService；独立 Profile 走宿主 custom backend，并沿用全局超时和有限重试策略。
@@ -405,7 +410,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 | api_request_settings.timeout | 请求超时（毫秒） | 默认 180000，范围 250–600000 |
 | api_request_settings.retry_count | 可重试次数 | 默认 1，范围 0–3 |
 | recent_story_global.regex_rules | 全局最近剧情规则 | 最多 50 条，单条 pattern 最多 2000 字符 |
-| world_analysis_prompt | World Model 的可编辑任务/输入文本 | 代码层核心约束仍然保留 |
+| world_analysis_prompt | World Model 的可编辑首尾 SYSTEM、任务/输入文本 | 代码层核心约束仍然保留 |
 
 任务 assignments 可以指向 default、SillyTavern 当前 API 或已保存的 Profile ID。没有有效 Profile 时不会静默使用不匹配的配置。
 
@@ -491,7 +496,7 @@ BioWeave 不提供独立用户认证、权限系统或服务端隔离能力；�
 - Chat/Floor 作用域、楼层版本 hash、stale async guard 和失败保留策略。
 - API Profile、任务分配、超时/重试、模型列表和宿主 Secret Store 边界。
 - 角色卡/Worldbook 稳定来源选择、延迟加载、最近剧情规则和输入预览。
-- World Model v1 schema、四段普通消息、JSON 解析、证据 guard、模块级编辑和 Chat 保存。
+- World Model v1 schema、首尾可选 SYSTEM 加四段普通消息、JSON 解析、证据 guard、模块级编辑和 Chat 保存。
 - Tavern / Light / Dark 主题与 Desktop / Tablet / Mobile 基础布局。
 
 ### 后续建设

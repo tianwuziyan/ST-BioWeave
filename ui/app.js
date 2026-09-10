@@ -1874,9 +1874,11 @@ export function createApp(runtime, options = {}) {
   function readWorldAnalysisPromptForm() {
     const field = key => root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`);
     return normalizeWorldAnalysisPrompt({
+      system_top: field('system_top')?.value ?? settingsState.worldAnalysisPrompt?.system_top,
       task: field('task')?.value ?? settingsState.worldAnalysisPrompt?.task,
       input_prefix: field('input_prefix')?.value ?? settingsState.worldAnalysisPrompt?.input_prefix,
       input_suffix: field('input_suffix')?.value ?? settingsState.worldAnalysisPrompt?.input_suffix,
+      system_bottom: field('system_bottom')?.value ?? settingsState.worldAnalysisPrompt?.system_bottom,
       // 保留旧设置中的内部标签兼容性，但不再向用户展示或提供编辑入口。
       labels: settingsState.worldAnalysisPrompt?.labels,
     });

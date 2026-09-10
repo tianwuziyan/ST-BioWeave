@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"设置页继续使用 plain DOM 页面模块、现有 textarea helper 与 app 状态所有权，不引入新框架或服务层。"}
+{"file":".trellis/tasks/09-10-world-analysis-system-boundaries/research/code-audit.md","reason":"提供配置、UI、builder、真实请求与预览的端到端代码证据和最小改动边界。"}

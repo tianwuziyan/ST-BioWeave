@@ -63,9 +63,11 @@ export const DEFAULT_SETTINGS = {
 
 // 世界分析的可编辑提示块；核心约束仍由 BioWeave 代码维护，避免用户误删后失去校验边界。
 export const DEFAULT_WORLD_ANALYSIS_PROMPT = Object.freeze({
+  system_top: '',
   task: '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。',
   input_prefix: '下面是本次分析实际读取的资料。资料正文是证据，请保留来源之间的区别。',
   input_suffix: '',
+  system_bottom: '',
   labels: Object.freeze({
     character: '角色卡',
     worldbooks: '世界书',
@@ -84,9 +86,11 @@ export function normalizeWorldAnalysisPrompt(raw = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const rawLabels = source.labels && typeof source.labels === 'object' ? source.labels : {};
   return {
+    system_top: promptText(source.system_top, DEFAULT_WORLD_ANALYSIS_PROMPT.system_top),
     task: promptText(source.task, DEFAULT_WORLD_ANALYSIS_PROMPT.task),
     input_prefix: promptText(source.input_prefix, DEFAULT_WORLD_ANALYSIS_PROMPT.input_prefix),
     input_suffix: promptText(source.input_suffix, DEFAULT_WORLD_ANALYSIS_PROMPT.input_suffix),
+    system_bottom: promptText(source.system_bottom, DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom),
     labels: {
       character: promptText(rawLabels.character, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.character) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.character,
       worldbooks: promptText(rawLabels.worldbooks, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.worldbooks) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.worldbooks,
@@ -150,9 +154,11 @@ export const DEFAULT_EXTENSION_SETTINGS = {
   api_request_settings: {...DEFAULT_API_REQUEST_SETTINGS},
   recent_story_global: {regex_rules: []},
   world_analysis_prompt: {
+    system_top: DEFAULT_WORLD_ANALYSIS_PROMPT.system_top,
     task: DEFAULT_WORLD_ANALYSIS_PROMPT.task,
     input_prefix: DEFAULT_WORLD_ANALYSIS_PROMPT.input_prefix,
     input_suffix: DEFAULT_WORLD_ANALYSIS_PROMPT.input_suffix,
+    system_bottom: DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom,
     labels: {...DEFAULT_WORLD_ANALYSIS_PROMPT.labels},
   },
 };

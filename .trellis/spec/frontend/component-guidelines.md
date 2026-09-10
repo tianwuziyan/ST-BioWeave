@@ -114,6 +114,77 @@ For registration ownership, keep one unregister function per document:
 - Use empty states for unfinished business layers. Do not create mock storage
   or write demo DTOs into Chat metadata or Floor data.
 
+## Scenario: World Analysis prompt boundary SYSTEM messages
+
+### 1. Scope / Trigger
+
+This contract applies when adding, reading, saving, rendering, previewing, or
+sending fields under the global `world_analysis_prompt` configuration.
+
+### 2. Signatures
+
+    normalizeWorldAnalysisPrompt(raw)
+      -> {system_top, task, input_prefix, input_suffix, system_bottom, labels}
+
+    buildWorldModelMessages(analysisInput, promptSettings)
+      -> Array<{role: 'system' | 'assistant' | 'user', content: string}>
+
+    saveWorldAnalysisPrompt(patch)
+      -> normalized complete world_analysis_prompt
+
+### 3. Contracts
+
+- `system_top` and `system_bottom` default to `''`, use the shared prompt-text
+  normalization, and are limited to 20,000 characters.
+- Missing or `undefined` fields in a partial save preserve the corresponding
+  normalized stored values; an explicit empty string clears that field.
+- After placeholder expansion, a non-empty `system_top` is an independent
+  absolute first message and a non-empty `system_bottom` is an independent
+  absolute last message. Never concatenate either into another message.
+- The middle sequence remains core SYSTEM, AnalysisInput SYSTEM, recent-story
+  ASSISTANT, and final-instruction USER.
+- The settings preview and the analyzer request must both consume
+  `buildWorldModelMessages()`; rendering code must not recreate message order.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Old config omits both boundary fields | Normalize both to `''`; do not migrate or overwrite existing prompt fields |
+| Boundary value is not a string | Normalize it to the empty default |
+| Boundary value exceeds 20,000 characters | Trim and truncate with the shared prompt-text rule |
+| Expanded boundary text is empty | Do not create an empty SYSTEM message |
+| Partial save omits task/input fields or labels | Preserve their existing normalized values |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `TOP → core → AnalysisInput → recent story → final USER → BOTTOM`,
+  where TOP and BOTTOM are separate SYSTEM messages.
+- Base: empty boundaries keep the original four-message request unchanged.
+- Bad: append `system_top` to the core prompt, place `system_bottom` before the
+  final USER, or implement a separate preview-only message builder.
+
+### 6. Tests Required
+
+- Assert exact first and last message objects for literal `TOP` and `BOTTOM`.
+- Assert the four middle messages equal the empty-boundary baseline.
+- Assert empty/whitespace boundaries produce no empty SYSTEM message.
+- Assert both fields normalize, truncate, round-trip through storage, and
+  expand the existing user/character placeholders.
+- Assert the settings page exposes both textareas and previews the same order.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+    coreSystem.content += settings.system_top
+    messages.splice(messages.length - 1, 0, {role: 'system', content: settings.system_bottom})
+
+#### Correct
+
+    if (systemTop) messages.unshift({role: 'system', content: systemTop})
+    if (systemBottom) messages.push({role: 'system', content: systemBottom})
+
 ## Worldbook source selector conventions
 
 The settings page renders the character-card and Worldbook selectors as two

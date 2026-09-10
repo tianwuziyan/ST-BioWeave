@@ -9,7 +9,13 @@ import {
   parseWorldModelResponse,
   summarizeAnalysisInput,
 } from '../ai/analyzer.js';
-import {SILLYTAVERN_CURRENT_API, emptyChat} from '../storage/schema.js';
+import {
+  DEFAULT_EXTENSION_SETTINGS,
+  DEFAULT_WORLD_ANALYSIS_PROMPT,
+  SILLYTAVERN_CURRENT_API,
+  emptyChat,
+  normalizeWorldAnalysisPrompt,
+} from '../storage/schema.js';
 import {settingsPage} from '../ui/settings.js';
 import {
   applyWorldModelSection,
@@ -2378,6 +2384,63 @@ test('World Analysis prompt blocks can be edited without sending format tags', (
   assert.match(buildWorldModelPrompt({character: {description: '普通资料'}}), /AnalysisInput/);
 });
 
+test('World Analysis supports independent top and bottom SYSTEM messages', () => {
+  const analysisInput = {
+    character: {description: '角色资料'},
+    worldbooks: [],
+    recent_story: {items: [{content: '最近剧情'}]},
+    meta: {user_name: '用户甲', character_name: '角色甲'},
+  };
+  const plainMessages = buildWorldModelMessages(analysisInput, {
+    system_top: 'TOP',
+    system_bottom: 'BOTTOM',
+  });
+  const messages = buildWorldModelMessages(analysisInput, {
+    system_top: 'TOP {{user}} / <CHAR>',
+    system_bottom: 'BOTTOM <USER> / {{char}}',
+  });
+  const baseline = buildWorldModelMessages(analysisInput);
+
+  assert.deepEqual(plainMessages[0], {role: 'system', content: 'TOP'});
+  assert.deepEqual(plainMessages.at(-1), {role: 'system', content: 'BOTTOM'});
+  assert.deepEqual(messages[0], {role: 'system', content: 'TOP 用户甲 / 角色甲'});
+  assert.deepEqual(messages.at(-1), {role: 'system', content: 'BOTTOM 用户甲 / 角色甲'});
+  assert.deepEqual(messages.slice(1, -1), baseline);
+  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'system', 'assistant', 'user', 'system']);
+});
+
+test('World Analysis empty boundary SYSTEM values preserve the four-message behavior', () => {
+  const analysisInput = {
+    character: {description: '角色资料'},
+    recent_story: {items: [{content: '最近剧情'}]},
+    meta: {user_name: '用户甲', character_name: '角色甲'},
+  };
+  const baseline = buildWorldModelMessages(analysisInput);
+  const messages = buildWorldModelMessages(analysisInput, {system_top: '', system_bottom: ' \u0000 '});
+
+  assert.deepEqual(messages, baseline);
+  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
+  assert.equal(messages.some(message => message.content === ''), false);
+});
+
+test('World Analysis prompt normalization includes bounded boundary fields and defaults', () => {
+  const normalized = normalizeWorldAnalysisPrompt({
+    system_top: `  ${'T'.repeat(20005)}  `,
+    system_bottom: `  ${'B'.repeat(20005)}  `,
+    task: '保留任务',
+  });
+
+  assert.equal(DEFAULT_WORLD_ANALYSIS_PROMPT.system_top, '');
+  assert.equal(DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom, '');
+  assert.equal(DEFAULT_EXTENSION_SETTINGS.world_analysis_prompt.system_top, '');
+  assert.equal(DEFAULT_EXTENSION_SETTINGS.world_analysis_prompt.system_bottom, '');
+  assert.equal(normalized.system_top.length, 20000);
+  assert.equal(normalized.system_bottom.length, 20000);
+  assert.equal(normalized.task, '保留任务');
+  assert.equal(normalizeWorldAnalysisPrompt({system_top: 42, system_bottom: null}).system_top, '');
+  assert.equal(normalizeWorldAnalysisPrompt({system_top: 42, system_bottom: null}).system_bottom, '');
+});
+
 test('World Model prompt distinguishes unknown non-human rules from the identified human baseline', () => {
   const messages = buildWorldModelMessages({
     character: {description: '角色性别为女性，但资料没有说明其物种；个人例外是妊娠时间不同。'},
@@ -2574,6 +2637,36 @@ test('settings debug preview groups the actual World Model messages by role', ()
   assert.match(html, /<summary><strong>ASSISTANT<\/strong>/);
   assert.match(html, /<summary><strong>USER<\/strong>/);
   assert.equal(html.includes('bioweave-analysis-preview-groups'), false);
+});
+
+test('settings debug preview keeps boundary SYSTEM messages aligned with the request', () => {
+  const html = settingsPage({
+    worldAnalysisPrompt: {system_top: 'TOP {{user}}', system_bottom: 'BOTTOM {{char}}'},
+    analysisPreview: {
+      input: {
+        character: {description: '角色预览'},
+        worldbooks: [],
+        recent_story: {items: [{floor: 7, role: 'assistant', content: '楼层预览'}]},
+        external_memory: [],
+        meta: {user_name: '用户丙', character_name: '角色丙'},
+      },
+    },
+  });
+  const previewStart = html.indexOf('<section class="bioweave-world-model-message-preview"');
+  const previewEnd = html.indexOf('<details class="bioweave-settings-disclosure bioweave-world-analysis-prompt-disclosure"');
+  const preview = html.slice(previewStart, previewEnd);
+  const topIndex = preview.indexOf('<pre>TOP 用户丙</pre>');
+  const coreIndex = preview.indexOf('<pre>任务：从本次 AnalysisInput');
+  const userIndex = preview.indexOf('<pre>请根据以上资料完成 World Model 分析');
+  const bottomIndex = preview.indexOf('<pre>BOTTOM 角色丙</pre>');
+
+  assert.equal((preview.match(/<details class="bioweave-world-model-message"/g) ?? []).length, 6);
+  assert.ok(topIndex >= 0);
+  assert.ok(coreIndex >= 0);
+  assert.ok(userIndex >= 0);
+  assert.ok(bottomIndex >= 0);
+  assert.ok(topIndex < coreIndex);
+  assert.ok(userIndex < bottomIndex);
 });
 
 test('settings debug preview shows temporary Raw and Canonical trace in Chinese', () => {

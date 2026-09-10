@@ -17,7 +17,7 @@
 
 全局正则适用于所有角色卡，并在分析输入收集时先于当前 Chat 的角色卡正则执行。
 
-同一层的 `world_analysis_prompt` 只保存 World Analysis 的用户可编辑补充提示和输入分段标签，不保存 AnalysisInput 正文或 API Key。固定核心约束和结果校验不由该设置覆盖。
+同一层的 `world_analysis_prompt` 保存 World Analysis 的用户可编辑 `system_top`、`task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定核心约束和结果校验不由该设置覆盖。
 
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 

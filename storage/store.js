@@ -398,7 +398,15 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
 
   async function saveWorldAnalysisPrompt(raw = {}) {
     const settings = read();
-    const prompt = normalizeWorldAnalysisPrompt(raw);
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const merged = {...settings.world_analysis_prompt};
+    for (const [key, value] of Object.entries(source)) {
+      if (value !== undefined) merged[key] = value;
+    }
+    if (source.labels && typeof source.labels === 'object' && !Array.isArray(source.labels)) {
+      merged.labels = {...settings.world_analysis_prompt.labels, ...source.labels};
+    }
+    const prompt = normalizeWorldAnalysisPrompt(merged);
     await write({...settings, world_analysis_prompt: prompt});
     return cloneValue(prompt);
   }

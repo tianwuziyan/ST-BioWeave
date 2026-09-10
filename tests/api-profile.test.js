@@ -874,15 +874,21 @@ test('independent API configuration is a Chinese disclosure nested inside API so
 test('world analysis prompt settings expose editable blocks without segment-name controls or secrets', () => {
   const html = settingsPage({
     worldAnalysisPrompt: {
+      system_top: '顶部内容',
       task: '只检查能力证据',
       input_prefix: '这是可编辑前言',
       input_suffix: '这是可编辑后记',
+      system_bottom: '尾部内容',
       labels: {character: '角色资料'},
     },
   });
   assert.match(html, /世界分析提示词/);
   assert.doesNotMatch(html, /世界分析提示词与标签/);
+  assert.match(html, /data-bioweave-world-analysis-prompt-field="system_top"[^>]*>顶部内容/);
+  assert.match(html, /顶部 SYSTEM<small>发送给 API 时作为 messages\[0\]。<\/small>/);
   assert.match(html, /data-bioweave-world-analysis-prompt-field="task"[^>]*>只检查能力证据/);
+  assert.match(html, /data-bioweave-world-analysis-prompt-field="system_bottom"[^>]*>尾部内容/);
+  assert.match(html, /尾部 SYSTEM<small>发送给 API 时作为 messages 最后一项。<\/small>/);
   assert.equal(html.includes('输入分段名称'), false);
   assert.equal(html.includes('data-bioweave-world-analysis-label'), false);
   assert.match(html, /data-bioweave-action="save-world-analysis-prompt"/);
@@ -907,17 +913,70 @@ test('world analysis prompt settings persist as global editable text only', asyn
     },
   });
   const saved = await profileStore.saveWorldAnalysisPrompt({
+    system_top: '顶部补充',
     task: '只分析输入证据',
     input_prefix: '自定义前言',
     input_suffix: '',
+    system_bottom: '尾部补充',
     labels: {character: '角色资料'},
     api_key: 'NEVER-PERSIST',
   });
   assert.equal(saved.task, '只分析输入证据');
   assert.equal(saved.input_prefix, '自定义前言');
+  assert.equal(saved.system_top, '顶部补充');
+  assert.equal(saved.system_bottom, '尾部补充');
   assert.equal(saved.labels.character, '角色资料');
   assert.equal(JSON.stringify(globalSettings).includes('NEVER-PERSIST'), false);
   assert.equal(profileStore.getWorldAnalysisPrompt().task, '只分析输入证据');
+});
+
+test('partial World Analysis prompt saves preserve existing editable blocks', async () => {
+  let globalSettings = {
+    world_analysis_prompt: {
+      task: '旧任务',
+      input_prefix: '旧前言',
+      input_suffix: '旧后记',
+      labels: {character: '旧角色标签'},
+    },
+  };
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    async saveGlobalSettings(value) {
+      globalSettings = value;
+    },
+  });
+
+  const legacyPrompt = profileStore.getWorldAnalysisPrompt();
+  assert.equal(legacyPrompt.system_top, '');
+  assert.equal(legacyPrompt.system_bottom, '');
+  assert.equal(globalSettings.world_analysis_prompt.system_top, undefined);
+  assert.equal(globalSettings.world_analysis_prompt.system_bottom, undefined);
+
+  const saved = await profileStore.saveWorldAnalysisPrompt({
+    system_top: 'TOP',
+    system_bottom: 'BOTTOM',
+    task: undefined,
+    input_prefix: undefined,
+    input_suffix: undefined,
+    labels: undefined,
+  });
+
+  assert.deepEqual(saved, {
+    system_top: 'TOP',
+    task: '旧任务',
+    input_prefix: '旧前言',
+    input_suffix: '旧后记',
+    system_bottom: 'BOTTOM',
+    labels: {
+      character: '旧角色标签',
+      worldbooks: '世界书',
+      recent_story: '最近剧情',
+      external_memory: '外部记忆',
+    },
+  });
+  assert.equal(profileStore.getWorldAnalysisPrompt().task, '旧任务');
+  assert.equal(profileStore.getWorldAnalysisPrompt().input_prefix, '旧前言');
+  assert.equal(profileStore.getWorldAnalysisPrompt().input_suffix, '旧后记');
 });
 
 test('model picker keeps its list temporary and closes after selection', () => {
