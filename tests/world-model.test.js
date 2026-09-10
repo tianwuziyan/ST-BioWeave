@@ -16,7 +16,7 @@ import {
   emptyChat,
   normalizeWorldAnalysisPrompt,
 } from '../storage/schema.js';
-import {settingsPage} from '../ui/settings.js';
+import {renderAnalysisDebugPopupContent, settingsPage} from '../ui/settings.js';
 import {
   applyWorldModelSection,
   resolveWorldModelSelection,
@@ -2611,36 +2611,39 @@ test('World Model prompt requires Chinese string values and human type names', (
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|Homo sapiens|极少女剑灵/);
 });
 
-test('settings debug preview groups the actual World Model messages by role', () => {
-  const html = settingsPage({
+test('settings keeps debug behind the title action and leaves no standalone preview disclosure', () => {
+  const html = settingsPage({});
+  assert.match(html, /data-bioweave-action="open-analysis-debug"/);
+  assert.match(html, /data-bioweave-settings-disclosure="world_analysis_prompt"[\s\S]*?<summary class="bioweave-settings-summary">[\s\S]*?<strong>世界分析提示词<\/strong>[\s\S]*?data-bioweave-action="open-analysis-debug"/);
+  assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
+});
+
+test('debug Popup content is standalone, uses the real message builder, and has no modal shell', () => {
+  const html = renderAnalysisDebugPopupContent({
+    theme: 'dark',
     analysisPreview: {
       input: {
-        persona: {name: '用户丙', description: '用户丙的人物设定'},
         character: {description: '角色预览'},
-        worldbooks: [{source_id: 'book-1', name: '书名', entries: [{entry_id: 'entry-1', content: '世界书预览'}]}],
-        recent_story: {items: [{floor: 7, role: 'assistant', content: '楼层预览'}]},
+        worldbooks: [],
+        recent_story: {items: []},
         external_memory: [],
         meta: {user_name: '用户丙', character_name: '角色丙'},
       },
     },
+    documentRef: null,
   });
-  assert.match(html, /SYSTEM/);
-  assert.match(html, /assistant/);
-  assert.match(html, /USER/);
-  assert.doesNotMatch(html, /用户丙的人物设定/);
-  assert.match(html, /【角色丙 的资料】/);
-  assert.match(html, /楼层预览/);
-  assert.equal((html.match(/<details class="bioweave-world-model-message"/g) ?? []).length, 4);
-  assert.equal((html.match(/data-bioweave-world-model-message-role=/g) ?? []).length, 4);
-  assert.match(html, /<details class="bioweave-world-model-message"[^>]*data-bioweave-world-model-message-role="system"/);
-  assert.match(html, /<summary><strong>SYSTEM<\/strong>/);
-  assert.match(html, /<summary><strong>ASSISTANT<\/strong>/);
-  assert.match(html, /<summary><strong>USER<\/strong>/);
-  assert.equal(html.includes('bioweave-analysis-preview-groups'), false);
+  assert.match(html, /class="bioweave-analysis-debug-popup-content"/);
+  assert.match(html, /data-theme="dark"/);
+  assert.match(html, /data-bioweave-analysis-preview/);
+  assert.match(html, /data-bioweave-world-model-message-preview/);
+  assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
+  assert.doesNotMatch(html, /bioweave-analysis-debug-overlay|bioweave-analysis-debug-dialog|bioweave-analysis-debug-close/);
+  assert.match(STYLE_SOURCE, /\.bioweave-analysis-debug-popup-content pre\s*\{[\s\S]*?overflow-x: auto;/);
+  assert.doesNotMatch(STYLE_SOURCE, /bioweave-analysis-debug-overlay|bioweave-analysis-debug-dialog|bioweave-analysis-debug-body/);
 });
 
 test('settings debug preview keeps boundary SYSTEM messages aligned with the request', () => {
-  const html = settingsPage({
+  const html = renderAnalysisDebugPopupContent({
     worldAnalysisPrompt: {system_top: 'TOP {{user}}', system_bottom: 'BOTTOM {{char}}'},
     analysisPreview: {
       input: {
@@ -2651,10 +2654,9 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
         meta: {user_name: '用户丙', character_name: '角色丙'},
       },
     },
+    documentRef: null,
   });
-  const previewStart = html.indexOf('<section class="bioweave-world-model-message-preview"');
-  const previewEnd = html.indexOf('<details class="bioweave-settings-disclosure bioweave-world-analysis-prompt-disclosure"');
-  const preview = html.slice(previewStart, previewEnd);
+  const preview = html;
   const topIndex = preview.indexOf('<pre>TOP 用户丙</pre>');
   const coreIndex = preview.indexOf('<pre>任务：从本次 AnalysisInput');
   const userIndex = preview.indexOf('<pre>请根据以上资料完成 World Model 分析');
@@ -2670,7 +2672,7 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
 });
 
 test('settings debug preview shows temporary Raw and Canonical trace in Chinese', () => {
-  const html = settingsPage({
+  const html = renderAnalysisDebugPopupContent({
     analysisPreview: {
       worldModelTrace: {
         rawResponse: '{"species":[{"name":"弧晶体","biological_types":[{"name":"甲相"}]}]}',
@@ -2680,6 +2682,7 @@ test('settings debug preview shows temporary Raw and Canonical trace in Chinese'
         },
       },
     },
+    documentRef: null,
   });
 
   assert.match(html, /AI 原始返回/);

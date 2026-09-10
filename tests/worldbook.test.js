@@ -30,7 +30,7 @@ import {
 import {createChatBoundary} from '../runtime/chat.js';
 import {createApiProfileStore, createStore} from '../storage/store.js';
 import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
-import {settingsPage} from '../ui/settings.js';
+import {renderAnalysisDebugPopupContent, settingsPage} from '../ui/settings.js';
 import {applyRecentStoryRegex, buildAnalysisInput, mergeRecentStorySettings} from '../ai/input-builder.js';
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
@@ -903,19 +903,47 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.equal(html.includes('Worldbook'), false);
 });
 
+test('settings source operations do not render a page notice, while preview errors stay visible', () => {
+  const html = settingsPage({
+    notice: '设置页顶部瞬时提示。',
+    worldbookSources: {
+      notice: '世界书来源保存成功。',
+      sources: [{
+        source_id: 'st-worldbook:toast-check',
+        source_type: 'worldbook',
+        label: 'Toast 检查书',
+        scopes: ['global_worldbook'],
+        entries: [{entry_id: 'entry-1', label: '条目一', content: '内容一'}],
+      }],
+      selected: [],
+    },
+  });
+  const previewHtml = renderAnalysisDebugPopupContent({
+    analysisPreview: {error: '分析输入预览读取失败。'},
+    documentRef: null,
+  });
+
+  assert.match(html, /data-bioweave-analysis-worldbook-toggle="st-worldbook:toast-check"/);
+  assert.doesNotMatch(html, /设置页顶部瞬时提示。/);
+  assert.doesNotMatch(html, /世界书来源保存成功。/);
+  assert.match(previewHtml, /class="bioweave-settings-notice" role="status">分析输入预览读取失败。/);
+});
+
 test('settings categories reuse the recent story disclosure shell and right-side arrows', () => {
   const html = settingsPage({
     worldbookSources: {
       openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'world_analysis_prompt', 'api', 'assignments'],
     },
   });
-  for (const key of ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'world_analysis_prompt', 'api', 'assignments']) {
+  for (const key of ['worldbook', 'recent_story', 'external_memory', 'world_analysis_prompt', 'api', 'assignments']) {
     assert.match(html, new RegExp('data-bioweave-settings-disclosure="' + key + '"[^>]* open'));
   }
+  assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
+  assert.match(html, /data-bioweave-action="open-analysis-debug"/);
   for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '世界分析提示词', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
-  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 6);
+  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 5);
   assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 1);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-summary-arrow/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-disclosure > \.bioweave-card > header/);
@@ -1635,8 +1663,8 @@ test('analysis input preview external statuses distinguish disabled, unavailable
   assert.equal(byKey.get('database_memory').status, '未检测到');
 });
 
-test('settings exposes a temporary analysis input preview without storing raw content', () => {
-  const html = settingsPage({
+test('debug Popup content exposes a temporary analysis input preview without storing raw content', () => {
+  const html = renderAnalysisDebugPopupContent({
     analysisPreview: {
       mode: 'structure',
       input: {
@@ -1649,6 +1677,7 @@ test('settings exposes a temporary analysis input preview without storing raw co
       },
     },
     worldbookSources: {openSettingsSections: []},
+    documentRef: null,
   });
   assert.match(html, /高级 \/ 调试/);
   assert.match(html, /分析输入预览/);

@@ -65,7 +65,7 @@
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 2000001;
+  z-index: 5000;
   display: none;
   width: 100vw;
   width: 100dvw;
@@ -1212,6 +1212,22 @@
 
 .bioweave-settings-disclosure[open] .bioweave-settings-summary-arrow i:last-child {
   display: inline-block;
+}
+
+.bioweave-settings-summary .bioweave-analysis-debug-trigger {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 6px;
+  background: var(--bioweave-surface);
+  color: var(--bioweave-accent);
+}
+
+.bioweave-settings-summary .bioweave-analysis-debug-trigger:hover,
+.bioweave-settings-summary .bioweave-analysis-debug-trigger:focus-visible {
+  border-color: var(--bioweave-accent);
+  background: var(--bioweave-accent-soft);
 }
 
 .bioweave-settings-disclosure > .bioweave-card > header,
@@ -2409,6 +2425,101 @@
 .bioweave-analysis-preview-message-hint {
   color: var(--bioweave-text-secondary);
   font-size: 12px;
+}
+
+.bioweave-analysis-debug-popup-content {
+  --bioweave-bg: var(--SmartThemeBlurTintColor, #e9f0f6);
+  --bioweave-surface: color-mix(in srgb, var(--bioweave-bg) 90%, var(--SmartThemeBodyColor, #fff) 10%);
+  --bioweave-surface-raised: color-mix(in srgb, var(--bioweave-surface) 84%, var(--SmartThemeBodyColor, #fff) 16%);
+  --bioweave-text: var(--SmartThemeBodyColor, #172a3b);
+  --bioweave-text-secondary: color-mix(in srgb, var(--bioweave-text) 78%, var(--bioweave-bg) 22%);
+  --bioweave-text-muted: color-mix(in srgb, var(--bioweave-text) 66%, var(--bioweave-bg) 34%);
+  --bioweave-border: color-mix(in srgb, var(--bioweave-text) 24%, var(--bioweave-bg) 76%);
+  --bioweave-accent: var(--SmartThemeQuoteColor, #2d76bd);
+  --bioweave-accent-soft: color-mix(in srgb, var(--bioweave-accent) 12%, var(--bioweave-bg) 88%);
+  --bioweave-danger: #a94450;
+  --bioweave-success: #1c7759;
+  --bioweave-warn: #9b6a17;
+  --bioweave-input-bg: var(--SmartThemeBlurTintColor, #fff);
+  --bioweave-on-accent: #fff;
+  --bioweave-success-soft: #e3f2ec;
+  --bioweave-danger-soft: #f8e8eb;
+  --bioweave-warn-soft: #fbf1dc;
+  min-width: 0;
+  color: var(--bioweave-text);
+}
+
+.bioweave-analysis-debug-popup-content[data-theme="light"] {
+  color-scheme: light;
+  --bioweave-bg: #f3f5f7;
+  --bioweave-surface: #fff;
+  --bioweave-surface-raised: #f7f8fa;
+  --bioweave-text: #17232d;
+  --bioweave-text-secondary: #3c4c58;
+  --bioweave-text-muted: #5a6974;
+  --bioweave-border: #b8c2ca;
+  --bioweave-accent: #2b6f9f;
+  --bioweave-accent-soft: #e5eff6;
+  --bioweave-danger: #a6424a;
+  --bioweave-success: #247153;
+  --bioweave-warn: #876116;
+  --bioweave-input-bg: #fff;
+  --bioweave-on-accent: #fff;
+  --bioweave-success-soft: #e8f2ed;
+  --bioweave-danger-soft: #f9e9eb;
+  --bioweave-warn-soft: #f8f1df;
+}
+
+.bioweave-analysis-debug-popup-content[data-theme="dark"] {
+  color-scheme: dark;
+  --bioweave-bg: #14181c;
+  --bioweave-surface: #1e2429;
+  --bioweave-surface-raised: #272e34;
+  --bioweave-text: #eef2f4;
+  --bioweave-text-secondary: #c3cbd1;
+  --bioweave-text-muted: #a8b2b9;
+  --bioweave-border: #56616a;
+  --bioweave-accent: #7eb5d8;
+  --bioweave-accent-soft: #2a3d4b;
+  --bioweave-danger: #df8c94;
+  --bioweave-success: #78c2a2;
+  --bioweave-warn: #e0bb75;
+  --bioweave-input-bg: #1a2126;
+  --bioweave-on-accent: #142029;
+  --bioweave-success-soft: #234238;
+  --bioweave-danger-soft: #452d32;
+  --bioweave-warn-soft: #453923;
+}
+
+.bioweave-analysis-debug-popup-header {
+  margin-bottom: 12px;
+}
+
+.bioweave-analysis-debug-popup-header h3,
+.bioweave-analysis-debug-popup-header p {
+  margin: 0;
+}
+
+.bioweave-analysis-debug-popup-header p {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.bioweave-analysis-debug-popup-content .bioweave-analysis-preview {
+  min-width: 0;
+}
+
+.bioweave-analysis-debug-popup-content .bioweave-analysis-preview-content {
+  max-height: none;
+}
+
+.bioweave-analysis-debug-popup-content pre {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .bioweave-settings-advanced {

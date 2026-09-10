@@ -22,7 +22,8 @@ survives a mobile viewport or host drawer overlay.
   destroy/reload.
 - Use mountBioWeave, openBioWeave, closeBioWeave, and destroyBioWeave as
   idempotent lifecycle boundaries.
-- Keep the documentElement-level overlay at z-index 2000001, with explicit
+- Keep the documentElement-level overlay above ordinary host overlays but below
+  SillyTavern modal and Toast layers, with explicit
   top/left and 100vw/100vh plus 100dvw/100dvh sizing, min-width: 0, internal
   scrolling, and safe-area handling. Do not rely on inset: 0 for the mobile host.
 - Use CSS tokens for Tavern/day/night themes. Theme changes must only update

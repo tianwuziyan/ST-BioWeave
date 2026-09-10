@@ -11,7 +11,7 @@ import {
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
 } from './world.js';
-import {normalizeModelList, settingsPage} from './settings.js';
+import {normalizeModelList, renderAnalysisDebugPopupContent, settingsPage} from './settings.js';
 import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
 import * as defaultApiClient from '../ai/client.js';
@@ -70,6 +70,32 @@ const RENDER_SCROLL_SELECTORS = Object.freeze([
   '.bioweave-main',
   '[data-bioweave-analysis-source-list]',
 ]);
+
+export function notify(message, type = 'info', documentRef = globalThis.document) {
+  const text = String(message ?? '').trim();
+  if (!text) return;
+
+  const method = typeof type === 'string' && type.trim() ? type.trim() : 'info';
+  const toastrRefs = [...new Set([documentRef?.defaultView?.toastr, globalThis.toastr])];
+  for (const toastr of toastrRefs) {
+    try {
+      const handler = toastr?.[method];
+      if (typeof handler !== 'function') continue;
+      handler.call(toastr, text);
+      return;
+    } catch {
+      // Toast 宿主异常时继续使用安全的 console 回退。
+    }
+  }
+
+  const consoleMethod = method === 'error' ? 'error' : method === 'warning' ? 'warn' : 'log';
+  const fallbackText = `[BioWeave] ${text}`;
+  try {
+    globalThis.console?.[consoleMethod]?.(fallbackText);
+  } catch {
+    // 控制台被宿主禁用时，通知仍不能影响设置操作。
+  }
+}
 
 // render 会重建设置页子树，按稳定选择器保存并恢复可滚动容器的位置。
 export function captureScrollPositions(root, selectors = RENDER_SCROLL_SELECTORS) {
@@ -485,10 +511,11 @@ export function createApp(runtime, options = {}) {
     try {
       updateSettingsState();
     } catch {
+      notify('无法读取全局设置，请确认 SillyTavern extensionSettings 可用。', 'error', documentRef);
       settingsState = {
         ...settingsState,
         loaded: true,
-        notice: '无法读取全局设置，请确认 SillyTavern extensionSettings 可用。',
+        notice: null,
       };
     } finally {
       settingsState.loading = false;
@@ -544,6 +571,85 @@ export function createApp(runtime, options = {}) {
   function clearAnalysisPreview() {
     analysisPreviewSequence += 1;
     analysisPreviewState = createAnalysisPreviewState();
+  }
+
+  function hostPopupContext() {
+    try {
+      return runtime.st?.getContext?.() ?? globalThis.SillyTavern?.getContext?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function isPopupContentElement(value) {
+    return Boolean(value
+      && typeof value === 'object'
+      && typeof value.addEventListener === 'function'
+      && 'innerHTML' in value);
+  }
+
+  function renderDebugPopupContent(content) {
+    const nextContent = renderAnalysisDebugPopupContent({
+      analysisPreview: analysisPreviewState,
+      worldAnalysisPrompt: settingsState.worldAnalysisPrompt,
+      worldAnalysisPromptDraft: settingsState.worldAnalysisPromptDraft,
+      openSettingsSections: analysisSourcesState.openSettingsSections,
+      theme: root?.dataset?.theme ?? 'tavern',
+      documentRef,
+    });
+    if (isPopupContentElement(content)) {
+      content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '');
+    }
+    return nextContent;
+  }
+
+  async function openAnalysisDebug() {
+    if (route !== 'settings') return false;
+    const context = hostPopupContext();
+    const Popup = context?.Popup;
+    const popupType = context?.POPUP_TYPE?.DISPLAY;
+    if (typeof Popup !== 'function' || popupType === undefined) {
+      notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef);
+      return false;
+    }
+
+    captureWorldAnalysisPromptDraft();
+    const content = renderDebugPopupContent();
+    const localContent = isPopupContentElement(content) ? content : null;
+    const handlePopupClick = async event => {
+      const target = event?.target?.closest?.('[data-bioweave-action]');
+      if (!target) return;
+      if (typeof localContent?.contains === 'function' && !localContent.contains(target)) return;
+      const action = target.dataset?.bioweaveAction;
+      if (action === 'refresh-analysis-preview') {
+        event.preventDefault?.();
+        const pending = refreshAnalysisPreview();
+        renderDebugPopupContent(localContent);
+        await pending;
+        renderDebugPopupContent(localContent);
+        return;
+      }
+      if (action === 'analysis-preview-mode') {
+        event.preventDefault?.();
+        setAnalysisPreviewMode(target.dataset.bioweavePreviewMode);
+        renderDebugPopupContent(localContent);
+      }
+    };
+
+    if (localContent) localContent.addEventListener('click', handlePopupClick);
+    try {
+      const popup = new Popup(content, popupType, '', {
+        wide: true,
+        allowVerticalScrolling: true,
+      });
+      await popup.show();
+      return true;
+    } catch {
+      notify('高级 / 调试窗口打开失败，请确认 SillyTavern Popup 可用。', 'error', documentRef);
+      return false;
+    } finally {
+      localContent?.removeEventListener?.('click', handlePopupClick);
+    }
   }
 
   // 预览需要等待同一 Chat 的来源初次加载完成，不另起一套请求或固定超时。
@@ -637,11 +743,13 @@ export function createApp(runtime, options = {}) {
       const sourceWarning = Array.isArray(sources) ? null : sources.warning;
       const keepExistingSources = sourceWarning === 'ST_WORLDBOOK_LIST_FAILED' && analysisSourcesState.sources.length > 0;
       const safeSources = keepExistingSources ? analysisSourcesState.sources : (sourceList ?? []);
-      const notice = sourceWarning === 'ST_WORLDBOOK_LIST_FAILED'
-        ? '世界书列表刷新失败，已保留之前的列表和选择。'
-        : sourceWarning === 'ST_WORLDBOOK_LIST_FALLBACK'
-          ? '世界书列表接口不可用，已使用 SillyTavern 公共名称列表。'
-          : null;
+      if (sourceWarning === 'ST_WORLDBOOK_LIST_FAILED') {
+        notify('世界书列表刷新失败，已保留之前的列表和选择。', 'error', documentRef);
+      } else if (sourceWarning === 'ST_WORLDBOOK_LIST_FALLBACK') {
+        notify('世界书列表接口不可用，已使用 SillyTavern 公共名称列表。', 'warning', documentRef);
+      } else if (forceRefresh) {
+        notify('分析来源已刷新。', 'info', documentRef);
+      }
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
         loading: false,
@@ -649,7 +757,7 @@ export function createApp(runtime, options = {}) {
         sources: safeSources,
         selected,
         chatId,
-        notice,
+        notice: null,
       });
     } catch {
       if (requestId !== analysisSourceRequestSequence) return;
@@ -664,8 +772,9 @@ export function createApp(runtime, options = {}) {
         refreshBusy: false,
         selected,
         chatId,
-        notice: '分析来源刷新失败，已保留之前的列表和选择。',
+        notice: null,
       });
+      notify('分析来源刷新失败，已保留之前的列表和选择。', 'error', documentRef);
     } finally {
       if (requestId !== analysisSourceRequestSequence) return;
       analysisSourcesState = {
@@ -710,7 +819,8 @@ export function createApp(runtime, options = {}) {
         });
         assertAnalysisChatToken(token);
         if (requestId === analysisSourceSaveSequence && analysisSourcesState.chatId === chatId) {
-          analysisSourcesState = {...analysisSourcesState, notice: '分析来源与最近剧情设置已保存到当前 Chat。'};
+          analysisSourcesState = {...analysisSourcesState, notice: null};
+          notify('分析来源与最近剧情设置已保存到当前 Chat。', 'success', documentRef);
           if (renderAfterSave && route === 'settings') render();
         }
       })
@@ -721,7 +831,8 @@ export function createApp(runtime, options = {}) {
           return;
         }
         if (requestId === analysisSourceSaveSequence && analysisSourcesState.chatId === chatId) {
-          analysisSourcesState = {...analysisSourcesState, notice: '世界书来源保存失败，当前选择仍保留。'};
+          analysisSourcesState = {...analysisSourcesState, notice: null};
+          notify('世界书来源保存失败，当前选择仍保留。', 'error', documentRef);
           if (renderAfterSave && route === 'settings') render();
         }
         void error;
@@ -764,7 +875,8 @@ export function createApp(runtime, options = {}) {
     globalRecentStoryLoaded = true;
     if (renderAfterSave) render();
     if (typeof profileStore.saveRecentStoryGlobal !== 'function') {
-      settingsState = {...settingsState, notice: '当前宿主不支持保存全局正则。'};
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持保存全局正则。', 'error', documentRef);
       if (renderAfterSave) render();
       return;
     }
@@ -779,13 +891,15 @@ export function createApp(runtime, options = {}) {
           // 保存规范化结果时不带入 Secret；空白规则仍由当前页面状态保留以便继续编辑。
           regex_rules: normalizeRecentStorySettings(globalRecentStory).regex_rules,
         };
-        settingsState = {...settingsState, notice: '全局正则已保存。'};
+        settingsState = {...settingsState, notice: null};
+        notify('全局正则已保存。', 'success', documentRef);
         void saved;
         if (renderAfterSave) render();
       })
       .catch(error => {
         if (requestId !== globalRecentStorySaveSequence) return;
-        settingsState = {...settingsState, notice: settingsOperationError(error)};
+        settingsState = {...settingsState, notice: null};
+        notify(settingsOperationError(error), 'error', documentRef);
         if (renderAfterSave) render();
       });
     return globalRecentStorySaveChain;
@@ -861,7 +975,7 @@ export function createApp(runtime, options = {}) {
     const selected = updateSourceSelection(analysisSourcesState.selected, selection, Boolean(target.checked));
     analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
     render();
-    await persistAnalysisSettings({selected});
+    await persistAnalysisSettings({selected, renderAfterSave: false});
   }
 
   async function loadWorldbookSourceForUi(sourceId, {selectAll = null, forceRefresh = false} = {}) {
@@ -913,7 +1027,7 @@ export function createApp(runtime, options = {}) {
         notice: null,
       });
       render();
-      if (selectAll !== null) await persistAnalysisSettings({selected});
+      if (selectAll !== null) await persistAnalysisSettings({selected, renderAfterSave: false});
       return loaded;
     } catch {
       if (requestId !== analysisSourceRequestSequence) return null;
@@ -926,8 +1040,9 @@ export function createApp(runtime, options = {}) {
         loading: false,
         loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? []).filter(value => value !== id),
         chatId,
-        notice: '世界书条目读取失败，请稍后重试。',
+        notice: null,
       });
+      notify('世界书条目读取失败，请稍后重试。', 'error', documentRef);
       render();
       return null;
     }
@@ -950,7 +1065,7 @@ export function createApp(runtime, options = {}) {
     );
     analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
     render();
-    await persistAnalysisSettings({selected});
+    await persistAnalysisSettings({selected, renderAfterSave: false});
   }
 
   async function toggleCharacterCardOpenings(target) {
@@ -966,7 +1081,7 @@ export function createApp(runtime, options = {}) {
     );
     analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
     render();
-    await persistAnalysisSettings({selected});
+    await persistAnalysisSettings({selected, renderAfterSave: false});
   }
 
   function syncAnalysisWorldbookToggles() {
@@ -1043,8 +1158,9 @@ export function createApp(runtime, options = {}) {
           .filter(value => !loadingWorldbookIds.includes(value)),
         sources,
         chatId,
-        notice: failed ? '部分世界书条目读取失败，已选择成功读取的内容。' : null,
+        notice: null,
       });
+      if (failed) notify('部分世界书条目读取失败，已选择成功读取的内容。', 'warning', documentRef);
       render();
       return sources;
     } catch {
@@ -1059,8 +1175,9 @@ export function createApp(runtime, options = {}) {
         loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? [])
           .filter(value => !loadingWorldbookIds.includes(value)),
         chatId,
-        notice: '世界书条目读取失败，当前选择仍保留。',
+        notice: null,
       });
+      notify('世界书条目读取失败，当前选择仍保留。', 'error', documentRef);
       render();
       return analysisSourcesState.sources;
     }
@@ -1221,12 +1338,26 @@ export function createApp(runtime, options = {}) {
     return draft;
   }
 
-  function canDiscardWorldModelSectionDraft() {
+  async function confirmWithPopup(title, message) {
+    const context = hostPopupContext();
+    const confirm = context?.Popup?.show?.confirm;
+    const affirmative = context?.POPUP_RESULT?.AFFIRMATIVE;
+    if (typeof confirm !== 'function' || affirmative === undefined) {
+      notify('当前宿主不支持确认弹窗，操作已取消。', 'error', documentRef);
+      return false;
+    }
+    try {
+      const result = await confirm.call(context.Popup.show, title, message);
+      return result === affirmative;
+    } catch {
+      notify('确认弹窗打开失败，操作已取消。', 'error', documentRef);
+      return false;
+    }
+  }
+
+  async function canDiscardWorldModelSectionDraft() {
     if (!worldModelState.editingSection || !worldModelState.sectionDirty) return true;
-    const confirmRef = documentRef?.defaultView?.confirm ?? globalThis.confirm;
-    return typeof confirmRef === 'function'
-      ? confirmRef('当前修改尚未保存，是否放弃？')
-      : true;
+    return confirmWithPopup('放弃未保存修改', '当前修改尚未保存，是否放弃？');
   }
 
   function clearWorldModelSectionDraft() {
@@ -1238,11 +1369,11 @@ export function createApp(runtime, options = {}) {
     };
   }
 
-  function beginWorldModelSectionEdit(section) {
+  async function beginWorldModelSectionEdit(section) {
     if (!worldModelState.model || !WORLD_MODEL_SECTION_KEYS.includes(section)) return false;
     if (worldModelState.editingSection === section) return true;
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!canDiscardWorldModelSectionDraft()) return false;
+    if (!await canDiscardWorldModelSectionDraft()) return false;
     const selection = currentWorldModelSelection();
     worldModelState = {
       ...worldModelState,
@@ -1264,10 +1395,10 @@ export function createApp(runtime, options = {}) {
     render();
   }
 
-  function selectWorldModelType(speciesIndex, typeIndex = null) {
+  async function selectWorldModelType(speciesIndex, typeIndex = null) {
     if (!worldModelState.model) return false;
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!canDiscardWorldModelSectionDraft()) return false;
+    if (!await canDiscardWorldModelSectionDraft()) return false;
     const selection = resolveWorldModelSelection(worldModelState.model, speciesIndex, typeIndex);
     worldModelState = {
       ...worldModelState,
@@ -1373,7 +1504,7 @@ export function createApp(runtime, options = {}) {
   async function analyzeWorldModel() {
     if (worldModelState.busy) return;
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!canDiscardWorldModelSectionDraft()) return;
+    if (!await canDiscardWorldModelSectionDraft()) return;
     if (worldModelState.editingSection) clearWorldModelSectionDraft();
     const {chatId, token} = currentAnalysisChatToken();
     worldModelTraceChatId = chatId;
@@ -1464,7 +1595,7 @@ export function createApp(runtime, options = {}) {
     const selected = selectAll ? selectAllSources(sources) : selectNoneSources();
     analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
     render();
-    await persistAnalysisSettings({selected});
+    await persistAnalysisSettings({selected, renderAfterSave: false});
   }
 
   function updateRecentStoryState(target) {
@@ -1526,8 +1657,9 @@ export function createApp(runtime, options = {}) {
   async function addRecentStoryRegexRule(scope = 'character') {
     const current = readRecentStoryRegexSettings(scope);
     if (current.regex_rules.length >= 50) {
-      if (scope === 'global') settingsState = {...settingsState, notice: '最多保存 50 条全局正则。'};
-      else analysisSourcesState = {...analysisSourcesState, notice: '最多保存 50 条最近剧情规则。'};
+      if (scope === 'global') settingsState = {...settingsState, notice: null};
+      else analysisSourcesState = {...analysisSourcesState, notice: null};
+      notify(scope === 'global' ? '最多保存 50 条全局正则。' : '最多保存 50 条最近剧情规则。', 'warning', documentRef);
       render();
       return;
     }
@@ -1848,7 +1980,8 @@ export function createApp(runtime, options = {}) {
   async function saveApiRequestSettings() {
     const draft = captureApiRequestSettingsDraft();
     if (typeof profileStore.saveApiRequestSettings !== 'function') {
-      settingsState = {...settingsState, notice: '当前宿主不支持保存全局请求设置。'};
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持保存全局请求设置。', 'error', documentRef);
       render();
       return;
     }
@@ -1859,14 +1992,16 @@ export function createApp(runtime, options = {}) {
         ...settingsState,
         apiRequestSettings: normalizeApiRequestSettings(saved),
         apiRequestDraft: null,
-        notice: '请求设置已即时保存。',
+        notice: null,
       };
+      notify('请求设置已即时保存。', 'success', documentRef);
     } catch (error) {
       settingsState = {
         ...settingsState,
         apiRequestDraft: draft,
-        notice: settingsOperationError(error),
+        notice: null,
       };
+      notify(settingsOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -1895,7 +2030,8 @@ export function createApp(runtime, options = {}) {
   async function saveWorldAnalysisPrompt() {
     const draft = captureWorldAnalysisPromptDraft();
     if (typeof profileStore.saveWorldAnalysisPrompt !== 'function') {
-      settingsState = {...settingsState, notice: '当前宿主不支持保存世界分析提示词。'};
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持保存世界分析提示词。', 'error', documentRef);
       render();
       return;
     }
@@ -1907,15 +2043,17 @@ export function createApp(runtime, options = {}) {
         busy: false,
         worldAnalysisPrompt: normalizeWorldAnalysisPrompt(saved),
         worldAnalysisPromptDraft: null,
-        notice: '世界分析提示词设置已保存。',
+        notice: null,
       };
+      notify('世界分析提示词设置已保存。', 'success', documentRef);
     } catch (error) {
       settingsState = {
         ...settingsState,
         busy: false,
         worldAnalysisPromptDraft: draft,
-        notice: settingsOperationError(error),
+        notice: null,
       };
+      notify(settingsOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -1925,7 +2063,8 @@ export function createApp(runtime, options = {}) {
     const id = String(profileId ?? '').trim();
     const profile = profileStore.getProfile?.(id) ?? settingsState.profiles?.[id] ?? null;
     if (!profile) {
-      settingsState.notice = '找不到该 API 配置。';
+      settingsState = {...settingsState, notice: null};
+      notify('找不到该 API 配置。', 'error', documentRef);
       render();
       return;
     }
@@ -1975,7 +2114,13 @@ export function createApp(runtime, options = {}) {
 
   async function saveSettingsForm() {
     const form = root?.querySelector?.('[data-bioweave-settings-form]');
-    if (!form || typeof profileStore.saveProfile !== 'function') return;
+    if (!form) return;
+    if (typeof profileStore.saveProfile !== 'function') {
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持保存 API 配置。', 'error', documentRef);
+      render();
+      return;
+    }
     const raw = captureSettingsDraft(form);
     const draftKey = profileDraftKey(raw.profile_id);
     settingsState = {...settingsState, busy: true, notice: null};
@@ -1995,8 +2140,9 @@ export function createApp(runtime, options = {}) {
         editingDraft: savedDraft,
         drafts,
         testResult: null,
-        notice: 'API 配置已保存；API 密钥仅保存在 Secret Store。',
+        notice: null,
       };
+      notify('API 配置已保存；API 密钥仅保存在 Secret Store。', 'success', documentRef);
       render();
     } catch (error) {
       const latestDraft = latestDraftFor(draftKey, raw);
@@ -2004,8 +2150,9 @@ export function createApp(runtime, options = {}) {
         ...settingsState,
         editingDraft: latestDraft,
         drafts: {...settingsState.drafts, [draftKey]: latestDraft},
-        notice: settingsOperationError(error),
+        notice: null,
       };
+      notify(settingsOperationError(error), 'error', documentRef);
     } finally {
       settingsState = {...settingsState, busy: false};
       render();
@@ -2019,7 +2166,9 @@ export function createApp(runtime, options = {}) {
     const draftKey = profileDraftKey(raw.profile_id);
     const runTest = typeof apiClient === 'function' ? apiClient : apiClient.testProfile;
     if (typeof runTest !== 'function') {
-      settingsState = {...settingsState, notice: '测试连接不可用，请确认 SillyTavern API 已加载。'};
+      const errorMessage = '测试连接不可用，请确认 SillyTavern API 已加载。';
+      settingsState = {...settingsState, notice: null, testResult: {ok: false, error: errorMessage}};
+      notify(errorMessage, 'error', documentRef);
       render();
       return;
     }
@@ -2043,8 +2192,10 @@ export function createApp(runtime, options = {}) {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
         drafts: {...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw)},
-        notice: settingsOperationError(error),
+        testResult: {ok: false, error: settingsOperationError(error)},
+        notice: null,
       };
+      notify(settingsOperationError(error), 'error', documentRef);
     } finally {
       settingsState = {...settingsState, busy: false};
       render();
@@ -2115,7 +2266,8 @@ export function createApp(runtime, options = {}) {
     const raw = captureSettingsDraft(form);
     const fetchModels = typeof apiClient === 'function' ? apiClient.fetchModels : apiClient?.fetchModels;
     if (typeof fetchModels !== 'function') {
-      settingsState = {...settingsState, notice: '模型列表接口不可用，请确认 AI Client 已加载。'};
+      settingsState = {...settingsState, notice: null};
+      notify('模型列表接口不可用，请确认 AI Client 已加载。', 'error', documentRef);
       render();
       return;
     }
@@ -2152,8 +2304,13 @@ export function createApp(runtime, options = {}) {
         modelListProfileKey: draftKey,
         editingDraft: latestDraft,
         drafts: {...settingsState.drafts, [draftKey]: latestDraft},
-        notice: nextModels.length ? null : '未找到可用模型；仍可手动填写 Model。',
+        notice: null,
       };
+      notify(
+        nextModels.length ? '模型列表已刷新。' : '未找到可用模型；仍可手动填写 Model。',
+        nextModels.length ? 'info' : 'warning',
+        documentRef,
+      );
     } catch (error) {
       if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
       const latestDraft = latestDraftFor(draftKey, raw);
@@ -2161,8 +2318,9 @@ export function createApp(runtime, options = {}) {
         ...settingsState,
         editingDraft: latestDraft,
         drafts: {...settingsState.drafts, [draftKey]: latestDraft},
-        notice: settingsOperationError(error),
+        notice: null,
       };
+      notify(settingsOperationError(error), 'error', documentRef);
     } finally {
       if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
       settingsState = {...settingsState, modelRefreshBusy: false};
@@ -2171,13 +2329,19 @@ export function createApp(runtime, options = {}) {
   }
 
   function hostContextForApp() {
-    return globalThis.SillyTavern?.getContext?.() ?? null;
+    return hostPopupContext();
   }
 
   async function removeProfile(profileId) {
     const id = String(profileId ?? '').trim();
-    if (!id || typeof profileStore.deleteProfile !== 'function') return;
-    if (typeof globalThis.confirm === 'function' && !globalThis.confirm('删除此 API 配置并清理其 Secret 引用？')) return;
+    if (!id) return;
+    if (typeof profileStore.deleteProfile !== 'function') {
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持删除 API 配置。', 'error', documentRef);
+      render();
+      return;
+    }
+    if (!await confirmWithPopup('删除 API 配置', '确定删除此 API 配置并清理关联 Secret 引用吗？')) return;
     settingsState.busy = true;
     try {
       await profileStore.deleteProfile(id);
@@ -2191,10 +2355,12 @@ export function createApp(runtime, options = {}) {
         editingDraft: deletedCurrentProfile ? undefined : settingsState.editingDraft,
         drafts,
         testResult: null,
-        notice: 'API 配置已删除；关联 Secret 引用已清理。',
+        notice: null,
       };
+      notify('API 配置已删除；关联 Secret 引用已清理。', 'success', documentRef);
     } catch (error) {
-      settingsState.notice = settingsOperationError(error);
+      settingsState = {...settingsState, notice: null};
+      notify(settingsOperationError(error), 'error', documentRef);
     } finally {
       settingsState.busy = false;
       render();
@@ -2203,16 +2369,24 @@ export function createApp(runtime, options = {}) {
 
   async function changeAssignment(target) {
     const slot = target?.dataset?.bioweaveAssignment;
-    if (!slot || typeof profileStore.setAssignment !== 'function') return;
+    if (!slot) return;
+    if (typeof profileStore.setAssignment !== 'function') {
+      settingsState = {...settingsState, notice: null};
+      notify('当前宿主不支持保存任务 API 分配。', 'error', documentRef);
+      render();
+      return;
+    }
     try {
       const value = await profileStore.setAssignment(slot, target.value);
       settingsState = {
         ...settingsState,
         assignments: {...settingsState.assignments, [slot]: value},
-        notice: '任务 API 分配已保存。',
+        notice: null,
       };
+      notify('任务 API 分配已保存。', 'success', documentRef);
     } catch (error) {
-      settingsState.notice = settingsOperationError(error);
+      settingsState = {...settingsState, notice: null};
+      notify(settingsOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -2223,9 +2397,11 @@ export function createApp(runtime, options = {}) {
       const saved = typeof profileStore.setApiSource === 'function'
         ? await profileStore.setApiSource(value)
         : value;
-      settingsState = {...settingsState, apiSource: saved, notice: '默认 API 来源已保存。'};
+      settingsState = {...settingsState, apiSource: saved, notice: null};
+      notify('默认 API 来源已保存。', 'success', documentRef);
     } catch (error) {
-      settingsState = {...settingsState, notice: settingsOperationError(error)};
+      settingsState = {...settingsState, notice: null};
+      notify(settingsOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -2235,9 +2411,11 @@ export function createApp(runtime, options = {}) {
       const saved = typeof profileStore.setDefaultProfile === 'function'
         ? await profileStore.setDefaultProfile(target?.value)
         : target?.value || null;
-      settingsState = {...settingsState, defaultProfileId: saved, notice: '默认 API 配置已保存。'};
+      settingsState = {...settingsState, defaultProfileId: saved, notice: null};
+      notify('默认 API 配置已保存。', 'success', documentRef);
     } catch (error) {
-      settingsState = {...settingsState, notice: settingsOperationError(error)};
+      settingsState = {...settingsState, notice: null};
+      notify(settingsOperationError(error), 'error', documentRef);
     }
     render();
   }
@@ -2355,6 +2533,11 @@ export function createApp(runtime, options = {}) {
     }
 
     const action = target.dataset.bioweaveAction;
+    if (action === 'open-analysis-debug') {
+      event.preventDefault();
+      await openAnalysisDebug();
+      return;
+    }
     if (action === 'new-profile') {
       event.preventDefault();
       startNewProfile();
@@ -2422,12 +2605,12 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'world-model-select-species') {
       event.preventDefault();
-      selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null);
+      await selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null);
       return;
     }
     if (action === 'world-model-select-type') {
       event.preventDefault();
-      selectWorldModelType(
+      await selectWorldModelType(
         Number(target.dataset.bioweaveWorldSpeciesIndex),
         Number(target.dataset.bioweaveWorldTypeIndex),
       );
@@ -2442,7 +2625,7 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'world-model-edit-section') {
       event.preventDefault();
-      beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''));
+      await beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''));
       return;
     }
     if (action === 'world-model-cancel-section') {
@@ -2618,8 +2801,11 @@ export function createApp(runtime, options = {}) {
   function handleKeydown(event) {
     if (event.key !== 'Escape' || root?.dataset.open !== 'true') return;
     event.preventDefault();
-    if (moreMenuOpen) setMoreMenu(false);
-    else closeBioWeave();
+    if (moreMenuOpen) {
+      setMoreMenu(false);
+    } else {
+      closeBioWeave();
+    }
   }
 
   function teardownRootListeners(node) {

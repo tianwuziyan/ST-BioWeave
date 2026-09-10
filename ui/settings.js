@@ -148,10 +148,14 @@ function normalizeApiProfileForDisplay(profile) {
   };
 }
 
-function renderSettingsSummary(title, hint) {
+function renderSettingsSummary(title, hint, action = null) {
+  const actionMarkup = action?.action
+    ? `<button type="button" class="${escapeHtml(action.className || 'bioweave-secondary-action')}" data-bioweave-action="${escapeHtml(action.action)}"${action.ariaLabel ? ` aria-label="${escapeHtml(action.ariaLabel)}"` : ''}>${escapeHtml(action.label || '')}</button>`
+    : '';
   return [
     '<summary class="bioweave-settings-summary">',
     '<span class="bioweave-settings-summary-copy"><strong>' + escapeHtml(title) + '</strong><small>' + escapeHtml(hint) + '</small></span>',
+    actionMarkup,
     '<span class="bioweave-settings-summary-arrow" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i><i class="fa-solid fa-chevron-up"></i></span>',
     '</summary>',
   ].join('');
@@ -508,9 +512,6 @@ function renderWorldbookSources(worldbookSources = {}) {
     '</details>',
   ].join('');
   const groups = cardSection + worldbookSection;
-  const notice = worldbookSources.notice
-    ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(worldbookSources.notice) + '</p>'
-    : '';
   const loading = worldbookSources.loading ? '<p class="bioweave-muted">正在读取世界书来源…</p>' : '';
   const selectedCount = Number(worldbookSources.selectedCount || 0);
   const selectedWorldbookCount = Number(worldbookSources.selectedWorldbookCount || 0);
@@ -534,7 +535,6 @@ function renderWorldbookSources(worldbookSources = {}) {
     '<button type="button" class="bioweave-secondary-action" data-bioweave-action="select-none-analysis-sources">全不选</button>',
     '</div>',
     '</div>',
-    notice,
     loading,
     '<div class="bioweave-analysis-source-list" data-bioweave-analysis-source-list>',
     groups,
@@ -727,7 +727,12 @@ function renderWorldAnalysisPromptSettings(prompt = {}, openSettingsSections = [
   ].join('');
   return [
     '<details class="bioweave-settings-disclosure bioweave-world-analysis-prompt-disclosure" data-bioweave-settings-disclosure="world_analysis_prompt"' + (open ? ' open' : '') + '>',
-    renderSettingsSummary('世界分析提示词', '可修改发送给模型的补充内容'),
+    renderSettingsSummary('世界分析提示词', '可修改发送给模型的补充内容', {
+      action: 'open-analysis-debug',
+      className: 'bioweave-secondary-action bioweave-analysis-debug-trigger',
+      label: '高级 / 调试',
+      ariaLabel: '打开世界分析提示词高级调试',
+    }),
     '<section class="bioweave-card bioweave-world-analysis-prompt-settings" data-bioweave-world-analysis-prompt-settings>',
     '<header class="bioweave-settings-card-header"><div><h3>提示词设置</h3><p class="bioweave-muted">BioWeave 的核心约束和结果校验始终保留；下面的提示内容可以留空或修改。这里不会保存角色正文、世界书正文或 API Key。</p></div></header>',
     textArea('顶部 SYSTEM', 'system_top', settings.system_top, '发送给 API 时作为 messages[0]。'),
@@ -838,6 +843,37 @@ export function renderAnalysisInputPreview(preview = {}) {
   ].join('');
 }
 
+export function renderAnalysisDebugPopupContent({
+  analysisPreview = {},
+  worldAnalysisPrompt = {},
+  worldAnalysisPromptDraft = null,
+  openSettingsSections = [],
+  theme = 'tavern',
+  documentRef = globalThis.document,
+} = {}) {
+  const promptSettings = worldAnalysisPromptDraft ?? worldAnalysisPrompt;
+  const themeName = ['tavern', 'light', 'dark'].includes(theme) ? theme : 'tavern';
+  const markup = [
+    '<div class="bioweave-analysis-debug-popup-content" data-theme="' + escapeHtml(themeName) + '">',
+    '<header class="bioweave-analysis-debug-popup-header">',
+    '<h3>高级 / 调试</h3>',
+    '<p class="bioweave-muted">临时检查本次世界分析实际读取的内容和发送消息。</p>',
+    '</header>',
+    renderAnalysisInputPreview({
+      ...analysisPreview,
+      standalone: true,
+      messagePreview: true,
+      promptSettings,
+      openSettingsSections,
+    }),
+  ].join('');
+
+  if (typeof documentRef?.createElement !== 'function') return markup;
+  const content = documentRef.createElement('div');
+  content.innerHTML = markup;
+  return content;
+}
+
 export function settingsPage({
   profiles: rawProfiles = {},
   assignments = {},
@@ -852,11 +888,9 @@ export function settingsPage({
   modelSearch = '',
   modelRefreshBusy = false,
   loading = false,
-  notice = null,
   testResult = null,
   busy = false,
   worldbookSources = {},
-  analysisPreview = {},
   worldAnalysisPrompt = {},
   worldAnalysisPromptDraft = null,
 } = {}) {
@@ -864,21 +898,13 @@ export function settingsPage({
     ? rawProfiles.map(profile => normalizeApiProfileForDisplay(profile))
     : Object.entries(rawProfiles ?? {}).map(([profileId, profile]) => normalizeApiProfileForDisplay({...profile, profile_id: profile?.profile_id ?? profileId}));
   const openSettingsSections = new Set(Array.isArray(worldbookSources.openSettingsSections) ? worldbookSources.openSettingsSections : []);
-  const safeNotice = notice ? `<p class="bioweave-settings-notice" role="status">${escapeHtml(notice)}</p>` : '';
   const assignmentsMarkup = API_ASSIGNMENTS.map(slot => `<label class="bioweave-assignment-field"><span>${ASSIGNMENT_LABELS[slot]}</span><select class="bioweave-select" data-bioweave-assignment="${slot}">${assignmentOptions(profiles, assignments[slot] ?? null)}</select></label>`).join('');
   return [
     '<section class="bioweave-page bioweave-settings-page" data-bioweave-settings>',
     '<div class="bioweave-page-title"><div><h2>设置</h2><p class="bioweave-muted">连接参数是全局配置；任务数据仍属于当前 Chat。</p></div></div>',
-    safeNotice,
     renderWorldbookSources(worldbookSources),
     renderRecentStorySettings(worldbookSources.recentStory, worldbookSources.openSettingsSections, worldbookSources.globalRecentStory),
     renderExternalMemorySettings(worldbookSources.externalMemory, worldbookSources.externalMemoryProviders, worldbookSources.openSettingsSections),
-    renderAnalysisInputPreview({
-      ...analysisPreview,
-      messagePreview: true,
-      promptSettings: worldAnalysisPromptDraft ?? worldAnalysisPrompt,
-      openSettingsSections: worldbookSources.openSettingsSections,
-    }),
     renderWorldAnalysisPromptSettings(worldAnalysisPromptDraft ?? worldAnalysisPrompt, worldbookSources.openSettingsSections),
     renderApiSource(apiSource, defaultProfileId, profiles, {
       loading,
