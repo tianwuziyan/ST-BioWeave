@@ -399,6 +399,8 @@ export function createApp(runtime, options = {}) {
   let analysisSourcesState = createAnalysisSourcesState();
   let analysisPreviewState = createAnalysisPreviewState();
   let worldModelState = createWorldModelState();
+  let worldModelAbortController = null;
+  let worldModelAbortConfirmOpen = false;
   let globalRecentStory = normalizeRecentStoryGlobalSettings();
   let globalRecentStoryLoaded = false;
   let globalRecentStorySaveSequence = 0;
@@ -1368,6 +1370,26 @@ export function createApp(runtime, options = {}) {
     return confirmWithPopup('放弃未保存修改', '当前修改尚未保存，是否放弃？');
   }
 
+  async function requestAbortWorldModelAnalysis() {
+    const controller = worldModelAbortController;
+    if (!worldModelState.busy || !controller || worldModelAbortConfirmOpen) return false;
+    worldModelAbortConfirmOpen = true;
+    try {
+      const confirmed = await confirmWithPopup(
+        '终止世界模型分析',
+        '当前分析仍在进行，是否终止本次分析？',
+      );
+      if (!confirmed) return false;
+      if (!worldModelState.busy || worldModelAbortController !== controller || controller.signal.aborted) {
+        return false;
+      }
+      controller.abort();
+      return true;
+    } finally {
+      worldModelAbortConfirmOpen = false;
+    }
+  }
+
   function clearWorldModelSectionDraft() {
     worldModelState = {
       ...worldModelState,
@@ -1514,6 +1536,8 @@ export function createApp(runtime, options = {}) {
     if (!await canDiscardWorldModelSectionDraft()) return;
     if (worldModelState.editingSection) clearWorldModelSectionDraft();
     const {chatId, token} = currentAnalysisChatToken();
+    const controller = new AbortController();
+    worldModelAbortController = controller;
     worldModelTraceChatId = chatId;
     analysisPreviewState = {
       ...analysisPreviewState,
@@ -1528,7 +1552,7 @@ export function createApp(runtime, options = {}) {
       assertAnalysisChatToken(token);
       const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld;
       if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE');
-      const result = await analyze({analysisInput: collected.input});
+      const result = await analyze({analysisInput: collected.input, signal: controller.signal});
       const model = normalizeWorldModel(result);
       assertAnalysisChatToken(token);
       const currentChat = runtime.store?.getChat?.(chatId);
@@ -1573,6 +1597,8 @@ export function createApp(runtime, options = {}) {
         return;
       }
       worldModelState = {...worldModelState, busy: false, notice: worldModelOperationError(error)};
+    } finally {
+      if (worldModelAbortController === controller) worldModelAbortController = null;
     }
     if (route === 'world') render();
   }
@@ -2578,7 +2604,8 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'world-model-reanalyze') {
       event.preventDefault();
-      await analyzeWorldModel();
+      if (worldModelState.busy) await requestAbortWorldModelAnalysis();
+      else await analyzeWorldModel();
       return;
     }
     if (action === 'world-model-view-input') {

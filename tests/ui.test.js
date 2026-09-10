@@ -13,6 +13,13 @@ import {
 } from '../ui/app.js';
 
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+const UI_SOURCE = [
+  APP_SOURCE,
+  fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../ui/settings.js', import.meta.url), 'utf8'),
+].join('\n');
+const CUSTOM_ABORT_UI_PATTERN = /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i;
 
 test('BioWeave overlay stays between ordinary host UI and host modal layers', () => {
   const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/);
@@ -943,6 +950,229 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
   await click({target: actionTarget('world-model-reanalyze'), preventDefault() {}});
   assert.deepEqual(confirmCalls, [['放弃未保存修改', '当前修改尚未保存，是否放弃？']]);
   assert.equal(analyzeCalls, 0);
+  app.destroyBioWeave();
+});
+
+test('busy World Model analysis asks before aborting and keeps the button actionable', async () => {
+  const documentRef = new AppFakeDocument();
+  const confirmCalls = [];
+  const pendingConfirmations = [];
+  const model = {
+    schema_version: 1,
+    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [],
+    unknowns: ['已有模型'],
+  };
+  let savedChat = {settings: {}, world_model: model};
+  let analysisCalls = 0;
+  let abortCalls = 0;
+  let resolveAnalyzerStarted;
+  const analyzerStarted = new Promise(resolve => {
+    resolveAnalyzerStarted = resolve;
+  });
+  const analyzer = {
+    analyzeWorldModel: async ({signal}) => {
+      analysisCalls += 1;
+      resolveAnalyzerStarted(signal);
+      await new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          abortCalls += 1;
+          const error = new Error('REQUEST_ABORTED');
+          error.code = 'REQUEST_ABORTED';
+          reject(error);
+        }, {once: true});
+        signal.addEventListener('abort', resolve, {once: true});
+      });
+      return model;
+    },
+  };
+  const context = {
+    Popup: {
+      show: {
+        confirm(title, message) {
+          confirmCalls.push([title, message]);
+          return new Promise(resolve => pendingConfirmations.push(resolve));
+        },
+      },
+    },
+    POPUP_RESULT: {AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative'},
+    chatId: 'chat-world-abort',
+    characters: [],
+  };
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  };
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-abort',
+      token: () => ({chatId: 'chat-world-abort', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => savedChat,
+      saveChat: async (_chatId, nextChat) => {
+        savedChat = nextChat;
+      },
+    },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  };
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
+  const root = app.openBioWeave();
+  app.go('world');
+  const click = [...root.listeners.get('click')][0];
+  const actionTarget = action => ({
+    __root: root,
+    dataset: {bioweaveAction: action},
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null;
+    },
+  });
+  const clickAction = action => click({target: actionTarget(action), preventDefault() {}});
+
+  const analysisRequest = clickAction('world-model-reanalyze');
+  const signal = await analyzerStarted;
+  assert.equal(analysisCalls, 1);
+  const busyMarkup = root.querySelector('.bioweave-main').innerHTML;
+  assert.match(busyMarkup, /data-bioweave-action="world-model-reanalyze">分析中…<\/button>/);
+  assert.doesNotMatch(busyMarkup, /data-bioweave-action="world-model-reanalyze"[^>]*disabled/);
+
+  const cancelledRequest = clickAction('world-model-reanalyze');
+  await Promise.resolve();
+  assert.deepEqual(confirmCalls, [['终止世界模型分析', '当前分析仍在进行，是否终止本次分析？']]);
+  await clickAction('world-model-reanalyze');
+  assert.equal(confirmCalls.length, 1);
+  assert.equal(signal.aborted, false);
+  assert.equal(abortCalls, 0);
+  assert.equal(analysisCalls, 1);
+
+  pendingConfirmations.shift()('negative');
+  await cancelledRequest;
+  assert.equal(signal.aborted, false);
+  assert.equal(abortCalls, 0);
+  assert.equal(root.querySelector('.bioweave-main').innerHTML.includes('分析中…'), true);
+
+  const closedRequest = clickAction('world-model-reanalyze');
+  await Promise.resolve();
+  assert.equal(confirmCalls.length, 2);
+  pendingConfirmations.shift()(undefined);
+  await closedRequest;
+  assert.equal(signal.aborted, false);
+  assert.equal(abortCalls, 0);
+  assert.equal(analysisCalls, 1);
+
+  const confirmedRequest = clickAction('world-model-reanalyze');
+  await Promise.resolve();
+  assert.equal(confirmCalls.length, 3);
+  pendingConfirmations.shift()('affirmative');
+  await confirmedRequest;
+  await analysisRequest;
+
+  assert.equal(signal.aborted, true);
+  assert.equal(abortCalls, 1);
+  assert.equal(analysisCalls, 1);
+  assert.equal(savedChat.world_model, model);
+  const completedMarkup = root.querySelector('.bioweave-main').innerHTML;
+  assert.match(completedMarkup, /已有模型/);
+  assert.doesNotMatch(completedMarkup, /分析中…/);
+  app.destroyBioWeave();
+});
+
+test('busy World Model analysis safely cancels when the host confirm Popup is unavailable', async () => {
+  const documentRef = new AppFakeDocument();
+  const toastCalls = [];
+  const model = {
+    schema_version: 1,
+    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [],
+    unknowns: ['已有模型'],
+  };
+  let analysisCalls = 0;
+  let abortCalls = 0;
+  let resolveAnalyzerStarted;
+  let resolveAnalysis;
+  const analyzerStarted = new Promise(resolve => {
+    resolveAnalyzerStarted = resolve;
+  });
+  const analyzer = {
+    analyzeWorldModel: async ({signal}) => {
+      analysisCalls += 1;
+      resolveAnalyzerStarted(signal);
+      signal.addEventListener('abort', () => {
+        abortCalls += 1;
+      }, {once: true});
+      return new Promise(resolve => {
+        resolveAnalysis = resolve;
+      });
+    },
+  };
+  const context = {
+    chatId: 'chat-world-abort-no-popup',
+    characters: [],
+  };
+  documentRef.defaultView.toastr = {error: message => toastCalls.push(message)};
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  };
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-abort-no-popup',
+      token: () => ({chatId: 'chat-world-abort-no-popup', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({settings: {}, world_model: model}),
+      saveChat: async () => {},
+    },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  };
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
+  const root = app.openBioWeave();
+  app.go('world');
+  const click = [...root.listeners.get('click')][0];
+  const actionTarget = action => ({
+    __root: root,
+    dataset: {bioweaveAction: action},
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null;
+    },
+  });
+  const clickAction = action => click({target: actionTarget(action), preventDefault() {}});
+
+  const analysisRequest = clickAction('world-model-reanalyze');
+  const signal = await analyzerStarted;
+  await clickAction('world-model-reanalyze');
+  assert.deepEqual(toastCalls, ['当前宿主不支持确认弹窗，操作已取消。']);
+  assert.equal(signal.aborted, false);
+  assert.equal(abortCalls, 0);
+  assert.equal(analysisCalls, 1);
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /分析中…/);
+  assert.doesNotMatch(APP_SOURCE, /\bwindow\.confirm\s*\(/);
+  assert.doesNotMatch(UI_SOURCE, CUSTOM_ABORT_UI_PATTERN);
+  assert.doesNotMatch(STYLE_SOURCE, CUSTOM_ABORT_UI_PATTERN);
+
+  resolveAnalysis(model);
+  await analysisRequest;
+  assert.equal(signal.aborted, false);
+  assert.equal(abortCalls, 0);
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /分析中…/);
   app.destroyBioWeave();
 });
 

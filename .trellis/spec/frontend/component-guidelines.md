@@ -114,6 +114,93 @@ For registration ownership, keep one unregister function per document:
 - Use empty states for unfinished business layers. Do not create mock storage
   or write demo DTOs into Chat metadata or Floor data.
 
+## SillyTavern host feedback and Popup conventions
+
+### 1. Scope / Trigger
+
+Use this contract for all transient notifications, user confirmations, and
+complex modal content opened by BioWeave inside SillyTavern. These interactions
+must use the host-owned feedback and Popup lifecycle instead of introducing a
+second BioWeave modal system.
+
+### 2. Signatures
+
+    notify(message, type = 'info', documentRef)
+      -> void
+
+    confirmWithPopup(title, message)
+      -> Promise<boolean>
+
+    new Popup(content, POPUP_TYPE.DISPLAY, title, options).show()
+      -> Promise<unknown>
+
+### 3. Contracts
+
+- Ordinary non-blocking `success`, `error`, `warning`, and `info` feedback must
+  go through the shared `notify()` helper, which delegates to the
+  SillyTavern/toastr notification system. Do not insert transient page notices
+  that shift the current layout.
+- Operations that require an explicit user decision must use
+  `SillyTavern.getContext().Popup.show.confirm()` through the shared
+  `confirmWithPopup()` helper. This includes deleting an API Profile,
+  discarding unsaved World Model edits, terminating an active World Model
+  analysis, and any other destructive or task-interrupting operation.
+- Confirmation callers may proceed only when `confirmWithPopup()` returns
+  `true`, which means the host result strictly matched
+  `POPUP_RESULT.AFFIRMATIVE`. Cancel, close, Escape, unavailable APIs, and Popup
+  failures all cancel the requested operation without changing its state.
+- Complex DOM content such as Analysis Debug must use the host `Popup` class
+  with `POPUP_TYPE.DISPLAY`. SillyTavern owns its modal lifecycle, backdrop,
+  stacking, close control, and Escape behavior.
+- Never use `window.confirm()`, a custom overlay/modal/dialog/backdrop, an
+  embedded BioWeave confirmation card, or a locally managed Escape listener as
+  a confirmation or DISPLAY Popup fallback.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Ordinary notification | Call `notify()` with the intended Toast type |
+| Confirmation returns `POPUP_RESULT.AFFIRMATIVE` | Return `true`; the caller may perform the confirmed operation |
+| Confirmation is canceled, closed, or dismissed with Escape | Return `false`; leave state and in-flight work unchanged |
+| `Popup.show.confirm` or `POPUP_RESULT.AFFIRMATIVE` is unavailable | Show a safe error Toast and return `false` |
+| Confirmation Popup throws | Show a safe error Toast and return `false` |
+| DISPLAY Popup API/type is unavailable or opening throws | Show a safe error Toast and do not create a custom modal |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `await confirmWithPopup(title, message)` and mutate state only after a
+  `true` result.
+- Good: render complex content into a host `Popup` using
+  `POPUP_TYPE.DISPLAY` and let the host own close/backdrop/Escape behavior.
+- Base: missing Popup support produces a Toast and safely cancels the action.
+- Bad: fall back to `window.confirm()`, append a confirmation card to the
+  BioWeave root, or create local modal/backdrop CSS and state.
+
+### 6. Tests Required
+
+- Mock `Popup.show.confirm` and assert the exact title/message plus strict
+  affirmative gating for every confirmation action.
+- Cover cancel, close/dismiss, thrown/unavailable Popup, and repeated-click
+  cases; assert no destructive action, state reset, or duplicate request.
+- Keep source-level regressions that reject custom confirmation
+  modal/dialog/overlay selectors and `window.confirm()`.
+- Mock `Popup` plus `POPUP_TYPE.DISPLAY` for complex content and assert that
+  unavailable host support produces only the safe Toast path.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+    const confirmed = window.confirm(message);
+    if (!confirmed) openBioWeaveConfirmModal();
+
+#### Correct
+
+    const confirmed = await confirmWithPopup(title, message);
+    if (!confirmed) return;
+    performConfirmedOperation();
+
 ## Scenario: shared SillyTavern Analysis Debug Popup
 
 ### 1. Scope / Trigger
@@ -278,6 +365,88 @@ sending fields under the global `world_analysis_prompt` configuration.
 
     if (systemTop) messages.unshift({role: 'system', content: systemTop})
     if (systemBottom) messages.push({role: 'system', content: systemBottom})
+
+## Scenario: cancellable World Model analysis
+
+### 1. Scope / Trigger
+
+Use this contract when the World Model analysis action is invoked while an
+existing analysis request is still running.
+
+### 2. Signatures
+
+    requestAbortWorldModelAnalysis()
+      -> Promise<boolean>
+
+    analyzeWorldModel()
+      -> Promise<void>
+
+    analyzer.analyzeWorldModel({analysisInput, signal})
+      -> Promise<WorldModel>
+
+### 3. Contracts
+
+- The World Model analysis button remains enabled while `worldModelState.busy`
+  is true; its busy label may be `分析中…`.
+- A busy-button click only enters `requestAbortWorldModelAnalysis()`. It must
+  not start another analysis, clear the model, set `busy` false, or call
+  `abort()` before confirmation.
+- The helper keeps a reference to the current round's `AbortController` and
+  uses `confirmWithPopup('终止世界模型分析', '当前分析仍在进行，是否终止本次分析？')`.
+  A guard prevents more than one confirmation Popup while the first is open.
+- This confirmation inherits the host Popup convention above: it must reach
+  `Popup.show.confirm` through `confirmWithPopup()` and has no custom modal,
+  dialog, overlay, or `window.confirm()` fallback.
+- Negative, dismissed, unavailable, or failed confirmation leaves the current
+  request and UI state untouched. Only an affirmative result may call the
+  matching controller's `abort()`.
+- `analyzeWorldModel()` passes that controller's `signal` to the analyzer and
+  owns busy/error cleanup in its existing success/catch path; `finally` only
+  clears the controller reference if it is still the current round.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Idle analysis button | Start exactly one World Model analysis |
+| Busy button, no confirmation yet | Keep request running; do not abort or start another request |
+| Confirmation canceled or dismissed | Keep `busy`, model, and signal unchanged |
+| Confirmation accepted | Abort only the matching current controller; let analysis catch/finally clean up |
+| Confirmation Popup already open | Ignore subsequent busy-button clicks |
+| Request finishes before confirmation resolves | Do not abort a finished or newer request |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `busy click → confirm → affirmative → controller.abort()`.
+- Base: `busy click → cancel` leaves the request and button unchanged.
+- Bad: disable the busy button, call `abort()` before the Popup result, or
+  manually assign `worldModelState.busy = false` from the confirmation helper.
+
+### 6. Tests Required
+
+- Assert the busy button has no `disabled` attribute and the idle path starts
+  one analysis.
+- Resolve the confirmation as negative/dismissed and assert no abort, no
+  second analyzer call, and the busy markup remains present.
+- Click while confirmation is pending and assert only one confirmation call.
+- Resolve affirmative, observe the analyzer's signal abort exactly once, and
+  assert the existing model is preserved after catch/finally cleanup.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+    if (worldModelState.busy) {
+      worldModelAbortController.abort();
+      worldModelState = {...worldModelState, busy: false};
+    }
+
+#### Correct
+
+    if (worldModelState.busy) {
+      await requestAbortWorldModelAnalysis();
+      return;
+    }
 
 ## Worldbook source selector conventions
 
