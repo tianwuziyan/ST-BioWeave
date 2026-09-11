@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查业务页面是否保持 plain DOM、empty state 和单一事件委托。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 Chat/Floor/Swipe scope、stale write 和 UI 数据来源。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查没有 mock 业务数据、命名违规或跳过真实宿主验收。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 Event schema 在 AI、Domain、Storage、Runtime、UI 之间的一致性。"}
+{"file": "docs/DATA-MODEL.md", "reason": "复核持久化边界、Event 单一事实源和 secret sanitizer 约束。"}
+{"file": "docs/UI.md", "reason": "复核人物、事件、总览 UI 语义与 Empty State 文案。"}
+{"file": ".trellis/tasks/09-11-phase-2a-event-pregnancy-tracking/prd.md", "reason": "按 Phase 2A 验收条件检查实现范围。"}
+{"file": ".trellis/tasks/09-11-phase-2a-event-pregnancy-tracking/design.md", "reason": "按设计检查 Source binding、Registry policy 和 Story Time fallback。"}
+{"file": ".trellis/tasks/09-11-phase-2a-event-pregnancy-tracking/implement.md", "reason": "按最终验证门执行 npm run check、diff 和人工验收清单。"}

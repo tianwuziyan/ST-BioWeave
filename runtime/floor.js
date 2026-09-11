@@ -1,11 +1,11 @@
-const FLOOR_VERSION_FIELDS = [
+export const FLOOR_VERSION_FIELDS = Object.freeze([
   'chat_id',
   'message_id',
   'floor',
   'swipe_id',
   'content_hash',
   'message_version',
-];
+]);
 
 export async function hashText(text = '') {
   const cryptoApi = globalThis.crypto;
@@ -34,14 +34,49 @@ export async function floorVersion({
   };
 }
 
-export function sameFloorVersion(left, right) {
-  if (!left || !right) return false;
+function hasVersionValue(value) {
+  if (value === undefined || value === null) return false;
+  return typeof value !== 'string' || value.trim() !== '';
+}
+
+export function hasCompleteFloorVersion(version) {
+  if (!version || typeof version !== 'object' || Array.isArray(version)) return false;
   return FLOOR_VERSION_FIELDS.every(field => (
-    left[field] !== undefined
-    && right[field] !== undefined
-    && left[field] === right[field]
+    Object.prototype.hasOwnProperty.call(version, field)
+    && hasVersionValue(version[field])
   ));
 }
+
+export function sameFloorVersion(left, right) {
+  if (!hasCompleteFloorVersion(left) || !hasCompleteFloorVersion(right)) return false;
+  return FLOOR_VERSION_FIELDS.every(field => (
+    left[field] === right[field]
+  ));
+}
+
+export function floorVersionFromData(data) {
+  if (!data || typeof data !== 'object') return null;
+  return data?.analysis?.floor_version ?? data?.floor_version ?? null;
+}
+
+export function eventSourceMatchesFloorVersion(eventOrSource, version) {
+  const source = eventOrSource?.source && typeof eventOrSource.source === 'object'
+    ? eventOrSource.source
+    : eventOrSource;
+  return sameFloorVersion(source, version);
+}
+
+// Read only facts produced for the authoritative current Floor Version.  A
+// missing/incomplete version intentionally yields no events rather than
+// treating a previous successful result as active.
+export function getActiveFloorEvents(floorOrEvents, version) {
+  if (!hasCompleteFloorVersion(version)) return [];
+  const events = Array.isArray(floorOrEvents) ? floorOrEvents : floorOrEvents?.events;
+  if (!Array.isArray(events)) return [];
+  return events.filter(event => eventSourceMatchesFloorVersion(event, version));
+}
+
+export const activeFloorEvents = getActiveFloorEvents;
 
 function analysisRecord(meta) {
   return meta?.analysis && typeof meta.analysis === 'object' ? meta.analysis : meta;

@@ -20,6 +20,46 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 人物列表可以进入人物详情壳：状态 / 事件 / 推演 / 关系 / 备注。人物详情只改变 UI focus，不改变 Chat Scope。
 
+## Phase 2A 业务页面契约
+
+### 人物列表与 Tracking Subject
+
+人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。
+
+进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
+
+没有 Subject 时，人物页显示：
+
+> 当前尚无需要追踪的角色。
+
+并说明人物列表只收录存在受孕相关暴露且通过证据边界的追踪对象，不代表当前 Chat 的全部角色。
+
+人物详情至少显示人物名称、稳定 `character_id`、可用的 species/type、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+
+### 历史事件页
+
+事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。列表和详情可显示：Story Time、Floor、Location、全部 Participants、Reproductive Roles、Pregnancy Relevance、Status、Confidence 和 Source。Source 字段只读，必须展示其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。
+
+Event 的完整 NSFW 历史事实只存在 Floor-bound Event；页面显示人物 exposure 时通过 `event_id` 引用读取 Event，不把完整事件对象复制进人物卡。`counterpart_ids` 和 `gestational_subject_ids` 始终按数组渲染，空数组、单项和多项都必须可显示。
+
+Event 编辑直接修改当前有效事实并保留 `event_id` 与 authoritative Source；删除是真删除，不新增 `user_override` priority layer。保存和删除完成后由业务层重建 Tracking Registry，UI 不自行补齐或删除 Subject。
+
+### Story Time 显示
+
+Story Time 持久化为结构化对象：`display`、`normalized`、`calendar_id`、`day_index`、`provider`、`precision`、`confidence`。UI 的 formatter 只显示 `display` 或未知/模糊时间文案，不从 display 反向解析排序或计算；`normalized` / `day_index` 不可靠时显示对应未知状态。SevenDaysCal 不可用时展示 Fallback provider 的结构化结果，不能伪造准确日期。
+
+### 总览、推演与家系
+
+总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
+
+Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶段保持 Empty State 或兼容骨架。页面可以显示“等待后续状态引擎”类说明，但不得生成 mock 业务 DTO、概率、妊娠天数或亲子关系。
+
+### 生命周期与刷新
+
+页面 mount、open、reopen 和 extension init 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。自动分析继续由 Runtime 按 N-floor 和六字段 Floor Version 调度；相同成功版本跳过，失败可重试，手动刷新强制请求。手动刷新成功替换当前 Floor Version 的 Event，失败保留旧成功结果，但旧版本 Event 不得进入当前有效 Registry。
+
+删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Characters、Events、Overview 都必须重新读取当前有效 Event 和 Registry；不存在事件的 Swipe 不得显示旧 Swipe 的人物或事件。
+
 Desktop / Tablet / Mobile 均提供跟随酒馆、日、夜主题按钮。主题使用 BioWeave CSS variables，选择持久化但不修改 SillyTavern 本身主题。
 
-Event 可编辑删除；Projection 仅删除。当前业务页允许使用 empty state 或明确的 demo DTO，但不得把占位数据写入 Chat。
+Event 可编辑删除；Projection 仅删除。Phase 2A 业务页只允许使用真实 DTO 或明确 Empty State；现有路由壳未接入真实数据时，不得把 `demo-character-1` 或其它占位 DTO 当作当前 Chat 的人物、事件或总览统计，也不得写入 Chat。

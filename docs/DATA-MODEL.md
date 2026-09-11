@@ -61,10 +61,128 @@ AI 原始返回只在当前分析调用中存在；若启用开发调试 trace�
 
 World Model 规则字段使用统一三态语义：`null` 表示未知、未提及、证据不足或无法判断；`"无"` 表示已经知道机制不存在、能力不具备或规则不适用；非空字符串表示已知存在对应机制。没有资料不能写成 `"无"`。普通 Human Male/Female 已建立后可以使用现实 baseline：Male 的 `pregnancy_or_carrying`、`cycle`、`ovulation`、`gestation`、`labor` 为 `"无"`，Female 的 `cycle`、`ovulation`、`gestation`、`labor` 使用简洁的普通 Human 描述；明确世界/个体规则按 Baseline + Delta 逐字段覆盖，Human baseline 只在当前字段为 `null` 时补值，不覆盖 `true`、`false`、`"无"` 或非空描述。独立的明确结构冲突仍可由 Final Consistency Guard 修正为已知 absence。Human species 的显示 canonical name 为“人类”，仅合并明确的 Human 显示别名，不建立其它 species 的同义词 registry。schema 不因该语义扩展，仍使用现有 `string | null` 字段。
 
+## Phase 2A：BiologicalEvent 与 Tracking Subject
+
+本节是已批准的 Phase 2A 数据契约。它描述实现必须保持的边界；契约、代码接入和真实 SillyTavern 验收是不同层次，文档不把其中任一层自动等同为已完成的端到端闭环。
+
+### 人物列表语义与进入条件
+
+人物列表不是当前 Chat 的全角色列表，只展示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通聊天角色、当前主卡角色、出现过的名字和仅被事件提及的参与者不会自动进入列表。
+
+创建或更新 Subject 必须同时有：
+
+1. 真实或可靠识别的 `sexual_activity` BiologicalEvent；
+2. Event 参与者实际存在，并有稳定的 `character_id`；
+3. World Model 与 Narrative Evidence 对相关 reproductive capability 提供支持；
+4. 本次事件存在实际受孕暴露可能。
+
+`gender`、攻受/receiver 文本、姓名、代词和 UI 选择都不能替代上述判断。`true`、`false`、`null` 三态 capability 必须保留；`null` 表示 unknown，不能自动变成 `true`。非 NSFW、没有受孕暴露、能力未知或明确不具备承载能力的 Event 都不能建立 Subject；NSFW 本身、症状或猜测也不能自动变成 conception / pregnancy。一个 Event 可以产生 0、1 或多个 Subject；一个 Subject 可以累积多个 exposure Event。
+
+### BiologicalEvent：完整事实的单一来源
+
+BiologicalEvent 是完整 NSFW 历史事实的单一来源。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
+
+本阶段保留现有其它 BiologicalEvent 类型的兼容性，但只实现 `sexual_activity` 的妊娠相关 Tracking 闭环。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
+
+### BiologicalEvent 固定结构
+
+每个进入 Floor 的 Event 至少包含以下字段：
+
+| 字段 | 语义 |
+| --- | --- |
+| `event_id` | Event 稳定标识；Registry 只通过它引用 Event。 |
+| `type` | 现有 BiologicalEvent 类型；本阶段以 `sexual_activity` 为 Tracking 入口。 |
+| `status` | Event 状态；`negated` / `fictional` 不得成为受孕追踪事实。 |
+| `location` | 事件地点，允许未知值按领域规范化处理。 |
+| `participants[]` | 全部实际参与者；每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`。 |
+| `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`confidence`。 |
+| `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
+| `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
+| `story_time` | 结构化故事时间，不能只保存展示字符串。 |
+
+`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。`biological_context` 只在有对应 World Model/species 证据时作为最小上下文保存，不由名称或常识补全。
+
+`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。
+
+`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。
+
+### Source binding 与 Floor / Swipe
+
+Event 的 `source` 必须由当前分析目标的 authoritative Floor Version 写入，不能信任 AI 返回的跨作用域身份。固定字段为：
+
+```json
+{
+  "chat_id": "当前 Chat",
+  "message_id": "产生事件的消息",
+  "floor": 12,
+  "swipe_id": 0,
+  "content_hash": "当前消息正文的 SHA-256",
+  "message_version": "当前消息版本"
+}
+```
+
+没有 swipe 结构时，Event 保存到 `message.extra.bioweave`；存在 swipe 结构时，包括 swipe `0`，只能保存到对应 `message.swipe_info[swipe_id].extra.bioweave`。Floor `events[]` 是该消息/版本的 Floor-bound 事实集合，不是 Chat-level 历史事件账本。删除 Floor 后其 Event 必须消失；切换到没有事件的 Swipe 后旧 Swipe Event 不得参与当前有效状态。
+
+自动分析沿用 `analysis_interval` 的 N-floor 规则与六字段 Floor Version：同一成功版本跳过，版本变化允许重新分析；失败可重试；UI mount/open/reopen/init 不触发新的 AI 请求。手动刷新始终强制请求，成功后替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本 Event 不能进入当前有效 Registry。Event 编辑直接修改当前有效事实，保存时保留 `event_id` 与 authoritative `source`；Event 删除是真删除，不产生 `user_override` 层。
+
+### Story Time
+
+Story Time 采用结构化 DTO：
+
+```json
+{
+  "display": "2026-08-20",
+  "normalized": "2026-08-20",
+  "calendar_id": "calendar_main",
+  "day_index": 20685,
+  "provider": "bioweave_fallback",
+  "precision": "day",
+  "confidence": 1
+}
+```
+
+字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。优先使用可用的 SevenDaysCal 公开 Story Time Adapter；不可用时使用 BioWeave Fallback StoryTimeProvider。Adapter 只依赖公开 context 或注入的 provider，不读取 SevenDaysCal 私有 Store。
+
+`display` 只由 formatter 用于 UI 展示，不是存储格式，也不得被任何排序或计算逻辑反向解析。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+
+### Tracking Subject Registry
+
+Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的唯一来源。Subject 的索引形状如下：
+
+```json
+{
+  "tracking_subjects": {
+    "char_A": {
+      "character_id": "char_A",
+      "display_name": "A",
+      "created_from_event_id": "evt_001",
+      "exposure_event_ids": ["evt_001", "evt_008"],
+      "status": "active"
+    }
+  }
+}
+```
+
+`created_from_event_id` 与 `exposure_event_ids[]` 必须指向当前有效 Event；Registry 重建时去重并清理 dangling 引用。同一角色多次事件复用同一个 Subject 并累积多个 exposure 引用，一个 Event 可以关联多个 Subject。只有真正进入 Tracking 的角色才建立必要的 `character_profiles` 最小资料或证据摘要；这些资料不替代历史 Event，也不复制完整事实，普通聊天角色不进入通用生理数据库。
+
+没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
+
+### 本阶段的空状态边界
+
+Phase 2A 的闭环为：
+
+```text
+当前剧情 → 固定 Event JSON → normalize / validate
+         → Floor-bound BiologicalEvent[]
+         → Tracking Subject Registry → Characters / Events / Overview
+```
+
+Projection、Genealogy、完整 StateReducer、Snapshot 恢复、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
+
 ## Floor Level
-`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、Snapshot、Projections。
+`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、Snapshot、Projections；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
 
 ## 核心链
-`Floor Version → BiologicalEvent → State Reducer → Current State → Snapshot → Projection → Context`。
+`Floor Version → BiologicalEvent → Tracking Subject Registry → Characters / Events / Overview → State Reducer → Current State → Snapshot → Projection → Context`。
 
-用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Projection 不进入事实历史。
+用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Projection 不进入事实历史，Phase 2A 不提前接通 State/Snapshot/Projection/Genealogy。

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createChatBoundary,STALE_CHAT} from '../runtime/chat.js';
 import {createRuntime,createSillyTavernAdapter} from '../runtime/events.js';
+import {floorVersion} from '../runtime/floor.js';
 import {createStore} from '../storage/store.js';
 
 function createAdapter() {
@@ -63,6 +64,27 @@ test('per-swipe floor storage isolates swipe zero and other swipes',async()=>{
   assert.equal(store.getFloor(0,2).value,undefined);
 });
 
+test('active floor reads the message swipe and drops deleted floors',async()=>{
+  const adapter=createAdapter();
+  adapter.message.swipe_id=0;
+  const store=createStore(adapter,createChatBoundary(adapter));
+  const versionA={chat_id:'chat-a',message_id:0,floor:1,swipe_id:0,content_hash:'hash-a',message_version:'v1'};
+  const versionB={...versionA,swipe_id:1,content_hash:'hash-b',message_version:'v2'};
+  await store.saveFloor(0,0,{analysis:{status:'success',floor_version:versionA},events:[{event_id:'evt-a',source:versionA}]});
+  await store.saveFloor(0,1,{analysis:{status:'success',floor_version:versionB},events:[{event_id:'evt-b',source:versionB}]});
+
+  assert.equal(store.getActiveSwipeId(0),0);
+  assert.deepEqual(store.getActiveFloorEvents(0,versionA).map(event=>event.event_id),['evt-a']);
+  adapter.message.swipe_id=1;
+  assert.equal(store.getActiveSwipeId(0),1);
+  assert.deepEqual(store.getActiveFloorEvents(0,versionB).map(event=>event.event_id),['evt-b']);
+  assert.deepEqual(store.getActiveFloorEvents(0,versionA),[]);
+
+  adapter.getMessage=()=>null;
+  assert.equal(store.getActiveFloor(0),null);
+  assert.deepEqual(store.getActiveFloorEvents(0,versionB),[]);
+});
+
 test('ordinary floor storage uses message extra when no swipe structure exists',async()=>{
   const adapter=createAdapter();
   delete adapter.message.swipes;
@@ -80,6 +102,69 @@ test('chat reads never return another chat metadata',()=>{
   adapter.setChatId('chat-b');
   assert.deepEqual(store.getChat('chat-a').chat_scope,{chat_id:'chat-a'});
   assert.equal(store.getChat('chat-b').marker,undefined);
+});
+
+test('legacy Chat reads as an empty tracking registry without writing a migration',()=>{
+  const adapter=createAdapter();
+  adapter.metadata.bioweave={chat_scope:{chat_id:'chat-a'},marker:'legacy'};
+  const store=createStore(adapter,createChatBoundary(adapter));
+  const restored=store.getChat('chat-a');
+  assert.deepEqual(restored.tracking_subjects,{});
+  assert.equal(adapter.metadata.bioweave.tracking_subjects,undefined);
+  assert.equal(restored.marker,'legacy');
+});
+
+test('tracking registry writes retain Chat scope and secret sanitization',async()=>{
+  const adapter=createAdapter();
+  const store=createStore(adapter,createChatBoundary(adapter));
+  await store.saveTrackingSubjects('chat-a',{
+    charA:{character_id:'charA',status:'active',exposure_event_ids:['evt-a']},
+    api_key:'do-not-persist',
+  });
+  assert.deepEqual(store.getTrackingSubjects('chat-a').charA.exposure_event_ids,['evt-a']);
+  assert.equal(adapter.metadata.bioweave.tracking_subjects.api_key,undefined);
+  assert.deepEqual(adapter.metadata.bioweave.chat_scope,{chat_id:'chat-a'});
+});
+
+test('runtime registry refresh scans current Floor facts without requesting AI',async()=>{
+  const adapter=createAdapter();
+  adapter.message.swipe_id=0;
+  adapter.message.swipes=['story'];
+  adapter.getChat=()=>[adapter.message];
+  const text='story';
+  const version=await floorVersion({
+    chatId:'chat-a',
+    messageId:0,
+    floor:0,
+    swipeId:0,
+    text,
+  });
+  await createStore(adapter,createChatBoundary(adapter)).saveFloor(0,0,{
+    analysis:{status:'success',floor_version:version},
+    events:[{
+      event_id:'evt-refresh',
+      type:'sexual_activity',
+      status:'confirmed',
+      source:version,
+      participants:[{
+        character_id:'char-a',
+        display_name:'A',
+        event_role:'potential_gestational_subject',
+        reproductive_capabilities_used:{can_carry_pregnancy:true},
+      }],
+      pregnancy_relevance:{
+        relevant:true,
+        possible_conception:true,
+        gestational_subject_ids:['char-a'],
+        counterpart_ids:[],
+      },
+    }],
+  });
+  const runtime=createRuntime({adapter});
+  assert.equal(await runtime.init(),true);
+  const registry=await runtime.refreshTrackingRegistry('focused-test');
+  assert.equal(registry.tracking_subjects['char-a'].created_from_event_id,'evt-refresh');
+  assert.deepEqual(adapter.metadata.bioweave.tracking_subjects['char-a'].exposure_event_ids,['evt-refresh']);
 });
 
 test('stale async chat save is rejected after chat switch',async()=>{
@@ -151,6 +236,22 @@ test('SillyTavern adapter writes per-swipe data to the host message',async()=>{
     await adapter.saveFloorBioWeave(0,1,{marker:'one'},'chat-a');
     assert.equal(context.chat[0].extra?.bioweave,undefined);
     assert.equal(context.chat[0].swipe_info[0].extra.bioweave.marker,'zero');
+    assert.equal(context.chat[0].swipe_info[1].extra.bioweave.marker,'one');
+  } finally {
+    delete globalThis.SillyTavern;
+  }
+});
+
+test('SillyTavern adapter preserves object-indexed swipe_info storage',async()=>{
+  const context={chatId:'chat-a',chat:[{
+    swipes:{0:{content:'zero'},1:{content:'one'}},
+    swipe_info:{},
+  }],saveChat:async()=>{}};
+  globalThis.SillyTavern={getContext:()=>context};
+  try {
+    const adapter=createSillyTavernAdapter();
+    await adapter.saveFloorBioWeave(0,1,{marker:'one'},'chat-a');
+    assert.equal(context.chat[0].extra?.bioweave,undefined);
     assert.equal(context.chat[0].swipe_info[1].extra.bioweave.marker,'one');
   } finally {
     delete globalThis.SillyTavern;

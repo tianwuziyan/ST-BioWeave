@@ -16,7 +16,11 @@ import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
 import * as defaultApiClient from '../ai/client.js';
 import {createAnalyzer, normalizeWorldModel, summarizeAnalysisInput} from '../ai/analyzer.js';
-import {buildAnalysisInput} from '../ai/input-builder.js';
+import {buildAnalysisInput, buildEventAnalysisInput} from '../ai/input-builder.js';
+import {normalizeEvent, sortEvents, validateEvent} from '../core/events.js';
+import {rebuildTrackingRegistry} from '../core/tracking.js';
+import {createStoryTime, normalizeStoryTime} from '../story/time.js';
+import {commitAnalysis, floorVersion, isIntervalTarget, shouldAnalyze} from '../runtime/floor.js';
 import {
   characterOpeningSelectionState,
   createWorldbookCache,
@@ -173,6 +177,95 @@ function createWorldModelState() {
     sectionDirty: false,
     notice: null,
   };
+}
+
+function scalarMessageValue(value) {
+  if (typeof value === 'string') return value.trim() || null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return null;
+}
+
+function messagePartText(value) {
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (!value || typeof value !== 'object') return '';
+  return String(value.mes ?? value.content ?? value.message ?? value.text ?? '');
+}
+
+function messageTextForSwipe(message, swipeId = 0) {
+  if (typeof message === 'string' || typeof message === 'number') return String(message);
+  if (!message || typeof message !== 'object') return '';
+  if (message.swipes && typeof message.swipes === 'object' && message.swipes[swipeId] !== undefined) {
+    return messagePartText(message.swipes[swipeId]);
+  }
+  return messagePartText(message.mes ?? message.content ?? message.message);
+}
+
+function messageRoleForAnalysis(message) {
+  const role = String(message?.role ?? '').trim().toLowerCase();
+  if (['user', 'assistant', 'system'].includes(role)) return role;
+  if (message?.is_system === true) return 'system';
+  if (message?.is_user === true) return 'user';
+  return 'assistant';
+}
+
+function eventCharacterContext(context, chatData = {}) {
+  const characterIndex = context?.characterId;
+  const character = context?.character
+    ?? context?.characterCard
+    ?? (characterIndex !== undefined && characterIndex !== null
+      ? context?.characters?.[characterIndex]
+      : null);
+  const card = character?.data && typeof character.data === 'object'
+    ? {...character, ...character.data}
+    : character && typeof character === 'object'
+      ? character
+      : {};
+  const cardFields = {};
+  for (const key of [
+    'name',
+    'description',
+    'personality',
+    'scenario',
+    'first_mes',
+    'mes_example',
+    'system_prompt',
+    'post_history_instructions',
+  ]) {
+    if (card[key] === undefined || card[key] === null || card[key] === '') continue;
+    cardFields[key] = card[key];
+  }
+  const stableCharacterId = card.avatar
+    ?? card.extensions?.character_id
+    ?? card.extensions?.id
+    ?? card.data?.extensions?.character_id
+    ?? card.data?.extensions?.id
+    ?? null;
+  return {
+    current_character: context?.name2 ?? context?.character_name ?? null,
+    character_id: stableCharacterId,
+    character_card: cardFields,
+    profiles: chatData.character_profiles ?? {},
+  };
+}
+
+function messageFloorForAnalysis(message, index) {
+  for (const candidate of [message?.floor, message?.floor_id, message?.floorIndex, message?.index]) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed)) return Math.round(parsed);
+  }
+  return index;
+}
+
+function messageIdForAnalysis(message, index) {
+  for (const candidate of [message?.message_id, message?.messageId, message?.id, index]) {
+    const value = scalarMessageValue(candidate);
+    if (value !== null) return value;
+  }
+  return index;
+}
+
+function messageVersionForAnalysis(message) {
+  return scalarMessageValue(message?.message_version ?? message?.messageVersion ?? message?.version) ?? undefined;
 }
 
 function themeLabel(value) {
@@ -431,6 +524,24 @@ export function createApp(runtime, options = {}) {
   };
 
   let worldModelTraceChatId = null;
+  let businessState = {
+    loaded: false,
+    loading: false,
+    chatId: null,
+    trackingSubjects: {},
+    characterProfiles: {},
+    activeEvents: [],
+    currentFloor: null,
+    lastAnalysis: null,
+    error: null,
+  };
+  let businessRefreshSequence = 0;
+  const eventAnalysisInFlight = new Set();
+  let eventEditingId = null;
+  const storyTime = options.storyTime ?? createStoryTime({
+    sevenDaysCalProvider: options.sevenDaysCalProvider ?? options.storyTimeProvider ?? null,
+    fallbackProvider: options.fallbackStoryTimeProvider ?? null,
+  });
 
   function receiveWorldModelTrace(trace) {
     if (!trace || typeof trace !== 'object') return;
@@ -449,9 +560,9 @@ export function createApp(runtime, options = {}) {
     if (route === 'settings') render();
   }
 
-  function resolveWorldAnalysisProfile() {
+  function resolveAnalysisProfile(task = 'world_analysis') {
     const settings = profileStore.getSettings?.() ?? {};
-    const assignment = settings.assignments?.world_analysis ?? null;
+    const assignment = settings.assignments?.[task] ?? null;
     if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
     if (assignment === FOLLOW_DEFAULT_API) {
       if (settings.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
@@ -462,7 +573,7 @@ export function createApp(runtime, options = {}) {
   }
 
   const analyzer = options.analyzer ?? createAnalyzer({
-    profileResolver: resolveWorldAnalysisProfile,
+    profileResolver: resolveAnalysisProfile,
     contextResolver: () => runtime.st?.getContext?.() ?? hostContextForApp(),
     requestSettingsResolver: () => settingsState.apiRequestDraft
       ?? profileStore.getApiRequestSettings?.()
@@ -1787,6 +1898,371 @@ export function createApp(runtime, options = {}) {
     }
   }
 
+  function currentMessages() {
+    const context = runtime.st?.getContext?.() ?? hostContextForApp();
+    const messages = runtime.st?.getChat?.() ?? context?.chat;
+    return Array.isArray(messages) ? messages : [];
+  }
+
+  function currentMessageSwipeId(message, index = null) {
+    const stored = index === null ? null : runtime.store?.getActiveSwipeId?.(index);
+    return stored ?? (
+      Number.isInteger(message?.swipe_id) && message.swipe_id >= 0 ? message.swipe_id : 0
+    );
+  }
+
+  function currentMessageVersion(message, floorData = null) {
+    return messageVersionForAnalysis(message)
+      ?? floorData?.analysis?.floor_version?.message_version
+      ?? floorData?.floor_version?.message_version;
+  }
+
+  async function resolveCurrentFloorVersion(chatId, message, index, floorData = null, explicitSwipeId = null) {
+    const swipeId = explicitSwipeId ?? currentMessageSwipeId(message, index);
+    return floorVersion({
+      chatId,
+      messageId: messageIdForAnalysis(message, index),
+      floor: messageFloorForAnalysis(message, index),
+      swipeId,
+      text: messageTextForSwipe(message, swipeId),
+      messageVersion: currentMessageVersion(message, floorData),
+    });
+  }
+
+  function floorDataForMessage(index, message) {
+    const swipeId = currentMessageSwipeId(message, index);
+    return {
+      swipeId,
+      data: runtime.store?.getFloor?.(index, swipeId) ?? null,
+    };
+  }
+
+  async function collectActiveBusinessData(chatId, token) {
+    const messages = currentMessages();
+    const activeEvents = [];
+    let currentFloor = null;
+    let lastAnalysis = null;
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index];
+      const {swipeId, data: floorData} = floorDataForMessage(index, message);
+      if (!floorData) continue;
+      const version = await resolveCurrentFloorVersion(chatId, message, index, floorData, swipeId);
+      assertAnalysisChatToken(token);
+      const events = runtime.store?.getActiveFloorEvents?.(index, version)
+        ?? (Array.isArray(floorData.events)
+          ? floorData.events.filter(event => JSON.stringify(event?.source) === JSON.stringify(version))
+          : []);
+      activeEvents.push(...events);
+      currentFloor = {
+        floor: version.floor,
+        message_id: version.message_id,
+        swipe_id: swipeId,
+        version,
+      };
+      lastAnalysis = floorData.analysis?.last_analyzed_at
+        ?? floorData.analysis?.last_attempt?.analyzed_at
+        ?? lastAnalysis;
+    }
+    return {
+      messages,
+      activeEvents: sortEvents(activeEvents),
+      currentFloor,
+      lastAnalysis,
+    };
+  }
+
+  async function refreshBusinessState({schedule = false, event = null, reason = 'ui-read'} = {}) {
+    if (businessState.loading && !schedule) return;
+    const requestId = ++businessRefreshSequence;
+    const {chatId, token} = currentAnalysisChatToken();
+    businessState = {...businessState, loading: true, chatId, error: null};
+    try {
+      const collected = await collectActiveBusinessData(chatId, token);
+      assertAnalysisChatToken(token);
+      const previousChat = runtime.store?.getChat?.(chatId);
+      const registry = rebuildTrackingRegistry(collected.activeEvents, previousChat);
+      assertAnalysisChatToken(token);
+      const previousRegistry = {
+        tracking_subjects: previousChat?.tracking_subjects ?? {},
+        character_profiles: previousChat?.character_profiles ?? {},
+      };
+      if (JSON.stringify(previousRegistry) !== JSON.stringify(registry)
+        && typeof runtime.store?.saveChat === 'function') {
+        await runtime.store.saveChat(chatId, {...previousChat, ...registry});
+        assertAnalysisChatToken(token);
+      }
+      if (requestId !== businessRefreshSequence) return;
+      businessState = {
+        loaded: true,
+        loading: false,
+        chatId,
+        trackingSubjects: registry.tracking_subjects,
+        characterProfiles: registry.character_profiles,
+        activeEvents: collected.activeEvents,
+        currentFloor: collected.currentFloor,
+        lastAnalysis: collected.lastAnalysis,
+        error: null,
+      };
+      if (root?.dataset.open === 'true') render();
+      if (schedule) void scheduleEventAnalysis(event, {reason});
+    } catch (error) {
+      if (requestId !== businessRefreshSequence) return;
+      try {
+        assertAnalysisChatToken(token);
+      } catch {
+        return;
+      }
+      businessState = {
+        ...businessState,
+        loaded: true,
+        loading: false,
+        chatId,
+        error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
+      };
+      if (root?.dataset.open === 'true') render();
+    }
+  }
+
+  function resolveEventMessage(event) {
+    const source = event?.source ?? {};
+    const messages = currentMessages();
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index];
+      const {swipeId} = floorDataForMessage(index, message);
+      if (String(messageIdForAnalysis(message, index)) !== String(source.message_id)) continue;
+      if (Number(swipeId) !== Number(source.swipe_id)) continue;
+      if (Number(messageFloorForAnalysis(message, index)) !== Number(source.floor)) continue;
+      return {index, message, swipeId};
+    }
+    return null;
+  }
+
+  function activeEventById(eventId) {
+    return businessState.activeEvents.find(event => String(event?.event_id) === String(eventId)) ?? null;
+  }
+
+  function eventAnalysisError(error) {
+    const code = String(error?.code ?? error?.message ?? '');
+    const messages = {
+      API_PROFILE_NOT_CONFIGURED: '事件分析尚未配置 API，请在设置的任务分配中选择可用配置。',
+      EVENT_ANALYSIS_INVALID: 'AI 返回的事件结果无法通过固定 JSON 校验，上一份有效事件已保留。',
+      ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，事件结果未保存。',
+      STALE_CHAT: 'Chat 已切换，本次事件结果未保存。',
+      MESSAGE_NOT_FOUND: '产生事件的楼层已不存在，当前事件未保存。',
+      EVENT_NOT_FOUND: '当前有效事件已不存在，请刷新页面。',
+    };
+    const matched = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`));
+    return messages[matched] ?? '事件分析或保存失败，上一份有效事件已保留。';
+  }
+
+  function shouldAutoAnalyzeLifecycle(event) {
+    return ['MESSAGE_RECEIVED', 'GENERATION_ENDED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']
+      .includes(event?.type);
+  }
+
+  async function analyzeEventFloor(messageIndex, {manual = false, notifyResult = true, reason = 'automatic'} = {}) {
+    const messages = currentMessages();
+    const message = messages[messageIndex];
+    if (!message) throw new Error('MESSAGE_NOT_FOUND');
+    const {chatId, token} = currentAnalysisChatToken();
+    const {swipeId, data: floorData} = floorDataForMessage(messageIndex, message);
+    if (!floorData) throw new Error('MESSAGE_NOT_FOUND');
+    const version = await resolveCurrentFloorVersion(chatId, message, messageIndex, floorData, swipeId);
+    assertAnalysisChatToken(token);
+    const savedAnalysis = floorData.analysis ?? null;
+    if (!shouldAnalyze(savedAnalysis, {version, manual})) return {skipped: true, version};
+    const requestKey = `${messageIndex}:${swipeId}`;
+    if (eventAnalysisInFlight.has(requestKey)) return {skipped: true, in_flight: true};
+    eventAnalysisInFlight.add(requestKey);
+    const context = runtime.st?.getContext?.() ?? hostContextForApp();
+    const chatData = runtime.store?.getChat?.(chatId) ?? {};
+    const recentContext = messages.slice(Math.max(0, messageIndex - 4), messageIndex).map((item, offset) => ({
+      floor: messageFloorForAnalysis(item, Math.max(0, messageIndex - 4) + offset),
+      role: messageRoleForAnalysis(item),
+      content: messageTextForSwipe(item, currentMessageSwipeId(item)),
+    }));
+    const floor = messageFloorForAnalysis(message, messageIndex);
+    const analysisInput = buildEventAnalysisInput({
+      chatId,
+      floorVersion: version,
+      currentFloor: {
+        floor,
+        message_id: version.message_id,
+        swipe_id: swipeId,
+        narrative: messageTextForSwipe(message, swipeId),
+        role: messageRoleForAnalysis(message),
+      },
+      recentContext,
+      worldModel: chatData.world_model,
+      storyTime: storyTime.atFloor(floor)
+        ?? normalizeStoryTime(message.story_time ?? message.storyTime ?? null),
+      characterContext: eventCharacterContext(context, chatData),
+    });
+    const controller = new AbortController();
+    try {
+      const analyze = analyzer?.analyzeFloor;
+      if (typeof analyze !== 'function') throw new Error('EVENT_ANALYZER_UNAVAILABLE');
+      const result = await analyze({
+        analysisInput,
+        floor_version: version,
+        authoritative_floor_version: version,
+        signal: controller.signal,
+      });
+      assertAnalysisChatToken(token);
+      const events = (Array.isArray(result?.events) ? result.events : []).map(event => normalizeEvent({
+        ...event,
+        source: version,
+      }));
+      if (events.some(event => !validateEvent(event).ok)) throw new Error('EVENT_ANALYSIS_INVALID');
+      const analyzedAt = new Date().toISOString();
+      const analysis = commitAnalysis(savedAnalysis, {
+        status: 'success',
+        analyzed_at: analyzedAt,
+        event_count: events.length,
+        reason,
+      }, version);
+      await runtime.store.saveFloor(messageIndex, swipeId, {...floorData, analysis, events});
+      assertAnalysisChatToken(token);
+      const currentChat = runtime.store.getChat(chatId);
+      await runtime.store.saveChat(chatId, {
+        ...currentChat,
+        index: {
+          ...(currentChat.index ?? {}),
+          last_processed_floor: floor,
+        },
+      });
+      assertAnalysisChatToken(token);
+      if (notifyResult) notify('事件分析成功并已保存。', 'success', documentRef);
+      return {events, version, status: 'success'};
+    } catch (error) {
+      try {
+        assertAnalysisChatToken(token);
+      } catch {
+        throw error;
+      }
+      const failure = commitAnalysis(savedAnalysis, {
+        status: 'failed',
+        error: error?.message ?? 'EVENT_ANALYSIS_FAILED',
+        attempted_at: new Date().toISOString(),
+        reason,
+      }, version);
+      try {
+        await runtime.store.saveFloor(messageIndex, swipeId, {...floorData, analysis: failure});
+        assertAnalysisChatToken(token);
+      } catch (saveError) {
+        if (saveError?.message === 'STALE_CHAT') throw saveError;
+      }
+      if (notifyResult) notify(eventAnalysisError(error), 'error', documentRef);
+      throw error;
+    } finally {
+      eventAnalysisInFlight.delete(requestKey);
+      await refreshBusinessState({schedule: false, reason: 'event-analysis'});
+    }
+  }
+
+  async function scheduleEventAnalysis(event, {reason = 'lifecycle'} = {}) {
+    if (!shouldAutoAnalyzeLifecycle(event)) return;
+    const messages = currentMessages();
+    if (!messages.length) return;
+    const payload = event?.payload;
+    const candidateIndex = Number.isInteger(Number(payload?.message_id))
+      ? Number(payload.message_id)
+      : Number.isInteger(Number(payload?.messageIndex))
+        ? Number(payload.messageIndex)
+        : messages.length - 1;
+    const messageIndex = candidateIndex >= 0 && candidateIndex < messages.length
+      ? candidateIndex
+      : messages.length - 1;
+    const message = messages[messageIndex];
+    const floor = messageFloorForAnalysis(message, messageIndex);
+    const chat = runtime.store?.getChat?.(runtime.chat.current()) ?? {};
+    const interval = Number(chat.settings?.analysis_interval ?? 3);
+    const forcedLifecycle = ['MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type);
+    if (!forcedLifecycle && !isIntervalTarget(floor, chat.index?.last_processed_floor, interval)) return;
+    try {
+      await analyzeEventFloor(messageIndex, {manual: false, notifyResult: false, reason});
+    } catch {
+      // Automatic failures are retained in Floor analysis metadata and retried
+      // on a later lifecycle event; UI opening never enters this path.
+    }
+  }
+
+  function eventFormField(form, field) {
+    return form?.querySelector?.(`[data-bioweave-event-field="${field}"]`);
+  }
+
+  function parseEventFormValue(form, field, fallback) {
+    const node = eventFormField(form, field);
+    if (!node) return fallback;
+    if (field === 'story_time' || field === 'participants' || field === 'pregnancy_relevance' || field === 'source_evidence') {
+      try {
+        return JSON.parse(String(node.value ?? ''));
+      } catch {
+        throw new Error(`EVENT_EDIT_${field.toUpperCase()}_INVALID`);
+      }
+    }
+    return node.value;
+  }
+
+  async function saveEventEdit() {
+    const form = root?.querySelector?.('[data-bioweave-event-form]');
+    const eventId = String(form?.dataset?.bioweaveEventId ?? eventEditingId ?? '').trim();
+    const currentEvent = activeEventById(eventId);
+    if (!currentEvent) throw new Error('EVENT_NOT_FOUND');
+    const rawNextEvent = {
+      ...currentEvent,
+      type: parseEventFormValue(form, 'type', currentEvent.type),
+      status: parseEventFormValue(form, 'status', currentEvent.status),
+      location: parseEventFormValue(form, 'location', currentEvent.location),
+      story_time: parseEventFormValue(form, 'story_time', currentEvent.story_time),
+      participants: parseEventFormValue(form, 'participants', currentEvent.participants),
+      pregnancy_relevance: parseEventFormValue(form, 'pregnancy_relevance', currentEvent.pregnancy_relevance),
+      source_evidence: parseEventFormValue(form, 'source_evidence', currentEvent.source_evidence),
+      source: currentEvent.source,
+    };
+    if (!validateEvent(rawNextEvent).ok) throw new Error('EVENT_ANALYSIS_INVALID');
+    const nextEvent = normalizeEvent(rawNextEvent);
+    if (!validateEvent(nextEvent).ok) throw new Error('EVENT_ANALYSIS_INVALID');
+    const target = resolveEventMessage(currentEvent);
+    if (!target) throw new Error('MESSAGE_NOT_FOUND');
+    const floorData = runtime.store.getFloor(target.index, target.swipeId);
+    const events = Array.isArray(floorData?.events) ? [...floorData.events] : [];
+    const eventIndex = events.findIndex(item => String(item?.event_id) === eventId);
+    if (eventIndex < 0) throw new Error('EVENT_NOT_FOUND');
+    events[eventIndex] = nextEvent;
+    await runtime.store.saveFloor(target.index, target.swipeId, {...floorData, events});
+    await runtime.refreshTrackingRegistry?.('event-edit');
+    eventEditingId = null;
+    notify('Event 已更新。', 'success', documentRef);
+    await refreshBusinessState({reason: 'event-edit'});
+  }
+
+  async function deleteEvent(eventId) {
+    const currentEvent = activeEventById(eventId);
+    if (!currentEvent) throw new Error('EVENT_NOT_FOUND');
+    if (!await confirmWithPopup('删除 BiologicalEvent', `确定删除 Event ${eventId} 吗？删除后该事实不再参与当前追踪。`)) return;
+    const target = resolveEventMessage(currentEvent);
+    if (!target) throw new Error('MESSAGE_NOT_FOUND');
+    const floorData = runtime.store.getFloor(target.index, target.swipeId);
+    const events = (Array.isArray(floorData?.events) ? floorData.events : [])
+      .filter(event => String(event?.event_id) !== String(eventId));
+    await runtime.store.saveFloor(target.index, target.swipeId, {...floorData, events});
+    await runtime.refreshTrackingRegistry?.('event-delete');
+    if (eventEditingId === eventId) eventEditingId = null;
+    notify('Event 已删除。', 'success', documentRef);
+    await refreshBusinessState({reason: 'event-delete'});
+  }
+
+  async function manualRefreshEventAnalysis() {
+    const messages = currentMessages();
+    if (!messages.length) throw new Error('MESSAGE_NOT_FOUND');
+    return analyzeEventFloor(messages.length - 1, {
+      manual: true,
+      notifyResult: true,
+      reason: 'manual-refresh',
+    });
+  }
+
   function syncMoreMenu() {
     if (!root) return;
     const menu = root.querySelector('.bioweave-more-menu');
@@ -1818,6 +2294,13 @@ export function createApp(runtime, options = {}) {
     main.innerHTML = page[2]({
       characterId: focusedCharacterId,
       characterDetailTab,
+      trackingSubjects: businessState.trackingSubjects,
+      characterProfiles: businessState.characterProfiles,
+      activeEvents: businessState.activeEvents,
+      currentFloor: businessState.currentFloor,
+      lastAnalysis: businessState.lastAnalysis,
+      editingEventId: eventEditingId,
+      chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
       ...(route === 'settings' ? {
         worldbookSources: {
@@ -1850,6 +2333,12 @@ export function createApp(runtime, options = {}) {
     syncAnalysisWorldbookToggles();
     syncAnalysisCharacterOpeningToggles();
     syncMoreMenu();
+    const currentChatId = runtime.chat.current();
+    if (!businessState.loaded && !businessState.loading) {
+      void refreshBusinessState({schedule: false, reason: 'ui-read'});
+    } else if (businessState.chatId !== currentChatId && !businessState.loading) {
+      void refreshBusinessState({schedule: false, reason: 'chat-read'});
+    }
     if (route === 'settings' && !settingsState.loaded && !settingsState.loading) void loadSettings();
     if (route === 'settings' && !analysisSourcesState.loaded && !analysisSourcesState.loading) void loadAnalysisSourcesState();
   }
@@ -2505,6 +2994,29 @@ export function createApp(runtime, options = {}) {
       focusedCharacterId = null;
       characterDetailTab = 'state';
       setMoreMenu(false);
+      businessRefreshSequence += 1;
+      businessState = {
+        ...businessState,
+        loaded: false,
+        loading: false,
+        chatId: null,
+        trackingSubjects: {},
+        characterProfiles: {},
+        activeEvents: [],
+        currentFloor: null,
+        lastAnalysis: null,
+        error: null,
+      };
+    }
+    if (event?.type === 'TRACKING_REGISTRY_REFRESHED') {
+      businessState = {...businessState, loaded: false, loading: false};
+      void refreshBusinessState({schedule: false, reason: 'tracking-registry'});
+    } else if (shouldAutoAnalyzeLifecycle(event)) {
+      businessState = {...businessState, loaded: false, loading: false};
+      void refreshBusinessState({schedule: true, event, reason: event.type});
+    } else if (event?.type === 'MESSAGE_DELETED') {
+      businessState = {...businessState, loaded: false, loading: false};
+      void refreshBusinessState({schedule: false, reason: event.type});
     }
     if (root?.dataset.open === 'true') render();
   }
@@ -2609,6 +3121,47 @@ export function createApp(runtime, options = {}) {
     if (action === 'refresh-analysis-sources') {
       event.preventDefault();
       await loadAnalysisSourcesState({forceRefresh: true});
+      return;
+    }
+    if (action === 'refresh') {
+      event.preventDefault();
+      try {
+        await manualRefreshEventAnalysis();
+      } catch (error) {
+        if (error?.message !== 'REQUEST_ABORTED') notify(eventAnalysisError(error), 'error', documentRef);
+      }
+      return;
+    }
+    if (action === 'edit-event') {
+      event.preventDefault();
+      eventEditingId = String(target.dataset.bioweaveEventId ?? '').trim() || null;
+      render();
+      return;
+    }
+    if (action === 'cancel-event-edit') {
+      event.preventDefault();
+      eventEditingId = null;
+      render();
+      return;
+    }
+    if (action === 'save-event') {
+      event.preventDefault();
+      try {
+        await saveEventEdit();
+      } catch (error) {
+        notify(eventAnalysisError(error), 'error', documentRef);
+        render();
+      }
+      return;
+    }
+    if (action === 'delete-event') {
+      event.preventDefault();
+      try {
+        await deleteEvent(String(target.dataset.bioweaveEventId ?? '').trim());
+      } catch (error) {
+        notify(eventAnalysisError(error), 'error', documentRef);
+        render();
+      }
       return;
     }
     if (action === 'world-model-reanalyze') {
@@ -2986,6 +3539,8 @@ export function createApp(runtime, options = {}) {
     modelRefreshSequence += 1;
     analysisSourceRequestSequence += 1;
     analysisSourceSaveSequence += 1;
+    businessRefreshSequence += 1;
+    eventAnalysisInFlight.clear();
     worldbookCache = createWorldbookCache();
     worldModelTraceChatId = null;
     lifecycle.destroy();
@@ -2998,6 +3553,18 @@ export function createApp(runtime, options = {}) {
     moreMenuOpen = false;
     analysisSourcesState = createAnalysisSourcesState();
     worldModelState = createWorldModelState();
+    businessState = {
+      loaded: false,
+      loading: false,
+      chatId: null,
+      trackingSubjects: {},
+      characterProfiles: {},
+      activeEvents: [],
+      currentFloor: null,
+      lastAnalysis: null,
+      error: null,
+    };
+    eventEditingId = null;
     globalRecentStory = normalizeRecentStoryGlobalSettings();
     globalRecentStoryLoaded = false;
     globalRecentStorySaveSequence += 1;

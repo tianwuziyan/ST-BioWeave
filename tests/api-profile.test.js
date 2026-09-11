@@ -43,6 +43,7 @@ test('global profile normalization removes API key values and emptyChat stays ch
   assert.equal(settings.assignments.world_analysis, 'stable');
   assert.equal(JSON.stringify(settings).includes('DO-NOT-PERSIST'), false);
   assert.equal('api_profiles' in emptyChat('chat-a'), false);
+  assert.deepEqual(emptyChat('chat-a').tracking_subjects, {});
 });
 
 test('global API request settings normalize and round-trip without Chat storage', async () => {

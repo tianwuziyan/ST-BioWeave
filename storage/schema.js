@@ -436,6 +436,13 @@ export function sanitizeSecrets(value) {
   return safe;
 }
 
+// Tracking Subjects are a Chat-local index.  Older Chats do not have this
+// field; treat that shape as an empty registry without writing a migration.
+export function normalizeTrackingSubjects(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return cloneValue(raw);
+}
+
 export function emptyChat(chatId) {
   return {
     schema_version: SCHEMA_VERSION,
@@ -443,6 +450,7 @@ export function emptyChat(chatId) {
     world_model: null,
     world_model_meta: null,
     character_profiles: {},
+    tracking_subjects: {},
     relationships: [],
     settings: cloneValue(DEFAULT_SETTINGS),
     index: {snapshot_floors: [], last_processed_floor: null},

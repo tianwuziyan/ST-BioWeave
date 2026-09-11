@@ -10,9 +10,14 @@ import {
   normalizeApiSource,
   normalizeExtensionSettings,
   normalizeRecentStoryGlobalSettings,
+  normalizeTrackingSubjects,
   normalizeWorldAnalysisPrompt,
   sanitizeSecrets,
 } from './schema.js';
+import {
+  floorVersionFromData as floorVersionFromStoredData,
+  getActiveFloorEvents as filterActiveFloorEvents,
+} from '../runtime/floor.js';
 
 function staleChatError() {
   return new Error('STALE_CHAT');
@@ -449,21 +454,33 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
 
 export const createProfileStore = createApiProfileStore;
 
-function floorVersionFromData(data) {
-  return data?.analysis?.floor_version ?? data?.floor_version ?? null;
-}
-
 function hasMatchingFloorScope(data, chatId) {
-  const version = floorVersionFromData(data);
+  const version = floorVersionFromStoredData(data);
   return !version?.chat_id || version.chat_id === chatId;
 }
 
 export function hasSwipeStructure(message) {
-  return Array.isArray(message?.swipes) || Array.isArray(message?.swipe_info);
+  return Array.isArray(message?.swipes)
+    || Boolean(message?.swipe_info && typeof message.swipe_info === 'object');
 }
 
+function normalizedSwipeId(swipeId) {
+  if (Number.isInteger(swipeId) && swipeId >= 0) return swipeId;
+  if (typeof swipeId === 'string' && /^\d+$/u.test(swipeId.trim())) return Number(swipeId);
+  return null;
+}
+
+export function activeSwipeId(message, fallback = 0) {
+  if (!hasSwipeStructure(message)) return 0;
+  return normalizedSwipeId(message.swipe_id)
+    ?? normalizedSwipeId(fallback)
+    ?? 0;
+}
+
+export const getActiveSwipeId = activeSwipeId;
+
 function validSwipeId(swipeId) {
-  return Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
+  return normalizedSwipeId(swipeId) ?? 0;
 }
 
 export function createStore(adapter, boundary = null) {
@@ -476,7 +493,10 @@ export function createStore(adapter, boundary = null) {
     const metadata = adapter.getChatMetadata?.();
     const stored = metadata?.bioweave;
     if (stored?.chat_scope?.chat_id !== chatId) return emptyChat(chatId);
-    return cloneForStorage(stored);
+    return cloneForStorage({
+      ...stored,
+      tracking_subjects: normalizeTrackingSubjects(stored.tracking_subjects),
+    });
   }
 
   async function saveChat(chatId, data) {
@@ -484,7 +504,10 @@ export function createStore(adapter, boundary = null) {
     if (typeof adapter.saveChatMetadata !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
     const token = captureToken(adapter, boundary);
     if (token.chatId !== chatId) throw staleChatError();
-    const safeData = cloneForStorage(data);
+    const safeData = cloneForStorage({
+      ...data,
+      tracking_subjects: normalizeTrackingSubjects(data?.tracking_subjects),
+    });
     await adapter.saveChatMetadata('bioweave', safeData, token.chatId);
     assertToken(adapter, boundary, token);
   }
@@ -502,10 +525,42 @@ export function createStore(adapter, boundary = null) {
     return cloneForStorage(stored);
   }
 
+  function getActiveSwipe(messageId) {
+    const message = adapter.getMessage?.(messageId);
+    return message ? activeSwipeId(message) : null;
+  }
+
+  function getActiveFloor(messageId) {
+    const swipeId = getActiveSwipe(messageId);
+    return swipeId === null ? null : getFloor(messageId, swipeId);
+  }
+
+  function getActiveFloorEvents(messageId, version) {
+    return filterActiveFloorEvents(getActiveFloor(messageId), version);
+  }
+
+  function getTrackingSubjects(chatId) {
+    return cloneValue(normalizeTrackingSubjects(getChat(chatId).tracking_subjects));
+  }
+
+  async function saveTrackingSubjects(chatId, registry) {
+    const chat = getChat(chatId);
+    const trackingSubjects = normalizeTrackingSubjects(
+      registry?.tracking_subjects ?? registry,
+    );
+    const nextChat = {...chat, tracking_subjects: trackingSubjects};
+    if (registry && typeof registry === 'object'
+      && Object.prototype.hasOwnProperty.call(registry, 'character_profiles')) {
+      nextChat.character_profiles = cloneValue(registry.character_profiles);
+    }
+    await saveChat(chatId, nextChat);
+    return cloneValue(trackingSubjects);
+  }
+
   async function saveFloor(messageId, swipeId, data) {
     const targetSwipeId = validSwipeId(swipeId);
     const token = captureToken(adapter, boundary);
-    const version = floorVersionFromData(data);
+    const version = floorVersionFromStoredData(data);
     if (version?.chat_id && version.chat_id !== token.chatId) throw new Error('CHAT_SCOPE_MISMATCH');
     const safeData = cloneForStorage(data);
     if (typeof adapter.saveFloorBioWeave !== 'function') {
@@ -516,5 +571,17 @@ export function createStore(adapter, boundary = null) {
   }
 
   const profileStore = createApiProfileStore(adapter);
-  return {getChat, saveChat, getFloor, saveFloor, profileStore, ...profileStore};
+  return {
+    getChat,
+    saveChat,
+    getFloor,
+    getActiveSwipeId: getActiveSwipe,
+    getActiveFloor,
+    getActiveFloorEvents,
+    getTrackingSubjects,
+    saveTrackingSubjects,
+    saveFloor,
+    profileStore,
+    ...profileStore,
+  };
 }

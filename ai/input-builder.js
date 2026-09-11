@@ -6,6 +6,7 @@ import {
   normalizeRecentStorySettings,
   normalizeWorldbookSettings,
 } from '../storage/schema.js';
+import {normalizeStoryTime} from '../story/time.js';
 
 const EXTERNAL_MEMORY_DEFINITIONS = Object.freeze([
   {key: 'anima', label: 'Anima'},
@@ -21,6 +22,96 @@ function safeText(value) {
 
 function safeId(value) {
   return String(value ?? '').trim();
+}
+
+const SENSITIVE_INPUT_KEY_PATTERN = /(?:^|_)(?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)(?:$|_)/iu;
+
+function isSensitiveInputKey(key) {
+  return SENSITIVE_INPUT_KEY_PATTERN.test(String(key ?? ''));
+}
+
+// Event analysis receives a deliberately small, text-only boundary. Keep this
+// sanitizer independent from storage sanitization so an input preview cannot
+// accidentally carry a host response, profile, or Secret field into a prompt.
+function safeStructuredValue(value, seen = new Set()) {
+  if (value === undefined || value === null) return value ?? null;
+  if (typeof value === 'string') return safeText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map(item => safeStructuredValue(item, seen));
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (isSensitiveInputKey(key)) continue;
+    result[key] = safeStructuredValue(item, seen);
+  }
+  return result;
+}
+
+function numericId(value, fallback = null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+}
+
+export function normalizeEventFloorVersion(raw = {}, fallbackChatId = null) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const chatId = safeId(source.chat_id ?? source.chatId ?? fallbackChatId);
+  return {
+    chat_id: chatId || null,
+    message_id: safeId(source.message_id ?? source.messageId) || null,
+    floor: numericId(source.floor ?? source.floor_id),
+    swipe_id: numericId(source.swipe_id ?? source.swipeId, null),
+    content_hash: safeId(source.content_hash ?? source.contentHash) || null,
+    message_version: safeId(source.message_version ?? source.messageVersion) || null,
+  };
+}
+
+function normalizeEventCurrentFloor(raw, floorVersion) {
+  if (typeof raw === 'string' || typeof raw === 'number') {
+    return {
+      floor: floorVersion.floor,
+      message_id: floorVersion.message_id,
+      swipe_id: floorVersion.swipe_id,
+      narrative: safeContent(raw),
+      role: null,
+    };
+  }
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const narrative = firstContent([
+    source.narrative,
+    source.content,
+    source.text,
+    source.mes,
+    source.message,
+  ]);
+  return {
+    ...safeStructuredValue(source),
+    floor: numericId(source.floor ?? source.floor_id, floorVersion.floor),
+    message_id: safeId(source.message_id ?? source.messageId ?? floorVersion.message_id) || null,
+    swipe_id: numericId(source.swipe_id ?? source.swipeId, floorVersion.swipe_id),
+    narrative,
+    role: safeText(source.role ?? '').trim() || null,
+  };
+}
+
+function normalizeEventRecentContext(raw, fallbackStory) {
+  const items = Array.isArray(raw)
+    ? raw
+    : Array.isArray(fallbackStory?.items)
+      ? fallbackStory.items
+      : [];
+  return items.map((item, index) => {
+    if (typeof item === 'string' || typeof item === 'number') {
+      return {floor: index, role: null, content: safeContent(item)};
+    }
+    const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+    return {
+      ...safeStructuredValue(source),
+      floor: numericId(source.floor ?? source.floor_id, index),
+      role: safeText(source.role ?? '').trim() || null,
+      content: firstContent([source.content, source.text, source.mes, source.message]),
+    };
+  }).filter(item => item.content || item.narrative);
 }
 
 // 外部扩展返回的对象只读取公开正文字段，不把响应对象、extra 或 Store 复制进 DTO。
@@ -457,6 +548,77 @@ export function buildAnalysisInput({
   input.token_estimate = estimateAnalysisTokens(input);
   return input;
 }
+
+// Event extraction has a narrower contract than the World Model input. It is
+// intentionally built from the current Floor boundary and never copies host
+// context or API settings wholesale.
+export function normalizeEventAnalysisInput(options = {}) {
+  const source = options && typeof options === 'object' ? options : {};
+  const nested = source.analysisInput && typeof source.analysisInput === 'object'
+    ? source.analysisInput
+    : source;
+  const requestedScope = source.chat_scope ?? nested.chat_scope ?? source.chatScope ?? nested.chatScope;
+  const requestedVersion = source.floor_version
+    ?? nested.floor_version
+    ?? source.floorVersion
+    ?? nested.floorVersion
+    ?? {};
+  const context = source.context ?? nested.context;
+  const fallbackChatId = source.chatId
+    ?? source.chat_id
+    ?? nested.chatId
+    ?? nested.chat_id
+    ?? context?.chatId
+    ?? context?.chat_id
+    ?? requestedScope?.chat_id
+    ?? requestedScope?.chatId
+    ?? null;
+  const floor_version = normalizeEventFloorVersion(requestedVersion, fallbackChatId);
+  const chat_id = floor_version.chat_id || safeId(fallbackChatId) || null;
+  const currentFloor = source.current_floor
+    ?? nested.current_floor
+    ?? source.currentFloor
+    ?? nested.currentFloor
+    ?? {
+      floor: source.floor ?? nested.floor,
+      message_id: source.message_id ?? nested.message_id,
+      swipe_id: source.swipe_id ?? nested.swipe_id,
+      narrative: source.narrative ?? nested.narrative ?? source.content ?? nested.content,
+      role: source.role ?? nested.role,
+    };
+  const recentContext = source.recent_context
+    ?? nested.recent_context
+    ?? source.recentContext
+    ?? nested.recentContext;
+  const worldModel = source.world_model
+    ?? nested.world_model
+    ?? source.worldModel
+    ?? nested.worldModel
+    ?? null;
+  const storyTime = source.story_time
+    ?? nested.story_time
+    ?? source.storyTime
+    ?? nested.storyTime
+    ?? null;
+  const characterContext = source.character_context
+    ?? nested.character_context
+    ?? source.characterContext
+    ?? nested.characterContext
+    ?? nested.character
+    ?? null;
+
+  return {
+    chat_scope: {chat_id},
+    floor_version,
+    current_floor: normalizeEventCurrentFloor(currentFloor, floor_version),
+    recent_context: normalizeEventRecentContext(recentContext, nested.recent_story),
+    world_model: safeStructuredValue(worldModel),
+    story_time: safeStructuredValue(normalizeStoryTime(storyTime)),
+    character_context: safeStructuredValue(characterContext),
+  };
+}
+
+export const buildEventAnalysisInput = normalizeEventAnalysisInput;
 
 export const createAnalysisInput = buildAnalysisInput;
 export const buildRecentStoryInput = collectRecentStory;

@@ -1,5 +1,14 @@
 import { callOpenAICompatible } from './client.js';
-import {buildPrompt, buildWorldModelMessages, WORLD_MODEL_SCHEMA} from './prompts.js';
+import * as eventDomain from '../core/events.js';
+import {
+  buildEventAnalysisMessages,
+  buildPrompt,
+  buildWorldModelMessages,
+  EVENT_STATUS,
+  EVENT_TYPES,
+  WORLD_MODEL_SCHEMA,
+} from './prompts.js';
+import {normalizeEventFloorVersion} from './input-builder.js';
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -902,6 +911,447 @@ function responseText(raw) {
   return '';
 }
 
+const EVENT_CAPABILITY_KEYS = Object.freeze([
+  'can_produce_sperm',
+  'can_produce_ova',
+  'can_be_fertilized',
+  'can_carry_pregnancy',
+  'can_cause_pregnancy',
+]);
+const EVENT_SCHEMA_VERSION = Number(
+  eventDomain.EVENT_SCHEMA_VERSION
+    ?? eventDomain.BIOLOGICAL_EVENT_SCHEMA?.schema_version
+    ?? 1,
+);
+const EVENT_STORY_TIME_PRECISIONS = new Set(['year', 'month', 'day', 'hour', 'minute', 'unknown']);
+const EVENT_SOURCE_KEYS = Object.freeze([
+  'chat_id',
+  'message_id',
+  'floor',
+  'swipe_id',
+  'content_hash',
+  'message_version',
+]);
+const EVENT_SENSITIVE_KEY_PATTERN = /(?:^|_)(?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)(?:$|_)/iu;
+
+function invalidEventAnalysis(message = 'EVENT_ANALYSIS_INVALID') {
+  const error = new Error(message);
+  error.code = 'EVENT_ANALYSIS_INVALID';
+  return error;
+}
+
+function hasOwn(value, key) {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function eventText(value, field, {nullable = true} = {}) {
+  if (value === undefined || value === null) {
+    if (nullable) return null;
+    throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_REQUIRED`);
+  }
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_INVALID`);
+  }
+  const text = String(value).trim();
+  if (!text && !nullable) throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_REQUIRED`);
+  return text || null;
+}
+
+function eventBoolean(value, field, fallback = null) {
+  if (value === undefined) return fallback;
+  if (value === null || typeof value === 'boolean') return value;
+  throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_INVALID`);
+}
+
+function eventConfidence(value, field) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_INVALID`);
+  }
+  return value;
+}
+
+function eventIdArray(value, field) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_ARRAY_REQUIRED`);
+  const ids = [];
+  const seen = new Set();
+  for (const item of value) {
+    const id = eventText(item, field, {nullable: false});
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function safeEventValue(value, seen = new Set()) {
+  if (value === undefined || value === null) return value ?? null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map(item => safeEventValue(item, seen));
+  const output = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (EVENT_SENSITIVE_KEY_PATTERN.test(key)) continue;
+    output[key] = safeEventValue(item, seen);
+  }
+  return output;
+}
+
+function eventEvidence(value, field) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_ARRAY_REQUIRED`);
+  return value.map((item, index) => {
+    if (typeof item === 'string') {
+      const text = eventText(item, `${field}_${index}_text`, {nullable: false});
+      return {kind: 'unknown', text};
+    }
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_${index}_INVALID`);
+    }
+    const text = eventText(item.text ?? item.content, `${field}_${index}_text`, {nullable: false});
+    const kind = eventText(item.kind, `${field}_${index}_kind`) ?? 'unknown';
+    return {
+      kind,
+      text,
+    };
+  });
+}
+
+function validateRawEventShape(raw) {
+  for (const field of [
+    'event_id',
+    'type',
+    'status',
+    'story_time',
+    'location',
+    'participants',
+    'pregnancy_relevance',
+    'source_evidence',
+    'source',
+  ]) {
+    if (!hasOwn(raw, field)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_REQUIRED`);
+    }
+  }
+  if (!raw.source || typeof raw.source !== 'object' || Array.isArray(raw.source)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_SOURCE_INVALID');
+  }
+  for (const field of EVENT_SOURCE_KEYS) {
+    if (!hasOwn(raw.source, field)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_SOURCE_${field.toUpperCase()}_REQUIRED`);
+    }
+  }
+  for (const field of ['event_id', 'type', 'status', 'location']) {
+    if (hasOwn(raw, field) && raw[field] !== null
+      && typeof raw[field] !== 'string' && typeof raw[field] !== 'number') {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_INVALID`);
+    }
+  }
+  if (hasOwn(raw, 'participants') && !Array.isArray(raw.participants)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_PARTICIPANTS_ARRAY_REQUIRED');
+  }
+  if (!Array.isArray(raw.participants)) return;
+  const allowedRoles = new Set(eventDomain.REPRODUCTIVE_ROLES ?? ['potential_gestational_subject', 'potential_conception_source', 'other_participant', 'unknown']);
+  raw.participants.forEach((participant, index) => {
+    if (!participant || typeof participant !== 'object' || Array.isArray(participant)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_INVALID`);
+    }
+    for (const field of ['character_id', 'display_name', 'event_role', 'reproductive_capabilities_used', 'evidence']) {
+      if (!hasOwn(participant, field)) {
+        throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_${field.toUpperCase()}_REQUIRED`);
+      }
+    }
+    for (const field of ['character_id', 'display_name', 'event_role']) {
+      if (hasOwn(participant, field) && participant[field] !== null
+        && typeof participant[field] !== 'string' && typeof participant[field] !== 'number') {
+        throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_${field.toUpperCase()}_INVALID`);
+      }
+    }
+    if (hasOwn(participant, 'event_role') && participant.event_role !== null
+      && !allowedRoles.has(String(participant.event_role).trim())) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_EVENT_ROLE_INVALID`);
+    }
+    const capabilities = participant.reproductive_capabilities_used
+      ?? participant.reproductive_capabilities;
+    if (capabilities !== undefined && (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities))) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_CAPABILITIES_INVALID`);
+    }
+    if (capabilities) {
+      for (const key of [...EVENT_CAPABILITY_KEYS, 'can_fertilize']) {
+        if (hasOwn(capabilities, key)
+          && capabilities[key] !== null
+          && typeof capabilities[key] !== 'boolean') {
+          throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_${key.toUpperCase()}_INVALID`);
+        }
+      }
+      for (const key of EVENT_CAPABILITY_KEYS) {
+        if (!hasOwn(capabilities, key)
+          && !(key === 'can_cause_pregnancy' && hasOwn(capabilities, 'can_fertilize'))) {
+          throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_${key.toUpperCase()}_REQUIRED`);
+        }
+      }
+    }
+    if (!Array.isArray(participant.evidence)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_EVIDENCE_ARRAY_REQUIRED`);
+    }
+    eventEvidence(participant.evidence, `participant_${index}_evidence`);
+  });
+
+  const storyTime = raw.story_time;
+  if (storyTime === undefined || storyTime === null) return;
+  if (typeof storyTime !== 'object' || Array.isArray(storyTime)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_INVALID');
+  }
+  for (const field of ['display', 'normalized', 'calendar_id', 'day_index', 'provider', 'precision', 'confidence']) {
+    if (!hasOwn(storyTime, field)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_STORY_TIME_${field.toUpperCase()}_REQUIRED`);
+    }
+  }
+  if (hasOwn(storyTime, 'precision') && storyTime.precision !== null
+    && (typeof storyTime.precision !== 'string' || !EVENT_STORY_TIME_PRECISIONS.has(storyTime.precision))) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_PRECISION_INVALID');
+  }
+  for (const field of ['display', 'normalized', 'calendar_id', 'provider']) {
+    if (hasOwn(storyTime, field) && storyTime[field] !== null
+      && typeof storyTime[field] !== 'string' && typeof storyTime[field] !== 'number') {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_STORY_TIME_${field.toUpperCase()}_INVALID`);
+    }
+  }
+  for (const field of ['day_index', 'confidence']) {
+    if (hasOwn(storyTime, field) && storyTime[field] !== null
+      && (typeof storyTime[field] !== 'number' || !Number.isFinite(storyTime[field]))) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_STORY_TIME_${field.toUpperCase()}_INVALID`);
+    }
+  }
+  const relevance = raw.pregnancy_relevance;
+  if (relevance === undefined || relevance === null) return;
+  if (typeof relevance !== 'object' || Array.isArray(relevance)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_PREGNANCY_RELEVANCE_INVALID');
+  }
+  for (const field of ['relevant', 'possible_conception', 'gestational_subject_ids', 'counterpart_ids', 'confidence']) {
+    if (!hasOwn(relevance, field)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PREGNANCY_RELEVANCE_${field.toUpperCase()}_REQUIRED`);
+    }
+  }
+  for (const field of ['relevant', 'possible_conception']) {
+    if (hasOwn(relevance, field) && relevance[field] !== null && typeof relevance[field] !== 'boolean') {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_INVALID`);
+    }
+  }
+  for (const field of ['gestational_subject_ids', 'counterpart_ids']) {
+    if (hasOwn(relevance, field) && !Array.isArray(relevance[field])) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_${field.toUpperCase()}_ARRAY_REQUIRED`);
+    }
+  }
+  if (hasOwn(relevance, 'confidence') && relevance.confidence !== null
+    && (typeof relevance.confidence !== 'number' || !Number.isFinite(relevance.confidence))) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_PREGNANCY_RELEVANCE_CONFIDENCE_INVALID');
+  }
+  if (!Array.isArray(raw.source_evidence)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_SOURCE_EVIDENCE_ARRAY_REQUIRED');
+  }
+  eventEvidence(raw.source_evidence, 'source_evidence');
+}
+
+function normalizeEventStoryTime(value) {
+  if (value === undefined || value === null) {
+    return {
+      display: null,
+      normalized: null,
+      calendar_id: null,
+      day_index: null,
+      provider: null,
+      precision: 'unknown',
+      confidence: null,
+    };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_INVALID');
+  }
+  const precision = value.precision === undefined || value.precision === null
+    ? 'unknown'
+    : eventText(value.precision, 'story_time_precision', {nullable: false});
+  if (!EVENT_STORY_TIME_PRECISIONS.has(precision)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_PRECISION_INVALID');
+  }
+  let dayIndex = null;
+  if (value.day_index !== undefined && value.day_index !== null) {
+    if (typeof value.day_index !== 'number' || !Number.isInteger(value.day_index)) {
+      throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_DAY_INDEX_INVALID');
+    }
+    dayIndex = value.day_index;
+  }
+  return {
+    display: eventText(value.display, 'story_time_display'),
+    normalized: eventText(value.normalized, 'story_time_normalized'),
+    calendar_id: eventText(value.calendar_id, 'story_time_calendar_id'),
+    day_index: dayIndex,
+    provider: eventText(value.provider, 'story_time_provider'),
+    precision,
+    confidence: eventConfidence(value.confidence, 'story_time_confidence'),
+  };
+}
+
+function normalizeEventCapabilities(value) {
+  if (value === undefined || value === null) {
+    return Object.fromEntries(EVENT_CAPABILITY_KEYS.map(key => [key, null]));
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_CAPABILITIES_INVALID');
+  }
+  return Object.fromEntries(EVENT_CAPABILITY_KEYS.map(key => {
+    const alias = key === 'can_cause_pregnancy' ? value.can_fertilize : undefined;
+    return [key, eventBoolean(value[key] ?? alias, key)];
+  }));
+}
+
+function normalizeEventParticipant(value, index) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_INVALID`);
+  }
+  const characterId = eventText(value.character_id, `participant_${index}_character_id`, {nullable: false});
+  const displayName = eventText(value.display_name, `participant_${index}_display_name`);
+  const role = eventText(value.event_role, `participant_${index}_event_role`) ?? 'unknown';
+  const participant = {
+    character_id: characterId,
+    display_name: displayName,
+    event_role: role,
+    reproductive_capabilities_used: normalizeEventCapabilities(value.reproductive_capabilities_used),
+    evidence: eventEvidence(value.evidence, `participant_${index}_evidence`),
+  };
+  if (value.biological_context !== undefined && value.biological_context !== null) {
+    if (!value.biological_context || typeof value.biological_context !== 'object' || Array.isArray(value.biological_context)) {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_BIOLOGICAL_CONTEXT_INVALID`);
+    }
+    participant.biological_context = safeEventValue(value.biological_context);
+  }
+  return participant;
+}
+
+function normalizeEventPregnancyRelevance(value, participantIds) {
+  if (value !== undefined && value !== null && (typeof value !== 'object' || Array.isArray(value))) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_PREGNANCY_RELEVANCE_INVALID');
+  }
+  const source = value && typeof value === 'object' ? value : {};
+  const gestationalSubjectIds = eventIdArray(source.gestational_subject_ids, 'gestational_subject_ids');
+  const counterpartIds = eventIdArray(source.counterpart_ids, 'counterpart_ids');
+  for (const id of [...gestationalSubjectIds, ...counterpartIds]) {
+    if (!participantIds.has(id)) throw invalidEventAnalysis('EVENT_ANALYSIS_PARTICIPANT_REFERENCE_INVALID');
+  }
+  return {
+    relevant: eventBoolean(source.relevant, 'pregnancy_relevance_relevant'),
+    possible_conception: eventBoolean(source.possible_conception, 'possible_conception'),
+    gestational_subject_ids: gestationalSubjectIds,
+    counterpart_ids: counterpartIds,
+    confidence: eventConfidence(source.confidence, 'pregnancy_relevance_confidence'),
+  };
+}
+
+function authoritativeFloorVersion(value) {
+  const candidate = value?.authoritative_floor_version
+    ?? value?.authoritativeFloorVersion
+    ?? value?.floor_version
+    ?? value?.floorVersion
+    ?? value?.analysisInput?.floor_version
+    ?? value?.analysisInput?.floorVersion
+    ?? value;
+  const normalized = normalizeEventFloorVersion(candidate);
+  for (const key of EVENT_SOURCE_KEYS) {
+    if (normalized[key] === null || normalized[key] === undefined || normalized[key] === '') {
+      throw invalidEventAnalysis(`EVENT_ANALYSIS_SOURCE_${key.toUpperCase()}_REQUIRED`);
+    }
+  }
+  if (!Number.isInteger(normalized.floor) || normalized.floor < 0) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_SOURCE_FLOOR_INVALID');
+  }
+  if (!Number.isInteger(normalized.swipe_id) || normalized.swipe_id < 0) {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_SOURCE_SWIPE_ID_INVALID');
+  }
+  return normalized;
+}
+
+function domainNormalizeEvent(raw) {
+  if (typeof eventDomain.normalizeEvent !== 'function') return raw;
+  try {
+    return eventDomain.normalizeEvent(raw);
+  } catch {
+    throw invalidEventAnalysis();
+  }
+}
+
+function domainValidateEvent(event) {
+  if (typeof eventDomain.validateEvent !== 'function') return;
+  try {
+    const result = eventDomain.validateEvent(event);
+    if (result === false || (result && result.ok === false)) throw invalidEventAnalysis();
+  } catch (error) {
+    if (error?.code === 'EVENT_ANALYSIS_INVALID') throw error;
+    throw invalidEventAnalysis();
+  }
+}
+
+function normalizeEventRecord(raw, source) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidEventAnalysis('EVENT_ANALYSIS_EVENT_INVALID');
+  validateRawEventShape(raw);
+  const normalized = domainNormalizeEvent({...raw, source});
+  const eventType = eventText(normalized.type, 'type', {nullable: false});
+  const eventStatus = eventText(normalized.status, 'status', {nullable: false});
+  const eventTypes = new Set(Array.isArray(eventDomain.EVENT_TYPES) ? eventDomain.EVENT_TYPES : EVENT_TYPES);
+  const eventStatuses = new Set(Array.isArray(eventDomain.EVENT_STATUS) ? eventDomain.EVENT_STATUS : EVENT_STATUS);
+  if (!eventTypes.has(eventType)) throw invalidEventAnalysis('EVENT_ANALYSIS_TYPE_INVALID');
+  if (!eventStatuses.has(eventStatus)) throw invalidEventAnalysis('EVENT_ANALYSIS_STATUS_INVALID');
+  if (!Array.isArray(normalized.participants)) throw invalidEventAnalysis('EVENT_ANALYSIS_PARTICIPANTS_ARRAY_REQUIRED');
+  const participants = normalized.participants.map(normalizeEventParticipant);
+  const participantIds = new Set(participants.map(item => item.character_id));
+  const event = {
+    event_id: eventText(normalized.event_id, 'event_id', {nullable: false}),
+    type: eventType,
+    status: eventStatus,
+    story_time: normalizeEventStoryTime(normalized.story_time),
+    location: eventText(normalized.location, 'location'),
+    participants,
+    pregnancy_relevance: normalizeEventPregnancyRelevance(normalized.pregnancy_relevance, participantIds),
+    source_evidence: eventEvidence(normalized.source_evidence, 'source_evidence'),
+    source: {...source},
+    physical_effect: safeEventValue(normalized.physical_effect ?? {}),
+  };
+  domainValidateEvent(event);
+  return event;
+}
+
+function eventPayload(raw) {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)
+    && (hasOwn(raw, 'schema_version') || hasOwn(raw, 'events'))) {
+    return raw;
+  }
+  const text = responseText(raw).trim();
+  if (!text) throw invalidEventAnalysis();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Event extraction is stricter than the legacy World Model parser: no
+    // fenced JSON or substring recovery is allowed at this boundary.
+    throw invalidEventAnalysis();
+  }
+}
+
+// Parse only the fixed Event response object. The second argument is the
+// scheduler-owned Floor Version (or an object containing one); AI source data
+// is never used as an identity fallback.
+export function parseEventAnalysisResponse(raw, sourceOrOptions = {}) {
+  const payload = eventPayload(raw);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw invalidEventAnalysis();
+  const keys = Object.keys(payload);
+  if (keys.some(key => !['schema_version', 'events'].includes(key))) throw invalidEventAnalysis();
+  if (payload.schema_version !== EVENT_SCHEMA_VERSION || !Array.isArray(payload.events)) throw invalidEventAnalysis();
+  const source = authoritativeFloorVersion(sourceOrOptions);
+  const events = payload.events.map(event => normalizeEventRecord(event, source));
+  return {schema_version: EVENT_SCHEMA_VERSION, events};
+}
+
 function jsonCandidates(text) {
   const value = String(text ?? '').trim();
   if (!value) return [];
@@ -1008,10 +1458,19 @@ export function createAnalyzer({
     return canonicalModel;
   }
 
+  async function analyzeFloor(input = {}) {
+    const profile = profileResolver?.('event_analysis') ?? profileResolver?.('event');
+    if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
+    const analysisInput = input.analysisInput ?? input;
+    const messages = buildEventAnalysisMessages(analysisInput);
+    const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
+    return parseEventAnalysisResponse(raw, input);
+  }
+
   return {
     analyzeWorldModel,
     analyzeWorld: analyzeWorldModel,
-    analyzeFloor: input => run('event', input),
+    analyzeFloor,
     generateProjection: input => run('projection', input),
   };
 }

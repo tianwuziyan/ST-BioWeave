@@ -6,7 +6,7 @@
 
 BioWeave 用结构化数据记录故事中的生理事件、状态、世界规则和非事实推演，并将当前 Chat 的相关上下文整理给 AI。它适合长篇角色扮演、原创物种设定和需要持续追踪生理变化的剧情。插件直接运行在 SillyTavern 中，不包含独立后端、独立数据库或单独的账号系统。
 
-> **开发状态**：项目仍在快速迭代中。World Model、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已有较完整实现；事件自动分析、完整状态推演、Projection 生命周期及 Context 注入仍在持续建设。
+> **开发状态**：项目仍在快速迭代中。World Model、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已有较完整实现；Phase 2A 的 Event / Tracking Subject 本地闭环已实现，真实 SillyTavern 宿主验收待完成。完整状态推演、Projection 生命周期及 Context 注入不属于本阶段已完成能力。
 
 ## 目录
 
@@ -35,8 +35,9 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 
 | 数据层 | 含义 | 当前保存位置 |
 | --- | --- | --- |
-| BiologicalEvent | 剧情中发生过的生理事实或候选事实 | 当前楼层消息的 extra.bioweave |
-| Current State | 由事件按确定性规则归约出的状态 | 当前 Chat 的 BioWeave 数据结构 |
+| BiologicalEvent | 剧情中发生过的生理事实或候选事实；完整 NSFW 历史事实的单一来源 | 产生事件的楼层消息 extra.bioweave，或对应 swipe 的 extra.bioweave |
+| Tracking Subject Registry | 已进入妊娠相关追踪流程的人物索引；Subject 不复制 Event，只保存稳定人物信息和 event_id 引用 | 当前 Chat 的 `chat_metadata.bioweave` |
+| Current State | 由事件按确定性规则归约出的状态 | 下一阶段的当前 Chat 数据结构 |
 | Snapshot | 用于恢复或检查的状态检查点 | 当前楼层数据和 Chat 索引 |
 | Projection | 面向后续剧情的非事实推演 | 当前楼层消息的 BioWeave 数据 |
 | World Model | 当前 Chat 的物种、生物类型和世界级生殖规则 | chat_metadata.bioweave |
@@ -51,8 +52,9 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 | AnalysisInput / Worldbook | ✅ 可用 | 角色卡、世界书、最近剧情和可选公开记忆的选择、预览与输入构建。 |
 | API Profile / Secret | ✅ 可用 | 使用 SillyTavern 当前 API，或配置独立的 OpenAI-compatible Profile。 |
 | Runtime / Storage | ✅ 基础实现 | Chat 切换、楼层版本、作用域校验、宿主生命周期和失败保护。 |
-| Event / State / Snapshot / Projection | 🧩 基础结构 | 领域 schema、纯函数和测试已存在，端到端自动分析链路仍在完善。 |
-| 多人总览、人物详情、事件、推演、家系 | 🧪 UI 基础/占位 | 页面路由和界面骨架已建立，真实业务 DTO 与全链路数据仍需继续接入。 |
+| Event / Tracking Subject | ✅ Phase 2A 本地闭环 | 已接通固定 Event、Floor/Swipe 绑定、Tracking Registry、人物/事件/总览真实 DTO；真实 SillyTavern 宿主验收仍待完成。 |
+| State / Snapshot / Projection / Genealogy | 🧩 后续阶段基础结构 | 本阶段保持空状态或兼容骨架，不实现完整妊娠计算、状态归约、快照恢复、推演和家系推导。 |
+| 多人总览、人物详情、事件、推演、家系 | 🧪 UI 基础/占位 | 页面路由和界面骨架已建立；Phase 2A 页面只能消费真实业务 DTO，接入前使用真实空状态，不写入演示数据。 |
 
 ## 核心能力
 
@@ -60,8 +62,9 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 2. **World Model 结构化分析**：按 species → biological_types 保存开放的生物分类，不把男性、女性或“双性”写死成 UI 选项。
 3. **证据边界与未知值**：没有资料支持的能力保持 null，界面显示为“未知”，不会把未知误判为“否”；人类 baseline 与非人类证据分开处理。
 4. **可控的 AI 输入**：选择角色卡字段、世界书条目、最近剧情楼层和可用的公开记忆来源，生成可预览的 AnalysisInput。
-5. **楼层版本与失败保护**：通过 Chat、message、swipe、内容 SHA-256 和版本号识别楼层；相同成功版本不自动重复分析，失败可重试且保留旧成功结果。
-6. **轻量响应式 UI**：不引入 React/Vue 或 UI 组件库，使用原生 DOM、主题变量和 Desktop / Tablet / Mobile 布局。
+5. **Phase 2A 追踪边界**：人物列表只显示已进入妊娠相关流程的 Tracking Subjects，不是当前 Chat 的全角色列表；是否进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 共同决定，UI 不参与判断。
+6. **楼层版本与失败保护**：通过 Chat、message、swipe、内容 SHA-256 和版本号识别楼层；相同成功版本不自动重复分析，失败可重试且保留旧成功结果。
+7. **轻量响应式 UI**：不引入 React/Vue 或 UI 组件库，使用原生 DOM、主题变量和 Desktop / Tablet / Mobile 布局。
 
 ## 效果展示与参考界面
 
@@ -264,11 +267,21 @@ flowchart LR
 核心概念链路为：
 
 ```text
-Floor Version → BiologicalEvent → State Reducer → Current State
-             → Snapshot → Projection → Context
+Floor Version → BiologicalEvent → Tracking Subject Registry → Characters / Events / Overview
+             → State Reducer → Current State → Snapshot → Projection → Context
 ```
 
-其中 Event 表示历史事实，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的推演。当前仓库已建立这些边界，但并非每一段都已由自动楼层分析完整串接。
+其中 Event 表示历史事实，Tracking Subject 是指向有效 Event 的 Chat-local 索引，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的推演。Phase 2A 只闭环到 Event、Tracking Subject 和人物/事件/总览页面；StateReducer、Snapshot、Projection、Genealogy 和完整妊娠计算保持空状态或下一阶段边界。
+
+### Phase 2A Event / Tracking 契约
+
+- 人物列表只来自当前 Chat 的 active Tracking Subject Registry。普通聊天角色、主卡角色、出现过的名字和不满足受孕暴露条件的参与者不会自动进入人物列表。
+- 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际受孕暴露可能时，才允许创建或更新 Subject。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断；`null` 仍是 unknown，不得变为 `true`。
+- BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
+- Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
+- `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`provider`、`precision`、`confidence`。`display` 只由 formatter 展示，排序和计算不得重新解析显示文本；无法可靠得到规范值时保留 `null`。
+- `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
+- 本阶段保留其它 BiologicalEvent 类型兼容，但只实现 `sexual_activity` 的 Tracking 闭环；妊娠概率、Gestational Age、预计分娩日、完整状态归约、Snapshot、Projection 和 Genealogy 仍是空状态或下一阶段。
 
 ## AI / World Model 工作流
 
@@ -322,6 +335,14 @@ flowchart TD
 - 超时和主动取消不自动重复请求；网络错误和部分 5xx 错误可按设置进行有限重试。
 - 项目当前没有 RAG、embedding、向量数据库或多智能体调度。Worldbook 是来源选择与缓存，不是向量检索系统。
 
+### Phase 2A Event Analyzer 边界
+
+Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、当前楼层叙事、必要的最近剧情上下文、World Model、结构化 Story Time 和必要的角色设定上下文。成功响应只能是固定 JSON 对象 `{schema_version, events[]}`，解析后的 Event 通过统一 normalize / validate 后才可写入 Floor；自然语言自由输出或半结构化结果不得写入。
+
+自动分析继续使用当前 Chat 的 `analysis_interval`（N-floor）和六字段 Floor Version 去重：同一成功版本不会因为 UI 初始化、打开或重新打开而重复请求；版本变化和失败允许重试；`manual: true` 的手动刷新强制请求。手动刷新成功替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本事实不能进入当前有效 Registry。Floor 删除、Swipe 切换、Event 编辑/删除后，当前有效 Event 集合和 Registry 必须重新筛选或重建。
+
+当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 N-floor 触发、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time provider；Node 检查不能替代这些验收。
+
 ### 外部记忆边界
 
 Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公开内容作为可选输入；数据库记忆当前标记为不可用。外部来源的启用状态、可用性和内容摘要会区分展示，不会为了填充输入而读取宿主私有内部结构。
@@ -351,7 +372,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 ├── context/
 │   └── builder.js           # Context DTO 与序列化
 ├── core/
-│   ├── events.js            # BiologicalEvent schema、规范化、排序
+│   ├── events.js            # BiologicalEvent schema、规范化、校验与排序
 │   ├── genealogy.js         # 稳定 character_id 的关系排序与查询
 │   ├── projection.js        # 非事实 Projection 规范化与筛选
 │   ├── snapshot.js          # Snapshot 间隔、检查点与恢复基础
@@ -365,7 +386,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   └── store.js              # Profile、Secret、Chat、Floor 存储边界
 ├── story/
 │   ├── seven-days-cal.js    # Anima/柏宝书公开记忆探测与适配
-│   └── time.js              # SillyTavern Story Time 适配
+│   └── time.js              # Story Time provider 与结构化时间适配
 ├── ui/
 │   ├── app.js               # overlay、路由、主题、状态、事件委托
 │   ├── characters.js        # 人物列表/详情基础页面
@@ -446,7 +467,7 @@ Chat-local settings 主要包括：
 | analysis_interval / snapshot_interval | 分析和 Snapshot 的间隔基础配置 |
 | projection_enabled / retry_failed_analysis | 推演与失败重试意向 |
 
-当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、world_model、world_model_meta、character_profiles、relationships、settings 和 index。
+当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、world_model、world_model_meta、character_profiles、relationships、settings 和 index。Phase 2A 的 Chat-local 字段包含 `tracking_subjects` Registry：它是人物列表唯一来源，只保存进入追踪流程的人物索引和有效 Event 引用；老 Chat 缺少该字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只为真正进入追踪的角色保留最小、带证据的资料，不复制完整 Event。
 
 ### Floor 数据
 
@@ -462,7 +483,7 @@ Chat-local settings 主要包括：
 }
 ```
 
-存在 swipe 时，数据优先写入对应 message.swipe_info[n].extra.bioweave；没有 swipe 结构时使用 message.extra.bioweave。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
+存在 swipe 结构时，数据只能写入对应 `message.swipe_info[n].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时使用 `message.extra.bioweave`。Floor `events[]` 是该消息/版本的绑定事实集合，不是 Chat-level 唯一事件大数组。每个 Event 的 `source` 绑定六字段 Floor Version，删除楼层或切换到没有事件的 swipe 后旧 Event 不再参与当前有效状态。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
 
 ## 性能与可扩展性
 
@@ -470,7 +491,8 @@ Chat-local settings 主要包括：
 
 - Worldbook 列表、正文、并发加载和 generation cache 分开管理；只有展开或选中的来源才延迟读取正文。
 - 输入构建保留来源分组和 token estimate，方便在发送 AI 请求前控制资料规模。
-- Floor Version 对文本计算 SHA-256；相同楼层的成功分析不会自动重复执行，编辑内容、swipe 或版本改变才会重新分析。
+- Floor Version 对文本计算 SHA-256；相同楼层的成功分析不会自动重复执行，编辑内容、swipe 或版本改变才会重新分析，失败和手动刷新遵守各自的替换/保留规则。
+- 自动分析继续按 N-floor 间隔触发，UI mount/open/reopen/init 不触发 AI；真实 SillyTavern 的宿主事件、Swipe 形状和实际 AI 请求仍需人工验收。
 - 请求超时、主动取消和网络/5xx 重试分类明确；失败不会无界重试。
 - Chat boundary token/epoch 会拒绝过期异步读写；UI overlay、路由和主题状态由单一 App owner 管理，避免重复挂载。
 - 领域 Core 尽量使用纯函数，便于独立测试，也避免把宿主 DOM 或请求逻辑带进 reducer。
@@ -499,12 +521,12 @@ BioWeave 不提供独立用户认证、权限系统或服务端隔离能力；�
 - World Model v1 schema、首尾可选 SYSTEM 加四段普通消息、JSON 解析、证据 guard、模块级编辑和 Chat 保存。
 - Tavern / Light / Dark 主题与 Desktop / Tablet / Mobile 基础布局。
 
-### 后续建设
+### Phase 2A 与后续建设
 
-- 将 Floor 分析完整接入消息更新、编辑、删除、swipe 和 generation 生命周期。
-- 完成 Event CRUD 与状态 reducer 的时间、周期、妊娠等确定性计算。
-- 完善 Snapshot 创建/恢复、Projection 管理和明确的 Context 注入链路。
-- 用真实 Chat 数据替换人物、事件、家系和总览页面中的空状态/演示 DTO。
+- 完成 Phase 2A 的固定 Event JSON 分析、Floor/Swipe 持久化、Tracking Registry 重建以及人物/事件/总览真实 DTO 接线。
+- 在真实 SillyTavern 中验证自动 N-floor、Floor Version 去重、失败可重试、手动刷新成功替换/失败保留和宿主删除/切换语义。
+- 后续再完成 Event 之外的完整 State Reducer、时间/周期/妊娠确定性计算、Snapshot 恢复、Projection 管理、Genealogy 推导和 Context 注入链路。
+- 用真实 Chat 数据替换人物、事件和总览页面中的空状态；Projection/Genealogy 继续保持空状态直到各自阶段。
 - 补充真实 SillyTavern 环境下的 Desktop、Tablet、Mobile 手动验收截图。
 - 在正式发布前补充仓库 License 和明确的发布/更新渠道。
 
@@ -569,6 +591,18 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 ### Projection 是已经发生的事实吗？
 
 不是。Projection 是非事实的后续推演，和 Event 的历史事实边界分开；当前 Projection 的完整生命周期仍在建设。
+
+### 人物列表为什么不等于当前 Chat 的全部角色？
+
+人物列表只展示已经进入妊娠相关追踪流程的 Tracking Subjects。角色要先由 BiologicalEvent、World Model、Narrative Evidence 和明确的 reproductive capability 共同支持，并存在实际受孕暴露可能；普通出场角色、只有姓名或未知能力的参与者不会自动建立人物卡。UI 只展示 Registry 结果，不负责重新判断资格。
+
+### Event 和人物卡分别保存什么？
+
+完整 NSFW 历史事实只保存在 Floor-bound BiologicalEvent。人物卡/Tracking Subject 只保存稳定 `character_id`、显示名、active 状态和 `event_id` 引用；详情通过有效 Event 读取 exposure，不能把完整 Event 复制到人物索引。
+
+### Story Time 的 display 可以用于排序吗？
+
+不能。Story Time 持久化为结构化对象；`display` 只是 formatter 的显示结果。排序或后续计算只能使用 `normalized`、`day_index` 等结构化字段，无法可靠得到的值必须保留 `null`。
 
 ### 项目支持 Docker 或独立数据库吗？
 
