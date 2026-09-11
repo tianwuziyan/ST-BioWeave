@@ -45,20 +45,32 @@ construction. The analyzer receives a fixed JSON-only output contract.
 ### AI DTO / Domain DTO boundary
 
 `AIEventAnalysisDTO` has only `schema_version: 1` and `events[]` at the top
-level. A legacy top-level `source` may be present and is ignored; any other
-unknown top-level field is rejected. An AI event does not require or trust
-`event_id` or `source`; legacy copies of those fields inside an event are
-ignored. Each accepted AI event contains biological facts such as `type`,
+level, and Event Analysis V1 accepts only `events.length === 0` or
+`events.length === 1` for one Target Floor Version. A legacy top-level `source`
+may be present and is ignored; any other unknown top-level field is rejected.
+An AI event does not require or trust `event_id` or `source`; legacy copies of
+those fields inside an event are ignored. Each accepted AI event contains biological facts such as `type`,
 `status`, structured `story_time`, `location`, directly relevant
 `participants`, `pregnancy_relevance`, `source_evidence`, and optional
 `physical_effect`. For `sexual_activity`, participants are only the direct
 members of the actual reproductive exposure chain; other Event types retain
 only objects directly relevant to that biological fact.
 
+The protected Prompt contract selects one primary Event for the Floor and
+consolidates immediate effects, directly associated symptoms, observations, and
+evidence into it. Pregnancy-relevant sexual exposure takes priority as a
+`sexual_activity` primary type. Ordinary care/supplements do not become a
+`medical_event`, and static appearance/constitution text does not become a
+`physical_symptom`. A response with more than one Event is rejected with the
+stable `multiple_events_not_allowed` diagnostic before Runtime enrichment; no
+Runtime or UI semantic merge is allowed.
+
 After parsing, Runtime generates a deterministic canonical `event_id` from the
 authoritative Floor Version and response ordinal, then binds the complete
-authoritative `source`. Only this enriched object is normalized and validated
-as the persisted `BiologicalEvent` Domain DTO.
+authoritative `source`. The ordinal remains an identity compatibility detail;
+new analysis for one Floor Version still persists at most one Event. Only this
+enriched object is normalized and validated as the persisted `BiologicalEvent`
+Domain DTO.
 
 ### Persisted BiologicalEvent
 
@@ -113,10 +125,15 @@ active subject has no exposure, but it is not displayed as an active subject.
 
 Characters, Events, and Overview consume domain DTOs. UI code must not derive
 eligibility or exposure from gender, participant labels, event roles,
-protection, ejaculation, or physical effects. Character exposure cards render
-only time, location, Event type/status, debug identity, and one `相关对象`
-row mapped from `counterpart_ids[]` against canonical Event participants. UI
-formatting may map IDs to display names and format Story Time.
+protection, ejaculation, or physical effects. Ordinary Product UI renders only
+user-readable business projections: Character exposure cards show time,
+location, Event type/status, and one `相关对象` row mapped from
+`counterpart_ids[]` against canonical Event participants. Ordinary Characters,
+Events, and Overview markup does not render `event_id`, `character_id`,
+`source`, Floor Version, hashes, Registry Summary, raw Event JSON, or other
+provenance fields. Edit operations may retain necessary internal bindings, and
+Settings Advanced/Debug may use the explicit host Popup. UI formatting may map
+IDs to display names and format Story Time.
 
 ### Runtime coordinator
 
@@ -156,6 +173,7 @@ API/schema failure.
 | Legacy top-level `source`, or event-level `event_id`/`source` | Ignore those compatibility fields; Runtime still owns identity and provenance |
 | Arbitrary unknown top-level field | Reject with `unexpected_top_level_field` and a safe JSON path |
 | Invalid event role, conception flag, evidence shape, or participant reference | Reject with a specific diagnostic code and safe JSON path |
+| AI response contains more than one Event for one Target Floor Version | Reject with `multiple_events_not_allowed` at `$.events`; write no new result and do not merge |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
 | `possible_conception: true` without direct exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
 | `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |
@@ -196,7 +214,7 @@ API/schema failure.
 
 ## 6. Tests Required
 
-- Parser assertions for fixed AI envelopes, all existing Event types, strict
+- Parser assertions for fixed AI envelopes, one-Floor 0/1 cardinality, all existing Event types, strict
   JSON, array-only references, canonical evidence, typed physical effects,
   diagnostic paths, and ignoring legacy identity/source fields.
 - Domain assertions for actual-exposure consistency, 0/1/N source IDs,

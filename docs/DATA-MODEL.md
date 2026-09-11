@@ -82,6 +82,21 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
 
+Event Analysis V1 的分析单位是一个 Target Floor Version。每个分析响应只能产生
+`events.length === 0` 或 `events.length === 1`：
+
+```text
+One Target Floor Version → 0 or 1 consolidated BiologicalEvent
+```
+
+同一连续过程中的 `sexual_activity`、实际生殖暴露、即时 physical effect、直接
+身体反应和相关证据必须合并到一个 primary Event。若该楼层存在实际妊娠相关性
+暴露，primary type 优先为 `sexual_activity`；普通照顾、送汤、食物、补品和静态
+外貌/体质背景不单独创建 `medical_event` 或 `physical_symptom`。独立的新症状或
+明确医疗干预可以分别作为该楼层唯一的 primary type。AI 若返回两个或更多 Event，
+Parser 以 `multiple_events_not_allowed` 拒绝；Runtime 与 UI 不选择、丢弃或合并
+这些 Event。
+
 本阶段保留现有其它 BiologicalEvent 类型的兼容性，但只实现 `sexual_activity` 的妊娠相关 Tracking 闭环。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
 
 ### BiologicalEvent 固定结构
@@ -109,9 +124,12 @@ BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-rele
 AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
 和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
 旧响应，顶层单独出现的 `source` 以及 Event 内的 `event_id`/`source` 会被
-忽略；其它未知顶层字段仍按固定 Contract 拒绝。Runtime 在解析成功后按
-authoritative Floor Version 与响应序号生成稳定 `event_id`，再绑定下面的
-六字段 `source`，随后才执行 Domain normalize / validate 并写入 Floor。
+忽略；其它未知顶层字段仍按固定 Contract 拒绝。对于新的 Event Analysis V1，
+`events[]` 只能包含 0 或 1 条；多条响应在解析阶段拒绝，不会进入 Runtime。
+Runtime 在解析成功后仍按 authoritative Floor Version 与响应序号生成稳定
+`event_id`，再绑定下面的六字段 `source`，随后才执行 Domain normalize / validate
+并写入 Floor。响应序号保留是为了兼容 deterministic identity 语义，不代表一个
+Floor 可以保存多条新分析 Event。
 
 ### Source binding 与 Floor / Swipe
 
@@ -129,6 +147,10 @@ Event 的 `source` 必须由当前分析目标的 authoritative Floor Version �
 ```
 
 没有 swipe 结构时，Event 保存到 `message.extra.bioweave`；存在 swipe 结构时，包括 swipe `0`，只能保存到对应 `message.swipe_info[swipe_id].extra.bioweave`。Floor `events[]` 是该消息/版本的 Floor-bound 事实集合，不是 Chat-level 历史事件账本。删除 Floor 后其 Event 必须消失；切换到没有事件的 Swipe 后旧 Swipe Event 不得参与当前有效状态。
+
+失败的 force refresh（包括多 Event contract failure）只记录失败尝试，不覆盖同一
+Floor Version 的上一份成功分析。已存在的历史数据不在本轮自动迁移或语义合并；
+本轮保证新 AI response 在保存边界前满足 0/1。
 
 自动分析沿用 `analysis_interval` 的 N-floor 规则与六字段 Floor Version：同一成功版本跳过，版本变化允许重新分析；失败可重试；UI mount/open/reopen/init 不触发新的 AI 请求。手动刷新始终强制请求，成功后替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本 Event 不能进入当前有效 Registry。Event 编辑直接修改当前有效事实，保存时保留 `event_id` 与 authoritative `source`；Event 删除是真删除，不产生 `user_override` 层。
 
@@ -177,6 +199,12 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 `BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者在 `sexual_activity` 中只记录 actual reproductive exposure chain 的直接参与者，其中 `counterpart_ids[]` 标记实际 exposure source；后者只表示 Core 根据受孕暴露、事件相关性和生殖能力计算后正式进入追踪流程的角色。参与者的 profile 存在也不代表该角色是 Tracking Subject。
 
 `explainTrackingDecision(event)` 与正式 Registry 构建共享同一条 Core 判定路径，返回 `{character_id, eligible, reasons[]}`。Reason code 只用于 Core、Runtime 的诊断、Debug 或 Analysis Detail，例如 `CAN_CARRY_PREGNANCY_UNKNOWN`、`POSSIBLE_CONCEPTION_FALSE` 或 `NOT_GESTATIONAL_SUBJECT`；它不是第二套 eligibility 规则，也不是人物实体，普通 Characters UI 不读取或展示这些诊断。
+
+Product UI（Overview、Characters、Character Detail、Events）只显示用户可读的业务
+投影和明确空状态，不渲染 `event_id`、`character_id`、`source`、Floor Version、
+hash、Registry Summary、raw Event JSON 或其它 Runtime provenance。必要的
+Debug/Prompt inspection 只属于 Settings 的 Advanced/Debug 工具；隐藏这些字段不
+等于从 Core、Runtime、Storage 或编辑操作中删除它们。
 
 Event Analysis 的运行状态由 Runtime coordinator 组合为 transient/read DTO，而不是第二套事实存储。DTO 同时区分当前 Floor 的 `event_count/current_floor_events` 与当前 Chat 的 `active_event_count/active_events`，并带有 Floor Version、attempt、last success/error、Tracking 数量、decision diagnostics 和脱敏 Registry 摘要。`running` 只表示当前 transient execution；持久分析记录保存成功结果或最后一次失败/取消尝试，失败刷新不覆盖 `last_success`。Runtime 以完整 Floor Version 持有 `AbortController` 和 in-flight Promise；取消、超时、stale Chat、保存失败或 Registry 失败都必须释放执行资源，迟到结果不得提交。Raw AI Response、API Secret、Authorization header 与请求正文不为可观察性写入 Chat。
 

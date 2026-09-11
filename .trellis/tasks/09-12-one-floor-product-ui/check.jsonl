@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-12-one-floor-product-ui/research/one-floor-ui-audit.md", "reason": "按审计证据核对 parser rejection、旧成功保留、普通 UI 清理与 Debug Popup 保留。"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "复核 one-floor Event boundary、participant/exposure 既有语义和 Runtime preservation 未被回归。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核普通 UI、JS syntax、测试和真实宿主验收边界。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 AI parser、Runtime、Storage、Core、UI 的职责边界未被跨层实现。"}
+{"file": "docs/DEVELOPMENT.md", "reason": "按项目开发契约复核冻结的 Phase 2B、Tracking eligibility 和 Floor lifecycle 边界。"}

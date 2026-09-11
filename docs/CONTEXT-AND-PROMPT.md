@@ -133,6 +133,16 @@ World Analysis 使用相同的首尾边界、选择和来源处理，但不包�
 
 Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。用户 common prompt 可以补充行为，不能覆盖 schema、业务 invariant 或 validator contract。
 
+Event Analysis V1 的 Output Contract 还有一个分析单位边界：一个 Target Floor
+Version 最多产生一个 consolidated BiologicalEvent。顶层仍使用兼容 schema
+`{"schema_version":1,"events":[]}`，但 `events.length` 只能是 `0` 或 `1`。
+模型应先选择该楼层最能代表生物历史意义的 primary type，再把同一连续过程的
+即时 symptoms、physical effects、直接观察和证据合并进该 Event。实际妊娠相关
+sexual exposure 优先使用 `sexual_activity`；普通照顾/补品不自动成为
+`medical_event`，静态外貌/体质描写不自动成为 `physical_symptom`。多 Event
+response 不由 Runtime 或 UI 合并，而是在 AI DTO parser 以
+`multiple_events_not_allowed` 拒绝。
+
 ## 9. Chinese semantic source labels
 
 主要来源 block 必须让模型清楚资料用途和边界，至少使用以下 presentation labels：
@@ -180,6 +190,12 @@ message_version
 ```
 
 AI 不拥有 `event_id` 或 authoritative `source`。Event ID、Floor/swipe binding、stale-result protection 和保存语义由 Runtime/Core 维护。
+
+这些 Runtime/Core provenance 字段属于内部数据边界，不属于普通 Product UI。
+Overview、Characters、Character Detail 和 Events 只显示用户可读业务投影；需要
+查看 raw prompt、诊断或 provenance 时使用 Settings 的 Advanced/Debug 工具。该
+UI 边界不改变 Prompt 中对 Floor provenance 的内部追踪，也不改变 Runtime 的
+authoritative source ownership。
 
 ## 12. Prompt Preview parity
 

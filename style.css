@@ -485,22 +485,6 @@
   margin-bottom: 0;
 }
 
-.bioweave-analysis-detail {
-  grid-column: 1 / -1;
-}
-
-.bioweave-analysis-detail summary {
-  cursor: pointer;
-  color: var(--bioweave-accent);
-}
-
-.bioweave-analysis-detail pre {
-  max-width: 100%;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .bioweave-page-actions {
   display: flex;
   flex-wrap: wrap;

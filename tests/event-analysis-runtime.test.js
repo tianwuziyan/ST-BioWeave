@@ -102,7 +102,9 @@ function createFixture({floor = 3, messages = null, analyzer = null, rawApiRespo
     context.ChatCompletionService = {
       async processRequest(request) {
         apiRequests.push(request);
-        return rawApiResponse;
+        return typeof rawApiResponse === 'function'
+          ? rawApiResponse(request, apiRequests.length)
+          : rawApiResponse;
       },
     };
   }
@@ -266,71 +268,10 @@ test('Runtime owns canonical Event IDs and Floor provenance', async () => {
 
 test('generic API response with legacy source reaches Floor save, Registry, and business DTOs', async () => {
   const eventA = canonicalApiEvent();
-  const eventB = canonicalApiEvent({
-    type: 'physical_symptom',
-    participants: [{
-      character_id: 'character_subject',
-      display_name: 'subject_display',
-      event_role: 'other_participant',
-      reproductive_capabilities_used: {
-        can_produce_sperm: null,
-        can_produce_ova: null,
-        can_be_fertilized: null,
-        can_carry_pregnancy: null,
-        can_cause_pregnancy: null,
-      },
-      evidence: [{kind: 'narrative', text: 'explicit symptom fixture evidence'}],
-    }],
-    pregnancyRelevance: {
-      relevant: false,
-      possible_conception: false,
-      gestational_subject_ids: [],
-      counterpart_ids: [],
-      confidence: null,
-    },
-  });
-  const eventC = canonicalApiEvent({
-    type: 'medical_event',
-    participants: [
-      {
-        character_id: 'character_other',
-        display_name: 'other_display',
-        event_role: 'other_participant',
-        reproductive_capabilities_used: {
-          can_produce_sperm: null,
-          can_produce_ova: null,
-          can_be_fertilized: null,
-          can_carry_pregnancy: null,
-          can_cause_pregnancy: null,
-        },
-        evidence: [{kind: 'narrative', text: 'explicit medical participant fixture evidence'}],
-      },
-      {
-        character_id: 'character_subject',
-        display_name: 'subject_display',
-        event_role: 'other_participant',
-        reproductive_capabilities_used: {
-          can_produce_sperm: null,
-          can_produce_ova: null,
-          can_be_fertilized: null,
-          can_carry_pregnancy: null,
-          can_cause_pregnancy: null,
-        },
-        evidence: [{kind: 'narrative', text: 'explicit medical subject fixture evidence'}],
-      },
-    ],
-    pregnancyRelevance: {
-      relevant: false,
-      possible_conception: false,
-      gestational_subject_ids: [],
-      counterpart_ids: [],
-      confidence: null,
-    },
-  });
   const fixture = createFixture({
     rawApiResponse: JSON.stringify({
       schema_version: 1,
-      events: [eventA, eventB, eventC],
+      events: [eventA],
       source: {chat_id: 'legacy-chat', message_id: 'legacy-message', floor: 999},
     }),
   });
@@ -339,7 +280,7 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
 
   assert.equal(fixture.apiRequests.length, 1);
   const events = await fixture.runtime.getCurrentFloorEvents();
-  assert.equal(events.length, 3);
+  assert.equal(events.length, 1);
   assert.equal(events[0].type, 'sexual_activity');
   assert.equal(events[0].participants.length, 2);
   assert.equal(events[0].participants[1].character_id, 'character_source');
@@ -348,18 +289,63 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
   assert.equal(events[0].source.chat_id, 'chat-runtime');
   assert.equal(events[0].source.message_id, 'message-stable');
   assert.equal(events[0].source.floor, 3);
-  assert.equal(events[1].type, 'physical_symptom');
-  assert.equal(events[2].type, 'medical_event');
-  assert.deepEqual(events[2].participants.map(participant => participant.character_id), [
-    'character_other', 'character_subject',
-  ]);
 
   const data = await fixture.runtime.collectActiveBusinessData();
-  assert.equal(data.active_event_count, 3);
+  assert.equal(data.active_event_count, 1);
   assert.equal(data.tracking_subject_count, 1);
   assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [events[0].event_id]);
   assert.equal(data.tracking_subjects.character_source, undefined);
-  assert.equal(data.tracking_subjects.character_other, undefined);
+  fixture.runtime.destroy();
+});
+
+test('production analyzer rejects multi-Event force refresh and preserves the prior success', async () => {
+  const firstEvent = canonicalApiEvent();
+  const secondEvent = canonicalApiEvent({
+    type: 'physical_symptom',
+    pregnancyRelevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+  });
+  let rawResponse = JSON.stringify({
+    schema_version: 1,
+    events: [firstEvent],
+    source: {chat_id: 'legacy-chat', message_id: 'legacy-message', floor: 999},
+  });
+  const fixture = createFixture({rawApiResponse: () => rawResponse});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const previousEvents = await fixture.runtime.getCurrentFloorEvents();
+  const previousId = previousEvents[0].event_id;
+  const previousStatus = await fixture.runtime.getCurrentFloorAnalysisStatus();
+
+  rawResponse = JSON.stringify({
+    schema_version: 1,
+    events: [firstEvent, secondEvent],
+    source: {chat_id: 'legacy-chat', message_id: 'legacy-message', floor: 999},
+  });
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED/,
+  );
+
+  assert.equal(fixture.apiRequests.length, 2);
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, 'failed');
+  assert.equal(status.error_code, 'multiple_events_not_allowed');
+  assert.equal(status.error_path, '$.events');
+  assert.equal(status.last_success, previousStatus.last_success);
+  assert.deepEqual(status.current_floor_events.map(event => event.event_id), [previousId]);
+  assert.deepEqual((await fixture.runtime.getCurrentFloorEvents()).map(event => event.event_id), [previousId]);
+
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 1);
+  assert.equal(data.tracking_subject_count, 1);
+  assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [previousId]);
   fixture.runtime.destroy();
 });
 

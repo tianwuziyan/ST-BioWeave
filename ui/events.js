@@ -34,13 +34,6 @@ const eventStatusLabels = {
   fictional: '虚构',
 };
 
-const reproductiveRoleLabels = {
-  potential_gestational_subject: '潜在妊娠承载者',
-  potential_conception_source: '潜在受孕来源',
-  other_participant: '其他参与者',
-  unknown: '未知',
-};
-
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;',
@@ -85,36 +78,11 @@ function eventIdOf(event, fallback = '') {
   return String(event?.event_id ?? fallback ?? '').trim();
 }
 
-function storyTime(event) {
-  const value = event?.story_time;
-  return value && typeof value === 'object' ? value : {display: value};
-}
-
 function renderDefinitionList(rows, className = '') {
   return '<dl class="bioweave-data-list ' + escapeHtml(className) + '">'
     + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>'
       + (typeof value === 'string' && value.startsWith('__html__') ? value.slice(8) : renderValue(value))
       + '</dd></div>').join('') + '</dl>';
-}
-
-function renderParticipants(event) {
-  const participants = Array.isArray(event?.participants) ? event.participants : [];
-  if (!participants.length) return '<div class="bioweave-empty">无参与者资料。</div>';
-  return '<ul class="bioweave-event-participants">' + participants.map(participant => {
-    const id = participant?.character_id;
-    const name = participant?.display_name ?? '未命名角色';
-    const role = participant?.event_role ?? participant?.role;
-    const roleLabel = role ? (reproductiveRoleLabels[role] ?? displayValue(role)) : '';
-    return '<li><b>' + escapeHtml(displayValue(name)) + '</b>'
-      + (roleLabel ? '<span class="bioweave-muted"> · 事件角色：' + escapeHtml(roleLabel) + '</span>' : '')
-      + (id ? '<details class="bioweave-inline-debug"><summary>标识信息</summary><code>character_id：'
-        + escapeHtml(id) + '</code></details>' : '') + '</li>';
-  }).join('') + '</ul>';
-}
-
-function formatIdList(value) {
-  if (!Array.isArray(value) || !value.length) return '—';
-  return value.map(item => escapeHtml(item)).join('、');
 }
 
 function participantNamesForIds(event, value) {
@@ -143,46 +111,14 @@ function renderPregnancyRelevance(event) {
     ['妊娠追踪对象', `__html__${participantNamesForIds(event, relevance.gestational_subject_ids)}`],
     ['相关对象', `__html__${participantNamesForIds(event, relevance.counterpart_ids)}`],
     ['判断置信度', `__html__${renderValue(relevance.confidence)}`],
-  ], 'bioweave-pregnancy-relevance')
-    + '<details class="bioweave-event-debug"><summary>结构化标识</summary>'
-    + renderDefinitionList([
-      ['gestational_subject_ids', `__html__${formatIdList(relevance.gestational_subject_ids)}`],
-      ['counterpart_ids', `__html__${formatIdList(relevance.counterpart_ids)}`],
-    ], 'bioweave-structured-identifiers') + '</details>';
-}
-
-function renderStoryTime(event) {
-  const time = storyTime(event);
-  return renderDefinitionList([
-    ['Display', formatStoryTime(event?.story_time)],
-    ['Normalized', time.normalized],
-    ['Day Index', time.day_index],
-    ['Calendar ID', time.calendar_id],
-    ['Provider', time.provider],
-    ['Precision', time.precision],
-    ['Confidence', time.confidence],
-  ], 'bioweave-story-time');
-}
-
-function renderSource(event) {
-  const source = event?.source ?? {};
-  return '<div data-bioweave-event-readonly="source">' + renderDefinitionList([
-    ['event_id', `__html__<code>${escapeHtml(eventIdOf(event))}</code>`],
-    ['chat_id', `__html__<code>${escapeHtml(displayValue(source.chat_id))}</code>`],
-    ['message_id', `__html__<code>${escapeHtml(displayValue(source.message_id))}</code>`],
-    ['floor', `__html__<code>${escapeHtml(displayValue(source.floor))}</code>`],
-    ['swipe_id', `__html__<code>${escapeHtml(displayValue(source.swipe_id))}</code>`],
-    ['content_hash', `__html__<code>${escapeHtml(displayValue(source.content_hash))}</code>`],
-    ['message_version', `__html__<code>${escapeHtml(displayValue(source.message_version))}</code>`],
-  ], 'bioweave-event-source') + '</div>';
+  ], 'bioweave-pregnancy-relevance');
 }
 
 function renderEvidence(event) {
   const evidence = Array.isArray(event?.source_evidence) ? event.source_evidence : [];
   if (!evidence.length) return '<div class="bioweave-empty">无事件证据。</div>';
   return '<ul class="bioweave-event-evidence">' + evidence.map(item =>
-    '<li><span>' + escapeHtml(displayValue(item?.kind)) + '</span>：'
-    + escapeHtml(displayValue(item?.text ?? item)) + '</li>').join('') + '</ul>';
+    '<li>' + escapeHtml(displayValue(typeof item === 'string' ? item : item?.text, '未提供证据文本')) + '</li>').join('') + '</ul>';
 }
 
 function renderEditForm(event) {
@@ -190,7 +126,7 @@ function renderEditForm(event) {
   const jsonValue = value => escapeHtml(JSON.stringify(value ?? null, null, 2));
   return '<form class="bioweave-card bioweave-event-form" data-bioweave-event-form data-bioweave-event-id="'
     + escapeHtml(eventId) + '"><h3>编辑当前有效 Event</h3>'
-    + '<p class="bioweave-muted">Event ID 与 Source 为只读；保存由页面所属 App 处理。</p>'
+    + '<p class="bioweave-muted">Event ID 为只读；保存由页面所属 App 处理。</p>'
     + '<label>Event ID<input class="bioweave-input" data-bioweave-event-field="event_id" value="'
     + escapeHtml(eventId) + '" readonly></label>'
     + '<label>Type<input class="bioweave-input" data-bioweave-event-field="type" value="'
@@ -224,12 +160,8 @@ function renderEventCard(event, editingEventId) {
       ['地点', `__html__${renderValue(event.location)}`],
       ['判断置信度', `__html__${renderValue(confidence)}`],
     ])
-    + '<section><h4>参与者</h4>' + renderParticipants(event) + '</section>'
     + '<section><h4>妊娠相关性</h4>' + renderPregnancyRelevance(event) + '</section>'
     + '<section><h4>事件证据</h4>' + renderEvidence(event) + '</section>'
-    + '<details class="bioweave-event-debug"><summary>来源与调试信息</summary>'
-    + '<h4>结构化时间</h4>' + renderStoryTime(event)
-    + '<h4>来源（只读）</h4>' + renderSource(event) + '</details>'
     + '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="edit-event" data-bioweave-event-id="'
     + escapeHtml(eventId) + '">编辑 Event</button><button type="button" class="bioweave-danger-action" data-bioweave-action="delete-event" data-bioweave-event-id="'
     + escapeHtml(eventId) + '">删除 Event</button></div>'

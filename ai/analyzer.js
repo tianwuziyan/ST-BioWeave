@@ -1413,6 +1413,13 @@ export function parseEventAnalysisResponse(raw) {
   if (payload.schema_version !== EVENT_SCHEMA_VERSION || !Array.isArray(payload.events)) {
     throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
   }
+  if (payload.events.length > 1) {
+    throw eventDiagnostic(
+      'multiple_events_not_allowed',
+      '$.events',
+      'EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED',
+    );
+  }
   const events = payload.events.map((event, index) => normalizeEventRecord(event, index));
   return {schema_version: EVENT_SCHEMA_VERSION, events};
 }

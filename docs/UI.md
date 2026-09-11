@@ -30,13 +30,13 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
 
-没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示错误摘要，并明确旧成功事件仍可保持有效。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
+没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
-人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。稳定 `character_id` 和其它技术字段可以放入折叠的调试信息。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
 
 ### 历史事件页
 
-事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、canonical Participants、妊娠相关性、Confidence 和简短证据；Reproductive Role 使用可读标签，事件 ID、Source、结构化时间和其它 raw 字段放入折叠的详情/调试区。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。人物 exposure card 不重新计算 actual exposure，只显示 `counterpart_ids[]` 投影出的相关对象。
+事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、妊娠追踪对象、相关对象、Confidence 和简短证据；妊娠相关 `sexual_activity` 不再单独显示完整 participant list 或 event role enum，相关对象只由 `counterpart_ids[]` 投影。普通卡片不渲染事件 ID、Source、结构化时间、Floor Version、hash 或其它 raw/provenance 字段。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定；编辑表单与普通卡片分开，编辑操作可使用必要的只读 Event ID。人物 exposure card 不重新计算 actual exposure，只显示 `counterpart_ids[]` 投影出的相关对象。
 
 当当前 Chat 没有 Event 时，页面必须区分“当前楼层尚未分析”和“当前楼层已分析成功但 0 Event”，并提供调用生产 Runtime pipeline 的“分析当前楼层 / 重新分析当前楼层”入口。
 
@@ -52,7 +52,21 @@ Story Time 持久化为结构化对象：`display`、`normalized`、`calendar_id
 
 总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
 
-总览的 Event Analysis 状态卡显示当前 Floor、六字段 Floor Version、`not_analyzed/running/success/failed/cancelled`、最近成功时间、当前 Floor Event 数、Tracking Subject 数和错误摘要。运行中按钮保持可点击并显示“分析中… · 点击可终止”；二次点击通过 SillyTavern confirm Popup 请求 Runtime 取消，拒绝确认不改变执行。轻量详情使用脱敏后的 Runtime DTO，包含 Execution Status、Stage、Attempt、Started At、Finished At、Error Code、Safe Error Summary、解析后的当前 Floor Events 与 Registry 摘要；不永久保存或默认展示 Raw AI Response、请求头或 Secret。主动取消显示信息提示，且保留上一份有效 Event/Tracking 结果。
+总览显示用户可理解的 Analysis Status、人物/事件统计、最近事件和分析操作；不显示当前 Floor Version 的 chat/message/floor/swipe/hash/message version，不显示 Event ID、raw Event JSON、Registry Summary 或 execution diagnostics。运行中按钮保持可点击并显示“分析中… · 点击可终止”；二次点击通过 SillyTavern confirm Popup 请求 Runtime 取消，拒绝确认不改变执行。Runtime 仍保留完整诊断 DTO，必要的 raw/provenance inspection 只通过 Settings 的 Advanced/Debug Popup 提供，而不是普通 Overview 的折叠详情。主动取消显示信息提示，且保留上一份有效 Event/Tracking 结果。
+
+### Product UI 与 Debug 边界
+
+Overview、Characters、Character Detail 和 Events 是普通 Product UI，只显示业务 DTO
+的用户可读投影或明确空状态。`event_id`、`character_id`、`source`、Floor
+Version、hash、Registry Summary、raw Event JSON 和 schema/provenance 字段不因为
+`<details>` 折叠而进入普通页面 HTML。它们仍存在于 Core/Runtime/Storage，并由
+编辑与诊断路径按需使用；Settings 的 Advanced/Debug Popup 是唯一的普通 UI 之外的
+分析调试 surface。
+
+Event Analysis V1 的分析单位是 Target Floor Version，固定内容是 Summary 之外的
+业务历史事实，而不是互斥 Tab：一个 Target Floor Version 只能产生 0 或 1 个
+consolidated BiologicalEvent。UI 不负责合并 Event，也不推导 State、Projection、
+Relations、Tracking eligibility 或 actual exposure。
 
 Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶段保持 Empty State 或兼容骨架。页面可以显示“等待后续状态引擎”类说明，但不得生成 mock 业务 DTO、概率、妊娠天数或亲子关系。
 

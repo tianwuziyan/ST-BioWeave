@@ -54,6 +54,10 @@ const trackingSubject = {
   status: 'active',
 };
 
+function visibleMarkup(html) {
+  return html.replace(/\sdata-[\w-]+(?:="[^"]*")?/g, '');
+}
+
 test('characters page distinguishes not analyzed from analyzed with zero subjects', () => {
   const html = charactersPage();
   assert.match(html, /尚未完成事件分析。/);
@@ -71,6 +75,16 @@ test('characters page distinguishes not analyzed from analyzed with zero subject
   assert.doesNotMatch(analyzed, /Tracking Decision 诊断|CAN_CARRY_PREGNANCY_UNKNOWN/);
   assert.match(analyzed, /重新分析当前楼层/);
   assert.doesNotMatch(html, /demo-character-1|演示人物|占位 DTO/);
+});
+
+test('characters failed state keeps diagnostics out of the ordinary product page', () => {
+  const html = charactersPage({
+    analysisStatus: {state: 'failed', last_error: 'multiple_events_not_allowed'},
+  });
+  assert.match(html, /当前楼层事件分析失败。/);
+  assert.match(html, /请稍后重试。/);
+  assert.match(html, /旧的成功事件，它们仍然有效/);
+  assert.doesNotMatch(html, /multiple_events_not_allowed|错误摘要|last_error/);
 });
 
 test('characters page only enumerates tracking subjects and ignores diagnostic decisions and profiles', () => {
@@ -122,7 +136,7 @@ test('events page distinguishes not analyzed from analyzed with zero events', ()
   assert.match(analyzed, /重新分析当前楼层/);
 });
 
-test('overview renders current Floor analysis status and secret-redacted details', () => {
+test('overview renders business analysis status without execution diagnostics', () => {
   const html = overviewPage({
     analysisStatus: {
       state: 'failed',
@@ -140,12 +154,12 @@ test('overview renders current Floor analysis status and secret-redacted details
   });
   assert.match(html, /当前 Floor 42/);
   assert.match(html, /分析失败/);
-  assert.match(html, /JSON_SCHEMA_INVALID/);
-  assert.match(html, /Event Analysis 详情/);
-  assert.doesNotMatch(html, /must-not-render/);
+  assert.match(html, /最近成功分析/);
+  assert.doesNotMatch(html, /JSON_SCHEMA_INVALID|Event Analysis 详情|Registry Summary|解析后的 Event JSON|chat-1|message-1|hash-1/);
+  assert.doesNotMatch(html, /Floor Version|content_hash|message_version/);
 });
 
-test('running Event Analysis keeps the action clickable and exposes execution diagnostics', () => {
+test('running Event Analysis keeps the action clickable without execution diagnostics', () => {
   const html = overviewPage({
     analysisStatus: {
       state: 'running',
@@ -161,9 +175,7 @@ test('running Event Analysis keeps the action clickable and exposes execution di
   });
   assert.match(html, /分析中… · 点击可终止/);
   assert.doesNotMatch(html, /data-bioweave-action="analyze-current-floor"[^>]*disabled/);
-  assert.match(html, /api_request/);
-  assert.match(html, /REQUEST_TIMEOUT/);
-  assert.match(html, /请求超时/);
+  assert.doesNotMatch(html, /api_request|REQUEST_TIMEOUT|请求超时|attempt|started_at|error_stage/);
 });
 
 test('characters page renders DTO facts, tri-state capabilities, and all exposure events', () => {
@@ -186,13 +198,14 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
     characterId: 'char-a',
   });
   assert.match(html, /阿甲/);
-  assert.match(html, /char-a/);
+  assert.doesNotMatch(visibleMarkup(html), /char-a|evt-1|chat-1|message-1|hash-1/);
   assert.match(html, /人类/);
   assert.match(html, /类型甲/);
   assert.match(html, /可承载妊娠[\s\S]*?是/);
   assert.match(html, /可产生卵子[\s\S]*?未知/);
   assert.match(html, /可产生精子[\s\S]*?否/);
-  assert.match(html, /evt-1/);
+  assert.match(html, /data-bioweave-event-id="evt-1"/);
+  assert.doesNotMatch(html, /调试信息|content_hash|message_version|chat_id|message_id/);
   for (const section of ['当前状态', '受孕相关记录', '推演', '关系', '备注']) {
     assert.match(html, new RegExp(`<h3>${section}</h3>`));
   }
@@ -245,7 +258,7 @@ test('character detail keeps every section for false or unknown capabilities and
   assert.match(html, /可产生卵子[\s\S]*?未知/);
   for (const text of [
     '当前状态',
-    '当前没有可显示的 exposure Event。',
+    '当前没有可显示的相关事件。',
     '当前没有可显示的生理推演。推演并非已发生事实。',
     '尚未建立已确认的亲子或其他关系。',
     '当前没有可显示的人物备注。',
@@ -269,42 +282,51 @@ test('character detail no longer exposes tab state or bindings and keeps top-lev
   assert.doesNotMatch(characterSource, /characterDetailTabs|characterDetailTab|renderTabContent|data-character-tab|role="tablist"|role="tab"/);
   assert.doesNotMatch(appSource, /characterDetailTab|setCharacterTab|data-character-tab/);
   assert.doesNotMatch(styleSource, /bioweave-character-tabs/);
+  assert.doesNotMatch(styleSource, /bioweave-analysis-detail/);
+  assert.match(styleSource, /bioweave-analysis-debug-popup-content/);
   assert.match(appSource, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings'\]/);
 });
 
-test('events page displays fact fields and exposes explicit edit/delete actions', () => {
-  const html = eventsPage({activeEvents: [event], editingEventId: 'evt-1'});
-  for (const value of ['第三日夜间', '7', '花园', '阿甲', '阿乙', 'potential_gestational_subject', 'potential_conception_source', 'true', '0.8', 'chat-1', 'message-1', 'hash-1']) {
+test('events ordinary cards keep user-readable facts and preserve operation bindings', () => {
+  const html = eventsPage({activeEvents: [event]});
+  for (const value of ['第三日夜间', '花园', '阿甲', '阿乙', '是', '0.8', '明确的当前楼层证据', '实际暴露证据']) {
     assert.match(html, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+  assert.match(html, /data-bioweave-event-id="evt-1"/);
   assert.match(html, /data-bioweave-action="edit-event"[^>]*data-bioweave-event-id="evt-1"/);
   assert.match(html, /data-bioweave-action="delete-event"[^>]*data-bioweave-event-id="evt-1"/);
+  assert.doesNotMatch(html, /参与者|事件角色|结构化标识|来源与调试信息|narrative|conception_relevant_exposure/);
+  assert.doesNotMatch(html, /chat-1|message-1|hash-1|content_hash|message_version|normalized|day_index|calendar_id/);
+});
+
+test('event edit form keeps necessary structured fields and readonly Event ID', () => {
+  const html = eventsPage({activeEvents: [event], editingEventId: 'evt-1'});
   assert.match(html, /data-bioweave-event-form[^>]*data-bioweave-event-id="evt-1"/);
   assert.match(html, /data-bioweave-event-field="location"/);
   assert.match(html, /data-bioweave-event-field="participants"/);
   assert.match(html, /data-bioweave-event-field="pregnancy_relevance"/);
   assert.match(html, /data-bioweave-event-field="event_id"[^>]*readonly/);
+  assert.match(html, /value="evt-1" readonly/);
 });
 
 test('events page accepts an object-shaped Event collection for compatibility', () => {
   const html = eventsPage({events: {'evt-1': event}});
-  assert.match(html, /evt-1/);
+  assert.match(html, /data-bioweave-event-id="evt-1"/);
+  assert.doesNotMatch(visibleMarkup(html), /evt-1/);
   assert.match(html, /花园/);
 });
 
-test('events page keeps source and event id read-only and does not infer eligibility', () => {
+test('events ordinary card does not expose participant identifiers or inferred eligibility', () => {
   const html = eventsPage({activeEvents: [{
     ...event,
     participants: [{character_id: 'char-x', display_name: '角色 X', gender: 'female', receiver: true}],
     pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []},
-  }], editingEventId: 'evt-1'});
-  assert.match(html, /来源与调试信息/);
-  assert.match(html, /data-bioweave-event-field="event_id"[^>]*readonly/);
-  assert.match(html, /char-x/);
-  assert.doesNotMatch(html, /data-bioweave-event-field="gender"|data-bioweave-event-field="receiver"/);
+  }]});
+  assert.doesNotMatch(html, /角色 X|char-x|gender|receiver|参与者|事件角色/);
+  assert.doesNotMatch(html, /来源与调试信息|结构化标识|chat-1|message-1|hash-1/);
 });
 
-test('event page preserves every participant while keeping raw presentation fields in details', () => {
+test('event page projects pregnancy objects without rendering participant roles or provenance', () => {
   const html = eventsPage({
     activeEvents: [{
       event_id: 'event_fixture',
@@ -337,10 +359,9 @@ test('event page preserves every participant while keeping raw presentation fiel
 
   assert.match(html, /subject_display/);
   assert.match(html, /source_display/);
-  assert.match(html, /潜在妊娠承载者/);
-  assert.match(html, /潜在受孕来源/);
-  assert.match(html, /来源与调试信息/);
-  assert.doesNotMatch(html, /Reproductive Role|potential_gestational_subject|potential_conception_source/);
+  assert.doesNotMatch(html, /<h4>参与者<\/h4>|事件角色|潜在妊娠承载者|潜在受孕来源/);
+  assert.doesNotMatch(html, /potential_gestational_subject|potential_conception_source|结构化标识|来源与调试信息/);
+  assert.doesNotMatch(html, /chat_fixture|message_fixture|hash_fixture|content_hash|message_version|normalized|day_index/);
 });
 
 test('characters source contains no tracking decision presentation path', () => {
@@ -360,7 +381,8 @@ test('overview counts only passed tracking subjects and active events and keeps 
   assert.match(html, /<strong>1<\/strong><span>追踪人物<\/span>/);
   assert.match(html, /<strong>3<\/strong><span>事件<\/span>/);
   assert.match(html, /阿甲/);
-  assert.match(html, /evt-1/);
+  assert.match(html, /data-character-id="char-a"/);
+  assert.doesNotMatch(visibleMarkup(html), /char-a|evt-1|Event ID|Floor Version|Registry Summary|content_hash|message_version/);
   assert.match(html, /当前没有需要展示的生理推演。/);
   assert.match(html, /尚未建立已确认的亲子关系。/);
   assert.doesNotMatch(html, /demo-character-1|演示人物|真实人物数据尚未接入/);
@@ -372,6 +394,7 @@ test('page DTO text remains HTML-escaped', () => {
       ...event,
       location: '<img src=x onerror=alert(1)>',
       participants: [{character_id: 'char-x', display_name: '<角色>\'"'}],
+      pregnancy_relevance: {...event.pregnancy_relevance, counterpart_ids: ['char-x']},
     }],
   });
   assert.doesNotMatch(html, /<img src=x/);

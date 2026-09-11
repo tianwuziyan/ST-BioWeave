@@ -110,6 +110,11 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /gender/);
   assert.match(prompt, /counterpart_ids\[\]/);
   assert.match(prompt, /0、1 或 N/);
+  assert.match(prompt, /consolidated BiologicalEvent/);
+  assert.match(prompt, /primary type/);
+  assert.match(prompt, /即时症状/);
+  assert.match(prompt, /普通送汤、食物、补品/);
+  assert.match(prompt, /静态人物描写/);
   assert.match(prompt, /症状/);
   assert.match(prompt, /actual reproductive exposure/);
   assert.match(prompt, /完整有效阻隔/);
@@ -164,6 +169,24 @@ test('Event parser accepts a non-sexual BiologicalEvent with the same fixed enve
   })]), floorVersion);
   assert.equal(parsed.events[0].type, 'physical_symptom');
   assert.deepEqual(parsed.events[0].pregnancy_relevance.counterpart_ids, []);
+});
+
+test('Event parser allows zero or one Event and rejects multiple Events before normalization', () => {
+  const empty = parseEventAnalysisResponse(response([]), floorVersion);
+  assert.deepEqual(empty, {schema_version: 1, events: []});
+
+  const single = parseEventAnalysisResponse(response([event()]), floorVersion);
+  assert.equal(single.events.length, 1);
+
+  assert.throws(
+    () => parseEventAnalysisResponse(response([event(), event({type: 'physical_symptom'})]), floorVersion),
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.diagnostic_code === 'multiple_events_not_allowed'
+      && error?.error_code === 'multiple_events_not_allowed'
+      && error?.diagnostic_path === '$.events'
+      && error?.error_path === '$.events'
+      && error?.message === 'EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED',
+  );
 });
 
 test('Event parser rejects natural language, fenced JSON, and non-array counterpart ids', () => {
@@ -531,7 +554,7 @@ test('canonical generic sexual-activity response parses with structured evidence
   ]);
 });
 
-test('Event parser preserves zero, one, and multiple abstract exposure sources as arrays', () => {
+test('Event parser preserves zero, one, and multiple abstract exposure sources inside one Event', () => {
   const noExposure = event({
     participants: [participant('character_subject')],
     pregnancy_relevance: {
@@ -553,12 +576,21 @@ test('Event parser preserves zero, one, and multiple abstract exposure sources a
       counterpart_ids: ['character_source', 'character_source_2'],
     },
   });
-  const parsed = parseEventAnalysisResponse(response([noExposure, oneSource, multipleSources]), floorVersion);
-  assert.deepEqual(parsed.events.map(item => item.pregnancy_relevance.counterpart_ids), [
+  assert.deepEqual(
+    parseEventAnalysisResponse(response([noExposure]), floorVersion)
+      .events[0].pregnancy_relevance.counterpart_ids,
     [],
+  );
+  assert.deepEqual(
+    parseEventAnalysisResponse(response([oneSource]), floorVersion)
+      .events[0].pregnancy_relevance.counterpart_ids,
     ['character_source'],
+  );
+  assert.deepEqual(
+    parseEventAnalysisResponse(response([multipleSources]), floorVersion)
+      .events[0].pregnancy_relevance.counterpart_ids,
     ['character_source', 'character_source_2'],
-  ]);
+  );
 });
 
 test('Event parser validates the typed physical effect while leaving exposure consistency to Domain', () => {

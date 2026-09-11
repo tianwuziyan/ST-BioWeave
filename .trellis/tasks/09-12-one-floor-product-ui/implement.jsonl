@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-12-one-floor-product-ui/research/one-floor-ui-audit.md", "reason": "当前 worktree 的 Event cardinality、Runtime failure preservation、Product UI debug 字段和既有回归审计证据。"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "保持 Event parser、Runtime identity/source、Tracking 和失败刷新边界，新增 one-floor invariant 时需对齐此契约。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "页面 renderer 只返回展示 HTML，保留单页人物详情、空状态和显式 Debug Popup 分离。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门槛、JS 检查、测试和普通页面/Debug surface 的边界。"}
+{"file": "docs/UI.md", "reason": "当前 UI 页面契约，实施时需要把旧的折叠 debug/source 说明改成 Product UI 不渲染内部字段。"}

@@ -140,30 +140,11 @@ function subjectStatusLabel(value) {
   return displayValue(value, '追踪中');
 }
 
-function renderExposureDebug(event, eventId) {
-  const source = event?.source ?? {};
-  const fields = [
-    ['event_id', eventId],
-    ['chat_id', source.chat_id],
-    ['message_id', source.message_id],
-    ['floor', source.floor ?? event?.floor],
-    ['swipe_id', source.swipe_id],
-    ['content_hash', source.content_hash],
-    ['message_version', source.message_version],
-  ];
-  return '<details class="bioweave-event-debug"><summary>调试信息</summary>'
-    + '<dl class="bioweave-data-list">' + fields.map(([label, value]) =>
-      '<div><dt>' + escapeHtml(label) + '</dt><dd><code>' + escapeHtml(displayValue(value))
-      + '</code></dd></div>').join('') + '</dl></details>';
-}
-
 function renderExposureEvent(event, fallbackEventId) {
   const eventId = eventIdOf(event, fallbackEventId);
   if (!event) {
     return '<article class="bioweave-card bioweave-character-exposure" data-bioweave-event-id="'
-      + escapeHtml(eventId) + '"><b>相关事件</b><p class="bioweave-muted">当前有效事件中未找到该引用。</p>'
-      + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>event_id：<code>'
-      + escapeHtml(eventId) + '</code></p></details></article>';
+      + escapeHtml(eventId) + '"><b>相关事件</b><p class="bioweave-muted">当前有效事件中未找到该引用。</p></article>';
   }
   return '<article class="bioweave-card bioweave-character-exposure" data-bioweave-event-id="'
     + escapeHtml(eventId) + '"><header><b>' + escapeHtml(eventTypeLabel(event.type))
@@ -172,7 +153,7 @@ function renderExposureEvent(event, fallbackEventId) {
     + '<div><dt>发生时间</dt><dd>' + storyTimeDisplay(event) + '</dd></div>'
     + '<div><dt>地点</dt><dd>' + renderValue(event.location) + '</dd></div>'
     + '<div><dt>相关对象</dt><dd>' + escapeHtml(counterpartSummary(event)) + '</dd></div>'
-    + '</dl>' + renderExposureDebug(event, eventId) + '</article>';
+    + '</dl></article>';
 }
 
 function renderCapabilities(profile) {
@@ -201,18 +182,16 @@ function renderExposures(subject, activeEvents) {
   const exposureIds = Array.isArray(subject?.exposure_event_ids)
     ? [...new Set(subject.exposure_event_ids.map(value => String(value ?? '').trim()).filter(Boolean))]
     : [];
-  if (!exposureIds.length) return '<div class="bioweave-empty">当前没有可显示的 exposure Event。</div>';
+  if (!exposureIds.length) return '<div class="bioweave-empty">当前没有可显示的相关事件。</div>';
   const events = new Map(eventEntries(activeEvents).map(({key, value}) => [key, value]));
   return exposureIds.map(eventId => renderExposureEvent(events.get(eventId), eventId)).join('');
 }
 
-function renderCharacterSummary({characterId, subject, profile}) {
-  const displayName = profile?.display_name ?? subject?.display_name ?? characterId;
+function renderCharacterSummary({subject, profile}) {
+  const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色';
   return '<section class="bioweave-card bioweave-character-summary"><header><b>' + escapeHtml(displayValue(displayName))
     + '</b><span class="bioweave-badge">妊娠追踪</span></header>'
-    + renderCharacterFacts(profile)
-    + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>character_id：<code>'
-    + escapeHtml(characterId) + '</code></p></details></section>';
+    + renderCharacterFacts(profile) + '</section>';
 }
 
 function renderCurrentState() {
@@ -241,11 +220,11 @@ function renderNotesSection() {
     + '<div class="bioweave-empty">当前没有可显示的人物备注。</div></section>';
 }
 
-function detailPage({characterId, subject, profile, activeEvents}) {
+function detailPage({subject, profile, activeEvents}) {
   return '<section class="bioweave-page bioweave-character-detail">'
     + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
     + '<h2>人物详情</h2><p class="bioweave-muted">当前 Chat · 妊娠追踪</p></div></div>'
-    + renderCharacterSummary({characterId, subject, profile})
+    + renderCharacterSummary({subject, profile})
     + '<section class="bioweave-card bioweave-detail-section"><h3>生殖能力</h3>'
     + renderCapabilities(profile) + '</section>'
     + renderCurrentState()
@@ -256,11 +235,11 @@ function detailPage({characterId, subject, profile, activeEvents}) {
     + '</section>';
 }
 
-function unavailableDetailPage(characterId) {
+function unavailableDetailPage() {
   return '<section class="bioweave-page bioweave-character-detail">'
     + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
     + '<h2>人物详情</h2></div></div><section class="bioweave-card bioweave-empty">'
-    + '<b>当前没有可追踪的角色详情。</b><p>未找到 character_id：<code>' + escapeHtml(characterId) + '</code>。</p>'
+    + '<b>当前没有可追踪的角色详情。</b><p>请从当前 Chat 的人物列表进入可追踪角色。</p>'
     + '</section></section>';
 }
 
@@ -277,16 +256,15 @@ export function charactersPage({
   if (characterId) {
     const id = String(characterId);
     const subject = subjects.find(item => item.key === id)?.value;
-    if (!subject) return unavailableDetailPage(id);
+    if (!subject) return unavailableDetailPage();
     return detailPage({
-      characterId: id,
       subject,
       profile: profileFor(characterProfiles, id),
       activeEvents: effectiveEvents,
     });
   }
   const rows = subjects.map(({key, value: subject}) => {
-    const displayName = subject.display_name ?? key;
+    const displayName = subject.display_name ?? '未命名角色';
     const exposureCount = Array.isArray(subject.exposure_event_ids) ? subject.exposure_event_ids.length : 0;
     return '<button type="button" class="bioweave-card bioweave-character-row" data-character-id="'
       + escapeHtml(key) + '"><span><b>' + escapeHtml(displayValue(displayName))
@@ -304,7 +282,7 @@ export function charactersPage({
           + '<p>现有 Tracking Subject 与历史事件仍然保留，可重新分析当前楼层。</p></div>'
       : status.state === 'failed'
         ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>'
-          + '<p>错误摘要：<code>' + escapeHtml(displayValue(status.last_error, 'EVENT_ANALYSIS_FAILED')) + '</code>。如有旧的成功事件，它们仍然有效。</p></div>'
+          + '<p>请稍后重试。如有旧的成功事件，它们仍然有效。</p></div>'
       : '<div class="bioweave-card bioweave-empty"><b>当前没有需要妊娠追踪的角色。</b>'
       + '<p>当前没有进入 Tracking Subject Registry 的角色。</p>'
       + '<dl class="bioweave-data-list bioweave-tracking-counts">'

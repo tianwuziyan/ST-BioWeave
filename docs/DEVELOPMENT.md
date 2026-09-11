@@ -38,7 +38,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 当前 Chat / Floor / 最近剧情 / World Model / Story Time
   → Event Analyzer 固定 JSON
   → Event normalize / validate
-  → Floor-bound BiologicalEvent[]
+  → Floor-bound BiologicalEvent[0..1]（每个 Target Floor Version）
   → Chat-local Tracking Subject Registry
   → Characters / Events / Overview
 ```
@@ -47,8 +47,8 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 - 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
 - BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
-- Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`；只有通过统一 normalize / validate 的结果才能写入 Floor。
-- `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。
+- Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`，且 Event Analysis V1 对每个 Target Floor Version 强制 `events.length <= 1`。同一连续过程的 primary biological event、即时症状、physical effect 和相关证据由 AI 合并；Parser 拒绝多 Event，Runtime 与 UI 不做语义合并。只有通过统一 normalize / validate 的结果才能写入 Floor。
+- `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析最多写入一条 Event；多 Event response 在 AI DTO boundary 失败，不保存半正确结果。
 - `story_time` 是结构化存储对象；`display` 只由 formatter 显示。排序和计算只使用 `normalized`、`day_index` 等结构化字段，无法可靠获取时保存 `null`。SevenDaysCal 只能通过公开、可注入的 Adapter 使用，缺失时降级到 BioWeave Fallback StoryTimeProvider。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段只实现 `sexual_activity` 的 Tracking 闭环。
 - `counterpart_ids[]` 只保存 `participants[]` 中最终实际造成 conception-relevant exposure 的 source ID。`possible_conception=true` 必须同时有 `relevant=true`、非空且 participant-backed 的 subject/source 数组，`participants[]` 不能包含其它对象，以及 `source_evidence` 中 kind 为 `conception_relevant_exposure` 的 marker；无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
@@ -71,7 +71,7 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 ### 页面职责
 
-`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”，稳定 ID 等技术字段默认放入调试区；事件页展示真实 Event 的用户可读类型、Story Time、Location、canonical Participants、妊娠相关性、Status、Confidence 和证据，Source 与 raw schema 字段放入折叠详情；人物 exposure card 只把 `counterpart_ids[]` 映射为“相关对象”，不展示全部 participants 或读取 protection、physical_effect、capability、event_role 做判断；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
+`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”；普通 Product UI 不渲染稳定 ID、Source、Floor Version、hash、Registry Summary 或 raw schema/debug 字段。事件页展示真实 Event 的用户可读类型、Story Time、Location、妊娠追踪对象、相关对象、Status、Confidence 和用户可读证据；妊娠相关 `sexual_activity` 不在普通卡片单独重复显示完整 participants，相关对象只由 `counterpart_ids[]` 投影。编辑表单与普通卡片分开，必要的只读 Event ID 可仅用于编辑操作。人物 exposure card 不读取 protection、physical_effect、capability、event_role 做判断；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
 
 ## 推荐实施顺序
 
@@ -114,6 +114,6 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 ## Phase 2A 验证与真实宿主验收
 
-实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、0/1/N Subject、0/1/N counterpart、gender 不决定能力、`null` 不变 `true`、无受孕暴露、重复 Event、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
+实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1 Event、单个 Event 内 0/1/N Subject 与 counterpart、gender 不决定能力、`null` 不变 `true`、无受孕暴露、重复 Event、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
 自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、自动 N-floor 触发、相同 Floor Version 去重、UI 重复打开不重复请求、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、SevenDaysCal 可用/不可用时的 Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

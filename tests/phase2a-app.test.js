@@ -306,6 +306,10 @@ function clickTarget(action, extra = {}) {
   };
 }
 
+function visibleMarkup(html) {
+  return html.replace(/\sdata-[\w-]+(?:="[^"]*")?/g, '');
+}
+
 test('App consumes persisted events and Tracking Registry without creating Chat-wide characters', async () => {
   const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
   const fixture = await createFixture({event: sourceEvent(version)});
@@ -316,10 +320,13 @@ test('App consumes persisted events and Tracking Registry without creating Chat-
   fixture.app.go('characters');
   const characters = fixture.root.querySelector('.bioweave-main').innerHTML;
   assert.match(characters, /Alice/);
-  assert.match(characters, /char-a/);
+  assert.match(characters, /data-character-id="char-a"/);
+  assert.doesNotMatch(visibleMarkup(characters), /char-a|character_id|event_id/);
   assert.doesNotMatch(characters, /demo-character-1|演示人物/);
   fixture.app.go('events');
-  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /2026-08-20/);
+  const events = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(events, /2026-08-20/);
+  assert.doesNotMatch(visibleMarkup(events), /evt-1|event_id|chat-app|message_id|content_hash|message_version/);
   assert.equal(Object.keys(fixture.getChat().tracking_subjects).length, 1);
   fixture.app.destroyBioWeave();
 });

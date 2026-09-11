@@ -25,6 +25,9 @@ export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([...STORY_TIME_PRECISIO
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
+  '一个 Target Floor Version 最多输出一个 consolidated BiologicalEvent；如果同一连续过程包含多个事实，必须选择一个 primary type 并合并到同一个 Event，不要拆成多个 events。',
+  '有实际 pregnancy-relevant sexual exposure 时，primary type 优先为 sexual_activity；同一过程中的即时症状、physical effect、直接身体反应与相关证据并入该 Event 的 effect/evidence 字段。只有独立的新症状且没有更高层级 BiologicalEvent 时，才允许唯一的 physical_symptom。',
+  '只有明确的医疗检查、诊断、治疗、给药、干预或医学监测才允许唯一的 medical_event；普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event。外貌、体质、长期设定和静态人物描写没有本楼新变化时不产生 physical_symptom。',
   '对 sexual_activity 只提取实际 conception-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用稳定 character_id，姓名只作为 display_name。',
   '保护或 Barrier 只是证据，不是最终结论；以最终 actual reproductive exposure outcome 为准。完整有效阻隔且未进入有效路径、体外或其它无有效路径的排出、仅插入、仅身体接触都不构成 pregnancy-related exposure；破裂、脱落、摘除后或其它失效导致实际进入有效路径时，才按实际暴露提取对应 subject 与一个或多个 source。',
   '对其它 BiologicalEvent 类型，participants 只保留对该生物事实有直接作用的对象；在场、说话、被提及或普通递送行为不能自动成为参与者。',
@@ -37,13 +40,17 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
 ].join('\n')
 
 export const EVENT_ANALYZER_TASK_CONTRACT = [
-  '任务：只分析【本次目标楼层】中实际发生或有可靠证据支持的 BiologicalEvent，并返回完整 events 数组。',
+  '任务：只分析【本次目标楼层】中实际发生或有可靠证据支持的 BiologicalEvent，并返回完整 events 数组；events[] 只能为空或包含一个 consolidated Event。',
+  '先为本楼选择唯一 primary Event type，并把同一连续过程的 sexual activity、实际生殖暴露、即时症状、physical effects 和直接证据合并到该 Event；不要选择第一条后丢弃其它事实，也不要拆成多个 Event。',
+  '只有独立的新 physical symptom 才能成为唯一的 physical_symptom；只有明确医疗检查、诊断、治疗、给药、干预或医学监测才是唯一的 medical_event。普通补品、食物、饮料、送汤、照顾、休息建议、外貌、体质或静态人物设定都不单独形成 Event。',
   'Recent Story 只作为前置剧情参考；目标楼层是本次事件事实的唯一直接提取对象。',
   '不要把预测、症状或可能性写成已经发生的受孕或妊娠事实。',
 ].join('\n')
 
 export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   '只输出一个完整、可直接 JSON.parse 的 JSON 对象，不要 Markdown、代码围栏、前后解释或半结构化文本。顶层固定为 {"schema_version":1,"events":[]}；唯一允许的旧兼容顶层字段是会被忽略的 source，任何其它未知顶层字段都必须拒绝。',
+  '每个 Target Floor Version 的 events[] 只能是 [] 或 [一个 consolidated BiologicalEvent]；不得返回两个或更多 Event，不得使用 type 数组或拼接 type 表达多个 primary type。',
+  'primary type 必须承载本楼最高层级的唯一生物事实：实际 pregnancy-relevant sexual exposure 优先使用 sexual_activity，并把同一过程的即时症状、physical effect、直接身体反应与证据放入该 Event；独立症状才使用 physical_symptom，明确医疗行为才使用 medical_event。普通补品、食物、饮料、照顾、休息建议、外貌、体质和静态人物描写不单独输出 Event。',
   'AI Event DTO 不生成 event_id 或 source；它们不是 AI 事实字段。Runtime 会按响应顺序生成 deterministic、同一响应内唯一且不依赖 display_name 的 event_id，并强制绑定 authoritative Floor Version。若兼容旧响应而出现 event.event_id、event.source，它们会被忽略，不能覆盖 Runtime 身份。',
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
   `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、provider、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
