@@ -11,7 +11,7 @@
 1. docs/UI.md 与 docs/DEVELOPMENT.md 中的业务契约；
 2. 本文档中的 UI 框架规则；
 3. docs/UI_FRAMEWORK_EXAMPLE.html 中的结构和视觉示例；
-4. work/bioweave-ui-concept/index.html 中的完整视觉原型；
+4. docs/UI_FULL_REFERENCE.html 中的完整八页面视觉原型；
 5. docs/references/ 下没有被本文档明确引用的旧参考文件只作历史资料。
 
 生产 UI 不是把静态原型直接复制进去。原型只提供布局、颜色、间距、控件形态和响应式方向；生产页面必须继续消费 Runtime DTO，并继续使用现有的 data-bioweave-* 事件钩子。
@@ -131,7 +131,7 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
 | 世界模块 | bioweave-world-module | 一个独立查看/编辑模块 |
 | 正则行 | bioweave-regex-row | 一条正则规则 |
 
-独立 UI 参考例子见 docs/UI_FRAMEWORK_EXAMPLE.html。生产代码可以使用更具体的 bioweave-* 变体，但必须保持同样的层级和职责。
+控件语法参考见 docs/UI_FRAMEWORK_EXAMPLE.html，完整八页面视觉参考见 docs/UI_FULL_REFERENCE.html。生产代码可以使用更具体的 bioweave-* 变体，但必须保持同样的层级和职责。
 
 ## 世界模型格式
 
@@ -256,7 +256,7 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
 
 以后任何 UI 修改都按以下顺序：
 
-1. 先读本文档和 docs/UI_FRAMEWORK_EXAMPLE.html；
+1. 先读本文档、docs/ui-framework.config.json、docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html；
 2. 再读目标页面模块和 ui/app.js 中对应的事件钩子；
 3. 先写出要保留的 data-bioweave-* 接口和三端验收点；
 4. 修改对应页面模块和 style.css，不新增第二套并行 UI；
@@ -277,3 +277,16 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
 - [ ] 旧 UI 不再参与渲染，没有两套 UI 同时存在。
 - [ ] 生产业务数据、权限边界、敏感信息处理和现有测试契约未被改变。
 
+## 配置同步规则
+
+docs/ui-framework.config.json 是本框架的机器可读配置，也是字体、颜色、间距、尺寸、断点、组件和事件钩子的集中登记处。任何 UI 调整都必须同步检查它。
+
+同步顺序固定为：
+
+1. 先更新 ui-framework.config.json 中的 token、组件、断点或事件映射；
+2. 再更新本文档中的说明和语法；
+3. 再更新 UI_FRAMEWORK_EXAMPLE.html 和 UI_FULL_REFERENCE.html，使例子能反映新规则；
+4. 最后修改生产 ui/*.js 与 style.css；
+5. 新增控件必须同时补充组件登记、交互钩子、响应式规则和验收项。
+
+字体、颜色、按钮、控件、边距、圆角或响应式规则不得只写在生产 CSS 里。配置文件不得写入 Runtime 数据、Chat 数据、模拟业务数据、API Key 或 Secret。

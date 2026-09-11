@@ -1,6 +1,6 @@
 # BioWeave UI
 
-视觉框架、HTML/CSS 语法、控件格式、三端断点和后续修改流程统一以 [UI_FRAMEWORK.md](./UI_FRAMEWORK.md) 为准；可运行的结构示例见 [UI_FRAMEWORK_EXAMPLE.html](./UI_FRAMEWORK_EXAMPLE.html)，完整替换指令见 [UI_MIGRATION_PROMPT.md](./UI_MIGRATION_PROMPT.md)。本文档继续作为业务 UI 契约，优先级高于视觉示例。
+视觉框架、HTML/CSS 语法、控件格式、三端断点和后续修改流程统一以 [UI_FRAMEWORK.md](./UI_FRAMEWORK.md) 与 [ui-framework.config.json](./ui-framework.config.json) 为准；可运行的结构示例见 [UI_FRAMEWORK_EXAMPLE.html](./UI_FRAMEWORK_EXAMPLE.html)，完整替换指令见 [UI_MIGRATION_PROMPT.md](./UI_MIGRATION_PROMPT.md)。本文档继续作为业务 UI 契约，优先级高于视觉示例。
 
 无头像、轻量、继承 SillyTavern Theme Variables。
 

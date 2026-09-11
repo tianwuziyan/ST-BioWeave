@@ -9,28 +9,34 @@
 
 先读取并遵守：
 
-1. docs/UI_FRAMEWORK.md
-2. docs/UI_FRAMEWORK_EXAMPLE.html
-3. docs/UI.md
-4. docs/DEVELOPMENT.md
-5. ui/app.js
-6. ui/overview.js
-7. ui/characters.js
-8. ui/events.js
-9. ui/projection.js
-10. ui/genealogy.js
-11. ui/world.js
-12. ui/settings.js
-13. ui/state.js
-14. style.css
-15. tests/ui.test.js
-16. tests/phase2a-ui.test.js
+1. docs/ui-framework.config.json
+2. docs/UI_FRAMEWORK.md
+3. docs/UI_FRAMEWORK_EXAMPLE.html
+4. docs/UI_FULL_REFERENCE.html
+5. docs/UI.md
+6. docs/DEVELOPMENT.md
+7. ui/app.js
+8. ui/overview.js
+9. ui/characters.js
+10. ui/events.js
+11. ui/projection.js
+12. ui/genealogy.js
+13. ui/world.js
+14. ui/settings.js
+15. ui/state.js
+16. style.css
+17. tests/ui.test.js
+18. tests/phase2a-ui.test.js
 
 目标：
 
-把 docs/UI_FRAMEWORK_EXAMPLE.html 和 work/bioweave-ui-concept/index.html 定义的视觉框架迁移到生产 UI，使桌面、iPad、手机三端的布局、颜色、间距、卡片、表格、折叠栏、下拉框、checkbox、switch、正则行和世界模型卡片保持同一套设计。
+把 docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html 定义的视觉框架迁移到生产 UI，使桌面、iPad、手机三端的布局、颜色、间距、卡片、表格、折叠栏、下拉框、checkbox、switch、正则行和世界模型卡片保持同一套设计。
 
 这是生产 UI 的视觉和交互结构替换，不是静态原型复制。
+
+视觉必须逐项一致：字体族、字体大小、字重、行高、文字颜色、背景颜色、边框颜色、圆角、阴影、内外边距、按钮尺寸、按钮状态、输入框、下拉框、折叠栏、checkbox、switch、正则行、卡片比例和三端断点，都以 docs/ui-framework.config.json、docs/UI_FRAMEWORK.md、docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html 为准。不要凭感觉重新设计，也不要只做近似颜色。
+
+配置同步是硬性要求：每次调整 UI 时，先同步更新 docs/ui-framework.config.json；若规则、语法或组件说明变化，同时更新 docs/UI_FRAMEWORK.md；若视觉或控件结构变化，同时更新 docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html；然后再修改生产 UI。配置、文档、示例、完整视觉参考和生产实现出现不一致时，先修复同步关系再继续。
 
 执行规则：
 
@@ -45,6 +51,9 @@
 9. 页面不能出现页面级横向溢出，设置展开后不能被右侧下拉框撑坏。
 10. 所有 DTO 文本继续 HTML 转义，不展示 Secret、API Key 或 Raw AI Response。
 11. 继续使用原生 JS、HTML、CSS，不引入 React、Vue、UI 组件库或大型状态管理框架。
+12. 不改变现有函数签名、Runtime 调用参数、数据结构、事件语义、存储键、API 配置格式和 data-bioweave-* 选择器，除非先证明原接口本身有错误。
+13. 修改前先通过调用方、被调用方、测试和现有生产实现核对接口；不凭 HTML 结构猜测业务接口。
+14. 每新增一个 UI 控件，必须在 ui-framework.config.json 登记 token、组件、事件钩子、响应式行为和验收项，并在 UI_FRAMEWORK_EXAMPLE.html 和必要时的 UI_FULL_REFERENCE.html 增加对应例子。
 
 允许修改：
 
@@ -61,6 +70,10 @@
 - 因结构变化必须调整的 tests/ui.test.js
 - 因结构变化必须调整的 tests/phase2a-ui.test.js
 - 必要时更新 docs/UI.md
+- docs/ui-framework.config.json
+- docs/UI_FRAMEWORK.md
+- docs/UI_FRAMEWORK_EXAMPLE.html
+- docs/UI_FULL_REFERENCE.html
 
 保持不变：
 
@@ -76,15 +89,15 @@
 
 实施顺序：
 
-第一阶段：列出当前生产 UI 的事件钩子、Runtime 调用、数据属性和测试断言，确认迁移边界。
+第一阶段：列出当前生产 UI 的事件钩子、Runtime 调用、函数签名、数据属性、存储键和测试断言，确认迁移边界。先做只读审计，不删除旧 UI。
 
-第二阶段：迁移 ui/app.js 的面板壳、标题栏、导航和页面容器。
+第二阶段：先同步 ui-framework.config.json、UI_FRAMEWORK.md、UI_FRAMEWORK_EXAMPLE.html 和 UI_FULL_REFERENCE.html，再迁移 ui/app.js 的面板壳、标题栏、导航和页面容器。
 
 第三阶段：逐页迁移 overview、characters、events、projection、genealogy、world、settings、state 的 HTML 结构。
 
 第四阶段：把框架变量、组件样式、世界卡片、设置折叠栏、来源树、正则行和三端媒体查询写入 style.css。
 
-第五阶段：运行自动化检查，并修复所有因结构变化导致的测试失败。
+第五阶段：检查生产实现是否仍与 ui-framework.config.json、UI_FRAMEWORK.md、UI_FRAMEWORK_EXAMPLE.html 和 UI_FULL_REFERENCE.html 一致；运行自动化检查，并修复所有因结构变化导致的测试失败。
 
 第六阶段：在 SillyTavern 中实际打开插件，验证 Desktop、iPad 和 Mobile 的所有路由及控件。
 
@@ -98,7 +111,9 @@ git diff --check
 完成后报告：
 
 - 修改的文件和每个文件的具体内容
+- ui-framework.config.json、UI_FRAMEWORK.md、UI_FRAMEWORK_EXAMPLE.html、UI_FULL_REFERENCE.html 是否同步更新
 - 保留的 data-bioweave-* 事件钩子
+- 保留的函数签名、Runtime 接口、存储键和数据结构
 - 已删除的旧 UI 模板、类名和 CSS 范围
 - Desktop、iPad、Mobile 的验证结果
 - 自动化测试结果
@@ -110,7 +125,7 @@ git diff --check
 ## 以后修改 UI 的短指令
 
 ~~~text
-请修改 BioWeave 的 UI。开始前先读取 docs/UI_FRAMEWORK.md 和 docs/UI_FRAMEWORK_EXAMPLE.html，再读取目标页面模块和 ui/app.js 的相关事件钩子。
+请修改 BioWeave 的 UI。开始前先读取 docs/ui-framework.config.json、docs/UI_FRAMEWORK.md、docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html，再读取目标页面模块和 ui/app.js 的相关事件钩子。
 
 本次只修改：[填写页面或控件]
 
@@ -119,9 +134,9 @@ git diff --check
 - 当前 UI 框架的颜色、字体、层级、间距和三端断点；
 - 现有 data-bioweave-* 事件钩子；
 - Runtime DTO 和生产业务逻辑；
+- 现有函数签名、Runtime 调用参数、存储键和数据结构；
 - Mobile 无页面级横向溢出；
 - checkbox、switch、details、select 和按钮的真实可用性。
 
-完成后运行 npm run check 和 git diff --check，并报告修改文件、保留的事件钩子、三端验证结果和测试结果。
+本次修改过程中同步更新 docs/ui-framework.config.json；如果涉及规则说明或视觉例子，同时更新 docs/UI_FRAMEWORK.md、docs/UI_FRAMEWORK_EXAMPLE.html 和 docs/UI_FULL_REFERENCE.html。完成后运行 npm run check 和 git diff --check，并报告修改文件、配置同步情况、保留的接口/事件钩子、三端验证结果和测试结果。
 ~~~
-

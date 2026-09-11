@@ -1,0 +1,170 @@
+{
+  "name": "BioWeave UI Framework",
+  "version": 1,
+  "status": "canonical",
+  "purpose": "Machine-readable visual and interaction contract for BioWeave UI. This file contains no runtime data, chat data, secrets, or mock business records.",
+  "references": {
+    "humanGuide": "docs/UI_FRAMEWORK.md",
+    "htmlExample": "docs/UI_FRAMEWORK_EXAMPLE.html",
+    "fullVisualReference": "docs/UI_FULL_REFERENCE.html",
+    "migrationPrompt": "docs/UI_MIGRATION_PROMPT.md",
+    "businessContract": [
+      "docs/UI.md",
+      "docs/DEVELOPMENT.md"
+    ]
+  },
+  "viewport": {
+    "desktop": {
+      "minWidth": 1200,
+      "navigation": "left-sidebar"
+    },
+    "tablet": {
+      "minWidth": 768,
+      "maxWidth": 1199,
+      "navigation": "top-compact"
+    },
+    "mobile": {
+      "maxWidth": 767,
+      "navigation": "top-flat",
+      "pageOverflowX": "hidden"
+    }
+  },
+  "tokens": {
+    "color": {
+      "host": "#0b1116",
+      "hostSoft": "#111a21",
+      "panel": "#171f25",
+      "panelRaised": "#1d272e",
+      "panelSoft": "#202c34",
+      "text": "#edf3f6",
+      "textSecondary": "#c2cdd2",
+      "muted": "#87959d",
+      "line": "#33444e",
+      "lineSoft": "#293840",
+      "accent": "#83c7ef",
+      "accentSoft": "#203b4b",
+      "good": "#7bd5ae",
+      "warn": "#f1be72",
+      "danger": "#f08e98"
+    },
+    "radius": {
+      "default": "10px",
+      "small": "7px",
+      "button": "7px",
+      "card": "8px"
+    },
+    "space": {
+      "micro": "3px",
+      "small": "4px",
+      "row": "6px",
+      "control": "8px",
+      "section": "10px",
+      "card": "12px",
+      "page": "16px"
+    },
+    "size": {
+      "pageTitle": "22px",
+      "sectionTitle": "16px",
+      "cardTitle": "14px",
+      "supportingText": "12px",
+      "microText": "11px",
+      "controlMinHeight": "32px",
+      "touchTargetMin": "44px"
+    },
+    "font": {
+      "family": "system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif",
+      "lineHeight": "1.5"
+    }
+  },
+  "components": {
+    "page": {
+      "root": "bioweave-page",
+      "head": "bioweave-page-head",
+      "section": "bioweave-section"
+    },
+    "button": {
+      "root": "bioweave-button",
+      "primary": "bioweave-button primary",
+      "small": "bioweave-button small",
+      "minimumHeight": "32px"
+    },
+    "worldSpeciesCard": {
+      "root": "bioweave-world-card",
+      "interaction": "button",
+      "selectionHook": "data-bioweave-action=select-species"
+    },
+    "worldTypeCard": {
+      "root": "bioweave-type-card",
+      "interaction": "button",
+      "selectionHook": "data-bioweave-action=select-type"
+    },
+    "worldModule": {
+      "root": "bioweave-world-module",
+      "editHook": "data-bioweave-action=edit-section",
+      "editScope": "one-module-at-a-time"
+    },
+    "settingsGroup": {
+      "root": "bioweave-settings-group",
+      "interaction": "details-summary",
+      "parentChildSelection": true
+    },
+    "sourceBranch": {
+      "root": "bioweave-source-branch",
+      "interaction": "details-summary",
+      "childIndentation": true,
+      "childWeight": 400
+    },
+    "regexRow": {
+      "root": "bioweave-regex-row",
+      "moveControls": "bioweave-regex-move",
+      "moveButtons": "adjacent-vertical",
+      "moveHeight": "stretch-to-row"
+    },
+    "switch": {
+      "root": "bioweave-switch",
+      "nativeInput": "checkbox",
+      "minimumTouchTarget": "44px"
+    }
+  },
+  "requiredHooks": [
+    "data-bioweave-action",
+    "data-bioweave-world-section",
+    "data-bioweave-world-section-form",
+    "data-bioweave-world-section-field",
+    "data-bioweave-world-section-row",
+    "data-bioweave-settings-disclosure",
+    "data-bioweave-analysis-source"
+  ],
+  "pages": [
+    "overview",
+    "characters",
+    "events",
+    "projection",
+    "genealogy",
+    "world",
+    "settings",
+    "state"
+  ],
+  "synchronization": {
+    "updateOrder": [
+      "docs/ui-framework.config.json",
+      "docs/UI_FRAMEWORK.md",
+      "docs/UI_FRAMEWORK_EXAMPLE.html",
+      "docs/UI_FULL_REFERENCE.html",
+      "production UI files"
+    ],
+    "mustStayInSync": true,
+    "newControlRequires": [
+      "token entry when it introduces a new visual value",
+      "component entry",
+      "HTML example",
+      "full visual reference when layout changes",
+      "production event hook mapping",
+      "responsive behavior",
+      "acceptance check"
+    ],
+    "runtimeDataAllowed": false,
+    "secretsAllowed": false,
+    "legacyParallelRendererAllowed": false
+  }
+}
