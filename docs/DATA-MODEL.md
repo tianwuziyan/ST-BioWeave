@@ -167,6 +167,10 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 
 没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
 
+`explainTrackingDecision(event)` 与正式 Registry 构建共享同一条 Core 判定路径，返回 `{character_id, eligible, reasons[]}`。Reason code 只用于解释为何参与者未进入 Tracking Registry，例如 `CAN_CARRY_PREGNANCY_UNKNOWN`、`POSSIBLE_CONCEPTION_FALSE` 或 `NOT_GESTATIONAL_SUBJECT`；它不是第二套 eligibility 规则，UI 只能读取并展示。
+
+Event Analysis 的运行状态由 Runtime coordinator 组合为 transient/read DTO，而不是第二套事实存储。DTO 同时区分当前 Floor 的 `event_count/current_floor_events` 与当前 Chat 的 `active_event_count/active_events`，并带有 Floor Version、attempt、last success/error、Tracking 数量、decision diagnostics 和脱敏 Registry 摘要。`running` 只表示当前 transient execution；持久分析记录保存成功结果或最后一次失败/取消尝试，失败刷新不覆盖 `last_success`。Runtime 以完整 Floor Version 持有 `AbortController` 和 in-flight Promise；取消、超时、stale Chat、保存失败或 Registry 失败都必须释放执行资源，迟到结果不得提交。Raw AI Response、API Secret、Authorization header 与请求正文不为可观察性写入 Chat。
+
 ### 本阶段的空状态边界
 
 Phase 2A 的闭环为：

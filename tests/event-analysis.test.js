@@ -147,8 +147,16 @@ test('Event parser accepts a non-sexual BiologicalEvent with the same fixed enve
 
 test('Event parser rejects natural language, fenced JSON, and non-array counterpart ids', () => {
   assert.throws(
+    () => parseEventAnalysisResponse('', floorVersion),
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.message === 'EVENT_RESPONSE_EMPTY'
+      && error?.analysis_stage === 'response_parse',
+  );
+  assert.throws(
     () => parseEventAnalysisResponse('这是事件分析结果：{}', floorVersion),
-    error => error?.code === 'EVENT_ANALYSIS_INVALID',
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.message === 'EVENT_RESPONSE_JSON_INVALID'
+      && error?.analysis_stage === 'response_parse',
   );
   assert.throws(
     () => parseEventAnalysisResponse(`\`\`\`json\n${response()}\n\`\`\``, floorVersion),
@@ -188,19 +196,22 @@ test('Event parser requires the complete source envelope before authoritative re
 
 test('analyzeFloor sends fixed Event messages and parses the response', async () => {
   const requests = [];
+  let receivedSignal = null;
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
     contextResolver: () => ({
       chatCompletionSettings: {chat_completion_source: 'openai', model: 'test-model'},
       getChatCompletionModel: () => 'test-model',
       ChatCompletionService: {
-        processRequest: async request => {
+        processRequest: async (request, ...args) => {
           requests.push(request);
+          receivedSignal = args[2] ?? null;
           return response();
         },
       },
     }),
   });
+  const controller = new AbortController();
   const parsed = await analyzer.analyzeFloor({
     analysisInput: buildEventAnalysisInput({
       chatId: floorVersion.chat_id,
@@ -211,10 +222,13 @@ test('analyzeFloor sends fixed Event messages and parses the response', async ()
       storyTime: {display: '未知', precision: 'unknown'},
       characterContext: {characters: []},
     }),
+    signal: controller.signal,
   });
   assert.equal(requests.length, 1);
   assert.deepEqual(requests[0].messages.map(message => message.role), ['system', 'user']);
   assert.match(requests[0].messages[0].content, /只输出一个完整/);
   assert.match(requests[0].messages[1].content, /当前楼层/);
   assert.deepEqual(parsed.events[0].source, floorVersion);
+  assert.ok(receivedSignal instanceof AbortSignal);
+  assert.equal(receivedSignal.aborted, false);
 });

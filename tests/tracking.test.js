@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   eligibleGestationalSubjects,
+  explainTrackingDecision,
   rebuildTrackingRegistry,
 } from '../core/tracking.js';
 
@@ -82,6 +83,112 @@ test('gender-like labels and event roles do not create a subject when capability
     }],
   });
   assert.deepEqual(eligibleGestationalSubjects(candidate), []);
+});
+
+test('tracking diagnostics explain eligible and non-subject participants', () => {
+  assert.deepEqual(explainTrackingDecision(event()), [
+    {character_id: 'char-a', eligible: true, reasons: []},
+    {character_id: 'char-b', eligible: false, reasons: ['NOT_GESTATIONAL_SUBJECT']},
+  ]);
+});
+
+test('diagnostic sharing preserves declared eligibility order', () => {
+  const base = event();
+  const result = event({
+    participants: [
+      {...base.participants[0], character_id: 'char-a'},
+      {...base.participants[0], character_id: 'char-c'},
+      base.participants[1],
+    ],
+    pregnancy_relevance: {
+      ...base.pregnancy_relevance,
+      gestational_subject_ids: ['char-c', 'char-a'],
+    },
+  });
+  assert.deepEqual(eligibleGestationalSubjects(result), ['char-c', 'char-a']);
+});
+
+test('tracking diagnostics explain unknown and false carrying capability', () => {
+  const unknown = explainTrackingDecision(event({
+    participants: event().participants.map(participant => participant.character_id === 'char-a'
+      ? {...participant, reproductive_capabilities_used: {can_carry_pregnancy: null}}
+      : participant),
+  }));
+  assert.deepEqual(unknown.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN'],
+  });
+
+  const falseCapability = explainTrackingDecision(event({
+    participants: event().participants.map(participant => participant.character_id === 'char-a'
+      ? {...participant, reproductive_capabilities_used: {can_carry_pregnancy: false}}
+      : participant),
+  }));
+  assert.deepEqual(falseCapability.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['CAN_CARRY_PREGNANCY_FALSE'],
+  });
+});
+
+test('tracking diagnostics explain absent conception exposure and missing participants', () => {
+  const irrelevant = explainTrackingDecision(event({
+    pregnancy_relevance: {
+      ...event().pregnancy_relevance,
+      relevant: false,
+    },
+  }));
+  assert.deepEqual(irrelevant.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['PREGNANCY_RELEVANCE_FALSE'],
+  });
+
+  const noExposure = explainTrackingDecision(event({
+    pregnancy_relevance: {
+      ...event().pregnancy_relevance,
+      possible_conception: false,
+    },
+  }));
+  assert.deepEqual(noExposure.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['POSSIBLE_CONCEPTION_FALSE'],
+  });
+
+  const missingParticipant = explainTrackingDecision(event({
+    participants: [event().participants[1]],
+    pregnancy_relevance: {
+      ...event().pregnancy_relevance,
+      gestational_subject_ids: ['char-a'],
+    },
+  }));
+  assert.deepEqual(missingParticipant.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['PARTICIPANT_NOT_FOUND'],
+  });
+});
+
+test('tracking diagnostics explain nonsexual, excluded, and invalid events', () => {
+  const nonsexual = explainTrackingDecision(event({type: 'physical_symptom'}));
+  assert.deepEqual(nonsexual.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['NOT_SEXUAL_ACTIVITY'],
+  });
+
+  const excluded = explainTrackingDecision(event({status: 'negated'}));
+  assert.deepEqual(excluded.find(decision => decision.character_id === 'char-a'), {
+    character_id: 'char-a',
+    eligible: false,
+    reasons: ['EVENT_STATUS_EXCLUDED'],
+  });
+
+  assert.deepEqual(explainTrackingDecision({}), [
+    {character_id: null, eligible: false, reasons: ['INVALID_EVENT']},
+  ]);
 });
 
 test('registry supports multiple subjects, counterpart references, repeated exposure, and dangling cleanup', () => {

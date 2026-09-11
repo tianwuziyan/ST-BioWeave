@@ -293,3 +293,33 @@ runtime.store.getFloor(messageIndex, activeSwipeId)
 - Registry 保存失败：保留 Floor Event，UI 显示上一次已保存 Registry，通知使用现有 Toast；下一次 lifecycle/打开时可重建。
 - 宿主缺少 Story Time：明确显示未知/模糊时间，不伪造日期，不阻塞 Event 其它字段存储。
 - 真实 SillyTavern 验收前不进行 Git push；完成后停在人工验收，不进入下一阶段状态引擎。
+
+## 9. Event Analysis Runtime ownership follow-up
+
+新增一个轻量 `runtime/event-analysis.js` coordinator，作为 Phase 2A Event Analysis 的唯一业务 owner：
+
+```text
+SillyTavern lifecycle / UI action
+  -> Runtime Event Analysis Coordinator
+  -> authoritative current/specified Floor Version
+  -> Analyzer -> normalize/validate -> commitAnalysis
+  -> Floor-bound events + analysis metadata
+  -> rebuild Tracking Registry
+  -> Runtime read-only status/selectors
+  -> Overview / Events / Characters
+```
+
+Coordinator API 至少覆盖：
+
+- `analyzeCurrentFloor({force})`
+- `analyzeFloor(target, {force, reason})`
+- `refreshCurrentFloorAnalysis()`
+- `getCurrentFloorAnalysisStatus()`
+- `getCurrentFloorEvents()`
+- `getTrackingRegistry()`
+- `collectActiveBusinessData()`
+- `handleLifecycleEvent(event)`
+
+Runtime 在扩展初始化时创建 coordinator，并由自身宿主 lifecycle listener 调用它。UI mount/open/reopen 只读取状态，不触发 AI。UI 仍可负责 Event 编辑表单和确认交互，但 Event normalize/validate、authoritative source、Floor 保存与 Registry rebuild 必须通过 Runtime API 完成。
+
+当前 Floor 状态 DTO 使用 `not_analyzed | running | success | failed`，同时携带 Floor Version、attempt、last_success、last_error、当前有效 Event 数量、Chat-wide Tracking Subject 数量和 Core tracking diagnostics。Raw AI Response 不进入 Chat/Floor metadata。

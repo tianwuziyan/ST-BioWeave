@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {createApp} from '../ui/app.js';
 import {floorVersion} from '../runtime/floor.js';
 
@@ -169,7 +170,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({analyzer = null, event = null, analysisOverrides = {}, lastProcessedFloor = 10, contextOverrides = {}} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, onRefresh = null, contextOverrides = {}} = {}) {
   const documentRef = new FakeDocument();
   const message = {floor: 10, content: '当前楼层剧情', role: 'assistant'};
   const version = await floorVersion({
@@ -179,32 +180,50 @@ async function createFixture({analyzer = null, event = null, analysisOverrides =
     swipeId: 0,
     text: message.content,
   });
-  const floorData = {
-    analysis: {
-      floor_version: version,
-      last_analyzed_at: '2026-08-20T00:00:00.000Z',
-      status: 'success',
-      ...analysisOverrides,
-      floor_version: version,
-    },
-    events: event ? [event] : [],
-    snapshot: null,
-    projections: [],
-  };
+  const floorData = {events: event ? [event] : []};
   const chatData = {
     schema_version: 1,
     chat_scope: {chat_id: 'chat-app'},
     world_model: null,
     world_model_meta: null,
     character_profiles: {},
-    tracking_subjects: {},
-    settings: {analysis_interval: 3},
-    index: {last_processed_floor: lastProcessedFloor},
+    tracking_subjects: event ? {'char-a': {
+      character_id: 'char-a', display_name: 'Alice', created_from_event_id: event.event_id,
+      exposure_event_ids: [event.event_id], status: 'active',
+    }} : {},
   };
   let floor = floorData;
   let chat = chatData;
   let runtimeListener = null;
+  let refreshCalls = 0;
+  let abortCalls = 0;
+  let currentBusy = analysisBusy;
+  let updateCalls = 0;
+  let deleteCalls = 0;
   const context = {chatId: 'chat-app', chat: [message], characters: [], ...contextOverrides};
+  const businessData = () => ({
+    tracking_subjects: chat.tracking_subjects,
+    character_profiles: chat.character_profiles,
+    active_events: floor.events,
+    current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
+    last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
+    analysis_status: {
+      state: currentBusy ? 'running' : analysisState,
+      busy: currentBusy,
+      current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
+      floor_version: version,
+      last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
+      last_error: analysisState === 'failed' ? 'JSON_SCHEMA_INVALID' : null,
+      event_count: floor.events.length,
+      active_event_count: floor.events.length,
+      sexual_activity_count: floor.events.filter(item => item.type === 'sexual_activity').length,
+      tracking_subject_count: Object.keys(chat.tracking_subjects).length,
+      current_floor_events: floor.events,
+      active_events: floor.events,
+      tracking_decisions: [],
+      registry_summary: {tracking_subject_count: Object.keys(chat.tracking_subjects).length},
+    },
+  });
   const runtime = {
     chat: {
       current: () => context.chatId,
@@ -214,16 +233,33 @@ async function createFixture({analyzer = null, event = null, analysisOverrides =
       },
     },
     st: {getContext: () => context, getChat: () => context.chat},
-    store: {
-      getChat: () => chat,
-      saveChat: async (_chatId, next) => { chat = structuredClone(next); },
-      getFloor: () => structuredClone(floor),
-      saveFloor: async (_messageId, _swipeId, next) => { floor = structuredClone(next); },
-      getActiveSwipeId: () => 0,
-      getActiveFloorEvents: (_messageId, currentVersion) => floor.events.filter(item => (
-        ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
-          .every(key => item.source?.[key] === currentVersion[key])
-      )),
+    store: {getChat: () => chat},
+    collectActiveBusinessData: async () => structuredClone(businessData()),
+    async refreshCurrentFloorAnalysis() {
+      refreshCalls += 1;
+      if (onRefresh) await onRefresh({floor, chat, version, context});
+      return {status: 'success'};
+    },
+    async getCurrentFloorAnalysisStatus() {
+      return businessData().analysis_status;
+    },
+    async requestAbortCurrentFloorAnalysis() {
+      abortCalls += 1;
+      currentBusy = false;
+      return true;
+    },
+    async updateEvent(eventId, next) {
+      updateCalls += 1;
+      const index = floor.events.findIndex(item => item.event_id === eventId);
+      if (index < 0) throw new Error('EVENT_NOT_FOUND');
+      floor.events[index] = structuredClone({...floor.events[index], ...next, source: floor.events[index].source});
+      return floor.events[index];
+    },
+    async deleteEvent(eventId) {
+      deleteCalls += 1;
+      floor.events = floor.events.filter(item => item.event_id !== eventId);
+      chat.tracking_subjects = {};
+      return true;
     },
     subscribe: listener => {
       runtimeListener = listener;
@@ -242,7 +278,7 @@ async function createFixture({analyzer = null, event = null, analysisOverrides =
     documentRef,
     storageRef: {},
     profileStore,
-    analyzer: analyzer ?? {analyzeFloor: async () => ({events: []})},
+    analyzer: {analyzeFloor: async () => { throw new Error('UI_MUST_NOT_ANALYZE_EVENTS'); }},
   });
   app.openBioWeave();
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -256,6 +292,7 @@ async function createFixture({analyzer = null, event = null, analysisOverrides =
     getChat: () => chat,
     documentRef,
     emit: event => runtimeListener?.(event),
+    calls: () => ({refresh: refreshCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
   };
 }
 
@@ -287,105 +324,51 @@ test('App consumes persisted events and Tracking Registry without creating Chat-
   fixture.app.destroyBioWeave();
 });
 
-test('Event analysis receives the current character card as narrative evidence', async () => {
-  let receivedInput = null;
-  const fixture = await createFixture({
-    analyzer: {
-      async analyzeFloor({analysisInput}) {
-        receivedInput = analysisInput;
-        return {events: []};
-      },
-    },
-    contextOverrides: {
-      characterId: 0,
-      name2: 'Alice',
-      characters: [{
-        avatar: 'char-a',
-        data: {
-          name: 'Alice',
-          description: '角色卡中的生理与叙事背景。',
-          personality: '谨慎',
-          scenario: '当前场景',
-        },
-      }],
-    },
-  });
+test('manual analyze action delegates to Runtime instead of the UI analyzer', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
   const click = [...fixture.root.listeners.get('click')][0];
   await click({
-    target: clickTarget('refresh', {root: fixture.root}),
+    target: clickTarget('analyze-current-floor', {root: fixture.root}),
     preventDefault() {},
   });
-  assert.equal(receivedInput.character_context.current_character, 'Alice');
-  assert.equal(receivedInput.character_context.character_id, 'char-a');
-  assert.equal(receivedInput.character_context.character_card.description, '角色卡中的生理与叙事背景。');
-  assert.equal(receivedInput.character_context.character_card.personality, '谨慎');
-  assert.deepEqual(receivedInput.story_time, {
-    display: null,
-    normalized: null,
-    calendar_id: null,
-    day_index: null,
-    provider: null,
-    precision: 'unknown',
-    confidence: null,
-  });
+  assert.equal(fixture.calls().refresh, 1);
   fixture.app.destroyBioWeave();
 });
 
-test('manual refresh replaces successful Floor Events and a later failure keeps them', async () => {
-  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
-  let calls = 0;
-  const analyzer = {
-    async analyzeFloor() {
-      calls += 1;
-      if (calls === 2) throw new Error('REQUEST_TIMEOUT');
-      return {events: [sourceEvent(version, {event_id: 'evt-replaced', location: '新地点'})]};
-    },
-  };
-  const fixture = await createFixture({analyzer, event: sourceEvent(version)});
+test('second Event Analysis click asks for confirmation and delegates cancellation to Runtime', async () => {
+  const fixture = await createFixture({analysisBusy: true});
+  fixture.context.Popup = {show: {confirm: async () => 'affirmative'}};
+  fixture.context.POPUP_RESULT = {AFFIRMATIVE: 'affirmative'};
   const click = [...fixture.root.listeners.get('click')][0];
   await click({
-    target: clickTarget('refresh', {root: fixture.root}),
+    target: clickTarget('analyze-current-floor', {root: fixture.root}),
     preventDefault() {},
   });
-  assert.equal(calls, 1);
-  assert.equal(fixture.getFloor().events[0].event_id, 'evt-replaced');
-  assert.equal(fixture.getFloor().events[0].location, '新地点');
-  await click({
-    target: clickTarget('refresh', {root: fixture.root}),
-    preventDefault() {},
-  });
-  assert.equal(calls, 2);
-  assert.equal(fixture.getFloor().events[0].event_id, 'evt-replaced');
-  assert.equal(fixture.getFloor().analysis.status, 'failed');
-  assert.equal(fixture.getFloor().analysis.last_success.status, 'success');
+  assert.equal(fixture.calls().refresh, 0);
+  assert.equal(fixture.calls().abort, 1);
   fixture.app.destroyBioWeave();
 });
 
-test('automatic analysis follows the configured Floor interval and UI reopen does not request AI', async () => {
-  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
-  let calls = 0;
-  const analyzer = {
-    async analyzeFloor() {
-      calls += 1;
-      return {events: [sourceEvent(version, {event_id: 'evt-auto'})]};
-    },
-  };
-  const fixture = await createFixture({
-    analyzer,
-    analysisOverrides: {status: 'failed'},
-    lastProcessedFloor: 7,
+test('cancelled Event Analysis confirmation leaves the Runtime execution running', async () => {
+  const fixture = await createFixture({analysisBusy: true});
+  fixture.context.Popup = {show: {confirm: async () => 'negative'}};
+  fixture.context.POPUP_RESULT = {AFFIRMATIVE: 'affirmative'};
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({
+    target: clickTarget('analyze-current-floor', {root: fixture.root}),
+    preventDefault() {},
   });
+  assert.equal(fixture.calls().abort, 0);
+  fixture.app.destroyBioWeave();
+});
 
-  assert.equal(calls, 0);
-  fixture.emit({type: 'MESSAGE_RECEIVED', payload: {message_id: 0}});
-  await new Promise(resolve => setTimeout(resolve, 40));
-  assert.equal(calls, 1);
-  assert.equal(fixture.getFloor().analysis.status, 'success');
-
+test('UI reopen only reads Runtime state and never triggers Event Analysis', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
+  assert.equal(fixture.calls().refresh, 0);
   fixture.app.destroyBioWeave();
   fixture.app.openBioWeave();
   await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal(calls, 1);
+  assert.equal(fixture.calls().refresh, 0);
   fixture.app.destroyBioWeave();
 });
 
@@ -416,6 +399,7 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
     target: clickTarget('save-event', {root: fixture.root, bioweaveEventId: current.event_id}),
     preventDefault() {},
   });
+  assert.equal(fixture.calls().update, 1);
   assert.equal(fixture.getFloor().events[0].location, '编辑后的地点');
   assert.deepEqual(fixture.getFloor().events[0].source, version);
 
@@ -425,7 +409,15 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
     target: clickTarget('delete-event', {root: fixture.root, bioweaveEventId: current.event_id}),
     preventDefault() {},
   });
+  assert.equal(fixture.calls().delete, 1);
   assert.deepEqual(fixture.getFloor().events, []);
   assert.deepEqual(fixture.getChat().tracking_subjects, {});
   fixture.app.destroyBioWeave();
+});
+
+test('UI contains no Event production or duplicated Tracking eligibility logic', () => {
+  const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+  const characterSource = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(appSource, /buildEventAnalysisInput|rebuildTrackingRegistry|shouldAnalyze\s*\(|eligibleGestationalSubjects/);
+  assert.doesNotMatch(characterSource, /pregnancy_relevance\.relevant\s*===|possible_conception\s*===|can_carry_pregnancy\s*===/);
 });

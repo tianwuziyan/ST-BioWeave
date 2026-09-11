@@ -1,4 +1,10 @@
 import {formatStoryTime} from '../story/time.js';
+import {
+  analysisStatusCount,
+  analysisStatusEvents,
+  normalizeAnalysisStatus,
+  renderAnalysisActionButton,
+} from './overview.js';
 
 const characterDetailTabs = [
   ['state', '状态'],
@@ -83,6 +89,48 @@ function eventEntries(activeEvents) {
   return entriesOf(activeEvents)
     .map(({key, value}) => ({key: eventIdOf(value, key), value}))
     .filter(({key, value}) => Boolean(key) && value && typeof value === 'object');
+}
+
+function trackingDecisionEntries(value) {
+  if (Array.isArray(value)) return value.map((item, index) => ({key: index, value: item}));
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value.decisions)) {
+    return value.decisions.map((item, index) => ({key: index, value: item}));
+  }
+  return Object.entries(value).map(([key, item]) => ({key, value: item}));
+}
+
+function reasonCodesOf(value) {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (!value || typeof value !== 'object') return [];
+  const raw = value.reason_codes
+    ?? value.reasonCodes
+    ?? value.reason_code
+    ?? value.reason
+    ?? value.reasons;
+  const values = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [raw] : [raw];
+  return values.map(item => {
+    if (typeof item === 'string' || typeof item === 'number') return String(item).trim();
+    return String(item?.code ?? item?.reason_code ?? '').trim();
+  }).filter(Boolean);
+}
+
+function renderTrackingDecisions(value) {
+  const decisions = trackingDecisionEntries(value).map(({key, value: decision}) => ({
+    key,
+    decision,
+    reasonCodes: reasonCodesOf(decision),
+  })).filter(item => item.reasonCodes.length);
+  if (!decisions.length) return '';
+  return '<section class="bioweave-card bioweave-tracking-decisions" data-bioweave-tracking-decisions="readonly">'
+    + '<h3>Tracking Decision 诊断（只读）</h3><ul class="bioweave-event-evidence">'
+    + decisions.map(({key, decision, reasonCodes}) => {
+      const id = decision && typeof decision === 'object'
+        ? decision.character_id ?? decision.subject_id ?? decision.event_id ?? key
+        : key;
+      return '<li><span>' + escapeHtml(displayValue(id, '未标识对象')) + '</span>：'
+        + reasonCodes.map(code => '<code>' + escapeHtml(code) + '</code>').join('、') + '</li>';
+    }).join('') + '</ul></section>';
 }
 
 function storyTimeDisplay(event) {
@@ -225,8 +273,11 @@ export function charactersPage({
   trackingSubjects = [],
   characterProfiles = {},
   activeEvents = [],
+  analysisStatus = null,
 } = {}) {
+  const status = normalizeAnalysisStatus(analysisStatus);
   const subjects = subjectEntries(trackingSubjects);
+  const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events');
   if (characterId) {
     const id = String(characterId);
     const subject = subjects.find(item => item.key === id)?.value;
@@ -236,7 +287,7 @@ export function charactersPage({
       characterDetailTab,
       subject,
       profile: profileFor(characterProfiles, id),
-      activeEvents,
+      activeEvents: effectiveEvents,
     });
   }
   const rows = subjects.map(({key, value: subject}) => {
@@ -248,12 +299,32 @@ export function charactersPage({
       + '<span class="bioweave-character-state">' + escapeHtml(displayValue(subject.status))
       + ' · ' + exposureCount + ' 个 exposure Event　›</span></button>';
   }).join('');
+  const emptyState = status.state === 'not_analyzed'
+    ? '<div class="bioweave-card bioweave-empty"><b>尚未完成事件分析。</b>'
+      + '<p>完成当前楼层分析后，符合追踪条件的角色会显示在这里。</p></div>'
+    : status.state === 'running'
+      ? '<div class="bioweave-card bioweave-empty"><b>当前楼层正在分析中。</b>'
+        + '<p>分析完成后将更新 BiologicalEvent 与 Tracking Subject。</p></div>'
+      : status.state === 'cancelled'
+        ? '<div class="bioweave-card bioweave-empty"><b>本次事件分析已取消。</b>'
+          + '<p>现有 Tracking Subject 与历史事件仍然保留，可重新分析当前楼层。</p></div>'
+      : status.state === 'failed'
+        ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>'
+          + '<p>错误摘要：<code>' + escapeHtml(displayValue(status.last_error, 'EVENT_ANALYSIS_FAILED')) + '</code>。如有旧的成功事件，它们仍然有效。</p></div>'
+        : '<div class="bioweave-card bioweave-empty"><b>当前没有需要妊娠追踪的角色。</b>'
+      + '<p>当前没有进入 Tracking Subject Registry 的角色。</p>'
+      + '<dl class="bioweave-data-list bioweave-tracking-counts">'
+      + '<div><dt>active_event_count</dt><dd>' + analysisStatusCount(status, 'active_event_count', 0) + '</dd></div>'
+      + '<div><dt>sexual_activity_count</dt><dd>' + analysisStatusCount(status, 'sexual_activity_count', 0) + '</dd></div>'
+      + '<div><dt>tracking_subject_count</dt><dd>' + analysisStatusCount(status, 'tracking_subject_count', 0) + '</dd></div>'
+      + '</dl></div>';
   return '<section class="bioweave-page"><div class="bioweave-page-title"><div><h2>人物列表</h2>'
-    + '<p class="bioweave-muted">当前 Chat 中已进入妊娠相关追踪流程的角色</p></div></div>'
+    + '<p class="bioweave-muted">当前 Chat 中已进入妊娠相关追踪流程的角色</p></div>'
+    + '<div class="bioweave-page-actions">' + renderAnalysisActionButton(status) + '</div></div>'
     + (subjects.length
       ? '<div class="bioweave-toolbar"><input class="bioweave-input" placeholder="搜索人物……" aria-label="搜索人物">'
         + '<button class="bioweave-select" type="button">全部状态 ▾</button></div>' + rows
-      : '<div class="bioweave-card bioweave-empty"><b>当前尚无需要追踪的角色。</b>'
-        + '<p>当剧情中发生存在受孕可能的相关事件后，角色将显示在这里。</p></div>')
+      : emptyState)
+    + renderTrackingDecisions(status.tracking_decisions)
     + '</section>';
 }

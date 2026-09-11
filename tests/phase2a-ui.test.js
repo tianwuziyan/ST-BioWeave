@@ -48,11 +48,81 @@ const trackingSubject = {
   status: 'active',
 };
 
-test('characters page renders the real empty state without demo DTO', () => {
+test('characters page distinguishes not analyzed from analyzed with zero subjects', () => {
   const html = charactersPage();
-  assert.match(html, /当前尚无需要追踪的角色。/);
-  assert.match(html, /当剧情中发生存在受孕可能的相关事件后，角色将显示在这里。/);
+  assert.match(html, /尚未完成事件分析。/);
+  assert.match(html, /分析当前楼层/);
+  const analyzed = charactersPage({
+    analysisStatus: {
+      state: 'success',
+      active_event_count: 1,
+      sexual_activity_count: 1,
+      tracking_subject_count: 0,
+      tracking_decisions: [{character_id: 'char-a', eligible: false, reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN']}],
+    },
+  });
+  assert.match(analyzed, /当前没有需要妊娠追踪的角色。/);
+  assert.match(analyzed, /CAN_CARRY_PREGNANCY_UNKNOWN/);
+  assert.match(analyzed, /重新分析当前楼层/);
   assert.doesNotMatch(html, /demo-character-1|演示人物|占位 DTO/);
+});
+
+test('events page distinguishes not analyzed from analyzed with zero events', () => {
+  const pending = eventsPage({analysisStatus: {state: 'not_analyzed'}});
+  assert.match(pending, /当前 Chat 尚无 BiologicalEvent。/);
+  assert.match(pending, /分析当前楼层/);
+  const analyzed = eventsPage({
+    activeEvents: [event],
+    analysisStatus: {state: 'success', event_count: 0, active_event_count: 1, active_events: [event], current_floor_events: []},
+  });
+  assert.match(analyzed, /当前楼层已完成分析，但没有识别到 BiologicalEvent。/);
+  assert.match(analyzed, /当前 Chat 的历史事件/);
+  assert.match(analyzed, /evt-1/);
+  assert.match(analyzed, /重新分析当前楼层/);
+});
+
+test('overview renders current Floor analysis status and secret-redacted details', () => {
+  const html = overviewPage({
+    analysisStatus: {
+      state: 'failed',
+      current_floor: {floor: 42},
+      floor_version: {...event.source, floor: 42},
+      last_success: '2026-09-11T12:31:00.000Z',
+      last_error: 'JSON_SCHEMA_INVALID',
+      event_count: 1,
+      active_event_count: 3,
+      tracking_subject_count: 1,
+      current_floor_events: [event],
+      active_events: [event],
+      registry_summary: {tracking_subject_count: 1, api_key: 'must-not-render'},
+    },
+  });
+  assert.match(html, /当前 Floor 42/);
+  assert.match(html, /分析失败/);
+  assert.match(html, /JSON_SCHEMA_INVALID/);
+  assert.match(html, /Event Analysis 详情/);
+  assert.doesNotMatch(html, /must-not-render/);
+});
+
+test('running Event Analysis keeps the action clickable and exposes execution diagnostics', () => {
+  const html = overviewPage({
+    analysisStatus: {
+      state: 'running',
+      busy: true,
+      current_floor: {floor: 42},
+      floor_version: event.source,
+      attempt: 3,
+      started_at: '2026-09-11T12:30:00.000Z',
+      error_stage: 'api_request',
+      error_code: 'REQUEST_TIMEOUT',
+      safe_error_summary: '请求超时',
+    },
+  });
+  assert.match(html, /分析中… · 点击可终止/);
+  assert.doesNotMatch(html, /data-bioweave-action="analyze-current-floor"[^>]*disabled/);
+  assert.match(html, /api_request/);
+  assert.match(html, /REQUEST_TIMEOUT/);
+  assert.match(html, /请求超时/);
 });
 
 test('characters page renders DTO facts, tri-state capabilities, and all exposure events', () => {

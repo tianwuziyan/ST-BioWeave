@@ -934,10 +934,17 @@ const EVENT_SOURCE_KEYS = Object.freeze([
 ]);
 const EVENT_SENSITIVE_KEY_PATTERN = /(?:^|_)(?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)(?:$|_)/iu;
 
-function invalidEventAnalysis(message = 'EVENT_ANALYSIS_INVALID') {
+function invalidEventAnalysis(message = 'EVENT_ANALYSIS_INVALID', stage = 'schema_validation') {
   const error = new Error(message);
   error.code = 'EVENT_ANALYSIS_INVALID';
+  error.analysis_stage = stage;
   return error;
+}
+
+function annotateAnalysisError(error, stage) {
+  const target = error instanceof Error ? error : new Error(String(error ?? 'EVENT_ANALYSIS_FAILED'));
+  if (!target.analysis_stage) target.analysis_stage = stage;
+  return target;
 }
 
 function hasOwn(value, key) {
@@ -1328,13 +1335,13 @@ function eventPayload(raw) {
     return raw;
   }
   const text = responseText(raw).trim();
-  if (!text) throw invalidEventAnalysis();
+  if (!text) throw invalidEventAnalysis('EVENT_RESPONSE_EMPTY', 'response_parse');
   try {
     return JSON.parse(text);
   } catch {
     // Event extraction is stricter than the legacy World Model parser: no
     // fenced JSON or substring recovery is allowed at this boundary.
-    throw invalidEventAnalysis();
+    throw invalidEventAnalysis('EVENT_RESPONSE_JSON_INVALID', 'response_parse');
   }
 }
 
@@ -1343,10 +1350,16 @@ function eventPayload(raw) {
 // is never used as an identity fallback.
 export function parseEventAnalysisResponse(raw, sourceOrOptions = {}) {
   const payload = eventPayload(raw);
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw invalidEventAnalysis();
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
+  }
   const keys = Object.keys(payload);
-  if (keys.some(key => !['schema_version', 'events'].includes(key))) throw invalidEventAnalysis();
-  if (payload.schema_version !== EVENT_SCHEMA_VERSION || !Array.isArray(payload.events)) throw invalidEventAnalysis();
+  if (keys.some(key => !['schema_version', 'events'].includes(key))) {
+    throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
+  }
+  if (payload.schema_version !== EVENT_SCHEMA_VERSION || !Array.isArray(payload.events)) {
+    throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
+  }
   const source = authoritativeFloorVersion(sourceOrOptions);
   const events = payload.events.map(event => normalizeEventRecord(event, source));
   return {schema_version: EVENT_SCHEMA_VERSION, events};
@@ -1459,12 +1472,35 @@ export function createAnalyzer({
   }
 
   async function analyzeFloor(input = {}) {
-    const profile = profileResolver?.('event_analysis') ?? profileResolver?.('event');
-    if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
+    let profile;
+    try {
+      profile = profileResolver?.('event_analysis') ?? profileResolver?.('event');
+    } catch (error) {
+      throw annotateAnalysisError(error, 'task_routing');
+    }
+    if (!profile) {
+      const error = new Error('API_PROFILE_NOT_CONFIGURED');
+      error.code = 'API_PROFILE_NOT_CONFIGURED';
+      throw annotateAnalysisError(error, 'task_routing');
+    }
     const analysisInput = input.analysisInput ?? input;
-    const messages = buildEventAnalysisMessages(analysisInput);
-    const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
-    return parseEventAnalysisResponse(raw, input);
+    let messages;
+    try {
+      messages = buildEventAnalysisMessages(analysisInput);
+    } catch (error) {
+      throw annotateAnalysisError(error, 'request_build');
+    }
+    let raw;
+    try {
+      raw = await callOpenAICompatible(profile, messages, requestOptions(input));
+    } catch (error) {
+      throw annotateAnalysisError(error, 'api_request');
+    }
+    try {
+      return parseEventAnalysisResponse(raw, input);
+    } catch (error) {
+      throw annotateAnalysisError(error, error?.analysis_stage ?? 'schema_validation');
+    }
   }
 
   return {

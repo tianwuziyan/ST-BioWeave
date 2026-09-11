@@ -97,3 +97,17 @@
 - Runtime/Storage 回归时恢复到现有 `events: []` Floor 行为，保留独立纯函数测试定位问题。
 - UI 回归时保留真实 Empty State，不恢复 demo-character mock；修复数据接线而不是生成占位数据。
 - 未完成人工 SillyTavern 验收前不执行 push；本 task 完成后停在人工验收等待点。
+
+## 8. Real-host Event Analysis ownership and observability follow-up
+
+- [x] 只读审计 `index.js`、Runtime/Floor、UI、Core、AI 与 Storage 的现有 Event Analysis 调用链。
+- [x] 新增 Runtime Event Analysis Coordinator，并把 lifecycle 自动调度、目标 Floor、dedupe/retry、commit/save 与 Registry rebuild 从 UI 移出。
+- [x] Runtime 暴露 current Floor analysis/status/events/registry API；UI open/reopen 不参与自动分析能力。
+- [x] 新增 `explainTrackingDecision(event)` Core selector，保持正式 Tracking 资格规则不变。
+- [x] Overview 显示真实当前 Floor 分析状态，并提供“分析/重新分析当前楼层”和轻量详情。
+- [x] Events 区分尚未分析与成功零 Event，并提供真实分析入口。
+- [x] Characters 区分尚未分析与零 Tracking Subject，并显示 Runtime/Core 提供的统计和原因。
+- [x] Event 编辑/删除改为调用 Runtime API，不在 UI 复制 Event normalize/validate 或 Registry rebuild。
+- [x] 补充无 UI 自动分析、手动 force、状态/空状态、Swipe/Floor 和 diagnostic 回归测试。
+- [x] 运行 focused tests、`npm run check`、`git diff --check` 与 Trellis validate。
+- [x] 更新 Runtime/Event/UI 契约文档，停止在真实 SillyTavern 人工验收。

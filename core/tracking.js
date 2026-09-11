@@ -133,13 +133,102 @@ function previousProfiles(previousChat) {
   return profiles;
 }
 
-function validTrackingEvent(rawEvent) {
+const EXCLUDED_EVENT_STATUSES = new Set(['negated', 'fictional']);
+
+function normalizeTrackingEvent(rawEvent) {
   try {
     const event = normalizeEvent(rawEvent);
-    return validateEvent(event).ok ? event : null;
+    return {
+      event,
+      valid: validateEvent(event).ok,
+    };
   } catch {
-    return null;
+    return {event: null, valid: false};
   }
+}
+
+function validTrackingEvent(rawEvent) {
+  const result = normalizeTrackingEvent(rawEvent);
+  return result.valid ? result.event : null;
+}
+
+function eventDecisionReasons(event, valid) {
+  if (!valid) return ['INVALID_EVENT'];
+
+  const reasons = [];
+  if (event.type !== 'sexual_activity') reasons.push('NOT_SEXUAL_ACTIVITY');
+  if (EXCLUDED_EVENT_STATUSES.has(event.status)) reasons.push('EVENT_STATUS_EXCLUDED');
+  if (event.pregnancy_relevance.relevant !== true) reasons.push('PREGNANCY_RELEVANCE_FALSE');
+  if (event.pregnancy_relevance.possible_conception !== true) reasons.push('POSSIBLE_CONCEPTION_FALSE');
+  return reasons;
+}
+
+function participantCandidates(event) {
+  const participants = new Map();
+  const participantIds = [];
+  for (const participant of event?.participants ?? []) {
+    const characterId = participant.character_id;
+    if (!characterId) continue;
+    if (!participants.has(characterId)) participantIds.push(characterId);
+    // Match the existing eligibility behavior: a duplicate participant ID uses
+    // the last participant record supplied by the event.
+    participants.set(characterId, participant);
+  }
+
+  const candidateIds = [];
+  const seen = new Set();
+  for (const characterId of event?.pregnancy_relevance?.gestational_subject_ids ?? []) {
+    if (seen.has(characterId)) continue;
+    seen.add(characterId);
+    candidateIds.push(characterId);
+  }
+  for (const characterId of participantIds) {
+    if (seen.has(characterId)) continue;
+    seen.add(characterId);
+    candidateIds.push(characterId);
+  }
+
+  return {participants, candidateIds};
+}
+
+function trackingDecisionPath(rawEvent) {
+  const normalized = normalizeTrackingEvent(rawEvent);
+  const event = normalized.event;
+  if (!event) {
+    return {
+      event: null,
+      decisions: [{character_id: null, eligible: false, reasons: ['INVALID_EVENT']}],
+    };
+  }
+
+  const eventReasons = eventDecisionReasons(event, normalized.valid);
+  const {participants, candidateIds} = participantCandidates(event);
+  const gestationalSubjectIds = new Set(event.pregnancy_relevance.gestational_subject_ids);
+  const decisions = candidateIds.map(characterId => {
+    const participant = participants.get(characterId);
+    const reasons = [...eventReasons];
+
+    if (!participant) {
+      reasons.push('PARTICIPANT_NOT_FOUND');
+    } else if (!gestationalSubjectIds.has(characterId)) {
+      reasons.push('NOT_GESTATIONAL_SUBJECT');
+    } else {
+      const canCarryPregnancy = participant.reproductive_capabilities_used.can_carry_pregnancy;
+      if (canCarryPregnancy === null) reasons.push('CAN_CARRY_PREGNANCY_UNKNOWN');
+      if (canCarryPregnancy === false) reasons.push('CAN_CARRY_PREGNANCY_FALSE');
+    }
+
+    return {
+      character_id: characterId,
+      eligible: reasons.length === 0,
+      reasons,
+    };
+  });
+
+  if (!decisions.length && !normalized.valid) {
+    decisions.push({character_id: null, eligible: false, reasons: eventReasons});
+  }
+  return {event, decisions};
 }
 
 /**
@@ -147,32 +236,18 @@ function validTrackingEvent(rawEvent) {
  * subjects by a validated sexual-activity event.
  */
 export function eligibleGestationalSubjects(rawEvent) {
-  const event = validTrackingEvent(rawEvent);
-  if (!event
-    || event.type !== 'sexual_activity'
-    || event.status === 'negated'
-    || event.status === 'fictional'
-    || event.pregnancy_relevance.relevant !== true
-    || event.pregnancy_relevance.possible_conception !== true) {
-    return [];
-  }
+  return trackingDecisionPath(rawEvent).decisions
+    .filter(decision => decision.eligible)
+    .map(decision => decision.character_id);
+}
 
-  const participants = new Map(
-    event.participants
-      .filter(participant => participant.character_id)
-      .map(participant => [participant.character_id, participant]),
-  );
-  const eligible = [];
-  const seen = new Set();
-  for (const characterId of event.pregnancy_relevance.gestational_subject_ids) {
-    const participant = participants.get(characterId);
-    if (!participant
-      || participant.reproductive_capabilities_used.can_carry_pregnancy !== true
-      || seen.has(characterId)) continue;
-    seen.add(characterId);
-    eligible.push(characterId);
-  }
-  return eligible;
+/**
+ * Explain the read-only tracking decision for each event participant or
+ * gestational-subject candidate. The returned reason codes are stable and
+ * never infer eligibility from participant labels.
+ */
+export function explainTrackingDecision(rawEvent) {
+  return trackingDecisionPath(rawEvent).decisions;
 }
 
 function uniqueEventList(events) {

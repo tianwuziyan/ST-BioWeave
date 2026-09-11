@@ -17,7 +17,16 @@ duplicates the Event fact.
 - `normalizeEvent(raw) -> BiologicalEvent`
 - `validateEvent(event) -> {ok, errors}`
 - `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, character_profiles}`
+- `explainTrackingDecision(event) -> Array<{character_id, eligible, reasons[]}>`
 - `getActiveFloorEvents(floorData, floorVersion) -> BiologicalEvent[]`
+- `createEventAnalysisCoordinator(deps) -> EventAnalysisRuntimeAPI`
+- `runtime.analyzeCurrentFloor({force = false}) -> AnalysisResult`
+- `runtime.analyzeFloor(messageIdOrIndex, {force = false}) -> AnalysisResult`
+- `runtime.refreshCurrentFloorAnalysis() -> AnalysisResult`
+- `runtime.requestAbortCurrentFloorAnalysis() -> Promise<boolean>`
+- `runtime.collectActiveBusinessData() -> EventAnalysisBusinessDTO`
+- `runtime.updateEvent(eventId, patch) -> BiologicalEvent`
+- `runtime.deleteEvent(eventId) -> true`
 
 `authoritativeFloorVersion` contains exactly these binding fields:
 `chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
@@ -72,6 +81,35 @@ Characters, Events, and Overview consume domain DTOs. UI code must not derive
 eligibility from gender, participant labels, or event roles. UI formatting may
 map IDs to display names and format Story Time.
 
+### Runtime coordinator
+
+The Runtime owns Event Analysis independently of UI mount/open state. It binds
+SillyTavern lifecycle events during `runtime.init()`, resolves stable
+`message_id` before treating a numeric value as an array index, selects the
+active Swipe, applies N-floor and Floor Version dedupe, calls the one production
+analyzer, commits Floor-bound Events, and rebuilds the registry.
+
+The coordinator keeps the in-flight execution and its `AbortController` in a
+transient map keyed by the complete Floor Version. The controller signal is
+passed through the analyzer to the shared `ChatCompletionService` transport.
+Every success, failure, cancellation, stale-Chat exit, timeout, retry
+exhaustion, save failure, and registry failure releases the in-flight entry and
+controller and publishes a terminal status. A cancelled or stale late result
+may not commit a Floor Event or rebuild the Registry.
+
+`EventAnalysisBusinessDTO.analysis_status` contains `state`, `busy`,
+`current_floor`, `floor_version`, `attempt`, `last_success`, `last_error`,
+`event_count`, `active_event_count`, `sexual_activity_count`,
+`tracking_subject_count`, `current_floor_events`, `active_events`,
+`tracking_decisions`, and `registry_summary`. Current-Floor counts and Chat-wide
+active counts are distinct. Raw AI responses, request bodies, headers, and
+secrets are not persisted for diagnostics. `running` is transient execution
+state, not a persisted historical result. Terminal diagnostics expose
+`error_stage`, `error_code`, `safe_error_summary`, `started_at`, and
+`finished_at`; a failed force refresh keeps `last_success` and its valid
+Events. `cancelled` uses `REQUEST_ABORTED` and is informational rather than an
+API/schema failure.
+
 ## 4. Validation & Error Matrix
 
 | Condition | Required behavior |
@@ -84,6 +122,12 @@ map IDs to display names and format Story Time.
 | NSFW without `relevant === true` and `possible_conception === true` | Create zero Tracking Subjects |
 | Floor deletion or inactive Swipe | Event is absent from active reads; rebuild removes dangling references |
 | Analysis failure after prior success | Keep the prior successful Events and record the failed attempt |
+| Analysis is cancelled or the Chat becomes stale | Release execution resources; preserve the previous success and ignore late results |
+| Successful current Floor, non-force request | Skip without another AI call |
+| Manual force succeeds | Replace that Floor Version's prior successful Events |
+| Manual force fails | Record `failed`/`last_error`; keep prior successful Events active |
+| Lifecycle payload has a stable message ID | Resolve by message identity before numeric array index |
+| UI mount/open/reopen | Read Runtime DTO only; never request Event Analysis |
 
 ## 5. Good / Base / Bad Cases
 
@@ -92,12 +136,16 @@ map IDs to display names and format Story Time.
   Event.
 - Good: one Event names two explicit gestational subjects; the registry has
   two subjects, while a conception source remains absent from Characters.
+- Good: the overlay is never opened; `MESSAGE_RECEIVED` reaches the Runtime
+  coordinator and performs interval-eligible analysis.
 - Base: a non-sexual BiologicalEvent passes the same envelope and remains
   available to the shared Event system without creating a subject.
 - Base: unknown capability stays `null` and is shown as unknown where exposed.
 - Bad: a participant is made eligible because their gender or UI label says
   receiver/攻/受.
 - Bad: a UI card copies an entire Event or uses `partner: "B,C"`.
+- Bad: `ui/app.js` builds Event analysis input, validates Event source, or
+  rebuilds Tracking Registry after rendering.
 
 ## 6. Tests Required
 
@@ -111,6 +159,13 @@ map IDs to display names and format Story Time.
   and never infer eligibility.
 - Scheduling assertions for Floor Version deduplication, manual replacement,
   and failed-refresh preservation.
+- Runtime integration assertions that lifecycle analysis requires no UI
+  subscriber, UI reopen causes no AI call, stable message IDs and active Swipes
+  select the correct Floor Version, and status DTOs distinguish zero Events
+  from no analysis.
+- Diagnostic assertions that `eligibleGestationalSubjects()` and
+  `explainTrackingDecision()` share the same decision path and unknown carrying
+  capability remains ineligible.
 
 ## 7. Wrong vs Correct
 
@@ -127,6 +182,15 @@ if (participant.event_role === 'receiver') {
 ```js
 const registry = rebuildTrackingRegistry(activeEvents, chat);
 renderCharacters(registry.tracking_subjects);
+```
+
+```js
+// Wrong: UI owns production analysis and business persistence.
+await analyzer.analyzeFloor(buildEventAnalysisInput(uiState));
+
+// Correct: UI invokes the Runtime coordinator and renders its DTO.
+await runtime.refreshCurrentFloorAnalysis();
+render(await runtime.collectActiveBusinessData());
 ```
 
 Eligibility belongs to the validated Event plus World Model and narrative

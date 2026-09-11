@@ -28,17 +28,15 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
 
-没有 Subject 时，人物页显示：
-
-> 当前尚无需要追踪的角色。
-
-并说明人物列表只收录存在受孕相关暴露且通过证据边界的追踪对象，不代表当前 Chat 的全部角色。
+没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示错误摘要，并明确旧成功事件仍可保持有效。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，UI 不重新执行资格判断。
 
 人物详情至少显示人物名称、稳定 `character_id`、可用的 species/type、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
 
 ### 历史事件页
 
 事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。列表和详情可显示：Story Time、Floor、Location、全部 Participants、Reproductive Roles、Pregnancy Relevance、Status、Confidence 和 Source。Source 字段只读，必须展示其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。
+
+当当前 Chat 没有 Event 时，页面必须区分“当前楼层尚未分析”和“当前楼层已分析成功但 0 Event”，并提供调用生产 Runtime pipeline 的“分析当前楼层 / 重新分析当前楼层”入口。
 
 Event 的完整 NSFW 历史事实只存在 Floor-bound Event；页面显示人物 exposure 时通过 `event_id` 引用读取 Event，不把完整事件对象复制进人物卡。`counterpart_ids` 和 `gestational_subject_ids` 始终按数组渲染，空数组、单项和多项都必须可显示。
 
@@ -52,11 +50,13 @@ Story Time 持久化为结构化对象：`display`、`normalized`、`calendar_id
 
 总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
 
+总览的 Event Analysis 状态卡显示当前 Floor、六字段 Floor Version、`not_analyzed/running/success/failed/cancelled`、最近成功时间、当前 Floor Event 数、Tracking Subject 数和错误摘要。运行中按钮保持可点击并显示“分析中… · 点击可终止”；二次点击通过 SillyTavern confirm Popup 请求 Runtime 取消，拒绝确认不改变执行。轻量详情使用脱敏后的 Runtime DTO，包含 Execution Status、Stage、Attempt、Started At、Finished At、Error Code、Safe Error Summary、解析后的当前 Floor Events 与 Registry 摘要；不永久保存或默认展示 Raw AI Response、请求头或 Secret。主动取消显示信息提示，且保留上一份有效 Event/Tracking 结果。
+
 Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶段保持 Empty State 或兼容骨架。页面可以显示“等待后续状态引擎”类说明，但不得生成 mock 业务 DTO、概率、妊娠天数或亲子关系。
 
 ### 生命周期与刷新
 
-页面 mount、open、reopen 和 extension init 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。自动分析继续由 Runtime 按 N-floor 和六字段 Floor Version 调度；相同成功版本跳过，失败可重试，手动刷新强制请求。手动刷新成功替换当前 Floor Version 的 Event，失败保留旧成功结果，但旧版本 Event 不得进入当前有效 Registry。
+页面 mount、open 和 reopen 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。Runtime 在 extension init 时绑定 SillyTavern lifecycle；即使 overlay 从未打开，`MESSAGE_RECEIVED`、`GENERATION_ENDED` 及编辑/Swipe 事件仍按 N-floor 和六字段 Floor Version 调度。相同成功版本跳过，失败可重试，手动刷新强制请求。手动刷新成功替换当前 Floor Version 的 Event，失败保留旧成功结果，但旧版本 Event 不得进入当前有效 Registry。所有 terminal branch 都必须退出 running；取消或 stale Chat 后的迟到响应只能被忽略，不能覆盖新执行或重建 Registry。
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Characters、Events、Overview 都必须重新读取当前有效 Event 和 Registry；不存在事件的 Swipe 不得显示旧 Swipe 的人物或事件。
 

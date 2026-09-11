@@ -1,7 +1,9 @@
 import {createChatBoundary} from './chat.js';
-import {activeSwipeId, createStore, hasSwipeStructure} from '../storage/store.js';
-import {floorVersion, floorVersionFromData} from './floor.js';
-import {rebuildTrackingRegistry} from '../core/tracking.js';
+import {createStore, hasSwipeStructure} from '../storage/store.js';
+import {createAnalyzer} from '../ai/analyzer.js';
+import {createStoryTime} from '../story/time.js';
+import {FOLLOW_DEFAULT_API, SILLYTAVERN_CURRENT_API} from '../storage/schema.js';
+import {createEventAnalysisCoordinator} from './event-analysis.js';
 
 const LIFECYCLE_EVENTS = [
   'CHAT_CHANGED',
@@ -83,7 +85,12 @@ export function createSillyTavernAdapter() {
   };
 }
 
-export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
+export function createRuntime({
+  adapter = createSillyTavernAdapter(),
+  analyzer = null,
+  storyTime = null,
+  characterContextResolver = null,
+} = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
   const store = createStore(st, chat);
@@ -91,73 +98,6 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
   const unbind = [];
   let initialized = false;
   let destroyed = false;
-  let registryRefreshSequence = 0;
-
-  function scalarMessageValue(value) {
-    if (typeof value === 'string') return value.trim() || null;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    return null;
-  }
-
-  function messageText(message) {
-    if (typeof message === 'string' || typeof message === 'number') return String(message);
-    if (!message || typeof message !== 'object') return '';
-    const partText = value => {
-      if (typeof value === 'string' || typeof value === 'number') return String(value);
-      if (!value || typeof value !== 'object') return '';
-      return String(value.mes ?? value.content ?? value.message ?? value.text ?? '');
-    };
-    const swipeId = activeSwipeId(message);
-    if (message.swipes && typeof message.swipes === 'object' && message.swipes[swipeId] !== undefined) {
-      return partText(message.swipes[swipeId]);
-    }
-    return partText(message.mes ?? message.content ?? message.message);
-  }
-
-  function messageFloor(message, index, storedVersion) {
-    const candidates = [message?.floor, message?.floor_id, message?.floorIndex, storedVersion?.floor, index];
-    for (const candidate of candidates) {
-      const parsed = Number(candidate);
-      if (Number.isFinite(parsed)) return Math.round(parsed);
-    }
-    return index;
-  }
-
-  function messageId(message, index, storedVersion) {
-    const candidates = [
-      message?.message_id,
-      message?.messageId,
-      message?.id,
-      storedVersion?.message_id,
-      index,
-    ];
-    for (const candidate of candidates) {
-      const value = scalarMessageValue(candidate);
-      if (value !== null) return value;
-    }
-    return index;
-  }
-
-  function messageVersion(message, storedVersion) {
-    return scalarMessageValue(
-      message?.message_version
-      ?? message?.messageVersion
-      ?? message?.version
-      ?? storedVersion?.message_version,
-    ) ?? undefined;
-  }
-
-  async function currentMessageFloorVersion(chatId, message, index, floorData) {
-    const storedVersion = floorVersionFromData(floorData);
-    return floorVersion({
-      chatId,
-      messageId: messageId(message, index, storedVersion),
-      floor: messageFloor(message, index, storedVersion),
-      swipeId: activeSwipeId(message),
-      text: messageText(message),
-      messageVersion: messageVersion(message, storedVersion),
-    });
-  }
 
   function notify(event) {
     for (const listener of [...subscriptions]) {
@@ -168,6 +108,34 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
       }
     }
   }
+
+  function resolveEventAnalysisProfile() {
+    const settings = store.profileStore?.getSettings?.() ?? {};
+    const assignment = settings.assignments?.event_analysis ?? null;
+    if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
+    if (assignment === FOLLOW_DEFAULT_API) {
+      if (settings.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
+      return settings.default_profile_id
+        ? store.profileStore?.getProfile?.(settings.default_profile_id) ?? null
+        : null;
+    }
+    return assignment ? store.profileStore?.getProfile?.(assignment) ?? null : null;
+  }
+
+  const eventAnalyzer = analyzer ?? createAnalyzer({
+    profileResolver: resolveEventAnalysisProfile,
+    contextResolver: () => st.getContext?.() ?? null,
+    requestSettingsResolver: () => store.profileStore?.getApiRequestSettings?.() ?? {},
+  });
+  const eventAnalysis = createEventAnalysisCoordinator({
+    st,
+    chat,
+    store,
+    analyzer: eventAnalyzer,
+    storyTime: storyTime ?? createStoryTime(),
+    ...(typeof characterContextResolver === 'function' ? {characterContextResolver} : {}),
+    notify,
+  });
 
   function handleLifecycleEvent(key, eventType, payload) {
     const epochBefore = chat.getEpoch();
@@ -182,9 +150,9 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
       epoch: chat.getEpoch(),
       chatChanged,
     });
-    void refreshTrackingRegistry(key).catch(error => {
-      if (error?.message !== 'STALE_CHAT') {
-        console.error('[BioWeave] tracking registry refresh failed', error);
+    void eventAnalysis.handleLifecycleEvent({type: key, eventType, payload, chatId}).catch(error => {
+      if (!['STALE_CHAT', 'MESSAGE_NOT_FOUND'].includes(error?.message)) {
+        console.error('[BioWeave] event analysis lifecycle failed', error);
       }
     });
   }
@@ -218,7 +186,7 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
     chat.current();
     bindLifecycleEvents();
     initialized = true;
-    void refreshTrackingRegistry('init').catch(error => {
+    void eventAnalysis.refreshTrackingRegistry('init').catch(error => {
       if (error?.message !== 'STALE_CHAT') {
         console.error('[BioWeave] initial tracking registry refresh failed', error);
       }
@@ -230,44 +198,6 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
     if (typeof listener !== 'function') throw new TypeError('RUNTIME_LISTENER_REQUIRED');
     subscriptions.add(listener);
     return () => subscriptions.delete(listener);
-  }
-
-  async function refreshTrackingRegistry(reason = 'lifecycle') {
-    const requestId = ++registryRefreshSequence;
-    const token = chat.token();
-    const context = st.getContext?.();
-    const messages = st.getChat?.() ?? context?.chat;
-    if (!Array.isArray(messages)) return null;
-
-    const activeEvents = [];
-    for (let index = 0; index < messages.length; index += 1) {
-      const message = messages[index];
-      const floorData = store.getActiveFloor?.(index);
-      if (!floorData) continue;
-      const version = await currentMessageFloorVersion(token.chatId, message, index, floorData);
-      chat.assert(token);
-      if (requestId !== registryRefreshSequence) return null;
-      activeEvents.push(...(store.getActiveFloorEvents?.(index, version) ?? []));
-    }
-
-    chat.assert(token);
-    if (requestId !== registryRefreshSequence) return null;
-    const previousChat = store.getChat(token.chatId);
-    const registry = rebuildTrackingRegistry(activeEvents, previousChat);
-    chat.assert(token);
-    if (requestId !== registryRefreshSequence) return null;
-    await store.saveChat(token.chatId, {...previousChat, ...registry});
-    chat.assert(token);
-    if (requestId !== registryRefreshSequence) return null;
-    notify({
-      type: 'TRACKING_REGISTRY_REFRESHED',
-      eventType: null,
-      payload: {reason, event_count: activeEvents.length},
-      chatId: token.chatId,
-      epoch: chat.getEpoch(),
-      chatChanged: false,
-    });
-    return registry;
   }
 
   // These reads deliberately stay synchronous and side-effect free.  The UI
@@ -287,7 +217,7 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
 
   function destroy() {
     if (destroyed) return;
-    registryRefreshSequence += 1;
+    eventAnalysis.destroy();
     while (unbind.length) unbind.pop()();
     subscriptions.clear();
     chat.destroy();
@@ -301,7 +231,17 @@ export function createRuntime({adapter = createSillyTavernAdapter()} = {}) {
     store,
     init,
     subscribe,
-    refreshTrackingRegistry,
+    analyzeCurrentFloor: eventAnalysis.analyzeCurrentFloor,
+    analyzeFloor: eventAnalysis.analyzeFloor,
+    refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
+    requestAbortCurrentFloorAnalysis: eventAnalysis.requestAbortCurrentFloorAnalysis,
+    getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
+    getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
+    getTrackingRegistry: eventAnalysis.getTrackingRegistry,
+    collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,
+    refreshTrackingRegistry: eventAnalysis.refreshTrackingRegistry,
+    updateEvent: eventAnalysis.updateEvent,
+    deleteEvent: eventAnalysis.deleteEvent,
     getActiveSwipeId,
     getActiveFloor,
     getActiveFloorEvents,

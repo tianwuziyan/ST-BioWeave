@@ -1,4 +1,10 @@
 import {formatStoryTime} from '../story/time.js';
+import {
+  analysisStatusCount,
+  analysisStatusEvents,
+  normalizeAnalysisStatus,
+  renderAnalysisActionButton,
+} from './overview.js';
 
 const eventStatuses = ['confirmed', 'probable', 'ambiguous', 'negated', 'fictional'];
 
@@ -177,16 +183,35 @@ function renderEventCard(event, editingEventId) {
     + (editingEventId === eventId ? renderEditForm(event) : '') + '</article>';
 }
 
-export function eventsPage({activeEvents, events, editingEventId = null} = {}) {
-  const biologicalEvents = Array.isArray(activeEvents)
-    ? activeEvents
-    : entriesOf(events);
+export function eventsPage({activeEvents, events, editingEventId = null, analysisStatus = null} = {}) {
+  const status = normalizeAnalysisStatus(analysisStatus);
+  const fallbackEvents = Array.isArray(activeEvents) ? activeEvents : entriesOf(events);
+  const biologicalEvents = analysisStatusEvents(status, fallbackEvents, 'active_events');
+  const eventCount = analysisStatusCount(status, 'active_event_count', biologicalEvents.length);
+  const emptyCopy = status.state === 'success'
+    ? '当前楼层已完成分析，但没有识别到 BiologicalEvent。'
+    : status.state === 'running'
+      ? '当前楼层正在分析，暂时没有可显示的 BiologicalEvent。'
+      : status.state === 'cancelled'
+        ? '本次楼层分析已取消；现有历史事件仍然保留。'
+      : status.state === 'failed'
+        ? '当前楼层分析失败，尚无可显示的 BiologicalEvent。'
+        : '当前 Chat 尚无 BiologicalEvent。';
+  const currentFloorNotice = status.state === 'success' && analysisStatusCount(status, 'event_count', biologicalEvents.length) === 0
+    ? '<p class="bioweave-muted">当前楼层已完成分析，但没有识别到 BiologicalEvent。下方保留当前 Chat 的历史事件。</p>'
+    : status.state === 'cancelled' && biologicalEvents.length
+      ? '<p class="bioweave-muted">本次楼层分析已取消；下方保留当前 Chat 的历史事件。</p>'
+    : status.state === 'not_analyzed' && biologicalEvents.length
+      ? '<p class="bioweave-muted">当前楼层尚未完成分析；下方为当前 Chat 已保存的历史事件。</p>'
+      : '';
   const cards = biologicalEvents.map(event => renderEventCard(event, editingEventId)).join('');
   return '<section class="bioweave-page bioweave-events-page"><div class="bioweave-page-title"><div><h2>历史事件</h2>'
     + '<p class="bioweave-muted">当前 Chat 的 BiologicalEvent 事实</p></div>'
-    + '<span class="bioweave-badge">' + biologicalEvents.length + ' 个事件</span></div>'
+    + '<div class="bioweave-page-actions">' + renderAnalysisActionButton(status)
+    + '<span class="bioweave-badge">' + eventCount + ' 个事件</span></div></div>'
+    + currentFloorNotice
     + (biologicalEvents.length ? '<div class="bioweave-event-list">' + cards + '</div>'
-      : '<section class="bioweave-card bioweave-empty"><b>当前 Chat 尚无历史事件</b>'
-        + '<p>当有效 BiologicalEvent 写入当前 Chat 后，事件详情会显示在这里。</p></section>')
+      : '<section class="bioweave-card bioweave-empty"><b>' + emptyCopy + '</b>'
+        + '<p>完成当前楼层分析后，已解析的事件详情会显示在这里。</p></section>')
     + '</section>';
 }

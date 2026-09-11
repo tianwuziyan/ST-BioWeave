@@ -122,3 +122,15 @@ Event Analyzer Prompt 必须明确写入：识别 sexual_activity；提取结构
 ## Open questions
 
 无。用户已确认进入规划；技术未知项按设计中的可注入 Adapter、明确 fallback 和真实宿主验收步骤处理。
+
+## Real-host observability follow-up
+
+真实 SillyTavern 验收暴露出 Phase 2A 的运行入口与可观察性不足。本次后续工作仍属于 Phase 2A，不进入 StateReducer 或 Phase 2B。
+
+- Event Analysis 的自动调度、当前 Floor 选择、去重/重试、成功替换、失败保留、Floor 保存和 Registry rebuild 必须由 Runtime coordinator 拥有，不能依赖 BioWeave overlay 是否打开或 UI subscriber 是否存在。
+- Runtime 必须提供当前 Floor 分析、强制刷新、当前状态、有效 Event 和 Tracking Registry 的明确 API；UI 只调用这些 API 并渲染返回 DTO。
+- Overview 必须显示当前 Floor、Floor Version、分析状态、最近成功、Event 数量、Tracking Subject 数量和轻量详情入口。
+- Events 与 Characters 的空状态必须区分“尚未分析”“成功但零 Event”“已有 Event 但零 Tracking Subject”。
+- `core/tracking.js` 必须提供只读 `explainTrackingDecision(event)`，复用正式 eligibility 规则并返回稳定 reason code；UI 不复制资格判断。
+- 不持久化 Raw AI Response；诊断详情只展示已持久化的 analysis metadata、解析后 Event 和 Registry 摘要。
+- 自动测试必须证明无 UI 打开也会分析、UI reopen 不触发分析、manual force 成功替换/失败保留、Swipe/Floor 目标正确，以及三个页面的状态区分。

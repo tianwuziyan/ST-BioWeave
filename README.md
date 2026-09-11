@@ -281,6 +281,8 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
 - `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`provider`、`precision`、`confidence`。`display` 只由 formatter 展示，排序和计算不得重新解析显示文本；无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
+- Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
+- 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 Registry 的原因，UI 不复制资格条件。
 - 本阶段保留其它 BiologicalEvent 类型兼容，但只实现 `sexual_activity` 的 Tracking 闭环；妊娠概率、Gestational Age、预计分娩日、完整状态归约、Snapshot、Projection 和 Genealogy 仍是空状态或下一阶段。
 
 ## AI / World Model 工作流
@@ -337,7 +339,7 @@ flowchart TD
 
 ### Phase 2A Event Analyzer 边界
 
-Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、当前楼层叙事、必要的最近剧情上下文、World Model、结构化 Story Time 和必要的角色设定上下文。成功响应只能是固定 JSON 对象 `{schema_version, events[]}`，解析后的 Event 通过统一 normalize / validate 后才可写入 Floor；自然语言自由输出或半结构化结果不得写入。
+Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、当前楼层叙事、必要的最近剧情上下文、World Model、结构化 Story Time 和必要的角色设定上下文。成功响应只能是固定 JSON 对象 `{schema_version, events[]}`，解析后的 Event 通过统一 normalize / validate 后才可写入 Floor；自然语言自由输出或半结构化结果不得写入。Event Analysis 的执行、取消、失败保留和诊断由 Runtime coordinator 负责，使用与 World Model 相同的 SillyTavern API transport；UI 只显示 `not_analyzed/running/success/failed/cancelled` 与脱敏的 stage/error code。
 
 自动分析继续使用当前 Chat 的 `analysis_interval`（N-floor）和六字段 Floor Version 去重：同一成功版本不会因为 UI 初始化、打开或重新打开而重复请求；版本变化和失败允许重试；`manual: true` 的手动刷新强制请求。手动刷新成功替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本事实不能进入当前有效 Registry。Floor 删除、Swipe 切换、Event 编辑/删除后，当前有效 Event 集合和 Registry 必须重新筛选或重建。
 
@@ -379,7 +381,8 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   └── state.js              # 纯状态归约基础
 ├── runtime/
 │   ├── chat.js              # Chat token、epoch、stale guard
-│   ├── events.js            # SillyTavern 适配器、宿主事件、存取入口
+│   ├── event-analysis.js    # Event Analysis 调度、提交、状态 DTO 与 Registry 重建
+│   ├── events.js            # SillyTavern 适配器、宿主事件与 Runtime API
 │   └── floor.js              # Floor Version、分析去重、失败保护
 ├── storage/
 │   ├── schema.js            # Global/Chat/Floor 默认值与规范化
@@ -412,7 +415,8 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 ### 重要入口
 
 - index.js：创建 Runtime 与 App，挂载 overlay，向 SillyTavern 扩展菜单注册入口，并导出 onInstall、onUpdate、onEnable、onDisable、onActivate、onDelete。
-- ui/app.js：拥有页面路由、当前 Chat 状态、主题、overlay 生命周期和全局事件委托。
+- runtime/event-analysis.js：拥有当前/指定 Floor 分析、N-floor 自动调度、强制刷新、去重、失败保护、Floor-bound Event 提交、Event CRUD 与 Tracking Registry 重建。
+- ui/app.js：拥有页面路由、主题、overlay 生命周期和全局事件委托；只调用 Runtime Event Analysis API 并显示状态，不生产或判定 Event/Tracking 业务结果。
 - storage/schema.js / storage/store.js：集中定义配置和数据保存边界，避免 API Profile 或 Secret 进入 Chat 数据。
 - ai/analyzer.js：把模型输出解析为固定 World Model，并执行分析专用的证据边界与一致性校验。
 
