@@ -2383,7 +2383,7 @@ test('World Analysis request uses ordinary chat messages for current and indepen
     const referenceMessage = request.messages.find(message => message.content.includes('【角色卡：角色甲 的背景资料】'));
     const characterMessage = referenceMessage?.content ?? '';
     const worldbookMessage = referenceMessage?.content ?? '';
-    const storyMessage = messageStartingWith(request.messages, '【剧情上下文】');
+    const storyMessage = messageStartingWith(request.messages, '【近期剧情参考】');
     const outputMessage = request.messages.find(message => message.content.includes('【World Model 输出契约】'))?.content ?? '';
     assert.match(characterMessage, /角色背景/);
     assert.match(worldbookMessage, /【条目：内部条目名不应发送】/);
@@ -2391,7 +2391,7 @@ test('World Analysis request uses ordinary chat messages for current and indepen
     assert.doesNotMatch(JSON.stringify(request.messages), /用户人物设定私密内容| 的人物设定/);
     assert.doesNotMatch(worldbookMessage, /source_id|entry_id|token_estimate/);
     assert.match(storyMessage, /楼层证据 用户甲/);
-    assert.doesNotMatch(storyMessage, /【楼层信息】|Floor 81|\[assistant\]/);
+    assert.doesNotMatch(storyMessage, /【楼层信息】|【楼层|正文：|Floor 81|\[assistant\]|role=|message_id|swipe_id/);
     assert.match(outputMessage, /World Model/);
   }
 });
@@ -2418,7 +2418,7 @@ test('World Analysis prompt blocks can be edited without sending format tags', (
   const characterMessage = referenceMessage;
   const worldbookMessage = referenceMessage;
   const tailMessage = messages.find(message => message.content.includes('【公共分析补充】'))?.content ?? '';
-  const storyMessage = messageStartingWith(messages, '【剧情上下文】');
+  const storyMessage = messageStartingWith(messages, '【近期剧情参考】');
   const outputMessage = messages.find(message => message.content.includes('【World Model 输出契约】'))?.content ?? '';
   assert.match(commonMessage, /用户自定义资料前言/);
   assert.match(characterMessage, /角色乙 的背景资料/);
@@ -2427,7 +2427,7 @@ test('World Analysis prompt blocks can be edited without sending format tags', (
   assert.doesNotMatch(JSON.stringify(messages), /用户人物设定私密内容| 的人物设定/);
   assert.doesNotMatch(worldbookMessage, /source_id|entry_id|token_estimate|书名不进入发送内容/);
   assert.match(storyMessage, /楼层内容/);
-  assert.doesNotMatch(storyMessage, /【楼层信息】|Floor 3|\[assistant\]/);
+  assert.doesNotMatch(storyMessage, /【楼层信息】|【楼层|正文：|Floor 3|\[assistant\]|role=|message_id|swipe_id/);
   assert.match(outputMessage, /World Model/);
   assert.equal(messages.some(message => /```|<json>|JSON 格式/i.test(message.content)), false);
   assert.match(buildWorldModelPrompt({character: {description: '普通资料'}}), /AnalysisInput/);

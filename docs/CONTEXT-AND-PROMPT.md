@@ -156,7 +156,15 @@ Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。�
 
 所有 Chat narrative floor 都必须先解析 authoritative active content，再逐楼层判断 regex 是否适用并独立执行 global regex 与 Chat-local regex，最后按剧情顺序合并为一个 `ASSISTANT` message。不能先合并原文再执行 regex，也不能让 Target Floor 绕过该流程。
 
-`regex_user_enabled` 只控制 user floor 是否执行剧情 regex：为 `false` 时 user floor 仍可进入上下文，但保留现有不执行 regex 的语义；为 `true` 时 user floor 执行 global regex 后再执行 Chat-local regex。opening floor 的既有特殊语义保持不变。Recent Story 与 Target Floor 使用同一个逐楼层处理 contract，并在合并后分别保留楼层边界和目标标记。
+`regex_user_enabled` 只控制 user floor 是否执行剧情 regex：为 `false` 时 user floor 仍可进入上下文，但保留现有不执行 regex 的语义；为 `true` 时 user floor 执行 global regex 后再执行 Chat-local regex。opening floor 的既有特殊语义保持不变。Recent Story 与 Target Floor 使用同一个逐楼层处理 contract；内部 DTO 保留每层边界和目标标记，最终 narrative presentation 只显示处理后的正文与必要的历史/目标语义标题。
+
+### Narrative Presentation Contract
+
+楼层号、消息 role、message_id、swipe metadata 和其它 Floor provenance 只保留在内部逐楼 DTO，属于 Runtime/Collector 的追踪信息，不属于模型可读的剧情正文。每层内容必须独立完成 active swipe 解析、regex 判断、regex 处理和 sanitization；处理完成后才按真实剧情顺序以自然段落合并，不能先拼接原文再处理。
+
+最终 narrative presentation 不应看起来像 Runtime debug dump：不显示 floor number、user/assistant role、`正文：`、message_id、swipe_id、content_hash 或 message_version，也不为每层自动插入分隔线。空的 processed floor 从最终正文中省略，但内部 DTO 可以保留供测试和诊断；Target Floor 处理为空时不得回退到 raw content。
+
+Event 使用 `【剧情上下文】` 表示非目标历史内容，使用 `【本次分析内容】` 表示唯一的目标内容；没有历史时省略空的剧情上下文 section。World Model 的 Recent Story 使用 `【近期剧情参考】`。每个任务的历史与目标 narrative 最终都只生成一个 `ASSISTANT` message，Prompt Preview 必须直接展示同一份真实 message content。
 
 ## 11. Runtime authoritative identity
 

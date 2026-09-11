@@ -314,6 +314,124 @@ test('Event narrative formatter removes a target floor even when only one side h
   assert.equal(narrative.match(/TARGET_CANONICAL/g)?.length ?? 0, 1);
 });
 
+test('Event narrative presents processed floors as one clean assistant message', () => {
+  const input = buildEventAnalysisInput({
+    chatId: 'chat_fixture',
+    floorVersion: {
+      chat_id: 'chat_fixture',
+      message_id: 'message_target',
+      floor: 3,
+      swipe_id: 1,
+      content_hash: 'hash_fixture',
+      message_version: 'v1:hash_fixture',
+    },
+    recent_story: {
+      items: [
+        {floor: 1, message_id: 'message_history_a', swipe_id: 0, role: 'assistant', content: 'HISTORY_A'},
+        {floor: 2, message_id: 'message_history_b', swipe_id: 0, role: 'user', content: 'HISTORY_B'},
+      ],
+    },
+    current_floor: {
+      floor: 3,
+      message_id: 'message_target',
+      swipe_id: 1,
+      role: 'assistant',
+      narrative: 'TARGET_FLOOR',
+    },
+  });
+  const narrative = buildEventAnalysisMessages(input)
+    .find(message => message.role === 'assistant')?.content ?? '';
+
+  assert.equal(narrative, [
+    '【剧情上下文】',
+    '',
+    'HISTORY_A',
+    '',
+    'HISTORY_B',
+    '',
+    '【本次分析内容】',
+    '',
+    'TARGET_FLOOR',
+  ].join('\n'));
+  assert.doesNotMatch(narrative, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
+  assert.equal(narrative.match(/TARGET_FLOOR/g)?.length ?? 0, 1);
+});
+
+test('Event narrative omits empty history and does not create an empty target section', () => {
+  const input = buildEventAnalysisInput({
+    chatId: 'chat_fixture',
+    floorVersion: {
+      chat_id: 'chat_fixture',
+      message_id: 'message_target',
+      floor: 3,
+      swipe_id: 1,
+      content_hash: 'hash_fixture',
+      message_version: 'v1:hash_fixture',
+    },
+    recent_story: {
+      items: [
+        {floor: 1, role: 'assistant', content: ''},
+        {floor: 2, role: 'assistant', content: 'HISTORY_ONLY'},
+      ],
+    },
+    current_floor: {
+      floor: 3,
+      message_id: 'message_target',
+      swipe_id: 1,
+      role: 'assistant',
+      narrative: '',
+    },
+  });
+  const narrative = buildEventAnalysisMessages(input)
+    .find(message => message.role === 'assistant')?.content ?? '';
+
+  assert.equal(narrative, '【剧情上下文】\n\nHISTORY_ONLY');
+  assert.doesNotMatch(narrative, /【本次分析内容】|无|【楼层|正文：/u);
+});
+
+test('Event narrative with only a target omits the empty history section', () => {
+  const input = buildEventAnalysisInput({
+    chatId: 'chat_fixture',
+    floorVersion: {
+      chat_id: 'chat_fixture',
+      message_id: 'message_target',
+      floor: 3,
+      swipe_id: 1,
+      content_hash: 'hash_fixture',
+      message_version: 'v1:hash_fixture',
+    },
+    recent_story: {items: []},
+    current_floor: {
+      floor: 3,
+      message_id: 'message_target',
+      swipe_id: 1,
+      role: 'assistant',
+      narrative: 'TARGET_ONLY',
+    },
+  });
+  const narrative = buildEventAnalysisMessages(input)
+    .find(message => message.role === 'assistant')?.content ?? '';
+
+  assert.equal(narrative, '【本次分析内容】\n\nTARGET_ONLY');
+  assert.doesNotMatch(narrative, /【剧情上下文】|【前文】|无/u);
+});
+
+test('World Model presents Recent Story as one clean assistant message', () => {
+  const messages = buildWorldModelMessages({
+    recent_story: {
+      items: [
+        {floor: 1, role: 'assistant', content: 'WORLD_HISTORY_A'},
+        {floor: 2, role: 'user', content: 'WORLD_HISTORY_B'},
+      ],
+    },
+  });
+  const narrativeMessages = messages.filter(message => message.role === 'assistant');
+
+  assert.equal(narrativeMessages.length, 1);
+  assert.equal(narrativeMessages[0].content, '【近期剧情参考】\n\nWORLD_HISTORY_A\n\nWORLD_HISTORY_B');
+  assert.doesNotMatch(narrativeMessages[0].content, /【楼层|正文：|role=|message_id|swipe_id/u);
+});
+
 test('selected context, readable external memory, and token estimate are shared by World/Event', async () => {
   const selected = selectedSourceItems();
   const input = await collectAnalysisContext({
@@ -439,7 +557,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
   assert.equal(messages.filter(message => message.role === 'assistant').length, 1);
   assert.equal(messages.filter(message => message.role === 'system').length <= 4, true);
   assert.equal(messages.at(-2).content.includes('【剧情上下文】'), true);
-  assert.equal(messages.at(-2).content.includes('【本次目标楼层'), true);
+  assert.equal(messages.at(-2).content.includes('【本次分析内容】'), true);
   assert.equal(messages.at(-1).role, 'user');
 
   const markerOrder = [
@@ -456,8 +574,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     '【当前 World Model 参考】',
     '【现有 BioWeave 事实参考】',
     '【剧情上下文】',
-    '【楼层 2｜',
-    '【本次目标楼层｜',
+    '【本次分析内容】',
     '请根据以上资料分析本次目标楼层',
   ];
   const combinedPrompt = messages.map(message => message.content).join('\n');
@@ -471,6 +588,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
   assert.equal(messages[2].content.includes('【角色卡：character_display 的背景资料】'), true);
   assert.equal(messages[2].content.includes('【世界书参考资料】'), true);
   assert.equal(messages.at(-2).role, 'assistant');
+  assert.doesNotMatch(messages.at(-2).content, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
   assert.doesNotMatch(messages.map(message => message.content).join('\n'), /JSON\.stringify\(analysisInput\)|"recent_story"\s*:/u);
 });
 
@@ -510,7 +628,7 @@ test('Event and World Model keep configured SYSTEM boundaries absolute and aggre
   assert.match(referenceMessages[0].content, /【世界书参考资料】/);
   assert.match(referenceMessages[0].content, /【persona_display 的人物设定】/);
   assert.match(eventMessages.find(message => message.role === 'assistant').content, /REFERENCE_FLOOR/);
-  assert.match(eventMessages.find(message => message.role === 'assistant').content, /【本次目标楼层/);
+  assert.match(eventMessages.find(message => message.role === 'assistant').content, /【本次分析内容】/);
 });
 
 test('Event Prompt Preview is generated from the exact Event message builder', async () => {

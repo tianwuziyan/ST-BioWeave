@@ -435,7 +435,7 @@ test('Event messages use deterministic ordered text blocks instead of serialized
     '【用户 的人物设定】',
     '【当前 World Model 参考】',
     '【剧情上下文】',
-    '【本次目标楼层｜',
+    '【本次分析内容】',
     '【本次分析边界】',
     '【Event 输出契约】',
   ]) assert.match(content, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -447,14 +447,16 @@ test('Event messages use deterministic ordered text blocks instead of serialized
     '【用户 的人物设定】',
     '【当前 World Model 参考】',
     '【剧情上下文】',
-    '【本次目标楼层｜',
+    '【本次分析内容】',
   ].map(marker => prompt.indexOf(marker));
   assert.deepEqual(order, [...order].sort((left, right) => left - right));
   assert.match(content, /COMMON_ANALYSIS_MARKER/);
   assert.match(content, /TARGET_FLOOR_MARKER/);
   assert.match(content, /RECENT_STORY_MARKER/);
   assert.match(content, /PERSONA_CONTEXT_MARKER/);
-  assert.ok(content.indexOf('【Event 输出契约】') < content.indexOf('【近期剧情参考】'));
+  assert.ok(content.indexOf('【Event 输出契约】') < content.indexOf('【剧情上下文】'));
+  const narrative = messages.find(message => message.role === 'assistant')?.content ?? '';
+  assert.doesNotMatch(narrative, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
   assert.equal(messages.at(-1).role, 'user');
   assert.match(content.trimEnd(), /只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。$/);
   assert.doesNotMatch(content, /api_key|authorization|secret/i);

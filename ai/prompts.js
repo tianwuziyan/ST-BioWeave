@@ -264,13 +264,6 @@ function formatStoryTimeReference(storyTime, names) {
   ].join('\n')
 }
 
-function narrativeRoleLabel(role) {
-  if (role === 'user') return '用户'
-  if (role === 'assistant') return '角色'
-  if (role === 'system') return '系统'
-  return '未知'
-}
-
 function narrativeItemsMatch(left, right) {
   if (!left || !right) return false
   const leftMessageId = readableText(left.message_id ?? left.messageId)
@@ -286,35 +279,33 @@ function narrativeItemsMatch(left, right) {
   return Number.isFinite(leftFloor) && Number.isFinite(rightFloor) && leftFloor === rightFloor
 }
 
-function formatNarrativeFloor(item, names, {target = false, storyTime = null} = {}) {
-  const narrative = expandPlaceholders(item?.content ?? item?.narrative, names)
-  if (!narrative) return ''
-  const floor = item?.floor ?? '未知'
-  const role = narrativeRoleLabel(item?.role)
-  const heading = target
-    ? `【本次目标楼层｜楼层 ${floor}｜${role}】`
-    : `【楼层 ${floor}｜${role}】`
-  const time = target ? formatStoryTimeReference(storyTime, names) : ''
-  return [heading, time, `正文：\n${narrative}`].filter(Boolean).join('\n')
+function formatNarrativeContent(item, names) {
+  return expandPlaceholders(item?.content ?? item?.narrative, names)
 }
 
 function formatNarrativeContext(items, targetItem = null, names, storyTime = null) {
   const recentItems = (Array.isArray(items) ? items : [])
     .filter(item => !narrativeItemsMatch(item, targetItem))
-  const recentSections = recentItems
-    .map(item => formatNarrativeFloor(item, names))
+  const recentContent = recentItems
+    .map(item => formatNarrativeContent(item, names))
     .filter(Boolean)
-  const targetSection = formatNarrativeFloor(targetItem, names, {target: true, storyTime})
-  if (!recentSections.length && !targetSection) return ''
-  const sections = [
-    recentSections.length ? ['【近期剧情参考】', recentSections.join('\n\n')].join('\n') : '',
-    targetSection,
-  ].filter(Boolean)
-  return [
-    '【剧情上下文】',
-    '以下内容来自当前 Chat，并已按照 BioWeave 设置逐楼层解析并处理。前面的楼层仅作为剧情参考，标记为“本次目标楼层”的楼层才是本次需要直接提取事件事实的对象。',
-    sections.join('\n\n'),
-  ].join('\n')
+  if (!targetItem) {
+    return recentContent.length
+      ? ['【近期剧情参考】', recentContent.join('\n\n')].join('\n\n')
+      : ''
+  }
+
+  const targetContent = formatNarrativeContent(targetItem, names)
+  const sections = []
+  if (recentContent.length) sections.push(['【剧情上下文】', recentContent.join('\n\n')].join('\n\n'))
+  if (targetContent) {
+    sections.push([
+      '【本次分析内容】',
+      formatStoryTimeReference(storyTime, names),
+      targetContent,
+    ].filter(Boolean).join('\n\n'))
+  }
+  return sections.join('\n\n')
 }
 
 function formatEventCharacterReference(input, names) {
