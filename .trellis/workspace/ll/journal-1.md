@@ -336,3 +336,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 完成人物详情单页人物卡并同步 GitHub
+<!-- trellis-session: v=2 fp=c3af41ec17374a26 -->
+
+**Date**: 2026-09-11
+**Task**: 完成人物详情单页人物卡并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+审计并完成人物详情单页化：移除详情 Tab 状态与旧样式，统一展示摘要、能力、状态、相关事件、推演、关系和备注；补充 Event 去重、DTO 空状态、Tracking Subject 入口和顶级导航回归测试；npm run check 356/356 通过，已提交并推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e97d0eae52c51f79f42a5baf2064bcb04c25f078` | 重构人物详情为单页人物卡 |
+
+### Status
+
+[OK] **Completed**
