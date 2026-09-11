@@ -380,3 +380,38 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: 收紧单楼层事件合同并清理产品页调试字段
+<!-- trellis-session: v=2 fp=870b641ab339f986 -->
+
+**Date**: 2026-09-12
+**Task**: 收紧单楼层事件合同并清理产品页调试字段
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+将一个 Target Floor Version 的 Event Analysis 固定为 0/1 consolidated BiologicalEvent，拒绝多 Event response 并验证失败刷新保留旧成功结果；移除 Overview、Characters、Character Detail、Events 普通页面的调试与 provenance 字段，保留编辑绑定与 Settings Advanced/Debug Popup。
+
+### Main Changes
+
+- 收紧 AI Prompt/Parser 合同并补充 Runtime/UI 回归测试
+- 同步 Product UI、CSS、文档与 domain spec 边界
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bcc39fb` | 收紧单楼层事件合同并清理产品页调试字段 |
+
+### Testing
+
+- [OK] npm run check、node --check、git diff --check 全部通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 推送当前分支到 origin
