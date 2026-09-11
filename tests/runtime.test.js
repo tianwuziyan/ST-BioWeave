@@ -4,6 +4,7 @@ import {createChatBoundary,STALE_CHAT} from '../runtime/chat.js';
 import {createRuntime,createSillyTavernAdapter} from '../runtime/events.js';
 import {floorVersion} from '../runtime/floor.js';
 import {createStore} from '../storage/store.js';
+import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 
 function createAdapter() {
   let chatId='chat-a';
@@ -146,18 +147,27 @@ test('runtime registry refresh scans current Floor facts without requesting AI',
       type:'sexual_activity',
       status:'confirmed',
       source:version,
-      participants:[{
-        character_id:'char-a',
-        display_name:'A',
-        event_role:'potential_gestational_subject',
-        reproductive_capabilities_used:{can_carry_pregnancy:true},
-      }],
+      participants:[
+        {
+          character_id:'char-a',
+          display_name:'A',
+          event_role:'potential_gestational_subject',
+          reproductive_capabilities_used:{can_carry_pregnancy:true},
+        },
+        {
+          character_id:'char-b',
+          display_name:'B',
+          event_role:'potential_conception_source',
+          reproductive_capabilities_used:{can_cause_pregnancy:true},
+        },
+      ],
       pregnancy_relevance:{
         relevant:true,
         possible_conception:true,
         gestational_subject_ids:['char-a'],
-        counterpart_ids:[],
+        counterpart_ids:['char-b'],
       },
+      source_evidence:[{kind:CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,text:'actual exposure'}],
     }],
   });
   const runtime=createRuntime({adapter});

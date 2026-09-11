@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"独立检查 actual exposure consistency、Event 引用完整性、Runtime 保存前校验和 Tracking eligibility 未被扩大。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"独立检查人物卡是否只渲染 DTO、是否保留空状态以及是否避免 UI 读取 protection/physical effect/event role 做判断。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"独立检查 plain DOM、测试、命名、宿主集成和 git diff 范围。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"独立检查 AI/Domain/Runtime/Tracking/UI 数据流是否保持单一业务事实源。"}
+{"file":".trellis/tasks/09-11-tighten-reproductive-exposure/prd.md","reason":"按本任务验收标准逐项复核 direct participant、counterpart、barrier outcome、UI projection 和冻结范围。"}
+{"file":".trellis/tasks/09-11-tighten-reproductive-exposure/design.md","reason":"按技术设计复核 evidence marker、validator trade-off、兼容风险和 excluded modules。"}
+{"file":".trellis/tasks/09-11-tighten-reproductive-exposure/research/code-audit.md","reason":"用实现前审计证据核对是否修复旧语义且没有误改 Runtime Registry/Tracking。"}

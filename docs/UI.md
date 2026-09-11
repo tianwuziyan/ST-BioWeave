@@ -20,13 +20,13 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 人物列表可以进入 Tracking Subject 的人物详情单页人物卡，详情只改变 UI focus，不改变 Chat Scope。人物卡按固定顺序同时显示：人物摘要（Summary）、生殖能力（Reproductive Capabilities）、当前状态（Current State）、受孕相关记录（Related Events）、推演（Projection）、关系（Relations）和备注（Notes）；这些是连续纵向 section，不是互斥 Tab。详情入口唯一门槛仍是当前 Chat 的 `tracking_subjects` 中存在对应 `character_id`，单独存在的 `character_profiles` 不会创建详情入口。
 
-人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示完整用户可读事实、全部参与者和 counterpart；当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
+人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
 
 ## Phase 2A 业务页面契约
 
 ### 人物列表与 Tracking Subject
 
-人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。`BiologicalEvent.participants[]` 记录事件中的全部实际参与者，不等于 Tracking Subject；Character Profile 也不等于人物列表实体。
+人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。对 `sexual_activity`，`BiologicalEvent.participants[]` 只记录 actual reproductive exposure chain 的直接参与者，不等于 Tracking Subject；Character Profile 也不等于人物列表实体。
 
 进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
 
@@ -36,11 +36,11 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 ### 历史事件页
 
-事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、全部 Participants、妊娠相关性、Confidence 和简短证据；Reproductive Role 使用可读标签，事件 ID、Source、结构化时间和其它 raw 字段放入折叠的详情/调试区。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。
+事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、canonical Participants、妊娠相关性、Confidence 和简短证据；Reproductive Role 使用可读标签，事件 ID、Source、结构化时间和其它 raw 字段放入折叠的详情/调试区。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。人物 exposure card 不重新计算 actual exposure，只显示 `counterpart_ids[]` 投影出的相关对象。
 
 当当前 Chat 没有 Event 时，页面必须区分“当前楼层尚未分析”和“当前楼层已分析成功但 0 Event”，并提供调用生产 Runtime pipeline 的“分析当前楼层 / 重新分析当前楼层”入口。
 
-Event 的完整 NSFW 历史事实只存在 Floor-bound Event；页面显示人物 exposure 时通过 `event_id` 引用读取 Event，不把完整事件对象复制进人物卡。`counterpart_ids` 和 `gestational_subject_ids` 始终按数组渲染，空数组、单项和多项都必须可显示。
+Event 的 actual reproductive exposure 事实只存在 Floor-bound Event；页面显示人物 exposure 时通过 `event_id` 引用读取 Event，不把完整事件对象复制进人物卡。`counterpart_ids` 和 `gestational_subject_ids` 始终按数组渲染，空数组、单项和多项都必须可显示。
 
 Event 编辑直接修改当前有效事实并保留 `event_id` 与 authoritative Source；删除是真删除，不新增 `user_override` priority layer。保存和删除完成后由业务层重建 Tracking Registry，UI 不自行补齐或删除 Subject。
 

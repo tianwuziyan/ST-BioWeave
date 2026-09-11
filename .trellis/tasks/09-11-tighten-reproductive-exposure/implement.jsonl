@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"遵循 BiologicalEvent normalize/validate、Runtime 保存前校验、participants/counterpart 数组和 Tracking/UI 边界；本任务需要同步收紧实际暴露契约。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"保持 plain DOM 页面模块和 app owner 边界；人物 exposure card 只展示 Runtime/Core DTO，不新增 UI 业务判断。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 UI 不新增业务计算、测试要求、宿主集成边界和变更后的 source-level regression。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 Prompt、AI DTO、Domain Event、Runtime、Tracking 与 UI projection 的跨层语义一致性。"}
+{"file":".trellis/tasks/09-11-tighten-reproductive-exposure/research/code-audit.md","reason":"提供当前 Prompt、Domain validator、Runtime 调用点、Tracking 边界和 Character UI 重复字段的审计证据。"}

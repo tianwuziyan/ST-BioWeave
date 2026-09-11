@@ -5,6 +5,7 @@ import {
   explainTrackingDecision,
   rebuildTrackingRegistry,
 } from '../core/tracking.js';
+import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 
 function event(overrides = {}) {
   return {
@@ -44,7 +45,10 @@ function event(overrides = {}) {
       counterpart_ids: ['char-b'],
       confidence: 0.8,
     },
-    source_evidence: [{kind: 'current_floor', text: 'event evidence'}],
+    source_evidence: [
+      {kind: 'current_floor', text: 'event evidence'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'actual exposure evidence'},
+    ],
     ...overrides,
   };
 }
@@ -135,26 +139,30 @@ test('tracking diagnostics explain unknown and false carrying capability', () =>
 test('tracking diagnostics explain absent conception exposure and missing participants', () => {
   const irrelevant = explainTrackingDecision(event({
     pregnancy_relevance: {
-      ...event().pregnancy_relevance,
       relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
     },
   }));
   assert.deepEqual(irrelevant.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
     eligible: false,
-    reasons: ['PREGNANCY_RELEVANCE_FALSE'],
+    reasons: ['INVALID_EVENT', 'NOT_GESTATIONAL_SUBJECT'],
   });
 
   const noExposure = explainTrackingDecision(event({
     pregnancy_relevance: {
-      ...event().pregnancy_relevance,
+      relevant: false,
       possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
     },
   }));
   assert.deepEqual(noExposure.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
     eligible: false,
-    reasons: ['POSSIBLE_CONCEPTION_FALSE'],
+    reasons: ['INVALID_EVENT', 'NOT_GESTATIONAL_SUBJECT'],
   });
 
   const missingParticipant = explainTrackingDecision(event({
@@ -167,8 +175,22 @@ test('tracking diagnostics explain absent conception exposure and missing partic
   assert.deepEqual(missingParticipant.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
     eligible: false,
-    reasons: ['PARTICIPANT_NOT_FOUND'],
+    reasons: ['INVALID_EVENT', 'PARTICIPANT_NOT_FOUND'],
   });
+});
+
+test('no-exposure sexual activity cannot create a tracking subject', () => {
+  const noExposure = event({
+    participants: [],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+    },
+  });
+  assert.deepEqual(eligibleGestationalSubjects(noExposure), []);
+  assert.deepEqual(rebuildTrackingRegistry([noExposure]).tracking_subjects, {});
 });
 
 test('tracking diagnostics explain nonsexual, excluded, and invalid events', () => {
@@ -197,13 +219,20 @@ test('registry supports multiple subjects, counterpart references, repeated expo
     event_id: 'evt-2',
     source: {...first.source, message_id: 'message-2', floor: 2, content_hash: 'hash-2', message_version: 'v2'},
     participants: [
-      {...first.participants[0]},
+      ...first.participants,
       {
         character_id: 'char-c',
         display_name: 'C',
         event_role: 'potential_gestational_subject',
         reproductive_capabilities_used: {can_carry_pregnancy: true},
         evidence: [{kind: 'narrative', text: 'second exposure'}],
+      },
+      {
+        character_id: 'char-d',
+        display_name: 'D',
+        event_role: 'potential_conception_source',
+        reproductive_capabilities_used: {can_cause_pregnancy: true},
+        evidence: [{kind: 'narrative', text: 'second source'}],
       },
     ],
     pregnancy_relevance: {

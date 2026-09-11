@@ -45,12 +45,13 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 实现时必须保持以下边界：
 
-- 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。`BiologicalEvent.participants[]` 是事件事实中的完整参与者集合，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
-- BiologicalEvent 是完整 NSFW 历史事实的单一来源。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
+- 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
+- BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
 - Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`；只有通过统一 normalize / validate 的结果才能写入 Floor。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。
 - `story_time` 是结构化存储对象；`display` 只由 formatter 显示。排序和计算只使用 `normalized`、`day_index` 等结构化字段，无法可靠获取时保存 `null`。SevenDaysCal 只能通过公开、可注入的 Adapter 使用，缺失时降级到 BioWeave Fallback StoryTimeProvider。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段只实现 `sexual_activity` 的 Tracking 闭环。
+- `counterpart_ids[]` 只保存 `participants[]` 中最终实际造成 conception-relevant exposure 的 source ID。`possible_conception=true` 必须同时有 `relevant=true`、非空且 participant-backed 的 subject/source 数组，`participants[]` 不能包含其它对象，以及 `source_evidence` 中 kind 为 `conception_relevant_exposure` 的 marker；无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
 - `true`、`false`、`null` capability 三态不可压缩；`null` 不能变为 `true`。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
 - StateReducer、Snapshot、Projection、Genealogy、完整妊娠计算、Gestational Age 和预计分娩日不在本阶段接通；对应页面/领域模块保持空状态或兼容骨架。
 
@@ -70,7 +71,7 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 ### 页面职责
 
-`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”，稳定 ID 等技术字段默认放入调试区；事件页展示真实 Event 的用户可读类型、Story Time、Location、全部 Participants、妊娠相关性、Status、Confidence 和证据，Source 与 raw schema 字段放入折叠详情；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
+`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”，稳定 ID 等技术字段默认放入调试区；事件页展示真实 Event 的用户可读类型、Story Time、Location、canonical Participants、妊娠相关性、Status、Confidence 和证据，Source 与 raw schema 字段放入折叠详情；人物 exposure card 只把 `counterpart_ids[]` 映射为“相关对象”，不展示全部 participants 或读取 protection、physical_effect、capability、event_role 做判断；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
 
 ## 推荐实施顺序
 

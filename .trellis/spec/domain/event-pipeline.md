@@ -49,8 +49,11 @@ level. A legacy top-level `source` may be present and is ignored; any other
 unknown top-level field is rejected. An AI event does not require or trust
 `event_id` or `source`; legacy copies of those fields inside an event are
 ignored. Each accepted AI event contains biological facts such as `type`,
-`status`, structured `story_time`, `location`, `participants`,
-`pregnancy_relevance`, `source_evidence`, and optional `physical_effect`.
+`status`, structured `story_time`, `location`, directly relevant
+`participants`, `pregnancy_relevance`, `source_evidence`, and optional
+`physical_effect`. For `sexual_activity`, participants are only the direct
+members of the actual reproductive exposure chain; other Event types retain
+only objects directly relevant to that biological fact.
 
 After parsing, Runtime generates a deterministic canonical `event_id` from the
 authoritative Floor Version and response ordinal, then binds the complete
@@ -67,9 +70,24 @@ Every persisted, accepted Domain Event has:
   `day_index`, `provider`, `precision`, and `confidence`;
 - `location`, `participants[]`, `pregnancy_relevance`, `source_evidence`,
   and a complete Floor/Swipe `source`;
+- for `possible_conception: true`, `relevant: true`, non-empty
+  participant-backed subject/source arrays, and a
+  `source_evidence` item whose `kind` is
+  `conception_relevant_exposure`;
 - participant capability keys that are each `true`, `false`, or `null`;
 - `gestational_subject_ids[]` and `counterpart_ids[]`, never a scalar or a
   comma-delimited display string.
+
+For `sexual_activity`, `counterpart_ids[]` is a subset of `participants[]`
+containing only actual exposure source IDs. A sexual activity with no
+conception-relevant exposure, if retained at all, has no participants, uses
+`relevant: false`, `possible_conception: false`, and empty subject/source
+arrays. A valid barrier with no exposure, external/no-path outcome,
+insertion-only, and contact-only cases follow that shape. Barrier/protection
+actions are evidence; the final actual exposure outcome controls the Event.
+`physical_effect.gestational_substance_intake`,
+when present, is only `true`, `false`, or `null`; `true` requires the same
+canonical exposure evidence marker.
 
 `story_time.display` is for formatting only. Sorting and elapsed-time logic
 must use `day_index` or another structured normalized value.
@@ -94,8 +112,11 @@ active subject has no exposure, but it is not displayed as an active subject.
 ### UI boundary
 
 Characters, Events, and Overview consume domain DTOs. UI code must not derive
-eligibility from gender, participant labels, or event roles. UI formatting may
-map IDs to display names and format Story Time.
+eligibility or exposure from gender, participant labels, event roles,
+protection, ejaculation, or physical effects. Character exposure cards render
+only time, location, Event type/status, debug identity, and one `相关对象`
+row mapped from `counterpart_ids[]` against canonical Event participants. UI
+formatting may map IDs to display names and format Story Time.
 
 ### Runtime coordinator
 
@@ -136,6 +157,9 @@ API/schema failure.
 | Arbitrary unknown top-level field | Reject with `unexpected_top_level_field` and a safe JSON path |
 | Invalid event role, conception flag, evidence shape, or participant reference | Reject with a specific diagnostic code and safe JSON path |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
+| `possible_conception: true` without direct exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
+| `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |
+| Invalid `physical_effect.gestational_substance_intake` shape | Reject with a safe field path; only boolean/null is accepted |
 | Incomplete or mismatched Floor Version source | Bind to the authoritative version or reject before storage; stale Events are inactive |
 | `can_carry_pregnancy: null` | Never create a Tracking Subject |
 | NSFW without `relevant === true` and `possible_conception === true` | Create zero Tracking Subjects |
@@ -150,9 +174,13 @@ API/schema failure.
 
 ## 5. Good / Base / Bad Cases
 
-- Good: one sexual Event has one participant with explicit carrying
-  capability and one or more counterpart IDs; one subject references that
-  Event.
+- Good: one sexual Event has a direct gestational subject, one or more actual
+  source IDs, and the canonical exposure evidence marker; one subject
+  references that Event.
+- Good: intact barrier, external/no-path outcome, insertion-only, and
+  contact-only cases remain valid unrelated Events with empty relevance IDs;
+  barrier failure/removal that reaches a valid exposure path retains only the
+  actual source IDs.
 - Good: one Event names two explicit gestational subjects; the registry has
   two subjects, while a conception source remains absent from Characters.
 - Good: the overlay is never opened; `MESSAGE_RECEIVED` reaches the Runtime
@@ -169,8 +197,11 @@ API/schema failure.
 ## 6. Tests Required
 
 - Parser assertions for fixed AI envelopes, all existing Event types, strict
-  JSON, array-only references, canonical evidence, diagnostic paths, and
-  ignoring legacy identity/source fields.
+  JSON, array-only references, canonical evidence, typed physical effects,
+  diagnostic paths, and ignoring legacy identity/source fields.
+- Domain assertions for actual-exposure consistency, 0/1/N source IDs,
+  participant-backed references, no-exposure sexual Events, and the
+  `conception_relevant_exposure` evidence marker.
 - Runtime assertions that every successful AI response receives a generated
   canonical Event ID and authoritative source before Floor save; model-provided
   identity/provenance never survives as persisted identity.

@@ -1226,7 +1226,21 @@ function validateRawEventShape(raw, eventIndex) {
   if (hasOwn(raw, 'physical_effect')
     && raw.physical_effect !== null
     && (typeof raw.physical_effect !== 'object' || Array.isArray(raw.physical_effect))) {
-    throw invalidEventAnalysis('EVENT_ANALYSIS_PHYSICAL_EFFECT_INVALID');
+    throw eventDiagnostic(
+      'invalid_physical_effect',
+      `${basePath}.physical_effect`,
+      'EVENT_ANALYSIS_PHYSICAL_EFFECT_INVALID',
+    );
+  }
+  if (raw.physical_effect && typeof raw.physical_effect === 'object'
+    && hasOwn(raw.physical_effect, 'gestational_substance_intake')
+    && raw.physical_effect.gestational_substance_intake !== null
+    && typeof raw.physical_effect.gestational_substance_intake !== 'boolean') {
+    throw eventDiagnostic(
+      'invalid_physical_effect',
+      `${basePath}.physical_effect.gestational_substance_intake`,
+      'EVENT_ANALYSIS_PHYSICAL_EFFECT_GESTATIONAL_SUBSTANCE_INTAKE_INVALID',
+    );
   }
 }
 

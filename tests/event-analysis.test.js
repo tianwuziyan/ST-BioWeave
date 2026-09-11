@@ -12,6 +12,7 @@ import {
 } from '../ai/prompts.js';
 import {buildEventAnalysisInput} from '../ai/input-builder.js';
 import {createAnalyzer, parseEventAnalysisResponse} from '../ai/analyzer.js';
+import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 import {renderAnalysisDebugPopupContent} from '../ui/settings.js';
 import {SILLYTAVERN_CURRENT_API} from '../storage/schema.js';
 
@@ -110,6 +111,11 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /counterpart_ids\[\]/);
   assert.match(prompt, /0、1 或 N/);
   assert.match(prompt, /症状/);
+  assert.match(prompt, /actual reproductive exposure/);
+  assert.match(prompt, /完整有效阻隔/);
+  assert.match(prompt, /破裂、脱落、摘除后/);
+  assert.match(prompt, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
+  assert.doesNotMatch(prompt, /全部实际参与者/);
   assert.match(prompt, /目标楼层：12/);
   assert.match(prompt, /Event source 由 Runtime 绑定/);
   assert.doesNotMatch(prompt, /Chat ID:/);
@@ -282,7 +288,7 @@ test('World Model analyzer injects the same common analysis prompt layer', async
   assert.match(requestText, /整理当前 Chat 的生物学世界规则/);
 });
 
-function conceptionFixture() {
+function conceptionFixture(overrides = {}) {
   return event({
     participants: [
       participant('character_subject', {
@@ -315,7 +321,11 @@ function conceptionFixture() {
       counterpart_ids: ['character_source'],
       confidence: 0.9,
     },
-    source_evidence: [{kind: 'narrative', text: 'The current floor establishes actual conception exposure.'}],
+    source_evidence: [
+      {kind: 'narrative', text: 'The current floor establishes actual conception exposure.'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'An abstract reproductive mechanism entered the valid path.'},
+    ],
+    ...overrides,
   });
 }
 
@@ -333,6 +343,9 @@ test('Event protected output contract exposes the exact Domain enums and scalar 
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /\{"kind":"\.\.\.","text":"\.\.\."\}/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /confidence 只能是 null 或 0 到 1 之间的 number/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /event_id.*source.*Runtime|Runtime.*event_id.*source/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /gestational_substance_intake/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /actual reproductive exposure chain/);
 });
 
 test('AI Event DTO may omit identity and ignore only the legacy top-level source', () => {
@@ -407,6 +420,13 @@ test('Event parser exposes safe diagnostic codes and JSON paths', () => {
       }})]},
       code: 'participant_reference_invalid',
       path: '$.events[0].pregnancy_relevance.gestational_subject_ids[0]',
+    },
+    {
+      payload: {schema_version: 1, events: [aiOnlyEvent({physical_effect: {
+        gestational_substance_intake: 'true',
+      }})]},
+      code: 'invalid_physical_effect',
+      path: '$.events[0].physical_effect.gestational_substance_intake',
     },
   ];
   for (const {payload, code, path} of cases) {
@@ -505,7 +525,57 @@ test('canonical generic sexual-activity response parses with structured evidence
   assert.deepEqual(parsed.events[0].pregnancy_relevance.gestational_subject_ids, ['character_subject']);
   assert.deepEqual(parsed.events[0].pregnancy_relevance.counterpart_ids, ['character_source']);
   assert.deepEqual(subject.evidence, [{kind: 'capability', text: 'The current evidence supports gestational capability.'}]);
-  assert.deepEqual(parsed.events[0].source_evidence, [{kind: 'narrative', text: 'The current floor establishes actual conception exposure.'}]);
+  assert.deepEqual(parsed.events[0].source_evidence, [
+    {kind: 'narrative', text: 'The current floor establishes actual conception exposure.'},
+    {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'An abstract reproductive mechanism entered the valid path.'},
+  ]);
+});
+
+test('Event parser preserves zero, one, and multiple abstract exposure sources as arrays', () => {
+  const noExposure = event({
+    participants: [participant('character_subject')],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+  });
+  const oneSource = conceptionFixture();
+  const multipleSources = conceptionFixture({
+    participants: [
+      ...conceptionFixture().participants,
+      participant('character_source_2', {event_role: 'potential_conception_source'}),
+    ],
+    pregnancy_relevance: {
+      ...conceptionFixture().pregnancy_relevance,
+      counterpart_ids: ['character_source', 'character_source_2'],
+    },
+  });
+  const parsed = parseEventAnalysisResponse(response([noExposure, oneSource, multipleSources]), floorVersion);
+  assert.deepEqual(parsed.events.map(item => item.pregnancy_relevance.counterpart_ids), [
+    [],
+    ['character_source'],
+    ['character_source', 'character_source_2'],
+  ]);
+});
+
+test('Event parser validates the typed physical effect while leaving exposure consistency to Domain', () => {
+  const parsed = parseEventAnalysisResponse(response([conceptionFixture({
+    physical_effect: {gestational_substance_intake: true},
+  })]), floorVersion);
+  assert.equal(parsed.events[0].physical_effect.gestational_substance_intake, true);
+  assert.equal(parseEventAnalysisResponse(response([conceptionFixture({
+    physical_effect: {gestational_substance_intake: null},
+  })]), floorVersion).events[0].physical_effect.gestational_substance_intake, null);
+  assert.throws(
+    () => parseEventAnalysisResponse(response([conceptionFixture({
+      physical_effect: {gestational_substance_intake: 'true'},
+    })]), floorVersion),
+    error => error?.diagnostic_code === 'invalid_physical_effect'
+      && error?.diagnostic_path === '$.events[0].physical_effect.gestational_substance_intake',
+  );
 });
 
 test('common analysis prompt reaches Event and World builders while Persona stays Event-only', () => {

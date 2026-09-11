@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRuntime} from '../runtime/events.js';
 import {createAnalyzer} from '../ai/analyzer.js';
+import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 import {SILLYTAVERN_CURRENT_API} from '../storage/schema.js';
 
 function eventResult(eventId = 'evt-1', overrides = {}) {
@@ -20,15 +21,24 @@ function eventResult(eventId = 'evt-1', overrides = {}) {
       event_role: 'potential_gestational_subject',
       reproductive_capabilities_used: {can_carry_pregnancy: true},
       evidence: [{kind: 'narrative', text: '明确证据'}],
+    }, {
+      character_id: 'char-b',
+      display_name: 'Bob',
+      event_role: 'potential_conception_source',
+      reproductive_capabilities_used: {can_cause_pregnancy: true},
+      evidence: [{kind: 'narrative', text: '实际来源证据'}],
     }],
     pregnancy_relevance: {
       relevant: true,
       possible_conception: true,
       gestational_subject_ids: ['char-a'],
-      counterpart_ids: [],
+      counterpart_ids: ['char-b'],
       confidence: 0.8,
     },
-    source_evidence: [{kind: 'current_floor', text: '当前楼层'}],
+    source_evidence: [
+      {kind: 'current_floor', text: '当前楼层'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: '实际暴露证据'},
+    ],
     ...overrides,
   };
 }
@@ -166,7 +176,10 @@ function canonicalApiEvent({type = 'sexual_activity', pregnancyRelevance, partic
       counterpart_ids: ['character_source'],
       confidence: 0.9,
     },
-    source_evidence: [{kind: 'narrative', text: 'explicit current-floor exposure fixture evidence'}],
+    source_evidence: [
+      {kind: 'narrative', text: 'explicit current-floor exposure fixture evidence'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'abstract exposure entered the valid path'},
+    ],
     source: {chat_id: 'model-chat', message_id: 'model-message', floor: 999, swipe_id: 9},
   };
 }
@@ -617,6 +630,22 @@ test('Domain validation failure keeps a specific diagnostic code and path', asyn
   assert.equal(status.error_code, 'domain_validation_failed');
   assert.equal(status.error_path, '$.events[0].type');
   assert.match(status.safe_error_summary, /Event JSON Schema/);
+  fixture.runtime.destroy();
+});
+
+test('Runtime rejects a possible conception Event without the canonical exposure evidence marker', async () => {
+  const fixture = createFixture({analyzer: {
+    async analyzeFloor() {
+      return {events: [eventResult('missing-exposure-marker', {
+        source_evidence: [{kind: 'narrative', text: 'barrier outcome without typed marker'}],
+      })]};
+    },
+  }});
+  await fixture.runtime.init();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /EVENT_DOMAIN_VALIDATION_FAILED/);
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.error_code, 'domain_validation_failed');
+  assert.equal(status.error_path, '$.events[0].source_evidence.conception_relevant_exposure');
   fixture.runtime.destroy();
 });
 

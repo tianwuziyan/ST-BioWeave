@@ -1,6 +1,7 @@
 import { normalizeAnalysisPrompt, WORLD_MODEL_SCHEMA } from '../storage/schema.js'
 import {
   CAPABILITY_KEYS,
+  CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
   EVENT_STATUS as DOMAIN_EVENT_STATUS,
   EVENT_TYPES as DOMAIN_EVENT_TYPES,
   REPRODUCTIVE_ROLES,
@@ -24,7 +25,9 @@ export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([...STORY_TIME_PRECISIO
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
-  '对 sexual_activity 提取结构化 Story Time、地点和全部实际参与者；不要只列主角、不要只列有生殖角色的参与者。参与者使用稳定 character_id，姓名只作为 display_name。',
+  '对 sexual_activity 只提取实际 conception-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用稳定 character_id，姓名只作为 display_name。',
+  '保护或 Barrier 只是证据，不是最终结论；以最终 actual reproductive exposure outcome 为准。完整有效阻隔且未进入有效路径、体外或其它无有效路径的排出、仅插入、仅身体接触都不构成 pregnancy-related exposure；破裂、脱落、摘除后或其它失效导致实际进入有效路径时，才按实际暴露提取对应 subject 与一个或多个 source。',
+  '对其它 BiologicalEvent 类型，participants 只保留对该生物事实有直接作用的对象；在场、说话、被提及或普通递送行为不能自动成为参与者。',
   '同时阅读 World Model baseline 与当前 Floor / recent_context 的 narrative evidence。World Model baseline 只提供已知生物学能力背景，narrative evidence 只记录本次剧情事实；二者不能互相臆造或跨角色借证。',
   'event_role 与 gender/biological_type 是不同字段。只能依据 capability 与事件证据填写 reproductive role；不得从 gender、性别词、攻受、姓名、外貌或社会角色推导 can_carry_pregnancy、can_cause_pregnancy 或其它 capability。不要添加 gender eligibility 分支。',
   'reproductive_capabilities_used 固定包含 can_produce_sperm、can_produce_ova、can_be_fertilized、can_carry_pregnancy、can_cause_pregnancy；每个值只能是 true、false 或 null。null 表示未知/没有证据，禁止把 unknown、缺失、模糊描述或模型常识自动变成 true。',
@@ -45,11 +48,13 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
   `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、provider、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
   'story_time.day_index 只有在证据提供真实、连续且可排序的 canonical index 时才能填写 number；否则必须是 null。不要把月内第几日或 display 文本解析成 day_index，时间计算不读取 display。',
-  `participants 必须是完整数组；每项包含 character_id、display_name、event_role、reproductive_capabilities_used 和 evidence，可带最小 biological_context。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。不要省略实际参与者。`,
+  `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 character_id、display_name、event_role、reproductive_capabilities_used 和 evidence，可带最小 biological_context。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
   `reproductive_capabilities_used 固定包含 ${EVENT_CAPABILITY_KEYS.join('、')}；每个值只能是 true、false 或 null。`,
   'participant.evidence 与 source_evidence 都必须是数组；每项必须是 {"kind":"...","text":"..."} 对象，kind 和 text 都是非空字符串。不得输出裸字符串、content 替代 text 或其它 evidence 形状。',
-  '每个 event 必须包含 type、status、story_time、location、participants、pregnancy_relevance、source_evidence；physical_effect 是可选对象。',
+  `每个 event 必须包含 type、status、story_time、location、participants、pregnancy_relevance、source_evidence；physical_effect 是可选对象，其中 gestational_substance_intake 只能是 true、false 或 null。`,
   'pregnancy_relevance 必须包含 relevant、possible_conception、gestational_subject_ids[]、counterpart_ids[]、confidence；relevant 与 possible_conception 都只能是 boolean，不能是 null、字符串或 probable/possible/unknown。两个 ID 字段始终是数组，可为空、单个或多个；不能是字符串。',
+  `没有 actual reproductive exposure 的 sexual_activity 必须使用 participants=[]、relevant=false、possible_conception=false、gestational_subject_ids=[]、counterpart_ids=[]；如果没有其它独立生物学价值，可以不输出该 Event。possible_conception=true 时必须有非空 subject/source ID 数组，两个数组中的 ID 必须来自 participants，且 participants 只能包含这些 subject/source，source_evidence[] 必须包含 kind 为 ${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} 的结构化证据。`,
+  'physical_effect.gestational_substance_intake=true 只能在 narrative evidence 明确支持 actual reproductive exposure 时填写，并必须与 pregnancy_relevance 保持一致；不要把该字段单独当作受孕结论。',
   'confidence 只能是 null 或 0 到 1 之间的 number。',
   '模型不要生成 source；六字段 Floor Version 只存在于输入的 Authoritative Floor Metadata，并由 Runtime 写入最终 Event：chat_id、message_id、floor、swipe_id、content_hash、message_version。',
 ].join('\n')

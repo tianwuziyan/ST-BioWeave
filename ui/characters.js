@@ -40,13 +40,6 @@ const eventStatusLabels = {
   fictional: '虚构',
 };
 
-const reproductiveRoleLabels = {
-  potential_gestational_subject: '潜在妊娠承载者',
-  potential_conception_source: '潜在受孕来源',
-  other_participant: '其他参与者',
-  unknown: '未知',
-};
-
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;',
@@ -120,17 +113,6 @@ function storyTimeDisplay(event) {
   return escapeHtml(formatStoryTime(event?.story_time));
 }
 
-function participantSummary(event) {
-  const participants = Array.isArray(event?.participants) ? event.participants : [];
-  if (!participants.length) return '—';
-  return participants.map(participant => {
-    const name = displayValue(participant?.display_name, '未命名角色');
-    const role = participant?.event_role ?? participant?.role;
-    const roleLabel = role ? (reproductiveRoleLabels[role] ?? displayValue(role)) : '';
-    return `${name}${roleLabel ? `（事件角色：${roleLabel}）` : ''}`;
-  }).join('、');
-}
-
 function counterpartSummary(event) {
   const ids = Array.isArray(event?.pregnancy_relevance?.counterpart_ids)
     ? event.pregnancy_relevance.counterpart_ids
@@ -189,7 +171,6 @@ function renderExposureEvent(event, fallbackEventId) {
     + '<dl class="bioweave-data-list">'
     + '<div><dt>发生时间</dt><dd>' + storyTimeDisplay(event) + '</dd></div>'
     + '<div><dt>地点</dt><dd>' + renderValue(event.location) + '</dd></div>'
-    + '<div><dt>参与者</dt><dd>' + escapeHtml(participantSummary(event)) + '</dd></div>'
     + '<div><dt>相关对象</dt><dd>' + escapeHtml(counterpartSummary(event)) + '</dd></div>'
     + '</dl>' + renderExposureDebug(event, eventId) + '</article>';
 }

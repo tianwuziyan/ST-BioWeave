@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
+import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 
 const event = {
   event_id: 'evt-1',
@@ -22,6 +23,7 @@ const event = {
   participants: [
     {character_id: 'char-a', display_name: '阿甲', event_role: 'potential_gestational_subject'},
     {character_id: 'char-b', display_name: '阿乙', event_role: 'potential_conception_source'},
+    {character_id: 'char-c', display_name: '阿丙', event_role: 'other_participant'},
   ],
   pregnancy_relevance: {
     relevant: true,
@@ -30,7 +32,10 @@ const event = {
     counterpart_ids: ['char-b'],
     confidence: 0.8,
   },
-  source_evidence: [{kind: 'narrative', text: '明确的当前楼层证据'}],
+  source_evidence: [
+    {kind: 'narrative', text: '明确的当前楼层证据'},
+    {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: '实际暴露证据'},
+  ],
   source: {
     chat_id: 'chat-1',
     message_id: 'message-1',
@@ -193,9 +198,25 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   }
   assert.equal((html.match(/bioweave-character-exposure/g) ?? []).length, 1);
   assert.match(html, /阿乙/);
+  assert.doesNotMatch(html, /阿丙/);
+  assert.doesNotMatch(html, /<dt>参与者<\/dt>|事件角色/);
   assert.match(html, /等待状态引擎计算/);
   assert.doesNotMatch(html, /role="tablist"|role="tab"|data-character-tab|aria-selected=/);
   assert.doesNotMatch(html, /probability|gestational age|妊娠概率|妊娠天数/);
+  const characterSource = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(characterSource, /physical_effect|protection|condom|ejaculat/i);
+});
+
+test('character exposure cards render one counterpart projection per referenced Event', () => {
+  const html = charactersPage({
+    trackingSubjects: [{character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1', 'evt-1']}],
+    characterProfiles: {},
+    activeEvents: [event],
+    characterId: 'char-a',
+  });
+  assert.equal((html.match(/data-bioweave-event-id="evt-1"/g) ?? []).length, 1);
+  assert.match(html, /<dt>相关对象<\/dt>[\s\S]*阿乙/);
+  assert.doesNotMatch(html, /<dt>参与者<\/dt>/);
 });
 
 test('character detail keeps every section for false or unknown capabilities and gates on tracking subjects', () => {
@@ -325,6 +346,8 @@ test('event page preserves every participant while keeping raw presentation fiel
 test('characters source contains no tracking decision presentation path', () => {
   const source = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /tracking_decisions|renderTrackingDecisions|explainTrackingDecision/);
+  assert.doesNotMatch(source, /participantSummary|reproductiveRoleLabels|event_role/);
+  assert.match(source, /counterpart_ids/);
 });
 
 test('overview counts only passed tracking subjects and active events and keeps unfinished areas empty', () => {

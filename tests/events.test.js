@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
   EVENT_TYPES,
   normalizeEvent,
   sortEvents,
@@ -42,6 +43,16 @@ test('normalizeEvent emits the fixed source, story time, participants, and relev
         can_produce_ova: null,
       },
       evidence: [{kind: 'narrative', text: 'explicit exposure'}],
+    }, {
+      character_id: 'char-b',
+      display_name: 'B',
+      event_role: 'potential_conception_source',
+      evidence: [{kind: 'narrative', text: 'actual source'}],
+    }, {
+      character_id: 'char-c',
+      display_name: 'C',
+      event_role: 'potential_conception_source',
+      evidence: [{kind: 'narrative', text: 'actual source'}],
     }],
     pregnancy_relevance: {
       relevant: true,
@@ -49,7 +60,10 @@ test('normalizeEvent emits the fixed source, story time, participants, and relev
       gestational_subject_ids: ['char-a', 'char-a'],
       counterpart_ids: ['char-b', 'char-c'],
     },
-    source_evidence: [{kind: 'current_floor', text: 'current floor'}],
+    source_evidence: [
+      {kind: 'current_floor', text: 'current floor'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'explicit exposure'},
+    ],
   });
 
   assert.equal(validateEvent(event).ok, true);
@@ -82,6 +96,199 @@ test('validateEvent rejects scalar participant references instead of treating na
       counterpart_ids: 'char-b,char-c',
     },
   }).ok, false);
+});
+
+test('validateEvent rejects malformed IDs inside reference arrays', () => {
+  assert.equal(validateEvent({
+    ...validExposureEvent(),
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      counterpart_ids: ['source-a', 'source-b,source-c'],
+    },
+  }).ok, false);
+  assert.equal(validateEvent({
+    ...validExposureEvent(),
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      gestational_subject_ids: ['subject', {}],
+    },
+  }).ok, false);
+});
+
+function validExposureEvent(overrides = {}) {
+  return {
+    event_id: 'evt-exposure',
+    type: 'sexual_activity',
+    status: 'confirmed',
+    source: {chat_id: 'chat-1'},
+    participants: [
+      {character_id: 'subject', event_role: 'potential_gestational_subject'},
+      {character_id: 'source-a', event_role: 'potential_conception_source'},
+      {character_id: 'source-b', event_role: 'potential_conception_source'},
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject'],
+      counterpart_ids: ['source-a', 'source-b'],
+      confidence: 1,
+    },
+    source_evidence: [
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'actual exposure'},
+    ],
+    ...overrides,
+  };
+}
+
+test('validateEvent requires actual exposure evidence and participant-backed subject/source references', () => {
+  assert.equal(validateEvent(validExposureEvent()).ok, true);
+  assert.equal(validateEvent(validExposureEvent({
+    source_evidence: [{kind: 'narrative', text: 'barrier failed'}],
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      counterpart_ids: [],
+    },
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      gestational_subject_ids: ['missing-subject'],
+    },
+  })).ok, false);
+});
+
+test('validateEvent excludes participants outside the actual exposure chain', () => {
+  assert.equal(validateEvent(validExposureEvent({
+    participants: [
+      ...validExposureEvent().participants,
+      {character_id: 'unrelated-participant', event_role: 'other_participant'},
+    ],
+  })).ok, false);
+});
+
+function actualExposureOutcome({sourceIds = [], possibleConception, evidenceText}) {
+  const subjectId = 'character_subject';
+  const participants = possibleConception
+    ? [
+      {character_id: subjectId, event_role: 'potential_gestational_subject'},
+      ...sourceIds.map(characterId => ({character_id: characterId, event_role: 'potential_conception_source'})),
+    ]
+    : [];
+  return validExposureEvent({
+    participants,
+    pregnancy_relevance: {
+      relevant: possibleConception,
+      possible_conception: possibleConception,
+      gestational_subject_ids: possibleConception ? [subjectId] : [],
+      counterpart_ids: sourceIds,
+      confidence: null,
+    },
+    source_evidence: [{
+      kind: possibleConception ? CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND : 'narrative',
+      text: evidenceText,
+    }],
+  });
+}
+
+test('actual exposure outcome beats protection action and excludes no-path cases', () => {
+  const cases = [
+    {label: 'no barrier with actual exposure', possibleConception: true, sourceIds: ['character_source'], evidenceText: 'actual reproductive substance entered the valid path'},
+    {label: 'barrier break with actual exposure', possibleConception: true, sourceIds: ['character_source'], evidenceText: 'barrier broke before actual exposure entered the valid path'},
+    {label: 'barrier removal with actual exposure', possibleConception: true, sourceIds: ['character_source'], evidenceText: 'barrier was removed and actual exposure entered the valid path'},
+    {label: 'barrier slip with actual exposure', possibleConception: true, sourceIds: ['character_source'], evidenceText: 'barrier slipped and actual exposure entered the valid path'},
+    {label: 'intact barrier without exposure', possibleConception: false, sourceIds: [], evidenceText: 'intact barrier kept the reproductive substance outside the valid path'},
+    {label: 'external release without valid path', possibleConception: false, sourceIds: [], evidenceText: 'external release did not enter a valid conception path'},
+    {label: 'insertion without reproductive exposure', possibleConception: false, sourceIds: [], evidenceText: 'insertion occurred without actual reproductive substance exposure'},
+    {label: 'contact without reproductive exposure', possibleConception: false, sourceIds: [], evidenceText: 'physical contact did not form actual reproductive exposure'},
+  ];
+  for (const outcome of cases) {
+    const event = actualExposureOutcome(outcome);
+    assert.equal(validateEvent(event).ok, true, outcome.label);
+    assert.equal(event.pregnancy_relevance.possible_conception, outcome.possibleConception, outcome.label);
+    assert.deepEqual(event.pregnancy_relevance.counterpart_ids, outcome.sourceIds, outcome.label);
+  }
+});
+
+test('actual exposure outcomes support one or multiple sources without retaining other participants', () => {
+  const oneSource = actualExposureOutcome({
+    sourceIds: ['character_source_a'],
+    possibleConception: true,
+    evidenceText: 'source a actual exposure entered the valid path',
+  });
+  const multipleSources = actualExposureOutcome({
+    sourceIds: ['character_source_a', 'character_source_b'],
+    possibleConception: true,
+    evidenceText: 'both actual exposure sources entered the valid path',
+  });
+  assert.deepEqual(oneSource.participants.map(item => item.character_id), [
+    'character_subject', 'character_source_a',
+  ]);
+  assert.deepEqual(oneSource.pregnancy_relevance.counterpart_ids, ['character_source_a']);
+  assert.deepEqual(multipleSources.participants.map(item => item.character_id), [
+    'character_subject', 'character_source_a', 'character_source_b',
+  ]);
+  assert.deepEqual(multipleSources.pregnancy_relevance.counterpart_ids, [
+    'character_source_a', 'character_source_b',
+  ]);
+  assert.equal(validateEvent(oneSource).ok, true);
+  assert.equal(validateEvent(multipleSources).ok, true);
+});
+
+test('validateEvent represents sexual activity without exposure as unrelated and empty', () => {
+  assert.equal(validateEvent(validExposureEvent({
+    participants: [],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+    source_evidence: [{kind: 'narrative', text: 'no valid exposure path'}],
+  })).ok, true);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+    source_evidence: [{kind: 'narrative', text: 'no valid exposure path'}],
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      possible_conception: false,
+    },
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: ['subject'],
+      counterpart_ids: [],
+      confidence: null,
+    },
+  })).ok, false);
+});
+
+test('validateEvent checks the typed gestational substance effect without choosing a mechanism', () => {
+  assert.equal(validateEvent(validExposureEvent({
+    physical_effect: {gestational_substance_intake: true},
+  })).ok, true);
+  assert.equal(validateEvent(validExposureEvent({
+    physical_effect: {gestational_substance_intake: null},
+  })).ok, true);
+  assert.equal(validateEvent(validExposureEvent({
+    source_evidence: [{kind: 'narrative', text: 'untyped claim'}],
+    physical_effect: {gestational_substance_intake: true},
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    physical_effect: {gestational_substance_intake: 'true'},
+  })).ok, false);
 });
 
 test('all existing biological event types remain accepted by the shared validator', () => {

@@ -43,6 +43,8 @@ export const CAPABILITY_KEYS = Object.freeze([
   'can_cause_pregnancy',
 ]);
 
+export const CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND = 'conception_relevant_exposure';
+
 export const STORY_TIME_PRECISIONS = Object.freeze([
   'year',
   'month',
@@ -70,6 +72,9 @@ export const BIOLOGICAL_EVENT_SCHEMA = Object.freeze({
     confidence: null,
   },
   source_evidence: [],
+  physical_effect: {
+    gestational_substance_intake: null,
+  },
   source: {
     chat_id: null,
     message_id: null,
@@ -283,6 +288,61 @@ function validateEvidence(value, path, errors) {
   });
 }
 
+function validateIdArrayShape(value, path, errors) {
+  if (!Array.isArray(value)) return;
+  value.forEach((item, index) => {
+    const id = identifierValue(item);
+    if (!id || id.includes(',')) addError(errors, `${path}[${index}]`);
+  });
+}
+
+export function hasConceptionRelevantExposureEvidence(value) {
+  return Array.isArray(value)
+    && value.some(item => item
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && textValue(item.kind) === CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND);
+}
+
+function validateExposureConsistency(normalized, participantIds, errors) {
+  const relevance = normalized.pregnancy_relevance;
+  const gestationalSubjectIds = relevance.gestational_subject_ids;
+  const counterpartIds = relevance.counterpart_ids;
+  const validateReferences = (ids, path) => {
+    ids.forEach((id, index) => {
+      if (!participantIds.has(id)) addError(errors, `${path}[${index}]`);
+    });
+  };
+
+  validateReferences(gestationalSubjectIds, 'pregnancy_relevance.gestational_subject_ids');
+  validateReferences(counterpartIds, 'pregnancy_relevance.counterpart_ids');
+
+  if (relevance.possible_conception === true) {
+    if (relevance.relevant !== true) addError(errors, 'pregnancy_relevance.relevant');
+    if (!gestationalSubjectIds.length) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
+    if (!counterpartIds.length) addError(errors, 'pregnancy_relevance.counterpart_ids');
+    const exposureParticipantIds = new Set([...gestationalSubjectIds, ...counterpartIds]);
+    normalized.participants.forEach((participant, index) => {
+      if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
+        addError(errors, `participants[${index}].character_id`);
+      }
+    });
+    if (!hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
+      addError(errors, `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`);
+    }
+  } else if (normalized.type === 'sexual_activity') {
+    if (relevance.relevant !== false) addError(errors, 'pregnancy_relevance.relevant');
+    if (gestationalSubjectIds.length) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
+    if (counterpartIds.length) addError(errors, 'pregnancy_relevance.counterpart_ids');
+    if (normalized.participants.length) addError(errors, 'participants');
+  }
+
+  if (normalized.physical_effect.gestational_substance_intake === true
+    && !hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
+    addError(errors, `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`);
+  }
+}
+
 export function validateEvent(event) {
   const errors = [];
   if (!event || typeof event !== 'object' || Array.isArray(event)) {
@@ -366,8 +426,11 @@ export function validateEvent(event) {
     }
   }
   for (const key of ['gestational_subject_ids', 'counterpart_ids']) {
-    if (hasOwn(rawRelevance, key) && !Array.isArray(rawRelevance[key])) {
+    if (!hasOwn(rawRelevance, key)) continue;
+    if (!Array.isArray(rawRelevance[key])) {
       addError(errors, `pregnancy_relevance.${key}`);
+    } else {
+      validateIdArrayShape(rawRelevance[key], `pregnancy_relevance.${key}`, errors);
     }
   }
   if (hasOwn(rawRelevance, 'confidence')
@@ -384,6 +447,19 @@ export function validateEvent(event) {
   }
 
   if (hasOwn(event, 'source_evidence')) validateEvidence(event.source_evidence, 'source_evidence', errors);
+  if (hasOwn(event, 'physical_effect')
+    && event.physical_effect !== null
+    && (typeof event.physical_effect !== 'object' || Array.isArray(event.physical_effect))) {
+    addError(errors, 'physical_effect');
+  }
+  const rawPhysicalEffect = recordValue(event.physical_effect);
+  if (hasOwn(rawPhysicalEffect, 'gestational_substance_intake')
+    && rawPhysicalEffect.gestational_substance_intake !== null
+    && typeof rawPhysicalEffect.gestational_substance_intake !== 'boolean') {
+    addError(errors, 'physical_effect.gestational_substance_intake');
+  }
+  const participantIds = new Set(normalized.participants.map(participant => participant.character_id).filter(Boolean));
+  validateExposureConsistency(normalized, participantIds, errors);
   for (const key of ['message_id', 'floor', 'swipe_id', 'message_version']) {
     if (!validScalar(normalized.source[key])) addError(errors, `source.${key}`);
   }

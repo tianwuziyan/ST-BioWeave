@@ -17,7 +17,7 @@
 
 全局正则适用于所有角色卡，并在分析输入收集时先于当前 Chat 的角色卡正则执行。
 
-同一层的 `analysis_prompt` 保存所有 AI Analysis 共用的用户可编辑 `system_top`、公共 `task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。旧 `world_analysis_prompt` 只作为读取迁移来源；保存后只写 `analysis_prompt`。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定 Core、任务契约、输出 JSON Contract 和结果校验不由该设置覆盖。Event participant 的 `event_role` 只能使用 Domain enum；`reproductive_capabilities_used.*` 为 `true | false | null`；`pregnancy_relevance.relevant` 与 `possible_conception` 为 boolean；`gestational_subject_ids` 与 `counterpart_ids` 为数组；`participant.evidence` 与 `source_evidence` 为 `{kind, text}` 对象数组。
+同一层的 `analysis_prompt` 保存所有 AI Analysis 共用的用户可编辑 `system_top`、公共 `task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。旧 `world_analysis_prompt` 只作为读取迁移来源；保存后只写 `analysis_prompt`。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定 Core、任务契约、输出 JSON Contract 和结果校验不由该设置覆盖。Event participant 的 `event_role` 只能使用 Domain enum；`reproductive_capabilities_used.*` 为 `true | false | null`；`pregnancy_relevance.relevant` 与 `possible_conception` 为 boolean；`gestational_subject_ids` 与 `counterpart_ids` 为数组；`participant.evidence` 与 `source_evidence` 为 `{kind, text}` 对象数组；`physical_effect.gestational_substance_intake` 只能是 `true | false | null`。
 
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 
@@ -80,7 +80,7 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 ### BiologicalEvent：完整事实的单一来源
 
-BiologicalEvent 是完整 NSFW 历史事实的单一来源。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
+BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
 
 本阶段保留现有其它 BiologicalEvent 类型的兼容性，但只实现 `sexual_activity` 的妊娠相关 Tracking 闭环。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
 
@@ -94,17 +94,17 @@ BiologicalEvent 是完整 NSFW 历史事实的单一来源。Tracking Subject �
 | `type` | 现有 BiologicalEvent 类型；本阶段以 `sexual_activity` 为 Tracking 入口。 |
 | `status` | Event 状态；`negated` / `fictional` 不得成为受孕追踪事实。 |
 | `location` | 事件地点，允许未知值按领域规范化处理。 |
-| `participants[]` | 全部实际参与者；每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`。 |
+| `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`。 |
 | `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`confidence`。 |
 | `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
 | `story_time` | 结构化故事时间，不能只保存展示字符串。 |
 
-`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。`biological_context` 只在有对应 World Model/species 证据时作为最小上下文保存，不由名称或常识补全。
+`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。对妊娠相关 `sexual_activity`，完整有效阻隔未进入有效路径、体外或其它无有效路径的排出、仅插入和仅身体接触都不产生妊娠相关参与者；保护动作只是证据，最终实际暴露结果优先，破裂、脱落或摘除后实际进入有效路径时才保留对应 source。`biological_context` 只在有对应 World Model/species 证据时作为最小上下文保存，不由名称或常识补全。
 
-`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。
+`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
 
-`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。
+`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。`counterpart_ids[]` 是 `participants[]` 的子集，只记录最终实际造成 conception-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
 
 AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
 和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
@@ -174,7 +174,7 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 
 没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
 
-`BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者记录事件事实中的全部实际参与者，包括 conception source、counterpart 和其它参与者；后者只表示 Core 根据受孕暴露、事件相关性和生殖能力计算后正式进入追踪流程的角色。参与者的 profile 存在也不代表该角色是 Tracking Subject。
+`BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者在 `sexual_activity` 中只记录 actual reproductive exposure chain 的直接参与者，其中 `counterpart_ids[]` 标记实际 exposure source；后者只表示 Core 根据受孕暴露、事件相关性和生殖能力计算后正式进入追踪流程的角色。参与者的 profile 存在也不代表该角色是 Tracking Subject。
 
 `explainTrackingDecision(event)` 与正式 Registry 构建共享同一条 Core 判定路径，返回 `{character_id, eligible, reasons[]}`。Reason code 只用于 Core、Runtime 的诊断、Debug 或 Analysis Detail，例如 `CAN_CARRY_PREGNANCY_UNKNOWN`、`POSSIBLE_CONCEPTION_FALSE` 或 `NOT_GESTATIONAL_SUBJECT`；它不是第二套 eligibility 规则，也不是人物实体，普通 Characters UI 不读取或展示这些诊断。
 
