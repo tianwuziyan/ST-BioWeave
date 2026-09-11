@@ -358,3 +358,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: 收紧妊娠相关实际暴露判定并同步 GitHub
+<!-- trellis-session: v=2 fp=78fa3abe1bd42aa2 -->
+
+**Date**: 2026-09-12
+**Task**: 收紧妊娠相关实际暴露判定并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 sexual_activity 的实际 conception-relevant exposure 语义收紧：participants 只保留暴露链直接参与者，counterpart_ids 只保留实际 source；增加机制中性的 Domain 一致性校验、Prompt/AI physical_effect 契约、人物 exposure counterpart projection、回归测试与文档。npm run check 通过 368/368，git diff --check 通过；提交 ff28882 已推送到 fix/world-model-prompt-baseline。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff28882` | 收紧妊娠相关 sexual_activity 的实际暴露语义 |
+
+### Status
+
+[OK] **Completed**

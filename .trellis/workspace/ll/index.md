@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
-- **Last Active**: 2026-09-11
+- **Total Sessions**: 17
+- **Last Active**: 2026-09-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~360 | Active |
+| `journal-1.md` | ~382 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-09-12 | 收紧妊娠相关实际暴露判定并同步 GitHub | `ff28882` | `fix/world-model-prompt-baseline` |
 | 16 | 2026-09-11 | 完成人物详情单页人物卡并同步 GitHub | `e97d0eae52c51f79f42a5baf2064bcb04c25f078` | `fix/world-model-prompt-baseline` |
 | 15 | 2026-09-10 | 修复 World Model 受精冲突与 Human 基线覆盖 | `91cdaed` | `fix/world-model-prompt-baseline` |
 | 14 | 2026-09-10 | World Model Raw 到 Canonical 审计修正 | `f4af442` | `fix/world-model-prompt-baseline` |
