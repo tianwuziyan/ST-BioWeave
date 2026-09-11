@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BioWeave UI Framework Example</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bw-host: #0b1116;
+      --bw-panel: #171f25;
+      --bw-raised: #1d272e;
+      --bw-soft: #202c34;
+      --bw-text: #edf3f6;
+      --bw-text-2: #c2cdd2;
+      --bw-muted: #87959d;
+      --bw-line: #33444e;
+      --bw-line-soft: #293840;
+      --bw-accent: #83c7ef;
+      --bw-accent-soft: #203b4b;
+      --bw-good: #7bd5ae;
+      --bw-radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: linear-gradient(140deg, #111a21, var(--bw-host));
+      color: var(--bw-text);
+      font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .bw-shell { min-height: 100vh; display: grid; grid-template-columns: 150px 1fr; }
+    .bw-sidebar { padding: 16px 10px; border-right: 1px solid var(--bw-line); background: #141e24; }
+    .bw-brand { padding: 0 8px 16px; font-size: 16px; font-weight: 700; }
+    .bw-brand small { display: block; margin-top: 3px; color: var(--bw-muted); font-size: 11px; font-weight: 400; }
+    .bw-nav { display: grid; gap: 3px; }
+    .bw-nav button { border: 0; border-radius: 7px; background: transparent; color: var(--bw-muted); padding: 9px 10px; text-align: left; }
+    .bw-nav button.active, .bw-nav button:hover { background: var(--bw-accent-soft); color: var(--bw-accent); }
+    .bw-main { width: min(900px, 100%); min-width: 0; margin: 0 auto; padding: 20px; }
+    .bw-page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; padding-left: 6px; }
+    .bw-page-head-copy { min-width: 0; flex: 1; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 22px; line-height: 1.3; }
+    h2 { font-size: 16px; }
+    h3 { font-size: 14px; }
+    .bw-page-head p, .bw-section-head p, .bw-note { margin-top: 4px; color: var(--bw-muted); font-size: 12px; }
+    .bw-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .bw-button { min-height: 32px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); color: var(--bw-text-2); padding: 5px 10px; }
+    .bw-button.primary { border-color: #5f9cc0; background: var(--bw-accent-soft); color: var(--bw-accent); }
+    .bw-button.small { min-height: 26px; padding: 3px 7px; font-size: 12px; }
+    .bw-section { margin-left: 10px; padding: 11px 12px; border: 1px solid var(--bw-line); border-radius: var(--bw-radius); background: var(--bw-raised); }
+    .bw-section + .bw-section { margin-top: 8px; }
+    .bw-section-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .bw-species-grid, .bw-type-grid, .bw-module-grid { display: grid; gap: 7px; }
+    .bw-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .bw-world-card, .bw-type-card { min-width: 0; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: #1a252c; color: var(--bw-text); text-align: left; }
+    .bw-world-card { min-height: 68px; padding: 9px 10px; }
+    .bw-world-card.selected, .bw-type-card.selected { border-color: var(--bw-accent); background: #203744; }
+    .bw-world-card-head, .bw-type-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 7px; }
+    .bw-world-card b { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-world-card small, .bw-type-card small { display: block; margin-top: 3px; color: var(--bw-muted); font-size: 11px; }
+    .bw-type-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 8px; }
+    .bw-type-card { min-height: 52px; padding: 8px 9px; }
+    .bw-type-card b { font-size: 13px; }
+    .bw-module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
+    .bw-module { min-width: 0; overflow: hidden; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: var(--bw-soft); }
+    .bw-module-head { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 6px 8px; border-bottom: 1px solid var(--bw-line); }
+    .bw-module-head .spacer { flex: 1; }
+    .bw-module-body { padding: 7px 8px; }
+    .bw-kv { display: grid; margin: 0; }
+    .bw-kv-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 5px 0; border-top: 1px solid var(--bw-line-soft); }
+    .bw-kv-row:first-child { border-top: 0; }
+    .bw-kv-row dt { color: var(--bw-text-2); }
+    .bw-kv-row dd { margin: 0; color: var(--bw-muted); }
+    .bw-settings { display: grid; gap: 6px; margin-top: 8px; }
+    .bw-settings-group, .bw-source-branch { overflow: hidden; border: 1px solid var(--bw-line); border-radius: 8px; background: #151f25; }
+    .bw-settings-group > summary, .bw-source-branch > summary { cursor: pointer; list-style: none; }
+    .bw-settings-group > summary::-webkit-details-marker, .bw-source-branch > summary::-webkit-details-marker { display: none; }
+    .bw-settings-head { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 7px 10px; background: #1a272e; }
+    .bw-settings-title { min-width: 0; }
+    .bw-settings-title b, .bw-settings-title small { display: block; }
+    .bw-settings-title b { font-size: 15px; }
+    .bw-settings-title small { margin-top: 2px; color: var(--bw-muted); font-size: 11px; }
+    .bw-settings-body { display: grid; gap: 7px; padding: 8px 10px 10px; border-top: 1px solid var(--bw-line); }
+    .bw-setting-row, .bw-source-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; padding: 5px 0; border-top: 1px solid var(--bw-line-soft); }
+    .bw-setting-row:first-child { border-top: 0; }
+    .bw-source-branch { background: #1a252c; }
+    .bw-source-branch > summary { padding: 6px 8px; color: var(--bw-text-2); font-weight: 700; }
+    .bw-source-child-list { display: grid; gap: 2px; margin: 0 8px 7px 24px; padding-left: 8px; border-left: 1px solid #465862; }
+    .bw-source-child { min-height: 28px; padding: 3px 5px; color: var(--bw-text-2); font-size: 11px; font-weight: 400; }
+    .bw-source-child input { width: 15px; height: 15px; accent-color: var(--bw-accent); }
+    .bw-select { width: 150px; border: 1px solid var(--bw-line); border-radius: 6px; background: #141d23; padding: 5px 6px; font-size: 12px; }
+    .bw-switch { position: relative; display: inline-flex; }
+    .bw-switch input { position: absolute; opacity: 0; }
+    .bw-switch span { display: block; width: 34px; height: 20px; border: 1px solid var(--bw-line); border-radius: 999px; background: #121a20; }
+    .bw-switch span::after { display: block; width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: var(--bw-muted); content: ""; transition: transform .15s; }
+    .bw-switch input:checked + span { border-color: #5f9cc0; background: var(--bw-accent-soft); }
+    .bw-switch input:checked + span::after { background: var(--bw-accent); transform: translateX(14px); }
+    .bw-regex-list { display: grid; gap: 3px; margin-top: 7px; }
+    .bw-regex-row { display: grid; grid-template-columns: 20px 58px minmax(100px, 1fr) minmax(90px, 1fr) 35px 38px; gap: 4px; align-items: stretch; padding: 3px 4px; border: 1px solid var(--bw-line-soft); border-radius: 6px; background: #1a252c; }
+    .bw-regex-row select, .bw-regex-row input { min-width: 0; border: 1px solid var(--bw-line); border-radius: 5px; background: #141d23; padding: 4px 5px; font-size: 11px; }
+    .bw-regex-move { display: grid; grid-template-rows: 1fr 1fr; }
+    .bw-regex-move button { min-height: 0; border: 1px solid var(--bw-line); background: #162129; color: var(--bw-muted); padding: 0; font-size: 10px; line-height: 1; }
+    .bw-regex-move button:first-child { border-radius: 4px 4px 0 0; }
+    .bw-regex-move button:last-child { border-top: 0; border-radius: 0 0 4px 4px; }
+    @media (max-width: 1199px) {
+      .bw-shell { display: block; }
+      .bw-sidebar { border-right: 0; border-bottom: 1px solid var(--bw-line); padding: 7px 10px; }
+      .bw-brand { display: none; }
+      .bw-nav { display: flex; overflow-x: auto; }
+      .bw-nav button { flex: 0 0 auto; }
+      .bw-main { padding: 14px 16px 20px; }
+    }
+    @media (max-width: 767px) {
+      .bw-main { padding: 10px; }
+      .bw-page-head { align-items: center; margin-bottom: 9px; padding-left: 3px; }
+      .bw-page-head p { display: none; }
+      .bw-page-head h1 { font-size: 19px; }
+      .bw-section { margin-left: 5px; padding: 9px 10px; }
+      .bw-species-grid, .bw-type-grid, .bw-module-grid { grid-template-columns: 1fr 1fr; gap: 5px; }
+      .bw-world-card { min-height: 58px; padding: 7px 8px; }
+      .bw-world-card b { font-size: 13px; }
+      .bw-world-card small { display: none; }
+      .bw-type-card { min-height: 48px; padding: 7px 8px; }
+      .bw-module-grid { grid-template-columns: 1fr; }
+      .bw-regex-row { grid-template-columns: 20px 50px minmax(0, 1fr) 34px 34px; }
+      .bw-regex-row input:nth-of-type(2) { display: none; }
+      .bw-select { width: 105px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bw-shell" data-ui-framework="bioweave-v1">
+    <aside class="bw-sidebar">
+      <div class="bw-brand">BioWeave<small>生理状态追踪与推演</small></div>
+      <nav class="bw-nav" aria-label="页面导航">
+        <button type="button">总览</button>
+        <button type="button">人物</button>
+        <button type="button">事件</button>
+        <button type="button">推演</button>
+        <button type="button">家系</button>
+        <button class="active" type="button">世界</button>
+        <button type="button">设置</button>
+      </nav>
+    </aside>
+
+    <main class="bw-main">
+      <header class="bw-page-head">
+        <div class="bw-page-head-copy">
+          <h1>世界模型</h1>
+          <p>这是结构与控件写法示例，生产数据仍来自 Runtime。</p>
+        </div>
+        <div class="bw-actions">
+          <button class="bw-button primary" type="button">重新分析</button>
+        </div>
+      </header>
+
+      <section class="bw-section">
+        <header class="bw-section-head">
+          <div>
+            <h2>物种与生物类型</h2>
+            <p>物种和类型使用卡片选择，不使用大面积下拉框。</p>
+          </div>
+        </header>
+        <div class="bw-species-grid">
+          <button class="bw-world-card selected" type="button" data-bioweave-action="select-species">
+            <span class="bw-world-card-head"><b>人类</b><small>当前</small></span>
+            <small>当前世界的主要物种</small>
+          </button>
+          <button class="bw-world-card" type="button" data-bioweave-action="select-species">
+            <span class="bw-world-card-head"><b>妖</b><small>3 类型</small></span>
+            <small>来自 Runtime 的描述</small>
+          </button>
+          <button class="bw-world-card" type="button" data-bioweave-action="select-species">
+            <span class="bw-world-card-head"><b>镜生体</b><small>1 类型</small></span>
+            <small>示例卡片</small>
+          </button>
+        </div>
+        <div class="bw-type-grid">
+          <button class="bw-type-card selected" type="button" data-bioweave-action="select-type"><span class="bw-type-card-head"><b>女性</b><small>当前</small></span></button>
+          <button class="bw-type-card" type="button" data-bioweave-action="select-type"><span class="bw-type-card-head"><b>男性</b><small>可用</small></span></button>
+          <button class="bw-type-card" type="button" data-bioweave-action="select-type"><span class="bw-type-card-head"><b>双性</b><small>可用</small></span></button>
+        </div>
+      </section>
+
+      <section class="bw-section">
+        <header class="bw-section-head">
+          <div><h2>女性 · 类型详情</h2><p>每个模块独立编辑，每个模块只有一个编辑入口。</p></div>
+        </header>
+        <div class="bw-module-grid">
+          <article class="bw-module" data-bioweave-world-section="capabilities">
+            <header class="bw-module-head"><h3>生殖能力</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="edit-section">编辑</button></header>
+            <div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>可产生卵子</dt><dd>是</dd></div><div class="bw-kv-row"><dt>可承担妊娠</dt><dd>是</dd></div></dl></div>
+          </article>
+          <article class="bw-module" data-bioweave-world-section="reproduction">
+            <header class="bw-module-head"><h3>生殖规则</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="edit-section">编辑</button></header>
+            <div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>妊娠方式</dt><dd>未知</dd></div><div class="bw-kv-row"><dt>妊娠周期</dt><dd>未知</dd></div></dl></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="bw-section">
+        <header class="bw-section-head"><div><h2>设置控件示例</h2><p>主栏可折叠，子目录字号更小且不加粗。</p></div></header>
+        <div class="bw-settings">
+          <details class="bw-settings-group" open data-bioweave-settings-disclosure>
+            <summary class="bw-settings-head"><span aria-hidden="true">⌄</span><span class="bw-settings-title"><b>世界书来源</b><small>选择当前分析使用的资料</small></span></summary>
+            <div class="bw-settings-body">
+              <details class="bw-source-branch" open>
+                <summary>角色卡字段</summary>
+                <div class="bw-source-child-list">
+                  <label class="bw-source-child"><span>角色名称</span><input type="checkbox" checked data-bioweave-analysis-source="field:name"></label>
+                  <label class="bw-source-child"><span>角色设定</span><input type="checkbox" data-bioweave-analysis-source="field:description"></label>
+                </div>
+              </details>
+              <details class="bw-source-branch">
+                <summary>关联世界书</summary>
+                <div class="bw-source-child-list"><label class="bw-source-child"><span>生物规则条目</span><input type="checkbox" checked data-bioweave-analysis-source="entry:biology"></label></div>
+              </details>
+            </div>
+          </details>
+          <details class="bw-settings-group">
+            <summary class="bw-settings-head"><span aria-hidden="true">›</span><span class="bw-settings-title"><b>最近剧情</b><small>读取楼数、正则提取与清洗</small></span></summary>
+            <div class="bw-settings-body">
+              <div class="bw-setting-row"><span>读取楼数</span><select class="bw-select"><option>20</option><option>40</option><option>0（不读取）</option></select></div>
+              <div class="bw-setting-row"><span>启用当前角色卡正则</span><label class="bw-switch"><input type="checkbox" checked><span aria-hidden="true"></span></label></div>
+              <div class="bw-regex-list">
+                <div class="bw-regex-row"><div class="bw-regex-move"><button type="button" aria-label="上移">↑</button><button type="button" aria-label="下移">↓</button></div><select aria-label="阶段"><option>提取</option><option>清洗</option></select><input aria-label="查找" placeholder="查找正则"><input aria-label="替换" placeholder="替换内容"><button class="bw-button small" type="button">启用</button><button class="bw-button small" type="button">删</button></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+      <p class="bw-note">本文件是 UI 结构和样式参考，不是生产页面，不包含真实业务数据。</p>
+    </main>
+  </div>
+</body>
+</html>
+

@@ -258,6 +258,10 @@ git status
 
 不要根据任务描述猜测修改内容。
 
+## UI 框架固定指针
+
+任何涉及页面、卡片、导航、设置控件、世界模型、响应式布局或 style.css 的任务，开始修改前必须读取 docs/UI_FRAMEWORK.md，并打开 docs/UI_FRAMEWORK_EXAMPLE.html 对照结构、语法和三端布局。该文档是 BioWeave 当前 UI 框架的唯一实现规范；完整替换任务使用 docs/UI_MIGRATION_PROMPT.md，小范围 UI 修改也必须沿用同一套变量、组件层级、data-bioweave-* 事件钩子和验收清单。
+
 **必须以实际 Git Diff 为准。**
 
 ## 核心原则
