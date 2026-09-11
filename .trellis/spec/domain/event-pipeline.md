@@ -13,7 +13,7 @@ duplicates the Event fact.
 ## 2. Signatures
 
 - `buildEventAnalysisInput(options) -> EventAnalysisInput`
-- `parseEventAnalysisResponse(raw, authoritativeFloorVersion) -> {schema_version, events}`
+- `parseEventAnalysisResponse(raw) -> AIEventAnalysisDTO`
 - `normalizeEvent(raw) -> BiologicalEvent`
 - `validateEvent(event) -> {ok, errors}`
 - `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, character_profiles}`
@@ -37,13 +37,29 @@ duplicates the Event fact.
 ### Input
 
 `EventAnalysisInput` contains `chat_scope`, `floor_version`, `current_floor`,
-`recent_context`, `world_model`, `story_time`, and `character_context`.
+`recent_context`, `world_model`, `story_time`, `character_context`, a sanitized
+`persona`, and optional existing BioWeave context.
 The input boundary is text-oriented and removes secret-like keys before prompt
 construction. The analyzer receives a fixed JSON-only output contract.
 
-### BiologicalEvent
+### AI DTO / Domain DTO boundary
 
-Every accepted analyzer event has:
+`AIEventAnalysisDTO` has only `schema_version: 1` and `events[]` at the top
+level. A legacy top-level `source` may be present and is ignored; any other
+unknown top-level field is rejected. An AI event does not require or trust
+`event_id` or `source`; legacy copies of those fields inside an event are
+ignored. Each accepted AI event contains biological facts such as `type`,
+`status`, structured `story_time`, `location`, `participants`,
+`pregnancy_relevance`, `source_evidence`, and optional `physical_effect`.
+
+After parsing, Runtime generates a deterministic canonical `event_id` from the
+authoritative Floor Version and response ordinal, then binds the complete
+authoritative `source`. Only this enriched object is normalized and validated
+as the persisted `BiologicalEvent` Domain DTO.
+
+### Persisted BiologicalEvent
+
+Every persisted, accepted Domain Event has:
 
 - `event_id`, `type`, and one of `confirmed`, `probable`, `ambiguous`,
   `negated`, or `fictional` statuses;
@@ -116,6 +132,9 @@ API/schema failure.
 |-----------|-------------------|
 | Natural language, fenced JSON, or non-object analyzer response | `EVENT_ANALYSIS_INVALID`; write no new result |
 | Missing required fixed-envelope field | `EVENT_ANALYSIS_INVALID`; write no partial Event |
+| Legacy top-level `source`, or event-level `event_id`/`source` | Ignore those compatibility fields; Runtime still owns identity and provenance |
+| Arbitrary unknown top-level field | Reject with `unexpected_top_level_field` and a safe JSON path |
+| Invalid event role, conception flag, evidence shape, or participant reference | Reject with a specific diagnostic code and safe JSON path |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
 | Incomplete or mismatched Floor Version source | Bind to the authoritative version or reject before storage; stale Events are inactive |
 | `can_carry_pregnancy: null` | Never create a Tracking Subject |
@@ -149,8 +168,12 @@ API/schema failure.
 
 ## 6. Tests Required
 
-- Parser assertions for fixed envelopes, all existing Event types, strict JSON,
-  array-only references, and authoritative source binding.
+- Parser assertions for fixed AI envelopes, all existing Event types, strict
+  JSON, array-only references, canonical evidence, diagnostic paths, and
+  ignoring legacy identity/source fields.
+- Runtime assertions that every successful AI response receives a generated
+  canonical Event ID and authoritative source before Floor save; model-provided
+  identity/provenance never survives as persisted identity.
 - Tracking assertions for zero/one/multiple subjects, repeated exposures,
   unknown capability, no exposure, dangling cleanup, and gender independence.
 - Storage/runtime assertions for Floor deletion, Swipe switching, object-indexed

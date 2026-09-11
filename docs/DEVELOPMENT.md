@@ -9,15 +9,19 @@
 - `core/projection.js`：未来软推演数据；不是事实。
 - `core/genealogy.js`：家系查询、世代与排序。
 - `ai/client.js`：API Profile 的校验、SillyTavern Secret 引用和宿主代理测试请求；不在浏览器或 Chat 数据中保存明文 API Key。
-- `ai/prompts.js`：受保护 Core Prompt + 用户 Prefix/Task/Suffix Pipeline。
+- `ai/prompts.js`：受保护 Core Prompt + 公共 `analysis_prompt` + 各 Analyzer 的任务/输出 Contract Pipeline。
 - `ai/worldbook.js`：世界书枚举/选择/Token 估算。
 - `ai/analyzer.js`：World / Floor / Projection 三类 AI 任务；Phase 2A 的 Floor Event 分析必须使用固定 JSON 解析和统一 Event 校验，不能以自由文本作为成功结果。
 - `runtime/chat.js`：ChatBoundary。
 - `runtime/floor.js`：Floor Version、N-floor 分析间隔、成功版本去重、失败重试与手动刷新规则。
-- `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、输入构建、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。
+- `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、生产输入构建（含 `getCurrentFloorAnalysisInput()`）、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。Prompt Preview 复用该 Runtime 输入，不在 UI 重建 Floor Version。
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Chat-local Tracking Registry 的兼容读取边界。
+
+### Analysis Context / Prompt Contract
+
+所有新的或调整中的 Analyzer 必须遵守 [`docs/CONTEXT-AND-PROMPT.md`](./CONTEXT-AND-PROMPT.md)，尤其是 Settings selection、SYSTEM 首尾边界、逐楼层 narrative regex 和 Preview parity contract。设置先决定可读取的数据源、楼层数量、regex、Persona、Worldbook 和 External Memory；共享 Collector 完成选择、清洗和脱敏后，任务 Prompt Builder 才能格式化稳定的 `messages[]`。Prompt Preview 必须直接复用真实请求的同一个 message builder。多个 `SYSTEM` message 是合法的，但应按职责聚合，关键是绝对边界、稳定顺序，以及 Preview 与实际请求一致。
 - `story/*`：外部记忆公开接口适配；`story/time.js` 负责结构化 Story Time provider、fallback 和 display formatter，不反向解析 display。
 - `context/builder.js`：向 Tavern 注入短、稳定、结构化的 BioWeave Context。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。

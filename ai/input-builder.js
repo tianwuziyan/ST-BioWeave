@@ -24,7 +24,7 @@ function safeId(value) {
   return String(value ?? '').trim();
 }
 
-const SENSITIVE_INPUT_KEY_PATTERN = /(?:^|_)(?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|password|secret)(?:$|_)/iu;
+const SENSITIVE_INPUT_KEY_PATTERN = /(?:^|_)(?:api[_-]?key|api[_-]?secret|authorization|access[_-]?token|refresh[_-]?token|bearer|password|credential|secret|token)(?:$|_)/iu;
 
 function isSensitiveInputKey(key) {
   return SENSITIVE_INPUT_KEY_PATTERN.test(String(key ?? ''));
@@ -172,7 +172,7 @@ function firstContent(values) {
 }
 
 // 读取当前 SillyTavern 的用户人物设定；参考 Anima 的公开上下文读取方式，不访问私有 Store。
-function buildUserPersonaInput(context) {
+export function buildUserPersonaInput(context) {
   const powerUserSettings = context?.powerUserSettings && typeof context.powerUserSettings === 'object'
     ? context.powerUserSettings
     : {};
@@ -231,17 +231,21 @@ function buildCharacterInput(sources, selected) {
   return character;
 }
 
-function buildWorldbookInput(sources, selected) {
+function buildWorldbookInput(sources, settings) {
+  const normalizedSettings = normalizeWorldbookSettings(settings);
+  if (normalizedSettings.mode === 'none') return [];
+  const includeAll = normalizedSettings.mode === 'all';
+  const selected = normalizedSettings.selected;
   const worldbooks = [];
   for (const source of Array.isArray(sources) ? sources : []) {
     if (sourceType(source) !== 'worldbook') continue;
     const sourceId = safeId(source.source_id);
     if (!sourceId) continue;
-    const entryIds = selectedChildIds(selected, sourceId, 'entry_id');
+    const entryIds = includeAll ? null : selectedChildIds(selected, sourceId, 'entry_id');
     const entries = [];
     for (const entry of Array.isArray(source.entries) ? source.entries : []) {
       const entryId = safeId(entry?.entry_id);
-      if (!entryId || !entryIds.has(entryId)) continue;
+      if (!entryId || (!includeAll && !entryIds.has(entryId))) continue;
       const content = safeContent(entry?.content);
       entries.push({
         entry_id: entryId,
@@ -265,12 +269,17 @@ function numericFloor(value, fallback) {
   return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
 }
 
-function messageContent(message) {
+function messageContent(message, swipeIdOverride = undefined) {
   if (typeof message === 'string' || typeof message === 'number') return safeContent(message);
   if (!message || typeof message !== 'object') return '';
-  const swipeId = Number.isInteger(message.swipe_id) ? message.swipe_id : 0;
-  if (Array.isArray(message.swipes) && message.swipes[swipeId] !== undefined) {
-    const swipeText = safeContent(message.swipes[swipeId]);
+  const swipeId = Number.isInteger(swipeIdOverride)
+    ? swipeIdOverride
+    : Number.isInteger(message.swipe_id) ? message.swipe_id : 0;
+  const swipes = Array.isArray(message.swipes) || (message.swipes && typeof message.swipes === 'object')
+    ? message.swipes
+    : null;
+  if (swipes && swipes[swipeId] !== undefined) {
+    const swipeText = safeContent(swipes[swipeId]);
     if (swipeText) return swipeText;
   }
   return safeContent(message.mes ?? message.content ?? message.message ?? '');
@@ -291,6 +300,43 @@ function messageFloor(message, index) {
     if (Number.isFinite(parsed)) return Math.round(parsed);
   }
   return index;
+}
+
+// Recent Story and the Event target use the same per-floor processing
+// contract. The active swipe is resolved before regex is applied, and the
+// caller may still process a target when Recent Story reading is disabled.
+export function processNarrativeFloor({
+  message = null,
+  index = 0,
+  floor = undefined,
+  messageId = undefined,
+  swipeId = undefined,
+  role = undefined,
+  settings = {},
+} = {}) {
+  const normalized = normalizeRecentStorySettings(settings);
+  const fallbackFloor = messageFloor(message, index);
+  const resolvedFloor = floor === undefined || floor === null
+    ? fallbackFloor
+    : numericFloor(floor, fallbackFloor);
+  const resolvedRole = role ?? messageRole(message);
+  const resolvedSwipeId = Number.isInteger(swipeId)
+    ? swipeId
+    : Number.isInteger(message?.swipe_id) ? message.swipe_id : null;
+  const originalContent = messageContent(message, resolvedSwipeId);
+  const shouldApplyRegex = resolvedFloor !== 0
+    && (resolvedRole !== 'user' || normalized.regex_user_enabled);
+  const content = shouldApplyRegex
+    ? applyRecentStoryRegex(originalContent, normalized.regex_rules)
+    : originalContent;
+  if (!content.trim()) return null;
+  return {
+    floor: resolvedFloor,
+    message_id: safeId(messageId ?? message?.message_id ?? message?.messageId ?? message?.id) || null,
+    swipe_id: resolvedSwipeId,
+    role: resolvedRole,
+    content,
+  };
 }
 
 function parseRecentStoryRegex(pattern) {
@@ -389,31 +435,31 @@ export function collectRecentStory({context = null, settings = {}, items = null}
     };
   }
 
-  const rawItems = Array.isArray(items)
-    ? items
+  const providedItems = Array.isArray(items) ? items : null;
+  const rawItems = providedItems
+    ? providedItems.slice(-normalized.floor_count)
     : Array.isArray(context?.chat)
       ? context.chat.slice(-normalized.floor_count)
       : [];
   const storyItems = rawItems.map((message, offset) => {
-    const originalIndex = Array.isArray(context?.chat)
-      ? Math.max(0, context.chat.length - rawItems.length) + offset
-      : offset;
-    const originalContent = message?.content !== undefined && message?.floor !== undefined && !message?.mes
-      ? safeContent(message.content)
-      : messageContent(message);
+    const contextIndex = Array.isArray(context?.chat) ? context.chat.indexOf(message) : -1;
+    const providedIndex = providedItems ? providedItems.indexOf(message) : -1;
+    let originalIndex = providedIndex >= 0 ? providedIndex : offset;
+    if (contextIndex >= 0) originalIndex = contextIndex;
+    else if (!providedItems && Array.isArray(context?.chat)) {
+      originalIndex = Math.max(0, context.chat.length - rawItems.length) + offset;
+    }
     const floor = messageFloor(message, originalIndex);
     const role = messageRole(message);
-    // 开场白保留原文；用户楼只有显式开启时才参与正则处理。
-    const shouldApplyRegex = floor !== 0 && (role !== 'user' || normalized.regex_user_enabled);
-    const content = shouldApplyRegex
-      ? applyRecentStoryRegex(originalContent, normalized.regex_rules)
-      : originalContent;
-    if (!content.trim()) return null;
-    return {
+    return processNarrativeFloor({
+      message,
+      index: originalIndex,
       floor,
+      messageId: message?.message_id ?? message?.messageId ?? message?.id,
+      swipeId: Number.isInteger(message?.swipe_id) ? message.swipe_id : undefined,
       role,
-      content,
-    };
+      settings: normalized,
+    });
   }).filter(Boolean);
   const floorStart = storyItems.length ? storyItems[0].floor : null;
   const floorEnd = storyItems.length ? storyItems.at(-1).floor : null;
@@ -423,6 +469,31 @@ export function collectRecentStory({context = null, settings = {}, items = null}
     floor_start: floorStart,
     floor_end: floorEnd,
     items: storyItems,
+  };
+}
+
+function recentStoryMatchesTarget(item, target = null) {
+  if (!target || !item) return false;
+  const targetMessageId = safeId(target.message_id ?? target.messageId);
+  const itemMessageId = safeId(item.message_id ?? item.messageId);
+  const targetSwipeId = Number.isInteger(target.swipe_id) ? target.swipe_id : null;
+  const itemSwipeId = Number.isInteger(item.swipe_id) ? item.swipe_id : null;
+  if (targetMessageId && itemMessageId) {
+    return targetMessageId === itemMessageId
+      && (targetSwipeId === null || itemSwipeId === null || targetSwipeId === itemSwipeId);
+  }
+  const targetFloor = numericFloor(target.floor, null);
+  return targetFloor !== null && numericFloor(item.floor, null) === targetFloor;
+}
+
+function excludeRecentStoryTarget(story, target = null) {
+  if (!target || !story || !Array.isArray(story.items)) return story;
+  const items = story.items.filter(item => !recentStoryMatchesTarget(item, target));
+  return {
+    ...story,
+    floor_start: items.length ? items[0].floor : null,
+    floor_end: items.length ? items.at(-1).floor : null,
+    items,
   };
 }
 
@@ -442,7 +513,12 @@ function buildExternalMemoryInput(settings, providers) {
     const provider = providerByKey.get(definition.key) ?? {};
     const enabled = normalized[definition.key] === true;
     const available = provider.available === true;
-    const rawItems = enabled && provider.content_available === true ? providerItems(provider) : [];
+    const providerStatus = safeText(provider.status || '').trim();
+    const readableProvider = enabled
+      && available
+      && provider.content_available === true
+      && !/失败|error|failed/iu.test(providerStatus);
+    const rawItems = readableProvider ? providerItems(provider) : [];
     const items = rawItems.map((item, index) => {
       const content = safeContent(item?.content ?? item?.text ?? item?.message ?? item);
       if (!content) return null;
@@ -452,7 +528,6 @@ function buildExternalMemoryInput(settings, providers) {
       };
     }).filter(Boolean);
     const hasContent = items.length > 0;
-    const providerStatus = safeText(provider.status || '').trim();
     const readStatus = !enabled
       ? 'disabled'
       : !available
@@ -484,8 +559,9 @@ function buildExternalMemoryInput(settings, providers) {
   });
 }
 
-export function estimateAnalysisTokens(input = {}) {
-  let total = tokenEstimate(input?.persona?.description) + tokenEstimate(input?.character?.description);
+export function estimateAnalysisTokens(input = {}, {includePersona = true} = {}) {
+  let total = (includePersona ? tokenEstimate(input?.persona?.description) : 0)
+    + tokenEstimate(input?.character?.description);
   for (const greeting of input?.character?.greetings ?? []) total += tokenEstimate(greeting?.content);
   for (const worldbook of input?.worldbooks ?? []) {
     for (const entry of worldbook?.entries ?? []) total += tokenEstimate(entry?.content);
@@ -499,7 +575,7 @@ export function estimateAnalysisTokens(input = {}) {
 
 export function buildAnalysisInput({
   sources = [],
-  selected = [],
+  selected = undefined,
   context = null,
   chatId = undefined,
   chatSettings = {},
@@ -508,19 +584,26 @@ export function buildAnalysisInput({
   recentStoryItems = null,
   externalMemory = undefined,
   externalMemoryProviders = [],
+  excludeRecentFloor = null,
+  includePersonaInTokenEstimate = false,
 } = {}) {
-  const normalizedSelected = normalizedSelections(selected ?? chatSettings?.worldbooks?.selected);
+  const worldbookSettings = normalizeWorldbookSettings({
+    ...(chatSettings?.worldbooks ?? {}),
+    selected: selected ?? chatSettings?.worldbooks?.selected ?? [],
+  });
+  const normalizedSelected = worldbookSettings.selected;
   const character = buildCharacterInput(sources, normalizedSelected);
-  const worldbooks = buildWorldbookInput(sources, normalizedSelected);
+  const worldbooks = buildWorldbookInput(sources, worldbookSettings);
   const recentSettings = mergeRecentStorySettings(
     globalRecentStory ?? {},
     recentStory ?? chatSettings?.recent_story ?? {},
   );
-  const recent_story = collectRecentStory({
+  const collectedRecentStory = collectRecentStory({
     context,
     settings: recentSettings,
     items: recentStoryItems ?? recentSettings?.items ?? null,
   });
+  const recent_story = excludeRecentStoryTarget(collectedRecentStory, excludeRecentFloor);
   const external_memory = buildExternalMemoryInput(
     externalMemory ?? chatSettings?.external_memory ?? {},
     externalMemoryProviders,
@@ -545,8 +628,101 @@ export function buildAnalysisInput({
     meta,
     token_estimate: 0,
   };
-  input.token_estimate = estimateAnalysisTokens(input);
+  input.token_estimate = estimateAnalysisTokens(input, {
+    includePersona: includePersonaInTokenEstimate,
+  });
   return input;
+}
+
+function selectedSourceIdsForCollection(selected = []) {
+  return [...new Set(normalizedSelections(selected)
+    .map(item => safeId(item.source_id))
+    .filter(Boolean))];
+}
+
+function sourceListFromResult(result) {
+  if (Array.isArray(result)) return result;
+  return Array.isArray(result?.sources) ? result.sources : [];
+}
+
+// Shared host boundary for World/Event and future analyzers. The optional
+// loaders are injected by Runtime/UI; all text selection and normalization
+// still ends in the same synchronous buildAnalysisInput() path.
+export async function collectAnalysisContext({
+  sources = null,
+  selected = undefined,
+  context = null,
+  chatId = undefined,
+  chatSettings = {},
+  recentStory = undefined,
+  globalRecentStory = undefined,
+  recentStoryItems = null,
+  externalMemory = undefined,
+  externalMemoryProviders = null,
+  sourceLoader = null,
+  sourceLoaderOptions = {},
+  externalMemoryProviderLoader = null,
+  excludeRecentFloor = null,
+  includePersonaInTokenEstimate = false,
+} = {}) {
+  const selectedItems = selected ?? chatSettings?.worldbooks?.selected ?? [];
+  const worldbookSettings = normalizeWorldbookSettings({
+    ...(chatSettings?.worldbooks ?? {}),
+    selected: selectedItems,
+  });
+  let collectedSources = Array.isArray(sources) ? sources : null;
+  if (collectedSources === null && typeof sourceLoader === 'function') {
+    const sourceIds = selectedSourceIdsForCollection(selectedItems);
+    const loadAllWorldbookContent = worldbookSettings.mode === 'all';
+    if (loadAllWorldbookContent || sourceIds.length > 0 || sourceLoaderOptions.loadSourcesWhenNone === true) {
+      try {
+        const result = await sourceLoader({
+          ...sourceLoaderOptions,
+          context,
+          deferWorldbookContent: loadAllWorldbookContent
+            ? false
+            : sourceLoaderOptions.deferWorldbookContent ?? true,
+          loadContentForSourceIds: loadAllWorldbookContent
+            ? []
+            : sourceLoaderOptions.loadContentForSourceIds ?? sourceIds,
+        });
+        collectedSources = sourceListFromResult(result);
+      } catch {
+        // Optional source failures never expose host error objects or raw
+        // responses to the analyzer; unreadable sources contribute no正文。
+        collectedSources = [];
+      }
+    } else {
+      collectedSources = [];
+    }
+  }
+
+  let collectedProviders = Array.isArray(externalMemoryProviders)
+    ? externalMemoryProviders
+    : null;
+  if (collectedProviders === null && typeof externalMemoryProviderLoader === 'function') {
+    try {
+      const result = await externalMemoryProviderLoader({context});
+      collectedProviders = Array.isArray(result) ? result : [];
+    } catch {
+      collectedProviders = [];
+    }
+  }
+
+  return buildAnalysisInput({
+    sources: collectedSources ?? [],
+    selected: selectedItems,
+    context,
+    chatId,
+    chatSettings,
+    recentStory,
+    globalRecentStory,
+    recentStoryItems,
+    externalMemory,
+    externalMemoryProviders: collectedProviders ?? [],
+    excludeRecentFloor,
+    includePersonaInTokenEstimate,
+  });
 }
 
 // Event extraction has a narrower contract than the World Model input. It is
@@ -563,13 +739,10 @@ export function normalizeEventAnalysisInput(options = {}) {
     ?? source.floorVersion
     ?? nested.floorVersion
     ?? {};
-  const context = source.context ?? nested.context;
   const fallbackChatId = source.chatId
     ?? source.chat_id
     ?? nested.chatId
     ?? nested.chat_id
-    ?? context?.chatId
-    ?? context?.chat_id
     ?? requestedScope?.chat_id
     ?? requestedScope?.chatId
     ?? null;
@@ -606,19 +779,82 @@ export function normalizeEventAnalysisInput(options = {}) {
     ?? nested.characterContext
     ?? nested.character
     ?? null;
+  const existingBioWeave = source.existing_bioweave
+    ?? nested.existing_bioweave
+    ?? source.existingBioWeave
+    ?? nested.existingBioWeave
+    ?? null;
+  const persona = source.persona
+    ?? nested.persona
+    ?? null;
+  const character = source.character
+    ?? nested.character
+    ?? null;
+  const worldbooks = source.worldbooks
+    ?? nested.worldbooks
+    ?? [];
+  const recentStory = source.recent_story
+    ?? nested.recent_story
+    ?? null;
+  const externalMemory = source.external_memory
+    ?? nested.external_memory
+    ?? [];
+  const meta = source.meta
+    ?? nested.meta
+    ?? {};
+  const tokenEstimate = Number(source.token_estimate ?? nested.token_estimate);
 
   return {
     chat_scope: {chat_id},
     floor_version,
     current_floor: normalizeEventCurrentFloor(currentFloor, floor_version),
     recent_context: normalizeEventRecentContext(recentContext, nested.recent_story),
+    recent_story: safeStructuredValue(recentStory),
+    character: safeStructuredValue(character),
+    worldbooks: safeStructuredValue(worldbooks),
+    external_memory: safeStructuredValue(externalMemory),
+    meta: safeStructuredValue(meta),
+    token_estimate: Number.isFinite(tokenEstimate) ? tokenEstimate : 0,
     world_model: safeStructuredValue(worldModel),
     story_time: safeStructuredValue(normalizeStoryTime(storyTime)),
     character_context: safeStructuredValue(characterContext),
+    existing_bioweave: safeStructuredValue(existingBioWeave),
+    persona: safeStructuredValue(persona),
   };
 }
 
-export const buildEventAnalysisInput = normalizeEventAnalysisInput;
+// Collection-facing Event input builder. Prompt builders only call the pure
+// normalizeEventAnalysisInput() above and therefore never read host context.
+export function buildEventAnalysisInput(options = {}) {
+  const source = options && typeof options === 'object' ? options : {};
+  const nested = source.analysisInput && typeof source.analysisInput === 'object'
+    ? source.analysisInput
+    : source;
+  const shouldCollectSharedInput = Array.isArray(source.sources)
+    || source.chatSettings !== undefined
+    || source.recentStory !== undefined
+    || source.globalRecentStory !== undefined
+    || source.externalMemory !== undefined
+    || source.selected !== undefined;
+  const shared = shouldCollectSharedInput
+    ? buildAnalysisInput({
+      ...source,
+      includePersonaInTokenEstimate: source.includePersonaInTokenEstimate ?? true,
+    })
+    : null;
+  return normalizeEventAnalysisInput({
+    ...(shared ?? {}),
+    ...source,
+    persona: source.persona ?? nested.persona ?? shared?.persona
+      ?? (source.context ? buildUserPersonaInput(source.context) : null),
+    character: source.character ?? nested.character ?? shared?.character,
+    worldbooks: source.worldbooks ?? nested.worldbooks ?? shared?.worldbooks,
+    recent_story: source.recent_story ?? nested.recent_story ?? shared?.recent_story,
+    external_memory: source.external_memory ?? nested.external_memory ?? shared?.external_memory,
+    meta: source.meta ?? nested.meta ?? shared?.meta,
+    token_estimate: source.token_estimate ?? nested.token_estimate ?? shared?.token_estimate,
+  });
+}
 
 export const createAnalysisInput = buildAnalysisInput;
 export const buildRecentStoryInput = collectRecentStory;

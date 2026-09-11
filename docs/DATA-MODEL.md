@@ -17,7 +17,7 @@
 
 全局正则适用于所有角色卡，并在分析输入收集时先于当前 Chat 的角色卡正则执行。
 
-同一层的 `world_analysis_prompt` 保存 World Analysis 的用户可编辑 `system_top`、`task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定核心约束和结果校验不由该设置覆盖。
+同一层的 `analysis_prompt` 保存所有 AI Analysis 共用的用户可编辑 `system_top`、公共 `task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。旧 `world_analysis_prompt` 只作为读取迁移来源；保存后只写 `analysis_prompt`。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定 Core、任务契约、输出 JSON Contract 和结果校验不由该设置覆盖。Event participant 的 `event_role` 只能使用 Domain enum；`reproductive_capabilities_used.*` 为 `true | false | null`；`pregnancy_relevance.relevant` 与 `possible_conception` 为 boolean；`gestational_subject_ids` 与 `counterpart_ids` 为数组；`participant.evidence` 与 `source_evidence` 为 `{kind, text}` 对象数组。
 
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 
@@ -105,6 +105,13 @@ BiologicalEvent 是完整 NSFW 历史事实的单一来源。Tracking Subject �
 `reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。
 
 `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。
+
+AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
+和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
+旧响应，顶层单独出现的 `source` 以及 Event 内的 `event_id`/`source` 会被
+忽略；其它未知顶层字段仍按固定 Contract 拒绝。Runtime 在解析成功后按
+authoritative Floor Version 与响应序号生成稳定 `event_id`，再绑定下面的
+六字段 `source`，随后才执行 Domain normalize / validate 并写入 Floor。
 
 ### Source binding 与 Floor / Swipe
 

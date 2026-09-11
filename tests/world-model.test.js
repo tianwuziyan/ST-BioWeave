@@ -10,6 +10,7 @@ import {
   summarizeAnalysisInput,
 } from '../ai/analyzer.js';
 import {
+  DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
   DEFAULT_WORLD_ANALYSIS_PROMPT,
   SILLYTAVERN_CURRENT_API,
@@ -52,6 +53,12 @@ function extractStructuredMessages(html) {
     });
   }
   return messages;
+}
+
+function messageStartingWith(messages, marker) {
+  const message = messages.find(item => item.content.startsWith(marker));
+  assert.ok(message, `expected a message starting with ${marker}`);
+  return message.content;
 }
 
 const modelFixture = {
@@ -2368,17 +2375,24 @@ test('World Analysis request uses ordinary chat messages for current and indepen
 
   assert.equal(requests.length, 2);
   for (const request of requests) {
-    assert.deepEqual(request.messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
+    assert.deepEqual(request.messages.map(message => message.role), [
+      'system', 'system', 'assistant', 'user',
+    ]);
     assert.ok(request.messages.every(message => typeof message.content === 'string' && message.content.trim()));
     assert.doesNotMatch(JSON.stringify(request.messages), /```|<json>|JSON 格式/i);
-    assert.match(request.messages[1].content, /【角色甲 的资料】/);
-    assert.match(request.messages[1].content, /【世界书】/);
-    assert.match(request.messages[1].content, /规则证据 用户甲/);
+    const referenceMessage = request.messages.find(message => message.content.includes('【角色卡：角色甲 的背景资料】'));
+    const characterMessage = referenceMessage?.content ?? '';
+    const worldbookMessage = referenceMessage?.content ?? '';
+    const storyMessage = messageStartingWith(request.messages, '【剧情上下文】');
+    const outputMessage = request.messages.find(message => message.content.includes('【World Model 输出契约】'))?.content ?? '';
+    assert.match(characterMessage, /角色背景/);
+    assert.match(worldbookMessage, /【条目：内部条目名不应发送】/);
+    assert.match(worldbookMessage, /规则证据 用户甲/);
     assert.doesNotMatch(JSON.stringify(request.messages), /用户人物设定私密内容| 的人物设定/);
-    assert.doesNotMatch(request.messages[1].content, /source_id|entry_id|token_estimate|内部书名不应发送|内部条目名不应发送/);
-    assert.match(request.messages[2].content, /楼层证据 用户甲/);
-    assert.doesNotMatch(request.messages[2].content, /【楼层信息】|Floor 81|\[assistant\]/);
-    assert.match(request.messages[3].content, /World Model/);
+    assert.doesNotMatch(worldbookMessage, /source_id|entry_id|token_estimate/);
+    assert.match(storyMessage, /楼层证据 用户甲/);
+    assert.doesNotMatch(storyMessage, /【楼层信息】|Floor 81|\[assistant\]/);
+    assert.match(outputMessage, /World Model/);
   }
 });
 
@@ -2395,19 +2409,26 @@ test('World Analysis prompt blocks can be edited without sending format tags', (
     input_suffix: '用户自定义资料后记。',
     labels: {character: '角色资料'},
   });
-  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
-  assert.match(messages[0].content, /只分析生物能力/);
-  assert.match(messages[0].content, /称呼 用户乙/);
-  assert.match(messages[1].content, /用户自定义资料前言/);
-  assert.match(messages[1].content, /【角色乙 的资料】/);
-  assert.match(messages[1].content, /【角色资料】/);
-  assert.match(messages[1].content, /世界书证据/);
-  assert.match(messages[1].content, /用户自定义资料后记/);
+  assert.deepEqual(messages.map(message => message.role), [
+    'system', 'system', 'assistant', 'user',
+  ]);
+  assert.match(messages[0].content, /任务：从本次 AnalysisInput/);
+  const commonMessage = messages.find(message => message.content.includes('【公共分析提示词】'))?.content ?? '';
+  const referenceMessage = messages.find(message => message.content.includes('【角色卡：角色乙 的背景资料】'))?.content ?? '';
+  const characterMessage = referenceMessage;
+  const worldbookMessage = referenceMessage;
+  const tailMessage = messages.find(message => message.content.includes('【公共分析补充】'))?.content ?? '';
+  const storyMessage = messageStartingWith(messages, '【剧情上下文】');
+  const outputMessage = messages.find(message => message.content.includes('【World Model 输出契约】'))?.content ?? '';
+  assert.match(commonMessage, /用户自定义资料前言/);
+  assert.match(characterMessage, /角色乙 的背景资料/);
+  assert.match(worldbookMessage, /世界书证据/);
+  assert.match(tailMessage, /用户自定义资料后记/);
   assert.doesNotMatch(JSON.stringify(messages), /用户人物设定私密内容| 的人物设定/);
-  assert.doesNotMatch(messages[1].content, /source_id|entry_id|token_estimate|书名不进入发送内容/);
-  assert.match(messages[2].content, /楼层内容/);
-  assert.doesNotMatch(messages[2].content, /【楼层信息】|Floor 3|\[assistant\]/);
-  assert.match(messages[3].content, /World Model/);
+  assert.doesNotMatch(worldbookMessage, /source_id|entry_id|token_estimate|书名不进入发送内容/);
+  assert.match(storyMessage, /楼层内容/);
+  assert.doesNotMatch(storyMessage, /【楼层信息】|Floor 3|\[assistant\]/);
+  assert.match(outputMessage, /World Model/);
   assert.equal(messages.some(message => /```|<json>|JSON 格式/i.test(message.content)), false);
   assert.match(buildWorldModelPrompt({character: {description: '普通资料'}}), /AnalysisInput/);
 });
@@ -2430,11 +2451,16 @@ test('World Analysis supports independent top and bottom SYSTEM messages', () =>
   const baseline = buildWorldModelMessages(analysisInput);
 
   assert.deepEqual(plainMessages[0], {role: 'system', content: 'TOP'});
-  assert.deepEqual(plainMessages.at(-1), {role: 'system', content: 'BOTTOM'});
   assert.deepEqual(messages[0], {role: 'system', content: 'TOP 用户甲 / 角色甲'});
-  assert.deepEqual(messages.at(-1), {role: 'system', content: 'BOTTOM 用户甲 / 角色甲'});
-  assert.deepEqual(messages.slice(1, -1), baseline);
-  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'system', 'assistant', 'user', 'system']);
+  assert.equal(messages.filter(message => message.role === 'system').at(-1).content, 'BOTTOM 用户甲 / 角色甲');
+  assert.notDeepEqual(messages, baseline);
+  assert.ok(messages.findIndex(message => message.content.startsWith('TOP 用户甲'))
+    < messages.findIndex(message => message.content.includes('【World Model 任务】')));
+  assert.ok(messages.findIndex(message => message.content.includes('【World Model 输出契约】'))
+    < messages.findIndex(message => message.role === 'assistant'));
+  assert.deepEqual(messages.map(message => message.role), [
+    'system', 'system', 'system', 'system', 'assistant', 'user',
+  ]);
 });
 
 test('World Analysis empty boundary SYSTEM values preserve the four-message behavior', () => {
@@ -2460,8 +2486,10 @@ test('World Analysis prompt normalization includes bounded boundary fields and d
 
   assert.equal(DEFAULT_WORLD_ANALYSIS_PROMPT.system_top, '');
   assert.equal(DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom, '');
-  assert.equal(DEFAULT_EXTENSION_SETTINGS.world_analysis_prompt.system_top, '');
-  assert.equal(DEFAULT_EXTENSION_SETTINGS.world_analysis_prompt.system_bottom, '');
+  assert.equal(DEFAULT_ANALYSIS_PROMPT.system_top, '');
+  assert.equal(DEFAULT_ANALYSIS_PROMPT.system_bottom, '');
+  assert.equal(DEFAULT_EXTENSION_SETTINGS.analysis_prompt.system_top, '');
+  assert.equal(DEFAULT_EXTENSION_SETTINGS.analysis_prompt.system_bottom, '');
   assert.equal(normalized.system_top.length, 20000);
   assert.equal(normalized.system_bottom.length, 20000);
   assert.equal(normalized.task, '保留任务');
@@ -2474,7 +2502,7 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
     character: {description: '角色性别为女性，但资料没有说明其物种；个人例外是妊娠时间不同。'},
     worldbooks: [{entries: [{content: '当前世界医疗条件：城市有产科医院和急救设施；人类妊娠规则为三个月。'}]}],
   });
-  const prompt = messages[0].content;
+  const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /人类/);
   assert.match(prompt, /Human baseline 与显式 delta/);
   assert.match(prompt, /唯一内置的现实生物 baseline/);
@@ -2487,7 +2515,7 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   assert.match(prompt, /fertilization/);
   assert.match(prompt, /medical_context/);
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/);
-  assert.match(messages[1].content, /当前世界医疗条件：城市有产科医院和急救设施；人类妊娠规则为三个月/);
+  assert.match(messages.find(message => message.content.includes('【世界书参考资料】'))?.content ?? '', /当前世界医疗条件：城市有产科医院和急救设施；人类妊娠规则为三个月/);
   assert.match(prompt, /childbirth_difficulty、care_level、evidence/);
 });
 
@@ -2510,7 +2538,7 @@ test('World Model prompt distinguishes fixed dual evidence from temporary dualiz
   assert.match(prompt, /固定生殖分类必须由资料支持/);
   assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化.*不能建立新的 biological_type/);
   assert.match(prompt, /固定双性统一使用名称“双性”/);
-  assert.match(messages[1].content, /角色本身是双性/);
+  assert.match(messageStartingWith(messages, '【角色卡：角色 的背景资料】'), /角色本身是双性/);
   assert.match(prompt, /明确支持才写 true\/false/);
   assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/);
 });
@@ -2523,8 +2551,9 @@ test('World Model prompt rejects dual types inferred from default male/female in
   assert.match(prompt, /biological_type\.name 都是开放字符串/);
   assert.match(prompt, /证据不足时保留 biological_types: \[\]/);
   assert.doesNotMatch(prompt, /默认人类基础类型包含男性、女性和双性/);
-  assert.match(messages[1].content, /资料只呈现默认男性\/女性二元/);
-  assert.doesNotMatch(messages[1].content, /固定双性分类/);
+  const characterMessage = messageStartingWith(messages, '【角色卡：角色 的背景资料】');
+  assert.match(characterMessage, /资料只呈现默认男性\/女性二元/);
+  assert.doesNotMatch(characterMessage, /固定双性分类/);
 });
 
 test('World Model prompt states the complete generic field semantic contract', () => {
@@ -2628,7 +2657,7 @@ test('World Model keeps progression outside lifecycle when the AI returns no bio
 });
 
 test('World Model prompt requires Chinese string values and human type names', () => {
-  const prompt = buildWorldModelMessages()[0].content;
+  const prompt = buildWorldModelMessages().map(message => message.content).join('\n');
   assert.match(prompt, /JSON key 使用 schema 规定的英文/);
   assert.match(prompt, /说明、规则和列表字符串使用中文/);
   assert.match(prompt, /species\[\] 包含 name、description、biological_types\[\]/);
@@ -2642,7 +2671,7 @@ test('World Model prompt requires Chinese string values and human type names', (
 test('settings keeps debug behind the title action and leaves no standalone preview disclosure', () => {
   const html = settingsPage({});
   assert.match(html, /data-bioweave-action="open-analysis-debug"/);
-  assert.match(html, /data-bioweave-settings-disclosure="world_analysis_prompt"[\s\S]*?<summary class="bioweave-settings-summary">[\s\S]*?<strong>世界分析提示词<\/strong>[\s\S]*?data-bioweave-action="open-analysis-debug"/);
+  assert.match(html, /data-bioweave-settings-disclosure="analysis_prompt"[\s\S]*?<summary class="bioweave-settings-summary">[\s\S]*?<strong>分析提示词<\/strong>[\s\S]*?data-bioweave-action="open-analysis-debug"/);
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
 });
 
@@ -2653,7 +2682,7 @@ test('debug Popup content is standalone, uses the real message builder, and has 
       input: {
         character: {description: '角色预览'},
         worldbooks: [],
-        recent_story: {items: []},
+        recent_story: {items: [{floor: 1, role: 'assistant', content: '预览剧情'}]},
         external_memory: [],
         meta: {user_name: '用户丙', character_name: '角色丙'},
       },
@@ -2677,7 +2706,7 @@ test('World Model message preview resets Popup alignment and wraps message conte
       input: {
         character: {description: '角色预览'},
         worldbooks: [],
-        recent_story: {items: []},
+        recent_story: {items: [{floor: 1, role: 'assistant', content: '预览剧情'}]},
         external_memory: [],
         meta: {user_name: '用户丙', character_name: '角色丙'},
       },
@@ -2720,9 +2749,9 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
   });
   const preview = html;
   const topIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>TOP 用户丙</pre>');
-  const coreIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>任务：从本次 AnalysisInput');
+  const coreIndex = preview.indexOf('任务：从本次 AnalysisInput');
   const userIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>请根据以上资料完成 World Model 分析');
-  const bottomIndex = preview.indexOf('<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>BOTTOM 角色丙</pre>');
+  const bottomIndex = preview.indexOf('BOTTOM 角色丙');
 
   assert.equal((preview.match(/<details class="bioweave-world-model-message"/g) ?? []).length, 6);
   assert.ok(topIndex >= 0);
@@ -2730,7 +2759,7 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
   assert.ok(userIndex >= 0);
   assert.ok(bottomIndex >= 0);
   assert.ok(topIndex < coreIndex);
-  assert.ok(userIndex < bottomIndex);
+  assert.ok(bottomIndex < userIndex);
 });
 
 test('World Model message structure and raw views share one final messages array', () => {
@@ -2768,7 +2797,8 @@ test('World Model message structure and raw views share one final messages array
   assert.deepEqual(structuredMessages.map(({role, content}) => ({role, content})), expectedMessages);
   assert.deepEqual(structuredMessages.map(message => message.index), expectedMessages.map((_, index) => index));
   assert.deepEqual(rawMessages[0], {role: 'system', content: 'TOP 用户丁'});
-  assert.deepEqual(rawMessages.at(-1), {role: 'system', content: 'BOTTOM 角色丁'});
+  assert.match(rawMessages[1].content, /World Model/);
+  assert.deepEqual(rawMessages.at(-1), expectedMessages.at(-1));
   assert.equal(structuredMessages[0].content, rawMessages[0].content);
   assert.equal(structuredMessages.at(-1).content, rawMessages.at(-1).content);
   assert.match(rawHtml, /class="bioweave-analysis-message-raw[^\"]*"/);
@@ -2798,8 +2828,8 @@ test('World Model raw and structure views keep the four-message compatibility sh
     documentRef: null,
   });
 
-  assert.equal(expectedMessages.length, 4);
-  assert.equal(extractStructuredMessages(structureHtml).length, 4);
+  assert.equal(expectedMessages.length, 3);
+  assert.equal(extractStructuredMessages(structureHtml).length, 3);
   assert.deepEqual(extractRawMessages(rawHtml), expectedMessages);
 });
 
@@ -2835,7 +2865,7 @@ test('AnalysisInput carries current SillyTavern names for request placeholder re
     ...input,
     character: {description: '<user> 与 {{char}} 的资料'},
   });
-  assert.match(messages[1].content, /当前用户设定 与 当前角色卡 的资料/);
+  assert.match(messageStartingWith(messages, '【角色卡：当前角色卡 的背景资料】'), /当前用户设定 与 当前角色卡 的资料/);
 });
 
 test('AnalysisInput keeps the selected persona for collection but excludes it from the World Model request', () => {
@@ -2902,12 +2932,16 @@ test('World Model external memory uses the neutral history memory heading', () =
     external_memory: [{
       key: 'anima',
       label: 'Anima',
+      enabled: true,
+      available: true,
+      content_available: true,
+      read_status: 'success',
       items: [{label: '记忆文件', content: '历史事件摘要'}],
     }],
   });
-  assert.match(messages[1].content, /【历史事件记忆库】/);
-  assert.match(messages[1].content, /以下是对话过程中自动生成的客观摘要/);
-  assert.doesNotMatch(messages[1].content, /【Anima】/);
+  const memoryMessage = messageStartingWith(messages, '【外部历史参考信息】');
+  assert.match(memoryMessage, /来自用户在设置中启用的外部历史或记忆来源/);
+  assert.match(memoryMessage, /【记忆文件】/);
 });
 
 test('World Model page uses Chinese labels and shows null as 未知', () => {

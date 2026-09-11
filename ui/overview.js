@@ -175,6 +175,7 @@ function renderAnalysisDetail(status, events, registrySummary, version) {
     + '<div><dt>started_at</dt><dd>' + escapeHtml(safeDiagnosticText(status.started_at)) + '</dd></div>'
     + '<div><dt>finished_at</dt><dd>' + escapeHtml(safeDiagnosticText(status.finished_at)) + '</dd></div>'
     + '<div><dt>error_code</dt><dd>' + escapeHtml(safeDiagnosticText(status.error_code ?? status.last_error)) + '</dd></div>'
+    + '<div><dt>error_path</dt><dd><code>' + escapeHtml(safeDiagnosticText(status.error_path ?? status.diagnostic_path)) + '</code></dd></div>'
     + '<div><dt>safe_error_summary</dt><dd>' + escapeHtml(safeDiagnosticText(status.safe_error_summary)) + '</dd></div>'
     + '<div><dt>last_success</dt><dd>' + escapeHtml(safeDiagnosticText(status.last_success)) + '</dd></div>'
     + '<div><dt>last_error</dt><dd>' + escapeHtml(safeDiagnosticText(status.last_error)) + '</dd></div>'

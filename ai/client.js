@@ -160,8 +160,8 @@ function safeModel(model, fallback = 'configured model') {
 export function redactSecrets(value) {
   return String(value ?? '')
     .replace(/(bearer\s+)[^\s,;"'}]+/gi, '$1[redacted]')
-    .replace(/([?&](?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|secret|token)=)[^&\s]+/gi, '$1[redacted]')
-    .replace(/(["']?(?:api[_-]?key|authorization|secret|token)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[redacted]');
+    .replace(/([?&](?:api[_-]?key|api[_-]?secret|authorization|access[_-]?token|refresh[_-]?token|secret|token|credential)=)[^&\s]+/gi, '$1[redacted]')
+    .replace(/(["']?(?:api[_-]?key|api[_-]?secret|authorization|secret|token|credential)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[redacted]');
 }
 
 export function safeErrorSummary(error) {

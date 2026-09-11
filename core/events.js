@@ -274,15 +274,12 @@ function validateEvidence(value, path, errors) {
     return;
   }
   value.forEach((item, index) => {
-    if (typeof item === 'string') {
-      if (!item.trim()) addError(errors, `${path}[${index}].text`);
-      return;
-    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       addError(errors, `${path}[${index}]`);
       return;
     }
-    if (!textValue(item.text ?? item.content)) addError(errors, `${path}[${index}].text`);
+    if (!textValue(item.kind)) addError(errors, `${path}[${index}].kind`);
+    if (!textValue(item.text)) addError(errors, `${path}[${index}].text`);
   });
 }
 

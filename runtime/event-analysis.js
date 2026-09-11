@@ -1,12 +1,20 @@
-import {buildEventAnalysisInput} from '../ai/input-builder.js';
+import {
+  buildEventAnalysisInput,
+  collectAnalysisContext,
+  mergeRecentStorySettings,
+  processNarrativeFloor,
+} from '../ai/input-builder.js';
+import {createWorldbookCache, loadAnalysisSources} from '../ai/worldbook.js';
 import {safeErrorSummary as clientSafeErrorSummary} from '../ai/client.js';
 import {normalizeEvent, sortEvents, validateEvent} from '../core/events.js';
 import {explainTrackingDecision, rebuildTrackingRegistry} from '../core/tracking.js';
 import {normalizeStoryTime} from '../story/time.js';
+import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
 import {
   commitAnalysis,
   floorVersion,
   floorVersionFromData,
+  hashText,
   isIntervalTarget,
   sameFloorVersion,
   shouldAnalyze,
@@ -77,30 +85,10 @@ function messageVersion(message, storedVersion = null) {
     ?? undefined;
 }
 
-function defaultCharacterContext(context, chatData = {}) {
-  const characterIndex = context?.characterId;
-  const character = context?.character
-    ?? context?.characterCard
-    ?? (characterIndex !== undefined && characterIndex !== null ? context?.characters?.[characterIndex] : null);
-  const card = character?.data && typeof character.data === 'object'
-    ? {...character, ...character.data}
-    : character && typeof character === 'object' ? character : {};
-  const characterCard = {};
-  for (const key of [
-    'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
-    'system_prompt', 'post_history_instructions',
-  ]) {
-    if (card[key] !== undefined && card[key] !== null && card[key] !== '') characterCard[key] = card[key];
-  }
+function defaultCharacterContext(_context, chatData = {}, analysisInput = {}) {
   return {
-    current_character: context?.name2 ?? context?.character_name ?? null,
-    character_id: card.avatar
-      ?? card.extensions?.character_id
-      ?? card.extensions?.id
-      ?? card.data?.extensions?.character_id
-      ?? card.data?.extensions?.id
-      ?? null,
-    character_card: characterCard,
+    current_character: analysisInput.meta?.character_name ?? null,
+    character_card: analysisInput.character ?? {},
     profiles: chatData.character_profiles ?? {},
   };
 }
@@ -150,7 +138,16 @@ function safeDiagnosticSummary(error, stage = null) {
   if (code === 'API_PROFILE_NOT_CONFIGURED') return '事件分析任务没有解析到可用 API 配置';
   if (code === 'EVENT_RESPONSE_EMPTY') return 'AI 响应为空或未能提取正文';
   if (code === 'EVENT_RESPONSE_JSON_INVALID') return 'AI 响应不是有效 JSON';
-  if (code === 'EVENT_SCHEMA_INVALID' || code.startsWith('EVENT_ANALYSIS_')) {
+  if (code === 'EVENT_SCHEMA_INVALID'
+    || code === 'domain_validation_failed'
+    || code === 'unexpected_top_level_field'
+    || code === 'unexpected_event_field'
+    || code === 'missing_event_field'
+    || code === 'invalid_event_role'
+    || code === 'invalid_possible_conception'
+    || code === 'invalid_evidence_shape'
+    || code === 'participant_reference_invalid'
+    || code.startsWith('EVENT_ANALYSIS_')) {
     return 'AI 返回未通过 Event JSON Schema 校验';
   }
   if (code === 'ST_CHAT_STORAGE_UNAVAILABLE') return 'SillyTavern Chat 存储不可用';
@@ -176,12 +173,30 @@ function floorExecutionKey(version) {
   ].map(value => String(value ?? '')).join('\u001f');
 }
 
+async function deterministicEventId(version, ordinal) {
+  const material = [
+    'bioweave-event-id-v1',
+    version?.chat_id,
+    version?.message_id,
+    version?.floor,
+    version?.swipe_id,
+    version?.content_hash,
+    version?.message_version,
+    ordinal,
+  ].map(value => String(value ?? '')).join('\u001f');
+  const digest = await hashText(material);
+  return `evt_${digest.slice(0, 24)}_${ordinal + 1}`;
+}
+
 function executionError(error, stage = null) {
   const code = diagnosticCode(error);
   const resolvedStage = error?.analysis_stage ?? stage ?? 'analysis';
+  const path = error?.diagnostic_path ?? error?.error_path ?? null;
   return {
     stage: resolvedStage,
     error_code: code,
+    error_path: path,
+    diagnostic_path: path,
     safe_error_summary: safeDiagnosticSummary(error, resolvedStage),
   };
 }
@@ -212,6 +227,8 @@ function safeFloorPreflightStatus(error, trackingSubjectCount = 0) {
     last_error: diagnostic.error_code,
     error_stage: diagnostic.stage,
     error_code: diagnostic.error_code,
+    error_path: diagnostic.error_path,
+    diagnostic_path: diagnostic.diagnostic_path,
     safe_error_summary: diagnostic.safe_error_summary,
     started_at: null,
     finished_at: null,
@@ -229,6 +246,12 @@ export function createEventAnalysisCoordinator({
   analyzer,
   storyTime = null,
   characterContextResolver = defaultCharacterContext,
+  analysisContextCollector = collectAnalysisContext,
+  analysisSourceLoader = loadAnalysisSources,
+  analysisSourceLoaderOptions = {},
+  externalMemoryProviderLoader = null,
+  globalRecentStoryResolver = () => ({}),
+  analysisSourceCache = null,
   notify = () => {},
 } = {}) {
   if (!st || !chat || !store) throw new TypeError('EVENT_ANALYSIS_DEPENDENCIES_REQUIRED');
@@ -237,6 +260,18 @@ export function createEventAnalysisCoordinator({
   let attemptSequence = 0;
   let registryRefreshChain = Promise.resolve();
   let destroyed = false;
+  const sourceCache = analysisSourceCache ?? createWorldbookCache();
+
+  async function collectExternalMemoryProviders(context) {
+    if (typeof externalMemoryProviderLoader === 'function') {
+      return externalMemoryProviderLoader({context});
+    }
+    try {
+      return await probeExternalMemoryProviders({context});
+    } catch {
+      return detectExternalMemoryProviders({context});
+    }
+  }
 
   function messageCollection() {
     const context = st.getContext?.();
@@ -246,6 +281,19 @@ export function createEventAnalysisCoordinator({
 
   function messages() {
     return messageCollection() ?? [];
+  }
+
+  function recentStoryItemsBefore(targetIndex) {
+    return messages().slice(0, Math.max(0, targetIndex)).map((message, index) => {
+      const swipeId = store.getActiveSwipeId?.(index) ?? 0;
+      return {
+        ...message,
+        floor: messageFloor(message, index),
+        message_id: messageId(message, index),
+        swipe_id: swipeId,
+        role: messageRole(message),
+      };
+    });
   }
 
   function resolveMessage(selector = null) {
@@ -401,6 +449,11 @@ export function createEventAnalysisCoordinator({
         ? {
           stage: analysis.error_stage ?? analysis.last_attempt.stage ?? null,
           error_code: analysis.error_code ?? analysis.last_attempt.error_code ?? analysis.last_error ?? null,
+          error_path: analysis.error_path ?? analysis.last_attempt.error_path ?? null,
+          diagnostic_path: analysis.diagnostic_path
+            ?? analysis.last_attempt.diagnostic_path
+            ?? analysis.last_attempt.error_path
+            ?? null,
           safe_error_summary: analysis.safe_error_summary ?? analysis.last_attempt.safe_error_summary ?? null,
         }
         : null);
@@ -422,6 +475,12 @@ export function createEventAnalysisCoordinator({
       last_error: diagnostic?.error_code ?? analysis?.last_error ?? analysis?.last_attempt?.error ?? null,
       error_stage: diagnostic?.stage ?? analysis?.error_stage ?? null,
       error_code: diagnostic?.error_code ?? analysis?.error_code ?? null,
+      error_path: diagnostic?.error_path ?? analysis?.error_path ?? analysis?.last_attempt?.error_path ?? null,
+      diagnostic_path: diagnostic?.diagnostic_path
+        ?? analysis?.diagnostic_path
+        ?? analysis?.last_attempt?.diagnostic_path
+        ?? analysis?.last_attempt?.error_path
+        ?? null,
       safe_error_summary: diagnostic?.safe_error_summary ?? analysis?.safe_error_summary ?? null,
       started_at: activeAttempt?.started_at ?? terminal?.started_at ?? analysis?.last_attempt?.started_at ?? null,
       finished_at: activeAttempt?.finished_at ?? terminal?.finished_at ?? analysis?.last_attempt?.finished_at ?? null,
@@ -580,6 +639,90 @@ export function createEventAnalysisCoordinator({
     }
   }
 
+  async function buildFloorAnalysisInput(target, token) {
+    const chatData = store.getChat(token.chatId);
+    const context = st.getContext?.() ?? {};
+    const globalRecentStory = globalRecentStoryResolver?.() ?? {};
+    const recentStorySettings = mergeRecentStorySettings(
+      globalRecentStory,
+      chatData.settings?.recent_story ?? {},
+    );
+    const storyTimeValue = storyTime?.atFloor?.(target.version.floor)
+      ?? normalizeStoryTime(target.message?.story_time ?? target.message?.storyTime ?? null);
+    const commonInput = await analysisContextCollector({
+      context,
+      chatId: token.chatId,
+      chatSettings: chatData.settings ?? {},
+      globalRecentStory,
+      // The shared collector owns floor_count and regex processing. Runtime
+      // only supplies the causal prefix of the Chat so a specified target
+      // Floor can never pull future narrative into its context.
+      recentStoryItems: recentStoryItemsBefore(target.index),
+      sourceLoader: analysisSourceLoader,
+      sourceLoaderOptions: {
+        ...analysisSourceLoaderOptions,
+        context,
+        fetchRef: analysisSourceLoaderOptions.fetchRef ?? st.fetch,
+        getRequestHeaders: analysisSourceLoaderOptions.getRequestHeaders ?? st.getRequestHeaders,
+        cache: analysisSourceLoaderOptions.cache ?? sourceCache,
+      },
+      externalMemoryProviderLoader: collectExternalMemoryProviders,
+      excludeRecentFloor: {
+        floor: target.version.floor,
+        message_id: target.version.message_id,
+        swipe_id: target.swipeId,
+      },
+      includePersonaInTokenEstimate: true,
+    });
+    const characterContext = characterContextResolver(
+      context,
+      chatData,
+      commonInput,
+    );
+    const targetMessage = target.message && typeof target.message === 'object' && !Array.isArray(target.message)
+      ? {
+        ...target.message,
+        floor: target.version.floor,
+        message_id: target.version.message_id,
+        swipe_id: target.swipeId,
+        role: messageRole(target.message),
+      }
+      : {
+        content: messageText(target.message, target.swipeId),
+        floor: target.version.floor,
+        message_id: target.version.message_id,
+        swipe_id: target.swipeId,
+        role: messageRole(target.message),
+      };
+    const processedTarget = processNarrativeFloor({
+      message: targetMessage,
+      floor: target.version.floor,
+      messageId: target.version.message_id,
+      swipeId: target.swipeId,
+      role: messageRole(target.message),
+      settings: recentStorySettings,
+    });
+    return buildEventAnalysisInput({
+      ...commonInput,
+      chatId: token.chatId,
+      floorVersion: target.version,
+      currentFloor: {
+        floor: target.version.floor,
+        message_id: target.version.message_id,
+        swipe_id: target.swipeId,
+        narrative: processedTarget?.content ?? '',
+        role: messageRole(target.message),
+      },
+      worldModel: chatData.world_model,
+      storyTime: storyTimeValue,
+      characterContext,
+      existingBioWeave: {
+        analysis: target.floorData?.analysis ?? null,
+        events: Array.isArray(target.floorData?.events) ? target.floorData.events : [],
+      },
+    });
+  }
+
   async function runAnalysis(execution, target, savedAnalysis) {
     let token = null;
     let terminalState = 'failed';
@@ -587,32 +730,7 @@ export function createEventAnalysisCoordinator({
     try {
       token = chat.token();
       execution.stage = 'request_build';
-      const all = messages();
-      const start = Math.max(0, target.index - 4);
-      const recentContext = all.slice(start, target.index).map((item, offset) => {
-        const index = start + offset;
-        const swipeId = store.getActiveSwipeId?.(index) ?? 0;
-        return {floor: messageFloor(item, index), role: messageRole(item), content: messageText(item, swipeId)};
-      });
-      const chatData = store.getChat(token.chatId);
-      const context = st.getContext?.() ?? {};
-      const storyTimeValue = storyTime?.atFloor?.(target.version.floor)
-        ?? normalizeStoryTime(target.message?.story_time ?? target.message?.storyTime ?? null);
-      const analysisInput = buildEventAnalysisInput({
-        chatId: token.chatId,
-        floorVersion: target.version,
-        currentFloor: {
-          floor: target.version.floor,
-          message_id: target.version.message_id,
-          swipe_id: target.swipeId,
-          narrative: messageText(target.message, target.swipeId),
-          role: messageRole(target.message),
-        },
-        recentContext,
-        worldModel: chatData.world_model,
-        storyTime: storyTimeValue,
-        characterContext: characterContextResolver(context, chatData),
-      });
+      const analysisInput = await buildFloorAnalysisInput(target, token);
       if (typeof analyzer?.analyzeFloor !== 'function') throw new Error('EVENT_ANALYZER_UNAVAILABLE');
 
       execution.stage = 'api_request';
@@ -625,14 +743,28 @@ export function createEventAnalysisCoordinator({
       assertExecutionCurrent(execution, token);
 
       execution.stage = 'normalization';
-      const events = (Array.isArray(result?.events) ? result.events : []).map(event => normalizeEvent({
-        ...event,
-        source: target.version,
+      const events = await Promise.all((Array.isArray(result?.events) ? result.events : []).map(async (event, ordinal) => {
+        const facts = event && typeof event === 'object' && !Array.isArray(event)
+          ? Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'event_id' && key !== 'source'))
+          : event;
+        const normalized = normalizeEvent(facts);
+        return normalizeEvent({
+          ...normalized,
+          event_id: await deterministicEventId(target.version, ordinal),
+          source: target.version,
+        });
       }));
       execution.stage = 'schema_validation';
-      if (events.some(event => !validateEvent(event).ok)) {
-        const error = new Error('EVENT_SCHEMA_INVALID');
-        error.code = 'EVENT_SCHEMA_INVALID';
+      const invalidEvent = events
+        .map((event, index) => ({event, index, validation: validateEvent(event)}))
+        .find(item => !item.validation.ok);
+      if (invalidEvent) {
+        const firstError = invalidEvent.validation.errors?.[0] ?? null;
+        const error = new Error('EVENT_DOMAIN_VALIDATION_FAILED');
+        error.code = 'EVENT_DOMAIN_VALIDATION_FAILED';
+        error.diagnostic_code = 'domain_validation_failed';
+        error.diagnostic_path = `$.events[${invalidEvent.index}]${firstError ? `.${firstError}` : ''}`;
+        error.error_path = error.diagnostic_path;
         throw error;
       }
       const analyzedAt = new Date().toISOString();
@@ -757,6 +889,13 @@ export function createEventAnalysisCoordinator({
     return analyzeCurrentFloor({force: true, reason: 'manual-refresh'});
   }
 
+  async function getCurrentFloorAnalysisInput() {
+    const target = await resolveFloor();
+    const token = chat.token();
+    chat.assert(token);
+    return buildFloorAnalysisInput(target, token);
+  }
+
   async function requestAbortCurrentFloorAnalysis() {
     let target;
     try {
@@ -849,6 +988,7 @@ export function createEventAnalysisCoordinator({
     analyzeCurrentFloor,
     analyzeFloor,
     refreshCurrentFloorAnalysis,
+    getCurrentFloorAnalysisInput,
     requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
     getCurrentFloorEvents: async () => (await statusForCurrentFloor()).current_floor_events,

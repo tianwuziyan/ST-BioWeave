@@ -724,8 +724,9 @@ test('settings and World Model analysis debug actions share one Popup and prompt
     target: popupActionTarget(settingsPopup.content, 'refresh-analysis-preview'),
     preventDefault() {},
   });
-  assert.match(settingsPopup.content.innerHTML, /DRAFT TOP/);
-  assert.match(settingsPopup.content.innerHTML, /DRAFT BOTTOM/);
+  assert.match(settingsPopup.content.innerHTML, /SAVED TOP/);
+  assert.match(settingsPopup.content.innerHTML, /SAVED BOTTOM/);
+  assert.doesNotMatch(settingsPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/);
   assert.match(settingsPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
   resolvePopup();
   await settingsOpen;
@@ -1491,7 +1492,7 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
   app.destroyBioWeave();
 });
 
-test('world analysis prompt save keeps data behavior and uses a success Toast without a page notice', async () => {
+test('analysis prompt save keeps data behavior and uses a success Toast without a page notice', async () => {
   const documentRef = new AppFakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -1503,9 +1504,9 @@ test('world analysis prompt save keeps data behavior and uses a success Toast wi
   const profileStore = {
     getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
     getApiRequestSettings: () => ({}),
-    getWorldAnalysisPrompt: () => savedPrompt ?? {},
+    getAnalysisPrompt: () => savedPrompt ?? {},
     getRecentStoryGlobal: () => ({regex_rules: []}),
-    saveWorldAnalysisPrompt: async value => {
+    saveAnalysisPrompt: async value => {
       savedPrompt = value;
       return value;
     },
@@ -1530,18 +1531,18 @@ test('world analysis prompt save keeps data behavior and uses a success Toast wi
   const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
   const root = app.openBioWeave();
   app.go('settings');
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-settings]', [{}]);
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-field="system_top"]', [{value: 'TOP'}]);
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-field="task"]', [{value: 'TASK'}]);
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-field="input_prefix"]', [{value: ''}]);
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-field="input_suffix"]', [{value: ''}]);
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-field="system_bottom"]', [{value: 'BOTTOM'}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-settings]', [{}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_top"]', [{value: 'TOP'}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="task"]', [{value: 'TASK'}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_prefix"]', [{value: ''}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_suffix"]', [{value: ''}]);
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_bottom"]', [{value: 'BOTTOM'}]);
 
   const click = [...root.listeners.get('click')][0];
   await click({
     target: {
       __root: root,
-      dataset: {bioweaveAction: 'save-world-analysis-prompt'},
+      dataset: {bioweaveAction: 'save-analysis-prompt'},
       closest(selector) {
         return selector.includes('[data-bioweave-action]') ? this : null;
       },
@@ -1563,7 +1564,7 @@ test('world analysis prompt save keeps data behavior and uses a success Toast wi
       external_memory: '外部记忆',
     },
   });
-  assert.deepEqual(toastCalls, [['success', '世界分析提示词设置已保存。']]);
+  assert.deepEqual(toastCalls, [['success', '分析提示词设置已保存。']]);
   assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /class="bioweave-settings-notice"/);
   app.destroyBioWeave();
 });

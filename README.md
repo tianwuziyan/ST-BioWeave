@@ -435,7 +435,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 | api_request_settings.timeout | 请求超时（毫秒） | 默认 180000，范围 250–600000 |
 | api_request_settings.retry_count | 可重试次数 | 默认 1，范围 0–3 |
 | recent_story_global.regex_rules | 全局最近剧情规则 | 最多 50 条，单条 pattern 最多 2000 字符 |
-| world_analysis_prompt | World Model 的可编辑首尾 SYSTEM、任务/输入文本 | 代码层核心约束仍然保留 |
+| analysis_prompt | 所有 AI Analysis 共用的可编辑首尾 SYSTEM、公共补充/输入文本 | World/Event 等任务契约、JSON Contract 和 Validator Contract 仍由代码层保护；旧 `world_analysis_prompt` 仅作为迁移读取来源 |
 
 任务 assignments 可以指向 default、SillyTavern 当前 API 或已保存的 Profile ID。没有有效 Profile 时不会静默使用不匹配的配置。
 

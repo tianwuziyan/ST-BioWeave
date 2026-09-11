@@ -5,7 +5,7 @@ import {
   DEFAULT_API_PROFILE,
   FOLLOW_DEFAULT_API,
   normalizeRecentStorySettings,
-  normalizeWorldAnalysisPrompt,
+  normalizeAnalysisPrompt,
   SILLYTAVERN_CURRENT_API,
 } from '../storage/schema.js';
 import {
@@ -14,7 +14,7 @@ import {
   WORLD_BOOK_RUNTIME_GROUPS,
   worldbookSelectionState,
 } from '../ai/worldbook.js';
-import {buildWorldModelMessages} from '../ai/prompts.js';
+import {buildEventAnalysisMessages, buildWorldModelMessages} from '../ai/prompts.js';
 
 const ASSIGNMENT_LABELS = {
   world_analysis: '世界分析',
@@ -716,58 +716,60 @@ function renderExternalMemorySettings(externalMemory = {}, providers = [], openS
   ].join('');
 }
 
-function renderWorldAnalysisPromptSettings(prompt = {}, openSettingsSections = []) {
-  const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('world_analysis_prompt');
-  const settings = normalizeWorldAnalysisPrompt(prompt);
+function renderAnalysisPromptSettings(prompt = {}, openSettingsSections = []) {
+  const open = Array.isArray(openSettingsSections)
+    && (openSettingsSections.includes('analysis_prompt') || openSettingsSections.includes('world_analysis_prompt'));
+  const settings = normalizeAnalysisPrompt(prompt);
   const textArea = (label, key, value, hint = '') => [
-    '<label class="bioweave-settings-field bioweave-world-analysis-prompt-field">',
+    '<label class="bioweave-settings-field bioweave-analysis-prompt-field">',
     '<span>' + label + (hint ? '<small>' + hint + '</small>' : '') + '</span>',
-    '<textarea class="bioweave-input" data-bioweave-world-analysis-prompt-field="' + key + '" rows="4">' + escapeHtml(value) + '</textarea>',
+    '<textarea class="bioweave-input" data-bioweave-analysis-prompt-field="' + key + '" rows="4">' + escapeHtml(value) + '</textarea>',
     '</label>',
   ].join('');
   return [
-    '<details class="bioweave-settings-disclosure bioweave-world-analysis-prompt-disclosure" data-bioweave-settings-disclosure="world_analysis_prompt"' + (open ? ' open' : '') + '>',
-    renderSettingsSummary('世界分析提示词', '可修改发送给模型的补充内容', {
+    '<details class="bioweave-settings-disclosure bioweave-analysis-prompt-disclosure" data-bioweave-settings-disclosure="analysis_prompt"' + (open ? ' open' : '') + '>',
+    renderSettingsSummary('分析提示词', '适用于 BioWeave 各类 AI Analysis 的公共用户自定义层；核心任务和 JSON Contract 不可覆盖', {
       action: 'open-analysis-debug',
       className: 'bioweave-secondary-action bioweave-analysis-debug-trigger',
       label: '高级 / 调试',
-      ariaLabel: '打开世界分析提示词高级调试',
+      ariaLabel: '打开分析提示词高级调试',
     }),
-    '<section class="bioweave-card bioweave-world-analysis-prompt-settings" data-bioweave-world-analysis-prompt-settings>',
-    '<header class="bioweave-settings-card-header"><div><h3>提示词设置</h3><p class="bioweave-muted">BioWeave 的核心约束和结果校验始终保留；下面的提示内容可以留空或修改。这里不会保存角色正文、世界书正文或 API Key。</p></div></header>',
-    textArea('顶部 SYSTEM', 'system_top', settings.system_top, '发送给 API 时作为 messages[0]。'),
-    textArea('分析任务补充', 'task', settings.task, '用于说明本次世界分析要关注什么。'),
-    textArea('输入前说明', 'input_prefix', settings.input_prefix, '放在实际 AnalysisInput 之前。'),
-    textArea('输入后说明', 'input_suffix', settings.input_suffix, '放在实际 AnalysisInput 之后，可留空。'),
-    textArea('尾部 SYSTEM', 'system_bottom', settings.system_bottom, '发送给 API 时作为 messages 最后一项。'),
+    '<section class="bioweave-card bioweave-analysis-prompt-settings" data-bioweave-analysis-prompt-settings>',
+    '<header class="bioweave-settings-card-header"><div><h3>分析提示词</h3><p class="bioweave-muted">这部分会作为公共用户自定义层注入 World Analysis、Event Analysis 以及后续分析任务；BioWeave 核心任务规则、JSON Contract 和 Validator Contract 始终保留。这里不会保存角色正文、世界书正文或 API Key。</p></div></header>',
+    textArea('第一个 SYSTEM', 'system_top', settings.system_top, '作为整个请求中的第一条 SYSTEM message；为空时省略。'),
+    textArea('通用分析补充', 'task', settings.task, '作为所有 Analyzer 的用户自定义附加指令；World/Event 的任务契约由 BioWeave 分别维护。'),
+    textArea('输入前说明', 'input_prefix', settings.input_prefix, '作为公共分析提示词的一部分，位于任务资料之前。'),
+    textArea('输入后说明', 'input_suffix', settings.input_suffix, '作为公共分析补充，位于受保护输出契约之前，可留空。'),
+    textArea('最后一个 SYSTEM', 'system_bottom', settings.system_bottom, '作为整个请求中的最后一条 SYSTEM message；为空时省略。'),
     '<div class="bioweave-settings-actions">',
-    '<button type="button" class="bioweave-primary-action" data-bioweave-action="save-world-analysis-prompt">保存提示词设置</button>',
+    '<button type="button" class="bioweave-primary-action" data-bioweave-action="save-analysis-prompt">保存提示词设置</button>',
     '</div>',
     '</section>',
     '</details>',
   ].join('');
 }
 
-function renderWorldModelMessagePreview(messages = [], mode = 'structure') {
+function renderAnalysisMessagePreview(messages = [], mode = 'structure', analysisType = 'world') {
   const roleLabels = {system: 'SYSTEM', assistant: 'ASSISTANT', user: 'USER'};
+  const typeLabel = analysisType === 'event' ? 'Event Analysis' : 'World Analysis';
   if (mode === 'raw') {
     return [
-      '<section class="bioweave-world-model-message-preview" data-bioweave-world-model-message-preview data-bioweave-world-model-message-preview-mode="raw">',
-      '<h4>实际发送消息</h4>',
-      '<p class="bioweave-muted">以下是 World Model 本次请求实际使用的 messages 原始 JSON；与结构预览来自同一份请求数据。</p>',
+      '<section class="bioweave-analysis-message-preview' + (analysisType === 'world' ? ' bioweave-world-model-message-preview' : '') + '" data-bioweave-analysis-message-preview data-bioweave-analysis-type="' + analysisType + '"' + (analysisType === 'world' ? ' data-bioweave-world-model-message-preview' : '') + ' data-bioweave-analysis-message-preview-mode="raw">',
+      '<h4>' + typeLabel + ' 实际发送消息</h4>',
+      '<p class="bioweave-muted">以下是本次请求实际使用的 messages 原始 JSON；与结构预览来自同一份请求数据。</p>',
       '<pre class="bioweave-analysis-message-raw bioweave-analysis-preview-raw" data-bioweave-analysis-message-raw>' + escapeHtml(JSON.stringify(messages, null, 2)) + '</pre>',
       '</section>',
     ].join('');
   }
   return [
-    '<section class="bioweave-world-model-message-preview" data-bioweave-world-model-message-preview data-bioweave-world-model-message-preview-mode="structure">',
-    '<h4>实际发送消息</h4>',
-    '<p class="bioweave-muted">以下是 World Model 本次请求实际使用的消息分层；这里只读，不包含 API Key。</p>',
-    '<div class="bioweave-world-model-message-list">',
+    '<section class="bioweave-analysis-message-preview' + (analysisType === 'world' ? ' bioweave-world-model-message-preview' : '') + '" data-bioweave-analysis-message-preview data-bioweave-analysis-type="' + analysisType + '"' + (analysisType === 'world' ? ' data-bioweave-world-model-message-preview' : '') + ' data-bioweave-analysis-message-preview-mode="structure">',
+    '<h4>' + typeLabel + ' 实际发送消息</h4>',
+    '<p class="bioweave-muted">以下是本次请求实际使用的消息分层；这里只读，不包含 API Key。</p>',
+    '<div class="bioweave-analysis-message-list bioweave-world-model-message-list">',
     messages.map((message, index) => [
-      '<details class="bioweave-world-model-message" data-bioweave-world-model-message-index="' + index + '" data-bioweave-world-model-message-role="' + escapeHtml(message.role) + '">',
+      '<details class="' + (analysisType === 'world' ? 'bioweave-world-model-message' : 'bioweave-analysis-message') + '"' + (analysisType === 'world' ? ' data-bioweave-world-model-message-index="' + index + '" data-bioweave-world-model-message-role="' + escapeHtml(message.role) + '"' : '') + ' data-bioweave-analysis-message-index="' + index + '" data-bioweave-analysis-message-role="' + escapeHtml(message.role) + '">',
       '<summary><strong>' + escapeHtml(roleLabels[message.role] || message.role) + '</strong><small>第 ' + (index + 1) + ' 段</small></summary>',
-      '<pre class="bioweave-world-model-message-content" data-bioweave-world-model-message-content>' + escapeHtml(message.content) + '</pre>',
+      '<pre class="' + (analysisType === 'world' ? 'bioweave-world-model-message-content' : 'bioweave-analysis-message-content') + '"' + (analysisType === 'world' ? ' data-bioweave-world-model-message-content' : ' data-bioweave-analysis-message-content') + '>' + escapeHtml(message.content) + '</pre>',
       '</details>',
     ].join('')).join(''),
     '</div>',
@@ -808,20 +810,23 @@ function renderWorldModelTrace(preview = {}) {
 }
 
 export function renderAnalysisInputPreview(preview = {}) {
-  const input = preview?.input;
+  const analysisType = preview?.analysisType === 'event' ? 'event' : 'world';
+  const input = analysisType === 'event' ? preview?.eventInput : preview?.input;
   const mode = preview?.mode === 'raw' ? 'raw' : 'structure';
   const standalone = preview?.standalone === true;
   const messages = input && preview?.messagePreview === true
-    ? buildWorldModelMessages(input, preview.promptSettings)
+    ? analysisType === 'event'
+      ? buildEventAnalysisMessages(input, preview.promptSettings)
+      : buildWorldModelMessages(input, preview.promptSettings)
     : null;
   const messagePreview = messages
-    ? renderWorldModelMessagePreview(messages, mode)
+    ? renderAnalysisMessagePreview(messages, mode, analysisType)
     : '';
   const worldModelTrace = renderWorldModelTrace(preview);
   const open = Array.isArray(preview?.openSettingsSections)
     && preview.openSettingsSections.includes('analysis_preview');
   const content = input
-    ? messagePreview || '<p class="bioweave-analysis-preview-message-hint">当前未启用实际 World Model messages 预览。</p>'
+    ? messagePreview || '<p class="bioweave-analysis-preview-message-hint">当前未启用实际分析 messages 预览。</p>'
     : '<p class="bioweave-empty">点击“刷新预览”后，临时读取当前 Chat 的已选分析输入。</p>';
   const error = preview?.error
     ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(preview.error) + '</p>'
@@ -832,7 +837,10 @@ export function renderAnalysisInputPreview(preview = {}) {
     '<header><div><h3>分析输入预览</h3><p class="bioweave-muted">只读当前 Chat 的已选来源，不保存正文，不调用 AI。</p></div>',
     '<button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-analysis-preview"' + (busy ? ' disabled' : '') + '>' + (busy ? '读取中…' : '刷新预览') + '</button></header>',
     error,
-    input ? '<div class="bioweave-analysis-preview-toolbar"><strong>预计 ' + escapeHtml(input.token_estimate ?? 0) + ' tokens</strong><span class="bioweave-muted">预览内容只存在于当前页面内存</span><div class="bioweave-analysis-preview-mode" role="group" aria-label="预览模式">' +
+    input ? '<div class="bioweave-analysis-preview-toolbar"><strong>预计 ' + escapeHtml(input.token_estimate ?? 0) + ' tokens</strong><span class="bioweave-muted">预览内容只存在于当前页面内存</span><div class="bioweave-analysis-preview-type" role="group" aria-label="分析类型">' +
+      '<button type="button" class="bioweave-secondary-action' + (analysisType === 'world' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-type" data-bioweave-preview-type="world" aria-pressed="' + (analysisType === 'world') + '">World Analysis</button>' +
+      '<button type="button" class="bioweave-secondary-action' + (analysisType === 'event' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-type" data-bioweave-preview-type="event" aria-pressed="' + (analysisType === 'event') + '">Event Analysis</button>' +
+      '</div><div class="bioweave-analysis-preview-mode" role="group" aria-label="预览模式">' +
       '<button type="button" class="bioweave-secondary-action' + (mode === 'structure' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-mode" data-bioweave-preview-mode="structure" aria-pressed="' + (mode === 'structure') + '">结构预览</button>' +
       '<button type="button" class="bioweave-secondary-action' + (mode === 'raw' ? ' is-selected' : '') + '" data-bioweave-action="analysis-preview-mode" data-bioweave-preview-mode="raw" aria-pressed="' + (mode === 'raw') + '">原始内容</button>' +
       '</div></div>' : '',
@@ -853,19 +861,25 @@ export function renderAnalysisInputPreview(preview = {}) {
 
 export function renderAnalysisDebugPopupContent({
   analysisPreview = {},
-  worldAnalysisPrompt = {},
+  analysisPrompt = null,
+  analysisPromptDraft = null,
+  worldAnalysisPrompt = null,
   worldAnalysisPromptDraft = null,
   openSettingsSections = [],
   theme = 'tavern',
   documentRef = globalThis.document,
 } = {}) {
-  const promptSettings = worldAnalysisPromptDraft ?? worldAnalysisPrompt;
+  const promptSettings = analysisPromptDraft
+    ?? analysisPrompt
+    ?? worldAnalysisPromptDraft
+    ?? worldAnalysisPrompt
+    ?? {};
   const themeName = ['tavern', 'light', 'dark'].includes(theme) ? theme : 'tavern';
   const markup = [
     '<div class="bioweave-analysis-debug-popup-content" data-theme="' + escapeHtml(themeName) + '">',
     '<header class="bioweave-analysis-debug-popup-header">',
     '<h3>高级 / 调试</h3>',
-    '<p class="bioweave-muted">临时检查本次世界分析实际读取的内容和发送消息。</p>',
+    '<p class="bioweave-muted">临时检查本次 World/Event Analysis 实际读取的内容和发送消息。</p>',
     '</header>',
     renderAnalysisInputPreview({
       ...analysisPreview,
@@ -899,7 +913,9 @@ export function settingsPage({
   testResult = null,
   busy = false,
   worldbookSources = {},
-  worldAnalysisPrompt = {},
+  analysisPrompt = null,
+  analysisPromptDraft = null,
+  worldAnalysisPrompt = null,
   worldAnalysisPromptDraft = null,
 } = {}) {
   const profiles = Array.isArray(rawProfiles)
@@ -913,7 +929,10 @@ export function settingsPage({
     renderWorldbookSources(worldbookSources),
     renderRecentStorySettings(worldbookSources.recentStory, worldbookSources.openSettingsSections, worldbookSources.globalRecentStory),
     renderExternalMemorySettings(worldbookSources.externalMemory, worldbookSources.externalMemoryProviders, worldbookSources.openSettingsSections),
-    renderWorldAnalysisPromptSettings(worldAnalysisPromptDraft ?? worldAnalysisPrompt, worldbookSources.openSettingsSections),
+    renderAnalysisPromptSettings(
+      analysisPromptDraft ?? analysisPrompt ?? worldAnalysisPromptDraft ?? worldAnalysisPrompt ?? {},
+      worldbookSources.openSettingsSections,
+    ),
     renderApiSource(apiSource, defaultProfileId, profiles, {
       loading,
       editingProfile,

@@ -893,7 +893,7 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.match(html, /select-none-analysis-sources/);
   assert.match(html, /<details class="bioweave-settings-disclosure bioweave-worldbook-source-disclosure"[^>]*data-bioweave-settings-disclosure="worldbook">/);
   assert.match(html, /<summary class="bioweave-settings-summary">[\s\S]*?<strong>世界书来源<\/strong>[\s\S]*?bioweave-settings-summary-arrow/);
-  assert.match(html, /data-bioweave-world-analysis-prompt-settings/);
+  assert.match(html, /data-bioweave-analysis-prompt-settings/);
   assert.match(html, /正则提取与清洗/);
   assert.match(html, /data-bioweave-action="add-recent-story-regex"/);
   assert.equal((html.match(/安全边界/g) || []).length, 0);
@@ -932,15 +932,15 @@ test('settings source operations do not render a page notice, while preview erro
 test('settings categories reuse the recent story disclosure shell and right-side arrows', () => {
   const html = settingsPage({
     worldbookSources: {
-      openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'world_analysis_prompt', 'api', 'assignments'],
+      openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'analysis_prompt', 'api', 'assignments'],
     },
   });
-  for (const key of ['worldbook', 'recent_story', 'external_memory', 'world_analysis_prompt', 'api', 'assignments']) {
+  for (const key of ['worldbook', 'recent_story', 'external_memory', 'analysis_prompt', 'api', 'assignments']) {
     assert.match(html, new RegExp('data-bioweave-settings-disclosure="' + key + '"[^>]* open'));
   }
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
   assert.match(html, /data-bioweave-action="open-analysis-debug"/);
-  for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '世界分析提示词', 'API 来源', '任务分配']) {
+  for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '分析提示词', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
   assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 5);

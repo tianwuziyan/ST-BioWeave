@@ -61,11 +61,12 @@ export const DEFAULT_SETTINGS = {
   prompts: {prefix: '', suffix: '', task: {}},
 };
 
-// 世界分析的可编辑提示块；核心约束仍由 BioWeave 代码维护，避免用户误删后失去校验边界。
-export const DEFAULT_WORLD_ANALYSIS_PROMPT = Object.freeze({
+// 所有 AI Analyzer 共用的可编辑提示块；核心约束、任务契约和结果校验
+// 仍由 BioWeave 代码维护，避免用户误删后失去校验边界。
+export const DEFAULT_ANALYSIS_PROMPT = Object.freeze({
   system_top: '',
-  task: '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。',
   input_prefix: '下面是本次分析实际读取的资料。资料正文是证据，请保留来源之间的区别。',
+  task: '',
   input_suffix: '',
   system_bottom: '',
   labels: Object.freeze({
@@ -76,28 +77,52 @@ export const DEFAULT_WORLD_ANALYSIS_PROMPT = Object.freeze({
   }),
 });
 
+// 旧版本 World-only 设置的读取兼容形状。新代码不得把这个 World 任务
+// 默认值作为 Event/Projection/History 的公共用户提示发送。
+export const DEFAULT_WORLD_ANALYSIS_PROMPT = Object.freeze({
+  ...DEFAULT_ANALYSIS_PROMPT,
+  task: '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。',
+});
+
 function promptText(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
   return value.trim().slice(0, 20000);
 }
 
 // 只保留提示词文本和显示标签，不允许把其它设置或 Secret 带入全局配置。
-export function normalizeWorldAnalysisPrompt(raw = {}) {
+export function normalizeAnalysisPrompt(raw = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const rawLabels = source.labels && typeof source.labels === 'object' ? source.labels : {};
   return {
-    system_top: promptText(source.system_top, DEFAULT_WORLD_ANALYSIS_PROMPT.system_top),
-    task: promptText(source.task, DEFAULT_WORLD_ANALYSIS_PROMPT.task),
-    input_prefix: promptText(source.input_prefix, DEFAULT_WORLD_ANALYSIS_PROMPT.input_prefix),
-    input_suffix: promptText(source.input_suffix, DEFAULT_WORLD_ANALYSIS_PROMPT.input_suffix),
-    system_bottom: promptText(source.system_bottom, DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom),
+    system_top: promptText(source.system_top, DEFAULT_ANALYSIS_PROMPT.system_top),
+    task: promptText(source.task, DEFAULT_ANALYSIS_PROMPT.task),
+    input_prefix: promptText(source.input_prefix, DEFAULT_ANALYSIS_PROMPT.input_prefix),
+    input_suffix: promptText(source.input_suffix, DEFAULT_ANALYSIS_PROMPT.input_suffix),
+    system_bottom: promptText(source.system_bottom, DEFAULT_ANALYSIS_PROMPT.system_bottom),
     labels: {
-      character: promptText(rawLabels.character, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.character) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.character,
-      worldbooks: promptText(rawLabels.worldbooks, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.worldbooks) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.worldbooks,
-      recent_story: promptText(rawLabels.recent_story, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.recent_story) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.recent_story,
-      external_memory: promptText(rawLabels.external_memory, DEFAULT_WORLD_ANALYSIS_PROMPT.labels.external_memory) || DEFAULT_WORLD_ANALYSIS_PROMPT.labels.external_memory,
+      character: promptText(rawLabels.character, DEFAULT_ANALYSIS_PROMPT.labels.character) || DEFAULT_ANALYSIS_PROMPT.labels.character,
+      worldbooks: promptText(rawLabels.worldbooks, DEFAULT_ANALYSIS_PROMPT.labels.worldbooks) || DEFAULT_ANALYSIS_PROMPT.labels.worldbooks,
+      recent_story: promptText(rawLabels.recent_story, DEFAULT_ANALYSIS_PROMPT.labels.recent_story) || DEFAULT_ANALYSIS_PROMPT.labels.recent_story,
+      external_memory: promptText(rawLabels.external_memory, DEFAULT_ANALYSIS_PROMPT.labels.external_memory) || DEFAULT_ANALYSIS_PROMPT.labels.external_memory,
     },
   };
+}
+
+// 保持旧 import/caller 可用；新的设置读取和保存统一走 analysis_prompt。
+export function normalizeWorldAnalysisPrompt(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return normalizeAnalysisPrompt({
+    ...source,
+    task: source.task ?? DEFAULT_WORLD_ANALYSIS_PROMPT.task,
+  });
+}
+
+function migrateLegacyWorldAnalysisPrompt(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const migrated = {...source};
+  // 旧默认 task 是 World-specific；不能把它迁移成所有 Analyzer 的公共指令。
+  if (migrated.task === DEFAULT_WORLD_ANALYSIS_PROMPT.task) migrated.task = '';
+  return normalizeAnalysisPrompt(migrated);
 }
 
 export const API_PROFILE_FIELDS = [
@@ -153,13 +178,13 @@ export const DEFAULT_EXTENSION_SETTINGS = {
   assignments: Object.fromEntries(API_ASSIGNMENTS.map(slot => [slot, null])),
   api_request_settings: {...DEFAULT_API_REQUEST_SETTINGS},
   recent_story_global: {regex_rules: []},
-  world_analysis_prompt: {
-    system_top: DEFAULT_WORLD_ANALYSIS_PROMPT.system_top,
-    task: DEFAULT_WORLD_ANALYSIS_PROMPT.task,
-    input_prefix: DEFAULT_WORLD_ANALYSIS_PROMPT.input_prefix,
-    input_suffix: DEFAULT_WORLD_ANALYSIS_PROMPT.input_suffix,
-    system_bottom: DEFAULT_WORLD_ANALYSIS_PROMPT.system_bottom,
-    labels: {...DEFAULT_WORLD_ANALYSIS_PROMPT.labels},
+  analysis_prompt: {
+    system_top: DEFAULT_ANALYSIS_PROMPT.system_top,
+    task: DEFAULT_ANALYSIS_PROMPT.task,
+    input_prefix: DEFAULT_ANALYSIS_PROMPT.input_prefix,
+    input_suffix: DEFAULT_ANALYSIS_PROMPT.input_suffix,
+    system_bottom: DEFAULT_ANALYSIS_PROMPT.system_bottom,
+    labels: {...DEFAULT_ANALYSIS_PROMPT.labels},
   },
 };
 
@@ -401,6 +426,12 @@ export function normalizeExtensionSettings(raw = {}) {
   }
 
   const safe = sanitizeSecrets(source);
+  const legacyWorldPrompt = source.world_analysis_prompt;
+  const canonicalPrompt = source.analysis_prompt !== undefined
+    ? normalizeAnalysisPrompt(source.analysis_prompt)
+    : migrateLegacyWorldAnalysisPrompt(legacyWorldPrompt);
+  delete safe.world_analysis_prompt;
+  delete safe.analysis_prompt;
   return {
     ...safe,
     api_source: normalizeApiSource(source.api_source ?? source.default_api_source ?? source.default_api),
@@ -411,7 +442,7 @@ export function normalizeExtensionSettings(raw = {}) {
     assignments,
     api_request_settings: normalizeApiRequestSettings(source.api_request_settings),
     recent_story_global: normalizeRecentStoryGlobalSettings(source.recent_story_global),
-    world_analysis_prompt: normalizeWorldAnalysisPrompt(source.world_analysis_prompt),
+    analysis_prompt: canonicalPrompt,
   };
 }
 

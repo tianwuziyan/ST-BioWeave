@@ -8,10 +8,10 @@ import {
   emptyFloor,
   normalizeApiProfile,
   normalizeApiSource,
+  normalizeAnalysisPrompt,
   normalizeExtensionSettings,
   normalizeRecentStoryGlobalSettings,
   normalizeTrackingSubjects,
-  normalizeWorldAnalysisPrompt,
   sanitizeSecrets,
 } from './schema.js';
 import {
@@ -397,24 +397,30 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     return nextValue;
   }
 
-  function getWorldAnalysisPrompt() {
-    return cloneValue(read().world_analysis_prompt);
+  function getAnalysisPrompt() {
+    return cloneValue(read().analysis_prompt);
   }
 
-  async function saveWorldAnalysisPrompt(raw = {}) {
+  async function saveAnalysisPrompt(raw = {}) {
     const settings = read();
     const source = raw && typeof raw === 'object' ? raw : {};
-    const merged = {...settings.world_analysis_prompt};
+    const merged = {...settings.analysis_prompt};
     for (const [key, value] of Object.entries(source)) {
       if (value !== undefined) merged[key] = value;
     }
     if (source.labels && typeof source.labels === 'object' && !Array.isArray(source.labels)) {
-      merged.labels = {...settings.world_analysis_prompt.labels, ...source.labels};
+      merged.labels = {...settings.analysis_prompt.labels, ...source.labels};
     }
-    const prompt = normalizeWorldAnalysisPrompt(merged);
-    await write({...settings, world_analysis_prompt: prompt});
+    const prompt = normalizeAnalysisPrompt(merged);
+    const nextSettings = {...settings, analysis_prompt: prompt};
+    delete nextSettings.world_analysis_prompt;
+    await write(nextSettings);
     return cloneValue(prompt);
   }
+
+  // 旧调用方兼容别名；实际读写已经迁移到 analysis_prompt。
+  const getWorldAnalysisPrompt = getAnalysisPrompt;
+  const saveWorldAnalysisPrompt = saveAnalysisPrompt;
 
   function getRecentStoryGlobal() {
     return cloneValue(read().recent_story_global);
@@ -441,6 +447,8 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     setAssignment,
     setApiSource,
     setDefaultProfile,
+    getAnalysisPrompt,
+    saveAnalysisPrompt,
     getWorldAnalysisPrompt,
     saveWorldAnalysisPrompt,
     getRecentStoryGlobal,

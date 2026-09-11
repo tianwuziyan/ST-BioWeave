@@ -90,6 +90,11 @@ export function createRuntime({
   analyzer = null,
   storyTime = null,
   characterContextResolver = null,
+  analysisContextCollector = null,
+  analysisSourceLoader = null,
+  analysisSourceLoaderOptions = {},
+  externalMemoryProviderLoader = null,
+  analysisSourceCache = null,
 } = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
@@ -126,6 +131,7 @@ export function createRuntime({
     profileResolver: resolveEventAnalysisProfile,
     contextResolver: () => st.getContext?.() ?? null,
     requestSettingsResolver: () => store.profileStore?.getApiRequestSettings?.() ?? {},
+    analysisPromptResolver: () => store.profileStore?.getAnalysisPrompt?.() ?? {},
   });
   const eventAnalysis = createEventAnalysisCoordinator({
     st,
@@ -134,6 +140,12 @@ export function createRuntime({
     analyzer: eventAnalyzer,
     storyTime: storyTime ?? createStoryTime(),
     ...(typeof characterContextResolver === 'function' ? {characterContextResolver} : {}),
+    ...(typeof analysisContextCollector === 'function' ? {analysisContextCollector} : {}),
+    ...(typeof analysisSourceLoader === 'function' ? {analysisSourceLoader} : {}),
+    analysisSourceLoaderOptions,
+    ...(typeof externalMemoryProviderLoader === 'function' ? {externalMemoryProviderLoader} : {}),
+    ...(analysisSourceCache ? {analysisSourceCache} : {}),
+    globalRecentStoryResolver: () => store.profileStore?.getSettings?.()?.recent_story_global ?? {},
     notify,
   });
 
@@ -236,6 +248,7 @@ export function createRuntime({
     refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
     requestAbortCurrentFloorAnalysis: eventAnalysis.requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
+    getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
     getTrackingRegistry: eventAnalysis.getTrackingRegistry,
     collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,

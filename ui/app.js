@@ -16,7 +16,7 @@ import {statePage} from './state.js';
 import {createApiProfileStore} from '../storage/store.js';
 import * as defaultApiClient from '../ai/client.js';
 import {createAnalyzer, normalizeWorldModel, summarizeAnalysisInput} from '../ai/analyzer.js';
-import {buildAnalysisInput} from '../ai/input-builder.js';
+import {collectAnalysisContext} from '../ai/input-builder.js';
 import {
   characterOpeningSelectionState,
   createWorldbookCache,
@@ -40,7 +40,7 @@ import {
   normalizeApiRequestSettings,
   normalizeRecentStoryGlobalSettings,
   normalizeRecentStorySettings,
-  normalizeWorldAnalysisPrompt,
+  normalizeAnalysisPrompt,
   normalizeWorldbookSettings,
   SILLYTAVERN_CURRENT_API,
 } from '../storage/schema.js';
@@ -151,7 +151,9 @@ function createAnalysisPreviewState() {
   return {
     busy: false,
     mode: 'structure',
+    analysisType: 'world',
     input: null,
+    eventInput: null,
     chatId: null,
     error: null,
     worldModelTrace: null,
@@ -427,8 +429,8 @@ export function createApp(runtime, options = {}) {
     notice: null,
     testResult: null,
     busy: false,
-    worldAnalysisPrompt: {},
-    worldAnalysisPromptDraft: null,
+    analysisPrompt: {},
+    analysisPromptDraft: null,
   };
 
   let worldModelTraceChatId = null;
@@ -482,9 +484,9 @@ export function createApp(runtime, options = {}) {
     requestSettingsResolver: () => settingsState.apiRequestDraft
       ?? profileStore.getApiRequestSettings?.()
       ?? settingsState.apiRequestSettings,
-    worldModelPromptResolver: () => settingsState.worldAnalysisPromptDraft
+    analysisPromptResolver: () => profileStore.getAnalysisPrompt?.()
       ?? profileStore.getWorldAnalysisPrompt?.()
-      ?? settingsState.worldAnalysisPrompt,
+      ?? settingsState.analysisPrompt,
     onWorldModelTrace: receiveWorldModelTrace,
   });
 
@@ -513,8 +515,13 @@ export function createApp(runtime, options = {}) {
           : settings.api_request_settings,
       ),
       apiRequestDraft: settingsState.apiRequestDraft,
-      worldAnalysisPrompt: normalizeWorldAnalysisPrompt(settings.world_analysis_prompt),
-      worldAnalysisPromptDraft: settingsState.worldAnalysisPromptDraft,
+      analysisPrompt: normalizeAnalysisPrompt(
+        settings.analysis_prompt
+          ?? settings.world_analysis_prompt
+          ?? profileStore.getAnalysisPrompt?.()
+          ?? profileStore.getWorldAnalysisPrompt?.(),
+      ),
+      analysisPromptDraft: settingsState.analysisPromptDraft,
       loaded: true,
     };
     return settings;
@@ -604,10 +611,10 @@ export function createApp(runtime, options = {}) {
       && 'innerHTML' in value);
   }
 
-  function renderDebugPopupContent(content, promptSettings = settingsState.worldAnalysisPrompt) {
+  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
-      worldAnalysisPrompt: promptSettings,
+      analysisPrompt: promptSettings,
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
       documentRef,
@@ -618,19 +625,21 @@ export function createApp(runtime, options = {}) {
     return nextContent;
   }
 
-  function readStoredWorldAnalysisPrompt() {
+  function readStoredAnalysisPrompt() {
     try {
-      return profileStore.getWorldAnalysisPrompt?.() ?? settingsState.worldAnalysisPrompt;
+      return profileStore.getAnalysisPrompt?.()
+        ?? profileStore.getWorldAnalysisPrompt?.()
+        ?? settingsState.analysisPrompt;
     } catch {
-      return settingsState.worldAnalysisPrompt;
+      return settingsState.analysisPrompt;
     }
   }
 
-  async function openAnalysisDebugPopup({usePromptDraft = false} = {}) {
-    if (usePromptDraft) captureWorldAnalysisPromptDraft();
-    const promptSettings = usePromptDraft
-      ? settingsState.worldAnalysisPromptDraft ?? settingsState.worldAnalysisPrompt
-      : readStoredWorldAnalysisPrompt();
+  async function openAnalysisDebugPopup() {
+    // Preview uses the persisted settings because those are the settings read
+    // by both the UI World analyzer and the Runtime Event analyzer. Unsaved
+    // form drafts remain local until the user explicitly saves them.
+    const promptSettings = readStoredAnalysisPrompt();
     const context = hostPopupContext();
     const Popup = context?.Popup;
     const popupType = context?.POPUP_TYPE?.DISPLAY;
@@ -657,6 +666,12 @@ export function createApp(runtime, options = {}) {
       if (action === 'analysis-preview-mode') {
         event.preventDefault?.();
         setAnalysisPreviewMode(target.dataset.bioweavePreviewMode);
+        renderDebugPopupContent(localContent, promptSettings);
+        return;
+      }
+      if (action === 'analysis-preview-type') {
+        event.preventDefault?.();
+        setAnalysisPreviewType(target.dataset.bioweavePreviewType);
         renderDebugPopupContent(localContent, promptSettings);
       }
     };
@@ -756,7 +771,7 @@ export function createApp(runtime, options = {}) {
         getRequestHeaders: runtime.st?.getRequestHeaders,
         cache: worldbookCache,
         forceRefresh,
-        deferWorldbookContent: true,
+        deferWorldbookContent: chatSettings.worldbooks.mode !== 'all',
         loadContentForSourceIds: [
           ...analysisSourcesState.openWorldbooks,
           ...selected.map(item => item.source_id),
@@ -817,26 +832,27 @@ export function createApp(runtime, options = {}) {
     externalMemory = analysisSourcesState.externalMemory,
     renderAfterSave = true,
   } = {}) {
+    const {chatId, token} = currentAnalysisChatToken();
+    const currentChat = runtime.store?.getChat?.(chatId);
     const normalizedWorldbooks = normalizeWorldbookSettings({
-      mode: 'selected_only',
+      ...(currentChat?.settings?.worldbooks ?? {}),
       selected,
     });
     const normalizedRecentStory = normalizeRecentStorySettings(recentStory);
     const normalizedExternalMemory = normalizeExternalMemorySettings(externalMemory);
-    const {chatId, token} = currentAnalysisChatToken();
     const requestId = ++analysisSourceSaveSequence;
     analysisSourceSaveChain = analysisSourceSaveChain
       .catch(() => {})
       .then(async () => {
         assertAnalysisChatToken(token);
-        const currentChat = runtime.store?.getChat?.(chatId);
-        if (!currentChat || typeof runtime.store?.saveChat !== 'function') {
+        const chat = runtime.store?.getChat?.(chatId);
+        if (!chat || typeof runtime.store?.saveChat !== 'function') {
           throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
         }
         await runtime.store.saveChat(chatId, {
-          ...currentChat,
+          ...chat,
           settings: {
-            ...(currentChat.settings ?? {}),
+            ...(chat.settings ?? {}),
             worldbooks: normalizedWorldbooks,
             recent_story: normalizedRecentStory,
             external_memory: normalizedExternalMemory,
@@ -1216,12 +1232,17 @@ export function createApp(runtime, options = {}) {
     }
     await waitForAnalysisSourcesIdle();
     assertAnalysisChatToken(token);
-    const selectedWorldbookIds = new Set(
-      analysisSourcesState.selected
-        .filter(item => item?.entry_id)
-        .map(item => item.source_id),
-    );
-    await loadAllWorldbooksForSelection({sourceIds: selectedWorldbookIds});
+    const currentAnalysisSettings = readAnalysisSettings(chatId);
+    if (currentAnalysisSettings.worldbooks.mode === 'all') {
+      await loadAllWorldbooksForSelection();
+    } else {
+      const selectedWorldbookIds = new Set(
+        analysisSourcesState.selected
+          .filter(item => item?.entry_id)
+          .map(item => item.source_id),
+      );
+      await loadAllWorldbooksForSelection({sourceIds: selectedWorldbookIds});
+    }
     assertAnalysisChatToken(token);
     const context = runtime.st?.getContext?.() ?? hostContextForApp();
     const externalMemoryProviders = await probeExternalMemoryProviders({context}).catch(() => (
@@ -1229,17 +1250,24 @@ export function createApp(runtime, options = {}) {
     ));
     assertAnalysisChatToken(token);
     if (!globalRecentStoryLoaded) loadGlobalRecentStoryState();
+    const input = await collectAnalysisContext({
+      sources: analysisSourcesState.sources,
+      selected: analysisSourcesState.selected,
+      context,
+      chatId,
+      recentStory: analysisSourcesState.recentStory,
+      globalRecentStory,
+      externalMemory: analysisSourcesState.externalMemory,
+      externalMemoryProviders,
+      includePersonaInTokenEstimate: false,
+    });
+    let eventInput = null;
+    if (typeof runtime.getCurrentFloorAnalysisInput === 'function') {
+      eventInput = await runtime.getCurrentFloorAnalysisInput();
+    }
     return {
-      input: buildAnalysisInput({
-        sources: analysisSourcesState.sources,
-        selected: analysisSourcesState.selected,
-        context,
-        chatId,
-        recentStory: analysisSourcesState.recentStory,
-        globalRecentStory,
-        externalMemory: analysisSourcesState.externalMemory,
-        externalMemoryProviders,
-      }),
+      input,
+      eventInput,
       chatId,
       token,
     };
@@ -1265,7 +1293,9 @@ export function createApp(runtime, options = {}) {
       analysisPreviewState = {
         busy: false,
         mode: analysisPreviewState.mode,
+        analysisType: analysisPreviewState.analysisType,
         input: collected.input,
+        eventInput: collected.eventInput,
         chatId: collected.chatId,
         error: null,
         worldModelTrace: null,
@@ -1631,6 +1661,13 @@ export function createApp(runtime, options = {}) {
     const nextMode = mode === 'raw' ? 'raw' : 'structure';
     if (analysisPreviewState.mode === nextMode) return;
     analysisPreviewState = {...analysisPreviewState, mode: nextMode};
+    if (route === 'settings') render();
+  }
+
+  function setAnalysisPreviewType(type) {
+    const nextType = type === 'event' ? 'event' : 'world';
+    if (analysisPreviewState.analysisType === nextType) return;
+    analysisPreviewState = {...analysisPreviewState, analysisType: nextType};
     if (route === 'settings') render();
   }
 
@@ -2097,7 +2134,7 @@ export function createApp(runtime, options = {}) {
       API_MODELS_HTTP_ERROR: '模型列表请求失败，请检查 URL、Key 和权限。',
       API_MODELS_FETCH_FAILED: '模型列表请求失败，请检查网络和 API 地址。',
       API_MODELS_FETCH_UNAVAILABLE: '模型列表请求不可用，请确认 SillyTavern API 已加载。',
-      WORLD_ANALYSIS_PROMPT_SAVE_FAILED: '世界分析提示词保存失败，当前内容仍保留。',
+      WORLD_ANALYSIS_PROMPT_SAVE_FAILED: '分析提示词保存失败，当前内容仍保留。',
       API_SOURCE_INVALID: 'API 来源无效。',
       API_ASSIGNMENT_INVALID: '任务分配无效。',
       ST_METADATA_STORAGE_UNAVAILABLE: '全局设置不可用，请稍后重试。',
@@ -2233,51 +2270,54 @@ export function createApp(runtime, options = {}) {
     render();
   }
 
-  function readWorldAnalysisPromptForm() {
-    const field = key => root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`);
-    return normalizeWorldAnalysisPrompt({
-      system_top: field('system_top')?.value ?? settingsState.worldAnalysisPrompt?.system_top,
-      task: field('task')?.value ?? settingsState.worldAnalysisPrompt?.task,
-      input_prefix: field('input_prefix')?.value ?? settingsState.worldAnalysisPrompt?.input_prefix,
-      input_suffix: field('input_suffix')?.value ?? settingsState.worldAnalysisPrompt?.input_suffix,
-      system_bottom: field('system_bottom')?.value ?? settingsState.worldAnalysisPrompt?.system_bottom,
+  function readAnalysisPromptForm() {
+    const field = key => root?.querySelector?.(`[data-bioweave-analysis-prompt-field="${key}"]`)
+      ?? root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`);
+    return normalizeAnalysisPrompt({
+      system_top: field('system_top')?.value ?? settingsState.analysisPrompt?.system_top,
+      task: field('task')?.value ?? settingsState.analysisPrompt?.task,
+      input_prefix: field('input_prefix')?.value ?? settingsState.analysisPrompt?.input_prefix,
+      input_suffix: field('input_suffix')?.value ?? settingsState.analysisPrompt?.input_suffix,
+      system_bottom: field('system_bottom')?.value ?? settingsState.analysisPrompt?.system_bottom,
       // 保留旧设置中的内部标签兼容性，但不再向用户展示或提供编辑入口。
-      labels: settingsState.worldAnalysisPrompt?.labels,
+      labels: settingsState.analysisPrompt?.labels,
     });
   }
 
-  function captureWorldAnalysisPromptDraft() {
-    const hasForm = root?.querySelector?.('[data-bioweave-world-analysis-prompt-settings]');
-    if (!hasForm) return settingsState.worldAnalysisPromptDraft ?? settingsState.worldAnalysisPrompt;
-    const draft = readWorldAnalysisPromptForm();
-    settingsState = {...settingsState, worldAnalysisPromptDraft: draft};
+  function captureAnalysisPromptDraft() {
+    const hasForm = root?.querySelector?.('[data-bioweave-analysis-prompt-settings]')
+      ?? root?.querySelector?.('[data-bioweave-world-analysis-prompt-settings]');
+    if (!hasForm) return settingsState.analysisPromptDraft ?? settingsState.analysisPrompt;
+    const draft = readAnalysisPromptForm();
+    settingsState = {...settingsState, analysisPromptDraft: draft};
     return draft;
   }
 
-  async function saveWorldAnalysisPrompt() {
-    const draft = captureWorldAnalysisPromptDraft();
-    if (typeof profileStore.saveWorldAnalysisPrompt !== 'function') {
+  async function saveAnalysisPrompt() {
+    const draft = captureAnalysisPromptDraft();
+    const savePrompt = profileStore.saveAnalysisPrompt ?? profileStore.saveWorldAnalysisPrompt;
+    if (typeof savePrompt !== 'function') {
       settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存世界分析提示词。', 'error', documentRef);
+      notify('当前宿主不支持保存分析提示词。', 'error', documentRef);
       render();
       return;
     }
     settingsState = {...settingsState, busy: true, notice: null};
     try {
-      const saved = await profileStore.saveWorldAnalysisPrompt(draft);
+      const saved = await savePrompt(draft);
       settingsState = {
         ...settingsState,
         busy: false,
-        worldAnalysisPrompt: normalizeWorldAnalysisPrompt(saved),
-        worldAnalysisPromptDraft: null,
+        analysisPrompt: normalizeAnalysisPrompt(saved),
+        analysisPromptDraft: null,
         notice: null,
       };
-      notify('世界分析提示词设置已保存。', 'success', documentRef);
+      notify('分析提示词设置已保存。', 'success', documentRef);
     } catch (error) {
       settingsState = {
         ...settingsState,
         busy: false,
-        worldAnalysisPromptDraft: draft,
+        analysisPromptDraft: draft,
         notice: null,
       };
       notify(settingsOperationError(error), 'error', documentRef);
@@ -2673,9 +2713,11 @@ export function createApp(runtime, options = {}) {
       queueRecentStorySettingsSave(updateRecentStoryState(target));
       return;
     }
-    if (target?.dataset?.bioweaveWorldAnalysisPromptField !== undefined
+    if (target?.dataset?.bioweaveAnalysisPromptField !== undefined
+      || target?.dataset?.bioweaveAnalysisLabel !== undefined
+      || target?.dataset?.bioweaveWorldAnalysisPromptField !== undefined
       || target?.dataset?.bioweaveWorldAnalysisLabel !== undefined) {
-      captureWorldAnalysisPromptDraft();
+      captureAnalysisPromptDraft();
       return;
     }
     if (target?.dataset?.bioweaveModelSearch !== undefined) {
@@ -2735,6 +2777,10 @@ export function createApp(runtime, options = {}) {
             ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_stage ?? null),
           error_code: payload.error_code
             ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_code ?? null),
+          error_path: payload.error_path
+            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_path ?? null),
+          diagnostic_path: payload.diagnostic_path
+            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.diagnostic_path ?? null),
           safe_error_summary: payload.safe_error_summary
             ?? (payload.state === 'success' ? null : businessState.analysisStatus?.safe_error_summary ?? null),
           last_error: payload.state === 'success'
@@ -2766,8 +2812,8 @@ export function createApp(runtime, options = {}) {
     if (!root?.contains(event.target)) return;
     captureAnalysisSourceDisclosure();
     if (handleAnalysisParentToggleClick(event)) return;
-    if (event.target.closest?.('[data-bioweave-world-analysis-prompt-settings]')) {
-      captureWorldAnalysisPromptDraft();
+    if (event.target.closest?.('[data-bioweave-analysis-prompt-settings], [data-bioweave-world-analysis-prompt-settings]')) {
+      captureAnalysisPromptDraft();
     }
     const analysisDisclosure = event.target.closest?.('[data-bioweave-analysis-worldbook-expand], [data-bioweave-analysis-character-expand]');
     if (analysisDisclosure) {
@@ -2816,7 +2862,7 @@ export function createApp(runtime, options = {}) {
     const action = target.dataset.bioweaveAction;
     if (action === 'open-analysis-debug') {
       event.preventDefault();
-      await openAnalysisDebugPopup({usePromptDraft: true});
+      await openAnalysisDebugPopup();
       return;
     }
     if (action === 'new-profile') {
@@ -2849,9 +2895,9 @@ export function createApp(runtime, options = {}) {
       await testSettingsForm();
       return;
     }
-    if (action === 'save-world-analysis-prompt') {
+    if (action === 'save-analysis-prompt' || action === 'save-world-analysis-prompt') {
       event.preventDefault();
-      await saveWorldAnalysisPrompt();
+      await saveAnalysisPrompt();
       return;
     }
     if (action === 'refresh-models') {
