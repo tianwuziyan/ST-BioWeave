@@ -45,7 +45,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 实现时必须保持以下边界：
 
-- 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
+- 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。`BiologicalEvent.participants[]` 是事件事实中的完整参与者集合，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
 - BiologicalEvent 是完整 NSFW 历史事实的单一来源。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
 - Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`；只有通过统一 normalize / validate 的结果才能写入 Floor。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。
@@ -64,13 +64,13 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 `createRuntime()` 对 UI 暴露 `analyzeCurrentFloor({force})`、`analyzeFloor(target, {force})`、`refreshCurrentFloorAnalysis()`、`requestAbortCurrentFloorAnalysis()`、`getCurrentFloorAnalysisStatus()`、`getCurrentFloorEvents()`、`getTrackingRegistry()`、`collectActiveBusinessData()`、`updateEvent()` 与 `deleteEvent()`。当前楼层始终是当前 Chat 最后一条消息的 active Swipe；指定消息优先按稳定 `message_id` 匹配，不能直接假定 lifecycle payload 的 `message_id` 是数组下标。
 
-`collectActiveBusinessData()` 的 `analysis_status` 至少包含 `state`、`busy`、`current_floor`、`floor_version`、`attempt`、`last_success`、`last_error`、`event_count`、`active_event_count`、`sexual_activity_count`、`tracking_subject_count`、`current_floor_events`、`active_events`、`tracking_decisions` 与 `registry_summary`，并在有执行记录时提供 `error_stage`、`error_code`、`safe_error_summary`、`started_at` 和 `finished_at`。`running` 只存在于 Runtime transient execution，不作为持久历史状态；终止分析使用 Runtime AbortController，迟到结果不能写回 Floor 或 Registry。该 DTO 只包含结构化、可脱敏显示的数据；Raw AI Response 与 API Secret 不写入 Chat。
+`collectActiveBusinessData()` 的 `analysis_status` 至少包含 `state`、`busy`、`current_floor`、`floor_version`、`attempt`、`last_success`、`last_error`、`event_count`、`active_event_count`、`sexual_activity_count`、`tracking_subject_count`、`current_floor_events`、`active_events`、`tracking_decisions` 与 `registry_summary`，并在有执行记录时提供 `error_stage`、`error_code`、`safe_error_summary`、`started_at` 和 `finished_at`。其中 `tracking_decisions` 是 Core/Runtime 诊断兼容数据，不是人物业务实体，普通 Characters UI 不消费它。`running` 只存在于 Runtime transient execution，不作为持久历史状态；终止分析使用 Runtime AbortController，迟到结果不能写回 Floor 或 Registry。该 DTO 只包含结构化、可脱敏显示的数据；Raw AI Response 与 API Secret 不写入 Chat。
 
 UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` 或页面模块重新实现 Floor Version 有效性、Event normalize/validate、Tracking eligibility 或 Registry rebuild。强制刷新失败时，Runtime 写入失败状态，但保留同一 Floor Version 的上一份成功 Events；UI 不清空事件或人物。
 
 ### 页面职责
 
-`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物详情展示稳定 ID、可用 species/type、已知 capabilities、exposure Event 和“等待状态引擎计算”；事件页展示真实 Event 的 Story Time、Floor、Location、Participants、Reproductive Roles、Pregnancy Relevance、Status、Confidence 和 Source；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
+`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”，稳定 ID 等技术字段默认放入调试区；事件页展示真实 Event 的用户可读类型、Story Time、Location、全部 Participants、妊娠相关性、Status、Confidence 和证据，Source 与 raw schema 字段放入折叠详情；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
 
 ## 推荐实施顺序
 

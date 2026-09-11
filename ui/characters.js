@@ -22,6 +22,39 @@ const capabilityLabels = {
   can_cause_pregnancy: '可导致受孕',
 };
 
+const eventTypeLabels = {
+  sexual_activity: '性活动',
+  conception: '受孕事件',
+  pregnancy_suspicion: '妊娠疑似',
+  pregnancy_confirmation: '妊娠确认',
+  pregnancy_loss: '妊娠终止',
+  abortion: '人工流产',
+  labor: '分娩过程',
+  delivery: '分娩',
+  postpartum: '产后事件',
+  menstrual_event: '月经事件',
+  ovulation_event: '排卵事件',
+  fertility_change: '生育能力变化',
+  physical_symptom: '身体症状',
+  medical_event: '医疗事件',
+  other_biological: '其他生理事件',
+};
+
+const eventStatusLabels = {
+  confirmed: '已确认',
+  probable: '较可能',
+  ambiguous: '有歧义',
+  negated: '已否定',
+  fictional: '虚构',
+};
+
+const reproductiveRoleLabels = {
+  potential_gestational_subject: '潜在妊娠承载者',
+  potential_conception_source: '潜在受孕来源',
+  other_participant: '其他参与者',
+  unknown: '未知',
+};
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;',
@@ -91,48 +124,6 @@ function eventEntries(activeEvents) {
     .filter(({key, value}) => Boolean(key) && value && typeof value === 'object');
 }
 
-function trackingDecisionEntries(value) {
-  if (Array.isArray(value)) return value.map((item, index) => ({key: index, value: item}));
-  if (!value || typeof value !== 'object') return [];
-  if (Array.isArray(value.decisions)) {
-    return value.decisions.map((item, index) => ({key: index, value: item}));
-  }
-  return Object.entries(value).map(([key, item]) => ({key, value: item}));
-}
-
-function reasonCodesOf(value) {
-  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
-  if (!value || typeof value !== 'object') return [];
-  const raw = value.reason_codes
-    ?? value.reasonCodes
-    ?? value.reason_code
-    ?? value.reason
-    ?? value.reasons;
-  const values = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [raw] : [raw];
-  return values.map(item => {
-    if (typeof item === 'string' || typeof item === 'number') return String(item).trim();
-    return String(item?.code ?? item?.reason_code ?? '').trim();
-  }).filter(Boolean);
-}
-
-function renderTrackingDecisions(value) {
-  const decisions = trackingDecisionEntries(value).map(({key, value: decision}) => ({
-    key,
-    decision,
-    reasonCodes: reasonCodesOf(decision),
-  })).filter(item => item.reasonCodes.length);
-  if (!decisions.length) return '';
-  return '<section class="bioweave-card bioweave-tracking-decisions" data-bioweave-tracking-decisions="readonly">'
-    + '<h3>Tracking Decision 诊断（只读）</h3><ul class="bioweave-event-evidence">'
-    + decisions.map(({key, decision, reasonCodes}) => {
-      const id = decision && typeof decision === 'object'
-        ? decision.character_id ?? decision.subject_id ?? decision.event_id ?? key
-        : key;
-      return '<li><span>' + escapeHtml(displayValue(id, '未标识对象')) + '</span>：'
-        + reasonCodes.map(code => '<code>' + escapeHtml(code) + '</code>').join('、') + '</li>';
-    }).join('') + '</ul></section>';
-}
-
 function storyTimeDisplay(event) {
   return escapeHtml(formatStoryTime(event?.story_time));
 }
@@ -142,12 +133,9 @@ function participantSummary(event) {
   if (!participants.length) return '—';
   return participants.map(participant => {
     const name = displayValue(participant?.display_name, '未命名角色');
-    const id = characterIdOf(participant);
     const role = participant?.event_role ?? participant?.role;
-    const suffix = [id ? `ID：${id}` : '', role ? `角色：${displayValue(role)}` : '']
-      .filter(Boolean)
-      .join(' · ');
-    return `${name}${suffix ? `（${suffix}）` : ''}`;
+    const roleLabel = role ? (reproductiveRoleLabels[role] ?? displayValue(role)) : '';
+    return `${name}${roleLabel ? `（事件角色：${roleLabel}）` : ''}`;
   }).join('、');
 }
 
@@ -160,30 +148,58 @@ function counterpartSummary(event) {
     .map(participant => [characterIdOf(participant), participant]));
   return ids.map(id => {
     const participant = participants.get(String(id));
-    const name = displayValue(participant?.display_name, String(id));
-    return `${name}（${String(id)}）`;
+    return displayValue(participant?.display_name, '未命名相关对象');
   }).join('、');
+}
+
+function eventTypeLabel(value) {
+  return eventTypeLabels[value] ?? displayValue(value, '生理事件');
+}
+
+function eventStatusLabel(value) {
+  return eventStatusLabels[value] ?? displayValue(value);
+}
+
+function subjectStatusLabel(value) {
+  if (value === 'active') return '追踪中';
+  if (value === 'inactive') return '已结束';
+  return displayValue(value, '追踪中');
+}
+
+function renderExposureDebug(event, eventId) {
+  const source = event?.source ?? {};
+  const fields = [
+    ['event_id', eventId],
+    ['chat_id', source.chat_id],
+    ['message_id', source.message_id],
+    ['floor', source.floor ?? event?.floor],
+    ['swipe_id', source.swipe_id],
+    ['content_hash', source.content_hash],
+    ['message_version', source.message_version],
+  ];
+  return '<details class="bioweave-event-debug"><summary>调试信息</summary>'
+    + '<dl class="bioweave-data-list">' + fields.map(([label, value]) =>
+      '<div><dt>' + escapeHtml(label) + '</dt><dd><code>' + escapeHtml(displayValue(value))
+      + '</code></dd></div>').join('') + '</dl></details>';
 }
 
 function renderExposureEvent(event, fallbackEventId) {
   const eventId = eventIdOf(event, fallbackEventId);
   if (!event) {
     return '<article class="bioweave-card bioweave-character-exposure" data-bioweave-event-id="'
-      + escapeHtml(eventId) + '"><b>Exposure Event</b><p class="bioweave-muted">Event ID：'
-      + escapeHtml(eventId) + ' · 当前有效事件中未找到该引用。</p></article>';
+      + escapeHtml(eventId) + '"><b>相关事件</b><p class="bioweave-muted">当前有效事件中未找到该引用。</p>'
+      + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>event_id：<code>'
+      + escapeHtml(eventId) + '</code></p></details></article>';
   }
-  const floor = event?.source?.floor ?? event?.floor;
   return '<article class="bioweave-card bioweave-character-exposure" data-bioweave-event-id="'
-    + escapeHtml(eventId) + '"><header><b>' + escapeHtml(displayValue(event.type, 'BiologicalEvent'))
-    + '</b><span class="bioweave-badge">' + escapeHtml(displayValue(event.status)) + '</span></header>'
+    + escapeHtml(eventId) + '"><header><b>' + escapeHtml(eventTypeLabel(event.type))
+    + '</b><span class="bioweave-badge">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
     + '<dl class="bioweave-data-list">'
-    + '<div><dt>Event ID</dt><dd><code>' + escapeHtml(eventId) + '</code></dd></div>'
-    + '<div><dt>Story Time</dt><dd>' + storyTimeDisplay(event) + '</dd></div>'
-    + '<div><dt>Floor</dt><dd>' + renderValue(floor) + '</dd></div>'
-    + '<div><dt>Location</dt><dd>' + renderValue(event.location) + '</dd></div>'
-    + '<div><dt>Participants / Roles</dt><dd>' + escapeHtml(participantSummary(event)) + '</dd></div>'
-    + '<div><dt>Counterpart IDs</dt><dd>' + escapeHtml(counterpartSummary(event)) + '</dd></div>'
-    + '</dl></article>';
+    + '<div><dt>发生时间</dt><dd>' + storyTimeDisplay(event) + '</dd></div>'
+    + '<div><dt>地点</dt><dd>' + renderValue(event.location) + '</dd></div>'
+    + '<div><dt>参与者</dt><dd>' + escapeHtml(participantSummary(event)) + '</dd></div>'
+    + '<div><dt>相关对象</dt><dd>' + escapeHtml(counterpartSummary(event)) + '</dd></div>'
+    + '</dl>' + renderExposureDebug(event, eventId) + '</article>';
 }
 
 function renderCapabilities(profile) {
@@ -203,8 +219,8 @@ function renderCharacterFacts(profile) {
   const species = profile?.species ?? biologicalContext.species;
   const type = profile?.biological_type ?? profile?.type ?? biologicalContext.biological_type;
   return '<dl class="bioweave-data-list">'
-    + '<div><dt>species</dt><dd>' + renderValue(species) + '</dd></div>'
-    + '<div><dt>type</dt><dd>' + renderValue(type) + '</dd></div>'
+    + '<div><dt>物种</dt><dd>' + renderValue(species) + '</dd></div>'
+    + '<div><dt>生理类型</dt><dd>' + renderValue(type) + '</dd></div>'
     + '</dl>';
 }
 
@@ -223,8 +239,8 @@ function renderTabContent(tab, subject, activeEvents) {
       + '<p class="bioweave-muted">等待状态引擎计算</p></section>';
   }
   if (tab === 'events') {
-    return '<section class="bioweave-card bioweave-detail-section"><h3>事件</h3>'
-      + '<p class="bioweave-muted">以下为该 Tracking Subject 的全部 exposure Event。</p>'
+    return '<section class="bioweave-card bioweave-detail-section"><h3>相关事件</h3>'
+      + '<p class="bioweave-muted">以下为该人物的全部受孕相关记录。</p>'
       + renderExposures(subject, activeEvents) + '</section>';
   }
   const content = {
@@ -244,17 +260,18 @@ function detailPage({characterId, characterDetailTab, subject, profile, activeEv
     + label + '</button>').join('');
   return '<section class="bioweave-page bioweave-character-detail">'
     + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
-    + '<h2>人物详情</h2><p class="bioweave-muted">人物 ID：' + escapeHtml(characterId) + ' · 当前 Chat</p></div></div>'
+    + '<h2>人物详情</h2><p class="bioweave-muted">当前 Chat · 妊娠追踪</p></div></div>'
     + '<section class="bioweave-card bioweave-character-summary"><header><b>' + escapeHtml(displayValue(displayName))
-    + '</b><span class="bioweave-badge">Tracking Subject</span></header>'
-    + '<p class="bioweave-muted">稳定 character_id：<code>' + escapeHtml(characterId) + '</code></p>'
+    + '</b><span class="bioweave-badge">妊娠追踪</span></header>'
+    + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>character_id：<code>'
+    + escapeHtml(characterId) + '</code></p></details>'
     + renderCharacterFacts(profile) + '</section>'
     + '<section class="bioweave-card bioweave-detail-section"><h3>生殖能力</h3>'
     + renderCapabilities(profile) + '</section>'
     + '<div class="bioweave-character-tabs" role="tablist" aria-label="人物详情分区">' + buttons + '</div>'
     + renderTabContent(tab, subject, activeEvents)
-    + '<section class="bioweave-card bioweave-detail-section"><h3>Exposure Events</h3>'
-    + '<p class="bioweave-muted">只展示 Registry 引用的当前有效事件。</p>'
+    + '<section class="bioweave-card bioweave-detail-section"><h3>受孕相关记录</h3>'
+    + '<p class="bioweave-muted">只展示当前追踪 Registry 引用的有效事件。</p>'
     + renderExposures(subject, activeEvents) + '</section>'
     + '</section>';
 }
@@ -295,9 +312,8 @@ export function charactersPage({
     const exposureCount = Array.isArray(subject.exposure_event_ids) ? subject.exposure_event_ids.length : 0;
     return '<button type="button" class="bioweave-card bioweave-character-row" data-character-id="'
       + escapeHtml(key) + '"><span><b>' + escapeHtml(displayValue(displayName))
-      + '</b><small class="bioweave-muted">稳定 character_id：' + escapeHtml(key) + '</small></span>'
-      + '<span class="bioweave-character-state">' + escapeHtml(displayValue(subject.status))
-      + ' · ' + exposureCount + ' 个 exposure Event　›</span></button>';
+      + '</b></span><span class="bioweave-character-state">' + escapeHtml(subjectStatusLabel(subject.status))
+      + ' · ' + exposureCount + ' 次相关事件　›</span></button>';
   }).join('');
   const emptyState = status.state === 'not_analyzed'
     ? '<div class="bioweave-card bioweave-empty"><b>尚未完成事件分析。</b>'
@@ -311,12 +327,12 @@ export function charactersPage({
       : status.state === 'failed'
         ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>'
           + '<p>错误摘要：<code>' + escapeHtml(displayValue(status.last_error, 'EVENT_ANALYSIS_FAILED')) + '</code>。如有旧的成功事件，它们仍然有效。</p></div>'
-        : '<div class="bioweave-card bioweave-empty"><b>当前没有需要妊娠追踪的角色。</b>'
+      : '<div class="bioweave-card bioweave-empty"><b>当前没有需要妊娠追踪的角色。</b>'
       + '<p>当前没有进入 Tracking Subject Registry 的角色。</p>'
       + '<dl class="bioweave-data-list bioweave-tracking-counts">'
-      + '<div><dt>active_event_count</dt><dd>' + analysisStatusCount(status, 'active_event_count', 0) + '</dd></div>'
-      + '<div><dt>sexual_activity_count</dt><dd>' + analysisStatusCount(status, 'sexual_activity_count', 0) + '</dd></div>'
-      + '<div><dt>tracking_subject_count</dt><dd>' + analysisStatusCount(status, 'tracking_subject_count', 0) + '</dd></div>'
+      + '<div><dt>当前有效事件</dt><dd>' + analysisStatusCount(status, 'active_event_count', 0) + '</dd></div>'
+      + '<div><dt>性活动事件</dt><dd>' + analysisStatusCount(status, 'sexual_activity_count', 0) + '</dd></div>'
+      + '<div><dt>妊娠追踪人物</dt><dd>' + analysisStatusCount(status, 'tracking_subject_count', 0) + '</dd></div>'
       + '</dl></div>';
   return '<section class="bioweave-page"><div class="bioweave-page-title"><div><h2>人物列表</h2>'
     + '<p class="bioweave-muted">当前 Chat 中已进入妊娠相关追踪流程的角色</p></div>'
@@ -325,6 +341,5 @@ export function charactersPage({
       ? '<div class="bioweave-toolbar"><input class="bioweave-input" placeholder="搜索人物……" aria-label="搜索人物">'
         + '<button class="bioweave-select" type="button">全部状态 ▾</button></div>' + rows
       : emptyState)
-    + renderTrackingDecisions(status.tracking_decisions)
     + '</section>';
 }

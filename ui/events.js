@@ -8,6 +8,39 @@ import {
 
 const eventStatuses = ['confirmed', 'probable', 'ambiguous', 'negated', 'fictional'];
 
+const eventTypeLabels = {
+  sexual_activity: '性活动',
+  conception: '受孕事件',
+  pregnancy_suspicion: '妊娠疑似',
+  pregnancy_confirmation: '妊娠确认',
+  pregnancy_loss: '妊娠终止',
+  abortion: '人工流产',
+  labor: '分娩过程',
+  delivery: '分娩',
+  postpartum: '产后事件',
+  menstrual_event: '月经事件',
+  ovulation_event: '排卵事件',
+  fertility_change: '生育能力变化',
+  physical_symptom: '身体症状',
+  medical_event: '医疗事件',
+  other_biological: '其他生理事件',
+};
+
+const eventStatusLabels = {
+  confirmed: '已确认',
+  probable: '较可能',
+  ambiguous: '有歧义',
+  negated: '已否定',
+  fictional: '虚构',
+};
+
+const reproductiveRoleLabels = {
+  potential_gestational_subject: '潜在妊娠承载者',
+  potential_conception_source: '潜在受孕来源',
+  other_participant: '其他参与者',
+  unknown: '未知',
+};
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
     '&': '&amp;',
@@ -69,11 +102,13 @@ function renderParticipants(event) {
   if (!participants.length) return '<div class="bioweave-empty">无参与者资料。</div>';
   return '<ul class="bioweave-event-participants">' + participants.map(participant => {
     const id = participant?.character_id;
-    const name = participant?.display_name ?? id ?? '未命名角色';
+    const name = participant?.display_name ?? '未命名角色';
     const role = participant?.event_role ?? participant?.role;
+    const roleLabel = role ? (reproductiveRoleLabels[role] ?? displayValue(role)) : '';
     return '<li><b>' + escapeHtml(displayValue(name)) + '</b>'
-      + (id ? ' <code>character_id：' + escapeHtml(id) + '</code>' : '')
-      + '<span class="bioweave-muted"> · Reproductive Role：' + renderValue(role) + '</span></li>';
+      + (roleLabel ? '<span class="bioweave-muted"> · 事件角色：' + escapeHtml(roleLabel) + '</span>' : '')
+      + (id ? '<details class="bioweave-inline-debug"><summary>标识信息</summary><code>character_id：'
+        + escapeHtml(id) + '</code></details>' : '') + '</li>';
   }).join('') + '</ul>';
 }
 
@@ -82,18 +117,38 @@ function formatIdList(value) {
   return value.map(item => escapeHtml(item)).join('、');
 }
 
+function participantNamesForIds(event, value) {
+  if (!Array.isArray(value) || !value.length) return '—';
+  const participants = new Map((Array.isArray(event?.participants) ? event.participants : [])
+    .map(participant => [String(participant?.character_id ?? ''), participant]));
+  return value.map(id => escapeHtml(displayValue(participants.get(String(id))?.display_name, '未命名对象'))).join('、');
+}
+
+function eventTypeLabel(value) {
+  return eventTypeLabels[value] ?? displayValue(value, '生理事件');
+}
+
+function eventStatusLabel(value) {
+  return eventStatusLabels[value] ?? displayValue(value);
+}
+
 function renderPregnancyRelevance(event) {
   const relevance = event?.pregnancy_relevance;
   if (!relevance || typeof relevance !== 'object') {
     return '<div class="bioweave-empty">—</div>';
   }
   return renderDefinitionList([
-    ['Relevant', `__html__${renderTriState(relevance.relevant)}`],
-    ['Possible Conception', `__html__${renderTriState(relevance.possible_conception)}`],
-    ['Gestational Subject IDs', `__html__${formatIdList(relevance.gestational_subject_ids)}`],
-    ['Counterpart IDs', `__html__${formatIdList(relevance.counterpart_ids)}`],
-    ['Confidence', `__html__${renderValue(relevance.confidence)}`],
-  ], 'bioweave-pregnancy-relevance');
+    ['与妊娠相关', `__html__${renderTriState(relevance.relevant)}`],
+    ['存在受孕可能', `__html__${renderTriState(relevance.possible_conception)}`],
+    ['妊娠追踪对象', `__html__${participantNamesForIds(event, relevance.gestational_subject_ids)}`],
+    ['相关对象', `__html__${participantNamesForIds(event, relevance.counterpart_ids)}`],
+    ['判断置信度', `__html__${renderValue(relevance.confidence)}`],
+  ], 'bioweave-pregnancy-relevance')
+    + '<details class="bioweave-event-debug"><summary>结构化标识</summary>'
+    + renderDefinitionList([
+      ['gestational_subject_ids', `__html__${formatIdList(relevance.gestational_subject_ids)}`],
+      ['counterpart_ids', `__html__${formatIdList(relevance.counterpart_ids)}`],
+    ], 'bioweave-structured-identifiers') + '</details>';
 }
 
 function renderStoryTime(event) {
@@ -124,7 +179,7 @@ function renderSource(event) {
 
 function renderEvidence(event) {
   const evidence = Array.isArray(event?.source_evidence) ? event.source_evidence : [];
-  if (!evidence.length) return '<div class="bioweave-empty">无 source evidence。</div>';
+  if (!evidence.length) return '<div class="bioweave-empty">无事件证据。</div>';
   return '<ul class="bioweave-event-evidence">' + evidence.map(item =>
     '<li><span>' + escapeHtml(displayValue(item?.kind)) + '</span>：'
     + escapeHtml(displayValue(item?.text ?? item)) + '</li>').join('') + '</ul>';
@@ -160,23 +215,21 @@ function renderEditForm(event) {
 
 function renderEventCard(event, editingEventId) {
   const eventId = eventIdOf(event);
-  const floor = event?.source?.floor ?? event?.floor;
   const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence;
   return '<article class="bioweave-card bioweave-event-card" data-bioweave-event-id="' + escapeHtml(eventId) + '">'
-    + '<header><div><b>' + escapeHtml(displayValue(event.type, 'BiologicalEvent')) + '</b>'
-    + '<p class="bioweave-muted" data-bioweave-event-readonly="event_id">Event ID：<code>' + escapeHtml(eventId) + '</code></p></div>'
-    + '<span class="bioweave-badge">' + escapeHtml(displayValue(event.status)) + '</span></header>'
+    + '<header><div><b>' + escapeHtml(eventTypeLabel(event.type)) + '</b></div>'
+    + '<span class="bioweave-badge">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
     + renderDefinitionList([
-      ['Story Time', `__html__${renderValue(formatStoryTime(event?.story_time))}`],
-      ['Floor', `__html__${renderValue(floor)}`],
-      ['Location', `__html__${renderValue(event.location)}`],
-      ['Confidence', `__html__${renderValue(confidence)}`],
+      ['发生时间', `__html__${renderValue(formatStoryTime(event?.story_time))}`],
+      ['地点', `__html__${renderValue(event.location)}`],
+      ['判断置信度', `__html__${renderValue(confidence)}`],
     ])
-    + '<section><h4>Participants / Reproductive Roles</h4>' + renderParticipants(event) + '</section>'
-    + '<section><h4>Pregnancy Relevance</h4>' + renderPregnancyRelevance(event) + '</section>'
-    + '<section><h4>Story Time</h4>' + renderStoryTime(event) + '</section>'
-    + '<section><h4>Source（只读）</h4>' + renderSource(event) + '</section>'
-    + '<section><h4>Source Evidence</h4>' + renderEvidence(event) + '</section>'
+    + '<section><h4>参与者</h4>' + renderParticipants(event) + '</section>'
+    + '<section><h4>妊娠相关性</h4>' + renderPregnancyRelevance(event) + '</section>'
+    + '<section><h4>事件证据</h4>' + renderEvidence(event) + '</section>'
+    + '<details class="bioweave-event-debug"><summary>来源与调试信息</summary>'
+    + '<h4>结构化时间</h4>' + renderStoryTime(event)
+    + '<h4>来源（只读）</h4>' + renderSource(event) + '</details>'
     + '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="edit-event" data-bioweave-event-id="'
     + escapeHtml(eventId) + '">编辑 Event</button><button type="button" class="bioweave-danger-action" data-bioweave-action="delete-event" data-bioweave-event-id="'
     + escapeHtml(eventId) + '">删除 Event</button></div>'

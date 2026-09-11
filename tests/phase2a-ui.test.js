@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
@@ -62,9 +63,44 @@ test('characters page distinguishes not analyzed from analyzed with zero subject
     },
   });
   assert.match(analyzed, /当前没有需要妊娠追踪的角色。/);
-  assert.match(analyzed, /CAN_CARRY_PREGNANCY_UNKNOWN/);
+  assert.doesNotMatch(analyzed, /Tracking Decision 诊断|CAN_CARRY_PREGNANCY_UNKNOWN/);
   assert.match(analyzed, /重新分析当前楼层/);
   assert.doesNotMatch(html, /demo-character-1|演示人物|占位 DTO/);
+});
+
+test('characters page only enumerates tracking subjects and ignores diagnostic decisions and profiles', () => {
+  const html = charactersPage({
+    trackingSubjects: [{
+      character_id: 'character_subject',
+      display_name: 'subject_display',
+      exposure_event_ids: ['event_fixture'],
+      status: 'active',
+    }],
+    characterProfiles: {
+      character_source: {character_id: 'character_source', display_name: 'source_display'},
+      character_other: {character_id: 'character_other', display_name: 'other_display'},
+    },
+    activeEvents: [{
+      event_id: 'event_fixture',
+      type: 'sexual_activity',
+      participants: [
+        {character_id: 'character_subject', display_name: 'subject_display'},
+        {character_id: 'character_source', display_name: 'source_display'},
+        {character_id: 'character_other', display_name: 'other_display'},
+      ],
+    }],
+    analysisStatus: {
+      state: 'success',
+      tracking_decisions: [
+        {character_id: 'character_source', eligible: false, reasons: ['CAN_CARRY_PREGNANCY_FALSE']},
+        {character_id: 'character_other', eligible: false, reasons: ['NOT_SEXUAL_ACTIVITY']},
+      ],
+    },
+  });
+
+  assert.match(html, /subject_display/);
+  assert.doesNotMatch(html, /source_display|other_display/);
+  assert.doesNotMatch(html, /Tracking Decision 诊断|CAN_CARRY_PREGNANCY_FALSE|NOT_SEXUAL_ACTIVITY/);
 });
 
 test('events page distinguishes not analyzed from analyzed with zero events', () => {
@@ -182,21 +218,65 @@ test('events page keeps source and event id read-only and does not infer eligibi
     participants: [{character_id: 'char-x', display_name: '角色 X', gender: 'female', receiver: true}],
     pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []},
   }], editingEventId: 'evt-1'});
-  assert.match(html, /Source（只读）/);
+  assert.match(html, /来源与调试信息/);
   assert.match(html, /data-bioweave-event-field="event_id"[^>]*readonly/);
   assert.match(html, /char-x/);
   assert.doesNotMatch(html, /data-bioweave-event-field="gender"|data-bioweave-event-field="receiver"/);
 });
 
+test('event page preserves every participant while keeping raw presentation fields in details', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      event_id: 'event_fixture',
+      type: 'sexual_activity',
+      status: 'confirmed',
+      story_time: {display: 'story_day_fixture', normalized: null, day_index: null},
+      location: 'location_fixture',
+      participants: [
+        {character_id: 'character_subject', display_name: 'subject_display', event_role: 'potential_gestational_subject'},
+        {character_id: 'character_source', display_name: 'source_display', event_role: 'potential_conception_source'},
+      ],
+      pregnancy_relevance: {
+        relevant: true,
+        possible_conception: true,
+        gestational_subject_ids: ['character_subject'],
+        counterpart_ids: ['character_source'],
+        confidence: 0.8,
+      },
+      source_evidence: [{kind: 'narrative', text: 'fixture evidence'}],
+      source: {
+        chat_id: 'chat_fixture',
+        message_id: 'message_fixture',
+        floor: 4,
+        swipe_id: 0,
+        content_hash: 'hash_fixture',
+        message_version: 'v1',
+      },
+    }],
+  });
+
+  assert.match(html, /subject_display/);
+  assert.match(html, /source_display/);
+  assert.match(html, /潜在妊娠承载者/);
+  assert.match(html, /潜在受孕来源/);
+  assert.match(html, /来源与调试信息/);
+  assert.doesNotMatch(html, /Reproductive Role|potential_gestational_subject|potential_conception_source/);
+});
+
+test('characters source contains no tracking decision presentation path', () => {
+  const source = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /tracking_decisions|renderTrackingDecisions|explainTrackingDecision/);
+});
+
 test('overview counts only passed tracking subjects and active events and keeps unfinished areas empty', () => {
   const html = overviewPage({
     trackingSubjects: [trackingSubject],
-    activeEvents: [event],
+    activeEvents: [event, {...event, event_id: 'evt-2'}, {...event, event_id: 'evt-3'}],
     chatName: '测试 Chat',
   });
   assert.match(html, /测试 Chat/);
   assert.match(html, /<strong>1<\/strong><span>追踪人物<\/span>/);
-  assert.match(html, /<strong>1<\/strong><span>事件<\/span>/);
+  assert.match(html, /<strong>3<\/strong><span>事件<\/span>/);
   assert.match(html, /阿甲/);
   assert.match(html, /evt-1/);
   assert.match(html, /当前没有需要展示的生理推演。/);

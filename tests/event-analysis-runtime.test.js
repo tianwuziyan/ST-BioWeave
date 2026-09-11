@@ -276,10 +276,48 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
       confidence: null,
     },
   });
+  const eventC = canonicalApiEvent({
+    type: 'medical_event',
+    participants: [
+      {
+        character_id: 'character_other',
+        display_name: 'other_display',
+        event_role: 'other_participant',
+        reproductive_capabilities_used: {
+          can_produce_sperm: null,
+          can_produce_ova: null,
+          can_be_fertilized: null,
+          can_carry_pregnancy: null,
+          can_cause_pregnancy: null,
+        },
+        evidence: [{kind: 'narrative', text: 'explicit medical participant fixture evidence'}],
+      },
+      {
+        character_id: 'character_subject',
+        display_name: 'subject_display',
+        event_role: 'other_participant',
+        reproductive_capabilities_used: {
+          can_produce_sperm: null,
+          can_produce_ova: null,
+          can_be_fertilized: null,
+          can_carry_pregnancy: null,
+          can_cause_pregnancy: null,
+        },
+        evidence: [{kind: 'narrative', text: 'explicit medical subject fixture evidence'}],
+      },
+    ],
+    pregnancyRelevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+  });
   const fixture = createFixture({
     rawApiResponse: JSON.stringify({
       schema_version: 1,
-      events: [eventA, eventB],
+      events: [eventA, eventB, eventC],
       source: {chat_id: 'legacy-chat', message_id: 'legacy-message', floor: 999},
     }),
   });
@@ -288,18 +326,27 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
 
   assert.equal(fixture.apiRequests.length, 1);
   const events = await fixture.runtime.getCurrentFloorEvents();
-  assert.equal(events.length, 2);
+  assert.equal(events.length, 3);
   assert.equal(events[0].type, 'sexual_activity');
+  assert.equal(events[0].participants.length, 2);
+  assert.equal(events[0].participants[1].character_id, 'character_source');
+  assert.equal(events[0].participants[1].reproductive_capabilities_used.can_carry_pregnancy, false);
   assert.notEqual(events[0].event_id, 'model-forged-event-id');
   assert.equal(events[0].source.chat_id, 'chat-runtime');
   assert.equal(events[0].source.message_id, 'message-stable');
   assert.equal(events[0].source.floor, 3);
   assert.equal(events[1].type, 'physical_symptom');
+  assert.equal(events[2].type, 'medical_event');
+  assert.deepEqual(events[2].participants.map(participant => participant.character_id), [
+    'character_other', 'character_subject',
+  ]);
 
   const data = await fixture.runtime.collectActiveBusinessData();
-  assert.equal(data.active_event_count, 2);
+  assert.equal(data.active_event_count, 3);
   assert.equal(data.tracking_subject_count, 1);
   assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [events[0].event_id]);
+  assert.equal(data.tracking_subjects.character_source, undefined);
+  assert.equal(data.tracking_subjects.character_other, undefined);
   fixture.runtime.destroy();
 });
 

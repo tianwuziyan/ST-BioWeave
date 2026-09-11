@@ -24,17 +24,17 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 ### 人物列表与 Tracking Subject
 
-人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。
+人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。`BiologicalEvent.participants[]` 记录事件中的全部实际参与者，不等于 Tracking Subject；Character Profile 也不等于人物列表实体。
 
 进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
 
-没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示错误摘要，并明确旧成功事件仍可保持有效。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，UI 不重新执行资格判断。
+没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示错误摘要，并明确旧成功事件仍可保持有效。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
-人物详情至少显示人物名称、稳定 `character_id`、可用的 species/type、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。稳定 `character_id` 和其它技术字段可以放入折叠的调试信息。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
 
 ### 历史事件页
 
-事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。列表和详情可显示：Story Time、Floor、Location、全部 Participants、Reproductive Roles、Pregnancy Relevance、Status、Confidence 和 Source。Source 字段只读，必须展示其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。
+事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、全部 Participants、妊娠相关性、Confidence 和简短证据；Reproductive Role 使用可读标签，事件 ID、Source、结构化时间和其它 raw 字段放入折叠的详情/调试区。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定。
 
 当当前 Chat 没有 Event 时，页面必须区分“当前楼层尚未分析”和“当前楼层已分析成功但 0 Event”，并提供调用生产 Runtime pipeline 的“分析当前楼层 / 重新分析当前楼层”入口。
 
