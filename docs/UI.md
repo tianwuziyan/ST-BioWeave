@@ -18,7 +18,9 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 “最近剧情”是独立折叠设置，内部按截图式结构分为读取设置、正则提取与清洗、使用提示三张紧凑卡片；读取设置只填写读取楼数，`0` 表示不读取。规则启用状态使用可访问的自定义 Switch，而不是浏览器默认 checkbox。正则区分“全局正则”和“当前角色卡正则”：全局规则适用于所有角色卡，当前角色卡规则只随当前 Chat 保存；两组规则均支持新增、删除、上下移动和启停，执行顺序固定为全局正则→当前角色卡正则。正则默认不处理 USER 楼，可单独开启；0 楼开场白始终保留原文。最近剧情请求只发送实际提取出的正文，不附加楼层标题或 `[Floor · role]` 包装。“外部记忆来源”是独立设置，显示 Anima、柏宝书和数据库记忆及其公开接口检测状态。最近剧情和外部来源不伪装成世界书条目，也不在本阶段进入 Tavern Context 注入。
 
-人物列表可以进入人物详情壳：状态 / 事件 / 推演 / 关系 / 备注。人物详情只改变 UI focus，不改变 Chat Scope。
+人物列表可以进入 Tracking Subject 的人物详情单页人物卡，详情只改变 UI focus，不改变 Chat Scope。人物卡按固定顺序同时显示：人物摘要（Summary）、生殖能力（Reproductive Capabilities）、当前状态（Current State）、受孕相关记录（Related Events）、推演（Projection）、关系（Relations）和备注（Notes）；这些是连续纵向 section，不是互斥 Tab。详情入口唯一门槛仍是当前 Chat 的 `tracking_subjects` 中存在对应 `character_id`，单独存在的 `character_profiles` 不会创建详情入口。
+
+人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示完整用户可读事实、全部参与者和 counterpart；当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
 
 ## Phase 2A 业务页面契约
 

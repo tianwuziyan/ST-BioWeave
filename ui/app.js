@@ -389,7 +389,6 @@ export function createApp(runtime, options = {}) {
   let overlay = null;
   let route = 'overview';
   let focusedCharacterId = null;
-  let characterDetailTab = 'state';
   let moreMenuOpen = false;
   let unsubscribeRuntime = null;
   let modelRefreshSequence = 0;
@@ -2039,7 +2038,6 @@ export function createApp(runtime, options = {}) {
     const scrollPositions = captureScrollPositions(root);
     main.innerHTML = page[2]({
       characterId: focusedCharacterId,
-      characterDetailTab,
       trackingSubjects: businessState.trackingSubjects,
       characterProfiles: businessState.characterProfiles,
       activeEvents: businessState.activeEvents,
@@ -2096,7 +2094,6 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure();
     route = nextRoute;
     focusedCharacterId = null;
-    characterDetailTab = 'state';
     setMoreMenu(false);
     render();
     return true;
@@ -2107,15 +2104,7 @@ export function createApp(runtime, options = {}) {
     if (!nextId) return;
     route = 'characters';
     focusedCharacterId = nextId;
-    characterDetailTab = 'state';
     setMoreMenu(false);
-    render();
-  }
-
-  function setCharacterTab(tab) {
-    const allowedTabs = new Set(['state', 'events', 'projection', 'relations', 'notes']);
-    if (!focusedCharacterId || !allowedTabs.has(tab)) return;
-    characterDetailTab = tab;
     render();
   }
 
@@ -2744,7 +2733,6 @@ export function createApp(runtime, options = {}) {
       clearAnalysisPreview();
       route = 'overview';
       focusedCharacterId = null;
-      characterDetailTab = 'state';
       setMoreMenu(false);
       businessRefreshSequence += 1;
       businessState = {
@@ -2839,7 +2827,7 @@ export function createApp(runtime, options = {}) {
     }
     const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]');
     const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]');
-    const target = event.target.closest?.('[data-route], [data-theme-choice], [data-character-id], [data-character-tab], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]');
+    const target = event.target.closest?.('[data-route], [data-theme-choice], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]');
     if (!target) {
       if (!clickedPicker || !clickedDropdown) closeModelPickers();
       if (moreMenuOpen) setMoreMenu(false);
@@ -3061,15 +3049,9 @@ export function createApp(runtime, options = {}) {
       openCharacter(target.dataset.characterId);
       return;
     }
-    if (target.dataset.characterTab) {
-      event.preventDefault();
-      setCharacterTab(target.dataset.characterTab);
-      return;
-    }
     if (target.dataset.backToCharacters !== undefined) {
       event.preventDefault();
       focusedCharacterId = null;
-      characterDetailTab = 'state';
       route = 'characters';
       render();
       return;
@@ -3341,7 +3323,6 @@ export function createApp(runtime, options = {}) {
     unsubscribeRuntime = null;
     route = 'overview';
     focusedCharacterId = null;
-    characterDetailTab = 'state';
     moreMenuOpen = false;
     analysisSourcesState = createAnalysisSourcesState();
     worldModelState = createWorldModelState();

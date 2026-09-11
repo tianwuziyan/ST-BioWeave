@@ -107,7 +107,7 @@ For registration ownership, keep one unregister function per document:
 
 - Keep one stable page responsibility per existing ui/*.js file.
 - Accept a small options object for presentation focus, for example
-  charactersPage({characterId, characterDetailTab}).
+  charactersPage({characterId});人物详情使用同页纵向 sections，不维护详情 Tab state。
 - Return accessible HTML with buttons/links carrying explicit
   data-route/data-character-* actions; do not bind a separate listener to
   every page fragment.

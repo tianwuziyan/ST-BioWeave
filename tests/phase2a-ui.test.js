@@ -163,7 +163,7 @@ test('running Event Analysis keeps the action clickable and exposes execution di
 
 test('characters page renders DTO facts, tri-state capabilities, and all exposure events', () => {
   const html = charactersPage({
-    trackingSubjects: [trackingSubject],
+    trackingSubjects: [{...trackingSubject, exposure_event_ids: ['evt-1', 'evt-1']}],
     characterProfiles: {
       'char-a': {
         character_id: 'char-a',
@@ -188,8 +188,67 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.match(html, /可产生卵子[\s\S]*?未知/);
   assert.match(html, /可产生精子[\s\S]*?否/);
   assert.match(html, /evt-1/);
+  for (const section of ['当前状态', '受孕相关记录', '推演', '关系', '备注']) {
+    assert.match(html, new RegExp(`<h3>${section}</h3>`));
+  }
+  assert.equal((html.match(/bioweave-character-exposure/g) ?? []).length, 1);
+  assert.match(html, /阿乙/);
   assert.match(html, /等待状态引擎计算/);
+  assert.doesNotMatch(html, /role="tablist"|role="tab"|data-character-tab|aria-selected=/);
   assert.doesNotMatch(html, /probability|gestational age|妊娠概率|妊娠天数/);
+});
+
+test('character detail keeps every section for false or unknown capabilities and gates on tracking subjects', () => {
+  const html = charactersPage({
+    trackingSubjects: [{
+      character_id: 'char-null',
+      display_name: '未知承载者',
+      exposure_event_ids: [],
+      status: 'active',
+    }],
+    characterProfiles: {
+      'char-null': {
+        character_id: 'char-null',
+        display_name: '未知承载者',
+        reproductive_capabilities: {
+          can_carry_pregnancy: false,
+          can_produce_ova: null,
+        },
+      },
+    },
+    characterId: 'char-null',
+  });
+
+  assert.match(html, /未知承载者/);
+  assert.match(html, /可承载妊娠[\s\S]*?否/);
+  assert.match(html, /可产生卵子[\s\S]*?未知/);
+  for (const text of [
+    '当前状态',
+    '当前没有可显示的 exposure Event。',
+    '当前没有可显示的生理推演。推演并非已发生事实。',
+    '尚未建立已确认的亲子或其他关系。',
+    '当前没有可显示的人物备注。',
+  ]) {
+    assert.match(html, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+
+  const profileOnly = charactersPage({
+    characterProfiles: {'profile-only': {character_id: 'profile-only', display_name: '只有资料'}},
+    characterId: 'profile-only',
+  });
+  assert.match(profileOnly, /当前没有可追踪的角色详情。/);
+  assert.doesNotMatch(profileOnly, /当前状态|受孕相关记录|只有资料/);
+});
+
+test('character detail no longer exposes tab state or bindings and keeps top-level routes', () => {
+  const characterSource = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
+  const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+  const styleSource = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(characterSource, /characterDetailTabs|characterDetailTab|renderTabContent|data-character-tab|role="tablist"|role="tab"/);
+  assert.doesNotMatch(appSource, /characterDetailTab|setCharacterTab|data-character-tab/);
+  assert.doesNotMatch(styleSource, /bioweave-character-tabs/);
+  assert.match(appSource, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings'\]/);
 });
 
 test('events page displays fact fields and exposes explicit edit/delete actions', () => {

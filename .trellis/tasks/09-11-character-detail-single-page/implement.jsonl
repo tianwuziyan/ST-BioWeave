@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵循 plain DOM 页面模块、ui/app.js presentation owner、空状态和事件委托约束。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行前端质量、测试和禁止模式检查。"}
+{"file":"docs/UI.md","reason":"保持人物列表、Tracking Subject、详情页 DTO 边界和顶级导航契约一致。"}
+{"file":"docs/DATA-MODEL.md","reason":"确认人物详情通过 Tracking Subject 的 event_id 引用读取 Event，不复制或推导业务事实。"}

@@ -6,14 +6,6 @@ import {
   renderAnalysisActionButton,
 } from './overview.js';
 
-const characterDetailTabs = [
-  ['state', '状态'],
-  ['events', '事件'],
-  ['projection', '推演'],
-  ['relations', '关系'],
-  ['notes', '备注'],
-];
-
 const capabilityLabels = {
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
@@ -226,53 +218,60 @@ function renderCharacterFacts(profile) {
 
 function renderExposures(subject, activeEvents) {
   const exposureIds = Array.isArray(subject?.exposure_event_ids)
-    ? subject.exposure_event_ids.map(value => String(value ?? '').trim()).filter(Boolean)
+    ? [...new Set(subject.exposure_event_ids.map(value => String(value ?? '').trim()).filter(Boolean))]
     : [];
   if (!exposureIds.length) return '<div class="bioweave-empty">当前没有可显示的 exposure Event。</div>';
   const events = new Map(eventEntries(activeEvents).map(({key, value}) => [key, value]));
   return exposureIds.map(eventId => renderExposureEvent(events.get(eventId), eventId)).join('');
 }
 
-function renderTabContent(tab, subject, activeEvents) {
-  if (tab === 'state') {
-    return '<section class="bioweave-card bioweave-detail-section"><h3>状态</h3>'
-      + '<p class="bioweave-muted">等待状态引擎计算</p></section>';
-  }
-  if (tab === 'events') {
-    return '<section class="bioweave-card bioweave-detail-section"><h3>相关事件</h3>'
-      + '<p class="bioweave-muted">以下为该人物的全部受孕相关记录。</p>'
-      + renderExposures(subject, activeEvents) + '</section>';
-  }
-  const content = {
-    projection: ['推演', '当前没有可显示的生理推演。推演并非已发生事实。'],
-    relations: ['关系', '尚未建立已确认的亲子或其他关系图谱。'],
-    notes: ['备注', '当前没有可显示的人物备注。'],
-  }[tab] ?? ['状态', '等待状态引擎计算'];
-  return '<section class="bioweave-card bioweave-detail-section"><h3>' + content[0]
-    + '</h3><div class="bioweave-empty">' + content[1] + '</div></section>';
+function renderCharacterSummary({characterId, subject, profile}) {
+  const displayName = profile?.display_name ?? subject?.display_name ?? characterId;
+  return '<section class="bioweave-card bioweave-character-summary"><header><b>' + escapeHtml(displayValue(displayName))
+    + '</b><span class="bioweave-badge">妊娠追踪</span></header>'
+    + renderCharacterFacts(profile)
+    + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>character_id：<code>'
+    + escapeHtml(characterId) + '</code></p></details></section>';
 }
 
-function detailPage({characterId, characterDetailTab, subject, profile, activeEvents}) {
-  const tab = characterDetailTabs.some(([id]) => id === characterDetailTab) ? characterDetailTab : 'state';
-  const displayName = profile?.display_name ?? subject?.display_name ?? characterId;
-  const buttons = characterDetailTabs.map(([id, label]) => '<button type="button" role="tab" data-character-tab="'
-    + id + '" aria-selected="' + String(id === tab) + '" class="' + (id === tab ? 'active' : '') + '">'
-    + label + '</button>').join('');
+function renderCurrentState() {
+  return '<section class="bioweave-card bioweave-detail-section"><h3>当前状态</h3>'
+    + '<p class="bioweave-muted">等待状态引擎计算</p></section>';
+}
+
+function renderExposuresSection(subject, activeEvents) {
+  return '<section class="bioweave-card bioweave-detail-section"><h3>受孕相关记录</h3>'
+    + '<p class="bioweave-muted">只展示当前追踪 Registry 引用的有效事件。</p>'
+    + renderExposures(subject, activeEvents) + '</section>';
+}
+
+function renderProjectionSection() {
+  return '<section class="bioweave-card bioweave-detail-section"><h3>推演</h3>'
+    + '<div class="bioweave-empty">当前没有可显示的生理推演。推演并非已发生事实。</div></section>';
+}
+
+function renderRelationsSection() {
+  return '<section class="bioweave-card bioweave-detail-section"><h3>关系</h3>'
+    + '<div class="bioweave-empty">尚未建立已确认的亲子或其他关系。</div></section>';
+}
+
+function renderNotesSection() {
+  return '<section class="bioweave-card bioweave-detail-section"><h3>备注</h3>'
+    + '<div class="bioweave-empty">当前没有可显示的人物备注。</div></section>';
+}
+
+function detailPage({characterId, subject, profile, activeEvents}) {
   return '<section class="bioweave-page bioweave-character-detail">'
     + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
     + '<h2>人物详情</h2><p class="bioweave-muted">当前 Chat · 妊娠追踪</p></div></div>'
-    + '<section class="bioweave-card bioweave-character-summary"><header><b>' + escapeHtml(displayValue(displayName))
-    + '</b><span class="bioweave-badge">妊娠追踪</span></header>'
-    + '<details class="bioweave-event-debug"><summary>调试信息</summary><p>character_id：<code>'
-    + escapeHtml(characterId) + '</code></p></details>'
-    + renderCharacterFacts(profile) + '</section>'
+    + renderCharacterSummary({characterId, subject, profile})
     + '<section class="bioweave-card bioweave-detail-section"><h3>生殖能力</h3>'
     + renderCapabilities(profile) + '</section>'
-    + '<div class="bioweave-character-tabs" role="tablist" aria-label="人物详情分区">' + buttons + '</div>'
-    + renderTabContent(tab, subject, activeEvents)
-    + '<section class="bioweave-card bioweave-detail-section"><h3>受孕相关记录</h3>'
-    + '<p class="bioweave-muted">只展示当前追踪 Registry 引用的有效事件。</p>'
-    + renderExposures(subject, activeEvents) + '</section>'
+    + renderCurrentState()
+    + renderExposuresSection(subject, activeEvents)
+    + renderProjectionSection()
+    + renderRelationsSection()
+    + renderNotesSection()
     + '</section>';
 }
 
@@ -286,7 +285,6 @@ function unavailableDetailPage(characterId) {
 
 export function charactersPage({
   characterId = null,
-  characterDetailTab = 'state',
   trackingSubjects = [],
   characterProfiles = {},
   activeEvents = [],
@@ -301,7 +299,6 @@ export function charactersPage({
     if (!subject) return unavailableDetailPage(id);
     return detailPage({
       characterId: id,
-      characterDetailTab,
       subject,
       profile: profileFor(characterProfiles, id),
       activeEvents: effectiveEvents,

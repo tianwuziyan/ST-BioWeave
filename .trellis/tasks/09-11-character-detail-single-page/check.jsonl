@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复核页面结构、plain DOM、事件委托和 unfinished business empty state。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核回归测试覆盖和前端禁用模式。"}
+{"file":"docs/UI.md","reason":"检查文档中的单页人物详情、UI/Business boundary 与顶级导航说明。"}
+{"file":"docs/DEVELOPMENT.md","reason":"复核 Phase 2A 页面只消费 DTO、不得在 UI 计算状态或资格的开发规范。"}
