@@ -437,3 +437,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 按 gestational subject 拆分妊娠暴露 Event
+<!-- trellis-session: v=2 fp=ca1648a47b372d9b -->
+
+**Date**: 2026-09-12
+**Task**: 按 gestational subject 拆分妊娠暴露 Event
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 Event Analysis 0/1/N 合同调整，按 gestational subject 拆分 pregnancy-related sexual_activity，增加 subject-local 结构与重复 subject 校验，保留 ordinal Event ID 与原有 Tracking eligibility，并通过 389 项自动化检查。未纳入并行 UI 变更；真实 SillyTavern 宿主验收仍待执行。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `69b1ad1` | 按 gestational subject 拆分妊娠暴露 Event |
+
+### Status
+
+[OK] **Completed**
