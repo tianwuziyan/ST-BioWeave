@@ -82,20 +82,31 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
 
-Event Analysis V1 的分析单位是一个 Target Floor Version。每个分析响应只能产生
-`events.length === 0` 或 `events.length === 1`：
+Event Analysis V1 的输入单位是一个 Target Floor Version，但一个分析响应可以产生
+零个、一个或多个彼此独立的 Event：
 
 ```text
-One Target Floor Version → 0 or 1 consolidated BiologicalEvent
+One Target Floor Version → 0 / 1 / N BiologicalEvents
 ```
 
-同一连续过程中的 `sexual_activity`、实际生殖暴露、即时 physical effect、直接
-身体反应和相关证据必须合并到一个 primary Event。若该楼层存在实际妊娠相关性
-暴露，primary type 优先为 `sexual_activity`；普通照顾、送汤、食物、补品和静态
-外貌/体质背景不单独创建 `medical_event` 或 `physical_symptom`。独立的新症状或
-明确医疗干预可以分别作为该楼层唯一的 primary type。AI 若返回两个或更多 Event，
-Parser 以 `multiple_events_not_allowed` 拒绝；Runtime 与 UI 不选择、丢弃或合并
-这些 Event。
+对于 pregnancy-related `sexual_activity`，Event 的粒度是一个 gestational subject
+在本 Floor Version 中的一组实际 conception-relevant exposure。先识别所有实际
+发生暴露的 subject，再按 subject 分组：每个 Event 的
+`gestational_subject_ids.length === 1`，并且 `counterpart_ids[]` 只包含实际对该
+subject 造成暴露的一个或多个 source。participant ID 集合必须严格等于该 subject
+与这些 counterpart 的并集，不能混入另一个 subject、另一组 source、在场人物或无
+实际暴露的 sexual participant；同一 subject 在同一 Floor Version 最多一个该类
+Event，多个 source 合并进该 Event。不同 subject 即使时间、地点、行为和 Event
+type 相同，也必须分别成 Event。两个 subject 之间的互相 exposure 仍可形成两个
+彼此独立的 subject-local Event。
+
+同一 subject 的 sexual exposure、即时 physical effect、直接身体反应和相关证据
+保持在同一个 Event 内，不机械拆成独立 `physical_symptom`。其它真正独立的新症状、
+明确医疗检查/诊断/治疗/给药/干预/医学监测或其它 BiologicalEvent 可以在同一
+Floor 并存。普通照顾、送汤、食物、补品和静态外貌/体质背景不单独创建
+`medical_event` 或 `physical_symptom`。Parser、Domain Validator 会拒绝多 subject
+Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtime 与 UI 不
+选择、丢弃、合并或按人物重建 Event。
 
 本阶段保留现有其它 BiologicalEvent 类型的兼容性，但只实现 `sexual_activity` 的妊娠相关 Tracking 闭环。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
 
@@ -119,17 +130,20 @@ Parser 以 `multiple_events_not_allowed` 拒绝；Runtime 与 UI 不选择、丢
 
 `reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
 
-`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。`counterpart_ids[]` 是 `participants[]` 的子集，只记录最终实际造成 conception-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
+`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。对 pregnancy-related `sexual_activity`，`gestational_subject_ids[]` 严格只有一个 ID，`counterpart_ids[]` 至少一个且去重，是 `participants[]` 的 subject-local 子集，只记录最终实际造成该 subject conception-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
 
 AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
 和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
 旧响应，顶层单独出现的 `source` 以及 Event 内的 `event_id`/`source` 会被
 忽略；其它未知顶层字段仍按固定 Contract 拒绝。对于新的 Event Analysis V1，
-`events[]` 只能包含 0 或 1 条；多条响应在解析阶段拒绝，不会进入 Runtime。
+`events[]` 可包含 0、1 或 N 条；多条合法 Event 按响应序号进入 Runtime，不会被
+合并。每个 pregnancy-related `sexual_activity` Event 在 parser/domain boundary
+检查唯一 subject、实际 source 与 participants 闭包；同一 Floor 的重复 subject
+Event 被拒绝。
 Runtime 在解析成功后仍按 authoritative Floor Version 与响应序号生成稳定
 `event_id`，再绑定下面的六字段 `source`，随后才执行 Domain normalize / validate
-并写入 Floor。响应序号保留是为了兼容 deterministic identity 语义，不代表一个
-Floor 可以保存多条新分析 Event。
+并写入 Floor。响应序号保留是为了兼容 deterministic identity 语义，并保证同一
+Floor 的多个 Event 都有稳定且不依赖 display name 的 ID。
 
 ### Source binding 与 Floor / Swipe
 
@@ -148,9 +162,10 @@ Event 的 `source` 必须由当前分析目标的 authoritative Floor Version �
 
 没有 swipe 结构时，Event 保存到 `message.extra.bioweave`；存在 swipe 结构时，包括 swipe `0`，只能保存到对应 `message.swipe_info[swipe_id].extra.bioweave`。Floor `events[]` 是该消息/版本的 Floor-bound 事实集合，不是 Chat-level 历史事件账本。删除 Floor 后其 Event 必须消失；切换到没有事件的 Swipe 后旧 Swipe Event 不得参与当前有效状态。
 
-失败的 force refresh（包括多 Event contract failure）只记录失败尝试，不覆盖同一
-Floor Version 的上一份成功分析。已存在的历史数据不在本轮自动迁移或语义合并；
-本轮保证新 AI response 在保存边界前满足 0/1。
+失败的 force refresh（包括重复 subject 或 subject-local contract failure）只记录
+失败尝试，不覆盖同一 Floor Version 的上一份成功分析。已存在的历史数据不在本轮
+自动迁移或语义合并；本轮保证新 AI response 在保存边界前满足 0/1/N，并通过
+subject-local consistency validation。
 
 自动分析沿用 `analysis_interval` 的 N-floor 规则与六字段 Floor Version：同一成功版本跳过，版本变化允许重新分析；失败可重试；UI mount/open/reopen/init 不触发新的 AI 请求。手动刷新始终强制请求，成功后替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本 Event 不能进入当前有效 Registry。Event 编辑直接修改当前有效事实，保存时保留 `event_id` 与 authoritative `source`；Event 删除是真删除，不产生 `user_override` 层。
 
@@ -192,7 +207,7 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 }
 ```
 
-`created_from_event_id` 与 `exposure_event_ids[]` 必须指向当前有效 Event；Registry 重建时去重并清理 dangling 引用。同一角色多次事件复用同一个 Subject 并累积多个 exposure 引用，一个 Event 可以关联多个 Subject。只有真正进入 Tracking 的角色才建立必要的 `character_profiles` 最小资料或证据摘要；这些资料不替代历史 Event，也不复制完整事实，普通聊天角色不进入通用生理数据库。
+`created_from_event_id` 与 `exposure_event_ids[]` 必须指向当前有效 Event；Registry 重建时去重并清理 dangling 引用。同一角色多次事件复用同一个 Subject 并累积多个 exposure 引用；pregnancy-related `sexual_activity` 的单个 Event 只关联一个 gestational Subject，其它非 pregnancy Event 是否关联 Subject 仍由既有 Domain/Tracking 规则决定。只有真正进入 Tracking 的角色才建立必要的 `character_profiles` 最小资料或证据摘要；这些资料不替代历史 Event，也不复制完整事实，普通聊天角色不进入通用生理数据库。
 
 没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
 

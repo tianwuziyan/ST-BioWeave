@@ -79,12 +79,12 @@ test('characters page distinguishes not analyzed from analyzed with zero subject
 
 test('characters failed state keeps diagnostics out of the ordinary product page', () => {
   const html = charactersPage({
-    analysisStatus: {state: 'failed', last_error: 'multiple_events_not_allowed'},
+    analysisStatus: {state: 'failed', last_error: 'duplicate_gestational_subject_event'},
   });
   assert.match(html, /当前楼层事件分析失败。/);
   assert.match(html, /请稍后重试。/);
   assert.match(html, /旧的成功事件，它们仍然有效/);
-  assert.doesNotMatch(html, /multiple_events_not_allowed|错误摘要|last_error/);
+  assert.doesNotMatch(html, /duplicate_gestational_subject_event|错误摘要|last_error/);
 });
 
 test('characters page only enumerates tracking subjects and ignores diagnostic decisions and profiles', () => {

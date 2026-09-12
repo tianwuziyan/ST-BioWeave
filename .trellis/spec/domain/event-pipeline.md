@@ -16,6 +16,7 @@ duplicates the Event fact.
 - `parseEventAnalysisResponse(raw) -> AIEventAnalysisDTO`
 - `normalizeEvent(raw) -> BiologicalEvent`
 - `validateEvent(event) -> {ok, errors}`
+- `validateEventCollection(events) -> {ok, errors}`
 - `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, character_profiles}`
 - `explainTrackingDecision(event) -> Array<{character_id, eligible, reasons[]}>`
 - `getActiveFloorEvents(floorData, floorVersion) -> BiologicalEvent[]`
@@ -45,32 +46,40 @@ construction. The analyzer receives a fixed JSON-only output contract.
 ### AI DTO / Domain DTO boundary
 
 `AIEventAnalysisDTO` has only `schema_version: 1` and `events[]` at the top
-level, and Event Analysis V1 accepts only `events.length === 0` or
-`events.length === 1` for one Target Floor Version. A legacy top-level `source`
-may be present and is ignored; any other unknown top-level field is rejected.
-An AI event does not require or trust `event_id` or `source`; legacy copies of
-those fields inside an event are ignored. Each accepted AI event contains biological facts such as `type`,
+level, and Event Analysis V1 accepts `events.length >= 0` for one Target Floor
+Version. A legacy top-level `source` may be present and is ignored; any other
+unknown top-level field is rejected. An AI event does not require or trust
+`event_id` or `source`; legacy copies of those fields inside an event are
+ignored. Each accepted AI event contains biological facts such as `type`,
 `status`, structured `story_time`, `location`, directly relevant
 `participants`, `pregnancy_relevance`, `source_evidence`, and optional
 `physical_effect`. For `sexual_activity`, participants are only the direct
 members of the actual reproductive exposure chain; other Event types retain
 only objects directly relevant to that biological fact.
 
-The protected Prompt contract selects one primary Event for the Floor and
-consolidates immediate effects, directly associated symptoms, observations, and
-evidence into it. Pregnancy-relevant sexual exposure takes priority as a
-`sexual_activity` primary type. Ordinary care/supplements do not become a
-`medical_event`, and static appearance/constitution text does not become a
-`physical_symptom`. A response with more than one Event is rejected with the
-stable `multiple_events_not_allowed` diagnostic before Runtime enrichment; no
-Runtime or UI semantic merge is allowed.
+For pregnancy-related `sexual_activity`, Event granularity is per gestational
+subject: first identify all subjects with actual conception-relevant exposure,
+then emit one Event per subject. Each such Event has exactly one
+`gestational_subject_ids` ID, at least one subject-local `counterpart_ids` source,
+and a participant ID set exactly equal to subject plus counterparts. Same-subject
+sources are merged into one Event; different subjects must remain separate even
+when time, location, or type match. A response containing the same pregnancy
+subject twice is rejected with `duplicate_gestational_subject_event`; no Runtime
+or UI semantic merge is allowed.
+
+The protected Prompt contract still consolidates immediate effects, directly
+associated symptoms, observations, and evidence into the same subject's
+`sexual_activity` Event. Independent `physical_symptom`, `medical_event`, or
+other BiologicalEvents may coexist in one Floor. Ordinary care/supplements do
+not become a `medical_event`, and static appearance/constitution text does not
+become a `physical_symptom`.
 
 After parsing, Runtime generates a deterministic canonical `event_id` from the
 authoritative Floor Version and response ordinal, then binds the complete
-authoritative `source`. The ordinal remains an identity compatibility detail;
-new analysis for one Floor Version still persists at most one Event. Only this
-enriched object is normalized and validated as the persisted `BiologicalEvent`
-Domain DTO.
+authoritative `source`. The ordinal remains an identity compatibility detail and
+keeps multiple Events in one response stable. Runtime calls
+`validateEventCollection()` before saving; only this enriched collection is
+normalized and validated as persisted `BiologicalEvent` Domain DTOs.
 
 ### Persisted BiologicalEvent
 
@@ -173,7 +182,10 @@ API/schema failure.
 | Legacy top-level `source`, or event-level `event_id`/`source` | Ignore those compatibility fields; Runtime still owns identity and provenance |
 | Arbitrary unknown top-level field | Reject with `unexpected_top_level_field` and a safe JSON path |
 | Invalid event role, conception flag, evidence shape, or participant reference | Reject with a specific diagnostic code and safe JSON path |
-| AI response contains more than one Event for one Target Floor Version | Reject with `multiple_events_not_allowed` at `$.events`; write no new result and do not merge |
+| AI response contains multiple legal Events for one Target Floor Version | Accept 0/1/N; preserve each Event and do not merge |
+| Pregnancy `sexual_activity` Event has zero or multiple gestational subjects | Reject with `invalid_gestational_subject_cardinality` |
+| Same Floor response repeats a pregnancy gestational subject | Reject with `duplicate_gestational_subject_event`; do not runtime-merge |
+| Pregnancy Event participants are not exactly subject plus actual counterparts, or counterpart overlaps subject | Reject with subject-local structure diagnostics |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
 | `possible_conception: true` without direct exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
 | `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |
@@ -199,8 +211,12 @@ API/schema failure.
   contact-only cases remain valid unrelated Events with empty relevance IDs;
   barrier failure/removal that reaches a valid exposure path retains only the
   actual source IDs.
-- Good: one Event names two explicit gestational subjects; the registry has
-  two subjects, while a conception source remains absent from Characters.
+- Good: one Floor response emits two subject-local sexual Events for two explicit
+  gestational subjects; each Registry subject references only its own Event and
+  counterpart sources remain local to that Event.
+- Good: one subject with two or more actual exposure sources uses one Event whose
+  `counterpart_ids[]` contains all actual sources; a sexual participant without
+  actual exposure is absent from `participants[]`.
 - Good: the overlay is never opened; `MESSAGE_RECEIVED` reaches the Runtime
   coordinator and performs interval-eligible analysis.
 - Base: a non-sexual BiologicalEvent passes the same envelope and remains
@@ -214,11 +230,11 @@ API/schema failure.
 
 ## 6. Tests Required
 
-- Parser assertions for fixed AI envelopes, one-Floor 0/1 cardinality, all existing Event types, strict
+- Parser assertions for fixed AI envelopes, one-Floor 0/1/N cardinality, per-subject pregnancy grouping, duplicate-subject rejection, all existing Event types, strict
   JSON, array-only references, canonical evidence, typed physical effects,
   diagnostic paths, and ignoring legacy identity/source fields.
-- Domain assertions for actual-exposure consistency, 0/1/N source IDs,
-  participant-backed references, no-exposure sexual Events, and the
+- Domain assertions for actual-exposure consistency, one-subject pregnancy
+  cardinality, 0/1/N source IDs, participant-backed references, no-exposure sexual Events, collection duplicate-subject rejection, and the
   `conception_relevant_exposure` evidence marker.
 - Runtime assertions that every successful AI response receives a generated
   canonical Event ID and authoritative source before Floor save; model-provided

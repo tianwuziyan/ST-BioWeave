@@ -6,6 +6,7 @@ import {
   normalizeEvent,
   sortEvents,
   validateEvent,
+  validateEventCollection,
 } from '../core/events.js';
 
 test('legacy event types remain valid with the old minimal source shape', () => {
@@ -234,6 +235,121 @@ test('actual exposure outcomes support one or multiple sources without retaining
   ]);
   assert.equal(validateEvent(oneSource).ok, true);
   assert.equal(validateEvent(multipleSources).ok, true);
+});
+
+test('validateEvent enforces one subject and an exact subject/source participant closure', () => {
+  const duplicateIds = validExposureEvent({
+    participants: [
+      ...validExposureEvent().participants,
+      {character_id: 'source-a', event_role: 'potential_conception_source'},
+    ],
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      gestational_subject_ids: ['subject', 'subject'],
+      counterpart_ids: ['source-a', 'source-b', 'source-a'],
+    },
+  });
+  assert.equal(validateEvent(duplicateIds).ok, true);
+  const normalizedDuplicateIds = normalizeEvent(duplicateIds);
+  assert.deepEqual(normalizedDuplicateIds.pregnancy_relevance.gestational_subject_ids, ['subject']);
+  assert.deepEqual(normalizedDuplicateIds.pregnancy_relevance.counterpart_ids, ['source-a', 'source-b']);
+  assert.deepEqual(normalizedDuplicateIds.participants.map(item => item.character_id), [
+    'subject', 'source-a', 'source-b',
+  ]);
+  assert.equal(validateEvent(validExposureEvent({
+    participants: [
+      {character_id: 'subject', event_role: 'potential_gestational_subject'},
+      {character_id: 'subject-2', event_role: 'potential_gestational_subject'},
+      {character_id: 'source-a', event_role: 'potential_conception_source'},
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject', 'subject-2'],
+      counterpart_ids: ['source-a'],
+      confidence: null,
+    },
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    participants: [{character_id: 'subject', event_role: 'potential_gestational_subject'}],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject'],
+      counterpart_ids: ['subject'],
+      confidence: null,
+    },
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      counterpart_ids: ['source-a', 'missing-source'],
+    },
+  })).ok, false);
+  assert.equal(validateEvent(validExposureEvent({
+    participants: [
+      ...validExposureEvent().participants,
+      {character_id: 'unrelated-participant', event_role: 'other_participant'},
+    ],
+  })).ok, false);
+});
+
+test('validateEvent checks raw duplicate participant records at their original indexes', () => {
+  const baseParticipants = validExposureEvent().participants;
+  const validation = validateEvent(validExposureEvent({
+    participants: [
+      ...baseParticipants,
+      {
+        ...baseParticipants[1],
+        event_role: 'invalid_role',
+        reproductive_capabilities_used: {can_cause_pregnancy: 'unknown'},
+        evidence: [{kind: 'narrative'}],
+      },
+    ],
+  }));
+
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.includes('participants[3].event_role'));
+  assert.ok(validation.errors.includes(
+    'participants[3].reproductive_capabilities_used.can_cause_pregnancy',
+  ));
+  assert.ok(validation.errors.includes('participants[3].evidence[0].text'));
+});
+
+test('validateEventCollection rejects duplicate pregnancy subjects without merging Events', () => {
+  const exposure = ({eventId, subjectId, counterpartIds}) => ({
+    ...validExposureEvent({event_id: eventId}),
+    participants: [
+      {character_id: subjectId, event_role: 'potential_gestational_subject'},
+      ...counterpartIds.map(characterId => ({
+        character_id: characterId,
+        event_role: 'potential_conception_source',
+      })),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: counterpartIds,
+      confidence: null,
+    },
+  });
+  const subjectA = exposure({eventId: 'evt-a', subjectId: 'subject-a', counterpartIds: ['source-a']});
+  const subjectB = exposure({eventId: 'evt-b', subjectId: 'subject-b', counterpartIds: ['source-b', 'source-c']});
+  assert.deepEqual(validateEventCollection([subjectA, subjectB]), {ok: true, errors: []});
+  const duplicate = validateEventCollection([subjectA, exposure({
+    eventId: 'evt-a-duplicate',
+    subjectId: 'subject-a',
+    counterpartIds: ['source-z'],
+  })]);
+  assert.equal(duplicate.ok, false);
+  assert.ok(duplicate.errors.includes('events[1].pregnancy_relevance.gestational_subject_ids[0]'));
+
+  const mutualExposure = validateEventCollection([
+    exposure({eventId: 'evt-mutual-a', subjectId: 'subject-a', counterpartIds: ['subject-b']}),
+    exposure({eventId: 'evt-mutual-b', subjectId: 'subject-b', counterpartIds: ['subject-a']}),
+  ]);
+  assert.deepEqual(mutualExposure, {ok: true, errors: []});
 });
 
 test('validateEvent represents sexual activity without exposure as unrelated and empty', () => {

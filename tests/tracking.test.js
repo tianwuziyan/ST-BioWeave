@@ -96,20 +96,32 @@ test('tracking diagnostics explain eligible and non-subject participants', () =>
   ]);
 });
 
-test('diagnostic sharing preserves declared eligibility order', () => {
+test('diagnostic sharing preserves subject-local eligibility across Events', () => {
   const base = event();
-  const result = event({
+  const resultA = event({
     participants: [
       {...base.participants[0], character_id: 'char-a'},
+      base.participants[1],
+    ],
+    pregnancy_relevance: {
+      ...base.pregnancy_relevance,
+      gestational_subject_ids: ['char-a'],
+    },
+  });
+  const resultC = event({
+    participants: [
       {...base.participants[0], character_id: 'char-c'},
       base.participants[1],
     ],
     pregnancy_relevance: {
       ...base.pregnancy_relevance,
-      gestational_subject_ids: ['char-c', 'char-a'],
+      gestational_subject_ids: ['char-c'],
     },
   });
-  assert.deepEqual(eligibleGestationalSubjects(result), ['char-c', 'char-a']);
+  assert.deepEqual([
+    ...eligibleGestationalSubjects(resultC),
+    ...eligibleGestationalSubjects(resultA),
+  ], ['char-c', 'char-a']);
 });
 
 test('tracking diagnostics explain unknown and false carrying capability', () => {
@@ -219,18 +231,14 @@ test('registry supports multiple subjects, counterpart references, repeated expo
     event_id: 'evt-2',
     source: {...first.source, message_id: 'message-2', floor: 2, content_hash: 'hash-2', message_version: 'v2'},
     participants: [
-      ...first.participants,
       {
-        character_id: 'char-c',
-        display_name: 'C',
-        event_role: 'potential_gestational_subject',
-        reproductive_capabilities_used: {can_carry_pregnancy: true},
-        evidence: [{kind: 'narrative', text: 'second exposure'}],
+        ...first.participants[0],
+        character_id: 'char-a',
       },
       {
+        ...first.participants[1],
         character_id: 'char-d',
         display_name: 'D',
-        event_role: 'potential_conception_source',
         reproductive_capabilities_used: {can_cause_pregnancy: true},
         evidence: [{kind: 'narrative', text: 'second source'}],
       },
@@ -238,11 +246,37 @@ test('registry supports multiple subjects, counterpart references, repeated expo
     pregnancy_relevance: {
       relevant: true,
       possible_conception: true,
-      gestational_subject_ids: ['char-a', 'char-c'],
-      counterpart_ids: ['char-b', 'char-d'],
+      gestational_subject_ids: ['char-a'],
+      counterpart_ids: ['char-d'],
     },
   });
-  const registry = rebuildTrackingRegistry([first, second, first], {
+  const third = event({
+    event_id: 'evt-3',
+    source: {...first.source, message_id: 'message-3', floor: 3, content_hash: 'hash-3', message_version: 'v3'},
+    participants: [
+      {
+        ...first.participants[0],
+        character_id: 'char-c',
+        display_name: 'C',
+        reproductive_capabilities_used: {can_carry_pregnancy: true},
+        evidence: [{kind: 'narrative', text: 'third exposure'}],
+      },
+      {
+        ...first.participants[1],
+        character_id: 'char-d',
+        display_name: 'D',
+        reproductive_capabilities_used: {can_cause_pregnancy: true},
+        evidence: [{kind: 'narrative', text: 'third source'}],
+      },
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['char-c'],
+      counterpart_ids: ['char-d'],
+    },
+  });
+  const registry = rebuildTrackingRegistry([first, second, third, first], {
     tracking_subjects: {
       'char-a': {
         character_id: 'char-a',
@@ -266,7 +300,7 @@ test('registry supports multiple subjects, counterpart references, repeated expo
 
   assert.deepEqual(registry.tracking_subjects['char-a'].exposure_event_ids, ['evt-1', 'evt-2']);
   assert.equal(registry.tracking_subjects['char-a'].created_from_event_id, 'evt-1');
-  assert.deepEqual(registry.tracking_subjects['char-c'].exposure_event_ids, ['evt-2']);
+  assert.deepEqual(registry.tracking_subjects['char-c'].exposure_event_ids, ['evt-3']);
   assert.equal(registry.tracking_subjects['char-z'], undefined);
   assert.deepEqual(registry.subjects, registry.tracking_subjects);
   assert.equal(registry.tracking_subjects['char-a'].counterpart_ids, undefined);

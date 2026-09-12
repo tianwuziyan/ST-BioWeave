@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event Analysis、AI DTO、Domain validator、Runtime、Tracking Registry 与 UI 边界的现行规范。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本次变更跨 Prompt、parser、Domain、Runtime、Storage、Tracking、UI 文档，需要按边界核对数据流。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"扩展现有 Event normalize/validate 路径前检查共享逻辑，避免在 analyzer、Domain、Runtime 重复定义合同。"}

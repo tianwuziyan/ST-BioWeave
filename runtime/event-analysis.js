@@ -6,7 +6,11 @@ import {
 } from '../ai/input-builder.js';
 import {createWorldbookCache, loadAnalysisSources} from '../ai/worldbook.js';
 import {safeErrorSummary as clientSafeErrorSummary} from '../ai/client.js';
-import {normalizeEvent, sortEvents, validateEvent} from '../core/events.js';
+import {
+  normalizeEvent,
+  sortEvents,
+  validateEventCollection,
+} from '../core/events.js';
 import {explainTrackingDecision, rebuildTrackingRegistry} from '../core/tracking.js';
 import {normalizeStoryTime} from '../story/time.js';
 import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
@@ -147,6 +151,12 @@ function safeDiagnosticSummary(error, stage = null) {
     || code === 'invalid_possible_conception'
     || code === 'invalid_evidence_shape'
     || code === 'participant_reference_invalid'
+    || code === 'invalid_gestational_subject_cardinality'
+    || code === 'invalid_counterpart_cardinality'
+    || code === 'invalid_pregnancy_participants'
+    || code === 'gestational_subject_counterpart_overlap'
+    || code === 'duplicate_gestational_subject_event'
+    || code === 'missing_conception_relevant_exposure_evidence'
     || code.startsWith('EVENT_ANALYSIS_')) {
     return 'AI 返回未通过 Event JSON Schema 校验';
   }
@@ -199,6 +209,51 @@ function executionError(error, stage = null) {
     diagnostic_path: path,
     safe_error_summary: safeDiagnosticSummary(error, resolvedStage),
   };
+}
+
+function pregnancyExposureSubjectId(event) {
+  try {
+    const normalized = normalizeEvent(event);
+    const relevance = normalized?.pregnancy_relevance;
+    if (normalized?.type !== 'sexual_activity'
+      || relevance?.relevant !== true
+      || relevance?.possible_conception !== true
+      || relevance.gestational_subject_ids.length !== 1) return null;
+    return relevance.gestational_subject_ids[0];
+  } catch {
+    return null;
+  }
+}
+
+function domainValidationError(
+  validation,
+  message = 'EVENT_DOMAIN_VALIDATION_FAILED',
+  events = null,
+) {
+  const errors = Array.isArray(validation?.errors) ? validation.errors : [];
+  const firstError = errors.find(error => typeof error === 'string') ?? null;
+  const duplicateSubjectError = Array.isArray(events)
+    ? errors.find(error => {
+      if (typeof error !== 'string') return false;
+      const match = error.match(/^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[0\]$/u);
+      if (!match) return false;
+      const index = Number(match[1]);
+      const subjectId = pregnancyExposureSubjectId(events[index]);
+      return subjectId !== null
+        && events.slice(0, index).some(event => pregnancyExposureSubjectId(event) === subjectId);
+    })
+    : null;
+  const diagnosticCode = duplicateSubjectError
+    ? 'duplicate_gestational_subject_event'
+    : 'domain_validation_failed';
+  const diagnosticPath = duplicateSubjectError ?? firstError ?? 'events';
+  const error = new Error(message);
+  error.code = message;
+  error.diagnostic_code = diagnosticCode;
+  error.error_code = diagnosticCode;
+  error.diagnostic_path = `$.${diagnosticPath}`;
+  error.error_path = error.diagnostic_path;
+  return error;
 }
 
 function withAnalysisStage(error, stage) {
@@ -743,30 +798,23 @@ export function createEventAnalysisCoordinator({
       assertExecutionCurrent(execution, token);
 
       execution.stage = 'normalization';
-      const events = await Promise.all((Array.isArray(result?.events) ? result.events : []).map(async (event, ordinal) => {
+      const enrichedEvents = await Promise.all((Array.isArray(result?.events) ? result.events : []).map(async (event, ordinal) => {
         const facts = event && typeof event === 'object' && !Array.isArray(event)
           ? Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'event_id' && key !== 'source'))
           : event;
-        const normalized = normalizeEvent(facts);
-        return normalizeEvent({
-          ...normalized,
+        if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return facts;
+        return {
+          ...facts,
           event_id: await deterministicEventId(target.version, ordinal),
           source: target.version,
-        });
+        };
       }));
       execution.stage = 'schema_validation';
-      const invalidEvent = events
-        .map((event, index) => ({event, index, validation: validateEvent(event)}))
-        .find(item => !item.validation.ok);
-      if (invalidEvent) {
-        const firstError = invalidEvent.validation.errors?.[0] ?? null;
-        const error = new Error('EVENT_DOMAIN_VALIDATION_FAILED');
-        error.code = 'EVENT_DOMAIN_VALIDATION_FAILED';
-        error.diagnostic_code = 'domain_validation_failed';
-        error.diagnostic_path = `$.events[${invalidEvent.index}]${firstError ? `.${firstError}` : ''}`;
-        error.error_path = error.diagnostic_path;
-        throw error;
+      const collectionValidation = validateEventCollection(enrichedEvents);
+      if (!collectionValidation.ok) {
+        throw domainValidationError(collectionValidation, 'EVENT_DOMAIN_VALIDATION_FAILED', enrichedEvents);
       }
+      const events = enrichedEvents.map(event => normalizeEvent(event));
       const analyzedAt = new Date().toISOString();
       const analysis = commitAnalysis(savedAnalysis, {
         status: 'success', analyzed_at: analyzedAt, last_analyzed_at: analyzedAt,
@@ -954,11 +1002,14 @@ export function createEventAnalysisCoordinator({
   async function updateEvent(eventId, patch = {}) {
     const target = await findActiveEvent(eventId);
     const nextEvent = normalizeEvent({...target.event, ...patch, event_id: target.event.event_id, source: target.event.source});
-    if (!validateEvent(nextEvent).ok) throw new Error('EVENT_ANALYSIS_INVALID');
     const events = [...(Array.isArray(target.floorData.events) ? target.floorData.events : [])];
     const index = events.findIndex(event => String(event?.event_id) === String(eventId));
     if (index < 0) throw new Error('EVENT_NOT_FOUND');
     events[index] = nextEvent;
+    const collectionValidation = validateEventCollection(events);
+    if (!collectionValidation.ok) {
+      throw domainValidationError(collectionValidation, 'EVENT_ANALYSIS_INVALID', events);
+    }
     await store.saveFloor(target.index, target.swipeId, {...target.floorData, events});
     await refreshTrackingRegistry('event-edit');
     return nextEvent;

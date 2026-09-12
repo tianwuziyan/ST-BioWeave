@@ -65,10 +65,14 @@ Version、hash、Registry Summary、raw Event JSON 和 schema/provenance 字段�
 编辑与诊断路径按需使用；Settings 的 Advanced/Debug Popup 是唯一的普通 UI 之外的
 分析调试 surface。
 
-Event Analysis V1 的分析单位是 Target Floor Version，固定内容是 Summary 之外的
-业务历史事实，而不是互斥 Tab：一个 Target Floor Version 只能产生 0 或 1 个
-consolidated BiologicalEvent。UI 不负责合并 Event，也不推导 State、Projection、
-Relations、Tracking eligibility 或 actual exposure。
+Event Analysis V1 的输入单位是 Target Floor Version，输出是 Summary 之外的业务
+历史事实：一个 Target Floor Version 可以产生 0 / 1 / N 个 BiologicalEvents。
+pregnancy-related `sexual_activity` 的 Event granularity is per gestational subject；
+每个 Event 严格只对应一个 gestational subject，并包含该 subject 与实际 exposure
+source。不同 subject 的 Event 已由 AI/Domain 分开，同一 subject 的多个 source 已在
+同一 Event 内合并。UI 不按人物拆 Event，不按 `gestational_subject_ids` 或
+`counterpart_ids` 重建 Event，也不推导 State、Projection、Relations、Tracking
+eligibility 或 actual exposure。
 
 Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶段保持 Empty State 或兼容骨架。页面可以显示“等待后续状态引擎”类说明，但不得生成 mock 业务 DTO、概率、妊娠天数或亲子关系。
 

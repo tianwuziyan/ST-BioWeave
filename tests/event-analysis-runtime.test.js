@@ -64,6 +64,7 @@ function createFixture({floor = 3, messages = null, analyzer = null, rawApiRespo
     async saveChat() {},
   };
   let saveChatMetadataCalls = 0;
+  let saveFloorCalls = 0;
   const apiRequests = [];
   const adapter = {
     getContext: () => context,
@@ -82,6 +83,7 @@ function createFixture({floor = 3, messages = null, analyzer = null, rawApiRespo
       context.chatMetadata[key] = structuredClone(value);
     },
     async saveFloorBioWeave(index, swipeId, value) {
+      saveFloorCalls += 1;
       if (saveFloorError) throw new Error(saveFloorError);
       const message = context.chat[index];
       if (!message) throw new Error('MESSAGE_NOT_FOUND');
@@ -129,11 +131,19 @@ function createFixture({floor = 3, messages = null, analyzer = null, rawApiRespo
     listeners,
     apiRequests,
     calls: () => calls,
+    saveChatMetadataCalls: () => saveChatMetadataCalls,
+    saveFloorCalls: () => saveFloorCalls,
     emit(type, payload) { listeners.get(type)?.(payload); },
   };
 }
 
-function canonicalApiEvent({type = 'sexual_activity', pregnancyRelevance, participants} = {}) {
+function canonicalApiEvent({
+  type = 'sexual_activity',
+  pregnancyRelevance,
+  participants,
+  subjectId = 'character_subject',
+  sourceId = 'character_source',
+} = {}) {
   return {
     event_id: 'model-forged-event-id',
     type,
@@ -145,8 +155,8 @@ function canonicalApiEvent({type = 'sexual_activity', pregnancyRelevance, partic
     location: 'location_fixture',
     participants: participants ?? [
       {
-        character_id: 'character_subject',
-        display_name: 'subject_display',
+        character_id: subjectId,
+        display_name: `${subjectId}_display`,
         event_role: 'potential_gestational_subject',
         reproductive_capabilities_used: {
           can_produce_sperm: false,
@@ -158,8 +168,8 @@ function canonicalApiEvent({type = 'sexual_activity', pregnancyRelevance, partic
         evidence: [{kind: 'capability', text: 'explicit gestational capability fixture evidence'}],
       },
       {
-        character_id: 'character_source',
-        display_name: 'source_display',
+        character_id: sourceId,
+        display_name: `${sourceId}_display`,
         event_role: 'potential_conception_source',
         reproductive_capabilities_used: {
           can_produce_sperm: true,
@@ -174,8 +184,8 @@ function canonicalApiEvent({type = 'sexual_activity', pregnancyRelevance, partic
     pregnancy_relevance: pregnancyRelevance ?? {
       relevant: true,
       possible_conception: true,
-      gestational_subject_ids: ['character_subject'],
-      counterpart_ids: ['character_source'],
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: [sourceId],
       confidence: 0.9,
     },
     source_evidence: [
@@ -298,17 +308,11 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
   fixture.runtime.destroy();
 });
 
-test('production analyzer rejects multi-Event force refresh and preserves the prior success', async () => {
+test('production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local', async () => {
   const firstEvent = canonicalApiEvent();
   const secondEvent = canonicalApiEvent({
-    type: 'physical_symptom',
-    pregnancyRelevance: {
-      relevant: false,
-      possible_conception: false,
-      gestational_subject_ids: [],
-      counterpart_ids: [],
-      confidence: null,
-    },
+    subjectId: 'character_subject_b',
+    sourceId: 'character_source_b',
   });
   let rawResponse = JSON.stringify({
     schema_version: 1,
@@ -321,31 +325,41 @@ test('production analyzer rejects multi-Event force refresh and preserves the pr
 
   const previousEvents = await fixture.runtime.getCurrentFloorEvents();
   const previousId = previousEvents[0].event_id;
-  const previousStatus = await fixture.runtime.getCurrentFloorAnalysisStatus();
 
   rawResponse = JSON.stringify({
     schema_version: 1,
     events: [firstEvent, secondEvent],
     source: {chat_id: 'legacy-chat', message_id: 'legacy-message', floor: 999},
   });
-  await assert.rejects(
-    fixture.runtime.refreshCurrentFloorAnalysis(),
-    /EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED/,
-  );
+  const result = await fixture.runtime.refreshCurrentFloorAnalysis();
 
   assert.equal(fixture.apiRequests.length, 2);
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
-  assert.equal(status.state, 'failed');
-  assert.equal(status.error_code, 'multiple_events_not_allowed');
-  assert.equal(status.error_path, '$.events');
-  assert.equal(status.last_success, previousStatus.last_success);
-  assert.deepEqual(status.current_floor_events.map(event => event.event_id), [previousId]);
-  assert.deepEqual((await fixture.runtime.getCurrentFloorEvents()).map(event => event.event_id), [previousId]);
+  assert.equal(result.status, 'success');
+  assert.equal(status.state, 'success');
+  assert.equal(status.event_count, 2);
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 2);
+  const subjectAEvent = events.find(event => event.pregnancy_relevance.gestational_subject_ids[0] === 'character_subject');
+  const subjectBEvent = events.find(event => event.pregnancy_relevance.gestational_subject_ids[0] === 'character_subject_b');
+  assert.ok(subjectAEvent);
+  assert.ok(subjectBEvent);
+  assert.equal(subjectAEvent.event_id, previousId);
+  assert.notEqual(subjectBEvent.event_id, subjectAEvent.event_id);
+  assert.deepEqual(subjectAEvent.pregnancy_relevance.counterpart_ids, ['character_source']);
+  assert.deepEqual(subjectBEvent.pregnancy_relevance.counterpart_ids, ['character_source_b']);
+  assert.deepEqual(subjectAEvent.participants.map(item => item.character_id), [
+    'character_subject', 'character_source',
+  ]);
+  assert.deepEqual(subjectBEvent.participants.map(item => item.character_id), [
+    'character_subject_b', 'character_source_b',
+  ]);
 
   const data = await fixture.runtime.collectActiveBusinessData();
-  assert.equal(data.active_event_count, 1);
-  assert.equal(data.tracking_subject_count, 1);
-  assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [previousId]);
+  assert.equal(data.active_event_count, 2);
+  assert.equal(data.tracking_subject_count, 2);
+  assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [subjectAEvent.event_id]);
+  assert.deepEqual(data.tracking_subjects.character_subject_b.exposure_event_ids, [subjectBEvent.event_id]);
   fixture.runtime.destroy();
 });
 
@@ -569,6 +583,72 @@ test('event edit updates the Floor fact and delete rebuilds Registry without dan
   fixture.runtime.destroy();
 });
 
+test('event edit validates the complete Floor collection before saving or rebuilding Registry', async () => {
+  const subjectEvent = (eventId, subjectId, sourceId) => eventResult(eventId, {
+    participants: [
+      {
+        character_id: subjectId,
+        display_name: `${subjectId} display`,
+        event_role: 'potential_gestational_subject',
+        reproductive_capabilities_used: {can_carry_pregnancy: true},
+        evidence: [{kind: 'narrative', text: 'subject evidence'}],
+      },
+      {
+        character_id: sourceId,
+        display_name: `${sourceId} display`,
+        event_role: 'potential_conception_source',
+        reproductive_capabilities_used: {can_cause_pregnancy: true},
+        evidence: [{kind: 'narrative', text: 'source evidence'}],
+      },
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: [sourceId],
+      confidence: 0.8,
+    },
+  });
+  const fixture = createFixture({analyzer: {
+    async analyzeFloor() {
+      return {events: [
+        subjectEvent('event-a', 'subject-a', 'source-a'),
+        subjectEvent('event-b', 'subject-b', 'source-b'),
+      ]};
+    },
+  }});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const beforeEvents = await fixture.runtime.getCurrentFloorEvents();
+  const beforeFloorSaveCalls = fixture.saveFloorCalls();
+  const beforeRegistrySaveCalls = fixture.saveChatMetadataCalls();
+  const secondEvent = beforeEvents.find(event => event.pregnancy_relevance.gestational_subject_ids[0] === 'subject-b');
+  await assert.rejects(
+    fixture.runtime.updateEvent(secondEvent.event_id, {
+      participants: [
+        {...secondEvent.participants[0], character_id: 'subject-a'},
+        {...secondEvent.participants[1]},
+      ],
+      pregnancy_relevance: {
+        ...secondEvent.pregnancy_relevance,
+        gestational_subject_ids: ['subject-a'],
+      },
+    }),
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.diagnostic_code === 'duplicate_gestational_subject_event'
+      && error?.error_path === '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
+  );
+
+  assert.equal(fixture.saveFloorCalls(), beforeFloorSaveCalls);
+  assert.equal(fixture.saveChatMetadataCalls(), beforeRegistrySaveCalls);
+  assert.deepEqual(
+    (await fixture.runtime.getCurrentFloorEvents()).map(event => event.pregnancy_relevance.gestational_subject_ids),
+    [['subject-a'], ['subject-b']],
+  );
+  fixture.runtime.destroy();
+});
+
 test('deleted Floor facts and inactive swipes no longer participate', async () => {
   const fixture = createFixture();
   await fixture.runtime.init();
@@ -616,6 +696,26 @@ test('Domain validation failure keeps a specific diagnostic code and path', asyn
   assert.equal(status.error_code, 'domain_validation_failed');
   assert.equal(status.error_path, '$.events[0].type');
   assert.match(status.safe_error_summary, /Event JSON Schema/);
+  fixture.runtime.destroy();
+});
+
+test('Domain collection duplicate subject keeps its stable diagnostic code and path', async () => {
+  const fixture = createFixture({analyzer: {
+    async analyzeFloor() {
+      return {events: [eventResult('duplicate-a'), eventResult('duplicate-b')]};
+    },
+  }});
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    error => error?.code === 'EVENT_DOMAIN_VALIDATION_FAILED'
+      && error?.diagnostic_code === 'duplicate_gestational_subject_event'
+      && error?.error_path === '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, 'failed');
+  assert.equal(status.error_code, 'duplicate_gestational_subject_event');
+  assert.equal(status.error_path, '$.events[1].pregnancy_relevance.gestational_subject_ids[0]');
   fixture.runtime.destroy();
 });
 

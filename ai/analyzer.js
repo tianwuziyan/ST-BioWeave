@@ -1319,6 +1319,21 @@ function normalizeEventParticipant(value, index) {
   return participant;
 }
 
+function normalizeEventParticipants(value) {
+  const participants = [];
+  const indexes = new Map();
+  for (const participant of value) {
+    const characterId = participant.character_id;
+    if (!indexes.has(characterId)) {
+      indexes.set(characterId, participants.length);
+      participants.push(participant);
+      continue;
+    }
+    participants[indexes.get(characterId)] = participant;
+  }
+  return participants;
+}
+
 function normalizeEventPregnancyRelevance(value, participantIds, eventIndex) {
   if (value !== undefined && value !== null && (typeof value !== 'object' || Array.isArray(value))) {
     throw invalidEventAnalysis('EVENT_ANALYSIS_PREGNANCY_RELEVANCE_INVALID');
@@ -1360,9 +1375,9 @@ function normalizeEventRecord(raw, eventIndex) {
   const eventStatuses = new Set(Array.isArray(eventDomain.EVENT_STATUS) ? eventDomain.EVENT_STATUS : EVENT_STATUS);
   if (!eventTypes.has(eventType)) throw invalidEventAnalysis('EVENT_ANALYSIS_TYPE_INVALID');
   if (!eventStatuses.has(eventStatus)) throw invalidEventAnalysis('EVENT_ANALYSIS_STATUS_INVALID');
-  const participants = raw.participants.map(normalizeEventParticipant);
+  const participants = normalizeEventParticipants(raw.participants.map(normalizeEventParticipant));
   const participantIds = new Set(participants.map(item => item.character_id));
-  return {
+  const normalized = {
     type: eventType,
     status: eventStatus,
     story_time: normalizeEventStoryTime(raw.story_time),
@@ -1376,6 +1391,84 @@ function normalizeEventRecord(raw, eventIndex) {
     ),
     physical_effect: safeEventValue(raw.physical_effect ?? {}),
   };
+  validateEventExposureStructure(normalized, eventIndex);
+  return normalized;
+}
+
+function validateEventExposureStructure(event, eventIndex) {
+  const basePath = eventPath(eventIndex);
+  const hasExposureEvidence = eventDomain.hasConceptionRelevantExposureEvidence?.(event.source_evidence) === true;
+  if (event.physical_effect?.gestational_substance_intake === true && !hasExposureEvidence) {
+    throw eventDiagnostic(
+      'missing_conception_relevant_exposure_evidence',
+      `${basePath}.source_evidence`,
+      'EVENT_SCHEMA_CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
+    );
+  }
+  if (event.type !== 'sexual_activity') return;
+  const relevance = event.pregnancy_relevance;
+  const subjectIds = relevance.gestational_subject_ids;
+  const counterpartIds = relevance.counterpart_ids;
+  const participantIds = new Set(event.participants.map(participant => participant.character_id));
+  const pregnancyExposure = relevance.relevant === true && relevance.possible_conception === true;
+
+  if (!pregnancyExposure) {
+    if (relevance.relevant !== false) {
+      throw eventDiagnostic(
+        'invalid_pregnancy_relevance',
+        `${basePath}.pregnancy_relevance.relevant`,
+        'EVENT_SCHEMA_PREGNANCY_RELEVANCE_INVALID',
+      );
+    }
+    if (subjectIds.length || counterpartIds.length || event.participants.length) {
+      throw eventDiagnostic(
+        'invalid_pregnancy_participants',
+        `${basePath}.participants`,
+        'EVENT_SCHEMA_INVALID_NON_EXPOSURE_PARTICIPANTS',
+      );
+    }
+    return;
+  }
+
+  if (subjectIds.length !== 1) {
+    throw eventDiagnostic(
+      'invalid_gestational_subject_cardinality',
+      `${basePath}.pregnancy_relevance.gestational_subject_ids`,
+      'EVENT_SCHEMA_INVALID_GESTATIONAL_SUBJECT_CARDINALITY',
+    );
+  }
+  if (counterpartIds.length < 1) {
+    throw eventDiagnostic(
+      'invalid_counterpart_cardinality',
+      `${basePath}.pregnancy_relevance.counterpart_ids`,
+      'EVENT_SCHEMA_INVALID_COUNTERPART_CARDINALITY',
+    );
+  }
+  const subjectId = subjectIds[0];
+  const overlapIndex = counterpartIds.indexOf(subjectId);
+  if (overlapIndex >= 0) {
+    throw eventDiagnostic(
+      'gestational_subject_counterpart_overlap',
+      `${basePath}.pregnancy_relevance.counterpart_ids[${overlapIndex}]`,
+      'EVENT_SCHEMA_GESTATIONAL_SUBJECT_COUNTERPART_OVERLAP',
+    );
+  }
+  const expectedParticipantIds = new Set([subjectId, ...counterpartIds]);
+  if (participantIds.size !== expectedParticipantIds.size
+    || [...participantIds].some(id => !expectedParticipantIds.has(id))) {
+    throw eventDiagnostic(
+      'invalid_pregnancy_participants',
+      `${basePath}.participants`,
+      'EVENT_SCHEMA_INVALID_PREGNANCY_PARTICIPANTS',
+    );
+  }
+  if (!hasExposureEvidence) {
+    throw eventDiagnostic(
+      'missing_conception_relevant_exposure_evidence',
+      `${basePath}.source_evidence`,
+      'EVENT_SCHEMA_CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
+    );
+  }
 }
 
 function eventPayload(raw) {
@@ -1413,14 +1506,23 @@ export function parseEventAnalysisResponse(raw) {
   if (payload.schema_version !== EVENT_SCHEMA_VERSION || !Array.isArray(payload.events)) {
     throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
   }
-  if (payload.events.length > 1) {
-    throw eventDiagnostic(
-      'multiple_events_not_allowed',
-      '$.events',
-      'EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED',
-    );
-  }
   const events = payload.events.map((event, index) => normalizeEventRecord(event, index));
+  const gestationalSubjects = new Set();
+  for (const [index, event] of events.entries()) {
+    const relevance = event.pregnancy_relevance;
+    if (event.type !== 'sexual_activity'
+      || relevance.relevant !== true
+      || relevance.possible_conception !== true) continue;
+    const subjectId = relevance.gestational_subject_ids[0];
+    if (gestationalSubjects.has(subjectId)) {
+      throw eventDiagnostic(
+        'duplicate_gestational_subject_event',
+        `${eventPath(index)}.pregnancy_relevance.gestational_subject_ids`,
+        'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
+      );
+    }
+    gestationalSubjects.add(subjectId);
+  }
   return {schema_version: EVENT_SCHEMA_VERSION, events};
 }
 

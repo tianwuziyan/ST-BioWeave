@@ -133,15 +133,22 @@ World Analysis 使用相同的首尾边界、选择和来源处理，但不包�
 
 Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。用户 common prompt 可以补充行为，不能覆盖 schema、业务 invariant 或 validator contract。
 
-Event Analysis V1 的 Output Contract 还有一个分析单位边界：一个 Target Floor
-Version 最多产生一个 consolidated BiologicalEvent。顶层仍使用兼容 schema
-`{"schema_version":1,"events":[]}`，但 `events.length` 只能是 `0` 或 `1`。
-模型应先选择该楼层最能代表生物历史意义的 primary type，再把同一连续过程的
-即时 symptoms、physical effects、直接观察和证据合并进该 Event。实际妊娠相关
-sexual exposure 优先使用 `sexual_activity`；普通照顾/补品不自动成为
-`medical_event`，静态外貌/体质描写不自动成为 `physical_symptom`。多 Event
-response 不由 Runtime 或 UI 合并，而是在 AI DTO parser 以
-`multiple_events_not_allowed` 拒绝。
+Event Analysis V1 的 Output Contract 允许一个 Target Floor Version 产生
+`0 / 1 / N` 个 BiologicalEvents。对于 pregnancy-related `sexual_activity`，Event
+granularity is per gestational subject：先识别本楼所有实际发生
+conception-relevant exposure 的 gestational subject，再按 subject 分组。同一
+subject 的多个 actual exposure source 合并为一个 Event；不同 subject 必须输出
+不同 Event，即使时间、地点和 type 相同。每个该类 Event 必须有且仅有一个
+`gestational_subject_ids`，至少一个 subject-local `counterpart_ids[]`，并且
+`participants[]` 只包含该 subject 与这些实际 source；不得混入另一个 subject、其
+source、在场人物或无 actual exposure 的参与者。同一 subject 在同一 Floor Version
+最多一个 pregnancy-related sexual_activity Event；重复 subject 或非法
+subject/source 闭包由 parser/domain validator 拒绝，Runtime 不自动合并。
+
+同一 subject 的 sexual exposure、即时 symptoms、physical effects、直接身体反应
+和证据保持在同一 Event；其它真正独立的 `physical_symptom`、`medical_event` 或
+BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外貌/体质描写不自动
+形成独立 Event。多 Event response 不由 Runtime 或 UI 合并、拆分或按人物重建。
 
 ## 9. Chinese semantic source labels
 

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"质量检查需确认 0/1/N Event、subject-local exposure、Floor source、Registry 与 UI 边界一致。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"质量检查需覆盖 AI DTO → Domain → Runtime → Floor/Swipe → Tracking → UI 的跨层闭环。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"UI 仅消费 DTO、保持现有 page module 边界；本轮需确认未新增 UI 拆分逻辑。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"质量门禁要求 JS 检查、Node 测试和 UI 变更范围核对。"}

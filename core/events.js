@@ -219,6 +219,25 @@ function normalizeParticipant(rawParticipant = {}) {
   };
 }
 
+function normalizeParticipants(value) {
+  if (!Array.isArray(value)) return [];
+  const result = [];
+  const indexes = new Map();
+  for (const rawParticipant of value) {
+    const participant = normalizeParticipant(rawParticipant);
+    const characterId = participant.character_id;
+    if (!characterId || !indexes.has(characterId)) {
+      if (characterId) indexes.set(characterId, result.length);
+      result.push(participant);
+      continue;
+    }
+    // Preserve the existing last-record-wins compatibility behavior while
+    // keeping the canonical participants list unique by character_id.
+    result[indexes.get(characterId)] = participant;
+  }
+  return result;
+}
+
 function normalizePregnancyRelevance(raw = {}) {
   const source = recordValue(raw);
   return {
@@ -252,9 +271,7 @@ export function normalizeEvent(raw = {}) {
     type: nullableText(source.type),
     status: nullableText(source.status),
     location: nullableText(source.location),
-    participants: Array.isArray(source.participants)
-      ? source.participants.map(normalizeParticipant)
-      : [],
+    participants: normalizeParticipants(source.participants),
     pregnancy_relevance: normalizePregnancyRelevance(source.pregnancy_relevance),
     source_evidence: normalizeEvidence(source.source_evidence),
     source: normalizeSource(source.source),
@@ -322,11 +339,27 @@ function validateExposureConsistency(normalized, participantIds, errors) {
     if (!gestationalSubjectIds.length) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
     if (!counterpartIds.length) addError(errors, 'pregnancy_relevance.counterpart_ids');
     const exposureParticipantIds = new Set([...gestationalSubjectIds, ...counterpartIds]);
-    normalized.participants.forEach((participant, index) => {
-      if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
-        addError(errors, `participants[${index}].character_id`);
+    if (normalized.type === 'sexual_activity') {
+      if (gestationalSubjectIds.length !== 1) {
+        addError(errors, 'pregnancy_relevance.gestational_subject_ids');
       }
-    });
+      const subjectSet = new Set(gestationalSubjectIds);
+      counterpartIds.forEach((id, index) => {
+        if (subjectSet.has(id)) addError(errors, `pregnancy_relevance.counterpart_ids[${index}]`);
+      });
+      normalized.participants.forEach((participant, index) => {
+        if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
+          addError(errors, `participants[${index}].character_id`);
+        }
+      });
+      if (participantIds.size !== exposureParticipantIds.size) addError(errors, 'participants');
+    } else {
+      normalized.participants.forEach((participant, index) => {
+        if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
+          addError(errors, `participants[${index}].character_id`);
+        }
+      });
+    }
     if (!hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
       addError(errors, `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`);
     }
@@ -373,6 +406,7 @@ export function validateEvent(event) {
   if (hasOwn(event, 'participants') && !Array.isArray(event.participants)) {
     addError(errors, 'participants');
   }
+  const rawParticipants = Array.isArray(event.participants) ? event.participants : [];
   normalized.participants.forEach((participant, index) => {
     if (!participant.character_id) addError(errors, `participants[${index}].character_id`);
     if (!REPRODUCTIVE_ROLES.includes(participant.event_role)) {
@@ -384,7 +418,8 @@ export function validateEvent(event) {
         addError(errors, `participants[${index}].reproductive_capabilities_used.${key}`);
       }
     }
-    const rawParticipant = event.participants?.[index];
+  });
+  rawParticipants.forEach((rawParticipant, index) => {
     if (rawParticipant && typeof rawParticipant === 'object' && !Array.isArray(rawParticipant)) {
       if (hasOwn(rawParticipant, 'event_role')
         && !REPRODUCTIVE_ROLES.includes(rawParticipant.event_role)) {
@@ -493,6 +528,39 @@ export function validateEvent(event) {
     addError(errors, 'story_time.confidence');
   }
 
+  return {ok: errors.length === 0, errors};
+}
+
+export function validateEventCollection(events = []) {
+  if (!Array.isArray(events)) return {ok: false, errors: ['events']};
+  const errors = [];
+  const subjectEvents = new Map();
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    const validation = validateEvent(event);
+    for (const error of validation.errors) {
+      addError(errors, `events[${index}]${error ? `.${error}` : ''}`);
+    }
+    let normalized;
+    try {
+      normalized = normalizeEvent(event);
+    } catch {
+      normalized = null;
+    }
+    const relevance = normalized?.pregnancy_relevance;
+    if (normalized?.type !== 'sexual_activity'
+      || relevance?.relevant !== true
+      || relevance?.possible_conception !== true
+      || relevance.gestational_subject_ids.length !== 1) {
+      continue;
+    }
+    const subjectId = relevance.gestational_subject_ids[0];
+    if (subjectEvents.has(subjectId)) {
+      addError(errors, `events[${index}].pregnancy_relevance.gestational_subject_ids[0]`);
+      continue;
+    }
+    subjectEvents.set(subjectId, index);
+  }
   return {ok: errors.length === 0, errors};
 }
 

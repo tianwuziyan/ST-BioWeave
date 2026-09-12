@@ -59,13 +59,16 @@ function event(overrides = {}) {
     location: 'an unspecified location',
     participants: [participant('character_subject'), participant('character_source')],
     pregnancy_relevance: {
-      relevant: false,
-      possible_conception: false,
-      gestational_subject_ids: [],
-      counterpart_ids: [],
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['character_subject'],
+      counterpart_ids: ['character_source'],
       confidence: null,
     },
-    source_evidence: [{kind: 'current_floor', text: 'The current floor contains the event evidence.'}],
+    source_evidence: [
+      {kind: 'current_floor', text: 'The current floor contains the event evidence.'},
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'Actual exposure evidence.'},
+    ],
     source: {...floorVersion, chat_id: 'model-invented-chat'},
     ...overrides,
   };
@@ -110,8 +113,8 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /gender/);
   assert.match(prompt, /counterpart_ids\[\]/);
   assert.match(prompt, /0、1 或 N/);
-  assert.match(prompt, /consolidated BiologicalEvent/);
-  assert.match(prompt, /primary type/);
+  assert.match(prompt, /gestational subject/);
+  assert.match(prompt, /同一 subject/);
   assert.match(prompt, /即时症状/);
   assert.match(prompt, /普通送汤、食物、补品/);
   assert.match(prompt, /静态人物描写/);
@@ -148,7 +151,10 @@ test('Event parser returns normalized facts without AI-owned identity or source'
 
 test('Event parser preserves unknown capability and never derives it from gender', () => {
   const parsed = parseEventAnalysisResponse(response([event({
-    participants: [participant('character_subject', {fixture_label: 'receiver-like label'})],
+    participants: [
+      participant('character_subject', {fixture_label: 'receiver-like label'}),
+      participant('character_source'),
+    ],
   })]), floorVersion);
   assert.equal(parsed.events[0].participants[0].reproductive_capabilities_used.can_carry_pregnancy, null);
   assert.equal('gender' in parsed.events[0].participants[0], false);
@@ -171,22 +177,117 @@ test('Event parser accepts a non-sexual BiologicalEvent with the same fixed enve
   assert.deepEqual(parsed.events[0].pregnancy_relevance.counterpart_ids, []);
 });
 
-test('Event parser allows zero or one Event and rejects multiple Events before normalization', () => {
+test('Event parser accepts zero, one, and multiple Events while rejecting duplicate pregnancy subjects', () => {
   const empty = parseEventAnalysisResponse(response([]), floorVersion);
   assert.deepEqual(empty, {schema_version: 1, events: []});
 
   const single = parseEventAnalysisResponse(response([event()]), floorVersion);
   assert.equal(single.events.length, 1);
 
+  const secondSubject = event({
+    participants: [
+      participant('character_subject_2', {event_role: 'potential_gestational_subject'}),
+      participant('character_source_2', {event_role: 'potential_conception_source'}),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['character_subject_2'],
+      counterpart_ids: ['character_source_2'],
+      confidence: null,
+    },
+  });
+  const multiple = parseEventAnalysisResponse(response([event(), secondSubject]), floorVersion);
+  assert.equal(multiple.events.length, 2);
+  assert.deepEqual(multiple.events.map(item => item.pregnancy_relevance.gestational_subject_ids), [
+    ['character_subject'],
+    ['character_subject_2'],
+  ]);
+
+  const duplicateIds = parseEventAnalysisResponse(response([event({
+    participants: [
+      participant('character_subject'),
+      participant('character_source'),
+      participant('character_source'),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['character_subject', 'character_subject'],
+      counterpart_ids: ['character_source', 'character_source'],
+      confidence: null,
+    },
+  })]), floorVersion);
+  assert.deepEqual(duplicateIds.events[0].pregnancy_relevance.gestational_subject_ids, ['character_subject']);
+  assert.deepEqual(duplicateIds.events[0].pregnancy_relevance.counterpart_ids, ['character_source']);
+  assert.deepEqual(duplicateIds.events[0].participants.map(item => item.character_id), [
+    'character_subject', 'character_source',
+  ]);
+
   assert.throws(
-    () => parseEventAnalysisResponse(response([event(), event({type: 'physical_symptom'})]), floorVersion),
+    () => parseEventAnalysisResponse(response([event(), event({
+      source_evidence: [
+        {kind: 'current_floor', text: 'duplicate subject event'},
+        {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'duplicate exposure'},
+      ],
+    })]), floorVersion),
     error => error?.code === 'EVENT_ANALYSIS_INVALID'
-      && error?.diagnostic_code === 'multiple_events_not_allowed'
-      && error?.error_code === 'multiple_events_not_allowed'
-      && error?.diagnostic_path === '$.events'
-      && error?.error_path === '$.events'
-      && error?.message === 'EVENT_SCHEMA_MULTIPLE_EVENTS_NOT_ALLOWED',
+      && error?.diagnostic_code === 'duplicate_gestational_subject_event'
+      && error?.error_code === 'duplicate_gestational_subject_event'
+      && error?.diagnostic_path === '$.events[1].pregnancy_relevance.gestational_subject_ids'
+      && error?.error_path === '$.events[1].pregnancy_relevance.gestational_subject_ids'
+      && error?.message === 'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
   );
+});
+
+test('Event parser enforces subject-local pregnancy exposure closure', () => {
+  const invalidCases = [
+    {
+      label: 'multiple subjects in one Event',
+      overrides: {
+        participants: [participant('character_subject'), participant('character_subject_2'), participant('character_source')],
+        pregnancy_relevance: {
+          relevant: true,
+          possible_conception: true,
+          gestational_subject_ids: ['character_subject', 'character_subject_2'],
+          counterpart_ids: ['character_source'],
+          confidence: null,
+        },
+      },
+      code: 'invalid_gestational_subject_cardinality',
+      path: '$.events[0].pregnancy_relevance.gestational_subject_ids',
+    },
+    {
+      label: 'subject used as counterpart',
+      overrides: {
+        participants: [participant('character_subject')],
+        pregnancy_relevance: {
+          relevant: true,
+          possible_conception: true,
+          gestational_subject_ids: ['character_subject'],
+          counterpart_ids: ['character_subject'],
+          confidence: null,
+        },
+      },
+      code: 'gestational_subject_counterpart_overlap',
+      path: '$.events[0].pregnancy_relevance.counterpart_ids[0]',
+    },
+    {
+      label: 'non-exposure participant retained',
+      overrides: {
+        participants: [participant('character_subject'), participant('character_source'), participant('character_observer')],
+      },
+      code: 'invalid_pregnancy_participants',
+      path: '$.events[0].participants',
+    },
+  ];
+  for (const item of invalidCases) {
+    assert.throws(
+      () => parseEventAnalysisResponse(response([event(item.overrides)]), floorVersion),
+      error => error?.diagnostic_code === item.code && error?.diagnostic_path === item.path,
+      item.label,
+    );
+  }
 });
 
 test('Event parser rejects natural language, fenced JSON, and non-array counterpart ids', () => {
@@ -556,7 +657,7 @@ test('canonical generic sexual-activity response parses with structured evidence
 
 test('Event parser preserves zero, one, and multiple abstract exposure sources inside one Event', () => {
   const noExposure = event({
-    participants: [participant('character_subject')],
+    participants: [],
     pregnancy_relevance: {
       relevant: false,
       possible_conception: false,
