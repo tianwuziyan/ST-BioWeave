@@ -1,0 +1,13 @@
+{"file": "docs/ui-framework.config.json", "reason": "canonical token, component, hook and responsive configuration"}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "human-readable UI framework and synchronization rules"}
+{"file": "docs/UI_FRAMEWORK_EXAMPLE.html", "reason": "control structure and syntax reference"}
+{"file": "docs/UI_FULL_REFERENCE.html", "reason": "eight-page visual reference"}
+{"file": "docs/UI_MIGRATION_PROMPT.md", "reason": "user-authorized migration constraints and execution phases"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "production shell, lifecycle, hook and naming constraints"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "responsive, overlay, browser verification and quality constraints"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "runtime, storage and presentation-state boundaries"}
+{"file": "ui/app.js", "reason": "production shell, routes, event delegation and runtime integration"}
+{"file": "ui/world.js", "reason": "world model production data and editing hooks"}
+{"file": "ui/settings.js", "reason": "settings controls, source tree, regex and prompt hooks"}
+{"file": "tests/ui.test.js", "reason": "production UI behavior and shell contract assertions"}
+{"file": "tests/phase2a-ui.test.js", "reason": "real DTO and no-mock production UI assertions"}

@@ -284,7 +284,7 @@ test('character detail no longer exposes tab state or bindings and keeps top-lev
   assert.doesNotMatch(styleSource, /bioweave-character-tabs/);
   assert.doesNotMatch(styleSource, /bioweave-analysis-detail/);
   assert.match(styleSource, /bioweave-analysis-debug-popup-content/);
-  assert.match(appSource, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings'\]/);
+  assert.match(appSource, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/);
 });
 
 test('events ordinary cards keep user-readable facts and preserve operation bindings', () => {

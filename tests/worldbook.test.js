@@ -891,10 +891,10 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.match(html, /refresh-analysis-sources/);
   assert.match(html, /select-all-analysis-sources/);
   assert.match(html, /select-none-analysis-sources/);
-  assert.match(html, /<details class="bioweave-settings-disclosure bioweave-worldbook-source-disclosure"[^>]*data-bioweave-settings-disclosure="worldbook">/);
+  assert.match(html, /<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-worldbook-source-disclosure"[^>]*data-bioweave-settings-disclosure="worldbook">/);
   assert.match(html, /<summary class="bioweave-settings-summary">[\s\S]*?<strong>世界书来源<\/strong>[\s\S]*?bioweave-settings-summary-arrow/);
   assert.match(html, /data-bioweave-analysis-prompt-settings/);
-  assert.match(html, /正则提取与清洗/);
+  assert.match(html, /按规则提取与清洗/);
   assert.match(html, /data-bioweave-action="add-recent-story-regex"/);
   assert.equal((html.match(/安全边界/g) || []).length, 0);
   assert.equal(html.includes('Character Card'), false);
@@ -1030,7 +1030,7 @@ test('settings page renders exactly the three runtime worldbook groups and omits
   assert.match(html, /<strong>当前全局书<\/strong>/);
   assert.match(html, /<strong>附加角色书<\/strong>/);
   assert.match(html, /<strong>其他书<\/strong>/);
-  assert.equal((html.match(/<details class="bioweave-analysis-worldbook" data-bioweave-analysis-source-row="st-worldbook:shared"/g) || []).length, 1);
+  assert.equal((html.match(/<details class="bioweave-analysis-worldbook(?: bioweave-source-branch)?" data-bioweave-analysis-source-row="st-worldbook:shared"/g) || []).length, 1);
 });
 
 test('external memory settings only report confirmed public provider capabilities', () => {
@@ -1070,7 +1070,7 @@ test('external memory checkboxes preserve saved unavailable selections and block
     },
   });
 
-  const externalMemoryInputs = new Map([...html.matchAll(/<input type="checkbox" data-bioweave-external-memory="([^"]+)"[^>]*>/g)]
+  const externalMemoryInputs = new Map([...html.matchAll(/<input[^>]*data-bioweave-external-memory="([^"]+)"[^>]*>/g)]
     .map(match => [match[1], match[0]]));
   assert.equal(externalMemoryInputs.size, 3);
   assert.match(externalMemoryInputs.get('anima'), / checked>/);
@@ -1108,7 +1108,7 @@ test('external memory checkboxes stay enabled when a public provider has no curr
     },
   });
 
-  const externalMemoryInputs = new Map([...html.matchAll(/<input type="checkbox" data-bioweave-external-memory="([^"]+)"[^>]*>/g)]
+  const externalMemoryInputs = new Map([...html.matchAll(/<input[^>]*data-bioweave-external-memory="([^"]+)"[^>]*>/g)]
     .map(match => [match[1], match[0]]));
   assert.doesNotMatch(externalMemoryInputs.get('anima'), / disabled/);
   assert.doesNotMatch(externalMemoryInputs.get('baobaoshu'), / disabled/);
@@ -1542,7 +1542,7 @@ test('recent story settings exposes ordered regex rule controls', () => {
   assert.match(html, /当前角色卡正则/);
   assert.match(html, /&lt;global&gt;/);
   assert.match(html, /&lt;event&gt;/);
-  assert.match(html, /<details class="bioweave-settings-disclosure bioweave-recent-story-disclosure"[^>]*data-bioweave-settings-disclosure="recent_story"/);
+  assert.match(html, /<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-recent-story-disclosure"[^>]*data-bioweave-settings-disclosure="recent_story"/);
   assert.match(html, /data-bioweave-recent-story-user-regex/);
   assert.equal((html.match(/role="switch"/g) ?? []).length, 4);
   assert.equal((html.match(/class="bioweave-switch-track"/g) ?? []).length, 4);

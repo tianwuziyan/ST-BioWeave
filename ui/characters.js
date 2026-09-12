@@ -2,8 +2,10 @@ import {formatStoryTime} from '../story/time.js';
 import {
   analysisStatusCount,
   analysisStatusEvents,
+  eventStatusTone,
   normalizeAnalysisStatus,
   renderAnalysisActionButton,
+  trackingSubjectTone,
 } from './overview.js';
 
 const capabilityLabels = {
@@ -148,7 +150,7 @@ function renderExposureEvent(event, fallbackEventId) {
   }
   return '<article class="bioweave-card bioweave-character-exposure" data-bioweave-event-id="'
     + escapeHtml(eventId) + '"><header><b>' + escapeHtml(eventTypeLabel(event.type))
-    + '</b><span class="bioweave-badge">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
+    + '</b><span class="bioweave-badge ' + eventStatusTone(event.status) + '">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
     + '<dl class="bioweave-data-list">'
     + '<div><dt>发生时间</dt><dd>' + storyTimeDisplay(event) + '</dd></div>'
     + '<div><dt>地点</dt><dd>' + renderValue(event.location) + '</dd></div>'
@@ -190,7 +192,7 @@ function renderExposures(subject, activeEvents) {
 function renderCharacterSummary({subject, profile}) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色';
   return '<section class="bioweave-card bioweave-character-summary"><header><b>' + escapeHtml(displayValue(displayName))
-    + '</b><span class="bioweave-badge">妊娠追踪</span></header>'
+    + '</b><span class="bioweave-badge good">妊娠追踪</span></header>'
     + renderCharacterFacts(profile) + '</section>';
 }
 
@@ -221,8 +223,8 @@ function renderNotesSection() {
 }
 
 function detailPage({subject, profile, activeEvents}) {
-  return '<section class="bioweave-page bioweave-character-detail">'
-    + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
+  return '<section class="bioweave-page bioweave-character-detail" data-bioweave-page="characters">'
+    + '<div class="bioweave-page-title bioweave-page-head"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
     + '<h2>人物详情</h2><p class="bioweave-muted">当前 Chat · 妊娠追踪</p></div></div>'
     + renderCharacterSummary({subject, profile})
     + '<section class="bioweave-card bioweave-detail-section"><h3>生殖能力</h3>'
@@ -236,8 +238,8 @@ function detailPage({subject, profile, activeEvents}) {
 }
 
 function unavailableDetailPage() {
-  return '<section class="bioweave-page bioweave-character-detail">'
-    + '<div class="bioweave-page-title"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
+  return '<section class="bioweave-page bioweave-character-detail" data-bioweave-page="characters">'
+    + '<div class="bioweave-page-title bioweave-page-head"><div><button type="button" class="bioweave-back" data-back-to-characters>← 返回人物列表</button>'
     + '<h2>人物详情</h2></div></div><section class="bioweave-card bioweave-empty">'
     + '<b>当前没有可追踪的角色详情。</b><p>请从当前 Chat 的人物列表进入可追踪角色。</p>'
     + '</section></section>';
@@ -268,7 +270,7 @@ export function charactersPage({
     const exposureCount = Array.isArray(subject.exposure_event_ids) ? subject.exposure_event_ids.length : 0;
     return '<button type="button" class="bioweave-card bioweave-character-row" data-character-id="'
       + escapeHtml(key) + '"><span><b>' + escapeHtml(displayValue(displayName))
-      + '</b></span><span class="bioweave-character-state">' + escapeHtml(subjectStatusLabel(subject.status))
+      + '</b></span><span class="bioweave-character-state bioweave-badge ' + trackingSubjectTone(subject.status) + '">' + escapeHtml(subjectStatusLabel(subject.status))
       + ' · ' + exposureCount + ' 次相关事件　›</span></button>';
   }).join('');
   const emptyState = status.state === 'not_analyzed'
@@ -290,12 +292,12 @@ export function charactersPage({
       + '<div><dt>性活动事件</dt><dd>' + analysisStatusCount(status, 'sexual_activity_count', 0) + '</dd></div>'
       + '<div><dt>妊娠追踪人物</dt><dd>' + analysisStatusCount(status, 'tracking_subject_count', 0) + '</dd></div>'
       + '</dl></div>';
-  return '<section class="bioweave-page"><div class="bioweave-page-title"><div><h2>人物列表</h2>'
+  return '<section class="bioweave-page" data-bioweave-page="characters"><div class="bioweave-page-title bioweave-page-head"><div><h2>人物列表</h2>'
     + '<p class="bioweave-muted">当前 Chat 中已进入妊娠相关追踪流程的角色</p></div>'
     + '<div class="bioweave-page-actions">' + renderAnalysisActionButton(status) + '</div></div>'
     + (subjects.length
       ? '<div class="bioweave-toolbar"><input class="bioweave-input" placeholder="搜索人物……" aria-label="搜索人物">'
-        + '<button class="bioweave-select" type="button">全部状态 ▾</button></div>' + rows
+        + '<button class="bioweave-button bioweave-select" type="button">全部状态 ▾</button></div>' + rows
       : emptyState)
     + '</section>';
 }

@@ -853,7 +853,7 @@ test('independent API configuration is a Chinese disclosure nested inside API so
       },
     },
   });
-  const apiDisclosureIndex = html.indexOf('<details class="bioweave-settings-disclosure bioweave-api-source-disclosure"');
+  const apiDisclosureIndex = html.search(/<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-api-source-disclosure"/);
   const apiSourceIndex = html.indexOf('<section class="bioweave-card bioweave-api-source">');
   const profilesIndex = html.indexOf('<details class="bioweave-api-profiles">');
   const assignmentsIndex = html.indexOf('<section class="bioweave-card bioweave-assignments">');

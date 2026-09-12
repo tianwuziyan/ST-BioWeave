@@ -70,10 +70,8 @@ class FakeElement {
     this._innerHTML = String(value);
     if (this.className.includes('bioweave-root') && this._innerHTML.includes('bioweave-main') && !this.children.length) {
       for (const [selector, tagName] of [
-        ['.bioweave-nav nav', 'nav'],
-        ['.bioweave-bottom', 'nav'],
+        ['.bioweave-route-items', 'div'],
         ['.bioweave-main', 'main'],
-        ['.bioweave-more-menu', 'div'],
       ]) {
         const node = new FakeElement(this.ownerDocument, tagName);
         this.append(node);

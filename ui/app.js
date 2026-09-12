@@ -56,9 +56,7 @@ const pages = {
   state: ['分析状态', 'fa-chart-line', statePage],
 };
 
-const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings'];
-const bottomRoutes = ['overview', 'characters', 'events', 'projection'];
-const moreRoutes = ['genealogy', 'world', 'settings', 'state'];
+const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'];
 const THEME_KEY = 'bioweave_ui_theme';
 const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown';
 const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe';
@@ -252,7 +250,7 @@ function createNavigationButton(documentRef, id, compact = false) {
   const [label, icon] = pages[id];
   const button = documentRef.createElement('button');
   button.type = 'button';
-  button.className = 'bioweave-nav-item';
+  button.className = 'bioweave-route-item';
   button.dataset.route = id;
   const compactLabel = label.replace('列表', '').replace('历史', '').replace('预测', '');
   button.innerHTML = '<i class="fa-solid ' + icon + '" aria-hidden="true"></i><span>' + (compact ? compactLabel : label) + '</span>';
@@ -389,7 +387,6 @@ export function createApp(runtime, options = {}) {
   let overlay = null;
   let route = 'overview';
   let focusedCharacterId = null;
-  let moreMenuOpen = false;
   let unsubscribeRuntime = null;
   let modelRefreshSequence = 0;
   let analysisSourceRequestSequence = 0;
@@ -1820,14 +1817,19 @@ export function createApp(runtime, options = {}) {
     if (!root) return nextTheme;
 
     root.dataset.theme = nextTheme;
-    root.querySelectorAll('[data-theme-choice]').forEach(button => {
-      const active = button.dataset.themeChoice === nextTheme;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-    const label = root.querySelector('.bioweave-theme-label');
-    if (label) label.textContent = themeLabel(nextTheme);
+    const button = root.querySelector('[data-bioweave-theme-button]');
+    if (button) {
+      button.textContent = themeLabel(nextTheme);
+      button.setAttribute('aria-label', '主题：' + themeLabel(nextTheme) + '，点击切换');
+    }
     return nextTheme;
+  }
+
+  function cycleTheme() {
+    const values = ['tavern', 'light', 'dark'];
+    const current = root?.dataset?.theme ?? readTheme(storageRef);
+    const index = values.indexOf(current);
+    return setTheme(values[(index + 1) % values.length]);
   }
 
   function currentChatLabel() {
@@ -2008,24 +2010,6 @@ export function createApp(runtime, options = {}) {
     }
   }
 
-  function syncMoreMenu() {
-    if (!root) return;
-    const menu = root.querySelector('.bioweave-more-menu');
-    if (menu) {
-      menu.dataset.open = String(moreMenuOpen);
-      menu.setAttribute('aria-hidden', String(!moreMenuOpen));
-    }
-    root.querySelectorAll('[data-bioweave-action="more"]').forEach(button => {
-      button.setAttribute('aria-expanded', String(moreMenuOpen));
-      button.setAttribute('aria-controls', 'bioweave-more-menu');
-    });
-  }
-
-  function setMoreMenu(open) {
-    moreMenuOpen = Boolean(open);
-    syncMoreMenu();
-  }
-
   function render() {
     if (!root || !isConnectedToDocument(root, documentRef)) return;
     if (route === 'settings') captureAnalysisSourceDisclosure();
@@ -2077,7 +2061,6 @@ export function createApp(runtime, options = {}) {
     });
     syncAnalysisWorldbookToggles();
     syncAnalysisCharacterOpeningToggles();
-    syncMoreMenu();
     const currentChatId = runtime.chat.current();
     if (!businessState.loaded && !businessState.loading) {
       void refreshBusinessState({reason: 'ui-read'});
@@ -2094,7 +2077,6 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure();
     route = nextRoute;
     focusedCharacterId = null;
-    setMoreMenu(false);
     render();
     return true;
   }
@@ -2104,7 +2086,6 @@ export function createApp(runtime, options = {}) {
     if (!nextId) return;
     route = 'characters';
     focusedCharacterId = nextId;
-    setMoreMenu(false);
     render();
   }
 
@@ -2733,7 +2714,6 @@ export function createApp(runtime, options = {}) {
       clearAnalysisPreview();
       route = 'overview';
       focusedCharacterId = null;
-      setMoreMenu(false);
       businessRefreshSequence += 1;
       businessState = {
         ...businessState,
@@ -2827,10 +2807,9 @@ export function createApp(runtime, options = {}) {
     }
     const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]');
     const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]');
-    const target = event.target.closest?.('[data-route], [data-theme-choice], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]');
+    const target = event.target.closest?.('[data-route], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]');
     if (!target) {
       if (!clickedPicker || !clickedDropdown) closeModelPickers();
-      if (moreMenuOpen) setMoreMenu(false);
       return;
     }
     if (!target.closest?.('[data-bioweave-model-picker]')) closeModelPickers();
@@ -3061,19 +3040,15 @@ export function createApp(runtime, options = {}) {
       go(target.dataset.route);
       return;
     }
-    if (target.dataset.themeChoice) {
+    if (target.dataset.bioweaveAction === 'cycle-theme') {
       event.preventDefault();
-      setTheme(target.dataset.themeChoice);
+      cycleTheme();
       return;
     }
     if (target.dataset.bioweaveAction === 'close') {
       event.preventDefault();
       closeBioWeave();
       return;
-    }
-    if (target.dataset.bioweaveAction === 'more') {
-      event.preventDefault();
-      setMoreMenu(!moreMenuOpen);
     }
   }
 
@@ -3148,11 +3123,7 @@ export function createApp(runtime, options = {}) {
   function handleKeydown(event) {
     if (event.key !== 'Escape' || root?.dataset.open !== 'true') return;
     event.preventDefault();
-    if (moreMenuOpen) {
-      setMoreMenu(false);
-    } else {
-      closeBioWeave();
-    }
+    closeBioWeave();
   }
 
   function teardownRootListeners(node) {
@@ -3205,49 +3176,19 @@ export function createApp(runtime, options = {}) {
     surface.hidden = !wasOpen;
     surface.setAttribute('aria-hidden', String(!wasOpen));
     root.innerHTML = [
-      '<header class="bioweave-head">',
-      '<button class="bioweave-mobile-menu" type="button" data-bioweave-action="more" aria-label="打开更多页面" aria-expanded="false">☰</button>',
+      '<header class="bioweave-app-header">',
       '<strong class="bioweave-brand">BioWeave</strong>',
       '<span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>',
       '<span class="bioweave-spacer"></span>',
-      '<div class="bioweave-theme-switch" title="主题配色" role="group" aria-label="主题配色">',
-      '<button type="button" data-theme-choice="tavern" aria-pressed="false">跟随酒馆</button>',
-      '<button type="button" data-theme-choice="light" aria-pressed="false">日</button>',
-      '<button type="button" data-theme-choice="dark" aria-pressed="false">夜</button>',
-      '</div>',
-      '<span class="bioweave-theme-label" aria-live="polite"></span>',
+      '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button aria-label="主题：跟随酒馆，点击切换">跟随酒馆</button>',
       '<button class="bioweave-close" type="button" data-bioweave-action="close" aria-label="关闭 BioWeave">×</button>',
       '</header>',
-      '<aside class="bioweave-nav">',
-      '<nav aria-label="BioWeave 主导航"></nav>',
-      '<footer>',
-      '<small>当前聊天</small>',
-      '<b class="bioweave-chat-scope">当前 Chat</b>',
-      '<span class="bioweave-enabled">● 已启用</span>',
-      '<small>UI Foundation</small>',
-      '</footer>',
-      '</aside>',
+      '<nav class="bioweave-routebar" aria-label="BioWeave 页面导航"><div class="bioweave-route-items"></div></nav>',
       '<main class="bioweave-main"></main>',
-      '<nav class="bioweave-bottom" aria-label="BioWeave 移动导航"></nav>',
-      '<div id="bioweave-more-menu" class="bioweave-more-menu" role="menu" aria-label="更多 BioWeave 页面" aria-hidden="true"></div>',
     ].join('');
 
-    const desktopNav = root.querySelector('.bioweave-nav nav');
-    desktopRoutes.forEach(id => desktopNav.append(createNavigationButton(documentRef, id)));
-    const bottomNav = root.querySelector('.bioweave-bottom');
-    bottomRoutes.forEach(id => bottomNav.append(createNavigationButton(documentRef, id, true)));
-    const moreButton = createNavigationButton(documentRef, 'state', true);
-    moreButton.dataset.bioweaveAction = 'more';
-    moreButton.dataset.route = '';
-    moreButton.innerHTML = '<i class="fa-solid fa-ellipsis" aria-hidden="true"></i><span>更多</span>';
-    bottomNav.append(moreButton);
-
-    const moreMenu = root.querySelector('.bioweave-more-menu');
-    moreRoutes.forEach(id => {
-      const button = createNavigationButton(documentRef, id);
-      button.setAttribute('role', 'menuitem');
-      moreMenu.append(button);
-    });
+    const routebar = root.querySelector('.bioweave-route-items');
+    desktopRoutes.forEach(id => routebar.append(createNavigationButton(documentRef, id)));
 
     root.addEventListener('click', handleClick);
     root.addEventListener('input', handleSettingsInput);
@@ -3261,7 +3202,6 @@ export function createApp(runtime, options = {}) {
       if (typeof unsubscribeRuntime === 'function') root[APP_RUNTIME_UNSUBSCRIBE_PROPERTY] = unsubscribeRuntime;
     }
     setTheme(readTheme(storageRef));
-    setMoreMenu(false);
     render();
   }
 
@@ -3306,7 +3246,6 @@ export function createApp(runtime, options = {}) {
   function closeBioWeave() {
     clearAnalysisPreview();
     lifecycle.close();
-    setMoreMenu(false);
   }
 
   function destroyBioWeave() {
@@ -3323,7 +3262,6 @@ export function createApp(runtime, options = {}) {
     unsubscribeRuntime = null;
     route = 'overview';
     focusedCharacterId = null;
-    moreMenuOpen = false;
     analysisSourcesState = createAnalysisSourcesState();
     worldModelState = createWorldModelState();
     businessState = {

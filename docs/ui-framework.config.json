@@ -16,16 +16,16 @@
   "viewport": {
     "desktop": {
       "minWidth": 1200,
-      "navigation": "left-sidebar"
+      "navigation": "top-routebar"
     },
     "tablet": {
       "minWidth": 768,
       "maxWidth": 1199,
-      "navigation": "top-compact"
+      "navigation": "top-routebar-compact"
     },
     "mobile": {
       "maxWidth": 767,
-      "navigation": "top-flat",
+      "navigation": "top-routebar-grid",
       "pageOverflowX": "hidden"
     }
   },
@@ -45,7 +45,17 @@
       "accentSoft": "#203b4b",
       "good": "#7bd5ae",
       "warn": "#f1be72",
-      "danger": "#f08e98"
+      "danger": "#f08e98",
+      "panelBorder": "#42545e",
+      "header": "#19232a",
+      "routebar": "#141d23",
+      "hover": "#1a2830",
+      "card": "#1a252c",
+      "cardSelected": "#203744",
+      "controlSurface": "#162129",
+      "primaryBorder": "#5f9cc0",
+      "dangerBorder": "#774852",
+      "indentLine": "#465862"
     },
     "radius": {
       "default": "10px",
@@ -69,7 +79,18 @@
       "supportingText": "12px",
       "microText": "11px",
       "controlMinHeight": "32px",
-      "touchTargetMin": "44px"
+      "smallButtonHeight": "25px",
+      "touchTargetMin": "44px",
+      "panelWidth": "960px",
+      "panelHeight": "760px",
+      "headerHeight": "50px",
+      "routebarHeight": "42px",
+      "routeItemMinWidth": "72px",
+      "checkboxSize": "16px",
+      "sourceParentTitle": "13px",
+      "sourceChildTitle": "11px",
+      "regexRowHeight": "38px",
+      "regexMoveWidth": "20px"
     },
     "font": {
       "family": "system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif",
@@ -77,6 +98,23 @@
     }
   },
   "components": {
+    "shell": {
+      "root": "bioweave-panel",
+      "header": "bioweave-app-header",
+      "routebar": "bioweave-routebar",
+      "content": "bioweave-main",
+      "panelWidth": "960px",
+      "panelHeight": "760px"
+    },
+    "routeItem": {
+      "root": "bioweave-route-item",
+      "activeState": "active / aria-current=page",
+      "allPagesVisible": true
+    },
+    "themeButton": {
+      "root": "bioweave-theme-button",
+      "interactionHook": "data-bioweave-action=cycle-theme"
+    },
     "page": {
       "root": "bioweave-page",
       "head": "bioweave-page-head",
@@ -85,40 +123,127 @@
     "button": {
       "root": "bioweave-button",
       "primary": "bioweave-button primary",
+      "danger": "bioweave-button danger",
       "small": "bioweave-button small",
-      "minimumHeight": "32px"
+      "text": "bioweave-text-button",
+      "minimumHeight": "32px",
+      "smallMinimumHeight": "25px",
+      "states": ["default", "primary", "danger", "hover", "focus-visible", "disabled"]
     },
     "worldSpeciesCard": {
       "root": "bioweave-world-card",
+      "productionClass": "bioweave-world-model-species-card bioweave-world-card",
       "interaction": "button",
-      "selectionHook": "data-bioweave-action=select-species"
+      "selectionHook": "data-bioweave-action=world-model-select-species"
     },
     "worldTypeCard": {
       "root": "bioweave-type-card",
+      "productionClass": "bioweave-world-model-type-button bioweave-type-card",
       "interaction": "button",
-      "selectionHook": "data-bioweave-action=select-type"
+      "selectionHook": "data-bioweave-action=world-model-select-type",
+      "ordering": "selected type first, remaining types preserve Runtime array order and wrap in the card grid"
     },
     "worldModule": {
       "root": "bioweave-world-module",
-      "editHook": "data-bioweave-action=edit-section",
+      "productionClass": "bioweave-world-model-section bioweave-world-model-module bioweave-world-module",
+      "editHook": "data-bioweave-action=world-model-edit-section",
       "editScope": "one-module-at-a-time"
     },
     "settingsGroup": {
       "root": "bioweave-settings-group",
       "interaction": "details-summary",
-      "parentChildSelection": true
+      "parentChildSelection": true,
+      "header": {
+        "minHeight": "56px",
+        "padding": "7px 12px",
+        "background": "#1a272e",
+        "expandedBackground": "#263740",
+        "expandedAccentBorder": "3px solid var(--bioweave-accent)"
+      },
+      "title": {
+        "fontSize": "15px",
+        "fontWeight": 700,
+        "supportingFontSize": "11px",
+        "supportingFontWeight": 400
+      },
+      "body": {
+        "padding": "0 13px 12px",
+        "background": "#1d2a31",
+        "borderTop": "1px solid #3b4d56"
+      },
+      "chevron": {
+        "size": "18px",
+        "closed": "+",
+        "open": "−"
+      }
     },
     "sourceBranch": {
       "root": "bioweave-source-branch",
       "interaction": "details-summary",
+      "parentTitle": {
+        "fontSize": "13px",
+        "fontWeight": 700
+      },
       "childIndentation": true,
-      "childWeight": 400
+      "childTitle": {
+        "fontSize": "11px",
+        "fontWeight": 400
+      },
+      "parentMeta": "selected-count badge on the right",
+      "childMeta": "good badge: 已选; neutral badge: 未选",
+      "chevron": {
+        "size": "20px",
+        "closed": "+",
+        "open": "−"
+      },
+      "childRow": {
+        "minHeight": "27px",
+        "padding": "3px 5px",
+        "gridColumns": "15px minmax(0, 1fr) auto"
+      }
+    },
+    "badge": {
+      "root": "bioweave-badge",
+      "height": "22px",
+      "padding": "2px 7px",
+      "radius": "999px",
+      "tones": {
+        "neutral": "var(--bioweave-border) / var(--bioweave-text-secondary)",
+        "good": "#426e5a / var(--bioweave-success)",
+        "warn": "#765d38 / var(--bioweave-warn)",
+        "danger": "#75434b / var(--bioweave-danger)"
+      }
+    },
+    "checkbox": {
+      "root": "bioweave-checkbox",
+      "nativeInput": "input[type=checkbox]",
+      "size": "16px",
+      "appearance": "native-accent",
+      "mixedState": "indeterminate / aria-checked=mixed"
+    },
+    "externalMemory": {
+      "root": "bioweave-external-memory-list",
+      "row": "bioweave-external-memory-option",
+      "status": "available / unavailable",
+      "layout": "single-column-list",
+      "statusSource": "Runtime provider availability and status"
     },
     "regexRow": {
       "root": "bioweave-regex-row",
-      "moveControls": "bioweave-regex-move",
+      "productionClass": "bioweave-recent-story-regex-row",
+      "moveControls": "bioweave-recent-story-regex-order",
+      "moveButton": "bioweave-recent-story-order-action",
       "moveButtons": "adjacent-vertical",
-      "moveHeight": "stretch-to-row"
+      "moveHeight": "stretch-to-row",
+      "desktopColumns": "auto minmax(64px, .45fr) minmax(150px, 1.7fr) auto auto auto",
+      "rowPadding": "3px 5px",
+      "controlFontSize": "12px"
+    },
+    "recentStory": {
+      "body": "flat settings-group body; no nested card layer",
+      "readGrid": "1fr 1fr with 9px gap",
+      "regexSection": "compact section with 6px top spacing and line separator",
+      "statusText": "non-functional explanatory text may be shortened to match the reference"
     },
     "switch": {
       "root": "bioweave-switch",
@@ -133,7 +258,8 @@
     "data-bioweave-world-section-field",
     "data-bioweave-world-section-row",
     "data-bioweave-settings-disclosure",
-    "data-bioweave-analysis-source"
+    "data-bioweave-analysis-source",
+    "data-bioweave-external-memory"
   ],
   "pages": [
     "overview",

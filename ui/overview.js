@@ -74,6 +74,28 @@ export function analysisStatusLabel(value = null) {
   return ANALYSIS_STATE_LABELS[normalizeAnalysisStatus(value).state];
 }
 
+export function analysisStatusTone(value = null) {
+  return {
+    success: 'good',
+    running: 'warn',
+    failed: 'danger',
+    cancelled: 'warn',
+  }[normalizeAnalysisStatus(value).state] ?? '';
+}
+
+export function eventStatusTone(value) {
+  return {
+    confirmed: 'good',
+    probable: 'warn',
+    ambiguous: 'warn',
+    negated: 'danger',
+  }[value] ?? '';
+}
+
+export function trackingSubjectTone(value) {
+  return value === 'active' ? 'good' : value === 'inactive' ? 'warn' : '';
+}
+
 export function renderAnalysisActionButton(value = null, {className = 'bioweave-primary-action'} = {}) {
   const status = normalizeAnalysisStatus(value);
   const busy = status.busy;
@@ -141,7 +163,7 @@ function renderSubjectList(trackingSubjects) {
   }
   return subjects.slice(0, 5).map(({id, value: subject}) => '<button type="button" class="bioweave-character-row" data-character-id="'
     + escapeHtml(id) + '"><span><b>' + escapeHtml(displayValue(subject.display_name, '未命名角色'))
-    + '</b></span>'
+    + '</b></span><span class="bioweave-badge ' + trackingSubjectTone(subject.status) + '">' + (subject.status === 'inactive' ? '已结束' : subject.status === 'active' ? '已追踪' : '未知') + '</span>'
     + '<span>›</span></button>').join('');
 }
 
@@ -156,7 +178,7 @@ function renderRecentEvents(activeEvents) {
   if (!events.length) return '<div class="bioweave-empty">当前 Chat 尚无生理历史事件。</div>';
   return '<div class="bioweave-event-list">' + events.slice(0, 5).map(event => {
     return '<article class="bioweave-card bioweave-overview-event"><header><b>'
-      + escapeHtml(EVENT_TYPE_LABELS[event.type] ?? displayValue(event.type, '生理事件')) + '</b><span class="bioweave-badge">'
+      + escapeHtml(EVENT_TYPE_LABELS[event.type] ?? displayValue(event.type, '生理事件')) + '</b><span class="bioweave-badge ' + eventStatusTone(event.status) + '">'
       + escapeHtml(EVENT_STATUS_LABELS[event.status] ?? displayValue(event.status)) + '</span></header><p>发生时间：'
       + escapeHtml(displayValue(storyTimeDisplay(event))) + '</p><p>地点：'
       + escapeHtml(displayValue(event.location)) + '</p></article>';
@@ -187,7 +209,7 @@ export function overviewPage({
   const lastSuccess = Object.prototype.hasOwnProperty.call(status, 'last_success')
     ? status.last_success
     : lastAnalysis;
-  return '<section class="bioweave-page bioweave-overview-page"><div class="bioweave-page-title"><div><h2>总览</h2><p>'
+  return '<section class="bioweave-page bioweave-overview-page" data-bioweave-page="overview"><div class="bioweave-page-title bioweave-page-head"><div><h2>总览</h2><p>'
     + '<strong class="bioweave-chat-name">' + escapeHtml(displayValue(chatName, '当前 Chat')) + '</strong>'
     + ' <span class="bioweave-muted">· 当前 Floor ' + escapeHtml(displayValue(floor))
     + ' · Analysis Status：' + escapeHtml(analysisStatusLabel(status)) + '</span></p></div>'
@@ -196,17 +218,17 @@ export function overviewPage({
     + '<div><strong>' + activeEventCount + '</strong><span>事件</span></div>'
     + '<div><strong>—</strong><span>推演</span></div><div><strong>—</strong><span>家系代数</span></div></div>'
     + '<div class="bioweave-overview-grid"><section class="bioweave-card bioweave-characters"><header><b>人物总览</b>'
-    + '<button type="button" data-route="characters">查看全部</button></header>' + renderSubjectList(trackingSubjects)
-    + '</section><section class="bioweave-card"><header><b>最近事件</b><button type="button" data-route="events">查看全部</button></header>'
+    + '<button type="button" class="bioweave-text-button" data-route="characters">查看全部</button></header>' + renderSubjectList(trackingSubjects)
+    + '</section><section class="bioweave-card"><header><b>最近事件</b><button type="button" class="bioweave-text-button" data-route="events">查看全部</button></header>'
     + renderRecentEvents(biologicalEvents) + '</section>'
-    + '<section class="bioweave-card"><header><b>当前推演</b><button type="button" data-route="projection">查看全部</button></header>'
+    + '<section class="bioweave-card"><header><b>当前推演</b><button type="button" class="bioweave-text-button" data-route="projection">查看全部</button></header>'
     + '<div class="bioweave-empty">当前没有需要展示的生理推演。推演并非已发生事实。</div></section>'
-    + '<section class="bioweave-card"><header><b>家系概览</b><button type="button" data-route="genealogy">查看图谱</button></header>'
+    + '<section class="bioweave-card"><header><b>家系概览</b><button type="button" class="bioweave-text-button" data-route="genealogy">查看图谱</button></header>'
     + '<div class="bioweave-empty">尚未建立已确认的亲子关系。</div></section>'
-    + '<section class="bioweave-card"><header><b>世界概览</b><button type="button" data-route="world">查看详情</button></header>'
+    + '<section class="bioweave-card"><header><b>世界概览</b><button type="button" class="bioweave-text-button" data-route="world">查看详情</button></header>'
     + '<div class="bioweave-empty">世界模型尚未建立。</div></section>'
     + '<section class="bioweave-card bioweave-analysis-status-card"><header><b>分析状态</b>'
-    + '<span class="bioweave-badge">' + escapeHtml(analysisStatusLabel(status)) + '</span></header>'
+    + '<span class="bioweave-badge ' + analysisStatusTone(status) + '">' + escapeHtml(analysisStatusLabel(status)) + '</span></header>'
     + '<dl class="bioweave-data-list">'
     + '<div><dt>当前 Floor</dt><dd>' + escapeHtml(displayValue(floor)) + '</dd></div>'
     + '<div><dt>Analysis Status</dt><dd>' + escapeHtml(analysisStatusLabel(status)) + '</dd></div>'

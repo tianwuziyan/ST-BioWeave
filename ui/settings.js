@@ -208,7 +208,7 @@ function renderApiSource(
     '</details>',
   ].join('');
   return [
-    `<details class="bioweave-settings-disclosure bioweave-api-source-disclosure" data-bioweave-settings-disclosure="api"${apiDisclosureOpen ? ' open' : ''}>`,
+    `<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-api-source-disclosure" data-bioweave-settings-disclosure="api"${apiDisclosureOpen ? ' open' : ''}>`,
     renderSettingsSummary('API 来源', '选择酒馆当前 API 或 BioWeave 独立 API'),
     '<section class="bioweave-card bioweave-api-source">',
     requestSettings,
@@ -253,7 +253,7 @@ function renderProfileEditor(profile, draft, testResult, busy, modelList, modelL
     renderModelPicker(source, modelList, modelListProfileKey, modelSearch, modelRefreshBusy),
     '</div>',
     `<p class="bioweave-secret-status bioweave-muted">${existingSecret ? '已保存 API 密钥；留空表示保留。' : '尚未设置 API 密钥；留空将以无密钥配置保存。'}</p>`,
-    existingSecret ? `<label class="bioweave-check"><input type="checkbox" name="clear_secret"${source.clear_secret ? ' checked' : ''}> 清除已保存 API 密钥</label>` : '',
+    existingSecret ? `<label class="bioweave-check"><input class="bioweave-checkbox" type="checkbox" name="clear_secret"${source.clear_secret ? ' checked' : ''}> 清除已保存 API 密钥</label>` : '',
     '<div class="bioweave-settings-actions">',
     `<button type="button" class="bioweave-primary-action" data-bioweave-action="save-profile"${busy ? ' disabled' : ''}>保存 API 配置</button>`,
     `<button type="button" class="bioweave-secondary-action" data-bioweave-action="test-profile"${busy ? ' disabled' : ''}>测试连接</button>`,
@@ -328,6 +328,53 @@ function analysisSelectionKey(sourceId, childType, childId) {
   return source && id ? source + '\u0000' + childType + '\u0000' + id : '';
 }
 
+function analysisSourceChildren(source) {
+  if (source?.source_type === 'worldbook') {
+    return (Array.isArray(source.entries) ? source.entries : [])
+      .map(entry => ({type: 'entry', id: entry?.entry_id, value: entry}));
+  }
+  if (source?.source_type === 'character_card') {
+    return (Array.isArray(source.fields) ? source.fields : [])
+      .filter(field => Object.prototype.hasOwnProperty.call(CHARACTER_CARD_UI_FIELDS, field?.field_key)
+        || isCharacterCardOpeningFieldKey(field?.field_key))
+      .map(field => ({type: 'field', id: field?.field_key, value: field}));
+  }
+  return [];
+}
+
+function analysisSourceSelectionState(source, selectedSet) {
+  const children = analysisSourceChildren(source)
+    .filter(child => String(child.id ?? '').trim());
+  const selectedCount = children.filter(child => selectedSet.has(analysisSelectionKey(source?.source_id, child.type, child.id))).length;
+  return {
+    total_count: children.length,
+    selected_count: selectedCount,
+    checked: children.length > 0 && selectedCount === children.length,
+    indeterminate: selectedCount > 0 && selectedCount < children.length,
+  };
+}
+
+function analysisSourcesSelectionState(sources, selectedSet) {
+  return (Array.isArray(sources) ? sources : []).reduce((total, source) => {
+    const state = analysisSourceSelectionState(source, selectedSet);
+    total.total_count += state.total_count;
+    total.selected_count += state.selected_count;
+    return total;
+  }, {total_count: 0, selected_count: 0});
+}
+
+function selectionBadgeMarkup(state = {}, extraClass = '') {
+  const total = Number(state.total_count || 0);
+  const selected = Number(state.selected_count || 0);
+  const label = selected <= 0
+    ? '未选'
+    : selected >= total && total > 0
+      ? '已选 ' + selected + '/' + total
+      : selected + '/' + total + ' 项';
+  const tone = selected >= total && total > 0 ? ' good' : selected > 0 ? ' warn' : '';
+  return '<span class="bioweave-badge' + tone + (extraClass ? ' ' + extraClass : '') + '">' + label + '</span>';
+}
+
 function selectedAnalysisItems(selected) {
   return new Set((Array.isArray(selected) ? selected : []).map(item => {
     if (!item || typeof item !== 'object') return '';
@@ -355,14 +402,15 @@ function renderAnalysisChildRow(source, child, childType, selectedSet) {
   const currentBadge = childType === 'field' && child?.is_current
     ? '<small class="bioweave-analysis-current-badge">当前开场白</small>'
     : '';
+  const selectedBadge = '<span class="bioweave-badge bioweave-analysis-child-status' + (checked ? ' good' : '') + '">' + (checked ? '已选' : '未选') + '</span>';
   return [
     '<label class="bioweave-analysis-source-child' + (unavailable ? ' is-unavailable' : '') + '" data-bioweave-analysis-source-row="' + escapeHtml(source.source_id) + '" data-bioweave-analysis-source-child-key="' + escapeHtml(selectionKey) + '">',
-    '<input type="checkbox" data-bioweave-analysis-source="' + escapeHtml(source.source_id) + '" ' + childAttribute + (checked ? ' checked' : '') + (unavailable ? ' disabled' : '') + '>',
+    '<input class="bioweave-checkbox" type="checkbox" data-bioweave-analysis-source="' + escapeHtml(source.source_id) + '" ' + childAttribute + (checked ? ' checked' : '') + (unavailable ? ' disabled' : '') + '>',
     '<span class="bioweave-analysis-source-copy">',
     '<strong>' + escapeHtml(child?.label || childId) + '</strong>',
     '<small>' + childStatus(child) + '</small>',
     '</span>',
-    currentBadge,
+    '<span class="bioweave-analysis-child-tools">' + currentBadge + selectedBadge + '</span>',
     '</label>',
   ].join('');
 }
@@ -385,12 +433,13 @@ function renderCharacterCardSource(source, selectedSet, openWorldbooks = new Set
   const openingIsOpen = openCharacterGroups.has(characterOpeningGroupKey(completeSource.source_id));
   const openingGroup = allOpeningFields.length && openingFields.length
     ? [
-      '<details class="bioweave-analysis-character-group" data-bioweave-analysis-character-group="opening" data-bioweave-analysis-character-group-source="' + escapeHtml(completeSource.source_id) + '"' + (openingIsOpen ? ' open' : '') + '>',
+      '<details class="bioweave-analysis-character-group bioweave-source-branch" data-bioweave-analysis-character-group="opening" data-bioweave-analysis-character-group-source="' + escapeHtml(completeSource.source_id) + '"' + (openingIsOpen ? ' open' : '') + '>',
       '<summary class="bioweave-analysis-character-group-summary">',
       '<button type="button" class="bioweave-analysis-disclosure-marker" data-bioweave-analysis-character-expand="' + escapeHtml(completeSource.source_id) + '" aria-expanded="' + String(openingIsOpen) + '" aria-label="' + (openingIsOpen ? '收起' : '展开') + '开场白">',
       '</button>',
-      '<input class="bioweave-analysis-parent-toggle" type="checkbox" data-bioweave-analysis-character-opening-toggle="' + escapeHtml(completeSource.source_id) + '" aria-label="选择全部开场白" aria-checked="' + (openingState.indeterminate ? 'mixed' : String(openingState.checked)) + '"' + (openingState.checked ? ' checked' : '') + (completeSource.available === false ? ' disabled' : '') + '>',
+      '<input class="bioweave-checkbox bioweave-analysis-parent-toggle" type="checkbox" data-bioweave-analysis-character-opening-toggle="' + escapeHtml(completeSource.source_id) + '" aria-label="选择全部开场白" aria-checked="' + (openingState.indeterminate ? 'mixed' : String(openingState.checked)) + '"' + (openingState.checked ? ' checked' : '') + (completeSource.available === false ? ' disabled' : '') + '>',
       '<span class="bioweave-analysis-character-group-copy"><strong>开场白</strong><small>' + openingState.selected_count + '/' + openingState.total_count + '</small></span>',
+      '<span class="bioweave-analysis-character-group-tools">' + selectionBadgeMarkup(openingState) + '</span>',
       '</summary>',
       '<div class="bioweave-analysis-character-group-entries">',
       openingFields.map(field => renderAnalysisChildRow(source, field, 'field', selectedSet)).join(''),
@@ -427,13 +476,15 @@ function renderWorldbookSource(source, selectedSet, openWorldbooks = new Set(), 
   const body = contentLoaded
     ? rows || '<p class="bioweave-empty">当前没有可读取的世界书条目。</p>'
     : '<p class="bioweave-muted bioweave-analysis-worldbook-deferred">展开后读取这本世界书的条目。</p>';
+  const selectionBadge = selectionBadgeMarkup(parentState, 'bioweave-analysis-source-status');
   return [
-    '<details class="bioweave-analysis-worldbook" data-bioweave-analysis-source-row="' + escapeHtml(source.source_id) + '"' + (worldbookIsOpen ? ' open' : '') + '>',
+    '<details class="bioweave-analysis-worldbook bioweave-source-branch" data-bioweave-analysis-source-row="' + escapeHtml(source.source_id) + '"' + (worldbookIsOpen ? ' open' : '') + '>',
     '<summary class="bioweave-analysis-worldbook-summary">',
     '<button type="button" class="bioweave-analysis-disclosure-marker" data-bioweave-analysis-worldbook-expand="' + escapeHtml(source.source_id) + '" aria-expanded="' + String(worldbookIsOpen) + '" aria-label="' + (worldbookIsOpen ? '收起' : '展开') + '世界书条目">',
     '</button>',
-    '<input class="bioweave-analysis-parent-toggle" type="checkbox" data-bioweave-analysis-worldbook-toggle="' + escapeHtml(source.source_id) + '" aria-label="选择整本世界书" aria-checked="' + (parentState.indeterminate ? 'mixed' : String(parentState.checked)) + '"' + (parentState.checked ? ' checked' : '') + (source.available === false || contentLoading ? ' disabled' : '') + '>',
+    '<input class="bioweave-checkbox bioweave-analysis-parent-toggle" type="checkbox" data-bioweave-analysis-worldbook-toggle="' + escapeHtml(source.source_id) + '" aria-label="选择整本世界书" aria-checked="' + (parentState.indeterminate ? 'mixed' : String(parentState.checked)) + '"' + (parentState.checked ? ' checked' : '') + (source.available === false || contentLoading ? ' disabled' : '') + '>',
     '<span class="bioweave-analysis-worldbook-title"><strong>' + escapeHtml(source.label || '世界书') + '</strong></span>',
+    '<span class="bioweave-analysis-worldbook-tools">' + selectionBadge + '</span>',
     '</summary>',
     '<div class="bioweave-analysis-worldbook-meta">' + escapeHtml(metadata) + '</div>',
     '<div class="bioweave-analysis-worldbook-entries">',
@@ -488,9 +539,18 @@ function renderWorldbookSources(worldbookSources = {}) {
   });
   const groupedWorldbooks = group => selectableWorldbooks.filter(source => worldbookGroupForSource(source) === group);
   const visibleGroupedWorldbooks = group => visibleWorldbookSources.filter(source => worldbookGroupForSource(source) === group);
+  const cardSelectionState = analysisSourcesSelectionState(cardSources, selectedSet);
+  const worldbookSelectionSummary = analysisSourcesSelectionState(selectableWorldbooks, selectedSet);
+  const sectionSummary = (label, state) => [
+    '<span class="bioweave-analysis-section-title">' + label + '</span>',
+    '<span class="bioweave-analysis-section-tools">',
+    selectionBadgeMarkup(state),
+    '<span class="bioweave-analysis-section-chevron" aria-hidden="true"></span>',
+    '</span>',
+  ].join('');
   const cardSection = [
-    '<details class="bioweave-analysis-section" data-bioweave-analysis-section="character_card"' + (openSections.has('character_card') ? ' open' : '') + '>',
-    '<summary>角色卡</summary>',
+    '<details class="bioweave-analysis-section bioweave-source-branch" data-bioweave-analysis-section="character_card"' + (openSections.has('character_card') ? ' open' : '') + '>',
+    '<summary>' + sectionSummary('角色卡', cardSelectionState) + '</summary>',
     '<div class="bioweave-analysis-section-content">',
     visibleCharacterCards.length
       ? renderAnalysisSourceRows(visibleCharacterCards, characterCardSources, selectedSet, renderCharacterCardSource, openWorldbooks, worldbookSources.selected, openCharacterGroups)
@@ -502,8 +562,8 @@ function renderWorldbookSources(worldbookSources = {}) {
     '</details>',
   ].join('');
   const worldbookSection = [
-    '<details class="bioweave-analysis-section" data-bioweave-analysis-section="worldbook"' + (openSections.has('worldbook') ? ' open' : '') + '>',
-    '<summary>世界书</summary>',
+    '<details class="bioweave-analysis-section bioweave-source-branch" data-bioweave-analysis-section="worldbook"' + (openSections.has('worldbook') ? ' open' : '') + '>',
+    '<summary>' + sectionSummary('世界书', worldbookSelectionSummary) + '</summary>',
     '<div class="bioweave-analysis-section-content">',
     renderAnalysisSourceGroup('当前开启的全局世界书', visibleGroupedWorldbooks(WORLD_BOOK_RUNTIME_GROUPS.SELECTED_GLOBAL), groupedWorldbooks(WORLD_BOOK_RUNTIME_GROUPS.SELECTED_GLOBAL), selectedSet, renderWorldbookSource, openWorldbooks, worldbookSources.selected, openCharacterGroups),
     renderAnalysisSourceGroup('附加角色世界书', visibleGroupedWorldbooks(WORLD_BOOK_RUNTIME_GROUPS.CHARACTER), groupedWorldbooks(WORLD_BOOK_RUNTIME_GROUPS.CHARACTER), selectedSet, renderWorldbookSource, openWorldbooks, worldbookSources.selected, openCharacterGroups),
@@ -517,10 +577,9 @@ function renderWorldbookSources(worldbookSources = {}) {
   const selectedWorldbookCount = Number(worldbookSources.selectedWorldbookCount || 0);
   const tokenEstimate = Number(worldbookSources.selectedTokenEstimate || 0);
   return [
-    `<details class="bioweave-settings-disclosure bioweave-worldbook-source-disclosure" data-bioweave-settings-disclosure="worldbook"${openSettingsSections.has('worldbook') ? ' open' : ''}>`,
+    `<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-worldbook-source-disclosure" data-bioweave-settings-disclosure="worldbook"${openSettingsSections.has('worldbook') ? ' open' : ''}>`,
     renderSettingsSummary('世界书来源', '选择角色卡字段和世界书条目作为分析输入'),
     '<section class="bioweave-card bioweave-analysis-sources" data-bioweave-analysis-sources>',
-    '<header class="bioweave-settings-card-header"><div><h3>来源选择</h3><p class="bioweave-muted">不会直接变成最终注入上下文。</p></div></header>',
     '<div class="bioweave-analysis-source-summary">',
     '<strong>已选项目 ' + selectedCount + ' 个</strong>',
     '<span>世界书 ' + selectedWorldbookCount + ' 本 · 约 ' + tokenEstimate + ' tokens</span>',
@@ -567,7 +626,7 @@ function renderRecentStoryRegexRow(rule, index, allRules, scope) {
     ? 'data-bioweave-recent-story-global-regex-row'
     : 'data-bioweave-recent-story-regex-row';
   return [
-    '<div class="bioweave-recent-story-regex-row" role="row" ' + rowAttribute + ' data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + '>',
+    '<div class="bioweave-regex-row bioweave-recent-story-regex-row" role="row" ' + rowAttribute + ' data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + '>',
     '<div class="bioweave-recent-story-regex-cell bioweave-recent-story-regex-index" role="cell" data-label="#">' + (index + 1) + '</div>',
     '<div class="bioweave-recent-story-regex-cell bioweave-recent-story-regex-type" role="cell" data-label="类型">',
     '<select class="bioweave-select" aria-label="' + scopeLabel + '正则类型" data-bioweave-recent-story-regex-type data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + '>',
@@ -586,12 +645,12 @@ function renderRecentStoryRegexRow(rule, index, allRules, scope) {
       inputAttributes: 'aria-label="启用' + scopeLabel + '规则" data-bioweave-recent-story-regex-enabled data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute,
     }),
     '</div>',
-    '<div class="bioweave-recent-story-regex-cell bioweave-recent-story-regex-order" role="cell" data-label="执行顺序">',
-    '<button type="button" class="bioweave-secondary-action bioweave-recent-story-order-action" aria-label="上移' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="move-recent-story-regex-up" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + (index === 0 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-up" aria-hidden="true"></i><span>上移</span></button>',
-    '<button type="button" class="bioweave-secondary-action bioweave-recent-story-order-action" aria-label="下移' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="move-recent-story-regex-down" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + (index === allRules.length - 1 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-down" aria-hidden="true"></i><span>下移</span></button>',
+    '<div class="bioweave-regex-move bioweave-recent-story-regex-order" role="cell" data-label="执行顺序">',
+    '<button type="button" class="bioweave-button bioweave-secondary-action bioweave-recent-story-order-action" aria-label="上移' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="move-recent-story-regex-up" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + (index === 0 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-up" aria-hidden="true"></i><span>上移</span></button>',
+    '<button type="button" class="bioweave-button bioweave-secondary-action bioweave-recent-story-order-action" aria-label="下移' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="move-recent-story-regex-down" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + (index === allRules.length - 1 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-down" aria-hidden="true"></i><span>下移</span></button>',
     '</div>',
     '<div class="bioweave-recent-story-regex-cell bioweave-recent-story-regex-operation" role="cell" data-label="操作">',
-    '<button type="button" class="bioweave-danger-action bioweave-recent-story-delete-action" aria-label="删除' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="remove-recent-story-regex" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + '><i class="fa-solid fa-trash-can" aria-hidden="true"></i><span>删除</span></button>',
+    '<button type="button" class="bioweave-button bioweave-recent-story-delete-action" aria-label="删除' + scopeLabel + '第 ' + (index + 1) + ' 条规则" data-bioweave-action="remove-recent-story-regex" data-bioweave-recent-story-regex-index="' + index + '"' + scopeAttribute + '><i class="fa-solid fa-trash-can" aria-hidden="true"></i><span>删除</span></button>',
     '</div>',
     '</div>',
   ].join('');
@@ -619,7 +678,7 @@ function renderRecentStoryRegexScope({scope, title, description, settings}) {
   return [
     '<section class="bioweave-recent-story-regex-scope" data-bioweave-recent-story-regex-scope="' + scope + '" data-bioweave-recent-story-regex-section>',
     '<header class="bioweave-recent-story-regex-scope-header"><div><h4>' + title + '</h4><p class="bioweave-muted">' + description + '</p></div>',
-    '<button type="button" class="bioweave-primary-action bioweave-recent-story-add-action" data-bioweave-action="add-recent-story-regex" data-bioweave-recent-story-regex-scope="' + scope + '"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>新增规则</span></button></header>',
+    '<button type="button" class="bioweave-button bioweave-recent-story-add-action" data-bioweave-action="add-recent-story-regex" data-bioweave-recent-story-regex-scope="' + scope + '"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>新增规则</span></button></header>',
     renderRecentStoryRegexTable(scope, settings.regex_rules),
     '</section>',
   ].join('');
@@ -630,30 +689,25 @@ function renderRecentStorySettings(recentStory = {}, openSettingsSections = [], 
   const globalSettings = {regex_rules: normalizeRecentStorySettings(globalRecentStory).regex_rules};
   const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('recent_story');
   return [
-    '<details class="bioweave-settings-disclosure bioweave-recent-story-disclosure" data-bioweave-settings-disclosure="recent_story"' + (open ? ' open' : '') + '>',
-    '<summary class="bioweave-recent-story-summary">',
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-recent-story-disclosure" data-bioweave-settings-disclosure="recent_story"' + (open ? ' open' : '') + '>',
+    '<summary class="bioweave-settings-summary bioweave-recent-story-summary">',
     '<span class="bioweave-recent-story-summary-copy"><strong>最近剧情</strong><small>读取当前 Chat 的最近楼层，并按规则提取与清洗</small></span>',
     '<span class="bioweave-recent-story-summary-arrow" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i><i class="fa-solid fa-chevron-up"></i></span>',
     '</summary>',
     '<section class="bioweave-recent-story-settings" data-bioweave-recent-story-settings>',
-    '<section class="bioweave-card bioweave-recent-story-read-card" data-bioweave-recent-story-read-settings>',
-    '<header class="bioweave-recent-story-card-header"><div><h3>读取设置</h3><p class="bioweave-muted">按当前 Chat 读取最近楼层；填写 0 表示不读取。</p></div></header>',
-    '<div class="bioweave-recent-story-read-options">',
-    '<label class="bioweave-recent-story-count"><span class="bioweave-recent-story-count-copy"><strong>读取最近</strong></span>',
+    '<div class="bioweave-recent-story-read-options" data-bioweave-recent-story-read-settings>',
+    '<label class="bioweave-recent-story-count"><span class="bioweave-recent-story-count-copy"><strong>读取最近楼层</strong></span>',
     '<input class="bioweave-input" type="number" min="0" max="1000" step="1" inputmode="numeric" data-bioweave-recent-story-floor-count value="' + escapeHtml(settings.floor_count) + '">',
-    '<span class="bioweave-recent-story-count-unit">楼</span><small class="bioweave-recent-story-count-hint"><i class="fa-solid fa-circle-info" aria-hidden="true"></i>开场楼（0 楼）始终保留原文，不受正则影响。</small></label>',
+    '<span class="bioweave-recent-story-count-unit">楼</span></label>',
     renderRecentStorySwitch({
       className: 'bioweave-recent-story-user-regex',
       label: '对用户楼应用正则',
-      description: '默认关闭；开场楼（0 楼）始终保留原文。',
+      description: '开场楼（0 楼）始终保留原文。',
       checked: settings.regex_user_enabled,
       inputAttributes: 'aria-label="对用户楼应用正则" data-bioweave-recent-story-user-regex',
     }),
     '</div>',
-    '</section>',
-    '<section class="bioweave-card bioweave-recent-story-regex-card" data-bioweave-recent-story-regex-settings>',
-    '<header class="bioweave-recent-story-card-header bioweave-recent-story-regex-card-header"><div><h3>正则提取与清洗</h3><p class="bioweave-muted">按列表顺序逐条处理每条楼层正文；无效规则会跳过。</p></div></header>',
-    '<div class="bioweave-recent-story-regex-sections">',
+    '<div class="bioweave-recent-story-regex-sections" data-bioweave-recent-story-regex-settings>',
     renderRecentStoryRegexScope({
       scope: 'global',
       title: '全局正则',
@@ -667,11 +721,7 @@ function renderRecentStorySettings(recentStory = {}, openSettingsSections = [], 
       settings,
     }),
     '</div>',
-    '</section>',
-    '<section class="bioweave-card bioweave-recent-story-tip-card" data-bioweave-recent-story-tip>',
-    '<header class="bioweave-recent-story-tip-header"><span class="bioweave-recent-story-tip-icon" aria-hidden="true"><i class="fa-regular fa-lightbulb"></i></span><h3>使用提示</h3></header>',
-    '<ul class="bioweave-recent-story-tip-list"><li>规则按从上到下的顺序依次处理，每条规则作用于上一步的结果。</li><li>0 楼（开场楼）始终保留原文，不受任何规则影响。</li></ul>',
-    '</section>',
+    '<p class="bioweave-setting-note" data-bioweave-recent-story-tip>规则按从上到下依次处理；0 楼（开场楼）始终保留原文。</p>',
     '</section>',
     '</details>',
   ].join('');
@@ -695,19 +745,19 @@ function renderExternalMemorySettings(externalMemory = {}, providers = [], openS
     const detail = available ? status || '已检测到，可在后续分析中读取。' : status;
     return [
       '<label class="bioweave-external-memory-option' + (unavailable ? ' is-unavailable' : '') + '">',
-      '<input type="checkbox" data-bioweave-external-memory="' + key + '"' + (checked ? ' checked' : '') + (!available && !checked ? ' disabled' : '') + '>',
-      '<span>',
+      '<input class="bioweave-checkbox" type="checkbox" data-bioweave-external-memory="' + key + '"' + (checked ? ' checked' : '') + (!available && !checked ? ' disabled' : '') + '>',
+      '<span class="bioweave-external-memory-copy">',
       '<strong>' + label + '</strong>',
       '<small>' + escapeHtml(detail) + '</small>',
       '</span>',
+      '<span class="bioweave-badge bioweave-external-memory-status' + (available ? ' good' : '') + '">' + (available ? '可用' : '不可用') + '</span>',
       '</label>',
     ].join('');
   }).join('');
   return [
-    '<details class="bioweave-settings-disclosure bioweave-external-memory-disclosure" data-bioweave-settings-disclosure="external_memory"' + (open ? ' open' : '') + '>',
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-external-memory-disclosure" data-bioweave-settings-disclosure="external_memory"' + (open ? ' open' : '') + '>',
     renderSettingsSummary('外部记忆来源', '选择可用于分析输入的外部记忆来源'),
     '<section class="bioweave-card bioweave-external-memory-settings" data-bioweave-external-memory-settings>',
-    '<header class="bioweave-settings-card-header"><div><h3>读取选项</h3><p class="bioweave-muted">仅保存是否读取的配置；未检测到公开接口的来源会标记为不可用。</p></div></header>',
     '<div class="bioweave-external-memory-list">',
     rows,
     '</div>',
@@ -727,7 +777,7 @@ function renderAnalysisPromptSettings(prompt = {}, openSettingsSections = []) {
     '</label>',
   ].join('');
   return [
-    '<details class="bioweave-settings-disclosure bioweave-analysis-prompt-disclosure" data-bioweave-settings-disclosure="analysis_prompt"' + (open ? ' open' : '') + '>',
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-analysis-prompt-disclosure" data-bioweave-settings-disclosure="analysis_prompt"' + (open ? ' open' : '') + '>',
     renderSettingsSummary('分析提示词', '适用于 BioWeave 各类 AI Analysis 的公共用户自定义层；核心任务和 JSON Contract 不可覆盖', {
       action: 'open-analysis-debug',
       className: 'bioweave-secondary-action bioweave-analysis-debug-trigger',
@@ -852,7 +902,7 @@ export function renderAnalysisInputPreview(preview = {}) {
   ].join('');
   if (standalone) return card;
   return [
-    '<details class="bioweave-settings-disclosure bioweave-analysis-preview-disclosure" data-bioweave-settings-disclosure="analysis_preview"' + (open ? ' open' : '') + '>',
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-analysis-preview-disclosure" data-bioweave-settings-disclosure="analysis_preview"' + (open ? ' open' : '') + '>',
     renderSettingsSummary('高级 / 调试', '临时检查本次分析实际读取的内容'),
     card,
     '</details>',
@@ -924,8 +974,8 @@ export function settingsPage({
   const openSettingsSections = new Set(Array.isArray(worldbookSources.openSettingsSections) ? worldbookSources.openSettingsSections : []);
   const assignmentsMarkup = API_ASSIGNMENTS.map(slot => `<label class="bioweave-assignment-field"><span>${ASSIGNMENT_LABELS[slot]}</span><select class="bioweave-select" data-bioweave-assignment="${slot}">${assignmentOptions(profiles, assignments[slot] ?? null)}</select></label>`).join('');
   return [
-    '<section class="bioweave-page bioweave-settings-page" data-bioweave-settings>',
-    '<div class="bioweave-page-title"><div><h2>设置</h2><p class="bioweave-muted">连接参数是全局配置；任务数据仍属于当前 Chat。</p></div></div>',
+    '<section class="bioweave-page bioweave-settings-page" data-bioweave-page="settings" data-bioweave-settings>',
+    '<div class="bioweave-page-title bioweave-page-head"><div><h2>设置</h2><p class="bioweave-muted">连接参数是全局配置；任务数据仍属于当前 Chat。</p></div></div>',
     renderWorldbookSources(worldbookSources),
     renderRecentStorySettings(worldbookSources.recentStory, worldbookSources.openSettingsSections, worldbookSources.globalRecentStory),
     renderExternalMemorySettings(worldbookSources.externalMemory, worldbookSources.externalMemoryProviders, worldbookSources.openSettingsSections),
@@ -946,7 +996,7 @@ export function settingsPage({
       apiRequestSettings: apiRequestDraft ?? apiRequestSettings,
       openSettingsSections: worldbookSources.openSettingsSections,
     }),
-    '<details class="bioweave-settings-disclosure bioweave-assignments-disclosure" data-bioweave-settings-disclosure="assignments"' + (openSettingsSections.has('assignments') ? ' open' : '') + '>',
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-assignments-disclosure" data-bioweave-settings-disclosure="assignments"' + (openSettingsSections.has('assignments') ? ' open' : '') + '>',
     renderSettingsSummary('任务分配', '为不同分析任务选择默认或指定 API'),
     '<section class="bioweave-card bioweave-assignments"><header class="bioweave-settings-card-header"><div><h3>分配设置</h3><p class="bioweave-muted">每项可跟随默认、指定 API、暂时禁用；这里只保存选择，不触发分析。</p></div></header>',
     `<div class="bioweave-assignment-grid">${assignmentsMarkup}</div>`,

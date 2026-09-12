@@ -2,6 +2,7 @@ import {formatStoryTime} from '../story/time.js';
 import {
   analysisStatusCount,
   analysisStatusEvents,
+  eventStatusTone,
   normalizeAnalysisStatus,
   renderAnalysisActionButton,
 } from './overview.js';
@@ -154,7 +155,7 @@ function renderEventCard(event, editingEventId) {
   const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence;
   return '<article class="bioweave-card bioweave-event-card" data-bioweave-event-id="' + escapeHtml(eventId) + '">'
     + '<header><div><b>' + escapeHtml(eventTypeLabel(event.type)) + '</b></div>'
-    + '<span class="bioweave-badge">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
+    + '<span class="bioweave-badge ' + eventStatusTone(event.status) + '">' + escapeHtml(eventStatusLabel(event.status)) + '</span></header>'
     + renderDefinitionList([
       ['发生时间', `__html__${renderValue(formatStoryTime(event?.story_time))}`],
       ['地点', `__html__${renderValue(event.location)}`],
@@ -190,7 +191,7 @@ export function eventsPage({activeEvents, events, editingEventId = null, analysi
       ? '<p class="bioweave-muted">当前楼层尚未完成分析；下方为当前 Chat 已保存的历史事件。</p>'
       : '';
   const cards = biologicalEvents.map(event => renderEventCard(event, editingEventId)).join('');
-  return '<section class="bioweave-page bioweave-events-page"><div class="bioweave-page-title"><div><h2>历史事件</h2>'
+  return '<section class="bioweave-page bioweave-events-page" data-bioweave-page="events"><div class="bioweave-page-title bioweave-page-head"><div><h2>历史事件</h2>'
     + '<p class="bioweave-muted">当前 Chat 的 BiologicalEvent 事实</p></div>'
     + '<div class="bioweave-page-actions">' + renderAnalysisActionButton(status)
     + '<span class="bioweave-badge">' + eventCount + ' 个事件</span></div></div>'

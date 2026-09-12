@@ -28,8 +28,9 @@ survives a mobile viewport or host drawer overlay.
   scrolling, and safe-area handling. Do not rely on inset: 0 for the mobile host.
 - Use CSS tokens for Tavern/day/night themes. Theme changes must only update
   BioWeave root state and local persistence.
-- Keep mobile More as a real DOM menu with route actions, not a visual-only
-  class toggle.
+- Keep the complete route set in a real DOM top routebar; on mobile it becomes
+  a compact multi-row grid rather than a horizontal scroller or visual-only
+  carousel.
 
 ### World page reference alignment
 

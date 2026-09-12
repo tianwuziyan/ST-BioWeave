@@ -4,9 +4,9 @@
 
 无头像、轻量、继承 SillyTavern Theme Variables。
 
-一级页面：总览 / 人物列表 / 历史事件 / 推演预测 / 家系图谱 / 世界模型 / 设置。
+一级页面：总览 / 人物列表 / 历史事件 / 推演预测 / 家系图谱 / 世界模型 / 设置 / 分析状态。
 
-Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人物/事件/推演/更多，触控目标至少 44px；更多菜单包含家系图谱、世界模型、设置和分析状态。
+Desktop / Tablet / Mobile：顶部 routebar；Desktop 展示完整八个路由，Mobile 使用四列多行平铺，触控目标至少 44px；不使用底部导航、横向滚动导航或更多菜单。
 
 主 UI 由输入区魔法棒 → #extensionsMenu → BioWeave 打开；#extensionsMenu 只承载入口，主 UI 挂载在稳定的 `document.documentElement` 下，结构为 `bioweave-overlay / bioweave-panel`。入口 click 同步打开预挂载宿主，酒馆关闭菜单不会移除主 UI。
 
@@ -18,7 +18,7 @@ Desktop：左侧完整导航。Tablet：顶部紧凑导航。Mobile：总览/人
 
 设置页的“分析提示词”是所有 BioWeave AI Analysis 共用的用户自定义层，保存于全局 `analysis_prompt`，提供可编辑的顶部 SYSTEM、公共补充、输入前后说明和尾部 SYSTEM；补充内容可以留空。固定 BioWeave Core、World/Event 等任务契约、输出 JSON Contract、Validator Contract 和 `AnalysisInput` 的实际资料由代码保留，用户不能覆盖；旧 `world_analysis_prompt` 只作为迁移读取来源，保存后只写 canonical 字段。World Analysis 使用公共分析提示词，但不把 User Persona 正文作为世界规则证据；Event Analysis 使用公共分析提示词，并读取经过清理的 Persona context。调试预览可切换查看 World Analysis 与 Event Analysis 的最终 messages，区分公共层、任务层和输入层，不显示 Secret。
 
-“最近剧情”是独立折叠设置，内部按截图式结构分为读取设置、正则提取与清洗、使用提示三张紧凑卡片；读取设置只填写读取楼数，`0` 表示不读取。规则启用状态使用可访问的自定义 Switch，而不是浏览器默认 checkbox。正则区分“全局正则”和“当前角色卡正则”：全局规则适用于所有角色卡，当前角色卡规则只随当前 Chat 保存；两组规则均支持新增、删除、上下移动和启停，执行顺序固定为全局正则→当前角色卡正则。正则默认不处理 USER 楼，可单独开启；0 楼开场白始终保留原文。最近剧情请求只发送实际提取出的正文，不附加楼层标题或 `[Floor · role]` 包装。“外部记忆来源”是独立设置，显示 Anima、柏宝书和数据库记忆及其公开接口检测状态。最近剧情和外部来源不伪装成世界书条目，也不在本阶段进入 Tavern Context 注入。
+“最近剧情”是独立折叠设置，使用与概念页一致的扁平设置 body：顶部读取楼数和用户楼正则开关使用紧凑双列布局，下方依次显示“全局正则”和“当前角色卡正则”两个 scope；不再额外嵌套多层卡片壳。读取楼数为 `0` 表示不读取。规则启用状态使用可访问的自定义 Switch，而不是浏览器默认 checkbox。正则区分“全局正则”和“当前角色卡正则”：全局规则适用于所有角色卡，当前角色卡规则只随当前 Chat 保存；两组规则均支持新增、删除、上下移动和启停，执行顺序固定为全局正则→当前角色卡正则。正则默认不处理 USER 楼，可单独开启；0 楼开场白始终保留原文。最近剧情请求只发送实际提取出的正文，不附加楼层标题或 `[Floor · role]` 包装。“外部记忆来源”是独立设置，显示 Anima、柏宝书和数据库记忆及其公开接口检测状态。最近剧情和外部来源不伪装成世界书条目，也不在本阶段进入 Tavern Context 注入。
 
 人物列表可以进入 Tracking Subject 的人物详情单页人物卡，详情只改变 UI focus，不改变 Chat Scope。人物卡按固定顺序同时显示：人物摘要（Summary）、生殖能力（Reproductive Capabilities）、当前状态（Current State）、受孕相关记录（Related Events）、推演（Projection）、关系（Relations）和备注（Notes）；这些是连续纵向 section，不是互斥 Tab。详情入口唯一门槛仍是当前 Chat 的 `tracking_subjects` 中存在对应 `character_id`，单独存在的 `character_profiles` 不会创建详情入口。
 
@@ -78,6 +78,6 @@ Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶�
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Characters、Events、Overview 都必须重新读取当前有效 Event 和 Registry；不存在事件的 Swipe 不得显示旧 Swipe 的人物或事件。
 
-Desktop / Tablet / Mobile 均提供跟随酒馆、日、夜主题按钮。主题使用 BioWeave CSS variables，选择持久化但不修改 SillyTavern 本身主题。
+Desktop / Tablet / Mobile 均提供主题切换按钮，可循环切换跟随酒馆、日、夜。主题使用 BioWeave CSS variables，选择持久化但不修改 SillyTavern 本身主题。
 
 Event 可编辑删除；Projection 仅删除。Phase 2A 业务页只允许使用真实 DTO 或明确 Empty State；现有路由壳未接入真实数据时，不得把 `demo-character-1` 或其它占位 DTO 当作当前 Chat 的人物、事件或总览统计，也不得写入 Chat。

@@ -460,7 +460,7 @@ function renderWorldSection(section, value, editingSection, sectionDraft, busy) 
                 ? renderPropertyList(value, LIFECYCLE_LABELS)
                 : displayList(value);
   return [
-    `<section class="bioweave-world-model-section bioweave-world-model-module${isEditing ? ' active' : ''}" data-bioweave-world-section="${section}">`,
+    `<section class="bioweave-world-model-section bioweave-world-model-module bioweave-world-module${isEditing ? ' active' : ''}" data-bioweave-world-section="${section}">`,
     '<header class="bioweave-world-model-module-header">',
     '<div class="bioweave-world-model-module-heading"><span class="bioweave-world-model-module-icon"><i class="fa-solid ' + SECTION_ICONS[section] + '" aria-hidden="true"></i></span><h3 class="bioweave-world-model-module-title">' + label + '</h3></div>',
     '<span class="bioweave-world-model-module-spacer" aria-hidden="true"></span>',
@@ -484,15 +484,24 @@ function renderSpeciesSelector(model, selection) {
   const cards = species.map((item, speciesIndex) => {
     const types = Array.isArray(item?.biological_types) ? item.biological_types : [];
     const selectedSpecies = selection.speciesIndex === speciesIndex;
-    const typeButtons = types.length
-      ? types.map((type, typeIndex) => [
-        `<button type="button" class="bioweave-world-model-type-button${selectedSpecies && selection.typeIndex === typeIndex ? ' active' : ''}" data-bioweave-action="world-model-select-type" data-bioweave-world-species-index="${speciesIndex}" data-bioweave-world-type-index="${typeIndex}" aria-pressed="${selectedSpecies && selection.typeIndex === typeIndex}">`,
+    const orderedTypes = types
+      .map((type, typeIndex) => ({type, typeIndex}))
+      .sort((left, right) => {
+        if (!selectedSpecies) return left.typeIndex - right.typeIndex;
+        const leftSelected = left.typeIndex === selection.typeIndex;
+        const rightSelected = right.typeIndex === selection.typeIndex;
+        if (leftSelected === rightSelected) return left.typeIndex - right.typeIndex;
+        return leftSelected ? -1 : 1;
+      });
+    const typeButtons = orderedTypes.length
+      ? orderedTypes.map(({type, typeIndex}) => [
+        `<button type="button" class="bioweave-world-model-type-button bioweave-type-card${selectedSpecies && selection.typeIndex === typeIndex ? ' active' : ''}" data-bioweave-action="world-model-select-type" data-bioweave-world-species-index="${speciesIndex}" data-bioweave-world-type-index="${typeIndex}" aria-pressed="${selectedSpecies && selection.typeIndex === typeIndex}">`,
         displayText(type?.name || `生物类型 ${typeIndex + 1}`),
         '</button>',
       ].join('')).join('')
       : '<p class="bioweave-empty">尚未识别出生物类型。</p>';
     return [
-      `<article class="bioweave-world-model-species-card${selectedSpecies ? ' active' : ''}" data-bioweave-world-species-index="${speciesIndex}">`,
+      `<article class="bioweave-world-model-species-card bioweave-world-card${selectedSpecies ? ' active' : ''}" data-bioweave-world-species-index="${speciesIndex}">`,
       '<header>',
       `<button type="button" class="bioweave-world-model-species-button" data-bioweave-action="world-model-select-species" data-bioweave-world-species-index="${speciesIndex}" aria-pressed="${selectedSpecies}"><i class="fa-solid fa-dna" aria-hidden="true"></i><span>${displayText(item?.name || `物种 ${speciesIndex + 1}`)}</span></button>`,
       '</header>',
@@ -505,7 +514,7 @@ function renderSpeciesSelector(model, selection) {
   }).join('');
   return [
     '<section class="bioweave-world-model-section bioweave-world-model-species-selector">',
-    '<div class="bioweave-world-model-section-heading"><div><h3>物种与生物类型</h3><p>当前世界中已识别的物种及其生物类型；点击类型查看详细规则。</p></div></div>',
+      '<div class="bioweave-world-model-section-heading"><div><h3>物种与生物类型</h3><p>当前世界中已识别的物种及其生物类型；当前类型置顶，其余类型按 Runtime 顺序换行显示。</p></div></div>',
     '<div class="bioweave-world-model-species-grid">' + cards + '</div>',
     '</section>',
   ].join('');
@@ -598,8 +607,8 @@ export function worldPage({
     })
     : '<section class="bioweave-card bioweave-empty"><b>世界模型尚未建立</b><p>点击“开始分析”，使用当前已选择的分析来源生成 Chat 独立的生物学规则。</p></section>';
   return [
-    '<section class="bioweave-page bioweave-world-model-page">',
-    '<header class="bioweave-page-title bioweave-world-model-titlebar bioweave-world-model-top' + (model ? '' : ' bioweave-world-model-top-empty') + '"><div class="bioweave-world-model-title-copy"><h2>世界模型</h2><p class="bioweave-muted">探索并管理当前聊天的世界观设定与生物规则</p></div>' + metadata + '<div class="bioweave-page-actions">' + actions + '</div></header>',
+    '<section class="bioweave-page bioweave-world-model-page" data-bioweave-page="world">',
+    '<header class="bioweave-page-title bioweave-page-head bioweave-world-model-titlebar bioweave-world-model-top' + (model ? '' : ' bioweave-world-model-top-empty') + '"><div class="bioweave-world-model-title-copy"><h2>世界模型</h2><p class="bioweave-muted">探索并管理当前聊天的世界观设定与生物规则</p></div>' + metadata + '<div class="bioweave-page-actions">' + actions + '</div></header>',
     notice,
     body,
     '</section>',

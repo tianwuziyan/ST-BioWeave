@@ -13,9 +13,13 @@ import {
 } from '../ui/app.js';
 
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'));
 const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
 const UI_SOURCE = [
   APP_SOURCE,
+  fs.readFileSync(new URL('../ui/overview.js', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../ui/events.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/settings.js', import.meta.url), 'utf8'),
 ].join('\n');
@@ -29,6 +33,41 @@ test('BioWeave overlay stays between ordinary host UI and host modal layers', ()
   assert.ok(zIndex < 9999, 'BioWeave must stay below SillyTavern Popup/backdrop');
   assert.ok(zIndex < 999999, 'BioWeave must stay below SillyTavern Toast');
   assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/);
+});
+
+test('production shell uses the unified top routebar on every viewport', () => {
+  assert.match(APP_SOURCE, /class="bioweave-app-header"/);
+  assert.match(APP_SOURCE, /class="bioweave-routebar"/);
+  assert.match(APP_SOURCE, /class="bioweave-route-items"/);
+  assert.match(APP_SOURCE, /data-bioweave-action="cycle-theme"/);
+  assert.match(APP_SOURCE, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/);
+  assert.doesNotMatch(APP_SOURCE, /bioweave-bottom|bioweave-more-menu|data-bioweave-action="more"/);
+  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-bottom|\.bioweave-more-menu|\.bioweave-nav-item/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-routebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?gap:\s*2px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-items\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?min-width:\s*100% !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?min-width:\s*72px !important;[\s\S]*?padding:\s*0 11px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-routebar\s*\{[\s\S]*?display:\s*block !important;[\s\S]*?overflow:\s*hidden !important;[\s\S]*?\.bioweave-route-items\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-text-button\s*\{[\s\S]*?color:\s*var\(--bioweave-accent\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel input\.bioweave-checkbox,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*checkbox !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-external-memory-list\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-regex-row,[\s\S]*?grid-template-columns:\s*auto minmax\(64px, \.45fr\) minmax\(150px, 1\.7fr\) auto auto auto !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-order-action\s*\{[\s\S]*?width:\s*20px !important;[\s\S]*?padding:\s*0 !important;/);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[\s\S]*?display:\s*grid\s*!important[\s\S]*?overflow:\s*visible\s*!important/);
+});
+
+test('production settings controls use the canonical checkbox, memory, and regex classes', () => {
+  const checkboxTags = [...UI_SOURCE.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(match => match[0]);
+  assert.ok(checkboxTags.length > 0, 'expected production settings to render checkbox controls');
+  assert.ok(checkboxTags.every(tag => /bioweave-checkbox|bioweave-switch-input/.test(tag)), 'every checkbox must use the native checkbox or switch contract');
+  assert.match(UI_SOURCE, /bioweave-external-memory-list/);
+  assert.match(UI_SOURCE, /bioweave-external-memory-status/);
+  assert.match(UI_SOURCE, /bioweave-regex-row bioweave-recent-story-regex-row/);
+  assert.match(UI_SOURCE, /bioweave-regex-move bioweave-recent-story-regex-order/);
+  assert.match(UI_SOURCE, /bioweave-analysis-child-status/);
+  assert.match(UI_SOURCE, /bioweave-analysis-section-chevron/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-badge\s*\{[\s\S]*?border-radius:\s*999px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?min-height:\s*56px !important/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-analysis-section-chevron::before\s*\{[\s\S]*?content:\s*'\+';/);
 });
 
 class FakeElement {
@@ -174,10 +213,8 @@ class AppFakeElement extends FakeElement {
       this.selectorNodes.set(selector, [node]);
       return node;
     };
-    add('.bioweave-nav nav', 'nav');
-    add('.bioweave-bottom', 'nav');
+    add('.bioweave-route-items', 'div');
     add('.bioweave-main', 'main');
-    add('.bioweave-more-menu', 'div');
   }
 
   querySelectorAll(selector) {

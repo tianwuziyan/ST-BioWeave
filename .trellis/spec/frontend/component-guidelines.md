@@ -44,7 +44,8 @@ BioWeave UI from Desktop, Tablet, or Mobile.
   destroyBioWeave() removes only BioWeave-owned DOM and listeners.
 - The root uses bioweave-* classes and has no avatar-dependent layout.
 - Responsive styles use the fixed breakpoints >=1200, 768-1199, and <768;
-  mobile navigation has a real More menu and safe-area padding.
+  all three widths use the documentElement-level top routebar, with a
+  compact multi-row route grid on mobile and safe-area padding.
 
 ### 4. Validation & Error Matrix
 
@@ -57,7 +58,7 @@ BioWeave UI from Desktop, Tablet, or Mobile.
 | Cached overlay/root is disconnected | tear down old listeners, recreate exactly one connected overlay/root |
 | Duplicate BioWeave ID exists | keep one connected node and remove the other BioWeave-owned nodes |
 | close followed by open | preserve the single root and show it again |
-| Mobile width below 768px | show single-column content and bottom navigation; document width must not overflow |
+| Mobile width below 768px | show the compact top route grid and single-column content; document width must not overflow |
 
 ### 5. Good / Base / Bad Cases
 

@@ -1,0 +1,7 @@
+{"file": "docs/ui-framework.config.json", "reason": "verify visual tokens, hooks and responsive configuration"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "verify overlay, responsive, naming and browser acceptance rules"}
+{"file": "tests/ui.test.js", "reason": "verify shell, controls, world editing and settings behavior"}
+{"file": "tests/phase2a-ui.test.js", "reason": "verify production DTO and no-mock constraints"}
+{"file": "ui/app.js", "reason": "verify routes, lifecycle and data-bioweave hooks"}
+{"file": "ui/world.js", "reason": "verify world model editing behavior"}
+{"file": "ui/settings.js", "reason": "verify settings and regex behavior"}
