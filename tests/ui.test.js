@@ -14,6 +14,7 @@ import {
 
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'));
+const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'));
 const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
 const UI_SOURCE = [
   APP_SOURCE,
@@ -46,13 +47,54 @@ test('production shell uses the unified top routebar on every viewport', () => {
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-routebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?gap:\s*2px !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-items\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?min-width:\s*100% !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?min-width:\s*72px !important;[\s\S]*?padding:\s*0 11px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*14px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*13px !important;/);
   assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-routebar\s*\{[\s\S]*?display:\s*block !important;[\s\S]*?overflow:\s*hidden !important;[\s\S]*?\.bioweave-route-items\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\) !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-text-button\s*\{[\s\S]*?color:\s*var\(--bioweave-accent\) !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel input\.bioweave-checkbox,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*checkbox !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /input\.bioweave-checkbox:indeterminate[\s\S]*?accent-color:\s*var\(--bioweave-warn\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-inline:\s*0 !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page\s*\{[\s\S]*?gap:\s*3px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure \+ \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-top:\s*0 !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure:not\(\[open\]\)[\s\S]*?\.bioweave-settings-summary-status\.good[\s\S]*?color:\s*var\(--bioweave-text-secondary\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-arrow,[\s\S]*?margin-left:\s*0 !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-status\s*\{[\s\S]*?margin-left:\s*auto !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-source-list\s*\{[\s\S]*?gap:\s*4px !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-external-memory-list\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-regex-row,[\s\S]*?grid-template-columns:\s*auto minmax\(64px, \.45fr\) minmax\(150px, 1\.7fr\) auto auto auto !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-regex-row,[\s\S]*?grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-order-action\s*\{[\s\S]*?width:\s*20px !important;[\s\S]*?padding:\s*0 !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-prompt-settings\s*\{[\s\S]*?display:\s*grid !important;[\s\S]*?gap:\s*9px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-prompt-field > span\s*\{[\s\S]*?white-space:\s*normal !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-profile-summary\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?white-space:\s*nowrap !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-select,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*menulist !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;[\s\S]*?align-items:\s*stretch !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-row,[\s\S]*?height:\s*32px !important;[\s\S]*?overflow:\s*visible !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-switch \.bioweave-switch-track\s*\{[\s\S]*?position:\s*relative !important;[\s\S]*?overflow:\s*hidden !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-switch \.bioweave-switch-input:checked \+ \.bioweave-switch-track \.bioweave-switch-thumb\s*\{[\s\S]*?left:\s*auto !important;[\s\S]*?right:\s*2px !important;[\s\S]*?transform:\s*none !important;/);
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-read-options\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1\.15fr\) minmax\(0, \.85fr\) !important;[\s\S]*?gap:\s*4px !important;/);
   assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[\s\S]*?display:\s*grid\s*!important[\s\S]*?overflow:\s*visible\s*!important/);
+});
+
+test('theme control is icon-only and keeps the configured day and Tavern palettes', () => {
+  assert.match(APP_SOURCE, /data-bioweave-theme-icon/);
+  assert.match(APP_SOURCE, /fa-solid fa-circle-half-stroke/);
+  assert.match(APP_SOURCE, /fa-solid fa-sun/);
+  assert.match(APP_SOURCE, /fa-solid fa-moon/);
+  assert.doesNotMatch(APP_SOURCE, /data-bioweave-theme-button[^>]*>跟随酒馆<\/button>/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\[data-theme="light"\]\s*\{[\s\S]*?--bioweave-bg:\s*#cbd6db !important;[\s\S]*?--bioweave-surface:\s*#dbe4e8 !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\[data-theme="tavern"\]\s*\{[\s\S]*?--bioweave-bg:\s*var\(--SmartThemeBlurTintColor, #202a31\) !important;[\s\S]*?--bioweave-accent:\s*var\(--SmartThemeQuoteColor, #4f91b6\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/);
+});
+
+test('settings disclosure surfaces use theme tokens instead of fixed night colors', () => {
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-header\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\[open\] > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-card-selected\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-disclosure > \.bioweave-card,[\s\S]*?border-top:\s*1px solid var\(--bioweave-border\) !important;[\s\S]*?background:\s*var\(--bioweave-surface-raised\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-worldbook > summary,[\s\S]*?background:\s*var\(--bioweave-surface-soft\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-source-child\s*\{[\s\S]*?background:\s*var\(--bioweave-surface\) !important;/);
 });
 
 test('production settings controls use the canonical checkbox, memory, and regex classes', () => {
@@ -65,9 +107,19 @@ test('production settings controls use the canonical checkbox, memory, and regex
   assert.match(UI_SOURCE, /bioweave-regex-move bioweave-recent-story-regex-order/);
   assert.match(UI_SOURCE, /bioweave-analysis-child-status/);
   assert.match(UI_SOURCE, /bioweave-analysis-section-chevron/);
+  assert.match(UI_SOURCE, /data-bioweave-analysis-section-toggle/);
+  assert.match(UI_SOURCE, /data-bioweave-analysis-section-source-ids/);
+  assert.match(UI_SOURCE, /bioweave-recent-story-read-options/);
+  assert.match(UI_SOURCE, /bioweave-world-model-species-grid/);
+  assert.match(UI_SOURCE, /bioweave-world-model-type-grid/);
+  assert.match(UI_SOURCE, /bioweave-world-model-card-summary/);
+  assert.match(UI_SOURCE, /bioweave-world-model-type-card-summary/);
+  assert.doesNotMatch(UI_SOURCE, /bioweave-world-model-type-selector/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-badge\s*\{[\s\S]*?border-radius:\s*999px !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?min-height:\s*56px !important/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-analysis-section-chevron::before\s*\{[\s\S]*?content:\s*'\+';/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-section-chevron\s*\{[\s\S]*?font-size:\s*13px !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-worldbook-title strong,[\s\S]*?font-size:\s*13px !important;[\s\S]*?font-weight:\s*700 !important;/);
 });
 
 class FakeElement {

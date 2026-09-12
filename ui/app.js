@@ -47,13 +47,13 @@ import {
 
 const pages = {
   overview: ['总览', 'fa-house', overviewPage],
-  characters: ['人物列表', 'fa-user-group', charactersPage],
-  events: ['历史事件', 'fa-calendar-days', eventsPage],
-  projection: ['推演预测', 'fa-wand-magic-sparkles', projectionPage],
-  genealogy: ['家系图谱', 'fa-diagram-project', genealogyPage],
-  world: ['世界模型', 'fa-shapes', worldPage],
+  characters: ['人物', 'fa-user-group', charactersPage],
+  events: ['事件', 'fa-calendar-days', eventsPage],
+  projection: ['推演', 'fa-wand-magic-sparkles', projectionPage],
+  genealogy: ['家系', 'fa-diagram-project', genealogyPage],
+  world: ['世界', 'fa-shapes', worldPage],
   settings: ['设置', 'fa-gear', settingsPage],
-  state: ['分析状态', 'fa-chart-line', statePage],
+  state: ['状态', 'fa-chart-line', statePage],
 };
 
 const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'];
@@ -179,6 +179,14 @@ function themeLabel(value) {
   return value === 'light' ? '日' : value === 'dark' ? '夜' : '跟随酒馆';
 }
 
+function themeIcon(value) {
+  return value === 'light'
+    ? 'fa-solid fa-sun'
+    : value === 'dark'
+      ? 'fa-solid fa-moon'
+      : 'fa-solid fa-circle-half-stroke';
+}
+
 function readTheme(storageRef) {
   try {
     const value = storageRef?.getItem?.(THEME_KEY);
@@ -210,7 +218,7 @@ export function closeModelPicker(target) {
 // 父级 checkbox 位于 summary 内时，只拦截事件冒泡，保留浏览器原生勾选和 change 事件。
 // details 的默认展开状态在当前事件结束后恢复，避免选择和折叠互相影响。
 export function handleAnalysisParentToggleClick(event) {
-  const target = event?.target?.closest?.('[data-bioweave-analysis-worldbook-toggle], [data-bioweave-analysis-character-opening-toggle]');
+  const target = event?.target?.closest?.('[data-bioweave-analysis-section-toggle], [data-bioweave-analysis-worldbook-toggle], [data-bioweave-analysis-character-opening-toggle]');
   if (!target) return false;
   event.stopPropagation?.();
   if (!target.disabled) {
@@ -255,6 +263,15 @@ function createNavigationButton(documentRef, id, compact = false) {
   const compactLabel = label.replace('列表', '').replace('历史', '').replace('预测', '');
   button.innerHTML = '<i class="fa-solid ' + icon + '" aria-hidden="true"></i><span>' + (compact ? compactLabel : label) + '</span>';
   return button;
+}
+
+function syncWorldModelCapabilityInputs(root) {
+  const inputs = root?.querySelectorAll?.('[data-bioweave-world-capability-input]') ?? [];
+  for (const input of inputs) {
+    const state = input.dataset?.bioweaveWorldCapabilityState;
+    input.indeterminate = state === 'unknown';
+    input.setAttribute?.('aria-checked', input.indeterminate ? 'mixed' : String(Boolean(input.checked)));
+  }
 }
 
 /**
@@ -1121,6 +1138,53 @@ export function createApp(runtime, options = {}) {
     await persistAnalysisSettings({selected, renderAfterSave: false});
   }
 
+  function analysisSectionSourceIds(target) {
+    try {
+      const value = JSON.parse(target?.closest?.('[data-bioweave-analysis-section]')?.dataset?.bioweaveAnalysisSectionSourceIds ?? '[]');
+      return Array.isArray(value) ? [...new Set(value.map(item => String(item ?? '').trim()).filter(Boolean))] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function toggleAnalysisSection(target) {
+    if (!target || target.disabled) return;
+    const sourceIds = analysisSectionSourceIds(target);
+    if (!sourceIds.length) return;
+    captureAnalysisSourceDisclosure();
+    let selected = analysisSourcesState.selected;
+    const pendingWorldbooks = [];
+    for (const sourceId of sourceIds) {
+      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
+      if (!source || source.available === false) continue;
+      if (source.source_type === 'worldbook') {
+        if (target.checked && !source.content_loaded) {
+          pendingWorldbooks.push(sourceId);
+        } else {
+          selected = setWorldbookEntriesSelection(selected, source, Boolean(target.checked));
+        }
+        continue;
+      }
+      for (const field of Array.isArray(source.fields) ? source.fields : []) {
+        const fieldKey = String(field?.field_key ?? '').trim();
+        const selectable = fieldKey === 'description'
+          || fieldKey === 'opening:main'
+          || /^opening:alternate:\d+$/.test(fieldKey);
+        if (!selectable || field?.available === false) continue;
+        selected = updateSourceSelection(selected, {
+          source_id: sourceId,
+          field_key: fieldKey,
+        }, Boolean(target.checked));
+      }
+    }
+    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
+    render();
+    await persistAnalysisSettings({selected, renderAfterSave: false});
+    for (const sourceId of pendingWorldbooks) {
+      await loadWorldbookSourceForUi(sourceId, {selectAll: true});
+    }
+  }
+
   function syncAnalysisWorldbookToggles() {
     if (!root) return;
     root.querySelectorAll?.('[data-bioweave-analysis-worldbook-toggle]').forEach(toggle => {
@@ -1142,6 +1206,13 @@ export function createApp(runtime, options = {}) {
       toggle.checked = state.checked;
       toggle.indeterminate = state.indeterminate;
       toggle.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked));
+    });
+  }
+
+  function syncAnalysisSectionToggles() {
+    if (!root) return;
+    root.querySelectorAll?.('[data-bioweave-analysis-section-toggle]').forEach(toggle => {
+      toggle.indeterminate = toggle.getAttribute('aria-checked') === 'mixed';
     });
   }
 
@@ -1819,7 +1890,9 @@ export function createApp(runtime, options = {}) {
     root.dataset.theme = nextTheme;
     const button = root.querySelector('[data-bioweave-theme-button]');
     if (button) {
-      button.textContent = themeLabel(nextTheme);
+      const icon = button.querySelector('[data-bioweave-theme-icon]');
+      if (icon) icon.className = themeIcon(nextTheme);
+      button.setAttribute('title', '主题：' + themeLabel(nextTheme) + '（点击切换）');
       button.setAttribute('aria-label', '主题：' + themeLabel(nextTheme) + '，点击切换');
     }
     return nextTheme;
@@ -2051,6 +2124,7 @@ export function createApp(runtime, options = {}) {
       } : {}),
     });
     restoreScrollPositions(root, scrollPositions);
+    syncWorldModelCapabilityInputs(root);
     root.querySelectorAll('.bioweave-chat-scope').forEach(node => {
       node.textContent = currentChatLabel();
     });
@@ -2061,6 +2135,7 @@ export function createApp(runtime, options = {}) {
     });
     syncAnalysisWorldbookToggles();
     syncAnalysisCharacterOpeningToggles();
+    syncAnalysisSectionToggles();
     const currentChatId = runtime.chat.current();
     if (!businessState.loaded && !businessState.loading) {
       void refreshBusinessState({reason: 'ui-read'});
@@ -2948,13 +3023,6 @@ export function createApp(runtime, options = {}) {
       );
       return;
     }
-    if (action === 'world-model-focus-selector') {
-      event.preventDefault();
-      const selector = root?.querySelector?.('.bioweave-world-model-species-selector');
-      selector?.scrollIntoView?.({behavior: 'smooth', block: 'nearest'});
-      selector?.querySelector?.('[aria-pressed="true"]')?.focus?.({preventScroll: true});
-      return;
-    }
     if (action === 'world-model-edit-section') {
       event.preventDefault();
       await beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''));
@@ -3056,12 +3124,22 @@ export function createApp(runtime, options = {}) {
     if (!root?.contains(event.target)) return;
     captureAnalysisSourceDisclosure();
     if (event.target.closest?.('[data-bioweave-world-section-form]')) {
+      if (event.target?.dataset?.bioweaveWorldCapabilityInput !== undefined) {
+        event.target.dataset.bioweaveWorldCapabilityState = event.target.checked ? 'true' : 'false';
+        event.target.indeterminate = false;
+        event.target.setAttribute?.('aria-checked', String(Boolean(event.target.checked)));
+      }
       captureWorldModelSectionDraft();
       return;
     }
     const characterOpeningToggle = event.target.closest?.('[data-bioweave-analysis-character-opening-toggle]');
     if (characterOpeningToggle) {
       await toggleCharacterCardOpenings(characterOpeningToggle);
+      return;
+    }
+    const analysisSectionToggle = event.target.closest?.('[data-bioweave-analysis-section-toggle]');
+    if (analysisSectionToggle) {
+      await toggleAnalysisSection(analysisSectionToggle);
       return;
     }
     const worldbookToggle = event.target.closest?.('[data-bioweave-analysis-worldbook-toggle]');
@@ -3180,7 +3258,7 @@ export function createApp(runtime, options = {}) {
       '<strong class="bioweave-brand">BioWeave</strong>',
       '<span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>',
       '<span class="bioweave-spacer"></span>',
-      '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button aria-label="主题：跟随酒馆，点击切换">跟随酒馆</button>',
+      '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换"><i class="fa-solid fa-circle-half-stroke" data-bioweave-theme-icon aria-hidden="true"></i></button>',
       '<button class="bioweave-close" type="button" data-bioweave-action="close" aria-label="关闭 BioWeave">×</button>',
       '</header>',
       '<nav class="bioweave-routebar" aria-label="BioWeave 页面导航"><div class="bioweave-route-items"></div></nav>',

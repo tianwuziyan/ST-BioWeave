@@ -6,19 +6,19 @@
 
 一级页面：总览 / 人物列表 / 历史事件 / 推演预测 / 家系图谱 / 世界模型 / 设置 / 分析状态。
 
-Desktop / Tablet / Mobile：顶部 routebar；Desktop 展示完整八个路由，Mobile 使用四列多行平铺，触控目标至少 44px；不使用底部导航、横向滚动导航或更多菜单。
+Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使用 14px，Mobile 使用 13px；Desktop 展示完整八个路由，Mobile 使用四列多行平铺，触控目标至少 44px；不使用底部导航、横向滚动导航或更多菜单。
 
 主 UI 由输入区魔法棒 → #extensionsMenu → BioWeave 打开；#extensionsMenu 只承载入口，主 UI 挂载在稳定的 `document.documentElement` 下，结构为 `bioweave-overlay / bioweave-panel`。入口 click 同步打开预挂载宿主，酒馆关闭菜单不会移除主 UI。
 
-设置页先选择 API 来源：使用 SillyTavern 当前 API，或使用 BioWeave 独立 API。独立 API 的 Profile 编辑器只显示 Profile、Provider、API URL、API Key 和 Model；超时和重试属于 API 来源下的全局请求设置，修改后通过 change 事件即时保存，不写入 Profile 或 Chat。超时对用户显示为秒，插件设置中保存为毫秒。Model 优先通过“刷新模型”从 SillyTavern custom status 接口获取并在可搜索、可滚动列表中选择，手动输入只作为回退；“测试连接”与刷新模型分开，均不保存当前 draft。保存成功后只显示安全配置摘要，API Key 不回填。世界分析、事件分析、推演、历史扫描的任务分配独立于连接参数，可跟随默认、使用当前 API、指定独立 Profile 或不使用 API。
+设置页先选择 API 来源：使用 SillyTavern 当前 API，或使用 BioWeave 独立 API。独立 API 的 Profile 编辑器只显示 Profile、Provider、API URL、API Key 和 Model；已保存配置列表只显示保存的配置名称，采用紧凑单行布局，完整字段不在列表重复展开。超时和重试属于 API 来源下的全局请求设置，修改后通过 change 事件即时保存，不写入 Profile 或 Chat。超时对用户显示为秒，插件设置中保存为毫秒。Model 优先通过“刷新模型”从 SillyTavern custom status 接口获取并在可搜索、可滚动列表中选择，手动输入只作为回退；“测试连接”与刷新模型分开，均不保存当前 draft。保存成功后只显示安全配置摘要，API Key 不回填。世界分析、事件分析、推演、历史扫描的任务分配独立于连接参数，可跟随默认、使用当前 API、指定独立 Profile 或不使用 API。
 
-设置页的“世界书来源”区域读取当前 Chat 的角色卡字段、角色关联世界书和可用的全局世界书。世界书按书展开到条目，角色卡按实际字段拆分；每个条目/字段使用独立 checkbox，选择使用稳定 `source_id` + `entry_id` 或 `field_key`。搜索、全选、全不选、刷新、已选数量和 token estimate 都只作用于选择器内存目录。
+设置页的“世界书来源”区域按“角色卡、全局世界书、附加角色世界书、其他世界书”四个同级折叠栏读取当前 Chat 的真实来源；首层折叠栏使用左侧 `+/-`、右侧运行时状态提示，首层之间保持 `3px` 紧凑间距，折叠时右侧状态使用中性色。下级来源栏把数量提示放在右侧并把 `+/-` 固定在最右侧。世界书按书展开到条目，角色卡按实际字段拆分；每个条目/字段使用独立 checkbox，选择使用稳定 `source_id` + `entry_id` 或 `field_key`。搜索、全选、全不选、刷新、已选数量和 token estimate 都只作用于选择器内存目录。
 
-“世界模型”页面使用已选择的 AnalysisInput 生成当前 Chat 独立的生物学规则。用户人物设定不参与 World Model 判断；角色卡、世界书以及可选的剧情/记忆证据用于识别生物规则和当前世界医疗条件。页面按“物种 → 性别 / 生殖类型”展示嵌套结果，编辑器也按同一层级增删和保存。species 识别与 biological type 识别分开：资料只呈现默认男性/女性二元或其它人类常规身体/生殖证据、没有明确非人类证据时，可以建立“人类” species，但识别 species 本身不自动创建任何 type；每个 type 只来自资料实际出现或规则明确描述存在的分类。固定的双性分类统一显示为“双性”；临时双性化、身体改造、单个人的性别模糊和种族/属性/来源别名不占用 type。明确的非人类证据按资料实际内容分别建立 species，类型名称保持开放并支持用户自定义分类。非人类 type 必须有同一 species 上下文中的直接或低推断证据。每个 biological type 的能力逐项按证据或适用的人类基线判断，未知保留为 `null`，不从名称、性别、代词、称谓、外貌或身体形态推断；非人类没有字段级机制证据时不会复制现实人类男女模板。人类基线只在对应的人类 type 已建立后使用，优先级为剧情事实 > 世界/世界书规则 > 个人例外 > 人类基线；非人类没有直接机制证据时保持未知。页面显示当前模型、最后分析时间、来源摘要、医疗条件和临时分析输入预览；失败或无效的 AI 结果不会覆盖上一份成功模型。手动编辑保存后成为当前 Chat 的权威版本。World Model v1 不进入 Floor、Event、Projection 或 Context 注入。
+"世界模型"页面使用已选择的 AnalysisInput 生成当前 Chat 独立的生物学规则。用户人物设定不参与 World Model 判断；角色卡、世界书以及可选的剧情/记忆证据用于识别生物规则和当前世界医疗条件。页面先用物种卡网格选择物种，再用独立的生物类型卡网格选择当前物种的 Runtime 生物类型；物种卡副文案显示“`N 个类型 · 类型 / 类型`”，类型卡副文案显示“`已知数/总能力数 项能力已知 · 是否可承担妊娠`”，均只来自 Runtime DTO 的真实字段，不能写死男性、女性或其它类型名称。类型卡保持 Runtime 顺序，点击后只改变选中样式，不交换左右位置，类型不再嵌套在每张物种卡内。选择区标题与卡片之间保持紧凑间距，类型标题使用 15px、Mobile 使用 14px；生殖能力、生殖规则、生命周期、特殊规则在当前类型详情面板内连续显示，Desktop 详情与世界级规则按 6:4 分栏，iPad / Mobile 使用单列；能力值按参考 UI 显示为 `否`左对齐、`是`右对齐绿色并向右保留 8px 内缩、`未知`右对齐黄色并保持同样内缩。医疗与照护表格使用 92px 首列和 5px 列间距，避免右侧内容离左侧过远。编辑器也按同一层级增删和保存，能力编辑使用原生勾选框并保留 true / false / null 三态；“是否能承担妊娠”只读取当前 Runtime 类型的 `capabilities.can_carry_pregnancy`。species 识别与 biological type 识别分开：资料只呈现默认男性/女性二元或其它人类常规身体/生殖证据、没有明确非人类证据时，可以建立“人类” species，但识别 species 本身不自动创建任何 type；每个 type 只来自资料实际出现或规则明确描述存在的分类。固定的双性分类统一显示为“双性”；临时双性化、身体改造、单个人的性别模糊和种族/属性/来源别名不占用 type。明确的非人类证据按资料实际内容分别建立 species，类型名称保持开放并支持用户自定义分类。非人类 type 必须有同一 species 上下文中的直接或低推断证据。每个 biological type 的能力逐项按证据或适用的人类基线判断，未知保留为 `null`，不从名称、性别、代词、称谓、外貌或身体形态推断；非人类没有字段级机制证据时不会复制现实人类男女模板。人类基线只在对应的人类 type 已建立后使用，优先级为剧情事实 > 世界/世界书规则 > 个人例外 > 人类基线；非人类没有直接机制证据时保持未知。页面显示当前模型、最后分析时间、来源摘要、医疗条件和临时分析输入预览；失败或无效的 AI 结果不会覆盖上一份成功模型。手动编辑保存后成为当前 Chat 的权威版本。World Model v1 不进入 Floor、Event、Projection 或 Context 注入。
 
-设置页的“分析提示词”是所有 BioWeave AI Analysis 共用的用户自定义层，保存于全局 `analysis_prompt`，提供可编辑的顶部 SYSTEM、公共补充、输入前后说明和尾部 SYSTEM；补充内容可以留空。固定 BioWeave Core、World/Event 等任务契约、输出 JSON Contract、Validator Contract 和 `AnalysisInput` 的实际资料由代码保留，用户不能覆盖；旧 `world_analysis_prompt` 只作为迁移读取来源，保存后只写 canonical 字段。World Analysis 使用公共分析提示词，但不把 User Persona 正文作为世界规则证据；Event Analysis 使用公共分析提示词，并读取经过清理的 Persona context。调试预览可切换查看 World Analysis 与 Event Analysis 的最终 messages，区分公共层、任务层和输入层，不显示 Secret。
+设置页的“分析提示词”是所有 BioWeave AI Analysis 共用的用户自定义层，保存于全局 `analysis_prompt`，提供可编辑的顶部 SYSTEM、分析任务补充、输入前说明、输入后说明和尾部 SYSTEM；补充内容可以留空。固定 BioWeave Core、World/Event 等任务契约、输出 JSON Contract、Validator Contract 和 `AnalysisInput` 的实际资料由代码保留，用户不能覆盖；旧 `world_analysis_prompt` 只作为迁移读取来源，保存后只写 canonical 字段。World Analysis 使用公共分析提示词，但不把 User Persona 正文作为世界规则证据；Event Analysis 使用公共分析提示词，并读取经过清理的 Persona context。调试预览可切换查看 World Analysis 与 Event Analysis 的最终 messages，区分公共层、任务层和输入层，不显示 Secret。
 
-“最近剧情”是独立折叠设置，使用与概念页一致的扁平设置 body：顶部读取楼数和用户楼正则开关使用紧凑双列布局，下方依次显示“全局正则”和“当前角色卡正则”两个 scope；不再额外嵌套多层卡片壳。读取楼数为 `0` 表示不读取。规则启用状态使用可访问的自定义 Switch，而不是浏览器默认 checkbox。正则区分“全局正则”和“当前角色卡正则”：全局规则适用于所有角色卡，当前角色卡规则只随当前 Chat 保存；两组规则均支持新增、删除、上下移动和启停，执行顺序固定为全局正则→当前角色卡正则。正则默认不处理 USER 楼，可单独开启；0 楼开场白始终保留原文。最近剧情请求只发送实际提取出的正文，不附加楼层标题或 `[Floor · role]` 包装。“外部记忆来源”是独立设置，显示 Anima、柏宝书和数据库记忆及其公开接口检测状态。最近剧情和外部来源不伪装成世界书条目，也不在本阶段进入 Tavern Context 注入。
+“最近剧情”是独立折叠设置，使用与概念页一致的扁平设置 body：顶部读取楼数和用户楼正则开关使用紧凑双列布局，移动端仍保持两列并留出足够控件空间，下方依次显示“全局正则”和“当前角色卡正则”两个 scope；不再额外嵌套多层卡片壳。读取楼数为 `0` 表示不读取。规则启用状态使用可访问的自定义 Switch，而不是浏览器默认 checkbox。正则区分“全局正则”和“当前角色卡正则”：全局规则适用于所有角色卡，当前角色卡规则只随当前 Chat 保存；两组规则均支持新增、删除、上下移动和启停，执行顺序固定为全局正则→当前角色卡正则。正则默认不处理 USER 楼，可单独开启；0 楼开场白始终保留原文。最近剧情请求只发送实际提取出的正文，不附加楼层标题或 `[Floor · role]` 包装。“外部记忆来源”是独立设置，显示 Anima、柏宝书和数据库记忆及其公开接口检测状态。最近剧情和外部来源不伪装成世界书条目，也不在本阶段进入 Tavern Context 注入。
 
 人物列表可以进入 Tracking Subject 的人物详情单页人物卡，详情只改变 UI focus，不改变 Chat Scope。人物卡按固定顺序同时显示：人物摘要（Summary）、生殖能力（Reproductive Capabilities）、当前状态（Current State）、受孕相关记录（Related Events）、推演（Projection）、关系（Relations）和备注（Notes）；这些是连续纵向 section，不是互斥 Tab。详情入口唯一门槛仍是当前 Chat 的 `tracking_subjects` 中存在对应 `character_id`，单独存在的 `character_profiles` 不会创建详情入口。
 
@@ -78,6 +78,6 @@ Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶�
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Characters、Events、Overview 都必须重新读取当前有效 Event 和 Registry；不存在事件的 Swipe 不得显示旧 Swipe 的人物或事件。
 
-Desktop / Tablet / Mobile 均提供主题切换按钮，可循环切换跟随酒馆、日、夜。主题使用 BioWeave CSS variables，选择持久化但不修改 SillyTavern 本身主题。
+Desktop / Tablet / Mobile 顶部右侧均提供图标主题按钮，可循环切换跟随酒馆、日、夜；图标分别为半明暗、太阳和月亮，当前主题文字只通过 aria-label / title 提示，不占用界面宽度。日间主题使用低亮度雾灰蓝配色，避免纯白刺眼；跟随酒馆调用 `--SmartThemeBlurTintColor`、`--SmartThemeBodyColor` 和 `--SmartThemeQuoteColor`，并保留 BioWeave 的语义色。主题使用 BioWeave CSS variables，选择持久化但不修改 SillyTavern 本身主题。
 
 Event 可编辑删除；Projection 仅删除。Phase 2A 业务页只允许使用真实 DTO 或明确 Empty State；现有路由壳未接入真实数据时，不得把 `demo-character-1` 或其它占位 DTO 当作当前 Chat 的人物、事件或总览统计，也不得写入 Chat。

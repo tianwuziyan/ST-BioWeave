@@ -785,14 +785,22 @@ test('settings page separates worldbook sources, recent story, and external memo
       ],
       openWorldbooks: ['st-worldbook:alpha'],
       openCharacterGroups: ['st-character-card:alice:opening'],
-      openAnalysisSections: ['character_card', 'worldbook'],
+      openAnalysisSections: ['character_card', 'selected_global', 'character', 'other'],
     },
   });
   assert.match(html, /世界书来源/);
-  assert.match(html, /data-bioweave-analysis-section="character_card" open/);
-  assert.match(html, /data-bioweave-analysis-section="worldbook" open/);
+  assert.match(html, /data-bioweave-analysis-section="character_card"[^>]* open/);
+  assert.match(html, /data-bioweave-analysis-section="selected_global"[^>]* open/);
+  assert.match(html, /data-bioweave-analysis-section="character"[^>]* open/);
+  assert.match(html, /data-bioweave-analysis-section="other"[^>]* open/);
+  assert.match(html, /data-bioweave-analysis-section-toggle="character_card"[^>]*aria-checked="mixed"/);
+  assert.match(html, /data-bioweave-analysis-section-source-ids="\[[^\]]*st-character-card:alice/);
+  assert.deepEqual(
+    [...html.matchAll(/data-bioweave-analysis-section="([^"]+)"/g)].map(match => match[1]),
+    ['character_card', 'selected_global', 'character', 'other'],
+  );
   assert.match(html, /附加角色世界书/);
-  assert.match(html, /当前开启的全局世界书/);
+  assert.match(html, /全局世界书/);
   assert.match(html, /角色描述/);
   assert.match(html, /data-bioweave-analysis-character-group="opening"[^>]* open/);
   assert.match(html, /data-bioweave-analysis-character-opening-toggle="st-character-card:alice"/);
@@ -816,12 +824,17 @@ test('settings page separates worldbook sources, recent story, and external memo
   const characterMarkerIndex = html.indexOf('class="bioweave-analysis-disclosure-marker"', characterGroupIndex);
   const characterToggleIndex = html.indexOf('data-bioweave-analysis-character-opening-toggle="st-character-card:alice"', characterGroupIndex);
   const characterNameIndex = html.indexOf('<strong>开场白</strong>', characterGroupIndex);
-  assert.ok(characterMarkerIndex < characterToggleIndex);
   assert.ok(characterToggleIndex < characterNameIndex);
-  const characterSectionStart = html.indexOf('<details class="bioweave-analysis-section" data-bioweave-analysis-section="character_card"');
-  const worldbookSectionStart = html.indexOf('<details class="bioweave-analysis-section" data-bioweave-analysis-section="worldbook"');
-  const characterSectionHtml = html.slice(characterSectionStart, worldbookSectionStart);
+  assert.ok(characterNameIndex < characterMarkerIndex);
+  const characterSectionStart = html.indexOf('data-bioweave-analysis-section="character_card"');
+  const globalSectionStart = html.indexOf('data-bioweave-analysis-section="selected_global"');
+  const characterSectionHtml = html.slice(characterSectionStart, globalSectionStart);
   assert.doesNotMatch(characterSectionHtml, /bioweave-analysis-source-card-heading/);
+  const globalSummaryStart = html.indexOf('<summary class="bioweave-analysis-section-summary">', globalSectionStart);
+  const globalSummaryEnd = html.indexOf('</summary>', globalSummaryStart);
+  const globalSummary = html.slice(globalSummaryStart, globalSummaryEnd);
+  assert.match(globalSummary, /<span class="bioweave-badge good">1\/2 项<\/span>/);
+  assert.ok(globalSummary.indexOf('bioweave-analysis-section-chevron') > globalSummary.indexOf('bioweave-badge good'));
   const worldbookIndex = html.indexOf('data-bioweave-analysis-source-row="st-worldbook:alpha"');
   const worldbookSummaryStart = html.indexOf('<summary class="bioweave-analysis-worldbook-summary">', worldbookIndex);
   const worldbookSummaryEnd = html.indexOf('</summary>', worldbookSummaryStart);
@@ -832,8 +845,8 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.ok(expandButtonIndex >= 0);
   assert.ok(worldbookToggleIndex >= 0);
   assert.ok(worldbookTitleIndex >= 0);
-  assert.ok(expandButtonIndex < worldbookToggleIndex);
   assert.ok(worldbookToggleIndex < worldbookTitleIndex);
+  assert.ok(worldbookTitleIndex < expandButtonIndex);
   const worldbookMetaStart = html.indexOf('<div class="bioweave-analysis-worldbook-meta">', worldbookIndex);
   const worldbookMetaEnd = html.indexOf('</div>', worldbookMetaStart);
   const worldbookMeta = html.slice(worldbookMetaStart, worldbookMetaEnd);
@@ -842,10 +855,10 @@ test('settings page separates worldbook sources, recent story, and external memo
   const worldbookMarkerIndex = html.indexOf('class="bioweave-analysis-disclosure-marker"', worldbookIndex);
   const worldbookNameIndex = html.indexOf('<strong>森林</strong>', worldbookIndex);
   assert.ok(worldbookMarkerIndex >= 0);
-  assert.ok(worldbookMarkerIndex < worldbookNameIndex);
   assert.ok(worldbookToggleIndex < worldbookNameIndex);
+  assert.ok(worldbookNameIndex < worldbookMarkerIndex);
   const linkedGroupIndex = html.indexOf('附加角色世界书');
-  const globalGroupIndex = html.indexOf('当前开启的全局世界书');
+  const globalGroupIndex = html.indexOf('全局世界书');
   assert.ok(globalGroupIndex < html.indexOf('森林'));
   assert.ok(html.indexOf('森林') < linkedGroupIndex);
   assert.ok(linkedGroupIndex < html.indexOf('角色书'));
@@ -875,12 +888,12 @@ test('settings page separates worldbook sources, recent story, and external memo
       }],
       selected: [{source_id: 'st-worldbook:alpha', entry_id: 'entry-1', enabled: true}],
       search: '条目 A',
-      openAnalysisSections: ['worldbook'],
+      openAnalysisSections: ['selected_global'],
       openWorldbooks: ['st-worldbook:alpha'],
     },
   });
   assert.match(searchedHtml, /data-bioweave-analysis-worldbook-toggle="st-worldbook:alpha"[^>]*aria-checked="mixed"/);
-  assert.match(searchedHtml, /class="bioweave-analysis-worldbook-meta">当前开启的全局世界书 · 2 个条目/);
+  assert.match(searchedHtml, /class="bioweave-analysis-worldbook-meta">全局世界书 · 2 个条目/);
   assert.equal(html.includes('data-bioweave-recent-story-enabled'), false);
   assert.match(html, /data-bioweave-recent-story-floor-count[^>]*value="20"/);
   assert.match(html, /外部记忆来源/);
@@ -892,7 +905,12 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.match(html, /select-all-analysis-sources/);
   assert.match(html, /select-none-analysis-sources/);
   assert.match(html, /<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-worldbook-source-disclosure"[^>]*data-bioweave-settings-disclosure="worldbook">/);
-  assert.match(html, /<summary class="bioweave-settings-summary">[\s\S]*?<strong>世界书来源<\/strong>[\s\S]*?bioweave-settings-summary-arrow/);
+  const settingsSummaryStart = html.indexOf('<summary class="bioweave-settings-summary">');
+  const settingsSummaryEnd = html.indexOf('</summary>', settingsSummaryStart);
+  const settingsSummary = html.slice(settingsSummaryStart, settingsSummaryEnd);
+  assert.ok(settingsSummary.indexOf('bioweave-settings-summary-arrow') < settingsSummary.indexOf('<strong>世界书来源</strong>'));
+  assert.ok(settingsSummary.indexOf('bioweave-settings-summary-status') > settingsSummary.indexOf('<small>选择角色卡字段和世界书条目作为分析输入</small>'));
+  assert.match(settingsSummary, /bioweave-settings-summary-status good">4 项已选/);
   assert.match(html, /data-bioweave-analysis-prompt-settings/);
   assert.match(html, /按规则提取与清洗/);
   assert.match(html, /data-bioweave-action="add-recent-story-regex"/);
@@ -929,7 +947,7 @@ test('settings source operations do not render a page notice, while preview erro
   assert.match(previewHtml, /class="bioweave-settings-notice" role="status">分析输入预览读取失败。/);
 });
 
-test('settings categories reuse the recent story disclosure shell and right-side arrows', () => {
+test('settings categories reuse the compact disclosure shell with left arrows and right status badges', () => {
   const html = settingsPage({
     worldbookSources: {
       openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'analysis_prompt', 'api', 'assignments'],
@@ -943,8 +961,10 @@ test('settings categories reuse the recent story disclosure shell and right-side
   for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '分析提示词', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
-  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 5);
-  assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 6);
+  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 6);
+  assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 0);
+  assert.match(html, /bioweave-settings-summary-status">0\/3 可用/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-summary-arrow/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-disclosure > \.bioweave-card > header/);
 });
@@ -976,21 +996,22 @@ test('character-card-owned worldbook stays inside the character card section', (
     worldbookSources: {
       sources,
       visibleSources: sources,
-      openAnalysisSections: ['character_card', 'worldbook'],
+      openAnalysisSections: ['character_card', 'selected_global', 'character', 'other'],
     },
   });
   const characterSectionIndex = html.indexOf('data-bioweave-analysis-section="character_card"');
-  const worldbookSectionIndex = html.indexOf('data-bioweave-analysis-section="worldbook"');
+  const globalSectionIndex = html.indexOf('data-bioweave-analysis-section="selected_global"');
+  const characterWorldbookSectionIndex = html.indexOf('data-bioweave-analysis-section="character"');
   const ownedWorldbookIndex = html.indexOf('data-bioweave-analysis-source-row="st-worldbook:card-owned"');
   const additionalWorldbookIndex = html.indexOf('data-bioweave-analysis-source-row="st-worldbook:additional"');
   const additionalGroupIndex = html.indexOf('附加角色世界书');
 
   assert.ok(characterSectionIndex >= 0);
-  assert.ok(worldbookSectionIndex > characterSectionIndex);
+  assert.ok(globalSectionIndex > characterSectionIndex);
   assert.ok(ownedWorldbookIndex > characterSectionIndex);
-  assert.ok(ownedWorldbookIndex < worldbookSectionIndex);
+  assert.ok(ownedWorldbookIndex < globalSectionIndex);
   assert.ok(additionalGroupIndex < additionalWorldbookIndex);
-  assert.ok(additionalWorldbookIndex > worldbookSectionIndex);
+  assert.ok(additionalWorldbookIndex > characterWorldbookSectionIndex);
   assert.match(html, /<strong>角色卡内嵌世界书<\/strong>/);
   assert.match(html, /<strong>附加世界书<\/strong>/);
 });
@@ -1019,7 +1040,7 @@ test('settings page renders exactly the three runtime worldbook groups and omits
       openAnalysisSections: ['worldbook'],
     },
   });
-  const globalGroupIndex = html.indexOf('当前开启的全局世界书');
+  const globalGroupIndex = html.indexOf('全局世界书');
   const characterGroupIndex = html.indexOf('附加角色世界书');
   const otherGroupIndex = html.indexOf('其他世界书');
   assert.ok(globalGroupIndex >= 0);
@@ -1553,20 +1574,19 @@ test('recent story settings exposes ordered regex rule controls', () => {
   assert.match(html, /type="number" min="0" max="1000"[^>]*data-bioweave-recent-story-floor-count/);
   assert.equal(html.includes('bioweave-recent-story-summary-icon'), false);
   assert.equal(html.includes('bioweave-recent-story-card-icon'), false);
-  assert.match(html, /bioweave-recent-story-regex-table-head/);
-  assert.equal((html.match(/>#</g) ?? []).length, 2);
+  assert.doesNotMatch(html, /bioweave-recent-story-regex-table-head/);
+  assert.equal((html.match(/>#</g) ?? []).length, 0);
   assert.match(html, /bioweave-recent-story-regex-index[^>]*data-label="#">1<\/div>/);
-  assert.equal((html.match(/>类型</g) ?? []).length, 2);
+  assert.equal((html.match(/>类型</g) ?? []).length, 0);
   assert.match(html, /data-bioweave-action="move-recent-story-regex-up"/);
   assert.match(html, /data-bioweave-action="move-recent-story-regex-down"/);
   assert.match(html, /data-bioweave-action="remove-recent-story-regex"/);
 });
 
-test('recent story regex table keeps a centered header and one-line mobile rows', () => {
+test('recent story regex rows keep the compact one-line mobile layout', () => {
   assert.match(STYLE_SOURCE, /\.bioweave-recent-story-regex-table\s*\{[^}]*overflow-x:\s*auto/);
-  assert.match(STYLE_SOURCE, /\.bioweave-recent-story-regex-table-head\s*\{[^}]*font-weight:\s*600[^}]*text-align:\s*center/);
   assert.match(STYLE_SOURCE, /\/\* 手机端保持规则表格单行/);
-  assert.match(STYLE_SOURCE, /\.bioweave-recent-story-regex-table-head,\s*\.bioweave-recent-story-regex-row\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*grid-template-columns:/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-recent-story-regex-row\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*grid-template-columns:/s);
   assert.match(STYLE_SOURCE, /\.bioweave-recent-story-regex-pattern \.bioweave-input\s*\{[^}]*min-height:\s*32px/);
   assert.match(STYLE_SOURCE, /\.bioweave-recent-story-count\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(64px,\s*76px\)\s+auto/);
   assert.match(STYLE_SOURCE, /\.bioweave-recent-story-order-action span,\s*\.bioweave-recent-story-delete-action span\s*\{[^}]*display:\s*none/s);

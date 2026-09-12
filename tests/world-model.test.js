@@ -2668,10 +2668,10 @@ test('World Model prompt requires Chinese string values and human type names', (
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|Homo sapiens|极少女剑灵/);
 });
 
-test('settings keeps debug behind the title action and leaves no standalone preview disclosure', () => {
+test('settings keeps debug in the analysis prompt body and leaves no standalone preview disclosure', () => {
   const html = settingsPage({});
   assert.match(html, /data-bioweave-action="open-analysis-debug"/);
-  assert.match(html, /data-bioweave-settings-disclosure="analysis_prompt"[\s\S]*?<summary class="bioweave-settings-summary">[\s\S]*?<strong>分析提示词<\/strong>[\s\S]*?data-bioweave-action="open-analysis-debug"/);
+  assert.match(html, /data-bioweave-settings-disclosure="analysis_prompt"[\s\S]*?<strong>分析提示词<\/strong>[\s\S]*?<section class="bioweave-card bioweave-analysis-prompt-settings"[\s\S]*?data-bioweave-action="open-analysis-debug"/);
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
 });
 
@@ -2960,14 +2960,19 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(html, /来源：<\/strong>角色卡 · 1 本世界书/);
   assert.doesNotMatch(html, /角色卡 1 项|条目|令牌|最后保存|AI 分析/);
   assert.match(html, /物种与生物类型/);
-  assert.match(html, /当前世界中已识别的物种及其生物类型/);
+  assert.match(html, /先选物种，再查看对应的生物类型/);
   assert.match(html, /bioweave-world-model-content-grid/);
+  assert.match(html, /bioweave-world-model-species-grid/);
+  assert.match(html, /bioweave-world-model-type-grid/);
+  assert.doesNotMatch(html, /bioweave-world-model-type-selector/);
   assert.match(html, /bioweave-world-model-module-grid/);
   assert.match(html, /bioweave-world-model-world-stack/);
   assert.match(html, /潮汐生物/);
   assert.match(html, /潮汐生物型/);
+  assert.match(html, /1 个类型 · 潮汐生物型/);
+  assert.match(html, /3\/5 项能力已知 · 妊娠未知/);
   assert.match(html, /生物类型详情/);
-  assert.match(html, /切换类型/);
+  assert.doesNotMatch(html, /切换类型/);
   assert.match(html, /生殖能力/);
   assert.match(html, /可承担妊娠/);
   assert.match(html, /医疗与照护/);
@@ -2993,9 +2998,9 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
       ...modelFixture.species[0],
       name: '人类',
       biological_types: [
-        typeFixture('男性'),
-        typeFixture('女性'),
-        typeFixture('双性'),
+        typeFixture('潮汐生物型'),
+        typeFixture('甲型'),
+        typeFixture('穗核型'),
         typeFixture('Alpha'),
         typeFixture('Beta'),
         typeFixture('Omega'),
@@ -3005,15 +3010,12 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   const visibleTypesHtml = worldPage({worldModel: visibleTypesModel});
   assert.equal((visibleTypesHtml.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 6);
   assert.equal((visibleTypesHtml.match(/<section class="[^"]*bioweave-world-model-type-detail[^"]*">/g) ?? []).length, 1);
-  assert.match(visibleTypesHtml, />男性<\/button>/);
-  assert.match(visibleTypesHtml, />女性<\/button>/);
-  assert.match(visibleTypesHtml, />双性<\/button>/);
-  assert.match(visibleTypesHtml, />Alpha<\/button>/);
-  assert.match(visibleTypesHtml, />Beta<\/button>/);
-  assert.match(visibleTypesHtml, />Omega<\/button>/);
+  for (const typeName of ['潮汐生物型', '甲型', '穗核型', 'Alpha', 'Beta', 'Omega']) {
+    assert.match(visibleTypesHtml, new RegExp(`<b>${typeName}</b>`));
+  }
 });
 
-test('World UI Fixture A keeps one species, two types, descriptions, fixed fields, and exception labels', () => {
+test('World UI Fixture A keeps one species, two types, card summaries, fixed fields, and exception labels', () => {
   assert.equal(fixtureA.species.length, 1);
   assert.equal(fixtureA.species[0].biological_types.length, 2);
   assert.deepEqual(Object.keys(fixtureA.species[0].biological_types[0].capabilities).sort(), [
@@ -3038,10 +3040,11 @@ test('World UI Fixture A keeps one species, two types, descriptions, fixed field
     selectedSpeciesIndex: 0,
     selectedTypeIndex: 0,
   });
-  assert.match(firstTypeHtml, /Fixture A 物种描述。/);
-  assert.match(firstTypeHtml, /第二行仍然可读。/);
+  assert.match(firstTypeHtml, /2 个类型 · Fixture A 类型一 \/ Fixture A 类型二/);
+  assert.doesNotMatch(firstTypeHtml, /Fixture A 物种描述。|第二行仍然可读。/);
   assert.match(firstTypeHtml, /Fixture A 类型一描述。/);
   assert.match(firstTypeHtml, /类型说明第二行。/);
+  assert.match(firstTypeHtml, /4\/5 项能力已知 · 不可承担妊娠/);
   assert.match(firstTypeHtml, /Fixture A 受精方式|Fixture A 妊娠方式|Fixture A 生理周期/);
   assert.match(firstTypeHtml, /Fixture A 排卵机制|Fixture A 妊娠周期|Fixture A 分娩方式/);
   assert.match(firstTypeHtml, /Fixture A 成熟|Fixture A 衰老|Fixture A 特殊规则/);
@@ -3053,9 +3056,9 @@ test('World UI Fixture A keeps one species, two types, descriptions, fixed field
   assert.equal((firstTypeHtml.match(/适用对象：/g) ?? []).length, 1);
   assert.equal((firstTypeHtml.match(/依据：/g) ?? []).length, 1);
   assert.match(firstTypeHtml, /Fixture A 尚未确定项/);
-  assert.match(firstTypeHtml, />是<\/dd>/);
-  assert.match(firstTypeHtml, />否<\/dd>/);
-  assert.match(firstTypeHtml, />未知<\/dd>/);
+  assert.match(firstTypeHtml, /<dd[^>]*>是<\/dd>/);
+  assert.match(firstTypeHtml, /<dd[^>]*>否<\/dd>/);
+  assert.match(firstTypeHtml, /<dd[^>]*>未知<\/dd>/);
 
   const secondTypeHtml = worldPage({
     worldModel: fixtureA,
@@ -3068,7 +3071,7 @@ test('World UI Fixture A keeps one species, two types, descriptions, fixed field
   assert.doesNotMatch(secondTypeHtml, /适用对象：<\/small>|依据：<\/small>/);
 });
 
-test('World UI Fixture B maps four species and all dynamic type descriptions', () => {
+test('World UI Fixture B maps four species and dynamic card summaries', () => {
   assert.equal(fixtureB.species.length, 4);
   assert.deepEqual(fixtureB.species.map(species => species.biological_types.length), [2, 1, 0, 3]);
 
@@ -3077,16 +3080,22 @@ test('World UI Fixture B maps four species and all dynamic type descriptions', (
     selectedSpeciesIndex: 3,
     selectedTypeIndex: 2,
   });
-  assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 6);
+  assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 3);
   for (const species of fixtureB.species) {
     assert.match(html, new RegExp(species.name));
-    assert.match(html, new RegExp(species.description));
-    for (const type of species.biological_types) {
+    const typeNames = species.biological_types.map(type => type.name).join(' / ');
+    assert.match(html, new RegExp(`${species.biological_types.length} 个类型 · ${typeNames || '未知'}`));
+    for (const type of species === fixtureB.species[3] ? species.biological_types : []) {
       assert.match(html, new RegExp(type.name));
     }
   }
   assert.match(html, /Fixture B 类型四丙描述。/);
-  assert.match(html, /尚未识别出生物类型/);
+  const emptySpeciesHtml = worldPage({
+    worldModel: fixtureB,
+    selectedSpeciesIndex: 2,
+    selectedTypeIndex: 0,
+  });
+  assert.match(emptySpeciesHtml, /尚未识别出生物类型/);
   assert.match(html, /<h3 class="bioweave-world-model-module-title">特殊例外<\/h3>/);
   assert.match(html, /<h3 class="bioweave-world-model-module-title">尚未确定<\/h3>/);
   assert.match(html, /<p class="bioweave-empty">未知<\/p>/);
@@ -3123,12 +3132,81 @@ test('World UI Fixture B maps four species and all dynamic type descriptions', (
   }
 });
 
-test('World UI description CSS keeps type and mobile species descriptions visible', () => {
-  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-description\s*\{[^}]*white-space:\s*pre-wrap[^}]*overflow-wrap:\s*anywhere/s);
-  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-detail\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*block[^}]*max-height:\s*none[^}]*overflow:\s*visible/s);
-  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-card\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*-webkit-box/s);
-  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-world-model(?:-page\s+)?(?:\.bioweave-world-model-)?type-detail\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*none/s);
-  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-world-model(?:-page\s+)?\.bioweave-world-model-species-card\s*>\s*\.bioweave-world-model-description\s*\{[^}]*display:\s*none/s);
+test('World UI card CSS keeps the reference density across devices', () => {
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-card\s*\{[^}]*min-height:\s*72px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(150px,\s*1fr\)\)/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-button\s*\{[^}]*min-height:\s*56px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-sections\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-sections \.bioweave-world-model-property\s*\{[^}]*grid-template-columns:\s*minmax\(118px,\s*max-content\)\s*minmax\(0,\s*1fr\)\s*!important/s);
+  assert.match(STYLE_SOURCE, /@media\s*\(min-width:\s*1200px\)[\s\S]*?\.bioweave-world-model-page \.bioweave-world-model-content-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*6fr\)\s*minmax\(0,\s*4fr\)\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-selector > \.bioweave-world-model-section-heading\s*\{[^}]*margin:\s*0 0 5px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-picker-head\s*\{[^}]*margin-top:\s*5px\s*!important;[^}]*padding-top:\s*5px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-card-head b\s*\{[^}]*font-size:\s*15px\s*!important/s);
+  assert.match(STYLE_SOURCE, /data-bioweave-world-section="medical_context"\]\s*\.bioweave-world-model-property\s*\{[^}]*grid-template-columns:\s*minmax\(92px,\s*max-content\)\s*minmax\(0,\s*1fr\)\s*!important;[^}]*gap:\s*5px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-property dd\.bioweave-world-model-value-good,[\s\S]*?padding-right:\s*8px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-capability-check\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*16px\s*!important/s);
+  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-card-summary\s*,[^}]*\{[^}]*display:\s*block\s*!important/s);
+  assert.match(STYLE_SOURCE, /@media\s*\(max-width:\s*767px\)[\s\S]*?\.bioweave-world-model-page \.bioweave-world-model-card-summary\s*\{[^}]*display:\s*none\s*!important/s);
+});
+
+test('World Model type cards keep Runtime order after selecting a later type', () => {
+  const html = worldPage({
+    worldModel: fixtureB,
+    selectedSpeciesIndex: 3,
+    selectedTypeIndex: 2,
+  });
+  const positions = [0, 1, 2].map(index => html.indexOf(`data-bioweave-world-type-index="${index}"`));
+  assert.ok(positions.every(position => position >= 0));
+  assert.deepEqual(positions, [...positions].sort((left, right) => left - right));
+  assert.match(html, /data-bioweave-world-type-index="2"[^>]*aria-pressed="true"/);
+});
+
+test('World Model cards render arbitrary Runtime types and derive pregnancy only from capabilities', () => {
+  const runtimeModel = {
+    ...fixtureB,
+    species: [{
+      ...fixtureB.species[0],
+      name: '运行时物种',
+      biological_types: [
+        structuredFixtureType('Gamma', null, {
+          capabilities: {
+            can_produce_sperm: true,
+            can_produce_ova: true,
+            can_be_fertilized: true,
+            can_fertilize: true,
+            can_carry_pregnancy: false,
+          },
+        }),
+        structuredFixtureType('Delta', null, {
+          capabilities: {
+            can_produce_sperm: true,
+            can_produce_ova: true,
+            can_be_fertilized: true,
+            can_fertilize: true,
+            can_carry_pregnancy: true,
+          },
+        }),
+        structuredFixtureType('Epsilon', null, {
+          capabilities: {
+            can_produce_sperm: null,
+            can_produce_ova: null,
+            can_be_fertilized: null,
+            can_fertilize: null,
+            can_carry_pregnancy: null,
+          },
+        }),
+      ],
+    }],
+  };
+  const html = worldPage({worldModel: runtimeModel, selectedSpeciesIndex: 0, selectedTypeIndex: 1});
+
+  assert.match(html, /3 个类型 · Gamma \/ Delta \/ Epsilon/);
+  assert.match(html, /<b>Gamma<\/b>[\s\S]*?5\/5 项能力已知 · 不可承担妊娠/);
+  assert.match(html, /<b>Delta<\/b>[\s\S]*?5\/5 项能力已知 · 可承担妊娠/);
+  assert.match(html, /<b>Epsilon<\/b>[\s\S]*?0\/5 项能力已知 · 妊娠未知/);
+  assert.doesNotMatch(html, /<b>男性<\/b>|<b>女性<\/b>/);
+  assert.match(html, /data-bioweave-world-type-index="1"[^>]*aria-pressed="true"/);
 });
 
 test('World Model page keeps the main source summary compact and filters unused sources', () => {
@@ -3222,8 +3300,32 @@ test('World Model UI renders Human and an original species through the same rend
   assert.match(html, /男性/);
   assert.match(html, /女性/);
   assert.match(html, /镜生体/);
-  assert.match(html, /甲型/);
-  assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 3);
+  assert.equal((html.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 2);
+
+  const originalSpeciesHtml = worldPage({
+    worldModel: {
+      schema_version: 1,
+      species: [
+        {
+          name: '人类',
+          description: '普通人类。',
+          biological_types: [typeFixture('男性'), typeFixture('女性')],
+        },
+        {
+          name: '镜生体',
+          description: '原创物种。',
+          biological_types: [typeFixture('甲型')],
+        },
+      ],
+      medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+      exceptions: [],
+      unknowns: [],
+    },
+    selectedSpeciesIndex: 1,
+    selectedTypeIndex: 0,
+  });
+  assert.match(originalSpeciesHtml, /甲型/);
+  assert.equal((originalSpeciesHtml.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 1);
 });
 
 test('World Model page keeps the analysis input action without an embedded preview', () => {
@@ -3269,9 +3371,11 @@ test('World UI uses seven independent section editors and keeps the global edito
   assert.match(editingHtml, /data-bioweave-world-section="capabilities"/);
   assert.match(editingHtml, /data-bioweave-action="world-model-cancel-section"/);
   assert.match(editingHtml, /data-bioweave-action="world-model-save-section"/);
-  assert.match(editingHtml, />是<\/option>/);
-  assert.match(editingHtml, />否<\/option>/);
-  assert.match(editingHtml, />未知<\/option>/);
+  assert.match(editingHtml, /bioweave-world-model-capability-input/);
+  assert.match(editingHtml, /data-bioweave-world-capability-state="true"[^>]*checked/);
+  assert.match(editingHtml, /data-bioweave-world-capability-state="false"/);
+  assert.match(editingHtml, /data-bioweave-world-capability-state="unknown"[^>]*aria-checked="mixed"/);
+  assert.doesNotMatch(editingHtml, /<select[^>]*data-bioweave-world-section-field/);
   assert.equal((editingHtml.match(/data-bioweave-action="world-model-edit-section"/g) ?? []).length, 6);
 });
 

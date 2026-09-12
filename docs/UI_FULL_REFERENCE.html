@@ -22,9 +22,80 @@
       --good: #7bd5ae;
       --warn: #f1be72;
       --danger: #f08e98;
+      --panel-border: #42545e;
+      --header: #19232a;
+      --routebar: #141d23;
+      --hover: #1a2830;
+      --card: #1a252c;
+      --card-selected: #203744;
+      --control-surface: #162129;
+      --input-bg: #141d23;
+      --primary-border: #5f9cc0;
+      --danger-border: #774852;
+      --indent-line: #465862;
       --radius: 10px;
       --panel-width: 960px;
       --panel-height: 760px;
+    }
+
+    body[data-theme="light"], .panel[data-theme="light"] {
+      color-scheme: light;
+      --host: #cbd6db;
+      --host-soft: #d3dfe4;
+      --panel: #dbe4e8;
+      --panel-raised: #e5ecef;
+      --panel-soft: #d3dfe4;
+      --text: #1b2a33;
+      --text-2: #3c4d56;
+      --muted: #61727c;
+      --line: #8fa2ac;
+      --line-soft: #b9c8cf;
+      --accent: #356f91;
+      --accent-soft: #c9dde6;
+      --good: #2b755d;
+      --warn: #86651f;
+      --danger: #a44852;
+      --panel-border: #7e949f;
+      --header: #d4dfe3;
+      --routebar: #cbd8de;
+      --hover: #d8e5e9;
+      --card: #e1e9ec;
+      --card-selected: #cbdfe8;
+      --control-surface: #d5e1e5;
+      --input-bg: #d9e4e8;
+      --primary-border: #5b8aa0;
+      --danger-border: #a44852;
+      --indent-line: #a8bac3;
+    }
+
+    body[data-theme="tavern"], .panel[data-theme="tavern"] {
+      color-scheme: light dark;
+      --host: var(--SmartThemeBlurTintColor, #202a31);
+      --host-soft: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 92%, var(--SmartThemeBodyColor, #e8eef2) 8%);
+      --panel: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
+      --panel-raised: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
+      --panel-soft: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 74%, var(--SmartThemeBodyColor, #e8eef2) 26%);
+      --text: var(--SmartThemeBodyColor, #e8eef2);
+      --text-2: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 78%, var(--SmartThemeBlurTintColor, #202a31) 22%);
+      --muted: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 62%, var(--SmartThemeBlurTintColor, #202a31) 38%);
+      --line: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 24%, var(--SmartThemeBlurTintColor, #202a31) 76%);
+      --line-soft: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 16%, var(--SmartThemeBlurTintColor, #202a31) 84%);
+      --accent: var(--SmartThemeQuoteColor, #4f91b6);
+      --accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%);
+      --good: #3b8b6d;
+      --warn: #a7792b;
+      --danger: #b45d67;
+      --panel-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%);
+      --header: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
+      --routebar: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 84%, var(--SmartThemeBodyColor, #10171c) 16%);
+      --hover: var(--accent-soft);
+      --card: var(--panel-raised);
+      --card-selected: var(--accent-soft);
+      --control-surface: var(--panel-raised);
+      --input-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
+      --primary-border: var(--SmartThemeQuoteColor, #5f9bbd);
+      --danger-border: #b45d67;
+      --indent-line: var(--line);
     }
 
     * { box-sizing: border-box; }
@@ -33,7 +104,7 @@
       min-height: 100vh;
       overflow: hidden;
       background:
-        radial-gradient(circle at 20% 15%, #1c2b35 0, transparent 34%),
+        radial-gradient(circle at 20% 15%, color-mix(in srgb, var(--accent) 20%, transparent) 0, transparent 34%),
         linear-gradient(140deg, var(--host-soft), var(--host));
       color: var(--text);
       font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -49,7 +120,7 @@
       display: grid;
       grid-template-rows: 50px 42px minmax(0, 1fr);
       overflow: hidden;
-      border: 1px solid #42545e;
+      border: 1px solid var(--panel-border);
       border-radius: 13px;
       background: var(--panel);
       box-shadow: 0 18px 60px rgb(0 0 0 / 42%);
@@ -62,7 +133,7 @@
       min-width: 0;
       padding: 0 16px;
       border-bottom: 1px solid var(--line);
-      background: #19232a;
+      background: var(--header);
     }
     .brand { font-size: 16px; font-weight: 700; white-space: nowrap; }
     .scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
@@ -75,6 +146,8 @@
       padding: 6px 8px;
     }
     .header-button:hover, .close-button:hover { color: var(--text); background: var(--accent-soft); border-radius: 6px; }
+    .theme-button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; font-size: 16px; }
+    .theme-icon { display: block; line-height: 1; }
     .close-button { font-size: 18px; line-height: 1; }
 
     .routebar {
@@ -84,7 +157,7 @@
       padding: 0 10px;
       overflow-x: auto;
       border-bottom: 1px solid var(--line);
-      background: #141d23;
+      background: var(--routebar);
     }
     .desktop-route-items { display: flex; align-items: stretch; gap: 2px; }
     .routebar button {
@@ -95,9 +168,10 @@
       background: transparent;
       color: var(--muted);
       padding: 0 11px;
+      font-size: 14px;
       white-space: nowrap;
     }
-    .routebar button:hover { color: var(--text); background: #1a2830; }
+    .routebar button:hover { color: var(--text); background: var(--hover); }
     .routebar button.active { border-bottom-color: var(--accent); color: var(--accent); }
 
     .main { min-height: 0; overflow: auto; padding: 16px 18px 20px; }
@@ -120,8 +194,8 @@
       padding: 5px 10px;
     }
     .button:hover { border-color: var(--accent); color: var(--text); }
-    .button.primary { border-color: #5f9cc0; background: var(--accent-soft); color: var(--accent); }
-    .button.danger { border-color: #774852; color: var(--danger); }
+    .button.primary { border-color: var(--primary-border); background: var(--accent-soft); color: var(--accent); }
+    .button.danger { border-color: var(--danger-border); color: var(--danger); }
     .text-button { border: 0; background: transparent; color: var(--accent); padding: 5px 0; }
 
     .surface { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-raised); }
@@ -153,8 +227,8 @@
     .row .row-main b { flex: 0 0 auto; max-width: 40%; }
     .row .row-main span { min-width: 0; margin-top: 0; color: var(--muted); font-size: 12px; }
     .row-value { flex: 0 0 auto; color: var(--text-2); text-align: right; }
-    .row-value.good { color: var(--good); }
-    .row-value.warn { color: var(--warn); }
+    .row-value.good { box-sizing: border-box; padding-right: 8px; color: var(--good); }
+    .row-value.warn { box-sizing: border-box; padding-right: 8px; color: var(--warn); }
     .badge { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-2); font-size: 12px; white-space: nowrap; }
     .badge.good { border-color: #426e5a; color: var(--good); }
     .badge.warn { border-color: #765d38; color: var(--warn); }
@@ -163,7 +237,7 @@
     .empty strong { display: block; margin-bottom: 5px; color: var(--text-2); font-size: 15px; }
 
     .character-list, .event-list, .task-list { display: grid; gap: 4px; }
-    .entity-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 8px; background: #1a252c; }
+    .entity-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card); }
     .entity-row:hover { border-color: var(--accent); }
     .entity-copy { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     .entity-copy b { flex: 0 0 auto; }
@@ -178,30 +252,33 @@
     .world-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
     .world-picker { margin-bottom: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-raised); }
     .world-picker-head, .type-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .world-picker-head { margin-bottom: 7px; }
+    .world-picker-head { margin-bottom: 5px; }
     .world-picker-head p, .type-picker-head p { margin-top: 2px; color: var(--muted); font-size: 12px; }
     .species-grid, .type-grid { display: grid; gap: 8px; }
     .species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .type-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 6px; }
-    .world-card, .type-card { min-width: 0; border: 1px solid var(--line-soft); border-radius: 9px; background: #1a252c; color: var(--text); text-align: left; transition: border-color .15s, background .15s; }
+    .type-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 4px; }
+    .world-card, .type-card { min-width: 0; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--card); color: var(--text); text-align: left; transition: border-color .15s, background .15s; }
     .world-card { min-height: 72px; padding: 10px 12px; }
     .type-card { min-height: 56px; padding: 8px 10px; }
     .world-card:hover, .type-card:hover { border-color: var(--accent); }
-    .world-card.selected, .type-card.selected { border-color: var(--accent); background: #203744; box-shadow: inset 0 0 0 1px rgb(131 199 239 / 20%); }
+    .world-card.selected, .type-card.selected { border-color: var(--accent); background: var(--card-selected); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
     .world-card-head, .type-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     .world-card b { display: block; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-    .type-card b { display: block; overflow: hidden; color: var(--text-2); font-size: 14px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+    .type-card b { display: block; overflow: hidden; color: var(--text-2); font-size: 15px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
     .world-card small, .type-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .world-card-mark { color: var(--accent); font-size: 11px; }
-    .type-picker-head { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+    .type-picker-head { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line-soft); }
     .type-picker-head h3 { color: var(--text-2); font-size: 13px; }
     .field { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
-    select, input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: #141d23; padding: 8px 9px; }
+    select, input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--input-bg); padding: 8px 9px; }
     .settings-group select, .settings-group select option { font-size: 11px; }
     .settings-group select { padding: 5px 7px; }
     .world-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
     .world-title b { display: block; font-size: 18px; }
     .world-title p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .world-content-grid { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 4fr); gap: 8px; padding-top: 2px; }
+    .world-detail-column, .world-rules-column { min-width: 0; }
+    .world-rules-column > .surface { height: 100%; }
     .world-detail-list { display: grid; padding-top: 2px; }
     .world-module { padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
     .world-module:last-child { border-bottom: 0; }
@@ -210,12 +287,13 @@
     .world-module-head small { max-width: 42%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
     .world-module-body { margin-top: 3px; }
     .kv { display: grid; }
-    .kv div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
+    .kv div { display: grid; grid-template-columns: minmax(118px, max-content) minmax(0, 1fr); gap: 6px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
+    .world-rules-column .kv div { grid-template-columns: minmax(92px, max-content) minmax(0, 1fr); gap: 5px; }
     .kv dt { color: var(--text-2); }
-    .kv dd { margin: 0; color: var(--muted); }
+    .kv dd { margin: 0; color: var(--muted); text-align: left; }
     .compact-note { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0 0; color: var(--muted); font-size: 12px; }
     .compact-note strong { color: var(--warn); }
-    .edit-panel { margin: 8px 0 2px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #172229; }
+    .edit-panel { margin: 8px 0 2px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
     .world-card-editor { display: grid; gap: 10px; }
     .world-editor-block { padding-top: 9px; border-top: 1px solid var(--line-soft); }
     .world-editor-block h3 { margin-bottom: 5px; color: var(--text-2); font-size: 13px; }
@@ -229,38 +307,39 @@
     .check-row input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--accent); }
     .switch { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; cursor: pointer; }
     .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-    .switch-track { display: inline-flex; align-items: center; width: 36px; height: 21px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: #121a20; transition: background .15s, border-color .15s; }
+    .switch-track { display: inline-flex; align-items: center; width: 36px; height: 21px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--control-surface); transition: background .15s, border-color .15s; }
     .switch-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
-    .switch input:checked + .switch-track { border-color: #5f9cc0; background: var(--accent-soft); }
-    .switch input:checked + .switch-track .switch-thumb { background: var(--accent); transform: translateX(15px); }
+    .switch input:checked + .switch-track { border-color: var(--primary-border); background: var(--accent-soft); }
+    .switch input:checked + .switch-track .switch-thumb { background: var(--accent); transform: none; }
     .inline-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
     .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
     .edit-grid .full { grid-column: 1 / -1; }
     .status-note { margin-left: auto; color: var(--good); font-size: 11px; }
 
     .settings-list { display: grid; gap: 7px; }
-    .settings-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border: 1px solid var(--line-soft); border-radius: 8px; background: #1a252c; }
+    .settings-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card); }
     .settings-item p { margin-top: 3px; color: var(--muted); font-size: 12px; }
     .settings-item.active { border-color: var(--accent); }
     .field-inline { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
     .field-inline select { width: auto; min-width: 82px; padding: 5px 7px; }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
     .form-grid .full { grid-column: 1 / -1; }
-    .settings-groups { display: grid; gap: 8px; }
-    .settings-group { overflow: hidden; border: 1px solid #30414a; border-radius: var(--radius); background: #151f25; }
-    .settings-group-head { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 7px 12px; background: #1a272e; }
+    .settings-groups { display: grid; gap: 3px; }
+    .settings-group { overflow: hidden; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--panel); }
+    .settings-group-head { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 7px 12px; background: var(--header); }
     .settings-group-head > .badge { flex: 0 0 auto; }
-    .settings-group.expanded .settings-group-head { border-left: 3px solid var(--accent); background: #263740; padding-left: 9px; }
+    .settings-group.expanded .settings-group-head { border-left: 3px solid var(--accent); background: var(--card-selected); padding-left: 9px; }
     .settings-toggle { display: flex; align-items: center; flex: 1; gap: 9px; min-width: 0; border: 0; background: transparent; color: var(--text); text-align: left; }
     .settings-toggle:hover { color: var(--accent); }
     .settings-chevron { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 5px; color: var(--accent); font-size: 15px; line-height: 1; }
     .settings-toggle-copy { min-width: 0; }
     .settings-toggle-copy b, .settings-toggle-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .settings-toggle-copy b { font-size: 15px; line-height: 1.35; }
-    .settings-toggle-copy small { margin-top: 3px; color: #a5b4bb; font-size: 11px; }
-    .settings-group-body { padding: 0 13px 12px; border-top: 1px solid #3b4d56; background: #1d2a31; }
+    .settings-toggle-copy small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .settings-group-body { padding: 0 13px 12px; border-top: 1px solid var(--line); background: var(--panel-raised); }
     .settings-group-body .field, .settings-group-body .setting-grid, .settings-group-body select { min-width: 0; }
     .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding-top: 11px; }
+    .recent-story-read-options { align-items: center; }
     .setting-grid .full { grid-column: 1 / -1; }
     .setting-note { margin-top: 9px; color: var(--muted); font-size: 11px; }
     .settings-group .control-list, .settings-group .check-list { padding-top: 4px; }
@@ -272,28 +351,30 @@
     .settings-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 9px; padding-top: 11px; }
     .settings-toolbar .field { min-width: 180px; flex: 1; }
     .settings-toolbar-actions, .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-    .api-profile-panel { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
-    .api-profile-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: #1a252c; }
-    .api-profile-row .row-main small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
-    .api-profile-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+    .api-profile-panel { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+    .api-profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 32px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); background: transparent; }
+    .api-profile-row .row-main { min-width: 0; }
+    .api-profile-row .row-main b { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .api-profile-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+    .api-profile-actions .button { min-height: 25px; padding: 3px 7px; font-size: 11px; }
     .profile-status { margin-top: 8px; color: var(--good); font-size: 11px; }
     .radio-list { display: grid; gap: 7px; padding-top: 11px; }
-    .radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #1a252c; }
-    .radio-option:has(input:checked) { border-color: var(--accent); background: #203744; }
+    .radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card); }
+    .radio-option:has(input:checked) { border-color: var(--accent); background: var(--card-selected); }
     .radio-option input { width: auto; flex: 0 0 auto; margin-top: 3px; accent-color: var(--accent); }
     .radio-option strong, .radio-option small { display: block; }
     .radio-option small { margin-top: 2px; color: var(--muted); font-size: 11px; }
     .source-list, .regex-list, .memory-list { display: grid; gap: 6px; padding-top: 11px; }
-    .source-row, .memory-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 39px; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: #1a252c; }
+    .source-row, .memory-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 39px; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--card); }
     .source-row > label, .memory-row > label { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
     .source-row input, .memory-row input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); }
     .source-row strong, .source-row small, .memory-row strong, .memory-row small { display: block; }
     .source-row small, .memory-row small { margin-top: 2px; color: var(--muted); font-size: 11px; }
     .source-row .badge, .memory-row .badge { flex: 0 0 auto; }
     .source-tree { display: grid; gap: 4px; padding-top: 8px; }
-    .source-branch { overflow: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: #1a252c; }
-    .source-branch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 4px 8px; background: #202e35; cursor: pointer; }
-    .source-branch-head:hover { background: #263740; }
+    .source-branch { overflow: hidden; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--card); }
+    .source-branch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 4px 8px; background: var(--panel-soft); cursor: pointer; }
+    .source-branch-head:hover { background: var(--card-selected); }
     .source-branch-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .source-branch-select { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
     .source-branch-head input { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 1px; accent-color: var(--accent); }
@@ -304,15 +385,15 @@
     .source-branch-copy small, .source-child-copy small { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; font-weight: 400; }
     .source-branch-head .badge, .source-branch-tools { flex: 0 0 auto; }
     .source-branch-tools { display: flex; align-items: center; gap: 4px; }
-    .source-branch-chevron { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 5px; background: #162129; color: var(--accent); font-size: 13px; line-height: 1; }
-    .source-child-list { display: grid; gap: 2px; margin: 0 8px 6px 31px; padding: 4px 0 0 8px; border-left: 1px solid #465862; }
-    .source-child-row { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 27px; padding: 3px 5px; border: 1px solid var(--line-soft); border-radius: 6px; background: #17232a; }
+    .source-branch-chevron { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 5px; background: var(--control-surface); color: var(--accent); font-size: 13px; line-height: 1; }
+    .source-child-list { display: grid; gap: 2px; margin: 0 8px 6px 31px; padding: 4px 0 0 8px; border-left: 1px solid var(--indent-line); }
+    .source-child-row { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 27px; padding: 3px 5px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--panel); }
     .source-child-row input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
     .source-child-row .badge { flex: 0 0 auto; padding: 2px 5px; font-size: 10px; }
     .regex-list { gap: 2px; padding-top: 5px; }
-    .regex-row { display: grid; grid-template-columns: auto minmax(64px, .45fr) minmax(150px, 1.7fr) auto auto auto; gap: 4px; align-items: center; padding: 3px 5px; border: 1px solid var(--line-soft); border-radius: 6px; background: #1a252c; }
+    .regex-row { display: grid; grid-template-columns: auto 72px minmax(150px, 1.7fr) auto auto auto; gap: 4px; align-items: center; padding: 3px 5px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--card); }
     .regex-row small { color: var(--muted); font-size: 10px; }
-    .regex-row select, .regex-row input { min-width: 0; padding: 5px 6px; font-size: 12px; }
+    .regex-row select, .regex-row input { min-width: 0; appearance: auto; -webkit-appearance: menulist; padding: 5px 6px; font-size: 12px; }
     .regex-row .button { min-height: 25px; padding: 2px 6px; font-size: 11px; }
     .regex-section { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
     .regex-section:first-child { margin-top: 0; padding-top: 6px; border-top: 0; }
@@ -320,7 +401,7 @@
     .regex-section-head h3 { font-size: 13px; }
     .regex-section-head p { margin-top: 1px; color: var(--muted); font-size: 10px; }
     .regex-move { display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); align-self: stretch; min-height: 0; }
-    .regex-move-button { display: grid; place-items: center; width: 20px; height: auto; min-height: 0; border: 1px solid var(--line); background: #162129; color: var(--muted); padding: 0; font-size: 10px; line-height: 1; }
+    .regex-move-button { display: grid; place-items: center; width: 20px; height: auto; min-height: 0; border: 1px solid var(--line); background: var(--control-surface); color: var(--muted); padding: 0; font-size: 10px; line-height: 1; }
     .regex-move-button:first-child { border-radius: 4px 4px 0 0; }
     .regex-move-button:last-child { border-top: 0; border-radius: 0 0 4px 4px; }
     .regex-move-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
@@ -359,11 +440,11 @@
     body[data-device="mobile"] .app-header { padding-inline: 12px; gap: 8px; }
     body[data-device="mobile"] .brand { font-size: 15px; }
     body[data-device="mobile"] .scope { font-size: 12px; }
-    body[data-device="mobile"] .theme-button { display: none; }
+    body[data-device="mobile"] .theme-button { display: grid; }
     .mobile-route-current, .mobile-route-trigger, .mobile-route-menu, .mobile-route-scrim { display: none; }
     body[data-device="mobile"] .routebar { position: relative; z-index: 3; display: block; padding: 4px 8px; overflow: hidden; }
     body[data-device="mobile"] .desktop-route-items { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; width: 100%; height: 100%; }
-    body[data-device="mobile"] .desktop-route-items button { min-width: 0; min-height: 30px; border-bottom: 2px solid transparent; border-radius: 4px; padding: 3px 2px; font-size: 12px; }
+    body[data-device="mobile"] .desktop-route-items button { min-width: 0; min-height: 30px; border-bottom: 2px solid transparent; border-radius: 4px; padding: 3px 2px; font-size: 13px; }
     body[data-device="mobile"] .desktop-route-items button.active { background: var(--accent-soft); }
     body[data-device="mobile"] .mobile-route-current { display: flex; align-items: baseline; gap: 7px; min-width: 0; color: var(--text-2); font-size: 12px; }
     body[data-device="mobile"] .mobile-route-current span { color: var(--muted); font-size: 11px; }
@@ -400,9 +481,10 @@
     body[data-device="mobile"] .type-grid { gap: 7px; }
     body[data-device="mobile"] .type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     body[data-device="mobile"] .type-card { min-height: 54px; padding: 8px 9px; }
-    body[data-device="mobile"] .type-card b { font-size: 13px; }
+    body[data-device="mobile"] .type-card b { font-size: 14px; }
     body[data-device="mobile"] .world-title b { font-size: 17px; }
     body[data-device="mobile"] .kv div { grid-template-columns: 1fr 1fr; }
+    body[data-device="mobile"] .world-content-grid { grid-template-columns: minmax(0, 1fr); }
     body[data-device="mobile"] .event-row { grid-template-columns: 86px minmax(0, 1fr) auto; gap: 6px; }
     body[data-device="mobile"] .event-row .badge { grid-column: auto; justify-self: auto; }
     body[data-device="mobile"] .form-grid { grid-template-columns: 1fr; }
@@ -410,6 +492,16 @@
     body[data-device="mobile"] .edit-grid { grid-template-columns: 1fr; }
     body[data-device="mobile"] .edit-grid .full { grid-column: auto; }
     body[data-device="mobile"] .setting-grid { grid-template-columns: 1fr; }
+    body[data-device="mobile"] .recent-story-read-options { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 4px; }
+    body[data-device="mobile"] .recent-story-read-options > .field { display: grid; grid-template-columns: minmax(0, 1fr) 48px auto; align-items: center; gap: 4px; min-width: 0; font-size: 11px; }
+    body[data-device="mobile"] .recent-story-read-options > .field input { height: 30px; min-height: 30px; padding: 4px 5px; }
+    body[data-device="mobile"] .recent-story-read-options .control-row { min-width: 0; gap: 5px; padding: 5px 0; }
+    body[data-device="mobile"] .recent-story-read-options .check-copy { min-width: 0; }
+    body[data-device="mobile"] .recent-story-read-options .check-copy b { font-size: 11px; line-height: 1.2; white-space: normal; }
+    body[data-device="mobile"] .recent-story-read-options .check-copy small { font-size: 10px; line-height: 1.2; white-space: normal; }
+    body[data-device="mobile"] .recent-story-read-options .switch-track { width: 28px; height: 18px; flex-basis: 28px; box-sizing: border-box; }
+    body[data-device="mobile"] .recent-story-read-options .switch-thumb { width: 12px; height: 12px; }
+    body[data-device="mobile"] .recent-story-read-options .switch input:checked + .switch-track .switch-thumb { transform: none; }
     body[data-device="mobile"] .setting-grid .full { grid-column: auto; }
     body[data-device="mobile"] .settings-group-head { min-height: 44px; align-items: flex-start; padding: 6px 8px; }
     body[data-device="mobile"] .settings-group.expanded .settings-group-head { padding-left: 5px; }
@@ -419,13 +511,16 @@
     body[data-device="mobile"] .settings-group .check-row:nth-child(2) { border-top: 1px solid var(--line-soft); }
     body[data-device="mobile"] .settings-toggle-copy b, body[data-device="mobile"] .settings-toggle-copy small { overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
     body[data-device="mobile"] .section-head p, body[data-device="mobile"] .world-title p, body[data-device="mobile"] .compact-note, body[data-device="mobile"] .setting-note { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
-    body[data-device="mobile"] .regex-row { grid-template-columns: auto minmax(52px, .5fr) minmax(0, 1.5fr) auto auto auto; gap: 3px; padding: 3px 4px; }
+    body[data-device="mobile"] .regex-row { grid-template-columns: 18px 60px minmax(0, 1fr) 28px 20px 28px; gap: 3px; align-items: stretch; min-height: 32px; padding: 2px 3px; }
     body[data-device="mobile"] .regex-row .button { padding-inline: 5px; }
-    body[data-device="mobile"] .regex-row select, body[data-device="mobile"] .regex-row input { padding: 4px 5px; font-size: 11px; }
+    body[data-device="mobile"] .regex-row select, body[data-device="mobile"] .regex-row input { height: 26px; min-height: 26px; box-sizing: border-box; padding: 3px 4px; font-size: 10px; }
+    body[data-device="mobile"] .regex-row .switch-track { width: 28px; height: 18px; flex-basis: 28px; box-sizing: border-box; padding: 2px; }
+    body[data-device="mobile"] .regex-row .switch-thumb { width: 12px; height: 12px; }
+    body[data-device="mobile"] .regex-row .switch input:checked + .switch-track .switch-thumb { transform: none; }
     body[data-device="mobile"] .source-branch-head { gap: 5px; }
     body[data-device="mobile"] .source-branch-copy, body[data-device="mobile"] .source-child-copy { gap: 4px; }
     body[data-device="mobile"] .source-child-row { grid-template-columns: 15px minmax(0, 1fr) auto; }
-    body[data-device="mobile"] .api-profile-row { align-items: flex-start; flex-direction: column; }
+    body[data-device="mobile"] .api-profile-row { grid-template-columns: minmax(0, 1fr) auto; }
     body[data-device="mobile"] .prototype-bar { bottom: 8px; }
     body[data-device="mobile"] .prototype-bar span { display: none; }
 
@@ -435,14 +530,14 @@
     }
   </style>
 </head>
-<body data-device="desktop">
+<body data-device="desktop" data-theme="dark">
   <div class="host">
     <section class="panel" aria-label="BioWeave UI prototype">
       <header class="app-header">
         <strong class="brand">BioWeave</strong>
         <span class="scope">New World</span>
         <span class="header-spacer"></span>
-        <button class="header-button theme-button" type="button">跟随酒馆</button>
+        <button class="header-button theme-button" type="button" title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换"><span class="theme-icon" data-theme-icon aria-hidden="true">◐</span></button>
         <button class="close-button" type="button" aria-label="关闭">×</button>
       </header>
       <nav class="routebar" aria-label="页面导航"></nav>
@@ -471,9 +566,10 @@
     const state = {
       route: new URLSearchParams(location.search).get('route') || 'overview',
       device: new URLSearchParams(location.search).get('device') || 'desktop',
+      theme: new URLSearchParams(location.search).get('theme') || 'dark',
       worldEdit: null,
       worldSpecies: '人类',
-      worldType: '女性',
+      worldType: '潮汐生物型',
       capabilitiesOverrides: {},
       settingsExpanded: {worldbook: true, recentStory: true, externalMemory: false, prompt: false, api: true, assignments: false, preview: false},
       settings: {
@@ -505,26 +601,30 @@
       eventFilter: 'all',
     };
 
+    // 仅用于静态视觉参考的示例数据；生产 ui/world.js 不读取此对象，必须渲染 Runtime DTO 的 species[].biological_types[]。
     const worldProfiles = {
       '人类': {
-        types: ['女性', '男性'],
+        types: ['潮汐生物型', '甲型', '双态型'],
         capabilities: {
-          '女性': {producesSperm: false, producesEggs: true, canFertilize: false, canBeFertilized: true, canCarryPregnancy: true},
-          '男性': {producesSperm: true, producesEggs: false, canFertilize: true, canBeFertilized: false, canCarryPregnancy: false},
+          '潮汐生物型': {producesSperm: true, producesEggs: true, canFertilize: true, canBeFertilized: true, canCarryPregnancy: true},
+          '甲型': {producesSperm: true, producesEggs: false, canFertilize: true, canBeFertilized: false, canCarryPregnancy: false},
+          '双态型': {producesSperm: null, producesEggs: null, canFertilize: null, canBeFertilized: null, canCarryPregnancy: null},
         },
       },
       '妖': {
-        types: ['雌性', '雄性'],
+        types: ['昼型', '夜型', '共生型'],
         capabilities: {
-          '雌性': {producesSperm: false, producesEggs: true, canFertilize: false, canBeFertilized: true, canCarryPregnancy: true},
-          '雄性': {producesSperm: true, producesEggs: false, canFertilize: true, canBeFertilized: false, canCarryPregnancy: false},
+          '昼型': {producesSperm: false, producesEggs: true, canFertilize: false, canBeFertilized: true, canCarryPregnancy: true},
+          '夜型': {producesSperm: true, producesEggs: false, canFertilize: true, canBeFertilized: false, canCarryPregnancy: false},
+          '共生型': {producesSperm: null, producesEggs: true, canFertilize: null, canBeFertilized: true, canCarryPregnancy: null},
         },
       },
       '镜生体': {
-        types: ['甲型', '乙型'],
+        types: ['甲相', '穗核型', '折叠型'],
         capabilities: {
-          '甲型': {producesSperm: null, producesEggs: true, canFertilize: null, canBeFertilized: true, canCarryPregnancy: true},
-          '乙型': {producesSperm: true, producesEggs: null, canFertilize: true, canBeFertilized: null, canCarryPregnancy: null},
+          '甲相': {producesSperm: null, producesEggs: true, canFertilize: null, canBeFertilized: true, canCarryPregnancy: true},
+          '穗核型': {producesSperm: true, producesEggs: null, canFertilize: true, canBeFertilized: null, canCarryPregnancy: null},
+          '折叠型': {producesSperm: false, producesEggs: false, canFertilize: false, canBeFertilized: false, canCarryPregnancy: false},
         },
       },
     };
@@ -538,8 +638,8 @@
     ];
 
     const worldbookSourceBranches = [
-      {key: 'characterCard', title: '角色卡字段', hint: '当前角色卡的开场白和描述字段', children: [['greeting', '开场白', '角色卡的初始场景文本', '已选'], ['description', '角色描述', '角色卡的长期设定文本', '已选'], ['exampleMessages', '示例对话', '可选的风格参考内容', '未选']]},
-      {key: 'selectedGlobal', title: '当前开启的全局世界书', hint: '跟随酒馆当前开启状态', children: [['foundation', '基础设定', '世界观、地点和时间线', '已选'], ['biology', '生物规则', '物种、类型和生殖规则', '已选'], ['relationships', '关系与事件', '关系网和事件约束', '已选']]},
+      {key: 'characterCard', title: '角色卡', hint: '当前角色卡的开场白和描述字段', children: [['greeting', '开场白', '角色卡的初始场景文本', '已选'], ['description', '角色描述', '角色卡的长期设定文本', '已选'], ['exampleMessages', '示例对话', '可选的风格参考内容', '未选']]},
+      {key: 'selectedGlobal', title: '全局世界书', hint: '跟随酒馆当前开启状态', children: [['foundation', '基础设定', '世界观、地点和时间线', '已选'], ['biology', '生物规则', '物种、类型和生殖规则', '已选'], ['relationships', '关系与事件', '关系网和事件约束', '已选']]},
       {key: 'characterWorldbook', title: '附加角色世界书', hint: '与当前角色关联的世界书', children: [['alice', '爱丽丝 · 角色世界书', '当前角色的专属设定', '已选'], ['mirror07', '镜生体 07 · 角色世界书', '参与当前 Chat 的关联设定', '已选']]},
       {key: 'otherWorldbook', title: '其他世界书', hint: '未归类的可用来源', children: [['imported', '临时导入资料', '本次 Chat 手动加入的内容', '未选'], ['archive', '归档设定', '不随当前酒馆状态启用', '未选']]},
     ];
@@ -553,10 +653,7 @@
     }
 
     function orderedWorldTypes(types) {
-      const stableTypes = [...types];
-      const selectedIndex = stableTypes.indexOf(state.worldType);
-      if (selectedIndex <= 0) return stableTypes;
-      return [stableTypes[selectedIndex], ...stableTypes.slice(0, selectedIndex), ...stableTypes.slice(selectedIndex + 1)];
+      return [...types];
     }
 
     function valueText(value) {
@@ -569,8 +666,27 @@
       })[character]);
     }
 
+    const themeMeta = {
+      tavern: {symbol: '◐', label: '跟随酒馆'},
+      light: {symbol: '☀', label: '日'},
+      dark: {symbol: '☾', label: '夜'},
+    };
+
+    function syncThemeControl() {
+      const theme = themeMeta[state.theme] ? state.theme : 'dark';
+      state.theme = theme;
+      document.body.dataset.theme = theme;
+      document.querySelector('.panel')?.setAttribute('data-theme', theme);
+      const button = document.querySelector('.theme-button');
+      const meta = themeMeta[theme];
+      const icon = button?.querySelector('[data-theme-icon]');
+      if (icon) icon.textContent = meta.symbol;
+      button?.setAttribute('title', `主题：${meta.label}（点击切换）`);
+      button?.setAttribute('aria-label', `主题：${meta.label}，点击切换`);
+    }
+
     function updateUrl() {
-      const params = new URLSearchParams({route: state.route, device: state.device});
+      const params = new URLSearchParams({route: state.route, device: state.device, theme: state.theme});
       history.replaceState(null, '', `${location.pathname}?${params}`);
     }
 
@@ -591,7 +707,7 @@
         <div class="stat-strip"><div class="stat"><strong>3</strong><span>追踪人物</span></div><div class="stat"><strong>12</strong><span>历史事件</span></div><div class="stat"><strong>42</strong><span>当前 Floor</span></div></div>
         <div class="split">
           <section class="section"><div class="section-head"><div><h2>人物总览</h2><p>只显示已进入追踪流程的 Subject</p></div><button class="text-button" type="button" data-route="characters">查看全部</button></div>
-            <div class="row-list"><div class="row"><div class="row-main"><b>爱丽丝</b><span>人类 · 女性</span></div><span class="badge good">已追踪</span></div><div class="row"><div class="row-main"><b>镜生体 07</b><span>镜生体 · 甲型</span></div><span class="badge good">已追踪</span></div><div class="row"><div class="row-main"><b>未命名对象</b><span>能力未知</span></div><span class="badge">未知</span></div></div>
+            <div class="row-list"><div class="row"><div class="row-main"><b>爱丽丝</b><span>人类 · 潮汐生物型</span></div><span class="badge good">已追踪</span></div><div class="row"><div class="row-main"><b>镜生体 07</b><span>镜生体 · 甲相</span></div><span class="badge good">已追踪</span></div><div class="row"><div class="row-main"><b>未命名对象</b><span>能力未知</span></div><span class="badge">未知</span></div></div>
           </section>
           <section class="section"><div class="section-head"><div><h2>最近事件</h2><p>当前有效 BiologicalEvent</p></div><button class="text-button" type="button" data-route="events">查看全部</button></div>
             <div class="row-list"><div class="row"><div class="row-main"><b>sexual_activity</b><span>Floor 42 · 角色参与</span></div><span class="badge">已确认</span></div><div class="row"><div class="row-main"><b>exposure</b><span>Floor 39 · 受孕暴露</span></div><span class="badge good">有效</span></div></div>
@@ -606,7 +722,7 @@
     function charactersPage() {
       return `<section class="page">${pageHead('人物列表', '当前 Chat 中已经进入妊娠相关追踪流程的人物', '<button class="button primary" type="button">重新分析当前楼层</button>')}
         <section class="section"><div class="section-head"><div><h2>Tracking Subjects</h2><p>人物资格由 Runtime / Core 决定，UI 只展示结果</p></div><span class="badge">3 人</span></div>
-          <div class="character-list"><button class="entity-row" type="button"><span class="entity-copy"><b>爱丽丝</b><small>character_id：alice · 人类 / 女性 · 可承载妊娠：是</small></span><span class="badge good">查看详情</span></button><button class="entity-row" type="button"><span class="entity-copy"><b>镜生体 07</b><small>character_id：mirror-07 · 镜生体 / 甲型 · 能力部分未知</small></span><span class="badge good">查看详情</span></button><button class="entity-row" type="button"><span class="entity-copy"><b>未命名对象</b><small>character_id：subject-03 · 来源引用 2 条 · 仍需证据</small></span><span class="badge">未知</span></button></div>
+          <div class="character-list"><button class="entity-row" type="button"><span class="entity-copy"><b>爱丽丝</b><small>character_id：alice · 人类 / 潮汐生物型 · 可承载妊娠：是</small></span><span class="badge good">查看详情</span></button><button class="entity-row" type="button"><span class="entity-copy"><b>镜生体 07</b><small>character_id：mirror-07 · 镜生体 / 甲相 · 能力部分未知</small></span><span class="badge good">查看详情</span></button><button class="entity-row" type="button"><span class="entity-copy"><b>未命名对象</b><small>character_id：subject-03 · 来源引用 2 条 · 仍需证据</small></span><span class="badge">未知</span></button></div>
         </section>
         <section class="section"><div class="section-head"><div><h2>进入原因</h2><p>只读诊断，不由 UI 二次判断</p></div></div><div class="row"><div class="row-main"><b>爱丽丝</b><span>CAN_CARRY_PREGNANCY_SUPPORTED · EXPOSURE_CONFIRMED</span></div><span class="row-value good">符合</span></div><div class="row"><div class="row-main"><b>未进入列表的对象</b><span>CAN_CARRY_PREGNANCY_UNKNOWN</span></div><span class="row-value">未知</span></div></section>
       </section>`;
@@ -671,7 +787,7 @@
     function worldSpeciesCard(species) {
       const profile = worldProfiles[species];
       const selected = state.worldSpecies === species;
-      return `<button class="world-card ${selected ? 'selected' : ''}" type="button" data-world-species-card="${escapeHtml(species)}" aria-pressed="${selected}"><span class="world-card-head"><b>${species}</b><span class="world-card-mark">${selected ? '已选' : '选择'}</span></span><small>${profile.types.length} 个类型 · ${profile.types.join(' / ')}</small></button>`;
+      return `<button class="world-card ${selected ? 'selected' : ''}" type="button" data-world-species-card="${escapeHtml(species)}" aria-pressed="${selected}"><span class="world-card-head"><b>${species}</b><span class="world-card-mark">${selected ? '已选' : '选择'}</span></span><small class="world-card-summary">${profile.types.length} 个类型 · ${profile.types.join(' / ')}</small></button>`;
     }
 
     function worldTypeCard(type) {
@@ -679,7 +795,7 @@
       const knownCount = capabilityLabels.filter(([id]) => values[id] !== null).length;
       const pregnancy = values.canCarryPregnancy === true ? '可承担妊娠' : values.canCarryPregnancy === false ? '不可承担妊娠' : '妊娠未知';
       const selected = state.worldType === type;
-      return `<button class="type-card ${selected ? 'selected' : ''}" type="button" data-world-type-card="${escapeHtml(type)}" aria-pressed="${selected}"><span class="type-card-head"><b>${type}</b><span class="world-card-mark">${selected ? '当前' : ''}</span></span><small>${knownCount}/5 项能力已知 · ${pregnancy}</small></button>`;
+      return `<button class="type-card ${selected ? 'selected' : ''}" type="button" data-world-type-card="${escapeHtml(type)}" aria-pressed="${selected}"><span class="type-card-head"><b>${type}</b><span class="world-card-mark">${selected ? '当前' : ''}</span></span><small class="type-card-summary">${knownCount}/5 项能力已知 · ${pregnancy}</small></button>`;
     }
 
     function worldPage() {
@@ -687,9 +803,9 @@
       const currentTypes = worldProfiles[state.worldSpecies].types;
       const orderedTypes = orderedWorldTypes(currentTypes);
       return `<section class="page">${pageHead('世界模型', '当前 Chat 的物种、生物类型和世界级规则', '<button class="button primary" type="button">重新分析</button><button class="text-button secondary-hide" type="button">查看分析输入</button>')}
-        <section class="world-picker"><div class="world-picker-head"><div><h2>选择物种</h2><p>先选物种，再查看对应的生物类型。</p></div><span class="badge">${Object.keys(worldProfiles).length} 个物种</span></div><div class="species-grid">${Object.keys(worldProfiles).map(worldSpeciesCard).join('')}</div><div class="type-picker-head"><div><h3>生物类型</h3><p>${state.worldSpecies} 的类型能力摘要 · 当前置顶，其余按模型顺序</p></div><span class="badge">${currentTypes.length} 个类型</span></div><div class="type-grid">${orderedTypes.map(worldTypeCard).join('')}</div></section>
+        <section class="world-picker"><div class="world-picker-head"><div><h2>选择物种</h2><p>先选物种，再查看对应的生物类型。</p></div><span class="badge">${Object.keys(worldProfiles).length} 个物种</span></div><div class="species-grid">${Object.keys(worldProfiles).map(worldSpeciesCard).join('')}</div><div class="type-picker-head"><div><h3>生物类型</h3><p>${state.worldSpecies} 的类型能力摘要 · 按 Runtime 顺序显示，当前项只改变选中状态</p></div><span class="badge">${currentTypes.length} 个类型</span></div><div class="type-grid">${orderedTypes.map(worldTypeCard).join('')}</div></section>
         <section class="surface pad"><div class="world-title"><div><b>${state.worldSpecies} / ${state.worldType}</b><p>当前类型的生殖能力、规则和生命周期；整张类型卡统一编辑。</p></div><button class="button" type="button" data-world-edit="all">${state.worldEdit === 'all' ? '收起编辑' : '编辑类型'}</button></div>
-          ${state.worldEdit === 'all' ? worldCardEditor(profile) : `<div class="world-detail-list">${worldModule('capabilities', '生殖能力', '5 项能力', profile)}${worldModule('rules', '生殖规则', '6 项规则', profile)}${worldModule('lifecycle', '生命周期', '2 项状态', profile)}${worldModule('special', '特殊规则', '3 项规则', profile)}${worldModule('worldRules', '世界级规则', '3 项规则', profile)}</div>`}
+          ${state.worldEdit === 'all' ? worldCardEditor(profile) : `<div class="world-content-grid"><div class="world-detail-column"><div class="world-detail-list">${worldModule('capabilities', '生殖能力', '5 项能力', profile)}${worldModule('rules', '生殖规则', '6 项规则', profile)}${worldModule('lifecycle', '生命周期', '2 项状态', profile)}${worldModule('special', '特殊规则', '3 项规则', profile)}</div></div><aside class="world-rules-column"><section class="surface"><div class="section-head"><div><h2>世界级规则</h2><p>对所有物种和生物类型生效。</p></div></div><div class="world-detail-list">${worldModule('worldRules', '世界级规则', '3 项规则', profile)}</div></section></aside></div>`}
           <div class="compact-note"><strong>提示</strong><span>未知表示当前资料不足，不代表否定。</span></div>
         </section>
       </section>`;
@@ -723,11 +839,11 @@
       const regexRows = (scope, rules) => rules.map((rule, index) => `<div class="regex-row"><small>#${index + 1}</small><select aria-label="${scope}规则类型" data-setting-regex-type data-setting-regex-scope="${scope}" data-setting-regex-index="${index}"><option ${rule.type === '提取' ? 'selected' : ''}>提取</option><option ${rule.type === '清洗' ? 'selected' : ''}>清洗</option></select><input value="${escapeHtml(rule.pattern)}" aria-label="${scope}正则表达式" data-setting-regex-pattern data-setting-regex-scope="${scope}" data-setting-regex-index="${index}"><span class="switch"><input type="checkbox" data-setting-regex-enabled data-setting-regex-scope="${scope}" data-setting-regex-index="${index}" ${rule.enabled ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span><span class="regex-move" aria-label="调整规则顺序"><button class="regex-move-button" type="button" title="上移" aria-label="上移规则" data-setting-regex-move="up" data-setting-regex-scope="${scope}" data-setting-regex-index="${index}" ${index === 0 ? 'disabled' : ''}>↑</button><button class="regex-move-button" type="button" title="下移" aria-label="下移规则" data-setting-regex-move="down" data-setting-regex-scope="${scope}" data-setting-regex-index="${index}" ${index === rules.length - 1 ? 'disabled' : ''}>↓</button></span><button class="button" type="button" data-setting-regex-delete data-setting-regex-scope="${scope}" data-setting-regex-index="${index}">删除</button></div>`).join('');
       const selectedSourceCount = worldbookSelectionSummary();
       const worldbookBody = `<div class="settings-summary-line"><strong>已选来源 ${selectedSourceCount} 项</strong><span>主栏可整体控制，子项可单独勾选 · 约 1,240 tokens</span></div><div class="settings-toolbar"><label class="field">搜索来源<input type="search" placeholder="搜索角色卡字段或世界书条目"></label><div class="settings-toolbar-actions"><button class="button" type="button">刷新</button><button class="button" type="button" data-setting-source-all>全选</button><button class="button" type="button" data-setting-source-none>全不选</button></div></div><div class="source-tree">${worldbookSourceBranches.map(sourceBranchMarkup).join('')}</div>`;
-      const recentBody = `<div class="setting-grid"><label class="field">读取最近楼层<input type="number" min="0" max="1000" value="${escapeHtml(state.settings.recentStoryCount)}" data-setting-recent-count></label><label class="control-row"><span class="check-copy"><b>对用户楼应用正则</b><small>开场楼（0 楼）始终保留原文</small></span><span class="switch"><input type="checkbox" data-setting-regex-user ${state.settings.regexUser ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label></div><div class="regex-section"><div class="regex-section-head"><div><h3>全局正则</h3><p>适用于所有角色卡，先于当前角色卡规则。</p></div><button class="button" type="button" data-setting-regex-add="global">新增规则</button></div><div class="regex-list">${regexRows('global', state.settings.globalRegex)}</div></div><div class="regex-section"><div class="regex-section-head"><div><h3>当前角色卡正则</h3><p>只作用于当前 Chat 与当前角色卡。</p></div><button class="button" type="button" data-setting-regex-add="character">新增规则</button></div><div class="regex-list">${regexRows('character', state.settings.characterRegex)}</div></div><p class="setting-note">规则按从上到下依次处理；无效规则会跳过。</p>`;
+      const recentBody = `<div class="setting-grid recent-story-read-options"><label class="field">读取最近楼层<input type="number" min="0" max="1000" value="${escapeHtml(state.settings.recentStoryCount)}" data-setting-recent-count></label><label class="control-row"><span class="check-copy"><b>对用户楼应用正则</b><small>开场楼（0 楼）始终保留原文</small></span><span class="switch"><input type="checkbox" data-setting-regex-user ${state.settings.regexUser ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label></div><div class="regex-section"><div class="regex-section-head"><div><h3>全局正则</h3><p>适用于所有角色卡，先于当前角色卡规则。</p></div><button class="button" type="button" data-setting-regex-add="global">新增规则</button></div><div class="regex-list">${regexRows('global', state.settings.globalRegex)}</div></div><div class="regex-section"><div class="regex-section-head"><div><h3>当前角色卡正则</h3><p>只作用于当前 Chat 与当前角色卡。</p></div><button class="button" type="button" data-setting-regex-add="character">新增规则</button></div><div class="regex-list">${regexRows('character', state.settings.characterRegex)}</div></div><p class="setting-note">规则按从上到下依次处理；无效规则会跳过。</p>`;
       const externalBody = `<div class="memory-list"><div class="memory-row"><label><input type="checkbox" data-setting-memory="anima" ${state.settings.externalSources.anima ? 'checked' : ''}><span><strong>读取 Anima</strong><small>已检测到公开接口，可用于分析输入。</small></span></label><span class="badge good">可用</span></div><div class="memory-row"><label><input type="checkbox" data-setting-memory="baobaoshu" disabled><span><strong>读取柏宝书</strong><small>未检测到公开接口。</small></span></label><span class="badge">未检测</span></div><div class="memory-row"><label><input type="checkbox" data-setting-memory="database_memory" disabled><span><strong>读取数据库记忆</strong><small>未检测到公开接口。</small></span></label><span class="badge">未检测</span></div></div>`;
       const promptBody = `<div class="prompt-grid"><label class="field">顶部 SYSTEM<textarea data-setting-prompt="systemTop">${escapeHtml(state.settings.prompt.systemTop)}</textarea></label><label class="field">分析任务补充<textarea data-setting-prompt="task">${escapeHtml(state.settings.prompt.task)}</textarea></label><label class="field">输入前说明<textarea data-setting-prompt="inputPrefix">${escapeHtml(state.settings.prompt.inputPrefix)}</textarea></label><label class="field">输入后说明<textarea data-setting-prompt="inputSuffix">${escapeHtml(state.settings.prompt.inputSuffix)}</textarea></label><label class="field">尾部 SYSTEM<textarea data-setting-prompt="systemBottom">${escapeHtml(state.settings.prompt.systemBottom)}</textarea></label></div><p class="setting-note">核心约束和结果校验始终保留；这里不会保存角色正文、世界书正文或 API Key。</p><div class="settings-actions"><button class="button primary" type="button">保存提示词设置</button><button class="button" type="button">高级 / 调试</button></div>`;
       const apiProfile = state.settings.apiProfile;
-      const apiProfileBody = state.settings.apiSource === 'bioweave_independent_api' ? `<div class="api-profile-panel"><div class="settings-summary-line"><strong>独立 API 配置</strong><span>配置名称、服务商、地址、密钥和模型均沿用原设置能力</span><button class="button" type="button" data-setting-profile-new>新建 API 配置</button></div><div class="api-profile-row"><div class="row-main"><b>${escapeHtml(apiProfile.name || '未命名配置')}</b><span>${escapeHtml(apiProfile.provider || '未设置服务商')} · ${escapeHtml(apiProfile.model || '未设置模型')}</span><small>密钥：${apiProfile.hasSecret ? '已保存于 Secret Store' : '未设置'} · ${escapeHtml(apiProfile.apiUrl || '未设置地址')}</small></div><div class="api-profile-actions"><button class="button" type="button" data-setting-profile-edit>编辑</button><button class="button danger" type="button" data-setting-profile-delete>删除</button></div></div><div class="setting-grid"><label class="field">默认 API 配置<select data-setting-profile-default><option selected>${escapeHtml(apiProfile.name || '请选择配置')}</option></select></label><label class="field">模型<select data-setting-profile="model">${apiProfile.models.map(model => `<option ${model === apiProfile.model ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}</select></label><label class="field">配置名称<input value="${escapeHtml(apiProfile.name)}" data-setting-profile="name"></label><label class="field">服务商<input value="${escapeHtml(apiProfile.provider)}" data-setting-profile="provider"></label><label class="field">API 地址<input value="${escapeHtml(apiProfile.apiUrl)}" data-setting-profile="apiUrl" placeholder="不含 /chat/completions"></label><label class="field">API 密钥<input type="password" value="" data-setting-profile-key placeholder="留空表示保留已保存密钥"></label></div><label class="control-row"><span class="check-copy"><b>清除已保存 API 密钥</b><small>密钥只进入 Secret Store，不回填到页面</small></span><span class="switch"><input type="checkbox" data-setting-profile-clear ${apiProfile.clearSecret ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label><div class="settings-actions"><button class="button primary" type="button" data-setting-profile-save>保存 API 配置</button><button class="button" type="button" data-setting-profile-test>测试连接</button><button class="button" type="button" data-setting-profile-refresh>刷新模型</button></div><p class="profile-status">${escapeHtml(apiProfile.status)}</p></div>` : '';
+      const apiProfileBody = state.settings.apiSource === 'bioweave_independent_api' ? `<div class="api-profile-panel"><div class="settings-summary-line"><strong>独立 API 配置</strong><span>完整字段只在编辑器中显示</span><button class="button" type="button" data-setting-profile-new>新建 API 配置</button></div><div class="api-profile-row"><div class="row-main"><b>${escapeHtml(apiProfile.name || '未命名配置')}</b></div><div class="api-profile-actions"><button class="button" type="button" data-setting-profile-edit>编辑</button><button class="button danger" type="button" data-setting-profile-delete>删除</button></div></div><div class="setting-grid"><label class="field">默认 API 配置<select data-setting-profile-default><option selected>${escapeHtml(apiProfile.name || '请选择配置')}</option></select></label><label class="field">模型<select data-setting-profile="model">${apiProfile.models.map(model => `<option ${model === apiProfile.model ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}</select></label><label class="field">配置名称<input value="${escapeHtml(apiProfile.name)}" data-setting-profile="name"></label><label class="field">服务商<input value="${escapeHtml(apiProfile.provider)}" data-setting-profile="provider"></label><label class="field">API 地址<input value="${escapeHtml(apiProfile.apiUrl)}" data-setting-profile="apiUrl" placeholder="不含 /chat/completions"></label><label class="field">API 密钥<input type="password" value="" data-setting-profile-key placeholder="留空表示保留已保存密钥"></label></div><label class="control-row"><span class="check-copy"><b>清除已保存 API 密钥</b><small>密钥只进入 Secret Store，不回填到页面</small></span><span class="switch"><input type="checkbox" data-setting-profile-clear ${apiProfile.clearSecret ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label><div class="settings-actions"><button class="button primary" type="button" data-setting-profile-save>保存 API 配置</button><button class="button" type="button" data-setting-profile-test>测试连接</button><button class="button" type="button" data-setting-profile-refresh>刷新模型</button></div><p class="profile-status">${escapeHtml(apiProfile.status)}</p></div>` : '';
       const apiBody = `<div class="radio-list"><label class="radio-option"><input type="radio" name="api_source" value="sillytavern_current_api" data-setting-api-source ${state.settings.apiSource === 'sillytavern_current_api' ? 'checked' : ''}><span><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span></label><label class="radio-option"><input type="radio" name="api_source" value="bioweave_independent_api" data-setting-api-source ${state.settings.apiSource === 'bioweave_independent_api' ? 'checked' : ''}><span><strong>使用 BioWeave 独立 API</strong><small>为“跟随默认”的任务提供独立连接。</small></span></label></div><div class="setting-grid"><label class="field">超时（秒）<select data-setting-timeout><option ${state.settings.timeout === '60 秒' ? 'selected' : ''}>60 秒</option><option ${state.settings.timeout === '180 秒' ? 'selected' : ''}>180 秒</option><option ${state.settings.timeout === '300 秒' ? 'selected' : ''}>300 秒</option></select></label><label class="field">重试次数<select data-setting-retry><option ${state.settings.retryCount === '0' ? 'selected' : ''}>0</option><option ${state.settings.retryCount === '1' ? 'selected' : ''}>1</option><option ${state.settings.retryCount === '2' ? 'selected' : ''}>2</option><option ${state.settings.retryCount === '3' ? 'selected' : ''}>3</option></select></label></div>${state.settings.apiSource === 'bioweave_independent_api' ? apiProfileBody : ''}<p class="setting-note">安全：独立 API Key 只写入 SillyTavern Secret Store；BioWeave 不读取、复制或显示酒馆当前 API 的密钥。</p>`;
       const assignmentBody = `<div class="setting-grid">${Object.entries(assignmentLabels).map(([slot, label]) => `<label class="field">${label}<select data-setting-assignment="${slot}">${assignmentOptions(state.settings.assignments[slot])}</select></label>`).join('')}</div><p class="setting-note">每项可跟随默认、指定 API 或暂时禁用；这里只保存选择，不触发分析。</p>`;
       const previewBody = `<div class="settings-summary-line"><strong>预计 1,240 tokens</strong><span>预览只存在当前页面内存，不保存正文。</span></div><div class="preview-strip"><button class="button ${state.settings.previewMode === 'structure' ? 'active' : ''}" type="button" data-setting-preview-mode="structure">结构预览</button><button class="button ${state.settings.previewMode === 'raw' ? 'active' : ''}" type="button" data-setting-preview-mode="raw">原始内容</button></div><details class="mini-disclosure" open><summary>实际发送消息</summary><p class="setting-note">SYSTEM / USER 消息分层来自同一份 World Model 请求数据。</p></details>`;
@@ -743,6 +859,7 @@
 
     function render() {
       document.body.dataset.device = state.device;
+      syncThemeControl();
       renderNav();
       const pages = {overview: overviewPage, characters: charactersPage, events: eventsPage, projection: () => emptyPage('推演预测', '未来可能发生的生理推演，不是事实账本', '当前没有需要展示的推演', '推演并非已发生事实，也不会自动成为 confirmed Event。'), genealogy: () => emptyPage('家系图谱', '使用稳定 character_id 查看 parents / children / generations', '当前 Chat 尚无家系关系', '节点、列表和世代视图将在关系图数据接入后显示。'), world: worldPage, settings: settingsPage, state: statePage};
       document.querySelector('#main').innerHTML = pages[state.route]();
@@ -840,6 +957,13 @@
         });
       });
       document.querySelectorAll('[data-settings-toggle]').forEach(button => button.addEventListener('click', () => { const key = button.dataset.settingsToggle; state.settingsExpanded[key] = !state.settingsExpanded[key]; render(); }));
+      const themeButton = document.querySelector('.theme-button');
+      if (themeButton) themeButton.onclick = () => {
+        const values = ['tavern', 'light', 'dark'];
+        state.theme = values[(values.indexOf(state.theme) + 1) % values.length];
+        updateUrl();
+        render();
+      };
     }
 
     document.querySelectorAll('.prototype-bar button').forEach(button => button.addEventListener('click', () => { state.device = button.dataset.device; updateUrl(); render(); }));

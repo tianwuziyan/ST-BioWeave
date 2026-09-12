@@ -43,11 +43,13 @@
 1. 生产数据继续来自 Runtime DTO。
 2. 保留现有 Runtime、API、世界书、正则、事件分析、世界模型编辑、Chat 保存和数据安全逻辑。
 3. 保留现有 data-bioweave-* 事件钩子；如果 HTML 结构变化，必须同步修改事件委托和选择器。
-4. 世界模型继续使用生产物种、类型、能力、规则、生命周期、医疗、例外和 unknowns 数据。
+4. 世界模型继续使用生产物种、类型、能力、规则、生命周期、医疗、例外和 unknowns 数据；物种卡和生物类型卡必须逐项读取 Runtime DTO 的 `species[].biological_types[]`，不得固定男性、女性或任何其它类型名称，类型顺序必须保持 Runtime 顺序；“是否能承担妊娠”只能读取当前类型的 `capabilities.can_carry_pregnancy`，保留 true / false / null。
 5. 世界模型每个模块只有一个编辑入口，保存和取消只作用于当前模块。
 6. 设置页面保留多级世界书来源、父子勾选/半选、折叠展开、API 来源、模型下拉框、开关、正则增删/启停/上下移动、外部记忆、提示词和调试预览。
 7. 正则上下按钮必须垂直紧挨，顶部和底部与正则行对齐。
 8. Desktop、iPad、Mobile 均使用顶部八路由栏；Mobile 使用四列多行平铺路由和单列内容，不使用底部导航、横向导航条或更多弹出菜单。
+8.1. 顶部右侧主题控件保留 `bioweave_ui_theme`、`data-bioweave-action="cycle-theme"` 和 `tavern → light → dark` 循环顺序，但可见内容必须使用图标：跟随酒馆使用半明暗图标，日使用太阳图标，夜使用月亮图标；当前模式必须通过 `title` 和 `aria-label` 可读。日主题使用低亮度雾蓝配色，不使用纯白大面积背景；跟随酒馆主题通过 SillyTavern 的 `--SmartThemeBlurTintColor`、`--SmartThemeBodyColor` 和 `--SmartThemeQuoteColor` 映射，并保留安全回退色。主题图标在 Desktop、iPad、Mobile 均可见。
+8.2. 设置页所有主折叠栏、世界书来源子折叠栏和展开 body 必须使用主题 token，不得保留 `#1a272e`、`#263740`、`#1d2a31`、`#202e35`、`#17232a` 等固定夜间背景；分别使用 `--bioweave-header`、`--bioweave-card-selected`、`--bioweave-surface-raised`、`--bioweave-surface-soft` 和 `--bioweave-surface`。
 9. 页面不能出现页面级横向溢出，设置展开后不能被右侧下拉框撑坏。
 10. 所有 DTO 文本继续 HTML 转义，不展示 Secret、API Key 或 Raw AI Response。
 11. 继续使用原生 JS、HTML、CSS，不引入 React、Vue、UI 组件库或大型状态管理框架。

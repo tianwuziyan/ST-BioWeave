@@ -86,6 +86,8 @@
       "headerHeight": "50px",
       "routebarHeight": "42px",
       "routeItemMinWidth": "72px",
+      "routeItemFontSize": "14px",
+      "routeItemMobileFontSize": "13px",
       "checkboxSize": "16px",
       "sourceParentTitle": "13px",
       "sourceChildTitle": "11px",
@@ -95,6 +97,131 @@
     "font": {
       "family": "system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif",
       "lineHeight": "1.5"
+    }
+  },
+  "themes": {
+    "control": {
+      "storageKey": "bioweave_ui_theme",
+      "interactionHook": "data-bioweave-action=cycle-theme",
+      "cycleOrder": ["tavern", "light", "dark"],
+      "iconOnly": true,
+      "icons": {
+        "tavern": "fa-solid fa-circle-half-stroke",
+        "light": "fa-solid fa-sun",
+        "dark": "fa-solid fa-moon"
+      },
+      "labels": {
+        "tavern": "跟随酒馆",
+        "light": "日",
+        "dark": "夜"
+      },
+      "accessibility": "Visible control is icon-only; current mode remains available through aria-label and title."
+    },
+    "palette": {
+      "dark": {
+        "colorScheme": "dark",
+        "tokens": {
+          "bg": "#171f25",
+          "surface": "#182229",
+          "surfaceRaised": "#1d272e",
+          "surfaceSoft": "#202c34",
+          "text": "#edf3f6",
+          "textSecondary": "#c2cdd2",
+          "textMuted": "#87959d",
+          "border": "#33444e",
+          "borderSoft": "#293840",
+          "accent": "#83c7ef",
+          "accentSoft": "#203b4b",
+          "danger": "#f08e98",
+          "success": "#7bd5ae",
+          "warn": "#f1be72",
+          "inputBg": "#141d23",
+          "onAccent": "#10202a",
+          "successSoft": "#19372f",
+          "dangerSoft": "#40262e",
+          "warnSoft": "#41331d",
+          "panelBorder": "#42545e",
+          "header": "#19232a",
+          "routebar": "#141d23",
+          "hover": "#1a2830",
+          "card": "#1a252c",
+          "cardSelected": "#203744",
+          "controlSurface": "#162129",
+          "primaryBorder": "#5f9cc0",
+          "dangerBorder": "#774852",
+          "indentLine": "#465862"
+        }
+      },
+      "light": {
+        "colorScheme": "light",
+        "designIntent": "low-luminance mist blue; avoid pure white surfaces and high-glare contrast",
+        "tokens": {
+          "bg": "#cbd6db",
+          "surface": "#dbe4e8",
+          "surfaceRaised": "#e5ecef",
+          "surfaceSoft": "#d3dfe4",
+          "text": "#1b2a33",
+          "textSecondary": "#3c4d56",
+          "textMuted": "#61727c",
+          "border": "#8fa2ac",
+          "borderSoft": "#b9c8cf",
+          "accent": "#356f91",
+          "accentSoft": "#c9dde6",
+          "danger": "#a44852",
+          "success": "#2b755d",
+          "warn": "#86651f",
+          "inputBg": "#d9e4e8",
+          "onAccent": "#f4f8f9",
+          "successSoft": "#d3e5dd",
+          "dangerSoft": "#edd9dc",
+          "warnSoft": "#eee5ce",
+          "panelBorder": "#7e949f",
+          "header": "#d4dfe3",
+          "routebar": "#cbd8de",
+          "hover": "#d8e5e9",
+          "card": "#e1e9ec",
+          "cardSelected": "#cbdfe8",
+          "controlSurface": "#d5e1e5",
+          "primaryBorder": "#5b8aa0",
+          "dangerBorder": "#a44852",
+          "indentLine": "#a8bac3"
+        }
+      },
+      "tavern": {
+        "colorScheme": "light dark",
+        "source": "SillyTavern --SmartThemeBlurTintColor, --SmartThemeBodyColor, and --SmartThemeQuoteColor with restrained mix fallbacks",
+        "tokens": {
+          "bg": "var(--SmartThemeBlurTintColor, #202a31)",
+          "surface": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%)",
+          "surfaceRaised": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%)",
+          "surfaceSoft": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 74%, var(--SmartThemeBodyColor, #e8eef2) 26%)",
+          "text": "var(--SmartThemeBodyColor, #e8eef2)",
+          "textSecondary": "color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 78%, var(--SmartThemeBlurTintColor, #202a31) 22%)",
+          "textMuted": "color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 62%, var(--SmartThemeBlurTintColor, #202a31) 38%)",
+          "border": "color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 24%, var(--SmartThemeBlurTintColor, #202a31) 76%)",
+          "borderSoft": "color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 16%, var(--SmartThemeBlurTintColor, #202a31) 84%)",
+          "accent": "var(--SmartThemeQuoteColor, #4f91b6)",
+          "accentSoft": "color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%)",
+          "danger": "#b45d67",
+          "success": "#3b8b6d",
+          "warn": "#a7792b",
+          "inputBg": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%)",
+          "onAccent": "#f4f8fa",
+          "successSoft": "#25483d",
+          "dangerSoft": "#482d33",
+          "warnSoft": "#4b3c23",
+          "panelBorder": "color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%)",
+          "header": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%)",
+          "routebar": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 84%, var(--SmartThemeBodyColor, #10171c) 16%)",
+          "hover": "var(--bioweave-accent-soft)",
+          "card": "color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%)",
+          "cardSelected": "var(--bioweave-accent-soft)",
+          "controlSurface": "var(--bioweave-input-bg)",
+          "primaryBorder": "var(--SmartThemeQuoteColor, #5f9bbd)",
+          "dangerBorder": "#b45d67",
+          "indentLine": "var(--bioweave-border)"
+        }
+      }
     }
   },
   "components": {
@@ -109,11 +236,28 @@
     "routeItem": {
       "root": "bioweave-route-item",
       "activeState": "active / aria-current=page",
-      "allPagesVisible": true
+      "allPagesVisible": true,
+      "labels": {
+        "overview": "总览",
+        "characters": "人物",
+        "events": "事件",
+        "projection": "推演",
+        "genealogy": "家系",
+        "world": "世界",
+        "settings": "设置",
+        "state": "状态"
+      },
+      "fontSize": "14px",
+      "mobileFontSize": "13px"
     },
     "themeButton": {
       "root": "bioweave-theme-button",
-      "interactionHook": "data-bioweave-action=cycle-theme"
+      "interactionHook": "data-bioweave-action=cycle-theme",
+      "iconOnly": true,
+      "iconHook": "data-bioweave-theme-icon",
+      "minimumSize": "32px",
+      "mobileVisible": true,
+      "accessibleState": "aria-label and title include the current theme label"
     },
     "page": {
       "root": "bioweave-page",
@@ -130,6 +274,12 @@
       "smallMinimumHeight": "25px",
       "states": ["default", "primary", "danger", "hover", "focus-visible", "disabled"]
     },
+    "select": {
+      "root": "bioweave-select",
+      "appearance": "native-arrow",
+      "indicator": "browser-native-chevron",
+      "minimumHeight": "32px"
+    },
     "worldSpeciesCard": {
       "root": "bioweave-world-card",
       "productionClass": "bioweave-world-model-species-card bioweave-world-card",
@@ -141,13 +291,74 @@
       "productionClass": "bioweave-world-model-type-button bioweave-type-card",
       "interaction": "button",
       "selectionHook": "data-bioweave-action=world-model-select-type",
-      "ordering": "selected type first, remaining types preserve Runtime array order and wrap in the card grid"
+      "ordering": "preserve Runtime array order; selection changes only the card state and never moves the card"
+    },
+    "worldSelection": {
+      "root": "bioweave-world-model-species-selector",
+      "layout": "species card grid followed by selected species type card grid",
+      "speciesGrid": "bioweave-world-model-species-grid",
+      "typeGrid": "bioweave-world-model-type-grid",
+      "typeHeader": "bioweave-world-model-type-picker-head",
+      "speciesCardParts": [
+        "bioweave-world-model-card-head",
+        "bioweave-world-model-card-title",
+        "bioweave-world-model-card-mark",
+        "bioweave-world-model-card-summary"
+      ],
+      "typeCardParts": [
+        "bioweave-world-model-type-card-head",
+        "bioweave-world-model-card-mark",
+        "bioweave-world-model-type-card-summary"
+      ],
+      "speciesColumns": "repeat(3, minmax(0, 1fr))",
+      "typeColumns": "repeat(auto-fit, minmax(150px, 1fr))",
+      "mobileTypeColumns": "repeat(2, minmax(0, 1fr))",
+      "sectionHeadingMargin": "0 0 5px",
+      "typeHeaderMarginTop": "5px",
+      "typeHeaderPaddingTop": "5px",
+      "typeGridMarginTop": "4px",
+      "typeCardTitleFontSize": "15px",
+      "typeCardTitleMobileFontSize": "14px",
+      "speciesCardSummary": "{count} 个类型 · {typeName} / {typeName}",
+      "typeCardSummary": "{knownCount}/{totalCapabilities} 项能力已知 · {pregnancyState}",
+      "pregnancyState": {
+        "true": "可承担妊娠",
+        "false": "不可承担妊娠",
+        "null": "妊娠未知"
+      },
+      "typeOrdering": "preserve Runtime array order; selection changes only the card state and never moves the card",
+      "preserveData": "species and biological_types come only from the Runtime DTO",
+      "speciesSource": "Runtime DTO worldModel.species",
+      "typeSource": "Runtime DTO worldModel.species[].biological_types[]",
+      "typeNameSource": "Runtime DTO biological_types[].name; never replace it with a fixed gender label",
+      "pregnancySource": "Runtime DTO biological_types[].capabilities.can_carry_pregnancy; preserve true, false, and null",
+      "exampleDataPolicy": "reference labels are illustrative only; production must not hardcode Male, Female, or any other type name"
     },
     "worldModule": {
       "root": "bioweave-world-module",
       "productionClass": "bioweave-world-model-section bioweave-world-model-module bioweave-world-module",
       "editHook": "data-bioweave-action=world-model-edit-section",
-      "editScope": "one-module-at-a-time"
+      "editScope": "one-module-at-a-time",
+      "typeModuleLayout": "one vertical stack inside the current type detail panel",
+      "detailGridDesktop": "minmax(0, 6fr) minmax(0, 4fr)",
+      "propertyColumns": "minmax(118px, max-content) minmax(0, 1fr)",
+      "propertyGap": "6px",
+      "medicalPropertyColumns": "minmax(92px, max-content) minmax(0, 1fr)",
+      "medicalPropertyGap": "5px",
+      "booleanValues": {
+        "true": "是: right aligned with 8px inset, var(--bioweave-success)",
+        "false": "否: left aligned, var(--bioweave-text-secondary)",
+        "unknown": "未知: right aligned with 8px inset, var(--bioweave-warn)"
+      },
+      "valueClasses": {
+        "true": "bioweave-world-model-value-good",
+        "false": "bioweave-world-model-value-no",
+        "unknown": "bioweave-world-model-value-warn"
+      },
+      "editor": {
+        "capabilities": "native bioweave-checkbox with indeterminate for null; checked=true and unchecked=false after interaction",
+        "preserveNull": true
+      }
     },
     "settingsGroup": {
       "root": "bioweave-settings-group",
@@ -156,30 +367,41 @@
       "header": {
         "minHeight": "56px",
         "padding": "7px 12px",
-        "background": "#1a272e",
-        "expandedBackground": "#263740",
+        "background": "var(--bioweave-header)",
+        "expandedBackground": "var(--bioweave-card-selected)",
         "expandedAccentBorder": "3px solid var(--bioweave-accent)"
       },
       "title": {
         "fontSize": "15px",
         "fontWeight": 700,
         "supportingFontSize": "11px",
-        "supportingFontWeight": 400
+        "supportingFontWeight": 400,
+        "supportingColor": "var(--bioweave-text-muted)"
       },
       "body": {
         "padding": "0 13px 12px",
-        "background": "#1d2a31",
-        "borderTop": "1px solid #3b4d56"
+        "background": "var(--bioweave-surface-raised)",
+        "borderTop": "1px solid var(--bioweave-border)"
       },
       "chevron": {
         "size": "18px",
         "closed": "+",
-        "open": "−"
-      }
+        "open": "−",
+        "placement": "leftmost"
+      },
+      "statusBadge": {
+        "placement": "rightmost",
+        "source": "runtime-backed summary status",
+        "tone": "collapsed is neutral; expanded uses good for an explicitly positive/available status; otherwise neutral"
+      },
+      "outerMarginInline": "0px",
+      "siblingGap": "3px"
     },
     "sourceBranch": {
       "root": "bioweave-source-branch",
       "interaction": "details-summary",
+      "parentLabels": ["角色卡", "全局世界书", "附加角色世界书", "其他世界书"],
+      "parentOrder": ["character_card", "selected_global", "character", "other"],
       "parentTitle": {
         "fontSize": "13px",
         "fontWeight": 700
@@ -189,7 +411,17 @@
         "fontSize": "11px",
         "fontWeight": 400
       },
-      "parentMeta": "selected-count badge on the right",
+      "parentMeta": "selected-count badge on the right; good tone whenever selected_count is greater than zero",
+      "parentChevronPlacement": "rightmost",
+      "headerBackground": "var(--bioweave-surface-soft)",
+      "headerHoverBackground": "var(--bioweave-card-selected)",
+      "childBackground": "var(--bioweave-surface)",
+      "parentToggle": {
+        "hook": "data-bioweave-analysis-section-toggle",
+        "state": "native checked plus aria-checked=mixed when partially selected",
+        "sourceIdsAttribute": "data-bioweave-analysis-section-source-ids"
+      },
+      "mixedCheckboxTone": "var(--bioweave-warn)",
       "childMeta": "good badge: 已选; neutral badge: 未选",
       "chevron": {
         "size": "20px",
@@ -228,6 +460,55 @@
       "layout": "single-column-list",
       "statusSource": "Runtime provider availability and status"
     },
+    "apiSource": {
+      "root": "bioweave-api-source",
+      "visualOrder": [
+        "sourceOptions",
+        "requestSettings",
+        "independentProfiles",
+        "securityNote"
+      ],
+      "profileBodyOrder": [
+        "profileTitle",
+        "defaultProfile",
+        "savedProfiles",
+        "profileEditor"
+      ],
+      "savedProfileRow": {
+        "summary": "single-line saved profile name only with ellipsis",
+        "actions": "fixed right",
+        "minHeight": "32px",
+        "padding": "4px 0",
+        "actionHeight": "25px",
+        "hiddenMetadata": ["provider", "model", "api_url", "secret_ref"]
+      },
+      "sourceOptionLabels": [
+        "使用 SillyTavern 当前 API",
+        "使用 BioWeave 独立 API"
+      ],
+      "requestFields": [
+        "超时（秒）",
+        "重试次数"
+      ],
+      "preserveHooks": [
+        "data-bioweave-api-source",
+        "data-bioweave-api-timeout",
+        "data-bioweave-api-retry-count",
+        "data-bioweave-default-profile"
+      ]
+    },
+    "analysisPrompt": {
+      "root": "bioweave-analysis-prompt-settings",
+      "fields": [
+        "顶部 SYSTEM",
+        "分析任务补充",
+        "输入前说明",
+        "输入后说明",
+        "尾部 SYSTEM"
+      ],
+      "duplicateInnerHeading": false,
+      "debugActionPlacement": "body-actions"
+    },
     "regexRow": {
       "root": "bioweave-regex-row",
       "productionClass": "bioweave-recent-story-regex-row",
@@ -235,13 +516,16 @@
       "moveButton": "bioweave-recent-story-order-action",
       "moveButtons": "adjacent-vertical",
       "moveHeight": "stretch-to-row",
-      "desktopColumns": "auto minmax(64px, .45fr) minmax(150px, 1.7fr) auto auto auto",
+      "desktopColumns": "auto 72px minmax(150px, 1.7fr) auto auto auto",
+      "mobileColumns": "18px 60px minmax(0, 1fr) 28px 20px 28px",
+      "mobileRowHeight": "32px",
+      "typeSelectIndicator": "native-arrow",
       "rowPadding": "3px 5px",
       "controlFontSize": "12px"
     },
     "recentStory": {
       "body": "flat settings-group body; no nested card layer",
-      "readGrid": "1fr 1fr with 9px gap",
+      "readGrid": "desktop 1fr 1fr with 9px gap; mobile 1.15fr .85fr with 4px gap",
       "regexSection": "compact section with 6px top spacing and line separator",
       "statusText": "non-functional explanatory text may be shortened to match the reference"
     },
@@ -259,6 +543,7 @@
     "data-bioweave-world-section-row",
     "data-bioweave-settings-disclosure",
     "data-bioweave-analysis-source",
+    "data-bioweave-analysis-section-toggle",
     "data-bioweave-external-memory"
   ],
   "pages": [

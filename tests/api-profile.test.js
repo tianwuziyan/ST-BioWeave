@@ -743,6 +743,7 @@ test('model refresh failures are safe and do not expose upstream error text', as
 
 test('settings markup exposes basic API fields, assignments, password input, and safe result text', () => {
   const html = settingsPage({
+    apiSource: BIOWEAVE_INDEPENDENT_API,
     profiles: {
       stable: {
         profile_id: 'stable',
@@ -783,6 +784,11 @@ test('settings markup exposes basic API fields, assignments, password input, and
   }
   assert.match(html, /使用 SillyTavern 当前 API/);
   assert.equal(html.includes('NOT-IN-MARKUP'), false);
+  const profileListStart = html.indexOf('<section class="bioweave-card bioweave-profile-list">');
+  const profileEditorStart = html.indexOf('<section class="bioweave-card bioweave-settings-editor">');
+  const profileListMarkup = html.slice(profileListStart, profileEditorStart);
+  assert.match(profileListMarkup, /<strong>Stable<\/strong>/);
+  assert.doesNotMatch(profileListMarkup, /custom|model-a|api\.example|API 密钥|Secret Store/);
 });
 
 test('settings markup renders the current draft without advanced API controls', () => {
@@ -823,16 +829,19 @@ test('settings markup renders the current draft without advanced API controls', 
   assert.match(html, /value="default" selected/);
   assert.match(html, /value="bioweave"[^>]*checked/);
   const apiSourceIndex = html.indexOf('<section class="bioweave-card bioweave-api-source">');
+  const sourceOptionsIndex = html.indexOf('<div class="bioweave-source-options">');
   const requestSettingsIndex = html.indexOf('data-bioweave-api-request-settings');
   const requestModuleTitleIndex = html.indexOf('<h3>请求设置</h3>');
-  const connectionSettingsIndex = html.indexOf('<header class="bioweave-api-module-header"><div><h3>连接设置</h3>');
-  const connectionModuleIndex = html.indexOf('<section class="bioweave-api-source-module bioweave-api-connection-settings">');
+  const connectionSettingsIndex = html.indexOf('<h3>连接设置</h3>');
+  const connectionModuleIndex = html.indexOf('bioweave-api-source-module bioweave-api-connection-settings');
   const profileFormIndex = html.indexOf('<form data-bioweave-settings-form');
   assert.ok(requestSettingsIndex > apiSourceIndex);
-  assert.ok(requestModuleTitleIndex > requestSettingsIndex);
-  assert.ok(requestSettingsIndex < connectionSettingsIndex);
-  assert.ok(connectionModuleIndex > requestSettingsIndex);
-  assert.ok(profileFormIndex > connectionSettingsIndex);
+  assert.ok(sourceOptionsIndex > apiSourceIndex);
+  assert.ok(requestSettingsIndex > sourceOptionsIndex);
+  assert.equal(requestModuleTitleIndex, -1);
+  assert.equal(connectionSettingsIndex, -1);
+  assert.equal(connectionModuleIndex, -1);
+  assert.ok(profileFormIndex > requestSettingsIndex);
   assert.equal(html.slice(profileFormIndex).includes('data-bioweave-api-timeout'), false);
   assert.equal(html.slice(profileFormIndex).includes('data-bioweave-api-retry-count'), false);
   assert.equal(html.includes('bioweave-settings-advanced'), false);
@@ -841,8 +850,9 @@ test('settings markup renders the current draft without advanced API controls', 
   assert.equal(html.includes('Temperature'), false);
 });
 
-test('independent API configuration is a Chinese disclosure nested inside API source', () => {
+test('independent API configuration is a flat panel inside API source', () => {
   const html = settingsPage({
+    apiSource: BIOWEAVE_INDEPENDENT_API,
     profiles: {
       stable: {
         profile_id: 'stable',
@@ -855,24 +865,25 @@ test('independent API configuration is a Chinese disclosure nested inside API so
   });
   const apiDisclosureIndex = html.search(/<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-api-source-disclosure"/);
   const apiSourceIndex = html.indexOf('<section class="bioweave-card bioweave-api-source">');
-  const profilesIndex = html.indexOf('<details class="bioweave-api-profiles">');
+  const profilesIndex = html.indexOf('<section class="bioweave-api-profiles">');
   const assignmentsIndex = html.indexOf('<section class="bioweave-card bioweave-assignments">');
 
   assert.ok(apiDisclosureIndex >= 0);
   assert.ok(apiSourceIndex > apiDisclosureIndex);
   assert.ok(profilesIndex > apiSourceIndex);
   assert.ok(assignmentsIndex > profilesIndex);
-  assert.match(html, /<summary>独立 API 配置<\/summary>/);
+  assert.match(html, /<h3>独立 API 配置<\/h3>/);
   assert.match(html, /data-bioweave-api-request-settings/);
   assert.match(html, /name="timeout" type="number" value="180"/);
   assert.match(html, /data-bioweave-action="new-profile"[^>]*>新建 API 配置<\/button>/);
   assert.match(html, /bioweave-api-security-note/);
   assert.equal(html.includes('安全边界'), false);
   assert.equal(html.includes('<details class="bioweave-settings-disclosure bioweave-api-source-disclosure" data-bioweave-settings-disclosure="api" open>'), false);
+  assert.equal(html.includes('<details class="bioweave-api-profiles"'), false);
   assert.equal(html.includes('独立 API Profiles'), false);
 });
 
-test('analysis prompt settings expose editable blocks without segment-name controls or secrets', () => {
+test('analysis prompt settings expose reference labels without duplicate headings or secrets', () => {
   const html = settingsPage({
     analysisPrompt: {
       system_top: '顶部内容',
@@ -884,12 +895,15 @@ test('analysis prompt settings expose editable blocks without segment-name contr
     },
   });
   assert.match(html, /分析提示词/);
+  assert.match(html, /顶部 SYSTEM/);
+  assert.match(html, /分析任务补充/);
   assert.doesNotMatch(html, /世界分析提示词与标签/);
+  assert.doesNotMatch(html, /第一个 SYSTEM/);
+  assert.doesNotMatch(html, /最后一个 SYSTEM/);
+  assert.equal((html.match(/<h3>分析提示词<\/h3>/g) ?? []).length, 0);
   assert.match(html, /data-bioweave-analysis-prompt-field="system_top"[^>]*>顶部内容/);
-  assert.match(html, /第一个 SYSTEM<small>作为整个请求中的第一条 SYSTEM message；为空时省略。<\/small>/);
   assert.match(html, /data-bioweave-analysis-prompt-field="task"[^>]*>只检查能力证据/);
   assert.match(html, /data-bioweave-analysis-prompt-field="system_bottom"[^>]*>尾部内容/);
-  assert.match(html, /最后一个 SYSTEM<small>作为整个请求中的最后一条 SYSTEM message；为空时省略。<\/small>/);
   assert.equal(html.includes('输入分段名称'), false);
   assert.equal(html.includes('data-bioweave-analysis-label'), false);
   assert.match(html, /data-bioweave-action="save-analysis-prompt"/);
@@ -986,6 +1000,7 @@ test('legacy World Analysis prompt migrates to canonical analysis prompt storage
 
 test('model picker keeps its list temporary and closes after selection', () => {
   const html = settingsPage({
+    apiSource: BIOWEAVE_INDEPENDENT_API,
     editingProfile: {profile_id: 'stable'},
     editingDraft: {profile_id: 'stable', model: 'model-a'},
     modelList: ['model-a', 'model-b'],
