@@ -415,3 +415,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Next Steps
 
 - 推送当前分支到 origin
+
+
+## Session 19: 补强 World Model biological_type 少数类型召回
+<!-- trellis-session: v=2 fp=8cb443d54f8c5d9c -->
+
+**Date**: 2026-09-12
+**Task**: 补强 World Model biological_type 少数类型召回
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+收紧 World Model Prompt 的低推理类型存在证据与 per-species completeness check；为规范化 type 名称补充通用“型”来源词干匹配；新增多数/少数、稀有类型、无依据 sibling 与 source binding 回归，World Model 138/138、全项目 383/383 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6ee245` | 补强 World Model biological_type 少数类型召回契约 |
+
+### Status
+
+[OK] **Completed**

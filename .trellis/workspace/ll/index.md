@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-09-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~417 | Active |
+| `journal-1.md` | ~439 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-09-12 | 补强 World Model biological_type 少数类型召回 | `e6ee245` | `fix/world-model-prompt-baseline` |
 | 18 | 2026-09-12 | 收紧单楼层事件合同并清理产品页调试字段 | `bcc39fb` | `fix/world-model-prompt-baseline` |
 | 17 | 2026-09-12 | 收紧妊娠相关实际暴露判定并同步 GitHub | `ff28882` | `fix/world-model-prompt-baseline` |
 | 16 | 2026-09-11 | 完成人物详情单页人物卡并同步 GitHub | `e97d0eae52c51f79f42a5baf2064bcb04c25f078` | `fix/world-model-prompt-baseline` |
