@@ -678,7 +678,7 @@ function hasDirectNameEvidence(value, units) {
 function genericLabelVariants(value) {
   const label = compactEvidenceText(value);
   if (!label) return [];
-  const baseLabel = label.replace(/(?:类型|分类|个体|性)$/u, '');
+  const baseLabel = label.replace(/(?:类型|分类|个体|型|性)$/u, '');
   return baseLabel && baseLabel !== label ? [label, baseLabel] : [label];
 }
 

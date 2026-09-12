@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 Prompt 语义输入与 Analyzer canonical 输出之间是否发生 type 遗漏或误删"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查回归命令、生产 Prompt 世界观无关性和修改范围"}
+{"file":".trellis/tasks/09-12-world-model-biological-type-completeness/research/current-audit.md","reason":"按审计结论检查 Prompt completeness、独立 evidence 和 Analyzer 条件性范围"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "复核本轮 generic type evidence 与 Analyzer Evidence Gate 契约"}

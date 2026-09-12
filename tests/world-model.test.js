@@ -2589,7 +2589,12 @@ test('World Model prompt requires a full biological type candidate gate without 
     /等级.*成长阶段.*训练状态/u,
     /疾病或异常.*个体特质.*行为模式/u,
     /AnalysisInput.*充分.*证据/u,
-    /biological_types: \[\].*优于错误分类/u,
+    /biological_types: \[\].*优于无证据猜测/u,
+    /多数.*少数.*极少.*少量.*罕见.*通常.*也存在.*除……外.*例外/u,
+    /原文不必逐字使用最终 canonical type name.*唯一回指/u,
+    /遗漏.*确定性低推理语义.*稳定 type.*错误/u,
+    /完成每个 species 的 biological_types 后.*回扫/u,
+    /不得因为已有一个 type.*配对 type.*补全/u,
     /只有一个.*候选.*不能.*自动/u,
     /A\..*稳定生物分类/u,
     /E\..*证据/u,
@@ -2645,6 +2650,66 @@ test('World Model preserves multiple explicitly established stable biological cl
   assert.ok(result.species[0].biological_types.every(type => (
     Object.values(type.capabilities).every(value => value === null)
   )));
+});
+
+test('World Model preserves rare stable biological types from deterministic frequency evidence', async () => {
+  const result = await analyzeDescription(
+    '绯环族绝大多数属于曜型，仅极少暮型个体。',
+    [{
+      name: '绯环族',
+      biological_types: [structuredFixtureType('曜型'), structuredFixtureType('暮型')],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['曜型', '暮型']);
+  assert.ok(result.species[0].biological_types.every(type => (
+    Object.values(type.capabilities).every(value => value === null)
+  )));
+});
+
+test('World Model preserves a rare generic sex type instead of keeping only the majority type', async () => {
+  const result = await analyzeDescription(
+    '极昼体基本都为男性，极少女性个体。',
+    [{name: '极昼体', biological_types: [structuredFixtureType('男性'), structuredFixtureType('女性')]}],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['男性', '女性']);
+});
+
+test('World Model does not invent an unmentioned sibling type during completeness checking', async () => {
+  const result = await analyzeDescription(
+    '绯环族绝大多数属于曜型。',
+    [{name: '绯环族', biological_types: [structuredFixtureType('曜型'), structuredFixtureType('暮型')]}],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['曜型']);
+});
+
+test('World Model keeps a normalized type when its name retains a unique source stem', async () => {
+  const result = await analyzeDescription(
+    '绯环族多数为核心个体，极少边缘个体。',
+    [{
+      name: '绯环族',
+      biological_types: [
+        structuredFixtureType('核心型'),
+        structuredFixtureType('边缘型'),
+      ],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), ['核心型', '边缘型']);
+});
+
+test('World Model still rejects a normalized type without a source anchor', async () => {
+  const result = await analyzeDescription(
+    '绯环族多数为核心个体，极少边缘个体。',
+    [{
+      name: '绯环族',
+      biological_types: [structuredFixtureType('陌生型'), structuredFixtureType('异核型')],
+    }],
+  );
+
+  assert.deepEqual(result.species[0].biological_types.map(type => type.name), []);
 });
 
 test('World Model keeps progression outside lifecycle when the AI returns no biological lifecycle evidence', async () => {

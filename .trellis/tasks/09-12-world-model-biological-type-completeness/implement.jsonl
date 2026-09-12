@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"规划 Raw、normalize、Evidence Guard 与 canonical World Model 之间的 type 召回边界"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵守 World Model 测试、范围控制和 dirty work 保护要求"}
+{"file":".trellis/tasks/09-12-world-model-biological-type-completeness/research/current-audit.md","reason":"记录当前 Prompt 过紧风险、Analyzer 证据路径和 Raw/Canonical 分辨方案"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "记录 World Model biological_type 证据与 Raw-to-canonical 边界"}
