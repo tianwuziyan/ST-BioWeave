@@ -1,0 +1,3 @@
+{"file":"docs/DEVELOPMENT.md","reason":"BioWeave 模块边界与 StoryTime 的结构化 DTO / provider fallback 合同。"}
+{"file":"docs/DATA-MODEL.md","reason":"Story Time 持久化字段、display 与 normalized/day_index 的语义边界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"日期解析从 provider 输入到 StoryTime/Event 消费的跨层数据流与验证要求。"}

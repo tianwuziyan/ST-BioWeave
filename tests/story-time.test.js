@@ -54,6 +54,66 @@ test('SevenDaysCal provider is injectable and fallback accepts only structured v
   assert.equal(fallback.getTimeAtFloor(3).day_index, null);
 });
 
+test('SevenDaysCal provider parses trusted raw Chinese dates at its input boundary', () => {
+  const provider = createSevenDaysCalProvider({
+    getCurrentTime: () => '2024年2月29日',
+    getTimeAtFloor: floor => floor === 4 ? {display: '中秋节', precision: 'unknown'} : null,
+  });
+  assert.deepEqual(provider.getCurrentTime(), {
+    display: '2024年2月29日',
+    normalized: '2024-02-29',
+    day_index: 19782,
+    calendar_id: null,
+    provider: 'seven_days_cal',
+    precision: 'day',
+    confidence: null,
+  });
+  assert.deepEqual(provider.getTimeAtFloor(4), {
+    display: '中秋节',
+    normalized: 'cn-0-8-15',
+    day_index: null,
+    calendar_id: null,
+    provider: 'seven_days_cal',
+    precision: 'day',
+    confidence: null,
+  });
+});
+
+test('structured SevenDaysCal fields remain authoritative over display parsing', () => {
+  const provider = createSevenDaysCalProvider({
+    getCurrentTime: () => ({
+      display: '中秋节',
+      normalized: '2026-08-20',
+      day_index: 20685,
+      precision: 'day',
+    }),
+  });
+  assert.deepEqual(provider.getCurrentTime(), {
+    display: '中秋节',
+    normalized: '2026-08-20',
+    day_index: 20685,
+    calendar_id: null,
+    provider: 'seven_days_cal',
+    precision: 'day',
+    confidence: null,
+  });
+});
+
+test('SevenDaysCal provider keeps open era dates structured without inventing a Gregorian index', () => {
+  const provider = createSevenDaysCalProvider({
+    getCurrentTime: () => '某任意纪年十九年中秋节',
+  });
+  assert.deepEqual(provider.getCurrentTime(), {
+    display: '某任意纪年十九年中秋节',
+    normalized: 'cn-19-8-15',
+    day_index: null,
+    calendar_id: null,
+    provider: 'seven_days_cal',
+    precision: 'day',
+    confidence: null,
+  });
+});
+
 test('createStoryTime uses SevenDaysCal first and falls back without turning display text into a date', () => {
   const storyTime = createStoryTime({
     provider: {getCurrentTime: () => null},

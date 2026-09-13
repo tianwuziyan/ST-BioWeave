@@ -1,3 +1,8 @@
+import { parseCnDate } from '../utils/cn-date.js';
+
+export { parseCnDate };
+export const parseStoryTimeDate = parseCnDate;
+
 export const STORY_TIME_PRECISION = Object.freeze({
   YEAR: 'year',
   MONTH: 'month',
@@ -80,6 +85,34 @@ function sourceStoryTime(raw) {
   return source;
 }
 
+function hasStructuredDate(source) {
+  return ['normalized', 'iso_date', 'isoDate', 'date', 'iso', 'day_index', 'dayIndex']
+    .some(key => hasOwn(source, key));
+}
+
+function parsedDateKey(date, calendar) {
+  if (!date) return null;
+  if (date.eraLabel || date.year == null || calendar && !(calendar.kind === 'gregorian' || calendar.id === 'default-gregorian')) {
+    return `cn-${date.year == null ? 0 : date.year}-${date.month}-${date.day}`;
+  }
+  return `${String(date.year).padStart(4, '0')}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+}
+
+function normalizeSevenDaysCalValue(value, provider, calendar) {
+  const normalized = normalizeStoryTime(value, {provider});
+  const source = sourceStoryTime(value);
+  if (hasStructuredDate(source) || !normalized.display) return normalized;
+  const parsed = parseCnDate(normalized.display, {calendar});
+  if (!parsed) return normalized;
+  const canonical = parsedDateKey(parsed, calendar);
+  return normalizeStoryTime({
+    ...normalized,
+    normalized: canonical,
+    day_index: strictDayIndex(canonical),
+    precision: normalized.precision === STORY_TIME_PRECISION.UNKNOWN ? STORY_TIME_PRECISION.DAY : normalized.precision,
+  }, {provider});
+}
+
 export function normalizeStoryTime(raw = null, defaults = {}) {
   const source = sourceStoryTime(raw);
   const options = recordValue(defaults);
@@ -147,9 +180,14 @@ function staticValue(source, names) {
   return undefined;
 }
 
-function normalizeProviderValue(value, provider) {
+function normalizeProviderValue(value, provider, calendar = null, parseDisplay = false) {
   if (value === undefined || value === null) return null;
-  return normalizeStoryTime(value, {provider});
+  if (!parseDisplay) return normalizeStoryTime(value, {provider});
+  const normalized = normalizeStoryTime(value, {provider});
+  const source = sourceStoryTime(value);
+  if (hasStructuredDate(source) || !normalized.display) return normalized;
+  const resolvedCalendar = typeof calendar === 'function' ? calendar() : calendar;
+  return normalizeSevenDaysCalValue(value, provider, resolvedCalendar);
 }
 
 function hasTimeValue(value) {
@@ -174,18 +212,22 @@ function differenceFromValues(left, right) {
  */
 export function createSevenDaysCalProvider(provider = null) {
   const source = provider;
+  const readCalendar = () => {
+    const result = invoke(source, ['getCalendar', 'calendar']);
+    return result.called ? result.value ?? null : staticValue(source, ['calendar_data', 'calendar']) ?? null;
+  };
   return {
     getCurrentTime() {
       const result = invoke(source, ['getCurrentTime', 'getCurrentStoryTime', 'current']);
       const value = result.called ? result.value : typeof source === 'function' ? source() : staticValue(source, ['current_time', 'currentTime']);
-      return normalizeProviderValue(value, STORY_TIME_PROVIDER.SEVEN_DAYS_CAL);
+      return normalizeProviderValue(value, STORY_TIME_PROVIDER.SEVEN_DAYS_CAL, readCalendar, true);
     },
     getTimeAtFloor(floor) {
       const result = invoke(source, ['getTimeAtFloor', 'getStoryTimeAtFloor', 'atFloor', 'timeAtFloor'], [floor]);
       const value = result.called
         ? result.value
         : staticValue(source, ['floor_times', 'floorTimes', 'at_floor', 'atFloor'])?.[floor];
-      return normalizeProviderValue(value, STORY_TIME_PROVIDER.SEVEN_DAYS_CAL);
+      return normalizeProviderValue(value, STORY_TIME_PROVIDER.SEVEN_DAYS_CAL, readCalendar, true);
     },
     getDateDifference(left, right) {
       const result = invoke(source, ['getDateDifference', 'difference', 'diff'], [left, right]);
@@ -194,8 +236,7 @@ export function createSevenDaysCalProvider(provider = null) {
         : differenceFromValues(left, right);
     },
     getCalendar() {
-      const result = invoke(source, ['getCalendar', 'calendar']);
-      return result.called ? result.value ?? null : staticValue(source, ['calendar_data', 'calendar']) ?? null;
+      return readCalendar();
     },
   };
 }

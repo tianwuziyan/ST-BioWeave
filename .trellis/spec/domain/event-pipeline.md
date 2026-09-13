@@ -28,6 +28,17 @@ duplicates the Event fact.
 - `runtime.collectActiveBusinessData() -> EventAnalysisBusinessDTO`
 - `runtime.updateEvent(eventId, patch) -> BiologicalEvent`
 - `runtime.deleteEvent(eventId) -> true`
+- `normalizeCnDateDigits(value) -> string`
+- `_cnToNumber(token) -> number | null`
+- `parseCnDate(text, options?) -> {year?, eraLabel?, month, day} | null`
+- `extractDayFromTime(text) -> string | null`
+- `parseCalendarDate(text, calendar?) -> CalendarDate | null`
+- `validateCalendarDate(date, calendar?) -> boolean`
+- `ordinalOf(date, calendar) -> number | null`
+- `dateFromOrdinal(ordinal, calendar, year?) -> CalendarDate | null`
+- `addCalendarDays(date, delta, calendar) -> CalendarDate | null`
+- `createSevenDaysCalProvider(provider?) -> StoryTimeProvider`
+- `createFallbackStoryTimeProvider(input?) -> StoryTimeProvider`
 
 `authoritativeFloorVersion` contains exactly these binding fields:
 `chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
@@ -80,6 +91,31 @@ authoritative `source`. The ordinal remains an identity compatibility detail and
 keeps multiple Events in one response stable. Runtime calls
 `validateEventCollection()` before saving; only this enriched collection is
 normalized and validated as persisted `BiologicalEvent` Domain DTOs.
+
+### Story Time date boundary
+
+`parseCnDate(text, options?)` is a pure parser. It accepts Chinese numerals,
+Chinese year/month/day forms, fixed month and festival aliases, numeric dates,
+and formal month names from an injected custom calendar. Alias matching is
+longest-first and dictionary-driven; era labels are captured from the input and
+are never pre-registered. The parser preserves this precedence: input guards and
+explicit year bounds, exact numeric dates, full Chinese year/date or
+year/festival forms, open era-year forms, formal month names, fixed aliases, and
+numeric month/date forms.
+
+The parser returns `{month, day}` plus `year` and/or `eraLabel` when known, or
+`null` for an unknown, out-of-range, or invalid date. Month/day validation uses
+the injected calendar when present. Gregorian dates with a year also require
+real leap-year validity; custom calendars do not pass through JavaScript `Date`.
+`extractDayFromTime()` retains its existing relative-day and numeric-date keys,
+then uses the same parser for the Chinese-date fallback.
+
+Only the trusted SevenDaysCal-compatible provider adapter may parse a raw
+provider/display-only value. Existing structured fields (`normalized`, `date`,
+`iso_date`, `day_index`, and equivalent aliases) are authoritative. Complete
+Gregorian dates become `YYYY-MM-DD` with a strict UTC `day_index`; custom or
+era-labeled dates become `cn-year-month-day` with `day_index: null`. The local
+fallback provider and `formatStoryTime()` never reverse-parse display text.
 
 ### Persisted BiologicalEvent
 
@@ -214,6 +250,12 @@ API/schema failure.
 | Manual force fails | Record `failed`/`last_error`; keep prior successful Events active |
 | Lifecycle payload has a stable message ID | Resolve by message identity before numeric array index |
 | UI mount/open/reopen | Read Runtime DTO only; never request Event Analysis |
+| Chinese date uses an unknown or invalid alias/date | Return `null`; do not manufacture a normalized date |
+| A longer month/festival alias overlaps a shorter alias | Match the longest dictionary entry first |
+| Custom era label appears without prior registration | Capture the label from input and keep the canonical date era-scoped |
+| Structured Story Time fields are present | Preserve them; do not reparse `display` |
+| Only a trusted provider supplies raw Chinese display text | Parse at the adapter boundary; fallback and formatter remain display-only |
+| Custom/era date has no Gregorian absolute day | Keep `day_index: null`; sorting/calculation must not invent one |
 
 ## 5. Good / Base / Bad Cases
 
@@ -235,9 +277,17 @@ API/schema failure.
 - Base: a non-sexual BiologicalEvent passes the same envelope and remains
   available to the shared Event system without creating a subject.
 - Base: unknown capability stays `null` and is shown as unknown where exposed.
+- Good: `霜月初七`, `中秋节`, and an unregistered era label resolve through the
+  shared alias/parser path; the sample labels are test data, not production
+  branches.
+- Base: a valid Gregorian date receives a strict UTC `day_index`; a valid custom
+  or era date keeps a canonical `cn-*` normalized value without an invented
+  absolute index.
 - Bad: a participant is made eligible because their gender or UI label says
   receiver/攻/受.
 - Bad: a UI card copies an entire Event or uses `partner: "B,C"`.
+- Bad: `formatStoryTime()` or the fallback provider parses a display string, or
+  production code special-cases an era name from a fixture.
 - Bad: `ui/app.js` builds Event analysis input, validates Event source, or
   rebuilds Tracking Registry after rendering.
 
@@ -267,6 +317,13 @@ API/schema failure.
 - Diagnostic assertions that `eligibleGestationalSubjects()` and
   `explainTrackingDecision()` share the same decision path and unknown carrying
   capability remains ineligible.
+- Date assertions for all fixed month aliases and festival aliases, longest
+  matching, Chinese numerals, full Chinese year/month/day forms, open era labels,
+  formal custom month names, invalid Gregorian/custom dates, relative-day
+  compatibility, and the three representative fixture strings.
+- Story Time assertions for structured-field precedence, trusted-provider parsing,
+  Gregorian day-index generation, `cn-*` custom/era normalization, and the
+  conservative fallback/formatter behavior.
 
 ## 7. Wrong vs Correct
 
@@ -292,6 +349,16 @@ await analyzer.analyzeFloor(buildEventAnalysisInput(uiState));
 // Correct: UI invokes the Runtime coordinator and renders its DTO.
 await runtime.refreshCurrentFloorAnalysis();
 render(await runtime.collectActiveBusinessData());
+```
+
+```js
+// Wrong: every consumer invents its own date parser or reparses display text.
+const normalized = parseDate(storyTime.display);
+
+// Correct: parse once at the trusted provider boundary and consume structure.
+const provider = createSevenDaysCalProvider(publicProvider);
+const storyTime = provider.getCurrentTime();
+const dayIndex = storyTime.day_index;
 ```
 
 Eligibility belongs to the validated Event plus World Model and narrative

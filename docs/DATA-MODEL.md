@@ -185,9 +185,11 @@ Story Time 采用结构化 DTO：
 }
 ```
 
-字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。优先使用可用的 SevenDaysCal 公开 Story Time Adapter；不可用时使用 BioWeave Fallback StoryTimeProvider。Adapter 只依赖公开 context 或注入的 provider，不读取 SevenDaysCal 私有 Store。
+字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。优先使用可用的 SevenDaysCal 公开 Story Time Adapter；该 Adapter 只在可信 provider 输入边界解析原始中文日期，并只依赖公开 context 或注入的 provider，不读取 SevenDaysCal 私有 Store。不可用时使用 BioWeave Fallback StoryTimeProvider。
 
-`display` 只由 formatter 用于 UI 展示，不是存储格式，也不得被任何排序或计算逻辑反向解析。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+`display` 只由 formatter 用于 UI 展示，不是存储格式，也不得被 fallback、formatter、排序或计算逻辑反向解析；只有可信 SevenDaysCal Adapter 的输入边界可以把它作为 provider 原始值交给纯日期解析器。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+
+公历完整日使用 `YYYY-MM-DD`；传统月份、节日或开放纪年在无法证明连续公历纪元时可保留 SevenDaysCal 兼容的 `cn-year-month-day` 规范 key，但 `day_index` 必须保持 `null`。
 
 ### Tracking Subject Registry
 
