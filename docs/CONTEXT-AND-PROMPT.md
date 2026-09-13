@@ -150,6 +150,16 @@ subject/source 闭包由 parser/domain validator 拒绝，Runtime 不自动合�
 BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外貌/体质描写不自动
 形成独立 Event。多 Event response 不由 Runtime 或 UI 合并、拆分或按人物重建。
 
+对 pregnancy-related `sexual_activity`，每个 participant 都必须返回
+`biological_context: {species, biological_type}`；两个字段值只能是字符串或
+`null`，资料不足时不得猜测。`species` 取当前 World Model 对应人物的 species，
+`biological_type` 取该 species 下稳定的生理/生殖分类。`reproductive_capabilities_used`
+必须先综合当前 World Model、已有 character profile、Character / Worldbook 与当前
+剧情证据，再逐项填写；event_role、性行为位置、主动/被动、姓名、外貌或 gender
+都不能替代生物身份证据。species/type 均为 `null` 且没有直接人物证据时，未知
+capability 必须保持 `null`，不输出凭空推导的完整 capability 套装。非 pregnancy
+Event 继续使用既有 participant 合同；不新增 `gender` 字段。
+
 ## 9. Chinese semantic source labels
 
 主要来源 block 必须让模型清楚资料用途和边界，至少使用以下 presentation labels：

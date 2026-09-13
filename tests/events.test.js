@@ -80,6 +80,14 @@ test('normalizeEvent emits the fixed source, story time, participants, and relev
   assert.equal(event.story_time.day_index, null);
   assert.deepEqual(event.pregnancy_relevance.gestational_subject_ids, ['char-a']);
   assert.deepEqual(event.pregnancy_relevance.counterpart_ids, ['char-b', 'char-c']);
+  assert.deepEqual(event.participants[0].biological_context, {
+    species: 'human',
+    biological_type: 'type-a',
+  });
+  assert.deepEqual(event.participants[1].biological_context, {
+    species: null,
+    biological_type: null,
+  });
   assert.equal(event.participants[0].reproductive_capabilities_used.can_carry_pregnancy, true);
   assert.equal(event.participants[0].reproductive_capabilities_used.can_produce_ova, null);
 });

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"按领域规范检查 pregnancy participant context、capability 与 Event normalization 的一致性。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查没有越过 Core/Tracking/UI 职责边界或引入未授权架构重构。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"确认本轮不改 UI，并检查产品 UI 仍只消费 tracking_subjects/validated results。"}
+{"file":"docs/DATA-MODEL.md","reason":"检查最终数据合同文档与实现/测试保持同步。"}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"检查最终 Prompt/DTO 合同文档与 prompt 实际规则保持同步。"}

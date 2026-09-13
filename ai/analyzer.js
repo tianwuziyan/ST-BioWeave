@@ -917,6 +917,7 @@ const EVENT_CAPABILITY_KEYS = Object.freeze([
   'can_carry_pregnancy',
   'can_cause_pregnancy',
 ]);
+const EVENT_BIOLOGICAL_CONTEXT_KEYS = Object.freeze(['species', 'biological_type']);
 const EVENT_SCHEMA_VERSION = Number(
   eventDomain.EVENT_SCHEMA_VERSION
     ?? eventDomain.BIOLOGICAL_EVENT_SCHEMA?.schema_version
@@ -1296,6 +1297,39 @@ function normalizeEventCapabilities(value) {
   }));
 }
 
+function validateEventParticipantBiologicalContext(value, eventIndex, participantIndex) {
+  const path = `${eventPath(eventIndex)}.participants[${participantIndex}].biological_context`;
+  const context = value.biological_context;
+  if (!hasOwn(value, 'biological_context')
+    || !context
+    || typeof context !== 'object'
+    || Array.isArray(context)) {
+    throw eventDiagnostic(
+      'invalid_biological_context',
+      path,
+      'EVENT_SCHEMA_PARTICIPANT_BIOLOGICAL_CONTEXT_INVALID',
+    );
+  }
+  for (const field of EVENT_BIOLOGICAL_CONTEXT_KEYS) {
+    const fieldPath = `${path}.${field}`;
+    if (!hasOwn(context, field)) {
+      throw eventDiagnostic(
+        'invalid_biological_context',
+        fieldPath,
+        'EVENT_SCHEMA_PARTICIPANT_BIOLOGICAL_CONTEXT_FIELD_REQUIRED',
+      );
+    }
+    if (context[field] !== null
+      && (typeof context[field] !== 'string' || !context[field].trim())) {
+      throw eventDiagnostic(
+        'invalid_biological_context',
+        fieldPath,
+        'EVENT_SCHEMA_PARTICIPANT_BIOLOGICAL_CONTEXT_FIELD_INVALID',
+      );
+    }
+  }
+}
+
 function normalizeEventParticipant(value, index) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw invalidEventAnalysis(`EVENT_ANALYSIS_PARTICIPANT_${index}_INVALID`);
@@ -1375,7 +1409,15 @@ function normalizeEventRecord(raw, eventIndex) {
   const eventStatuses = new Set(Array.isArray(eventDomain.EVENT_STATUS) ? eventDomain.EVENT_STATUS : EVENT_STATUS);
   if (!eventTypes.has(eventType)) throw invalidEventAnalysis('EVENT_ANALYSIS_TYPE_INVALID');
   if (!eventStatuses.has(eventStatus)) throw invalidEventAnalysis('EVENT_ANALYSIS_STATUS_INVALID');
-  const participants = normalizeEventParticipants(raw.participants.map(normalizeEventParticipant));
+  const pregnancyExposure = eventType === 'sexual_activity'
+    && raw.pregnancy_relevance?.relevant === true
+    && raw.pregnancy_relevance?.possible_conception === true;
+  const participants = normalizeEventParticipants(raw.participants.map((participant, participantIndex) => {
+    if (pregnancyExposure) {
+      validateEventParticipantBiologicalContext(participant, eventIndex, participantIndex);
+    }
+    return normalizeEventParticipant(participant, participantIndex);
+  }));
   const participantIds = new Set(participants.map(item => item.character_id));
   const normalized = {
     type: eventType,

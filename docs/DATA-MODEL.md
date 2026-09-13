@@ -17,7 +17,7 @@
 
 全局正则适用于所有角色卡，并在分析输入收集时先于当前 Chat 的角色卡正则执行。
 
-同一层的 `analysis_prompt` 保存所有 AI Analysis 共用的用户可编辑 `system_top`、公共 `task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。旧 `world_analysis_prompt` 只作为读取迁移来源；保存后只写 `analysis_prompt`。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定 Core、任务契约、输出 JSON Contract 和结果校验不由该设置覆盖。Event participant 的 `event_role` 只能使用 Domain enum；`reproductive_capabilities_used.*` 为 `true | false | null`；`pregnancy_relevance.relevant` 与 `possible_conception` 为 boolean；`gestational_subject_ids` 与 `counterpart_ids` 为数组；`participant.evidence` 与 `source_evidence` 为 `{kind, text}` 对象数组；`physical_effect.gestational_substance_intake` 只能是 `true | false | null`。
+同一层的 `analysis_prompt` 保存所有 AI Analysis 共用的用户可编辑 `system_top`、公共 `task`、`input_prefix`、`input_suffix`、`system_bottom` 和输入分段标签，不保存 AnalysisInput 正文或 API Key。旧 `world_analysis_prompt` 只作为读取迁移来源；保存后只写 `analysis_prompt`。`system_top` 和 `system_bottom` 为空时不生成额外 SYSTEM 消息；固定 Core、任务契约、输出 JSON Contract 和结果校验不由该设置覆盖。Event participant 的 `event_role` 只能使用 Domain enum；`reproductive_capabilities_used.*` 为 `true | false | null`；`pregnancy_relevance.relevant` 与 `possible_conception` 为 boolean；`gestational_subject_ids` 与 `counterpart_ids` 为数组；`participant.evidence` 与 `source_evidence` 为 `{kind, text}` 对象数组；pregnancy-related `sexual_activity` 的每个 participant 必须包含 `biological_context.species` 与 `biological_context.biological_type`，二者均为 `string | null`；`physical_effect.gestational_substance_intake` 只能是 `true | false | null`。
 
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 
@@ -120,13 +120,13 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 | `type` | 现有 BiologicalEvent 类型；本阶段以 `sexual_activity` 为 Tracking 入口。 |
 | `status` | Event 状态；`negated` / `fictional` 不得成为受孕追踪事实。 |
 | `location` | 事件地点，允许未知值按领域规范化处理。 |
-| `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`。 |
+| `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`；pregnancy-related `sexual_activity` 的每项还必须包含 `biological_context: {species, biological_type}`，两个值均为 `string | null`。 |
 | `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`confidence`。 |
 | `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
 | `story_time` | 结构化故事时间，不能只保存展示字符串。 |
 
-`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。对妊娠相关 `sexual_activity`，完整有效阻隔未进入有效路径、体外或其它无有效路径的排出、仅插入和仅身体接触都不产生妊娠相关参与者；保护动作只是证据，最终实际暴露结果优先，破裂、脱落或摘除后实际进入有效路径时才保留对应 source。`biological_context` 只在有对应 World Model/species 证据时作为最小上下文保存，不由名称或常识补全。
+`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。对妊娠相关 `sexual_activity`，完整有效阻隔未进入有效路径、体外或其它无有效路径的排出、仅插入和仅身体接触都不产生妊娠相关参与者；保护动作只是证据，最终实际暴露结果优先，破裂、脱落或摘除后实际进入有效路径时才保留对应 source。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`，不由名称、外貌或 event_role 补全。`reproductive_capabilities_used` 必须先依据当前 World Model、已有 character profile 与 Character / Worldbook / 当前剧情证据判断；若没有直接人物证据，未知 capability 保持 `null`。
 
 `reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
 

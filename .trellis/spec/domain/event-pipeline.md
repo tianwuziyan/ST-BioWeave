@@ -99,6 +99,18 @@ Every persisted, accepted Domain Event has:
 - `gestational_subject_ids[]` and `counterpart_ids[]`, never a scalar or a
   comma-delimited display string.
 
+For a pregnancy-related `sexual_activity` AI participant, `biological_context`
+is required and must contain `species` and `biological_type`, each a string or
+`null`. `species` comes from the participant's current World Model identity;
+`biological_type` is the stable physiological/reproductive classification under
+that species. Missing evidence uses `null`; no `gender` field is added and no
+identity or capability is inferred from event role, position, active/passive
+labels, name, or appearance. Capability evaluation first uses the current World
+Model, existing character profile, and Character/Worldbook/current narrative
+evidence. Without direct character evidence, unknown capabilities remain
+`null`. Non-pregnancy Events retain the existing optional participant context
+compatibility.
+
 For `sexual_activity`, `counterpart_ids[]` is a subset of `participants[]`
 containing only actual exposure source IDs. A sexual activity with no
 conception-relevant exposure, if retained at all, has no participants, uses
@@ -186,6 +198,7 @@ API/schema failure.
 | Pregnancy `sexual_activity` Event has zero or multiple gestational subjects | Reject with `invalid_gestational_subject_cardinality` |
 | Same Floor response repeats a pregnancy gestational subject | Reject with `duplicate_gestational_subject_event`; do not runtime-merge |
 | Pregnancy Event participants are not exactly subject plus actual counterparts, or counterpart overlaps subject | Reject with subject-local structure diagnostics |
+| Pregnancy `sexual_activity` participant lacks `biological_context`, lacks `species`/`biological_type`, or uses a non-string/non-null value | Reject with `invalid_biological_context` and a safe participant context path |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
 | `possible_conception: true` without direct exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
 | `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |

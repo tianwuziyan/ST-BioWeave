@@ -30,6 +30,10 @@ function participant(characterId, overrides = {}) {
     character_id: characterId,
     display_name: characterId,
     event_role: 'unknown',
+    biological_context: {
+      species: null,
+      biological_type: null,
+    },
     reproductive_capabilities_used: {
       can_produce_sperm: null,
       can_produce_ova: null,
@@ -120,6 +124,10 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /静态人物描写/);
   assert.match(prompt, /症状/);
   assert.match(prompt, /actual reproductive exposure/);
+  assert.match(prompt, /biological_context/);
+  assert.match(prompt, /species/);
+  assert.match(prompt, /biological_type/);
+  assert.match(prompt, /character profile/);
   assert.match(prompt, /完整有效阻隔/);
   assert.match(prompt, /破裂、脱落、摘除后/);
   assert.match(prompt, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
@@ -158,6 +166,128 @@ test('Event parser preserves unknown capability and never derives it from gender
   })]), floorVersion);
   assert.equal(parsed.events[0].participants[0].reproductive_capabilities_used.can_carry_pregnancy, null);
   assert.equal('gender' in parsed.events[0].participants[0], false);
+});
+
+test('pregnancy participants preserve explicit species and biological type context', () => {
+  const parsed = parseEventAnalysisResponse(response([event({
+    participants: [
+      participant('subject_a', {
+        biological_context: {species: 'species_a', biological_type: 'type_a'},
+      }),
+      participant('source_a', {
+        biological_context: {species: 'species_b', biological_type: 'type_b'},
+      }),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject_a'],
+      counterpart_ids: ['source_a'],
+      confidence: null,
+    },
+  })]), floorVersion);
+  assert.deepEqual(parsed.events[0].participants.map(item => item.biological_context), [
+    {species: 'species_a', biological_type: 'type_a'},
+    {species: 'species_b', biological_type: 'type_b'},
+  ]);
+});
+
+test('pregnancy participants may use null identity context while unknown capability stays null', () => {
+  const parsed = parseEventAnalysisResponse(response([event({
+    participants: [
+      participant('subject_a', {
+        biological_context: {species: null, biological_type: null},
+        evidence: [],
+      }),
+      participant('source_a', {
+        biological_context: {species: null, biological_type: null},
+        evidence: [],
+      }),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject_a'],
+      counterpart_ids: ['source_a'],
+      confidence: null,
+    },
+  })]), floorVersion);
+  for (const item of parsed.events[0].participants) {
+    assert.deepEqual(item.biological_context, {species: null, biological_type: null});
+    assert.deepEqual(Object.values(item.reproductive_capabilities_used), [null, null, null, null, null]);
+  }
+});
+
+test('event_role alone cannot create a complete capability suite without identity evidence', () => {
+  const parsed = parseEventAnalysisResponse(response([event({
+    participants: [
+      participant('subject_a', {
+        event_role: 'potential_gestational_subject',
+        biological_context: {species: null, biological_type: null},
+        evidence: [],
+      }),
+      participant('source_a', {
+        event_role: 'potential_conception_source',
+        biological_context: {species: null, biological_type: null},
+        evidence: [],
+      }),
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject_a'],
+      counterpart_ids: ['source_a'],
+      confidence: null,
+    },
+  })]), floorVersion);
+  assert.equal(parsed.events[0].participants.some(item => Object.values(item.reproductive_capabilities_used).some(Boolean)), false);
+});
+
+test('pregnancy participant biological context is mandatory and typed', () => {
+  const missingContext = participant('subject_a');
+  delete missingContext.biological_context;
+  assert.throws(
+    () => parseEventAnalysisResponse(response([event({participants: [missingContext, participant('source_a')]} )]), floorVersion),
+    error => error?.diagnostic_code === 'invalid_biological_context'
+      && error?.diagnostic_path === '$.events[0].participants[0].biological_context',
+  );
+
+  assert.throws(
+    () => parseEventAnalysisResponse(response([event({
+      participants: [
+        participant('subject_a', {biological_context: {species: null}}),
+        participant('source_a'),
+      ],
+    })]), floorVersion),
+    error => error?.diagnostic_code === 'invalid_biological_context'
+      && error?.diagnostic_path === '$.events[0].participants[0].biological_context.biological_type',
+  );
+
+  assert.throws(
+    () => parseEventAnalysisResponse(response([event({
+      participants: [
+        participant('subject_a', {biological_context: {species: 7, biological_type: null}}),
+        participant('source_a'),
+      ],
+    })]), floorVersion),
+    error => error?.diagnostic_code === 'invalid_biological_context'
+      && error?.diagnostic_path === '$.events[0].participants[0].biological_context.species',
+  );
+
+  const nonPregnancyParticipant = participant('subject_a');
+  delete nonPregnancyParticipant.biological_context;
+  const parsed = parseEventAnalysisResponse(response([event({
+    type: 'physical_symptom',
+    participants: [nonPregnancyParticipant],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+  })]), floorVersion);
+  assert.equal(parsed.events[0].participants[0].biological_context, undefined);
 });
 
 test('Event parser accepts a non-sexual BiologicalEvent with the same fixed envelope', () => {

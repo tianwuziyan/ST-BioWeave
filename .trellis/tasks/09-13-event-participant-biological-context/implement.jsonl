@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认 AI DTO、Domain normalization、Tracking 与 UI 的数据边界，避免把身份补全放错层。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"优先复用现有 Event predicate、participant normalization 与 profile 链路，控制修改范围。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"遵循当前 BiologicalEvent、pregnancy exposure 与 participant capability 的领域合同。"}
+{"file":"docs/DATA-MODEL.md","reason":"同步 participant biological_context 的数据模型说明。"}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"同步 Event Analyzer 输入证据顺序与输出合同。"}

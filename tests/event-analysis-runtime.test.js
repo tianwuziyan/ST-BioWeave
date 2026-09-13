@@ -19,12 +19,14 @@ function eventResult(eventId = 'evt-1', overrides = {}) {
       character_id: 'char-a',
       display_name: 'Alice',
       event_role: 'potential_gestational_subject',
+      biological_context: {species: 'species-a', biological_type: 'type-a'},
       reproductive_capabilities_used: {can_carry_pregnancy: true},
       evidence: [{kind: 'narrative', text: '明确证据'}],
     }, {
       character_id: 'char-b',
       display_name: 'Bob',
       event_role: 'potential_conception_source',
+      biological_context: {species: 'species-b', biological_type: 'type-b'},
       reproductive_capabilities_used: {can_cause_pregnancy: true},
       evidence: [{kind: 'narrative', text: '实际来源证据'}],
     }],
@@ -158,6 +160,7 @@ function canonicalApiEvent({
         character_id: subjectId,
         display_name: `${subjectId}_display`,
         event_role: 'potential_gestational_subject',
+        biological_context: {species: 'species-subject', biological_type: 'type-subject'},
         reproductive_capabilities_used: {
           can_produce_sperm: false,
           can_produce_ova: true,
@@ -171,6 +174,7 @@ function canonicalApiEvent({
         character_id: sourceId,
         display_name: `${sourceId}_display`,
         event_role: 'potential_conception_source',
+        biological_context: {species: 'species-source', biological_type: 'type-source'},
         reproductive_capabilities_used: {
           can_produce_sperm: true,
           can_produce_ova: false,
