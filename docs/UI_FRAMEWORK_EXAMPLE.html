@@ -99,7 +99,8 @@
     }
     button, input, select, textarea { font: inherit; color: inherit; }
     button { cursor: pointer; }
-    h1, h2, h3, p { margin: 0; }
+    /* Shared vertical rhythm: component selectors below add only explicit reference spacing. */
+    h1, h2, h3, h4, p { margin: 0; }
     .bw-shell { width: min(960px, 94vw); min-height: min(760px, 90vh); margin: 5vh auto; display: grid; grid-template-rows: 50px 42px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--bw-panel-border); border-radius: 11px; background: var(--bw-panel); box-shadow: 0 24px 60px rgb(0 0 0 / 34%); }
     .bw-header { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 0 13px; border-bottom: 1px solid var(--bw-line); background: var(--bw-header); }
     .bw-brand { flex: 0 0 auto; font-size: 16px; font-weight: 700; }

@@ -694,6 +694,14 @@
   font-weight: 600;
 }
 
+.bioweave-panel h1,
+.bioweave-panel h2,
+.bioweave-panel h3,
+.bioweave-panel h4,
+.bioweave-panel p {
+  margin: 0;
+}
+
 .bioweave-panel i.fa-solid {
   font-weight: 900;
 }

@@ -36,6 +36,15 @@ test('BioWeave overlay stays between ordinary host UI and host modal layers', ()
   assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/);
 });
 
+test('production panel owns paragraph rhythm before page-specific spacing', () => {
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-panel h1,[\s\S]*?\.bioweave-panel h4,[\s\S]*?\.bioweave-panel p\s*\{\s*margin:\s*0;/
+  );
+  assert.match(STYLE_SOURCE, /\.bioweave-character-exposure-list\s*\{[\s\S]*?margin-top:\s*5px/);
+  assert.match(STYLE_SOURCE, /\.bioweave-event-review-summary\s*\{[\s\S]*?margin:\s*2px 0 5px/);
+});
+
 test('production shell uses the unified top routebar on every viewport', () => {
   assert.match(APP_SOURCE, /class="bioweave-app-header"/);
   assert.match(APP_SOURCE, /class="bioweave-routebar"/);
