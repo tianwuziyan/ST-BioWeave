@@ -302,7 +302,6 @@
 .bioweave-event-card > header,
 .bioweave-character-detail > header,
 .bioweave-settings-card-header,
-.bioweave-recent-story-card-header,
 .bioweave-recent-story-regex-scope-header {
   display: flex;
   align-items: flex-start;
@@ -436,12 +435,7 @@
 .bioweave-world-model-species-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .bioweave-world-model-species-card { min-width: 0; overflow: hidden; border: 1px solid var(--bioweave-border-soft); border-radius: 8px; background: var(--bioweave-card); padding: 8px; }
 .bioweave-world-model-species-card.active { border-color: var(--bioweave-accent); background: var(--bioweave-card-selected); }
-.bioweave-world-model-species-button { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 34px; border: 0; border-radius: 6px; background: transparent; color: var(--bioweave-text); cursor: pointer; padding: 4px 5px; text-align: left; }
-.bioweave-world-model-species-button:hover,
-.bioweave-world-model-species-button:focus-visible { background: var(--bioweave-accent-soft); color: var(--bioweave-accent); }
-.bioweave-world-model-species-button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bioweave-world-model-description { margin: 4px 4px 0; color: var(--bioweave-text-muted); font-size: 11px; overflow-wrap: anywhere; }
-.bioweave-world-model-type-selector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
 .bioweave-world-model-type-button { min-width: 0; min-height: 30px; overflow: hidden; border: 1px solid var(--bioweave-border-soft); border-radius: 6px; background: var(--bioweave-surface-soft); color: var(--bioweave-text-secondary); cursor: pointer; padding: 4px 6px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .bioweave-world-model-type-button:hover,
 .bioweave-world-model-type-button.active,
@@ -459,8 +453,7 @@
 .bioweave-world-model-module-heading { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .bioweave-world-model-module-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; background: var(--bioweave-accent-soft); color: var(--bioweave-accent); font-size: 11px; }
 .bioweave-world-model-module-title { min-width: 0; margin: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.bioweave-world-model-module-spacer,
-.bioweave-world-model-detail-spacer { flex: 1; }
+.bioweave-world-model-module-spacer { flex: 1; }
 .bioweave-world-model-module > .bioweave-world-model-properties,
 .bioweave-world-model-module > ul,
 .bioweave-world-model-module > p,
@@ -552,9 +545,7 @@
 .bioweave-recent-story-regex-sections { display: grid; gap: 8px; }
 .bioweave-recent-story-regex-scope { min-width: 0; border: 1px solid var(--bioweave-border-soft); border-radius: 8px; background: var(--bioweave-surface-soft); padding: 8px; }
 .bioweave-recent-story-regex-table { min-width: 0; overflow: hidden; }
-.bioweave-recent-story-regex-table-head,
 .bioweave-recent-story-regex-row { display: grid; grid-template-columns: 24px 58px minmax(100px, 1fr) minmax(80px, 1fr) 34px 38px; gap: 4px; align-items: stretch; min-width: 0; }
-.bioweave-recent-story-regex-table-head { padding: 4px 5px; color: var(--bioweave-text-muted); font-size: 11px; text-align: center; }
 .bioweave-recent-story-regex-row { min-height: 38px; padding: 3px 4px; border: 1px solid var(--bioweave-border-soft); border-radius: 6px; background: var(--bioweave-card); }
 .bioweave-recent-story-regex-cell { display: flex; align-items: center; min-width: 0; }
 .bioweave-recent-story-regex-cell .bioweave-input,
@@ -631,9 +622,7 @@
   .bioweave-model-label { grid-column: 1 / -1; }
   .bioweave-model-refresh-action { min-width: 0; }
   .bioweave-recent-story-read-options { grid-template-columns: minmax(0, 1fr); }
-  .bioweave-recent-story-regex-table-head,
   .bioweave-recent-story-regex-row { grid-template-columns: 20px 48px minmax(44px, 1fr) 30px 30px; gap: 3px; }
-  .bioweave-recent-story-regex-table-head { display: none; }
   .bioweave-recent-story-regex-row { min-height: 38px; padding: 3px 4px; }
   .bioweave-recent-story-regex-pattern { grid-column: 3; }
   .bioweave-recent-story-regex-order { grid-column: 1; grid-row: 1; }
@@ -655,8 +644,6 @@
   .bioweave-world-model-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
   .bioweave-world-model-species-card { padding: 6px; }
   .bioweave-world-model-species-card .bioweave-world-model-description { display: -webkit-box; }
-  .bioweave-world-model-species-button { min-height: 34px; padding-inline: 3px; font-size: 12px; }
-  .bioweave-world-model-type-selector { grid-template-columns: 1fr; gap: 3px; }
   .bioweave-world-model-type-button { min-height: 28px; padding-inline: 4px; font-size: 11px; }
   .bioweave-world-model-content-grid,
   .bioweave-world-model-type-sections { grid-template-columns: minmax(0, 1fr); }
@@ -1013,29 +1000,11 @@
   overflow-wrap: anywhere;
 }
 
-.bioweave-world-model-meta-source,
-.bioweave-world-model-meta-saved {
+.bioweave-world-model-meta-source {
   grid-column: 1 / -1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.bioweave-world-model-meta-saved {
-  color: var(--bioweave-text-muted);
-  font-size: 11px;
-}
-
-.bioweave-world-model-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-
-.bioweave-world-model-status i {
-  color: var(--bioweave-success);
-  font-size: 11px;
 }
 
 .bioweave-world-model-meta-source {
@@ -1044,8 +1013,7 @@
   overflow-wrap: anywhere;
 }
 
-.bioweave-world-model-meta-source strong,
-.bioweave-world-model-meta-saved strong {
+.bioweave-world-model-meta-source strong {
   font-weight: 600;
 }
 
@@ -1103,31 +1071,6 @@
   min-width: 0;
 }
 
-.bioweave-world-model-species-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  min-height: 32px;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--bioweave-text);
-  text-align: left;
-}
-
-.bioweave-world-model-species-button i {
-  flex: 0 0 auto;
-  width: 1.1em;
-  color: var(--bioweave-accent);
-  text-align: center;
-}
-
-.bioweave-world-model-species-button[aria-pressed="true"] span {
-  color: var(--bioweave-accent);
-}
-
-.bioweave-world-model-species-button span,
 .bioweave-world-model-detail-header h4 {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1141,13 +1084,6 @@
   -webkit-line-clamp: 2;
   font-size: 12px;
   line-height: 1.4;
-}
-
-.bioweave-world-model-type-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
 }
 
 .bioweave-world-model-type-button {
@@ -1430,26 +1366,6 @@
   margin-top: 0;
 }
 
-.bioweave-settings-list {
-  display: grid;
-  gap: 0;
-}
-
-.bioweave-settings-list button {
-  display: flex;
-  justify-content: space-between;
-  min-height: 44px;
-  padding: 10px 2px;
-  border: 0;
-  border-bottom: 1px solid var(--bioweave-border);
-  background: transparent;
-  text-align: left;
-}
-
-.bioweave-settings-list p {
-  margin: 12px 2px 0;
-}
-
 .bioweave-settings-page {
   display: grid;
   gap: 10px;
@@ -1578,18 +1494,6 @@
   background: var(--bioweave-accent-soft);
 }
 
-.bioweave-disclosure-hint {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--bioweave-text-secondary);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.bioweave-settings-disclosure > summary .bioweave-disclosure-hint {
-  font-weight: 400;
-}
-
 .bioweave-settings-disclosure > .bioweave-card {
   min-width: 0;
   padding: 11px;
@@ -1716,45 +1620,6 @@
   content: '';
 }
 
-.bioweave-recent-story-summary-copy {
-  display: grid;
-  flex: 1 1 auto;
-  gap: 2px;
-  min-width: 0;
-}
-
-.bioweave-recent-story-summary-copy strong {
-  overflow-wrap: anywhere;
-  font-size: 16px;
-}
-
-.bioweave-recent-story-summary-copy small {
-  overflow-wrap: anywhere;
-  color: var(--bioweave-text-secondary);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.bioweave-recent-story-summary-arrow {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  margin-left: auto;
-  color: var(--bioweave-text-secondary);
-  font-size: 14px;
-}
-
-.bioweave-recent-story-summary-arrow i:last-child,
-.bioweave-recent-story-disclosure[open] .bioweave-recent-story-summary-arrow i:first-child {
-  display: none;
-}
-
-.bioweave-recent-story-disclosure[open] .bioweave-recent-story-summary-arrow i:last-child {
-  display: inline-block;
-}
-
 .bioweave-settings-disclosure > .bioweave-recent-story-settings {
   min-width: 0;
   padding: 10px;
@@ -1767,62 +1632,6 @@
 .bioweave-recent-story-settings {
   display: grid;
   gap: 10px;
-}
-
-.bioweave-recent-story-read-card,
-.bioweave-recent-story-regex-card,
-.bioweave-recent-story-tip-card {
-  min-width: 0;
-  padding: 11px;
-  border: 1px solid var(--bioweave-border);
-  border-radius: 8px;
-  background: var(--bioweave-surface);
-}
-
-.bioweave-recent-story-read-card,
-.bioweave-recent-story-regex-card {
-  padding: 11px;
-}
-
-.bioweave-recent-story-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start !important;
-  gap: 9px;
-  margin-bottom: 8px !important;
-  padding-bottom: 7px;
-  border-bottom: 1px solid var(--bioweave-border);
-}
-
-.bioweave-recent-story-card-header > div {
-  min-width: 0;
-}
-
-.bioweave-recent-story-card-header h3,
-.bioweave-recent-story-card-header p {
-  margin: 0;
-}
-
-.bioweave-recent-story-card-header h3 {
-  font-size: 14px;
-}
-
-.bioweave-recent-story-card-header p {
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-
-.bioweave-recent-story-tip-icon {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--bioweave-accent-soft);
-  color: var(--bioweave-accent);
-  font-size: 14px;
 }
 
 .bioweave-recent-story-read-options {
@@ -1841,45 +1650,6 @@
 .bioweave-recent-story-read-options .bioweave-recent-story-user-regex {
   grid-column: auto;
   margin: 0;
-}
-
-.bioweave-recent-story-regex-card > header {
-  margin-bottom: 8px !important;
-}
-
-.bioweave-recent-story-tip-card > header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.bioweave-recent-story-tip-header h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.bioweave-recent-story-tip-icon {
-  flex-basis: 24px;
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  font-size: 16px;
-}
-
-.bioweave-recent-story-tip-list {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  padding-left: 26px;
-  color: var(--bioweave-text-secondary);
-  font-size: 12px;
-}
-
-.bioweave-recent-story-tip-list li {
-  padding-left: 3px;
-  overflow-wrap: anywhere;
 }
 
 .bioweave-api-security-note {
@@ -2044,7 +1814,6 @@
   min-width: 0;
 }
 
-.bioweave-analysis-source-card-heading,
 .bioweave-analysis-worldbook > summary,
 .bioweave-analysis-character-group > summary {
   display: flex;
@@ -2053,16 +1822,6 @@
   gap: 8px;
   min-width: 0;
   color: var(--bioweave-text);
-}
-
-.bioweave-analysis-source-card-heading {
-  padding: 4px 8px;
-}
-
-.bioweave-analysis-source-card-heading span {
-  flex: 0 0 auto;
-  color: var(--bioweave-text-secondary);
-  font-size: 12px;
 }
 
 .bioweave-analysis-worldbook,
@@ -2387,11 +2146,6 @@
   font-size: 13px;
 }
 
-.bioweave-recent-story-count-hint {
-  color: var(--bioweave-text-secondary);
-  font-size: 11px;
-}
-
 .bioweave-recent-story-count .bioweave-input {
   width: 100%;
   min-width: 0;
@@ -2400,19 +2154,6 @@
 .bioweave-recent-story-count-unit {
   color: var(--bioweave-text);
   font-weight: 600;
-}
-
-.bioweave-recent-story-count-hint {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.bioweave-recent-story-count-hint i {
-  color: var(--bioweave-accent);
 }
 
 .bioweave-recent-story-regex-sections {
@@ -2499,22 +2240,12 @@
   background: transparent;
 }
 
-.bioweave-recent-story-regex-table-head,
 .bioweave-recent-story-regex-row {
   display: grid;
   grid-template-columns: minmax(38px, .35fr) minmax(86px, .85fr) minmax(140px, 3fr) minmax(64px, .7fr) minmax(140px, 1.45fr) minmax(86px, .85fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.bioweave-recent-story-regex-table-head {
-  padding: 8px 10px;
-  color: var(--bioweave-text-secondary);
-  background: var(--bioweave-accent-soft);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
 }
 
 .bioweave-recent-story-regex-list {
@@ -2989,29 +2720,6 @@
   overflow-wrap: normal;
 }
 
-.bioweave-settings-advanced {
-  margin-top: 12px;
-  border-top: 1px solid var(--bioweave-border);
-}
-
-.bioweave-settings-advanced summary {
-  min-height: 42px;
-  padding: 12px 2px 8px;
-  color: var(--bioweave-text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  list-style-position: inside;
-}
-
-.bioweave-settings-advanced[open] summary {
-  color: var(--bioweave-accent);
-}
-
-.bioweave-settings-advanced .bioweave-settings-fields {
-  padding: 2px 0 3px;
-}
-
 .bioweave-primary-action,
 .bioweave-danger-action {
   min-height: 38px;
@@ -3029,22 +2737,11 @@
   color: var(--bioweave-danger);
 }
 
-.bioweave-security-note,
 .bioweave-settings-notice,
 .bioweave-test-result {
   overflow-wrap: anywhere;
 }
 
-.bioweave-security-note {
-  display: grid;
-  gap: 3px;
-  padding: 10px 11px;
-  border: 1px solid var(--bioweave-accent);
-  border-radius: 8px;
-  background: var(--bioweave-accent-soft);
-}
-
-.bioweave-security-note span,
 .bioweave-settings-notice {
   color: var(--bioweave-text-secondary);
   font-size: 12px;
@@ -3268,10 +2965,6 @@
 .bioweave-assignment-field .bioweave-select {
   width: 100%;
   min-width: 0;
-}
-
-.bioweave-secret-field {
-  margin-top: 10px;
 }
 
 .bioweave-secret-status,
@@ -3681,8 +3374,7 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .bioweave-world-model-meta-source,
-  .bioweave-world-model-meta-saved {
+  .bioweave-world-model-meta-source {
     white-space: normal;
   }
 
@@ -3747,8 +3439,7 @@
     display: -webkit-box;
   }
 
-  .bioweave-world-model-type-button,
-  .bioweave-world-model-species-button {
+  .bioweave-world-model-type-button {
     min-height: 38px;
   }
 
@@ -3819,19 +3510,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .bioweave-recent-story-regex-header {
-    flex-wrap: wrap;
-  }
-
-  .bioweave-recent-story-regex-header > div,
-  .bioweave-recent-story-regex-header > button {
-    min-width: 0;
-  }
-
-  .bioweave-recent-story-regex-header > button {
-    width: 100%;
-  }
-
   .bioweave-recent-story-settings {
     padding: 4px;
   }
@@ -3851,10 +3529,6 @@
 
   .bioweave-recent-story-regex-scope-header button {
     width: 100%;
-  }
-
-  .bioweave-recent-story-regex-table-head {
-    display: none;
   }
 
   .bioweave-recent-story-regex-row {
@@ -3955,12 +3629,10 @@
     padding: 6px 10px;
   }
 
-  .bioweave-recent-story-summary-copy strong,
   .bioweave-settings-summary-copy strong {
     font-size: 16px;
   }
 
-  .bioweave-recent-story-summary-copy small,
   .bioweave-settings-summary-copy small {
     font-size: 11px;
   }
@@ -3974,15 +3646,6 @@
     gap: 10px;
   }
 
-  .bioweave-recent-story-read-card,
-  .bioweave-recent-story-regex-card {
-    padding: 10px;
-  }
-
-  .bioweave-recent-story-card-header {
-    margin-bottom: 8px !important;
-  }
-
   .bioweave-recent-story-regex-scope-header {
     flex-wrap: wrap;
   }
@@ -3994,10 +3657,6 @@
 
   .bioweave-recent-story-regex-scope-header > button {
     width: 100%;
-  }
-
-  .bioweave-recent-story-regex-table-head {
-    display: none;
   }
 
   .bioweave-recent-story-regex-row {
@@ -4049,18 +3708,12 @@
   }
 
   /* 手机端保持规则表格单行，通过表格自身横向滚动避免页面溢出。 */
-  .bioweave-recent-story-regex-table-head,
   .bioweave-recent-story-regex-row {
     display: grid;
     width: 100%;
     min-width: 0;
     grid-template-columns: 24px 58px minmax(64px, 1fr) 38px 44px 38px;
     gap: 6px;
-  }
-
-  .bioweave-recent-story-regex-table-head {
-    padding: 8px 10px;
-    text-align: center;
   }
 
   .bioweave-recent-story-regex-row {
@@ -4181,14 +3834,9 @@
 }
 
 @media (max-width: 480px) {
-  .bioweave-recent-story-regex-table-head,
   .bioweave-recent-story-regex-row {
     grid-template-columns: 20px 48px minmax(44px, 1fr) 30px 44px 30px;
     gap: 3px;
-  }
-
-  .bioweave-recent-story-regex-table-head {
-    padding: 7px 5px;
   }
 
   .bioweave-recent-story-regex-row {
@@ -4307,30 +3955,10 @@
   min-height: 26px;
 }
 
-.bioweave-world-model-species-button {
-  min-height: 26px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.bioweave-world-model-species-button i {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--bioweave-accent-soft);
-}
-
 .bioweave-world-model-species-card > .bioweave-world-model-description {
   max-height: 4.2em;
   -webkit-line-clamp: 3;
   line-height: 1.4;
-}
-
-.bioweave-world-model-type-selector {
-  margin-top: auto;
-  gap: 6px;
 }
 
 .bioweave-world-model-type-button {
@@ -4381,19 +4009,9 @@
   font-size: 12px;
 }
 
-.bioweave-world-model-detail-spacer,
 .bioweave-world-model-module-spacer {
   flex: 1 1 auto;
   min-width: 8px;
-}
-
-.bioweave-world-model-switch-button {
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 1px solid var(--bioweave-border);
-  border-radius: 6px;
-  background: transparent;
-  white-space: nowrap;
 }
 
 .bioweave-world-model-type-sections {
@@ -4648,7 +4266,6 @@
   }
 
   .bioweave-world-model-edit-button,
-  .bioweave-world-model-switch-button,
   .bioweave-world-model-section-actions button {
     min-height: 40px;
   }
@@ -4766,7 +4383,6 @@
 .bioweave-world-model-page .bioweave-secondary-action,
 .bioweave-world-model-page .bioweave-danger-action,
 .bioweave-world-model-page .bioweave-world-model-edit-button,
-.bioweave-world-model-page .bioweave-world-model-switch-button,
 .bioweave-world-model-page .bioweave-world-model-section-actions button {
   min-height: 38px;
   padding: 8px 12px;
@@ -4796,13 +4412,11 @@
 .bioweave-world-model-page .bioweave-secondary-action:hover,
 .bioweave-world-model-page .bioweave-danger-action:hover,
 .bioweave-world-model-page .bioweave-world-model-edit-button:hover,
-.bioweave-world-model-page .bioweave-world-model-switch-button:hover,
 .bioweave-world-model-page .bioweave-world-model-section-actions button:hover {
   border-color: var(--bioweave-accent);
 }
 
 .bioweave-world-model-page .bioweave-world-model-edit-button,
-.bioweave-world-model-page .bioweave-world-model-switch-button,
 .bioweave-world-model-page .bioweave-world-model-section-actions button {
   min-height: 31px;
   padding: 5px 9px;
@@ -4871,38 +4485,6 @@
   min-height: 31px;
 }
 
-.bioweave-world-model-page .bioweave-world-model-species-button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 31px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--bioweave-text);
-  text-align: left;
-}
-
-.bioweave-world-model-page .bioweave-world-model-species-button i {
-  display: grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  border-radius: 8px;
-  background: var(--bioweave-accent-soft);
-  color: var(--bioweave-accent);
-}
-
-.bioweave-world-model-page .bioweave-world-model-species-button span {
-  min-width: 0;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
 .bioweave-world-model-page .bioweave-world-model-species-card > .bioweave-world-model-description {
   display: -webkit-box;
   max-height: 4.5em;
@@ -4913,13 +4495,6 @@
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-}
-
-.bioweave-world-model-page .bioweave-world-model-type-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: auto;
 }
 
 .bioweave-world-model-page .bioweave-world-model-type-button {
@@ -4943,17 +4518,6 @@
   background: var(--bioweave-accent);
   color: var(--bioweave-bg);
   font-weight: 700;
-}
-
-.bioweave-world-model-page .bioweave-world-model-type-selector > .bioweave-empty {
-  width: 100%;
-  margin-top: auto;
-  padding: 7px;
-  border: 1px solid var(--bioweave-border);
-  border-radius: 7px;
-  color: var(--bioweave-text-muted);
-  font-size: 12px;
-  text-align: center;
 }
 
 .bioweave-world-model-page .bioweave-world-model-content-grid {
@@ -5309,10 +4873,6 @@
     background: var(--bioweave-surface);
   }
 
-  .bioweave-world-model-page .bioweave-world-model-switch-button {
-    display: none;
-  }
-
   .bioweave-world-model-page .bioweave-world-model-property {
     grid-template-columns: 1fr;
     gap: 2px;
@@ -5510,10 +5070,7 @@
 .bioweave-world-model-page .bioweave-world-model-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 7px !important; }
 .bioweave-world-model-page .bioweave-world-model-species-card { display: block !important; gap: 0 !important; padding: 8px !important; border-color: var(--bioweave-border-soft) !important; border-radius: 8px !important; background: var(--bioweave-card) !important; }
 .bioweave-world-model-page .bioweave-world-model-species-card.active { border-color: var(--bioweave-accent) !important; background: var(--bioweave-card-selected) !important; }
-.bioweave-world-model-page .bioweave-world-model-species-button { justify-content: flex-start !important; min-height: 34px !important; padding: 4px 5px !important; text-align: left !important; font-size: 15px !important; font-weight: 700 !important; }
-.bioweave-world-model-page .bioweave-world-model-species-button span { font-size: 15px !important; font-weight: 700 !important; }
 .bioweave-world-model-page .bioweave-world-model-type-button { min-height: 32px !important; padding: 5px 7px !important; text-align: left !important; font-size: 14px !important; font-weight: 650 !important; }
-.bioweave-world-model-page .bioweave-world-model-type-selector { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 4px !important; margin-top: 7px !important; }
 .bioweave-world-model-page .bioweave-world-model-type-button { min-height: 30px !important; border-radius: 6px !important; background: var(--bioweave-surface-soft) !important; padding: 4px 6px !important; }
 .bioweave-world-model-page .bioweave-world-model-content-grid { grid-template-columns: minmax(0, 1.7fr) minmax(250px, .9fr) !important; gap: 8px !important; }
 .bioweave-world-model-page .bioweave-world-model-type-sections { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 7px !important; }
@@ -5544,7 +5101,6 @@
 .bioweave-settings-page .bioweave-select,
 .bioweave-settings-page .bioweave-model-trigger { min-width: 0 !important; max-width: 100% !important; }
 
-.bioweave-settings-page .bioweave-recent-story-regex-table-head,
 .bioweave-settings-page .bioweave-recent-story-regex-row { grid-template-columns: 24px 58px minmax(100px, 1fr) minmax(80px, 1fr) 34px 38px !important; gap: 4px !important; }
 .bioweave-settings-page .bioweave-recent-story-regex-row { min-height: 38px !important; padding: 3px 4px !important; }
 .bioweave-settings-page .bioweave-recent-story-regex-order { display: grid !important; grid-template-rows: 1fr 1fr !important; gap: 0 !important; min-height: 32px !important; }
@@ -5583,9 +5139,7 @@
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-card,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-recent-story-settings,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-analysis-preview { margin-inline: 5px !important; }
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head,
   .bioweave-settings-page .bioweave-recent-story-regex-row { grid-template-columns: 20px 48px minmax(44px, 1fr) 30px 30px !important; gap: 3px !important; }
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head { display: none !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-row { min-height: 38px !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-pattern { grid-column: 3 !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-order { grid-column: 1 !important; grid-row: 1 !important; }
@@ -5608,13 +5162,10 @@
     padding: 6px !important;
     scroll-snap-align: none !important;
   }
-  .bioweave-world-model-page .bioweave-world-model-species-button,
-  .bioweave-world-model-page .bioweave-world-model-species-button span,
   .bioweave-world-model-page .bioweave-world-model-type-button {
     font-size: 13px !important;
   }
   .bioweave-world-model-page .bioweave-world-model-species-card > .bioweave-world-model-description { display: -webkit-box !important; }
-  .bioweave-world-model-page .bioweave-world-model-type-selector { grid-template-columns: 1fr !important; gap: 3px !important; }
   .bioweave-world-model-page .bioweave-world-model-content-grid,
   .bioweave-world-model-page .bioweave-world-model-type-sections { grid-template-columns: 1fr !important; }
 }
@@ -5873,7 +5424,6 @@
 .bioweave-settings-page .bioweave-recent-story-regex-table,
 .bioweave-settings-page .bioweave-recent-story-regex-list { width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
 
-.bioweave-settings-page .bioweave-recent-story-regex-table-head,
 .bioweave-settings-page .bioweave-recent-story-regex-row,
 .bioweave-settings-page .bioweave-regex-row {
   grid-template-columns: auto minmax(64px, .45fr) minmax(150px, 1.7fr) auto auto auto !important;
@@ -5881,7 +5431,6 @@
   min-width: 0 !important;
 }
 
-.bioweave-settings-page .bioweave-recent-story-regex-table-head { padding: 4px 5px !important; font-size: 10px !important; }
 .bioweave-settings-page .bioweave-recent-story-regex-row { min-height: 38px !important; padding: 3px 5px !important; border-color: var(--bioweave-border-soft) !important; background: var(--bioweave-card) !important; }
 
 .bioweave-settings-page .bioweave-recent-story-regex-cell .bioweave-input,
@@ -5961,10 +5510,8 @@
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-card,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-recent-story-settings,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-analysis-preview { max-width: calc(100% - 10px) !important; margin-inline: 5px !important; }
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head,
   .bioweave-settings-page .bioweave-recent-story-regex-row,
   .bioweave-settings-page .bioweave-regex-row { grid-template-columns: 20px 48px minmax(44px, 1fr) 30px 20px 30px !important; gap: 3px !important; }
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head { display: none !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-index { grid-column: 1 !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-type { grid-column: 2 !important; }
   .bioweave-settings-page .bioweave-recent-story-regex-pattern { grid-column: 3 !important; }
@@ -6056,16 +5603,14 @@
   background: var(--bioweave-card-selected) !important;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-copy,
-.bioweave-settings-page .bioweave-recent-story-summary-copy {
+.bioweave-settings-page .bioweave-settings-summary-copy {
   display: grid !important;
   flex: 1 1 auto !important;
   gap: 0 !important;
   min-width: 0 !important;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-copy strong,
-.bioweave-settings-page .bioweave-recent-story-summary-copy strong {
+.bioweave-settings-page .bioweave-settings-summary-copy strong {
   overflow: hidden;
   color: var(--bioweave-text) !important;
   font-size: 15px !important;
@@ -6075,8 +5620,7 @@
   white-space: nowrap;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-copy small,
-.bioweave-settings-page .bioweave-recent-story-summary-copy small {
+.bioweave-settings-page .bioweave-settings-summary-copy small {
   margin-top: 3px !important;
   overflow: hidden;
   color: var(--bioweave-text-muted) !important;
@@ -6086,8 +5630,7 @@
   white-space: nowrap;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-arrow,
-.bioweave-settings-page .bioweave-recent-story-summary-arrow {
+.bioweave-settings-page .bioweave-settings-summary-arrow {
   display: grid !important;
   place-items: center !important;
   flex: 0 0 18px !important;
@@ -6102,19 +5645,16 @@
   line-height: 1 !important;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-arrow i,
-.bioweave-settings-page .bioweave-recent-story-summary-arrow i {
+.bioweave-settings-page .bioweave-settings-summary-arrow i {
   display: none !important;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-arrow::before,
-.bioweave-settings-page .bioweave-recent-story-summary-arrow::before {
+.bioweave-settings-page .bioweave-settings-summary-arrow::before {
   content: '+';
   font-size: 15px;
 }
 
-.bioweave-settings-page > .bioweave-settings-disclosure[open] .bioweave-settings-summary-arrow::before,
-.bioweave-settings-page > .bioweave-settings-disclosure[open] .bioweave-recent-story-summary-arrow::before {
+.bioweave-settings-page > .bioweave-settings-disclosure[open] .bioweave-settings-summary-arrow::before {
   content: '−';
 }
 
@@ -6422,10 +5962,8 @@
   .bioweave-settings-page > .bioweave-settings-disclosure > .bioweave-recent-story-summary { min-height: 44px !important; padding: 6px 8px !important; }
   .bioweave-settings-page > .bioweave-settings-disclosure[open] > .bioweave-settings-summary,
   .bioweave-settings-page > .bioweave-settings-disclosure[open] > .bioweave-recent-story-summary { padding-left: 5px !important; }
-  .bioweave-settings-page .bioweave-settings-summary-copy strong,
-  .bioweave-settings-page .bioweave-recent-story-summary-copy strong { font-size: 15px !important; }
-  .bioweave-settings-page .bioweave-settings-summary-copy small,
-  .bioweave-settings-page .bioweave-recent-story-summary-copy small { font-size: 10px !important; }
+  .bioweave-settings-page .bioweave-settings-summary-copy strong { font-size: 15px !important; }
+  .bioweave-settings-page .bioweave-settings-summary-copy small { font-size: 10px !important; }
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-card,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-recent-story-settings,
   .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-analysis-preview { padding: 0 8px 10px !important; }
@@ -6599,15 +6137,13 @@
   accent-color: var(--bioweave-warn) !important;
 }
 
-.bioweave-settings-page .bioweave-settings-summary-arrow::before,
-.bioweave-settings-page .bioweave-recent-story-summary-arrow::before {
+.bioweave-settings-page .bioweave-settings-summary-arrow::before {
   display: block !important;
   content: '+' !important;
   font-size: 15px !important;
 }
 
-.bioweave-settings-page .bioweave-settings-disclosure[open] > .bioweave-settings-summary .bioweave-settings-summary-arrow::before,
-.bioweave-settings-page .bioweave-settings-disclosure[open] > .bioweave-recent-story-summary .bioweave-recent-story-summary-arrow::before {
+.bioweave-settings-page .bioweave-settings-disclosure[open] > .bioweave-settings-summary .bioweave-settings-summary-arrow::before {
   content: '−' !important;
 }
 
@@ -6690,7 +6226,6 @@
     width: auto !important;
   }
 
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head,
   .bioweave-settings-page .bioweave-recent-story-regex-row,
   .bioweave-settings-page .bioweave-regex-row {
     grid-template-columns: 18px 44px minmax(0, 1fr) 28px 20px 28px !important;
@@ -6782,7 +6317,6 @@
 /* Final responsive correction: the type column is fixed to its content,
  * mobile rows keep a real inner control height, and the top read controls
  * remain parallel on narrow screens. */
-.bioweave-settings-page .bioweave-recent-story-regex-table-head,
 .bioweave-settings-page .bioweave-recent-story-regex-row,
 .bioweave-settings-page .bioweave-regex-row {
   grid-template-columns: auto 72px minmax(150px, 1.7fr) auto auto auto !important;
@@ -6880,7 +6414,6 @@
     transform: none !important;
   }
 
-  .bioweave-settings-page .bioweave-recent-story-regex-table-head,
   .bioweave-settings-page .bioweave-recent-story-regex-row,
   .bioweave-settings-page .bioweave-regex-row {
     grid-template-columns: 18px 60px minmax(0, 1fr) 28px 20px 28px !important;

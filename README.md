@@ -72,13 +72,11 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 
 <!-- TODO: 添加实际运行截图或 GIF，展示扩展入口、World Model、设置和移动端布局。 -->
 
-已有图片和 HTML 是设计参考资料，不等同于当前版本的运行截图：
+仓库中的 HTML 仅用于维护当前 UI 契约，不等同于当前版本的运行截图：
 
-![BioWeave World Model UI 参考图](docs/references/BioWeave_World_UI_reference_v2.png)
-
-- [World Model UI v3 静态参考实现](docs/references/BioWeave_World_UI_reference_v3.html)
-- [UI v2.0 完整设计文档](docs/references/BioWeave_UI_v2.0_design.md)
-- [World Model UI 开发规范 v2](docs/references/BioWeave_World_UI_开发规范_v2.md)
+- [完整八页面视觉参考](docs/UI_FULL_REFERENCE.html)
+- [控件结构与语法示例](docs/UI_FRAMEWORK_EXAMPLE.html)
+- [UI 框架规范](docs/UI_FRAMEWORK.md)
 
 参考设计强调：当前 Chat 是数据边界、总览面向多人、World Model 按物种和生物类型浏览、每个规则模块独立编辑，以及 PC / Tablet / Mobile 的布局适配。
 
@@ -625,8 +623,9 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 - [数据模型与存储边界](docs/DATA-MODEL.md)
 - [开发规范与模块边界](docs/DEVELOPMENT.md)
 - [UI 行为与页面说明](docs/UI.md)
-- [UI v2.0 完整设计](docs/references/BioWeave_UI_v2.0_design.md)
-- [World Model UI 开发规范 v2](docs/references/BioWeave_World_UI_开发规范_v2.md)
-- [World Model UI 静态参考](docs/references/BioWeave_World_UI_reference_v3.html)
+- [UI 迁移契约](docs/UI_MIGRATION_PROMPT.md)
+- [UI 框架规范](docs/UI_FRAMEWORK.md)
+- [UI 框架配置](docs/ui-framework.config.json)
+- [完整八页面视觉参考](docs/UI_FULL_REFERENCE.html)
 
 项目地址：[tianwuziyan/ST-BioWeave](https://github.com/tianwuziyan/ST-BioWeave)

@@ -12,7 +12,7 @@
 2. 本文档中的 UI 框架规则；
 3. docs/UI_FRAMEWORK_EXAMPLE.html 中的结构和视觉示例；
 4. docs/UI_FULL_REFERENCE.html 中的完整八页面视觉原型；
-5. docs/references/ 下没有被本文档明确引用的旧参考文件只作历史资料。
+5. 仓库不再保留旧 UI 参考目录；未列入上述清单的文件不构成 UI 规范。
 
 生产 UI 不是把静态原型直接复制进去。原型只提供布局、颜色、间距、控件形态和响应式方向；生产页面必须继续消费 Runtime DTO，并继续使用现有的 data-bioweave-* 事件钩子。
 
