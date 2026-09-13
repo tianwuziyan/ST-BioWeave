@@ -71,7 +71,7 @@ test('characters page distinguishes not analyzed from analyzed with zero subject
       tracking_decisions: [{character_id: 'char-a', eligible: false, reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN']}],
     },
   });
-  assert.match(analyzed, /当前没有需要妊娠追踪的角色。/);
+  assert.match(analyzed, /当前没有需要事件追踪的角色。/);
   assert.doesNotMatch(analyzed, /Tracking Decision 诊断|CAN_CARRY_PREGNANCY_UNKNOWN/);
   assert.match(analyzed, /重新分析当前楼层/);
   assert.doesNotMatch(html, /demo-character-1|演示人物|占位 DTO/);
@@ -206,10 +206,10 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.match(html, /可产生精子[\s\S]*?否/);
   assert.match(html, /data-bioweave-event-id="evt-1"/);
   assert.doesNotMatch(html, /调试信息|content_hash|message_version|chat_id|message_id/);
-  for (const section of ['当前状态', '受孕相关记录', '推演', '关系', '备注']) {
+  for (const section of ['当前状态', '事件追踪', '推演', '关系', '备注']) {
     assert.match(html, new RegExp(`<h3>${section}</h3>`));
   }
-  assert.equal((html.match(/bioweave-character-exposure/g) ?? []).length, 1);
+  assert.equal((html.match(/class="bioweave-card bioweave-character-exposure"/g) ?? []).length, 1);
   assert.match(html, /阿乙/);
   assert.doesNotMatch(html, /阿丙/);
   assert.doesNotMatch(html, /<dt>参与者<\/dt>|事件角色/);

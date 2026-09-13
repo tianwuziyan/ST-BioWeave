@@ -193,6 +193,65 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 控件语法参考见 docs/UI_FRAMEWORK_EXAMPLE.html，完整八页面视觉参考见 docs/UI_FULL_REFERENCE.html。生产代码可以使用更具体的 bioweave-* 变体，但必须保持同样的层级和职责。
 
+## 人物页面格式
+
+人物页面使用参考页同款的“列表 + 详情”工作区，不再通过路由把列表整体替换成详情。页面最大宽度为 `900px`；标题下的工具栏和工作区统一保留 `10px` 一级缩进。Desktop 使用 `minmax(180px, .72fr) minmax(0, 1.28fr)` 两列和 `8px` 间距，Mobile 退回单列，列表在上、详情在下。人物行必须使用按钮语义和 `data-character-id`，选中只改变边框/背景，不改变 Runtime 数组顺序：
+
+工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板内的空状态使用 `bioweave-character-empty`，颜色为 `text-muted`、字号 `10px`、行高 `1.35`、顶部间距 `5px`。能力字段的标签使用 `text-secondary`，值默认使用 `text-muted`；事件详情字段的标签使用 `text-muted`，值使用 `text-secondary`。字段列表不再继承通用 `data-list` 的额外间距：能力行使用 `4px 0`，事件详情行使用 `minmax(60px, max-content) minmax(0, 1fr)`、列间距 `12px`、内边距 `3px 0`；Mobile 使用 `minmax(58px, max-content) minmax(0, 1fr)` 和 `10px` 列间距。Mobile 人物工具栏、工作区、列表 pane、详情 pane 都必须 `width: 100%` 且取消左右外边距，避免内容被缩窄或产生页面横向滚动。
+
+左侧人物列表使用 `5px` 行间距；列表行不再叠加额外的相邻行外边距。Desktop 的人物内容按参考页的 `900px` 最大宽度、`8px` 工作区列间距和 `10px` 一级缩进排列，详情内两列区块使用 `6px` 间距；这些值不能被通用卡片或数据列表样式覆盖。
+
+~~~html
+<div class="bioweave-character-workspace">
+  <section class="bioweave-character-list-pane">
+    <div class="bioweave-character-pane-head">
+      <strong>追踪人物</strong><span>n 人</span>
+    </div>
+    <div class="bioweave-character-list">
+      <button class="bioweave-card bioweave-character-row" type="button" data-character-id="runtime-id">
+        <span class="bioweave-character-row-main"><b>Runtime display_name</b></span>
+        <span class="bioweave-character-row-state">
+          <span class="bioweave-badge good">追踪中</span>
+          <span>n 次相关事件</span><span class="bioweave-character-row-chevron">›</span>
+        </span>
+      </button>
+    </div>
+  </section>
+  <section class="bioweave-card bioweave-character-detail-pane">
+    <header class="bioweave-character-detail-head"><div><h2>人物详情</h2><p>当前 Chat · 事件追踪</p></div></header>
+    <!-- summary / capabilities / current state / exposure / projection / relations / notes -->
+  </section>
+</div>
+~~~
+
+详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。日期下方的相对时间只允许读取 `story_time.normalized` 这样的规范日期，不解析展示文案。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态仍按原业务语义显示。
+
+## 事件页面格式
+
+事件页面采用参考页同款的紧凑审阅索引：标题为“事件审阅”，主区块标题为“当前事件索引”，状态筛选使用原生 `bioweave-select`，并通过 `data-bioweave-event-filter` 触发现有 App 的本地筛选。Desktop 每行列为 `128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto`，最小高度 `45px`、间距 `8px`；Mobile 改为两行网格，第一行放事件类型/状态，第二行放时间/摘要，不产生页面级横向滚动：
+
+~~~html
+<section class="bioweave-card bioweave-event-review-panel">
+  <div class="bioweave-section-head">
+    <div><h3>当前事件索引</h3><p>按日期快速定位；不在这里堆叠所有人物上下文</p></div>
+    <label class="bioweave-field-inline">状态
+      <select class="bioweave-select" data-bioweave-event-filter>...</select>
+    </label>
+  </div>
+  <div class="bioweave-event-review-summary"><strong>n 条</strong><span>当前筛选结果</span></div>
+  <div class="bioweave-event-review-list">
+    <details class="bioweave-card bioweave-event-review-item" data-bioweave-event-id="runtime-event-id">
+      <summary class="bioweave-event-review-row">时间 / 类型 / 真实对象摘要 / 状态</summary>
+      <div class="bioweave-event-review-detail-panel">
+        <!-- 原有妊娠相关性、证据、编辑和删除 hooks 保留在这里 -->
+      </div>
+    </details>
+  </div>
+</section>
+~~~
+
+事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。时间下方的相对时间只允许读取规范 `story_time.normalized`，不能解析展示文本。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
+
 状态徽标必须沿用概念页的胶囊形样式：22px 高、`2px 7px` 内边距、999px 圆角、透明背景。成功/已选/有效使用 `good`，处理中/较可能使用 `warn`，失败/否定使用 `danger`；世界书来源的“已选数量”即使处于部分选择也使用绿色 `good`，黄色只表示 checkbox 的 `indeterminate` 状态；没有明确语义时使用中性徽标，不根据文案猜测业务状态。
 
 ## 世界模型格式

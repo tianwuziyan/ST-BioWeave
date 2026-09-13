@@ -28,6 +28,7 @@
       --bw-card: #1a252c;
       --bw-card-selected: #203744;
       --bw-control-surface: #162129;
+      --bw-input-bg: #141d23;
       --bw-primary-border: #5f9cc0;
       --bw-danger-border: #774852;
       --bw-indent-line: #465862;
@@ -56,6 +57,7 @@
       --bw-card: #e1e9ec;
       --bw-card-selected: #cbdfe8;
       --bw-control-surface: #d5e1e5;
+      --bw-input-bg: #d9e4e8;
       --bw-primary-border: #5b8aa0;
       --bw-danger-border: #a44852;
       --bw-indent-line: #a8bac3;
@@ -83,6 +85,7 @@
       --bw-card: var(--bw-raised);
       --bw-card-selected: var(--bw-accent-soft);
       --bw-control-surface: var(--bw-raised);
+      --bw-input-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
       --bw-primary-border: var(--SmartThemeQuoteColor, #5f9bbd);
       --bw-danger-border: #b45d67;
       --bw-indent-line: var(--bw-line);
@@ -123,12 +126,97 @@
     .bw-button.danger { border-color: var(--bw-danger-border); color: var(--bw-danger); }
     .bw-button.small { min-height: 26px; padding: 3px 7px; font-size: 12px; }
     .bw-text-button { border: 0; background: transparent; color: var(--bw-accent); padding: 5px 0; }
+    input, select, textarea { width: 100%; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-input-bg); padding: 8px 9px; }
     .bw-section, .bw-settings-group { min-width: 0; margin-left: 10px; border: 1px solid var(--bw-line); border-radius: var(--bw-radius); background: var(--bw-raised); }
     .bw-section { padding: 11px 12px; }
     .bw-section + .bw-section, .bw-settings-group + .bw-settings-group { margin-top: 3px; }
     .bw-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
     .bw-world-selection > .bw-section-head { margin-bottom: 5px; }
     .bw-section-head h2 { font-size: 16px; }
+    .bw-characters-page { max-width: 900px; }
+    .bw-character-toolbar { display: flex; align-items: center; gap: 7px; margin: 0 0 8px 10px; }
+    .bw-character-toolbar input { min-width: 0; flex: 1 1 auto; }
+    .bw-character-toolbar .bw-button { flex: 0 0 auto; min-width: 96px; }
+    .bw-character-workspace { display: grid; grid-template-columns: minmax(180px, .72fr) minmax(0, 1.28fr); gap: 8px; align-items: start; margin-left: 10px; }
+    .bw-character-list-pane, .bw-character-detail-pane { min-width: 0; }
+    .bw-character-list { display: grid; gap: 5px; min-width: 0; }
+    .bw-character-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 2px 6px; color: var(--bw-muted); font-size: 11px; }
+    .bw-character-pane-head strong { color: var(--bw-text-2); font-size: 13px; }
+    .bw-character-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-card); color: var(--bw-text); text-align: left; transition: border-color .15s, background .15s, transform .15s; }
+    .bw-character-row:hover, .bw-character-row:focus-visible, .bw-character-row.selected { border-color: var(--bw-accent); background: var(--bw-accent-soft); }
+    .bw-character-row:focus-visible { outline: 2px solid var(--bw-accent); outline-offset: 2px; }
+    .bw-character-row-main { display: grid; gap: 2px; min-width: 0; }
+    .bw-character-row-main b { overflow: hidden; font-size: 14px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-character-row-state { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--bw-accent); font-size: 10px; white-space: nowrap; }
+    .bw-character-row-state .bw-badge { min-height: 19px; padding: 1px 5px; font-size: 10px; }
+    .bw-character-row-chevron { color: var(--bw-muted); font-size: 15px; line-height: 1; }
+    .bw-character-detail-pane { padding: 10px 11px; }
+    .bw-character-detail-placeholder { display: grid; align-content: center; min-height: 98px; padding: 16px; color: var(--bw-muted); }
+    .bw-character-detail-placeholder strong { color: var(--bw-text-2); font-size: 13px; }
+    .bw-character-detail-placeholder p { margin-top: 2px; font-size: 11px; }
+    .bw-character-detail-head, .bw-character-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .bw-character-detail-head { align-items: flex-start; padding-bottom: 7px; border-bottom: 1px solid var(--bw-line); }
+    .bw-character-detail-head h2 { font-size: 16px; }
+    .bw-character-detail-head p { margin-top: 2px; color: var(--bw-muted); font-size: 10px; }
+    .bw-character-summary { margin-top: 6px; padding: 6px 10px; border-left: 2px solid var(--bw-accent); background: var(--bw-accent-soft); }
+    .bw-character-summary-head b { min-width: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-character-summary-facts { display: flex; align-items: center; width: 100%; min-width: 0; gap: 6px; margin-top: 3px; color: var(--bw-muted); font-size: 10px; line-height: 1.15; white-space: nowrap; }
+    .bw-character-summary-facts > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-character-summary-facts > span:nth-child(2) { flex: 0 0 auto; color: var(--bw-line); }
+    .bw-character-detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; align-items: start; margin-top: 6px; }
+    .bw-character-detail-section { min-width: 0; padding: 8px 9px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-card); }
+    .bw-character-detail-section.exposure-section { grid-column: 1 / -1; }
+    .bw-character-detail-section h3 { color: var(--bw-text-2); font-size: 12px; }
+    .bw-character-detail-section > p { margin-top: 2px; color: var(--bw-muted); font-size: 10px; }
+    .bw-character-capabilities { display: grid; gap: 0; margin: 5px 0 0; }
+    .bw-character-capabilities > div { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr); gap: 7px; padding: 4px 0; border-top: 1px solid var(--bw-line-soft); }
+    .bw-character-capabilities > div:first-child { border-top: 0; }
+    .bw-character-capabilities dt { color: var(--bw-text-2); font-size: 10px; }
+    .bw-character-capabilities dd { margin: 0; padding-left: 8px; color: var(--bw-muted); font-size: 10px; text-align: left; }
+    .bw-character-capabilities dd.row-value.good { color: var(--bw-good); }
+    .bw-character-capabilities dd.character-capability-unknown { color: var(--bw-warn); }
+    .bw-character-empty { padding-top: 5px; color: var(--bw-muted); font-size: 10px; line-height: 1.35; }
+    .bw-character-exposure-list { display: grid; gap: 7px; margin-top: 5px; }
+    .bw-character-exposure-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 1px 2px; color: var(--bw-muted); font-size: 10px; }
+    .bw-character-exposure-list-head strong { color: var(--bw-text-2); font-size: 11px; }
+    .bw-character-exposure { min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--bw-line-soft); border-radius: 6px; background: var(--bw-panel-raised); }
+    .bw-character-exposure > summary { display: grid; grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px; grid-template-areas: "date type meta . status chevron"; align-items: center; column-gap: 14px; row-gap: 4px; min-height: 46px; padding: 6px 8px; cursor: pointer; list-style: none; }
+    .bw-character-exposure > summary::-webkit-details-marker { display: none; }
+    .bw-character-exposure > summary:hover { background: var(--bw-hover); }
+    .bw-character-exposure-date { display: grid; grid-area: date; gap: 2px; width: 132px; min-width: 0; padding-right: 12px; border-right: 1px solid var(--bw-line-soft); color: var(--bw-muted); font-size: 10px; line-height: 1.1; }
+    .bw-character-exposure-date > span, .bw-character-exposure-type, .bw-character-exposure-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-character-exposure-date > span { color: var(--bw-muted); font-size: 10px; }
+    .bw-character-exposure-date > small { color: var(--bw-accent); font-size: 9px; line-height: 1; }
+    .bw-character-exposure-type { grid-area: type; font-size: 11px; }
+    .bw-character-exposure-meta { grid-area: meta; max-width: 220px; color: var(--bw-muted); font-size: 10px; }
+    .bw-character-exposure-fields { display: grid; gap: 0; margin: 5px 0 0; }
+    .bw-character-exposure-fields > div { display: grid; grid-template-columns: minmax(60px, max-content) minmax(0, 1fr); column-gap: 12px; min-width: 0; padding: 3px 0; border-top: 1px solid var(--bw-line-soft); }
+    .bw-character-exposure-fields > div:first-child { border-top: 0; }
+    .bw-character-exposure-fields dt { color: var(--bw-muted); font-size: 10px; }
+    .bw-character-exposure-fields dd { min-width: 0; margin: 0; overflow: hidden; color: var(--bw-text-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-character-exposure-age-inline { margin-left: 6px; color: var(--bw-accent); font-size: 9px; }
+    .bw-character-exposure > summary > .bw-badge { grid-area: status; min-height: 18px; padding: 1px 5px; font-size: 9px; }
+    .bw-character-exposure-chevron { grid-area: chevron; color: var(--bw-muted); font-size: 13px; line-height: 1; }
+    .bw-character-exposure-detail { padding: 7px 8px 8px; border-top: 1px solid var(--bw-line-soft); background: color-mix(in srgb, var(--bw-panel-raised) 72%, var(--bw-panel) 28%); }
+    .bw-character-exposure-source { margin-top: 6px; color: var(--bw-muted); font-size: 10px; }
+    .bw-event-review-panel { margin-left: 10px; }
+    .bw-event-review-summary { display: flex; align-items: baseline; gap: 7px; margin: 2px 0 5px; color: var(--bw-muted); font-size: 11px; }
+    .bw-event-review-summary strong { color: var(--bw-text-2); font-size: 13px; }
+    .bw-event-review-list { display: grid; gap: 0; border-top: 1px solid var(--bw-line-soft); }
+    .bw-event-review-row { display: grid; grid-template-columns: 128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto; gap: 8px; align-items: center; min-width: 0; min-height: 45px; padding: 6px 0; border-bottom: 1px solid var(--bw-line-soft); list-style: none; cursor: pointer; }
+    .bw-event-review-row::-webkit-details-marker { display: none; }
+    .bw-event-review-time, .bw-event-review-main, .bw-event-review-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-event-review-time { color: var(--bw-muted); font-size: 11px; }
+    .bw-event-review-time { display: grid; gap: 1px; align-content: center; }
+    .bw-event-review-time b { color: var(--bw-text-2); font-size: 11px; }
+    .bw-event-review-time small { color: var(--bw-accent); font-size: 9px; line-height: 1; }
+    .bw-event-review-main { display: flex; align-items: baseline; gap: 7px; }
+    .bw-event-review-main b { flex: 0 0 auto; font-size: 12px; }
+    .bw-event-review-main small { min-width: 0; overflow: hidden; color: var(--bw-muted); text-overflow: ellipsis; white-space: nowrap; }
+    .bw-event-review-detail { color: var(--bw-muted); font-size: 11px; }
+    .bw-event-review-row > .bw-badge { justify-self: end; }
+    .bw-event-review-detail-panel { padding: 8px 0; border-bottom: 1px solid var(--bw-line-soft); }
+    .bw-event-review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; color: var(--bw-muted); font-size: 10px; }
     .bw-species-grid, .bw-type-grid, .bw-module-grid { display: grid; gap: 7px; }
     .bw-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .bw-type-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 4px; }
@@ -253,6 +341,36 @@
       .bw-page-head { align-items: center; margin-bottom: 10px; padding-left: 2px; }
       .bw-page-head h1 { font-size: 19px; }
       .bw-page-head p { display: none; }
+      .bw-character-toolbar { margin-left: 5px; }
+      .bw-character-toolbar .bw-button { min-width: 84px; }
+      .bw-character-workspace { display: flex; flex-direction: column; gap: 6px; margin-left: 5px; }
+      .bw-character-list-pane { order: 1; }
+      .bw-character-detail-pane { order: 2; width: 100%; padding: 8px; }
+      body[data-device="mobile"][data-view="characters"] .bw-character-toolbar,
+      body[data-device="mobile"][data-view="characters"] .bw-character-workspace,
+      body[data-device="mobile"][data-view="characters"] .bw-character-list-pane,
+      body[data-device="mobile"][data-view="characters"] .bw-character-detail-pane { width: 100%; margin-left: 0; margin-right: 0; }
+      .bw-character-row { gap: 8px; padding: 8px 9px; }
+      .bw-character-row-main b { font-size: 13px; }
+      .bw-character-detail-sections { grid-template-columns: 1fr; gap: 5px; }
+      .bw-character-detail-section { padding: 7px 8px; }
+      .bw-character-detail-section.exposure-section { grid-column: auto; }
+      .bw-character-exposure-fields > div { grid-template-columns: minmax(58px, max-content) minmax(0, 1fr); column-gap: 10px; padding: 3px 0; }
+      .bw-character-exposure > summary { grid-template-columns: 100px minmax(0, 1fr) auto 14px; grid-template-rows: auto auto; column-gap: 9px; row-gap: 5px; min-height: 55px; padding: 7px; }
+      .bw-character-exposure-date { grid-column: 1; padding-right: 0; border-right: 0; }
+      .bw-character-exposure-type { grid-column: 2; }
+      .bw-character-exposure-meta { grid-column: 1 / 3; grid-row: 2; }
+      .bw-character-exposure > summary > .bw-badge { grid-column: 3; grid-row: 1; }
+      .bw-character-exposure-chevron { grid-column: 4; grid-row: 1; }
+      .bw-event-review-panel { margin-left: 5px; }
+      .bw-event-review-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 3px 7px; min-height: 52px; padding: 7px 0; }
+      .bw-event-review-time { grid-column: 1; grid-row: 2; font-size: 10px; }
+      .bw-event-review-main { grid-column: 1; grid-row: 1; }
+      .bw-event-review-main b { font-size: 11px; }
+      .bw-event-review-main small { font-size: 10px; }
+      .bw-event-review-detail { grid-column: 2; grid-row: 2; justify-self: end; font-size: 10px; }
+      .bw-event-review-row > .bw-badge { grid-column: 2; grid-row: 1; }
+      .bw-event-review-foot { align-items: flex-start; flex-direction: column; gap: 4px; }
       .bw-page > .bw-section, .bw-page > .bw-settings-group { margin-left: 5px; }
       .bw-section { padding: 10px; }
       .bw-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
@@ -301,6 +419,25 @@
           </div>
           <div class="bw-actions"><button class="bw-button primary" type="button">重新分析</button></div>
         </header>
+
+        <!-- 人物页的视觉结构：生产实现使用 trackingSubjects / characterProfiles，不复制示例人物。 -->
+        <section class="bw-page bw-characters-page">
+          <header class="bw-page-head"><div class="bw-page-head-copy"><h1>人物列表</h1><p>当前 Chat 中已进入事件追踪流程的角色</p></div><div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div></header>
+          <div class="bw-character-toolbar"><input placeholder="搜索人物……" aria-label="搜索人物"><button class="bw-button" type="button">全部状态 ▾</button></div>
+          <div class="bw-character-workspace">
+            <section class="bw-character-list-pane"><div class="bw-character-pane-head"><strong>追踪人物</strong><span>n 人</span></div><div class="bw-character-list">
+              <button class="bw-character-row selected" type="button" data-character-id="runtime-character-id"><span class="bw-character-row-main"><b>Runtime display_name</b></span><span class="bw-character-row-state"><span class="bw-badge good">追踪中</span><span>n 次相关事件</span><span class="bw-character-row-chevron">›</span></span></button>
+              <button class="bw-character-row" type="button" data-character-id="runtime-character-id-2"><span class="bw-character-row-main"><b>另一个 Runtime 角色</b></span><span class="bw-character-row-state"><span class="bw-badge">未知</span><span>0 次相关事件</span><span class="bw-character-row-chevron">›</span></span></button>
+            </div></section>
+            <section class="bw-section bw-character-detail-pane"><header class="bw-character-detail-head"><div><h2>人物详情</h2><p>当前 Chat · 事件追踪</p></div></header><section class="bw-character-summary"><header class="bw-character-summary-head"><b>Runtime display_name</b><span class="bw-badge good">事件追踪</span></header><div class="bw-character-summary-facts"><span>物种</span><span>·</span><span>生理类型</span></div></section><div class="bw-character-detail-sections"><section class="bw-character-detail-section"><h3>生殖能力</h3><dl class="bw-character-capabilities"><div><dt>Runtime 能力字段</dt><dd class="row-value good">是</dd></div><div><dt>未知能力字段</dt><dd class="character-capability-unknown">未知</dd></div></dl></section><section class="bw-character-detail-section"><h3>当前状态</h3><p>等待状态引擎计算</p></section><section class="bw-character-detail-section exposure-section"><h3>事件追踪</h3><p>仅显示当前仍在跟进的相关记录。</p><div class="bw-character-exposure-list"><div class="bw-character-exposure-list-head"><span>按 Runtime 引用顺序</span><strong>n 条记录</strong></div><details class="bw-character-exposure" open><summary><span class="bw-character-exposure-date"><span>Runtime story time</span><small>相对时间</small></span><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span><span class="bw-badge good">已确认</span><span class="bw-character-exposure-chevron">⌄</span></summary><div class="bw-character-exposure-detail"><dl class="bw-character-exposure-fields"><div><dt>日期</dt><dd><span>Runtime story time</span><small class="bw-character-exposure-age-inline">相对时间</small></dd></div><div><dt>地点</dt><dd>Runtime 地点</dd></div><div><dt>相关对象</dt><dd>Runtime 对象</dd></div></dl><p class="bw-character-exposure-source">完整事实仍来自当前 Event Registry。</p></div></details></div></section><section class="bw-character-detail-section"><h3>推演</h3><div class="bw-character-empty">当前没有可显示的生理推演。</div></section><section class="bw-character-detail-section"><h3>关系</h3><div class="bw-character-empty">当前没有已确认关系。</div></section></div></section>
+          </div>
+        </section>
+
+        <!-- 事件页的视觉结构：生产实现保留真实事件详情、编辑和删除 hooks。 -->
+        <section class="bw-page">
+          <header class="bw-page-head"><div class="bw-page-head-copy"><h1>事件审阅</h1><p>全局只保留快速索引；完整记录在对应人物内查看</p></div><div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div></header>
+          <section class="bw-section bw-event-review-panel"><div class="bw-section-head"><div><h2>当前事件索引</h2><p>按日期快速定位；不在这里堆叠所有人物上下文</p></div><label>状态<select class="bw-select" data-bioweave-event-filter><option>全部</option><option>已确认</option><option>较可能</option></select></label></div><div class="bw-event-review-summary"><strong>n 条</strong><span>当前筛选结果 · 详情按人物归属展开</span></div><div class="bw-event-review-list"><details class="bw-event-review-item" data-bioweave-event-id="runtime-event-id"><summary class="bw-event-review-row"><span class="bw-event-review-time"><b>Runtime story time</b><small>相对时间</small></span><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span><span class="bw-event-review-detail">n 个追踪对象</span><span class="bw-badge good">已确认</span></summary><div class="bw-event-review-detail-panel">原有事件事实、妊娠相关性、证据、编辑和删除操作位于展开内容。</div></details></div><div class="bw-event-review-foot"><span>完整事实来自 Runtime Event Registry。</span><button class="bw-text-button" type="button">查看人物记录 →</button></div></section>
+        </section>
 
         <section class="bw-section bw-world-selection">
           <header class="bw-section-head"><div><h2>物种与生物类型</h2><p>使用卡片选择，不使用大面积下拉框。</p></div></header>

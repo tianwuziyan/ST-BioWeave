@@ -6924,3 +6924,175 @@
     font-size: 14px !important;
   }
 }
+
+/* Characters and events: faithful production mapping of the current reference.
+   Data and hooks stay in ui/characters.js and ui/events.js; this layer only
+   defines the split workspace, compact review rows, and three-viewport layout. */
+.bioweave-characters-page { max-width: 900px !important; }
+.bioweave-characters-page .bioweave-toolbar { display: flex !important; align-items: center !important; gap: 7px !important; margin: 0 0 8px 10px !important; overflow: visible !important; }
+.bioweave-characters-page .bioweave-toolbar .bioweave-input { min-width: 0 !important; flex: 1 1 auto !important; box-sizing: border-box !important; padding: 8px 9px !important; border-radius: 7px !important; background: var(--bioweave-input-bg) !important; color: var(--bioweave-text) !important; }
+.bioweave-characters-page .bioweave-toolbar .bioweave-button { flex: 0 0 auto !important; min-width: 96px !important; min-height: 32px !important; padding: 5px 10px !important; border-radius: 7px !important; background: var(--bioweave-surface-raised) !important; color: var(--bioweave-text-secondary) !important; }
+.bioweave-characters-page .bioweave-toolbar .bioweave-button:hover,
+.bioweave-characters-page .bioweave-toolbar .bioweave-button:focus-visible { border-color: var(--bioweave-accent) !important; color: var(--bioweave-text) !important; }
+.bioweave-characters-page .bioweave-badge { background: transparent !important; }
+.bioweave-character-workspace { display: grid !important; grid-template-columns: minmax(180px, .72fr) minmax(0, 1.28fr) !important; gap: 8px !important; align-items: start !important; margin-left: 10px !important; min-width: 0 !important; }
+.bioweave-character-list-pane,
+.bioweave-character-detail-pane { min-width: 0 !important; }
+.bioweave-character-list { display: grid !important; gap: 5px !important; min-width: 0 !important; }
+.bioweave-character-pane-head { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 8px !important; margin: 0 2px 6px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-pane-head strong { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
+.bioweave-character-row { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 10px !important; width: 100% !important; min-width: 0 !important; margin: 0 !important; padding: 9px 10px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; color: var(--bioweave-text) !important; text-align: left !important; cursor: pointer !important; transition: border-color .15s, background .15s, transform .15s !important; }
+.bioweave-character-row:hover,
+.bioweave-character-row:focus-visible,
+.bioweave-character-row.selected { border-color: var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; }
+.bioweave-character-row:focus-visible { outline: 2px solid var(--bioweave-accent) !important; outline-offset: 2px !important; }
+.bioweave-character-row:active { transform: translateY(1px) !important; }
+.bioweave-character-row-main { display: grid !important; gap: 2px !important; min-width: 0 !important; }
+.bioweave-character-row-main b { overflow: hidden !important; font-size: 14px !important; line-height: 1.25 !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-row-state { display: flex !important; align-items: center !important; gap: 5px !important; flex: 0 0 auto !important; color: var(--bioweave-accent) !important; font-size: 10px !important; white-space: nowrap !important; }
+.bioweave-character-row-state .bioweave-badge { min-height: 19px !important; padding: 1px 5px !important; font-size: 10px !important; }
+.bioweave-character-row-chevron { color: var(--bioweave-text-muted) !important; font-size: 15px !important; line-height: 1 !important; }
+.bioweave-character-detail-pane { min-height: 0 !important; padding: 10px 11px !important; animation: bioweave-character-detail-reveal .16s ease-out !important; }
+.bioweave-character-detail-placeholder { display: grid !important; align-content: center !important; min-height: 98px !important; padding: 16px !important; color: var(--bioweave-text-muted) !important; }
+.bioweave-character-detail-placeholder strong { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
+.bioweave-character-detail-placeholder p { margin-top: 2px !important; font-size: 11px !important; }
+.bioweave-character-detail-head,
+.bioweave-character-summary-head { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; }
+.bioweave-character-detail-head { align-items: flex-start !important; margin-bottom: 0 !important; padding-bottom: 7px !important; border-bottom: 1px solid var(--bioweave-border) !important; }
+.bioweave-character-detail-head h2 { margin: 0 !important; font-size: 16px !important; }
+.bioweave-character-detail-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-summary { margin-top: 6px !important; padding: 6px 10px !important; border-left: 2px solid var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; }
+.bioweave-character-summary-head { margin-bottom: 0 !important; }
+.bioweave-character-summary-head b { min-width: 0 !important; overflow: hidden !important; font-size: 16px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-summary-head .bioweave-badge { min-height: 20px !important; padding: 1px 6px !important; font-size: 10px !important; }
+.bioweave-character-summary-facts { display: flex !important; align-items: center !important; width: 100% !important; min-width: 0 !important; gap: 6px !important; margin-top: 3px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.15 !important; white-space: nowrap !important; }
+.bioweave-character-summary-facts > span { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-summary-facts > span:nth-child(2) { flex: 0 0 auto !important; color: var(--bioweave-border) !important; }
+.bioweave-character-detail-sections { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 6px !important; align-items: start !important; margin-top: 6px !important; min-width: 0 !important; }
+.bioweave-character-detail-section { min-width: 0 !important; margin: 0 !important; padding: 8px 9px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-detail-section h3 { margin: 0 !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; }
+.bioweave-character-detail-section > p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-exposure-section { grid-column: 1 / -1 !important; }
+.bioweave-character-capabilities,
+.bioweave-character-exposure-fields,
+.bioweave-capabilities { display: grid !important; gap: 0 !important; margin: 5px 0 0 !important; }
+.bioweave-character-capabilities > div,
+.bioweave-character-exposure-fields > div,
+.bioweave-capabilities > div { display: grid !important; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) !important; gap: 7px !important; min-width: 0 !important; padding: 4px 0 !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-capabilities > div:first-child,
+.bioweave-character-exposure-fields > div:first-child,
+.bioweave-capabilities > div:first-child { border-top: 0 !important; }
+.bioweave-character-capabilities dt,
+.bioweave-character-exposure-fields dt,
+.bioweave-capabilities dt { color: var(--bioweave-text-secondary) !important; font-size: 10px !important; }
+.bioweave-character-capabilities dd,
+.bioweave-character-exposure-fields dd,
+.bioweave-capabilities dd { min-width: 0 !important; margin: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; text-align: left !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-capabilities dd,
+.bioweave-capabilities dd { padding-left: 8px !important; }
+.bioweave-character-capabilities dd.row-value,
+.bioweave-capabilities dd.row-value { padding-right: 0 !important; color: var(--bioweave-success) !important; text-align: left !important; }
+.bioweave-character-capabilities dd.character-capability-unknown,
+.bioweave-capabilities dd.character-capability-unknown { color: var(--bioweave-warn) !important; }
+.bioweave-character-exposure-fields > div { grid-template-columns: minmax(60px, max-content) minmax(0, 1fr) !important; column-gap: 12px !important; padding: 3px 0 !important; }
+.bioweave-character-exposure-fields dt { color: var(--bioweave-text-muted) !important; }
+.bioweave-character-exposure-fields dd { color: var(--bioweave-text-secondary) !important; }
+.bioweave-character-empty { padding-top: 5px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.35 !important; }
+.bioweave-character-exposure-age-inline { margin-left: 6px !important; color: var(--bioweave-accent) !important; font-size: 9px !important; }
+.bioweave-characters-page > .bioweave-empty { min-height: 160px !important; padding: 20px !important; text-align: center !important; color: var(--bioweave-text-muted) !important; }
+.bioweave-characters-page > .bioweave-empty > b { display: block !important; margin-bottom: 5px !important; color: var(--bioweave-text-secondary) !important; font-size: 15px !important; }
+.bioweave-characters-page > .bioweave-empty > p { margin-top: 0 !important; color: var(--bioweave-text-muted) !important; font-size: 12px !important; }
+.bioweave-characters-page > .bioweave-empty .bioweave-tracking-counts { display: grid !important; gap: 0 !important; margin: 5px 0 0 !important; }
+.bioweave-characters-page > .bioweave-empty .bioweave-tracking-counts > div { display: grid !important; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) !important; gap: 7px !important; min-width: 0 !important; padding: 4px 0 !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-characters-page > .bioweave-empty .bioweave-tracking-counts > div:first-child { border-top: 0 !important; }
+.bioweave-characters-page > .bioweave-empty .bioweave-tracking-counts dt { color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-characters-page > .bioweave-empty .bioweave-tracking-counts dd { min-width: 0 !important; margin: 0 !important; color: var(--bioweave-text-secondary) !important; font-size: 10px !important; text-align: left !important; }
+.bioweave-character-exposure-list { display: grid !important; gap: 7px !important; margin-top: 5px !important; }
+.bioweave-character-exposure-list-head { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 8px !important; padding: 0 1px 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-exposure-list-head strong { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
+.bioweave-character-exposure { min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-surface-raised) !important; }
+.bioweave-character-exposure > summary { display: grid !important; grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px !important; grid-template-areas: "date type meta . status chevron" !important; align-items: center !important; column-gap: 14px !important; row-gap: 4px !important; min-height: 46px !important; padding: 6px 8px !important; cursor: pointer !important; list-style: none !important; }
+.bioweave-character-exposure > summary::-webkit-details-marker { display: none !important; }
+.bioweave-character-exposure > summary:hover { background: var(--bioweave-hover) !important; }
+.bioweave-character-exposure > summary:focus-visible { outline: 2px solid var(--bioweave-accent) !important; outline-offset: -2px !important; }
+.bioweave-character-exposure-date { display: grid !important; grid-area: date !important; width: 132px !important; min-width: 0 !important; padding-right: 12px !important; border-right: 1px solid var(--bioweave-border-soft) !important; line-height: 1.1 !important; }
+.bioweave-character-exposure-date > span,
+.bioweave-character-exposure-type,
+.bioweave-character-exposure-meta { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-exposure-date > span { color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-exposure-date > small { color: var(--bioweave-accent) !important; font-size: 9px !important; line-height: 1 !important; }
+.bioweave-character-exposure-type { grid-area: type !important; font-size: 11px !important; }
+.bioweave-character-exposure-meta { grid-area: meta !important; max-width: 220px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-exposure > summary > .bioweave-badge { grid-area: status !important; min-height: 18px !important; padding: 1px 5px !important; font-size: 9px !important; }
+.bioweave-character-exposure-chevron { grid-area: chevron !important; color: var(--bioweave-text-muted) !important; font-size: 13px !important; line-height: 1 !important; transition: transform .15s !important; }
+.bioweave-character-exposure[open] .bioweave-character-exposure-chevron { transform: rotate(180deg) !important; }
+.bioweave-character-exposure-detail { padding: 7px 8px 8px !important; border-top: 1px solid var(--bioweave-border-soft) !important; background: color-mix(in srgb, var(--bioweave-surface-raised) 72%, var(--bioweave-surface) 28%) !important; }
+.bioweave-character-exposure-source { margin-top: 6px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-exposure-missing { padding: 8px !important; }
+.bioweave-character-exposure-missing-copy { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 8px !important; }
+.bioweave-character-exposure-missing-copy span { color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+
+.bioweave-event-review-panel { margin-left: 10px !important; }
+.bioweave-section-head { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; margin-bottom: 6px !important; }
+.bioweave-section-head h3 { margin: 0 !important; font-size: 16px !important; }
+.bioweave-section-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 12px !important; }
+.bioweave-field-inline { display: inline-flex !important; align-items: center !important; gap: 6px !important; flex: 0 0 auto !important; color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
+.bioweave-field-inline .bioweave-select { min-width: 94px !important; min-height: 32px !important; }
+.bioweave-event-review-summary { display: flex !important; align-items: baseline !important; gap: 7px !important; margin: 2px 0 5px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-review-summary strong { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
+.bioweave-event-review-list { display: grid !important; gap: 0 !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-event-review-item { min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; }
+.bioweave-event-review-item + .bioweave-event-review-item { margin-top: 0 !important; }
+.bioweave-event-review-row { display: grid !important; grid-template-columns: 128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto !important; gap: 8px !important; align-items: center !important; min-width: 0 !important; min-height: 45px !important; padding: 6px 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; cursor: pointer !important; list-style: none !important; }
+.bioweave-event-review-row::-webkit-details-marker { display: none !important; }
+.bioweave-event-review-row:hover { background: var(--bioweave-hover) !important; }
+.bioweave-event-review-time,
+.bioweave-event-review-main,
+.bioweave-event-review-detail { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-event-review-time { display: grid !important; gap: 1px !important; align-content: center !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-review-time b { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
+.bioweave-event-review-time small { color: var(--bioweave-accent) !important; font-size: 9px !important; line-height: 1 !important; }
+.bioweave-event-review-main { display: flex !important; align-items: baseline !important; gap: 7px !important; }
+.bioweave-event-review-main b { flex: 0 0 auto !important; font-size: 12px !important; }
+.bioweave-event-review-main small { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-event-review-detail { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-review-row > .bioweave-badge { justify-self: end !important; }
+.bioweave-event-review-detail-panel { padding: 8px 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-event-review-foot { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding-top: 8px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+@keyframes bioweave-character-detail-reveal { from { opacity: .55; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 767px) {
+  .bioweave-characters-page .bioweave-toolbar,
+  .bioweave-characters-page .bioweave-character-workspace,
+  .bioweave-characters-page .bioweave-character-list-pane,
+  .bioweave-characters-page .bioweave-character-detail-pane { width: 100% !important; margin-left: 0 !important; margin-right: 0 !important; }
+  .bioweave-characters-page .bioweave-toolbar .bioweave-button { min-width: 84px !important; }
+  .bioweave-character-workspace { display: flex !important; flex-direction: column !important; gap: 6px !important; margin-left: 5px !important; }
+  .bioweave-character-list-pane { order: 1 !important; }
+  .bioweave-character-detail-pane { order: 2 !important; width: 100% !important; padding: 8px !important; }
+  .bioweave-character-row { gap: 8px !important; padding: 8px 9px !important; }
+  .bioweave-character-row-main b { font-size: 13px !important; }
+  .bioweave-character-row-state { gap: 4px !important; }
+  .bioweave-character-row-state .bioweave-badge { max-width: 65px !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+  .bioweave-character-detail-placeholder { min-height: 64px !important; padding: 12px !important; }
+  .bioweave-character-detail-head h2 { font-size: 15px !important; }
+  .bioweave-character-summary { padding: 6px 9px !important; }
+  .bioweave-character-summary-head b { font-size: 15px !important; }
+  .bioweave-character-detail-sections { grid-template-columns: 1fr !important; gap: 5px !important; }
+  .bioweave-character-detail-section { margin: 0 !important; padding: 7px 8px !important; }
+  .bioweave-character-exposure-section { grid-column: auto !important; }
+  .bioweave-character-exposure-fields > div { grid-template-columns: minmax(58px, max-content) minmax(0, 1fr) !important; column-gap: 10px !important; padding: 3px 0 !important; }
+  .bioweave-character-exposure > summary { grid-template-columns: 100px minmax(0, 1fr) auto 14px !important; grid-template-areas: "date type status chevron" "meta meta meta meta" !important; column-gap: 9px !important; row-gap: 5px !important; min-height: 55px !important; padding: 7px !important; }
+  .bioweave-character-exposure-date { width: auto !important; padding-right: 0 !important; border-right: 0 !important; }
+  .bioweave-character-exposure-meta { max-width: none !important; padding-top: 1px !important; }
+  .bioweave-character-exposure-detail { padding: 7px !important; }
+  .bioweave-event-review-panel { margin-left: 5px !important; }
+  .bioweave-event-review-row { grid-template-columns: minmax(0, 1fr) auto !important; grid-template-areas: "main status" "time detail" !important; gap: 3px 7px !important; min-height: 52px !important; padding: 7px 0 !important; }
+  .bioweave-event-review-time { grid-area: time !important; font-size: 10px !important; }
+  .bioweave-event-review-main { grid-area: main !important; min-width: 0 !important; }
+  .bioweave-event-review-main b { font-size: 11px !important; }
+  .bioweave-event-review-main small { font-size: 10px !important; }
+  .bioweave-event-review-detail { grid-area: detail !important; justify-self: end !important; font-size: 10px !important; }
+  .bioweave-event-review-row > .bioweave-badge { grid-area: status !important; }
+  .bioweave-event-review-foot { align-items: flex-start !important; flex-direction: column !important; gap: 4px !important; }
+}

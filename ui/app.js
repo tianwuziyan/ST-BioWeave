@@ -1,6 +1,6 @@
 import {overviewPage} from './overview.js';
 import {charactersPage} from './characters.js';
-import {eventsPage} from './events.js';
+import {eventsPage, setEventFilter} from './events.js';
 import {projectionPage} from './projection.js';
 import {genealogyPage} from './genealogy.js';
 import {
@@ -461,7 +461,6 @@ export function createApp(runtime, options = {}) {
   };
   let businessRefreshSequence = 0;
   let eventEditingId = null;
-
   function receiveWorldModelTrace(trace) {
     if (!trace || typeof trace !== 'object') return;
     const currentChatId = runtime.chat.current();
@@ -2152,6 +2151,7 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure();
     route = nextRoute;
     focusedCharacterId = null;
+    if (nextRoute !== 'events') setEventFilter();
     render();
     return true;
   }
@@ -3123,6 +3123,15 @@ export function createApp(runtime, options = {}) {
   async function handleChange(event) {
     if (!root?.contains(event.target)) return;
     captureAnalysisSourceDisclosure();
+    const eventFilterControl = event.target.closest?.('[data-bioweave-event-filter]');
+    if (eventFilterControl) {
+      const allowed = ['all', 'confirmed', 'probable', 'ambiguous', 'negated', 'fictional'];
+      setEventFilter(allowed.includes(String(eventFilterControl.value ?? ''))
+        ? String(eventFilterControl.value)
+        : 'all');
+      render();
+      return;
+    }
     if (event.target.closest?.('[data-bioweave-world-section-form]')) {
       if (event.target?.dataset?.bioweaveWorldCapabilityInput !== undefined) {
         event.target.dataset.bioweaveWorldCapabilityState = event.target.checked ? 'true' : 'false';
@@ -3355,6 +3364,7 @@ export function createApp(runtime, options = {}) {
       error: null,
     };
     eventEditingId = null;
+    setEventFilter();
     globalRecentStory = normalizeRecentStoryGlobalSettings();
     globalRecentStoryLoaded = false;
     globalRecentStorySaveSequence += 1;

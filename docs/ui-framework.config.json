@@ -264,6 +264,126 @@
       "head": "bioweave-page-head",
       "section": "bioweave-section"
     },
+    "charactersPage": {
+      "root": "bioweave-characters-page",
+      "maxWidth": "900px",
+      "toolbar": {
+        "class": "bioweave-toolbar",
+        "margin": "0 0 8px 10px",
+        "gap": "7px",
+        "statusControl": "bioweave-button",
+        "statusButton": {
+          "minWidth": "96px",
+          "minHeight": "32px",
+          "padding": "5px 10px",
+          "radius": "7px",
+          "surface": "surface-raised",
+          "text": "text-secondary"
+        },
+        "searchInput": {
+          "padding": "8px 9px",
+          "radius": "7px",
+          "surface": "input-bg",
+          "text": "text"
+        }
+      },
+      "workspace": {
+        "class": "bioweave-character-workspace",
+        "desktopColumns": "minmax(180px, .72fr) minmax(0, 1.28fr)",
+        "gap": "8px",
+        "marginLeft": "10px",
+        "mobileLayout": "single-column; list first, detail second"
+      },
+      "list": {
+        "pane": "bioweave-character-list-pane",
+        "head": "bioweave-character-pane-head",
+        "gap": "5px",
+        "row": "bioweave-character-row",
+        "rowPadding": "9px 10px",
+        "rowRadius": "7px",
+        "selectedState": "accent border and accent-soft background",
+        "rowParts": ["bioweave-character-row-main", "bioweave-character-row-state", "bioweave-character-row-chevron"]
+      },
+      "detail": {
+        "pane": "bioweave-character-detail-pane",
+        "placeholder": "bioweave-character-detail-placeholder",
+        "sections": "bioweave-character-detail-sections",
+        "sectionColumns": "repeat(2, minmax(0, 1fr))",
+        "exposureSectionFullRow": true,
+        "empty": {
+          "class": "bioweave-character-empty",
+          "color": "text-muted",
+          "fontSize": "10px",
+          "lineHeight": "1.35",
+          "paddingTop": "5px"
+        },
+        "spacing": {
+          "panePadding": "10px 11px",
+          "summaryMarginTop": "6px",
+          "detailGridGap": "6px",
+          "sectionPadding": "8px 9px",
+          "fieldListGap": "0",
+          "fieldRowPadding": "4px 0",
+          "exposureFieldColumns": "minmax(60px, max-content) minmax(0, 1fr)",
+          "exposureFieldGap": "12px",
+          "exposureFieldPadding": "3px 0"
+        },
+        "typography": {
+          "capabilityLabelColor": "text-secondary",
+          "capabilityValueColor": "text-muted",
+          "exposureLabelColor": "text-muted",
+          "exposureValueColor": "text-secondary",
+          "relativeTimeColor": "accent"
+        },
+        "mobileFullWidth": [
+          "bioweave-toolbar",
+          "bioweave-character-workspace",
+          "bioweave-character-list-pane",
+          "bioweave-character-detail-pane"
+        ],
+        "capabilities": {
+          "class": "bioweave-character-capabilities",
+          "trueClass": "row-value good",
+          "unknownClass": "character-capability-unknown",
+          "falseClass": "neutral text"
+        }
+      },
+      "exposure": {
+        "root": "bioweave-character-exposure",
+        "interaction": "details-summary",
+        "summary": "bioweave-character-exposure-summary",
+        "summaryColumns": "132px max-content max-content minmax(0, 1fr) auto 14px",
+        "summaryMinHeight": "46px",
+        "dateSubline": "optional relative label from story_time.normalized only",
+        "detail": "bioweave-character-exposure-detail",
+        "fieldList": "bioweave-character-exposure-fields",
+        "fieldColumns": "minmax(60px, max-content) minmax(0, 1fr)",
+        "fieldGap": "12px",
+        "fieldRowPadding": "3px 0",
+        "preserveHooks": ["data-bioweave-event-id"],
+        "mobileColumns": "100px minmax(0, 1fr) auto 14px; meta moves to second row",
+        "mobileFieldColumns": "minmax(58px, max-content) minmax(0, 1fr)",
+        "mobileFieldGap": "10px"
+      },
+      "dataPolicy": "list and detail consume trackingSubjects, characterProfiles, and activeEvents from Runtime; no fixed character or gender names"
+    },
+    "eventReview": {
+      "root": "bioweave-event-review-panel",
+      "list": "bioweave-event-review-list",
+      "item": "bioweave-event-review-item",
+      "row": "bioweave-event-review-row",
+      "rowColumns": "128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto",
+      "rowMinHeight": "45px",
+      "rowGap": "8px",
+      "timeSubline": "optional relative label from story_time.normalized only",
+      "filter": "native bioweave-select with data-bioweave-event-filter",
+      "detail": "bioweave-event-review-detail-panel",
+      "summary": "bioweave-event-review-summary",
+      "footer": "bioweave-event-review-foot",
+      "mobileRows": "minmax(0, 1fr) auto; main/status first row, time/detail second row",
+      "preserveHooks": ["data-bioweave-event-id", "data-bioweave-action=edit-event", "data-bioweave-action=delete-event", "data-bioweave-event-form"],
+      "dataPolicy": "rows are built only from Runtime BiologicalEvent DTOs; full pregnancy relevance, evidence, edit and delete controls remain in the expandable detail"
+    },
     "button": {
       "root": "bioweave-button",
       "primary": "bioweave-button primary",
@@ -544,7 +664,10 @@
     "data-bioweave-settings-disclosure",
     "data-bioweave-analysis-source",
     "data-bioweave-analysis-section-toggle",
-    "data-bioweave-external-memory"
+    "data-bioweave-external-memory",
+    "data-character-id",
+    "data-bioweave-event-id",
+    "data-bioweave-event-filter"
   ],
   "pages": [
     "overview",
