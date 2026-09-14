@@ -459,3 +459,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: 完成楼层重新分析 baseline 修复并同步 GitHub
+<!-- trellis-session: v=2 fp=41075937bc6a2d9f -->
+
+**Date**: 2026-09-14
+**Task**: 完成楼层重新分析 baseline 修复并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+修复任意目标楼层的 previous BioWeave baseline 选择，排除目标楼层旧 analysis/events，复用六字段 Floor Version 与 active events 过滤；新增输入级与重复 re-analysis 回归测试。node --test runtime 34/34，npm test 与 npm run check 均 432/432。已提交并推送修复 commit 8787681。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8787681` | 修复楼层重新分析的 BioWeave baseline 选择 |
+
+### Status
+
+[OK] **Completed**
