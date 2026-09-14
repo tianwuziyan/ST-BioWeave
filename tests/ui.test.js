@@ -1,7 +1,7 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {registerExtensionsMenuEntry} from '../index.js';
-import fs from 'node:fs';
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { registerExtensionsMenuEntry } from '../index.js'
+import fs from 'node:fs'
 import {
   captureScrollPositions,
   createOverlayLifecycle,
@@ -11,12 +11,11 @@ import {
   isConnectedToDocument,
   notify,
   restoreScrollPositions,
-} from '../ui/app.js';
-
-const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'));
-const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'));
-const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+} from '../ui/app.js'
+const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
+const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
+const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
 const UI_SOURCE = [
   APP_SOURCE,
   fs.readFileSync(new URL('../ui/overview.js', import.meta.url), 'utf8'),
@@ -24,33 +23,32 @@ const UI_SOURCE = [
   fs.readFileSync(new URL('../ui/events.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/settings.js', import.meta.url), 'utf8'),
-].join('\n');
-const CUSTOM_ABORT_UI_PATTERN = /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i;
-
+].join('\n')
+const CUSTOM_ABORT_UI_PATTERN =
+  /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i
 test('BioWeave overlay stays between ordinary host UI and host modal layers', () => {
-  const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/);
-  assert.ok(match, 'expected the BioWeave overlay to declare a numeric z-index');
-  const zIndex = Number(match[1]);
-  assert.ok(zIndex > 4100, 'BioWeave must stay above ordinary SillyTavern overlays');
-  assert.ok(zIndex < 9999, 'BioWeave must stay below SillyTavern Popup/backdrop');
-  assert.ok(zIndex < 999999, 'BioWeave must stay below SillyTavern Toast');
-  assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/);
-});
-
+  const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/)
+  assert.ok(match, 'expected the BioWeave overlay to declare a numeric z-index')
+  const zIndex = Number(match[1])
+  assert.ok(zIndex > 4100, 'BioWeave must stay above ordinary SillyTavern overlays')
+  assert.ok(zIndex < 9999, 'BioWeave must stay below SillyTavern Popup/backdrop')
+  assert.ok(zIndex < 999999, 'BioWeave must stay below SillyTavern Toast')
+  assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/)
+})
 test('top app header drag moves only the panel and ignores header controls', () => {
   const createPointerTarget = rect => {
-    const listeners = new Map();
+    const listeners = new Map()
     return {
-      style: {left: '', top: ''},
+      style: { left: '', top: '' },
       dataset: {},
       parentElement: null,
       addEventListener(type, listener) {
-        const registered = listeners.get(type) ?? new Set();
-        registered.add(listener);
-        listeners.set(type, registered);
+        const registered = listeners.get(type) ?? new Set()
+        registered.add(listener)
+        listeners.set(type, registered)
       },
       removeEventListener(type, listener) {
-        listeners.get(type)?.delete(listener);
+        listeners.get(type)?.delete(listener)
       },
       dispatch(type, event = {}) {
         const dispatched = {
@@ -59,207 +57,259 @@ test('top app header drag moves only the panel and ignores header controls', () 
           target: event.target ?? this,
           defaultPrevented: false,
           preventDefault() {
-            this.defaultPrevented = true;
+            this.defaultPrevented = true
           },
-        };
-        for (const listener of listeners.get(type) ?? []) listener(dispatched);
-        return dispatched;
+        }
+        for (const listener of listeners.get(type) ?? []) listener(dispatched)
+        return dispatched
       },
       closest() {
-        return null;
+        return null
       },
       setPointerCapture(pointerId) {
-        this.capturedPointerId = pointerId;
+        this.capturedPointerId = pointerId
       },
       releasePointerCapture(pointerId) {
-        if (this.capturedPointerId === pointerId) delete this.capturedPointerId;
+        if (this.capturedPointerId === pointerId) delete this.capturedPointerId
       },
       getBoundingClientRect() {
-        return rect;
+        return rect
       },
-    };
-  };
-
-  const documentRef = createPointerTarget(null);
-  const overlay = createPointerTarget({left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600});
-  const root = createPointerTarget({left: 200, top: 150, width: 400, height: 300, right: 600, bottom: 450});
-  const handle = createPointerTarget(null);
-  root.parentElement = overlay;
-
-  const controller = createPanelDragController({root, handle, documentRef});
-  const down = handle.dispatch('pointerdown', {clientX: 100, clientY: 100, pointerId: 7, button: 0});
-  assert.equal(down.defaultPrevented, true);
-  assert.equal(handle.capturedPointerId, 7);
-
-  documentRef.dispatch('pointermove', {clientX: 140, clientY: 130, pointerId: 7});
-  assert.equal(root.style.left, '40px');
-  assert.equal(root.style.top, '30px');
-  assert.equal(root.dataset.dragging, 'true');
-
-  documentRef.dispatch('pointerup', {pointerId: 7});
-  assert.equal(root.dataset.dragging, undefined);
-  assert.equal(handle.capturedPointerId, undefined);
-
-  const blockedTarget = {closest: () => ({})};
-  handle.dispatch('pointerdown', {clientX: 100, clientY: 100, pointerId: 8, button: 0, target: blockedTarget});
-  documentRef.dispatch('pointermove', {clientX: 180, clientY: 180, pointerId: 8});
-  assert.equal(root.style.left, '40px');
-  assert.equal(root.style.top, '30px');
-
-  controller.destroy();
-});
-
-test('production panel owns paragraph rhythm before page-specific spacing', () => {
-  assert.match(
-    STYLE_SOURCE,
-    /\.bioweave-panel h1,[\s\S]*?\.bioweave-panel h4,[\s\S]*?\.bioweave-panel p\s*\{\s*margin:\s*0;/
-  );
-  assert.match(STYLE_SOURCE, /\.bioweave-character-exposure-list\s*\{[\s\S]*?margin-top:\s*5px/);
-  assert.match(STYLE_SOURCE, /\.bioweave-event-review-summary\s*\{[\s\S]*?margin:\s*2px 0 5px/);
-});
-
-test('production shell uses the unified top routebar on every viewport', () => {
-  assert.match(APP_SOURCE, /class="bioweave-app-header"/);
-  assert.match(APP_SOURCE, /class="bioweave-app-header" data-bioweave-drag-handle/);
-  assert.match(APP_SOURCE, /createPanelDragController/);
-  assert.match(APP_SOURCE, /class="bioweave-routebar"/);
-  assert.match(APP_SOURCE, /class="bioweave-route-items"/);
-  assert.match(APP_SOURCE, /data-bioweave-action="cycle-theme"/);
-  assert.match(APP_SOURCE, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/);
-  assert.doesNotMatch(APP_SOURCE, /bioweave-bottom|bioweave-more-menu|data-bioweave-action="more"/);
-  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-bottom|\.bioweave-more-menu|\.bioweave-nav-item/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-routebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?gap:\s*2px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-items\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?min-width:\s*100% !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?min-width:\s*72px !important;[\s\S]*?padding:\s*0 11px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*14px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*13px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-routebar\s*\{[\s\S]*?display:\s*block !important;[\s\S]*?overflow:\s*hidden !important;[\s\S]*?\.bioweave-route-items\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-text-button\s*\{[\s\S]*?color:\s*var\(--bioweave-accent\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel \.bioweave-app-header\[data-bioweave-drag-handle\][\s\S]*?touch-action:\s*none !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\s*\{[\s\S]*?position:\s*relative !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel input\.bioweave-checkbox,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*checkbox !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /input\.bioweave-checkbox:indeterminate[\s\S]*?accent-color:\s*var\(--bioweave-warn\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-inline:\s*0 !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page\s*\{[\s\S]*?gap:\s*3px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure \+ \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-top:\s*0 !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure:not\(\[open\]\)[\s\S]*?\.bioweave-settings-summary-status\.good[\s\S]*?color:\s*var\(--bioweave-text-secondary\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-arrow,[\s\S]*?margin-left:\s*0 !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-status\s*\{[\s\S]*?margin-left:\s*auto !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-source-list\s*\{[\s\S]*?gap:\s*4px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-external-memory-list\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-regex-row,[\s\S]*?grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-recent-story-order-action\s*\{[\s\S]*?width:\s*20px !important;[\s\S]*?padding:\s*0 !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-prompt-settings\s*\{[\s\S]*?display:\s*grid !important;[\s\S]*?gap:\s*9px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-prompt-field > span\s*\{[\s\S]*?white-space:\s*normal !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-profile-summary\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?white-space:\s*nowrap !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-select,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*menulist !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;[\s\S]*?align-items:\s*stretch !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-row,[\s\S]*?height:\s*32px !important;[\s\S]*?overflow:\s*visible !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-switch \.bioweave-switch-track\s*\{[\s\S]*?position:\s*relative !important;[\s\S]*?overflow:\s*hidden !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-regex-switch \.bioweave-switch-input:checked \+ \.bioweave-switch-track \.bioweave-switch-thumb\s*\{[\s\S]*?left:\s*auto !important;[\s\S]*?right:\s*2px !important;[\s\S]*?transform:\s*none !important;/);
-  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /\.bioweave-recent-story-read-options\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1\.15fr\) minmax\(0, \.85fr\) !important;[\s\S]*?gap:\s*4px !important;/);
-  assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[\s\S]*?display:\s*grid\s*!important[\s\S]*?overflow:\s*visible\s*!important/);
-});
-
-test('theme control is icon-only and keeps the configured day and Tavern palettes', () => {
-  assert.match(APP_SOURCE, /data-bioweave-theme-icon/);
-  assert.match(APP_SOURCE, /fa-solid fa-circle-half-stroke/);
-  assert.match(APP_SOURCE, /fa-solid fa-sun/);
-  assert.match(APP_SOURCE, /fa-solid fa-moon/);
-  assert.doesNotMatch(APP_SOURCE, /data-bioweave-theme-button[^>]*>跟随酒馆<\/button>/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\[data-theme="light"\]\s*\{[\s\S]*?--bioweave-bg:\s*#cbd6db !important;[\s\S]*?--bioweave-surface:\s*#dbe4e8 !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\[data-theme="tavern"\]\s*\{[\s\S]*?--bioweave-bg:\s*var\(--SmartThemeBlurTintColor, #202a31\) !important;[\s\S]*?--bioweave-accent:\s*var\(--SmartThemeQuoteColor, #4f91b6\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/);
-});
-
-test('settings disclosure surfaces use theme tokens instead of fixed night colors', () => {
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-header\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\[open\] > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-card-selected\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-disclosure > \.bioweave-card,[\s\S]*?border-top:\s*1px solid var\(--bioweave-border\) !important;[\s\S]*?background:\s*var\(--bioweave-surface-raised\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-worldbook > summary,[\s\S]*?background:\s*var\(--bioweave-surface-soft\) !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-source-child\s*\{[\s\S]*?background:\s*var\(--bioweave-surface\) !important;/);
-});
-
-test('production settings controls use the canonical checkbox, memory, and regex classes', () => {
-  const checkboxTags = [...UI_SOURCE.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(match => match[0]);
-  assert.ok(checkboxTags.length > 0, 'expected production settings to render checkbox controls');
-  assert.ok(checkboxTags.every(tag => /bioweave-checkbox|bioweave-switch-input/.test(tag)), 'every checkbox must use the native checkbox or switch contract');
-  assert.match(UI_SOURCE, /bioweave-external-memory-list/);
-  assert.match(UI_SOURCE, /bioweave-external-memory-status/);
-  assert.match(UI_SOURCE, /bioweave-regex-row bioweave-recent-story-regex-row/);
-  assert.match(UI_SOURCE, /bioweave-regex-move bioweave-recent-story-regex-order/);
-  assert.match(UI_SOURCE, /bioweave-analysis-child-status/);
-  assert.match(UI_SOURCE, /bioweave-analysis-section-chevron/);
-  assert.match(UI_SOURCE, /data-bioweave-analysis-section-toggle/);
-  assert.match(UI_SOURCE, /data-bioweave-analysis-section-source-ids/);
-  assert.match(UI_SOURCE, /bioweave-recent-story-read-options/);
-  assert.match(UI_SOURCE, /bioweave-world-model-species-grid/);
-  assert.match(UI_SOURCE, /bioweave-world-model-type-grid/);
-  assert.match(UI_SOURCE, /bioweave-world-model-card-summary/);
-  assert.match(UI_SOURCE, /bioweave-world-model-type-card-summary/);
-  assert.doesNotMatch(UI_SOURCE, /bioweave-world-model-type-selector/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-badge\s*\{[\s\S]*?border-radius:\s*999px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?min-height:\s*56px !important/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-analysis-section-chevron::before\s*\{[\s\S]*?content:\s*'\+';/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-section-chevron\s*\{[\s\S]*?font-size:\s*13px !important;/);
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-worldbook-title strong,[\s\S]*?font-size:\s*13px !important;[\s\S]*?font-weight:\s*700 !important;/);
-});
-
-class FakeElement {
-  constructor(documentRef, tagName = 'div') {
-    this.ownerDocument = documentRef;
-    this.tagName = tagName.toUpperCase();
-    this.children = [];
-    this.parentElement = null;
-    this.dataset = {};
-    this.attributes = new Map();
-    this.listeners = new Map();
-    this.hidden = false;
-    this.id = '';
-    this.className = '';
-  }
-
-  get isConnected() {
-    let node = this;
-    while (node.parentElement) node = node.parentElement;
-    return node === this.ownerDocument.documentElement;
-  }
-
-  append(...nodes) {
-    for (const node of nodes) {
-      node.parentElement?.removeChild(node);
-      node.parentElement = this;
-      this.children.push(node);
     }
   }
-
+  const documentRef = createPointerTarget(null)
+  const overlay = createPointerTarget({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 })
+  const root = createPointerTarget({ left: 200, top: 150, width: 400, height: 300, right: 600, bottom: 450 })
+  const handle = createPointerTarget(null)
+  root.parentElement = overlay
+  const controller = createPanelDragController({ root, handle, documentRef })
+  const down = handle.dispatch('pointerdown', { clientX: 100, clientY: 100, pointerId: 7, button: 0 })
+  assert.equal(down.defaultPrevented, true)
+  assert.equal(handle.capturedPointerId, 7)
+  documentRef.dispatch('pointermove', { clientX: 140, clientY: 130, pointerId: 7 })
+  assert.equal(root.style.left, '40px')
+  assert.equal(root.style.top, '30px')
+  assert.equal(root.dataset.dragging, 'true')
+  documentRef.dispatch('pointerup', { pointerId: 7 })
+  assert.equal(root.dataset.dragging, undefined)
+  assert.equal(handle.capturedPointerId, undefined)
+  const blockedTarget = { closest: () => ({}) }
+  handle.dispatch('pointerdown', { clientX: 100, clientY: 100, pointerId: 8, button: 0, target: blockedTarget })
+  documentRef.dispatch('pointermove', { clientX: 180, clientY: 180, pointerId: 8 })
+  assert.equal(root.style.left, '40px')
+  assert.equal(root.style.top, '30px')
+  controller.destroy()
+})
+test('production panel owns paragraph rhythm before page-specific spacing', () => {
+  assert.match(STYLE_SOURCE, /\.bioweave-panel h1,[\s\S]*?\.bioweave-panel h4,[\s\S]*?\.bioweave-panel p\s*\{\s*margin:\s*0;/)
+  assert.match(STYLE_SOURCE, /\.bioweave-character-exposure-list\s*\{[\s\S]*?margin-top:\s*5px/)
+  assert.match(STYLE_SOURCE, /\.bioweave-event-review-summary\s*\{[\s\S]*?margin:\s*2px 0 5px/)
+})
+test('production shell uses the unified top routebar on every viewport', () => {
+  assert.match(APP_SOURCE, /class="bioweave-app-header"/)
+  assert.match(APP_SOURCE, /class="bioweave-app-header" data-bioweave-drag-handle/)
+  assert.match(APP_SOURCE, /createPanelDragController/)
+  assert.match(APP_SOURCE, /class="bioweave-routebar"/)
+  assert.match(APP_SOURCE, /class="bioweave-route-items"/)
+  assert.match(APP_SOURCE, /data-bioweave-action="cycle-theme"/)
+  assert.match(APP_SOURCE, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/)
+  assert.doesNotMatch(APP_SOURCE, /bioweave-bottom|bioweave-more-menu|data-bioweave-action="more"/)
+  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-bottom|\.bioweave-more-menu|\.bioweave-nav-item/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-routebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?gap:\s*2px !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-items\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?min-width:\s*100% !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?min-width:\s*72px !important;[\s\S]*?padding:\s*0 11px !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*14px !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*13px !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /@media \(max-width: 767px\)[\s\S]*?\.bioweave-routebar\s*\{[\s\S]*?display:\s*block !important;[\s\S]*?overflow:\s*hidden !important;[\s\S]*?\.bioweave-route-items\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\) !important;/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-text-button\s*\{[\s\S]*?color:\s*var\(--bioweave-accent\) !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel \.bioweave-app-header\[data-bioweave-drag-handle\][\s\S]*?touch-action:\s*none !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\s*\{[\s\S]*?position:\s*relative !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-panel input\.bioweave-checkbox,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*checkbox !important;/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /input\.bioweave-checkbox:indeterminate[\s\S]*?accent-color:\s*var\(--bioweave-warn\) !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-inline:\s*0 !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page\s*\{[\s\S]*?gap:\s*3px !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page > \.bioweave-settings-disclosure \+ \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-top:\s*0 !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page > \.bioweave-settings-disclosure:not\(\[open\]\)[\s\S]*?\.bioweave-settings-summary-status\.good[\s\S]*?color:\s*var\(--bioweave-text-secondary\) !important;/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-arrow,[\s\S]*?margin-left:\s*0 !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-settings-summary-status\s*\{[\s\S]*?margin-left:\s*auto !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-source-list\s*\{[\s\S]*?gap:\s*4px !important;/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-external-memory-list\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-recent-story-regex-row,[\s\S]*?grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-recent-story-order-action\s*\{[\s\S]*?width:\s*20px !important;[\s\S]*?padding:\s*0 !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-analysis-prompt-settings\s*\{[\s\S]*?display:\s*grid !important;[\s\S]*?gap:\s*9px !important;/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-prompt-field > span\s*\{[\s\S]*?white-space:\s*normal !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-profile-summary\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?white-space:\s*nowrap !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-select,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*menulist !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /@media \(max-width: 767px\)[\s\S]*?grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;[\s\S]*?align-items:\s*stretch !important;/,
+  )
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*auto 72px minmax\(150px, 1\.7fr\) auto auto auto !important;/)
+  assert.match(FINAL_RESPONSIVE_STYLE_SOURCE, /grid-template-columns:\s*18px 60px minmax\(0, 1fr\) 28px 20px 28px !important;/)
+  assert.match(
+    FINAL_RESPONSIVE_STYLE_SOURCE,
+    /\.bioweave-recent-story-regex-row,[\s\S]*?height:\s*32px !important;[\s\S]*?overflow:\s*visible !important;/,
+  )
+  assert.match(
+    FINAL_RESPONSIVE_STYLE_SOURCE,
+    /\.bioweave-recent-story-regex-switch \.bioweave-switch-track\s*\{[\s\S]*?position:\s*relative !important;[\s\S]*?overflow:\s*hidden !important;/,
+  )
+  assert.match(
+    FINAL_RESPONSIVE_STYLE_SOURCE,
+    /\.bioweave-recent-story-regex-switch \.bioweave-switch-input:checked \+ \.bioweave-switch-track \.bioweave-switch-thumb\s*\{[\s\S]*?left:\s*auto !important;[\s\S]*?right:\s*2px !important;[\s\S]*?transform:\s*none !important;/,
+  )
+  assert.match(
+    FINAL_RESPONSIVE_STYLE_SOURCE,
+    /\.bioweave-recent-story-read-options\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1\.15fr\) minmax\(0, \.85fr\) !important;[\s\S]*?gap:\s*4px !important;/,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[\s\S]*?display:\s*grid\s*!important[\s\S]*?overflow:\s*visible\s*!important/,
+  )
+})
+test('theme control is icon-only and keeps the configured day and Tavern palettes', () => {
+  assert.match(APP_SOURCE, /data-bioweave-theme-icon/)
+  assert.match(APP_SOURCE, /fa-solid fa-circle-half-stroke/)
+  assert.match(APP_SOURCE, /fa-solid fa-sun/)
+  assert.match(APP_SOURCE, /fa-solid fa-moon/)
+  assert.doesNotMatch(APP_SOURCE, /data-bioweave-theme-button[^>]*>跟随酒馆<\/button>/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-panel\[data-theme="light"\]\s*\{[\s\S]*?--bioweave-bg:\s*#cbd6db !important;[\s\S]*?--bioweave-surface:\s*#dbe4e8 !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-panel\[data-theme="tavern"\]\s*\{[\s\S]*?--bioweave-bg:\s*var\(--SmartThemeBlurTintColor, #202a31\) !important;[\s\S]*?--bioweave-accent:\s*var\(--SmartThemeQuoteColor, #4f91b6\) !important;/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-theme-button\s*\{[\s\S]*?display:\s*grid !important;/)
+})
+test('settings disclosure surfaces use theme tokens instead of fixed night colors', () => {
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-header\) !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page > \.bioweave-settings-disclosure\[open\] > \.bioweave-settings-summary,[\s\S]*?background:\s*var\(--bioweave-card-selected\) !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-settings-disclosure > \.bioweave-card,[\s\S]*?border-top:\s*1px solid var\(--bioweave-border\) !important;[\s\S]*?background:\s*var\(--bioweave-surface-raised\) !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-analysis-worldbook > summary,[\s\S]*?background:\s*var\(--bioweave-surface-soft\) !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-analysis-source-child\s*\{[\s\S]*?background:\s*var\(--bioweave-surface\) !important;/,
+  )
+})
+test('production settings controls use the canonical checkbox, memory, and regex classes', () => {
+  const checkboxTags = [...UI_SOURCE.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(match => match[0])
+  assert.ok(checkboxTags.length > 0, 'expected production settings to render checkbox controls')
+  assert.ok(
+    checkboxTags.every(tag => /bioweave-checkbox|bioweave-switch-input/.test(tag)),
+    'every checkbox must use the native checkbox or switch contract',
+  )
+  assert.match(UI_SOURCE, /bioweave-external-memory-list/)
+  assert.match(UI_SOURCE, /bioweave-external-memory-status/)
+  assert.match(UI_SOURCE, /bioweave-regex-row bioweave-recent-story-regex-row/)
+  assert.match(UI_SOURCE, /bioweave-regex-move bioweave-recent-story-regex-order/)
+  assert.match(UI_SOURCE, /bioweave-analysis-child-status/)
+  assert.match(UI_SOURCE, /bioweave-analysis-section-chevron/)
+  assert.match(UI_SOURCE, /data-bioweave-analysis-section-toggle/)
+  assert.match(UI_SOURCE, /data-bioweave-analysis-section-source-ids/)
+  assert.match(UI_SOURCE, /bioweave-recent-story-read-options/)
+  assert.match(UI_SOURCE, /bioweave-world-model-species-grid/)
+  assert.match(UI_SOURCE, /bioweave-world-model-type-grid/)
+  assert.match(UI_SOURCE, /bioweave-world-model-card-summary/)
+  assert.match(UI_SOURCE, /bioweave-world-model-type-card-summary/)
+  assert.doesNotMatch(UI_SOURCE, /bioweave-world-model-type-selector/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-badge\s*\{[\s\S]*?border-radius:\s*999px !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page > \.bioweave-settings-disclosure > \.bioweave-settings-summary,[\s\S]*?min-height:\s*56px !important/,
+  )
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-analysis-section-chevron::before\s*\{[\s\S]*?content:\s*'\+';/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page \.bioweave-analysis-section-chevron\s*\{[\s\S]*?font-size:\s*13px !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-analysis-worldbook-title strong,[\s\S]*?font-size:\s*13px !important;[\s\S]*?font-weight:\s*700 !important;/,
+  )
+})
+class FakeElement {
+  constructor(documentRef, tagName = 'div') {
+    this.ownerDocument = documentRef
+    this.tagName = tagName.toUpperCase()
+    this.children = []
+    this.parentElement = null
+    this.dataset = {}
+    this.attributes = new Map()
+    this.listeners = new Map()
+    this.hidden = false
+    this.id = ''
+    this.className = ''
+  }
+  get isConnected() {
+    let node = this
+    while (node.parentElement) node = node.parentElement
+    return node === this.ownerDocument.documentElement
+  }
+  append(...nodes) {
+    for (const node of nodes) {
+      node.parentElement?.removeChild(node)
+      node.parentElement = this
+      this.children.push(node)
+    }
+  }
   removeChild(node) {
-    const index = this.children.indexOf(node);
-    if (index >= 0) this.children.splice(index, 1);
-    node.parentElement = null;
+    const index = this.children.indexOf(node)
+    if (index >= 0) this.children.splice(index, 1)
+    node.parentElement = null
   }
-
   remove() {
-    this.parentElement?.removeChild(this);
+    this.parentElement?.removeChild(this)
   }
-
   setAttribute(name, value) {
-    this.attributes.set(name, String(value));
+    this.attributes.set(name, String(value))
   }
-
   addEventListener(type, listener) {
-    const listeners = this.listeners.get(type) ?? new Set();
-    listeners.add(listener);
-    this.listeners.set(type, listeners);
+    const listeners = this.listeners.get(type) ?? new Set()
+    listeners.add(listener)
+    this.listeners.set(type, listeners)
   }
-
   removeEventListener(type, listener) {
-    this.listeners.get(type)?.delete(listener);
+    this.listeners.get(type)?.delete(listener)
   }
-
   dispatch(type, extra = {}) {
     const event = {
       type,
@@ -267,449 +317,402 @@ class FakeElement {
       key: extra.key,
       defaultPrevented: false,
       preventDefault() {
-        this.defaultPrevented = true;
+        this.defaultPrevented = true
       },
-    };
-    for (const listener of this.listeners.get(type) ?? []) listener(event);
-    return event;
+    }
+    for (const listener of this.listeners.get(type) ?? []) listener(event)
+    return event
   }
-
   querySelectorAll(selector) {
-    const matches = [];
+    const matches = []
     const visit = node => {
       for (const child of node.children) {
-        if (selector.startsWith('#') && child.id === selector.slice(1)) matches.push(child);
-        visit(child);
+        if (selector.startsWith('#') && child.id === selector.slice(1)) matches.push(child)
+        visit(child)
       }
-    };
-    visit(this);
-    return matches;
+    }
+    visit(this)
+    return matches
   }
-
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] ?? null;
+    return this.querySelectorAll(selector)[0] ?? null
   }
 }
-
 class FakeDocument {
   constructor() {
-    this.documentElement = new FakeElement(this, 'html');
-    this.body = new FakeElement(this, 'body');
-    this.documentElement.append(this.body);
-    this.body.clickCount = 0;
+    this.documentElement = new FakeElement(this, 'html')
+    this.body = new FakeElement(this, 'body')
+    this.documentElement.append(this.body)
+    this.body.clickCount = 0
     this.body.click = () => {
-      this.body.clickCount += 1;
-    };
+      this.body.clickCount += 1
+    }
   }
-
   createElement(tagName) {
-    return new FakeElement(this, tagName);
+    return new FakeElement(this, tagName)
   }
-
   querySelectorAll(selector) {
-    return this.documentElement.querySelectorAll(selector);
+    return this.documentElement.querySelectorAll(selector)
   }
-
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] ?? null;
+    return this.querySelectorAll(selector)[0] ?? null
   }
-
   getElementById(id) {
-    return this.querySelector('#' + id);
+    return this.querySelector('#' + id)
   }
 }
-
 class AppFakeElement extends FakeElement {
   constructor(documentRef, tagName = 'div') {
-    super(documentRef, tagName);
-    this._innerHTML = '';
-    this.selectorNodes = new Map();
+    super(documentRef, tagName)
+    this._innerHTML = ''
+    this.selectorNodes = new Map()
     this.classList = {
       toggle: (name, force) => {
-        const names = new Set(this.className.split(/\s+/).filter(Boolean));
-        if (force) names.add(name);
-        else names.delete(name);
-        this.className = [...names].join(' ');
+        const names = new Set(this.className.split(/\s+/).filter(Boolean))
+        if (force) names.add(name)
+        else names.delete(name)
+        this.className = [...names].join(' ')
       },
-    };
-  }
-
-  set innerHTML(value) {
-    this._innerHTML = String(value);
-    if (this.className.includes('bioweave-root') && this._innerHTML.includes('bioweave-main')) this.buildAppShell();
-  }
-
-  get innerHTML() {
-    return this._innerHTML;
-  }
-
-  buildAppShell() {
-    if (this.children.length) return;
-    const add = (selector, tagName) => {
-      const node = new AppFakeElement(this.ownerDocument, tagName);
-      this.append(node);
-      this.selectorNodes.set(selector, [node]);
-      return node;
-    };
-    add('.bioweave-route-items', 'div');
-    add('.bioweave-main', 'main');
-  }
-
-  querySelectorAll(selector) {
-    return this.selectorNodes.get(selector) ?? [];
-  }
-
-  querySelector(selector) {
-    return this.selectorNodes.get(selector)?.[0] ?? null;
-  }
-
-  contains(node) {
-    if (node === this || node?.__root === this) return true;
-    let current = node;
-    while (current?.parentElement) {
-      if (current.parentElement === this) return true;
-      current = current.parentElement;
     }
-    return false;
+  }
+  set innerHTML(value) {
+    this._innerHTML = String(value)
+    if (this.className.includes('bioweave-root') && this._innerHTML.includes('bioweave-main')) this.buildAppShell()
+  }
+  get innerHTML() {
+    return this._innerHTML
+  }
+  buildAppShell() {
+    if (this.children.length) return
+    const add = (selector, tagName) => {
+      const node = new AppFakeElement(this.ownerDocument, tagName)
+      this.append(node)
+      this.selectorNodes.set(selector, [node])
+      return node
+    }
+    add('.bioweave-route-items', 'div')
+    add('.bioweave-main', 'main')
+  }
+  querySelectorAll(selector) {
+    return this.selectorNodes.get(selector) ?? []
+  }
+  querySelector(selector) {
+    return this.selectorNodes.get(selector)?.[0] ?? null
+  }
+  contains(node) {
+    if (node === this || node?.__root === this) return true
+    let current = node
+    while (current?.parentElement) {
+      if (current.parentElement === this) return true
+      current = current.parentElement
+    }
+    return false
   }
 }
-
 class AppFakeDocument extends FakeDocument {
   constructor() {
-    super();
-    this.defaultView = {};
+    super()
+    this.defaultView = {}
   }
-
   createElement(tagName) {
-    return new AppFakeElement(this, tagName);
+    return new AppFakeElement(this, tagName)
   }
 }
-
 class FakeMutationObserver {
-  static latest = null;
-
+  static latest = null
   constructor(callback) {
-    this.callback = callback;
-    this.disconnected = false;
-    FakeMutationObserver.latest = this;
+    this.callback = callback
+    this.disconnected = false
+    FakeMutationObserver.latest = this
   }
-
   observe() {}
-
   disconnect() {
-    this.disconnected = true;
+    this.disconnected = true
   }
-
   trigger() {
-    if (!this.disconnected) this.callback([]);
+    if (!this.disconnected) this.callback([])
   }
 }
-
 function createMenuDocument() {
-  const documentRef = new FakeDocument();
-  const menu = documentRef.createElement('div');
-  menu.id = 'extensionsMenu';
-  documentRef.body.append(menu);
-  return {documentRef, menu};
+  const documentRef = new FakeDocument()
+  const menu = documentRef.createElement('div')
+  menu.id = 'extensionsMenu'
+  documentRef.body.append(menu)
+  return { documentRef, menu }
 }
-
 function createTestLifecycle(documentRef) {
-  let initialized = 0;
-  let tornDown = 0;
+  let initialized = 0
+  let tornDown = 0
   const lifecycle = createOverlayLifecycle({
     documentRef,
     createOverlay: documentRefRef => documentRefRef.createElement('div'),
     createRoot: documentRefRef => documentRefRef.createElement('section'),
     initializeRoot: () => {
-      initialized += 1;
+      initialized += 1
     },
     teardownRoot: () => {
-      tornDown += 1;
+      tornDown += 1
     },
-  });
+  })
   return {
     lifecycle,
     getInitialized: () => initialized,
     getTornDown: () => tornDown,
-  };
+  }
 }
-
 test('overlay lifecycle keeps one root and reopens after close', () => {
-  const documentRef = new FakeDocument();
-  const {lifecycle, getInitialized} = createTestLifecycle(documentRef);
-
-  const first = lifecycle.open();
-  assert.equal(first.overlay.parentElement, documentRef.documentElement);
-  assert.equal(documentRef.body.children.length, 0);
-  assert.equal(documentRef.documentElement.children.length, 2);
-  assert.equal(first.overlay.children.length, 1);
-  assert.equal(first.overlay.hidden, false);
-  assert.equal(first.root.dataset.open, 'true');
-  assert.equal(getInitialized(), 1);
-
-  lifecycle.close();
-  assert.equal(first.overlay.hidden, true);
-  lifecycle.open();
-  assert.equal(lifecycle.getRoot(), first.root);
-  assert.equal(documentRef.body.children.length, 0);
-  assert.equal(getInitialized(), 1);
-});
-
+  const documentRef = new FakeDocument()
+  const { lifecycle, getInitialized } = createTestLifecycle(documentRef)
+  const first = lifecycle.open()
+  assert.equal(first.overlay.parentElement, documentRef.documentElement)
+  assert.equal(documentRef.body.children.length, 0)
+  assert.equal(documentRef.documentElement.children.length, 2)
+  assert.equal(first.overlay.children.length, 1)
+  assert.equal(first.overlay.hidden, false)
+  assert.equal(first.root.dataset.open, 'true')
+  assert.equal(getInitialized(), 1)
+  lifecycle.close()
+  assert.equal(first.overlay.hidden, true)
+  lifecycle.open()
+  assert.equal(lifecycle.getRoot(), first.root)
+  assert.equal(documentRef.body.children.length, 0)
+  assert.equal(getInitialized(), 1)
+})
 test('detached root is discarded and recreated, then destroy removes overlay', () => {
-  const documentRef = new FakeDocument();
-  const {lifecycle, getTornDown} = createTestLifecycle(documentRef);
-  const first = lifecycle.mount();
-  first.root.remove();
-  assert.equal(isConnectedToDocument(first.root, documentRef), false);
-
-  const second = lifecycle.open();
-  assert.notEqual(second.root, first.root);
-  assert.equal(second.overlay.parentElement, documentRef.documentElement);
-  assert.equal(documentRef.body.children.length, 0);
-  assert.equal(second.overlay.children.length, 1);
-  assert.equal(getTornDown(), 1);
-
-  lifecycle.destroy();
-  lifecycle.destroy();
-  assert.equal(documentRef.body.children.length, 0);
-  assert.equal(documentRef.documentElement.children.length, 1);
-  assert.equal(documentRef.getElementById('bioweave-overlay'), null);
-  assert.equal(getTornDown(), 2);
-});
-
+  const documentRef = new FakeDocument()
+  const { lifecycle, getTornDown } = createTestLifecycle(documentRef)
+  const first = lifecycle.mount()
+  first.root.remove()
+  assert.equal(isConnectedToDocument(first.root, documentRef), false)
+  const second = lifecycle.open()
+  assert.notEqual(second.root, first.root)
+  assert.equal(second.overlay.parentElement, documentRef.documentElement)
+  assert.equal(documentRef.body.children.length, 0)
+  assert.equal(second.overlay.children.length, 1)
+  assert.equal(getTornDown(), 1)
+  lifecycle.destroy()
+  lifecycle.destroy()
+  assert.equal(documentRef.body.children.length, 0)
+  assert.equal(documentRef.documentElement.children.length, 1)
+  assert.equal(documentRef.getElementById('bioweave-overlay'), null)
+  assert.equal(getTornDown(), 2)
+})
 test('worldbook parent checkbox keeps native toggle and does not toggle disclosure', async () => {
-  const details = {open: false, isConnected: true};
+  const details = { open: false, isConnected: true }
   const target = {
     // 模拟浏览器 click 事件进入监听器时 checkbox 已经完成预激活。
     checked: true,
     indeterminate: false,
     disabled: false,
-    dataset: {bioweaveAnalysisWorldbookToggle: 'st-worldbook:alpha'},
+    dataset: { bioweaveAnalysisWorldbookToggle: 'st-worldbook:alpha' },
     closest(selector) {
-      return selector === 'details' ? details : this;
+      return selector === 'details' ? details : this
     },
-  };
-  let prevented = false;
-  let stopped = false;
+  }
+  let prevented = false
+  let stopped = false
   const handled = handleAnalysisParentToggleClick({
     target,
     preventDefault() {
-      prevented = true;
+      prevented = true
     },
     stopPropagation() {
-      stopped = true;
+      stopped = true
     },
-  });
-
-  assert.equal(handled, true);
-  assert.equal(prevented, false);
-  assert.equal(stopped, true);
-  assert.equal(target.checked, true);
-  assert.equal(target.indeterminate, false);
-  details.open = true;
-  await Promise.resolve();
-  assert.equal(details.open, false);
-});
-
+  })
+  assert.equal(handled, true)
+  assert.equal(prevented, false)
+  assert.equal(stopped, true)
+  assert.equal(target.checked, true)
+  assert.equal(target.indeterminate, false)
+  details.open = true
+  await Promise.resolve()
+  assert.equal(details.open, false)
+})
 test('render scroll helper restores main and worldbook list positions', () => {
   const nodes = new Map([
-    ['.bioweave-main', {scrollTop: 123, scrollLeft: 7}],
-    ['[data-bioweave-analysis-source-list]', {scrollTop: 456, scrollLeft: 11}],
-  ]);
+    ['.bioweave-main', { scrollTop: 123, scrollLeft: 7 }],
+    ['[data-bioweave-analysis-source-list]', { scrollTop: 456, scrollLeft: 11 }],
+  ])
   const root = {
     querySelector(selector) {
-      return nodes.get(selector) ?? null;
+      return nodes.get(selector) ?? null
     },
-  };
-
-  const positions = captureScrollPositions(root);
-  nodes.set('.bioweave-main', {scrollTop: 0, scrollLeft: 0});
-  nodes.set('[data-bioweave-analysis-source-list]', {scrollTop: 0, scrollLeft: 0});
-  restoreScrollPositions(root, positions);
-
-  assert.deepEqual(nodes.get('.bioweave-main'), {scrollTop: 123, scrollLeft: 7});
-  assert.deepEqual(nodes.get('[data-bioweave-analysis-source-list]'), {scrollTop: 456, scrollLeft: 11});
-});
-
+  }
+  const positions = captureScrollPositions(root)
+  nodes.set('.bioweave-main', { scrollTop: 0, scrollLeft: 0 })
+  nodes.set('[data-bioweave-analysis-source-list]', { scrollTop: 0, scrollLeft: 0 })
+  restoreScrollPositions(root, positions)
+  assert.deepEqual(nodes.get('.bioweave-main'), { scrollTop: 123, scrollLeft: 7 })
+  assert.deepEqual(nodes.get('[data-bioweave-analysis-source-list]'), { scrollTop: 456, scrollLeft: 11 })
+})
 test('notify dispatches each toastr method and trims empty messages', () => {
-  const calls = [];
+  const calls = []
   const documentRef = {
     defaultView: {
-      toastr: Object.fromEntries(['success', 'info', 'warning', 'error'].map(type => [
-        type,
-        message => calls.push([type, message]),
-      ])),
+      toastr: Object.fromEntries(['success', 'info', 'warning', 'error'].map(type => [type, message => calls.push([type, message])])),
     },
-  };
-
-  notify('  已保存。  ', 'success', documentRef);
-  notify('说明。', 'info', documentRef);
-  notify('注意。', 'warning', documentRef);
-  notify('失败。', 'error', documentRef);
-  notify('   ', 'error', documentRef);
-
+  }
+  notify('  已保存。  ', 'success', documentRef)
+  notify('说明。', 'info', documentRef)
+  notify('注意。', 'warning', documentRef)
+  notify('失败。', 'error', documentRef)
+  notify('   ', 'error', documentRef)
   assert.deepEqual(calls, [
     ['success', '已保存。'],
     ['info', '说明。'],
     ['warning', '注意。'],
     ['error', '失败。'],
-  ]);
-});
-
+  ])
+})
 test('notify survives a throwing host toastr method and uses prefixed console fallback', () => {
-  const previousToastr = globalThis.toastr;
-  const previousConsole = globalThis.console;
-  const consoleCalls = [];
-  let attempts = 0;
+  const previousToastr = globalThis.toastr
+  const previousConsole = globalThis.console
+  const consoleCalls = []
+  let attempts = 0
   const throwingToastr = {
     error() {
-      attempts += 1;
-      throw new Error('broken toastr');
+      attempts += 1
+      throw new Error('broken toastr')
     },
-  };
-  globalThis.toastr = throwingToastr;
+  }
+  globalThis.toastr = throwingToastr
   globalThis.console = {
     error(message) {
-      consoleCalls.push(message);
+      consoleCalls.push(message)
     },
-  };
-
+  }
   try {
     notify('保存失败。', 'error', {
       defaultView: {
         toastr: throwingToastr,
       },
-    });
-    assert.equal(attempts, 1);
-    assert.deepEqual(consoleCalls, ['[BioWeave] 保存失败。']);
+    })
+    assert.equal(attempts, 1)
+    assert.deepEqual(consoleCalls, ['[BioWeave] 保存失败。'])
   } finally {
-    if (previousToastr === undefined) delete globalThis.toastr;
-    else globalThis.toastr = previousToastr;
-    globalThis.console = previousConsole;
+    if (previousToastr === undefined) delete globalThis.toastr
+    else globalThis.toastr = previousToastr
+    globalThis.console = previousConsole
   }
-});
-
+})
 test('notify falls back to the global toastr and then typed console methods', () => {
-  const previousToastr = globalThis.toastr;
-  const previousConsole = globalThis.console;
-  const toastrCalls = [];
-  const consoleCalls = [];
+  const previousToastr = globalThis.toastr
+  const previousConsole = globalThis.console
+  const toastrCalls = []
+  const consoleCalls = []
   globalThis.toastr = {
     warning(message) {
-      toastrCalls.push(['warning', message]);
+      toastrCalls.push(['warning', message])
     },
-  };
+  }
   globalThis.console = {
     error(message) {
-      consoleCalls.push(['error', message]);
+      consoleCalls.push(['error', message])
     },
     warn(message) {
-      consoleCalls.push(['warn', message]);
+      consoleCalls.push(['warn', message])
     },
     log(message) {
-      consoleCalls.push(['log', message]);
+      consoleCalls.push(['log', message])
     },
-  };
-
-  try {
-    notify('来源刷新完成。', 'warning', {defaultView: {toastr: {}}});
-    notify('保存失败。', 'error', {defaultView: {}});
-    notify('说明。', 'info', {defaultView: {}});
-    assert.deepEqual(toastrCalls, [['warning', '来源刷新完成。']]);
-    assert.deepEqual(consoleCalls, [['error', '[BioWeave] 保存失败。'], ['log', '[BioWeave] 说明。']]);
-  } finally {
-    if (previousToastr === undefined) delete globalThis.toastr;
-    else globalThis.toastr = previousToastr;
-    globalThis.console = previousConsole;
   }
-});
-
+  try {
+    notify('来源刷新完成。', 'warning', { defaultView: { toastr: {} } })
+    notify('保存失败。', 'error', { defaultView: {} })
+    notify('说明。', 'info', { defaultView: {} })
+    assert.deepEqual(toastrCalls, [['warning', '来源刷新完成。']])
+    assert.deepEqual(consoleCalls, [
+      ['error', '[BioWeave] 保存失败。'],
+      ['log', '[BioWeave] 说明。'],
+    ])
+  } finally {
+    if (previousToastr === undefined) delete globalThis.toastr
+    else globalThis.toastr = previousToastr
+    globalThis.console = previousConsole
+  }
+})
 test('settings API source and default profile keep fallback values without host setters', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
   documentRef.defaultView.toastr = {
     success(message) {
-      toastCalls.push(message);
+      toastCalls.push(message)
     },
-  };
+  }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
     chat: {
       current: () => 'chat-1',
-      token: () => ({chatId: 'chat-1', epoch: 0}),
+      token: () => ({ chatId: 'chat-1', epoch: 0 }),
       assert: () => {},
     },
     store: {
-      getChat: () => ({settings: {}}),
+      getChat: () => ({ settings: {} }),
       saveChat: async () => {},
     },
     st: {
-      getContext: () => ({chatId: 'chat-1', characters: []}),
-      fetch: async () => ({ok: true, json: async () => ({})}),
+      getContext: () => ({ chatId: 'chat-1', characters: [] }),
+      fetch: async () => ({ ok: true, json: async () => ({}) }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.mountBioWeave();
-  app.go('settings');
-
-  const change = [...root.listeners.get('change')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.mountBioWeave()
+  app.go('settings')
+  const change = [...root.listeners.get('change')][0]
   const dispatchChange = async (value, selector) => {
     const target = {
       __root: root,
       value,
       dataset: {},
       closest(candidate) {
-        return candidate === selector ? this : null;
+        return candidate === selector ? this : null
       },
-    };
-    await change({target});
-  };
-
-  await dispatchChange('bioweave', '[data-bioweave-api-source]');
-  await dispatchChange('profile-1', '[data-bioweave-default-profile]');
-
-  assert.equal(app.getSettingsState().apiSource, 'bioweave');
-  assert.equal(app.getSettingsState().defaultProfileId, 'profile-1');
-  assert.deepEqual(toastCalls, ['默认 API 来源已保存。', '默认 API 配置已保存。']);
-  app.destroyBioWeave();
-});
-
+    }
+    await change({ target })
+  }
+  await dispatchChange('bioweave', '[data-bioweave-api-source]')
+  await dispatchChange('profile-1', '[data-bioweave-default-profile]')
+  assert.equal(app.getSettingsState().apiSource, 'bioweave')
+  assert.equal(app.getSettingsState().defaultProfileId, 'profile-1')
+  assert.deepEqual(toastCalls, ['默认 API 来源已保存。', '默认 API 配置已保存。'])
+  app.destroyBioWeave()
+})
 test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview actions local', async () => {
-  const documentRef = new AppFakeDocument();
-  const popupCalls = [];
-  let resolvePopup;
+  const documentRef = new AppFakeDocument()
+  const popupCalls = []
+  let resolvePopup
   class Popup {
     constructor(content, type, title, options) {
-      popupCalls.push({content, type, title, options});
+      popupCalls.push({ content, type, title, options })
     }
-
     show() {
       return new Promise(resolve => {
-        resolvePopup = resolve;
-      });
+        resolvePopup = resolve
+      })
     }
   }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
     chat: {
       current: () => 'chat-debug',
-      token: () => ({chatId: 'chat-debug', epoch: 0}),
+      token: () => ({ chatId: 'chat-debug', epoch: 0 }),
       assert: () => {},
     },
     store: {
-      getChat: () => ({settings: {}}),
+      getChat: () => ({ settings: {} }),
       saveChat: async () => {},
     },
     st: {
@@ -717,90 +720,84 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
         chatId: 'chat-debug',
         characters: [],
         Popup,
-        POPUP_TYPE: {DISPLAY: 'display'},
-        POPUP_RESULT: {AFFIRMATIVE: 'yes', NEGATIVE: 'no'},
+        POPUP_TYPE: { DISPLAY: 'display' },
+        POPUP_RESULT: { AFFIRMATIVE: 'yes', NEGATIVE: 'no' },
       }),
-      fetch: async () => ({ok: true, json: async () => []}),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.openBioWeave();
-  app.go('settings');
-  await new Promise(resolve => setTimeout(resolve, 0));
-
-  const click = [...root.listeners.get('click')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const click = [...root.listeners.get('click')][0]
   const actionTarget = action => ({
     __root: root,
-    dataset: {bioweaveAction: action},
+    dataset: { bioweaveAction: action },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
+  })
   const clickAction = async action => {
     await click({
       target: actionTarget(action),
       preventDefault() {},
       stopPropagation() {},
-    });
-  };
-
-  const openPromise = clickAction('open-analysis-debug');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(popupCalls.length, 1);
-  assert.equal(popupCalls[0].type, 'display');
-  assert.equal(popupCalls[0].title, '');
-  assert.deepEqual(popupCalls[0].options, {wide: true, allowVerticalScrolling: true});
-  assert.equal(popupCalls[0].content.ownerDocument, documentRef);
-  assert.match(popupCalls[0].content.innerHTML, /data-bioweave-analysis-preview/);
-
-  const popupContent = popupCalls[0].content;
-  const popupClick = [...popupContent.listeners.get('click')][0];
+    })
+  }
+  const openPromise = clickAction('open-analysis-debug')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(popupCalls.length, 1)
+  assert.equal(popupCalls[0].type, 'display')
+  assert.equal(popupCalls[0].title, '')
+  assert.deepEqual(popupCalls[0].options, { wide: true, allowVerticalScrolling: true })
+  assert.equal(popupCalls[0].content.ownerDocument, documentRef)
+  assert.match(popupCalls[0].content.innerHTML, /data-bioweave-analysis-preview/)
+  const popupContent = popupCalls[0].content
+  const popupClick = [...popupContent.listeners.get('click')][0]
   const popupActionTarget = (action, mode = undefined) => ({
     __root: popupContent,
     dataset: {
       bioweaveAction: action,
-      ...(mode ? {bioweavePreviewMode: mode} : {}),
+      ...(mode ? { bioweavePreviewMode: mode } : {}),
     },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
+  })
   await popupClick({
     target: popupActionTarget('refresh-analysis-preview'),
     preventDefault() {},
-  });
-  assert.match(popupContent.innerHTML, /data-bioweave-analysis-preview/);
-  assert.match(popupContent.innerHTML, /data-bioweave-world-model-message-preview/);
+  })
+  assert.match(popupContent.innerHTML, /data-bioweave-analysis-preview/)
+  assert.match(popupContent.innerHTML, /data-bioweave-world-model-message-preview/)
   await popupClick({
     target: popupActionTarget('analysis-preview-mode', 'raw'),
     preventDefault() {},
-  });
-  assert.match(popupContent.innerHTML, /bioweave-analysis-preview-raw/);
-
-  resolvePopup();
-  await openPromise;
-  assert.equal(root.dataset.open, 'true');
-  const keydown = [...root.listeners.get('keydown')][0];
-  keydown({key: 'Escape', preventDefault() {}});
-  assert.equal(root.dataset.open, 'false');
-  app.destroyBioWeave();
-});
-
+  })
+  assert.match(popupContent.innerHTML, /bioweave-analysis-preview-raw/)
+  resolvePopup()
+  await openPromise
+  assert.equal(root.dataset.open, 'true')
+  const keydown = [...root.listeners.get('keydown')][0]
+  keydown({ key: 'Escape', preventDefault() {} })
+  assert.equal(root.dataset.open, 'false')
+  app.destroyBioWeave()
+})
 test('settings and World Model analysis debug actions share one Popup and prompt source boundary', async () => {
-  const documentRef = new AppFakeDocument();
-  const popupCalls = [];
-  let resolvePopup;
+  const documentRef = new AppFakeDocument()
+  const popupCalls = []
+  let resolvePopup
   class Popup {
     constructor(content, type, title, options) {
-      popupCalls.push({content, type, title, options});
+      popupCalls.push({ content, type, title, options })
     }
-
     show() {
       return new Promise(resolve => {
-        resolvePopup = resolve;
-      });
+        resolvePopup = resolve
+      })
     }
   }
   const savedPrompt = {
@@ -809,7 +806,7 @@ test('settings and World Model analysis debug actions share one Popup and prompt
     input_prefix: '',
     input_suffix: '',
     system_bottom: 'SAVED BOTTOM',
-  };
+  }
   const profileStore = {
     getSettings: () => ({
       api_source: 'sillytavern',
@@ -820,16 +817,16 @@ test('settings and World Model analysis debug actions share one Popup and prompt
     }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => savedPrompt,
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
     chat: {
       current: () => 'chat-debug-shared',
-      token: () => ({chatId: 'chat-debug-shared', epoch: 0}),
+      token: () => ({ chatId: 'chat-debug-shared', epoch: 0 }),
       assert: () => {},
     },
     store: {
-      getChat: () => ({settings: {}}),
+      getChat: () => ({ settings: {} }),
       saveChat: async () => {},
     },
     st: {
@@ -837,20 +834,19 @@ test('settings and World Model analysis debug actions share one Popup and prompt
         chatId: 'chat-debug-shared',
         characters: [],
         Popup,
-        POPUP_TYPE: {DISPLAY: 'display'},
+        POPUP_TYPE: { DISPLAY: 'display' },
       }),
-      fetch: async () => ({ok: true, json: async () => []}),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.openBioWeave();
-  app.go('settings');
-  await new Promise(resolve => setTimeout(resolve, 0));
-
-  const promptForm = {};
-  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-settings]', [promptForm]);
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const promptForm = {}
+  root.selectorNodes.set('[data-bioweave-world-analysis-prompt-settings]', [promptForm])
   for (const [key, value] of Object.entries({
     system_top: 'DRAFT TOP',
     task: 'DRAFT TASK',
@@ -858,523 +854,517 @@ test('settings and World Model analysis debug actions share one Popup and prompt
     input_suffix: '',
     system_bottom: 'DRAFT BOTTOM',
   })) {
-    root.selectorNodes.set(`[data-bioweave-world-analysis-prompt-field="${key}"]`, [{value}]);
+    root.selectorNodes.set(`[data-bioweave-world-analysis-prompt-field="${key}"]`, [{ value }])
   }
-
-  const click = [...root.listeners.get('click')][0];
+  const click = [...root.listeners.get('click')][0]
   const actionTarget = action => ({
     __root: root,
-    dataset: {bioweaveAction: action},
+    dataset: { bioweaveAction: action },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
+  })
   const clickAction = async action => {
     await click({
       target: actionTarget(action),
       preventDefault() {},
       stopPropagation() {},
-    });
-  };
-
-  const settingsOpen = clickAction('open-analysis-debug');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(popupCalls.length, 1);
-  const settingsPopup = popupCalls[0];
-  assert.equal(settingsPopup.type, 'display');
-  assert.equal(settingsPopup.title, '');
-  assert.deepEqual(settingsPopup.options, {wide: true, allowVerticalScrolling: true});
+    })
+  }
+  const settingsOpen = clickAction('open-analysis-debug')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(popupCalls.length, 1)
+  const settingsPopup = popupCalls[0]
+  assert.equal(settingsPopup.type, 'display')
+  assert.equal(settingsPopup.title, '')
+  assert.deepEqual(settingsPopup.options, { wide: true, allowVerticalScrolling: true })
   const popupActionTarget = (content, action, mode = undefined) => ({
     __root: content,
     dataset: {
       bioweaveAction: action,
-      ...(mode ? {bioweavePreviewMode: mode} : {}),
+      ...(mode ? { bioweavePreviewMode: mode } : {}),
     },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
-  const settingsPopupClick = [...settingsPopup.content.listeners.get('click')][0];
+  })
+  const settingsPopupClick = [...settingsPopup.content.listeners.get('click')][0]
   await settingsPopupClick({
     target: popupActionTarget(settingsPopup.content, 'refresh-analysis-preview'),
     preventDefault() {},
-  });
-  assert.match(settingsPopup.content.innerHTML, /SAVED TOP/);
-  assert.match(settingsPopup.content.innerHTML, /SAVED BOTTOM/);
-  assert.doesNotMatch(settingsPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/);
-  assert.match(settingsPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
-  resolvePopup();
-  await settingsOpen;
-
-  app.go('world');
-  const worldPageMarkup = root.querySelector('.bioweave-main').innerHTML;
-  const worldOpen = clickAction('world-model-view-input');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(root.querySelector('.bioweave-main').innerHTML, worldPageMarkup);
-  assert.equal(popupCalls.length, 2);
-  const worldPopup = popupCalls[1];
-  assert.equal(worldPopup.type, settingsPopup.type);
-  assert.equal(worldPopup.title, settingsPopup.title);
-  assert.deepEqual(worldPopup.options, settingsPopup.options);
-  assert.match(worldPopup.content.innerHTML, /SAVED TOP/);
-  assert.match(worldPopup.content.innerHTML, /SAVED BOTTOM/);
-  assert.doesNotMatch(worldPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/);
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-analysis-preview/);
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
-  const worldPopupClick = [...worldPopup.content.listeners.get('click')][0];
+  })
+  assert.match(settingsPopup.content.innerHTML, /SAVED TOP/)
+  assert.match(settingsPopup.content.innerHTML, /SAVED BOTTOM/)
+  assert.doesNotMatch(settingsPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/)
+  assert.match(settingsPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
+  resolvePopup()
+  await settingsOpen
+  app.go('world')
+  const worldPageMarkup = root.querySelector('.bioweave-main').innerHTML
+  const worldOpen = clickAction('world-model-view-input')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, worldPageMarkup)
+  assert.equal(popupCalls.length, 2)
+  const worldPopup = popupCalls[1]
+  assert.equal(worldPopup.type, settingsPopup.type)
+  assert.equal(worldPopup.title, settingsPopup.title)
+  assert.deepEqual(worldPopup.options, settingsPopup.options)
+  assert.match(worldPopup.content.innerHTML, /SAVED TOP/)
+  assert.match(worldPopup.content.innerHTML, /SAVED BOTTOM/)
+  assert.doesNotMatch(worldPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/)
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-analysis-preview/)
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
+  const worldPopupClick = [...worldPopup.content.listeners.get('click')][0]
   await worldPopupClick({
     target: popupActionTarget(worldPopup.content, 'refresh-analysis-preview'),
     preventDefault() {},
-  });
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/);
+  })
+  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
   await worldPopupClick({
     target: popupActionTarget(worldPopup.content, 'analysis-preview-mode', 'raw'),
     preventDefault() {},
-  });
-  assert.match(worldPopup.content.innerHTML, /bioweave-analysis-preview-raw/);
-  resolvePopup();
-  await worldOpen;
-  app.destroyBioWeave();
-});
-
+  })
+  assert.match(worldPopup.content.innerHTML, /bioweave-analysis-preview-raw/)
+  resolvePopup()
+  await worldOpen
+  app.destroyBioWeave()
+})
 test('analysis debug shows a safe Toast and no custom modal when Popup is unavailable', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
-  documentRef.defaultView.toastr = {error: message => toastCalls.push(message)};
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
+  documentRef.defaultView.toastr = { error: message => toastCalls.push(message) }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
-    chat: {current: () => 'chat-no-popup', token: () => ({chatId: 'chat-no-popup'}), assert: () => {}},
-    store: {getChat: () => ({settings: {}}), saveChat: async () => {}},
-    st: {getContext: () => ({chatId: 'chat-no-popup'}), fetch: async () => ({ok: true, json: async () => []}), getRequestHeaders: () => ({})},
+    chat: { current: () => 'chat-no-popup', token: () => ({ chatId: 'chat-no-popup' }), assert: () => {} },
+    store: { getChat: () => ({ settings: {} }), saveChat: async () => {} },
+    st: { getContext: () => ({ chatId: 'chat-no-popup' }), fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.openBioWeave();
-  app.go('settings');
-  const click = [...root.listeners.get('click')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const click = [...root.listeners.get('click')][0]
   await click({
     target: {
       __root: root,
-      dataset: {bioweaveAction: 'open-analysis-debug'},
-      closest(selector) { return selector.includes('[data-bioweave-action]') ? this : null; },
+      dataset: { bioweaveAction: 'open-analysis-debug' },
+      closest(selector) {
+        return selector.includes('[data-bioweave-action]') ? this : null
+      },
     },
     preventDefault() {},
-  });
-  assert.deepEqual(toastCalls, ['高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。']);
-  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-analysis-debug-overlay/);
-  app.destroyBioWeave();
-});
-
+  })
+  assert.deepEqual(toastCalls, ['高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。'])
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-analysis-debug-overlay/)
+  app.destroyBioWeave()
+})
 test('API profile deletion uses Popup.show.confirm and cancels on a negative result', async () => {
-  const documentRef = new AppFakeDocument();
-  const confirmCalls = [];
-  const toastCalls = [];
-  let confirmResult = 'negative';
-  let deleted = false;
+  const documentRef = new AppFakeDocument()
+  const confirmCalls = []
+  const toastCalls = []
+  let confirmResult = 'negative'
+  let deleted = false
   const context = {
     Popup: {
       show: {
         async confirm(title, message) {
-          confirmCalls.push([title, message]);
-          return confirmResult;
+          confirmCalls.push([title, message])
+          return confirmResult
         },
       },
     },
-    POPUP_RESULT: {AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative'},
-  };
-  documentRef.defaultView.toastr = {success: message => toastCalls.push(message)};
+    POPUP_RESULT: { AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative' },
+  }
+  documentRef.defaultView.toastr = { success: message => toastCalls.push(message) }
   const profileStore = {
     getSettings: () => ({
       api_source: 'bioweave',
       default_profile_id: 'profile-1',
-      api_profiles: deleted ? {} : { 'profile-1': {profile_id: 'profile-1', name: '配置一'} },
+      api_profiles: deleted ? {} : { 'profile-1': { profile_id: 'profile-1', name: '配置一' } },
       assignments: {},
     }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
     deleteProfile: async id => {
-      deleted = id === 'profile-1';
+      deleted = id === 'profile-1'
     },
-  };
+  }
   const runtime = {
-    chat: {current: () => 'chat-delete', token: () => ({chatId: 'chat-delete'}), assert: () => {}},
-    store: {getChat: () => ({settings: {}}), saveChat: async () => {}},
-    st: {getContext: () => context, fetch: async () => ({ok: true, json: async () => []}), getRequestHeaders: () => ({})},
+    chat: { current: () => 'chat-delete', token: () => ({ chatId: 'chat-delete' }), assert: () => {} },
+    store: { getChat: () => ({ settings: {} }), saveChat: async () => {} },
+    st: { getContext: () => context, fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
     subscribe: () => () => {},
-  };
-  const previousConfirm = globalThis.confirm;
+  }
+  const previousConfirm = globalThis.confirm
   globalThis.confirm = () => {
-    throw new Error('native confirm must not be called');
-  };
+    throw new Error('native confirm must not be called')
+  }
   try {
-    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-    const root = app.openBioWeave();
-    app.go('settings');
-    const click = [...root.listeners.get('click')][0];
+    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+    const root = app.openBioWeave()
+    app.go('settings')
+    const click = [...root.listeners.get('click')][0]
     const deleteTarget = {
       __root: root,
-      dataset: {bioweaveAction: 'delete-profile', profileId: 'profile-1'},
+      dataset: { bioweaveAction: 'delete-profile', profileId: 'profile-1' },
       closest(selector) {
-        return selector.includes('[data-bioweave-action]') ? this : null;
+        return selector.includes('[data-bioweave-action]') ? this : null
       },
-    };
-    const event = {target: deleteTarget, preventDefault() {}};
-
-    await click(event);
-    assert.equal(deleted, false);
-    assert.deepEqual(confirmCalls, [['删除 API 配置', '确定删除此 API 配置并清理关联 Secret 引用吗？']]);
-
-    confirmResult = 'affirmative';
-    await click(event);
-    assert.equal(deleted, true);
-    assert.equal(confirmCalls.length, 2);
-    assert.deepEqual(toastCalls, ['API 配置已删除；关联 Secret 引用已清理。']);
-    app.destroyBioWeave();
+    }
+    const event = { target: deleteTarget, preventDefault() {} }
+    await click(event)
+    assert.equal(deleted, false)
+    assert.deepEqual(confirmCalls, [['删除 API 配置', '确定删除此 API 配置并清理关联 Secret 引用吗？']])
+    confirmResult = 'affirmative'
+    await click(event)
+    assert.equal(deleted, true)
+    assert.equal(confirmCalls.length, 2)
+    assert.deepEqual(toastCalls, ['API 配置已删除；关联 Secret 引用已清理。'])
+    app.destroyBioWeave()
   } finally {
-    if (previousConfirm === undefined) delete globalThis.confirm;
-    else globalThis.confirm = previousConfirm;
+    if (previousConfirm === undefined) delete globalThis.confirm
+    else globalThis.confirm = previousConfirm
   }
-});
-
+})
 test('dirty World Model drafts use Popup confirmation and do not analyze after cancellation', async () => {
-  const documentRef = new AppFakeDocument();
-  const confirmCalls = [];
-  let analyzeCalls = 0;
+  const documentRef = new AppFakeDocument()
+  const confirmCalls = []
+  let analyzeCalls = 0
   const context = {
     Popup: {
       show: {
         async confirm(title, message) {
-          confirmCalls.push([title, message]);
-          return 'negative';
+          confirmCalls.push([title, message])
+          return 'negative'
         },
       },
     },
-    POPUP_RESULT: {AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative'},
+    POPUP_RESULT: { AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative' },
     chatId: 'chat-dirty-world',
     characters: [],
-  };
+  }
   const model = {
     schema_version: 1,
-    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
-    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
+    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
     exceptions: [],
     unknowns: ['旧未知'],
-  };
+  }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
-    chat: {current: () => 'chat-dirty-world', token: () => ({chatId: 'chat-dirty-world'}), assert: () => {}},
+    chat: { current: () => 'chat-dirty-world', token: () => ({ chatId: 'chat-dirty-world' }), assert: () => {} },
     store: {
-      getChat: () => ({settings: {}, world_model: model}),
+      getChat: () => ({ settings: {}, world_model: model }),
       saveChat: async () => {},
     },
-    st: {getContext: () => context, fetch: async () => ({ok: true, json: async () => []}), getRequestHeaders: () => ({})},
+    st: { getContext: () => context, fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
     subscribe: () => () => {},
-  };
+  }
   const app = createApp(runtime, {
     documentRef,
     storageRef: {},
     profileStore,
-    analyzer: {analyzeWorldModel: async () => { analyzeCalls += 1; return model; }},
-  });
-  const root = app.openBioWeave();
-  app.go('world');
-  const click = [...root.listeners.get('click')][0];
+    analyzer: {
+      analyzeWorldModel: async () => {
+        analyzeCalls += 1
+        return model
+      },
+    },
+  })
+  const root = app.openBioWeave()
+  app.go('world')
+  const click = [...root.listeners.get('click')][0]
   const actionTarget = (action, section = undefined) => ({
     __root: root,
     dataset: {
       bioweaveAction: action,
-      ...(section ? {bioweaveWorldSection: section} : {}),
+      ...(section ? { bioweaveWorldSection: section } : {}),
     },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
-
-  await click({target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {}});
+  })
+  await click({ target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {} })
   const row = {
     querySelector(selector) {
-      return selector.includes('data-bioweave-world-section-field="value"') ? {value: '新未知'} : null;
+      return selector.includes('data-bioweave-world-section-field="value"') ? { value: '新未知' } : null
     },
-  };
+  }
   const form = {
     querySelectorAll(selector) {
-      return selector.includes('data-bioweave-world-section-row="unknowns"') ? [row] : [];
+      return selector.includes('data-bioweave-world-section-row="unknowns"') ? [row] : []
     },
-  };
-  root.selectorNodes.set('[data-bioweave-world-section-form]', [form]);
-  const input = [...root.listeners.get('input')][0];
+  }
+  root.selectorNodes.set('[data-bioweave-world-section-form]', [form])
+  const input = [...root.listeners.get('input')][0]
   input({
     target: {
       __root: root,
       closest(selector) {
-        return selector === '[data-bioweave-world-section-form]' ? form : null;
+        return selector === '[data-bioweave-world-section-form]' ? form : null
       },
     },
-  });
-
-  await click({target: actionTarget('world-model-reanalyze'), preventDefault() {}});
-  assert.deepEqual(confirmCalls, [['放弃未保存修改', '当前修改尚未保存，是否放弃？']]);
-  assert.equal(analyzeCalls, 0);
-  app.destroyBioWeave();
-});
-
+  })
+  await click({ target: actionTarget('world-model-reanalyze'), preventDefault() {} })
+  assert.deepEqual(confirmCalls, [['放弃未保存修改', '当前修改尚未保存，是否放弃？']])
+  assert.equal(analyzeCalls, 0)
+  app.destroyBioWeave()
+})
 test('busy World Model analysis asks before aborting and keeps the button actionable', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
   documentRef.defaultView.toastr = {
     info(message) {
-      toastCalls.push(['info', message]);
+      toastCalls.push(['info', message])
     },
-  };
-  const confirmCalls = [];
-  const pendingConfirmations = [];
+  }
+  const confirmCalls = []
+  const pendingConfirmations = []
   const model = {
     schema_version: 1,
-    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
-    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
+    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
     exceptions: [],
     unknowns: ['已有模型'],
-  };
-  let savedChat = {settings: {}, world_model: model};
-  let analysisCalls = 0;
-  let abortCalls = 0;
-  let resolveAnalyzerStarted;
+  }
+  let savedChat = { settings: {}, world_model: model }
+  let analysisCalls = 0
+  let abortCalls = 0
+  let resolveAnalyzerStarted
   const analyzerStarted = new Promise(resolve => {
-    resolveAnalyzerStarted = resolve;
-  });
+    resolveAnalyzerStarted = resolve
+  })
   const analyzer = {
-    analyzeWorldModel: async ({signal}) => {
-      analysisCalls += 1;
-      resolveAnalyzerStarted(signal);
+    analyzeWorldModel: async ({ signal }) => {
+      analysisCalls += 1
+      resolveAnalyzerStarted(signal)
       await new Promise((resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          abortCalls += 1;
-          const error = new Error('REQUEST_ABORTED');
-          error.code = 'REQUEST_ABORTED';
-          reject(error);
-        }, {once: true});
-        signal.addEventListener('abort', resolve, {once: true});
-      });
-      return model;
+        signal.addEventListener(
+          'abort',
+          () => {
+            abortCalls += 1
+            const error = new Error('REQUEST_ABORTED')
+            error.code = 'REQUEST_ABORTED'
+            reject(error)
+          },
+          { once: true },
+        )
+        signal.addEventListener('abort', resolve, { once: true })
+      })
+      return model
     },
-  };
+  }
   const context = {
     Popup: {
       show: {
         confirm(title, message) {
-          confirmCalls.push([title, message]);
-          return new Promise(resolve => pendingConfirmations.push(resolve));
+          confirmCalls.push([title, message])
+          return new Promise(resolve => pendingConfirmations.push(resolve))
         },
       },
     },
-    POPUP_RESULT: {AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative'},
+    POPUP_RESULT: { AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative' },
     chatId: 'chat-world-abort',
     characters: [],
-  };
+  }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
     chat: {
       current: () => 'chat-world-abort',
-      token: () => ({chatId: 'chat-world-abort', epoch: 0}),
+      token: () => ({ chatId: 'chat-world-abort', epoch: 0 }),
       assert: () => {},
     },
     store: {
       getChat: () => savedChat,
       saveChat: async (_chatId, nextChat) => {
-        savedChat = nextChat;
+        savedChat = nextChat
       },
     },
     st: {
       getContext: () => context,
-      fetch: async () => ({ok: true, json: async () => []}),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
-  const root = app.openBioWeave();
-  app.go('world');
-  const click = [...root.listeners.get('click')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+  const root = app.openBioWeave()
+  app.go('world')
+  const click = [...root.listeners.get('click')][0]
   const actionTarget = action => ({
     __root: root,
-    dataset: {bioweaveAction: action},
+    dataset: { bioweaveAction: action },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
-  const clickAction = action => click({target: actionTarget(action), preventDefault() {}});
-
-  const analysisRequest = clickAction('world-model-reanalyze');
-  const signal = await analyzerStarted;
-  assert.equal(analysisCalls, 1);
-  const busyMarkup = root.querySelector('.bioweave-main').innerHTML;
-  assert.match(busyMarkup, /data-bioweave-action="world-model-reanalyze">分析中…<\/button>/);
-  assert.doesNotMatch(busyMarkup, /data-bioweave-action="world-model-reanalyze"[^>]*disabled/);
-
-  const cancelledRequest = clickAction('world-model-reanalyze');
-  await Promise.resolve();
-  assert.deepEqual(confirmCalls, [['终止世界模型分析', '当前分析仍在进行，是否终止本次分析？']]);
-  await clickAction('world-model-reanalyze');
-  assert.equal(confirmCalls.length, 1);
-  assert.equal(signal.aborted, false);
-  assert.equal(abortCalls, 0);
-  assert.equal(analysisCalls, 1);
-
-  pendingConfirmations.shift()('negative');
-  await cancelledRequest;
-  assert.equal(signal.aborted, false);
-  assert.equal(abortCalls, 0);
-  assert.deepEqual(toastCalls, []);
-  assert.equal(root.querySelector('.bioweave-main').innerHTML.includes('分析中…'), true);
-
-  const closedRequest = clickAction('world-model-reanalyze');
-  await Promise.resolve();
-  assert.equal(confirmCalls.length, 2);
-  pendingConfirmations.shift()(undefined);
-  await closedRequest;
-  assert.equal(signal.aborted, false);
-  assert.equal(abortCalls, 0);
-  assert.deepEqual(toastCalls, []);
-  assert.equal(analysisCalls, 1);
-
-  const confirmedRequest = clickAction('world-model-reanalyze');
-  await Promise.resolve();
-  assert.equal(confirmCalls.length, 3);
-  pendingConfirmations.shift()('affirmative');
-  await confirmedRequest;
-  await analysisRequest;
-
-  assert.equal(signal.aborted, true);
-  assert.equal(abortCalls, 1);
-  assert.equal(analysisCalls, 1);
-  assert.deepEqual(toastCalls, [['info', '世界模型分析请求已取消，上一份模型已保留。']]);
-  assert.equal(savedChat.world_model, model);
-  const completedMarkup = root.querySelector('.bioweave-main').innerHTML;
-  assert.match(completedMarkup, /已有模型/);
-  assert.doesNotMatch(completedMarkup, /分析中…/);
-  assert.doesNotMatch(completedMarkup, /世界模型分析请求已取消，上一份模型已保留。/);
-  assert.doesNotMatch(completedMarkup, /class="bioweave-settings-notice"/);
-  app.destroyBioWeave();
-});
-
+  })
+  const clickAction = action => click({ target: actionTarget(action), preventDefault() {} })
+  const analysisRequest = clickAction('world-model-reanalyze')
+  const signal = await analyzerStarted
+  assert.equal(analysisCalls, 1)
+  const busyMarkup = root.querySelector('.bioweave-main').innerHTML
+  assert.match(busyMarkup, /data-bioweave-action="world-model-reanalyze">分析中…<\/button>/)
+  assert.doesNotMatch(busyMarkup, /data-bioweave-action="world-model-reanalyze"[^>]*disabled/)
+  const cancelledRequest = clickAction('world-model-reanalyze')
+  await Promise.resolve()
+  assert.deepEqual(confirmCalls, [['终止世界模型分析', '当前分析仍在进行，是否终止本次分析？']])
+  await clickAction('world-model-reanalyze')
+  assert.equal(confirmCalls.length, 1)
+  assert.equal(signal.aborted, false)
+  assert.equal(abortCalls, 0)
+  assert.equal(analysisCalls, 1)
+  pendingConfirmations.shift()('negative')
+  await cancelledRequest
+  assert.equal(signal.aborted, false)
+  assert.equal(abortCalls, 0)
+  assert.deepEqual(toastCalls, [])
+  assert.equal(root.querySelector('.bioweave-main').innerHTML.includes('分析中…'), true)
+  const closedRequest = clickAction('world-model-reanalyze')
+  await Promise.resolve()
+  assert.equal(confirmCalls.length, 2)
+  pendingConfirmations.shift()(undefined)
+  await closedRequest
+  assert.equal(signal.aborted, false)
+  assert.equal(abortCalls, 0)
+  assert.deepEqual(toastCalls, [])
+  assert.equal(analysisCalls, 1)
+  const confirmedRequest = clickAction('world-model-reanalyze')
+  await Promise.resolve()
+  assert.equal(confirmCalls.length, 3)
+  pendingConfirmations.shift()('affirmative')
+  await confirmedRequest
+  await analysisRequest
+  assert.equal(signal.aborted, true)
+  assert.equal(abortCalls, 1)
+  assert.equal(analysisCalls, 1)
+  assert.deepEqual(toastCalls, [['info', '世界模型分析请求已取消，上一份模型已保留。']])
+  assert.equal(savedChat.world_model, model)
+  const completedMarkup = root.querySelector('.bioweave-main').innerHTML
+  assert.match(completedMarkup, /已有模型/)
+  assert.doesNotMatch(completedMarkup, /分析中…/)
+  assert.doesNotMatch(completedMarkup, /世界模型分析请求已取消，上一份模型已保留。/)
+  assert.doesNotMatch(completedMarkup, /class="bioweave-settings-notice"/)
+  app.destroyBioWeave()
+})
 test('busy World Model analysis safely cancels when the host confirm Popup is unavailable', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
   const model = {
     schema_version: 1,
-    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
-    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
+    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
     exceptions: [],
     unknowns: ['已有模型'],
-  };
-  let analysisCalls = 0;
-  let abortCalls = 0;
-  let resolveAnalyzerStarted;
-  let resolveAnalysis;
+  }
+  let analysisCalls = 0
+  let abortCalls = 0
+  let resolveAnalyzerStarted
+  let resolveAnalysis
   const analyzerStarted = new Promise(resolve => {
-    resolveAnalyzerStarted = resolve;
-  });
+    resolveAnalyzerStarted = resolve
+  })
   const analyzer = {
-    analyzeWorldModel: async ({signal}) => {
-      analysisCalls += 1;
-      resolveAnalyzerStarted(signal);
-      signal.addEventListener('abort', () => {
-        abortCalls += 1;
-      }, {once: true});
+    analyzeWorldModel: async ({ signal }) => {
+      analysisCalls += 1
+      resolveAnalyzerStarted(signal)
+      signal.addEventListener(
+        'abort',
+        () => {
+          abortCalls += 1
+        },
+        { once: true },
+      )
       return new Promise(resolve => {
-        resolveAnalysis = resolve;
-      });
+        resolveAnalysis = resolve
+      })
     },
-  };
+  }
   const context = {
     chatId: 'chat-world-abort-no-popup',
     characters: [],
-  };
-  documentRef.defaultView.toastr = {error: message => toastCalls.push(message)};
+  }
+  documentRef.defaultView.toastr = { error: message => toastCalls.push(message) }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
   const runtime = {
     chat: {
       current: () => 'chat-world-abort-no-popup',
-      token: () => ({chatId: 'chat-world-abort-no-popup', epoch: 0}),
+      token: () => ({ chatId: 'chat-world-abort-no-popup', epoch: 0 }),
       assert: () => {},
     },
     store: {
-      getChat: () => ({settings: {}, world_model: model}),
+      getChat: () => ({ settings: {}, world_model: model }),
       saveChat: async () => {},
     },
     st: {
       getContext: () => context,
-      fetch: async () => ({ok: true, json: async () => []}),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
-  const root = app.openBioWeave();
-  app.go('world');
-  const click = [...root.listeners.get('click')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+  const root = app.openBioWeave()
+  app.go('world')
+  const click = [...root.listeners.get('click')][0]
   const actionTarget = action => ({
     __root: root,
-    dataset: {bioweaveAction: action},
+    dataset: { bioweaveAction: action },
     closest(selector) {
-      return selector.includes('[data-bioweave-action]') ? this : null;
+      return selector.includes('[data-bioweave-action]') ? this : null
     },
-  });
-  const clickAction = action => click({target: actionTarget(action), preventDefault() {}});
-
-  const analysisRequest = clickAction('world-model-reanalyze');
-  const signal = await analyzerStarted;
-  await clickAction('world-model-reanalyze');
-  assert.deepEqual(toastCalls, ['当前宿主不支持确认弹窗，操作已取消。']);
-  assert.equal(signal.aborted, false);
-  assert.equal(abortCalls, 0);
-  assert.equal(analysisCalls, 1);
-  assert.match(root.querySelector('.bioweave-main').innerHTML, /分析中…/);
-  assert.doesNotMatch(APP_SOURCE, /\bwindow\.confirm\s*\(/);
-  assert.doesNotMatch(UI_SOURCE, CUSTOM_ABORT_UI_PATTERN);
-  assert.doesNotMatch(STYLE_SOURCE, CUSTOM_ABORT_UI_PATTERN);
-
-  resolveAnalysis(model);
-  await analysisRequest;
-  assert.equal(signal.aborted, false);
-  assert.equal(abortCalls, 0);
-  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /分析中…/);
-  app.destroyBioWeave();
-});
-
+  })
+  const clickAction = action => click({ target: actionTarget(action), preventDefault() {} })
+  const analysisRequest = clickAction('world-model-reanalyze')
+  const signal = await analyzerStarted
+  await clickAction('world-model-reanalyze')
+  assert.deepEqual(toastCalls, ['当前宿主不支持确认弹窗，操作已取消。'])
+  assert.equal(signal.aborted, false)
+  assert.equal(abortCalls, 0)
+  assert.equal(analysisCalls, 1)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /分析中…/)
+  assert.doesNotMatch(APP_SOURCE, /\bwindow\.confirm\s*\(/)
+  assert.doesNotMatch(UI_SOURCE, CUSTOM_ABORT_UI_PATTERN)
+  assert.doesNotMatch(STYLE_SOURCE, CUSTOM_ABORT_UI_PATTERN)
+  resolveAnalysis(model)
+  await analysisRequest
+  assert.equal(signal.aborted, false)
+  assert.equal(abortCalls, 0)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /分析中…/)
+  app.destroyBioWeave()
+})
 test('World Model analysis routes success and failure feedback through semantic Toasts', async () => {
   const previousModel = {
     schema_version: 1,
-    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
-    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
+    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
     exceptions: [],
     unknowns: ['旧模型'],
-  };
+  }
   const nextModel = {
     ...previousModel,
     unknowns: ['新模型'],
-  };
+  }
   const scenarios = [
     {
       code: null,
@@ -1387,95 +1377,105 @@ test('World Model analysis routes success and failure feedback through semantic 
       message: '世界模型分析请求超时，上一份模型已保留。',
     },
     {
+      code: 'REQUEST_TIMEOUT',
+      diagnosticCode: 'server',
+      status: 503,
+      type: 'error',
+      message: '服务暂时不可用（HTTP 503），请稍后重试。 上一份模型已保留。',
+    },
+    {
       code: 'API_PROFILE_INVALID',
       type: 'error',
       message: '世界分析 API 配置无效，请检查 URL 和模型。',
     },
-  ];
-
+  ]
   for (const scenario of scenarios) {
-    const documentRef = new AppFakeDocument();
-    const toastCalls = [];
+    const documentRef = new AppFakeDocument()
+    const toastCalls = []
     documentRef.defaultView.toastr = {
       success(message) {
-        toastCalls.push(['success', message]);
+        toastCalls.push(['success', message])
       },
       error(message) {
-        toastCalls.push(['error', message]);
+        toastCalls.push(['error', message])
       },
-    };
-    let savedChat = {settings: {}, world_model: previousModel};
+    }
+    let savedChat = { settings: {}, world_model: previousModel }
     const profileStore = {
-      getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+      getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
       getApiRequestSettings: () => ({}),
       getWorldAnalysisPrompt: () => ({}),
-      getRecentStoryGlobal: () => ({regex_rules: []}),
-    };
+      getRecentStoryGlobal: () => ({ regex_rules: [] }),
+    }
     const runtime = {
       chat: {
         current: () => 'chat-world-feedback',
-        token: () => ({chatId: 'chat-world-feedback', epoch: 0}),
+        token: () => ({ chatId: 'chat-world-feedback', epoch: 0 }),
         assert: () => {},
       },
       store: {
         getChat: () => savedChat,
         saveChat: async (_chatId, nextChat) => {
-          savedChat = nextChat;
+          savedChat = nextChat
         },
       },
       st: {
-        getContext: () => ({chatId: 'chat-world-feedback', characters: []}),
-        fetch: async () => ({ok: true, json: async () => []}),
+        getContext: () => ({ chatId: 'chat-world-feedback', characters: [] }),
+        fetch: async () => ({ ok: true, json: async () => [] }),
         getRequestHeaders: () => ({}),
       },
       subscribe: () => () => {},
-    };
+    }
     const analyzer = {
       analyzeWorldModel: async () => {
-        if (!scenario.code) return nextModel;
-        const error = new Error(scenario.code);
-        error.code = scenario.code;
-        throw error;
+        if (!scenario.code) return nextModel
+        const error = new Error(scenario.code)
+        error.code = scenario.code
+        if (scenario.diagnosticCode) {
+          error.diagnosticCode = scenario.diagnosticCode
+          error.diagnostic_code = scenario.diagnosticCode
+          error.error_code = scenario.diagnosticCode
+        }
+        if (scenario.status) error.status = scenario.status
+        throw error
       },
-    };
-    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore, analyzer});
-    const root = app.openBioWeave();
-    app.go('world');
-    const click = [...root.listeners.get('click')][0];
+    }
+    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+    const root = app.openBioWeave()
+    app.go('world')
+    const click = [...root.listeners.get('click')][0]
     await click({
       target: {
         __root: root,
-        dataset: {bioweaveAction: 'world-model-reanalyze'},
+        dataset: { bioweaveAction: 'world-model-reanalyze' },
         closest(selector) {
-          return selector.includes('[data-bioweave-action]') ? this : null;
+          return selector.includes('[data-bioweave-action]') ? this : null
         },
       },
       preventDefault() {},
-    });
-
-    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]], scenario.code ?? 'success');
-    const markup = root.querySelector('.bioweave-main').innerHTML;
-    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/);
-    assert.doesNotMatch(markup, new RegExp(scenario.message));
+    })
+    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]], scenario.code ?? 'success')
+    const markup = root.querySelector('.bioweave-main').innerHTML
+    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/)
+    assert.doesNotMatch(markup, new RegExp(scenario.message))
     if (scenario.code) {
-      assert.match(markup, /旧模型/);
-      assert.equal(savedChat.world_model, previousModel);
+      assert.match(markup, /旧模型/)
+      assert.equal(savedChat.world_model, previousModel)
     } else {
-      assert.match(markup, /新模型/);
-      assert.deepEqual(savedChat.world_model, nextModel);
+      assert.match(markup, /新模型/)
+      assert.deepEqual(savedChat.world_model, nextModel)
     }
-    app.destroyBioWeave();
+    app.destroyBioWeave()
   }
-});
-
+})
 test('World Model section save routes success and failure feedback through Toasts', async () => {
   const baseModel = {
     schema_version: 1,
-    species: [{name: '潮汐生物', description: '描述', biological_types: []}],
-    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
+    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
     exceptions: [],
     unknowns: ['旧模块内容'],
-  };
+  }
   const scenarios = [
     {
       errorCode: null,
@@ -1487,158 +1487,153 @@ test('World Model section save routes success and failure feedback through Toast
       type: 'error',
       message: '保存失败，当前模块草稿仍保留。',
     },
-  ];
-
+  ]
   for (const scenario of scenarios) {
-    const documentRef = new AppFakeDocument();
-    const toastCalls = [];
+    const documentRef = new AppFakeDocument()
+    const toastCalls = []
     documentRef.defaultView.toastr = {
       success(message) {
-        toastCalls.push(['success', message]);
+        toastCalls.push(['success', message])
       },
       error(message) {
-        toastCalls.push(['error', message]);
+        toastCalls.push(['error', message])
       },
-    };
-    let savedChat = {settings: {}, world_model: baseModel};
+    }
+    let savedChat = { settings: {}, world_model: baseModel }
     const profileStore = {
-      getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+      getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
       getApiRequestSettings: () => ({}),
       getWorldAnalysisPrompt: () => ({}),
-      getRecentStoryGlobal: () => ({regex_rules: []}),
-    };
+      getRecentStoryGlobal: () => ({ regex_rules: [] }),
+    }
     const runtime = {
       chat: {
         current: () => 'chat-world-section-feedback',
-        token: () => ({chatId: 'chat-world-section-feedback', epoch: 0}),
+        token: () => ({ chatId: 'chat-world-section-feedback', epoch: 0 }),
         assert: () => {},
       },
       store: {
         getChat: () => savedChat,
         saveChat: async (_chatId, nextChat) => {
           if (scenario.errorCode) {
-            const error = new Error(scenario.errorCode);
-            error.code = scenario.errorCode;
-            throw error;
+            const error = new Error(scenario.errorCode)
+            error.code = scenario.errorCode
+            throw error
           }
-          savedChat = nextChat;
+          savedChat = nextChat
         },
       },
       st: {
-        getContext: () => ({chatId: 'chat-world-section-feedback', characters: []}),
-        fetch: async () => ({ok: true, json: async () => []}),
+        getContext: () => ({ chatId: 'chat-world-section-feedback', characters: [] }),
+        fetch: async () => ({ ok: true, json: async () => [] }),
         getRequestHeaders: () => ({}),
       },
       subscribe: () => () => {},
-    };
-    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-    const root = app.openBioWeave();
-    app.go('world');
+    }
+    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+    const root = app.openBioWeave()
+    app.go('world')
     const actionTarget = (action, section = undefined) => ({
       __root: root,
       dataset: {
         bioweaveAction: action,
-        ...(section ? {bioweaveWorldSection: section} : {}),
+        ...(section ? { bioweaveWorldSection: section } : {}),
       },
       closest(selector) {
-        return selector.includes('[data-bioweave-action]') ? this : null;
+        return selector.includes('[data-bioweave-action]') ? this : null
       },
-    });
-    const click = [...root.listeners.get('click')][0];
-    await click({target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {}});
-
+    })
+    const click = [...root.listeners.get('click')][0]
+    await click({ target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {} })
     const row = {
       querySelector(selector) {
-        return selector.includes('data-bioweave-world-section-field="value"') ? {value: '新模块内容'} : null;
+        return selector.includes('data-bioweave-world-section-field="value"') ? { value: '新模块内容' } : null
       },
-    };
+    }
     const form = {
       querySelectorAll(selector) {
-        return selector.includes('data-bioweave-world-section-row="unknowns"') ? [row] : [];
+        return selector.includes('data-bioweave-world-section-row="unknowns"') ? [row] : []
       },
-    };
-    root.selectorNodes.set('[data-bioweave-world-section-form]', [form]);
-    const input = [...root.listeners.get('input')][0];
+    }
+    root.selectorNodes.set('[data-bioweave-world-section-form]', [form])
+    const input = [...root.listeners.get('input')][0]
     input({
       target: {
         __root: root,
         closest(selector) {
-          return selector === '[data-bioweave-world-section-form]' ? form : null;
+          return selector === '[data-bioweave-world-section-form]' ? form : null
         },
       },
-    });
-    await click({target: actionTarget('world-model-save-section'), preventDefault() {}});
-
-    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]]);
-    const markup = root.querySelector('.bioweave-main').innerHTML;
-    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/);
-    assert.doesNotMatch(markup, new RegExp(scenario.message));
+    })
+    await click({ target: actionTarget('world-model-save-section'), preventDefault() {} })
+    assert.deepEqual(toastCalls, [[scenario.type, scenario.message]])
+    const markup = root.querySelector('.bioweave-main').innerHTML
+    assert.doesNotMatch(markup, /class="bioweave-settings-notice"/)
+    assert.doesNotMatch(markup, new RegExp(scenario.message))
     if (scenario.errorCode) {
-      assert.deepEqual(savedChat.world_model, baseModel);
+      assert.deepEqual(savedChat.world_model, baseModel)
     } else {
-      assert.deepEqual(savedChat.world_model.unknowns, ['新模块内容']);
+      assert.deepEqual(savedChat.world_model.unknowns, ['新模块内容'])
     }
-    app.destroyBioWeave();
+    app.destroyBioWeave()
   }
-});
-
+})
 test('worldbook source checkbox updates immediately and saves with a success Toast without a page notice', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
   documentRef.defaultView.toastr = {
     success(message) {
-      toastCalls.push(message);
+      toastCalls.push(message)
     },
-  };
+  }
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
-    getRecentStoryGlobal: () => ({regex_rules: []}),
-  };
-  let savedChat = {settings: {}};
-  let releaseSave;
-  let markSaveStarted;
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+  }
+  let savedChat = { settings: {} }
+  let releaseSave
+  let markSaveStarted
   const saveStarted = new Promise(resolve => {
-    markSaveStarted = resolve;
-  });
+    markSaveStarted = resolve
+  })
   const runtime = {
     chat: {
       current: () => 'chat-sources',
-      token: () => ({chatId: 'chat-sources', epoch: 0}),
+      token: () => ({ chatId: 'chat-sources', epoch: 0 }),
       assert: () => {},
     },
     store: {
       getChat: () => savedChat,
       saveChat: async (chatId, nextChat) => {
-        savedChat = nextChat;
-        markSaveStarted();
+        savedChat = nextChat
+        markSaveStarted()
         await new Promise(resolve => {
-          releaseSave = resolve;
-        });
+          releaseSave = resolve
+        })
       },
     },
     st: {
       getContext: () => ({
         chatId: 'chat-sources',
         characterId: 0,
-        characters: [{avatar: 'alice.png', data: {name: '爱丽丝', description: '角色描述', first_mes: '你好'}}],
+        characters: [{ avatar: 'alice.png', data: { name: '爱丽丝', description: '角色描述', first_mes: '你好' } }],
       }),
-      fetch: async () => ({ok: true, json: async () => []}),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.openBioWeave();
-  app.go('settings');
-  const main = root.querySelector('.bioweave-main');
-  for (let attempt = 0; attempt < 10 && !main.innerHTML.includes('st-character-card:alice.png'); attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 0));
   }
-  assert.match(main.innerHTML, /data-bioweave-analysis-source="st-character-card:alice\.png"/);
-
-  const change = [...root.listeners.get('change')][0];
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const main = root.querySelector('.bioweave-main')
+  for (let attempt = 0; attempt < 10 && !main.innerHTML.includes('st-character-card:alice.png'); attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  assert.match(main.innerHTML, /data-bioweave-analysis-source="st-character-card:alice\.png"/)
+  const change = [...root.listeners.get('change')][0]
   const target = {
     __root: root,
     checked: true,
@@ -1648,84 +1643,82 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
       bioweaveAnalysisField: 'description',
     },
     closest(selector) {
-      return selector === '[data-bioweave-analysis-source]' ? this : null;
+      return selector === '[data-bioweave-analysis-source]' ? this : null
     },
-  };
-  const pendingSave = change({target});
-  await saveStarted;
-  assert.match(main.innerHTML, /data-bioweave-analysis-source="st-character-card:alice\.png"[^>]*checked/);
-  assert.doesNotMatch(main.innerHTML, /class="bioweave-settings-notice"/);
-  releaseSave();
-  await pendingSave;
-
-  assert.deepEqual(savedChat.settings.worldbooks.selected, [{
-    source_id: 'st-character-card:alice.png',
-    field_key: 'description',
-    enabled: true,
-  }]);
-  assert.deepEqual(toastCalls, ['分析来源与最近剧情设置已保存到当前 Chat。']);
-  app.destroyBioWeave();
-});
-
+  }
+  const pendingSave = change({ target })
+  await saveStarted
+  assert.match(main.innerHTML, /data-bioweave-analysis-source="st-character-card:alice\.png"[^>]*checked/)
+  assert.doesNotMatch(main.innerHTML, /class="bioweave-settings-notice"/)
+  releaseSave()
+  await pendingSave
+  assert.deepEqual(savedChat.settings.worldbooks.selected, [
+    {
+      source_id: 'st-character-card:alice.png',
+      field_key: 'description',
+      enabled: true,
+    },
+  ])
+  assert.deepEqual(toastCalls, ['分析来源与最近剧情设置已保存到当前 Chat。'])
+  app.destroyBioWeave()
+})
 test('analysis prompt save keeps data behavior and uses a success Toast without a page notice', async () => {
-  const documentRef = new AppFakeDocument();
-  const toastCalls = [];
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
   documentRef.defaultView.toastr = {
     success(message) {
-      toastCalls.push(['success', message]);
+      toastCalls.push(['success', message])
     },
-  };
-  let savedPrompt = null;
+  }
+  let savedPrompt = null
   const profileStore = {
-    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
     getApiRequestSettings: () => ({}),
     getAnalysisPrompt: () => savedPrompt ?? {},
-    getRecentStoryGlobal: () => ({regex_rules: []}),
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
     saveAnalysisPrompt: async value => {
-      savedPrompt = value;
-      return value;
+      savedPrompt = value
+      return value
     },
-  };
+  }
   const runtime = {
     chat: {
       current: () => 'chat-prompt',
-      token: () => ({chatId: 'chat-prompt', epoch: 0}),
+      token: () => ({ chatId: 'chat-prompt', epoch: 0 }),
       assert: () => {},
     },
     store: {
-      getChat: () => ({settings: {}}),
+      getChat: () => ({ settings: {} }),
       saveChat: async () => {},
     },
     st: {
-      getContext: () => ({chatId: 'chat-prompt', characters: []}),
-      fetch: async () => ({ok: true, json: async () => []}),
+      getContext: () => ({ chatId: 'chat-prompt', characters: [] }),
+      fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
     },
     subscribe: () => () => {},
-  };
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore});
-  const root = app.openBioWeave();
-  app.go('settings');
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-settings]', [{}]);
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_top"]', [{value: 'TOP'}]);
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="task"]', [{value: 'TASK'}]);
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_prefix"]', [{value: ''}]);
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_suffix"]', [{value: ''}]);
-  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_bottom"]', [{value: 'BOTTOM'}]);
-
-  const click = [...root.listeners.get('click')][0];
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+  const root = app.openBioWeave()
+  app.go('settings')
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-settings]', [{}])
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_top"]', [{ value: 'TOP' }])
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="task"]', [{ value: 'TASK' }])
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_prefix"]', [{ value: '' }])
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="input_suffix"]', [{ value: '' }])
+  root.selectorNodes.set('[data-bioweave-analysis-prompt-field="system_bottom"]', [{ value: 'BOTTOM' }])
+  const click = [...root.listeners.get('click')][0]
   await click({
     target: {
       __root: root,
-      dataset: {bioweaveAction: 'save-analysis-prompt'},
+      dataset: { bioweaveAction: 'save-analysis-prompt' },
       closest(selector) {
-        return selector.includes('[data-bioweave-action]') ? this : null;
+        return selector.includes('[data-bioweave-action]') ? this : null
       },
     },
     preventDefault() {},
     stopPropagation() {},
-  });
-
+  })
   assert.deepEqual(savedPrompt, {
     system_top: 'TOP',
     task: 'TASK',
@@ -1738,95 +1731,101 @@ test('analysis prompt save keeps data behavior and uses a success Toast without 
       recent_story: '最近剧情',
       external_memory: '外部记忆',
     },
-  });
-  assert.deepEqual(toastCalls, [['success', '分析提示词设置已保存。']]);
-  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /class="bioweave-settings-notice"/);
-  app.destroyBioWeave();
-});
-
+  })
+  assert.deepEqual(toastCalls, [['success', '分析提示词设置已保存。']])
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /class="bioweave-settings-notice"/)
+  app.destroyBioWeave()
+})
 test('extensions menu entry opens synchronously without cancelling the host click', () => {
-  const {documentRef, menu} = createMenuDocument();
-  let openCalls = 0;
-  const unregister = registerExtensionsMenuEntry({
-    openBioWeave() {
-      openCalls += 1;
+  const { documentRef, menu } = createMenuDocument()
+  let openCalls = 0
+  const unregister = registerExtensionsMenuEntry(
+    {
+      openBioWeave() {
+        openCalls += 1
+      },
     },
-  }, documentRef, null);
-  const entry = documentRef.getElementById('bioweave-extensions-menu-entry');
-
-  assert.equal(entry.parentElement, menu);
-  assert.equal(entry.className, 'bioweave-menu-entry list-group-item flex-container flexGap5');
-  assert.match(entry.innerHTML, /class="fa-solid fa-dna extensionsMenuExtensionButton"/);
-  const event = entry.dispatch('click');
-  assert.equal(event.defaultPrevented, false);
-  assert.equal(openCalls, 1);
-  assert.equal(entry.dispatch('keydown', {key: 'Enter'}).defaultPrevented, false);
-  assert.equal(openCalls, 2);
-  assert.equal(entry.dispatch('keydown', {key: ' '}).defaultPrevented, false);
-  assert.equal(openCalls, 3);
-  entry.dispatch('keydown', {key: 'Escape'});
-  assert.equal(openCalls, 3);
-  assert.equal(documentRef.body.clickCount, 0);
-  unregister();
-  assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null);
-});
-
+    documentRef,
+    null,
+  )
+  const entry = documentRef.getElementById('bioweave-extensions-menu-entry')
+  assert.equal(entry.parentElement, menu)
+  assert.equal(entry.className, 'bioweave-menu-entry list-group-item flex-container flexGap5')
+  assert.match(entry.innerHTML, /class="fa-solid fa-dna extensionsMenuExtensionButton"/)
+  const event = entry.dispatch('click')
+  assert.equal(event.defaultPrevented, false)
+  assert.equal(openCalls, 1)
+  assert.equal(entry.dispatch('keydown', { key: 'Enter' }).defaultPrevented, false)
+  assert.equal(openCalls, 2)
+  assert.equal(entry.dispatch('keydown', { key: ' ' }).defaultPrevented, false)
+  assert.equal(openCalls, 3)
+  entry.dispatch('keydown', { key: 'Escape' })
+  assert.equal(openCalls, 3)
+  assert.equal(documentRef.body.clickCount, 0)
+  unregister()
+  assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
+})
 test('extensions menu recreation restores one entry and destroy prevents re-registration', () => {
-  const {documentRef, menu: oldMenu} = createMenuDocument();
-  const unregister = registerExtensionsMenuEntry({
-    openBioWeave() {},
-  }, documentRef, FakeMutationObserver);
-  const oldEntry = documentRef.getElementById('bioweave-extensions-menu-entry');
-  oldEntry.dataset.bioweaveOwned = 'true';
-
-  const duplicate = documentRef.createElement('div');
-  duplicate.id = 'bioweave-extensions-menu-entry';
-  duplicate.dataset.bioweaveOwned = 'true';
-  oldMenu.append(duplicate);
-  FakeMutationObserver.latest.trigger();
-  assert.equal(oldMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 1);
-
-  oldMenu.remove();
-  const newMenu = documentRef.createElement('div');
-  newMenu.id = 'extensionsMenu';
-  documentRef.body.append(newMenu);
-  FakeMutationObserver.latest.trigger();
-  assert.equal(newMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 1);
-
-  unregister();
-  assert.equal(FakeMutationObserver.latest.disconnected, true);
-  FakeMutationObserver.latest.trigger();
-  assert.equal(newMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 0);
-});
-
+  const { documentRef, menu: oldMenu } = createMenuDocument()
+  const unregister = registerExtensionsMenuEntry(
+    {
+      openBioWeave() {},
+    },
+    documentRef,
+    FakeMutationObserver,
+  )
+  const oldEntry = documentRef.getElementById('bioweave-extensions-menu-entry')
+  oldEntry.dataset.bioweaveOwned = 'true'
+  const duplicate = documentRef.createElement('div')
+  duplicate.id = 'bioweave-extensions-menu-entry'
+  duplicate.dataset.bioweaveOwned = 'true'
+  oldMenu.append(duplicate)
+  FakeMutationObserver.latest.trigger()
+  assert.equal(oldMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 1)
+  oldMenu.remove()
+  const newMenu = documentRef.createElement('div')
+  newMenu.id = 'extensionsMenu'
+  documentRef.body.append(newMenu)
+  FakeMutationObserver.latest.trigger()
+  assert.equal(newMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 1)
+  unregister()
+  assert.equal(FakeMutationObserver.latest.disconnected, true)
+  FakeMutationObserver.latest.trigger()
+  assert.equal(newMenu.querySelectorAll('#bioweave-extensions-menu-entry').length, 0)
+})
 test('menu re-registration retires the stale handler and observer', () => {
-  const {documentRef} = createMenuDocument();
-  let firstCalls = 0;
-  let secondCalls = 0;
-  const firstUnregister = registerExtensionsMenuEntry({
-    openBioWeave() {
-      firstCalls += 1;
+  const { documentRef } = createMenuDocument()
+  let firstCalls = 0
+  let secondCalls = 0
+  const firstUnregister = registerExtensionsMenuEntry(
+    {
+      openBioWeave() {
+        firstCalls += 1
+      },
     },
-  }, documentRef, FakeMutationObserver);
-  const firstObserver = FakeMutationObserver.latest;
-  const secondUnregister = registerExtensionsMenuEntry({
-    openBioWeave() {
-      secondCalls += 1;
+    documentRef,
+    FakeMutationObserver,
+  )
+  const firstObserver = FakeMutationObserver.latest
+  const secondUnregister = registerExtensionsMenuEntry(
+    {
+      openBioWeave() {
+        secondCalls += 1
+      },
     },
-  }, documentRef, FakeMutationObserver);
-
-  documentRef.getElementById('bioweave-extensions-menu-entry').dispatch('click');
-  assert.equal(firstCalls, 0);
-  assert.equal(secondCalls, 1);
-
-  firstObserver.trigger();
-  documentRef.getElementById('bioweave-extensions-menu-entry').dispatch('click');
-  assert.equal(firstObserver.disconnected, true);
-  assert.equal(firstCalls, 0);
-  assert.equal(secondCalls, 2);
-
-  firstUnregister();
-  assert.notEqual(documentRef.getElementById('bioweave-extensions-menu-entry'), null);
-  secondUnregister();
-  assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null);
-});
+    documentRef,
+    FakeMutationObserver,
+  )
+  documentRef.getElementById('bioweave-extensions-menu-entry').dispatch('click')
+  assert.equal(firstCalls, 0)
+  assert.equal(secondCalls, 1)
+  firstObserver.trigger()
+  documentRef.getElementById('bioweave-extensions-menu-entry').dispatch('click')
+  assert.equal(firstObserver.disconnected, true)
+  assert.equal(firstCalls, 0)
+  assert.equal(secondCalls, 2)
+  firstUnregister()
+  assert.notEqual(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
+  secondUnregister()
+  assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
+})

@@ -1,8 +1,8 @@
-import {overviewPage} from './overview.js';
-import {charactersPage} from './characters.js';
-import {eventsPage, setEventFilter} from './events.js';
-import {projectionPage} from './projection.js';
-import {genealogyPage} from './genealogy.js';
+import { overviewPage } from './overview.js'
+import { charactersPage } from './characters.js'
+import { eventsPage, setEventFilter } from './events.js'
+import { projectionPage } from './projection.js'
+import { genealogyPage } from './genealogy.js'
 import {
   applyWorldModelSection,
   extractWorldModelSection,
@@ -10,13 +10,14 @@ import {
   resolveWorldModelSelection,
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
-} from './world.js';
-import {normalizeModelList, renderAnalysisDebugPopupContent, settingsPage} from './settings.js';
-import {statePage} from './state.js';
-import {createApiProfileStore} from '../storage/store.js';
-import * as defaultApiClient from '../ai/client.js';
-import {createAnalyzer, normalizeWorldModel, summarizeAnalysisInput} from '../ai/analyzer.js';
-import {collectAnalysisContext} from '../ai/input-builder.js';
+} from './world.js'
+import { normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
+import { statePage } from './state.js'
+import { createApiProfileStore } from '../storage/store.js'
+import * as defaultApiClient from '../ai/client.js'
+import { diagnosticMessage as sharedDiagnosticMessage, isTransportDiagnostic, statusFromError as sharedStatusFromError } from '../ai/client.js'
+import { createAnalyzer, normalizeWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
+import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
   characterOpeningSelectionState,
   createWorldbookCache,
@@ -30,8 +31,8 @@ import {
   sourceSelectionStats,
   updateSourceSelection,
   worldbookSelectionState,
-} from '../ai/worldbook.js';
-import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
+} from '../ai/worldbook.js'
+import { detectExternalMemoryProviders, probeExternalMemoryProviders } from '../story/seven-days-cal.js'
 import {
   DEFAULT_API_REQUEST_SETTINGS,
   DEFAULT_API_PROFILE,
@@ -43,8 +44,7 @@ import {
   normalizeAnalysisPrompt,
   normalizeWorldbookSettings,
   SILLYTAVERN_CURRENT_API,
-} from '../storage/schema.js';
-
+} from '../storage/schema.js'
 const pages = {
   overview: ['总览', 'fa-house', overviewPage],
   characters: ['人物', 'fa-user-group', charactersPage],
@@ -54,79 +54,75 @@ const pages = {
   world: ['世界', 'fa-shapes', worldPage],
   settings: ['设置', 'fa-gear', settingsPage],
   state: ['状态', 'fa-chart-line', statePage],
-};
-
-const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'];
-const THEME_KEY = 'bioweave_ui_theme';
-const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown';
-const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe';
-const APP_RUNTIME_DESTROY_PROPERTY = '__bioweaveRuntimeDestroy';
-const THEME_VALUES = new Set(['tavern', 'light', 'dark']);
-const ANALYSIS_SELECTION_SEPARATOR = '\u0000';
-const analysisParentDisclosureStates = new WeakMap();
-const RENDER_SCROLL_SELECTORS = Object.freeze([
-  '.bioweave-main',
-  '[data-bioweave-analysis-source-list]',
-]);
-
+}
+const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state']
+const THEME_KEY = 'bioweave_ui_theme'
+const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown'
+const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe'
+const APP_RUNTIME_DESTROY_PROPERTY = '__bioweaveRuntimeDestroy'
+const THEME_VALUES = new Set(['tavern', 'light', 'dark'])
+const ANALYSIS_SELECTION_SEPARATOR = '\u0000'
+const analysisParentDisclosureStates = new WeakMap()
+const RENDER_SCROLL_SELECTORS = Object.freeze(['.bioweave-main', '[data-bioweave-analysis-source-list]'])
 export function notify(message, type = 'info', documentRef = globalThis.document) {
-  const text = String(message ?? '').trim();
-  if (!text) return;
-
-  const method = typeof type === 'string' && type.trim() ? type.trim() : 'info';
-  const toastrRefs = [...new Set([documentRef?.defaultView?.toastr, globalThis.toastr])];
+  const text = String(message ?? '').trim()
+  if (!text) return
+  const method = typeof type === 'string' && type.trim() ? type.trim() : 'info'
+  const toastrRefs = [...new Set([documentRef?.defaultView?.toastr, globalThis.toastr])]
   for (const toastr of toastrRefs) {
     try {
-      const handler = toastr?.[method];
-      if (typeof handler !== 'function') continue;
-      handler.call(toastr, text);
-      return;
+      const handler = toastr?.[method]
+      if (typeof handler !== 'function') continue
+      handler.call(toastr, text)
+      return
     } catch {
       // Toast 宿主异常时继续使用安全的 console 回退。
     }
   }
-
-  const consoleMethod = method === 'error' ? 'error' : method === 'warning' ? 'warn' : 'log';
-  const fallbackText = `[BioWeave] ${text}`;
+  const consoleMethod = method === 'error' ? 'error' : method === 'warning' ? 'warn' : 'log'
+  const fallbackText = `[BioWeave] ${text}`
   try {
-    globalThis.console?.[consoleMethod]?.(fallbackText);
+    globalThis.console?.[consoleMethod]?.(fallbackText)
   } catch {
     // 控制台被宿主禁用时，通知仍不能影响设置操作。
   }
 }
-
+function sharedTransportErrorMessage(error) {
+  const status = sharedStatusFromError(error)
+  if (!isTransportDiagnostic(error, { status })) return ''
+  return sharedDiagnosticMessage(error, { status })
+}
 // render 会重建设置页子树，按稳定选择器保存并恢复可滚动容器的位置。
 export function captureScrollPositions(root, selectors = RENDER_SCROLL_SELECTORS) {
-  return (Array.isArray(selectors) ? selectors : []).map(selector => {
-    const node = root?.querySelector?.(selector);
-    if (!node) return null;
-    return {
-      selector,
-      scrollTop: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
-      scrollLeft: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
-    };
-  }).filter(Boolean);
+  return (Array.isArray(selectors) ? selectors : [])
+    .map(selector => {
+      const node = root?.querySelector?.(selector)
+      if (!node) return null
+      return {
+        selector,
+        scrollTop: Number.isFinite(node.scrollTop) ? node.scrollTop : 0,
+        scrollLeft: Number.isFinite(node.scrollLeft) ? node.scrollLeft : 0,
+      }
+    })
+    .filter(Boolean)
 }
-
 export function restoreScrollPositions(root, positions) {
   for (const position of Array.isArray(positions) ? positions : []) {
-    const node = root?.querySelector?.(position?.selector);
-    if (!node) continue;
-    node.scrollTop = position.scrollTop;
-    node.scrollLeft = position.scrollLeft;
+    const node = root?.querySelector?.(position?.selector)
+    if (!node) continue
+    node.scrollTop = position.scrollTop
+    node.scrollLeft = position.scrollLeft
   }
 }
-
-const PANEL_DRAG_EXCLUDED_SELECTOR = 'button, a, input, select, textarea, [data-bioweave-no-drag]';
-
+const PANEL_DRAG_EXCLUDED_SELECTOR = 'button, a, input, select, textarea, [data-bioweave-no-drag]'
 function panelDragRect(node) {
-  const rect = node?.getBoundingClientRect?.();
-  if (!rect) return null;
-  const left = Number(rect.left);
-  const top = Number(rect.top);
-  const width = Number(rect.width);
-  const height = Number(rect.height);
-  if (![left, top, width, height].every(Number.isFinite)) return null;
+  const rect = node?.getBoundingClientRect?.()
+  if (!rect) return null
+  const left = Number(rect.left)
+  const top = Number(rect.top)
+  const width = Number(rect.width)
+  const height = Number(rect.height)
+  if (![left, top, width, height].every(Number.isFinite)) return null
   return {
     left,
     top,
@@ -134,83 +130,64 @@ function panelDragRect(node) {
     height,
     right: Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + width,
     bottom: Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + height,
-  };
+  }
 }
-
-export function createPanelDragController({
-  root,
-  handle,
-  documentRef = globalThis.document,
-} = {}) {
-  if (!root || !handle) return {destroy() {}};
-
-  let drag = null;
-
+export function createPanelDragController({ root, handle, documentRef = globalThis.document } = {}) {
+  if (!root || !handle) return { destroy() {} }
+  let drag = null
   const removeDocumentListeners = () => {
-    documentRef?.removeEventListener?.('pointermove', handlePointerMove);
-    documentRef?.removeEventListener?.('pointerup', handlePointerEnd);
-    documentRef?.removeEventListener?.('pointercancel', handlePointerEnd);
-  };
-
+    documentRef?.removeEventListener?.('pointermove', handlePointerMove)
+    documentRef?.removeEventListener?.('pointerup', handlePointerEnd)
+    documentRef?.removeEventListener?.('pointercancel', handlePointerEnd)
+  }
   const finishDrag = () => {
-    if (!drag) return;
-    const pointerId = drag.pointerId;
-    removeDocumentListeners();
-    if (pointerId !== null) handle.releasePointerCapture?.(pointerId);
-    drag = null;
-    if (root.dataset) delete root.dataset.dragging;
-  };
-
+    if (!drag) return
+    const pointerId = drag.pointerId
+    removeDocumentListeners()
+    if (pointerId !== null) handle.releasePointerCapture?.(pointerId)
+    drag = null
+    if (root.dataset) delete root.dataset.dragging
+  }
   function handlePointerMove(event) {
-    if (!drag) return;
-    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
-    const clientX = Number(event.clientX);
-    const clientY = Number(event.clientY);
-    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
-
-    let nextLeft = drag.startLeft + clientX - drag.startX;
-    let nextTop = drag.startTop + clientY - drag.startY;
+    if (!drag) return
+    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return
+    const clientX = Number(event.clientX)
+    const clientY = Number(event.clientY)
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return
+    let nextLeft = drag.startLeft + clientX - drag.startX
+    let nextTop = drag.startTop + clientY - drag.startY
     if (drag.hostRect && drag.panelBase) {
-      const minLeft = drag.hostRect.left - drag.panelBase.left;
-      const maxLeft = drag.hostRect.right - drag.panelBase.left - drag.panelRect.width;
-      const minTop = drag.hostRect.top - drag.panelBase.top;
-      const maxTop = drag.hostRect.bottom - drag.panelBase.top - drag.panelRect.height;
-      nextLeft = Math.min(Math.max(nextLeft, minLeft), Math.max(minLeft, maxLeft));
-      nextTop = Math.min(Math.max(nextTop, minTop), Math.max(minTop, maxTop));
+      const minLeft = drag.hostRect.left - drag.panelBase.left
+      const maxLeft = drag.hostRect.right - drag.panelBase.left - drag.panelRect.width
+      const minTop = drag.hostRect.top - drag.panelBase.top
+      const maxTop = drag.hostRect.bottom - drag.panelBase.top - drag.panelRect.height
+      nextLeft = Math.min(Math.max(nextLeft, minLeft), Math.max(minLeft, maxLeft))
+      nextTop = Math.min(Math.max(nextTop, minTop), Math.max(minTop, maxTop))
     }
-    root.style.left = Math.round(nextLeft) + 'px';
-    root.style.top = Math.round(nextTop) + 'px';
+    root.style.left = Math.round(nextLeft) + 'px'
+    root.style.top = Math.round(nextTop) + 'px'
   }
-
   function handlePointerEnd(event) {
-    if (!drag) return;
-    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
-    finishDrag();
+    if (!drag) return
+    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return
+    finishDrag()
   }
-
   function handlePointerDown(event) {
-    if (drag || event?.isPrimary === false) return;
-    if (event?.button !== undefined && event.button !== 0) return;
-    const target = event.target;
-    const interactiveTarget = target?.closest?.(PANEL_DRAG_EXCLUDED_SELECTOR)
-      ?? (target?.matches?.(PANEL_DRAG_EXCLUDED_SELECTOR) ? target : null);
-    if (interactiveTarget) return;
-
-    const startX = Number(event.clientX);
-    const startY = Number(event.clientY);
-    if (!Number.isFinite(startX) || !Number.isFinite(startY)) return;
-
-    const startLeftValue = Number.parseFloat(root.style?.left);
-    const startTopValue = Number.parseFloat(root.style?.top);
-    const startLeft = Number.isFinite(startLeftValue) ? startLeftValue : 0;
-    const startTop = Number.isFinite(startTopValue) ? startTopValue : 0;
-    const panelRect = panelDragRect(root);
-    const hostRect = panelDragRect(root.parentElement)
-      ?? panelDragRect(documentRef?.documentElement);
-    const panelBase = panelRect
-      ? {left: panelRect.left - startLeft, top: panelRect.top - startTop}
-      : null;
-
+    if (drag || event?.isPrimary === false) return
+    if (event?.button !== undefined && event.button !== 0) return
+    const target = event.target
+    const interactiveTarget = target?.closest?.(PANEL_DRAG_EXCLUDED_SELECTOR) ?? (target?.matches?.(PANEL_DRAG_EXCLUDED_SELECTOR) ? target : null)
+    if (interactiveTarget) return
+    const startX = Number(event.clientX)
+    const startY = Number(event.clientY)
+    if (!Number.isFinite(startX) || !Number.isFinite(startY)) return
+    const startLeftValue = Number.parseFloat(root.style?.left)
+    const startTopValue = Number.parseFloat(root.style?.top)
+    const startLeft = Number.isFinite(startLeftValue) ? startLeftValue : 0
+    const startTop = Number.isFinite(startTopValue) ? startTopValue : 0
+    const panelRect = panelDragRect(root)
+    const hostRect = panelDragRect(root.parentElement) ?? panelDragRect(documentRef?.documentElement)
+    const panelBase = panelRect ? { left: panelRect.left - startLeft, top: panelRect.top - startTop } : null
     drag = {
       pointerId: event.pointerId ?? null,
       startX,
@@ -220,29 +197,25 @@ export function createPanelDragController({
       panelRect,
       panelBase,
       hostRect,
-    };
-    root.dataset.dragging = 'true';
-    if (drag.pointerId !== null) handle.setPointerCapture?.(drag.pointerId);
-    documentRef?.addEventListener?.('pointermove', handlePointerMove);
-    documentRef?.addEventListener?.('pointerup', handlePointerEnd);
-    documentRef?.addEventListener?.('pointercancel', handlePointerEnd);
-    event.preventDefault?.();
+    }
+    root.dataset.dragging = 'true'
+    if (drag.pointerId !== null) handle.setPointerCapture?.(drag.pointerId)
+    documentRef?.addEventListener?.('pointermove', handlePointerMove)
+    documentRef?.addEventListener?.('pointerup', handlePointerEnd)
+    documentRef?.addEventListener?.('pointercancel', handlePointerEnd)
+    event.preventDefault?.()
   }
-
-  handle.addEventListener?.('pointerdown', handlePointerDown);
-
+  handle.addEventListener?.('pointerdown', handlePointerDown)
   return {
     destroy() {
-      handle.removeEventListener?.('pointerdown', handlePointerDown);
-      finishDrag();
+      handle.removeEventListener?.('pointerdown', handlePointerDown)
+      finishDrag()
     },
-  };
+  }
 }
-
 function analysisCharacterGroupKey(sourceId) {
-  return String(sourceId ?? '').trim() + ':opening';
+  return String(sourceId ?? '').trim() + ':opening'
 }
-
 function createAnalysisSourcesState() {
   return {
     loaded: false,
@@ -264,9 +237,8 @@ function createAnalysisSourcesState() {
     recentStory: normalizeRecentStorySettings(),
     externalMemory: normalizeExternalMemorySettings(),
     externalMemoryProviders: [],
-  };
+  }
 }
-
 function createAnalysisPreviewState() {
   return {
     busy: false,
@@ -277,9 +249,8 @@ function createAnalysisPreviewState() {
     chatId: null,
     error: null,
     worldModelTrace: null,
-  };
+  }
 }
-
 function createWorldModelState() {
   return {
     loaded: false,
@@ -294,108 +265,95 @@ function createWorldModelState() {
     sectionDraft: null,
     sectionDirty: false,
     notice: null,
-  };
-}
-
-function themeLabel(value) {
-  return value === 'light' ? '日' : value === 'dark' ? '夜' : '跟随酒馆';
-}
-
-function themeIcon(value) {
-  return value === 'light'
-    ? 'fa-solid fa-sun'
-    : value === 'dark'
-      ? 'fa-solid fa-moon'
-      : 'fa-solid fa-circle-half-stroke';
-}
-
-function readTheme(storageRef) {
-  try {
-    const value = storageRef?.getItem?.(THEME_KEY);
-    return THEME_VALUES.has(value) ? value : 'tavern';
-  } catch {
-    return 'tavern';
   }
 }
-
+function themeLabel(value) {
+  return value === 'light' ? '日' : value === 'dark' ? '夜' : '跟随酒馆'
+}
+function themeIcon(value) {
+  return value === 'light' ? 'fa-solid fa-sun' : value === 'dark' ? 'fa-solid fa-moon' : 'fa-solid fa-circle-half-stroke'
+}
+function readTheme(storageRef) {
+  try {
+    const value = storageRef?.getItem?.(THEME_KEY)
+    return THEME_VALUES.has(value) ? value : 'tavern'
+  } catch {
+    return 'tavern'
+  }
+}
 function writeTheme(storageRef, value) {
   try {
-    storageRef?.setItem?.(THEME_KEY, value);
+    storageRef?.setItem?.(THEME_KEY, value)
   } catch {
     // 隐私模式或宿主禁用 localStorage 时仍允许本次会话切换主题。
   }
 }
-
 export function closeModelPicker(target) {
-  const picker = target?.closest?.('[data-bioweave-model-picker]')
-    ?? (target?.matches?.('[data-bioweave-model-picker]') ? target : null);
-  if (!picker) return false;
-  const dropdown = picker.querySelector?.('[data-bioweave-model-dropdown]');
-  const trigger = picker.querySelector?.('[data-bioweave-model-trigger]');
-  if (dropdown) dropdown.hidden = true;
-  trigger?.setAttribute?.('aria-expanded', 'false');
-  return true;
+  const picker = target?.closest?.('[data-bioweave-model-picker]') ?? (target?.matches?.('[data-bioweave-model-picker]') ? target : null)
+  if (!picker) return false
+  const dropdown = picker.querySelector?.('[data-bioweave-model-dropdown]')
+  const trigger = picker.querySelector?.('[data-bioweave-model-trigger]')
+  if (dropdown) dropdown.hidden = true
+  trigger?.setAttribute?.('aria-expanded', 'false')
+  return true
 }
-
 // 父级 checkbox 位于 summary 内时，只拦截事件冒泡，保留浏览器原生勾选和 change 事件。
 // details 的默认展开状态在当前事件结束后恢复，避免选择和折叠互相影响。
 export function handleAnalysisParentToggleClick(event) {
-  const target = event?.target?.closest?.('[data-bioweave-analysis-section-toggle], [data-bioweave-analysis-worldbook-toggle], [data-bioweave-analysis-character-opening-toggle]');
-  if (!target) return false;
-  event.stopPropagation?.();
+  const target = event?.target?.closest?.(
+    '[data-bioweave-analysis-section-toggle], [data-bioweave-analysis-worldbook-toggle], [data-bioweave-analysis-character-opening-toggle]',
+  )
+  if (!target) return false
+  event.stopPropagation?.()
   if (!target.disabled) {
-    const details = target.closest?.('details');
-    const openBeforeClick = details?.open;
+    const details = target.closest?.('details')
+    const openBeforeClick = details?.open
     if (details && typeof openBeforeClick === 'boolean') {
-      analysisParentDisclosureStates.set(details, openBeforeClick);
+      analysisParentDisclosureStates.set(details, openBeforeClick)
       const restoreDisclosure = () => {
-        if (isConnectedToDocument(details)) details.open = openBeforeClick;
-        analysisParentDisclosureStates.delete(details);
-      };
-      if (typeof globalThis.queueMicrotask === 'function') globalThis.queueMicrotask(restoreDisclosure);
-      else Promise.resolve().then(restoreDisclosure);
+        if (isConnectedToDocument(details)) details.open = openBeforeClick
+        analysisParentDisclosureStates.delete(details)
+      }
+      if (typeof globalThis.queueMicrotask === 'function') globalThis.queueMicrotask(restoreDisclosure)
+      else Promise.resolve().then(restoreDisclosure)
     }
   }
-  return true;
+  return true
 }
-
 export function isConnectedToDocument(node, documentRef = globalThis.document) {
-  if (!node) return false;
-  if (typeof node.isConnected === 'boolean') return node.isConnected;
+  if (!node) return false
+  if (typeof node.isConnected === 'boolean') return node.isConnected
   if (typeof documentRef?.documentElement?.contains === 'function') {
-    return documentRef.documentElement.contains(node);
+    return documentRef.documentElement.contains(node)
   }
-  return Boolean(documentRef?.body?.contains?.(node));
+  return Boolean(documentRef?.body?.contains?.(node))
 }
-
 function connectedNodesById(documentRef, id) {
-  if (!documentRef) return [];
-  const nodes = typeof documentRef.querySelectorAll === 'function'
-    ? [...documentRef.querySelectorAll('#' + id)]
-    : [documentRef.getElementById?.(id)].filter(Boolean);
-  return nodes.filter(node => isConnectedToDocument(node, documentRef));
+  if (!documentRef) return []
+  const nodes =
+    typeof documentRef.querySelectorAll === 'function'
+      ? [...documentRef.querySelectorAll('#' + id)]
+      : [documentRef.getElementById?.(id)].filter(Boolean)
+  return nodes.filter(node => isConnectedToDocument(node, documentRef))
 }
-
 function createNavigationButton(documentRef, id, compact = false) {
-  const [label, icon] = pages[id];
-  const button = documentRef.createElement('button');
-  button.type = 'button';
-  button.className = 'bioweave-route-item';
-  button.dataset.route = id;
-  const compactLabel = label.replace('列表', '').replace('历史', '').replace('预测', '');
-  button.innerHTML = '<i class="fa-solid ' + icon + '" aria-hidden="true"></i><span>' + (compact ? compactLabel : label) + '</span>';
-  return button;
+  const [label, icon] = pages[id]
+  const button = documentRef.createElement('button')
+  button.type = 'button'
+  button.className = 'bioweave-route-item'
+  button.dataset.route = id
+  const compactLabel = label.replace('列表', '').replace('历史', '').replace('预测', '')
+  button.innerHTML = '<i class="fa-solid ' + icon + '" aria-hidden="true"></i><span>' + (compact ? compactLabel : label) + '</span>'
+  return button
 }
-
 function syncWorldModelCapabilityInputs(root) {
-  const inputs = root?.querySelectorAll?.('[data-bioweave-world-capability-input]') ?? [];
+  const inputs = root?.querySelectorAll?.('[data-bioweave-world-capability-input]') ?? []
   for (const input of inputs) {
-    const state = input.dataset?.bioweaveWorldCapabilityState;
-    input.indeterminate = state === 'unknown';
-    input.setAttribute?.('aria-checked', input.indeterminate ? 'mixed' : String(Boolean(input.checked)));
+    const state = input.dataset?.bioweaveWorldCapabilityState
+    input.indeterminate = state === 'unknown'
+    input.setAttribute?.('aria-checked', input.indeterminate ? 'mixed' : String(Boolean(input.checked)))
   }
 }
-
 /**
  * 只负责稳定 overlay/panel 的 DOM 生命周期，业务状态仍由 createApp 持有。
  * 这样可以用最小 fake DOM 覆盖 detached root、重复 open 和 destroy 边界。
@@ -409,102 +367,91 @@ export function createOverlayLifecycle({
   initializeRoot,
   teardownRoot,
 }) {
-  let overlay = null;
-  let root = null;
-  let initialized = false;
-
+  let overlay = null
+  let root = null
+  let initialized = false
   const cleanupRoot = node => {
-    if (node && typeof teardownRoot === 'function') teardownRoot(node, overlay);
-  };
-
+    if (node && typeof teardownRoot === 'function') teardownRoot(node, overlay)
+  }
   const removeDuplicateNodes = (nodes, keep, cleanup) => {
     for (const node of nodes) {
-      if (node === keep) continue;
-      cleanup?.(node);
-      node.remove?.();
+      if (node === keep) continue
+      cleanup?.(node)
+      node.remove?.()
     }
-  };
-
+  }
   function discardDisconnectedNodes() {
     if (overlay && !isConnectedToDocument(overlay, documentRef)) {
-      cleanupRoot(root);
-      root = null;
-      overlay = null;
-      initialized = false;
-      return;
+      cleanupRoot(root)
+      root = null
+      overlay = null
+      initialized = false
+      return
     }
     if (root && !isConnectedToDocument(root, documentRef)) {
-      cleanupRoot(root);
-      root = null;
-      initialized = false;
+      cleanupRoot(root)
+      root = null
+      initialized = false
     }
   }
-
   function mount() {
-    const host = documentRef?.documentElement ?? documentRef?.body;
-    if (!host) return null;
-    discardDisconnectedNodes();
-
+    const host = documentRef?.documentElement ?? documentRef?.body
+    if (!host) return null
+    discardDisconnectedNodes()
     if (!overlay) {
-      const overlays = connectedNodesById(documentRef, overlayId);
-      overlay = overlays[0] ?? null;
+      const overlays = connectedNodesById(documentRef, overlayId)
+      overlay = overlays[0] ?? null
       removeDuplicateNodes(overlays, overlay, extraOverlay => {
-        for (const extraRoot of extraOverlay.querySelectorAll?.('#' + rootId) ?? []) cleanupRoot(extraRoot);
-      });
+        for (const extraRoot of extraOverlay.querySelectorAll?.('#' + rootId) ?? []) cleanupRoot(extraRoot)
+      })
     }
     if (!overlay) {
-      overlay = createOverlay(documentRef);
-      overlay.id = overlayId;
-      host.append(overlay);
+      overlay = createOverlay(documentRef)
+      overlay.id = overlayId
+      host.append(overlay)
     } else if (overlay.parentElement !== host) {
-      host.append(overlay);
+      host.append(overlay)
     }
-
     if (!root) {
-      const roots = connectedNodesById(documentRef, rootId);
-      root = roots[0] ?? null;
-      removeDuplicateNodes(roots, root, cleanupRoot);
+      const roots = connectedNodesById(documentRef, rootId)
+      root = roots[0] ?? null
+      removeDuplicateNodes(roots, root, cleanupRoot)
     }
-    if (!root) root = createRoot(documentRef, overlay);
-    root.id = rootId;
-    if (root.parentElement !== overlay) overlay.append(root);
-
+    if (!root) root = createRoot(documentRef, overlay)
+    root.id = rootId
+    if (root.parentElement !== overlay) overlay.append(root)
     if (!initialized) {
-      initializeRoot(root, overlay);
-      initialized = true;
+      initializeRoot(root, overlay)
+      initialized = true
     }
-    return {overlay, root};
+    return { overlay, root }
   }
-
   function open() {
-    const mounted = mount();
-    if (!mounted) return null;
-    mounted.overlay.hidden = false;
-    mounted.overlay.dataset.open = 'true';
-    mounted.overlay.setAttribute('aria-hidden', 'false');
-    mounted.root.dataset.open = 'true';
-    mounted.root.setAttribute('aria-hidden', 'false');
-    return mounted;
+    const mounted = mount()
+    if (!mounted) return null
+    mounted.overlay.hidden = false
+    mounted.overlay.dataset.open = 'true'
+    mounted.overlay.setAttribute('aria-hidden', 'false')
+    mounted.root.dataset.open = 'true'
+    mounted.root.setAttribute('aria-hidden', 'false')
+    return mounted
   }
-
   function close() {
-    if (!overlay || !root) return;
-    overlay.hidden = true;
-    overlay.dataset.open = 'false';
-    overlay.setAttribute('aria-hidden', 'true');
-    root.dataset.open = 'false';
-    root.setAttribute('aria-hidden', 'true');
+    if (!overlay || !root) return
+    overlay.hidden = true
+    overlay.dataset.open = 'false'
+    overlay.setAttribute('aria-hidden', 'true')
+    root.dataset.open = 'false'
+    root.setAttribute('aria-hidden', 'true')
   }
-
   function destroy() {
-    if (root) cleanupRoot(root);
-    if (overlay) overlay.remove?.();
-    else root?.remove?.();
-    overlay = null;
-    root = null;
-    initialized = false;
+    if (root) cleanupRoot(root)
+    if (overlay) overlay.remove?.()
+    else root?.remove?.()
+    overlay = null
+    root = null
+    initialized = false
   }
-
   return {
     mount,
     open,
@@ -512,40 +459,38 @@ export function createOverlayLifecycle({
     destroy,
     getRoot: () => root,
     getOverlay: () => overlay,
-  };
+  }
 }
-
 export function createApp(runtime, options = {}) {
-  if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED');
-
-  const documentRef = options.documentRef ?? globalThis.document;
-  const storageRef = options.storageRef ?? globalThis.localStorage;
-  const profileStore = options.profileStore ?? runtime.store?.profileStore ?? createApiProfileStore(runtime.st ?? {});
-  const apiClient = options.apiClient ?? defaultApiClient;
-  let root = null;
-  let overlay = null;
-  let panelDragController = null;
-  let route = 'overview';
-  let focusedCharacterId = null;
-  let unsubscribeRuntime = null;
-  let modelRefreshSequence = 0;
-  let analysisSourceRequestSequence = 0;
-  let analysisSourceSaveSequence = 0;
-  let analysisPreviewSequence = 0;
-  let analysisSourceSaveChain = Promise.resolve();
-  let worldbookCache = createWorldbookCache();
-  let analysisSourcesState = createAnalysisSourcesState();
-  let analysisPreviewState = createAnalysisPreviewState();
-  let worldModelState = createWorldModelState();
-  let worldModelAbortController = null;
-  let worldModelAbortConfirmOpen = false;
-  let eventAnalysisAbortConfirmOpen = false;
-  let globalRecentStory = normalizeRecentStoryGlobalSettings();
-  let globalRecentStoryLoaded = false;
-  let globalRecentStorySaveSequence = 0;
-  let globalRecentStorySaveChain = Promise.resolve();
-  let recentStorySaveTimer = null;
-  let globalRecentStorySaveTimer = null;
+  if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED')
+  const documentRef = options.documentRef ?? globalThis.document
+  const storageRef = options.storageRef ?? globalThis.localStorage
+  const profileStore = options.profileStore ?? runtime.store?.profileStore ?? createApiProfileStore(runtime.st ?? {})
+  const apiClient = options.apiClient ?? defaultApiClient
+  let root = null
+  let overlay = null
+  let panelDragController = null
+  let route = 'overview'
+  let focusedCharacterId = null
+  let unsubscribeRuntime = null
+  let modelRefreshSequence = 0
+  let analysisSourceRequestSequence = 0
+  let analysisSourceSaveSequence = 0
+  let analysisPreviewSequence = 0
+  let analysisSourceSaveChain = Promise.resolve()
+  let worldbookCache = createWorldbookCache()
+  let analysisSourcesState = createAnalysisSourcesState()
+  let analysisPreviewState = createAnalysisPreviewState()
+  let worldModelState = createWorldModelState()
+  let worldModelAbortController = null
+  let worldModelAbortConfirmOpen = false
+  let eventAnalysisAbortConfirmOpen = false
+  let globalRecentStory = normalizeRecentStoryGlobalSettings()
+  let globalRecentStoryLoaded = false
+  let globalRecentStorySaveSequence = 0
+  let globalRecentStorySaveChain = Promise.resolve()
+  let recentStorySaveTimer = null
+  let globalRecentStorySaveTimer = null
   let settingsState = {
     loaded: false,
     loading: false,
@@ -553,7 +498,7 @@ export function createApp(runtime, options = {}) {
     assignments: {},
     apiSource: SILLYTAVERN_CURRENT_API,
     defaultProfileId: null,
-    apiRequestSettings: {...DEFAULT_API_REQUEST_SETTINGS},
+    apiRequestSettings: { ...DEFAULT_API_REQUEST_SETTINGS },
     apiRequestDraft: null,
     editingProfile: undefined,
     editingDraft: undefined,
@@ -567,9 +512,8 @@ export function createApp(runtime, options = {}) {
     busy: false,
     analysisPrompt: {},
     analysisPromptDraft: null,
-  };
-
-  let worldModelTraceChatId = null;
+  }
+  let worldModelTraceChatId = null
   let businessState = {
     loaded: false,
     loading: false,
@@ -579,65 +523,59 @@ export function createApp(runtime, options = {}) {
     activeEvents: [],
     currentFloor: null,
     lastAnalysis: null,
-    analysisStatus: {state: 'not_analyzed', busy: false},
+    analysisStatus: { state: 'not_analyzed', busy: false },
     error: null,
-  };
-  let businessRefreshSequence = 0;
-  let eventEditingId = null;
+  }
+  let businessRefreshSequence = 0
+  let eventEditingId = null
   function receiveWorldModelTrace(trace) {
-    if (!trace || typeof trace !== 'object') return;
-    const currentChatId = runtime.chat.current();
-    if (worldModelTraceChatId !== null
-      && String(worldModelTraceChatId) !== String(currentChatId)) return;
-    const rawResponse = trace.raw_output ?? null;
-    const canonicalModel = trace.canonical_model ?? null;
-    if (rawResponse === null && canonicalModel === null) return;
+    if (!trace || typeof trace !== 'object') return
+    const currentChatId = runtime.chat.current()
+    if (worldModelTraceChatId !== null && String(worldModelTraceChatId) !== String(currentChatId)) return
+    const rawResponse = trace.raw_output ?? null
+    const canonicalModel = trace.canonical_model ?? null
+    if (rawResponse === null && canonicalModel === null) return
     analysisPreviewState = {
       ...analysisPreviewState,
       chatId: currentChatId,
       error: null,
-      worldModelTrace: {rawResponse, canonicalModel},
-    };
-    if (route === 'settings') render();
-  }
-
-  function resolveAnalysisProfile(task = 'world_analysis') {
-    const settings = profileStore.getSettings?.() ?? {};
-    const assignment = settings.assignments?.[task] ?? null;
-    if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
-    if (assignment === FOLLOW_DEFAULT_API) {
-      if (settings.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
-      const defaultProfileId = settings.default_profile_id;
-      return defaultProfileId ? profileStore.getProfile?.(defaultProfileId) : null;
+      worldModelTrace: { rawResponse, canonicalModel },
     }
-    return assignment ? profileStore.getProfile?.(assignment) : null;
+    if (route === 'settings') render()
   }
-
-  const analyzer = options.analyzer ?? createAnalyzer({
-    profileResolver: resolveAnalysisProfile,
-    contextResolver: () => runtime.st?.getContext?.() ?? hostContextForApp(),
-    requestSettingsResolver: () => settingsState.apiRequestDraft
-      ?? profileStore.getApiRequestSettings?.()
-      ?? settingsState.apiRequestSettings,
-    analysisPromptResolver: () => profileStore.getAnalysisPrompt?.()
-      ?? profileStore.getWorldAnalysisPrompt?.()
-      ?? settingsState.analysisPrompt,
-    onWorldModelTrace: receiveWorldModelTrace,
-  });
-
+  function resolveAnalysisProfile(task = 'world_analysis') {
+    const settings = profileStore.getSettings?.() ?? {}
+    const assignment = settings.assignments?.[task] ?? null
+    if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API
+    if (assignment === FOLLOW_DEFAULT_API) {
+      if (settings.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API
+      const defaultProfileId = settings.default_profile_id
+      return defaultProfileId ? profileStore.getProfile?.(defaultProfileId) : null
+    }
+    return assignment ? profileStore.getProfile?.(assignment) : null
+  }
+  const analyzer =
+    options.analyzer ??
+    createAnalyzer({
+      profileResolver: resolveAnalysisProfile,
+      contextResolver: () => runtime.st?.getContext?.() ?? hostContextForApp(),
+      requestSettingsResolver: () => settingsState.apiRequestDraft ?? profileStore.getApiRequestSettings?.() ?? settingsState.apiRequestSettings,
+      analysisPromptResolver: () => profileStore.getAnalysisPrompt?.() ?? profileStore.getWorldAnalysisPrompt?.() ?? settingsState.analysisPrompt,
+      onWorldModelTrace: receiveWorldModelTrace,
+    })
   function loadGlobalRecentStoryState() {
-    const settings = profileStore.getSettings?.() ?? {};
-    const saved = typeof profileStore.getRecentStoryGlobal === 'function'
-      ? profileStore.getRecentStoryGlobal() ?? settings.recent_story_global
-      : settings.recent_story_global;
-    globalRecentStory = normalizeRecentStoryGlobalSettings(saved);
-    globalRecentStoryLoaded = true;
-    return globalRecentStory;
+    const settings = profileStore.getSettings?.() ?? {}
+    const saved =
+      typeof profileStore.getRecentStoryGlobal === 'function'
+        ? (profileStore.getRecentStoryGlobal() ?? settings.recent_story_global)
+        : settings.recent_story_global
+    globalRecentStory = normalizeRecentStoryGlobalSettings(saved)
+    globalRecentStoryLoaded = true
+    return globalRecentStory
   }
-
   function updateSettingsState() {
-    const settings = profileStore.getSettings?.() ?? {};
-    loadGlobalRecentStoryState();
+    const settings = profileStore.getSettings?.() ?? {}
+    loadGlobalRecentStoryState()
     settingsState = {
       ...settingsState,
       profiles: settings.api_profiles ?? {},
@@ -645,107 +583,87 @@ export function createApp(runtime, options = {}) {
       apiSource: settings.api_source ?? SILLYTAVERN_CURRENT_API,
       defaultProfileId: settings.default_profile_id ?? null,
       apiRequestSettings: normalizeApiRequestSettings(
-        typeof profileStore.getApiRequestSettings === 'function'
-          ? profileStore.getApiRequestSettings()
-          : settings.api_request_settings,
+        typeof profileStore.getApiRequestSettings === 'function' ? profileStore.getApiRequestSettings() : settings.api_request_settings,
       ),
       apiRequestDraft: settingsState.apiRequestDraft,
       analysisPrompt: normalizeAnalysisPrompt(
-        settings.analysis_prompt
-          ?? settings.world_analysis_prompt
-          ?? profileStore.getAnalysisPrompt?.()
-          ?? profileStore.getWorldAnalysisPrompt?.(),
+        settings.analysis_prompt ?? settings.world_analysis_prompt ?? profileStore.getAnalysisPrompt?.() ?? profileStore.getWorldAnalysisPrompt?.(),
       ),
       analysisPromptDraft: settingsState.analysisPromptDraft,
       loaded: true,
-    };
-    return settings;
+    }
+    return settings
   }
-
   async function loadSettings() {
-    if (settingsState.loaded || settingsState.loading) return;
-    settingsState.loading = true;
-    if (route === 'settings') render();
+    if (settingsState.loaded || settingsState.loading) return
+    settingsState.loading = true
+    if (route === 'settings') render()
     try {
-      updateSettingsState();
+      updateSettingsState()
     } catch {
-      notify('无法读取全局设置，请确认 SillyTavern extensionSettings 可用。', 'error', documentRef);
+      notify('无法读取全局设置，请确认 SillyTavern extensionSettings 可用。', 'error', documentRef)
       settingsState = {
         ...settingsState,
         loaded: true,
         notice: null,
-      };
+      }
     } finally {
-      settingsState.loading = false;
-      if (route === 'settings') render();
+      settingsState.loading = false
+      if (route === 'settings') render()
     }
   }
-
   function analysisSourceSelectedItems(selected) {
-    return normalizeWorldbookSettings({selected}).selected;
+    return normalizeWorldbookSettings({ selected }).selected
   }
-
   function syncAnalysisSourcesState(patch = {}) {
-    const next = {...analysisSourcesState, ...patch};
-    const selected = analysisSourceSelectedItems(next.selected);
-    const stats = sourceSelectionStats(next.sources, selected);
+    const next = { ...analysisSourcesState, ...patch }
+    const selected = analysisSourceSelectedItems(next.selected)
+    const stats = sourceSelectionStats(next.sources, selected)
     return {
       ...next,
       selected,
       selectedCount: stats.count,
       selectedWorldbookCount: stats.worldbook_count,
       selectedTokenEstimate: stats.token_estimate,
-    };
+    }
   }
-
   function currentAnalysisChatToken() {
-    const chatId = runtime.chat.current();
-    const token = typeof runtime.chat.token === 'function'
-      ? runtime.chat.token()
-      : {chatId};
-    return {chatId, token};
+    const chatId = runtime.chat.current()
+    const token = typeof runtime.chat.token === 'function' ? runtime.chat.token() : { chatId }
+    return { chatId, token }
   }
-
   function assertAnalysisChatToken(token) {
     if (typeof runtime.chat.assert === 'function') {
-      runtime.chat.assert(token);
-      return;
+      runtime.chat.assert(token)
+      return
     }
-    if (runtime.chat.current() !== token.chatId) throw new Error('STALE_CHAT');
+    if (runtime.chat.current() !== token.chatId) throw new Error('STALE_CHAT')
   }
-
   function ensureAnalysisSourcesChat() {
-    const chatId = runtime.chat.current();
+    const chatId = runtime.chat.current()
     if (analysisSourcesState.chatId !== null && analysisSourcesState.chatId !== chatId) {
-      analysisSourceRequestSequence += 1;
-      analysisSourceSaveSequence += 1;
-      analysisSourcesState = createAnalysisSourcesState();
-      worldModelState = createWorldModelState();
-      clearAnalysisPreview();
+      analysisSourceRequestSequence += 1
+      analysisSourceSaveSequence += 1
+      analysisSourcesState = createAnalysisSourcesState()
+      worldModelState = createWorldModelState()
+      clearAnalysisPreview()
     }
-    return chatId;
+    return chatId
   }
-
   function clearAnalysisPreview() {
-    analysisPreviewSequence += 1;
-    analysisPreviewState = createAnalysisPreviewState();
+    analysisPreviewSequence += 1
+    analysisPreviewState = createAnalysisPreviewState()
   }
-
   function hostPopupContext() {
     try {
-      return runtime.st?.getContext?.() ?? globalThis.SillyTavern?.getContext?.() ?? null;
+      return runtime.st?.getContext?.() ?? globalThis.SillyTavern?.getContext?.() ?? null
     } catch {
-      return null;
+      return null
     }
   }
-
   function isPopupContentElement(value) {
-    return Boolean(value
-      && typeof value === 'object'
-      && typeof value.addEventListener === 'function'
-      && 'innerHTML' in value);
+    return Boolean(value && typeof value === 'object' && typeof value.addEventListener === 'function' && 'innerHTML' in value)
   }
-
   function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
@@ -753,125 +671,112 @@ export function createApp(runtime, options = {}) {
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
       documentRef,
-    });
+    })
     if (isPopupContentElement(content)) {
-      content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '');
+      content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '')
     }
-    return nextContent;
+    return nextContent
   }
-
   function readStoredAnalysisPrompt() {
     try {
-      return profileStore.getAnalysisPrompt?.()
-        ?? profileStore.getWorldAnalysisPrompt?.()
-        ?? settingsState.analysisPrompt;
+      return profileStore.getAnalysisPrompt?.() ?? profileStore.getWorldAnalysisPrompt?.() ?? settingsState.analysisPrompt
     } catch {
-      return settingsState.analysisPrompt;
+      return settingsState.analysisPrompt
     }
   }
-
   async function openAnalysisDebugPopup() {
     // Preview uses the persisted settings because those are the settings read
     // by both the UI World analyzer and the Runtime Event analyzer. Unsaved
     // form drafts remain local until the user explicitly saves them.
-    const promptSettings = readStoredAnalysisPrompt();
-    const context = hostPopupContext();
-    const Popup = context?.Popup;
-    const popupType = context?.POPUP_TYPE?.DISPLAY;
+    const promptSettings = readStoredAnalysisPrompt()
+    const context = hostPopupContext()
+    const Popup = context?.Popup
+    const popupType = context?.POPUP_TYPE?.DISPLAY
     if (typeof Popup !== 'function' || popupType === undefined) {
-      notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef);
-      return false;
+      notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef)
+      return false
     }
-
-    const content = renderDebugPopupContent(null, promptSettings);
-    const localContent = isPopupContentElement(content) ? content : null;
+    const content = renderDebugPopupContent(null, promptSettings)
+    const localContent = isPopupContentElement(content) ? content : null
     const handlePopupClick = async event => {
-      const target = event?.target?.closest?.('[data-bioweave-action]');
-      if (!target) return;
-      if (typeof localContent?.contains === 'function' && !localContent.contains(target)) return;
-      const action = target.dataset?.bioweaveAction;
+      const target = event?.target?.closest?.('[data-bioweave-action]')
+      if (!target) return
+      if (typeof localContent?.contains === 'function' && !localContent.contains(target)) return
+      const action = target.dataset?.bioweaveAction
       if (action === 'refresh-analysis-preview') {
-        event.preventDefault?.();
-        const pending = refreshAnalysisPreview();
-        renderDebugPopupContent(localContent, promptSettings);
-        await pending;
-        renderDebugPopupContent(localContent, promptSettings);
-        return;
+        event.preventDefault?.()
+        const pending = refreshAnalysisPreview()
+        renderDebugPopupContent(localContent, promptSettings)
+        await pending
+        renderDebugPopupContent(localContent, promptSettings)
+        return
       }
       if (action === 'analysis-preview-mode') {
-        event.preventDefault?.();
-        setAnalysisPreviewMode(target.dataset.bioweavePreviewMode);
-        renderDebugPopupContent(localContent, promptSettings);
-        return;
+        event.preventDefault?.()
+        setAnalysisPreviewMode(target.dataset.bioweavePreviewMode)
+        renderDebugPopupContent(localContent, promptSettings)
+        return
       }
       if (action === 'analysis-preview-type') {
-        event.preventDefault?.();
-        setAnalysisPreviewType(target.dataset.bioweavePreviewType);
-        renderDebugPopupContent(localContent, promptSettings);
+        event.preventDefault?.()
+        setAnalysisPreviewType(target.dataset.bioweavePreviewType)
+        renderDebugPopupContent(localContent, promptSettings)
       }
-    };
-
-    if (localContent) localContent.addEventListener('click', handlePopupClick);
+    }
+    if (localContent) localContent.addEventListener('click', handlePopupClick)
     try {
       const popup = new Popup(content, popupType, '', {
         wide: true,
         allowVerticalScrolling: true,
-      });
-      await popup.show();
-      return true;
+      })
+      await popup.show()
+      return true
     } catch {
-      notify('高级 / 调试窗口打开失败，请确认 SillyTavern Popup 可用。', 'error', documentRef);
-      return false;
+      notify('高级 / 调试窗口打开失败，请确认 SillyTavern Popup 可用。', 'error', documentRef)
+      return false
     } finally {
-      localContent?.removeEventListener?.('click', handlePopupClick);
+      localContent?.removeEventListener?.('click', handlePopupClick)
     }
   }
-
   // 预览需要等待同一 Chat 的来源初次加载完成，不另起一套请求或固定超时。
   async function waitForAnalysisSourcesIdle() {
     while (analysisSourcesState.loading) {
-      await new Promise(resolve => setTimeout(resolve, 20));
+      await new Promise(resolve => setTimeout(resolve, 20))
     }
   }
-
   function readAnalysisSettings(chatId) {
-    const chatData = runtime.store?.getChat?.(chatId);
+    const chatData = runtime.store?.getChat?.(chatId)
     return {
       worldbooks: normalizeWorldbookSettings(chatData?.settings?.worldbooks),
       recentStory: normalizeRecentStorySettings(chatData?.settings?.recent_story),
       externalMemory: normalizeExternalMemorySettings(chatData?.settings?.external_memory),
-    };
+    }
   }
-
   // 重新读取当前 Chat 的小型设置，避免跨端打开时沿用旧的页面内存。
   function refreshAnalysisChatSettings() {
-    if (recentStorySaveTimer !== null || globalRecentStorySaveTimer !== null) return false;
-    const chatId = runtime.chat.current();
-    if (analysisSourcesState.chatId !== chatId) return false;
-    const chatSettings = readAnalysisSettings(chatId);
+    if (recentStorySaveTimer !== null || globalRecentStorySaveTimer !== null) return false
+    const chatId = runtime.chat.current()
+    if (analysisSourcesState.chatId !== chatId) return false
+    const chatSettings = readAnalysisSettings(chatId)
     analysisSourcesState = syncAnalysisSourcesState({
       chatId,
       selected: chatSettings.worldbooks.selected,
       recentStory: chatSettings.recentStory,
       externalMemory: chatSettings.externalMemory,
       notice: null,
-    });
-    return true;
+    })
+    return true
   }
-
-  async function loadAnalysisSourcesState({forceRefresh = false} = {}) {
-    if (analysisSourcesState.loading) return;
-    captureAnalysisSourceDisclosure();
-    const {chatId, token} = currentAnalysisChatToken();
-    const requestId = ++analysisSourceRequestSequence;
-    const context = runtime.st?.getContext?.() ?? hostContextForApp();
-    const chatSettings = readAnalysisSettings(chatId);
-    const externalMemoryProbe = probeExternalMemoryProviders({context}).catch(() => (
-      detectExternalMemoryProviders({context})
-    ));
-    const selected = analysisSourcesState.chatId === chatId
-      ? analysisSourceSelectedItems(analysisSourcesState.selected)
-      : chatSettings.worldbooks.selected;
+  async function loadAnalysisSourcesState({ forceRefresh = false } = {}) {
+    if (analysisSourcesState.loading) return
+    captureAnalysisSourceDisclosure()
+    const { chatId, token } = currentAnalysisChatToken()
+    const requestId = ++analysisSourceRequestSequence
+    const context = runtime.st?.getContext?.() ?? hostContextForApp()
+    const chatSettings = readAnalysisSettings(chatId)
+    const externalMemoryProbe = probeExternalMemoryProviders({ context }).catch(() => detectExternalMemoryProviders({ context }))
+    const selected =
+      analysisSourcesState.chatId === chatId ? analysisSourceSelectedItems(analysisSourcesState.selected) : chatSettings.worldbooks.selected
     analysisSourcesState = syncAnalysisSourcesState({
       loading: true,
       refreshBusy: true,
@@ -880,26 +785,28 @@ export function createApp(runtime, options = {}) {
       selected,
       recentStory: analysisSourcesState.chatId === chatId ? analysisSourcesState.recentStory : chatSettings.recentStory,
       externalMemory: analysisSourcesState.chatId === chatId ? analysisSourcesState.externalMemory : chatSettings.externalMemory,
-      externalMemoryProviders: detectExternalMemoryProviders({context}),
+      externalMemoryProviders: detectExternalMemoryProviders({ context }),
       notice: null,
-    });
-    if (route === 'settings') render();
-    void externalMemoryProbe.then(providers => {
-      try {
-        assertAnalysisChatToken(token);
-      } catch {
-        return;
-      }
-      if (requestId !== analysisSourceRequestSequence || analysisSourcesState.chatId !== chatId) return;
-      analysisSourcesState = {...analysisSourcesState, externalMemoryProviders: providers};
-      if (route === 'settings') render();
-    }).catch(() => {
-      // 外部来源探测失败时保留同步能力检测结果，不影响世界书目录。
-    });
+    })
+    if (route === 'settings') render()
+    void externalMemoryProbe
+      .then(providers => {
+        try {
+          assertAnalysisChatToken(token)
+        } catch {
+          return
+        }
+        if (requestId !== analysisSourceRequestSequence || analysisSourcesState.chatId !== chatId) return
+        analysisSourcesState = { ...analysisSourcesState, externalMemoryProviders: providers }
+        if (route === 'settings') render()
+      })
+      .catch(() => {
+        // 外部来源探测失败时保留同步能力检测结果，不影响世界书目录。
+      })
     try {
-      await analysisSourceSaveChain;
-      assertAnalysisChatToken(token);
-      if (requestId !== analysisSourceRequestSequence) return;
+      await analysisSourceSaveChain
+      assertAnalysisChatToken(token)
+      if (requestId !== analysisSourceRequestSequence) return
       const sources = await loadAnalysisSources({
         context,
         fetchRef: runtime.st?.fetch,
@@ -907,23 +814,20 @@ export function createApp(runtime, options = {}) {
         cache: worldbookCache,
         forceRefresh,
         deferWorldbookContent: chatSettings.worldbooks.mode !== 'all',
-        loadContentForSourceIds: [
-          ...analysisSourcesState.openWorldbooks,
-          ...selected.map(item => item.source_id),
-        ],
-      });
-      assertAnalysisChatToken(token);
-      if (requestId !== analysisSourceRequestSequence) return;
-      const sourceList = Array.isArray(sources) ? sources : sources.sources;
-      const sourceWarning = Array.isArray(sources) ? null : sources.warning;
-      const keepExistingSources = sourceWarning === 'ST_WORLDBOOK_LIST_FAILED' && analysisSourcesState.sources.length > 0;
-      const safeSources = keepExistingSources ? analysisSourcesState.sources : (sourceList ?? []);
+        loadContentForSourceIds: [...analysisSourcesState.openWorldbooks, ...selected.map(item => item.source_id)],
+      })
+      assertAnalysisChatToken(token)
+      if (requestId !== analysisSourceRequestSequence) return
+      const sourceList = Array.isArray(sources) ? sources : sources.sources
+      const sourceWarning = Array.isArray(sources) ? null : sources.warning
+      const keepExistingSources = sourceWarning === 'ST_WORLDBOOK_LIST_FAILED' && analysisSourcesState.sources.length > 0
+      const safeSources = keepExistingSources ? analysisSourcesState.sources : (sourceList ?? [])
       if (sourceWarning === 'ST_WORLDBOOK_LIST_FAILED') {
-        notify('世界书列表刷新失败，已保留之前的列表和选择。', 'error', documentRef);
+        notify('世界书列表刷新失败，已保留之前的列表和选择。', 'error', documentRef)
       } else if (sourceWarning === 'ST_WORLDBOOK_LIST_FALLBACK') {
-        notify('世界书列表接口不可用，已使用 SillyTavern 公共名称列表。', 'warning', documentRef);
+        notify('世界书列表接口不可用，已使用 SillyTavern 公共名称列表。', 'warning', documentRef)
       } else if (forceRefresh) {
-        notify('分析来源已刷新。', 'info', documentRef);
+        notify('分析来源已刷新。', 'info', documentRef)
       }
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
@@ -933,13 +837,13 @@ export function createApp(runtime, options = {}) {
         selected,
         chatId,
         notice: null,
-      });
+      })
     } catch {
-      if (requestId !== analysisSourceRequestSequence) return;
+      if (requestId !== analysisSourceRequestSequence) return
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return;
+        return
       }
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
@@ -948,41 +852,40 @@ export function createApp(runtime, options = {}) {
         selected,
         chatId,
         notice: null,
-      });
-      notify('分析来源刷新失败，已保留之前的列表和选择。', 'error', documentRef);
+      })
+      notify('分析来源刷新失败，已保留之前的列表和选择。', 'error', documentRef)
     } finally {
-      if (requestId !== analysisSourceRequestSequence) return;
+      if (requestId !== analysisSourceRequestSequence) return
       analysisSourcesState = {
         ...analysisSourcesState,
         loading: false,
         refreshBusy: false,
-      };
-      if (route === 'settings') render();
+      }
+      if (route === 'settings') render()
     }
   }
-
   async function persistAnalysisSettings({
     selected = analysisSourcesState.selected,
     recentStory = analysisSourcesState.recentStory,
     externalMemory = analysisSourcesState.externalMemory,
     renderAfterSave = true,
   } = {}) {
-    const {chatId, token} = currentAnalysisChatToken();
-    const currentChat = runtime.store?.getChat?.(chatId);
+    const { chatId, token } = currentAnalysisChatToken()
+    const currentChat = runtime.store?.getChat?.(chatId)
     const normalizedWorldbooks = normalizeWorldbookSettings({
       ...(currentChat?.settings?.worldbooks ?? {}),
       selected,
-    });
-    const normalizedRecentStory = normalizeRecentStorySettings(recentStory);
-    const normalizedExternalMemory = normalizeExternalMemorySettings(externalMemory);
-    const requestId = ++analysisSourceSaveSequence;
+    })
+    const normalizedRecentStory = normalizeRecentStorySettings(recentStory)
+    const normalizedExternalMemory = normalizeExternalMemorySettings(externalMemory)
+    const requestId = ++analysisSourceSaveSequence
     analysisSourceSaveChain = analysisSourceSaveChain
       .catch(() => {})
       .then(async () => {
-        assertAnalysisChatToken(token);
-        const chat = runtime.store?.getChat?.(chatId);
+        assertAnalysisChatToken(token)
+        const chat = runtime.store?.getChat?.(chatId)
         if (!chat || typeof runtime.store?.saveChat !== 'function') {
-          throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
+          throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
         }
         await runtime.store.saveChat(chatId, {
           ...chat,
@@ -992,207 +895,195 @@ export function createApp(runtime, options = {}) {
             recent_story: normalizedRecentStory,
             external_memory: normalizedExternalMemory,
           },
-        });
-        assertAnalysisChatToken(token);
+        })
+        assertAnalysisChatToken(token)
         if (requestId === analysisSourceSaveSequence && analysisSourcesState.chatId === chatId) {
-          analysisSourcesState = {...analysisSourcesState, notice: null};
-          notify('分析来源与最近剧情设置已保存到当前 Chat。', 'success', documentRef);
-          if (renderAfterSave && route === 'settings') render();
+          analysisSourcesState = { ...analysisSourcesState, notice: null }
+          notify('分析来源与最近剧情设置已保存到当前 Chat。', 'success', documentRef)
+          if (renderAfterSave && route === 'settings') render()
         }
       })
       .catch(error => {
         try {
-          assertAnalysisChatToken(token);
+          assertAnalysisChatToken(token)
         } catch {
-          return;
+          return
         }
         if (requestId === analysisSourceSaveSequence && analysisSourcesState.chatId === chatId) {
-          analysisSourcesState = {...analysisSourcesState, notice: null};
-          notify('世界书来源保存失败，当前选择仍保留。', 'error', documentRef);
-          if (renderAfterSave && route === 'settings') render();
+          analysisSourcesState = { ...analysisSourcesState, notice: null }
+          notify('世界书来源保存失败，当前选择仍保留。', 'error', documentRef)
+          if (renderAfterSave && route === 'settings') render()
         }
-        void error;
-      });
-    return analysisSourceSaveChain;
+        void error
+      })
+    return analysisSourceSaveChain
   }
-
   function clearPendingRecentStorySaves() {
     if (recentStorySaveTimer !== null) {
-      clearTimeout(recentStorySaveTimer);
-      recentStorySaveTimer = null;
+      clearTimeout(recentStorySaveTimer)
+      recentStorySaveTimer = null
     }
     if (globalRecentStorySaveTimer !== null) {
-      clearTimeout(globalRecentStorySaveTimer);
-      globalRecentStorySaveTimer = null;
+      clearTimeout(globalRecentStorySaveTimer)
+      globalRecentStorySaveTimer = null
     }
   }
-
   function queueRecentStorySettingsSave(settings) {
-    const snapshot = normalizeRecentStorySettings(settings);
-    if (recentStorySaveTimer !== null) clearTimeout(recentStorySaveTimer);
+    const snapshot = normalizeRecentStorySettings(settings)
+    if (recentStorySaveTimer !== null) clearTimeout(recentStorySaveTimer)
     recentStorySaveTimer = setTimeout(() => {
-      recentStorySaveTimer = null;
-      void persistAnalysisSettings({recentStory: snapshot, renderAfterSave: false});
-    }, 250);
+      recentStorySaveTimer = null
+      void persistAnalysisSettings({ recentStory: snapshot, renderAfterSave: false })
+    }, 250)
   }
-
   function queueRecentStoryGlobalSettingsSave(settings) {
-    const snapshot = normalizeRecentStoryGlobalSettings(settings);
-    if (globalRecentStorySaveTimer !== null) clearTimeout(globalRecentStorySaveTimer);
+    const snapshot = normalizeRecentStoryGlobalSettings(settings)
+    if (globalRecentStorySaveTimer !== null) clearTimeout(globalRecentStorySaveTimer)
     globalRecentStorySaveTimer = setTimeout(() => {
-      globalRecentStorySaveTimer = null;
-      void persistRecentStoryGlobalSettings(snapshot, {renderAfterSave: false});
-    }, 250);
+      globalRecentStorySaveTimer = null
+      void persistRecentStoryGlobalSettings(snapshot, { renderAfterSave: false })
+    }, 250)
   }
-
-  async function persistRecentStoryGlobalSettings(settings, {renderAfterSave = true} = {}) {
-    const next = normalizeRecentStorySettings(settings);
-    globalRecentStory = {regex_rules: next.regex_rules};
-    globalRecentStoryLoaded = true;
-    if (renderAfterSave) render();
+  async function persistRecentStoryGlobalSettings(settings, { renderAfterSave = true } = {}) {
+    const next = normalizeRecentStorySettings(settings)
+    globalRecentStory = { regex_rules: next.regex_rules }
+    globalRecentStoryLoaded = true
+    if (renderAfterSave) render()
     if (typeof profileStore.saveRecentStoryGlobal !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存全局正则。', 'error', documentRef);
-      if (renderAfterSave) render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持保存全局正则。', 'error', documentRef)
+      if (renderAfterSave) render()
+      return
     }
-    const requestId = ++globalRecentStorySaveSequence;
-    const snapshot = {regex_rules: [...next.regex_rules]};
+    const requestId = ++globalRecentStorySaveSequence
+    const snapshot = { regex_rules: [...next.regex_rules] }
     globalRecentStorySaveChain = globalRecentStorySaveChain
       .catch(() => {})
       .then(async () => {
-        const saved = await profileStore.saveRecentStoryGlobal(snapshot);
-        if (requestId !== globalRecentStorySaveSequence) return;
+        const saved = await profileStore.saveRecentStoryGlobal(snapshot)
+        if (requestId !== globalRecentStorySaveSequence) return
         globalRecentStory = {
           // 保存规范化结果时不带入 Secret；空白规则仍由当前页面状态保留以便继续编辑。
           regex_rules: normalizeRecentStorySettings(globalRecentStory).regex_rules,
-        };
-        settingsState = {...settingsState, notice: null};
-        notify('全局正则已保存。', 'success', documentRef);
-        void saved;
-        if (renderAfterSave) render();
+        }
+        settingsState = { ...settingsState, notice: null }
+        notify('全局正则已保存。', 'success', documentRef)
+        void saved
+        if (renderAfterSave) render()
       })
       .catch(error => {
-        if (requestId !== globalRecentStorySaveSequence) return;
-        settingsState = {...settingsState, notice: null};
-        notify(settingsOperationError(error), 'error', documentRef);
-        if (renderAfterSave) render();
-      });
-    return globalRecentStorySaveChain;
+        if (requestId !== globalRecentStorySaveSequence) return
+        settingsState = { ...settingsState, notice: null }
+        notify(settingsOperationError(error), 'error', documentRef)
+        if (renderAfterSave) render()
+      })
+    return globalRecentStorySaveChain
   }
-
   function applyAnalysisSourceSearch(query) {
-    if (!root) return;
-    const visibleSources = searchAnalysisSources(analysisSourcesState.sources, query);
-    const visibleIds = new Set(visibleSources.map(source => source.source_id));
-    const visibleChildren = new Set();
+    if (!root) return
+    const visibleSources = searchAnalysisSources(analysisSourcesState.sources, query)
+    const visibleIds = new Set(visibleSources.map(source => source.source_id))
+    const visibleChildren = new Set()
     for (const source of visibleSources) {
-      for (const entry of source.entries ?? []) visibleChildren.add(`${source.source_id}${ANALYSIS_SELECTION_SEPARATOR}entry${ANALYSIS_SELECTION_SEPARATOR}${entry.entry_id}`);
-      for (const field of source.fields ?? []) visibleChildren.add(`${source.source_id}${ANALYSIS_SELECTION_SEPARATOR}field${ANALYSIS_SELECTION_SEPARATOR}${field.field_key}`);
+      for (const entry of source.entries ?? [])
+        visibleChildren.add(`${source.source_id}${ANALYSIS_SELECTION_SEPARATOR}entry${ANALYSIS_SELECTION_SEPARATOR}${entry.entry_id}`)
+      for (const field of source.fields ?? [])
+        visibleChildren.add(`${source.source_id}${ANALYSIS_SELECTION_SEPARATOR}field${ANALYSIS_SELECTION_SEPARATOR}${field.field_key}`)
     }
     root.querySelectorAll?.('[data-bioweave-analysis-source-row]').forEach(row => {
-      const sourceId = row.dataset?.bioweaveAnalysisSourceRow;
-      const childKey = row.dataset?.bioweaveAnalysisSourceChildKey;
-      const visible = visibleIds.has(sourceId) && (!childKey || visibleChildren.has(childKey));
-      row.hidden = !visible;
-      if (visible && query.trim() && row.tagName === 'DETAILS') row.open = true;
-    });
+      const sourceId = row.dataset?.bioweaveAnalysisSourceRow
+      const childKey = row.dataset?.bioweaveAnalysisSourceChildKey
+      const visible = visibleIds.has(sourceId) && (!childKey || visibleChildren.has(childKey))
+      row.hidden = !visible
+      if (visible && query.trim() && row.tagName === 'DETAILS') row.open = true
+    })
     root.querySelectorAll?.('[data-bioweave-analysis-character-group]').forEach(group => {
-      const visibleChild = [...group.querySelectorAll?.('[data-bioweave-analysis-source-child-key]') ?? []]
-        .some(row => !row.hidden);
-      if (query.trim() && visibleChild) group.open = true;
-    });
+      const visibleChild = [...(group.querySelectorAll?.('[data-bioweave-analysis-source-child-key]') ?? [])].some(row => !row.hidden)
+      if (query.trim() && visibleChild) group.open = true
+    })
     root.querySelectorAll?.('[data-bioweave-analysis-section]').forEach(section => {
-      const hasVisibleRow = [...section.querySelectorAll?.('[data-bioweave-analysis-source-row]') ?? []]
-        .some(row => !row.hidden);
-      section.hidden = Boolean(query.trim()) && !hasVisibleRow;
-      if (query.trim() && hasVisibleRow) section.open = true;
-    });
+      const hasVisibleRow = [...(section.querySelectorAll?.('[data-bioweave-analysis-source-row]') ?? [])].some(row => !row.hidden)
+      section.hidden = Boolean(query.trim()) && !hasVisibleRow
+      if (query.trim() && hasVisibleRow) section.open = true
+    })
   }
-
   function captureAnalysisSourceDisclosure() {
-    if (!root) return;
-    const openAnalysisSections = [...root.querySelectorAll?.('[data-bioweave-analysis-section][open]') ?? []]
+    if (!root) return
+    const openAnalysisSections = [...(root.querySelectorAll?.('[data-bioweave-analysis-section][open]') ?? [])]
       .map(node => String(node.dataset?.bioweaveAnalysisSection ?? '').trim())
-      .filter(Boolean);
-    const openWorldbooks = [...root.querySelectorAll?.('.bioweave-analysis-worldbook') ?? []]
-      .filter(node => analysisParentDisclosureStates.has(node)
-        ? analysisParentDisclosureStates.get(node)
-        : node.open)
+      .filter(Boolean)
+    const openWorldbooks = [...(root.querySelectorAll?.('.bioweave-analysis-worldbook') ?? [])]
+      .filter(node => (analysisParentDisclosureStates.has(node) ? analysisParentDisclosureStates.get(node) : node.open))
       .map(node => String(node.dataset?.bioweaveAnalysisSourceRow ?? '').trim())
-      .filter(Boolean);
-    const openCharacterGroups = [...root.querySelectorAll?.('[data-bioweave-analysis-character-group]') ?? []]
-      .filter(node => analysisParentDisclosureStates.has(node)
-        ? analysisParentDisclosureStates.get(node)
-        : node.open)
+      .filter(Boolean)
+    const openCharacterGroups = [...(root.querySelectorAll?.('[data-bioweave-analysis-character-group]') ?? [])]
+      .filter(node => (analysisParentDisclosureStates.has(node) ? analysisParentDisclosureStates.get(node) : node.open))
       .map(node => analysisCharacterGroupKey(node.dataset?.bioweaveAnalysisCharacterGroupSource))
-      .filter(key => key !== ':opening');
-    const openSettingsSections = [...root.querySelectorAll?.('[data-bioweave-settings-disclosure][open]') ?? []]
+      .filter(key => key !== ':opening')
+    const openSettingsSections = [...(root.querySelectorAll?.('[data-bioweave-settings-disclosure][open]') ?? [])]
       .map(node => String(node.dataset?.bioweaveSettingsDisclosure ?? '').trim())
-      .filter(Boolean);
+      .filter(Boolean)
     analysisSourcesState = {
       ...analysisSourcesState,
       openAnalysisSections,
       openWorldbooks,
       openCharacterGroups,
       openSettingsSections,
-    };
+    }
   }
-
   async function toggleAnalysisSource(target) {
-    const sourceId = target?.dataset?.bioweaveAnalysisSource;
-    if (!sourceId || target.disabled) return;
-    captureAnalysisSourceDisclosure();
+    const sourceId = target?.dataset?.bioweaveAnalysisSource
+    if (!sourceId || target.disabled) return
+    captureAnalysisSourceDisclosure()
     const selection = {
       source_id: sourceId,
       entry_id: target.dataset?.bioweaveAnalysisEntry,
       field_key: target.dataset?.bioweaveAnalysisField,
-    };
-    const selected = updateSourceSelection(analysisSourcesState.selected, selection, Boolean(target.checked));
-    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
-    render();
-    await persistAnalysisSettings({selected, renderAfterSave: false});
+    }
+    const selected = updateSourceSelection(analysisSourcesState.selected, selection, Boolean(target.checked))
+    analysisSourcesState = syncAnalysisSourcesState({ selected, notice: null })
+    render()
+    await persistAnalysisSettings({ selected, renderAfterSave: false })
   }
-
-  async function loadWorldbookSourceForUi(sourceId, {selectAll = null, forceRefresh = false} = {}) {
-    const id = String(sourceId ?? '').trim();
-    const source = analysisSourcesState.sources.find(item => item.source_id === id);
-    if (!source) return null;
-    if (source.content_loaded && selectAll === null) return source;
-    if ((analysisSourcesState.loadingWorldbookIds ?? []).includes(id)) return null;
-
-    const {chatId, token} = currentAnalysisChatToken();
-    const requestId = analysisSourceRequestSequence;
-    const loadingWorldbookIds = [...new Set([...(analysisSourcesState.loadingWorldbookIds ?? []), id])];
+  async function loadWorldbookSourceForUi(sourceId, { selectAll = null, forceRefresh = false } = {}) {
+    const id = String(sourceId ?? '').trim()
+    const source = analysisSourcesState.sources.find(item => item.source_id === id)
+    if (!source) return null
+    if (source.content_loaded && selectAll === null) return source
+    if ((analysisSourcesState.loadingWorldbookIds ?? []).includes(id)) return null
+    const { chatId, token } = currentAnalysisChatToken()
+    const requestId = analysisSourceRequestSequence
+    const loadingWorldbookIds = [...new Set([...(analysisSourcesState.loadingWorldbookIds ?? []), id])]
     analysisSourcesState = syncAnalysisSourcesState({
       loading: true,
       loadingWorldbookIds,
       chatId,
       notice: null,
-    });
-    render();
+    })
+    render()
     try {
-      const context = runtime.st?.getContext?.() ?? hostContextForApp();
+      const context = runtime.st?.getContext?.() ?? hostContextForApp()
       const loaded = await loadWorldbookSource(source, {
         context,
         fetchRef: runtime.st?.fetch ?? globalThis.fetch,
         getRequestHeaders: runtime.st?.getRequestHeaders,
         cache: worldbookCache,
         forceRefresh,
-      });
-      assertAnalysisChatToken(token);
-      if (requestId !== analysisSourceRequestSequence) return null;
-      if (!loaded?.content_loaded) throw new Error('ST_WORLDBOOK_CONTENT_FAILED');
-      const sources = analysisSourcesState.sources.map(item => item.source_id === id
-        ? {
-          ...item,
-          ...loaded,
-          scopes: [...new Set([...(item.scopes ?? []), ...(loaded.scopes ?? [])])],
-        }
-        : item);
-      const selected = selectAll === null
-        ? analysisSourcesState.selected
-        : setWorldbookEntriesSelection(analysisSourcesState.selected, loaded, selectAll);
+      })
+      assertAnalysisChatToken(token)
+      if (requestId !== analysisSourceRequestSequence) return null
+      if (!loaded?.content_loaded) throw new Error('ST_WORLDBOOK_CONTENT_FAILED')
+      const sources = analysisSourcesState.sources.map(item =>
+        item.source_id === id
+          ? {
+              ...item,
+              ...loaded,
+              scopes: [...new Set([...(item.scopes ?? []), ...(loaded.scopes ?? [])])],
+            }
+          : item,
+      )
+      const selected =
+        selectAll === null ? analysisSourcesState.selected : setWorldbookEntriesSelection(analysisSourcesState.selected, loaded, selectAll)
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
         loading: false,
@@ -1201,244 +1092,218 @@ export function createApp(runtime, options = {}) {
         selected,
         chatId,
         notice: null,
-      });
-      render();
-      if (selectAll !== null) await persistAnalysisSettings({selected, renderAfterSave: false});
-      return loaded;
+      })
+      render()
+      if (selectAll !== null) await persistAnalysisSettings({ selected, renderAfterSave: false })
+      return loaded
     } catch {
-      if (requestId !== analysisSourceRequestSequence) return null;
+      if (requestId !== analysisSourceRequestSequence) return null
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return null;
+        return null
       }
       analysisSourcesState = syncAnalysisSourcesState({
         loading: false,
         loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? []).filter(value => value !== id),
         chatId,
         notice: null,
-      });
-      notify('世界书条目读取失败，请稍后重试。', 'error', documentRef);
-      render();
-      return null;
+      })
+      notify('世界书条目读取失败，请稍后重试。', 'error', documentRef)
+      render()
+      return null
     }
   }
-
   async function toggleWorldbookEntries(target) {
-    const sourceId = String(target?.dataset?.bioweaveAnalysisWorldbookToggle ?? '').trim();
-    if (!sourceId || target.disabled) return;
-    const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-    if (!source) return;
-    captureAnalysisSourceDisclosure();
+    const sourceId = String(target?.dataset?.bioweaveAnalysisWorldbookToggle ?? '').trim()
+    if (!sourceId || target.disabled) return
+    const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+    if (!source) return
+    captureAnalysisSourceDisclosure()
     if (!source.content_loaded) {
-      await loadWorldbookSourceForUi(sourceId, {selectAll: Boolean(target.checked)});
-      return;
+      await loadWorldbookSourceForUi(sourceId, { selectAll: Boolean(target.checked) })
+      return
     }
-    const selected = setWorldbookEntriesSelection(
-      analysisSourcesState.selected,
-      source,
-      Boolean(target.checked),
-    );
-    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
-    render();
-    await persistAnalysisSettings({selected, renderAfterSave: false});
+    const selected = setWorldbookEntriesSelection(analysisSourcesState.selected, source, Boolean(target.checked))
+    analysisSourcesState = syncAnalysisSourcesState({ selected, notice: null })
+    render()
+    await persistAnalysisSettings({ selected, renderAfterSave: false })
   }
-
   async function toggleCharacterCardOpenings(target) {
-    const sourceId = String(target?.dataset?.bioweaveAnalysisCharacterOpeningToggle ?? '').trim();
-    if (!sourceId || target.disabled) return;
-    const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-    if (!source) return;
-    captureAnalysisSourceDisclosure();
-    const selected = setCharacterCardOpeningsSelection(
-      analysisSourcesState.selected,
-      source,
-      Boolean(target.checked),
-    );
-    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
-    render();
-    await persistAnalysisSettings({selected, renderAfterSave: false});
+    const sourceId = String(target?.dataset?.bioweaveAnalysisCharacterOpeningToggle ?? '').trim()
+    if (!sourceId || target.disabled) return
+    const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+    if (!source) return
+    captureAnalysisSourceDisclosure()
+    const selected = setCharacterCardOpeningsSelection(analysisSourcesState.selected, source, Boolean(target.checked))
+    analysisSourcesState = syncAnalysisSourcesState({ selected, notice: null })
+    render()
+    await persistAnalysisSettings({ selected, renderAfterSave: false })
   }
-
   function analysisSectionSourceIds(target) {
     try {
-      const value = JSON.parse(target?.closest?.('[data-bioweave-analysis-section]')?.dataset?.bioweaveAnalysisSectionSourceIds ?? '[]');
-      return Array.isArray(value) ? [...new Set(value.map(item => String(item ?? '').trim()).filter(Boolean))] : [];
+      const value = JSON.parse(target?.closest?.('[data-bioweave-analysis-section]')?.dataset?.bioweaveAnalysisSectionSourceIds ?? '[]')
+      return Array.isArray(value) ? [...new Set(value.map(item => String(item ?? '').trim()).filter(Boolean))] : []
     } catch {
-      return [];
+      return []
     }
   }
-
   async function toggleAnalysisSection(target) {
-    if (!target || target.disabled) return;
-    const sourceIds = analysisSectionSourceIds(target);
-    if (!sourceIds.length) return;
-    captureAnalysisSourceDisclosure();
-    let selected = analysisSourcesState.selected;
-    const pendingWorldbooks = [];
+    if (!target || target.disabled) return
+    const sourceIds = analysisSectionSourceIds(target)
+    if (!sourceIds.length) return
+    captureAnalysisSourceDisclosure()
+    let selected = analysisSourcesState.selected
+    const pendingWorldbooks = []
     for (const sourceId of sourceIds) {
-      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-      if (!source || source.available === false) continue;
+      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+      if (!source || source.available === false) continue
       if (source.source_type === 'worldbook') {
         if (target.checked && !source.content_loaded) {
-          pendingWorldbooks.push(sourceId);
+          pendingWorldbooks.push(sourceId)
         } else {
-          selected = setWorldbookEntriesSelection(selected, source, Boolean(target.checked));
+          selected = setWorldbookEntriesSelection(selected, source, Boolean(target.checked))
         }
-        continue;
+        continue
       }
       for (const field of Array.isArray(source.fields) ? source.fields : []) {
-        const fieldKey = String(field?.field_key ?? '').trim();
-        const selectable = fieldKey === 'description'
-          || fieldKey === 'opening:main'
-          || /^opening:alternate:\d+$/.test(fieldKey);
-        if (!selectable || field?.available === false) continue;
-        selected = updateSourceSelection(selected, {
-          source_id: sourceId,
-          field_key: fieldKey,
-        }, Boolean(target.checked));
+        const fieldKey = String(field?.field_key ?? '').trim()
+        const selectable = fieldKey === 'description' || fieldKey === 'opening:main' || /^opening:alternate:\d+$/.test(fieldKey)
+        if (!selectable || field?.available === false) continue
+        selected = updateSourceSelection(
+          selected,
+          {
+            source_id: sourceId,
+            field_key: fieldKey,
+          },
+          Boolean(target.checked),
+        )
       }
     }
-    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
-    render();
-    await persistAnalysisSettings({selected, renderAfterSave: false});
+    analysisSourcesState = syncAnalysisSourcesState({ selected, notice: null })
+    render()
+    await persistAnalysisSettings({ selected, renderAfterSave: false })
     for (const sourceId of pendingWorldbooks) {
-      await loadWorldbookSourceForUi(sourceId, {selectAll: true});
+      await loadWorldbookSourceForUi(sourceId, { selectAll: true })
     }
   }
-
   function syncAnalysisWorldbookToggles() {
-    if (!root) return;
+    if (!root) return
     root.querySelectorAll?.('[data-bioweave-analysis-worldbook-toggle]').forEach(toggle => {
-      const sourceId = String(toggle.dataset?.bioweaveAnalysisWorldbookToggle ?? '').trim();
-      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-      const state = worldbookSelectionState(source, analysisSourcesState.selected);
-      toggle.checked = state.checked;
-      toggle.indeterminate = state.indeterminate;
-      toggle.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked));
-    });
+      const sourceId = String(toggle.dataset?.bioweaveAnalysisWorldbookToggle ?? '').trim()
+      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+      const state = worldbookSelectionState(source, analysisSourcesState.selected)
+      toggle.checked = state.checked
+      toggle.indeterminate = state.indeterminate
+      toggle.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked))
+    })
   }
-
   function syncAnalysisCharacterOpeningToggles() {
-    if (!root) return;
+    if (!root) return
     root.querySelectorAll?.('[data-bioweave-analysis-character-opening-toggle]').forEach(toggle => {
-      const sourceId = String(toggle.dataset?.bioweaveAnalysisCharacterOpeningToggle ?? '').trim();
-      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-      const state = characterOpeningSelectionState(source, analysisSourcesState.selected);
-      toggle.checked = state.checked;
-      toggle.indeterminate = state.indeterminate;
-      toggle.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked));
-    });
+      const sourceId = String(toggle.dataset?.bioweaveAnalysisCharacterOpeningToggle ?? '').trim()
+      const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+      const state = characterOpeningSelectionState(source, analysisSourcesState.selected)
+      toggle.checked = state.checked
+      toggle.indeterminate = state.indeterminate
+      toggle.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked))
+    })
   }
-
   function syncAnalysisSectionToggles() {
-    if (!root) return;
+    if (!root) return
     root.querySelectorAll?.('[data-bioweave-analysis-section-toggle]').forEach(toggle => {
-      toggle.indeterminate = toggle.getAttribute('aria-checked') === 'mixed';
-    });
+      toggle.indeterminate = toggle.getAttribute('aria-checked') === 'mixed'
+    })
   }
-
-  async function loadAllWorldbooksForSelection({sourceIds = null} = {}) {
-    const requestedSourceIds = sourceIds instanceof Set
-      ? sourceIds
-      : Array.isArray(sourceIds)
-        ? new Set(sourceIds)
-        : null;
-    const unloaded = analysisSourcesState.sources.filter(source => source.source_type === 'worldbook'
-      && !source.content_loaded
-      && source.host_key
-      && (!requestedSourceIds || requestedSourceIds.has(source.source_id)));
-    if (!unloaded.length) return analysisSourcesState.sources;
-
-    const {chatId, token} = currentAnalysisChatToken();
-    const requestId = analysisSourceRequestSequence;
-    const loadingWorldbookIds = [...new Set([
-      ...(analysisSourcesState.loadingWorldbookIds ?? []),
-      ...unloaded.map(source => source.source_id),
-    ])];
+  async function loadAllWorldbooksForSelection({ sourceIds = null } = {}) {
+    const requestedSourceIds = sourceIds instanceof Set ? sourceIds : Array.isArray(sourceIds) ? new Set(sourceIds) : null
+    const unloaded = analysisSourcesState.sources.filter(
+      source =>
+        source.source_type === 'worldbook' &&
+        !source.content_loaded &&
+        source.host_key &&
+        (!requestedSourceIds || requestedSourceIds.has(source.source_id)),
+    )
+    if (!unloaded.length) return analysisSourcesState.sources
+    const { chatId, token } = currentAnalysisChatToken()
+    const requestId = analysisSourceRequestSequence
+    const loadingWorldbookIds = [...new Set([...(analysisSourcesState.loadingWorldbookIds ?? []), ...unloaded.map(source => source.source_id)])]
     analysisSourcesState = syncAnalysisSourcesState({
       loading: true,
       loadingWorldbookIds,
       chatId,
       notice: null,
-    });
-    render();
+    })
+    render()
     try {
-      const context = runtime.st?.getContext?.() ?? hostContextForApp();
-      const loaded = await Promise.all(unloaded.map(source => loadWorldbookSource(source, {
-        context,
-        fetchRef: runtime.st?.fetch ?? globalThis.fetch,
-        getRequestHeaders: runtime.st?.getRequestHeaders,
-        cache: worldbookCache,
-      })));
-      assertAnalysisChatToken(token);
-      if (requestId !== analysisSourceRequestSequence) return null;
-      const loadedById = new Map(loaded.map(source => [source.source_id, source]));
+      const context = runtime.st?.getContext?.() ?? hostContextForApp()
+      const loaded = await Promise.all(
+        unloaded.map(source =>
+          loadWorldbookSource(source, {
+            context,
+            fetchRef: runtime.st?.fetch ?? globalThis.fetch,
+            getRequestHeaders: runtime.st?.getRequestHeaders,
+            cache: worldbookCache,
+          }),
+        ),
+      )
+      assertAnalysisChatToken(token)
+      if (requestId !== analysisSourceRequestSequence) return null
+      const loadedById = new Map(loaded.map(source => [source.source_id, source]))
       const sources = analysisSourcesState.sources.map(source => {
-        const next = loadedById.get(source.source_id);
-        return next
-          ? {...source, ...next, scopes: [...new Set([...(source.scopes ?? []), ...(next.scopes ?? [])])]}
-          : source;
-      });
-      const failed = loaded.some(source => !source?.content_loaded);
+        const next = loadedById.get(source.source_id)
+        return next ? { ...source, ...next, scopes: [...new Set([...(source.scopes ?? []), ...(next.scopes ?? [])])] } : source
+      })
+      const failed = loaded.some(source => !source?.content_loaded)
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
         loading: false,
-        loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? [])
-          .filter(value => !loadingWorldbookIds.includes(value)),
+        loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? []).filter(value => !loadingWorldbookIds.includes(value)),
         sources,
         chatId,
         notice: null,
-      });
-      if (failed) notify('部分世界书条目读取失败，已选择成功读取的内容。', 'warning', documentRef);
-      render();
-      return sources;
+      })
+      if (failed) notify('部分世界书条目读取失败，已选择成功读取的内容。', 'warning', documentRef)
+      render()
+      return sources
     } catch {
-      if (requestId !== analysisSourceRequestSequence) return null;
+      if (requestId !== analysisSourceRequestSequence) return null
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return null;
+        return null
       }
       analysisSourcesState = syncAnalysisSourcesState({
         loading: false,
-        loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? [])
-          .filter(value => !loadingWorldbookIds.includes(value)),
+        loadingWorldbookIds: (analysisSourcesState.loadingWorldbookIds ?? []).filter(value => !loadingWorldbookIds.includes(value)),
         chatId,
         notice: null,
-      });
-      notify('世界书条目读取失败，当前选择仍保留。', 'error', documentRef);
-      render();
-      return analysisSourcesState.sources;
+      })
+      notify('世界书条目读取失败，当前选择仍保留。', 'error', documentRef)
+      render()
+      return analysisSourcesState.sources
     }
   }
-
   // World Model 与分析输入预览共用同一份临时 AnalysisInput 收集流程。
   async function collectCurrentAnalysisInput() {
-    const {chatId, token} = currentAnalysisChatToken();
+    const { chatId, token } = currentAnalysisChatToken()
     if (!analysisSourcesState.loaded || analysisSourcesState.chatId !== chatId) {
-      await loadAnalysisSourcesState();
+      await loadAnalysisSourcesState()
     }
-    await waitForAnalysisSourcesIdle();
-    assertAnalysisChatToken(token);
-    const currentAnalysisSettings = readAnalysisSettings(chatId);
+    await waitForAnalysisSourcesIdle()
+    assertAnalysisChatToken(token)
+    const currentAnalysisSettings = readAnalysisSettings(chatId)
     if (currentAnalysisSettings.worldbooks.mode === 'all') {
-      await loadAllWorldbooksForSelection();
+      await loadAllWorldbooksForSelection()
     } else {
-      const selectedWorldbookIds = new Set(
-        analysisSourcesState.selected
-          .filter(item => item?.entry_id)
-          .map(item => item.source_id),
-      );
-      await loadAllWorldbooksForSelection({sourceIds: selectedWorldbookIds});
+      const selectedWorldbookIds = new Set(analysisSourcesState.selected.filter(item => item?.entry_id).map(item => item.source_id))
+      await loadAllWorldbooksForSelection({ sourceIds: selectedWorldbookIds })
     }
-    assertAnalysisChatToken(token);
-    const context = runtime.st?.getContext?.() ?? hostContextForApp();
-    const externalMemoryProviders = await probeExternalMemoryProviders({context}).catch(() => (
-      detectExternalMemoryProviders({context})
-    ));
-    assertAnalysisChatToken(token);
-    if (!globalRecentStoryLoaded) loadGlobalRecentStoryState();
+    assertAnalysisChatToken(token)
+    const context = runtime.st?.getContext?.() ?? hostContextForApp()
+    const externalMemoryProviders = await probeExternalMemoryProviders({ context }).catch(() => detectExternalMemoryProviders({ context }))
+    assertAnalysisChatToken(token)
+    if (!globalRecentStoryLoaded) loadGlobalRecentStoryState()
     const input = await collectAnalysisContext({
       sources: analysisSourcesState.sources,
       selected: analysisSourcesState.selected,
@@ -1449,36 +1314,35 @@ export function createApp(runtime, options = {}) {
       externalMemory: analysisSourcesState.externalMemory,
       externalMemoryProviders,
       includePersonaInTokenEstimate: false,
-    });
-    let eventInput = null;
+    })
+    let eventInput = null
     if (typeof runtime.getCurrentFloorAnalysisInput === 'function') {
-      eventInput = await runtime.getCurrentFloorAnalysisInput();
+      eventInput = await runtime.getCurrentFloorAnalysisInput()
     }
     return {
       input,
       eventInput,
       chatId,
       token,
-    };
+    }
   }
-
   async function refreshAnalysisPreview() {
-    if (analysisPreviewState.busy) return;
-    captureAnalysisSourceDisclosure();
-    const {chatId, token} = currentAnalysisChatToken();
-    const requestId = ++analysisPreviewSequence;
+    if (analysisPreviewState.busy) return
+    captureAnalysisSourceDisclosure()
+    const { chatId, token } = currentAnalysisChatToken()
+    const requestId = ++analysisPreviewSequence
     analysisPreviewState = {
       ...analysisPreviewState,
       busy: true,
       chatId,
       error: null,
       worldModelTrace: null,
-    };
-    if (route === 'settings' || route === 'world') render();
+    }
+    if (route === 'settings' || route === 'world') render()
     try {
-      const collected = await collectCurrentAnalysisInput();
-      assertAnalysisChatToken(token);
-      if (requestId !== analysisPreviewSequence) return;
+      const collected = await collectCurrentAnalysisInput()
+      assertAnalysisChatToken(token)
+      if (requestId !== analysisPreviewSequence) return
       analysisPreviewState = {
         busy: false,
         mode: analysisPreviewState.mode,
@@ -1488,38 +1352,37 @@ export function createApp(runtime, options = {}) {
         chatId: collected.chatId,
         error: null,
         worldModelTrace: null,
-      };
+      }
     } catch (error) {
-      if (requestId !== analysisPreviewSequence) return;
+      if (requestId !== analysisPreviewSequence) return
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return;
+        return
       }
       analysisPreviewState = {
         ...analysisPreviewState,
         busy: false,
         chatId,
         error: '分析输入预览读取失败，请检查当前 Chat 的来源设置。',
-      };
-    }
-    if (requestId === analysisPreviewSequence && (route === 'settings' || route === 'world')) render();
-  }
-
-  function loadWorldModelState() {
-    const chatId = runtime.chat.current();
-    if (worldModelState.loaded && worldModelState.chatId === chatId) return;
-    const chatData = runtime.store?.getChat?.(chatId);
-    let model = null;
-    let notice = null;
-    if (chatData?.world_model) {
-      try {
-        model = normalizeWorldModel(chatData.world_model);
-      } catch {
-        notice = '已保存的世界模型格式无效，请重新分析。';
       }
     }
-    const selection = resolveWorldModelSelection(model);
+    if (requestId === analysisPreviewSequence && (route === 'settings' || route === 'world')) render()
+  }
+  function loadWorldModelState() {
+    const chatId = runtime.chat.current()
+    if (worldModelState.loaded && worldModelState.chatId === chatId) return
+    const chatData = runtime.store?.getChat?.(chatId)
+    let model = null
+    let notice = null
+    if (chatData?.world_model) {
+      try {
+        model = normalizeWorldModel(chatData.world_model)
+      } catch {
+        notice = '已保存的世界模型格式无效，请重新分析。'
+      }
+    }
+    const selection = resolveWorldModelSelection(model)
     worldModelState = {
       ...createWorldModelState(),
       loaded: true,
@@ -1529,11 +1392,26 @@ export function createApp(runtime, options = {}) {
       selectedSpeciesIndex: selection.speciesIndex,
       selectedTypeIndex: selection.typeIndex,
       notice,
-    };
+    }
   }
-
   function worldModelOperationError(error) {
-    const code = String(error?.code ?? error?.message ?? '');
+    const code = String(error?.code ?? error?.message ?? '')
+    const diagnostic = String(error?.diagnostic_code ?? error?.diagnosticCode ?? error?.error_code ?? '')
+      .trim()
+      .toLowerCase()
+    const status = sharedStatusFromError(error)
+    const preservesLegacyTransportCopy =
+      status === null &&
+      (code === 'REQUEST_TIMEOUT' ||
+        code.startsWith('REQUEST_TIMEOUT_') ||
+        code === 'REQUEST_ABORTED' ||
+        code.startsWith('REQUEST_ABORTED_') ||
+        diagnostic === 'timeout' ||
+        diagnostic === 'aborted' ||
+        diagnostic === 'request_timeout' ||
+        diagnostic === 'request_aborted')
+    const transportMessage = preservesLegacyTransportCopy ? '' : sharedTransportErrorMessage(error)
+    if (transportMessage) return `${transportMessage} 上一份模型已保留。`
     const messages = {
       API_PROFILE_NOT_CONFIGURED: '世界分析尚未配置 API，请在设置的任务分配中选择可用配置。',
       API_PROFILE_INVALID: '世界分析 API 配置无效，请检查 URL 和模型。',
@@ -1549,96 +1427,78 @@ export function createApp(runtime, options = {}) {
       ST_CHAT_SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
       REQUEST_TIMEOUT: '世界模型分析请求超时，上一份模型已保留。',
       REQUEST_ABORTED: '世界模型分析请求已取消，上一份模型已保留。',
-    };
-    const matchedCode = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`));
-    return messages[matchedCode] ?? '世界模型操作失败，上一份模型已保留。';
+    }
+    const matchedCode = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`))
+    return messages[matchedCode] ?? '世界模型操作失败，上一份模型已保留。'
   }
-
   function currentWorldModelSelection() {
-    return resolveWorldModelSelection(
-      worldModelState.model,
-      worldModelState.selectedSpeciesIndex,
-      worldModelState.selectedTypeIndex,
-    );
+    return resolveWorldModelSelection(worldModelState.model, worldModelState.selectedSpeciesIndex, worldModelState.selectedTypeIndex)
   }
-
   function captureWorldModelSectionDraft() {
-    const section = worldModelState.editingSection;
-    if (!section) return worldModelState.sectionDraft;
-    const form = root?.querySelector?.('[data-bioweave-world-section-form]');
-    if (!form) return worldModelState.sectionDraft;
-    const draft = extractWorldModelSection(form, section);
-    if (draft === null) return worldModelState.sectionDraft;
-    const original = getWorldModelSection(
-      worldModelState.model,
-      section,
-      currentWorldModelSelection(),
-    );
+    const section = worldModelState.editingSection
+    if (!section) return worldModelState.sectionDraft
+    const form = root?.querySelector?.('[data-bioweave-world-section-form]')
+    if (!form) return worldModelState.sectionDraft
+    const draft = extractWorldModelSection(form, section)
+    if (draft === null) return worldModelState.sectionDraft
+    const original = getWorldModelSection(worldModelState.model, section, currentWorldModelSelection())
     worldModelState = {
       ...worldModelState,
       sectionDraft: draft,
       sectionDirty: JSON.stringify(draft) !== JSON.stringify(original),
-    };
-    return draft;
+    }
+    return draft
   }
-
   async function confirmWithPopup(title, message) {
-    const context = hostPopupContext();
-    const confirm = context?.Popup?.show?.confirm;
-    const affirmative = context?.POPUP_RESULT?.AFFIRMATIVE;
+    const context = hostPopupContext()
+    const confirm = context?.Popup?.show?.confirm
+    const affirmative = context?.POPUP_RESULT?.AFFIRMATIVE
     if (typeof confirm !== 'function' || affirmative === undefined) {
-      notify('当前宿主不支持确认弹窗，操作已取消。', 'error', documentRef);
-      return false;
+      notify('当前宿主不支持确认弹窗，操作已取消。', 'error', documentRef)
+      return false
     }
     try {
-      const result = await confirm.call(context.Popup.show, title, message);
-      return result === affirmative;
+      const result = await confirm.call(context.Popup.show, title, message)
+      return result === affirmative
     } catch {
-      notify('确认弹窗打开失败，操作已取消。', 'error', documentRef);
-      return false;
+      notify('确认弹窗打开失败，操作已取消。', 'error', documentRef)
+      return false
     }
   }
-
   async function canDiscardWorldModelSectionDraft() {
-    if (!worldModelState.editingSection || !worldModelState.sectionDirty) return true;
-    return confirmWithPopup('放弃未保存修改', '当前修改尚未保存，是否放弃？');
+    if (!worldModelState.editingSection || !worldModelState.sectionDirty) return true
+    return confirmWithPopup('放弃未保存修改', '当前修改尚未保存，是否放弃？')
   }
-
   async function requestAbortWorldModelAnalysis() {
-    const controller = worldModelAbortController;
-    if (!worldModelState.busy || !controller || worldModelAbortConfirmOpen) return false;
-    worldModelAbortConfirmOpen = true;
+    const controller = worldModelAbortController
+    if (!worldModelState.busy || !controller || worldModelAbortConfirmOpen) return false
+    worldModelAbortConfirmOpen = true
     try {
-      const confirmed = await confirmWithPopup(
-        '终止世界模型分析',
-        '当前分析仍在进行，是否终止本次分析？',
-      );
-      if (!confirmed) return false;
+      const confirmed = await confirmWithPopup('终止世界模型分析', '当前分析仍在进行，是否终止本次分析？')
+      if (!confirmed) return false
       if (!worldModelState.busy || worldModelAbortController !== controller || controller.signal.aborted) {
-        return false;
+        return false
       }
-      controller.abort();
-      return true;
+      controller.abort()
+      return true
     } finally {
-      worldModelAbortConfirmOpen = false;
+      worldModelAbortConfirmOpen = false
     }
   }
-
   function clearWorldModelSectionDraft() {
     worldModelState = {
       ...worldModelState,
       editingSection: null,
       sectionDraft: null,
       sectionDirty: false,
-    };
+    }
   }
-
   async function beginWorldModelSectionEdit(section) {
-    if (!worldModelState.model || !WORLD_MODEL_SECTION_KEYS.includes(section)) return false;
-    if (worldModelState.editingSection === section) return true;
-    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!await canDiscardWorldModelSectionDraft()) return false;
-    const selection = currentWorldModelSelection();
+    if (!worldModelState.model || !WORLD_MODEL_SECTION_KEYS.includes(section)) return false
+    if (worldModelState.editingSection === section) return true
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
+    if (!(await canDiscardWorldModelSectionDraft())) return false
+    const selection = currentWorldModelSelection()
     worldModelState = {
       ...worldModelState,
       selectedSpeciesIndex: selection.speciesIndex,
@@ -1647,22 +1507,20 @@ export function createApp(runtime, options = {}) {
       sectionDraft: getWorldModelSection(worldModelState.model, section, selection),
       sectionDirty: false,
       notice: null,
-    };
-    render();
-    return true;
+    }
+    render()
+    return true
   }
-
   function cancelWorldModelSectionEdit() {
-    clearWorldModelSectionDraft();
-    worldModelState = {...worldModelState, notice: null};
-    render();
+    clearWorldModelSectionDraft()
+    worldModelState = { ...worldModelState, notice: null }
+    render()
   }
-
   async function selectWorldModelType(speciesIndex, typeIndex = null) {
-    if (!worldModelState.model) return false;
-    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!await canDiscardWorldModelSectionDraft()) return false;
-    const selection = resolveWorldModelSelection(worldModelState.model, speciesIndex, typeIndex);
+    if (!worldModelState.model) return false
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
+    if (!(await canDiscardWorldModelSectionDraft())) return false
+    const selection = resolveWorldModelSelection(worldModelState.model, speciesIndex, typeIndex)
     worldModelState = {
       ...worldModelState,
       selectedSpeciesIndex: selection.speciesIndex,
@@ -1671,75 +1529,68 @@ export function createApp(runtime, options = {}) {
       sectionDraft: null,
       sectionDirty: false,
       notice: null,
-    };
-    render();
-    return true;
+    }
+    render()
+    return true
   }
-
   function updateWorldModelSectionDraft(mutator) {
-    if (!worldModelState.editingSection) return;
-    captureWorldModelSectionDraft();
-    const current = worldModelState.sectionDraft ?? getWorldModelSection(
-      worldModelState.model,
-      worldModelState.editingSection,
-      currentWorldModelSelection(),
-    );
-    const next = mutator(current);
+    if (!worldModelState.editingSection) return
+    captureWorldModelSectionDraft()
+    const current =
+      worldModelState.sectionDraft ?? getWorldModelSection(worldModelState.model, worldModelState.editingSection, currentWorldModelSelection())
+    const next = mutator(current)
     worldModelState = {
       ...worldModelState,
       sectionDraft: next,
       sectionDirty: true,
       notice: null,
-    };
-    render();
+    }
+    render()
   }
-
   async function saveWorldModelSection() {
-    const section = worldModelState.editingSection;
-    if (!section || !worldModelState.model) return;
-    captureWorldModelSectionDraft();
-    const selection = currentWorldModelSelection();
-    let model;
+    const section = worldModelState.editingSection
+    if (!section || !worldModelState.model) return
+    captureWorldModelSectionDraft()
+    const selection = currentWorldModelSelection()
+    let model
     try {
-      const base = normalizeWorldModel(worldModelState.model);
+      const base = normalizeWorldModel(worldModelState.model)
       const patched = applyWorldModelSection(base, section, worldModelState.sectionDraft, {
         selectedSpeciesIndex: selection.speciesIndex,
         selectedTypeIndex: selection.typeIndex,
-      });
-      model = normalizeWorldModel(patched);
+      })
+      model = normalizeWorldModel(patched)
     } catch (error) {
-      worldModelState = {...worldModelState, notice: null};
-      notify(worldModelOperationError(error), 'error', documentRef);
-      render();
-      return;
+      worldModelState = { ...worldModelState, notice: null }
+      notify(worldModelOperationError(error), 'error', documentRef)
+      render()
+      return
     }
-    const {chatId, token} = currentAnalysisChatToken();
-    worldModelState = {...worldModelState, busy: true, notice: null};
-    render();
+    const { chatId, token } = currentAnalysisChatToken()
+    worldModelState = { ...worldModelState, busy: true, notice: null }
+    render()
     try {
-      const currentChat = runtime.store?.getChat?.(chatId);
-      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
-      const hasPersistedMeta = Object.prototype.hasOwnProperty.call(currentChat, 'world_model_meta');
-      const currentMeta = hasPersistedMeta ? currentChat.world_model_meta : worldModelState.meta;
-      const existingMeta = currentMeta && typeof currentMeta === 'object'
-        ? currentMeta
-        : null;
-      const nextMeta = existingMeta ? {...existingMeta} : null;
-      let metadataChanged = false;
+      const currentChat = runtime.store?.getChat?.(chatId)
+      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
+      const hasPersistedMeta = Object.prototype.hasOwnProperty.call(currentChat, 'world_model_meta')
+      const currentMeta = hasPersistedMeta ? currentChat.world_model_meta : worldModelState.meta
+      const existingMeta = currentMeta && typeof currentMeta === 'object' ? currentMeta : null
+      const nextMeta = existingMeta ? { ...existingMeta } : null
+      let metadataChanged = false
       if (nextMeta && Object.prototype.hasOwnProperty.call(nextMeta, 'last_saved_at')) {
-        nextMeta.last_saved_at = new Date().toISOString();
-        metadataChanged = true;
+        nextMeta.last_saved_at = new Date().toISOString()
+        metadataChanged = true
       }
       if (nextMeta && Object.prototype.hasOwnProperty.call(nextMeta, 'last_saved_by')) {
-        nextMeta.last_saved_by = 'manual';
-        metadataChanged = true;
+        nextMeta.last_saved_by = 'manual'
+        metadataChanged = true
       }
-      const nextChat = {...currentChat, world_model: model};
+      const nextChat = { ...currentChat, world_model: model }
       if (metadataChanged && hasPersistedMeta) {
-        nextChat.world_model_meta = nextMeta;
+        nextChat.world_model_meta = nextMeta
       }
-      await runtime.store.saveChat(chatId, nextChat);
-      assertAnalysisChatToken(token);
+      await runtime.store.saveChat(chatId, nextChat)
+      assertAnalysisChatToken(token)
       worldModelState = {
         ...worldModelState,
         busy: false,
@@ -1749,71 +1600,70 @@ export function createApp(runtime, options = {}) {
         sectionDraft: null,
         sectionDirty: false,
         notice: null,
-      };
-      notify('当前模块已保存。', 'success', documentRef);
+      }
+      notify('当前模块已保存。', 'success', documentRef)
     } catch (error) {
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return;
+        return
       }
       worldModelState = {
         ...worldModelState,
         busy: false,
         notice: null,
-      };
-      notify(worldModelOperationError(error), 'error', documentRef);
+      }
+      notify(worldModelOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   async function analyzeWorldModel() {
-    if (worldModelState.busy) return;
-    if (worldModelState.sectionDirty) captureWorldModelSectionDraft();
-    if (!await canDiscardWorldModelSectionDraft()) return;
-    if (worldModelState.editingSection) clearWorldModelSectionDraft();
-    const {chatId, token} = currentAnalysisChatToken();
-    const controller = new AbortController();
-    worldModelAbortController = controller;
-    worldModelTraceChatId = chatId;
+    if (worldModelState.busy) return
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
+    if (!(await canDiscardWorldModelSectionDraft())) return
+    if (worldModelState.editingSection) clearWorldModelSectionDraft()
+    const { chatId, token } = currentAnalysisChatToken()
+    const controller = new AbortController()
+    worldModelAbortController = controller
+    worldModelTraceChatId = chatId
     analysisPreviewState = {
       ...analysisPreviewState,
       chatId,
       error: null,
       worldModelTrace: null,
-    };
-    worldModelState = {...worldModelState, busy: true, notice: null};
-    if (route === 'world') render();
+    }
+    worldModelState = { ...worldModelState, busy: true, notice: null }
+    if (route === 'world') render()
     try {
-      const collected = await collectCurrentAnalysisInput();
-      assertAnalysisChatToken(token);
-      const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld;
-      if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE');
-      const result = await analyze({analysisInput: collected.input, signal: controller.signal});
-      const model = normalizeWorldModel(result);
-      assertAnalysisChatToken(token);
-      const currentChat = runtime.store?.getChat?.(chatId);
-      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
-      const analyzedAt = new Date().toISOString();
+      const collected = await collectCurrentAnalysisInput()
+      assertAnalysisChatToken(token)
+      const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld
+      if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE')
+      const result = await analyze({ analysisInput: collected.input, signal: controller.signal })
+      const model = normalizeWorldModel(result)
+      assertAnalysisChatToken(token)
+      const currentChat = runtime.store?.getChat?.(chatId)
+      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
+      const analyzedAt = new Date().toISOString()
       const meta = {
         last_analyzed_at: analyzedAt,
         last_saved_at: analyzedAt,
         last_saved_by: 'ai',
         source_summary: summarizeAnalysisInput(collected.input),
-      };
+      }
       await runtime.store.saveChat(chatId, {
         ...currentChat,
         world_model: model,
         world_model_meta: meta,
-      });
-      assertAnalysisChatToken(token);
+      })
+      assertAnalysisChatToken(token)
       analysisPreviewState = {
         ...analysisPreviewState,
         busy: false,
         input: collected.input,
         chatId,
         error: null,
-      };
+      }
       worldModelState = {
         ...worldModelState,
         loaded: true,
@@ -1826,226 +1676,205 @@ export function createApp(runtime, options = {}) {
         sectionDraft: null,
         sectionDirty: false,
         notice: null,
-      };
-      notify('世界模型分析成功并已保存。', 'success', documentRef);
+      }
+      notify('世界模型分析成功并已保存。', 'success', documentRef)
     } catch (error) {
       try {
-        assertAnalysisChatToken(token);
+        assertAnalysisChatToken(token)
       } catch {
-        return;
+        return
       }
-      const code = String(error?.code ?? error?.message ?? '');
-      const feedbackType = code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')
-        ? 'info'
-        : 'error';
-      worldModelState = {...worldModelState, busy: false, notice: null};
-      notify(worldModelOperationError(error), feedbackType, documentRef);
+      const code = String(error?.code ?? error?.message ?? '')
+      const feedbackType = code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_') ? 'info' : 'error'
+      worldModelState = { ...worldModelState, busy: false, notice: null }
+      notify(worldModelOperationError(error), feedbackType, documentRef)
     } finally {
-      if (worldModelAbortController === controller) worldModelAbortController = null;
+      if (worldModelAbortController === controller) worldModelAbortController = null
     }
-    if (route === 'world') render();
+    if (route === 'world') render()
   }
-
   function setAnalysisPreviewMode(mode) {
-    const nextMode = mode === 'raw' ? 'raw' : 'structure';
-    if (analysisPreviewState.mode === nextMode) return;
-    analysisPreviewState = {...analysisPreviewState, mode: nextMode};
-    if (route === 'settings') render();
+    const nextMode = mode === 'raw' ? 'raw' : 'structure'
+    if (analysisPreviewState.mode === nextMode) return
+    analysisPreviewState = { ...analysisPreviewState, mode: nextMode }
+    if (route === 'settings') render()
   }
-
   function setAnalysisPreviewType(type) {
-    const nextType = type === 'event' ? 'event' : 'world';
-    if (analysisPreviewState.analysisType === nextType) return;
-    analysisPreviewState = {...analysisPreviewState, analysisType: nextType};
-    if (route === 'settings') render();
+    const nextType = type === 'event' ? 'event' : 'world'
+    if (analysisPreviewState.analysisType === nextType) return
+    analysisPreviewState = { ...analysisPreviewState, analysisType: nextType }
+    if (route === 'settings') render()
   }
-
   async function setAllAnalysisSources(selectAll) {
-    captureAnalysisSourceDisclosure();
-    const sources = selectAll ? await loadAllWorldbooksForSelection() : analysisSourcesState.sources;
-    if (!sources) return;
-    const selected = selectAll ? selectAllSources(sources) : selectNoneSources();
-    analysisSourcesState = syncAnalysisSourcesState({selected, notice: null});
-    render();
-    await persistAnalysisSettings({selected, renderAfterSave: false});
+    captureAnalysisSourceDisclosure()
+    const sources = selectAll ? await loadAllWorldbooksForSelection() : analysisSourcesState.sources
+    if (!sources) return
+    const selected = selectAll ? selectAllSources(sources) : selectNoneSources()
+    analysisSourcesState = syncAnalysisSourcesState({ selected, notice: null })
+    render()
+    await persistAnalysisSettings({ selected, renderAfterSave: false })
   }
-
   function updateRecentStoryState(target) {
-    const current = normalizeRecentStorySettings(analysisSourcesState.recentStory);
-    const next = target?.dataset?.bioweaveRecentStoryUserRegex !== undefined
-      ? normalizeRecentStorySettings({...current, regex_user_enabled: Boolean(target.checked)})
-      : normalizeRecentStorySettings({...current, floor_count: target?.value});
-    analysisSourcesState = {...analysisSourcesState, recentStory: next, notice: null};
-    return next;
+    const current = normalizeRecentStorySettings(analysisSourcesState.recentStory)
+    const next =
+      target?.dataset?.bioweaveRecentStoryUserRegex !== undefined
+        ? normalizeRecentStorySettings({ ...current, regex_user_enabled: Boolean(target.checked) })
+        : normalizeRecentStorySettings({ ...current, floor_count: target?.value })
+    analysisSourcesState = { ...analysisSourcesState, recentStory: next, notice: null }
+    return next
   }
-
   function readRecentStoryRegexSettings(scope = 'character') {
-    const isGlobal = scope === 'global';
-    const current = isGlobal
-      ? normalizeRecentStorySettings(globalRecentStory)
-      : normalizeRecentStorySettings(analysisSourcesState.recentStory);
-    const rows = [...(root?.querySelectorAll?.('[data-bioweave-recent-story-regex-row], [data-bioweave-recent-story-global-regex-row]') ?? [])]
-      .filter(row => String(row.dataset?.bioweaveRecentStoryRegexScope ?? '').trim() === scope);
-    if (!rows.length) return isGlobal ? {regex_rules: current.regex_rules} : current;
+    const isGlobal = scope === 'global'
+    const current = isGlobal ? normalizeRecentStorySettings(globalRecentStory) : normalizeRecentStorySettings(analysisSourcesState.recentStory)
+    const rows = [
+      ...(root?.querySelectorAll?.('[data-bioweave-recent-story-regex-row], [data-bioweave-recent-story-global-regex-row]') ?? []),
+    ].filter(row => String(row.dataset?.bioweaveRecentStoryRegexScope ?? '').trim() === scope)
+    if (!rows.length) return isGlobal ? { regex_rules: current.regex_rules } : current
     const regexRules = rows.map(row => ({
       pattern: row.querySelector?.('[data-bioweave-recent-story-regex-pattern]')?.value ?? '',
       type: row.querySelector?.('[data-bioweave-recent-story-regex-type]')?.value ?? 'extract',
       enabled: row.querySelector?.('[data-bioweave-recent-story-regex-enabled]')?.checked !== false,
-    }));
+    }))
     return isGlobal
-      ? {regex_rules: normalizeRecentStorySettings({regex_rules: regexRules}).regex_rules}
-      : normalizeRecentStorySettings({...current, regex_rules: regexRules});
+      ? { regex_rules: normalizeRecentStorySettings({ regex_rules: regexRules }).regex_rules }
+      : normalizeRecentStorySettings({ ...current, regex_rules: regexRules })
   }
-
   function updateRecentStoryRegexState(scope = 'character') {
-    const recentStory = readRecentStoryRegexSettings(scope);
+    const recentStory = readRecentStoryRegexSettings(scope)
     if (scope === 'global') {
-      globalRecentStory = recentStory;
-      globalRecentStoryLoaded = true;
-      return recentStory;
+      globalRecentStory = recentStory
+      globalRecentStoryLoaded = true
+      return recentStory
     }
-    analysisSourcesState = {...analysisSourcesState, recentStory, notice: null};
-    return recentStory;
+    analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    return recentStory
   }
-
   async function persistRecentStorySettings(target) {
-    clearPendingRecentStorySaves();
-    const recentStory = updateRecentStoryState(target);
-    render();
-    await persistAnalysisSettings({recentStory});
+    clearPendingRecentStorySaves()
+    const recentStory = updateRecentStoryState(target)
+    render()
+    await persistAnalysisSettings({ recentStory })
   }
-
   async function persistRecentStoryRegexSettings(scope = 'character') {
-    clearPendingRecentStorySaves();
-    const recentStory = updateRecentStoryRegexState(scope);
+    clearPendingRecentStorySaves()
+    const recentStory = updateRecentStoryRegexState(scope)
     if (scope === 'global') {
-      await persistRecentStoryGlobalSettings(recentStory);
-      return;
+      await persistRecentStoryGlobalSettings(recentStory)
+      return
     }
-    render();
-    await persistAnalysisSettings({recentStory});
+    render()
+    await persistAnalysisSettings({ recentStory })
   }
-
   async function addRecentStoryRegexRule(scope = 'character') {
-    const current = readRecentStoryRegexSettings(scope);
+    const current = readRecentStoryRegexSettings(scope)
     if (current.regex_rules.length >= 50) {
-      if (scope === 'global') settingsState = {...settingsState, notice: null};
-      else analysisSourcesState = {...analysisSourcesState, notice: null};
-      notify(scope === 'global' ? '最多保存 50 条全局正则。' : '最多保存 50 条最近剧情规则。', 'warning', documentRef);
-      render();
-      return;
+      if (scope === 'global') settingsState = { ...settingsState, notice: null }
+      else analysisSourcesState = { ...analysisSourcesState, notice: null }
+      notify(scope === 'global' ? '最多保存 50 条全局正则。' : '最多保存 50 条最近剧情规则。', 'warning', documentRef)
+      render()
+      return
     }
     const next = normalizeRecentStorySettings({
       ...current,
-      regex_rules: [...current.regex_rules, {pattern: '', type: 'extract', enabled: true}],
-    });
-    const recentStory = scope === 'global' ? {regex_rules: next.regex_rules} : next;
+      regex_rules: [...current.regex_rules, { pattern: '', type: 'extract', enabled: true }],
+    })
+    const recentStory = scope === 'global' ? { regex_rules: next.regex_rules } : next
     if (scope === 'global') {
-      globalRecentStory = recentStory;
-      globalRecentStoryLoaded = true;
-      analysisSourcesState = {...analysisSourcesState, notice: null};
+      globalRecentStory = recentStory
+      globalRecentStoryLoaded = true
+      analysisSourcesState = { ...analysisSourcesState, notice: null }
     } else {
-      analysisSourcesState = {...analysisSourcesState, recentStory, notice: null};
+      analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
     }
-    render();
-    if (scope === 'global') await persistRecentStoryGlobalSettings(recentStory);
-    else await persistAnalysisSettings({recentStory});
+    render()
+    if (scope === 'global') await persistRecentStoryGlobalSettings(recentStory)
+    else await persistAnalysisSettings({ recentStory })
   }
-
   async function moveRecentStoryRegexRule(target, direction, scope = null) {
-    const resolvedScope = scope ?? (String(target?.dataset?.bioweaveRecentStoryRegexScope ?? 'character').trim() === 'global'
-      ? 'global'
-      : 'character');
-    const index = Number(target?.dataset?.bioweaveRecentStoryRegexIndex);
-    if (!Number.isInteger(index)) return;
-    const current = readRecentStoryRegexSettings(resolvedScope);
-    const nextIndex = index + direction;
-    if (index < 0 || index >= current.regex_rules.length || nextIndex < 0 || nextIndex >= current.regex_rules.length) return;
-    const regexRules = [...current.regex_rules];
-    [regexRules[index], regexRules[nextIndex]] = [regexRules[nextIndex], regexRules[index]];
-    const normalized = normalizeRecentStorySettings({...current, regex_rules: regexRules});
-    const recentStory = resolvedScope === 'global' ? {regex_rules: normalized.regex_rules} : normalized;
-    if (resolvedScope === 'global') globalRecentStory = recentStory;
-    else analysisSourcesState = {...analysisSourcesState, recentStory, notice: null};
-    render();
-    if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory);
-    else await persistAnalysisSettings({recentStory});
+    const resolvedScope =
+      scope ?? (String(target?.dataset?.bioweaveRecentStoryRegexScope ?? 'character').trim() === 'global' ? 'global' : 'character')
+    const index = Number(target?.dataset?.bioweaveRecentStoryRegexIndex)
+    if (!Number.isInteger(index)) return
+    const current = readRecentStoryRegexSettings(resolvedScope)
+    const nextIndex = index + direction
+    if (index < 0 || index >= current.regex_rules.length || nextIndex < 0 || nextIndex >= current.regex_rules.length) return
+    const regexRules = [...current.regex_rules]
+    ;[regexRules[index], regexRules[nextIndex]] = [regexRules[nextIndex], regexRules[index]]
+    const normalized = normalizeRecentStorySettings({ ...current, regex_rules: regexRules })
+    const recentStory = resolvedScope === 'global' ? { regex_rules: normalized.regex_rules } : normalized
+    if (resolvedScope === 'global') globalRecentStory = recentStory
+    else analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    render()
+    if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory)
+    else await persistAnalysisSettings({ recentStory })
   }
-
   async function removeRecentStoryRegexRule(target, scope = null) {
-    const resolvedScope = scope ?? (String(target?.dataset?.bioweaveRecentStoryRegexScope ?? 'character').trim() === 'global'
-      ? 'global'
-      : 'character');
-    const index = Number(target?.dataset?.bioweaveRecentStoryRegexIndex);
-    if (!Number.isInteger(index)) return;
-    const current = readRecentStoryRegexSettings(resolvedScope);
-    if (index < 0 || index >= current.regex_rules.length) return;
+    const resolvedScope =
+      scope ?? (String(target?.dataset?.bioweaveRecentStoryRegexScope ?? 'character').trim() === 'global' ? 'global' : 'character')
+    const index = Number(target?.dataset?.bioweaveRecentStoryRegexIndex)
+    if (!Number.isInteger(index)) return
+    const current = readRecentStoryRegexSettings(resolvedScope)
+    if (index < 0 || index >= current.regex_rules.length) return
     const normalized = normalizeRecentStorySettings({
       ...current,
       regex_rules: current.regex_rules.filter((_, itemIndex) => itemIndex !== index),
-    });
-    const recentStory = resolvedScope === 'global' ? {regex_rules: normalized.regex_rules} : normalized;
-    if (resolvedScope === 'global') globalRecentStory = recentStory;
-    else analysisSourcesState = {...analysisSourcesState, recentStory, notice: null};
-    render();
-    if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory);
-    else await persistAnalysisSettings({recentStory});
+    })
+    const recentStory = resolvedScope === 'global' ? { regex_rules: normalized.regex_rules } : normalized
+    if (resolvedScope === 'global') globalRecentStory = recentStory
+    else analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    render()
+    if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory)
+    else await persistAnalysisSettings({ recentStory })
   }
-
   async function toggleExternalMemory(target) {
-    const key = String(target?.dataset?.bioweaveExternalMemory ?? '').trim();
-    if (!key || target.disabled) return;
+    const key = String(target?.dataset?.bioweaveExternalMemory ?? '').trim()
+    if (!key || target.disabled) return
     const externalMemory = normalizeExternalMemorySettings({
       ...analysisSourcesState.externalMemory,
       [key]: Boolean(target.checked),
-    });
-    analysisSourcesState = {...analysisSourcesState, externalMemory, notice: null};
-    render();
-    await persistAnalysisSettings({externalMemory});
+    })
+    analysisSourcesState = { ...analysisSourcesState, externalMemory, notice: null }
+    render()
+    await persistAnalysisSettings({ externalMemory })
   }
-
   function setTheme(value) {
-    const nextTheme = THEME_VALUES.has(value) ? value : 'tavern';
-    writeTheme(storageRef, nextTheme);
-    if (!root) return nextTheme;
-
-    root.dataset.theme = nextTheme;
-    const button = root.querySelector('[data-bioweave-theme-button]');
+    const nextTheme = THEME_VALUES.has(value) ? value : 'tavern'
+    writeTheme(storageRef, nextTheme)
+    if (!root) return nextTheme
+    root.dataset.theme = nextTheme
+    const button = root.querySelector('[data-bioweave-theme-button]')
     if (button) {
-      const icon = button.querySelector('[data-bioweave-theme-icon]');
-      if (icon) icon.className = themeIcon(nextTheme);
-      button.setAttribute('title', '主题：' + themeLabel(nextTheme) + '（点击切换）');
-      button.setAttribute('aria-label', '主题：' + themeLabel(nextTheme) + '，点击切换');
+      const icon = button.querySelector('[data-bioweave-theme-icon]')
+      if (icon) icon.className = themeIcon(nextTheme)
+      button.setAttribute('title', '主题：' + themeLabel(nextTheme) + '（点击切换）')
+      button.setAttribute('aria-label', '主题：' + themeLabel(nextTheme) + '，点击切换')
     }
-    return nextTheme;
+    return nextTheme
   }
-
   function cycleTheme() {
-    const values = ['tavern', 'light', 'dark'];
-    const current = root?.dataset?.theme ?? readTheme(storageRef);
-    const index = values.indexOf(current);
-    return setTheme(values[(index + 1) % values.length]);
+    const values = ['tavern', 'light', 'dark']
+    const current = root?.dataset?.theme ?? readTheme(storageRef)
+    const index = values.indexOf(current)
+    return setTheme(values[(index + 1) % values.length])
   }
-
   function currentChatLabel() {
     try {
-      return runtime.chat.current() ?? '当前 Chat';
+      return runtime.chat.current() ?? '当前 Chat'
     } catch {
-      return '当前 Chat';
+      return '当前 Chat'
     }
   }
-
-  async function refreshBusinessState({reason = 'ui-read', force = false} = {}) {
-    if (businessState.loading && !force) return;
-    const requestId = ++businessRefreshSequence;
-    const chatId = runtime.chat.current();
-    businessState = {...businessState, loading: true, chatId, error: null};
+  async function refreshBusinessState({ reason = 'ui-read', force = false } = {}) {
+    if (businessState.loading && !force) return
+    const requestId = ++businessRefreshSequence
+    const chatId = runtime.chat.current()
+    businessState = { ...businessState, loading: true, chatId, error: null }
     try {
       if (typeof runtime.collectActiveBusinessData !== 'function') {
-        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE');
+        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
-      const collected = await runtime.collectActiveBusinessData({reason});
-      if (requestId !== businessRefreshSequence) return;
+      const collected = await runtime.collectActiveBusinessData({ reason })
+      if (requestId !== businessRefreshSequence) return
       businessState = {
         loaded: true,
         loading: false,
@@ -2057,30 +1886,32 @@ export function createApp(runtime, options = {}) {
         lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
         analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
         error: null,
-      };
-      if (root?.dataset.open === 'true') render();
+      }
+      if (root?.dataset.open === 'true') render()
     } catch (error) {
-      if (requestId !== businessRefreshSequence) return;
+      if (requestId !== businessRefreshSequence) return
       businessState = {
         ...businessState,
         loaded: true,
         loading: false,
         chatId,
         error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
-      };
-      if (root?.dataset.open === 'true') render();
+      }
+      if (root?.dataset.open === 'true') render()
     }
   }
-
   function activeEventById(eventId) {
-    return businessState.activeEvents.find(event => String(event?.event_id) === String(eventId)) ?? null;
+    return businessState.activeEvents.find(event => String(event?.event_id) === String(eventId)) ?? null
   }
-
   function eventAnalysisError(error) {
-    const code = String(error?.error_code
-      ?? (error?.code === 'EVENT_ANALYSIS_INVALID' && error?.message && error.message !== error.code
-        ? error.message
-        : error?.code ?? error?.message ?? ''));
+    const transportMessage = sharedTransportErrorMessage(error)
+    if (transportMessage) return `事件分析失败（${transportMessage}），上一份有效事件已保留。`
+    const code = String(
+      error?.error_code ??
+        (error?.code === 'EVENT_ANALYSIS_INVALID' && error?.message && error.message !== error.code
+          ? error.message
+          : (error?.code ?? error?.message ?? '')),
+    )
     const messages = {
       API_PROFILE_NOT_CONFIGURED: '事件分析尚未配置 API，请在设置的任务分配中选择可用配置。',
       EVENT_ANALYSIS_INVALID: 'AI 返回的事件结果无法通过固定 JSON 校验，上一份有效事件已保留。',
@@ -2099,40 +1930,36 @@ export function createApp(runtime, options = {}) {
       MESSAGE_NOT_FOUND: '产生事件的楼层已不存在，当前事件未保存。',
       EVENT_NOT_FOUND: '当前有效事件已不存在，请刷新页面。',
       EVENT_ANALYSIS_RUNTIME_UNAVAILABLE: 'Event Analysis Runtime 当前不可用。',
-    };
-    const matched = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`));
-    if (messages[matched]) return messages[matched];
-    const stage = String(error?.analysis_stage ?? '').trim();
-    const safeSummary = String(error?.safe_error_summary ?? '').trim();
-    if (stage || safeSummary) {
-      return `事件分析失败（${stage || 'analysis'} / ${safeSummary || code || 'EVENT_ANALYSIS_FAILED'}），上一份有效事件已保留。`;
     }
-    return '事件分析或保存失败，上一份有效事件已保留。';
+    const matched = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`))
+    if (messages[matched]) return messages[matched]
+    const stage = String(error?.analysis_stage ?? '').trim()
+    const safeSummary = String(error?.safe_error_summary ?? '').trim()
+    if (stage || safeSummary) {
+      return `事件分析失败（${stage || 'analysis'} / ${safeSummary || code || 'EVENT_ANALYSIS_FAILED'}），上一份有效事件已保留。`
+    }
+    return '事件分析或保存失败，上一份有效事件已保留。'
   }
-
-
   function eventFormField(form, field) {
-    return form?.querySelector?.(`[data-bioweave-event-field="${field}"]`);
+    return form?.querySelector?.(`[data-bioweave-event-field="${field}"]`)
   }
-
   function parseEventFormValue(form, field, fallback) {
-    const node = eventFormField(form, field);
-    if (!node) return fallback;
+    const node = eventFormField(form, field)
+    if (!node) return fallback
     if (field === 'story_time' || field === 'participants' || field === 'pregnancy_relevance' || field === 'source_evidence') {
       try {
-        return JSON.parse(String(node.value ?? ''));
+        return JSON.parse(String(node.value ?? ''))
       } catch {
-        throw new Error(`EVENT_EDIT_${field.toUpperCase()}_INVALID`);
+        throw new Error(`EVENT_EDIT_${field.toUpperCase()}_INVALID`)
       }
     }
-    return node.value;
+    return node.value
   }
-
   async function saveEventEdit() {
-    const form = root?.querySelector?.('[data-bioweave-event-form]');
-    const eventId = String(form?.dataset?.bioweaveEventId ?? eventEditingId ?? '').trim();
-    const currentEvent = activeEventById(eventId);
-    if (!currentEvent) throw new Error('EVENT_NOT_FOUND');
+    const form = root?.querySelector?.('[data-bioweave-event-form]')
+    const eventId = String(form?.dataset?.bioweaveEventId ?? eventEditingId ?? '').trim()
+    const currentEvent = activeEventById(eventId)
+    if (!currentEvent) throw new Error('EVENT_NOT_FOUND')
     const rawNextEvent = {
       ...currentEvent,
       type: parseEventFormValue(form, 'type', currentEvent.type),
@@ -2143,78 +1970,71 @@ export function createApp(runtime, options = {}) {
       pregnancy_relevance: parseEventFormValue(form, 'pregnancy_relevance', currentEvent.pregnancy_relevance),
       source_evidence: parseEventFormValue(form, 'source_evidence', currentEvent.source_evidence),
       source: currentEvent.source,
-    };
-    if (typeof runtime.updateEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE');
-    await runtime.updateEvent(eventId, rawNextEvent);
-    eventEditingId = null;
-    notify('Event 已更新。', 'success', documentRef);
-    await refreshBusinessState({reason: 'event-edit'});
+    }
+    if (typeof runtime.updateEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
+    await runtime.updateEvent(eventId, rawNextEvent)
+    eventEditingId = null
+    notify('Event 已更新。', 'success', documentRef)
+    await refreshBusinessState({ reason: 'event-edit' })
   }
-
   async function deleteEvent(eventId) {
-    const currentEvent = activeEventById(eventId);
-    if (!currentEvent) throw new Error('EVENT_NOT_FOUND');
-    if (!await confirmWithPopup('删除 BiologicalEvent', `确定删除 Event ${eventId} 吗？删除后该事实不再参与当前追踪。`)) return;
-    if (typeof runtime.deleteEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE');
-    await runtime.deleteEvent(eventId);
-    if (eventEditingId === eventId) eventEditingId = null;
-    notify('Event 已删除。', 'success', documentRef);
-    await refreshBusinessState({reason: 'event-delete'});
+    const currentEvent = activeEventById(eventId)
+    if (!currentEvent) throw new Error('EVENT_NOT_FOUND')
+    if (!(await confirmWithPopup('删除 BiologicalEvent', `确定删除 Event ${eventId} 吗？删除后该事实不再参与当前追踪。`))) return
+    if (typeof runtime.deleteEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
+    await runtime.deleteEvent(eventId)
+    if (eventEditingId === eventId) eventEditingId = null
+    notify('Event 已删除。', 'success', documentRef)
+    await refreshBusinessState({ reason: 'event-delete' })
   }
-
   async function manualRefreshEventAnalysis() {
     if (typeof runtime.refreshCurrentFloorAnalysis !== 'function') {
-      throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE');
+      throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
     }
-    render();
+    render()
     try {
-      const result = await runtime.refreshCurrentFloorAnalysis();
-      notify('当前楼层事件分析成功并已保存。', 'success', documentRef);
-      return result;
+      const result = await runtime.refreshCurrentFloorAnalysis()
+      notify('当前楼层事件分析成功并已保存。', 'success', documentRef)
+      return result
     } finally {
-      await refreshBusinessState({reason: 'manual-analysis', force: true});
+      await refreshBusinessState({ reason: 'manual-analysis', force: true })
     }
   }
-
   async function requestAbortEventAnalysis() {
-    if (eventAnalysisAbortConfirmOpen) return false;
-    eventAnalysisAbortConfirmOpen = true;
-    const getStatus = runtime.getCurrentFloorAnalysisStatus;
+    if (eventAnalysisAbortConfirmOpen) return false
+    eventAnalysisAbortConfirmOpen = true
+    const getStatus = runtime.getCurrentFloorAnalysisStatus
     try {
-      let status = businessState.analysisStatus;
+      let status = businessState.analysisStatus
       if (typeof getStatus === 'function') {
         try {
-          status = await getStatus();
+          status = await getStatus()
         } catch {
           // The Runtime subscriber will publish the terminal status; keep the
           // last rendered DTO for this confirmation decision.
         }
       }
-      if (!status?.busy && status?.state !== 'running') return false;
+      if (!status?.busy && status?.state !== 'running') return false
       if (typeof runtime.requestAbortCurrentFloorAnalysis !== 'function') {
-        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE');
+        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
-      const confirmed = await confirmWithPopup(
-        '终止事件分析',
-        '当前事件分析仍在进行，是否终止本次分析？',
-      );
-      if (!confirmed) return false;
-      return await runtime.requestAbortCurrentFloorAnalysis();
+      const confirmed = await confirmWithPopup('终止事件分析', '当前事件分析仍在进行，是否终止本次分析？')
+      if (!confirmed) return false
+      return await runtime.requestAbortCurrentFloorAnalysis()
     } finally {
-      eventAnalysisAbortConfirmOpen = false;
+      eventAnalysisAbortConfirmOpen = false
     }
   }
-
   function render() {
-    if (!root || !isConnectedToDocument(root, documentRef)) return;
-    if (route === 'settings') captureAnalysisSourceDisclosure();
-    const page = pages[route] ?? pages.overview;
-    if (!pages[route]) route = 'overview';
-    if (route === 'settings') ensureAnalysisSourcesChat();
-    if (route === 'world') loadWorldModelState();
-    const main = root.querySelector('.bioweave-main');
-    if (!main) return;
-    const scrollPositions = captureScrollPositions(root);
+    if (!root || !isConnectedToDocument(root, documentRef)) return
+    if (route === 'settings') captureAnalysisSourceDisclosure()
+    const page = pages[route] ?? pages.overview
+    if (!pages[route]) route = 'overview'
+    if (route === 'settings') ensureAnalysisSourcesChat()
+    if (route === 'world') loadWorldModelState()
+    const main = root.querySelector('.bioweave-main')
+    if (!main) return
+    const scrollPositions = captureScrollPositions(root)
     main.innerHTML = page[2]({
       characterId: focusedCharacterId,
       trackingSubjects: businessState.trackingSubjects,
@@ -2226,69 +2046,72 @@ export function createApp(runtime, options = {}) {
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
-      ...(route === 'settings' ? {
-        worldbookSources: {
-          ...analysisSourcesState,
-          globalRecentStory,
-          visibleSources: searchAnalysisSources(analysisSourcesState.sources, analysisSourcesState.search),
-          selected: analysisSourcesState.selected,
-        },
-      } : {}),
-      ...(route === 'world' ? {
-        worldModel: worldModelState.model,
-        worldModelMeta: worldModelState.meta,
-        worldModelBusy: worldModelState.busy,
-        selectedSpeciesIndex: worldModelState.selectedSpeciesIndex,
-        selectedTypeIndex: worldModelState.selectedTypeIndex,
-        editingSection: worldModelState.editingSection,
-        sectionDraft: worldModelState.sectionDraft,
-        worldModelNotice: worldModelState.notice,
-      } : {}),
-    });
-    restoreScrollPositions(root, scrollPositions);
-    syncWorldModelCapabilityInputs(root);
+      ...(route === 'settings'
+        ? {
+            worldbookSources: {
+              ...analysisSourcesState,
+              globalRecentStory,
+              visibleSources: searchAnalysisSources(analysisSourcesState.sources, analysisSourcesState.search),
+              selected: analysisSourcesState.selected,
+            },
+          }
+        : {}),
+      ...(route === 'world'
+        ? {
+            worldModel: worldModelState.model,
+            worldModelMeta: worldModelState.meta,
+            worldModelBusy: worldModelState.busy,
+            selectedSpeciesIndex: worldModelState.selectedSpeciesIndex,
+            selectedTypeIndex: worldModelState.selectedTypeIndex,
+            editingSection: worldModelState.editingSection,
+            sectionDraft: worldModelState.sectionDraft,
+            worldModelNotice: worldModelState.notice,
+          }
+        : {}),
+    })
+    restoreScrollPositions(root, scrollPositions)
+    syncWorldModelCapabilityInputs(root)
     root.querySelectorAll('.bioweave-chat-scope').forEach(node => {
-      node.textContent = currentChatLabel();
-    });
+      node.textContent = currentChatLabel()
+    })
     root.querySelectorAll('[data-route]').forEach(button => {
-      const active = button.dataset.route === route && !focusedCharacterId;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-current', active ? 'page' : 'false');
-    });
-    syncAnalysisWorldbookToggles();
-    syncAnalysisCharacterOpeningToggles();
-    syncAnalysisSectionToggles();
-    const currentChatId = runtime.chat.current();
+      const active = button.dataset.route === route && !focusedCharacterId
+      button.classList.toggle('active', active)
+      button.setAttribute('aria-current', active ? 'page' : 'false')
+    })
+    syncAnalysisWorldbookToggles()
+    syncAnalysisCharacterOpeningToggles()
+    syncAnalysisSectionToggles()
+    const currentChatId = runtime.chat.current()
     if (!businessState.loaded && !businessState.loading) {
-      void refreshBusinessState({reason: 'ui-read'});
+      void refreshBusinessState({ reason: 'ui-read' })
     } else if (businessState.chatId !== currentChatId && !businessState.loading) {
-      void refreshBusinessState({reason: 'chat-read'});
+      void refreshBusinessState({ reason: 'chat-read' })
     }
-    if (route === 'settings' && !settingsState.loaded && !settingsState.loading) void loadSettings();
-    if (route === 'settings' && !analysisSourcesState.loaded && !analysisSourcesState.loading) void loadAnalysisSourcesState();
+    if (route === 'settings' && !settingsState.loaded && !settingsState.loading) void loadSettings()
+    if (route === 'settings' && !analysisSourcesState.loaded && !analysisSourcesState.loading) void loadAnalysisSourcesState()
   }
-
   function go(nextRoute) {
-    if (!pages[nextRoute]) return false;
-    if (nextRoute === 'settings' && route !== 'settings') refreshAnalysisChatSettings();
-    captureAnalysisSourceDisclosure();
-    route = nextRoute;
-    focusedCharacterId = null;
-    if (nextRoute !== 'events') setEventFilter();
-    render();
-    return true;
+    if (!pages[nextRoute]) return false
+    if (nextRoute === 'settings' && route !== 'settings') refreshAnalysisChatSettings()
+    captureAnalysisSourceDisclosure()
+    route = nextRoute
+    focusedCharacterId = null
+    if (nextRoute !== 'events') setEventFilter()
+    render()
+    return true
   }
-
   function openCharacter(characterId) {
-    const nextId = String(characterId ?? '').trim();
-    if (!nextId) return;
-    route = 'characters';
-    focusedCharacterId = nextId;
-    render();
+    const nextId = String(characterId ?? '').trim()
+    if (!nextId) return
+    route = 'characters'
+    focusedCharacterId = nextId
+    render()
   }
-
   function settingsOperationError(error) {
-    const errorCode = String(error?.code ?? error?.message ?? '');
+    const transportMessage = sharedTransportErrorMessage(error)
+    if (transportMessage) return transportMessage
+    const errorCode = String(error?.code ?? error?.message ?? '')
     const messages = {
       ST_EXTENSION_SETTINGS_UNAVAILABLE: '全局设置不可用，请确认 SillyTavern extensionSettings 已加载。',
       ST_SECRET_STORAGE_UNAVAILABLE: 'Secret Store 不可用，API Key 未保存。',
@@ -2314,16 +2137,14 @@ export function createApp(runtime, options = {}) {
       API_MODELS_FETCH_FAILED: '模型列表请求失败，请检查地址和权限。',
       REQUEST_TIMEOUT: '模型列表请求超时，请检查地址或延长超时设置。',
       REQUEST_ABORTED: '模型列表请求已取消。',
-    };
-    const matchedCode = Object.keys(messages).find(code => errorCode === code || errorCode.startsWith(`${code}_`));
-    return messages[matchedCode] ?? '设置操作失败，请检查 SillyTavern 状态后重试。';
+    }
+    const matchedCode = Object.keys(messages).find(code => errorCode === code || errorCode.startsWith(`${code}_`))
+    return messages[matchedCode] ?? '设置操作失败，请检查 SillyTavern 状态后重试。'
   }
-
   function profileDraftKey(profileId) {
-    const id = String(profileId ?? '').trim();
-    return id || '__new__';
+    const id = String(profileId ?? '').trim()
+    return id || '__new__'
   }
-
   function profileDraftFrom(profile) {
     return {
       profile_id: profile?.profile_id ?? '',
@@ -2336,37 +2157,30 @@ export function createApp(runtime, options = {}) {
       temperature: profile?.temperature ?? DEFAULT_API_PROFILE.temperature,
       api_key: '',
       clear_secret: false,
-    };
+    }
   }
-
   function currentDraft(profile) {
-    const key = profileDraftKey(profile?.profile_id);
-    return settingsState.drafts?.[key] ?? profileDraftFrom(profile);
+    const key = profileDraftKey(profile?.profile_id)
+    return settingsState.drafts?.[key] ?? profileDraftFrom(profile)
   }
-
   function latestDraftFor(key, fallback) {
-    const draft = settingsState.drafts?.[key];
-    return draft && typeof draft === 'object' ? draft : fallback;
+    const draft = settingsState.drafts?.[key]
+    return draft && typeof draft === 'object' ? draft : fallback
   }
-
   function resetModelPickerState() {
-    modelRefreshSequence += 1;
+    modelRefreshSequence += 1
     return {
       modelList: [],
       modelListProfileKey: null,
       modelSearch: '',
       modelRefreshBusy: false,
-    };
+    }
   }
-
   function formField(form, name) {
-    return form?.elements?.namedItem?.(name)
-      ?? form?.querySelector?.(`[name="${name}"]`)
-      ?? null;
+    return form?.elements?.namedItem?.(name) ?? form?.querySelector?.(`[name="${name}"]`) ?? null
   }
-
   function readSettingsForm(form) {
-    const value = name => formField(form, name)?.value ?? '';
+    const value = name => formField(form, name)?.value ?? ''
     return {
       profile_id: value('profile_id'),
       name: value('name'),
@@ -2375,72 +2189,68 @@ export function createApp(runtime, options = {}) {
       model: value('model'),
       api_key: value('api_key'),
       clear_secret: Boolean(formField(form, 'clear_secret')?.checked),
-    };
+    }
   }
-
   function captureSettingsDraft(form = root?.querySelector?.('[data-bioweave-settings-form]')) {
-    if (!form) return null;
-    const draft = readSettingsForm(form);
-    const key = profileDraftKey(draft.profile_id || settingsState.editingProfile?.profile_id);
+    if (!form) return null
+    const draft = readSettingsForm(form)
+    const key = profileDraftKey(draft.profile_id || settingsState.editingProfile?.profile_id)
     settingsState = {
       ...settingsState,
       editingDraft: draft,
-      drafts: {...settingsState.drafts, [key]: draft},
-    };
-    return draft;
+      drafts: { ...settingsState.drafts, [key]: draft },
+    }
+    return draft
   }
-
   function readApiRequestSettingsForm() {
-    const timeoutField = root?.querySelector?.('[data-bioweave-api-timeout]');
-    const retryField = root?.querySelector?.('[data-bioweave-api-retry-count]');
-    const timeoutSeconds = String(timeoutField?.value ?? '').trim();
-    const retryCount = String(retryField?.value ?? '').trim();
+    const timeoutField = root?.querySelector?.('[data-bioweave-api-timeout]')
+    const retryField = root?.querySelector?.('[data-bioweave-api-retry-count]')
+    const timeoutSeconds = String(timeoutField?.value ?? '').trim()
+    const retryCount = String(retryField?.value ?? '').trim()
     return normalizeApiRequestSettings({
       timeout: timeoutSeconds === '' ? undefined : Number(timeoutSeconds) * 1000,
       retry_count: retryCount === '' ? undefined : Number(retryCount),
-    });
+    })
   }
-
   function captureApiRequestSettingsDraft() {
-    const hasFields = root?.querySelector?.('[data-bioweave-api-timeout], [data-bioweave-api-retry-count]');
-    if (!hasFields) return settingsState.apiRequestDraft ?? settingsState.apiRequestSettings;
-    const draft = readApiRequestSettingsForm();
-    settingsState = {...settingsState, apiRequestDraft: draft};
-    return draft;
+    const hasFields = root?.querySelector?.('[data-bioweave-api-timeout], [data-bioweave-api-retry-count]')
+    if (!hasFields) return settingsState.apiRequestDraft ?? settingsState.apiRequestSettings
+    const draft = readApiRequestSettingsForm()
+    settingsState = { ...settingsState, apiRequestDraft: draft }
+    return draft
   }
-
   async function saveApiRequestSettings() {
-    const draft = captureApiRequestSettingsDraft();
+    const draft = captureApiRequestSettingsDraft()
     if (typeof profileStore.saveApiRequestSettings !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存全局请求设置。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持保存全局请求设置。', 'error', documentRef)
+      render()
+      return
     }
-    settingsState = {...settingsState, notice: null};
+    settingsState = { ...settingsState, notice: null }
     try {
-      const saved = await profileStore.saveApiRequestSettings(draft);
+      const saved = await profileStore.saveApiRequestSettings(draft)
       settingsState = {
         ...settingsState,
         apiRequestSettings: normalizeApiRequestSettings(saved),
         apiRequestDraft: null,
         notice: null,
-      };
-      notify('请求设置已即时保存。', 'success', documentRef);
+      }
+      notify('请求设置已即时保存。', 'success', documentRef)
     } catch (error) {
       settingsState = {
         ...settingsState,
         apiRequestDraft: draft,
         notice: null,
-      };
-      notify(settingsOperationError(error), 'error', documentRef);
+      }
+      notify(settingsOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   function readAnalysisPromptForm() {
-    const field = key => root?.querySelector?.(`[data-bioweave-analysis-prompt-field="${key}"]`)
-      ?? root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`);
+    const field = key =>
+      root?.querySelector?.(`[data-bioweave-analysis-prompt-field="${key}"]`) ??
+      root?.querySelector?.(`[data-bioweave-world-analysis-prompt-field="${key}"]`)
     return normalizeAnalysisPrompt({
       system_top: field('system_top')?.value ?? settingsState.analysisPrompt?.system_top,
       task: field('task')?.value ?? settingsState.analysisPrompt?.task,
@@ -2449,62 +2259,59 @@ export function createApp(runtime, options = {}) {
       system_bottom: field('system_bottom')?.value ?? settingsState.analysisPrompt?.system_bottom,
       // 保留旧设置中的内部标签兼容性，但不再向用户展示或提供编辑入口。
       labels: settingsState.analysisPrompt?.labels,
-    });
+    })
   }
-
   function captureAnalysisPromptDraft() {
-    const hasForm = root?.querySelector?.('[data-bioweave-analysis-prompt-settings]')
-      ?? root?.querySelector?.('[data-bioweave-world-analysis-prompt-settings]');
-    if (!hasForm) return settingsState.analysisPromptDraft ?? settingsState.analysisPrompt;
-    const draft = readAnalysisPromptForm();
-    settingsState = {...settingsState, analysisPromptDraft: draft};
-    return draft;
+    const hasForm =
+      root?.querySelector?.('[data-bioweave-analysis-prompt-settings]') ?? root?.querySelector?.('[data-bioweave-world-analysis-prompt-settings]')
+    if (!hasForm) return settingsState.analysisPromptDraft ?? settingsState.analysisPrompt
+    const draft = readAnalysisPromptForm()
+    settingsState = { ...settingsState, analysisPromptDraft: draft }
+    return draft
   }
-
   async function saveAnalysisPrompt() {
-    const draft = captureAnalysisPromptDraft();
-    const savePrompt = profileStore.saveAnalysisPrompt ?? profileStore.saveWorldAnalysisPrompt;
+    const draft = captureAnalysisPromptDraft()
+    const savePrompt = profileStore.saveAnalysisPrompt ?? profileStore.saveWorldAnalysisPrompt
     if (typeof savePrompt !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存分析提示词。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持保存分析提示词。', 'error', documentRef)
+      render()
+      return
     }
-    settingsState = {...settingsState, busy: true, notice: null};
+    settingsState = { ...settingsState, busy: true, notice: null }
     try {
-      const saved = await savePrompt(draft);
+      const saved = await savePrompt(draft)
       settingsState = {
         ...settingsState,
         busy: false,
         analysisPrompt: normalizeAnalysisPrompt(saved),
         analysisPromptDraft: null,
         notice: null,
-      };
-      notify('分析提示词设置已保存。', 'success', documentRef);
+      }
+      notify('分析提示词设置已保存。', 'success', documentRef)
     } catch (error) {
       settingsState = {
         ...settingsState,
         busy: false,
         analysisPromptDraft: draft,
         notice: null,
-      };
-      notify(settingsOperationError(error), 'error', documentRef);
+      }
+      notify(settingsOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   function editProfile(profileId) {
-    captureSettingsDraft();
-    const id = String(profileId ?? '').trim();
-    const profile = profileStore.getProfile?.(id) ?? settingsState.profiles?.[id] ?? null;
+    captureSettingsDraft()
+    const id = String(profileId ?? '').trim()
+    const profile = profileStore.getProfile?.(id) ?? settingsState.profiles?.[id] ?? null
     if (!profile) {
-      settingsState = {...settingsState, notice: null};
-      notify('找不到该 API 配置。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('找不到该 API 配置。', 'error', documentRef)
+      render()
+      return
     }
-    route = 'settings';
-    focusedCharacterId = null;
+    route = 'settings'
+    focusedCharacterId = null
     settingsState = {
       ...settingsState,
       ...resetModelPickerState(),
@@ -2512,14 +2319,13 @@ export function createApp(runtime, options = {}) {
       editingDraft: currentDraft(profile),
       testResult: null,
       notice: null,
-    };
-    render();
+    }
+    render()
   }
-
   function startNewProfile() {
-    captureSettingsDraft();
-    route = 'settings';
-    focusedCharacterId = null;
+    captureSettingsDraft()
+    route = 'settings'
+    focusedCharacterId = null
     settingsState = {
       ...settingsState,
       ...resetModelPickerState(),
@@ -2527,13 +2333,12 @@ export function createApp(runtime, options = {}) {
       editingDraft: currentDraft(null),
       testResult: null,
       notice: null,
-    };
-    render();
+    }
+    render()
   }
-
   function cancelProfileEdit() {
-    const drafts = {...settingsState.drafts};
-    delete drafts[profileDraftKey(settingsState.editingProfile?.profile_id)];
+    const drafts = { ...settingsState.drafts }
+    delete drafts[profileDraftKey(settingsState.editingProfile?.profile_id)]
     settingsState = {
       ...settingsState,
       ...resetModelPickerState(),
@@ -2543,31 +2348,28 @@ export function createApp(runtime, options = {}) {
       testResult: null,
       notice: null,
       busy: false,
-    };
-    render();
-  }
-
-  async function saveSettingsForm() {
-    const form = root?.querySelector?.('[data-bioweave-settings-form]');
-    if (!form) return;
-    if (typeof profileStore.saveProfile !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存 API 配置。', 'error', documentRef);
-      render();
-      return;
     }
-    const raw = captureSettingsDraft(form);
-    const draftKey = profileDraftKey(raw.profile_id);
-    settingsState = {...settingsState, busy: true, notice: null};
+    render()
+  }
+  async function saveSettingsForm() {
+    const form = root?.querySelector?.('[data-bioweave-settings-form]')
+    if (!form) return
+    if (typeof profileStore.saveProfile !== 'function') {
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持保存 API 配置。', 'error', documentRef)
+      render()
+      return
+    }
+    const raw = captureSettingsDraft(form)
+    const draftKey = profileDraftKey(raw.profile_id)
+    settingsState = { ...settingsState, busy: true, notice: null }
     try {
-      const saved = await profileStore.saveProfile(raw);
-      updateSettingsState();
-      const savedDraft = profileDraftFrom(saved);
-      const drafts = {...settingsState.drafts, [saved.profile_id]: savedDraft};
-      delete drafts.__new__;
-      const modelPickerState = settingsState.modelListProfileKey === draftKey
-        ? {modelListProfileKey: saved.profile_id}
-        : {};
+      const saved = await profileStore.saveProfile(raw)
+      updateSettingsState()
+      const savedDraft = profileDraftFrom(saved)
+      const drafts = { ...settingsState.drafts, [saved.profile_id]: savedDraft }
+      delete drafts.__new__
+      const modelPickerState = settingsState.modelListProfileKey === draftKey ? { modelListProfileKey: saved.profile_id } : {}
       settingsState = {
         ...settingsState,
         ...modelPickerState,
@@ -2576,214 +2378,202 @@ export function createApp(runtime, options = {}) {
         drafts,
         testResult: null,
         notice: null,
-      };
-      notify('API 配置已保存；API 密钥仅保存在 Secret Store。', 'success', documentRef);
-      render();
+      }
+      notify('API 配置已保存；API 密钥仅保存在 Secret Store。', 'success', documentRef)
+      render()
     } catch (error) {
-      const latestDraft = latestDraftFor(draftKey, raw);
+      const latestDraft = latestDraftFor(draftKey, raw)
       settingsState = {
         ...settingsState,
         editingDraft: latestDraft,
-        drafts: {...settingsState.drafts, [draftKey]: latestDraft},
+        drafts: { ...settingsState.drafts, [draftKey]: latestDraft },
         notice: null,
-      };
-      notify(settingsOperationError(error), 'error', documentRef);
+      }
+      notify(settingsOperationError(error), 'error', documentRef)
     } finally {
-      settingsState = {...settingsState, busy: false};
-      render();
+      settingsState = { ...settingsState, busy: false }
+      render()
     }
   }
-
   async function testSettingsForm() {
-    const form = root?.querySelector?.('[data-bioweave-settings-form]');
-    if (!form) return;
-    const raw = captureSettingsDraft(form);
-    const draftKey = profileDraftKey(raw.profile_id);
-    const runTest = typeof apiClient === 'function' ? apiClient : apiClient.testProfile;
+    const form = root?.querySelector?.('[data-bioweave-settings-form]')
+    if (!form) return
+    const raw = captureSettingsDraft(form)
+    const draftKey = profileDraftKey(raw.profile_id)
+    const runTest = typeof apiClient === 'function' ? apiClient : apiClient.testProfile
     if (typeof runTest !== 'function') {
-      const errorMessage = '测试连接不可用，请确认 SillyTavern API 已加载。';
-      settingsState = {...settingsState, notice: null, testResult: {ok: false, error: errorMessage}};
-      notify(errorMessage, 'error', documentRef);
-      render();
-      return;
+      const errorMessage = '测试连接不可用，请确认 SillyTavern API 已加载。'
+      settingsState = { ...settingsState, notice: null, testResult: { ok: false, error: errorMessage } }
+      notify(errorMessage, 'error', documentRef)
+      render()
+      return
     }
-
-    settingsState = {...settingsState, busy: true, notice: null, testResult: null};
+    settingsState = { ...settingsState, busy: true, notice: null, testResult: null }
     try {
-      const context = runtime.st?.getContext?.() ?? hostContextForApp();
-      const requestSettings = settingsState.apiRequestDraft ?? settingsState.apiRequestSettings;
-      const result = typeof profileStore.withTestProfile === 'function'
-        ? await profileStore.withTestProfile(raw, profile => runTest(profile, {context, requestSettings}))
-        : await runTest(raw, {context, requestSettings});
+      const context = runtime.st?.getContext?.() ?? hostContextForApp()
+      const requestSettings = settingsState.apiRequestDraft ?? settingsState.apiRequestSettings
+      const result =
+        typeof profileStore.withTestProfile === 'function'
+          ? await profileStore.withTestProfile(raw, profile => runTest(profile, { context, requestSettings }))
+          : await runTest(raw, { context, requestSettings })
       settingsState = {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
-        drafts: {...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw)},
+        drafts: { ...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw) },
         testResult: result,
         notice: null,
-      };
+      }
     } catch (error) {
       settingsState = {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
-        drafts: {...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw)},
-        testResult: {ok: false, error: settingsOperationError(error)},
+        drafts: { ...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw) },
+        testResult: { ok: false, error: settingsOperationError(error) },
         notice: null,
-      };
-      notify(settingsOperationError(error), 'error', documentRef);
+      }
+      notify(settingsOperationError(error), 'error', documentRef)
     } finally {
-      settingsState = {...settingsState, busy: false};
-      render();
+      settingsState = { ...settingsState, busy: false }
+      render()
     }
   }
-
   function activeSettingsDraftKey() {
-    return profileDraftKey(settingsState.editingDraft?.profile_id || settingsState.editingProfile?.profile_id);
+    return profileDraftKey(settingsState.editingDraft?.profile_id || settingsState.editingProfile?.profile_id)
   }
-
   function applyModelSearch(query) {
-    if (!root) return;
-    const normalizedQuery = String(query ?? '').trim().toLocaleLowerCase();
-    const items = [...(root.querySelectorAll?.('[data-bioweave-model-item]') ?? [])];
-    let visibleCount = 0;
+    if (!root) return
+    const normalizedQuery = String(query ?? '')
+      .trim()
+      .toLocaleLowerCase()
+    const items = [...(root.querySelectorAll?.('[data-bioweave-model-item]') ?? [])]
+    let visibleCount = 0
     for (const item of items) {
-      const model = String(item.dataset?.modelValue ?? item.textContent ?? '').toLocaleLowerCase();
-      const visible = model.includes(normalizedQuery);
-      item.hidden = !visible;
-      item.setAttribute?.('aria-hidden', String(!visible));
-      if (visible) visibleCount += 1;
+      const model = String(item.dataset?.modelValue ?? item.textContent ?? '').toLocaleLowerCase()
+      const visible = model.includes(normalizedQuery)
+      item.hidden = !visible
+      item.setAttribute?.('aria-hidden', String(!visible))
+      if (visible) visibleCount += 1
     }
-    const empty = root.querySelector?.('[data-bioweave-model-empty]');
-    if (empty) empty.hidden = items.length > 0 && visibleCount > 0;
+    const empty = root.querySelector?.('[data-bioweave-model-empty]')
+    if (empty) empty.hidden = items.length > 0 && visibleCount > 0
   }
-
   function toggleModelPicker(target) {
-    const picker = target?.closest?.('[data-bioweave-model-picker]');
-    const dropdown = picker?.querySelector?.('[data-bioweave-model-dropdown]');
-    if (!picker || !dropdown) return false;
-    const open = dropdown.hidden;
-    dropdown.hidden = !open;
-    target.setAttribute?.('aria-expanded', String(open));
-    return true;
+    const picker = target?.closest?.('[data-bioweave-model-picker]')
+    const dropdown = picker?.querySelector?.('[data-bioweave-model-dropdown]')
+    if (!picker || !dropdown) return false
+    const open = dropdown.hidden
+    dropdown.hidden = !open
+    target.setAttribute?.('aria-expanded', String(open))
+    return true
   }
-
   function closeModelPickers(target = root) {
-    const pickers = target?.querySelectorAll?.('[data-bioweave-model-picker]') ?? [];
-    for (const picker of pickers) closeModelPicker(picker);
+    const pickers = target?.querySelectorAll?.('[data-bioweave-model-picker]') ?? []
+    for (const picker of pickers) closeModelPicker(picker)
   }
-
   function selectModel(target) {
-    const model = String(target?.dataset?.modelValue ?? '').trim();
-    if (!model) return;
-    const form = root?.querySelector?.('[data-bioweave-settings-form]');
-    const input = formField(form, 'model');
-    if (!input) return;
-    input.value = model;
-    captureSettingsDraft(form);
+    const model = String(target?.dataset?.modelValue ?? '').trim()
+    if (!model) return
+    const form = root?.querySelector?.('[data-bioweave-settings-form]')
+    const input = formField(form, 'model')
+    if (!input) return
+    input.value = model
+    captureSettingsDraft(form)
     root.querySelectorAll?.('[data-bioweave-model-item]').forEach(item => {
-      const selected = item.dataset?.modelValue === model;
-      item.classList?.toggle('is-selected', selected);
-      item.setAttribute?.('aria-selected', String(selected));
-      const marker = item.querySelector?.('small');
-      if (marker) marker.textContent = selected ? '当前选择' : '';
-    });
-    const picker = target.closest?.('[data-bioweave-model-picker]');
-    const triggerLabel = picker?.querySelector?.('[data-bioweave-model-trigger-label]');
-    if (triggerLabel) triggerLabel.textContent = model;
-    else picker?.querySelector?.('[data-bioweave-model-trigger]')?.replaceChildren?.(model);
-    closeModelPicker(target);
+      const selected = item.dataset?.modelValue === model
+      item.classList?.toggle('is-selected', selected)
+      item.setAttribute?.('aria-selected', String(selected))
+      const marker = item.querySelector?.('small')
+      if (marker) marker.textContent = selected ? '当前选择' : ''
+    })
+    const picker = target.closest?.('[data-bioweave-model-picker]')
+    const triggerLabel = picker?.querySelector?.('[data-bioweave-model-trigger-label]')
+    if (triggerLabel) triggerLabel.textContent = model
+    else picker?.querySelector?.('[data-bioweave-model-trigger]')?.replaceChildren?.(model)
+    closeModelPicker(target)
   }
-
   async function refreshModels() {
-    if (settingsState.modelRefreshBusy) return;
-    const form = root?.querySelector?.('[data-bioweave-settings-form]');
-    if (!form) return;
-    const raw = captureSettingsDraft(form);
-    const fetchModels = typeof apiClient === 'function' ? apiClient.fetchModels : apiClient?.fetchModels;
+    if (settingsState.modelRefreshBusy) return
+    const form = root?.querySelector?.('[data-bioweave-settings-form]')
+    if (!form) return
+    const raw = captureSettingsDraft(form)
+    const fetchModels = typeof apiClient === 'function' ? apiClient.fetchModels : apiClient?.fetchModels
     if (typeof fetchModels !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('模型列表接口不可用，请确认 AI Client 已加载。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('模型列表接口不可用，请确认 AI Client 已加载。', 'error', documentRef)
+      render()
+      return
     }
-
-    const draftKey = profileDraftKey(raw.profile_id || settingsState.editingProfile?.profile_id);
-    const requestId = ++modelRefreshSequence;
-    const existingModels = settingsState.modelListProfileKey === draftKey ? settingsState.modelList : [];
+    const draftKey = profileDraftKey(raw.profile_id || settingsState.editingProfile?.profile_id)
+    const requestId = ++modelRefreshSequence
+    const existingModels = settingsState.modelListProfileKey === draftKey ? settingsState.modelList : []
     settingsState = {
       ...settingsState,
       modelList: existingModels,
       modelListProfileKey: draftKey,
       modelRefreshBusy: true,
       notice: null,
-    };
-    render();
-
+    }
+    render()
     try {
-      const context = runtime.st?.getContext?.() ?? hostContextForApp();
-      if (typeof profileStore.withTestProfile !== 'function') throw new Error('ST_MODEL_FETCH_UNAVAILABLE');
+      const context = runtime.st?.getContext?.() ?? hostContextForApp()
+      if (typeof profileStore.withTestProfile !== 'function') throw new Error('ST_MODEL_FETCH_UNAVAILABLE')
       const models = await profileStore.withTestProfile(
         raw,
-        profile => fetchModels.call(apiClient, profile, {
-          context,
-          requestSettings: settingsState.apiRequestDraft ?? settingsState.apiRequestSettings,
-        }),
-        {requireModel: false},
-      );
-      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
-      const nextModels = normalizeModelList(models);
-      const latestDraft = latestDraftFor(draftKey, raw);
+        profile =>
+          fetchModels.call(apiClient, profile, {
+            context,
+            requestSettings: settingsState.apiRequestDraft ?? settingsState.apiRequestSettings,
+          }),
+        { requireModel: false },
+      )
+      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return
+      const nextModels = normalizeModelList(models)
+      const latestDraft = latestDraftFor(draftKey, raw)
       settingsState = {
         ...settingsState,
         modelList: nextModels,
         modelListProfileKey: draftKey,
         editingDraft: latestDraft,
-        drafts: {...settingsState.drafts, [draftKey]: latestDraft},
+        drafts: { ...settingsState.drafts, [draftKey]: latestDraft },
         notice: null,
-      };
-      notify(
-        nextModels.length ? '模型列表已刷新。' : '未找到可用模型；仍可手动填写 Model。',
-        nextModels.length ? 'info' : 'warning',
-        documentRef,
-      );
+      }
+      notify(nextModels.length ? '模型列表已刷新。' : '未找到可用模型；仍可手动填写 Model。', nextModels.length ? 'info' : 'warning', documentRef)
     } catch (error) {
-      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
-      const latestDraft = latestDraftFor(draftKey, raw);
+      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return
+      const latestDraft = latestDraftFor(draftKey, raw)
       settingsState = {
         ...settingsState,
         editingDraft: latestDraft,
-        drafts: {...settingsState.drafts, [draftKey]: latestDraft},
+        drafts: { ...settingsState.drafts, [draftKey]: latestDraft },
         notice: null,
-      };
-      notify(settingsOperationError(error), 'error', documentRef);
+      }
+      notify(settingsOperationError(error), 'error', documentRef)
     } finally {
-      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return;
-      settingsState = {...settingsState, modelRefreshBusy: false};
-      render();
+      if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return
+      settingsState = { ...settingsState, modelRefreshBusy: false }
+      render()
     }
   }
-
   function hostContextForApp() {
-    return hostPopupContext();
+    return hostPopupContext()
   }
-
   async function removeProfile(profileId) {
-    const id = String(profileId ?? '').trim();
-    if (!id) return;
+    const id = String(profileId ?? '').trim()
+    if (!id) return
     if (typeof profileStore.deleteProfile !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持删除 API 配置。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持删除 API 配置。', 'error', documentRef)
+      render()
+      return
     }
-    if (!await confirmWithPopup('删除 API 配置', '确定删除此 API 配置并清理关联 Secret 引用吗？')) return;
-    settingsState.busy = true;
+    if (!(await confirmWithPopup('删除 API 配置', '确定删除此 API 配置并清理关联 Secret 引用吗？'))) return
+    settingsState.busy = true
     try {
-      await profileStore.deleteProfile(id);
-      updateSettingsState();
-      const drafts = {...settingsState.drafts};
-      delete drafts[id];
-      const deletedCurrentProfile = settingsState.editingProfile?.profile_id === id;
+      await profileStore.deleteProfile(id)
+      updateSettingsState()
+      const drafts = { ...settingsState.drafts }
+      delete drafts[id]
+      const deletedCurrentProfile = settingsState.editingProfile?.profile_id === id
       settingsState = {
         ...settingsState,
         editingProfile: deletedCurrentProfile ? undefined : settingsState.editingProfile,
@@ -2791,128 +2581,120 @@ export function createApp(runtime, options = {}) {
         drafts,
         testResult: null,
         notice: null,
-      };
-      notify('API 配置已删除；关联 Secret 引用已清理。', 'success', documentRef);
+      }
+      notify('API 配置已删除；关联 Secret 引用已清理。', 'success', documentRef)
     } catch (error) {
-      settingsState = {...settingsState, notice: null};
-      notify(settingsOperationError(error), 'error', documentRef);
+      settingsState = { ...settingsState, notice: null }
+      notify(settingsOperationError(error), 'error', documentRef)
     } finally {
-      settingsState.busy = false;
-      render();
+      settingsState.busy = false
+      render()
     }
   }
-
   async function changeAssignment(target) {
-    const slot = target?.dataset?.bioweaveAssignment;
-    if (!slot) return;
+    const slot = target?.dataset?.bioweaveAssignment
+    if (!slot) return
     if (typeof profileStore.setAssignment !== 'function') {
-      settingsState = {...settingsState, notice: null};
-      notify('当前宿主不支持保存任务 API 分配。', 'error', documentRef);
-      render();
-      return;
+      settingsState = { ...settingsState, notice: null }
+      notify('当前宿主不支持保存任务 API 分配。', 'error', documentRef)
+      render()
+      return
     }
     try {
-      const value = await profileStore.setAssignment(slot, target.value);
+      const value = await profileStore.setAssignment(slot, target.value)
       settingsState = {
         ...settingsState,
-        assignments: {...settingsState.assignments, [slot]: value},
+        assignments: { ...settingsState.assignments, [slot]: value },
         notice: null,
-      };
-      notify('任务 API 分配已保存。', 'success', documentRef);
+      }
+      notify('任务 API 分配已保存。', 'success', documentRef)
     } catch (error) {
-      settingsState = {...settingsState, notice: null};
-      notify(settingsOperationError(error), 'error', documentRef);
+      settingsState = { ...settingsState, notice: null }
+      notify(settingsOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   async function changeApiSource(target) {
-    const value = target?.value;
+    const value = target?.value
     try {
-      const saved = typeof profileStore.setApiSource === 'function'
-        ? await profileStore.setApiSource(value)
-        : value;
-      settingsState = {...settingsState, apiSource: saved, notice: null};
-      notify('默认 API 来源已保存。', 'success', documentRef);
+      const saved = typeof profileStore.setApiSource === 'function' ? await profileStore.setApiSource(value) : value
+      settingsState = { ...settingsState, apiSource: saved, notice: null }
+      notify('默认 API 来源已保存。', 'success', documentRef)
     } catch (error) {
-      settingsState = {...settingsState, notice: null};
-      notify(settingsOperationError(error), 'error', documentRef);
+      settingsState = { ...settingsState, notice: null }
+      notify(settingsOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   async function changeDefaultProfile(target) {
     try {
-      const saved = typeof profileStore.setDefaultProfile === 'function'
-        ? await profileStore.setDefaultProfile(target?.value)
-        : target?.value || null;
-      settingsState = {...settingsState, defaultProfileId: saved, notice: null};
-      notify('默认 API 配置已保存。', 'success', documentRef);
+      const saved = typeof profileStore.setDefaultProfile === 'function' ? await profileStore.setDefaultProfile(target?.value) : target?.value || null
+      settingsState = { ...settingsState, defaultProfileId: saved, notice: null }
+      notify('默认 API 配置已保存。', 'success', documentRef)
     } catch (error) {
-      settingsState = {...settingsState, notice: null};
-      notify(settingsOperationError(error), 'error', documentRef);
+      settingsState = { ...settingsState, notice: null }
+      notify(settingsOperationError(error), 'error', documentRef)
     }
-    render();
+    render()
   }
-
   function handleSettingsInput(event) {
-    if (!root?.contains(event.target)) return;
-    const target = event.target;
+    if (!root?.contains(event.target)) return
+    const target = event.target
     if (target.closest?.('[data-bioweave-world-section-form]')) {
-      captureWorldModelSectionDraft();
-      return;
+      captureWorldModelSectionDraft()
+      return
     }
     if (target?.dataset?.bioweaveAnalysisSourceSearch !== undefined) {
       analysisSourcesState = {
         ...analysisSourcesState,
         search: String(target.value ?? ''),
-      };
-      applyAnalysisSourceSearch(target.value);
-      return;
+      }
+      applyAnalysisSourceSearch(target.value)
+      return
     }
     if (target?.dataset?.bioweaveRecentStoryRegexPattern !== undefined) {
-      const scope = target?.dataset?.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character';
-      const recentStory = updateRecentStoryRegexState(scope);
-      if (scope === 'global') queueRecentStoryGlobalSettingsSave(recentStory);
-      else queueRecentStorySettingsSave(recentStory);
-      return;
+      const scope = target?.dataset?.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character'
+      const recentStory = updateRecentStoryRegexState(scope)
+      if (scope === 'global') queueRecentStoryGlobalSettingsSave(recentStory)
+      else queueRecentStorySettingsSave(recentStory)
+      return
     }
     if (target?.dataset?.bioweaveRecentStoryFloorCount !== undefined) {
-      queueRecentStorySettingsSave(updateRecentStoryState(target));
-      return;
+      queueRecentStorySettingsSave(updateRecentStoryState(target))
+      return
     }
-    if (target?.dataset?.bioweaveAnalysisPromptField !== undefined
-      || target?.dataset?.bioweaveAnalysisLabel !== undefined
-      || target?.dataset?.bioweaveWorldAnalysisPromptField !== undefined
-      || target?.dataset?.bioweaveWorldAnalysisLabel !== undefined) {
-      captureAnalysisPromptDraft();
-      return;
+    if (
+      target?.dataset?.bioweaveAnalysisPromptField !== undefined ||
+      target?.dataset?.bioweaveAnalysisLabel !== undefined ||
+      target?.dataset?.bioweaveWorldAnalysisPromptField !== undefined ||
+      target?.dataset?.bioweaveWorldAnalysisLabel !== undefined
+    ) {
+      captureAnalysisPromptDraft()
+      return
     }
     if (target?.dataset?.bioweaveModelSearch !== undefined) {
-      captureSettingsDraft();
-      settingsState = {...settingsState, modelSearch: String(target.value ?? '')};
-      applyModelSearch(target.value);
-      return;
+      captureSettingsDraft()
+      settingsState = { ...settingsState, modelSearch: String(target.value ?? '') }
+      applyModelSearch(target.value)
+      return
     }
-    if (target?.dataset?.bioweaveApiTimeout !== undefined
-      || target?.dataset?.bioweaveApiRetryCount !== undefined) {
-      captureApiRequestSettingsDraft();
-      return;
+    if (target?.dataset?.bioweaveApiTimeout !== undefined || target?.dataset?.bioweaveApiRetryCount !== undefined) {
+      captureApiRequestSettingsDraft()
+      return
     }
-    if (target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();
+    if (target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft()
   }
-
   function handleRuntimeEvent(event) {
     if (event?.chatChanged || event?.type === 'CHAT_CHANGED') {
-      clearPendingRecentStorySaves();
-      analysisSourceRequestSequence += 1;
-      analysisSourceSaveSequence += 1;
-      analysisSourcesState = createAnalysisSourcesState();
-      worldModelState = createWorldModelState();
-      clearAnalysisPreview();
-      route = 'overview';
-      focusedCharacterId = null;
-      businessRefreshSequence += 1;
+      clearPendingRecentStorySaves()
+      analysisSourceRequestSequence += 1
+      analysisSourceSaveSequence += 1
+      analysisSourcesState = createAnalysisSourcesState()
+      worldModelState = createWorldModelState()
+      clearAnalysisPreview()
+      route = 'overview'
+      focusedCharacterId = null
+      businessRefreshSequence += 1
       businessState = {
         ...businessState,
         loaded: false,
@@ -2923,13 +2705,13 @@ export function createApp(runtime, options = {}) {
         activeEvents: [],
         currentFloor: null,
         lastAnalysis: null,
-        analysisStatus: {state: 'not_analyzed', busy: false},
+        analysisStatus: { state: 'not_analyzed', busy: false },
         error: null,
-      };
+      }
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED') {
-      const payload = event.payload ?? {};
-      const terminal = payload.state !== 'running';
+      const payload = event.payload ?? {}
+      const terminal = payload.state !== 'running'
       businessState = {
         ...businessState,
         loaded: false,
@@ -2939,454 +2721,439 @@ export function createApp(runtime, options = {}) {
           ...payload,
           state: payload.state ?? businessState.analysisStatus?.state ?? 'not_analyzed',
           busy: !terminal,
-          error_stage: payload.stage ?? payload.error_stage
-            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_stage ?? null),
-          error_code: payload.error_code
-            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_code ?? null),
-          error_path: payload.error_path
-            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.error_path ?? null),
-          diagnostic_path: payload.diagnostic_path
-            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.diagnostic_path ?? null),
-          safe_error_summary: payload.safe_error_summary
-            ?? (payload.state === 'success' ? null : businessState.analysisStatus?.safe_error_summary ?? null),
-          last_error: payload.state === 'success'
-            ? null
-            : payload.error_code ?? businessState.analysisStatus?.last_error ?? null,
+          error_stage:
+            payload.stage ?? payload.error_stage ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.error_stage ?? null)),
+          error_code: payload.error_code ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.error_code ?? null)),
+          error_path: payload.error_path ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.error_path ?? null)),
+          diagnostic_path: payload.diagnostic_path ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.diagnostic_path ?? null)),
+          safe_error_summary:
+            payload.safe_error_summary ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.safe_error_summary ?? null)),
+          last_error: payload.state === 'success' ? null : (payload.error_code ?? businessState.analysisStatus?.last_error ?? null),
         },
-      };
+      }
     }
-    if (event?.type === 'TRACKING_REGISTRY_REFRESHED'
-      || event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED'
-      || event?.type === 'EVENT_ANALYSIS_COMMITTED'
-      || event?.type === 'MESSAGE_DELETED'
-      || event?.type === 'MESSAGE_RECEIVED'
-      || event?.type === 'GENERATION_ENDED'
-      || event?.type === 'MESSAGE_UPDATED'
-      || event?.type === 'MESSAGE_EDITED'
-      || event?.type === 'MESSAGE_SWIPED'
-      || event?.type === 'MESSAGE_SWIPE_DELETED') {
-      businessState = {...businessState, loaded: false, loading: false};
-      void refreshBusinessState({reason: event.type});
+    if (
+      event?.type === 'TRACKING_REGISTRY_REFRESHED' ||
+      event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' ||
+      event?.type === 'EVENT_ANALYSIS_COMMITTED' ||
+      event?.type === 'MESSAGE_DELETED' ||
+      event?.type === 'MESSAGE_RECEIVED' ||
+      event?.type === 'GENERATION_ENDED' ||
+      event?.type === 'MESSAGE_UPDATED' ||
+      event?.type === 'MESSAGE_EDITED' ||
+      event?.type === 'MESSAGE_SWIPED' ||
+      event?.type === 'MESSAGE_SWIPE_DELETED'
+    ) {
+      businessState = { ...businessState, loaded: false, loading: false }
+      void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
-      notify('本次事件分析已取消。', 'info', documentRef);
+      notify('本次事件分析已取消。', 'info', documentRef)
     }
-    if (root?.dataset.open === 'true') render();
+    if (root?.dataset.open === 'true') render()
   }
-
   async function handleClick(event) {
-    if (!root?.contains(event.target)) return;
-    captureAnalysisSourceDisclosure();
-    if (handleAnalysisParentToggleClick(event)) return;
+    if (!root?.contains(event.target)) return
+    captureAnalysisSourceDisclosure()
+    if (handleAnalysisParentToggleClick(event)) return
     if (event.target.closest?.('[data-bioweave-analysis-prompt-settings], [data-bioweave-world-analysis-prompt-settings]')) {
-      captureAnalysisPromptDraft();
+      captureAnalysisPromptDraft()
     }
-    const analysisDisclosure = event.target.closest?.('[data-bioweave-analysis-worldbook-expand], [data-bioweave-analysis-character-expand]');
+    const analysisDisclosure = event.target.closest?.('[data-bioweave-analysis-worldbook-expand], [data-bioweave-analysis-character-expand]')
     if (analysisDisclosure) {
       // 展开按钮只切换对应 details，不改变任何来源选择。
-      event.preventDefault();
-      event.stopPropagation();
-      const details = analysisDisclosure.closest?.('details');
+      event.preventDefault()
+      event.stopPropagation()
+      const details = analysisDisclosure.closest?.('details')
       if (details) {
-        details.open = !details.open;
-        analysisDisclosure.setAttribute('aria-expanded', String(details.open));
-        const prefix = details.open ? '收起' : '展开';
-        analysisDisclosure.setAttribute('aria-label', analysisDisclosure.dataset.bioweaveAnalysisWorldbookExpand !== undefined
-          ? prefix + '世界书条目'
-          : prefix + '开场白');
-        captureAnalysisSourceDisclosure();
+        details.open = !details.open
+        analysisDisclosure.setAttribute('aria-expanded', String(details.open))
+        const prefix = details.open ? '收起' : '展开'
+        analysisDisclosure.setAttribute(
+          'aria-label',
+          analysisDisclosure.dataset.bioweaveAnalysisWorldbookExpand !== undefined ? prefix + '世界书条目' : prefix + '开场白',
+        )
+        captureAnalysisSourceDisclosure()
         if (details.open && analysisDisclosure.dataset.bioweaveAnalysisWorldbookExpand !== undefined) {
-          const sourceId = String(analysisDisclosure.dataset.bioweaveAnalysisWorldbookExpand ?? '').trim();
-          const source = analysisSourcesState.sources.find(item => item.source_id === sourceId);
-          if (source && !source.content_loaded) void loadWorldbookSourceForUi(sourceId);
+          const sourceId = String(analysisDisclosure.dataset.bioweaveAnalysisWorldbookExpand ?? '').trim()
+          const source = analysisSourcesState.sources.find(item => item.source_id === sourceId)
+          if (source && !source.content_loaded) void loadWorldbookSourceForUi(sourceId)
         }
       }
-      return;
+      return
     }
-    const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]');
-    const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]');
-    const target = event.target.closest?.('[data-route], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]');
+    const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]')
+    const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]')
+    const target = event.target.closest?.(
+      '[data-route], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]',
+    )
     if (!target) {
-      if (!clickedPicker || !clickedDropdown) closeModelPickers();
-      return;
+      if (!clickedPicker || !clickedDropdown) closeModelPickers()
+      return
     }
-    if (!target.closest?.('[data-bioweave-model-picker]')) closeModelPickers();
-
+    if (!target.closest?.('[data-bioweave-model-picker]')) closeModelPickers()
     if (target.dataset.bioweaveModelTrigger !== undefined) {
-      event.preventDefault();
-      toggleModelPicker(target);
-      return;
+      event.preventDefault()
+      toggleModelPicker(target)
+      return
     }
-
     if (target.dataset.bioweaveModelItem !== undefined) {
-      event.preventDefault();
-      selectModel(target);
-      return;
+      event.preventDefault()
+      selectModel(target)
+      return
     }
-
-    const action = target.dataset.bioweaveAction;
+    const action = target.dataset.bioweaveAction
     if (action === 'open-analysis-debug') {
-      event.preventDefault();
-      await openAnalysisDebugPopup();
-      return;
+      event.preventDefault()
+      await openAnalysisDebugPopup()
+      return
     }
     if (action === 'new-profile') {
-      event.preventDefault();
-      startNewProfile();
-      return;
+      event.preventDefault()
+      startNewProfile()
+      return
     }
     if (action === 'edit-profile') {
-      event.preventDefault();
-      editProfile(target.dataset.profileId);
-      return;
+      event.preventDefault()
+      editProfile(target.dataset.profileId)
+      return
     }
     if (action === 'delete-profile') {
-      event.preventDefault();
-      await removeProfile(target.dataset.profileId);
-      return;
+      event.preventDefault()
+      await removeProfile(target.dataset.profileId)
+      return
     }
     if (action === 'cancel-profile') {
-      event.preventDefault();
-      cancelProfileEdit();
-      return;
+      event.preventDefault()
+      cancelProfileEdit()
+      return
     }
     if (action === 'save-profile') {
-      event.preventDefault();
-      await saveSettingsForm(false);
-      return;
+      event.preventDefault()
+      await saveSettingsForm(false)
+      return
     }
     if (action === 'test-profile') {
-      event.preventDefault();
-      await testSettingsForm();
-      return;
+      event.preventDefault()
+      await testSettingsForm()
+      return
     }
     if (action === 'save-analysis-prompt' || action === 'save-world-analysis-prompt') {
-      event.preventDefault();
-      await saveAnalysisPrompt();
-      return;
+      event.preventDefault()
+      await saveAnalysisPrompt()
+      return
     }
     if (action === 'refresh-models') {
-      event.preventDefault();
-      await refreshModels();
-      return;
+      event.preventDefault()
+      await refreshModels()
+      return
     }
     if (action === 'refresh-analysis-sources') {
-      event.preventDefault();
-      await loadAnalysisSourcesState({forceRefresh: true});
-      return;
+      event.preventDefault()
+      await loadAnalysisSourcesState({ forceRefresh: true })
+      return
     }
     if (action === 'analyze-current-floor' || action === 'refresh') {
-      event.preventDefault();
+      event.preventDefault()
       try {
-        const status = typeof runtime.getCurrentFloorAnalysisStatus === 'function'
-          ? await runtime.getCurrentFloorAnalysisStatus().catch(() => businessState.analysisStatus)
-          : businessState.analysisStatus;
-        if (status?.busy || status?.state === 'running') await requestAbortEventAnalysis();
-        else await manualRefreshEventAnalysis();
+        const status =
+          typeof runtime.getCurrentFloorAnalysisStatus === 'function'
+            ? await runtime.getCurrentFloorAnalysisStatus().catch(() => businessState.analysisStatus)
+            : businessState.analysisStatus
+        if (status?.busy || status?.state === 'running') await requestAbortEventAnalysis()
+        else await manualRefreshEventAnalysis()
       } catch (error) {
         if (error?.message !== 'REQUEST_ABORTED' && error?.code !== 'REQUEST_ABORTED') {
-          notify(eventAnalysisError(error), 'error', documentRef);
+          notify(eventAnalysisError(error), 'error', documentRef)
         }
       }
-      return;
+      return
     }
     if (action === 'edit-event') {
-      event.preventDefault();
-      eventEditingId = String(target.dataset.bioweaveEventId ?? '').trim() || null;
-      render();
-      return;
+      event.preventDefault()
+      eventEditingId = String(target.dataset.bioweaveEventId ?? '').trim() || null
+      render()
+      return
     }
     if (action === 'cancel-event-edit') {
-      event.preventDefault();
-      eventEditingId = null;
-      render();
-      return;
+      event.preventDefault()
+      eventEditingId = null
+      render()
+      return
     }
     if (action === 'save-event') {
-      event.preventDefault();
+      event.preventDefault()
       try {
-        await saveEventEdit();
+        await saveEventEdit()
       } catch (error) {
-        notify(eventAnalysisError(error), 'error', documentRef);
-        render();
+        notify(eventAnalysisError(error), 'error', documentRef)
+        render()
       }
-      return;
+      return
     }
     if (action === 'delete-event') {
-      event.preventDefault();
+      event.preventDefault()
       try {
-        await deleteEvent(String(target.dataset.bioweaveEventId ?? '').trim());
+        await deleteEvent(String(target.dataset.bioweaveEventId ?? '').trim())
       } catch (error) {
-        notify(eventAnalysisError(error), 'error', documentRef);
-        render();
+        notify(eventAnalysisError(error), 'error', documentRef)
+        render()
       }
-      return;
+      return
     }
     if (action === 'world-model-reanalyze') {
-      event.preventDefault();
-      if (worldModelState.busy) await requestAbortWorldModelAnalysis();
-      else await analyzeWorldModel();
-      return;
+      event.preventDefault()
+      if (worldModelState.busy) await requestAbortWorldModelAnalysis()
+      else await analyzeWorldModel()
+      return
     }
     if (action === 'world-model-view-input') {
-      event.preventDefault();
-      await openAnalysisDebugPopup();
-      return;
+      event.preventDefault()
+      await openAnalysisDebugPopup()
+      return
     }
     if (action === 'world-model-select-species') {
-      event.preventDefault();
-      await selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null);
-      return;
+      event.preventDefault()
+      await selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null)
+      return
     }
     if (action === 'world-model-select-type') {
-      event.preventDefault();
-      await selectWorldModelType(
-        Number(target.dataset.bioweaveWorldSpeciesIndex),
-        Number(target.dataset.bioweaveWorldTypeIndex),
-      );
-      return;
+      event.preventDefault()
+      await selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), Number(target.dataset.bioweaveWorldTypeIndex))
+      return
     }
     if (action === 'world-model-edit-section') {
-      event.preventDefault();
-      await beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''));
-      return;
+      event.preventDefault()
+      await beginWorldModelSectionEdit(String(target.dataset.bioweaveWorldSection ?? ''))
+      return
     }
     if (action === 'world-model-cancel-section') {
-      event.preventDefault();
-      cancelWorldModelSectionEdit();
-      return;
+      event.preventDefault()
+      cancelWorldModelSectionEdit()
+      return
     }
     if (action === 'world-model-save-section') {
-      event.preventDefault();
-      await saveWorldModelSection();
-      return;
+      event.preventDefault()
+      await saveWorldModelSection()
+      return
     }
     if (action === 'world-model-add-row') {
-      event.preventDefault();
-      const section = String(target.dataset.bioweaveWorldSection ?? '');
+      event.preventDefault()
+      const section = String(target.dataset.bioweaveWorldSection ?? '')
       if (section === 'exceptions') {
-        updateWorldModelSectionDraft(value => [...(Array.isArray(value) ? value : []), {
-          statement: null,
-          applies_to: null,
-          evidence: null,
-        }]);
+        updateWorldModelSectionDraft(value => [
+          ...(Array.isArray(value) ? value : []),
+          {
+            statement: null,
+            applies_to: null,
+            evidence: null,
+          },
+        ])
       } else if (section === 'special_rules' || section === 'unknowns') {
-        updateWorldModelSectionDraft(value => [...(Array.isArray(value) ? value : []), '']);
+        updateWorldModelSectionDraft(value => [...(Array.isArray(value) ? value : []), ''])
       }
-      return;
+      return
     }
     if (action === 'world-model-remove-row') {
-      event.preventDefault();
-      const section = String(target.dataset.bioweaveWorldSection ?? '');
-      const index = Number(target.dataset.bioweaveWorldRowIndex);
-      if (!Number.isInteger(index) || index < 0) return;
-      updateWorldModelSectionDraft(value => (Array.isArray(value) ? value.filter((_, itemIndex) => itemIndex !== index) : value));
-      return;
+      event.preventDefault()
+      const section = String(target.dataset.bioweaveWorldSection ?? '')
+      const index = Number(target.dataset.bioweaveWorldRowIndex)
+      if (!Number.isInteger(index) || index < 0) return
+      updateWorldModelSectionDraft(value => (Array.isArray(value) ? value.filter((_, itemIndex) => itemIndex !== index) : value))
+      return
     }
     if (action === 'select-all-analysis-sources') {
-      event.preventDefault();
-      await setAllAnalysisSources(true);
-      return;
+      event.preventDefault()
+      await setAllAnalysisSources(true)
+      return
     }
     if (action === 'select-none-analysis-sources') {
-      event.preventDefault();
-      await setAllAnalysisSources(false);
-      return;
+      event.preventDefault()
+      await setAllAnalysisSources(false)
+      return
     }
     if (action === 'add-recent-story-regex') {
-      event.preventDefault();
-      await addRecentStoryRegexRule(target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character');
-      return;
+      event.preventDefault()
+      await addRecentStoryRegexRule(target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character')
+      return
     }
     if (action === 'move-recent-story-regex-up') {
-      event.preventDefault();
-      await moveRecentStoryRegexRule(target, -1, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character');
-      return;
+      event.preventDefault()
+      await moveRecentStoryRegexRule(target, -1, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character')
+      return
     }
     if (action === 'move-recent-story-regex-down') {
-      event.preventDefault();
-      await moveRecentStoryRegexRule(target, 1, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character');
-      return;
+      event.preventDefault()
+      await moveRecentStoryRegexRule(target, 1, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character')
+      return
     }
     if (action === 'remove-recent-story-regex') {
-      event.preventDefault();
-      await removeRecentStoryRegexRule(target, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character');
-      return;
+      event.preventDefault()
+      await removeRecentStoryRegexRule(target, target.dataset.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character')
+      return
     }
-
     if (target.dataset.characterId) {
-      event.preventDefault();
-      openCharacter(target.dataset.characterId);
-      return;
+      event.preventDefault()
+      openCharacter(target.dataset.characterId)
+      return
     }
     if (target.dataset.backToCharacters !== undefined) {
-      event.preventDefault();
-      focusedCharacterId = null;
-      route = 'characters';
-      render();
-      return;
+      event.preventDefault()
+      focusedCharacterId = null
+      route = 'characters'
+      render()
+      return
     }
     if (target.dataset.route) {
-      event.preventDefault();
-      go(target.dataset.route);
-      return;
+      event.preventDefault()
+      go(target.dataset.route)
+      return
     }
     if (target.dataset.bioweaveAction === 'cycle-theme') {
-      event.preventDefault();
-      cycleTheme();
-      return;
+      event.preventDefault()
+      cycleTheme()
+      return
     }
     if (target.dataset.bioweaveAction === 'close') {
-      event.preventDefault();
-      closeBioWeave();
-      return;
+      event.preventDefault()
+      closeBioWeave()
+      return
     }
   }
-
   async function handleChange(event) {
-    if (!root?.contains(event.target)) return;
-    captureAnalysisSourceDisclosure();
-    const eventFilterControl = event.target.closest?.('[data-bioweave-event-filter]');
+    if (!root?.contains(event.target)) return
+    captureAnalysisSourceDisclosure()
+    const eventFilterControl = event.target.closest?.('[data-bioweave-event-filter]')
     if (eventFilterControl) {
-      const allowed = ['all', 'confirmed', 'probable', 'ambiguous', 'negated', 'fictional'];
-      setEventFilter(allowed.includes(String(eventFilterControl.value ?? ''))
-        ? String(eventFilterControl.value)
-        : 'all');
-      render();
-      return;
+      const allowed = ['all', 'confirmed', 'probable', 'ambiguous', 'negated', 'fictional']
+      setEventFilter(allowed.includes(String(eventFilterControl.value ?? '')) ? String(eventFilterControl.value) : 'all')
+      render()
+      return
     }
     if (event.target.closest?.('[data-bioweave-world-section-form]')) {
       if (event.target?.dataset?.bioweaveWorldCapabilityInput !== undefined) {
-        event.target.dataset.bioweaveWorldCapabilityState = event.target.checked ? 'true' : 'false';
-        event.target.indeterminate = false;
-        event.target.setAttribute?.('aria-checked', String(Boolean(event.target.checked)));
+        event.target.dataset.bioweaveWorldCapabilityState = event.target.checked ? 'true' : 'false'
+        event.target.indeterminate = false
+        event.target.setAttribute?.('aria-checked', String(Boolean(event.target.checked)))
       }
-      captureWorldModelSectionDraft();
-      return;
+      captureWorldModelSectionDraft()
+      return
     }
-    const characterOpeningToggle = event.target.closest?.('[data-bioweave-analysis-character-opening-toggle]');
+    const characterOpeningToggle = event.target.closest?.('[data-bioweave-analysis-character-opening-toggle]')
     if (characterOpeningToggle) {
-      await toggleCharacterCardOpenings(characterOpeningToggle);
-      return;
+      await toggleCharacterCardOpenings(characterOpeningToggle)
+      return
     }
-    const analysisSectionToggle = event.target.closest?.('[data-bioweave-analysis-section-toggle]');
+    const analysisSectionToggle = event.target.closest?.('[data-bioweave-analysis-section-toggle]')
     if (analysisSectionToggle) {
-      await toggleAnalysisSection(analysisSectionToggle);
-      return;
+      await toggleAnalysisSection(analysisSectionToggle)
+      return
     }
-    const worldbookToggle = event.target.closest?.('[data-bioweave-analysis-worldbook-toggle]');
+    const worldbookToggle = event.target.closest?.('[data-bioweave-analysis-worldbook-toggle]')
     if (worldbookToggle) {
-      await toggleWorldbookEntries(worldbookToggle);
-      return;
+      await toggleWorldbookEntries(worldbookToggle)
+      return
     }
-    const analysisSource = event.target.closest?.('[data-bioweave-analysis-source]');
+    const analysisSource = event.target.closest?.('[data-bioweave-analysis-source]')
     if (analysisSource) {
-      await toggleAnalysisSource(analysisSource);
-      return;
+      await toggleAnalysisSource(analysisSource)
+      return
     }
-    if (event.target?.dataset?.bioweaveRecentStoryFloorCount !== undefined
-      || event.target?.dataset?.bioweaveRecentStoryUserRegex !== undefined) {
-      await persistRecentStorySettings(event.target);
-      return;
+    if (event.target?.dataset?.bioweaveRecentStoryFloorCount !== undefined || event.target?.dataset?.bioweaveRecentStoryUserRegex !== undefined) {
+      await persistRecentStorySettings(event.target)
+      return
     }
-    if (event.target?.dataset?.bioweaveRecentStoryRegexPattern !== undefined
-      || event.target?.dataset?.bioweaveRecentStoryRegexType !== undefined
-      || event.target?.dataset?.bioweaveRecentStoryRegexEnabled !== undefined) {
-      await persistRecentStoryRegexSettings(event.target?.dataset?.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character');
-      return;
+    if (
+      event.target?.dataset?.bioweaveRecentStoryRegexPattern !== undefined ||
+      event.target?.dataset?.bioweaveRecentStoryRegexType !== undefined ||
+      event.target?.dataset?.bioweaveRecentStoryRegexEnabled !== undefined
+    ) {
+      await persistRecentStoryRegexSettings(event.target?.dataset?.bioweaveRecentStoryRegexScope === 'global' ? 'global' : 'character')
+      return
     }
     if (event.target?.dataset?.bioweaveExternalMemory !== undefined) {
-      await toggleExternalMemory(event.target);
-      return;
+      await toggleExternalMemory(event.target)
+      return
     }
-    if (event.target?.dataset?.bioweaveApiTimeout !== undefined
-      || event.target?.dataset?.bioweaveApiRetryCount !== undefined) {
-      await saveApiRequestSettings();
-      return;
+    if (event.target?.dataset?.bioweaveApiTimeout !== undefined || event.target?.dataset?.bioweaveApiRetryCount !== undefined) {
+      await saveApiRequestSettings()
+      return
     }
-    if (event.target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft();
-    const source = event.target.closest?.('[data-bioweave-api-source]');
+    if (event.target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft()
+    const source = event.target.closest?.('[data-bioweave-api-source]')
     if (source) {
-      await changeApiSource(source);
-      return;
+      await changeApiSource(source)
+      return
     }
-    const defaultProfile = event.target.closest?.('[data-bioweave-default-profile]');
+    const defaultProfile = event.target.closest?.('[data-bioweave-default-profile]')
     if (defaultProfile) {
-      await changeDefaultProfile(defaultProfile);
-      return;
+      await changeDefaultProfile(defaultProfile)
+      return
     }
-    const target = event.target.closest?.('[data-bioweave-assignment]');
-    if (!target) return;
-    await changeAssignment(target);
+    const target = event.target.closest?.('[data-bioweave-assignment]')
+    if (!target) return
+    await changeAssignment(target)
   }
-
   function handleSubmit(event) {
     if (event.target?.closest?.('[data-bioweave-world-section-form]')) {
-      event.preventDefault();
+      event.preventDefault()
     }
   }
-
   function handleOverlayClick(event) {
-    if (event.target === overlay) closeBioWeave();
+    if (event.target === overlay) closeBioWeave()
   }
-
   function handleKeydown(event) {
-    if (event.key !== 'Escape' || root?.dataset.open !== 'true') return;
-    event.preventDefault();
-    closeBioWeave();
+    if (event.key !== 'Escape' || root?.dataset.open !== 'true') return
+    event.preventDefault()
+    closeBioWeave()
   }
-
   function teardownRootListeners(node) {
-    if (!node) return;
-    panelDragController?.destroy?.();
-    panelDragController = null;
-    node.removeEventListener?.('click', handleClick);
-    node.removeEventListener?.('input', handleSettingsInput);
-    node.removeEventListener?.('change', handleChange);
-    node.removeEventListener?.('submit', handleSubmit);
-    node.removeEventListener?.('keydown', handleKeydown);
-    const surface = overlay;
-    surface?.removeEventListener?.('click', handleOverlayClick);
-    const registeredUnsubscribe = node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY];
+    if (!node) return
+    panelDragController?.destroy?.()
+    panelDragController = null
+    node.removeEventListener?.('click', handleClick)
+    node.removeEventListener?.('input', handleSettingsInput)
+    node.removeEventListener?.('change', handleChange)
+    node.removeEventListener?.('submit', handleSubmit)
+    node.removeEventListener?.('keydown', handleKeydown)
+    const surface = overlay
+    surface?.removeEventListener?.('click', handleOverlayClick)
+    const registeredUnsubscribe = node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY]
     if (typeof registeredUnsubscribe === 'function') {
-      registeredUnsubscribe();
-      if (registeredUnsubscribe === unsubscribeRuntime) unsubscribeRuntime = null;
+      registeredUnsubscribe()
+      if (registeredUnsubscribe === unsubscribeRuntime) unsubscribeRuntime = null
     }
-    delete node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY];
-    delete node[APP_RUNTIME_DESTROY_PROPERTY];
-    if (node[APP_TEARDOWN_PROPERTY] === teardownRootListeners) delete node[APP_TEARDOWN_PROPERTY];
+    delete node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY]
+    delete node[APP_RUNTIME_DESTROY_PROPERTY]
+    if (node[APP_TEARDOWN_PROPERTY] === teardownRootListeners) delete node[APP_TEARDOWN_PROPERTY]
   }
-
   function clearExistingRootBindings(node) {
-    const oldTeardown = node?.[APP_TEARDOWN_PROPERTY];
-    if (typeof oldTeardown === 'function' && oldTeardown !== teardownRootListeners) oldTeardown();
-    else teardownRootListeners(node);
-
-    const oldUnsubscribe = node?.[APP_RUNTIME_UNSUBSCRIBE_PROPERTY];
-    if (typeof oldUnsubscribe === 'function') oldUnsubscribe();
-    if (node) delete node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY];
-
-    const oldDestroy = node?.[APP_RUNTIME_DESTROY_PROPERTY];
-    if (typeof oldDestroy === 'function' && oldDestroy !== runtime.destroy) oldDestroy();
-    if (node) delete node[APP_RUNTIME_DESTROY_PROPERTY];
+    const oldTeardown = node?.[APP_TEARDOWN_PROPERTY]
+    if (typeof oldTeardown === 'function' && oldTeardown !== teardownRootListeners) oldTeardown()
+    else teardownRootListeners(node)
+    const oldUnsubscribe = node?.[APP_RUNTIME_UNSUBSCRIBE_PROPERTY]
+    if (typeof oldUnsubscribe === 'function') oldUnsubscribe()
+    if (node) delete node[APP_RUNTIME_UNSUBSCRIBE_PROPERTY]
+    const oldDestroy = node?.[APP_RUNTIME_DESTROY_PROPERTY]
+    if (typeof oldDestroy === 'function' && oldDestroy !== runtime.destroy) oldDestroy()
+    if (node) delete node[APP_RUNTIME_DESTROY_PROPERTY]
   }
-
   function initializeRoot(node, surface) {
-    const wasOpen = node.dataset.open === 'true';
-    clearExistingRootBindings(node);
-    root = node;
-    overlay = surface;
-    root.id = 'bioweave-panel';
-    root.className = 'bioweave-root bioweave-panel';
-    root.dataset.open = String(wasOpen);
-    root.setAttribute('role', 'dialog');
-    root.setAttribute('aria-modal', 'true');
-    root.setAttribute('aria-hidden', String(!wasOpen));
-    surface.id = 'bioweave-overlay';
-    surface.className = 'bioweave-overlay';
-    surface.dataset.open = String(wasOpen);
-    surface.hidden = !wasOpen;
-    surface.setAttribute('aria-hidden', String(!wasOpen));
+    const wasOpen = node.dataset.open === 'true'
+    clearExistingRootBindings(node)
+    root = node
+    overlay = surface
+    root.id = 'bioweave-panel'
+    root.className = 'bioweave-root bioweave-panel'
+    root.dataset.open = String(wasOpen)
+    root.setAttribute('role', 'dialog')
+    root.setAttribute('aria-modal', 'true')
+    root.setAttribute('aria-hidden', String(!wasOpen))
+    surface.id = 'bioweave-overlay'
+    surface.className = 'bioweave-overlay'
+    surface.dataset.open = String(wasOpen)
+    surface.hidden = !wasOpen
+    surface.setAttribute('aria-hidden', String(!wasOpen))
     root.innerHTML = [
       '<header class="bioweave-app-header" data-bioweave-drag-handle>',
       '<strong class="bioweave-brand">BioWeave</strong>',
@@ -3397,90 +3164,83 @@ export function createApp(runtime, options = {}) {
       '</header>',
       '<nav class="bioweave-routebar" aria-label="BioWeave 页面导航"><div class="bioweave-route-items"></div></nav>',
       '<main class="bioweave-main"></main>',
-    ].join('');
-
+    ].join('')
     panelDragController = createPanelDragController({
       root,
       handle: root.querySelector('[data-bioweave-drag-handle]'),
       documentRef,
-    });
-    const routebar = root.querySelector('.bioweave-route-items');
-    desktopRoutes.forEach(id => routebar.append(createNavigationButton(documentRef, id)));
-
-    root.addEventListener('click', handleClick);
-    root.addEventListener('input', handleSettingsInput);
-    root.addEventListener('change', handleChange);
-    root.addEventListener('submit', handleSubmit);
-    root.addEventListener('keydown', handleKeydown);
-    surface.addEventListener('click', handleOverlayClick);
-    root[APP_TEARDOWN_PROPERTY] = teardownRootListeners;
+    })
+    const routebar = root.querySelector('.bioweave-route-items')
+    desktopRoutes.forEach(id => routebar.append(createNavigationButton(documentRef, id)))
+    root.addEventListener('click', handleClick)
+    root.addEventListener('input', handleSettingsInput)
+    root.addEventListener('change', handleChange)
+    root.addEventListener('submit', handleSubmit)
+    root.addEventListener('keydown', handleKeydown)
+    surface.addEventListener('click', handleOverlayClick)
+    root[APP_TEARDOWN_PROPERTY] = teardownRootListeners
     if (typeof runtime.subscribe === 'function') {
-      unsubscribeRuntime = runtime.subscribe(handleRuntimeEvent);
-      if (typeof unsubscribeRuntime === 'function') root[APP_RUNTIME_UNSUBSCRIBE_PROPERTY] = unsubscribeRuntime;
+      unsubscribeRuntime = runtime.subscribe(handleRuntimeEvent)
+      if (typeof unsubscribeRuntime === 'function') root[APP_RUNTIME_UNSUBSCRIBE_PROPERTY] = unsubscribeRuntime
     }
-    setTheme(readTheme(storageRef));
-    render();
+    setTheme(readTheme(storageRef))
+    render()
   }
-
   const lifecycle = createOverlayLifecycle({
     documentRef,
     createOverlay: documentRefRef => {
-      const node = documentRefRef.createElement('div');
-      node.className = 'bioweave-overlay';
-      node.hidden = true;
-      node.dataset.open = 'false';
-      node.setAttribute('aria-hidden', 'true');
-      return node;
+      const node = documentRefRef.createElement('div')
+      node.className = 'bioweave-overlay'
+      node.hidden = true
+      node.dataset.open = 'false'
+      node.setAttribute('aria-hidden', 'true')
+      return node
     },
     createRoot: documentRefRef => {
-      const node = documentRefRef.createElement('section');
-      node.className = 'bioweave-root bioweave-panel';
-      node.dataset.open = 'false';
-      return node;
+      const node = documentRefRef.createElement('section')
+      node.className = 'bioweave-root bioweave-panel'
+      node.dataset.open = 'false'
+      return node
     },
     initializeRoot,
     teardownRoot: teardownRootListeners,
-  });
-
+  })
   function mountBioWeave() {
-    const mounted = lifecycle.mount();
-    if (!mounted) return null;
-    overlay = mounted.overlay;
-    root = mounted.root;
-    return root;
+    const mounted = lifecycle.mount()
+    if (!mounted) return null
+    overlay = mounted.overlay
+    root = mounted.root
+    return root
   }
-
   function openBioWeave() {
-    const opened = lifecycle.open();
-    if (!opened) return null;
-    overlay = opened.overlay;
-    root = opened.root;
-    if (route === 'settings') refreshAnalysisChatSettings();
-    render();
-    return root;
+    const opened = lifecycle.open()
+    if (!opened) return null
+    overlay = opened.overlay
+    root = opened.root
+    if (route === 'settings') refreshAnalysisChatSettings()
+    render()
+    return root
   }
-
   function closeBioWeave() {
-    clearAnalysisPreview();
-    lifecycle.close();
+    clearAnalysisPreview()
+    lifecycle.close()
   }
-
   function destroyBioWeave() {
-    clearPendingRecentStorySaves();
-    modelRefreshSequence += 1;
-    analysisSourceRequestSequence += 1;
-    analysisSourceSaveSequence += 1;
-    businessRefreshSequence += 1;
-    worldbookCache = createWorldbookCache();
-    worldModelTraceChatId = null;
-    lifecycle.destroy();
-    root = null;
-    overlay = null;
-    unsubscribeRuntime = null;
-    route = 'overview';
-    focusedCharacterId = null;
-    analysisSourcesState = createAnalysisSourcesState();
-    worldModelState = createWorldModelState();
+    clearPendingRecentStorySaves()
+    modelRefreshSequence += 1
+    analysisSourceRequestSequence += 1
+    analysisSourceSaveSequence += 1
+    businessRefreshSequence += 1
+    worldbookCache = createWorldbookCache()
+    worldModelTraceChatId = null
+    lifecycle.destroy()
+    root = null
+    overlay = null
+    unsubscribeRuntime = null
+    route = 'overview'
+    focusedCharacterId = null
+    analysisSourcesState = createAnalysisSourcesState()
+    worldModelState = createWorldModelState()
     businessState = {
       loaded: false,
       loading: false,
@@ -3490,16 +3250,16 @@ export function createApp(runtime, options = {}) {
       activeEvents: [],
       currentFloor: null,
       lastAnalysis: null,
-      analysisStatus: {state: 'not_analyzed', busy: false},
+      analysisStatus: { state: 'not_analyzed', busy: false },
       error: null,
-    };
-    eventEditingId = null;
-    setEventFilter();
-    globalRecentStory = normalizeRecentStoryGlobalSettings();
-    globalRecentStoryLoaded = false;
-    globalRecentStorySaveSequence += 1;
-    globalRecentStorySaveChain = Promise.resolve();
-    clearAnalysisPreview();
+    }
+    eventEditingId = null
+    setEventFilter()
+    globalRecentStory = normalizeRecentStoryGlobalSettings()
+    globalRecentStoryLoaded = false
+    globalRecentStorySaveSequence += 1
+    globalRecentStorySaveChain = Promise.resolve()
+    clearAnalysisPreview()
     settingsState = {
       loaded: false,
       loading: false,
@@ -3514,14 +3274,13 @@ export function createApp(runtime, options = {}) {
       modelRefreshBusy: false,
       apiSource: SILLYTAVERN_CURRENT_API,
       defaultProfileId: null,
-      apiRequestSettings: {...DEFAULT_API_REQUEST_SETTINGS},
+      apiRequestSettings: { ...DEFAULT_API_REQUEST_SETTINGS },
       apiRequestDraft: null,
       notice: null,
       testResult: null,
       busy: false,
-    };
+    }
   }
-
   return {
     mountBioWeave,
     openBioWeave,
@@ -3537,19 +3296,14 @@ export function createApp(runtime, options = {}) {
     getFocusedCharacterId: () => focusedCharacterId,
     getSettingsState: () => ({
       ...settingsState,
-      profiles: {...settingsState.profiles},
-      assignments: {...settingsState.assignments},
+      profiles: { ...settingsState.profiles },
+      assignments: { ...settingsState.assignments },
       globalRecentStory: {
         regex_rules: [...(globalRecentStory.regex_rules ?? [])],
       },
       modelList: [...(settingsState.modelList ?? [])],
-      editingDraft: settingsState.editingDraft
-        ? {...settingsState.editingDraft, api_key: ''}
-        : settingsState.editingDraft,
-      drafts: Object.fromEntries(Object.entries(settingsState.drafts ?? {}).map(([key, draft]) => [
-        key,
-        draft ? {...draft, api_key: ''} : draft,
-      ])),
+      editingDraft: settingsState.editingDraft ? { ...settingsState.editingDraft, api_key: '' } : settingsState.editingDraft,
+      drafts: Object.fromEntries(Object.entries(settingsState.drafts ?? {}).map(([key, draft]) => [key, draft ? { ...draft, api_key: '' } : draft])),
     }),
-  };
+  }
 }

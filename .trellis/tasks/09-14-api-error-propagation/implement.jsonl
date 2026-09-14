@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"API client、Runtime 与 UI 之间需要单一错误合同和完整字段传播。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"UI 错误反馈必须沿用现有 Toast/产品 UI 边界，不在 UI 重新猜测 transport error。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"变更 JavaScript 后需要执行项目规定的 Node 测试、check 与 host smoke 验证。"}
+{"file":".trellis/tasks/09-07-world-model-v1/research/st-seven-days-cal.md","reason":"既有 SevenDaysCal API 边界研究，补充当前错误传播实现的兼容约束。"}
+{"file":".trellis/tasks/09-14-api-error-propagation/research/sevendayscal-api-error-propagation.md","reason":"本任务固定的 SevenDaysCal 错误分类与响应边界研究结论。"}

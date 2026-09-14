@@ -18,6 +18,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Established |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
 | [State Management](./state-management.md) | Local state, global state, server state | To fill |
+| [API Error Propagation](./api-error-propagation.md) | Single-point API error classification and cross-layer diagnostics | Established |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Established |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 
