@@ -141,6 +141,11 @@ second BioWeave modal system.
   go through the shared `notify()` helper, which delegates to the
   SillyTavern/toastr notification system. Do not insert transient page notices
   that shift the current layout.
+- When a manual operation helper owns its failure `catch`, it must notify and
+  rethrow the original error; the surrounding event handler must suppress its
+  fallback notification for that helper while retaining fallback notifications
+  for sibling branches. This keeps one final toastr without hiding the error
+  from direct callers.
 - All transient operation results use this same path, including successful or
   failed saves, API operation results, cancellations, timeouts, and ordinary
   warnings or informational updates. The Toast type must preserve the business

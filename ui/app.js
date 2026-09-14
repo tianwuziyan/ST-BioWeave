@@ -1988,14 +1988,17 @@ export function createApp(runtime, options = {}) {
     await refreshBusinessState({ reason: 'event-delete' })
   }
   async function manualRefreshEventAnalysis() {
-    if (typeof runtime.refreshCurrentFloorAnalysis !== 'function') {
-      throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
-    }
-    render()
     try {
+      if (typeof runtime.refreshCurrentFloorAnalysis !== 'function') {
+        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
+      }
+      render()
       const result = await runtime.refreshCurrentFloorAnalysis()
       notify('当前楼层事件分析成功并已保存。', 'success', documentRef)
       return result
+    } catch (error) {
+      notify(eventAnalysisError(error), 'error', documentRef)
+      throw error
     } finally {
       await refreshBusinessState({ reason: 'manual-analysis', force: true })
     }
@@ -2855,15 +2858,23 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'analyze-current-floor' || action === 'refresh') {
       event.preventDefault()
+      let manualAnalysisRequested = false
       try {
         const status =
           typeof runtime.getCurrentFloorAnalysisStatus === 'function'
             ? await runtime.getCurrentFloorAnalysisStatus().catch(() => businessState.analysisStatus)
             : businessState.analysisStatus
         if (status?.busy || status?.state === 'running') await requestAbortEventAnalysis()
-        else await manualRefreshEventAnalysis()
+        else {
+          manualAnalysisRequested = true
+          await manualRefreshEventAnalysis()
+        }
       } catch (error) {
-        if (error?.message !== 'REQUEST_ABORTED' && error?.code !== 'REQUEST_ABORTED') {
+        if (
+          !manualAnalysisRequested &&
+          error?.message !== 'REQUEST_ABORTED' &&
+          error?.code !== 'REQUEST_ABORTED'
+        ) {
           notify(eventAnalysisError(error), 'error', documentRef)
         }
       }

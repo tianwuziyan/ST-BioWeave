@@ -170,6 +170,21 @@ function sourceEvent(version, overrides = {}) {
 
 async function createFixture({event = null, analysisState = 'success', analysisBusy = false, onRefresh = null, contextOverrides = {}} = {}) {
   const documentRef = new FakeDocument();
+  const toastCalls = [];
+  documentRef.defaultView.toastr = {
+    success(message) {
+      toastCalls.push(['success', message]);
+    },
+    error(message) {
+      toastCalls.push(['error', message]);
+    },
+    info(message) {
+      toastCalls.push(['info', message]);
+    },
+    warning(message) {
+      toastCalls.push(['warning', message]);
+    },
+  };
   const message = {floor: 10, content: '当前楼层剧情', role: 'assistant'};
   const version = await floorVersion({
     chatId: 'chat-app',
@@ -290,6 +305,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     getChat: () => chat,
     documentRef,
     emit: event => runtimeListener?.(event),
+    toasts: () => [...toastCalls],
     calls: () => ({refresh: refreshCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
   };
 }
@@ -337,6 +353,54 @@ test('manual analyze action delegates to Runtime instead of the UI analyzer', as
     preventDefault() {},
   });
   assert.equal(fixture.calls().refresh, 1);
+  assert.deepEqual(fixture.toasts(), [['success', '当前楼层事件分析成功并已保存。']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('manual Event Analysis shows one diagnostic error Toast and does not reject the UI event', async () => {
+  const originalError = Object.assign(new Error('REQUEST_TIMEOUT'), {
+    code: 'REQUEST_TIMEOUT',
+    diagnosticCode: 'timeout',
+    timeoutSec: 3,
+  });
+  const fixture = await createFixture({
+    analysisState: 'not_analyzed',
+    onRefresh: async () => {
+      throw originalError;
+    },
+  });
+  const click = [...fixture.root.listeners.get('click')][0];
+  await assert.doesNotReject(
+    click({
+      target: clickTarget('analyze-current-floor', {root: fixture.root}),
+      preventDefault() {},
+    }),
+  );
+  assert.deepEqual(fixture.toasts(), [
+    ['error', '事件分析失败（请求超时：等待 3 秒后已在本地终止。本次未自动重试。），上一份有效事件已保留。'],
+  ]);
+  fixture.app.destroyBioWeave();
+});
+
+test('manual Event Analysis keeps the Runtime error object in its helper contract', () => {
+  const source = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('async function manualRefreshEventAnalysis()'), source.indexOf('async function requestAbortEventAnalysis()'));
+  assert.match(helper, /catch \(error\) \{\s*notify\(eventAnalysisError\(error\), 'error', documentRef\)\s*throw error\s*\}/);
+});
+
+test('background Event Analysis failures update UI state without a top error Toast', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    payload: {
+      state: 'failed',
+      error_code: 'REQUEST_TIMEOUT',
+      diagnostic_code: 'timeout',
+      safe_error_summary: '请求超时',
+    },
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(fixture.toasts(), []);
   fixture.app.destroyBioWeave();
 });
 

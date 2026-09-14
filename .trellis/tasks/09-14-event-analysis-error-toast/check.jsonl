@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查错误 toast 是否复用既有 UI 通知边界且不重复"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "执行 UI 回归测试与全量质量检查"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复用现有 notify/toastr 与手动分析 UI 反馈边界"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "遵循现有 UI 测试、静态检查和最小改动约束"}
