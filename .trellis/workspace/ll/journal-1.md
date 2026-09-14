@@ -481,3 +481,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: 同步 API 错误传播与独立 transport
+<!-- trellis-session: v=2 fp=6c725b6d948cf3bf -->
+
+**Date**: 2026-09-14
+**Task**: 同步 API 错误传播与独立 transport
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 BioWeave-only 独立 API raw fetch 迁移，保留当前 API 的 ChatCompletionService 语义、secret_ref/secret_id 安全边界与既有 timeout 语义；补齐 HTTP、response-error、invalid-json、upstream-timeout、network、abort 的分类和跨层测试，并已推送功能提交。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1ad35d` | 修复 API 错误状态传播并迁移独立 transport |
+
+### Status
+
+[OK] **Completed**

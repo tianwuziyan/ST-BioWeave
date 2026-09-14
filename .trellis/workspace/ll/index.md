@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~483 | Active |
+| `journal-1.md` | ~505 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-09-14 | 同步 API 错误传播与独立 transport | `d1ad35d` | `fix/world-model-prompt-baseline` |
 | 21 | 2026-09-14 | 完成楼层重新分析 baseline 修复并同步 GitHub | `8787681` | `fix/world-model-prompt-baseline` |
 | 20 | 2026-09-12 | 按 gestational subject 拆分妊娠暴露 Event | `69b1ad1` | `fix/world-model-prompt-baseline` |
 | 19 | 2026-09-12 | 补强 World Model biological_type 少数类型召回 | `e6ee245` | `fix/world-model-prompt-baseline` |
