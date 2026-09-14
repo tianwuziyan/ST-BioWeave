@@ -116,7 +116,7 @@ BioWeave 不要求一个请求只有一个 SYSTEM message。允许按职责拆�
 
 用户设置中的 `analysis_prompt.system_top`（设置界面“第一个 SYSTEM”）是整个请求中第一条 `role: system` message。它非空时，Protected Core、公共提示词、Task Contract、Reference Context、Floor metadata 和 Output Contract 都不能出现在它前面。
 
-用户设置中的 `analysis_prompt.system_bottom`（设置界面“最后一个 SYSTEM”）是整个请求中最后一条 `role: system` message。它非空时，任何受保护规则或参考资料都不能出现在它后面；其后只能是非 SYSTEM 的 narrative 和最终执行指令。为空时对应 message 省略。
+用户设置中的 `analysis_prompt.system_bottom`（设置界面“最后一个 SYSTEM”）是整个请求 `messages[]` 的绝对最后一项，且保持独立的 `role: system` message。它非空时，任何 narrative、最终执行指令或其它输出内容都必须排在它前面；它后面不能再有任何 message。为空时对应 message 省略。
 
 首尾设置不是普通 Core/suffix block。首尾之间的 SYSTEM 应按职责聚合：规则通常合并为一个 SYSTEM，允许的参考资料通常合并为一个 SYSTEM。因此 Event/World 请求通常为 1–4 个 SYSTEM，而不是每个来源一个 SYSTEM。
 
@@ -125,9 +125,9 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 1. 可选 `SYSTEM`：用户设置的“第一个 SYSTEM”（绝对第一条 SYSTEM）；
 2. `SYSTEM`：BioWeave Event Analysis Rules，合并 Protected Core、公共 `analysis_prompt`、Event Task、必要边界说明、输入后补充和 Protected Output Contract；
 3. 可选 `SYSTEM`：Reference Context，合并已选 Character Card、Event Persona、已选 Worldbook、External Memory、Current World Model、Existing BioWeave 和必要的结构化角色资料；
-4. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（绝对最后一条 SYSTEM）；
-5. `ASSISTANT`：唯一的 Narrative Context，按剧情顺序包含每层已处理的 Recent Story 和明确标记的 Target Floor；
-6. `USER`：最终执行指令。
+4. `ASSISTANT`：唯一的 Narrative Context，按剧情顺序包含每层已处理的 Recent Story 和明确标记的 Target Floor；
+5. `USER`：最终执行指令；
+6. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（整个 `messages[]` 的绝对最后一项）。
 
 World Analysis 使用相同的首尾边界、选择和来源处理，但不包含 User Persona、Event 角色资料、Target Floor、World Model reference 或 Existing BioWeave reference 等 Event 专属资料。其规则与参考资料同样按职责聚合，Recent Story 同样只产生一个 narrative `ASSISTANT`。
 

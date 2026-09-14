@@ -551,14 +551,15 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
   }));
   const messages = buildEventAnalysisMessages(input, promptSettings);
   assert.deepEqual(messages.map(message => message.role), [
-    'system', 'system', 'system', 'system', 'assistant', 'user',
+    'system', 'system', 'system', 'assistant', 'user', 'system',
   ]);
   assert.equal(messages[0].content, 'COMMON_TOP_MARKER');
   assert.equal(messages.filter(message => message.role === 'assistant').length, 1);
   assert.equal(messages.filter(message => message.role === 'system').length <= 4, true);
-  assert.equal(messages.at(-2).content.includes('【剧情上下文】'), true);
-  assert.equal(messages.at(-2).content.includes('【本次分析内容】'), true);
-  assert.equal(messages.at(-1).role, 'user');
+  assert.equal(messages.at(-3).content.includes('【剧情上下文】'), true);
+  assert.equal(messages.at(-3).content.includes('【本次分析内容】'), true);
+  assert.equal(messages.at(-2).role, 'user');
+  assert.deepEqual(messages.at(-1), {role: 'system', content: 'COMMON_BOTTOM_MARKER'});
 
   const markerOrder = [
     'COMMON_TOP_MARKER',
@@ -584,11 +585,11 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     assert.ok(index > previous, `expected ordered Event block: ${marker}`);
     previous = index;
   }
-  assert.equal(messages.slice(0, 4).every(message => message.role === 'system'), true);
+  assert.equal(messages.slice(0, 3).every(message => message.role === 'system'), true);
   assert.equal(messages[2].content.includes('【角色卡：character_display 的背景资料】'), true);
   assert.equal(messages[2].content.includes('【世界书参考资料】'), true);
-  assert.equal(messages.at(-2).role, 'assistant');
-  assert.doesNotMatch(messages.at(-2).content, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
+  assert.equal(messages.at(-3).role, 'assistant');
+  assert.doesNotMatch(messages.at(-3).content, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
   assert.doesNotMatch(messages.map(message => message.content).join('\n'), /JSON\.stringify\(analysisInput\)|"recent_story"\s*:/u);
 });
 
@@ -616,8 +617,9 @@ test('Event and World Model keep configured SYSTEM boundaries absolute and aggre
     assert.equal(systems.at(-1).content, 'LAST_SYSTEM');
     assert.equal(systems.length <= 4, true);
     assert.equal(messages.filter(message => message.role === 'assistant').length, 1);
-    assert.equal(messages.at(-2).role, 'assistant');
-    assert.equal(messages.at(-1).role, 'user');
+    assert.equal(messages.at(-3).role, 'assistant');
+    assert.equal(messages.at(-2).role, 'user');
+    assert.deepEqual(messages.at(-1), {role: 'system', content: 'LAST_SYSTEM'});
   }
 
   const eventMessages = buildEventAnalysisMessages(input, settings);
@@ -661,8 +663,9 @@ test('World Model uses the selected shared context but never formats User Person
   const messages = buildWorldModelMessages(input, promptSettings);
   const roles = messages.map(message => message.role);
   assert.equal(roles.filter(role => role === 'system').length >= 1, true);
-  assert.equal(roles.at(-2), 'assistant');
-  assert.equal(roles.at(-1), 'user');
+  assert.equal(roles.at(-3), 'assistant');
+  assert.equal(roles.at(-2), 'user');
+  assert.equal(roles.at(-1), 'system');
   assert.match(messages.map(message => message.content).join('\n'), /CHARACTER_SELECTED|WORLDBOOK_SELECTED/);
   assert.doesNotMatch(messages.map(message => message.content).join('\n'), /PERSONA_SELECTED|persona_description|user_persona/iu);
 });

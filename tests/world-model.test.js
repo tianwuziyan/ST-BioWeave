@@ -2452,14 +2452,15 @@ test('World Analysis supports independent top and bottom SYSTEM messages', () =>
 
   assert.deepEqual(plainMessages[0], {role: 'system', content: 'TOP'});
   assert.deepEqual(messages[0], {role: 'system', content: 'TOP 用户甲 / 角色甲'});
-  assert.equal(messages.filter(message => message.role === 'system').at(-1).content, 'BOTTOM 用户甲 / 角色甲');
+  assert.deepEqual(messages.at(-1), {role: 'system', content: 'BOTTOM 用户甲 / 角色甲'});
+  assert.equal(messages.at(-2).role, 'user');
   assert.notDeepEqual(messages, baseline);
   assert.ok(messages.findIndex(message => message.content.startsWith('TOP 用户甲'))
     < messages.findIndex(message => message.content.includes('【World Model 任务】')));
   assert.ok(messages.findIndex(message => message.content.includes('【World Model 输出契约】'))
     < messages.findIndex(message => message.role === 'assistant'));
   assert.deepEqual(messages.map(message => message.role), [
-    'system', 'system', 'system', 'system', 'assistant', 'user',
+    'system', 'system', 'system', 'assistant', 'user', 'system',
   ]);
 });
 
@@ -2824,7 +2825,7 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
   assert.ok(userIndex >= 0);
   assert.ok(bottomIndex >= 0);
   assert.ok(topIndex < coreIndex);
-  assert.ok(bottomIndex < userIndex);
+  assert.ok(userIndex < bottomIndex);
 });
 
 test('World Model message structure and raw views share one final messages array', () => {

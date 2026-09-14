@@ -473,9 +473,9 @@ export function buildWorldModelMessages(analysisInput = {}, promptSettings = {})
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', formatWorldModelRules(settings, names))
   addMessage(messages, 'system', formatWorldModelReferences(input, names))
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
   addMessage(messages, 'user', '请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。')
+  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }
 
@@ -487,7 +487,6 @@ export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = 
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', formatEventAnalysisRules(input, settings, names))
   addMessage(messages, 'system', formatEventAnalysisReferences(input, names))
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   addMessage(messages, 'assistant', formatNarrativeContext(
     input.recent_story?.items ?? input.recent_context,
     input.current_floor,
@@ -495,6 +494,7 @@ export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = 
     input.story_time,
   ))
   addMessage(messages, 'user', '请根据以上资料分析本次目标楼层，只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。')
+  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }
 
