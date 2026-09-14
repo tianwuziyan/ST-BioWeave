@@ -1,535 +1,2346 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BioWeave UI Framework Example</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bw-host: #0b1116;
-      --bw-panel: #171f25;
-      --bw-raised: #1d272e;
-      --bw-soft: #202c34;
-      --bw-text: #edf3f6;
-      --bw-text-2: #c2cdd2;
-      --bw-muted: #87959d;
-      --bw-line: #33444e;
-      --bw-line-soft: #293840;
-      --bw-accent: #83c7ef;
-      --bw-accent-soft: #203b4b;
-      --bw-good: #7bd5ae;
-      --bw-warn: #f1be72;
-      --bw-danger: #f08e98;
-      --bw-panel-border: #42545e;
-      --bw-header: #19232a;
-      --bw-routebar: #141d23;
-      --bw-hover: #1a2830;
-      --bw-card: #1a252c;
-      --bw-card-selected: #203744;
-      --bw-control-surface: #162129;
-      --bw-input-bg: #141d23;
-      --bw-primary-border: #5f9cc0;
-      --bw-danger-border: #774852;
-      --bw-indent-line: #465862;
-      --bw-radius: 10px;
-    }
-    .bw-shell[data-theme="light"] {
-      color-scheme: light;
-      --bw-host: #cbd6db;
-      --bw-panel: #dbe4e8;
-      --bw-raised: #e5ecef;
-      --bw-soft: #d3dfe4;
-      --bw-text: #1b2a33;
-      --bw-text-2: #3c4d56;
-      --bw-muted: #61727c;
-      --bw-line: #8fa2ac;
-      --bw-line-soft: #b9c8cf;
-      --bw-accent: #356f91;
-      --bw-accent-soft: #c9dde6;
-      --bw-good: #2b755d;
-      --bw-warn: #86651f;
-      --bw-danger: #a44852;
-      --bw-panel-border: #7e949f;
-      --bw-header: #d4dfe3;
-      --bw-routebar: #cbd8de;
-      --bw-hover: #d8e5e9;
-      --bw-card: #e1e9ec;
-      --bw-card-selected: #cbdfe8;
-      --bw-control-surface: #d5e1e5;
-      --bw-input-bg: #d9e4e8;
-      --bw-primary-border: #5b8aa0;
-      --bw-danger-border: #a44852;
-      --bw-indent-line: #a8bac3;
-    }
-    .bw-shell[data-theme="tavern"] {
-      color-scheme: light dark;
-      --bw-host: var(--SmartThemeBlurTintColor, #202a31);
-      --bw-panel: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
-      --bw-raised: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
-      --bw-soft: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 74%, var(--SmartThemeBodyColor, #e8eef2) 26%);
-      --bw-text: var(--SmartThemeBodyColor, #e8eef2);
-      --bw-text-2: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 78%, var(--SmartThemeBlurTintColor, #202a31) 22%);
-      --bw-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 62%, var(--SmartThemeBlurTintColor, #202a31) 38%);
-      --bw-line: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 24%, var(--SmartThemeBlurTintColor, #202a31) 76%);
-      --bw-line-soft: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 16%, var(--SmartThemeBlurTintColor, #202a31) 84%);
-      --bw-accent: var(--SmartThemeQuoteColor, #4f91b6);
-      --bw-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%);
-      --bw-good: #3b8b6d;
-      --bw-warn: #a7792b;
-      --bw-danger: #b45d67;
-      --bw-panel-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%);
-      --bw-header: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
-      --bw-routebar: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 84%, var(--SmartThemeBodyColor, #10171c) 16%);
-      --bw-hover: var(--bw-accent-soft);
-      --bw-card: var(--bw-raised);
-      --bw-card-selected: var(--bw-accent-soft);
-      --bw-control-surface: var(--bw-raised);
-      --bw-input-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
-      --bw-primary-border: var(--SmartThemeQuoteColor, #5f9bbd);
-      --bw-danger-border: #b45d67;
-      --bw-indent-line: var(--bw-line);
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
-    body {
-      background: linear-gradient(140deg, #111a21, var(--bw-host));
-      color: var(--bw-text);
-      font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    }
-    button, input, select, textarea { font: inherit; color: inherit; }
-    button { cursor: pointer; }
-    /* Shared vertical rhythm: component selectors below add only explicit reference spacing. */
-    h1, h2, h3, h4, p { margin: 0; }
-    .bw-shell { width: min(960px, 94vw); min-height: min(760px, 90vh); margin: 5vh auto; display: grid; grid-template-rows: 50px 42px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--bw-panel-border); border-radius: 11px; background: var(--bw-panel); box-shadow: 0 24px 60px rgb(0 0 0 / 34%); }
-    .bw-header { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 0 13px; border-bottom: 1px solid var(--bw-line); background: var(--bw-header); cursor: grab; touch-action: none; user-select: none; }
-    .bw-shell[data-dragging="true"] .bw-header { cursor: grabbing; }
-    .bw-brand { flex: 0 0 auto; font-size: 16px; font-weight: 700; }
-    .bw-scope { min-width: 0; overflow: hidden; color: var(--bw-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-header-spacer { flex: 1; }
-    .bw-header button, .bw-routebar button { border: 0; border-radius: 6px; background: transparent; color: var(--bw-muted); }
-    .bw-header button { min-width: 30px; min-height: 30px; padding: 4px 7px; }
-    .bw-theme-button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0 !important; font-size: 16px; }
-    .bw-theme-icon { display: block; line-height: 1; }
-    .bw-routebar { display: flex; align-items: stretch; gap: 2px; min-width: 0; padding: 0 10px; overflow-x: auto; border-bottom: 1px solid var(--bw-line-soft); background: var(--bw-routebar); }
-    .bw-route-items { display: flex; align-items: stretch; gap: 2px; flex: 0 0 auto; width: max-content; min-width: 100%; }
-    .bw-route-items button { flex: 0 0 auto; min-width: 72px; min-height: 42px; padding: 0 11px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 14px; white-space: nowrap; }
-    .bw-route-items button:hover { background: var(--bw-hover); color: var(--bw-text); }
-    .bw-route-items button.active { background: transparent; color: var(--bw-accent); border-bottom-color: var(--bw-accent); }
-    .bw-main { min-width: 0; overflow: auto; padding: 16px 18px 20px; }
-    .bw-page { max-width: 820px; margin: 0 auto; }
-    .bw-page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; padding-left: 4px; }
-    .bw-page-head-copy { min-width: 0; flex: 1; }
-    .bw-page-head p, .bw-section-head p, .bw-note { margin-top: 4px; color: var(--bw-muted); font-size: 12px; }
-    .bw-page-head h1 { font-size: 22px; line-height: 1.3; }
-    .bw-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-    .bw-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); color: var(--bw-text-2); }
-    .bw-button.primary { border-color: var(--bw-primary-border); background: var(--bw-accent-soft); color: var(--bw-accent); }
-    .bw-button.danger { border-color: var(--bw-danger-border); color: var(--bw-danger); }
-    .bw-button.small { min-height: 26px; padding: 3px 7px; font-size: 12px; }
-    .bw-text-button { border: 0; background: transparent; color: var(--bw-accent); padding: 5px 0; }
-    input, select, textarea { width: 100%; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-input-bg); padding: 8px 9px; }
-    .bw-section, .bw-settings-group { min-width: 0; margin-left: 10px; border: 1px solid var(--bw-line); border-radius: var(--bw-radius); background: var(--bw-raised); }
-    .bw-section { padding: 11px 12px; }
-    .bw-section + .bw-section, .bw-settings-group + .bw-settings-group { margin-top: 3px; }
-    .bw-settings-group.bw-api-source-group { overflow: visible; }
-    .bw-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
-    .bw-world-selection > .bw-section-head { margin-bottom: 5px; }
-    .bw-section-head h2 { font-size: 16px; }
-    .bw-characters-page { max-width: 900px; }
-    .bw-character-toolbar { display: flex; align-items: center; gap: 7px; margin: 0 0 8px 10px; }
-    .bw-character-toolbar input { min-width: 0; flex: 1 1 auto; }
-    .bw-character-toolbar .bw-button { flex: 0 0 auto; min-width: 96px; }
-    .bw-character-workspace { display: grid; grid-template-columns: minmax(180px, .72fr) minmax(0, 1.28fr); gap: 8px; align-items: start; margin-left: 10px; }
-    .bw-character-list-pane, .bw-character-detail-pane { min-width: 0; }
-    .bw-character-list { display: grid; gap: 5px; min-width: 0; }
-    .bw-character-pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 2px 6px; color: var(--bw-muted); font-size: 11px; }
-    .bw-character-pane-head strong { color: var(--bw-text-2); font-size: 13px; }
-    .bw-character-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-card); color: var(--bw-text); text-align: left; transition: border-color .15s, background .15s, transform .15s; }
-    .bw-character-row:hover, .bw-character-row:focus-visible, .bw-character-row.selected { border-color: var(--bw-accent); background: var(--bw-accent-soft); }
-    .bw-character-row:focus-visible { outline: 2px solid var(--bw-accent); outline-offset: 2px; }
-    .bw-character-row-main { display: grid; gap: 2px; min-width: 0; }
-    .bw-character-row-main b { overflow: hidden; font-size: 14px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-character-row-state { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--bw-accent); font-size: 10px; white-space: nowrap; }
-    .bw-character-row-state .bw-badge { min-height: 19px; padding: 1px 5px; font-size: 10px; }
-    .bw-character-row-chevron { color: var(--bw-muted); font-size: 15px; line-height: 1; }
-    .bw-character-detail-pane { padding: 10px 11px; }
-    .bw-character-detail-placeholder { display: grid; align-content: center; min-height: 98px; padding: 16px; color: var(--bw-muted); }
-    .bw-character-detail-placeholder strong { color: var(--bw-text-2); font-size: 13px; }
-    .bw-character-detail-placeholder p { margin-top: 2px; font-size: 11px; }
-    .bw-character-detail-head, .bw-character-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .bw-character-detail-head { align-items: flex-start; padding-bottom: 7px; border-bottom: 1px solid var(--bw-line); }
-    .bw-character-detail-head h2 { font-size: 16px; }
-    .bw-character-detail-head p { margin-top: 2px; color: var(--bw-muted); font-size: 10px; }
-    .bw-character-summary { margin-top: 6px; padding: 6px 10px; border-left: 2px solid var(--bw-accent); background: var(--bw-accent-soft); }
-    .bw-character-summary-head b { min-width: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-character-summary-facts { display: flex; align-items: center; width: 100%; min-width: 0; gap: 6px; margin-top: 3px; color: var(--bw-muted); font-size: 10px; line-height: 1.15; white-space: nowrap; }
-    .bw-character-summary-facts > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-character-summary-facts > span:nth-child(2) { flex: 0 0 auto; color: var(--bw-line); }
-    .bw-character-detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; align-items: start; margin-top: 6px; }
-    .bw-character-detail-section { min-width: 0; padding: 8px 9px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-card); }
-    .bw-character-detail-section.exposure-section { grid-column: 1 / -1; }
-    .bw-character-detail-section h3 { color: var(--bw-text-2); font-size: 12px; }
-    .bw-character-detail-section > p { margin-top: 2px; color: var(--bw-muted); font-size: 10px; }
-    .bw-character-capabilities { display: grid; gap: 0; margin: 5px 0 0; }
-    .bw-character-capabilities > div { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr); gap: 7px; padding: 4px 0; border-top: 1px solid var(--bw-line-soft); }
-    .bw-character-capabilities > div:first-child { border-top: 0; }
-    .bw-character-capabilities dt { color: var(--bw-text-2); font-size: 10px; }
-    .bw-character-capabilities dd { margin: 0; padding-left: 8px; color: var(--bw-muted); font-size: 10px; text-align: left; }
-    .bw-character-capabilities dd.row-value.good { color: var(--bw-good); }
-    .bw-character-capabilities dd.character-capability-unknown { color: var(--bw-warn); }
-    .bw-character-empty { padding-top: 5px; color: var(--bw-muted); font-size: 10px; line-height: 1.35; }
-    .bw-character-exposure-list { display: grid; gap: 7px; margin-top: 5px; }
-    .bw-character-exposure-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 1px 2px; color: var(--bw-muted); font-size: 10px; }
-    .bw-character-exposure-list-head strong { color: var(--bw-text-2); font-size: 11px; }
-    .bw-character-exposure { min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--bw-line-soft); border-radius: 6px; background: var(--bw-panel-raised); }
-    .bw-character-exposure > summary { display: grid; grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px; grid-template-areas: "date type meta . status chevron"; align-items: center; column-gap: 14px; row-gap: 4px; min-height: 46px; padding: 6px 8px; cursor: pointer; list-style: none; }
-    .bw-character-exposure > summary::-webkit-details-marker { display: none; }
-    .bw-character-exposure > summary:hover { background: var(--bw-hover); }
-    .bw-character-exposure-date { display: grid; grid-area: date; gap: 2px; width: 132px; min-width: 0; padding-right: 12px; border-right: 1px solid var(--bw-line-soft); color: var(--bw-muted); font-size: 10px; line-height: 1.1; }
-    .bw-character-exposure-date > span, .bw-character-exposure-type, .bw-character-exposure-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-character-exposure-date > span { color: var(--bw-muted); font-size: 10px; }
-    .bw-character-exposure-date > small { color: var(--bw-accent); font-size: 9px; line-height: 1; }
-    .bw-character-exposure-type { grid-area: type; font-size: 11px; }
-    .bw-character-exposure-meta { grid-area: meta; max-width: 220px; color: var(--bw-muted); font-size: 10px; }
-    .bw-character-exposure-fields { display: grid; gap: 0; margin: 5px 0 0; }
-    .bw-character-exposure-fields > div { display: grid; grid-template-columns: minmax(60px, max-content) minmax(0, 1fr); column-gap: 12px; min-width: 0; padding: 3px 0; border-top: 1px solid var(--bw-line-soft); }
-    .bw-character-exposure-fields > div:first-child { border-top: 0; }
-    .bw-character-exposure-fields dt { color: var(--bw-muted); font-size: 10px; }
-    .bw-character-exposure-fields dd { min-width: 0; margin: 0; overflow: hidden; color: var(--bw-text-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-character-exposure-age-inline { margin-left: 6px; color: var(--bw-accent); font-size: 9px; }
-    .bw-character-exposure > summary > .bw-badge { grid-area: status; min-height: 18px; padding: 1px 5px; font-size: 9px; }
-    .bw-character-exposure-chevron { grid-area: chevron; color: var(--bw-muted); font-size: 13px; line-height: 1; }
-    .bw-character-exposure-detail { padding: 7px 8px 8px; border-top: 1px solid var(--bw-line-soft); background: color-mix(in srgb, var(--bw-panel-raised) 72%, var(--bw-panel) 28%); }
-    .bw-character-exposure-source { margin-top: 6px; color: var(--bw-muted); font-size: 10px; }
-    .bw-event-review-panel { margin-left: 10px; }
-    .bw-event-review-summary { display: flex; align-items: baseline; gap: 7px; margin: 2px 0 5px; color: var(--bw-muted); font-size: 11px; }
-    .bw-event-review-summary strong { color: var(--bw-text-2); font-size: 13px; }
-    .bw-event-review-list { display: grid; gap: 0; border-top: 1px solid var(--bw-line-soft); }
-    .bw-event-review-row { display: grid; grid-template-columns: 128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto; gap: 8px; align-items: center; min-width: 0; min-height: 45px; padding: 6px 0; border-bottom: 1px solid var(--bw-line-soft); list-style: none; cursor: pointer; }
-    .bw-event-review-row::-webkit-details-marker { display: none; }
-    .bw-event-review-time, .bw-event-review-main, .bw-event-review-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-event-review-time { color: var(--bw-muted); font-size: 11px; }
-    .bw-event-review-time { display: grid; gap: 1px; align-content: center; }
-    .bw-event-review-time b { color: var(--bw-text-2); font-size: 11px; }
-    .bw-event-review-time small { color: var(--bw-accent); font-size: 9px; line-height: 1; }
-    .bw-event-review-main { display: flex; align-items: baseline; gap: 7px; }
-    .bw-event-review-main b { flex: 0 0 auto; font-size: 12px; }
-    .bw-event-review-main small { min-width: 0; overflow: hidden; color: var(--bw-muted); text-overflow: ellipsis; white-space: nowrap; }
-    .bw-event-review-detail { color: var(--bw-muted); font-size: 11px; }
-    .bw-event-review-row > .bw-badge { justify-self: end; }
-    .bw-event-review-detail-panel { padding: 8px 0; border-bottom: 1px solid var(--bw-line-soft); }
-    .bw-event-review-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; color: var(--bw-muted); font-size: 10px; }
-    .bw-species-grid, .bw-type-grid, .bw-module-grid { display: grid; gap: 7px; }
-    .bw-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .bw-type-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 4px; }
-    .bw-world-card, .bw-type-card { min-width: 0; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: var(--bw-card); color: var(--bw-text); text-align: left; }
-    .bw-world-card { min-height: 68px; padding: 9px 10px; }
-    .bw-type-card { min-height: 52px; padding: 8px 9px; }
-    .bw-world-card.selected, .bw-type-card.selected { border-color: var(--bw-accent); background: var(--bw-card-selected); }
-    .bw-world-card-head, .bw-type-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 7px; }
-    .bw-world-card b { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-type-card b { font-size: 15px; }
-    .bw-world-card small, .bw-type-card small { display: block; margin-top: 3px; color: var(--bw-muted); font-size: 11px; }
-    .bw-module-grid { grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 8px; }
-    .bw-module { min-width: 0; overflow: hidden; border-bottom: 1px solid var(--bw-line-soft); background: transparent; }
-    .bw-module:last-child { border-bottom: 0; }
-    .bw-module-head { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 7px 0 5px; }
-    .bw-module-head .spacer { flex: 1; }
-    .bw-module-body { padding: 0 0 7px; }
-    .bw-kv { display: grid; margin: 0; }
-    .bw-kv-row { display: grid; grid-template-columns: minmax(118px, max-content) minmax(0, 1fr); gap: 6px; padding: 5px 0; border-top: 1px solid var(--bw-line-soft); }
-    .bw-kv-row:first-child { border-top: 0; }
-    .bw-kv-row dt { color: var(--bw-text-2); }
-    .bw-kv-row dd { margin: 0; color: var(--bw-muted); }
-    .bw-world-rules-column .bw-kv-row { grid-template-columns: minmax(92px, max-content) minmax(0, 1fr); gap: 5px; }
-    .bw-kv-row dd.bw-value-good { box-sizing: border-box; padding-right: 8px; color: var(--bw-good); text-align: right; }
-    .bw-kv-row dd.bw-value-no { color: var(--bw-text-2); text-align: left; }
-    .bw-kv-row dd.bw-value-warn { box-sizing: border-box; padding-right: 8px; color: var(--bw-warn); text-align: right; }
-    .bw-world-content-grid { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 4fr); gap: 8px; }
-    .bw-world-detail-column, .bw-world-rules-column { min-width: 0; }
-    .bw-world-rules-column > .bw-section { margin-left: 0; }
-    .bw-settings { display: grid; gap: 3px; }
-    .bw-settings-group { overflow: hidden; margin-left: 0; }
-    .bw-settings-group > summary, .bw-source-branch > summary { cursor: pointer; list-style: none; }
-    .bw-settings-group > summary::-webkit-details-marker, .bw-source-branch > summary::-webkit-details-marker { display: none; }
-    .bw-settings-head { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 7px 12px; background: var(--bw-header); }
-    .bw-settings-group[open] > .bw-settings-head { border-left: 3px solid var(--bw-accent); padding-left: 9px; background: var(--bw-card-selected); }
-    .bw-settings-head > .bw-badge { margin-left: auto; }
-    .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.good, .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.warn, .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.danger { border-color: var(--bw-line); color: var(--bw-text-2); }
-    .bw-settings-chevron, .bw-source-branch-chevron { display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--bw-line); border-radius: 5px; color: var(--bw-accent); background: var(--bw-control-surface); font-size: 15px; line-height: 1; }
-    .bw-settings-chevron { width: 18px; height: 18px; }
-    .bw-settings-title { min-width: 0; }
-    .bw-settings-title b, .bw-settings-title small { display: block; }
-    .bw-settings-title b { font-size: 15px; }
-    .bw-settings-title small { margin-top: 2px; color: var(--bw-muted); font-size: 11px; }
-    .bw-settings-body { display: grid; gap: 7px; padding: 0 13px 12px; border-top: 1px solid var(--bw-line); background: var(--bw-raised); }
-    .bw-source-branch { overflow: hidden; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: var(--bw-card); }
-    .bw-source-branch > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; padding: 4px 8px; color: var(--bw-text-2); font-size: 13px; font-weight: 700; background: var(--bw-soft); }
-    .bw-source-branch-select, .bw-source-branch-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .bw-source-branch-select input:indeterminate { accent-color: var(--bw-warn); }
-    .bw-source-branch-select > span { display: grid; gap: 2px; min-width: 0; }
-    .bw-source-branch-select small { color: var(--bw-muted); font-size: 10px; font-weight: 400; }
-    .bw-source-branch-tools { flex: 0 0 auto; gap: 4px; }
-    .bw-source-branch-chevron { width: 20px; height: 20px; font-size: 13px; }
-    .bw-source-child-list { display: grid; gap: 2px; margin: 0 8px 7px 24px; padding-left: 8px; border-left: 1px solid var(--bw-indent-line); }
-    .bw-source-child { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 27px; padding: 3px 5px; color: var(--bw-text-2); font-size: 11px; font-weight: 400; }
-    .bw-source-child > span { display: grid; gap: 2px; min-width: 0; }
-    .bw-source-child small { color: var(--bw-muted); font-size: 10px; }
-    .bw-checkbox { width: 16px; height: 16px; accent-color: var(--bw-accent); appearance: auto; }
-    .bw-source-child input { width: 15px; height: 15px; accent-color: var(--bw-accent); appearance: auto; }
-    .bw-memory-list { display: grid; gap: 6px; padding-top: 8px; }
-    .bw-memory-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 39px; padding: 7px 9px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-card); }
-    .bw-memory-row > label { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-    .bw-memory-row strong, .bw-memory-row small { display: block; }
-    .bw-memory-row small { margin-top: 2px; color: var(--bw-muted); font-size: 11px; }
-    .bw-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--bw-line); border-radius: 999px; color: var(--bw-text-2); font-size: 12px; white-space: nowrap; }
-    .bw-badge.good { border-color: #426e5a; color: var(--bw-good); }
-    .bw-badge.warn { border-color: #765d38; color: var(--bw-warn); }
-    .bw-badge.danger { border-color: #75434b; color: var(--bw-danger); }
-    .bw-select { width: 150px; min-width: 0; border: 1px solid var(--bw-line); border-radius: 6px; appearance: auto; -webkit-appearance: menulist; background: var(--bw-routebar); padding: 5px 6px; font-size: 12px; }
-    .bw-model-picker { position: relative; min-width: 0; overflow: visible; }
-    .bw-model-control-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; min-width: 0; }
-    .bw-model-label { color: var(--bw-text-2); font-size: 12px; white-space: nowrap; }
-    .bw-model-trigger { display: flex; align-items: center; justify-content: space-between; min-width: 0; width: 100%; min-height: 32px; border: 1px solid var(--bw-line); border-radius: 6px; background: var(--bw-input-bg); padding: 5px 7px; text-align: left; }
-    .bw-model-trigger > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-model-dropdown { position: absolute; top: calc(100% + 5px); right: 0; left: 0; z-index: 30; display: grid; gap: 6px; min-width: 0; max-width: 100%; padding: 8px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); box-shadow: 0 10px 24px rgb(0 0 0 / 24%); }
-    .bw-model-dropdown[hidden] { display: none; }
-    .bw-model-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; }
-    .bw-model-list button { min-width: 0; border: 0; background: transparent; padding: 5px 6px; color: var(--bw-text-2); text-align: left; }
-    .bw-radio-list { display: grid; gap: 7px; padding-top: 11px; }
-    .bw-radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: var(--bw-card); }
-    .bw-radio-option:has(input:checked) { border-color: var(--bw-accent); background: var(--bw-card-selected); }
-    .bw-radio-option input { flex: 0 0 auto; margin-top: 3px; accent-color: var(--bw-accent); }
-    .bw-radio-option span, .bw-setting-field { display: grid; gap: 3px; min-width: 0; }
-    .bw-radio-option small, .bw-setting-field small { color: var(--bw-muted); font-size: 11px; }
-    .bw-api-profile-panel { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--bw-line-soft); }
-    .bw-api-profile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .bw-api-profile-head h3 { font-size: 13px; }
-    .bw-api-profile-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 32px; padding: 4px 0; border-bottom: 1px solid var(--bw-line-soft); }
-    .bw-api-profile-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bw-api-profile-actions { display: flex; flex: 0 0 auto; gap: 4px; }
-    .bw-api-profile-actions .bw-button { min-height: 25px; padding: 3px 7px; font-size: 11px; }
-    .bw-prompt-grid { display: grid; gap: 9px; padding-top: 11px; }
-    .bw-prompt-grid textarea { min-height: 72px; resize: vertical; border: 1px solid var(--bw-line); border-radius: 6px; background: var(--bw-routebar); padding: 6px; }
-    .bw-settings-actions { display: flex; flex-wrap: wrap; gap: 7px; padding-top: 4px; }
-    .bw-setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding-top: 11px; }
-    .bw-recent-story-read-options { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
-    .bw-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; padding: 5px 0; border-top: 1px solid var(--bw-line-soft); }
-    .bw-switch { position: relative; display: inline-flex; min-height: 24px; min-width: 34px; }
-    .bw-switch input { position: absolute; opacity: 0; }
-    .bw-switch span { display: block; width: 34px; height: 20px; border: 1px solid var(--bw-line); border-radius: 999px; background: #121a20; }
-    .bw-switch span::after { display: block; width: 14px; height: 14px; margin: 2px; border-radius: 50%; background: var(--bw-muted); content: ""; transition: transform .15s; }
-    .bw-switch input:checked + span { border-color: var(--bw-primary-border); background: var(--bw-accent-soft); }
-    .bw-switch input:checked + span::after { background: var(--bw-accent); transform: translateX(14px); }
-    .bw-regex-row .bw-switch span { width: 28px; height: 18px; }
-    .bw-regex-row .bw-switch span::after { width: 12px; height: 12px; }
-    .bw-regex-row .bw-switch input:checked + span::after { transform: translateX(12px); }
-    .bw-regex-list { display: grid; gap: 3px; margin-top: 7px; }
-    .bw-regex-row { display: grid; grid-template-columns: 20px 72px minmax(100px, 1fr) minmax(90px, 1fr) 35px 38px; gap: 4px; align-items: stretch; min-width: 0; padding: 3px 4px; border: 1px solid var(--bw-line-soft); border-radius: 6px; background: var(--bw-card); }
-    .bw-regex-row select, .bw-regex-row input { min-width: 0; height: 26px; box-sizing: border-box; border: 1px solid var(--bw-line); border-radius: 5px; background: var(--bw-routebar); padding: 4px 5px; font-size: 11px; }
-    .bw-regex-move { display: grid; grid-template-rows: 1fr 1fr; min-height: 32px; }
-    .bw-regex-move button { min-height: 0; border: 1px solid var(--bw-line); background: var(--bw-control-surface); color: var(--bw-muted); padding: 0; font-size: 10px; line-height: 1; }
-    .bw-regex-move button:first-child { border-radius: 4px 4px 0 0; }
-    .bw-regex-move button:last-child { border-top: 0; border-radius: 0 0 4px 4px; }
-    .bw-regex-section { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--bw-line-soft); }
-    .bw-regex-section:first-child { margin-top: 0; padding-top: 6px; border-top: 0; }
-    .bw-regex-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-    .bw-regex-section-head h3 { font-size: 13px; }
-    .bw-regex-section-head p { margin-top: 1px; color: var(--bw-muted); font-size: 10px; }
-    .bw-note { margin: 10px 10px 0; }
-    @media (max-width: 1199px) {
-      .bw-shell { width: min(960px, calc(100vw - 24px)); margin-block: 12px; }
-      .bw-routebar { gap: 2px; }
-    }
-    @media (max-width: 767px) {
-      .bw-shell { width: calc(100vw - 20px); min-height: calc(100vh - 20px); margin: 10px; grid-template-rows: 48px 72px minmax(0, 1fr); }
-      .bw-header { padding-inline: 10px; }
-      .bw-scope { font-size: 11px; }
-      .bw-routebar { display: block; gap: 0; padding: 4px 7px; overflow: hidden; }
-      .bw-route-items { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; width: 100%; min-width: 0; }
-      .bw-route-items button { min-width: 0; min-height: 30px; border-radius: 4px; padding: 3px 2px; font-size: 13px; }
-      .bw-main { padding: 12px 12px 16px; }
-      .bw-page-head { align-items: center; margin-bottom: 10px; padding-left: 2px; }
-      .bw-page-head h1 { font-size: 19px; }
-      .bw-page-head p { display: none; }
-      .bw-character-toolbar { margin-left: 5px; }
-      .bw-character-toolbar .bw-button { min-width: 84px; }
-      .bw-character-workspace { display: flex; flex-direction: column; gap: 6px; margin-left: 5px; }
-      .bw-character-list-pane { order: 1; }
-      .bw-character-detail-pane { order: 2; width: 100%; padding: 8px; }
-      body[data-device="mobile"][data-view="characters"] .bw-character-toolbar,
-      body[data-device="mobile"][data-view="characters"] .bw-character-workspace,
-      body[data-device="mobile"][data-view="characters"] .bw-character-list-pane,
-      body[data-device="mobile"][data-view="characters"] .bw-character-detail-pane { width: 100%; margin-left: 0; margin-right: 0; }
-      .bw-character-row { gap: 8px; padding: 8px 9px; }
-      .bw-character-row-main b { font-size: 13px; }
-      .bw-character-detail-sections { grid-template-columns: 1fr; gap: 5px; }
-      .bw-character-detail-section { padding: 7px 8px; }
-      .bw-character-detail-section.exposure-section { grid-column: auto; }
-      .bw-character-exposure-fields > div { grid-template-columns: minmax(58px, max-content) minmax(0, 1fr); column-gap: 10px; padding: 3px 0; }
-      .bw-character-exposure > summary { grid-template-columns: 100px minmax(0, 1fr) auto 14px; grid-template-rows: auto auto; column-gap: 9px; row-gap: 5px; min-height: 55px; padding: 7px; }
-      .bw-character-exposure-date { grid-column: 1; padding-right: 0; border-right: 0; }
-      .bw-character-exposure-type { grid-column: 2; }
-      .bw-character-exposure-meta { grid-column: 1 / 3; grid-row: 2; }
-      .bw-character-exposure > summary > .bw-badge { grid-column: 3; grid-row: 1; }
-      .bw-character-exposure-chevron { grid-column: 4; grid-row: 1; }
-      .bw-event-review-panel { margin-left: 5px; }
-      .bw-event-review-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 3px 7px; min-height: 52px; padding: 7px 0; }
-      .bw-event-review-time { grid-column: 1; grid-row: 2; font-size: 10px; }
-      .bw-event-review-main { grid-column: 1; grid-row: 1; }
-      .bw-event-review-main b { font-size: 11px; }
-      .bw-event-review-main small { font-size: 10px; }
-      .bw-event-review-detail { grid-column: 2; grid-row: 2; justify-self: end; font-size: 10px; }
-      .bw-event-review-row > .bw-badge { grid-column: 2; grid-row: 1; }
-      .bw-event-review-foot { align-items: flex-start; flex-direction: column; gap: 4px; }
-      .bw-page > .bw-section, .bw-page > .bw-settings-group { margin-left: 5px; }
-      .bw-section { padding: 10px; }
-      .bw-species-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
-      .bw-type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-      .bw-type-card b { font-size: 14px; }
-      .bw-world-card { min-height: 58px; padding: 7px 8px; }
-      .bw-world-card b { font-size: 13px; }
-      .bw-world-card small { display: none; }
-      .bw-type-card { min-height: 48px; padding: 7px 8px; }
-      .bw-module-grid { grid-template-columns: 1fr; }
-      .bw-world-content-grid { grid-template-columns: minmax(0, 1fr); }
-      .bw-recent-story-read-options { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 4px; }
-      .bw-regex-row { grid-template-columns: 18px 60px minmax(0, 1fr) 28px 20px 28px; gap: 3px; align-items: stretch; min-height: 32px; }
-      .bw-select { width: 105px; }
-    }
-  </style>
-</head>
-<body>
-  <!-- This is a structural example only. It has no production data or API logic. -->
-  <div class="bw-shell" data-ui-framework="bioweave-v1" data-theme="dark">
-    <header class="bw-header" data-bioweave-drag-handle>
-      <strong class="bw-brand">BioWeave</strong>
-      <span class="bw-scope">当前 Chat</span>
-      <span class="bw-header-spacer"></span>
-      <button class="bw-theme-button" type="button" title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换"><i class="fa-solid fa-circle-half-stroke bw-theme-icon" data-bw-theme-icon aria-hidden="true"></i></button>
-      <button type="button" aria-label="关闭">×</button>
-    </header>
-    <nav class="bw-routebar" aria-label="页面导航">
-      <div class="bw-route-items">
-        <button type="button">总览</button>
-        <button type="button">人物</button>
-        <button type="button">事件</button>
-        <button type="button">推演</button>
-        <button type="button">家系</button>
-        <button class="active" type="button">世界</button>
-        <button type="button">设置</button>
-        <button type="button">状态</button>
-      </div>
-    </nav>
-    <main class="bw-main">
-      <div class="bw-page">
-        <header class="bw-page-head">
-          <div class="bw-page-head-copy">
-            <h1>世界模型</h1>
-            <p>这是结构与控件写法示例，生产数据仍来自 Runtime。</p>
-          </div>
-          <div class="bw-actions"><button class="bw-button primary" type="button">重新分析</button></div>
-        </header>
-
-        <!-- 人物页的视觉结构：生产实现使用 trackingSubjects / characterProfiles，不复制示例人物。 -->
-        <section class="bw-page bw-characters-page">
-          <header class="bw-page-head"><div class="bw-page-head-copy"><h1>人物列表</h1><p>当前 Chat 中已进入事件追踪流程的角色</p></div><div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div></header>
-          <div class="bw-character-toolbar"><input placeholder="搜索人物……" aria-label="搜索人物"><button class="bw-button" type="button">全部状态 ▾</button></div>
-          <div class="bw-character-workspace">
-            <section class="bw-character-list-pane"><div class="bw-character-pane-head"><strong>追踪人物</strong><span>n 人</span></div><div class="bw-character-list">
-              <button class="bw-character-row selected" type="button" data-character-id="runtime-character-id"><span class="bw-character-row-main"><b>Runtime display_name</b></span><span class="bw-character-row-state"><span class="bw-badge good">追踪中</span><span>n 次相关事件</span><span class="bw-character-row-chevron">›</span></span></button>
-              <button class="bw-character-row" type="button" data-character-id="runtime-character-id-2"><span class="bw-character-row-main"><b>另一个 Runtime 角色</b></span><span class="bw-character-row-state"><span class="bw-badge">未知</span><span>0 次相关事件</span><span class="bw-character-row-chevron">›</span></span></button>
-            </div></section>
-            <section class="bw-section bw-character-detail-pane"><header class="bw-character-detail-head"><div><h2>人物详情</h2><p>当前 Chat · 事件追踪</p></div></header><section class="bw-character-summary"><header class="bw-character-summary-head"><b>Runtime display_name</b><span class="bw-badge good">事件追踪</span></header><div class="bw-character-summary-facts"><span>物种</span><span>·</span><span>生理类型</span></div></section><div class="bw-character-detail-sections"><section class="bw-character-detail-section"><h3>生殖能力</h3><dl class="bw-character-capabilities"><div><dt>Runtime 能力字段</dt><dd class="row-value good">是</dd></div><div><dt>未知能力字段</dt><dd class="character-capability-unknown">未知</dd></div></dl></section><section class="bw-character-detail-section"><h3>当前状态</h3><p>等待状态引擎计算</p></section><section class="bw-character-detail-section exposure-section"><h3>事件追踪</h3><p>仅显示当前仍在跟进的相关记录。</p><div class="bw-character-exposure-list"><div class="bw-character-exposure-list-head"><span>按 Runtime 引用顺序</span><strong>n 条记录</strong></div><details class="bw-character-exposure" open><summary><span class="bw-character-exposure-date"><span>Runtime story time</span><small>相对时间</small></span><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span><span class="bw-badge good">已确认</span><span class="bw-character-exposure-chevron">⌄</span></summary><div class="bw-character-exposure-detail"><dl class="bw-character-exposure-fields"><div><dt>日期</dt><dd><span>Runtime story time</span><small class="bw-character-exposure-age-inline">相对时间</small></dd></div><div><dt>地点</dt><dd>Runtime 地点</dd></div><div><dt>相关对象</dt><dd>Runtime 对象</dd></div></dl><p class="bw-character-exposure-source">完整事实仍来自当前 Event Registry。</p></div></details></div></section><section class="bw-character-detail-section"><h3>推演</h3><div class="bw-character-empty">当前没有可显示的生理推演。</div></section><section class="bw-character-detail-section"><h3>关系</h3><div class="bw-character-empty">当前没有已确认关系。</div></section></div></section>
-          </div>
-        </section>
-
-        <!-- 事件页的视觉结构：生产实现保留真实事件详情、编辑和删除 hooks。 -->
-        <section class="bw-page">
-          <header class="bw-page-head"><div class="bw-page-head-copy"><h1>事件审阅</h1><p>全局只保留快速索引；完整记录在对应人物内查看</p></div><div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div></header>
-          <section class="bw-section bw-event-review-panel"><div class="bw-section-head"><div><h2>当前事件索引</h2><p>按日期快速定位；不在这里堆叠所有人物上下文</p></div><label>状态<select class="bw-select" data-bioweave-event-filter><option>全部</option><option>已确认</option><option>较可能</option></select></label></div><div class="bw-event-review-summary"><strong>n 条</strong><span>当前筛选结果 · 详情按人物归属展开</span></div><div class="bw-event-review-list"><details class="bw-event-review-item" data-bioweave-event-id="runtime-event-id"><summary class="bw-event-review-row"><span class="bw-event-review-time"><b>Runtime story time</b><small>相对时间</small></span><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span><span class="bw-event-review-detail">n 个追踪对象</span><span class="bw-badge good">已确认</span></summary><div class="bw-event-review-detail-panel">原有事件事实、妊娠相关性、证据、编辑和删除操作位于展开内容。</div></details></div><div class="bw-event-review-foot"><span>完整事实来自 Runtime Event Registry。</span><button class="bw-text-button" type="button">查看人物记录 →</button></div></section>
-        </section>
-
-        <section class="bw-section bw-world-selection">
-          <header class="bw-section-head"><div><h2>物种与生物类型</h2><p>使用卡片选择，不使用大面积下拉框。</p></div></header>
-          <!-- 卡片内部结构与配置登记：head / title / mark / summary；名称和数量只演示 Runtime 映射，不固定性别枚举。 -->
-          <div class="bw-species-grid">
-            <button class="bw-world-card selected" type="button" data-bioweave-action="world-model-select-species"><span class="bw-world-card-head"><b>潮汐生物</b><small>当前</small></span><small class="bw-world-card-summary">2 个类型 · 潮汐生物型 / 甲型</small></button>
-            <button class="bw-world-card" type="button" data-bioweave-action="world-model-select-species"><span class="bw-world-card-head"><b>镜生体</b><small>可选</small></span><small class="bw-world-card-summary">1 个类型 · 镜生体型</small></button>
-            <button class="bw-world-card" type="button" data-bioweave-action="world-model-select-species"><span class="bw-world-card-head"><b>弧晶体</b><small>可选</small></span><small class="bw-world-card-summary">3 个类型 · 甲相 / 穗核型 / 双态型</small></button>
-          </div>
-          <!-- More than three type cards keep Runtime order and wrap; selection never moves a card. -->
-          <div class="bw-type-grid">
-            <button class="bw-type-card selected" type="button" data-bioweave-action="world-model-select-type"><span class="bw-type-card-head"><b>潮汐生物型</b><small>当前</small></span><small class="bw-type-card-summary">5/5 项能力已知 · 可承担妊娠</small></button>
-            <button class="bw-type-card" type="button" data-bioweave-action="world-model-select-type"><span class="bw-type-card-head"><b>甲型</b><small>可选</small></span><small class="bw-type-card-summary">4/5 项能力已知 · 不可承担妊娠</small></button>
-            <button class="bw-type-card" type="button" data-bioweave-action="world-model-select-type"><span class="bw-type-card-head"><b>双态型</b><small>可选</small></span><small class="bw-type-card-summary">3/5 项能力已知 · 妊娠未知</small></button>
-          </div>
-        </section>
-
-        <section class="bw-section">
-          <header class="bw-section-head"><div><h2>当前类型详情</h2><p>每个模块独立编辑，每个模块只有一个编辑入口。</p></div></header>
-          <div class="bw-world-content-grid">
-            <div class="bw-world-detail-column">
-              <div class="bw-module-grid">
-                <article class="bw-module" data-bioweave-world-section="capabilities"><header class="bw-module-head"><h3>生殖能力</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button></header><div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>可产生精子</dt><dd class="bw-value-good">是</dd></div><div class="bw-kv-row"><dt>可被受精</dt><dd class="bw-value-no">否</dd></div><div class="bw-kv-row"><dt>可承担妊娠</dt><dd class="bw-value-warn">未知</dd></div></dl></div></article>
-                <article class="bw-module" data-bioweave-world-section="reproduction_rules"><header class="bw-module-head"><h3>生殖规则</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button></header><div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>受精方式</dt><dd>由 Runtime 提供</dd></div><div class="bw-kv-row"><dt>妊娠方式</dt><dd>未知</dd></div></dl></div></article>
-                <article class="bw-module" data-bioweave-world-section="lifecycle"><header class="bw-module-head"><h3>生命周期</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button></header><div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>成熟</dt><dd>由 Runtime 提供</dd></div><div class="bw-kv-row"><dt>衰老</dt><dd>未知</dd></div></dl></div></article>
-                <article class="bw-module" data-bioweave-world-section="special_rules"><header class="bw-module-head"><h3>特殊规则</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button></header><div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>规则状态</dt><dd class="bw-value-good">已确认</dd></div><div class="bw-kv-row"><dt>未知语义</dt><dd class="bw-value-warn">未知</dd></div></dl></div></article>
-              </div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BioWeave UI Framework Example</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bw-host: #0b1116;
+        --bw-panel: #171f25;
+        --bw-raised: #1d272e;
+        --bw-soft: #202c34;
+        --bw-text: #edf3f6;
+        --bw-text-2: #c2cdd2;
+        --bw-muted: #87959d;
+        --bw-line: #33444e;
+        --bw-line-soft: #293840;
+        --bw-accent: #83c7ef;
+        --bw-accent-soft: #203b4b;
+        --bw-good: #7bd5ae;
+        --bw-warn: #f1be72;
+        --bw-danger: #f08e98;
+        --bw-panel-border: #42545e;
+        --bw-header: #19232a;
+        --bw-routebar: #141d23;
+        --bw-hover: #1a2830;
+        --bw-card: #1a252c;
+        --bw-card-selected: #203744;
+        --bw-control-surface: #162129;
+        --bw-input-bg: #141d23;
+        --bw-primary-border: #5f9cc0;
+        --bw-danger-border: #774852;
+        --bw-indent-line: #465862;
+        --bw-radius: 10px;
+      }
+      .bw-shell[data-theme='light'] {
+        color-scheme: light;
+        --bw-host: #cbd6db;
+        --bw-panel: #dbe4e8;
+        --bw-raised: #e5ecef;
+        --bw-soft: #d3dfe4;
+        --bw-text: #1b2a33;
+        --bw-text-2: #3c4d56;
+        --bw-muted: #61727c;
+        --bw-line: #8fa2ac;
+        --bw-line-soft: #b9c8cf;
+        --bw-accent: #356f91;
+        --bw-accent-soft: #c9dde6;
+        --bw-good: #2b755d;
+        --bw-warn: #86651f;
+        --bw-danger: #a44852;
+        --bw-panel-border: #7e949f;
+        --bw-header: #d4dfe3;
+        --bw-routebar: #cbd8de;
+        --bw-hover: #d8e5e9;
+        --bw-card: #e1e9ec;
+        --bw-card-selected: #cbdfe8;
+        --bw-control-surface: #d5e1e5;
+        --bw-input-bg: #d9e4e8;
+        --bw-primary-border: #5b8aa0;
+        --bw-danger-border: #a44852;
+        --bw-indent-line: #a8bac3;
+      }
+      .bw-shell[data-theme='tavern'] {
+        color-scheme: light dark;
+        --bw-host: var(--SmartThemeBlurTintColor, #202a31);
+        --bw-panel: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
+        --bw-raised: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
+        --bw-soft: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 74%, var(--SmartThemeBodyColor, #e8eef2) 26%);
+        --bw-text: var(--SmartThemeBodyColor, #e8eef2);
+        --bw-text-2: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 78%, var(--SmartThemeBlurTintColor, #202a31) 22%);
+        --bw-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 62%, var(--SmartThemeBlurTintColor, #202a31) 38%);
+        --bw-line: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 24%, var(--SmartThemeBlurTintColor, #202a31) 76%);
+        --bw-line-soft: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 16%, var(--SmartThemeBlurTintColor, #202a31) 84%);
+        --bw-accent: var(--SmartThemeQuoteColor, #4f91b6);
+        --bw-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%);
+        --bw-good: #3b8b6d;
+        --bw-warn: #a7792b;
+        --bw-danger: #b45d67;
+        --bw-panel-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%);
+        --bw-header: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
+        --bw-routebar: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 84%, var(--SmartThemeBodyColor, #10171c) 16%);
+        --bw-hover: var(--bw-accent-soft);
+        --bw-card: var(--bw-raised);
+        --bw-card-selected: var(--bw-accent-soft);
+        --bw-control-surface: var(--bw-raised);
+        --bw-input-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%);
+        --bw-primary-border: var(--SmartThemeQuoteColor, #5f9bbd);
+        --bw-danger-border: #b45d67;
+        --bw-indent-line: var(--bw-line);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+      body {
+        background: linear-gradient(140deg, #111a21, var(--bw-host));
+        color: var(--bw-text);
+        font:
+          14px/1.5 system-ui,
+          -apple-system,
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      /* Shared vertical rhythm: component selectors below add only explicit reference spacing. */
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+      }
+      .bw-shell {
+        width: min(960px, 94vw);
+        min-height: min(760px, 90vh);
+        margin: 5vh auto;
+        display: grid;
+        grid-template-rows: 50px 42px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid var(--bw-panel-border);
+        border-radius: 11px;
+        background: var(--bw-panel);
+        box-shadow: 0 24px 60px rgb(0 0 0 / 34%);
+      }
+      .bw-header {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+        padding: 0 13px;
+        border-bottom: 1px solid var(--bw-line);
+        background: var(--bw-header);
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+      }
+      .bw-shell[data-dragging='true'] .bw-header {
+        cursor: grabbing;
+      }
+      .bw-brand {
+        flex: 0 0 auto;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .bw-scope {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--bw-muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-header-spacer {
+        flex: 1;
+      }
+      .bw-header button,
+      .bw-routebar button {
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--bw-muted);
+      }
+      .bw-header button {
+        min-width: 30px;
+        min-height: 30px;
+        padding: 4px 7px;
+      }
+      .bw-theme-button {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0 !important;
+        font-size: 16px;
+      }
+      .bw-theme-icon {
+        display: block;
+        line-height: 1;
+      }
+      .bw-routebar {
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        min-width: 0;
+        padding: 0 10px;
+        overflow-x: auto;
+        border-bottom: 1px solid var(--bw-line-soft);
+        background: var(--bw-routebar);
+      }
+      .bw-route-items {
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        flex: 0 0 auto;
+        width: max-content;
+        min-width: 100%;
+      }
+      .bw-route-items button {
+        flex: 0 0 auto;
+        min-width: 72px;
+        min-height: 42px;
+        padding: 0 11px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        background: transparent;
+        font-size: 14px;
+        white-space: nowrap;
+      }
+      .bw-route-items button:hover {
+        background: var(--bw-hover);
+        color: var(--bw-text);
+      }
+      .bw-route-items button.active {
+        background: transparent;
+        color: var(--bw-accent);
+        border-bottom-color: var(--bw-accent);
+      }
+      .bw-main {
+        min-width: 0;
+        overflow: auto;
+        padding: 16px 18px 20px;
+      }
+      .bw-page {
+        max-width: 820px;
+        margin: 0 auto;
+      }
+      .bw-page-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 12px;
+        padding-left: 4px;
+      }
+      .bw-page-head-copy {
+        min-width: 0;
+        flex: 1;
+      }
+      .bw-page-head p,
+      .bw-section-head p,
+      .bw-note {
+        margin-top: 4px;
+        color: var(--bw-muted);
+        font-size: 12px;
+      }
+      .bw-page-head h1 {
+        font-size: 22px;
+        line-height: 1.3;
+      }
+      .bw-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+      .bw-button {
+        min-height: 32px;
+        padding: 5px 10px;
+        border: 1px solid var(--bw-line);
+        border-radius: 7px;
+        background: var(--bw-raised);
+        color: var(--bw-text-2);
+      }
+      .bw-button.primary {
+        border-color: var(--bw-primary-border);
+        background: var(--bw-accent-soft);
+        color: var(--bw-accent);
+      }
+      .bw-button.danger {
+        border-color: var(--bw-danger-border);
+        color: var(--bw-danger);
+      }
+      .bw-button.small {
+        min-height: 26px;
+        padding: 3px 7px;
+        font-size: 12px;
+      }
+      .bw-text-button {
+        border: 0;
+        background: transparent;
+        color: var(--bw-accent);
+        padding: 5px 0;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--bw-line);
+        border-radius: 7px;
+        background: var(--bw-input-bg);
+        padding: 8px 9px;
+      }
+      .bw-section,
+      .bw-settings-group {
+        min-width: 0;
+        margin-left: 10px;
+        border: 1px solid var(--bw-line);
+        border-radius: var(--bw-radius);
+        background: var(--bw-raised);
+      }
+      .bw-section {
+        padding: 11px 12px;
+      }
+      .bw-section + .bw-section,
+      .bw-settings-group + .bw-settings-group {
+        margin-top: 3px;
+      }
+      .bw-settings-group.bw-api-source-group {
+        overflow: visible;
+      }
+      .bw-section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 7px;
+      }
+      .bw-world-selection > .bw-section-head {
+        margin-bottom: 5px;
+      }
+      .bw-section-head h2 {
+        font-size: 16px;
+      }
+      .bw-characters-page {
+        max-width: 900px;
+      }
+      .bw-character-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 0 0 8px 10px;
+      }
+      .bw-character-toolbar input {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      .bw-character-toolbar .bw-button {
+        flex: 0 0 auto;
+        min-width: 96px;
+      }
+      .bw-character-workspace {
+        display: grid;
+        grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1.28fr);
+        gap: 8px;
+        align-items: start;
+        margin-left: 10px;
+      }
+      .bw-character-list-pane,
+      .bw-character-detail-pane {
+        min-width: 0;
+      }
+      .bw-character-list {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+      .bw-character-pane-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0 2px 6px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-character-pane-head strong {
+        color: var(--bw-text-2);
+        font-size: 13px;
+      }
+      .bw-character-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 100%;
+        min-width: 0;
+        padding: 9px 10px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 7px;
+        background: var(--bw-card);
+        color: var(--bw-text);
+        text-align: left;
+        transition:
+          border-color 0.15s,
+          background 0.15s,
+          transform 0.15s;
+      }
+      .bw-character-row:hover,
+      .bw-character-row:focus-visible,
+      .bw-character-row.selected {
+        border-color: var(--bw-accent);
+        background: var(--bw-accent-soft);
+      }
+      .bw-character-row:focus-visible {
+        outline: 2px solid var(--bw-accent);
+        outline-offset: 2px;
+      }
+      .bw-character-row-main {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .bw-character-row-main b {
+        overflow: hidden;
+        font-size: 14px;
+        line-height: 1.25;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-row-state {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+        color: var(--bw-accent);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .bw-character-row-state .bw-badge {
+        min-height: 19px;
+        padding: 1px 5px;
+        font-size: 10px;
+      }
+      .bw-character-row-chevron {
+        color: var(--bw-muted);
+        font-size: 15px;
+        line-height: 1;
+      }
+      .bw-character-detail-pane {
+        padding: 10px 11px;
+      }
+      .bw-character-detail-placeholder {
+        display: grid;
+        align-content: center;
+        min-height: 98px;
+        padding: 16px;
+        color: var(--bw-muted);
+      }
+      .bw-character-detail-placeholder strong {
+        color: var(--bw-text-2);
+        font-size: 13px;
+      }
+      .bw-character-detail-placeholder p {
+        margin-top: 2px;
+        font-size: 11px;
+      }
+      .bw-character-detail-head,
+      .bw-character-summary-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .bw-character-detail-head {
+        align-items: flex-start;
+        padding-bottom: 7px;
+        border-bottom: 1px solid var(--bw-line);
+      }
+      .bw-character-detail-head h2 {
+        font-size: 16px;
+      }
+      .bw-character-detail-head p {
+        margin-top: 2px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-summary {
+        margin-top: 6px;
+        padding: 6px 10px;
+        border-left: 2px solid var(--bw-accent);
+        background: var(--bw-accent-soft);
+      }
+      .bw-character-summary-head b {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 16px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-summary-facts {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-width: 0;
+        gap: 6px;
+        margin-top: 3px;
+        color: var(--bw-muted);
+        font-size: 10px;
+        line-height: 1.15;
+        white-space: nowrap;
+      }
+      .bw-character-summary-facts > span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-summary-facts > span:nth-child(2) {
+        flex: 0 0 auto;
+        color: var(--bw-line);
+      }
+      .bw-character-detail-sections {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        align-items: start;
+        margin-top: 6px;
+      }
+      .bw-character-detail-section {
+        min-width: 0;
+        padding: 8px 9px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 7px;
+        background: var(--bw-card);
+      }
+      .bw-character-detail-section.exposure-section {
+        grid-column: 1 / -1;
+      }
+      .bw-character-detail-section h3 {
+        color: var(--bw-text-2);
+        font-size: 12px;
+      }
+      .bw-character-detail-section > p {
+        margin-top: 2px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-capabilities {
+        display: grid;
+        gap: 0;
+        margin: 5px 0 0;
+      }
+      .bw-character-capabilities > div {
+        display: grid;
+        grid-template-columns: minmax(64px, max-content) minmax(0, 1fr);
+        gap: 7px;
+        padding: 4px 0;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-character-capabilities > div:first-child {
+        border-top: 0;
+      }
+      .bw-character-capabilities dt {
+        color: var(--bw-text-2);
+        font-size: 10px;
+      }
+      .bw-character-capabilities dd {
+        margin: 0;
+        padding-left: 8px;
+        color: var(--bw-muted);
+        font-size: 10px;
+        text-align: left;
+      }
+      .bw-character-capabilities dd.row-value.good {
+        color: var(--bw-good);
+      }
+      .bw-character-capabilities dd.character-capability-unknown {
+        color: var(--bw-warn);
+      }
+      .bw-character-empty {
+        padding-top: 5px;
+        color: var(--bw-muted);
+        font-size: 10px;
+        line-height: 1.35;
+      }
+      .bw-character-exposure-list {
+        display: grid;
+        gap: 7px;
+        margin-top: 5px;
+      }
+      .bw-character-exposure-list-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 1px 2px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-exposure-list-head strong {
+        color: var(--bw-text-2);
+        font-size: 11px;
+      }
+      .bw-character-exposure {
+        min-width: 0;
+        padding: 0;
+        overflow: hidden;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 6px;
+        background: var(--bw-panel-raised);
+      }
+      .bw-character-exposure > summary {
+        display: grid;
+        grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px;
+        grid-template-areas: 'date type meta . status chevron';
+        align-items: center;
+        column-gap: 14px;
+        row-gap: 4px;
+        min-height: 46px;
+        padding: 6px 8px;
+        cursor: pointer;
+        list-style: none;
+      }
+      .bw-character-exposure > summary::-webkit-details-marker {
+        display: none;
+      }
+      .bw-character-exposure > summary:hover {
+        background: var(--bw-hover);
+      }
+      .bw-character-exposure-date {
+        display: grid;
+        grid-area: date;
+        gap: 2px;
+        width: 132px;
+        min-width: 0;
+        padding-right: 12px;
+        border-right: 1px solid var(--bw-line-soft);
+        color: var(--bw-muted);
+        font-size: 10px;
+        line-height: 1.1;
+      }
+      .bw-character-exposure-date > span,
+      .bw-character-exposure-type,
+      .bw-character-exposure-meta {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-exposure-date > span {
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-exposure-date > small {
+        color: var(--bw-accent);
+        font-size: 9px;
+        line-height: 1;
+      }
+      .bw-character-exposure-type {
+        grid-area: type;
+        font-size: 11px;
+      }
+      .bw-character-exposure-meta {
+        grid-area: meta;
+        max-width: 220px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-exposure-fields {
+        display: grid;
+        gap: 0;
+        margin: 5px 0 0;
+      }
+      .bw-character-exposure-fields > div {
+        display: grid;
+        grid-template-columns: minmax(60px, max-content) minmax(0, 1fr);
+        column-gap: 12px;
+        min-width: 0;
+        padding: 3px 0;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-character-exposure-fields > div:first-child {
+        border-top: 0;
+      }
+      .bw-character-exposure-fields dt {
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-exposure-fields dd {
+        min-width: 0;
+        margin: 0;
+        overflow: hidden;
+        color: var(--bw-text-2);
+        font-size: 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-exposure-age-inline {
+        margin-left: 6px;
+        color: var(--bw-accent);
+        font-size: 9px;
+      }
+      .bw-character-exposure > summary > .bw-badge {
+        grid-area: status;
+        min-height: 18px;
+        padding: 1px 5px;
+        font-size: 9px;
+      }
+      .bw-character-exposure-chevron {
+        grid-area: chevron;
+        color: var(--bw-muted);
+        font-size: 13px;
+        line-height: 1;
+      }
+      .bw-character-exposure-detail {
+        padding: 7px 8px 8px;
+        border-top: 1px solid var(--bw-line-soft);
+        background: color-mix(in srgb, var(--bw-panel-raised) 72%, var(--bw-panel) 28%);
+      }
+      .bw-character-exposure-source {
+        margin-top: 6px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-event-review-panel {
+        margin-left: 10px;
+      }
+      .bw-event-review-summary {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        margin: 2px 0 5px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-event-review-summary strong {
+        color: var(--bw-text-2);
+        font-size: 13px;
+      }
+      .bw-event-review-list {
+        display: grid;
+        gap: 0;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-event-review-row {
+        display: grid;
+        grid-template-columns: 128px minmax(170px, 1.1fr) minmax(130px, 0.9fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-width: 0;
+        min-height: 45px;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--bw-line-soft);
+        list-style: none;
+        cursor: pointer;
+      }
+      .bw-event-review-row::-webkit-details-marker {
+        display: none;
+      }
+      .bw-event-review-time,
+      .bw-event-review-main,
+      .bw-event-review-detail {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-event-review-time {
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-event-review-time {
+        display: grid;
+        gap: 1px;
+        align-content: center;
+      }
+      .bw-event-review-time b {
+        color: var(--bw-text-2);
+        font-size: 11px;
+      }
+      .bw-event-review-time small {
+        color: var(--bw-accent);
+        font-size: 9px;
+        line-height: 1;
+      }
+      .bw-event-review-main {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+      }
+      .bw-event-review-main b {
+        flex: 0 0 auto;
+        font-size: 12px;
+      }
+      .bw-event-review-main small {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--bw-muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-event-review-detail {
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-event-review-row > .bw-badge {
+        justify-self: end;
+      }
+      .bw-event-review-detail-panel {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--bw-line-soft);
+      }
+      .bw-event-review-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding-top: 8px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-species-grid,
+      .bw-type-grid,
+      .bw-module-grid {
+        display: grid;
+        gap: 7px;
+      }
+      .bw-species-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .bw-type-grid {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        margin-top: 4px;
+      }
+      .bw-world-card,
+      .bw-type-card {
+        min-width: 0;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 8px;
+        background: var(--bw-card);
+        color: var(--bw-text);
+        text-align: left;
+      }
+      .bw-world-card {
+        min-height: 68px;
+        padding: 9px 10px;
+      }
+      .bw-type-card {
+        min-height: 52px;
+        padding: 8px 9px;
+      }
+      .bw-world-card.selected,
+      .bw-type-card.selected {
+        border-color: var(--bw-accent);
+        background: var(--bw-card-selected);
+      }
+      .bw-world-card-head,
+      .bw-type-card-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 7px;
+      }
+      .bw-world-card b {
+        overflow: hidden;
+        font-size: 15px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-type-card b {
+        font-size: 15px;
+      }
+      .bw-world-card small,
+      .bw-type-card small {
+        display: block;
+        margin-top: 3px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-module-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+        margin-top: 8px;
+      }
+      .bw-module {
+        min-width: 0;
+        overflow: hidden;
+        border-bottom: 1px solid var(--bw-line-soft);
+        background: transparent;
+      }
+      .bw-module:last-child {
+        border-bottom: 0;
+      }
+      .bw-module-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 38px;
+        padding: 7px 0 5px;
+      }
+      .bw-module-head .spacer {
+        flex: 1;
+      }
+      .bw-module-body {
+        padding: 0 0 7px;
+      }
+      .bw-kv {
+        display: grid;
+        margin: 0;
+      }
+      .bw-kv-row {
+        display: grid;
+        grid-template-columns: minmax(118px, max-content) minmax(0, 1fr);
+        gap: 6px;
+        padding: 5px 0;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-kv-row:first-child {
+        border-top: 0;
+      }
+      .bw-kv-row dt {
+        color: var(--bw-text-2);
+      }
+      .bw-kv-row dd {
+        margin: 0;
+        color: var(--bw-muted);
+      }
+      .bw-world-rules-column .bw-kv-row {
+        grid-template-columns: minmax(92px, max-content) minmax(0, 1fr);
+        gap: 5px;
+      }
+      .bw-kv-row dd.bw-value-good {
+        box-sizing: border-box;
+        padding-right: 8px;
+        color: var(--bw-good);
+        text-align: right;
+      }
+      .bw-kv-row dd.bw-value-no {
+        color: var(--bw-text-2);
+        text-align: left;
+      }
+      .bw-kv-row dd.bw-value-warn {
+        box-sizing: border-box;
+        padding-right: 8px;
+        color: var(--bw-warn);
+        text-align: right;
+      }
+      .bw-world-content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 6fr) minmax(0, 4fr);
+        gap: 8px;
+      }
+      .bw-world-detail-column,
+      .bw-world-rules-column {
+        min-width: 0;
+      }
+      .bw-world-rules-column > .bw-section {
+        margin-left: 0;
+      }
+      .bw-settings {
+        display: grid;
+        gap: 3px;
+      }
+      .bw-settings-group {
+        overflow: hidden;
+        margin-left: 0;
+      }
+      .bw-settings-group > summary,
+      .bw-source-branch > summary {
+        cursor: pointer;
+        list-style: none;
+      }
+      .bw-settings-group > summary::-webkit-details-marker,
+      .bw-source-branch > summary::-webkit-details-marker {
+        display: none;
+      }
+      .bw-settings-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 56px;
+        padding: 7px 12px;
+        background: var(--bw-header);
+      }
+      .bw-settings-group[open] > .bw-settings-head {
+        border-left: 3px solid var(--bw-accent);
+        padding-left: 9px;
+        background: var(--bw-card-selected);
+      }
+      .bw-settings-head > .bw-badge {
+        margin-left: auto;
+      }
+      .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.good,
+      .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.warn,
+      .bw-settings-group:not([open]) > .bw-settings-head > .bw-badge.danger {
+        border-color: var(--bw-line);
+        color: var(--bw-text-2);
+      }
+      .bw-settings-chevron,
+      .bw-source-branch-chevron {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border: 1px solid var(--bw-line);
+        border-radius: 5px;
+        color: var(--bw-accent);
+        background: var(--bw-control-surface);
+        font-size: 15px;
+        line-height: 1;
+      }
+      .bw-settings-chevron {
+        width: 18px;
+        height: 18px;
+      }
+      .bw-settings-title {
+        min-width: 0;
+      }
+      .bw-settings-title b,
+      .bw-settings-title small {
+        display: block;
+      }
+      .bw-settings-title b {
+        font-size: 15px;
+      }
+      .bw-settings-title small {
+        margin-top: 2px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-settings-body {
+        display: grid;
+        gap: 7px;
+        padding: 0 13px 12px;
+        border-top: 1px solid var(--bw-line);
+        background: var(--bw-raised);
+      }
+      .bw-source-branch {
+        overflow: hidden;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 8px;
+        background: var(--bw-card);
+      }
+      .bw-source-branch > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 34px;
+        padding: 4px 8px;
+        color: var(--bw-text-2);
+        font-size: 13px;
+        font-weight: 700;
+        background: var(--bw-soft);
+      }
+      .bw-source-branch-select,
+      .bw-source-branch-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .bw-source-branch-select input:indeterminate {
+        accent-color: var(--bw-warn);
+      }
+      .bw-source-branch-select > span {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .bw-source-branch-select small {
+        color: var(--bw-muted);
+        font-size: 10px;
+        font-weight: 400;
+      }
+      .bw-source-branch-tools {
+        flex: 0 0 auto;
+        gap: 4px;
+      }
+      .bw-source-branch-chevron {
+        width: 20px;
+        height: 20px;
+        font-size: 13px;
+      }
+      .bw-source-child-list {
+        display: grid;
+        gap: 2px;
+        margin: 0 8px 7px 24px;
+        padding-left: 8px;
+        border-left: 1px solid var(--bw-indent-line);
+      }
+      .bw-source-child {
+        display: grid;
+        grid-template-columns: 15px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-height: 27px;
+        padding: 3px 5px;
+        color: var(--bw-text-2);
+        font-size: 11px;
+        font-weight: 400;
+      }
+      .bw-source-child > span {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .bw-source-child small {
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-checkbox {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--bw-accent);
+        appearance: auto;
+      }
+      .bw-source-child input {
+        width: 15px;
+        height: 15px;
+        accent-color: var(--bw-accent);
+        appearance: auto;
+      }
+      .bw-memory-list {
+        display: grid;
+        gap: 6px;
+        padding-top: 8px;
+      }
+      .bw-memory-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 39px;
+        padding: 7px 9px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 7px;
+        background: var(--bw-card);
+      }
+      .bw-memory-row > label {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        min-width: 0;
+      }
+      .bw-memory-row strong,
+      .bw-memory-row small {
+        display: block;
+      }
+      .bw-memory-row small {
+        margin-top: 2px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 2px 7px;
+        border: 1px solid var(--bw-line);
+        border-radius: 999px;
+        color: var(--bw-text-2);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .bw-badge.good {
+        border-color: #426e5a;
+        color: var(--bw-good);
+      }
+      .bw-badge.warn {
+        border-color: #765d38;
+        color: var(--bw-warn);
+      }
+      .bw-badge.danger {
+        border-color: #75434b;
+        color: var(--bw-danger);
+      }
+      .bw-select {
+        width: 150px;
+        min-width: 0;
+        border: 1px solid var(--bw-line);
+        border-radius: 6px;
+        appearance: auto;
+        -webkit-appearance: menulist;
+        background: var(--bw-routebar);
+        padding: 5px 6px;
+        font-size: 12px;
+      }
+      .bw-model-picker {
+        position: relative;
+        min-width: 0;
+        overflow: visible;
+      }
+      .bw-model-control-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .bw-model-label {
+        color: var(--bw-text-2);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .bw-model-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-width: 0;
+        width: 100%;
+        min-height: 32px;
+        border: 1px solid var(--bw-line);
+        border-radius: 6px;
+        background: var(--bw-input-bg);
+        padding: 5px 7px;
+        text-align: left;
+      }
+      .bw-model-trigger > span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-model-dropdown {
+        position: absolute;
+        top: calc(100% + 5px);
+        right: 0;
+        left: 0;
+        z-index: 30;
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+        max-width: 100%;
+        padding: 8px;
+        border: 1px solid var(--bw-line);
+        border-radius: 7px;
+        background: var(--bw-raised);
+        box-shadow: 0 10px 24px rgb(0 0 0 / 24%);
+      }
+      .bw-model-dropdown[hidden] {
+        display: none;
+      }
+      .bw-model-list {
+        display: grid;
+        gap: 2px;
+        max-height: 180px;
+        overflow: auto;
+      }
+      .bw-model-list button {
+        min-width: 0;
+        border: 0;
+        background: transparent;
+        padding: 5px 6px;
+        color: var(--bw-text-2);
+        text-align: left;
+      }
+      .bw-radio-list {
+        display: grid;
+        gap: 7px;
+        padding-top: 11px;
+      }
+      .bw-radio-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 9px 10px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 8px;
+        background: var(--bw-card);
+      }
+      .bw-radio-option:has(input:checked) {
+        border-color: var(--bw-accent);
+        background: var(--bw-card-selected);
+      }
+      .bw-radio-option input {
+        flex: 0 0 auto;
+        margin-top: 3px;
+        accent-color: var(--bw-accent);
+      }
+      .bw-radio-option span,
+      .bw-setting-field {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+      .bw-radio-option small,
+      .bw-setting-field small {
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-api-profile-panel {
+        display: grid;
+        gap: 6px;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-api-profile-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .bw-api-profile-head h3 {
+        font-size: 13px;
+      }
+      .bw-api-profile-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        padding: 4px 0;
+        border-bottom: 1px solid var(--bw-line-soft);
+      }
+      .bw-api-profile-row strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-api-profile-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 4px;
+      }
+      .bw-api-profile-actions .bw-button {
+        min-height: 25px;
+        padding: 3px 7px;
+        font-size: 11px;
+      }
+      .bw-api-profile-editor {
+        display: grid;
+        gap: 7px;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-api-profile-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .bw-api-profile-summary {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        padding: 7px 8px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 7px;
+        background: var(--bw-card);
+      }
+      .bw-api-profile-summary-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+        font-size: 11px;
+      }
+      .bw-api-profile-summary-row span:first-child {
+        color: var(--bw-muted);
+      }
+      .bw-api-profile-summary-row strong {
+        color: var(--bw-text-2);
+        font-weight: 600;
+      }
+      .bw-api-profile-summary small {
+        color: var(--bw-muted);
+        font-size: 10px;
+        line-height: 1.35;
+      }
+      @media (max-width: 767px) {
+        .bw-api-profile-fields {
+          grid-template-columns: 1fr;
+        }
+      }
+      .bw-prompt-grid {
+        display: grid;
+        gap: 9px;
+        padding-top: 11px;
+      }
+      .bw-prompt-grid textarea {
+        min-height: 72px;
+        resize: vertical;
+        border: 1px solid var(--bw-line);
+        border-radius: 6px;
+        background: var(--bw-routebar);
+        padding: 6px;
+      }
+      .bw-settings-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        padding-top: 4px;
+      }
+      .bw-setting-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 9px;
+        padding-top: 11px;
+      }
+      .bw-recent-story-read-options {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: center;
+      }
+      .bw-setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 34px;
+        padding: 5px 0;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-switch {
+        position: relative;
+        display: inline-flex;
+        min-height: 24px;
+        min-width: 34px;
+      }
+      .bw-switch input {
+        position: absolute;
+        opacity: 0;
+      }
+      .bw-switch span {
+        display: block;
+        width: 34px;
+        height: 20px;
+        border: 1px solid var(--bw-line);
+        border-radius: 999px;
+        background: #121a20;
+      }
+      .bw-switch span::after {
+        display: block;
+        width: 14px;
+        height: 14px;
+        margin: 2px;
+        border-radius: 50%;
+        background: var(--bw-muted);
+        content: '';
+        transition: transform 0.15s;
+      }
+      .bw-switch input:checked + span {
+        border-color: var(--bw-primary-border);
+        background: var(--bw-accent-soft);
+      }
+      .bw-switch input:checked + span::after {
+        background: var(--bw-accent);
+        transform: translateX(14px);
+      }
+      .bw-regex-row .bw-switch span {
+        width: 28px;
+        height: 18px;
+      }
+      .bw-regex-row .bw-switch span::after {
+        width: 12px;
+        height: 12px;
+      }
+      .bw-regex-row .bw-switch input:checked + span::after {
+        transform: translateX(12px);
+      }
+      .bw-regex-list {
+        display: grid;
+        gap: 3px;
+        margin-top: 7px;
+      }
+      .bw-regex-row {
+        display: grid;
+        grid-template-columns: 20px 72px minmax(100px, 1fr) minmax(90px, 1fr) 35px 38px;
+        gap: 4px;
+        align-items: stretch;
+        min-width: 0;
+        padding: 3px 4px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 6px;
+        background: var(--bw-card);
+      }
+      .bw-regex-row select,
+      .bw-regex-row input {
+        min-width: 0;
+        height: 26px;
+        box-sizing: border-box;
+        border: 1px solid var(--bw-line);
+        border-radius: 5px;
+        background: var(--bw-routebar);
+        padding: 4px 5px;
+        font-size: 11px;
+      }
+      .bw-regex-move {
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        min-height: 32px;
+      }
+      .bw-regex-move button {
+        min-height: 0;
+        border: 1px solid var(--bw-line);
+        background: var(--bw-control-surface);
+        color: var(--bw-muted);
+        padding: 0;
+        font-size: 10px;
+        line-height: 1;
+      }
+      .bw-regex-move button:first-child {
+        border-radius: 4px 4px 0 0;
+      }
+      .bw-regex-move button:last-child {
+        border-top: 0;
+        border-radius: 0 0 4px 4px;
+      }
+      .bw-regex-section {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--bw-line-soft);
+      }
+      .bw-regex-section:first-child {
+        margin-top: 0;
+        padding-top: 6px;
+        border-top: 0;
+      }
+      .bw-regex-section-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .bw-regex-section-head h3 {
+        font-size: 13px;
+      }
+      .bw-regex-section-head p {
+        margin-top: 1px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-note {
+        margin: 10px 10px 0;
+      }
+      @media (max-width: 1199px) {
+        .bw-shell {
+          width: min(960px, calc(100vw - 24px));
+          margin-block: 12px;
+        }
+        .bw-routebar {
+          gap: 2px;
+        }
+      }
+      @media (max-width: 767px) {
+        .bw-shell {
+          width: calc(100vw - 20px);
+          min-height: calc(100vh - 20px);
+          margin: 10px;
+          grid-template-rows: 48px 72px minmax(0, 1fr);
+        }
+        .bw-header {
+          padding-inline: 10px;
+        }
+        .bw-scope {
+          font-size: 11px;
+        }
+        .bw-routebar {
+          display: block;
+          gap: 0;
+          padding: 4px 7px;
+          overflow: hidden;
+        }
+        .bw-route-items {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 2px;
+          width: 100%;
+          min-width: 0;
+        }
+        .bw-route-items button {
+          min-width: 0;
+          min-height: 30px;
+          border-radius: 4px;
+          padding: 3px 2px;
+          font-size: 13px;
+        }
+        .bw-main {
+          padding: 12px 12px 16px;
+        }
+        .bw-page-head {
+          align-items: center;
+          margin-bottom: 10px;
+          padding-left: 2px;
+        }
+        .bw-page-head h1 {
+          font-size: 19px;
+        }
+        .bw-page-head p {
+          display: none;
+        }
+        .bw-character-toolbar {
+          margin-left: 5px;
+        }
+        .bw-character-toolbar .bw-button {
+          min-width: 84px;
+        }
+        .bw-character-workspace {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          margin-left: 5px;
+        }
+        .bw-character-list-pane {
+          order: 1;
+        }
+        .bw-character-detail-pane {
+          order: 2;
+          width: 100%;
+          padding: 8px;
+        }
+        body[data-device='mobile'][data-view='characters'] .bw-character-toolbar,
+        body[data-device='mobile'][data-view='characters'] .bw-character-workspace,
+        body[data-device='mobile'][data-view='characters'] .bw-character-list-pane,
+        body[data-device='mobile'][data-view='characters'] .bw-character-detail-pane {
+          width: 100%;
+          margin-left: 0;
+          margin-right: 0;
+        }
+        .bw-character-row {
+          gap: 8px;
+          padding: 8px 9px;
+        }
+        .bw-character-row-main b {
+          font-size: 13px;
+        }
+        .bw-character-detail-sections {
+          grid-template-columns: 1fr;
+          gap: 5px;
+        }
+        .bw-character-detail-section {
+          padding: 7px 8px;
+        }
+        .bw-character-detail-section.exposure-section {
+          grid-column: auto;
+        }
+        .bw-character-exposure-fields > div {
+          grid-template-columns: minmax(58px, max-content) minmax(0, 1fr);
+          column-gap: 10px;
+          padding: 3px 0;
+        }
+        .bw-character-exposure > summary {
+          grid-template-columns: 100px minmax(0, 1fr) auto 14px;
+          grid-template-rows: auto auto;
+          column-gap: 9px;
+          row-gap: 5px;
+          min-height: 55px;
+          padding: 7px;
+        }
+        .bw-character-exposure-date {
+          grid-column: 1;
+          padding-right: 0;
+          border-right: 0;
+        }
+        .bw-character-exposure-type {
+          grid-column: 2;
+        }
+        .bw-character-exposure-meta {
+          grid-column: 1 / 3;
+          grid-row: 2;
+        }
+        .bw-character-exposure > summary > .bw-badge {
+          grid-column: 3;
+          grid-row: 1;
+        }
+        .bw-character-exposure-chevron {
+          grid-column: 4;
+          grid-row: 1;
+        }
+        .bw-event-review-panel {
+          margin-left: 5px;
+        }
+        .bw-event-review-row {
+          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-rows: auto auto;
+          gap: 3px 7px;
+          min-height: 52px;
+          padding: 7px 0;
+        }
+        .bw-event-review-time {
+          grid-column: 1;
+          grid-row: 2;
+          font-size: 10px;
+        }
+        .bw-event-review-main {
+          grid-column: 1;
+          grid-row: 1;
+        }
+        .bw-event-review-main b {
+          font-size: 11px;
+        }
+        .bw-event-review-main small {
+          font-size: 10px;
+        }
+        .bw-event-review-detail {
+          grid-column: 2;
+          grid-row: 2;
+          justify-self: end;
+          font-size: 10px;
+        }
+        .bw-event-review-row > .bw-badge {
+          grid-column: 2;
+          grid-row: 1;
+        }
+        .bw-event-review-foot {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .bw-page > .bw-section,
+        .bw-page > .bw-settings-group {
+          margin-left: 5px;
+        }
+        .bw-section {
+          padding: 10px;
+        }
+        .bw-species-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 5px;
+        }
+        .bw-type-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 5px;
+        }
+        .bw-type-card b {
+          font-size: 14px;
+        }
+        .bw-world-card {
+          min-height: 58px;
+          padding: 7px 8px;
+        }
+        .bw-world-card b {
+          font-size: 13px;
+        }
+        .bw-world-card small {
+          display: none;
+        }
+        .bw-type-card {
+          min-height: 48px;
+          padding: 7px 8px;
+        }
+        .bw-module-grid {
+          grid-template-columns: 1fr;
+        }
+        .bw-world-content-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .bw-recent-story-read-options {
+          grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+          gap: 4px;
+        }
+        .bw-regex-row {
+          grid-template-columns: 18px 60px minmax(0, 1fr) 28px 20px 28px;
+          gap: 3px;
+          align-items: stretch;
+          min-height: 32px;
+        }
+        .bw-select {
+          width: 105px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- This is a structural example only. It has no production data or API logic. -->
+    <div class="bw-shell" data-ui-framework="bioweave-v1" data-theme="dark">
+      <header class="bw-header" data-bioweave-drag-handle>
+        <strong class="bw-brand">BioWeave</strong>
+        <span class="bw-scope">当前 Chat</span>
+        <span class="bw-header-spacer"></span>
+        <button class="bw-theme-button" type="button" title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换">
+          <i class="fa-solid fa-circle-half-stroke bw-theme-icon" data-bw-theme-icon aria-hidden="true"></i>
+        </button>
+        <button type="button" aria-label="关闭">×</button>
+      </header>
+      <nav class="bw-routebar" aria-label="页面导航">
+        <div class="bw-route-items">
+          <button type="button">总览</button>
+          <button type="button">人物</button>
+          <button type="button">事件</button>
+          <button type="button">推演</button>
+          <button type="button">家系</button>
+          <button class="active" type="button">世界</button>
+          <button type="button">设置</button>
+          <button type="button">状态</button>
+        </div>
+      </nav>
+      <main class="bw-main">
+        <div class="bw-page">
+          <header class="bw-page-head">
+            <div class="bw-page-head-copy">
+              <h1>世界模型</h1>
+              <p>这是结构与控件写法示例，生产数据仍来自 Runtime。</p>
             </div>
-            <aside class="bw-world-rules-column">
-              <section class="bw-section"><header class="bw-section-head"><div><h2>世界级规则</h2><p>对所有物种和生物类型生效。</p></div></header><div class="bw-module-grid"><article class="bw-module" data-bioweave-world-section="world_rules"><header class="bw-module-head"><h3>医疗与照护</h3><span class="spacer"></span><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button></header><div class="bw-module-body"><dl class="bw-kv"><div class="bw-kv-row"><dt>照护水平</dt><dd>由 Runtime 提供</dd></div><div class="bw-kv-row"><dt>判断依据</dt><dd class="bw-value-warn">未知</dd></div></dl></div></article></div></section>
-            </aside>
-          </div>
-        </section>
+            <div class="bw-actions"><button class="bw-button primary" type="button">重新分析</button></div>
+          </header>
 
-        <section class="bw-section">
-          <header class="bw-section-head"><div><h2>设置控件示例</h2><p>主栏可折叠，子目录字号更小且不加粗。</p></div></header>
-          <div class="bw-settings">
-            <details class="bw-settings-group" open data-bioweave-settings-disclosure>
-              <summary class="bw-settings-head"><span class="bw-settings-chevron" aria-hidden="true">−</span><span class="bw-settings-title"><b>世界书来源</b><small>选择当前分析使用的资料</small></span><span class="bw-badge good">4 项已选</span></summary>
-              <div class="bw-settings-body">
-                <details class="bw-source-branch" open><summary><span class="bw-source-branch-select"><input class="bw-checkbox" type="checkbox" checked data-bioweave-analysis-section-toggle="character_card" aria-checked="true"><span><strong>角色卡</strong><small>当前角色卡可读取字段</small></span></span><span class="bw-source-branch-tools"><span class="bw-badge good">2/3 项</span><span class="bw-source-branch-chevron" aria-hidden="true">−</span></span></summary><div class="bw-source-child-list"><label class="bw-source-child"><input class="bw-checkbox" type="checkbox" checked data-bioweave-analysis-source="field"><span><strong>角色描述</strong><small>约 12 tokens</small></span><span class="bw-badge good">已选</span></label><label class="bw-source-child"><input class="bw-checkbox" type="checkbox" data-bioweave-analysis-source="field:child"><span><strong>开场白</strong><small>约 8 tokens</small></span><span class="bw-badge">未选</span></label></div></details>
-                <details class="bw-source-branch"><summary><span class="bw-source-branch-select"><input class="bw-checkbox" type="checkbox"><span><strong>全局世界书</strong><small>当前酒馆已开启的全局来源</small></span></span><span class="bw-source-branch-tools"><span class="bw-badge good">1/3 项</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span></summary><div class="bw-source-child-list"><label class="bw-source-child"><input class="bw-checkbox" type="checkbox" data-bioweave-analysis-source="entry"><span><strong>基础设定</strong><small>约 24 tokens</small></span><span class="bw-badge">未选</span></label></div></details>
-                <details class="bw-source-branch"><summary><span class="bw-source-branch-select"><input class="bw-checkbox" type="checkbox"><span><strong>附加角色世界书</strong><small>与当前角色关联的世界书</small></span></span><span class="bw-source-branch-tools"><span class="bw-badge">未选</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span></summary></details>
-                <details class="bw-source-branch"><summary><span class="bw-source-branch-select"><input class="bw-checkbox" type="checkbox"><span><strong>其他世界书</strong><small>未归类的可用来源</small></span></span><span class="bw-source-branch-tools"><span class="bw-badge">未选</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span></summary></details>
-                <div class="bw-memory-list">
-                  <div class="bw-memory-row"><label><input class="bw-checkbox" type="checkbox" checked><span><strong>读取外部记忆</strong><small>Runtime provider 返回可读取状态。</small></span></label><span class="bw-badge good">可用</span></div>
-                  <div class="bw-memory-row"><label><input class="bw-checkbox" type="checkbox" disabled><span><strong>未连接来源</strong><small>当前没有公开接口。</small></span></label><span class="bw-badge">不可用</span></div>
+          <!-- 人物页的视觉结构：生产实现使用 trackingSubjects / characterProfiles，不复制示例人物。 -->
+          <section class="bw-page bw-characters-page">
+            <header class="bw-page-head">
+              <div class="bw-page-head-copy">
+                <h1>人物列表</h1>
+                <p>当前 Chat 中已进入事件追踪流程的角色</p>
+              </div>
+              <div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div>
+            </header>
+            <div class="bw-character-toolbar">
+              <input placeholder="搜索人物……" aria-label="搜索人物" /><button class="bw-button" type="button">全部状态 ▾</button>
+            </div>
+            <div class="bw-character-workspace">
+              <section class="bw-character-list-pane">
+                <div class="bw-character-pane-head"><strong>追踪人物</strong><span>n 人</span></div>
+                <div class="bw-character-list">
+                  <button class="bw-character-row selected" type="button" data-character-id="runtime-character-id">
+                    <span class="bw-character-row-main"><b>Runtime display_name</b></span
+                    ><span class="bw-character-row-state"
+                      ><span class="bw-badge good">追踪中</span><span>n 次相关事件</span><span class="bw-character-row-chevron">›</span></span
+                    >
+                  </button>
+                  <button class="bw-character-row" type="button" data-character-id="runtime-character-id-2">
+                    <span class="bw-character-row-main"><b>另一个 Runtime 角色</b></span
+                    ><span class="bw-character-row-state"
+                      ><span class="bw-badge">未知</span><span>0 次相关事件</span><span class="bw-character-row-chevron">›</span></span
+                    >
+                  </button>
+                </div>
+              </section>
+              <section class="bw-section bw-character-detail-pane">
+                <header class="bw-character-detail-head">
+                  <div>
+                    <h2>人物详情</h2>
+                    <p>当前 Chat · 事件追踪</p>
+                  </div>
+                </header>
+                <section class="bw-character-summary">
+                  <header class="bw-character-summary-head"><b>Runtime display_name</b><span class="bw-badge good">事件追踪</span></header>
+                  <div class="bw-character-summary-facts"><span>物种</span><span>·</span><span>生理类型</span></div>
+                </section>
+                <div class="bw-character-detail-sections">
+                  <section class="bw-character-detail-section">
+                    <h3>生殖能力</h3>
+                    <dl class="bw-character-capabilities">
+                      <div>
+                        <dt>Runtime 能力字段</dt>
+                        <dd class="row-value good">是</dd>
+                      </div>
+                      <div>
+                        <dt>未知能力字段</dt>
+                        <dd class="character-capability-unknown">未知</dd>
+                      </div>
+                    </dl>
+                  </section>
+                  <section class="bw-character-detail-section">
+                    <h3>当前状态</h3>
+                    <p>等待状态引擎计算</p>
+                  </section>
+                  <section class="bw-character-detail-section exposure-section">
+                    <h3>事件追踪</h3>
+                    <p>仅显示当前仍在跟进的相关记录。</p>
+                    <div class="bw-character-exposure-list">
+                      <div class="bw-character-exposure-list-head"><span>按 Runtime 引用顺序</span><strong>n 条记录</strong></div>
+                      <details class="bw-character-exposure" open>
+                        <summary>
+                          <span class="bw-character-exposure-date"><span>Runtime story time</span><small>相对时间</small></span
+                          ><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span
+                          ><span class="bw-badge good">已确认</span><span class="bw-character-exposure-chevron">⌄</span>
+                        </summary>
+                        <div class="bw-character-exposure-detail">
+                          <dl class="bw-character-exposure-fields">
+                            <div>
+                              <dt>日期</dt>
+                              <dd><span>Runtime story time</span><small class="bw-character-exposure-age-inline">相对时间</small></dd>
+                            </div>
+                            <div>
+                              <dt>地点</dt>
+                              <dd>Runtime 地点</dd>
+                            </div>
+                            <div>
+                              <dt>相关对象</dt>
+                              <dd>Runtime 对象</dd>
+                            </div>
+                          </dl>
+                          <p class="bw-character-exposure-source">完整事实仍来自当前 Event Registry。</p>
+                        </div>
+                      </details>
+                    </div>
+                  </section>
+                  <section class="bw-character-detail-section">
+                    <h3>推演</h3>
+                    <div class="bw-character-empty">当前没有可显示的生理推演。</div>
+                  </section>
+                  <section class="bw-character-detail-section">
+                    <h3>关系</h3>
+                    <div class="bw-character-empty">当前没有已确认关系。</div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <!-- 事件页的视觉结构：生产实现保留真实事件详情、编辑和删除 hooks。 -->
+          <section class="bw-page">
+            <header class="bw-page-head">
+              <div class="bw-page-head-copy">
+                <h1>事件审阅</h1>
+                <p>全局只保留快速索引；完整记录在对应人物内查看</p>
+              </div>
+              <div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div>
+            </header>
+            <section class="bw-section bw-event-review-panel">
+              <div class="bw-section-head">
+                <div>
+                  <h2>当前事件索引</h2>
+                  <p>按日期快速定位；不在这里堆叠所有人物上下文</p>
+                </div>
+                <label
+                  >状态<select class="bw-select" data-bioweave-event-filter>
+                    <option>全部</option>
+                    <option>已确认</option>
+                    <option>较可能</option>
+                  </select></label
+                >
+              </div>
+              <div class="bw-event-review-summary"><strong>n 条</strong><span>当前筛选结果 · 详情按人物归属展开</span></div>
+              <div class="bw-event-review-list">
+                <details class="bw-event-review-item" data-bioweave-event-id="runtime-event-id">
+                  <summary class="bw-event-review-row">
+                    <span class="bw-event-review-time"><b>Runtime story time</b><small>相对时间</small></span
+                    ><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span
+                    ><span class="bw-event-review-detail">n 个追踪对象</span><span class="bw-badge good">已确认</span>
+                  </summary>
+                  <div class="bw-event-review-detail-panel">原有事件事实、妊娠相关性、证据、编辑和删除操作位于展开内容。</div>
+                </details>
+              </div>
+              <div class="bw-event-review-foot">
+                <span>完整事实来自 Runtime Event Registry。</span><button class="bw-text-button" type="button">查看人物记录 →</button>
+              </div>
+            </section>
+          </section>
+
+          <section class="bw-section bw-world-selection">
+            <header class="bw-section-head">
+              <div>
+                <h2>物种与生物类型</h2>
+                <p>使用卡片选择，不使用大面积下拉框。</p>
+              </div>
+            </header>
+            <!-- 卡片内部结构与配置登记：head / title / mark / summary；名称和数量只演示 Runtime 映射，不固定性别枚举。 -->
+            <div class="bw-species-grid">
+              <button class="bw-world-card selected" type="button" data-bioweave-action="world-model-select-species">
+                <span class="bw-world-card-head"><b>潮汐生物</b><small>当前</small></span
+                ><small class="bw-world-card-summary">2 个类型 · 潮汐生物型 / 甲型</small>
+              </button>
+              <button class="bw-world-card" type="button" data-bioweave-action="world-model-select-species">
+                <span class="bw-world-card-head"><b>镜生体</b><small>可选</small></span
+                ><small class="bw-world-card-summary">1 个类型 · 镜生体型</small>
+              </button>
+              <button class="bw-world-card" type="button" data-bioweave-action="world-model-select-species">
+                <span class="bw-world-card-head"><b>弧晶体</b><small>可选</small></span
+                ><small class="bw-world-card-summary">3 个类型 · 甲相 / 穗核型 / 双态型</small>
+              </button>
+            </div>
+            <!-- More than three type cards keep Runtime order and wrap; selection never moves a card. -->
+            <div class="bw-type-grid">
+              <button class="bw-type-card selected" type="button" data-bioweave-action="world-model-select-type">
+                <span class="bw-type-card-head"><b>潮汐生物型</b><small>当前</small></span
+                ><small class="bw-type-card-summary">5/5 项能力已知 · 可承担妊娠</small>
+              </button>
+              <button class="bw-type-card" type="button" data-bioweave-action="world-model-select-type">
+                <span class="bw-type-card-head"><b>甲型</b><small>可选</small></span
+                ><small class="bw-type-card-summary">4/5 项能力已知 · 不可承担妊娠</small>
+              </button>
+              <button class="bw-type-card" type="button" data-bioweave-action="world-model-select-type">
+                <span class="bw-type-card-head"><b>双态型</b><small>可选</small></span
+                ><small class="bw-type-card-summary">3/5 项能力已知 · 妊娠未知</small>
+              </button>
+            </div>
+          </section>
+
+          <section class="bw-section">
+            <header class="bw-section-head">
+              <div>
+                <h2>当前类型详情</h2>
+                <p>每个模块独立编辑，每个模块只有一个编辑入口。</p>
+              </div>
+            </header>
+            <div class="bw-world-content-grid">
+              <div class="bw-world-detail-column">
+                <div class="bw-module-grid">
+                  <article class="bw-module" data-bioweave-world-section="capabilities">
+                    <header class="bw-module-head">
+                      <h3>生殖能力</h3>
+                      <span class="spacer"></span
+                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                    </header>
+                    <div class="bw-module-body">
+                      <dl class="bw-kv">
+                        <div class="bw-kv-row">
+                          <dt>可产生精子</dt>
+                          <dd class="bw-value-good">是</dd>
+                        </div>
+                        <div class="bw-kv-row">
+                          <dt>可被受精</dt>
+                          <dd class="bw-value-no">否</dd>
+                        </div>
+                        <div class="bw-kv-row">
+                          <dt>可承担妊娠</dt>
+                          <dd class="bw-value-warn">未知</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </article>
+                  <article class="bw-module" data-bioweave-world-section="reproduction_rules">
+                    <header class="bw-module-head">
+                      <h3>生殖规则</h3>
+                      <span class="spacer"></span
+                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                    </header>
+                    <div class="bw-module-body">
+                      <dl class="bw-kv">
+                        <div class="bw-kv-row">
+                          <dt>受精方式</dt>
+                          <dd>由 Runtime 提供</dd>
+                        </div>
+                        <div class="bw-kv-row">
+                          <dt>妊娠方式</dt>
+                          <dd>未知</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </article>
+                  <article class="bw-module" data-bioweave-world-section="lifecycle">
+                    <header class="bw-module-head">
+                      <h3>生命周期</h3>
+                      <span class="spacer"></span
+                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                    </header>
+                    <div class="bw-module-body">
+                      <dl class="bw-kv">
+                        <div class="bw-kv-row">
+                          <dt>成熟</dt>
+                          <dd>由 Runtime 提供</dd>
+                        </div>
+                        <div class="bw-kv-row">
+                          <dt>衰老</dt>
+                          <dd>未知</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </article>
+                  <article class="bw-module" data-bioweave-world-section="special_rules">
+                    <header class="bw-module-head">
+                      <h3>特殊规则</h3>
+                      <span class="spacer"></span
+                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                    </header>
+                    <div class="bw-module-body">
+                      <dl class="bw-kv">
+                        <div class="bw-kv-row">
+                          <dt>规则状态</dt>
+                          <dd class="bw-value-good">已确认</dd>
+                        </div>
+                        <div class="bw-kv-row">
+                          <dt>未知语义</dt>
+                          <dd class="bw-value-warn">未知</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </article>
                 </div>
               </div>
-            </details>
-            <details class="bw-settings-group">
-              <summary class="bw-settings-head"><span aria-hidden="true">›</span><span class="bw-settings-title"><b>最近剧情</b><small>读取楼数、正则提取与清洗</small></span></summary>
-              <div class="bw-settings-body">
-                <div class="bw-setting-grid bw-recent-story-read-options"><label>读取最近楼层<input class="bw-select" type="number" value="20"></label><div class="bw-setting-row"><span>对用户楼应用正则</span><label class="bw-switch"><input type="checkbox" checked><span aria-hidden="true"></span></label></div></div>
-                <div class="bw-regex-section"><div class="bw-regex-section-head"><div><h3>全局正则</h3><p>适用于所有角色卡。</p></div><button class="bw-button small" type="button">新增规则</button></div><div class="bw-regex-list"><div class="bw-regex-row"><small>#1</small><select aria-label="阶段"><option>提取</option><option>清洗</option></select><input aria-label="查找" placeholder="查找正则"><label class="bw-switch"><input type="checkbox" checked><span aria-hidden="true"></span></label><div class="bw-regex-move"><button type="button" aria-label="上移">↑</button><button type="button" aria-label="下移">↓</button></div><button class="bw-button small" type="button">删</button></div></div></div>
-                <div class="bw-regex-section"><div class="bw-regex-section-head"><div><h3>当前角色卡正则</h3><p>只作用于当前 Chat。</p></div><button class="bw-button small" type="button">新增规则</button></div></div>
+              <aside class="bw-world-rules-column">
+                <section class="bw-section">
+                  <header class="bw-section-head">
+                    <div>
+                      <h2>世界级规则</h2>
+                      <p>对所有物种和生物类型生效。</p>
+                    </div>
+                  </header>
+                  <div class="bw-module-grid">
+                    <article class="bw-module" data-bioweave-world-section="world_rules">
+                      <header class="bw-module-head">
+                        <h3>医疗与照护</h3>
+                        <span class="spacer"></span
+                        ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                      </header>
+                      <div class="bw-module-body">
+                        <dl class="bw-kv">
+                          <div class="bw-kv-row">
+                            <dt>照护水平</dt>
+                            <dd>由 Runtime 提供</dd>
+                          </div>
+                          <div class="bw-kv-row">
+                            <dt>判断依据</dt>
+                            <dd class="bw-value-warn">未知</dd>
+                          </div>
+                        </dl>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="bw-section">
+            <header class="bw-section-head">
+              <div>
+                <h2>设置控件示例</h2>
+                <p>主栏可折叠，子目录字号更小且不加粗。</p>
               </div>
-            </details>
-            <details class="bw-settings-group bw-api-source-group">
-              <summary class="bw-settings-head"><span aria-hidden="true">+</span><span class="bw-settings-title"><b>API 来源</b><small>选择酒馆当前 API 或 BioWeave 独立 API</small></span><span class="bw-badge">当前 API</span></summary>
-              <div class="bw-settings-body">
-                <div class="bw-radio-list"><label class="bw-radio-option"><input type="radio" name="bw-api-source" checked><span><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span></label><label class="bw-radio-option"><input type="radio" name="bw-api-source"><span><strong>使用 BioWeave 独立 API</strong><small>为“跟随默认”的任务提供独立连接。</small></span></label></div>
-                <div class="bw-setting-grid"><label class="bw-setting-field">超时（秒）<input class="bw-select" type="number" value="180"></label><label class="bw-setting-field">重试次数<select class="bw-select"><option>0</option><option selected>1</option><option>2</option></select></label></div>
-                <div class="bw-model-picker"><div class="bw-model-control-row"><span class="bw-model-label">模型</span><button class="bw-model-trigger" type="button" aria-expanded="false"><span>请选择模型</span><span aria-hidden="true">▼</span></button><button class="bw-button small" type="button">刷新模型</button></div><div class="bw-model-dropdown" hidden><p class="bw-note">模型列表由 API 返回；点击刷新后展示。</p><div class="bw-model-list" role="listbox"></div></div></div>
-                <div class="bw-api-profile-panel"><div class="bw-api-profile-head"><h3>已保存的 API 配置</h3><button class="bw-button small" type="button">新建配置</button></div><div class="bw-api-profile-row"><strong>当前环境</strong><span class="bw-api-profile-actions"><button class="bw-button" type="button">编辑</button><button class="bw-button danger" type="button">删除</button></span></div></div>
-                <p class="bw-note">安全：独立 API Key 只写入 Secret Store；不会显示当前 API 的密钥。</p>
-              </div>
-            </details>
-            <details class="bw-settings-group">
-              <summary class="bw-settings-head"><span aria-hidden="true">+</span><span class="bw-settings-title"><b>分析提示词</b><small>可修改发送给模型的补充内容</small></span><span class="bw-badge">核心约束保留</span></summary>
-              <div class="bw-settings-body">
-                <div class="bw-prompt-grid"><label class="bw-setting-field">顶部 SYSTEM<textarea></textarea></label><label class="bw-setting-field">分析任务补充<textarea></textarea></label><label class="bw-setting-field">输入前说明<textarea></textarea></label><label class="bw-setting-field">输入后说明<textarea></textarea></label><label class="bw-setting-field">尾部 SYSTEM<textarea></textarea></label></div>
-                <div class="bw-settings-actions"><button class="bw-button primary" type="button">保存提示词设置</button><button class="bw-button" type="button">高级 / 调试</button></div>
-              </div>
-            </details>
-          </div>
-        </section>
-        <p class="bw-note">本文件只示范 UI 结构、控件语法和响应式布局；不包含真实业务数据、API 或存储逻辑。独立示例的 <code>.bw-*</code> 类名不能复制到生产代码。</p>
-      </div>
-    </main>
-  </div>
-</body>
+            </header>
+            <div class="bw-settings">
+              <details class="bw-settings-group" open data-bioweave-settings-disclosure>
+                <summary class="bw-settings-head">
+                  <span class="bw-settings-chevron" aria-hidden="true">−</span
+                  ><span class="bw-settings-title"><b>世界书来源</b><small>选择当前分析使用的资料</small></span
+                  ><span class="bw-badge good">4 项已选</span>
+                </summary>
+                <div class="bw-settings-body">
+                  <details class="bw-source-branch" open>
+                    <summary>
+                      <span class="bw-source-branch-select"
+                        ><input
+                          class="bw-checkbox"
+                          type="checkbox"
+                          checked
+                          data-bioweave-analysis-section-toggle="character_card"
+                          aria-checked="true"
+                        /><span><strong>角色卡</strong><small>当前角色卡可读取字段</small></span></span
+                      ><span class="bw-source-branch-tools"
+                        ><span class="bw-badge good">2/3 项</span><span class="bw-source-branch-chevron" aria-hidden="true">−</span></span
+                      >
+                    </summary>
+                    <div class="bw-source-child-list">
+                      <label class="bw-source-child"
+                        ><input class="bw-checkbox" type="checkbox" checked data-bioweave-analysis-source="field" /><span
+                          ><strong>角色描述</strong><small>约 12 tokens</small></span
+                        ><span class="bw-badge good">已选</span></label
+                      ><label class="bw-source-child"
+                        ><input class="bw-checkbox" type="checkbox" data-bioweave-analysis-source="field:child" /><span
+                          ><strong>开场白</strong><small>约 8 tokens</small></span
+                        ><span class="bw-badge">未选</span></label
+                      >
+                    </div>
+                  </details>
+                  <details class="bw-source-branch">
+                    <summary>
+                      <span class="bw-source-branch-select"
+                        ><input class="bw-checkbox" type="checkbox" /><span
+                          ><strong>全局世界书</strong><small>当前酒馆已开启的全局来源</small></span
+                        ></span
+                      ><span class="bw-source-branch-tools"
+                        ><span class="bw-badge good">1/3 项</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span
+                      >
+                    </summary>
+                    <div class="bw-source-child-list">
+                      <label class="bw-source-child"
+                        ><input class="bw-checkbox" type="checkbox" data-bioweave-analysis-source="entry" /><span
+                          ><strong>基础设定</strong><small>约 24 tokens</small></span
+                        ><span class="bw-badge">未选</span></label
+                      >
+                    </div>
+                  </details>
+                  <details class="bw-source-branch">
+                    <summary>
+                      <span class="bw-source-branch-select"
+                        ><input class="bw-checkbox" type="checkbox" /><span
+                          ><strong>附加角色世界书</strong><small>与当前角色关联的世界书</small></span
+                        ></span
+                      ><span class="bw-source-branch-tools"
+                        ><span class="bw-badge">未选</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span
+                      >
+                    </summary>
+                  </details>
+                  <details class="bw-source-branch">
+                    <summary>
+                      <span class="bw-source-branch-select"
+                        ><input class="bw-checkbox" type="checkbox" /><span><strong>其他世界书</strong><small>未归类的可用来源</small></span></span
+                      ><span class="bw-source-branch-tools"
+                        ><span class="bw-badge">未选</span><span class="bw-source-branch-chevron" aria-hidden="true">+</span></span
+                      >
+                    </summary>
+                  </details>
+                  <div class="bw-memory-list">
+                    <div class="bw-memory-row">
+                      <label
+                        ><input class="bw-checkbox" type="checkbox" checked /><span
+                          ><strong>读取外部记忆</strong><small>Runtime provider 返回可读取状态。</small></span
+                        ></label
+                      ><span class="bw-badge good">可用</span>
+                    </div>
+                    <div class="bw-memory-row">
+                      <label
+                        ><input class="bw-checkbox" type="checkbox" disabled /><span
+                          ><strong>未连接来源</strong><small>当前没有公开接口。</small></span
+                        ></label
+                      ><span class="bw-badge">不可用</span>
+                    </div>
+                  </div>
+                </div>
+              </details>
+              <details class="bw-settings-group">
+                <summary class="bw-settings-head">
+                  <span aria-hidden="true">›</span><span class="bw-settings-title"><b>最近剧情</b><small>读取楼数、正则提取与清洗</small></span>
+                </summary>
+                <div class="bw-settings-body">
+                  <div class="bw-setting-grid bw-recent-story-read-options">
+                    <label>读取最近楼层<input class="bw-select" type="number" value="20" /></label>
+                    <div class="bw-setting-row">
+                      <span>对用户楼应用正则</span><label class="bw-switch"><input type="checkbox" checked /><span aria-hidden="true"></span></label>
+                    </div>
+                  </div>
+                  <div class="bw-regex-section">
+                    <div class="bw-regex-section-head">
+                      <div>
+                        <h3>全局正则</h3>
+                        <p>适用于所有角色卡。</p>
+                      </div>
+                      <button class="bw-button small" type="button">新增规则</button>
+                    </div>
+                    <div class="bw-regex-list">
+                      <div class="bw-regex-row">
+                        <small>#1</small
+                        ><select aria-label="阶段">
+                          <option>提取</option>
+                          <option>清洗</option></select
+                        ><input aria-label="查找" placeholder="查找正则" /><label class="bw-switch"
+                          ><input type="checkbox" checked /><span aria-hidden="true"></span
+                        ></label>
+                        <div class="bw-regex-move">
+                          <button type="button" aria-label="上移">↑</button><button type="button" aria-label="下移">↓</button>
+                        </div>
+                        <button class="bw-button small" type="button">删</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bw-regex-section">
+                    <div class="bw-regex-section-head">
+                      <div>
+                        <h3>当前角色卡正则</h3>
+                        <p>只作用于当前 Chat。</p>
+                      </div>
+                      <button class="bw-button small" type="button">新增规则</button>
+                    </div>
+                  </div>
+                </div>
+              </details>
+              <details class="bw-settings-group bw-api-source-group">
+                <summary class="bw-settings-head">
+                  <span aria-hidden="true">+</span
+                  ><span class="bw-settings-title"><b>API 来源</b><small>选择酒馆当前 API 或 BioWeave 独立 API</small></span
+                  ><span class="bw-badge">当前 API</span>
+                </summary>
+                <div class="bw-settings-body">
+                  <div class="bw-radio-list">
+                    <label class="bw-radio-option"
+                      ><input type="radio" name="bw-api-source" checked /><span
+                        ><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span
+                      ></label
+                    ><label class="bw-radio-option"
+                      ><input type="radio" name="bw-api-source" /><span
+                        ><strong>使用 BioWeave 独立 API</strong><small>为“跟随默认”的任务提供独立连接。</small></span
+                      ></label
+                    >
+                  </div>
+                  <div class="bw-setting-grid">
+                    <label class="bw-setting-field">超时（秒）<input class="bw-select" type="number" value="180" /></label
+                    ><label class="bw-setting-field"
+                      >重试次数<select class="bw-select">
+                        <option>0</option>
+                        <option selected>1</option>
+                        <option>2</option>
+                      </select></label
+                    >
+                  </div>
+                  <div class="bw-api-profile-panel">
+                    <div class="bw-api-profile-head">
+                      <h3>已保存的 API 配置</h3>
+                      <button class="bw-button small" type="button">新建配置</button>
+                    </div>
+                    <div class="bw-api-profile-row">
+                      <strong>当前环境</strong
+                      ><span class="bw-api-profile-actions"
+                        ><button class="bw-button" type="button">编辑</button><button class="bw-button danger" type="button">删除</button></span
+                      >
+                    </div>
+                    <div class="bw-api-profile-editor">
+                      <div class="bw-api-profile-fields">
+                        <label class="bw-setting-field">配置名称<input class="bw-select" value="本地模型" /></label>
+                        <label class="bw-setting-field">API 地址<input class="bw-select" value="http://127.0.0.1:1234/v1" placeholder="不含 /chat/completions" /></label>
+                        <label class="bw-setting-field">API 密钥<input class="bw-select" type="password" value="" placeholder="留空表示保留已保存密钥" /></label>
+                        <div class="bw-api-profile-summary" aria-label="独立 API 连接摘要">
+                          <div class="bw-api-profile-summary-row"><span>连接模式</span><strong>独立 API</strong></div>
+                          <div class="bw-api-profile-summary-row"><span>密钥状态</span><strong>未设置</strong></div>
+                          <small>密钥只写入 Secret Store；留空表示保留已保存密钥。</small>
+                        </div>
+                      </div>
+                      <div class="bw-model-picker">
+                        <div class="bw-model-control-row">
+                          <span class="bw-model-label">模型</span
+                          ><button class="bw-model-trigger" type="button" aria-expanded="false">
+                            <span>请选择模型</span><span aria-hidden="true">▼</span></button
+                          ><button class="bw-button small" type="button">刷新模型</button>
+                        </div>
+                        <div class="bw-model-dropdown" hidden>
+                          <p class="bw-note">模型列表由 API 返回；点击刷新后展示。</p>
+                          <div class="bw-model-list" role="listbox"></div>
+                        </div>
+                      </div>
+                      <div class="bw-setting-row"><span>清除已保存 API 密钥</span><label class="bw-switch"><input type="checkbox" /><span aria-hidden="true"></span></label></div>
+                      <div class="bw-settings-actions">
+                        <button class="bw-button primary" type="button">保存 API 配置</button><button class="bw-button" type="button">测试连接</button><button class="bw-button" type="button">取消</button>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="bw-note">安全：独立 API Key 只写入 Secret Store；不会显示当前 API 的密钥。</p>
+                </div>
+              </details>
+              <details class="bw-settings-group">
+                <summary class="bw-settings-head">
+                  <span aria-hidden="true">+</span><span class="bw-settings-title"><b>分析提示词</b><small>可修改发送给模型的补充内容</small></span
+                  ><span class="bw-badge">核心约束保留</span>
+                </summary>
+                <div class="bw-settings-body">
+                  <div class="bw-prompt-grid">
+                    <label class="bw-setting-field">顶部 SYSTEM<textarea></textarea></label
+                    ><label class="bw-setting-field">分析任务补充<textarea></textarea></label
+                    ><label class="bw-setting-field">输入前说明<textarea></textarea></label
+                    ><label class="bw-setting-field">输入后说明<textarea></textarea></label
+                    ><label class="bw-setting-field">尾部 SYSTEM<textarea></textarea></label>
+                  </div>
+                  <div class="bw-settings-actions">
+                    <button class="bw-button primary" type="button">保存提示词设置</button
+                    ><button class="bw-button" type="button">高级 / 调试</button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
+          <p class="bw-note">
+            本文件只示范 UI 结构、控件语法和响应式布局；不包含真实业务数据、API 或存储逻辑。独立示例的 <code>.bw-*</code> 类名不能复制到生产代码。
+          </p>
+        </div>
+      </main>
+    </div>
+  </body>
 </html>

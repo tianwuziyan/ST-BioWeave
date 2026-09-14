@@ -18,6 +18,7 @@ import {
   SILLYTAVERN_CURRENT_API,
   emptyChat,
   normalizeExtensionSettings,
+  normalizeApiProfile,
   normalizeApiRequestSettings,
 } from '../storage/schema.js'
 import { createApiProfileStore, createSecretStore } from '../storage/store.js'
@@ -95,6 +96,7 @@ test('global profile normalization removes API key values and emptyChat stays ch
   })
   assert.equal(settings.api_profiles.stable.api_key, undefined)
   assert.equal(settings.api_profiles.stable.nested, undefined)
+  assert.equal(settings.api_profiles.stable.provider, 'OpenAI-compatible')
   assert.equal(settings.api_profiles.stable.secret_ref, 'secret-id-1')
   assert.equal('timeout' in settings.api_profiles.stable, false)
   assert.equal('retry_count' in settings.api_profiles.stable, false)
@@ -103,6 +105,10 @@ test('global profile normalization removes API key values and emptyChat stays ch
   assert.equal(JSON.stringify(settings).includes('DO-NOT-PERSIST'), false)
   assert.equal('api_profiles' in emptyChat('chat-a'), false)
   assert.deepEqual(emptyChat('chat-a').tracking_subjects, {})
+})
+test('providerless profile normalization uses a stable display fallback', () => {
+  assert.equal(normalizeApiProfile({ api_url: 'https://api.example/v1', model: 'model-a' }).name, 'model-a')
+  assert.equal(normalizeApiProfile({ api_url: 'https://api.example/v1' }).name, 'API 配置')
 })
 test('global API request settings normalize and round-trip without Chat storage', async () => {
   assert.deepEqual(normalizeApiRequestSettings(), DEFAULT_API_REQUEST_SETTINGS)
@@ -127,6 +133,40 @@ test('global API request settings normalize and round-trip without Chat storage'
   assert.deepEqual(profileStore.getApiRequestSettings(), saved)
   assert.deepEqual(globalSettings.api_request_settings, saved)
   assert.equal(chatWrites, 0)
+})
+test('providerless profiles save and legacy provider values survive edits', async () => {
+  let globalSettings = {
+    api_profiles: {
+      legacy: {
+        profile_id: 'legacy',
+        name: '旧配置',
+        provider: 'Legacy Provider',
+        api_url: 'https://legacy.example/v1',
+        model: 'legacy-model',
+      },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const created = await profileStore.saveProfile({
+    name: '无服务商配置',
+    api_url: 'https://api.example/v1',
+    model: 'model-a',
+  })
+  assert.equal(created.provider, 'OpenAI-compatible')
+  assert.equal(created.name, '无服务商配置')
+  const edited = await profileStore.saveProfile({
+    profile_id: 'legacy',
+    name: '旧配置已编辑',
+    api_url: 'https://legacy.example/v1',
+    model: 'legacy-model',
+  })
+  assert.equal(edited.provider, 'Legacy Provider')
+  assert.equal(profileStore.getProfile('legacy').provider, 'Legacy Provider')
 })
 test('profile URL normalization strips completion suffixes and rejects URL credentials', () => {
   const normalized = normalizeExtensionSettings({
@@ -1275,9 +1315,10 @@ test('settings markup exposes basic API fields, assignments, password input, and
     },
     testResult: { ok: false, error: '认证失败（HTTP 401）' },
   })
-  for (const field of ['name', 'provider', 'api_url', 'model']) {
+  for (const field of ['name', 'api_url', 'model']) {
     assert.match(html, new RegExp(`name="${field}"`))
   }
+  assert.doesNotMatch(html, /name="provider"/)
   for (const field of ['context_size', 'max_output_tokens', 'temperature']) {
     assert.doesNotMatch(html, new RegExp(`name="${field}"`))
   }
@@ -1287,6 +1328,9 @@ test('settings markup exposes basic API fields, assignments, password input, and
   assert.match(html, /重试次数/)
   assert.equal(html.includes('bioweave-settings-advanced'), false)
   assert.match(html, /name="api_key" type="password" value=""/)
+  assert.match(html, /bioweave-api-profile-summary/)
+  assert.match(html, /连接模式.*独立 API/)
+  assert.match(html, /密钥状态.*已保存/)
   for (const slot of ['world_analysis', 'event_analysis', 'projection', 'history_scan']) {
     assert.match(html, new RegExp(`data-bioweave-assignment="${slot}"`))
   }

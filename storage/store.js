@@ -70,6 +70,14 @@ function profileIdFrom(value) {
   return typeof id === 'string' ? id.trim() : '';
 }
 
+function profileInputWithLegacyProvider(raw, existing) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const suppliedProvider = typeof source.provider === 'string' ? source.provider.trim() : '';
+  const existingProvider = typeof existing?.provider === 'string' ? existing.provider.trim() : '';
+  const provider = suppliedProvider || existingProvider;
+  return provider ? {...source, provider} : source;
+}
+
 function readGlobalSettings(adapter) {
   if (typeof adapter.getGlobalSettings === 'function') return adapter.getGlobalSettings() ?? {};
   const extensionSettings = adapter.getExtensionSettings?.();
@@ -244,7 +252,8 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     const settings = read();
     const requestedId = profileIdFrom(raw);
     const existing = requestedId ? settings.api_profiles[requestedId] : null;
-    const profile = normalizeApiProfile(raw, {profileId: requestedId || null});
+    const profileInput = profileInputWithLegacyProvider(raw, existing);
+    const profile = normalizeApiProfile(profileInput, {profileId: requestedId || null});
     if (!profile.api_url || !profile.model) throw new Error('API_PROFILE_INVALID');
     const oldSecretRef = existing?.secret_ref ?? null;
     const suppliedKey = keyInput(raw);
@@ -313,7 +322,8 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     const settings = read();
     const requestedId = profileIdFrom(raw);
     const existing = requestedId ? settings.api_profiles[requestedId] : null;
-    const profile = normalizeApiProfile(raw, {
+    const profileInput = profileInputWithLegacyProvider(raw, existing);
+    const profile = normalizeApiProfile(profileInput, {
       profileId: requestedId || null,
       secretRef: existing?.secret_ref ?? null,
     });

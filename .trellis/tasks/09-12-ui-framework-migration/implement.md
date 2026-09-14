@@ -32,6 +32,12 @@
 - [x] 世界：对齐物种/类型/人物模块卡；每个模块一个编辑按钮，独立保存/取消，保留 null/未知与生产能力语义。
 - [x] 设置：对齐多级来源折叠、父子半选、下拉框/checkbox/switch、最近剧情、正则、外部记忆、提示词和调试入口；正则 rail 垂直紧邻并与 row 对齐。
 
+### 本轮 API Profile 兼容性收敛
+
+- [x] 同步登记 providerless API Profile 编辑器、连接摘要和名称 fallback 的配置/规范/示例/参考视觉。
+- [x] 从生产编辑器和表单 draft 移除 provider 输入，但保留旧 Profile 的 provider 读取与保存兼容。
+- [x] 验证无 provider Profile 的保存、连接测试、模型刷新和独立 API 请求，以及旧 provider 配置回读。
+
 ## 阶段 4：测试与兼容清理
 
 - [x] 更新 Fake DOM/测试夹具仅以适配新 shell 选择器，保留行为断言和 hook 断言。

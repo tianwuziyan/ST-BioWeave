@@ -164,7 +164,9 @@
         touch-action: none;
         user-select: none;
       }
-      .panel[data-dragging='true'] .app-header { cursor: grabbing; }
+      .panel[data-dragging='true'] .app-header {
+        cursor: grabbing;
+      }
       .brand {
         font-size: 16px;
         font-weight: 700;
@@ -634,7 +636,10 @@
         background: var(--card);
         color: var(--text);
         text-align: left;
-        transition: border-color 0.15s, background 0.15s, transform 0.15s;
+        transition:
+          border-color 0.15s,
+          background 0.15s,
+          transform 0.15s;
       }
       .character-row:hover,
       .character-row:focus-visible,
@@ -879,7 +884,7 @@
       .character-exposure > summary {
         display: grid;
         grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px;
-        grid-template-areas: "date type meta . status chevron";
+        grid-template-areas: 'date type meta . status chevron';
         align-items: center;
         column-gap: 14px;
         row-gap: 4px;
@@ -1692,6 +1697,38 @@
         padding: 3px 7px;
         font-size: 11px;
       }
+      .profile-connection-summary {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        padding: 7px 8px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: var(--card);
+      }
+      .profile-connection-summary-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+        font-size: 11px;
+      }
+      .profile-connection-summary-row span:first-child {
+        color: var(--muted);
+      }
+      .profile-connection-summary-row strong {
+        color: var(--text-2);
+        font-weight: 600;
+      }
+      .profile-connection-summary-row strong.good {
+        color: var(--good);
+      }
+      .profile-connection-summary small {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.35;
+      }
       .profile-status {
         margin-top: 8px;
         color: var(--good);
@@ -2309,7 +2346,7 @@
       body[data-device='mobile'] .character-exposure > summary {
         grid-template-columns: 100px minmax(0, 1fr) auto 14px;
         grid-template-rows: auto auto;
-        grid-template-areas: "date type status chevron" "meta meta meta meta";
+        grid-template-areas: 'date type status chevron' 'meta meta meta meta';
         column-gap: 9px;
         row-gap: 5px;
         min-height: 55px;
@@ -2701,7 +2738,6 @@
           previewMode: 'structure',
           apiProfile: {
             name: '本地模型',
-            provider: 'OpenAI Compatible',
             apiUrl: 'http://127.0.0.1:1234/v1',
             model: '当前宿主模型',
             hasSecret: false,
@@ -3032,7 +3068,7 @@
         const apiProfile = state.settings.apiProfile
         const apiProfileBody =
           state.settings.apiSource === 'bioweave_independent_api'
-            ? `<div class="api-profile-panel"><div class="settings-summary-line"><strong>独立 API 配置</strong><span>完整字段只在编辑器中显示</span><button class="button" type="button" data-setting-profile-new>新建 API 配置</button></div><div class="api-profile-row"><div class="row-main"><b>${escapeHtml(apiProfile.name || '未命名配置')}</b></div><div class="api-profile-actions"><button class="button" type="button" data-setting-profile-edit>编辑</button><button class="button danger" type="button" data-setting-profile-delete>删除</button></div></div><div class="setting-grid"><label class="field">默认 API 配置<select data-setting-profile-default><option selected>${escapeHtml(apiProfile.name || '请选择配置')}</option></select></label><label class="field">模型<select data-setting-profile="model">${apiProfile.models.map(model => `<option ${model === apiProfile.model ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}</select></label><label class="field">配置名称<input value="${escapeHtml(apiProfile.name)}" data-setting-profile="name"></label><label class="field">服务商<input value="${escapeHtml(apiProfile.provider)}" data-setting-profile="provider"></label><label class="field">API 地址<input value="${escapeHtml(apiProfile.apiUrl)}" data-setting-profile="apiUrl" placeholder="不含 /chat/completions"></label><label class="field">API 密钥<input type="password" value="" data-setting-profile-key placeholder="留空表示保留已保存密钥"></label></div><label class="control-row"><span class="check-copy"><b>清除已保存 API 密钥</b><small>密钥只进入 Secret Store，不回填到页面</small></span><span class="switch"><input type="checkbox" data-setting-profile-clear ${apiProfile.clearSecret ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label><div class="settings-actions"><button class="button primary" type="button" data-setting-profile-save>保存 API 配置</button><button class="button" type="button" data-setting-profile-test>测试连接</button><button class="button" type="button" data-setting-profile-refresh>刷新模型</button></div><p class="profile-status">${escapeHtml(apiProfile.status)}</p></div>`
+            ? `<div class="api-profile-panel"><div class="settings-summary-line"><strong>独立 API 配置</strong><span>完整字段只在编辑器中显示</span><button class="button" type="button" data-setting-profile-new>新建 API 配置</button></div><div class="api-profile-row"><div class="row-main"><b>${escapeHtml(apiProfile.name || '未命名配置')}</b></div><div class="api-profile-actions"><button class="button" type="button" data-setting-profile-edit>编辑</button><button class="button danger" type="button" data-setting-profile-delete>删除</button></div></div><div class="setting-grid"><label class="field">默认 API 配置<select data-setting-profile-default><option selected>${escapeHtml(apiProfile.name || '请选择配置')}</option></select></label><label class="field">模型<select data-setting-profile="model">${apiProfile.models.map(model => `<option ${model === apiProfile.model ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}</select></label><label class="field">配置名称<input value="${escapeHtml(apiProfile.name)}" data-setting-profile="name"></label><label class="field">API 地址<input value="${escapeHtml(apiProfile.apiUrl)}" data-setting-profile="apiUrl" placeholder="不含 /chat/completions"></label><label class="field">API 密钥<input type="password" value="" data-setting-profile-key placeholder="留空表示保留已保存密钥"></label><div class="profile-connection-summary" aria-label="独立 API 连接摘要"><div class="profile-connection-summary-row"><span>连接模式</span><strong>独立 API</strong></div><div class="profile-connection-summary-row"><span>密钥状态</span><strong class="${apiProfile.hasSecret ? 'good' : ''}">${apiProfile.hasSecret ? '已保存' : '未设置'}</strong></div><small>密钥只进入 Secret Store；留空表示保留已保存密钥。</small></div></div><label class="control-row"><span class="check-copy"><b>清除已保存 API 密钥</b><small>密钥只进入 Secret Store，不回填到页面</small></span><span class="switch"><input type="checkbox" data-setting-profile-clear ${apiProfile.clearSecret ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label><div class="settings-actions"><button class="button primary" type="button" data-setting-profile-save>保存 API 配置</button><button class="button" type="button" data-setting-profile-test>测试连接</button><button class="button" type="button" data-setting-profile-refresh>刷新模型</button></div><p class="profile-status">${escapeHtml(apiProfile.status)}</p></div>`
             : ''
         const apiBody = `<div class="radio-list"><label class="radio-option"><input type="radio" name="api_source" value="sillytavern_current_api" data-setting-api-source ${state.settings.apiSource === 'sillytavern_current_api' ? 'checked' : ''}><span><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span></label><label class="radio-option"><input type="radio" name="api_source" value="bioweave_independent_api" data-setting-api-source ${state.settings.apiSource === 'bioweave_independent_api' ? 'checked' : ''}><span><strong>使用 BioWeave 独立 API</strong><small>为“跟随默认”的任务提供独立连接。</small></span></label></div><div class="setting-grid"><label class="field">超时（秒）<select data-setting-timeout><option ${state.settings.timeout === '60 秒' ? 'selected' : ''}>60 秒</option><option ${state.settings.timeout === '180 秒' ? 'selected' : ''}>180 秒</option><option ${state.settings.timeout === '300 秒' ? 'selected' : ''}>300 秒</option></select></label><label class="field">重试次数<select data-setting-retry><option ${state.settings.retryCount === '0' ? 'selected' : ''}>0</option><option ${state.settings.retryCount === '1' ? 'selected' : ''}>1</option><option ${state.settings.retryCount === '2' ? 'selected' : ''}>2</option><option ${state.settings.retryCount === '3' ? 'selected' : ''}>3</option></select></label></div>${state.settings.apiSource === 'bioweave_independent_api' ? apiProfileBody : ''}<p class="setting-note">安全：独立 API Key 只写入 SillyTavern Secret Store；BioWeave 不读取、复制或显示酒馆当前 API 的密钥。</p>`
         const assignmentBody = `<div class="setting-grid">${Object.entries(assignmentLabels)
@@ -3266,7 +3302,6 @@
         document.querySelector('[data-setting-profile-new]')?.addEventListener('click', () => {
           state.settings.apiProfile = {
             name: '新建配置',
-            provider: '',
             apiUrl: '',
             model: '',
             hasSecret: false,

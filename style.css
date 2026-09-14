@@ -2978,10 +2978,43 @@
   min-width: 0;
 }
 
-.bioweave-secret-status,
 .bioweave-check {
   margin: 6px 0 0;
   font-size: 12px;
+}
+
+.bioweave-api-profile-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--bioweave-border-soft);
+  border-radius: 7px;
+  background: var(--bioweave-card);
+}
+
+.bioweave-api-profile-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.bioweave-api-profile-summary-row > span:first-child {
+  color: var(--bioweave-text-muted);
+}
+
+.bioweave-api-profile-summary-row > strong {
+  color: var(--bioweave-text-secondary);
+  font-weight: 600;
+}
+
+.bioweave-api-profile-summary small {
+  color: var(--bioweave-text-muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .bioweave-check {

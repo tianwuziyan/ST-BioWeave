@@ -355,7 +355,7 @@ export function normalizeApiProfile(raw = {}, {profileId = null, secretRef = und
   const id = firstString(profileId, source.profile_id, source.id) || createProfileId();
   const provider = firstString(source.provider, DEFAULT_API_PROFILE.provider) || DEFAULT_API_PROFILE.provider;
   const model = firstString(source.model);
-  const name = firstString(source.name) || model || provider;
+  const name = firstString(source.name) || model || 'API 配置';
   const apiUrl = normalizeApiUrl(source.api_url ?? source.base_url ?? source.custom_url);
   const existingSecretRef = secretRef === undefined
     ? firstString(source.secret_ref, source.secret_id) || null

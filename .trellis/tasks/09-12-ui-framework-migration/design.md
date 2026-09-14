@@ -49,6 +49,10 @@
 
 世界书来源采用上级 details/折叠栏包裹一级分支，一级下继续渲染子级分支和 checkbox；父级选中、未选中、半选由现有状态计算驱动，原生 checkbox 状态与 click 目标区域保持一致。API 来源和模型保持原下拉框及参数。
 
+### API Profile provider 兼容性补充
+
+本轮 UI 收敛移除 API Profile 编辑器中的 `provider` 输入项，因为独立 API 请求、模型发现和路由不读取该字段。`storage/schema.js` 仍保留旧字段的读取、规范化和保存输出；`storage/store.js` 在编辑已有 Profile 时从已存配置保留非空 `provider`，新建 Profile 仅使用内部默认值，不把它暴露为必填输入。名称 fallback 固定为 `name → model → API 配置`。该补充不改变 Profile 函数签名、Runtime DTO、Secret Store 引用、assignment 或 `custom` 请求参数。
+
 全局正则和角色卡正则复用相同紧凑 row 结构：左侧短标签列，中间名称/状态内容，右侧上下移动按钮组成零间隙的垂直 control rail；rail 顶/底与正则 row 对齐，窄屏时 row 内部可收缩但页面不横向溢出。新增、删除、启停、上移、下移均继续走现有 hooks。
 
 ## 响应式策略

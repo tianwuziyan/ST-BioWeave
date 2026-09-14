@@ -121,7 +121,6 @@ function profileValues(profile, draft) {
   return {
     profile_id: value('profile_id') || saved.profile_id,
     name: value('name') ?? '',
-    provider: value('provider') ?? DEFAULT_API_PROFILE.provider,
     api_url: value('api_url') ?? '',
     model: value('model') ?? '',
     context_size: value('context_size') ?? DEFAULT_API_PROFILE.context_size,
@@ -138,7 +137,6 @@ function normalizeApiProfileForDisplay(profile) {
   return {
     profile_id: String(source.profile_id ?? ''),
     name: source.name ?? '',
-    provider: source.provider ?? DEFAULT_API_PROFILE.provider,
     api_url: source.api_url ?? '',
     model: source.model ?? '',
     context_size: source.context_size ?? DEFAULT_API_PROFILE.context_size,
@@ -237,6 +235,16 @@ function renderApiSource(
   ].join('');
 }
 
+function renderProfileConnectionSummary(existingSecret) {
+  return [
+    '<div class="bioweave-api-profile-summary" aria-label="独立 API 连接摘要">',
+    '<div class="bioweave-api-profile-summary-row"><span>连接模式</span><strong>独立 API</strong></div>',
+    `<div class="bioweave-api-profile-summary-row"><span>密钥状态</span><span class="bioweave-badge${existingSecret ? ' good' : ''}">${existingSecret ? '已保存' : '未设置'}</span></div>`,
+    '<small>密钥只写入 Secret Store；留空表示保留已保存密钥。</small>',
+    '</div>',
+  ].join('');
+}
+
 function renderProfileEditor(profile, draft, testResult, busy, modelList, modelListProfileKey, modelSearch, modelRefreshBusy) {
   const source = profileValues(profile, draft);
   const existingSecret = Boolean(source.secret_ref);
@@ -252,12 +260,11 @@ function renderProfileEditor(profile, draft, testResult, busy, modelList, modelL
     `<input type="hidden" name="profile_id" value="${escapeHtml(source.profile_id)}">`,
     '<div class="bioweave-settings-fields bioweave-settings-basic-fields">',
     field('配置名称', 'name', source.name),
-    field('服务商', 'provider', source.provider),
     field('API 地址（不含 /chat/completions）', 'api_url', source.api_url, 'url', ' autocomplete="url" required'),
     field('API 密钥', 'api_key', source.api_key, 'password', ' autocomplete="new-password" placeholder="不显示已保存密钥"'),
+    renderProfileConnectionSummary(existingSecret),
     renderModelPicker(source, modelList, modelListProfileKey, modelSearch, modelRefreshBusy),
     '</div>',
-    `<p class="bioweave-secret-status bioweave-muted">${existingSecret ? '已保存 API 密钥；留空表示保留。' : '尚未设置 API 密钥；留空将以无密钥配置保存。'}</p>`,
     existingSecret ? `<label class="bioweave-check"><input class="bioweave-checkbox" type="checkbox" name="clear_secret"${source.clear_secret ? ' checked' : ''}> 清除已保存 API 密钥</label>` : '',
     '<div class="bioweave-settings-actions">',
     `<button type="button" class="bioweave-primary-action" data-bioweave-action="save-profile"${busy ? ' disabled' : ''}>保存 API 配置</button>`,

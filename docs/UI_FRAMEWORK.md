@@ -339,7 +339,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 折叠栏本身不能写死夜间色：首层标题背景使用 `var(--bioweave-header)`，展开背景和 hover 使用 `var(--bioweave-card-selected)`，body 使用 `var(--bioweave-surface-raised)`，分隔线使用 `var(--bioweave-border)`；世界书来源子栏标题使用 `var(--bioweave-surface-soft)`，子项使用 `var(--bioweave-surface)`。这些映射必须跟随日、夜、跟随酒馆三套主题 token 一起变化。
 
-API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重试次数 → 独立 API 配置（独立 API 时显示，内部依次为标题、默认 API 配置、已保存配置、编辑器）→ 安全提示”。独立 API 配置是平面 body，不再嵌套旧的 `details/summary`；已保存配置列表每行只显示保存时的配置名称，使用 32px 左右的紧凑单行布局，超出宽度使用省略号，编辑/删除按钮固定在右侧；服务商、模型、地址和密钥状态只在编辑器中显示，不在保存列表重复展开。所有 `bioweave-select` 保留原生下拉箭头，不隐藏可下拉提示。单选项文字、请求字段文字和现有 `data-bioweave-api-*` hooks 必须保留，不能为了贴近示例删除 Profile、模型下拉框、测试连接或 Secret Store 行为。
+API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重试次数 → 独立 API 配置（独立 API 时显示，内部依次为标题、默认 API 配置、已保存配置、编辑器）→ 安全提示”。独立 API 配置是平面 body，不再嵌套旧的 `details/summary`；已保存配置列表每行只显示保存时的配置名称，使用 32px 左右的紧凑单行布局，超出宽度使用省略号，编辑/删除按钮固定在右侧。编辑器只显示配置名称、API 地址、API 密钥和模型四项；第二行在密钥右侧显示紧凑的“连接模式 / 密钥状态”摘要，密钥状态来自 Secret Store 引用，留空表示保留已保存密钥。旧配置里的 `provider` 仅作为隐藏兼容字段读取和保存，不再提供输入项，也不参与请求。配置名称 fallback 固定为 `name → model → API 配置`。所有 `bioweave-select` 保留原生下拉箭头，不隐藏可下拉提示。单选项文字、请求字段文字和现有 `data-bioweave-api-*` hooks 必须保留，不能为了贴近示例删除 Profile、模型下拉框、测试连接或 Secret Store 行为。
 
 下拉框分为两种显示层：默认 API 配置、任务分配、正则类型等使用原生 `bioweave-select`，必须保持 `min-width: 0`、`max-width: 100%`，由字段占满可用宽度，并保留浏览器原生箭头；API 编辑器中的模型选择使用 `bioweave-model-picker` / `bioweave-model-dropdown` 自定义浮层，菜单定位在触发按钮下方，使用配置登记的 `z-index: 30`。设置页的 API 来源折叠栏和模型选择器本身必须 `overflow: visible`，不能让紧凑卡片的裁剪规则截断菜单；菜单内部的模型列表仍可局部滚动。所有其他设置下拉框必须经过同一套宽度和窄屏检查，不能通过放大父级或产生页面级横向滚动来“解决”遮挡。
 

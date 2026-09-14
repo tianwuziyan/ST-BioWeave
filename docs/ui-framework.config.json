@@ -8,10 +8,7 @@
     "htmlExample": "docs/UI_FRAMEWORK_EXAMPLE.html",
     "fullVisualReference": "docs/UI_FULL_REFERENCE.html",
     "migrationPrompt": "docs/UI_MIGRATION_PROMPT.md",
-    "businessContract": [
-      "docs/UI.md",
-      "docs/DEVELOPMENT.md"
-    ]
+    "businessContract": ["docs/UI.md", "docs/DEVELOPMENT.md"]
   },
   "viewport": {
     "desktop": {
@@ -351,12 +348,7 @@
           "exposureValueColor": "text-secondary",
           "relativeTimeColor": "accent"
         },
-        "mobileFullWidth": [
-          "bioweave-toolbar",
-          "bioweave-character-workspace",
-          "bioweave-character-list-pane",
-          "bioweave-character-detail-pane"
-        ],
+        "mobileFullWidth": ["bioweave-toolbar", "bioweave-character-workspace", "bioweave-character-list-pane", "bioweave-character-detail-pane"],
         "capabilities": {
           "class": "bioweave-character-capabilities",
           "trueClass": "row-value good",
@@ -432,12 +424,7 @@
         "maxWidth": "100%",
         "ancestorOverflow": "visible on the API source disclosure and picker"
       },
-      "settingsAudit": [
-        "default API profile",
-        "task assignment",
-        "recent-story regex type",
-        "custom API model picker"
-      ],
+      "settingsAudit": ["default API profile", "task assignment", "recent-story regex type", "custom API model picker"],
       "responsiveRule": "never create page-level horizontal overflow; native selects stay bounded and the custom menu may extend only within the panel"
     },
     "worldSpeciesCard": {
@@ -465,11 +452,7 @@
         "bioweave-world-model-card-mark",
         "bioweave-world-model-card-summary"
       ],
-      "typeCardParts": [
-        "bioweave-world-model-type-card-head",
-        "bioweave-world-model-card-mark",
-        "bioweave-world-model-type-card-summary"
-      ],
+      "typeCardParts": ["bioweave-world-model-type-card-head", "bioweave-world-model-card-mark", "bioweave-world-model-type-card-summary"],
       "speciesColumns": "repeat(3, minmax(0, 1fr))",
       "typeColumns": "repeat(auto-fit, minmax(150px, 1fr))",
       "mobileTypeColumns": "repeat(2, minmax(0, 1fr))",
@@ -622,18 +605,8 @@
     },
     "apiSource": {
       "root": "bioweave-api-source",
-      "visualOrder": [
-        "sourceOptions",
-        "requestSettings",
-        "independentProfiles",
-        "securityNote"
-      ],
-      "profileBodyOrder": [
-        "profileTitle",
-        "defaultProfile",
-        "savedProfiles",
-        "profileEditor"
-      ],
+      "visualOrder": ["sourceOptions", "requestSettings", "independentProfiles", "securityNote"],
+      "profileBodyOrder": ["profileTitle", "defaultProfile", "savedProfiles", "profileEditor"],
       "savedProfileRow": {
         "summary": "single-line saved profile name only with ellipsis",
         "actions": "fixed right",
@@ -642,30 +615,26 @@
         "actionHeight": "25px",
         "hiddenMetadata": ["provider", "model", "api_url", "secret_ref"]
       },
-      "sourceOptionLabels": [
-        "使用 SillyTavern 当前 API",
-        "使用 BioWeave 独立 API"
-      ],
-      "requestFields": [
-        "超时（秒）",
-        "重试次数"
-      ],
-      "preserveHooks": [
-        "data-bioweave-api-source",
-        "data-bioweave-api-timeout",
-        "data-bioweave-api-retry-count",
-        "data-bioweave-default-profile"
-      ]
+      "profileEditor": {
+        "fields": ["name", "api_url", "api_key", "model"],
+        "layout": "two columns; model picker spans the editor width",
+        "connectionSummary": {
+          "root": "bioweave-api-profile-summary",
+          "placement": "second row beside the API key field",
+          "rows": ["连接模式 / 独立 API", "密钥状态 / Runtime Secret Store status"],
+          "statusTones": ["neutral", "good"],
+          "note": "密钥只写入 Secret Store；留空表示保留已保存密钥"
+        },
+        "nameFallback": ["name", "model", "API 配置"],
+        "mobileLayout": "single column; summary follows the API key field"
+      },
+      "sourceOptionLabels": ["使用 SillyTavern 当前 API", "使用 BioWeave 独立 API"],
+      "requestFields": ["超时（秒）", "重试次数"],
+      "preserveHooks": ["data-bioweave-api-source", "data-bioweave-api-timeout", "data-bioweave-api-retry-count", "data-bioweave-default-profile"]
     },
     "analysisPrompt": {
       "root": "bioweave-analysis-prompt-settings",
-      "fields": [
-        "顶部 SYSTEM",
-        "分析任务补充",
-        "输入前说明",
-        "输入后说明",
-        "尾部 SYSTEM"
-      ],
+      "fields": ["顶部 SYSTEM", "分析任务补充", "输入前说明", "输入后说明", "尾部 SYSTEM"],
       "duplicateInnerHeading": false,
       "debugActionPlacement": "body-actions"
     },
@@ -709,16 +678,7 @@
     "data-bioweave-event-id",
     "data-bioweave-event-filter"
   ],
-  "pages": [
-    "overview",
-    "characters",
-    "events",
-    "projection",
-    "genealogy",
-    "world",
-    "settings",
-    "state"
-  ],
+  "pages": ["overview", "characters", "events", "projection", "genealogy", "world", "settings", "state"],
   "synchronization": {
     "updateOrder": [
       "docs/ui-framework.config.json",

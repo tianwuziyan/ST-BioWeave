@@ -2152,7 +2152,6 @@ export function createApp(runtime, options = {}) {
     return {
       profile_id: profile?.profile_id ?? '',
       name: profile?.name ?? '',
-      provider: profile?.provider ?? DEFAULT_API_PROFILE.provider,
       api_url: profile?.api_url ?? '',
       model: profile?.model ?? '',
       context_size: profile?.context_size ?? DEFAULT_API_PROFILE.context_size,
@@ -2187,7 +2186,6 @@ export function createApp(runtime, options = {}) {
     return {
       profile_id: value('profile_id'),
       name: value('name'),
-      provider: value('provider'),
       api_url: value('api_url'),
       model: value('model'),
       api_key: value('api_key'),
