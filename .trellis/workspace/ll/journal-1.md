@@ -503,3 +503,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: 同步手动事件分析失败 toastr
+<!-- trellis-session: v=2 fp=7c129e34e58a046a -->
+
+**Date**: 2026-09-14
+**Task**: 同步手动事件分析失败 toastr
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成手动事件分析最终失败的 SillyTavern toastr 提示：在 manualRefreshEventAnalysis 内通过现有 notify 展示 eventAnalysisError 并 rethrow 原错误，外层避免重复提示；自动/后台分析保持只更新状态。新增 UI 回归测试，focused 10/10、全量 447/447 通过，功能提交已推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a438c6a` | 为手动事件分析增加失败 toastr 提示 |
+
+### Status
+
+[OK] **Completed**
