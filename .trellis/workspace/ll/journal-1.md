@@ -525,3 +525,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: 完成 API 成功返回丢失诊断并推送
+<!-- trellis-session: v=2 fp=91aa62c8f1b79f51 -->
+
+**Date**: 2026-09-15
+**Task**: 完成 API 成功返回丢失诊断并推送
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 BioWeave API 返回丢失的静态审计、开发环境 metadata TRACE、Current/Independent Response 与 SSE 返回形态测试；npm run check 463/463 通过。提交 6fce659 已推送到 fix/world-model-prompt-baseline，随后归档当前 Trellis 任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6fce659` | 增加 API 成功返回丢失诊断 TRACE 与返回形态测试 |
+
+### Status
+
+[OK] **Completed**
