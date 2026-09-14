@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验证 baseline 选择不破坏 Event、Floor Version、失败保留和手动替换合同。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验证输入构造、版本校验、持久化覆盖和回归测试的跨层一致性。"}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"验证 analyzer 捕获的 normalized existing_bioweave 结构。"}

@@ -235,6 +235,22 @@ exhaustion, save failure, and registry failure releases the in-flight entry and
 controller and publishes a terminal status. A cancelled or stale late result
 may not commit a Floor Event or rebuild the Registry.
 
+For any target Floor N, Runtime selects `existing_bioweave` only from the
+nearest valid successful Floor before N. The scan starts at the target message
+index minus one, so the target's own saved `analysis` and `events` are never a
+baseline, including during force/re-analysis. A candidate is usable only when
+its saved `analysis.status` is `success`, its current authoritative version has
+`version.floor < target.version.floor`, and
+`sameFloorVersion(floorVersionFromData(candidateFloor), version)` is true.
+Candidate Events must come from `getActiveFloorEvents(candidateIndex, version)`
+so inactive Swipes and stale Event sources are excluded. If no candidate
+passes, the normalized baseline is exactly `{analysis: null, events: []}`.
+Successful analysis replaces the target Floor's `analysis/events` in its
+existing storage slot; request failure, cancellation, or response/domain
+validation failure must not pre-delete the previous successful target result.
+Re-analyzing a historical Floor does not automatically invalidate or delete
+later Floors.
+
 `EventAnalysisBusinessDTO.analysis_status` contains `state`, `busy`,
 `current_floor`, `floor_version`, `attempt`, `last_success`, `last_error`,
 `event_count`, `active_event_count`, `sexual_activity_count`,
@@ -351,6 +367,11 @@ API/schema failure.
   and never infer eligibility.
 - Scheduling assertions for Floor Version deduplication, manual replacement,
   and failed-refresh preservation.
+- Runtime input assertions that the nearest previous successful current-version
+  Floor supplies `existing_bioweave`, no prior valid Floor yields
+  `{analysis: null, events: []}`, stale candidates are skipped, the target
+  Floor never self-references, and repeated force analysis replaces rather than
+  accumulates its Events.
 - Runtime integration assertions that lifecycle analysis requires no UI
   subscriber, UI reopen causes no AI call, stable message IDs and active Swipes
   select the correct Floor Version, and status DTOs distinguish zero Events
@@ -396,6 +417,20 @@ await analyzer.analyzeFloor(buildEventAnalysisInput(uiState));
 // Correct: UI invokes the Runtime coordinator and renders its DTO.
 await runtime.refreshCurrentFloorAnalysis();
 render(await runtime.collectActiveBusinessData());
+```
+
+```js
+// Wrong: feed the target Floor's old result back into its own prompt.
+existingBioWeave: {
+  analysis: target.floorData?.analysis ?? null,
+  events: target.floorData?.events ?? [],
+}
+
+// Correct: use the nearest earlier candidate that still matches its current
+// six-field Floor Version, or the empty baseline when none is valid.
+const previous = await findPreviousSuccessfulBioWeave(target);
+chat.assert(token);
+existingBioWeave: previous;
 ```
 
 ```js

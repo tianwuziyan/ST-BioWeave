@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event Runtime 的 Floor Version、成功替换与失败保留合同，作为实现边界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 runtime、Floor storage、AI input 与测试之间的数据流边界。"}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"确认 normalized Event Analysis Input 与 existing_bioweave 的输入合同。"}

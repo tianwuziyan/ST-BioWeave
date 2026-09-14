@@ -519,6 +519,159 @@ test('successful Floor skips non-force analysis and force success replaces Event
   fixture.runtime.destroy();
 });
 
+test('analysis input uses the nearest successful previous Floor baseline', async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: 'message-1', floor: 1, content: '第一楼层', role: 'assistant'},
+      {message_id: 'message-2', floor: 2, content: '第二楼层', role: 'assistant'},
+      {message_id: 'message-3', floor: 3, content: '第三楼层', role: 'assistant'},
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return {events: [eventResult()]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  const baseline = inputs[2].existing_bioweave;
+  assert.equal(baseline.analysis.status, 'success');
+  assert.equal(baseline.analysis.floor_version.message_id, 'message-2');
+  assert.deepEqual(baseline.events.map(event => event.source.message_id), ['message-2']);
+  fixture.runtime.destroy();
+});
+
+test('first analysis sends an empty previous Floor baseline', async () => {
+  let input;
+  const fixture = createFixture({analyzer: {
+    async analyzeFloor(request) {
+      input = request.analysisInput;
+      return {events: []};
+    },
+  }});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.deepEqual(input.existing_bioweave, {analysis: null, events: []});
+  fixture.runtime.destroy();
+});
+
+test('force re-analysis never uses the target Floor as its own baseline', async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: 'message-1', floor: 1, content: '第一楼层', role: 'assistant'},
+      {message_id: 'message-2', floor: 2, content: '第二楼层', role: 'assistant'},
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return {events: [eventResult('ignored-model-id', {location: `run-${inputs.length}`})]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(inputs.length, 3);
+  for (const input of inputs.slice(1)) {
+    assert.equal(input.existing_bioweave.analysis.floor_version.message_id, 'message-1');
+    assert.deepEqual(input.existing_bioweave.events.map(event => event.location), ['run-1']);
+  }
+  fixture.runtime.destroy();
+});
+
+test('stale previous Floor analysis is skipped in favor of the next valid baseline', async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: 'message-1', floor: 1, content: '第一楼层', role: 'assistant'},
+      {message_id: 'message-2', floor: 2, content: '第二楼层', role: 'assistant', message_version: 'v1'},
+      {message_id: 'message-3', floor: 3, content: '第三楼层', role: 'assistant'},
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return {events: [eventResult()]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  fixture.context.chat[1].message_version = 'v2';
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  const baseline = inputs[2].existing_bioweave;
+  assert.equal(baseline.analysis.floor_version.message_id, 'message-1');
+  assert.deepEqual(baseline.events.map(event => event.source.message_id), ['message-1']);
+  fixture.runtime.destroy();
+});
+
+test('repeated force analysis leaves only the final successful Event result', async () => {
+  let calls = 0;
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: 'message-1', floor: 1, content: '第一楼层', role: 'assistant'},
+      {message_id: 'message-2', floor: 2, content: '第二楼层', role: 'assistant'},
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        calls += 1;
+        inputs.push(request.analysisInput);
+        if (calls === 2) return {events: []};
+        return {events: [eventResult(`model-${calls}`, {location: calls === 1 ? 'prior' : 'final'})]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.deepEqual(await fixture.runtime.getActiveFloorEvents(1, inputs[1].floor_version), []);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(inputs.length, 3);
+  for (const input of inputs.slice(1)) {
+    assert.equal(input.existing_bioweave.analysis.floor_version.message_id, 'message-1');
+    assert.deepEqual(input.existing_bioweave.events.map(event => event.location), ['prior']);
+  }
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].location, 'final');
+  fixture.runtime.destroy();
+});
+
+test('stale target success is never selected as its own baseline', async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: 'message-1', floor: 1, content: '第一楼层', role: 'assistant'},
+      {message_id: 'message-2', floor: 2, content: '第二楼层', role: 'assistant'},
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return {events: [eventResult(`model-${inputs.length}`, {location: `run-${inputs.length}`})]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  fixture.context.chat[1].content = '第二楼层已编辑';
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  assert.equal(inputs.length, 3);
+  assert.equal(inputs[2].existing_bioweave.analysis.floor_version.message_id, 'message-1');
+  assert.deepEqual(inputs[2].existing_bioweave.events.map(event => event.location), ['run-1']);
+  fixture.runtime.destroy();
+});
+
 test('failed force refresh preserves the previous successful Events and records failure', async () => {
   let calls = 0;
   const fixture = createFixture({analyzer: {

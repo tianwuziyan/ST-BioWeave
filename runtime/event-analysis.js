@@ -417,6 +417,23 @@ export function createEventAnalysisCoordinator({
     return {index, message, swipeId, floorData, version, chatId};
   }
 
+  async function findPreviousSuccessfulBioWeave(target) {
+    for (let index = target.index - 1; index >= 0; index -= 1) {
+      const swipeId = store.getActiveSwipeId?.(index) ?? 0;
+      const floorData = store.getFloor?.(index, swipeId);
+      const analysis = floorData?.analysis;
+      if (analysis?.status !== 'success') continue;
+      const candidate = await resolveFloor({__messageIndex: true, index});
+      if (candidate.version.floor >= target.version.floor) continue;
+      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
+      return {
+        analysis,
+        events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
+      };
+    }
+    return {analysis: null, events: []};
+  }
+
   async function collectActiveEvents(token = chat.token()) {
     const activeEvents = [];
     const all = messages();
@@ -757,6 +774,8 @@ export function createEventAnalysisCoordinator({
       role: messageRole(target.message),
       settings: recentStorySettings,
     });
+    const existingBioWeave = await findPreviousSuccessfulBioWeave(target);
+    chat.assert(token);
     return buildEventAnalysisInput({
       ...commonInput,
       chatId: token.chatId,
@@ -771,10 +790,7 @@ export function createEventAnalysisCoordinator({
       worldModel: chatData.world_model,
       storyTime: storyTimeValue,
       characterContext,
-      existingBioWeave: {
-        analysis: target.floorData?.analysis ?? null,
-        events: Array.isArray(target.floorData?.events) ? target.floorData.events : [],
-      },
+      existingBioWeave,
     });
   }
 
