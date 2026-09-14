@@ -132,6 +132,7 @@
     .bw-section, .bw-settings-group { min-width: 0; margin-left: 10px; border: 1px solid var(--bw-line); border-radius: var(--bw-radius); background: var(--bw-raised); }
     .bw-section { padding: 11px 12px; }
     .bw-section + .bw-section, .bw-settings-group + .bw-settings-group { margin-top: 3px; }
+    .bw-settings-group.bw-api-source-group { overflow: visible; }
     .bw-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
     .bw-world-selection > .bw-section-head { margin-bottom: 5px; }
     .bw-section-head h2 { font-size: 16px; }
@@ -287,6 +288,15 @@
     .bw-badge.warn { border-color: #765d38; color: var(--bw-warn); }
     .bw-badge.danger { border-color: #75434b; color: var(--bw-danger); }
     .bw-select { width: 150px; min-width: 0; border: 1px solid var(--bw-line); border-radius: 6px; appearance: auto; -webkit-appearance: menulist; background: var(--bw-routebar); padding: 5px 6px; font-size: 12px; }
+    .bw-model-picker { position: relative; min-width: 0; overflow: visible; }
+    .bw-model-control-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; min-width: 0; }
+    .bw-model-label { color: var(--bw-text-2); font-size: 12px; white-space: nowrap; }
+    .bw-model-trigger { display: flex; align-items: center; justify-content: space-between; min-width: 0; width: 100%; min-height: 32px; border: 1px solid var(--bw-line); border-radius: 6px; background: var(--bw-input-bg); padding: 5px 7px; text-align: left; }
+    .bw-model-trigger > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bw-model-dropdown { position: absolute; top: calc(100% + 5px); right: 0; left: 0; z-index: 30; display: grid; gap: 6px; min-width: 0; max-width: 100%; padding: 8px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); box-shadow: 0 10px 24px rgb(0 0 0 / 24%); }
+    .bw-model-dropdown[hidden] { display: none; }
+    .bw-model-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; }
+    .bw-model-list button { min-width: 0; border: 0; background: transparent; padding: 5px 6px; color: var(--bw-text-2); text-align: left; }
     .bw-radio-list { display: grid; gap: 7px; padding-top: 11px; }
     .bw-radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border: 1px solid var(--bw-line-soft); border-radius: 8px; background: var(--bw-card); }
     .bw-radio-option:has(input:checked) { border-color: var(--bw-accent); background: var(--bw-card-selected); }
@@ -498,11 +508,12 @@
                 <div class="bw-regex-section"><div class="bw-regex-section-head"><div><h3>当前角色卡正则</h3><p>只作用于当前 Chat。</p></div><button class="bw-button small" type="button">新增规则</button></div></div>
               </div>
             </details>
-            <details class="bw-settings-group">
+            <details class="bw-settings-group bw-api-source-group">
               <summary class="bw-settings-head"><span aria-hidden="true">+</span><span class="bw-settings-title"><b>API 来源</b><small>选择酒馆当前 API 或 BioWeave 独立 API</small></span><span class="bw-badge">当前 API</span></summary>
               <div class="bw-settings-body">
                 <div class="bw-radio-list"><label class="bw-radio-option"><input type="radio" name="bw-api-source" checked><span><strong>使用 SillyTavern 当前 API</strong><small>沿用酒馆当前连接，不复制或读取 API Key。</small></span></label><label class="bw-radio-option"><input type="radio" name="bw-api-source"><span><strong>使用 BioWeave 独立 API</strong><small>为“跟随默认”的任务提供独立连接。</small></span></label></div>
                 <div class="bw-setting-grid"><label class="bw-setting-field">超时（秒）<input class="bw-select" type="number" value="180"></label><label class="bw-setting-field">重试次数<select class="bw-select"><option>0</option><option selected>1</option><option>2</option></select></label></div>
+                <div class="bw-model-picker"><div class="bw-model-control-row"><span class="bw-model-label">模型</span><button class="bw-model-trigger" type="button" aria-expanded="false"><span>请选择模型</span><span aria-hidden="true">▼</span></button><button class="bw-button small" type="button">刷新模型</button></div><div class="bw-model-dropdown" hidden><p class="bw-note">模型列表由 API 返回；点击刷新后展示。</p><div class="bw-model-list" role="listbox"></div></div></div>
                 <div class="bw-api-profile-panel"><div class="bw-api-profile-head"><h3>已保存的 API 配置</h3><button class="bw-button small" type="button">新建配置</button></div><div class="bw-api-profile-row"><strong>当前环境</strong><span class="bw-api-profile-actions"><button class="bw-button" type="button">编辑</button><button class="bw-button danger" type="button">删除</button></span></div></div>
                 <p class="bw-note">安全：独立 API Key 只写入 Secret Store；不会显示当前 API 的密钥。</p>
               </div>

@@ -266,6 +266,23 @@ test('production settings controls use the canonical checkbox, memory, and regex
     /\.bioweave-settings-page \.bioweave-analysis-worldbook-title strong,[\s\S]*?font-size:\s*13px !important;[\s\S]*?font-weight:\s*700 !important;/,
   )
 })
+test('settings dropdown surfaces are not clipped by compact disclosure cards', () => {
+  assert.match(UI_SOURCE, /bioweave-api-source-disclosure/)
+  assert.match(UI_SOURCE, /bioweave-model-picker/)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-api-source-disclosure\s*\{[\s\S]*?overflow:\s*visible !important;/)
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-api-source-disclosure \.bioweave-model-picker\s*\{[\s\S]*?position:\s*relative !important;[\s\S]*?overflow:\s*visible !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-api-source-disclosure \.bioweave-model-dropdown\s*\{[\s\S]*?z-index:\s*30 !important;[\s\S]*?max-width:\s*100% !important;/,
+  )
+  assert.match(
+    FINAL_STYLE_SOURCE,
+    /\.bioweave-settings-page \.bioweave-select\s*\{[\s\S]*?width:\s*100% !important;[\s\S]*?min-width:\s*0 !important;[\s\S]*?max-width:\s*100% !important;/,
+  )
+})
 class FakeElement {
   constructor(documentRef, tagName = 'div') {
     this.ownerDocument = documentRef

@@ -1179,6 +1179,75 @@
       .settings-group select {
         padding: 5px 7px;
       }
+      .model-picker {
+        position: relative;
+        min-width: 0;
+        overflow: visible;
+      }
+      .model-control-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .model-label {
+        color: var(--text-2);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .model-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-width: 0;
+        width: 100%;
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--input-bg);
+        padding: 5px 7px;
+        text-align: left;
+      }
+      .model-trigger > span:first-child {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .model-dropdown {
+        position: absolute;
+        top: calc(100% + 5px);
+        right: 0;
+        left: 0;
+        z-index: 30;
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+        max-width: 100%;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-raised);
+        box-shadow: 0 10px 24px rgb(0 0 0 / 24%);
+      }
+      .model-dropdown[hidden] {
+        display: none;
+      }
+      .model-list {
+        display: grid;
+        gap: 2px;
+        max-height: 180px;
+        overflow: auto;
+      }
+      .model-list button {
+        min-width: 0;
+        border: 0;
+        background: transparent;
+        padding: 5px 6px;
+        color: var(--text-2);
+        text-align: left;
+      }
       .world-title {
         display: flex;
         align-items: flex-start;
@@ -1452,6 +1521,9 @@
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
         background: var(--panel);
+      }
+      .settings-group.api-source-group {
+        overflow: visible;
       }
       .settings-group-head {
         display: flex;
@@ -2915,7 +2987,8 @@
 
       function settingsGroup(key, title, summary, body, badge = '') {
         const expanded = Boolean(state.settingsExpanded[key])
-        return `<section class="settings-group ${expanded ? 'expanded' : ''}"><div class="settings-group-head"><button class="settings-toggle" type="button" data-settings-toggle="${key}" aria-expanded="${expanded}"><span class="settings-chevron">${expanded ? '−' : '+'}</span><span class="settings-toggle-copy"><b>${title}</b><small>${summary}</small></span></button>${badge ? `<span class="badge ${expanded ? 'good' : ''}">${badge}</span>` : ''}</div>${expanded ? `<div class="settings-group-body">${body}</div>` : ''}</section>`
+        const modifier = key === 'api' ? ' api-source-group' : ''
+        return `<section class="settings-group${modifier} ${expanded ? 'expanded' : ''}"><div class="settings-group-head"><button class="settings-toggle" type="button" data-settings-toggle="${key}" aria-expanded="${expanded}"><span class="settings-chevron">${expanded ? '−' : '+'}</span><span class="settings-toggle-copy"><b>${title}</b><small>${summary}</small></span></button>${badge ? `<span class="badge ${expanded ? 'good' : ''}">${badge}</span>` : ''}</div>${expanded ? `<div class="settings-group-body">${body}</div>` : ''}</section>`
       }
 
       function sourceBranchMarkup(branch) {

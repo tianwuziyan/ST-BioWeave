@@ -414,7 +414,31 @@
       "root": "bioweave-select",
       "appearance": "native-arrow",
       "indicator": "browser-native-chevron",
-      "minimumHeight": "32px"
+      "minimumHeight": "32px",
+      "widthContract": {
+        "minWidth": "0",
+        "maxWidth": "100%",
+        "fieldWidth": "100%"
+      }
+    },
+    "dropdown": {
+      "nativeSelect": "bioweave-select",
+      "customModelPicker": {
+        "root": "bioweave-model-picker",
+        "trigger": "bioweave-model-trigger",
+        "menu": "bioweave-model-dropdown",
+        "position": "absolute below trigger",
+        "zIndex": 30,
+        "maxWidth": "100%",
+        "ancestorOverflow": "visible on the API source disclosure and picker"
+      },
+      "settingsAudit": [
+        "default API profile",
+        "task assignment",
+        "recent-story regex type",
+        "custom API model picker"
+      ],
+      "responsiveRule": "never create page-level horizontal overflow; native selects stay bounded and the custom menu may extend only within the panel"
     },
     "worldSpeciesCard": {
       "root": "bioweave-world-card",

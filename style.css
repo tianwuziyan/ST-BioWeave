@@ -7121,3 +7121,27 @@
   .bioweave-event-review-row > .bioweave-badge { grid-area: status !important; }
   .bioweave-event-review-foot { align-items: flex-start !important; flex-direction: column !important; gap: 4px !important; }
 }
+
+/* Dropdown overlay contract: the API model menu must escape the compact
+ * disclosure clip, while every native settings select stays bounded. */
+.bioweave-settings-page > .bioweave-api-source-disclosure {
+  overflow: visible !important;
+}
+
+.bioweave-settings-page .bioweave-api-source-disclosure .bioweave-model-picker {
+  position: relative !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+}
+
+.bioweave-settings-page .bioweave-api-source-disclosure .bioweave-model-dropdown {
+  z-index: 30 !important;
+  max-width: 100% !important;
+}
+
+.bioweave-settings-page .bioweave-select {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
