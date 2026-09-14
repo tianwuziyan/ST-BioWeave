@@ -187,7 +187,7 @@ Story Time 采用结构化 DTO：
 
 字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。优先使用可用的 SevenDaysCal 公开 Story Time Adapter；该 Adapter 只在可信 provider 输入边界解析原始中文日期，并只依赖公开 context 或注入的 provider，不读取 SevenDaysCal 私有 Store。不可用时使用 BioWeave Fallback StoryTimeProvider。
 
-`display` 只由 formatter 用于 UI 展示，不是存储格式，也不得被 fallback、formatter、排序或计算逻辑反向解析；只有可信 SevenDaysCal Adapter 的输入边界可以把它作为 provider 原始值交给纯日期解析器。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+`display` 不是排序或计算输入。可信 SevenDaysCal Adapter 可以把 provider 的原始日期/时辰转换为结构化字段；在明确的 display-formatting 边界（trusted provider 或最终 Event 归一化）中，也可以复用 `parseCnDate()` 独立把可靠的日期部分数字化，并保留后续任意原文。该操作不得重新推断、覆盖 `normalized` 或 `day_index`；fallback 与 `formatStoryTime()` 仍保持保守的 display-only 语义，不从 display 生成结构化日期/时间。传统十二时辰及可选数字刻在 trusted provider 边界转换为现代 `HH:MM`：纯时辰的 `normalized` 为 `HH:MM`，日期加时辰则在既有日期 key 后追加 `THH:MM`，并把可解析的日期格式化为数字年月日后与原始时辰子串以空格连接；date-only 输入仍按既有兼容规则处理（显式年月日可数字化，节日 alias-only display 保留原文）。时辰跨日时只有在公历或注入的自定义历法能够可靠推进日期时才更新日期 key；否则保留 `normalized: null`，不伪造 `day_index`。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
 
 公历完整日使用 `YYYY-MM-DD`；传统月份、节日或开放纪年在无法证明连续公历纪元时可保留 SevenDaysCal 兼容的 `cn-year-month-day` 规范 key，但 `day_index` 必须保持 `null`。
 

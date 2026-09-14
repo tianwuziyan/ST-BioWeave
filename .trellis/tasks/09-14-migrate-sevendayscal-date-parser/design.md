@@ -42,9 +42,10 @@ Event Analysis / UI 只消费结构化 StoryTime
 ## 4. StoryTime 适配
 
 - `story/time.js` 新增公开的日期解析入口/别名，并导入上述纯模块。
-- `createSevenDaysCalProvider` 在其“调用方提供的公开值”边界解析原始字符串或只有 `display` 的日期值；已有 `normalized`、`day_index`、`calendar_id` 等结构化字段优先保留。
+- `createSevenDaysCalProvider` 在其“调用方提供的公开值”边界解析原始字符串或只有 `display` 的日期值；已有 `normalized`、`day_index`、`calendar_id` 等结构化字段优先保留。可信 provider 或最终 Event 归一化的明确 display-formatting 边界可独立格式化可靠日期部分，但不得重推或覆盖这些结构化字段，并保留后续原文。
 - `createFallbackStoryTimeProvider` 继续只接受结构化值，不从 fallback 的 `display` 反向解析；`formatStoryTime` 继续只负责显示。
 - 公历完整日日期可按既有 `strictDayIndex` 生成连续 `day_index`。自定义历法/纪元日期没有明确连续纪元时仅保存规范 key/结构化年月日，`day_index` 保持 `null`；`addCalendarDays` 等计算能力通过纯历法 API 提供。
+- `parseTraditionalTime` 与 `matchTraditionalTime` 共用单一地支起点映射和既有中文数字转换路径，语法固定为 branch + 时/時 + 可选数字刻；可信 provider 输入边界将可解析日期格式化为数字年月日，接一个空格和原始时辰 display，并把纯时辰规范化为 `HH:MM`、日期加时辰规范化为 `date-keyTHH:MM`。date-only display 保持兼容；时辰跨日只在公历或注入历法可以可靠推进时更新日期 key。
 - 现有 `createStoryTime()` 的 provider 优先、fallback 降级、`diff` 和 DTO 字段不改名、不改调用签名；适配参数只以可选参数形式增加。
 
 ## 5. 兼容性和风险

@@ -5,8 +5,10 @@ import {
   _CN_MONTH_ALIAS,
   _cnToNumber,
   extractDayFromTime,
+  matchTraditionalTime,
   normalizeCnDateDigits,
   parseCnDate,
+  parseTraditionalTime,
 } from '../utils/cn-date.js';
 
 const monthAliases = {
@@ -42,6 +44,28 @@ const festivalAliases = {
   '12-30': ['除夕', '守岁'],
 };
 
+const traditionalTimeCases = [
+  ['子时', {branch: '子', marks: 0, hour: 23, minute: 0, dayOffset: 0}],
+  ['丑时', {branch: '丑', marks: 0, hour: 1, minute: 0, dayOffset: 0}],
+  ['寅时', {branch: '寅', marks: 0, hour: 3, minute: 0, dayOffset: 0}],
+  ['卯时', {branch: '卯', marks: 0, hour: 5, minute: 0, dayOffset: 0}],
+  ['辰时', {branch: '辰', marks: 0, hour: 7, minute: 0, dayOffset: 0}],
+  ['巳时', {branch: '巳', marks: 0, hour: 9, minute: 0, dayOffset: 0}],
+  ['午时', {branch: '午', marks: 0, hour: 11, minute: 0, dayOffset: 0}],
+  ['未时', {branch: '未', marks: 0, hour: 13, minute: 0, dayOffset: 0}],
+  ['申时', {branch: '申', marks: 0, hour: 15, minute: 0, dayOffset: 0}],
+  ['酉时', {branch: '酉', marks: 0, hour: 17, minute: 0, dayOffset: 0}],
+  ['戌时', {branch: '戌', marks: 0, hour: 19, minute: 0, dayOffset: 0}],
+  ['亥时', {branch: '亥', marks: 0, hour: 21, minute: 0, dayOffset: 0}],
+];
+
+const traditionalMarkVariants = [
+  [['丑时一刻', '丑时1刻', '丑时１刻', '丑时壹刻'], {branch: '丑', marks: 1, hour: 1, minute: 15, dayOffset: 0}],
+  [['丑时三刻', '丑时3刻', '丑時３刻', '丑时叁刻'], {branch: '丑', marks: 3, hour: 1, minute: 45, dayOffset: 0}],
+  [['丑时八刻', '丑时8刻', '丑時８刻', '丑时捌刻'], {branch: '丑', marks: 8, hour: 3, minute: 0, dayOffset: 0}],
+  [['子时八刻'], {branch: '子', marks: 8, hour: 1, minute: 0, dayOffset: 1}],
+];
+
 test('SevenDaysCal Chinese number conversion and digit normalization are preserved', () => {
   assert.equal(normalizeCnDateDigits('２０２４年０３月１５日'), '2024年03月15日');
   assert.deepEqual(
@@ -50,6 +74,38 @@ test('SevenDaysCal Chinese number conversion and digit normalization are preserv
   );
   assert.equal(_cnToNumber('二〇二四'), null);
   assert.equal(_cnToNumber('第三'), null);
+});
+
+test('traditional earthly-branch times use the shared start-hour mapping', () => {
+  for (const [text, expected] of traditionalTimeCases) {
+    assert.deepEqual(parseTraditionalTime(text), expected, text);
+  }
+  for (const [texts, expected] of traditionalMarkVariants) {
+    for (const text of texts) assert.deepEqual(parseTraditionalTime(text), expected, text);
+  }
+  assert.deepEqual(matchTraditionalTime('前文：丑時３刻；后文', {search: true}), {
+    ...traditionalMarkVariants[1][1],
+    text: '丑時３刻',
+    index: 3,
+  });
+});
+
+test('traditional time rejects missing, unconvertible, zero, and out-of-range marks', () => {
+  for (const text of ['子', '丑刻', '丑3刻', '丑时刻', '丑时0刻', '丑時０刻', '丑时零刻', '丑时9刻', '丑時９刻', '丑时九刻', '丑时玖刻', '丑时十刻', '丑时壹拾刻', '丑时百刻']) {
+    assert.equal(parseTraditionalTime(text), null, text);
+  }
+});
+
+test('traditional time search rejects partial matches and malformed suffixes', () => {
+  for (const text of ['丑时4刻5', '丑时abc刻', '丑时4刻后文']) {
+    assert.equal(matchTraditionalTime(text, {search: true}), null, text);
+    assert.equal(matchTraditionalTime(text, {search: true, includeInvalid: true})?.invalid, true, text);
+  }
+  assert.deepEqual(matchTraditionalTime('前文：丑時３刻；后文', {search: true}), {
+    ...traditionalMarkVariants[1][1],
+    text: '丑時３刻',
+    index: 3,
+  });
 });
 
 test('SevenDaysCal day-key extraction keeps its branch priority and aliases feed the same key flow', () => {

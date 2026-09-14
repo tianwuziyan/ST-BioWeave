@@ -31,6 +31,8 @@ duplicates the Event fact.
 - `normalizeCnDateDigits(value) -> string`
 - `_cnToNumber(token) -> number | null`
 - `parseCnDate(text, options?) -> {year?, eraLabel?, month, day} | null`
+- `parseTraditionalTime(text) -> {branch, marks, hour, minute, dayOffset} | null`
+- `matchTraditionalTime(text, options?) -> parsed time + {text, index} | null`
 - `extractDayFromTime(text) -> string | null`
 - `parseCalendarDate(text, calendar?) -> CalendarDate | null`
 - `validateCalendarDate(date, calendar?) -> boolean`
@@ -110,12 +112,37 @@ real leap-year validity; custom calendars do not pass through JavaScript `Date`.
 `extractDayFromTime()` retains its existing relative-day and numeric-date keys,
 then uses the same parser for the Chinese-date fallback.
 
-Only the trusted SevenDaysCal-compatible provider adapter may parse a raw
-provider/display-only value. Existing structured fields (`normalized`, `date`,
-`iso_date`, `day_index`, and equivalent aliases) are authoritative. Complete
-Gregorian dates become `YYYY-MM-DD` with a strict UTC `day_index`; custom or
-era-labeled dates become `cn-year-month-day` with `day_index: null`. The local
-fallback provider and `formatStoryTime()` never reverse-parse display text.
+Only the trusted SevenDaysCal-compatible provider adapter may turn a raw
+provider/display-only value into structured date or time fields. Existing
+structured fields (`normalized`, `date`, `iso_date`, `day_index`, and equivalent
+aliases) are authoritative. Complete Gregorian dates become `YYYY-MM-DD` with
+a strict UTC `day_index`; custom or era-labeled dates become
+`cn-year-month-day` with `day_index: null`. When an explicit display-formatting
+boundary is used (the trusted provider adapter or final Event normalization),
+`parseCnDate()` may independently canonicalize only the reliable date portion
+of `display`; it must preserve the trailing text and must not regenerate or
+overwrite `normalized` or `day_index`. The local fallback provider and
+`formatStoryTime()` never turn display text into structured date/time values.
+
+Traditional time parsing is a separate pure component of that same boundary.
+Its grammar is exactly `<earthly branch>时 [<number>刻]` (the traditional `時`
+variant is accepted); the刻 part is optional and an omitted part means
+`marks: 0`. When the part is present, its token is first passed through
+`normalizeCnDateDigits()` and then `_cnToNumber()`, and only values from 1
+through 8 are accepted. The start-hour table is the sole source for the twelve
+branches: 子23, 丑1, 寅3, 卯5, 辰7, 巳9, 午11, 未13, 申15, 酉17, 戌19, 亥21.
+The clock value is calculated as start minutes plus `marks * 15`, returning
+`hour`, `minute`, and `dayOffset`; for example, the eighth刻 of 子时 is the
+next day at 01:00.
+
+For a trusted raw value containing both date and traditional time, the adapter
+uses the parsed date to produce numeric `display` date text and appends the
+original matched time substring. The source date remains the display date even
+when `dayOffset` is non-zero; only `normalized` uses the shifted date key. A
+pure traditional time normalizes to `HH:MM`; a date plus time normalizes to
+`date-keyTHH:MM`. If a custom/era calendar cannot safely advance across its
+boundary, the adapter keeps the display but returns `normalized: null` and never
+invents an absolute `day_index`.
 
 ### Persisted BiologicalEvent
 
@@ -253,9 +280,14 @@ API/schema failure.
 | Chinese date uses an unknown or invalid alias/date | Return `null`; do not manufacture a normalized date |
 | A longer month/festival alias overlaps a shorter alias | Match the longest dictionary entry first |
 | Custom era label appears without prior registration | Capture the label from input and keep the canonical date era-scoped |
-| Structured Story Time fields are present | Preserve them; do not reparse `display` |
-| Only a trusted provider supplies raw Chinese display text | Parse at the adapter boundary; fallback and formatter remain display-only |
+| Structured Story Time fields are present | Preserve `normalized`/`day_index` and independently format only a reliably parsed display date when the explicit formatting boundary allows it |
+| Trusted provider or final narrative Event normalization receives a parseable display date | Canonicalize only the date portion; preserve arbitrary trailing text and every structured field |
+| Fallback provider or `formatStoryTime()` receives display text | Keep the conservative display-only behavior; do not create structured date/time values |
 | Custom/era date has no Gregorian absolute day | Keep `day_index: null`; sorting/calculation must not invent one |
+| Traditional time has no刻 part | Accept it with `marks: 0` and hour precision |
+| Traditional time has刻 `0`, greater than `8`, or an unconvertible token | Return `null`; provider keeps the value conservative and does not fall back to date-only |
+| Traditional time token is missing `时`/`時` or has trailing text | Reject the partial match |
+| Traditional time crosses midnight | Shift only the internal normalized date when the calendar can prove the next date; keep display tied to the source date |
 
 ## 5. Good / Base / Bad Cases
 
@@ -283,11 +315,20 @@ API/schema failure.
 - Base: a valid Gregorian date receives a strict UTC `day_index`; a valid custom
   or era date keeps a canonical `cn-*` normalized value without an invented
   absolute index.
+- Good: all twelve branch names use the one start-hour table; pure times use
+  `marks: 0`, and numeric marks in Chinese, Arabic, full-width, or financial
+  forms share the existing number conversion functions.
+- Good: a date with a traditional time keeps the original time spelling in
+  `display`, while `normalized` uses modern `HH:MM`; an eighth 子时刻 advances
+  only the normalized date.
 - Bad: a participant is made eligible because their gender or UI label says
   receiver/攻/受.
 - Bad: a UI card copies an entire Event or uses `partner: "B,C"`.
-- Bad: `formatStoryTime()` or the fallback provider parses a display string, or
-  production code special-cases an era name from a fixture.
+- Bad: `formatStoryTime()` or the fallback provider creates structured values
+  from display text, a display formatter overwrites authoritative structured
+  fields, or production code special-cases an era name from a fixture.
+- Bad: a missing `时`/`時`, invalid刻 count, or trailing fragment is accepted as
+  a shorter valid time or silently reduced to a date-only value.
 - Bad: `ui/app.js` builds Event analysis input, validates Event source, or
   rebuilds Tracking Registry after rendering.
 
@@ -322,8 +363,14 @@ API/schema failure.
   formal custom month names, invalid Gregorian/custom dates, relative-day
   compatibility, and the three representative fixture strings.
 - Story Time assertions for structured-field precedence, trusted-provider parsing,
-  Gregorian day-index generation, `cn-*` custom/era normalization, and the
-  conservative fallback/formatter behavior.
+  independent display date formatting for narrative/provider values with
+  arbitrary trailing text, unchanged normalized fields, Gregorian day-index
+  generation, `cn-*` custom/era normalization, and the conservative
+  fallback/formatter behavior.
+- Traditional-time assertions for all twelve start hours, optional刻 semantics,
+  shared numeric conversion, 1/3/8刻 variants, invalid and partial matches,
+  modern `HH:MM` normalization, original display spelling, and Gregorian/custom
+  midnight rollover.
 
 ## 7. Wrong vs Correct
 
@@ -359,6 +406,15 @@ const normalized = parseDate(storyTime.display);
 const provider = createSevenDaysCalProvider(publicProvider);
 const storyTime = provider.getCurrentTime();
 const dayIndex = storyTime.day_index;
+```
+
+```js
+// Wrong: invent a second parser or use the display as a calculation input.
+const minutes = parseInt(storyTime.display.replace(/\D/g, ''), 10);
+
+// Correct: the trusted boundary owns parsing; consumers use normalized fields.
+const time = parseTraditionalTime(rawProviderValue);
+const normalized = time ? `${time.hour}:${String(time.minute).padStart(2, '0')}` : null;
 ```
 
 Eligibility belongs to the validated Event plus World Model and narrative

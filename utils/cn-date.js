@@ -223,6 +223,22 @@ export const _CN_FESTIVAL_ALIAS = {
   除夕: { month: 12, day: 30 },
   守岁: { month: 12, day: 30 },
 }
+
+export const TRADITIONAL_TIME_START_HOURS = Object.freeze({
+  子: 23,
+  丑: 1,
+  寅: 3,
+  卯: 5,
+  辰: 7,
+  巳: 9,
+  午: 11,
+  未: 13,
+  申: 15,
+  酉: 17,
+  戌: 19,
+  亥: 21,
+})
+
 export function normalizeCnDateDigits(value) {
   return String(value ?? '').replace(/[０-９]/g, ch => String(ch.charCodeAt(0) - 0xff10))
 }
@@ -279,6 +295,62 @@ const CN_NUMBER_TOKEN = '零〇一二两兩三四五六七八九十廿卄卅卌�
 const CN_NUMBER_RE = `[${CN_NUMBER_TOKEN}]+`
 const DAY_RE = `(初(?:${CN_NUMBER_RE})|\\d{1,2}|${CN_NUMBER_RE})`
 const DATE_BOUNDARY = '[\\s|｜,，、;；=＝]'
+
+const TRADITIONAL_TIME_RE_SOURCE = `([${Object.keys(TRADITIONAL_TIME_START_HOURS).join('')}])\\s*([时時])(?:\\s*([0-9０-９${CN_NUMBER_TOKEN}]+)\\s*刻)?`
+const TRADITIONAL_TIME_PREFIX_RE_SOURCE = `([${Object.keys(TRADITIONAL_TIME_START_HOURS).join('')}])\\s*([时時])`
+const TRADITIONAL_TIME_BOUNDARY = '[\\s|｜,，、;；。！？!?=＝]'
+
+function traditionalTimeValue(match) {
+  if (!match || !match[2]) return null
+  const marks = match[3] == null
+    ? 0
+    : _cnToNumber(normalizeCnDateDigits(match[3]))
+  if (match[3] != null && (!Number.isInteger(marks) || marks < 1 || marks > 8)) return null
+  const totalMinutes = TRADITIONAL_TIME_START_HOURS[match[1]] * 60 + marks * 15
+  return {
+    branch: match[1],
+    marks,
+    hour: Math.floor((totalMinutes % 1440) / 60),
+    minute: totalMinutes % 60,
+    dayOffset: Math.floor(totalMinutes / 1440),
+  }
+}
+
+/**
+ * Match a traditional earthly-branch time and retain the original substring.
+ * The default mode parses one complete time; search mode is for trusted
+ * provider input that combines a date and a time.
+ */
+export function matchTraditionalTime(text, {search = false, includeInvalid = false} = {}) {
+  const value = String(text ?? '')
+  const pattern = search
+    ? new RegExp(`${TRADITIONAL_TIME_RE_SOURCE}(?=$|${TRADITIONAL_TIME_BOUNDARY})`)
+    : new RegExp(`^\\s*${TRADITIONAL_TIME_RE_SOURCE}\\s*$`)
+  const match = pattern.exec(value)
+  const prefix = search ? new RegExp(TRADITIONAL_TIME_PREFIX_RE_SOURCE).exec(value) : null
+  if (search && prefix && (!match || prefix.index < match.index)) {
+    return includeInvalid ? {invalid: true, text: prefix[0], index: prefix.index} : null
+  }
+  const parsed = traditionalTimeValue(match)
+  if (!parsed && includeInvalid && match) {
+    return {invalid: true, text: match[0], index: match.index}
+  }
+  return parsed
+    ? {...parsed, text: match[0], index: match.index}
+    : null
+}
+
+/**
+ * Parse a traditional earthly-branch time into modern clock components.
+ * Numeric marks always use the shared Chinese-number conversion path.
+ */
+export function parseTraditionalTime(text) {
+  const match = matchTraditionalTime(text)
+  if (!match) return null
+  const {text: _text, index: _index, ...parsed} = match
+  return parsed
+}
+
 function calendarIsGregorian(calendar) {
   return calendar == null || calendar.kind === 'gregorian' || calendar.id === 'default-gregorian'
 }

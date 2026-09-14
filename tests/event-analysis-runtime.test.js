@@ -312,6 +312,38 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
   fixture.runtime.destroy();
 });
 
+test('narrative StoryTime keeps structured fields when persisted through Runtime', async () => {
+  const event = {
+    ...canonicalApiEvent(),
+    story_time: {
+      display: '天河四十二年三月十八日午时至未时',
+      normalized: '0042-03-18T12:45:00',
+      day_index: 42,
+      calendar_id: 'tianhe',
+      provider: 'narrative',
+      precision: 'hour',
+      confidence: 0.73,
+    },
+  };
+  const fixture = createFixture({
+    rawApiResponse: JSON.stringify({schema_version: 1, events: [event]}),
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const [persisted] = await fixture.runtime.getCurrentFloorEvents();
+  assert.deepEqual(persisted.story_time, {
+    display: '天河42年3月18日 午时至未时',
+    normalized: '0042-03-18T12:45:00',
+    day_index: 42,
+    calendar_id: 'tianhe',
+    provider: 'narrative',
+    precision: 'hour',
+    confidence: 0.73,
+  });
+  fixture.runtime.destroy();
+});
+
 test('production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local', async () => {
   const firstEvent = canonicalApiEvent();
   const secondEvent = canonicalApiEvent({

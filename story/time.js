@@ -1,7 +1,9 @@
-import { parseCnDate } from '../utils/cn-date.js';
+import { addCalendarDays, isGregorian } from '../business/calendar/date.js';
+import { matchTraditionalTime, parseCnDate, parseTraditionalTime } from '../utils/cn-date.js';
 
-export { parseCnDate };
+export { matchTraditionalTime, parseCnDate, parseTraditionalTime };
 export const parseStoryTimeDate = parseCnDate;
+export const parseStoryTimeTime = parseTraditionalTime;
 
 export const STORY_TIME_PRECISION = Object.freeze({
   YEAR: 'year',
@@ -92,24 +94,153 @@ function hasStructuredDate(source) {
 
 function parsedDateKey(date, calendar) {
   if (!date) return null;
-  if (date.eraLabel || date.year == null || calendar && !(calendar.kind === 'gregorian' || calendar.id === 'default-gregorian')) {
+  if (date.eraLabel || date.year == null || !isGregorian(calendar)) {
     return `cn-${date.year == null ? 0 : date.year}-${date.month}-${date.day}`;
   }
   return `${String(date.year).padStart(4, '0')}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
 }
 
+function parsedDateDisplay(date) {
+  if (!date) return null;
+  const year = date.year == null ? '' : `${date.eraLabel || ''}${date.year}年`;
+  return `${year}${date.month}月${date.day}日`;
+}
+
+function sameParsedDate(left, right) {
+  return Boolean(left && right)
+    && left.year === right.year
+    && left.month === right.month
+    && left.day === right.day
+    && (left.eraLabel || null) === (right.eraLabel || null);
+}
+
+function isDateContinuation(value) {
+  return /[0-9０-９年月日初第节節]/u.test(value);
+}
+
+function findParsedDateSpan(rawDisplay, parsedDate, calendar = null) {
+  const value = String(rawDisplay ?? '');
+  for (let start = 0; start < value.length; start += 1) {
+    for (let end = start + 1; end <= value.length; end += 1) {
+      if (!sameParsedDate(parseCnDate(value.slice(start, end), {calendar}), parsedDate)) continue;
+      const hasDaySuffix = value[end] === '日';
+      const dateEnd = hasDaySuffix ? end + 1 : end;
+      const next = value[dateEnd];
+      if (hasDaySuffix || next === undefined || !isDateContinuation(next)) {
+        return {start, end: dateEnd};
+      }
+      if (!sameParsedDate(
+        parseCnDate(value.slice(start, dateEnd + 1), {calendar}),
+        parsedDate,
+      )) {
+        return {start, end: dateEnd};
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Format only a parsed date within a display string. The remainder is kept
+ * verbatim so arbitrary time or narrative text is not interpreted here.
+ */
+export function formatParsedDateDisplay(rawDisplay, parsedDate, {calendar = null} = {}) {
+  if (!parsedDate || typeof rawDisplay !== 'string') return rawDisplay;
+  const span = findParsedDateSpan(rawDisplay, parsedDate, calendar);
+  if (!span) return rawDisplay;
+  const trailing = rawDisplay.slice(span.end);
+  if (!trailing.trim() && !(/[年]/u.test(rawDisplay.slice(span.start, span.end))
+    && /[月日]/u.test(rawDisplay.slice(span.start, span.end)))) {
+    return rawDisplay;
+  }
+  const separator = trailing && !/^\s/.test(trailing) ? ' ' : '';
+  return `${rawDisplay.slice(0, span.start)}${parsedDateDisplay(parsedDate)}${separator}${trailing}`;
+}
+
+function parseDisplayDate(rawDisplay, calendar = null) {
+  let best = parseCnDate(rawDisplay, {calendar});
+  const score = value => (value?.year == null ? 0 : 1) + (value?.eraLabel ? 1 : 0);
+  for (let end = 1; end <= rawDisplay.length; end += 1) {
+    const prefix = parseCnDate(rawDisplay.slice(0, end), {calendar});
+    if (!prefix) continue;
+    if (!best || score(prefix) > score(best) || score(prefix) === score(best)) best = prefix;
+  }
+  return best;
+}
+
+function traditionalTimeDisplay(time) {
+  return `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
+}
+
+function traditionalTimePrecision(time) {
+  return time.marks > 0 ? STORY_TIME_PRECISION.MINUTE : STORY_TIME_PRECISION.HOUR;
+}
+
+function shiftedParsedDate(date, calendar, dayOffset) {
+  if (!dayOffset) return date;
+  if (isGregorian(calendar) && (date.eraLabel || date.year == null)) return null;
+  const shifted = addCalendarDays({
+    year: date.year == null ? null : date.year,
+    month: date.month,
+    day: date.day,
+  }, dayOffset, calendar);
+  return shifted ? {...date, ...shifted} : null;
+}
+
+function dateTextWithoutTraditionalTime(display, time) {
+  if (!time) return display;
+  return `${display.slice(0, time.index)} ${display.slice(time.index + time.text.length)}`;
+}
+
 function normalizeSevenDaysCalValue(value, provider, calendar) {
   const normalized = normalizeStoryTime(value, {provider});
   const source = sourceStoryTime(value);
-  if (hasStructuredDate(source) || !normalized.display) return normalized;
-  const parsed = parseCnDate(normalized.display, {calendar});
-  if (!parsed) return normalized;
-  const canonical = parsedDateKey(parsed, calendar);
+  if (!normalized.display) return normalized;
+  const parsed = parseDisplayDate(normalized.display, calendar);
+  const formattedDisplay = formatParsedDateDisplay(normalized.display, parsed, {calendar});
+  if (hasStructuredDate(source)) {
+    if (formattedDisplay === normalized.display) return normalized;
+    return normalizeStoryTime({
+      ...normalized,
+      display: formattedDisplay,
+    }, {provider});
+  }
+  const timeMatch = matchTraditionalTime(normalized.display, {search: true, includeInvalid: true});
+  if (timeMatch?.invalid) return normalized;
+  const time = timeMatch;
+  const dateText = dateTextWithoutTraditionalTime(normalized.display, time);
+  if (matchTraditionalTime(dateText, {search: true, includeInvalid: true})) return normalized;
+  const parsedDate = parseCnDate(dateText, {calendar});
+  if (!parsedDate && (!time || dateText.trim())) return normalized;
+  const precision = normalized.precision === STORY_TIME_PRECISION.UNKNOWN
+    ? time ? traditionalTimePrecision(time) : STORY_TIME_PRECISION.DAY
+    : normalized.precision;
+  if (!parsedDate) {
+    return normalizeStoryTime({
+      ...normalized,
+      normalized: traditionalTimeDisplay(time),
+      day_index: null,
+      precision,
+    }, {provider});
+  }
+  const shifted = time ? shiftedParsedDate(parsedDate, calendar, time.dayOffset) : parsedDate;
+  if (!shifted) {
+    return normalizeStoryTime({
+      ...normalized,
+      display: formattedDisplay,
+      normalized: null,
+      day_index: null,
+      precision,
+    }, {provider});
+  }
+  const canonical = parsedDateKey(shifted, calendar);
+  const normalizedValue = time ? `${canonical}T${traditionalTimeDisplay(time)}` : canonical;
   return normalizeStoryTime({
     ...normalized,
-    normalized: canonical,
+    display: formattedDisplay,
+    normalized: normalizedValue,
     day_index: strictDayIndex(canonical),
-    precision: normalized.precision === STORY_TIME_PRECISION.UNKNOWN ? STORY_TIME_PRECISION.DAY : normalized.precision,
+    precision,
   }, {provider});
 }
 
@@ -140,8 +271,16 @@ export function normalizeStoryTime(raw = null, defaults = {}) {
     source.calendar_id
       ?? source.calendarId,
   );
+  const rawDisplay = nullableText(source.display);
+  const display = options.formatDisplay === true && rawDisplay
+    ? formatParsedDateDisplay(
+      rawDisplay,
+      parseDisplayDate(rawDisplay, options.calendar ?? null),
+      {calendar: options.calendar ?? null},
+    )
+    : rawDisplay;
   return {
-    display: nullableText(source.display),
+    display,
     normalized,
     day_index: dayIndex,
     calendar_id: calendarId,
@@ -183,9 +322,6 @@ function staticValue(source, names) {
 function normalizeProviderValue(value, provider, calendar = null, parseDisplay = false) {
   if (value === undefined || value === null) return null;
   if (!parseDisplay) return normalizeStoryTime(value, {provider});
-  const normalized = normalizeStoryTime(value, {provider});
-  const source = sourceStoryTime(value);
-  if (hasStructuredDate(source) || !normalized.display) return normalized;
   const resolvedCalendar = typeof calendar === 'function' ? calendar() : calendar;
   return normalizeSevenDaysCalValue(value, provider, resolvedCalendar);
 }

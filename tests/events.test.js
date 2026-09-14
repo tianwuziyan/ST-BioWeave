@@ -18,6 +18,42 @@ test('legacy event types remain valid with the old minimal source shape', () => 
   }).ok, true);
 });
 
+test('normalizeEvent formats narrative StoryTime dates without changing structured fields', () => {
+  const storyTime = {
+    display: '天河四十二年三月十八日午时至未时',
+    normalized: '0042-03-18T12:45:00',
+    day_index: 42,
+    calendar_id: 'tianhe',
+    provider: 'narrative',
+    precision: 'hour',
+    confidence: 0.73,
+  };
+  const event = normalizeEvent({
+    event_id: 'evt-narrative-story-time',
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: storyTime,
+  });
+
+  assert.deepEqual(event.story_time, {
+    display: '天河42年3月18日 午时至未时',
+    normalized: '0042-03-18T12:45:00',
+    day_index: 42,
+    calendar_id: 'tianhe',
+    provider: 'narrative',
+    precision: 'hour',
+    confidence: 0.73,
+  });
+
+  const dateOnly = '天河四十二年三月十八日';
+  assert.equal(normalizeEvent({
+    event_id: 'evt-narrative-date-only',
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: {...storyTime, display: dateOnly},
+  }).story_time.display, '天河42年3月18日');
+});
+
 test('normalizeEvent emits the fixed source, story time, participants, and relevance shapes', () => {
   const event = normalizeEvent({
     event_id: 'evt-1',

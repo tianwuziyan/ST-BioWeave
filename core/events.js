@@ -275,7 +275,7 @@ export function normalizeEvent(raw = {}) {
     pregnancy_relevance: normalizePregnancyRelevance(source.pregnancy_relevance),
     source_evidence: normalizeEvidence(source.source_evidence),
     source: normalizeSource(source.source),
-    story_time: normalizeStoryTime(source.story_time),
+    story_time: normalizeStoryTime(source.story_time, {formatDisplay: true}),
     physical_effect: recordValue(source.physical_effect),
   };
 }
