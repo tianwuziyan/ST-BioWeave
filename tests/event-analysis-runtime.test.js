@@ -381,6 +381,38 @@ test('narrative StoryTime keeps structured fields when persisted through Runtime
   fixture.runtime.destroy()
 })
 
+test('narrative StoryTime persists a formatted first-year display when time remains unresolved', async () => {
+  const event = {
+    ...canonicalApiEvent(),
+    story_time: {
+      display: '羲和元年三月四日 巳时末',
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      provider: 'narrative',
+      precision: 'minute',
+      confidence: 1,
+    },
+  }
+  const fixture = createFixture({
+    rawApiResponse: JSON.stringify({ schema_version: 1, events: [event] }),
+  })
+  await fixture.runtime.init()
+  await fixture.runtime.refreshCurrentFloorAnalysis()
+
+  const [persisted] = await fixture.runtime.getCurrentFloorEvents()
+  assert.deepEqual(persisted.story_time, {
+    display: '羲和1年3月4日 巳时末',
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+    provider: 'narrative',
+    precision: 'minute',
+    confidence: 1,
+  })
+  fixture.runtime.destroy()
+})
+
 test('production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local', async () => {
   const firstEvent = canonicalApiEvent()
   const secondEvent = canonicalApiEvent({

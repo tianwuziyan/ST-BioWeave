@@ -54,6 +54,33 @@ test('normalizeEvent formats narrative StoryTime dates without changing structur
   }).story_time.display, '天河42年3月18日');
 });
 
+test('normalizeEvent formats narrative first-year dates while preserving an unresolved time suffix', () => {
+  const event = normalizeEvent({
+    event_id: 'evt-narrative-first-year',
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: {
+      display: '羲和元年三月四日 巳时末',
+      normalized: null,
+      calendar_id: null,
+      day_index: null,
+      provider: 'narrative',
+      precision: 'minute',
+      confidence: 1,
+    },
+  });
+
+  assert.deepEqual(event.story_time, {
+    display: '羲和1年3月4日 巳时末',
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+    provider: 'narrative',
+    precision: 'minute',
+    confidence: 1,
+  });
+});
+
 test('normalizeEvent emits the fixed source, story time, participants, and relevance shapes', () => {
   const event = normalizeEvent({
     event_id: 'evt-1',

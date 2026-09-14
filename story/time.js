@@ -118,11 +118,20 @@ function isDateContinuation(value) {
   return /[0-9０-９年月日初第节節]/u.test(value);
 }
 
+function parseDisplayDateCandidate(value, calendar = null) {
+  const parsed = parseCnDate(value, {calendar});
+  if (parsed || !/元\s*年/u.test(value)) return parsed;
+  // parseCnDate already understands 元 as a year-first token. For an
+  // era-prefixed first year, give the unchanged parser its equivalent 一年
+  // spelling and keep the original text for display replacement.
+  return parseCnDate(value.replace(/元(?=\s*年)/gu, '一'), {calendar});
+}
+
 function findParsedDateSpan(rawDisplay, parsedDate, calendar = null) {
   const value = String(rawDisplay ?? '');
   for (let start = 0; start < value.length; start += 1) {
     for (let end = start + 1; end <= value.length; end += 1) {
-      if (!sameParsedDate(parseCnDate(value.slice(start, end), {calendar}), parsedDate)) continue;
+      if (!sameParsedDate(parseDisplayDateCandidate(value.slice(start, end), calendar), parsedDate)) continue;
       const hasDaySuffix = value[end] === '日';
       const dateEnd = hasDaySuffix ? end + 1 : end;
       const next = value[dateEnd];
@@ -130,7 +139,7 @@ function findParsedDateSpan(rawDisplay, parsedDate, calendar = null) {
         return {start, end: dateEnd};
       }
       if (!sameParsedDate(
-        parseCnDate(value.slice(start, dateEnd + 1), {calendar}),
+        parseDisplayDateCandidate(value.slice(start, dateEnd + 1), calendar),
         parsedDate,
       )) {
         return {start, end: dateEnd};
@@ -158,10 +167,10 @@ export function formatParsedDateDisplay(rawDisplay, parsedDate, {calendar = null
 }
 
 function parseDisplayDate(rawDisplay, calendar = null) {
-  let best = parseCnDate(rawDisplay, {calendar});
+  let best = parseDisplayDateCandidate(rawDisplay, calendar);
   const score = value => (value?.year == null ? 0 : 1) + (value?.eraLabel ? 1 : 0);
   for (let end = 1; end <= rawDisplay.length; end += 1) {
-    const prefix = parseCnDate(rawDisplay.slice(0, end), {calendar});
+    const prefix = parseDisplayDateCandidate(rawDisplay.slice(0, end), calendar);
     if (!prefix) continue;
     if (!best || score(prefix) > score(best) || score(prefix) === score(best)) best = prefix;
   }
