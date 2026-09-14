@@ -73,6 +73,92 @@ const TRANSPORT_DIAGNOSTIC_CODES = new Set([
   'response-error',
   'aborted',
 ])
+const API_TRACE_GLOBAL_FLAG = '__BIOWEAVE_API_TRACE__'
+const API_TRACE_PREFIX = '[BioWeave API TRACE]'
+function apiTraceEnabled() {
+  return globalThis?.[API_TRACE_GLOBAL_FLAG] === true
+}
+const TRACE_SAFE_STRING_KEYS = new Set([
+  'transport',
+  'phase',
+  'contentType',
+  'payloadType',
+  'constructor',
+  'code',
+  'errorCode',
+  'diagnosticCode',
+  'diagnostic_code',
+  'error_code',
+  'stage',
+  'analysisStage',
+  'analysis_stage',
+  'name',
+  'method',
+  'statusType',
+  'rawType',
+  'parser',
+  'timestamp',
+  'state',
+])
+function traceErrorMetadata(error, options = {}) {
+  let status = null
+  let diagnostic = 'unknown'
+  try {
+    status = validStatus(options.status) ?? statusFromError(error)
+    diagnostic = classifyGenerationError(error, { ...options, status })
+  } catch {
+    // Keep the trace projection inert if a host error exposes unsafe getters.
+  }
+  const result = {
+    status,
+    diagnosticCode: diagnostic,
+  }
+  try {
+    if (typeof error?.name === 'string' && error.name) result.name = error.name
+    if (typeof error?.code === 'string' && error.code) result.code = error.code
+    if (typeof error?.phase === 'string' && error.phase) result.phase = error.phase
+  } catch {
+    // Keep only the already-computed safe diagnostic fields.
+  }
+  return result
+}
+function traceTopLevelKeys(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  try {
+    return Object.keys(value).slice(0, 64)
+  } catch {
+    return []
+  }
+}
+function traceSafeValue(value, key = '') {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value
+  if (typeof value === 'string') {
+    if (key === 'model') return redactSecrets(value).slice(0, 160)
+    if (TRACE_SAFE_STRING_KEYS.has(key)) return value.slice(0, 120)
+    return { type: 'string', length: value.length }
+  }
+  if (Array.isArray(value)) {
+    if (key === 'topLevelKeys' || key === 'keys') return value.filter(item => typeof item === 'string').slice(0, 64)
+    return { type: 'array', length: value.length }
+  }
+  if (value instanceof Error) return traceErrorMetadata(value)
+  if (typeof value === 'object') return { type: 'object', keys: traceTopLevelKeys(value) }
+  return { type: typeof value }
+}
+function traceMetadata(metadata) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
+  return Object.fromEntries(Object.entries(metadata).map(([key, value]) => [key, traceSafeValue(value, key)]))
+}
+export function traceApi(checkpoint, metadata = {}) {
+  if (!apiTraceEnabled()) return
+  try {
+    const logger = globalThis.console?.debug ?? globalThis.console?.log
+    if (typeof logger !== 'function') return
+    logger.call(globalThis.console, API_TRACE_PREFIX, String(checkpoint), traceMetadata(metadata))
+  } catch {
+    // Diagnostic logging must never affect the request or response path.
+  }
+}
 function now() {
   return globalThis.performance?.now?.() ?? Date.now()
 }
@@ -334,15 +420,49 @@ async function waitBeforeRetry(attempt, signal) {
 }
 async function runWithTimeout(operation, { signal, timeout, attempt = 1 }) {
   const controller = new AbortController()
-  const requestState = { status: null, phase: 'request', attempt }
+  const requestState = {
+    status: null,
+    phase: 'request',
+    attempt,
+    responseReceived: false,
+    bodyReadStarted: false,
+    bodyReadCompleted: false,
+  }
   let timedOut = false
   let timer = null
-  const abort = () => controller.abort()
+  const abort = () => {
+    traceApi('caller-abort', {
+      status: requestState.status,
+      phase: requestState.phase,
+      responseReceived: requestState.responseReceived,
+      bodyReadStarted: requestState.bodyReadStarted,
+      bodyReadCompleted: requestState.bodyReadCompleted,
+    })
+    controller.abort()
+  }
   signal?.addEventListener?.('abort', abort, { once: true })
-  if (signal?.aborted) throw abortedError()
+  if (signal?.aborted) {
+    traceApi('caller-abort', {
+      status: requestState.status,
+      phase: requestState.phase,
+      responseReceived: requestState.responseReceived,
+      bodyReadStarted: requestState.bodyReadStarted,
+      bodyReadCompleted: requestState.bodyReadCompleted,
+    })
+    throw abortedError()
+  }
   const timeoutPromise = new Promise((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true
+      traceApi('timeout-abort', {
+        status: requestState.status,
+        phase: requestState.phase,
+        responseReceived: requestState.responseReceived,
+        bodyReadStarted: requestState.bodyReadStarted,
+        bodyReadCompleted: requestState.bodyReadCompleted,
+        timeoutMs: timeout,
+        attempt,
+      })
       controller.abort()
       reject(
         timeoutError({
@@ -561,6 +681,136 @@ function isResponseLike(value) {
     statusProperty(value) !== null
   )
 }
+function responseContentType(value) {
+  try {
+    if (typeof value?.headers?.get === 'function') return value.headers.get('content-type') || null
+    if (typeof value?.headers?.['content-type'] === 'string') return value.headers['content-type']
+  } catch {
+    return null
+  }
+  return null
+}
+function responseBodyUsed(value) {
+  try {
+    return typeof value?.bodyUsed === 'boolean' ? value.bodyUsed : null
+  } catch {
+    return null
+  }
+}
+function responseTraceMetadata(value) {
+  if (!apiTraceEnabled()) return {}
+  try {
+    return {
+      rawType: typeof value,
+      constructor: value?.constructor?.name ?? null,
+      responseLike: isResponseLike(value),
+      status: statusFromError(value),
+      ok: typeof value?.ok === 'boolean' ? value.ok : null,
+      contentType: responseContentType(value),
+      bodyUsed: responseBodyUsed(value),
+      hasJson: typeof value?.json === 'function',
+      hasText: typeof value?.text === 'function',
+      hasBody: value?.body !== undefined && value?.body !== null,
+      topLevelKeys: traceTopLevelKeys(value),
+    }
+  } catch {
+    return {
+      rawType: typeof value,
+      constructor: null,
+      responseLike: false,
+      status: null,
+      ok: null,
+      contentType: null,
+      bodyUsed: null,
+      hasJson: false,
+      hasText: false,
+      hasBody: false,
+      topLevelKeys: [],
+    }
+  }
+}
+function traceTransportResolved(value) {
+  if (!apiTraceEnabled()) return
+  traceApi('transport-resolved', responseTraceMetadata(value))
+}
+function traceBodyReadStart(response, requestState, method) {
+  if (requestState) requestState.bodyReadStarted = true
+  if (!apiTraceEnabled()) return
+  let status = null
+  try {
+    status = statusFromError(response)
+  } catch {}
+  const metadata = {
+    method,
+    status,
+    contentType: responseContentType(response),
+    bodyUsedBefore: responseBodyUsed(response),
+  }
+  traceApi('body-read-start', metadata)
+  traceApi(`${method}-start`, metadata)
+}
+function traceBodyReadComplete(response, requestState, method, metadata = {}) {
+  if (requestState) requestState.bodyReadCompleted = true
+  if (!apiTraceEnabled()) return
+  let status = null
+  try {
+    status = statusFromError(response)
+  } catch {}
+  const complete = {
+    method,
+    status,
+    contentType: responseContentType(response),
+    bodyUsedAfter: responseBodyUsed(response),
+    ...metadata,
+  }
+  traceApi('body-read-complete', complete)
+  traceApi(`${method}-complete`, complete)
+}
+function traceBodyReadError(response, method, error) {
+  if (!apiTraceEnabled()) return
+  let status = null
+  try {
+    status = statusFromError(response)
+  } catch {}
+  const metadata = {
+    method,
+    status,
+    contentType: responseContentType(response),
+    bodyUsedAfter: responseBodyUsed(response),
+    ...traceErrorMetadata(error, { status, phase: 'response' }),
+  }
+  traceApi(`${method}-error`, metadata)
+  traceApi('body-read-error', metadata)
+}
+function tracePayloadMetadata(payload) {
+  if (!apiTraceEnabled()) return {}
+  try {
+    return {
+      payloadType: Array.isArray(payload) ? 'array' : payload === null ? 'null' : typeof payload,
+      constructor: payload?.constructor?.name ?? null,
+      topLevelKeys: traceTopLevelKeys(payload),
+      contentExists: Boolean(payload && typeof payload === 'object' && hasOwn(payload, 'content')),
+      contentLength: responsePayloadText(payload).length,
+      choicesExists: Boolean(payload && typeof payload === 'object' && Array.isArray(payload.choices)),
+    }
+  } catch {
+    return {
+      payloadType: Array.isArray(payload) ? 'array' : payload === null ? 'null' : typeof payload,
+      constructor: null,
+      topLevelKeys: [],
+      contentExists: false,
+      contentLength: null,
+      choicesExists: false,
+    }
+  }
+}
+function traceNormalizedComplete(payload, status, requestState) {
+  traceApi('normalize-complete', {
+    ...tracePayloadMetadata(payload),
+    status: status ?? null,
+    phase: requestState?.phase ?? 'response',
+  })
+}
 function responsePayloadText(value) {
   if (typeof value === 'string') return value
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
@@ -580,38 +830,85 @@ function responseHasError(value) {
     value && typeof value === 'object' && !Array.isArray(value) && hasOwn(value, 'error') && value.error !== undefined && value.error !== null,
   )
 }
-async function consumeResponseBody(response) {
+async function consumeResponseBody(response, requestState = null) {
+  let method = 'reader'
   try {
     if (typeof response?.text === 'function') {
-      await response.text()
+      method = 'text'
+      traceBodyReadStart(response, requestState, 'text')
+      const body = await response.text()
+      traceBodyReadComplete(response, requestState, 'text', { bodyLength: typeof body === 'string' ? body.length : null, payloadType: 'text' })
       return
     }
     if (typeof response?.json === 'function') {
-      await response.json()
+      method = 'json'
+      traceBodyReadStart(response, requestState, 'json')
+      const payload = await response.json()
+      traceBodyReadComplete(response, requestState, 'json', { ...tracePayloadMetadata(payload), bodyLength: null })
       return
     }
-    if (typeof response?.body === 'string') return
+    if (typeof response?.body === 'string') {
+      method = 'body-string'
+      traceBodyReadStart(response, requestState, 'body-string')
+      traceBodyReadComplete(response, requestState, 'body-string', { bodyLength: response.body.length, payloadType: 'text' })
+      return
+    }
+    traceBodyReadStart(response, requestState, 'reader')
     const reader = response?.body?.getReader?.()
-    if (!reader) return
+    if (!reader) {
+      traceBodyReadComplete(response, requestState, 'reader', { bodyLength: null, payloadType: 'none', chunkCount: 0 })
+      return
+    }
+    let chunkCount = 0
     try {
-      while (!(await reader.read()).done) {}
+      while (!(await reader.read()).done) chunkCount += 1
+      traceBodyReadComplete(response, requestState, 'reader', { bodyLength: null, payloadType: 'stream', chunkCount })
+    } catch (error) {
+      traceBodyReadError(response, 'reader', error)
+      throw error
     } finally {
       try {
         reader.releaseLock?.()
       } catch {}
     }
-  } catch {
+  } catch (error) {
+    traceBodyReadError(response, method, error)
     // The status-bearing diagnostic remains authoritative; response bodies are
     // deliberately consumed only as a best-effort drain and never exposed.
   }
 }
-async function responseBodyText(response) {
-  if (typeof response?.text === 'function') return response.text()
-  if (typeof response?.body === 'string') return response.body
-  const reader = response?.body?.getReader?.()
-  if (!reader) return null
+async function responseBodyText(response, requestState = null) {
+  if (typeof response?.text === 'function') {
+    traceBodyReadStart(response, requestState, 'text')
+    try {
+      const body = await response.text()
+      traceBodyReadComplete(response, requestState, 'text', { bodyLength: typeof body === 'string' ? body.length : null, payloadType: 'text' })
+      return body
+    } catch (error) {
+      traceBodyReadError(response, 'text', error)
+      throw error
+    }
+  }
+  if (typeof response?.body === 'string') {
+    traceBodyReadStart(response, requestState, 'body-string')
+    traceBodyReadComplete(response, requestState, 'body-string', { bodyLength: response.body.length, payloadType: 'text' })
+    return response.body
+  }
+  traceBodyReadStart(response, requestState, 'reader')
+  let reader
+  try {
+    reader = response?.body?.getReader?.()
+  } catch (error) {
+    traceBodyReadError(response, 'reader', error)
+    throw error
+  }
+  if (!reader) {
+    traceBodyReadComplete(response, requestState, 'reader', { bodyLength: null, payloadType: 'none', chunkCount: 0 })
+    return null
+  }
   const decoder = new TextDecoder()
   let text = ''
+  let chunkCount = 0
   try {
     for (;;) {
       const { done, value } = await reader.read()
@@ -619,8 +916,13 @@ async function responseBodyText(response) {
         text += decoder.decode()
         break
       }
+      chunkCount += 1
       text += decoder.decode(value, { stream: true })
     }
+    traceBodyReadComplete(response, requestState, 'reader', { bodyLength: text.length, payloadType: 'text', chunkCount })
+  } catch (error) {
+    traceBodyReadError(response, 'reader', error)
+    throw error
   } finally {
     try {
       reader.releaseLock?.()
@@ -628,56 +930,150 @@ async function responseBodyText(response) {
   }
   return text
 }
-function responseJsonFromText(text, status, attempt) {
+function responseJsonFromText(text, status, attempt, traceContext = {}) {
   const normalized = String(text ?? '').trim()
-  if (isUpstreamTimeoutTemplate(normalized)) {
-    throw makeDiagnosticError('upstream-timeout', { status, phase: 'response', attempt })
-  }
-  if (!normalized) throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt })
-  // A response body can be a complete SSE stream when the host returns a raw
-  // Response-like object. Parse every data frame so an error envelope cannot
-  // accidentally enter the success path.
-  const dataLines = normalized
-    .split('\n')
-    .map(line => line.replace(/\r$/, ''))
-    .filter(line => line.startsWith('data:'))
-    .map(line => line.slice(5).replace(/^\s/, ''))
-  if (dataLines.length) {
-    const contents = []
-    let lastPayload = null
-    for (const line of dataLines) {
-      if (line === '[DONE]') continue
-      let payload
-      try {
-        payload = JSON.parse(line)
-      } catch (error) {
-        throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
-      }
-      if (responseHasError(payload)) {
-        throw makeDiagnosticError('response-error', { status, phase: 'response', attempt })
-      }
-      lastPayload = payload
-      const choice = payload?.choices?.[0]
-      const content = choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? payload?.content
-      if (typeof content === 'string') contents.push(content)
-    }
-    if (contents.length) return { content: contents.join('') }
-    if (lastPayload !== null) return lastPayload
-    throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt })
-  }
-  let payload
+  const dataLineCount =
+    apiTraceEnabled()
+      ? normalized
+          .split('\n')
+          .map(line => line.replace(/\r$/, ''))
+          .filter(line => line.startsWith('data:')).length
+      : null
+  let deltaContentCount = 0
+  let messageContentCount = 0
+  let textContentCount = 0
+  let contentCount = 0
+  traceApi('response-json-from-text-start', {
+    status,
+    contentType: traceContext.contentType ?? null,
+    bodyLength: normalized.length,
+    dataLineCount,
+    enteredResponseJsonFromText: true,
+    emptyBody: !normalized,
+    deltaContentCount: 0,
+    messageContentCount: 0,
+    textContentCount: 0,
+    contentCount: 0,
+  })
   try {
-    payload = JSON.parse(normalized)
+    if (isUpstreamTimeoutTemplate(normalized)) {
+      throw makeDiagnosticError('upstream-timeout', { status, phase: 'response', attempt })
+    }
+    if (!normalized) throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt })
+    // A response body can be a complete SSE stream when the host returns a raw
+    // Response-like object. Parse every data frame so an error envelope cannot
+    // accidentally enter the success path.
+    const dataLines = normalized
+      .split('\n')
+      .map(line => line.replace(/\r$/, ''))
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^\s/, ''))
+    if (dataLines.length) {
+      const contents = []
+      let lastPayload = null
+      for (const line of dataLines) {
+        if (line === '[DONE]') continue
+        let payload
+        try {
+          payload = JSON.parse(line)
+        } catch (error) {
+          throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
+        }
+        if (responseHasError(payload)) {
+          throw makeDiagnosticError('response-error', { status, phase: 'response', attempt })
+        }
+        lastPayload = payload
+        const choice = payload?.choices?.[0]
+        if (typeof choice?.delta?.content === 'string') deltaContentCount += 1
+        if (typeof choice?.message?.content === 'string') messageContentCount += 1
+        if (typeof choice?.text === 'string') textContentCount += 1
+        if (typeof payload?.content === 'string') contentCount += 1
+        const content = choice?.delta?.content ?? choice?.message?.content ?? choice?.text ?? payload?.content
+        if (typeof content === 'string') contents.push(content)
+      }
+      if (contents.length) {
+        const result = { content: contents.join('') }
+        traceApi('response-json-from-text-complete', {
+          status,
+          contentType: traceContext.contentType ?? null,
+          bodyLength: normalized.length,
+          dataLineCount: dataLines.length,
+          enteredResponseJsonFromText: true,
+          deltaContentCount,
+          deltaContentExtracted: deltaContentCount > 0,
+          messageContentCount,
+          messageContentExtracted: messageContentCount > 0,
+          textContentCount,
+          textContentExtracted: textContentCount > 0,
+          contentCount,
+          contentExtracted: contentCount > 0,
+        })
+        return result
+      }
+      if (lastPayload !== null) {
+        traceApi('response-json-from-text-complete', {
+          status,
+          contentType: traceContext.contentType ?? null,
+          bodyLength: normalized.length,
+          dataLineCount: dataLines.length,
+          enteredResponseJsonFromText: true,
+          deltaContentCount,
+          deltaContentExtracted: deltaContentCount > 0,
+          messageContentCount,
+          messageContentExtracted: messageContentCount > 0,
+          textContentCount,
+          textContentExtracted: textContentCount > 0,
+          contentCount,
+          contentExtracted: contentCount > 0,
+        })
+        return lastPayload
+      }
+      throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt })
+    }
+    let payload
+    try {
+      payload = JSON.parse(normalized)
+    } catch (error) {
+      throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
+    }
+    if (isUpstreamTimeoutTemplate(payload)) {
+      throw makeDiagnosticError('upstream-timeout', { status, phase: 'response', attempt })
+    }
+    if (responseHasError(payload)) {
+      throw makeDiagnosticError('response-error', { status, phase: 'response', attempt })
+    }
+    traceApi('response-json-from-text-complete', {
+      status,
+      contentType: traceContext.contentType ?? null,
+      bodyLength: normalized.length,
+      dataLineCount: dataLines.length,
+      enteredResponseJsonFromText: true,
+      deltaContentCount,
+      deltaContentExtracted: false,
+      messageContentCount,
+      messageContentExtracted: false,
+      textContentCount,
+      textContentExtracted: false,
+      contentCount,
+      contentExtracted: false,
+    })
+    return payload
   } catch (error) {
-    throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
+    traceApi('response-json-from-text-error', {
+      status,
+      contentType: traceContext.contentType ?? null,
+      bodyLength: normalized.length,
+      dataLineCount,
+      enteredResponseJsonFromText: true,
+      emptyBody: !normalized,
+      deltaContentCount,
+      messageContentCount,
+      textContentCount,
+      contentCount,
+      ...traceErrorMetadata(error, { status, phase: 'response' }),
+    })
+    throw error
   }
-  if (isUpstreamTimeoutTemplate(payload)) {
-    throw makeDiagnosticError('upstream-timeout', { status, phase: 'response', attempt })
-  }
-  if (responseHasError(payload)) {
-    throw makeDiagnosticError('response-error', { status, phase: 'response', attempt })
-  }
-  return payload
 }
 function normalizedResponsePayload(payload, status, attempt) {
   if (isUpstreamTimeoutTemplate(responsePayloadText(payload))) {
@@ -689,44 +1085,80 @@ function normalizedResponsePayload(payload, status, attempt) {
   return payload
 }
 async function normalizeResponseLike(value, requestState = {}, { attempt = requestState.attempt ?? 1 } = {}) {
-  if (value instanceof Error) throw value
-  const status = statusFromError(value)
-  if (status !== null) requestState.status = status
-  const responseLike = isResponseLike(value)
-  if (!responseLike) return normalizedResponsePayload(value, status, attempt)
-  requestState.phase = 'response'
-  const failedStatus = status !== null && (status < 200 || status >= 300)
-  if (value.ok === false || failedStatus) {
-    await consumeResponseBody(value)
-    if (failedStatus && status !== null) {
-      throw makeDiagnosticError(httpDiagnosticCode(status), {
-        status,
-        phase: 'request',
-        retryable: status === 429 || status >= 500,
+  const initialMetadata = responseTraceMetadata(value)
+  traceApi('normalize-start', { ...initialMetadata, attempt, phase: requestState.phase ?? 'request' })
+  try {
+    if (value instanceof Error) throw value
+    const status = statusFromError(value)
+    if (status !== null) requestState.status = status
+    const responseLike = isResponseLike(value)
+    if (!responseLike) {
+      const payload = normalizedResponsePayload(value, status, attempt)
+      traceNormalizedComplete(payload, status, requestState)
+      return payload
+    }
+    requestState.phase = 'response'
+    const failedStatus = status !== null && (status < 200 || status >= 300)
+    if (value.ok === false || failedStatus) {
+      await consumeResponseBody(value, requestState)
+      if (failedStatus && status !== null) {
+        throw makeDiagnosticError(httpDiagnosticCode(status), {
+          status,
+          phase: 'request',
+          retryable: status === 429 || status >= 500,
+          attempt,
+        })
+      }
+      throw makeDiagnosticError('response-error', { status, phase: 'request', attempt })
+    }
+    if (typeof value.json === 'function') {
+      let payload
+      try {
+        traceBodyReadStart(value, requestState, 'json')
+        payload = await value.json()
+        traceBodyReadComplete(value, requestState, 'json', { ...tracePayloadMetadata(payload), bodyLength: null })
+      } catch (error) {
+        traceBodyReadError(value, 'json', error)
+        if (isAbortError(error) || networkError(error)) throw error
+        throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
+      }
+      const normalized = normalizedResponsePayload(payload, status, attempt)
+      traceNormalizedComplete(normalized, status, requestState)
+      return normalized
+    }
+    const body = await responseBodyText(value, requestState)
+    if (body !== null) {
+      const normalized = responseJsonFromText(body, status, attempt, { contentType: responseContentType(value) })
+      traceNormalizedComplete(normalized, status, requestState)
+      return normalized
+    }
+    const normalized = normalizedResponsePayload(value, status, attempt)
+    traceNormalizedComplete(normalized, status, requestState)
+    return normalized
+  } catch (error) {
+    if (apiTraceEnabled()) {
+      const errorStatus = statusFromError(error) ?? validStatus(requestState.status)
+      const errorPhase = error?.phase ?? requestState.phase ?? 'response'
+      traceApi('normalize-error', {
+        ...initialMetadata,
+        status: errorStatus,
+        phase: errorPhase,
+        ...traceErrorMetadata(error, { status: errorStatus, phase: errorPhase }),
         attempt,
+        bodyReadStarted: requestState.bodyReadStarted === true,
+        bodyReadCompleted: requestState.bodyReadCompleted === true,
       })
     }
-    throw makeDiagnosticError('response-error', { status, phase: 'request', attempt })
+    throw error
   }
-  if (typeof value.json === 'function') {
-    let payload
-    try {
-      payload = await value.json()
-    } catch (error) {
-      if (isAbortError(error) || networkError(error)) throw error
-      throw makeDiagnosticError('invalid-json', { status, phase: 'response', attempt, cause: error })
-    }
-    return normalizedResponsePayload(payload, status, attempt)
-  }
-  const body = await responseBodyText(value)
-  if (body !== null) return responseJsonFromText(body, status, attempt)
-  return normalizedResponsePayload(value, status, attempt)
 }
 async function runCurrentApi(profile, messages, context, signal, requestState) {
   const currentRequest = await currentApiRequest(profile, messages, context)
   if (currentRequest) {
     // ChatCompletionService 不挂接 GENERATION_STOPPED，避免宿主结束主楼生成时取消本次分析。
     const result = await currentRequest.service.processRequest(currentRequest.request, {}, true, signal)
+    requestState.responseReceived = true
+    traceTransportResolved(result)
     return normalizeResponseLike(result, requestState)
   }
   if (typeof context?.generateRaw !== 'function') throw new Error('ST_CURRENT_API_UNAVAILABLE')
@@ -735,6 +1167,8 @@ async function runCurrentApi(profile, messages, context, signal, requestState) {
     prompt: messagesForRequest(messages),
     responseLength: numeric(profile?.max_output_tokens, 4096, 1, 10000000, true),
   })
+  requestState.responseReceived = true
+  traceTransportResolved(result)
   return normalizeResponseLike(result, requestState)
 }
 async function runIndependentApi(profile, messages, context, signal, requestState, fetchRef) {
@@ -764,6 +1198,8 @@ async function runIndependentApi(profile, messages, context, signal, requestStat
     }),
     signal,
   })
+  requestState.responseReceived = true
+  traceTransportResolved(response)
   return normalizeResponseLike(response, requestState)
 }
 function modelName(item) {
@@ -837,6 +1273,15 @@ export async function callOpenAICompatible(profile, messages, options = {}) {
   const context = hostContext(options.context)
   const normalized = isCurrentApi(profile) ? profile : normalizeApiProfile(profile)
   const fetchRef = options.fetchRef ?? globalThis.fetch
+  const traceRequestSettings =
+    apiTraceEnabled() ? normalizeApiRequestSettings(options.requestSettings) : null
+  traceApi('request-start', {
+    transport: isCurrentApi(profile) ? 'sillytavern-current-api' : 'independent-fetch',
+    model: safeModel(normalized?.model ?? (isCurrentApi(profile) ? 'SillyTavern 当前 API' : 'configured model')),
+    stream: false,
+    timeoutMs: traceRequestSettings ? requestTimeout(traceRequestSettings) : null,
+    timestamp: new Date().toISOString(),
+  })
   try {
     return await requestWithRetry(
       (signal, requestState) =>

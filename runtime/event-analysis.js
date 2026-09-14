@@ -1,6 +1,6 @@
 import { buildEventAnalysisInput, collectAnalysisContext, mergeRecentStorySettings, processNarrativeFloor } from '../ai/input-builder.js'
 import { createWorldbookCache, loadAnalysisSources } from '../ai/worldbook.js'
-import { safeErrorSummary as clientSafeErrorSummary, statusFromError as clientStatusFromError } from '../ai/client.js'
+import { safeErrorSummary as clientSafeErrorSummary, statusFromError as clientStatusFromError, traceApi } from '../ai/client.js'
 import { normalizeEvent, sortEvents, validateEventCollection } from '../core/events.js'
 import { explainTrackingDecision, rebuildTrackingRegistry } from '../core/tracking.js'
 import { normalizeStoryTime } from '../story/time.js'
@@ -830,10 +830,26 @@ export function createEventAnalysisCoordinator({
       await refreshTrackingRegistry(execution.reason)
       assertExecutionCurrent(execution, token)
       execution.event_count = events.length
+      traceApi('runtime-success', {
+        state: 'success',
+        phase: execution.stage,
+        attempt: execution.attempt,
+        eventCount: events.length,
+        floorSaved: execution.floorSaved === true,
+        persistenceComplete: true,
+        registryComplete: true,
+      })
       terminalState = 'success'
       return { events, version: target.version, status: 'success', attempt: execution.attempt }
     } catch (error) {
       const cancelled = execution.cancelRequested || isRequestAborted(error) || error?.code === 'REQUEST_ABORTED'
+      traceApi('runtime-error', {
+        error,
+        phase: execution.stage,
+        attempt: execution.attempt,
+        cancelled,
+        staleChat: isStaleChat(error),
+      })
       if (cancelled) {
         terminalState = 'cancelled'
         terminalError = requestAbortedError()

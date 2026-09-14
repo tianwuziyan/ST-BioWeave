@@ -513,6 +513,40 @@ test('analyzeFloor sends contract-bound Event messages and parses the response',
   assert.equal(receivedSignal.aborted, false);
 });
 
+test('analyzeFloor preserves processRequest content and OpenAI message content for the parser', async () => {
+  const rawResponse = response();
+  for (const raw of [
+    {content: rawResponse},
+    {choices: [{message: {content: rawResponse}}]},
+  ]) {
+    const analyzer = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({
+        chatCompletionSettings: {chat_completion_source: 'openai', model: 'test-model'},
+        getChatCompletionModel: () => 'test-model',
+        ChatCompletionService: {
+          async processRequest() {
+            return raw;
+          },
+        },
+      }),
+    });
+    const parsed = await analyzer.analyzeFloor({
+      analysisInput: buildEventAnalysisInput({
+        chatId: floorVersion.chat_id,
+        floorVersion,
+        currentFloor: {narrative: 'Current floor narrative.'},
+        recentContext: [],
+        worldModel: {species: []},
+        storyTime: {display: 'unknown', precision: 'unknown'},
+        characterContext: {characters: []},
+      }),
+    });
+    assert.equal(parsed.events.length, 1);
+    assert.equal(parsed.events[0].type, 'sexual_activity');
+  }
+});
+
 test('World Model analyzer injects the same common analysis prompt layer', async () => {
   const requests = [];
   const analyzer = createAnalyzer({

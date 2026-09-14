@@ -15,7 +15,7 @@ import { normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } fro
 import { statePage } from './state.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
-import { diagnosticMessage as sharedDiagnosticMessage, isTransportDiagnostic, statusFromError as sharedStatusFromError } from '../ai/client.js'
+import { diagnosticMessage as sharedDiagnosticMessage, isTransportDiagnostic, statusFromError as sharedStatusFromError, traceApi } from '../ai/client.js'
 import { createAnalyzer, normalizeWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
@@ -1639,7 +1639,18 @@ export function createApp(runtime, options = {}) {
       assertAnalysisChatToken(token)
       const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld
       if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE')
-      const result = await analyze({ analysisInput: collected.input, signal: controller.signal })
+      let result
+      try {
+        result = await analyze({ analysisInput: collected.input, signal: controller.signal })
+        traceApi('world-model-analyzer-success', {
+          phase: 'analyzer',
+          resultType: typeof result,
+          speciesCount: Array.isArray(result?.species) ? result.species.length : 0,
+        })
+      } catch (error) {
+        traceApi('world-model-analyzer-error', { error, phase: 'analyzer' })
+        throw error
+      }
       const model = normalizeWorldModel(result)
       assertAnalysisChatToken(token)
       const currentChat = runtime.store?.getChat?.(chatId)
@@ -1677,8 +1688,14 @@ export function createApp(runtime, options = {}) {
         sectionDirty: false,
         notice: null,
       }
+      traceApi('world-model-ui-success', {
+        phase: 'world-model-ui',
+        speciesCount: Array.isArray(model.species) ? model.species.length : 0,
+        modelSaved: true,
+      })
       notify('世界模型分析成功并已保存。', 'success', documentRef)
     } catch (error) {
+      traceApi('world-model-ui-error', { error, phase: 'world-model-ui', state: 'error' })
       try {
         assertAnalysisChatToken(token)
       } catch {

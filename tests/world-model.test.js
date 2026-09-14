@@ -52,6 +52,42 @@ function messageStartingWith(messages, marker) {
   return message.content
 }
 
+async function captureTraceLogs(run) {
+  const previousFlag = globalThis.__BIOWEAVE_API_TRACE__
+  const previousDebug = globalThis.console?.debug
+  const entries = []
+  globalThis.__BIOWEAVE_API_TRACE__ = true
+  if (globalThis.console) globalThis.console.debug = (...args) => entries.push(args)
+  try {
+    return { result: await run(), entries }
+  } finally {
+    if (previousFlag === undefined) delete globalThis.__BIOWEAVE_API_TRACE__
+    else globalThis.__BIOWEAVE_API_TRACE__ = previousFlag
+    if (globalThis.console) globalThis.console.debug = previousDebug
+  }
+}
+
+function responseLikeSse(body) {
+  let consumed = false
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: name => (name.toLowerCase() === 'content-type' ? 'text/event-stream' : null) },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (consumed) return { done: true, value: undefined }
+            consumed = true
+            return { done: false, value: new TextEncoder().encode(body) }
+          },
+          releaseLock() {},
+        }
+      },
+    },
+  }
+}
+
 const modelFixture = {
   schema_version: 1,
   species: [
@@ -368,6 +404,61 @@ test('World Model response parser accepts JSON object content and rejects invali
     () => parseWorldModelResponse(JSON.stringify({})),
     error => error?.code === 'WORLD_MODEL_INVALID',
   )
+})
+
+test('World Model analyzer preserves processRequest content and OpenAI message content', async () => {
+  const response = JSON.stringify(modelFixture)
+  for (const raw of [
+    { content: response },
+    { choices: [{ message: { content: response } }] },
+    new Response(JSON.stringify({ content: response }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    responseLikeSse(`data: ${JSON.stringify({ content: response })}\ndata: [DONE]\n`),
+  ]) {
+    const analyzer = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({
+        chatCompletionSettings: { chat_completion_source: 'openai', model: 'test-model' },
+        getChatCompletionModel: () => 'test-model',
+        ChatCompletionService: {
+          async processRequest() {
+            return raw
+          },
+        },
+      }),
+    })
+    const result = await analyzer.analyzeWorldModel({
+      analysisInput: {
+        character: { description: '潮汐生物型存在；潮汐生物明确存在双性个体。' },
+      },
+    })
+    assert.equal(result.schema_version, 1)
+    assert.equal(result.species[0]?.name, '潮汐生物')
+    assert.ok(result.species[0]?.biological_types.length >= 1)
+  }
+})
+
+test('World Model parser TRACE keeps the safe parser error code readable', async () => {
+  const captured = await captureTraceLogs(async () => {
+    const analyzer = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({
+        chatCompletionSettings: { chat_completion_source: 'openai', model: 'test-model' },
+        getChatCompletionModel: () => 'test-model',
+        ChatCompletionService: {
+          async processRequest() {
+            return { content: 'not-json' }
+          },
+        },
+      }),
+    })
+    await assert.rejects(
+      analyzer.analyzeWorldModel({ analysisInput: { character: { description: '有分析输入。' } } }),
+      error => error?.code === 'WORLD_MODEL_INVALID',
+    )
+  })
+  const logText = JSON.stringify(captured.entries)
+  assert.match(logText, /parser-error/)
+  assert.match(logText, /"code":"WORLD_MODEL_INVALID"/)
 })
 
 test('World Model parser keeps bisexual/intersex capabilities independently evidence-based', () => {

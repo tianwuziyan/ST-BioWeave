@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"检查新增 TRACE 不改变 status/diagnostic/timeout/abort 错误传播与敏感信息边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查测试和日志改动不泄露业务正文，并遵循当前仓库验证方式。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核完整响应数据流、body 消费、Analyzer 解析、Runtime/UI 终点及跨层回归测试。"}

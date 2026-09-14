@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"保留 client 单一错误分类边界、200 body/SSE timeout 语义和安全诊断元数据契约。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"按 API、Analyzer、Runtime、UI 边界核对返回格式和消费责任，避免重复解析或跨层推断。"}

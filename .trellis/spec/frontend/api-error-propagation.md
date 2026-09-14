@@ -15,6 +15,8 @@ boundaries that carry the resulting diagnostic.
 - `isUpstreamTimeoutTemplate(value) -> boolean`
 - `callOpenAICompatible(profile, messages, options?) -> host response`
 - `statusFromError(error) -> HTTP status | null`
+- `traceApi(checkpoint, metadata?) -> void`, enabled only when
+  `globalThis.__BIOWEAVE_API_TRACE__ === true`
 
 ## 3. Contracts
 
@@ -97,3 +99,89 @@ catch (error) {
 The correct path must keep the original error metadata, distinguish a local
 timer from a 2xx body-read timeout, and let callers display the shared safe
 diagnostic without reclassifying it.
+
+## 8. Metadata TRACE Contract
+
+### 1. Scope / Trigger
+
+This contract applies only to temporary developer diagnosis of a successful
+third-party API response that does not reach BioWeave's Analyzer, Runtime, or
+UI. TRACE is opt-in and must remain disabled unless the developer explicitly
+sets `globalThis.__BIOWEAVE_API_TRACE__` to `true` in the host console.
+
+### 2. Signatures
+
+- `globalThis.__BIOWEAVE_API_TRACE__ -> boolean` — runtime-only opt-in flag.
+- `traceApi(checkpoint, metadata?) -> void` — safe metadata logger with the
+  `[BioWeave API TRACE]` prefix.
+- Body checkpoints may report `status`, `contentType`, `bodyUsed`, method,
+  body length, chunk/data-line counts, and diagnostic codes; they must not
+  report body text.
+
+### 3. Contracts
+
+- With the flag unset or false, TRACE produces no console entry and must not
+  consume a response body.
+- `transport-resolved` records the resolved value's type, constructor,
+  Response-like shape, status, `ok`, available body methods, `bodyUsed`, and
+  top-level keys only.
+- `json-start`/`json-complete`/`json-error`, `text-*`, and `reader-*` identify
+  the existing body method selected by `normalizeResponseLike()`; TRACE must
+  not add a fallback read.
+- `response-json-from-text-*` records SSE `data:` line counts and whether
+  `choice.delta.content`, `message.content`, `choice.text`, or top-level
+  `content` was structurally extracted.
+- Prompt text, user chat text, response text, API keys, Authorization values,
+  secrets, and error messages are never logged.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required TRACE evidence |
+| --- | --- |
+| Transport resolves | `transport-resolved` with status/content type/body shape |
+| `json()` starts and succeeds | `json-start` then `json-complete`, including `bodyUsed` before/after |
+| `json()` throws | `json-error` and `normalize-error` with `invalid-json` when classified |
+| Body reader completes | `reader-start` then `reader-complete` with body length |
+| HTTP 200 body read stalls | `timeout-abort` with `status=200`, `phase=response`, and incomplete body flags |
+| Caller aborts after headers | `caller-abort` with response/body state |
+| Analyzer receives a result | `analyzer-received` with `responseTextLength`, never response text |
+| Parser or Runtime fails | `parser-error` or `runtime-error` with code/diagnostic code only |
+
+### 5. Good / Base / Bad Cases
+
+- Good: enable TRACE for one reproduction, preserve checkpoint order, and
+  inspect only structural metadata and lengths.
+- Base: keep the existing `json()`-first versus text/reader selection and
+  record which branch was selected.
+- Bad: call `response.text()` after `response.json()` merely to improve a log,
+  or serialize a complete payload into the console.
+
+### 6. Tests Required
+
+- Assert TRACE is silent by default.
+- Assert current API `{content}` and OpenAI `choices.message.content` reach
+  Analyzer parsing.
+- Assert standard JSON `Response`, body-only SSE, and delayed HTTP 200 body
+  readers preserve the existing behavior.
+- Assert JSON success/error, SSE extraction counters, and 200-body timeout
+  checkpoints without logging response text.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```js
+console.debug('[BioWeave API TRACE]', await response.text())
+```
+
+#### Correct
+
+```js
+traceApi('json-complete', {
+  status: response.status,
+  contentType,
+  bodyUsedAfter: response.bodyUsed,
+  payloadType,
+  bodyLength,
+})
+```

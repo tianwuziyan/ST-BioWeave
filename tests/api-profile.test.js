@@ -76,6 +76,42 @@ function independentApiOptions(fetchRef, overrides = {}) {
     },
   }
 }
+function responseLikeSse(body, { contentType = 'text/event-stream' } = {}) {
+  let consumed = false
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: name => (name.toLowerCase() === 'content-type' ? contentType : null) },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (consumed) return { done: true, value: undefined }
+            consumed = true
+            return { done: false, value: new TextEncoder().encode(body) }
+          },
+          releaseLock() {},
+        }
+      },
+    },
+  }
+}
+async function captureApiTrace(enabled, run) {
+  const previousFlag = globalThis.__BIOWEAVE_API_TRACE__
+  const previousDebug = globalThis.console?.debug
+  const entries = []
+  globalThis.__BIOWEAVE_API_TRACE__ = enabled
+  if (globalThis.console) {
+    globalThis.console.debug = (...args) => entries.push(args)
+  }
+  try {
+    return { result: await run(), entries }
+  } finally {
+    if (previousFlag === undefined) delete globalThis.__BIOWEAVE_API_TRACE__
+    else globalThis.__BIOWEAVE_API_TRACE__ = previousFlag
+    if (globalThis.console) globalThis.console.debug = previousDebug
+  }
+}
 test('global profile normalization removes API key values and emptyChat stays chat-local', () => {
   const settings = normalizeExtensionSettings({
     api_profiles: {
@@ -552,6 +588,255 @@ test('independent raw response classifies HTTP 200 error, invalid JSON, and upst
       },
     )
   }
+})
+test('successful response shapes remain available to the client normalization boundary', async () => {
+  const currentShapes = [
+    { content: '{"schema_version":"test"}' },
+    { choices: [{ message: { content: '{"schema_version":"test"}' } }] },
+  ]
+  for (const shape of currentShapes) {
+    const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], currentApiContext(shape))
+    assert.deepEqual(result, shape)
+  }
+
+  const jsonResult = await callOpenAICompatible(
+    independentApiProfile(),
+    [{ role: 'user', content: '测试' }],
+    independentApiOptions(async () => new Response(JSON.stringify({ content: '{"schema_version":"test"}' }), { status: 200 })),
+  )
+  assert.deepEqual(jsonResult, { content: '{"schema_version":"test"}' })
+
+  const sseResult = await callOpenAICompatible(
+    independentApiProfile(),
+    [{ role: 'user', content: '测试' }],
+    independentApiOptions(async () => responseLikeSse([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '}' } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n'))),
+  )
+  assert.deepEqual(sseResult, { content: '{}' })
+})
+test('standard native Response SSE remains an explicit json-first diagnostic', async () => {
+  await assert.rejects(
+    callOpenAICompatible(
+      independentApiProfile(),
+      [{ role: 'user', content: '测试' }],
+      independentApiOptions(async () => new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\ndata: [DONE]\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })),
+    ),
+    error => {
+      assert.equal(error.status, 200)
+      assert.equal(error.diagnosticCode, 'invalid-json')
+      assert.equal(error.phase, 'response')
+      return true
+    },
+  )
+})
+test('a delayed HTTP 200 body reader completes before the local timeout', async () => {
+  const result = await callOpenAICompatible(
+    independentApiProfile(),
+    [{ role: 'user', content: '测试' }],
+    independentApiOptions(
+      async () => {
+        let read = false
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader() {
+              return {
+                async read() {
+                  if (read) return { done: true, value: undefined }
+                  await new Promise(resolve => setTimeout(resolve, 25))
+                  read = true
+                  return { done: false, value: new TextEncoder().encode('{"content":"delayed"}') }
+                },
+                releaseLock() {},
+              }
+            },
+          },
+        }
+      },
+      { requestSettings: { timeout: 250 } },
+    ),
+  )
+  assert.deepEqual(result, { content: 'delayed' })
+})
+test('API TRACE is disabled by default and enabled TRACE contains only safe metadata', async () => {
+  const disabled = await captureApiTrace(false, async () =>
+    callOpenAICompatible(
+      independentApiProfile({ model: 'trace-model', secret_ref: 'opaque-secret-id' }),
+      [{ role: 'user', content: 'PRIVATE PROMPT SHOULD NOT BE LOGGED' }],
+      independentApiOptions(async () => responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n')),
+    ),
+  )
+  assert.equal(disabled.entries.length, 0)
+
+  const enabled = await captureApiTrace(true, async () =>
+    callOpenAICompatible(
+      independentApiProfile({ model: 'trace-model', secret_ref: 'opaque-secret-id' }),
+      [{ role: 'user', content: 'PRIVATE PROMPT SHOULD NOT BE LOGGED' }],
+      independentApiOptions(async () => responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n')),
+    ),
+  )
+  const logText = JSON.stringify(enabled.entries)
+  assert.match(logText, /\[BioWeave API TRACE\]/)
+  for (const checkpoint of [
+    'request-start',
+    'transport-resolved',
+    'normalize-start',
+    'reader-start',
+    'reader-complete',
+    'response-json-from-text-start',
+    'response-json-from-text-complete',
+    'normalize-complete',
+  ]) {
+    assert.match(logText, new RegExp(checkpoint))
+  }
+  assert.match(logText, /dataLineCount/)
+  assert.match(logText, /deltaContentExtracted/)
+  assert.doesNotMatch(logText, /PRIVATE PROMPT SHOULD NOT BE LOGGED/)
+  assert.doesNotMatch(logText, /PRIVATE RESPONSE SHOULD NOT BE LOGGED/)
+  assert.doesNotMatch(logText, /opaque-secret-id/)
+
+  const invalidJsonTrace = await captureApiTrace(true, async () =>
+    assert.rejects(
+      callOpenAICompatible(
+        independentApiProfile(),
+        [{ role: 'user', content: '测试' }],
+        independentApiOptions(async () => responseLikeSse('not-json')),
+      ),
+      error => error?.diagnosticCode === 'invalid-json',
+    ),
+  )
+  const invalidJsonLogText = JSON.stringify(invalidJsonTrace.entries)
+  assert.match(invalidJsonLogText, /response-json-from-text-start/)
+  assert.match(invalidJsonLogText, /response-json-from-text-error/)
+  assert.match(invalidJsonLogText, /"diagnosticCode":"invalid-json"/)
+  assert.match(invalidJsonLogText, /"code":"invalid-json"/)
+})
+test('response-json-from-text TRACE starts before empty-body and upstream-timeout checks', async () => {
+  const captured = await captureApiTrace(true, async () => {
+    for (const [body, diagnostic] of [
+      ['', 'invalid-json'],
+      [UPSTREAM_TIMEOUT_BODY, 'upstream-timeout'],
+    ]) {
+      await assert.rejects(
+        callOpenAICompatible(
+          independentApiProfile(),
+          [{ role: 'user', content: '测试' }],
+          independentApiOptions(async () => responseLikeSse(body)),
+        ),
+        error => error?.diagnosticCode === diagnostic,
+      )
+    }
+  })
+  const logText = JSON.stringify(captured.entries)
+  assert.match(logText, /response-json-from-text-start/)
+  assert.match(logText, /response-json-from-text-error/)
+  assert.match(logText, /"emptyBody":true/)
+  assert.match(logText, /"diagnosticCode":"invalid-json"/)
+  assert.match(logText, /"diagnosticCode":"upstream-timeout"/)
+})
+test('API TRACE distinguishes JSON body completion from JSON body failure', async () => {
+  const success = await captureApiTrace(true, async () =>
+    callOpenAICompatible(
+      independentApiProfile(),
+      [{ role: 'user', content: '测试' }],
+      independentApiOptions(
+        async () => new Response(JSON.stringify({ content: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      ),
+    ),
+  )
+  const jsonStart = success.entries.find(entry => entry[1] === 'json-start')
+  const jsonComplete = success.entries.find(entry => entry[1] === 'json-complete')
+  assert.ok(jsonStart)
+  assert.ok(jsonComplete)
+  assert.equal(jsonStart[2].status, 200)
+  assert.equal(jsonStart[2].contentType, 'application/json')
+  assert.equal(jsonStart[2].bodyUsedBefore, false)
+  assert.equal(jsonComplete[2].status, 200)
+  assert.equal(jsonComplete[2].contentType, 'application/json')
+  assert.equal(jsonComplete[2].bodyUsedAfter, true)
+
+  const failure = await captureApiTrace(true, async () =>
+    assert.rejects(
+      callOpenAICompatible(
+        independentApiProfile(),
+        [{ role: 'user', content: '测试' }],
+        independentApiOptions(
+          async () => new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } }),
+        ),
+      ),
+      error => error?.diagnosticCode === 'invalid-json',
+    ),
+  )
+  const jsonError = failure.entries.find(entry => entry[1] === 'json-error')
+  assert.ok(jsonError)
+  assert.equal(jsonError[2].status, 200)
+  assert.equal(jsonError[2].contentType, 'application/json')
+  assert.equal(jsonError[2].bodyUsedAfter, true)
+  assert.equal(jsonError[2].diagnosticCode, 'invalid-json')
+})
+test('SSE TRACE records each supported content extraction branch', async () => {
+  const captured = await captureApiTrace(true, async () =>
+    callOpenAICompatible(
+      independentApiProfile(),
+      [{ role: 'user', content: '测试' }],
+      independentApiOptions(async () =>
+        responseLikeSse([
+          `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
+          `data: ${JSON.stringify({ choices: [{ message: { content: '"schema_version"' } }] })}`,
+          `data: ${JSON.stringify({ choices: [{ text: ':"test"}' }] })}`,
+          'data: [DONE]',
+          '',
+        ].join('\n')),
+      ),
+    ),
+  )
+  const complete = captured.entries.find(entry => entry[1] === 'response-json-from-text-complete')
+  assert.ok(complete)
+  assert.equal(complete[2].status, 200)
+  assert.equal(complete[2].contentType, 'text/event-stream')
+  assert.equal(complete[2].dataLineCount, 4)
+  assert.equal(complete[2].deltaContentExtracted, true)
+  assert.equal(complete[2].messageContentExtracted, true)
+  assert.equal(complete[2].textContentExtracted, true)
+})
+test('API TRACE marks a 200 response timeout during body consumption', async () => {
+  const captured = await captureApiTrace(true, async () =>
+    assert.rejects(
+      callOpenAICompatible(
+        independentApiProfile(),
+        [{ role: 'user', content: '测试' }],
+        independentApiOptions(
+          async () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => 'text/event-stream' },
+            body: {
+              getReader() {
+                return { read: () => new Promise(() => {}), releaseLock() {} }
+              },
+            },
+          }),
+          { requestSettings: { timeout: 250 } },
+        ),
+      ),
+      error => error?.diagnosticCode === 'timeout' && error?.status === 200 && error?.phase === 'response',
+    ),
+  )
+  const timeout = captured.entries.find(entry => entry[1] === 'timeout-abort')
+  assert.ok(timeout)
+  assert.equal(timeout[2].status, 200)
+  assert.equal(timeout[2].phase, 'response')
+  assert.equal(timeout[2].responseReceived, true)
+  assert.equal(timeout[2].bodyReadStarted, true)
+  assert.equal(timeout[2].bodyReadCompleted, false)
 })
 test('independent raw fetch keeps local request, body, and SSE timeouts distinct from network errors', async () => {
   const timeoutScenarios = [

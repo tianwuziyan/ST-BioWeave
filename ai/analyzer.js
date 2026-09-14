@@ -1,4 +1,4 @@
-import { callOpenAICompatible } from './client.js';
+import { callOpenAICompatible, traceApi } from './client.js';
 import * as eventDomain from '../core/events.js';
 import {
   buildEventAnalysisMessages,
@@ -910,6 +910,53 @@ function responseText(raw) {
   return '';
 }
 
+function traceAnalyzerReceived(raw) {
+  if (globalThis?.__BIOWEAVE_API_TRACE__ !== true) return 0
+  let text = '';
+  try {
+    text = responseText(raw);
+  } catch {
+    text = '';
+  }
+  let topLevelKeys = [];
+  let constructor = null;
+  let contentExists = false;
+  let choicesExists = false;
+  try {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      topLevelKeys = Object.keys(raw).slice(0, 64);
+      constructor = raw?.constructor?.name ?? null;
+      contentExists = Object.hasOwn(raw, 'content');
+      choicesExists = Array.isArray(raw.choices);
+    }
+  } catch {
+    topLevelKeys = [];
+  }
+  traceApi('analyzer-received', {
+    rawType: typeof raw,
+    constructor,
+    topLevelKeys,
+    responseTextLength: text.length,
+    contentExists,
+    choicesExists,
+  });
+  return text.length;
+}
+
+function traceParserError(error) {
+  return {
+    code: typeof error?.code === 'string' ? error.code : null,
+    diagnosticCode:
+      typeof error?.diagnosticCode === 'string'
+        ? error.diagnosticCode
+        : typeof error?.diagnostic_code === 'string'
+          ? error.diagnostic_code
+          : typeof error?.error_code === 'string'
+            ? error.error_code
+            : null,
+  };
+}
+
 const EVENT_CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
   'can_produce_ova',
@@ -1668,7 +1715,20 @@ export function createAnalyzer({
       worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
     );
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input));
-    const model = parseWorldModelResponse(raw);
+    const responseTextLength = traceAnalyzerReceived(raw);
+    traceApi('parser-start', {parser: 'world-model', responseTextLength});
+    let model;
+    try {
+      model = parseWorldModelResponse(raw);
+      traceApi('parser-success', {
+        parser: 'world-model',
+        responseTextLength,
+        speciesCount: model.species.length,
+      });
+    } catch (error) {
+      traceApi('parser-error', {parser: 'world-model', responseTextLength, ...traceParserError(error)});
+      throw error;
+    }
     const evidenceGuardedModel = applyWorldModelEvidenceGuard(model, input.analysisInput ?? input);
     const canonicalModel = applyWorldModelFinalConsistencyGuard(evidenceGuardedModel);
     emitWorldModelTrace(raw, model, canonicalModel);
@@ -1700,9 +1760,18 @@ export function createAnalyzer({
     } catch (error) {
       throw annotateAnalysisError(error, 'api_request');
     }
+    const responseTextLength = traceAnalyzerReceived(raw);
+    traceApi('parser-start', {parser: 'event', responseTextLength});
     try {
-      return parseEventAnalysisResponse(raw);
+      const parsed = parseEventAnalysisResponse(raw);
+      traceApi('parser-success', {
+        parser: 'event',
+        responseTextLength,
+        eventCount: parsed.events.length,
+      });
+      return parsed;
     } catch (error) {
+      traceApi('parser-error', {parser: 'event', responseTextLength, ...traceParserError(error)});
       throw annotateAnalysisError(error, error?.analysis_stage ?? 'schema_validation');
     }
   }
