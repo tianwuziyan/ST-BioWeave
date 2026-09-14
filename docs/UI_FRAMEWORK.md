@@ -155,7 +155,7 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
 
 ~~~html
 <section id="bioweave-panel" class="bioweave-panel">
-  <header class="bioweave-app-header">...</header>
+  <header class="bioweave-app-header" data-bioweave-drag-handle>...</header>
   <nav class="bioweave-routebar" aria-label="BioWeave 页面导航">
     <div class="bioweave-route-items">
       <button class="bioweave-route-item active" data-route="world">世界</button>
@@ -164,6 +164,8 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
   <main class="bioweave-main"></main>
 </section>
 ~~~
+
+顶端 bioweave-app-header 同时是面板的拖动手柄。生产 UI 使用 Pointer Events 支持鼠标、触控笔和触摸按住移动，位移限制在 overlay 范围内，仅在当前面板会话中生效，不写入 Runtime 或存储。主题、关闭等按钮以及其他表单/链接控件不参与拖动，必须保留各自的点击语义；手柄使用 touch-action: none，避免移动端按住时被页面滚动接管。
 
 Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小 72px 宽度并完整平铺，字号 14px；Mobile 切换为四列网格，八个两字路由分两行显示，字号 13px。路由栏本身不能再套用“父级八列 Grid + 子级八列 Grid”的双重网格写法，否则按钮会被压在同一列发生叠加。
 

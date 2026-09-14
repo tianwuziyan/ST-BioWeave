@@ -6,6 +6,7 @@ import {
   captureScrollPositions,
   createOverlayLifecycle,
   createApp,
+  createPanelDragController,
   handleAnalysisParentToggleClick,
   isConnectedToDocument,
   notify,
@@ -36,6 +37,78 @@ test('BioWeave overlay stays between ordinary host UI and host modal layers', ()
   assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/);
 });
 
+test('top app header drag moves only the panel and ignores header controls', () => {
+  const createPointerTarget = rect => {
+    const listeners = new Map();
+    return {
+      style: {left: '', top: ''},
+      dataset: {},
+      parentElement: null,
+      addEventListener(type, listener) {
+        const registered = listeners.get(type) ?? new Set();
+        registered.add(listener);
+        listeners.set(type, registered);
+      },
+      removeEventListener(type, listener) {
+        listeners.get(type)?.delete(listener);
+      },
+      dispatch(type, event = {}) {
+        const dispatched = {
+          ...event,
+          type,
+          target: event.target ?? this,
+          defaultPrevented: false,
+          preventDefault() {
+            this.defaultPrevented = true;
+          },
+        };
+        for (const listener of listeners.get(type) ?? []) listener(dispatched);
+        return dispatched;
+      },
+      closest() {
+        return null;
+      },
+      setPointerCapture(pointerId) {
+        this.capturedPointerId = pointerId;
+      },
+      releasePointerCapture(pointerId) {
+        if (this.capturedPointerId === pointerId) delete this.capturedPointerId;
+      },
+      getBoundingClientRect() {
+        return rect;
+      },
+    };
+  };
+
+  const documentRef = createPointerTarget(null);
+  const overlay = createPointerTarget({left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600});
+  const root = createPointerTarget({left: 200, top: 150, width: 400, height: 300, right: 600, bottom: 450});
+  const handle = createPointerTarget(null);
+  root.parentElement = overlay;
+
+  const controller = createPanelDragController({root, handle, documentRef});
+  const down = handle.dispatch('pointerdown', {clientX: 100, clientY: 100, pointerId: 7, button: 0});
+  assert.equal(down.defaultPrevented, true);
+  assert.equal(handle.capturedPointerId, 7);
+
+  documentRef.dispatch('pointermove', {clientX: 140, clientY: 130, pointerId: 7});
+  assert.equal(root.style.left, '40px');
+  assert.equal(root.style.top, '30px');
+  assert.equal(root.dataset.dragging, 'true');
+
+  documentRef.dispatch('pointerup', {pointerId: 7});
+  assert.equal(root.dataset.dragging, undefined);
+  assert.equal(handle.capturedPointerId, undefined);
+
+  const blockedTarget = {closest: () => ({})};
+  handle.dispatch('pointerdown', {clientX: 100, clientY: 100, pointerId: 8, button: 0, target: blockedTarget});
+  documentRef.dispatch('pointermove', {clientX: 180, clientY: 180, pointerId: 8});
+  assert.equal(root.style.left, '40px');
+  assert.equal(root.style.top, '30px');
+
+  controller.destroy();
+});
+
 test('production panel owns paragraph rhythm before page-specific spacing', () => {
   assert.match(
     STYLE_SOURCE,
@@ -47,6 +120,8 @@ test('production panel owns paragraph rhythm before page-specific spacing', () =
 
 test('production shell uses the unified top routebar on every viewport', () => {
   assert.match(APP_SOURCE, /class="bioweave-app-header"/);
+  assert.match(APP_SOURCE, /class="bioweave-app-header" data-bioweave-drag-handle/);
+  assert.match(APP_SOURCE, /createPanelDragController/);
   assert.match(APP_SOURCE, /class="bioweave-routebar"/);
   assert.match(APP_SOURCE, /class="bioweave-route-items"/);
   assert.match(APP_SOURCE, /data-bioweave-action="cycle-theme"/);
@@ -60,6 +135,8 @@ test('production shell uses the unified top routebar on every viewport', () => {
   assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-route-item\s*\{[\s\S]*?font-size:\s*13px !important;/);
   assert.match(FINAL_STYLE_SOURCE, /@media \(max-width: 767px\)[\s\S]*?\.bioweave-routebar\s*\{[\s\S]*?display:\s*block !important;[\s\S]*?overflow:\s*hidden !important;[\s\S]*?\.bioweave-route-items\s*\{[\s\S]*?repeat\(4, minmax\(0, 1fr\)\) !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-text-button\s*\{[\s\S]*?color:\s*var\(--bioweave-accent\) !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel \.bioweave-app-header\[data-bioweave-drag-handle\][\s\S]*?touch-action:\s*none !important;/);
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\s*\{[\s\S]*?position:\s*relative !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel input\.bioweave-checkbox,[\s\S]*?appearance:\s*auto !important;[\s\S]*?-webkit-appearance:\s*checkbox !important;/);
   assert.match(FINAL_STYLE_SOURCE, /input\.bioweave-checkbox:indeterminate[\s\S]*?accent-color:\s*var\(--bioweave-warn\) !important;/);
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-settings-page > \.bioweave-settings-disclosure\s*\{[\s\S]*?margin-inline:\s*0 !important;/);

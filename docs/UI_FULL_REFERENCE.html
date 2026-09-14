@@ -160,7 +160,11 @@
         padding: 0 16px;
         border-bottom: 1px solid var(--line);
         background: var(--header);
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
       }
+      .panel[data-dragging='true'] .app-header { cursor: grabbing; }
       .brand {
         font-size: 16px;
         font-weight: 700;
@@ -2547,7 +2551,7 @@
   <body data-device="desktop" data-theme="dark">
     <div class="host">
       <section class="panel" aria-label="BioWeave UI prototype">
-        <header class="app-header">
+        <header class="app-header" data-bioweave-drag-handle>
           <strong class="brand">BioWeave</strong>
           <span class="scope">New World</span>
           <span class="header-spacer"></span>

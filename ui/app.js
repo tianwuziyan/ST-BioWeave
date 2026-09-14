@@ -117,6 +117,128 @@ export function restoreScrollPositions(root, positions) {
   }
 }
 
+const PANEL_DRAG_EXCLUDED_SELECTOR = 'button, a, input, select, textarea, [data-bioweave-no-drag]';
+
+function panelDragRect(node) {
+  const rect = node?.getBoundingClientRect?.();
+  if (!rect) return null;
+  const left = Number(rect.left);
+  const top = Number(rect.top);
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (![left, top, width, height].every(Number.isFinite)) return null;
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: Number.isFinite(Number(rect.right)) ? Number(rect.right) : left + width,
+    bottom: Number.isFinite(Number(rect.bottom)) ? Number(rect.bottom) : top + height,
+  };
+}
+
+export function createPanelDragController({
+  root,
+  handle,
+  documentRef = globalThis.document,
+} = {}) {
+  if (!root || !handle) return {destroy() {}};
+
+  let drag = null;
+
+  const removeDocumentListeners = () => {
+    documentRef?.removeEventListener?.('pointermove', handlePointerMove);
+    documentRef?.removeEventListener?.('pointerup', handlePointerEnd);
+    documentRef?.removeEventListener?.('pointercancel', handlePointerEnd);
+  };
+
+  const finishDrag = () => {
+    if (!drag) return;
+    const pointerId = drag.pointerId;
+    removeDocumentListeners();
+    if (pointerId !== null) handle.releasePointerCapture?.(pointerId);
+    drag = null;
+    if (root.dataset) delete root.dataset.dragging;
+  };
+
+  function handlePointerMove(event) {
+    if (!drag) return;
+    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
+    const clientX = Number(event.clientX);
+    const clientY = Number(event.clientY);
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+
+    let nextLeft = drag.startLeft + clientX - drag.startX;
+    let nextTop = drag.startTop + clientY - drag.startY;
+    if (drag.hostRect && drag.panelBase) {
+      const minLeft = drag.hostRect.left - drag.panelBase.left;
+      const maxLeft = drag.hostRect.right - drag.panelBase.left - drag.panelRect.width;
+      const minTop = drag.hostRect.top - drag.panelBase.top;
+      const maxTop = drag.hostRect.bottom - drag.panelBase.top - drag.panelRect.height;
+      nextLeft = Math.min(Math.max(nextLeft, minLeft), Math.max(minLeft, maxLeft));
+      nextTop = Math.min(Math.max(nextTop, minTop), Math.max(minTop, maxTop));
+    }
+    root.style.left = Math.round(nextLeft) + 'px';
+    root.style.top = Math.round(nextTop) + 'px';
+  }
+
+  function handlePointerEnd(event) {
+    if (!drag) return;
+    if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
+    finishDrag();
+  }
+
+  function handlePointerDown(event) {
+    if (drag || event?.isPrimary === false) return;
+    if (event?.button !== undefined && event.button !== 0) return;
+    const target = event.target;
+    const interactiveTarget = target?.closest?.(PANEL_DRAG_EXCLUDED_SELECTOR)
+      ?? (target?.matches?.(PANEL_DRAG_EXCLUDED_SELECTOR) ? target : null);
+    if (interactiveTarget) return;
+
+    const startX = Number(event.clientX);
+    const startY = Number(event.clientY);
+    if (!Number.isFinite(startX) || !Number.isFinite(startY)) return;
+
+    const startLeftValue = Number.parseFloat(root.style?.left);
+    const startTopValue = Number.parseFloat(root.style?.top);
+    const startLeft = Number.isFinite(startLeftValue) ? startLeftValue : 0;
+    const startTop = Number.isFinite(startTopValue) ? startTopValue : 0;
+    const panelRect = panelDragRect(root);
+    const hostRect = panelDragRect(root.parentElement)
+      ?? panelDragRect(documentRef?.documentElement);
+    const panelBase = panelRect
+      ? {left: panelRect.left - startLeft, top: panelRect.top - startTop}
+      : null;
+
+    drag = {
+      pointerId: event.pointerId ?? null,
+      startX,
+      startY,
+      startLeft,
+      startTop,
+      panelRect,
+      panelBase,
+      hostRect,
+    };
+    root.dataset.dragging = 'true';
+    if (drag.pointerId !== null) handle.setPointerCapture?.(drag.pointerId);
+    documentRef?.addEventListener?.('pointermove', handlePointerMove);
+    documentRef?.addEventListener?.('pointerup', handlePointerEnd);
+    documentRef?.addEventListener?.('pointercancel', handlePointerEnd);
+    event.preventDefault?.();
+  }
+
+  handle.addEventListener?.('pointerdown', handlePointerDown);
+
+  return {
+    destroy() {
+      handle.removeEventListener?.('pointerdown', handlePointerDown);
+      finishDrag();
+    },
+  };
+}
+
 function analysisCharacterGroupKey(sourceId) {
   return String(sourceId ?? '').trim() + ':opening';
 }
@@ -402,6 +524,7 @@ export function createApp(runtime, options = {}) {
   const apiClient = options.apiClient ?? defaultApiClient;
   let root = null;
   let overlay = null;
+  let panelDragController = null;
   let route = 'overview';
   let focusedCharacterId = null;
   let unsubscribeRuntime = null;
@@ -3215,6 +3338,8 @@ export function createApp(runtime, options = {}) {
 
   function teardownRootListeners(node) {
     if (!node) return;
+    panelDragController?.destroy?.();
+    panelDragController = null;
     node.removeEventListener?.('click', handleClick);
     node.removeEventListener?.('input', handleSettingsInput);
     node.removeEventListener?.('change', handleChange);
@@ -3263,7 +3388,7 @@ export function createApp(runtime, options = {}) {
     surface.hidden = !wasOpen;
     surface.setAttribute('aria-hidden', String(!wasOpen));
     root.innerHTML = [
-      '<header class="bioweave-app-header">',
+      '<header class="bioweave-app-header" data-bioweave-drag-handle>',
       '<strong class="bioweave-brand">BioWeave</strong>',
       '<span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>',
       '<span class="bioweave-spacer"></span>',
@@ -3274,6 +3399,11 @@ export function createApp(runtime, options = {}) {
       '<main class="bioweave-main"></main>',
     ].join('');
 
+    panelDragController = createPanelDragController({
+      root,
+      handle: root.querySelector('[data-bioweave-drag-handle]'),
+      documentRef,
+    });
     const routebar = root.querySelector('.bioweave-route-items');
     desktopRoutes.forEach(id => routebar.append(createNavigationButton(documentRef, id)));
 

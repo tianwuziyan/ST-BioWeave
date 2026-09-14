@@ -102,7 +102,8 @@
     /* Shared vertical rhythm: component selectors below add only explicit reference spacing. */
     h1, h2, h3, h4, p { margin: 0; }
     .bw-shell { width: min(960px, 94vw); min-height: min(760px, 90vh); margin: 5vh auto; display: grid; grid-template-rows: 50px 42px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--bw-panel-border); border-radius: 11px; background: var(--bw-panel); box-shadow: 0 24px 60px rgb(0 0 0 / 34%); }
-    .bw-header { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 0 13px; border-bottom: 1px solid var(--bw-line); background: var(--bw-header); }
+    .bw-header { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 0 13px; border-bottom: 1px solid var(--bw-line); background: var(--bw-header); cursor: grab; touch-action: none; user-select: none; }
+    .bw-shell[data-dragging="true"] .bw-header { cursor: grabbing; }
     .bw-brand { flex: 0 0 auto; font-size: 16px; font-weight: 700; }
     .bw-scope { min-width: 0; overflow: hidden; color: var(--bw-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
     .bw-header-spacer { flex: 1; }
@@ -392,7 +393,7 @@
 <body>
   <!-- This is a structural example only. It has no production data or API logic. -->
   <div class="bw-shell" data-ui-framework="bioweave-v1" data-theme="dark">
-    <header class="bw-header">
+    <header class="bw-header" data-bioweave-drag-handle>
       <strong class="bw-brand">BioWeave</strong>
       <span class="bw-scope">当前 Chat</span>
       <span class="bw-header-spacer"></span>

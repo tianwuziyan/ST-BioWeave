@@ -101,6 +101,9 @@
   padding: 0 16px;
   border-bottom: 1px solid var(--bioweave-border);
   background: var(--bioweave-surface);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .bioweave-brand {
@@ -5180,6 +5183,20 @@
 
 /* Last cascade layer: production selectors must win over host and legacy
  * component rules while keeping the concept page's values unchanged. */
+.bioweave-panel {
+  position: relative !important;
+}
+
+.bioweave-panel .bioweave-app-header[data-bioweave-drag-handle] {
+  cursor: grab !important;
+  touch-action: none !important;
+  user-select: none !important;
+}
+
+.bioweave-panel[data-dragging="true"] .bioweave-app-header[data-bioweave-drag-handle] {
+  cursor: grabbing !important;
+}
+
 .bioweave-main .bioweave-text-button {
   min-height: 0 !important;
   border: 0 !important;

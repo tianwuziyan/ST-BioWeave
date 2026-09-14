@@ -237,7 +237,17 @@
       "routebar": "bioweave-routebar",
       "content": "bioweave-main",
       "panelWidth": "960px",
-      "panelHeight": "760px"
+      "panelHeight": "760px",
+      "dragHandle": {
+        "hook": "data-bioweave-drag-handle",
+        "class": "bioweave-app-header",
+        "interaction": "pointer drag",
+        "events": ["pointerdown", "pointermove", "pointerup", "pointercancel"],
+        "excludedTargets": "buttons, links, and form controls",
+        "bounds": "overlay",
+        "scope": "session-only",
+        "touchAction": "none"
+      }
     },
     "routeItem": {
       "root": "bioweave-route-item",
