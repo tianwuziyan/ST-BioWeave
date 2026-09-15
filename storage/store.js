@@ -17,14 +17,14 @@ import {
   normalizeTrackingSubjects,
   isStableApiProfileId,
   sanitizeSecrets,
-} from './schema.js';
+} from "./schema.js";
 import {
   floorVersionFromData as floorVersionFromStoredData,
   getActiveFloorEvents as filterActiveFloorEvents,
-} from '../runtime/floor.js';
+} from "../runtime/floor.js";
 
 function staleChatError() {
-  return new Error('STALE_CHAT');
+  return new Error("STALE_CHAT");
 }
 
 function currentChatId(adapter, boundary) {
@@ -44,16 +44,16 @@ function assertToken(adapter, boundary, token) {
 }
 
 const CHAT_PROFILE_CONFIGURATION_FIELDS = new Set([
-  'api_profiles',
-  'api_model_caches',
-  'profile_assignments',
-  'assignments',
-  'api_request_settings',
+  "api_profiles",
+  "api_model_caches",
+  "profile_assignments",
+  "assignments",
+  "api_request_settings",
 ]);
 
 function stripChatProfileConfiguration(value) {
   if (Array.isArray(value)) return value.map(stripChatProfileConfiguration);
-  if (!value || typeof value !== 'object') return value;
+  if (!value || typeof value !== "object") return value;
   const safe = {};
   for (const [key, item] of Object.entries(value)) {
     if (CHAT_PROFILE_CONFIGURATION_FIELDS.has(key)) continue;
@@ -72,27 +72,27 @@ function hasOwn(value, key) {
 
 function profileIdFrom(value) {
   const id =
-    typeof value === 'string' ? value : (value?.profile_id ?? value?.id);
-  return typeof id === 'string' ? id.trim() : '';
+    typeof value === "string" ? value : (value?.profile_id ?? value?.id);
+  return typeof id === "string" ? id.trim() : "";
 }
 
 function profileInputWithLegacyProvider(raw, existing) {
-  const source = raw && typeof raw === 'object' ? raw : {};
+  const source = raw && typeof raw === "object" ? raw : {};
   const suppliedProvider =
-    typeof source.provider === 'string' ? source.provider.trim() : '';
+    typeof source.provider === "string" ? source.provider.trim() : "";
   const existingProvider =
-    typeof existing?.provider === 'string' ? existing.provider.trim() : '';
+    typeof existing?.provider === "string" ? existing.provider.trim() : "";
   const provider = suppliedProvider || existingProvider;
   return provider ? { ...source, provider } : source;
 }
 
 function readGlobalSettings(adapter) {
-  if (typeof adapter.getGlobalSettings === 'function')
+  if (typeof adapter.getGlobalSettings === "function")
     return adapter.getGlobalSettings() ?? {};
   const extensionSettings = adapter.getExtensionSettings?.();
   if (
     extensionSettings?.bioweave &&
-    typeof extensionSettings.bioweave === 'object'
+    typeof extensionSettings.bioweave === "object"
   ) {
     return extensionSettings.bioweave;
   }
@@ -100,15 +100,15 @@ function readGlobalSettings(adapter) {
 }
 
 async function saveGlobalSettings(adapter, value) {
-  if (typeof adapter.saveGlobalSettings === 'function') {
+  if (typeof adapter.saveGlobalSettings === "function") {
     await adapter.saveGlobalSettings(value);
     return;
   }
-  if (typeof adapter.saveExtensionSettings === 'function') {
+  if (typeof adapter.saveExtensionSettings === "function") {
     await adapter.saveExtensionSettings(value);
     return;
   }
-  throw new Error('ST_EXTENSION_SETTINGS_UNAVAILABLE');
+  throw new Error("ST_EXTENSION_SETTINGS_UNAVAILABLE");
 }
 
 function requestHeaders(getRequestHeaders) {
@@ -119,11 +119,11 @@ function requestHeaders(getRequestHeaders) {
     headers = {};
   }
   const contentType = Object.keys(headers).find(
-    (key) => key.toLowerCase() === 'content-type',
+    (key) => key.toLowerCase() === "content-type",
   );
   return contentType
     ? headers
-    : { ...headers, 'Content-Type': 'application/json' };
+    : { ...headers, "Content-Type": "application/json" };
 }
 
 function statusError(prefix, response) {
@@ -138,56 +138,56 @@ export function createSecretStore({
   fetchRef = globalThis.fetch,
   getRequestHeaders,
   // 与 SillyTavern SECRET_KEYS.CUSTOM 保持一致；后端 custom source 会用同一 key 解析 secret_id。
-  secretKey = 'api_key_custom',
-  endpoint = '/api/secrets',
+  secretKey = "api_key_custom",
+  endpoint = "/api/secrets",
 } = {}) {
-  async function write(value, label = 'BioWeave API Profile') {
-    const secretValue = typeof value === 'string' ? value : '';
+  async function write(value, label = "BioWeave API Profile") {
+    const secretValue = typeof value === "string" ? value : "";
     if (!secretValue) return null;
-    if (typeof fetchRef !== 'function')
-      throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+    if (typeof fetchRef !== "function")
+      throw new Error("ST_SECRET_STORAGE_UNAVAILABLE");
     let response;
     try {
       response = await fetchRef(`${endpoint}/write`, {
-        method: 'POST',
+        method: "POST",
         headers: requestHeaders(getRequestHeaders),
         body: JSON.stringify({
           key: secretKey,
           value: secretValue,
-          label: String(label || 'BioWeave API Profile').slice(0, 120),
+          label: String(label || "BioWeave API Profile").slice(0, 120),
         }),
       });
     } catch {
-      throw new Error('ST_SECRET_WRITE_FAILED');
+      throw new Error("ST_SECRET_WRITE_FAILED");
     }
-    if (!response?.ok) throw statusError('ST_SECRET_WRITE_FAILED', response);
+    if (!response?.ok) throw statusError("ST_SECRET_WRITE_FAILED", response);
     let result;
     try {
       result = await response.json();
     } catch {
-      throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
+      throw new Error("ST_SECRET_WRITE_INVALID_RESPONSE");
     }
-    const id = typeof result?.id === 'string' ? result.id.trim() : '';
-    if (!id) throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
+    const id = typeof result?.id === "string" ? result.id.trim() : "";
+    if (!id) throw new Error("ST_SECRET_WRITE_INVALID_RESPONSE");
     return id;
   }
 
   async function remove(secretRef) {
-    const id = typeof secretRef === 'string' ? secretRef.trim() : '';
+    const id = typeof secretRef === "string" ? secretRef.trim() : "";
     if (!id) return false;
-    if (typeof fetchRef !== 'function')
-      throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+    if (typeof fetchRef !== "function")
+      throw new Error("ST_SECRET_STORAGE_UNAVAILABLE");
     let response;
     try {
       response = await fetchRef(`${endpoint}/delete`, {
-        method: 'POST',
+        method: "POST",
         headers: requestHeaders(getRequestHeaders),
         body: JSON.stringify({ key: secretKey, id }),
       });
     } catch {
-      throw new Error('ST_SECRET_DELETE_FAILED');
+      throw new Error("ST_SECRET_DELETE_FAILED");
     }
-    if (!response?.ok) throw statusError('ST_SECRET_DELETE_FAILED', response);
+    if (!response?.ok) throw statusError("ST_SECRET_DELETE_FAILED", response);
     return true;
   }
 
@@ -199,7 +199,7 @@ export function createSecretStore({
     delete: remove,
     deleteSecret: remove,
     get() {
-      throw new Error('ST_SECRET_READ_DISABLED');
+      throw new Error("ST_SECRET_READ_DISABLED");
     },
   };
 }
@@ -216,18 +216,18 @@ function secretRemover(secretStore) {
 
 async function removeSecretOrThrow(secretStore, secretRef) {
   const remover = secretRemover(secretStore);
-  if (typeof remover !== 'function') {
-    throw new Error('ST_SECRET_DELETE_FAILED');
+  if (typeof remover !== "function") {
+    throw new Error("ST_SECRET_DELETE_FAILED");
   }
   try {
     await remover.call(secretStore, secretRef);
   } catch (error) {
-    if (error?.code === 'ST_SECRET_DELETE_FAILED') throw error;
-    throw new Error('ST_SECRET_DELETE_FAILED');
+    if (error?.code === "ST_SECRET_DELETE_FAILED") throw error;
+    throw new Error("ST_SECRET_DELETE_FAILED");
   }
 }
 
-function secretRefUsed(settings, secretRef, exceptProfileId = '') {
+function secretRefUsed(settings, secretRef, exceptProfileId = "") {
   if (!secretRef) return false;
   return Object.values(settings.api_profiles ?? {}).some(
     (profile) =>
@@ -237,8 +237,8 @@ function secretRefUsed(settings, secretRef, exceptProfileId = '') {
 }
 
 function keyInput(raw) {
-  if (hasOwn(raw, 'api_key')) return raw.api_key;
-  if (hasOwn(raw, 'apiKey')) return raw.apiKey;
+  if (hasOwn(raw, "api_key")) return raw.api_key;
+  if (hasOwn(raw, "apiKey")) return raw.apiKey;
   return undefined;
 }
 
@@ -247,8 +247,8 @@ function clearSecretRequested(raw) {
 }
 
 export function createApiProfileStore(adapter, { secretStore = null } = {}) {
-  if (!adapter || typeof adapter !== 'object')
-    throw new TypeError('PROFILE_ADAPTER_REQUIRED');
+  if (!adapter || typeof adapter !== "object")
+    throw new TypeError("PROFILE_ADAPTER_REQUIRED");
   const secrets =
     secretStore ??
     createSecretStore({
@@ -291,14 +291,14 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
     const id = profileIdFrom(profileId);
     const settings = read();
     if (!isStableApiProfileId(id) || !settings.api_profiles[id])
-      throw new Error('API_PROFILE_NOT_FOUND');
+      throw new Error("API_PROFILE_NOT_FOUND");
     const source =
-      rawCache && typeof rawCache === 'object' && !Array.isArray(rawCache)
+      rawCache && typeof rawCache === "object" && !Array.isArray(rawCache)
         ? rawCache
         : {};
     const fallbackRefreshedAt = Object.prototype.hasOwnProperty.call(
       source,
-      'refreshed_at',
+      "refreshed_at",
     )
       ? 0
       : Date.now();
@@ -325,22 +325,22 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
       profileId: requestedId || null,
     });
     if (!profile.api_url || !profile.model)
-      throw new Error('API_PROFILE_INVALID');
+      throw new Error("API_PROFILE_INVALID");
     const oldSecretRef = existing?.secret_ref ?? null;
     const suppliedKey = keyInput(raw);
     const hasNewKey =
-      typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
+      typeof suppliedKey === "string" && suppliedKey.trim().length > 0;
     const shouldClear = clearSecretRequested(raw);
     let nextSecretRef = oldSecretRef;
     let newlyWrittenRef = null;
 
     if (hasNewKey) {
       const writeSecret = secretWriter(secrets);
-      if (typeof writeSecret !== 'function')
-        throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+      if (typeof writeSecret !== "function")
+        throw new Error("ST_SECRET_STORAGE_UNAVAILABLE");
       // 不把用户可编辑的 Profile 名称传给 Secret Store，避免误把 Key 写进 label。
       newlyWrittenRef = await writeSecret.call(secrets, suppliedKey.trim());
-      if (!newlyWrittenRef) throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
+      if (!newlyWrittenRef) throw new Error("ST_SECRET_WRITE_INVALID_RESPONSE");
       nextSecretRef = newlyWrittenRef;
     } else if (shouldClear) {
       nextSecretRef = null;
@@ -395,8 +395,8 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
   }
 
   async function withTestProfile(raw = {}, callback, options = {}) {
-    if (typeof callback !== 'function')
-      throw new TypeError('PROFILE_TEST_CALLBACK_REQUIRED');
+    if (typeof callback !== "function")
+      throw new TypeError("PROFILE_TEST_CALLBACK_REQUIRED");
     const settings = read();
     const requestedId = profileIdFrom(raw);
     const existing = requestedId ? settings.api_profiles[requestedId] : null;
@@ -407,21 +407,21 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
     });
     const requireModel = options?.requireModel !== false;
     if (!profile.api_url || (requireModel && !profile.model))
-      throw new Error('API_PROFILE_INVALID');
+      throw new Error("API_PROFILE_INVALID");
 
     const suppliedKey = keyInput(raw);
     const hasNewKey =
-      typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
+      typeof suppliedKey === "string" && suppliedKey.trim().length > 0;
     const shouldClear = clearSecretRequested(raw);
     let temporarySecretRef = null;
 
     if (hasNewKey) {
       const writeSecret = secretWriter(secrets);
-      if (typeof writeSecret !== 'function')
-        throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+      if (typeof writeSecret !== "function")
+        throw new Error("ST_SECRET_STORAGE_UNAVAILABLE");
       temporarySecretRef = await writeSecret.call(secrets, suppliedKey.trim());
       if (!temporarySecretRef)
-        throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
+        throw new Error("ST_SECRET_WRITE_INVALID_RESPONSE");
       profile.secret_ref = temporarySecretRef;
     } else if (shouldClear) {
       profile.secret_ref = null;
@@ -467,23 +467,23 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
 
   async function setAssignment(slot, value) {
     if (!API_ASSIGNMENTS.includes(slot))
-      throw new Error('API_ASSIGNMENT_INVALID');
+      throw new Error("API_ASSIGNMENT_INVALID");
     const settings = read();
-    let nextValue = typeof value === 'string' ? value.trim() : '';
+    let nextValue = typeof value === "string" ? value.trim() : "";
     if (!nextValue) nextValue = null;
     else if (
       nextValue.toLowerCase() === FOLLOW_DEFAULT_API ||
-      nextValue.toLowerCase() === 'follow_default' ||
-      nextValue.toLowerCase() === 'default_api'
+      nextValue.toLowerCase() === "follow_default" ||
+      nextValue.toLowerCase() === "default_api"
     ) {
       nextValue = FOLLOW_DEFAULT_API;
     } else if (
       nextValue.toLowerCase() === SILLYTAVERN_CURRENT_API ||
-      nextValue.toLowerCase() === 'current'
+      nextValue.toLowerCase() === "current"
     ) {
       nextValue = SILLYTAVERN_CURRENT_API;
     } else if (!settings.api_profiles[nextValue]) {
-      throw new Error('API_PROFILE_NOT_FOUND');
+      throw new Error("API_PROFILE_NOT_FOUND");
     }
     const nextSettings = {
       ...settings,
@@ -504,7 +504,7 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
     const settings = read();
     const nextValue = profileIdFrom(profileId) || null;
     if (nextValue && !settings.api_profiles[nextValue])
-      throw new Error('API_PROFILE_NOT_FOUND');
+      throw new Error("API_PROFILE_NOT_FOUND");
     await write({ ...settings, default_profile_id: nextValue });
     return nextValue;
   }
@@ -515,14 +515,14 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
 
   async function saveAnalysisPrompt(raw = {}) {
     const settings = read();
-    const source = raw && typeof raw === 'object' ? raw : {};
+    const source = raw && typeof raw === "object" ? raw : {};
     const merged = { ...settings.analysis_prompt };
     for (const [key, value] of Object.entries(source)) {
       if (value !== undefined) merged[key] = value;
     }
     if (
       source.labels &&
-      typeof source.labels === 'object' &&
+      typeof source.labels === "object" &&
       !Array.isArray(source.labels)
     ) {
       merged.labels = { ...settings.analysis_prompt.labels, ...source.labels };
@@ -588,22 +588,43 @@ function hasMatchingFloorScope(data, chatId) {
 export function hasSwipeStructure(message) {
   return (
     Array.isArray(message?.swipes) ||
-    Boolean(message?.swipe_info && typeof message.swipe_info === 'object')
+    Boolean(message?.swipe_info && typeof message.swipe_info === "object")
   );
 }
 
 function normalizedSwipeId(swipeId) {
   if (Number.isInteger(swipeId) && swipeId >= 0) return swipeId;
-  if (typeof swipeId === 'string' && /^\d+$/u.test(swipeId.trim()))
+  if (typeof swipeId === "string" && /^\d+$/u.test(swipeId.trim()))
     return Number(swipeId);
   return null;
 }
 
+function hasIndexedValue(container, swipeId) {
+  return Boolean(
+    container &&
+    typeof container === "object" &&
+    Object.prototype.hasOwnProperty.call(container, swipeId) &&
+    container[swipeId] !== undefined &&
+    container[swipeId] !== null,
+  );
+}
+
+export function hasSwipeSlot(message, swipeId) {
+  if (!hasSwipeStructure(message)) return true;
+  const targetSwipeId = normalizedSwipeId(swipeId);
+  if (targetSwipeId === null) return false;
+  if (message?.swipes && typeof message.swipes === "object")
+    return hasIndexedValue(message.swipes, targetSwipeId);
+  return hasIndexedValue(message?.swipe_info, targetSwipeId);
+}
+
 export function activeSwipeId(message, fallback = 0) {
   if (!hasSwipeStructure(message)) return 0;
-  return (
-    normalizedSwipeId(message.swipe_id) ?? normalizedSwipeId(fallback) ?? 0
-  );
+  const targetSwipeId =
+    normalizedSwipeId(message.swipe_id) ?? normalizedSwipeId(fallback);
+  return targetSwipeId !== null && hasSwipeSlot(message, targetSwipeId)
+    ? targetSwipeId
+    : null;
 }
 
 export const getActiveSwipeId = activeSwipeId;
@@ -613,8 +634,8 @@ function validSwipeId(swipeId) {
 }
 
 export function createStore(adapter, boundary = null) {
-  if (!adapter || typeof adapter.getChatId !== 'function') {
-    throw new TypeError('STORAGE_ADAPTER_REQUIRED');
+  if (!adapter || typeof adapter.getChatId !== "function") {
+    throw new TypeError("STORAGE_ADAPTER_REQUIRED");
   }
 
   function getChat(chatId) {
@@ -634,9 +655,9 @@ export function createStore(adapter, boundary = null) {
 
   async function saveChat(chatId, data) {
     if (data?.chat_scope?.chat_id !== chatId)
-      throw new Error('CHAT_SCOPE_MISMATCH');
-    if (typeof adapter.saveChatMetadata !== 'function')
-      throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
+      throw new Error("CHAT_SCOPE_MISMATCH");
+    if (typeof adapter.saveChatMetadata !== "function")
+      throw new Error("ST_METADATA_STORAGE_UNAVAILABLE");
     const token = captureToken(adapter, boundary);
     if (token.chatId !== chatId) throw staleChatError();
     const safeData = cloneForStorage({
@@ -647,7 +668,7 @@ export function createStore(adapter, boundary = null) {
         data?.tracking_candidates,
       ),
     });
-    await adapter.saveChatMetadata('bioweave', safeData, token.chatId);
+    await adapter.saveChatMetadata("bioweave", safeData, token.chatId);
     assertToken(adapter, boundary, token);
   }
 
@@ -655,6 +676,8 @@ export function createStore(adapter, boundary = null) {
     const message = adapter.getMessage?.(messageId);
     if (!message) return null;
     const targetSwipeId = validSwipeId(swipeId);
+    if (hasSwipeStructure(message) && !hasSwipeSlot(message, targetSwipeId))
+      return emptyFloor();
     // The message/per-Swipe slot owns Floor facts; active reads select one slot. See .trellis/spec/domain/floor-state.md.
     const stored = hasSwipeStructure(message)
       ? message.swipe_info?.[targetSwipeId]?.extra?.bioweave
@@ -702,8 +725,8 @@ export function createStore(adapter, boundary = null) {
     const nextChat = { ...chat, tracking_subjects: trackingSubjects };
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'tracking_candidates')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "tracking_candidates")
     ) {
       nextChat.tracking_candidates = cloneValue(
         normalizeTrackingCandidates(registry.tracking_candidates),
@@ -711,15 +734,15 @@ export function createStore(adapter, boundary = null) {
     }
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'character_profiles')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "character_profiles")
     ) {
       nextChat.character_profiles = cloneValue(registry.character_profiles);
     }
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'character_registry')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "character_registry")
     ) {
       nextChat.character_registry = normalizeCharacterRegistry(
         registry.character_registry,
@@ -737,8 +760,8 @@ export function createStore(adapter, boundary = null) {
     const nextChat = { ...chat, tracking_candidates: trackingCandidates };
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'tracking_subjects')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "tracking_subjects")
     ) {
       nextChat.tracking_subjects = cloneValue(
         normalizeTrackingSubjects(registry.tracking_subjects),
@@ -746,15 +769,15 @@ export function createStore(adapter, boundary = null) {
     }
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'character_profiles')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "character_profiles")
     ) {
       nextChat.character_profiles = cloneValue(registry.character_profiles);
     }
     if (
       registry &&
-      typeof registry === 'object' &&
-      Object.prototype.hasOwnProperty.call(registry, 'character_registry')
+      typeof registry === "object" &&
+      Object.prototype.hasOwnProperty.call(registry, "character_registry")
     ) {
       nextChat.character_registry = normalizeCharacterRegistry(
         registry.character_registry,
@@ -766,13 +789,20 @@ export function createStore(adapter, boundary = null) {
 
   async function saveFloor(messageId, swipeId, data) {
     const targetSwipeId = validSwipeId(swipeId);
+    const message = adapter.getMessage?.(messageId);
+    if (
+      message &&
+      hasSwipeStructure(message) &&
+      !hasSwipeSlot(message, targetSwipeId)
+    )
+      throw new Error("SWIPE_NOT_FOUND");
     const token = captureToken(adapter, boundary);
     const version = floorVersionFromStoredData(data);
     if (version?.chat_id && version.chat_id !== token.chatId)
-      throw new Error('CHAT_SCOPE_MISMATCH');
+      throw new Error("CHAT_SCOPE_MISMATCH");
     const safeData = cloneForStorage(data);
-    if (typeof adapter.saveFloorBioWeave !== 'function') {
-      throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE');
+    if (typeof adapter.saveFloorBioWeave !== "function") {
+      throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
     }
     await adapter.saveFloorBioWeave(
       messageId,

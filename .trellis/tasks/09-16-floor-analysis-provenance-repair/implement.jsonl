@@ -1,0 +1,9 @@
+{"file": "AGENTS.md", "reason": "遵守项目所有权红线、实施授权边界、格式化和 Git 安全规则。"}
+{"file": ".trellis/spec/domain/index.md", "reason": "确认 domain 规范入口及 Floor/Event/World Model 文档边界。"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe/Version/previous/derived state/Chat metadata/API provenance 的唯一详细合同。"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Event 输入、持久化、Tracking projection、失败和生命周期合同。"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "区分合法 World Model configuration 与 Floor-derived biological facts。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审计 storage→runtime→tracking→input→API 的跨层传播和单一事实源。"}
+{"file": ".trellis/tasks/09-16-floor-analysis-provenance-repair/prd.md", "reason": "实施范围、Case A-I、Invariant 和验收门槛。"}
+{"file": ".trellis/tasks/09-16-floor-analysis-provenance-repair/design.md", "reason": "本次 source-level audit 证据、污染路径和最小修复设计。"}
+{"file": ".trellis/tasks/09-16-floor-analysis-provenance-repair/research/reference-snapshot.md", "reason": "参考 snapshot.js 的 per-message/per-swipe owner 事实及适用边界。"}

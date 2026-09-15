@@ -247,7 +247,91 @@ Floor-derived fields are invalidated.
 No second historical database, permanent Floor ID ledger, or alternate
 business writer is introduced to make lifecycle behavior appear durable.
 
-## 10. Feature Development Checklist
+## 10. Concrete Runtime Guardrails
+
+### 1. Scope / Trigger
+
+This section makes the ownership contract executable at the storage, Runtime,
+Tracking, and API boundaries. It is required whenever a change can make a
+Floor-derived value survive message deletion, Swipe deletion/switching,
+version changes, reload, or an asynchronous analysis completion.
+
+### 2. Signatures
+
+- `store.getFloor(messageId, swipeId)` reads the requested message/Swipe owner;
+  `store.getActiveFloor(messageId)` selects the current host active Swipe.
+- `store.saveFloor(messageId, swipeId, data)` writes one existing owner slot and
+  rejects a missing structured Swipe with `SWIPE_NOT_FOUND`.
+- `findPreviousSuccessfulBioWeave(target)` returns either the nearest valid
+  `{ analysis, events }` or exactly `{ analysis: null, events: [] }`.
+- `rebuildTrackingRegistry(activeEvents, chatConfig)` returns the materialized
+  `tracking_subjects`, `tracking_candidates`, and event-derived
+  `character_profiles` for that `activeEvents` collection. `chatConfig` may
+  supply configuration such as `world_model`, not prior derived facts.
+
+### 3. Contracts
+
+- A structured message is readable only through
+  `swipe_info[swipe_id].extra.bioweave` for an existing current Swipe. The
+  active-message mirror, another Swipe, Chat Metadata, and runtime cache are
+  not fallbacks.
+- `activeEvents`, Tracking projections, API `existing_bioweave`, and all future
+  Floor-derived history are functions of current valid Floor slots and complete
+  six-field Versions. A Chat projection may be persisted for speed, but a read
+  must be correct when that projection is stale or absent.
+- `character_registry` contains canonical identity configuration only
+  (`character_id`, display name, aliases). It may survive deletion of an Event;
+  biological capability, exposure, evidence, and Event references may not.
+- `last_processed_floor` is recomputed from current successful valid Floors when
+  needed for scheduling. It never supplies historical input or validates a fact.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| Structured active Swipe or its owner slot is absent | Read the empty Floor shape; do not read a mirror or create a slot; a save fails with `SWIPE_NOT_FOUND`. |
+| Stored Floor Version is incomplete, stale, or differs from current text/Swipe | Exclude its analysis and Events from active state and previous/API history. |
+| Candidate is the target Floor, not lower, not current active Swipe, or not `success` | Skip it and continue scanning older messages. |
+| No candidate passes every previous-state check | Pass `{ analysis: null, events: [] }`; never consult Chat derived state or a cache. |
+| Chat invalidation, owner deletion, or Version change happens during analysis | Abort/ignore the old execution and do not save its Events or terminal facts to a different owner. |
+| Current valid Floor collection changes | Rebuild subjects, candidates, profiles, references, counts, and API history from that collection. |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**: `3F -> A`, `6F -> B`, `9F -> C`; reanalyzing `9F` sends `B`, then
+  deleting `9F` makes a later target use `B` again.
+- **Base**: all analyzed owner messages are removed; reload produces empty
+  active Events, empty previous, and empty event-derived Tracking state while
+  preserving independent identity/configuration values.
+- **Bad**: `Math.max(oldLastProcessed, targetFloor)`, merging an old
+  `tracking_candidates` map, or falling back from a missing Swipe slot to
+  `message.extra` resurrects a fact without current Floor provenance.
+
+### 6. Tests Required
+
+Regression tests must assert both the source and the API sink: target
+self-exclusion and nearest previous; deletion/truncation fallback; empty
+previous; Swipe isolation/deletion; stale Version invalidation; current-facts-
+only Tracking rebuild; in-flight invalidation; hint recomputation; and reload
+after deleting all analyzed owners. Request bodies must not contain deleted
+Event IDs, profile evidence, or derived candidates.
+
+### 7. Wrong vs Correct
+
+```js
+// Wrong: a stale Chat projection authorizes the next analysis.
+const profiles = chatData.character_profiles;
+const candidates = chatData.tracking_candidates;
+
+// Correct: Chat fields are only the destination of a rebuild.
+const activeEvents = collectCurrentValidFloorEvents();
+const registry = rebuildTrackingRegistry(activeEvents, {
+  world_model: chatData.world_model,
+});
+const previous = findPreviousSuccessfulBioWeave(target);
+```
+
+## 11. Feature Development Checklist
 
 Before adding any cross-Floor feature, answer all of these questions in the
 design and executable tests:

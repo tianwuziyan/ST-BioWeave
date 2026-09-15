@@ -1,22 +1,26 @@
-import { createChatBoundary } from './chat.js';
-import { createStore, hasSwipeStructure } from '../storage/store.js';
-import { createAnalyzer } from '../ai/analyzer.js';
-import { createStoryTime } from '../story/time.js';
+import { createChatBoundary } from "./chat.js";
+import {
+  createStore,
+  hasSwipeSlot,
+  hasSwipeStructure,
+} from "../storage/store.js";
+import { createAnalyzer } from "../ai/analyzer.js";
+import { createStoryTime } from "../story/time.js";
 import {
   FOLLOW_DEFAULT_API,
   SILLYTAVERN_CURRENT_API,
-} from '../storage/schema.js';
-import { createEventAnalysisCoordinator } from './event-analysis.js';
+} from "../storage/schema.js";
+import { createEventAnalysisCoordinator } from "./event-analysis.js";
 
 const LIFECYCLE_EVENTS = [
-  'CHAT_CHANGED',
-  'MESSAGE_UPDATED',
-  'MESSAGE_EDITED',
-  'MESSAGE_DELETED',
-  'MESSAGE_SWIPED',
-  'MESSAGE_SWIPE_DELETED',
-  'MESSAGE_RECEIVED',
-  'GENERATION_ENDED',
+  "CHAT_CHANGED",
+  "MESSAGE_UPDATED",
+  "MESSAGE_EDITED",
+  "MESSAGE_DELETED",
+  "MESSAGE_SWIPED",
+  "MESSAGE_SWIPE_DELETED",
+  "MESSAGE_RECEIVED",
+  "GENERATION_ENDED",
 ];
 
 export function createSillyTavernAdapter() {
@@ -33,13 +37,13 @@ export function createSillyTavernAdapter() {
       const context = getContext();
       if (
         !context?.extensionSettings ||
-        typeof context.saveSettingsDebounced !== 'function'
+        typeof context.saveSettingsDebounced !== "function"
       ) {
-        throw new Error('ST_EXTENSION_SETTINGS_UNAVAILABLE');
+        throw new Error("ST_EXTENSION_SETTINGS_UNAVAILABLE");
       }
       const hadPrevious = Object.prototype.hasOwnProperty.call(
         context.extensionSettings,
-        'bioweave',
+        "bioweave",
       );
       const previous = context.extensionSettings.bioweave;
       context.extensionSettings.bioweave = value;
@@ -57,13 +61,13 @@ export function createSillyTavernAdapter() {
     async saveChatMetadata(key, value, expectedChatId) {
       const context = getContext();
       if (expectedChatId !== undefined && context?.chatId !== expectedChatId) {
-        throw new Error('STALE_CHAT');
+        throw new Error("STALE_CHAT");
       }
       if (
         !context?.chatMetadata ||
-        typeof context.saveMetadata !== 'function'
+        typeof context.saveMetadata !== "function"
       ) {
-        throw new Error('ST_METADATA_UNAVAILABLE');
+        throw new Error("ST_METADATA_UNAVAILABLE");
       }
       context.chatMetadata[key] = value;
       await context.saveMetadata();
@@ -71,19 +75,21 @@ export function createSillyTavernAdapter() {
         expectedChatId !== undefined &&
         getContext()?.chatId !== expectedChatId
       ) {
-        throw new Error('STALE_CHAT');
+        throw new Error("STALE_CHAT");
       }
     },
     async saveFloorBioWeave(messageIndex, swipeId, value, expectedChatId) {
       const context = getContext();
       if (expectedChatId !== undefined && context?.chatId !== expectedChatId) {
-        throw new Error('STALE_CHAT');
+        throw new Error("STALE_CHAT");
       }
       const message = context?.chat?.[messageIndex];
-      if (!message) throw new Error('MESSAGE_NOT_FOUND');
+      if (!message) throw new Error("MESSAGE_NOT_FOUND");
       const targetSwipeId =
         Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
       if (hasSwipeStructure(message)) {
+        if (!hasSwipeSlot(message, targetSwipeId))
+          throw new Error("SWIPE_NOT_FOUND");
         message.swipe_info ??= [];
         message.swipe_info[targetSwipeId] ??= {};
         message.swipe_info[targetSwipeId].extra ??= {};
@@ -92,14 +98,14 @@ export function createSillyTavernAdapter() {
         message.extra ??= {};
         message.extra.bioweave = value;
       }
-      if (typeof context.saveChat !== 'function')
-        throw new Error('ST_CHAT_STORAGE_UNAVAILABLE');
+      if (typeof context.saveChat !== "function")
+        throw new Error("ST_CHAT_STORAGE_UNAVAILABLE");
       await context.saveChat();
       if (
         expectedChatId !== undefined &&
         getContext()?.chatId !== expectedChatId
       ) {
-        throw new Error('STALE_CHAT');
+        throw new Error("STALE_CHAT");
       }
     },
   };
@@ -130,7 +136,7 @@ export function createRuntime({
       try {
         listener(event);
       } catch (error) {
-        console.error('[BioWeave] runtime subscriber failed', error);
+        console.error("[BioWeave] runtime subscriber failed", error);
       }
     }
   }
@@ -168,17 +174,17 @@ export function createRuntime({
     store,
     analyzer: eventAnalyzer,
     storyTime: storyTime ?? createStoryTime(),
-    ...(typeof characterContextResolver === 'function'
+    ...(typeof characterContextResolver === "function"
       ? { characterContextResolver }
       : {}),
-    ...(typeof analysisContextCollector === 'function'
+    ...(typeof analysisContextCollector === "function"
       ? { analysisContextCollector }
       : {}),
-    ...(typeof analysisSourceLoader === 'function'
+    ...(typeof analysisSourceLoader === "function"
       ? { analysisSourceLoader }
       : {}),
     analysisSourceLoaderOptions,
-    ...(typeof externalMemoryProviderLoader === 'function'
+    ...(typeof externalMemoryProviderLoader === "function"
       ? { externalMemoryProviderLoader }
       : {}),
     ...(analysisSourceCache ? { analysisSourceCache } : {}),
@@ -204,8 +210,8 @@ export function createRuntime({
     void eventAnalysis
       .handleLifecycleEvent({ type: key, eventType, payload, chatId })
       .catch((error) => {
-        if (!['STALE_CHAT', 'MESSAGE_NOT_FOUND'].includes(error?.message)) {
-          console.error('[BioWeave] event analysis lifecycle failed', error);
+        if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message)) {
+          console.error("[BioWeave] event analysis lifecycle failed", error);
         }
       });
   }
@@ -216,8 +222,8 @@ export function createRuntime({
     const types = context?.eventTypes;
     if (
       !source ||
-      typeof source.on !== 'function' ||
-      typeof source.removeListener !== 'function'
+      typeof source.on !== "function" ||
+      typeof source.removeListener !== "function"
     ) {
       return;
     }
@@ -237,17 +243,17 @@ export function createRuntime({
     if (destroyed) return false;
     if (initialized) return true;
     const context = st.getContext?.();
-    if (typeof st.getContext === 'function' && !context) {
-      console.error('[BioWeave] SillyTavern context unavailable');
+    if (typeof st.getContext === "function" && !context) {
+      console.error("[BioWeave] SillyTavern context unavailable");
       return false;
     }
     chat.current();
     bindLifecycleEvents();
     initialized = true;
-    void eventAnalysis.refreshTrackingRegistry('init').catch((error) => {
-      if (error?.message !== 'STALE_CHAT') {
+    void eventAnalysis.refreshTrackingRegistry("init").catch((error) => {
+      if (error?.message !== "STALE_CHAT") {
         console.error(
-          '[BioWeave] initial tracking registry refresh failed',
+          "[BioWeave] initial tracking registry refresh failed",
           error,
         );
       }
@@ -256,8 +262,8 @@ export function createRuntime({
   }
 
   function subscribe(listener) {
-    if (typeof listener !== 'function')
-      throw new TypeError('RUNTIME_LISTENER_REQUIRED');
+    if (typeof listener !== "function")
+      throw new TypeError("RUNTIME_LISTENER_REQUIRED");
     subscriptions.add(listener);
     return () => subscriptions.delete(listener);
   }

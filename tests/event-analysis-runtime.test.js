@@ -1,108 +1,111 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { createRuntime } from '../runtime/events.js'
-import { createAnalyzer } from '../ai/analyzer.js'
-import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from '../core/events.js'
-import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js'
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createRuntime } from "../runtime/events.js";
+import { createAnalyzer } from "../ai/analyzer.js";
+import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { floorVersion } from "../runtime/floor.js";
+import { SILLYTAVERN_CURRENT_API } from "../storage/schema.js";
 
-function eventResult(eventId = 'evt-1', overrides = {}) {
+function eventResult(eventId = "evt-1", overrides = {}) {
   return {
     event_id: eventId,
-    type: 'sexual_activity',
-    status: 'confirmed',
+    type: "sexual_activity",
+    status: "confirmed",
     story_time: {
-      display: '第三日',
+      display: "第三日",
       normalized: null,
       day_index: null,
       calendar_id: null,
-      provider: 'bioweave_fallback',
-      precision: 'unknown',
+      provider: "bioweave_fallback",
+      precision: "unknown",
       confidence: 0.6,
     },
-    location: '房间',
+    location: "房间",
     participants: [
       {
-        character_id: 'char-a',
-        display_name: 'Alice',
-        event_role: 'potential_gestational_subject',
-        biological_context: { species: 'species-a', biological_type: 'type-a' },
+        character_id: "char-a",
+        display_name: "Alice",
+        event_role: "potential_gestational_subject",
+        biological_context: { species: "species-a", biological_type: "type-a" },
         reproductive_capabilities_used: { can_carry_pregnancy: true },
-        evidence: [{ kind: 'narrative', text: '明确证据' }],
+        evidence: [{ kind: "narrative", text: "明确证据" }],
       },
       {
-        character_id: 'char-b',
-        display_name: 'Bob',
-        event_role: 'potential_conception_source',
-        biological_context: { species: 'species-b', biological_type: 'type-b' },
+        character_id: "char-b",
+        display_name: "Bob",
+        event_role: "potential_conception_source",
+        biological_context: { species: "species-b", biological_type: "type-b" },
         reproductive_capabilities_used: { can_cause_pregnancy: true },
-        evidence: [{ kind: 'narrative', text: '实际来源证据' }],
+        evidence: [{ kind: "narrative", text: "实际来源证据" }],
       },
     ],
     pregnancy_relevance: {
       relevant: true,
       possible_conception: true,
-      gestational_subject_ids: ['char-a'],
-      counterpart_ids: ['char-b'],
+      gestational_subject_ids: ["char-a"],
+      counterpart_ids: ["char-b"],
       confidence: 0.8,
     },
     source_evidence: [
-      { kind: 'current_floor', text: '当前楼层' },
+      { kind: "current_floor", text: "当前楼层" },
       {
         kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
-        text: '实际暴露证据',
+        text: "实际暴露证据",
       },
     ],
     ...overrides,
-  }
+  };
 }
 
 function createFixture({
   floor = 3,
   messages = null,
   analyzer = null,
+  characterContextResolver = null,
   rawApiResponse = null,
   saveFloorError = null,
+  saveFloorHook = null,
   saveChatMetadataError = null,
   saveChatMetadataErrorAt = 0,
   allowLegacyIdentity = true,
 } = {}) {
-  const listeners = new Map()
+  const listeners = new Map();
   const context = {
-    chatId: 'chat-runtime',
+    chatId: "chat-runtime",
     chat: messages ?? [
       {
-        message_id: 'message-stable',
+        message_id: "message-stable",
         floor,
-        content: '当前剧情',
-        role: 'assistant',
+        content: "当前剧情",
+        role: "assistant",
       },
     ],
     chatMetadata: {},
     extensionSettings: { bioweave: {} },
     eventTypes: {
-      CHAT_CHANGED: 'chat-changed',
-      MESSAGE_UPDATED: 'message-updated',
-      MESSAGE_EDITED: 'message-edited',
-      MESSAGE_DELETED: 'message-deleted',
-      MESSAGE_SWIPED: 'message-swiped',
-      MESSAGE_SWIPE_DELETED: 'message-swipe-deleted',
-      MESSAGE_RECEIVED: 'message-received',
-      GENERATION_ENDED: 'generation-ended',
+      CHAT_CHANGED: "chat-changed",
+      MESSAGE_UPDATED: "message-updated",
+      MESSAGE_EDITED: "message-edited",
+      MESSAGE_DELETED: "message-deleted",
+      MESSAGE_SWIPED: "message-swiped",
+      MESSAGE_SWIPE_DELETED: "message-swipe-deleted",
+      MESSAGE_RECEIVED: "message-received",
+      GENERATION_ENDED: "generation-ended",
     },
     eventSource: {
       on(type, listener) {
-        listeners.set(type, listener)
+        listeners.set(type, listener);
       },
       removeListener(type, listener) {
-        if (listeners.get(type) === listener) listeners.delete(type)
+        if (listeners.get(type) === listener) listeners.delete(type);
       },
     },
     async saveMetadata() {},
     async saveChat() {},
-  }
-  let saveChatMetadataCalls = 0
-  let saveFloorCalls = 0
-  const apiRequests = []
+  };
+  let saveChatMetadataCalls = 0;
+  let saveFloorCalls = 0;
+  const apiRequests = [];
   const adapter = {
     getContext: () => context,
     getChat: () => context.chat,
@@ -112,53 +115,58 @@ function createFixture({
     getGlobalSettings: () => context.extensionSettings.bioweave,
     getMessage: (index) => context.chat[index] ?? null,
     async saveChatMetadata(key, value) {
-      saveChatMetadataCalls += 1
+      saveChatMetadataCalls += 1;
       if (
         saveChatMetadataErrorAt &&
         saveChatMetadataCalls === saveChatMetadataErrorAt
       ) {
         throw new Error(
-          saveChatMetadataError ?? 'ST_METADATA_STORAGE_UNAVAILABLE',
-        )
+          saveChatMetadataError ?? "ST_METADATA_STORAGE_UNAVAILABLE",
+        );
       }
-      if (saveChatMetadataError) throw new Error(saveChatMetadataError)
-      context.chatMetadata[key] = structuredClone(value)
+      if (saveChatMetadataError) throw new Error(saveChatMetadataError);
+      context.chatMetadata[key] = structuredClone(value);
     },
     async saveFloorBioWeave(index, swipeId, value) {
-      saveFloorCalls += 1
-      if (saveFloorError) throw new Error(saveFloorError)
-      const message = context.chat[index]
-      if (!message) throw new Error('MESSAGE_NOT_FOUND')
+      saveFloorCalls += 1;
+      if (saveFloorError) throw new Error(saveFloorError);
+      if (typeof saveFloorHook === "function")
+        await saveFloorHook({ index, swipeId, value });
+      const message = context.chat[index];
+      if (!message) throw new Error("MESSAGE_NOT_FOUND");
       if (message.swipes || message.swipe_info) {
-        message.swipe_info ??= []
-        message.swipe_info[swipeId] ??= {}
-        message.swipe_info[swipeId].extra ??= {}
-        message.swipe_info[swipeId].extra.bioweave = structuredClone(value)
+        message.swipe_info ??= [];
+        message.swipe_info[swipeId] ??= {};
+        message.swipe_info[swipeId].extra ??= {};
+        message.swipe_info[swipeId].extra.bioweave = structuredClone(value);
       } else {
-        message.extra ??= {}
-        message.extra.bioweave = structuredClone(value)
+        message.extra ??= {};
+        message.extra.bioweave = structuredClone(value);
       }
     },
-  }
+  };
   if (rawApiResponse !== null) {
     context.chatCompletionSettings = {
-      chat_completion_source: 'openai',
-      model: 'fixture-model',
-    }
-    context.getChatCompletionModel = () => 'fixture-model'
+      chat_completion_source: "openai",
+      model: "fixture-model",
+    };
+    context.getChatCompletionModel = () => "fixture-model";
     context.ChatCompletionService = {
       async processRequest(request) {
-        apiRequests.push(request)
-        return typeof rawApiResponse === 'function'
+        apiRequests.push(request);
+        return typeof rawApiResponse === "function"
           ? rawApiResponse(request, apiRequests.length)
-          : rawApiResponse
+          : rawApiResponse;
       },
-    }
+    };
   }
-  let calls = 0
+  let calls = 0;
   const runtime = createRuntime({
     adapter,
     allowLegacyIdentity,
+    ...(typeof characterContextResolver === "function"
+      ? { characterContextResolver }
+      : {}),
     analyzer:
       analyzer ??
       (rawApiResponse !== null
@@ -168,11 +176,11 @@ function createFixture({
           })
         : {
             async analyzeFloor() {
-              calls += 1
-              return { events: [eventResult(`evt-${calls}`)] }
+              calls += 1;
+              return { events: [eventResult(`evt-${calls}`)] };
             },
           }),
-  })
+  });
   return {
     runtime,
     context,
@@ -182,40 +190,40 @@ function createFixture({
     saveChatMetadataCalls: () => saveChatMetadataCalls,
     saveFloorCalls: () => saveFloorCalls,
     emit(type, payload) {
-      listeners.get(type)?.(payload)
+      listeners.get(type)?.(payload);
     },
-  }
+  };
 }
 
 function canonicalApiEvent({
-  type = 'sexual_activity',
+  type = "sexual_activity",
   pregnancyRelevance,
   participants,
-  subjectId = 'character_subject',
-  sourceId = 'character_source',
+  subjectId = "character_subject",
+  sourceId = "character_source",
 } = {}) {
   return {
-    event_id: 'model-forged-event-id',
+    event_id: "model-forged-event-id",
     type,
-    status: 'confirmed',
+    status: "confirmed",
     story_time: {
-      display: 'fixture day',
+      display: "fixture day",
       normalized: null,
       day_index: null,
       calendar_id: null,
       provider: null,
-      precision: 'unknown',
+      precision: "unknown",
       confidence: null,
     },
-    location: 'location_fixture',
+    location: "location_fixture",
     participants: participants ?? [
       {
         character_id: subjectId,
         display_name: `${subjectId}_display`,
-        event_role: 'potential_gestational_subject',
+        event_role: "potential_gestational_subject",
         biological_context: {
-          species: 'species-subject',
-          biological_type: 'type-subject',
+          species: "species-subject",
+          biological_type: "type-subject",
         },
         reproductive_capabilities_used: {
           can_produce_sperm: false,
@@ -226,18 +234,18 @@ function canonicalApiEvent({
         },
         evidence: [
           {
-            kind: 'capability',
-            text: 'explicit gestational capability fixture evidence',
+            kind: "capability",
+            text: "explicit gestational capability fixture evidence",
           },
         ],
       },
       {
         character_id: sourceId,
         display_name: `${sourceId}_display`,
-        event_role: 'potential_conception_source',
+        event_role: "potential_conception_source",
         biological_context: {
-          species: 'species-source',
-          biological_type: 'type-source',
+          species: "species-source",
+          biological_type: "type-source",
         },
         reproductive_capabilities_used: {
           can_produce_sperm: true,
@@ -248,8 +256,8 @@ function canonicalApiEvent({
         },
         evidence: [
           {
-            kind: 'capability',
-            text: 'explicit conception-source capability fixture evidence',
+            kind: "capability",
+            text: "explicit conception-source capability fixture evidence",
           },
         ],
       },
@@ -263,21 +271,21 @@ function canonicalApiEvent({
     },
     source_evidence: [
       {
-        kind: 'narrative',
-        text: 'explicit current-floor exposure fixture evidence',
+        kind: "narrative",
+        text: "explicit current-floor exposure fixture evidence",
       },
       {
         kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
-        text: 'abstract exposure entered the valid path',
+        text: "abstract exposure entered the valid path",
       },
     ],
     source: {
-      chat_id: 'model-chat',
-      message_id: 'model-message',
+      chat_id: "model-chat",
+      message_id: "model-message",
       floor: 999,
       swipe_id: 9,
     },
-  }
+  };
 }
 
 function identityParticipant({
@@ -292,13 +300,13 @@ function identityParticipant({
 }) {
   const participant = {
     identity_status: identityStatus,
-    character_id: identityStatus === 'existing' ? characterId : null,
+    character_id: identityStatus === "existing" ? characterId : null,
     mention_id: mentionId,
     display_name: displayName,
     event_role: eventRole,
     biological_context: {
-      species: 'species-fixture',
-      biological_type: 'type-fixture',
+      species: "species-fixture",
+      biological_type: "type-fixture",
     },
     reproductive_capabilities_used: {
       can_produce_sperm: null,
@@ -309,19 +317,20 @@ function identityParticipant({
       ...capabilities,
     },
     evidence: [
-      { kind: 'narrative', text: 'identity lifecycle fixture evidence' },
+      { kind: "narrative", text: "identity lifecycle fixture evidence" },
     ],
-  }
-  if (aliasCandidate !== undefined) participant.alias_candidate = aliasCandidate
+  };
+  if (aliasCandidate !== undefined)
+    participant.alias_candidate = aliasCandidate;
   if (identityEvidence !== undefined)
-    participant.identity_evidence = identityEvidence
-  return participant
+    participant.identity_evidence = identityEvidence;
+  return participant;
 }
 
 function identityLifecycleEvent({
   subject,
   source,
-  location = '传灯院',
+  location = "传灯院",
   subjectReference = subject.mention_id,
   sourceReference = source.mention_id,
 } = {}) {
@@ -334,56 +343,56 @@ function identityLifecycleEvent({
       counterpart_ids: [sourceReference],
       confidence: 0.9,
     },
-  })
-  result.location = location
-  return result
+  });
+  result.location = location;
+  return result;
 }
 
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 30))
+  await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
 async function withGlobalCrypto(value, callback) {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
-  Object.defineProperty(globalThis, 'crypto', {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  Object.defineProperty(globalThis, "crypto", {
     configurable: true,
     enumerable: descriptor?.enumerable ?? true,
     value,
-  })
+  });
   try {
-    return await callback()
+    return await callback();
   } finally {
-    if (descriptor) Object.defineProperty(globalThis, 'crypto', descriptor)
-    else delete globalThis.crypto
+    if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+    else delete globalThis.crypto;
   }
 }
 
-test('manual analysis targets the current Floor and exposes observable status', async () => {
-  let input = null
+test("manual analysis targets the current Floor and exposes observable status", async () => {
+  let input = null;
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor(request) {
-        input = request.analysisInput
-        return { events: [eventResult()] }
+        input = request.analysisInput;
+        return { events: [eventResult()] };
       },
     },
-  })
-  await fixture.runtime.init()
-  const result = await fixture.runtime.refreshCurrentFloorAnalysis()
-  assert.equal(result.status, 'success')
-  assert.equal(input.current_floor.message_id, 'message-stable')
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.state, 'success')
-  assert.equal(status.event_count, 1)
-  assert.equal(status.floor_version.message_id, 'message-stable')
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.active_event_count, 1)
-  assert.equal(data.tracking_subject_count, 1)
-  assert.equal(data.tracking_decisions[0].eligibility, 'eligible')
-  fixture.runtime.destroy()
-})
+  });
+  await fixture.runtime.init();
+  const result = await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(result.status, "success");
+  assert.equal(input.current_floor.message_id, "message-stable");
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "success");
+  assert.equal(status.event_count, 1);
+  assert.equal(status.floor_version.message_id, "message-stable");
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 1);
+  assert.equal(data.tracking_subject_count, 1);
+  assert.equal(data.tracking_decisions[0].eligibility, "eligible");
+  fixture.runtime.destroy();
+});
 
-test('Runtime owns canonical Event IDs and Floor provenance', async () => {
+test("Runtime owns canonical Event IDs and Floor provenance", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
@@ -391,196 +400,196 @@ test('Runtime owns canonical Event IDs and Floor provenance', async () => {
           event_id: ignoredEventId,
           source: ignoredSource,
           ...facts
-        } = eventResult('model-forged-id')
+        } = eventResult("model-forged-id");
         return {
           events: [
             {
               ...facts,
               event_id: ignoredEventId,
               source: {
-                chat_id: 'model-chat',
-                message_id: 'model-message',
+                chat_id: "model-chat",
+                message_id: "model-message",
                 floor: 999,
                 swipe_id: 9,
               },
             },
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const first = (await fixture.runtime.getCurrentFloorEvents())[0]
-  assert.notEqual(first.event_id, 'model-forged-id')
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const first = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.notEqual(first.event_id, "model-forged-id");
   assert.deepEqual(first.source, {
-    chat_id: 'chat-runtime',
-    message_id: 'message-stable',
+    chat_id: "chat-runtime",
+    message_id: "message-stable",
     floor: 3,
     swipe_id: 0,
     content_hash: first.source.content_hash,
     message_version: first.source.message_version,
-  })
-  const firstId = first.event_id
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const second = (await fixture.runtime.getCurrentFloorEvents())[0]
-  assert.equal(second.event_id, firstId)
-  const registry = await fixture.runtime.getTrackingRegistry()
-  assert.deepEqual(registry.tracking_subjects['char-a'].exposure_event_ids, [
+  });
+  const firstId = first.event_id;
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const second = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.equal(second.event_id, firstId);
+  const registry = await fixture.runtime.getTrackingRegistry();
+  assert.deepEqual(registry.tracking_subjects["char-a"].exposure_event_ids, [
     firstId,
-  ])
-  await fixture.runtime.updateEvent(firstId, { location: 'updated-location' })
+  ]);
+  await fixture.runtime.updateEvent(firstId, { location: "updated-location" });
   assert.equal(
     (await fixture.runtime.getCurrentFloorEvents())[0].location,
-    'updated-location',
-  )
-  await fixture.runtime.deleteEvent(firstId)
-  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), [])
-  fixture.runtime.destroy()
-})
+    "updated-location",
+  );
+  await fixture.runtime.deleteEvent(firstId);
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
 
 test(
-  'Runtime registers a new identity before pregnancy closure validation and reuses it on the next Floor',
+  "Runtime registers a new identity before pregnancy closure validation and reuses it on the next Floor",
   { concurrency: false },
   async () => {
-    let analysisCount = 0
-    let subjectId = null
-    let sourceId = null
-    const inputRegistries = []
+    let analysisCount = 0;
+    let subjectId = null;
+    let sourceId = null;
+    const inputRegistries = [];
     const fixture = createFixture({
       allowLegacyIdentity: false,
       analyzer: {
         async analyzeFloor({ analysisInput }) {
           inputRegistries.push(
             structuredClone(analysisInput.character_registry),
-          )
-          analysisCount += 1
+          );
+          analysisCount += 1;
           if (analysisCount === 1) {
             return {
               events: [
                 identityLifecycleEvent({
                   subject: identityParticipant({
-                    identityStatus: 'new',
-                    mentionId: 'subject-first',
-                    displayName: '苏晚',
-                    eventRole: 'potential_gestational_subject',
+                    identityStatus: "new",
+                    mentionId: "subject-first",
+                    displayName: "苏晚",
+                    eventRole: "potential_gestational_subject",
                     capabilities: { can_carry_pregnancy: true },
                     aliasCandidate: {
-                      value: '晚儿',
-                      kind: 'nickname',
+                      value: "晚儿",
+                      kind: "nickname",
                       confidence: 0.97,
                     },
                     identityEvidence: [
                       {
-                        kind: 'explicit_alias',
-                        text: '她名叫苏晚，朋友都叫她晚儿。',
+                        kind: "explicit_alias",
+                        text: "她名叫苏晚，朋友都叫她晚儿。",
                       },
                     ],
                   }),
                   source: identityParticipant({
-                    identityStatus: 'new',
-                    mentionId: 'source-first',
-                    displayName: '陆行',
-                    eventRole: 'potential_conception_source',
+                    identityStatus: "new",
+                    mentionId: "source-first",
+                    displayName: "陆行",
+                    eventRole: "potential_conception_source",
                     capabilities: { can_cause_pregnancy: true },
                   }),
                 }),
               ],
-            }
+            };
           }
           return {
             events: [
               identityLifecycleEvent({
                 subject: identityParticipant({
-                  identityStatus: 'existing',
+                  identityStatus: "existing",
                   characterId: subjectId,
-                  mentionId: 'subject-second',
-                  displayName: '晚儿',
-                  eventRole: 'potential_gestational_subject',
+                  mentionId: "subject-second",
+                  displayName: "晚儿",
+                  eventRole: "potential_gestational_subject",
                   capabilities: { can_carry_pregnancy: true },
                 }),
                 source: identityParticipant({
-                  identityStatus: 'existing',
+                  identityStatus: "existing",
                   characterId: sourceId,
-                  mentionId: 'source-second',
-                  displayName: '陆行',
-                  eventRole: 'potential_conception_source',
+                  mentionId: "source-second",
+                  displayName: "陆行",
+                  eventRole: "potential_conception_source",
                   capabilities: { can_cause_pregnancy: true },
                 }),
               }),
             ],
-          }
+          };
         },
       },
-    })
+    });
 
     await withGlobalCrypto(
       {
         randomUUID: (() => {
-          const ids = ['char_runtime_subject_001', 'char_runtime_source_001']
-          return () => ids.shift()
+          const ids = ["char_runtime_subject_001", "char_runtime_source_001"];
+          return () => ids.shift();
         })(),
       },
       async () => {
-        await fixture.runtime.init()
-        await settle()
-        await fixture.runtime.refreshCurrentFloorAnalysis()
+        await fixture.runtime.init();
+        await settle();
+        await fixture.runtime.refreshCurrentFloorAnalysis();
 
-        const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
-        subjectId = firstEvent.participants[0].character_id
-        sourceId = firstEvent.participants[1].character_id
+        const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
+        subjectId = firstEvent.participants[0].character_id;
+        sourceId = firstEvent.participants[1].character_id;
         const firstRegistry = (await fixture.runtime.getTrackingRegistry())
-          .character_registry
+          .character_registry;
         assert.deepEqual(inputRegistries[0], {
           schema_version: 1,
           entities: {},
-        })
+        });
         assert.deepEqual(firstEvent.pregnancy_relevance, {
           relevant: true,
           possible_conception: true,
           gestational_subject_ids: [subjectId],
           counterpart_ids: [sourceId],
           confidence: 0.9,
-        })
-        assert.equal(firstEvent.location, '传灯院')
-        assert.equal('mention_id' in firstEvent.participants[0], false)
+        });
+        assert.equal(firstEvent.location, "传灯院");
+        assert.equal("mention_id" in firstEvent.participants[0], false);
         assert.deepEqual(firstRegistry.entities[subjectId], {
           character_id: subjectId,
-          display_name: '苏晚',
-          aliases: ['晚儿'],
-        })
+          display_name: "苏晚",
+          aliases: ["晚儿"],
+        });
         assert.deepEqual(firstRegistry.entities[sourceId], {
           character_id: sourceId,
-          display_name: '陆行',
+          display_name: "陆行",
           aliases: [],
-        })
+        });
 
-        await fixture.runtime.refreshCurrentFloorAnalysis()
-        const secondEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+        await fixture.runtime.refreshCurrentFloorAnalysis();
+        const secondEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
         const secondRegistry = (await fixture.runtime.getTrackingRegistry())
-          .character_registry
-        assert.equal(analysisCount, 2)
+          .character_registry;
+        assert.equal(analysisCount, 2);
         assert.equal(
           inputRegistries[1].entities[subjectId].display_name,
-          '苏晚',
-        )
+          "苏晚",
+        );
         assert.deepEqual(inputRegistries[1].entities[subjectId].aliases, [
-          '晚儿',
-        ])
+          "晚儿",
+        ]);
         assert.deepEqual(
           secondEvent.participants.map(
             (participant) => participant.character_id,
           ),
           [subjectId, sourceId],
-        )
-        assert.equal(Object.keys(secondRegistry.entities).length, 2)
+        );
+        assert.equal(Object.keys(secondRegistry.entities).length, 2);
       },
-    )
-    fixture.runtime.destroy()
+    );
+    fixture.runtime.destroy();
   },
-)
+);
 
-test('unresolved identity aborts the whole Event batch without registry or Floor pollution', async () => {
+test("unresolved identity aborts the whole Event batch without registry or Floor pollution", async () => {
   const fixture = createFixture({
     allowLegacyIdentity: false,
     analyzer: {
@@ -589,122 +598,122 @@ test('unresolved identity aborts the whole Event batch without registry or Floor
           events: [
             identityLifecycleEvent({
               subject: identityParticipant({
-                identityStatus: 'unresolved',
-                mentionId: 'unresolved-subject',
-                displayName: '沈姑娘',
-                eventRole: 'potential_gestational_subject',
+                identityStatus: "unresolved",
+                mentionId: "unresolved-subject",
+                displayName: "沈姑娘",
+                eventRole: "potential_gestational_subject",
               }),
               source: identityParticipant({
-                identityStatus: 'new',
-                mentionId: 'new-source',
-                displayName: '未知来源',
-                eventRole: 'potential_conception_source',
+                identityStatus: "new",
+                mentionId: "new-source",
+                displayName: "未知来源",
+                eventRole: "potential_conception_source",
                 capabilities: { can_cause_pregnancy: true },
               }),
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     (error) =>
-      error?.code === 'EVENT_IDENTITY_RESOLUTION_FAILED' &&
-      error?.analysis_stage === 'identity_resolution',
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.error_stage, 'identity_resolution')
-  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), [])
+      error?.code === "EVENT_IDENTITY_RESOLUTION_FAILED" &&
+      error?.analysis_stage === "identity_resolution",
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.error_stage, "identity_resolution");
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
   assert.deepEqual(
     (await fixture.runtime.getTrackingRegistry()).character_registry,
     { schema_version: 1, entities: {} },
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('strict Runtime rejects a hallucinated existing character ID', async () => {
-  const forged = canonicalApiEvent()
+test("strict Runtime rejects a hallucinated existing character ID", async () => {
+  const forged = canonicalApiEvent();
   forged.participants = forged.participants.map((participant, index) => ({
     ...participant,
-    identity_status: 'existing',
+    identity_status: "existing",
     mention_id: `forged-${index}`,
-    character_id: index === 0 ? 'shen_qi_yuan' : 'other-forged-id',
-  }))
+    character_id: index === 0 ? "shen_qi_yuan" : "other-forged-id",
+  }));
   const fixture = createFixture({
     allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor() {
-        return { events: [forged] }
+        return { events: [forged] };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     (error) =>
-      error?.code === 'EVENT_IDENTITY_RESOLUTION_FAILED' &&
-      error?.diagnostic_code === 'unknown_existing_character_id',
-  )
-  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), [])
-  fixture.runtime.destroy()
-})
+      error?.code === "EVENT_IDENTITY_RESOLUTION_FAILED" &&
+      error?.diagnostic_code === "unknown_existing_character_id",
+  );
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
 
-test('generic API response with legacy source reaches Floor save, Registry, and business DTOs', async () => {
-  const eventA = canonicalApiEvent()
+test("generic API response with legacy source reaches Floor save, Registry, and business DTOs", async () => {
+  const eventA = canonicalApiEvent();
   const fixture = createFixture({
     rawApiResponse: JSON.stringify({
       schema_version: 1,
       events: [eventA],
       source: {
-        chat_id: 'legacy-chat',
-        message_id: 'legacy-message',
+        chat_id: "legacy-chat",
+        message_id: "legacy-message",
         floor: 999,
       },
     }),
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  assert.equal(fixture.apiRequests.length, 1)
-  const events = await fixture.runtime.getCurrentFloorEvents()
-  assert.equal(events.length, 1)
-  assert.equal(events[0].type, 'sexual_activity')
-  assert.equal(events[0].participants.length, 2)
-  assert.equal(events[0].participants[1].character_id, 'character_source')
+  assert.equal(fixture.apiRequests.length, 1);
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "sexual_activity");
+  assert.equal(events[0].participants.length, 2);
+  assert.equal(events[0].participants[1].character_id, "character_source");
   assert.equal(
     events[0].participants[1].reproductive_capabilities_used
       .can_carry_pregnancy,
     false,
-  )
-  assert.notEqual(events[0].event_id, 'model-forged-event-id')
-  assert.equal(events[0].source.chat_id, 'chat-runtime')
-  assert.equal(events[0].source.message_id, 'message-stable')
-  assert.equal(events[0].source.floor, 3)
+  );
+  assert.notEqual(events[0].event_id, "model-forged-event-id");
+  assert.equal(events[0].source.chat_id, "chat-runtime");
+  assert.equal(events[0].source.message_id, "message-stable");
+  assert.equal(events[0].source.floor, 3);
 
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.active_event_count, 1)
-  assert.equal(data.tracking_subject_count, 1)
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 1);
+  assert.equal(data.tracking_subject_count, 1);
   assert.deepEqual(
     data.tracking_subjects.character_subject.exposure_event_ids,
     [events[0].event_id],
-  )
-  assert.equal(data.tracking_subjects.character_source, undefined)
-  fixture.runtime.destroy()
-})
+  );
+  assert.equal(data.tracking_subjects.character_source, undefined);
+  fixture.runtime.destroy();
+});
 
-test('Runtime persists pending candidates and re-evaluates them after a World Model update', async () => {
+test("Runtime persists pending candidates and re-evaluates them after a World Model update", async () => {
   const abstractEvent = canonicalApiEvent({
-    subjectId: 'subject_a',
-    sourceId: 'source_a',
-  })
+    subjectId: "subject_a",
+    sourceId: "source_a",
+  });
   abstractEvent.participants = abstractEvent.participants.map(
     (participant, index) => ({
       ...participant,
       biological_context: {
-        species: 'species_alpha',
-        biological_type: index === 0 ? 'type_a' : 'type_b',
+        species: "species_alpha",
+        biological_type: index === 0 ? "type_a" : "type_b",
       },
       reproductive_capabilities_used:
         index === 0
@@ -714,82 +723,85 @@ test('Runtime persists pending candidates and re-evaluates them after a World Mo
             }
           : participant.reproductive_capabilities_used,
     }),
-  )
+  );
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        return { events: [abstractEvent] }
+        return { events: [abstractEvent] };
       },
     },
-  })
-  await fixture.runtime.init()
-  await settle()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await settle();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const pendingRegistry = await fixture.runtime.getTrackingRegistry()
-  assert.equal(pendingRegistry.tracking_subjects.subject_a, undefined)
+  const pendingRegistry = await fixture.runtime.getTrackingRegistry();
+  assert.equal(pendingRegistry.tracking_subjects.subject_a, undefined);
   assert.equal(
     pendingRegistry.tracking_candidates.subject_a.eligibility,
-    'pending',
-  )
-  const storedEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+    "pending",
+  );
+  const storedEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
   const pendingRecord =
-    pendingRegistry.tracking_candidates.subject_a.exposure_records[0]
-  assert.equal(pendingRecord.event_id, storedEvent.event_id)
-  assert.equal(pendingRecord.source.floor, 3)
-  assert.equal(pendingRecord.story_time.display, storedEvent.story_time.display)
+    pendingRegistry.tracking_candidates.subject_a.exposure_records[0];
+  assert.equal(pendingRecord.event_id, storedEvent.event_id);
+  assert.equal(pendingRecord.source.floor, 3);
+  assert.equal(
+    pendingRecord.story_time.display,
+    storedEvent.story_time.display,
+  );
 
-  const chat = fixture.runtime.store.getChat('chat-runtime')
-  await fixture.runtime.store.saveChat('chat-runtime', {
+  const chat = fixture.runtime.store.getChat("chat-runtime");
+  await fixture.runtime.store.saveChat("chat-runtime", {
     ...chat,
     world_model: {
       schema_version: 1,
       species: [
         {
-          name: 'species_alpha',
+          name: "species_alpha",
           biological_types: [
-            { name: 'type_a', capabilities: { can_carry_pregnancy: true } },
-            { name: 'type_b', capabilities: { can_carry_pregnancy: false } },
+            { name: "type_a", capabilities: { can_carry_pregnancy: true } },
+            { name: "type_b", capabilities: { can_carry_pregnancy: false } },
           ],
         },
       ],
     },
-  })
-  await fixture.runtime.refreshTrackingRegistry('world-model-update')
+  });
+  await fixture.runtime.refreshTrackingRegistry("world-model-update");
 
-  const resolvedRegistry = await fixture.runtime.getTrackingRegistry()
-  assert.ok(resolvedRegistry.tracking_subjects.subject_a)
+  const resolvedRegistry = await fixture.runtime.getTrackingRegistry();
+  assert.ok(resolvedRegistry.tracking_subjects.subject_a);
   assert.equal(
     resolvedRegistry.tracking_subjects.subject_a.created_from_event_id,
     storedEvent.event_id,
-  )
-  assert.deepEqual(resolvedRegistry.tracking_candidates, {})
+  );
+  assert.deepEqual(resolvedRegistry.tracking_candidates, {});
   assert.equal(
-    'pregnant' in resolvedRegistry.tracking_subjects.subject_a,
+    "pregnant" in resolvedRegistry.tracking_subjects.subject_a,
     false,
-  )
+  );
   assert.equal(
-    'conception_confirmed' in resolvedRegistry.tracking_subjects.subject_a,
+    "conception_confirmed" in resolvedRegistry.tracking_subjects.subject_a,
     false,
-  )
+  );
   assert.equal(
     (await fixture.runtime.getCurrentFloorEvents())[0].event_id,
     storedEvent.event_id,
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('Runtime re-evaluates a pending candidate after Event evidence updates its profile', async () => {
+test("Runtime re-evaluates a pending candidate after Event evidence updates its profile", async () => {
   const abstractEvent = canonicalApiEvent({
-    subjectId: 'subject_profile',
-    sourceId: 'source_profile',
-  })
+    subjectId: "subject_profile",
+    sourceId: "source_profile",
+  });
   abstractEvent.participants = abstractEvent.participants.map(
     (participant, index) => ({
       ...participant,
       biological_context: {
-        species: 'species_alpha',
-        biological_type: index === 0 ? 'type_a' : 'type_b',
+        species: "species_alpha",
+        biological_type: index === 0 ? "type_a" : "type_b",
       },
       reproductive_capabilities_used:
         index === 0
@@ -799,322 +811,322 @@ test('Runtime re-evaluates a pending candidate after Event evidence updates its 
             }
           : participant.reproductive_capabilities_used,
     }),
-  )
-  let analysisCount = 0
+  );
+  let analysisCount = 0;
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        analysisCount += 1
-        const event = structuredClone(abstractEvent)
+        analysisCount += 1;
+        const event = structuredClone(abstractEvent);
         if (analysisCount > 1) {
-          event.participants[0].reproductive_capabilities_used.can_carry_pregnancy = true
+          event.participants[0].reproductive_capabilities_used.can_carry_pregnancy = true;
           event.participants[0].evidence.push({
-            kind: 'profile',
-            text: 'trusted profile capability fixture evidence',
-          })
+            kind: "profile",
+            text: "trusted profile capability fixture evidence",
+          });
         }
-        return { events: [event] }
+        return { events: [event] };
       },
     },
-  })
-  await fixture.runtime.init()
-  await settle()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await settle();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal(
     (await fixture.runtime.getTrackingRegistry()).tracking_candidates
       .subject_profile.eligibility,
-    'pending',
-  )
+    "pending",
+  );
 
-  const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const resolvedRegistry = await fixture.runtime.getTrackingRegistry()
-  assert.ok(resolvedRegistry.tracking_subjects.subject_profile)
-  assert.deepEqual(resolvedRegistry.tracking_candidates, {})
+  const resolvedRegistry = await fixture.runtime.getTrackingRegistry();
+  assert.ok(resolvedRegistry.tracking_subjects.subject_profile);
+  assert.deepEqual(resolvedRegistry.tracking_candidates, {});
   assert.equal(
     resolvedRegistry.tracking_subjects.subject_profile.created_from_event_id,
     firstEvent.event_id,
-  )
+  );
   assert.equal(
-    fixture.runtime.store.getChat('chat-runtime').character_profiles
+    fixture.runtime.store.getChat("chat-runtime").character_profiles
       .subject_profile.reproductive_capabilities.can_carry_pregnancy,
     true,
-  )
+  );
   assert.equal(
     (await fixture.runtime.getCurrentFloorEvents())[0].event_id,
     firstEvent.event_id,
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('narrative StoryTime keeps structured fields when persisted through Runtime', async () => {
+test("narrative StoryTime keeps structured fields when persisted through Runtime", async () => {
   const event = {
     ...canonicalApiEvent(),
     story_time: {
-      display: '天河四十二年三月十八日午时至未时',
-      normalized: '0042-03-18T12:45:00',
+      display: "天河四十二年三月十八日午时至未时",
+      normalized: "0042-03-18T12:45:00",
       day_index: 42,
-      calendar_id: 'tianhe',
-      provider: 'narrative',
-      precision: 'hour',
+      calendar_id: "tianhe",
+      provider: "narrative",
+      precision: "hour",
       confidence: 0.73,
     },
-  }
+  };
   const fixture = createFixture({
     rawApiResponse: JSON.stringify({ schema_version: 1, events: [event] }),
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const [persisted] = await fixture.runtime.getCurrentFloorEvents()
+  const [persisted] = await fixture.runtime.getCurrentFloorEvents();
   assert.deepEqual(persisted.story_time, {
-    display: '天河42年3月18日 午时至未时',
-    normalized: '0042-03-18T12:45:00',
+    display: "天河42年3月18日 午时至未时",
+    normalized: "0042-03-18T12:45:00",
     day_index: 42,
-    calendar_id: 'tianhe',
-    provider: 'narrative',
-    precision: 'hour',
+    calendar_id: "tianhe",
+    provider: "narrative",
+    precision: "hour",
     confidence: 0.73,
-  })
-  fixture.runtime.destroy()
-})
+  });
+  fixture.runtime.destroy();
+});
 
-test('narrative StoryTime persists a formatted first-year display when time remains unresolved', async () => {
+test("narrative StoryTime persists a formatted first-year display when time remains unresolved", async () => {
   const event = {
     ...canonicalApiEvent(),
     story_time: {
-      display: '羲和元年三月四日 巳时末',
+      display: "羲和元年三月四日 巳时末",
       normalized: null,
       day_index: null,
       calendar_id: null,
-      provider: 'narrative',
-      precision: 'minute',
+      provider: "narrative",
+      precision: "minute",
       confidence: 1,
     },
-  }
+  };
   const fixture = createFixture({
     rawApiResponse: JSON.stringify({ schema_version: 1, events: [event] }),
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const [persisted] = await fixture.runtime.getCurrentFloorEvents()
+  const [persisted] = await fixture.runtime.getCurrentFloorEvents();
   assert.deepEqual(persisted.story_time, {
-    display: '羲和1年3月4日 巳时末',
+    display: "羲和1年3月4日 巳时末",
     normalized: null,
     day_index: null,
     calendar_id: null,
-    provider: 'narrative',
-    precision: 'minute',
+    provider: "narrative",
+    precision: "minute",
     confidence: 1,
-  })
-  fixture.runtime.destroy()
-})
+  });
+  fixture.runtime.destroy();
+});
 
-test('production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local', async () => {
-  const firstEvent = canonicalApiEvent()
-  firstEvent.location = 'location_alpha'
+test("production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local", async () => {
+  const firstEvent = canonicalApiEvent();
+  firstEvent.location = "location_alpha";
   const secondEvent = canonicalApiEvent({
-    subjectId: 'character_subject_b',
-    sourceId: 'character_source_b',
-  })
-  secondEvent.location = 'location_beta'
+    subjectId: "character_subject_b",
+    sourceId: "character_source_b",
+  });
+  secondEvent.location = "location_beta";
   let rawResponse = JSON.stringify({
     schema_version: 1,
     events: [firstEvent],
     source: {
-      chat_id: 'legacy-chat',
-      message_id: 'legacy-message',
+      chat_id: "legacy-chat",
+      message_id: "legacy-message",
       floor: 999,
     },
-  })
-  const fixture = createFixture({ rawApiResponse: () => rawResponse })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  const fixture = createFixture({ rawApiResponse: () => rawResponse });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const previousEvents = await fixture.runtime.getCurrentFloorEvents()
-  const previousId = previousEvents[0].event_id
+  const previousEvents = await fixture.runtime.getCurrentFloorEvents();
+  const previousId = previousEvents[0].event_id;
 
   rawResponse = JSON.stringify({
     schema_version: 1,
     events: [firstEvent, secondEvent],
     source: {
-      chat_id: 'legacy-chat',
-      message_id: 'legacy-message',
+      chat_id: "legacy-chat",
+      message_id: "legacy-message",
       floor: 999,
     },
-  })
-  const result = await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  const result = await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  assert.equal(fixture.apiRequests.length, 2)
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(result.status, 'success')
-  assert.equal(status.state, 'success')
-  assert.equal(status.event_count, 2)
-  const events = await fixture.runtime.getCurrentFloorEvents()
-  assert.equal(events.length, 2)
+  assert.equal(fixture.apiRequests.length, 2);
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(result.status, "success");
+  assert.equal(status.state, "success");
+  assert.equal(status.event_count, 2);
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 2);
   const subjectAEvent = events.find(
     (event) =>
       event.pregnancy_relevance.gestational_subject_ids[0] ===
-      'character_subject',
-  )
+      "character_subject",
+  );
   const subjectBEvent = events.find(
     (event) =>
       event.pregnancy_relevance.gestational_subject_ids[0] ===
-      'character_subject_b',
-  )
-  assert.ok(subjectAEvent)
-  assert.ok(subjectBEvent)
-  assert.equal(subjectAEvent.event_id, previousId)
-  assert.notEqual(subjectBEvent.event_id, subjectAEvent.event_id)
-  assert.equal(subjectAEvent.location, 'location_alpha')
-  assert.equal(subjectBEvent.location, 'location_beta')
+      "character_subject_b",
+  );
+  assert.ok(subjectAEvent);
+  assert.ok(subjectBEvent);
+  assert.equal(subjectAEvent.event_id, previousId);
+  assert.notEqual(subjectBEvent.event_id, subjectAEvent.event_id);
+  assert.equal(subjectAEvent.location, "location_alpha");
+  assert.equal(subjectBEvent.location, "location_beta");
   assert.deepEqual(subjectAEvent.pregnancy_relevance.counterpart_ids, [
-    'character_source',
-  ])
+    "character_source",
+  ]);
   assert.deepEqual(subjectBEvent.pregnancy_relevance.counterpart_ids, [
-    'character_source_b',
-  ])
+    "character_source_b",
+  ]);
   assert.deepEqual(
     subjectAEvent.participants.map((item) => item.character_id),
-    ['character_subject', 'character_source'],
-  )
+    ["character_subject", "character_source"],
+  );
   assert.deepEqual(
     subjectBEvent.participants.map((item) => item.character_id),
-    ['character_subject_b', 'character_source_b'],
-  )
+    ["character_subject_b", "character_source_b"],
+  );
 
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.active_event_count, 2)
-  assert.equal(data.tracking_subject_count, 2)
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 2);
+  assert.equal(data.tracking_subject_count, 2);
   assert.deepEqual(Object.keys(data.tracking_subjects).sort(), [
-    'character_subject',
-    'character_subject_b',
-  ])
+    "character_subject",
+    "character_subject_b",
+  ]);
   assert.deepEqual(Object.keys(data.character_profiles).sort(), [
-    'character_subject',
-    'character_subject_b',
-  ])
+    "character_subject",
+    "character_subject_b",
+  ]);
   assert.deepEqual(
     data.tracking_subjects.character_subject.exposure_event_ids,
     [subjectAEvent.event_id],
-  )
+  );
   assert.deepEqual(
     data.tracking_subjects.character_subject_b.exposure_event_ids,
     [subjectBEvent.event_id],
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('invalid raw location response preserves the previous successful Event and Registry batch', async () => {
+test("invalid raw location response preserves the previous successful Event and Registry batch", async () => {
   const firstEvent = canonicalApiEvent({
-    subjectId: 'subject_a',
-    sourceId: 'source_a',
-  })
-  firstEvent.location = 'location_alpha'
+    subjectId: "subject_a",
+    sourceId: "source_a",
+  });
+  firstEvent.location = "location_alpha";
   const secondEvent = canonicalApiEvent({
-    subjectId: 'subject_b',
-    sourceId: 'source_b',
-  })
-  secondEvent.location = { display: 'location_alpha' }
-  let rawResponse = JSON.stringify({ schema_version: 1, events: [firstEvent] })
-  const fixture = createFixture({ rawApiResponse: () => rawResponse })
+    subjectId: "subject_b",
+    sourceId: "source_b",
+  });
+  secondEvent.location = { display: "location_alpha" };
+  let rawResponse = JSON.stringify({ schema_version: 1, events: [firstEvent] });
+  const fixture = createFixture({ rawApiResponse: () => rawResponse });
 
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const previousEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const previousEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
 
   rawResponse = JSON.stringify({
     schema_version: 1,
     events: [firstEvent, secondEvent],
-  })
+  });
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     (error) =>
-      error?.code === 'EVENT_ANALYSIS_INVALID' &&
-      error?.message === 'EVENT_ANALYSIS_LOCATION_INVALID',
-  )
+      error?.code === "EVENT_ANALYSIS_INVALID" &&
+      error?.message === "EVENT_ANALYSIS_LOCATION_INVALID",
+  );
 
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.state, 'failed')
-  assert.equal(status.last_error, 'EVENT_ANALYSIS_LOCATION_INVALID')
-  assert.equal(status.error_code, 'EVENT_ANALYSIS_LOCATION_INVALID')
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "failed");
+  assert.equal(status.last_error, "EVENT_ANALYSIS_LOCATION_INVALID");
+  assert.equal(status.error_code, "EVENT_ANALYSIS_LOCATION_INVALID");
   assert.deepEqual(
     status.current_floor_events.map((event) => event.event_id),
     [previousEvent.event_id],
-  )
+  );
 
-  const events = await fixture.runtime.getCurrentFloorEvents()
-  assert.equal(events.length, 1)
-  assert.equal(events[0].event_id, previousEvent.event_id)
-  assert.equal(events[0].location, 'location_alpha')
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_id, previousEvent.event_id);
+  assert.equal(events[0].location, "location_alpha");
   assert.deepEqual(events[0].pregnancy_relevance.gestational_subject_ids, [
-    'subject_a',
-  ])
+    "subject_a",
+  ]);
 
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.deepEqual(Object.keys(data.tracking_subjects), ['subject_a'])
-  assert.deepEqual(Object.keys(data.character_profiles), ['subject_a'])
-  assert.equal(data.tracking_subjects.subject_b, undefined)
-  assert.equal(data.character_profiles.subject_b, undefined)
-  fixture.runtime.destroy()
-})
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(Object.keys(data.tracking_subjects), ["subject_a"]);
+  assert.deepEqual(Object.keys(data.character_profiles), ["subject_a"]);
+  assert.equal(data.tracking_subjects.subject_b, undefined);
+  assert.equal(data.character_profiles.subject_b, undefined);
+  fixture.runtime.destroy();
+});
 
 test(
-  'HTTP-like crypto without subtle still reaches analyzer and persists a complete Floor Version',
+  "HTTP-like crypto without subtle still reaches analyzer and persists a complete Floor Version",
   { concurrency: false },
   async () => {
-    let analyzed = 0
+    let analyzed = 0;
     const fixture = createFixture({
       analyzer: {
         async analyzeFloor(request) {
-          analyzed += 1
-          assert.equal(request.floor_version.content_hash.length, 64)
-          return { events: [] }
+          analyzed += 1;
+          assert.equal(request.floor_version.content_hash.length, 64);
+          return { events: [] };
         },
       },
-    })
+    });
     await withGlobalCrypto({ subtle: undefined }, async () => {
-      await fixture.runtime.init()
-      const result = await fixture.runtime.refreshCurrentFloorAnalysis()
-      assert.equal(result.status, 'success')
-      assert.equal(analyzed, 1)
-      const stored = fixture.runtime.store.getFloor(0)
-      assert.equal(stored.analysis.floor_version.content_hash.length, 64)
+      await fixture.runtime.init();
+      const result = await fixture.runtime.refreshCurrentFloorAnalysis();
+      assert.equal(result.status, "success");
+      assert.equal(analyzed, 1);
+      const stored = fixture.runtime.store.getFloor(0);
+      assert.equal(stored.analysis.floor_version.content_hash.length, 64);
       assert.deepEqual(Object.keys(stored.analysis.floor_version), [
-        'chat_id',
-        'message_id',
-        'floor',
-        'swipe_id',
-        'content_hash',
-        'message_version',
-      ])
-    })
-    fixture.runtime.destroy()
+        "chat_id",
+        "message_id",
+        "floor",
+        "swipe_id",
+        "content_hash",
+        "message_version",
+      ]);
+    });
+    fixture.runtime.destroy();
   },
-)
+);
 
-test('Runtime sends the target floor through the shared per-floor regex pipeline', async () => {
-  let analysisInput = null
+test("Runtime sends the target floor through the shared per-floor regex pipeline", async () => {
+  let analysisInput = null;
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-target',
+        message_id: "message-target",
         floor: 3,
-        role: 'assistant',
-        content: '<target>TARGET_PROCESSED</target>',
+        role: "assistant",
+        content: "<target>TARGET_PROCESSED</target>",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        analysisInput = request.analysisInput
-        return { events: [] }
+        analysisInput = request.analysisInput;
+        return { events: [] };
       },
     },
-  })
+  });
   fixture.context.chatMetadata.bioweave = {
-    chat_scope: { chat_id: 'chat-runtime' },
+    chat_scope: { chat_id: "chat-runtime" },
     settings: {
       recent_story: {
         enabled: true,
@@ -1122,619 +1134,924 @@ test('Runtime sends the target floor through the shared per-floor regex pipeline
         regex_user_enabled: false,
         regex_rules: [
           {
-            pattern: '/<target>(.*?)<\\/target>/',
-            type: 'extract',
+            pattern: "/<target>(.*?)<\\/target>/",
+            type: "extract",
             enabled: true,
           },
         ],
       },
     },
     tracking_subjects: {},
-  }
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  assert.equal(analysisInput.current_floor.narrative, 'TARGET_PROCESSED')
-  fixture.runtime.destroy()
-})
+  };
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(analysisInput.current_floor.narrative, "TARGET_PROCESSED");
+  fixture.runtime.destroy();
+});
 
 test(
-  'Floor Version preflight failures expose safe diagnostics without throwing status or business DTO reads',
+  "Floor Version preflight failures expose safe diagnostics without throwing status or business DTO reads",
   { concurrency: false },
   async () => {
-    const digestError = new Error('DIGEST_BROKE')
-    digestError.code = 'DIGEST_BROKE'
-    const fixture = createFixture()
+    const digestError = new Error("DIGEST_BROKE");
+    digestError.code = "DIGEST_BROKE";
+    const fixture = createFixture();
     await withGlobalCrypto(
       {
         subtle: {
           async digest() {
-            throw digestError
+            throw digestError;
           },
         },
       },
       async () => {
-        await fixture.runtime.init()
-        const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-        assert.equal(status.state, 'failed')
-        assert.equal(status.busy, false)
-        assert.equal(status.error_stage, 'floor_version')
-        assert.equal(status.error_code, 'DIGEST_BROKE')
-        assert.match(status.safe_error_summary, /Floor Version/)
-        assert.doesNotMatch(status.safe_error_summary, /DIGEST_BROKE/)
-        assert.equal(status.floor_version, null)
-        assert.deepEqual(status.current_floor_events, [])
+        await fixture.runtime.init();
+        const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+        assert.equal(status.state, "failed");
+        assert.equal(status.busy, false);
+        assert.equal(status.error_stage, "floor_version");
+        assert.equal(status.error_code, "DIGEST_BROKE");
+        assert.match(status.safe_error_summary, /Floor Version/);
+        assert.doesNotMatch(status.safe_error_summary, /DIGEST_BROKE/);
+        assert.equal(status.floor_version, null);
+        assert.deepEqual(status.current_floor_events, []);
 
-        const data = await fixture.runtime.collectActiveBusinessData()
-        assert.equal(data.analysis_status.error_stage, 'floor_version')
-        assert.equal(data.analysis_status.error_code, 'DIGEST_BROKE')
-        assert.equal(data.floor_version, null)
-        assert.deepEqual(data.active_events, [])
-        assert.equal(fixture.runtime.store.getFloor(0).analysis, null)
+        const data = await fixture.runtime.collectActiveBusinessData();
+        assert.equal(data.analysis_status.error_stage, "floor_version");
+        assert.equal(data.analysis_status.error_code, "DIGEST_BROKE");
+        assert.equal(data.floor_version, null);
+        assert.deepEqual(data.active_events, []);
+        assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
         await assert.rejects(
           fixture.runtime.refreshCurrentFloorAnalysis(),
           /DIGEST_BROKE/,
-        )
+        );
       },
-    )
-    fixture.runtime.destroy()
+    );
+    fixture.runtime.destroy();
   },
-)
+);
 
-test('analysis status exposes running state and attempt while the analyzer is busy', async () => {
-  let release
+test("analysis status exposes running state and attempt while the analyzer is busy", async () => {
+  let release;
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
   const fixture = createFixture({
     analyzer: {
       analyzeFloor: () =>
         new Promise((resolve) => {
-          release = () => resolve({ events: [] })
+          release = () => resolve({ events: [] });
+          startedResolve();
         }),
     },
-  })
-  await fixture.runtime.init()
-  const pending = fixture.runtime.refreshCurrentFloorAnalysis()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  const running = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(running.state, 'running')
-  assert.equal(running.busy, true)
-  assert.equal(running.attempt, 1)
-  release()
-  await pending
-  fixture.runtime.destroy()
-})
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.refreshCurrentFloorAnalysis();
+  await started;
+  const running = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(running.state, "running");
+  assert.equal(running.busy, true);
+  assert.equal(running.attempt, 1);
+  release();
+  await pending;
+  fixture.runtime.destroy();
+});
 
-test('successful Floor skips non-force analysis and force success replaces Events', async () => {
-  const fixture = createFixture()
-  await fixture.runtime.init()
-  await fixture.runtime.analyzeCurrentFloor()
-  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
-  await fixture.runtime.analyzeCurrentFloor()
-  assert.equal(fixture.calls(), 1)
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  assert.equal(fixture.calls(), 2)
+test("successful Floor skips non-force analysis and force success replaces Events", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  await fixture.runtime.analyzeCurrentFloor();
+  assert.equal(fixture.calls(), 1);
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(fixture.calls(), 2);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.event_id,
     ),
     [firstId],
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('API input uses the nearest valid previous Floor Version provenance', async () => {
-  const inputs = []
+test("API input uses the nearest valid previous Floor Version provenance", async () => {
+  const inputs = [];
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-1',
-        floor: 1,
-        content: '第一楼层',
-        role: 'assistant',
-      },
-      {
-        message_id: 'message-2',
-        floor: 2,
-        content: '第二楼层',
-        role: 'assistant',
-      },
-      {
-        message_id: 'message-3',
+        message_id: "message-1",
         floor: 3,
-        content: '第三楼层',
-        role: 'assistant',
+        content: "第一楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-2",
+        floor: 6,
+        content: "第二楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-3",
+        floor: 9,
+        content: "第三楼层",
+        role: "assistant",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        inputs.push(request.analysisInput)
-        return { events: [eventResult()] }
+        inputs.push(request.analysisInput);
+        return { events: [eventResult()] };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 0 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 2 },
     { force: true },
-  )
+  );
 
-  const baseline = inputs[2].existing_bioweave
-  assert.equal(baseline.analysis.status, 'success')
-  assert.equal(baseline.analysis.floor_version.message_id, 'message-2')
+  const baseline = inputs[2].existing_bioweave;
+  assert.equal(baseline.analysis.status, "success");
+  assert.equal(baseline.analysis.floor_version.message_id, "message-2");
   assert.deepEqual(
     baseline.events.map((event) => event.source.message_id),
-    ['message-2'],
-  )
-  fixture.runtime.destroy()
-})
+    ["message-2"],
+  );
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 2 },
+    { force: true },
+  );
+  const reanalysis = inputs.at(-1).existing_bioweave;
+  assert.equal(reanalysis.analysis.floor_version.message_id, "message-2");
+  assert.deepEqual(
+    reanalysis.events.map((event) => event.source.message_id),
+    ["message-2"],
+  );
+  assert.doesNotMatch(JSON.stringify(reanalysis), /message-3/u);
+  fixture.runtime.destroy();
+});
 
-test('API input is empty when no valid previous Floor exists', async () => {
-  let input
+test("API input uses 6F when the unanalysed target is 9F", async () => {
+  let input;
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-3",
+        floor: 3,
+        content: "第三楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-6",
+        floor: 6,
+        content: "第六楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-9",
+        floor: 9,
+        content: "第九楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        input = request.analysisInput;
+        return { events: [eventResult()] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 1 },
+    { force: true },
+  );
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 2 },
+    { force: true },
+  );
+
+  assert.equal(
+    input.existing_bioweave.analysis.floor_version.message_id,
+    "message-6",
+  );
+  assert.deepEqual(
+    input.existing_bioweave.events.map((event) => event.source.message_id),
+    ["message-6"],
+  );
+  fixture.runtime.destroy();
+});
+
+test("deleted latest Floor falls back to the nearest remaining valid previous Floor", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-3",
+        floor: 3,
+        content: "第三楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-6",
+        floor: 6,
+        content: "第六楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-9",
+        floor: 9,
+        content: "第九楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-target",
+        floor: 10,
+        content: "目标楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return { events: [eventResult(`event-${inputs.length}`)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  for (const index of [0, 1, 2]) {
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index },
+      { force: true },
+    );
+  }
+  fixture.context.chat.splice(2, 1);
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+
+  assert.equal(
+    inputs.at(-1).existing_bioweave.analysis.floor_version.message_id,
+    "message-6",
+  );
+  assert.deepEqual(
+    inputs
+      .at(-1)
+      .existing_bioweave.events.map((event) => event.source.message_id),
+    ["message-6"],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(inputs.at(-1).existing_bioweave),
+    /message-9/u,
+  );
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+  assert.equal(
+    inputs.at(-1).existing_bioweave.analysis.floor_version.message_id,
+    "message-6",
+  );
+  assert.doesNotMatch(
+    JSON.stringify(inputs.at(-1).existing_bioweave),
+    /message-9/u,
+  );
+  fixture.runtime.destroy();
+});
+
+test("API input is empty when no valid previous Floor exists", async () => {
+  let input;
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor(request) {
-        input = request.analysisInput
-        return { events: [] }
+        input = request.analysisInput;
+        return { events: [] };
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] })
-  fixture.runtime.destroy()
-})
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
+  fixture.runtime.destroy();
+});
 
-test('deleted Floor and Swipe owners cannot contribute previous API state', async () => {
+test("deleted Floor and Swipe owners cannot contribute previous API state", async () => {
   async function assertEmptyPrevious(messages, removeOwner) {
-    const inputs = []
+    const inputs = [];
     const fixture = createFixture({
       messages,
       analyzer: {
         async analyzeFloor(request) {
-          inputs.push(request.analysisInput)
-          return { events: [eventResult('event-' + inputs.length)] }
+          inputs.push(request.analysisInput);
+          return { events: [eventResult("event-" + inputs.length)] };
         },
       },
-    })
-    await fixture.runtime.init()
+    });
+    await fixture.runtime.init();
     await fixture.runtime.analyzeFloor(
       { __messageIndex: true, index: 0 },
       { force: true },
-    )
-    removeOwner(fixture.context.chat)
-    await fixture.runtime.analyzeFloor('message-target', { force: true })
+    );
+    removeOwner(fixture.context.chat);
+    await fixture.runtime.analyzeFloor("message-target", { force: true });
     assert.deepEqual(inputs[1].existing_bioweave, {
       analysis: null,
       events: [],
-    })
-    fixture.runtime.destroy()
+    });
+    fixture.runtime.destroy();
   }
 
   await assertEmptyPrevious(
     [
       {
-        message_id: 'message-owner',
-        floor: 1,
-        content: '被删除的 Floor',
-        role: 'assistant',
+        message_id: "message-owner",
+        floor: 9,
+        content: "被删除的 Floor",
+        role: "assistant",
       },
       {
-        message_id: 'message-target',
-        floor: 2,
-        content: '目标 Floor',
-        role: 'assistant',
+        message_id: "message-target",
+        floor: 10,
+        content: "目标 Floor",
+        role: "assistant",
       },
     ],
     (chat) => chat.splice(0, 1),
-  )
+  );
 
   await assertEmptyPrevious(
     [
       {
-        message_id: 'message-owner',
-        floor: 1,
-        swipes: ['版本 A', '版本 B'],
+        message_id: "message-owner",
+        floor: 9,
+        swipes: ["版本 A", "版本 B"],
         swipe_info: [{}, {}],
         swipe_id: 1,
-        role: 'assistant',
+        role: "assistant",
       },
       {
-        message_id: 'message-target',
-        floor: 2,
-        content: '目标 Floor',
-        role: 'assistant',
+        message_id: "message-target",
+        floor: 10,
+        content: "目标 Floor",
+        role: "assistant",
       },
     ],
     (chat) => {
-      delete chat[0].swipe_info[1]
+      delete chat[0].swipe_info[1];
     },
-  )
-})
+  );
+});
 
-test('reanalyzing a Floor never uses that Floor as its own previous state', async () => {
-  const inputs = []
+test("reanalyzing a Floor never uses that Floor as its own previous state", async () => {
+  const inputs = [];
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-1',
+        message_id: "message-1",
         floor: 1,
-        content: '第一楼层',
-        role: 'assistant',
+        content: "第一楼层",
+        role: "assistant",
       },
       {
-        message_id: 'message-2',
+        message_id: "message-2",
         floor: 2,
-        content: '第二楼层',
-        role: 'assistant',
+        content: "第二楼层",
+        role: "assistant",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        inputs.push(request.analysisInput)
+        inputs.push(request.analysisInput);
         return {
           events: [
-            eventResult('ignored-model-id', {
+            eventResult("ignored-model-id", {
               location: `run-${inputs.length}`,
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 0 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
-  assert.equal(inputs.length, 3)
+  );
+  assert.equal(inputs.length, 3);
   for (const input of inputs.slice(1)) {
     assert.equal(
       input.existing_bioweave.analysis.floor_version.message_id,
-      'message-1',
-    )
+      "message-1",
+    );
     assert.deepEqual(
       input.existing_bioweave.events.map((event) => event.location),
-      ['run-1'],
-    )
+      ["run-1"],
+    );
   }
-  fixture.runtime.destroy()
-})
+  fixture.runtime.destroy();
+});
 
-test('stale Floor Version is skipped during previous-state resolution', async () => {
-  const inputs = []
+test("stale Floor Version is skipped during previous-state resolution", async () => {
+  const inputs = [];
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-1',
+        message_id: "message-1",
         floor: 1,
-        content: '第一楼层',
-        role: 'assistant',
+        content: "第一楼层",
+        role: "assistant",
       },
       {
-        message_id: 'message-2',
+        message_id: "message-2",
         floor: 2,
-        content: '第二楼层',
-        role: 'assistant',
-        message_version: 'v1',
+        content: "第二楼层",
+        role: "assistant",
+        message_version: "v1",
       },
       {
-        message_id: 'message-3',
+        message_id: "message-3",
         floor: 3,
-        content: '第三楼层',
-        role: 'assistant',
+        content: "第三楼层",
+        role: "assistant",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        inputs.push(request.analysisInput)
-        return { events: [eventResult()] }
+        inputs.push(request.analysisInput);
+        return { events: [eventResult()] };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 0 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
-  fixture.context.chat[1].message_version = 'v2'
+  );
+  fixture.context.chat[1].message_version = "v2";
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 2 },
     { force: true },
-  )
+  );
 
-  const baseline = inputs[2].existing_bioweave
-  assert.equal(baseline.analysis.floor_version.message_id, 'message-1')
+  const baseline = inputs[2].existing_bioweave;
+  assert.equal(baseline.analysis.floor_version.message_id, "message-1");
   assert.deepEqual(
     baseline.events.map((event) => event.source.message_id),
-    ['message-1'],
-  )
-  fixture.runtime.destroy()
-})
+    ["message-1"],
+  );
+  fixture.runtime.destroy();
+});
 
-test('repeated force analysis leaves only the final successful Event result', async () => {
-  let calls = 0
-  const inputs = []
+test("repeated force analysis leaves only the final successful Event result", async () => {
+  let calls = 0;
+  const inputs = [];
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-1',
+        message_id: "message-1",
         floor: 1,
-        content: '第一楼层',
-        role: 'assistant',
+        content: "第一楼层",
+        role: "assistant",
       },
       {
-        message_id: 'message-2',
+        message_id: "message-2",
         floor: 2,
-        content: '第二楼层',
-        role: 'assistant',
+        content: "第二楼层",
+        role: "assistant",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        calls += 1
-        inputs.push(request.analysisInput)
-        if (calls === 2) return { events: [] }
+        calls += 1;
+        inputs.push(request.analysisInput);
+        if (calls === 2) return { events: [] };
         return {
           events: [
             eventResult(`model-${calls}`, {
-              location: calls === 1 ? 'prior' : 'final',
+              location: calls === 1 ? "prior" : "final",
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 0 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
+  );
   assert.deepEqual(
     await fixture.runtime.getActiveFloorEvents(1, inputs[1].floor_version),
     [],
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
-  assert.equal(inputs.length, 3)
+  );
+  assert.equal(inputs.length, 3);
   for (const input of inputs.slice(1)) {
     assert.equal(
       input.existing_bioweave.analysis.floor_version.message_id,
-      'message-1',
-    )
+      "message-1",
+    );
     assert.deepEqual(
       input.existing_bioweave.events.map((event) => event.location),
-      ['prior'],
-    )
+      ["prior"],
+    );
   }
-  const events = await fixture.runtime.getCurrentFloorEvents()
-  assert.equal(events.length, 1)
-  assert.equal(events[0].location, 'final')
-  fixture.runtime.destroy()
-})
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].location, "final");
+  fixture.runtime.destroy();
+});
 
-test('reanalyzing an edited Floor never uses its stale own result as previous state', async () => {
-  const inputs = []
+test("reanalyzing an edited Floor never uses its stale own result as previous state", async () => {
+  const inputs = [];
   const fixture = createFixture({
     messages: [
       {
-        message_id: 'message-1',
+        message_id: "message-1",
         floor: 1,
-        content: '第一楼层',
-        role: 'assistant',
+        content: "第一楼层",
+        role: "assistant",
       },
       {
-        message_id: 'message-2',
+        message_id: "message-2",
         floor: 2,
-        content: '第二楼层',
-        role: 'assistant',
+        content: "第二楼层",
+        role: "assistant",
       },
     ],
     analyzer: {
       async analyzeFloor(request) {
-        inputs.push(request.analysisInput)
+        inputs.push(request.analysisInput);
         return {
           events: [
             eventResult(`model-${inputs.length}`, {
               location: `run-${inputs.length}`,
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 0 },
     { force: true },
-  )
+  );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
-  fixture.context.chat[1].content = '第二楼层已编辑'
+  );
+  fixture.context.chat[1].content = "第二楼层已编辑";
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 1 },
     { force: true },
-  )
+  );
 
-  assert.equal(inputs.length, 3)
+  assert.equal(inputs.length, 3);
   assert.equal(
     inputs[2].existing_bioweave.analysis.floor_version.message_id,
-    'message-1',
-  )
+    "message-1",
+  );
   assert.deepEqual(
     inputs[2].existing_bioweave.events.map((event) => event.location),
-    ['run-1'],
-  )
-  fixture.runtime.destroy()
-})
+    ["run-1"],
+  );
+  fixture.runtime.destroy();
+});
 
-test('failed force refresh preserves the previous successful Events and records failure', async () => {
-  let calls = 0
+test("failed force refresh preserves the previous successful Events and records failure", async () => {
+  let calls = 0;
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        calls += 1
-        if (calls === 2) throw new Error('JSON_SCHEMA_INVALID')
-        return { events: [eventResult('evt-success')] }
+        calls += 1;
+        if (calls === 2) throw new Error("JSON_SCHEMA_INVALID");
+        return { events: [eventResult("evt-success")] };
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /JSON_SCHEMA_INVALID/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.state, 'failed')
-  assert.equal(status.last_error, 'JSON_SCHEMA_INVALID')
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "failed");
+  assert.equal(status.last_error, "JSON_SCHEMA_INVALID");
   assert.deepEqual(
     status.current_floor_events.map((event) => event.event_id),
     [firstId],
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('stale Floor Version removes old Events from the derived Registry', async () => {
-  let calls = 0
+test("stale Floor Version removes old Events from the derived Registry", async () => {
+  let calls = 0;
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        calls += 1
-        if (calls === 2) throw new Error('REQUEST_TIMEOUT')
-        return { events: [eventResult('evt-old-version')] }
+        calls += 1;
+        if (calls === 2) throw new Error("REQUEST_TIMEOUT");
+        return { events: [eventResult("evt-old-version")] };
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  fixture.context.chat[0].content = '编辑后的当前剧情'
-  await assert.rejects(fixture.runtime.analyzeCurrentFloor(), /REQUEST_TIMEOUT/)
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.state, 'failed')
-  assert.equal(data.active_event_count, 0)
-  assert.equal(data.tracking_subject_count, 0)
-  fixture.runtime.destroy()
-})
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  fixture.context.chat[0].content = "编辑后的当前剧情";
+  await assert.rejects(
+    fixture.runtime.analyzeCurrentFloor(),
+    /REQUEST_TIMEOUT/,
+  );
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.state, "failed");
+  assert.equal(data.active_event_count, 0);
+  assert.equal(data.tracking_subject_count, 0);
+  fixture.runtime.destroy();
+});
 
-test('Runtime lifecycle performs interval analysis without any UI subscriber', async () => {
-  const fixture = createFixture({ floor: 3 })
-  await fixture.runtime.init()
-  fixture.emit('message-received', { message_id: 'message-stable' })
-  await settle()
-  assert.equal(fixture.calls(), 1)
-  fixture.emit('generation-ended', { message_id: 'message-stable' })
-  await settle()
-  assert.equal(fixture.calls(), 1)
-  fixture.runtime.destroy()
-})
+test("stale Floor Version does not expose old analysis status metadata", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  fixture.context.chat[0].content = "编辑后的当前剧情";
 
-test('active Swipe switching selects isolated authoritative Floor Versions', async () => {
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "not_analyzed");
+  assert.equal(status.last_success, null);
+  assert.equal(status.attempt, null);
+  assert.equal(status.last_error, null);
+  assert.equal(status.error_code, null);
+  assert.deepEqual(status.current_floor_events, []);
+  fixture.runtime.destroy();
+});
+
+test("Runtime lifecycle performs interval analysis without any UI subscriber", async () => {
+  const fixture = createFixture({ floor: 3 });
+  await fixture.runtime.init();
+  fixture.emit("message-received", { message_id: "message-stable" });
+  await settle();
+  assert.equal(fixture.calls(), 1);
+  fixture.emit("generation-ended", { message_id: "message-stable" });
+  await settle();
+  assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("active Swipe switching selects isolated authoritative Floor Versions", async () => {
   const message = {
-    message_id: 'message-swipe',
+    message_id: "message-swipe",
     floor: 3,
     swipe_id: 0,
-    swipes: ['版本 A', '版本 B'],
+    swipes: ["版本 A", "版本 B"],
     swipe_info: [{}, {}],
-    role: 'assistant',
-  }
-  const fixture = createFixture({ messages: [message] })
-  await fixture.runtime.init()
-  fixture.emit('message-received', { message_id: 'message-swipe' })
-  await settle()
-  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
-  message.swipe_id = 1
-  fixture.emit('message-swiped', { message_id: 'message-swipe' })
-  await settle()
-  const events = await fixture.runtime.getCurrentFloorEvents()
-  assert.equal(events.length, 1)
-  assert.notEqual(events[0].event_id, firstId)
-  assert.equal(events[0].source.swipe_id, 1)
-  fixture.runtime.destroy()
-})
+    role: "assistant",
+  };
+  const fixture = createFixture({ messages: [message] });
+  await fixture.runtime.init();
+  fixture.emit("message-received", { message_id: "message-swipe" });
+  await settle();
+  const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", { message_id: "message-swipe" });
+  await settle();
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.length, 1);
+  assert.notEqual(events[0].event_id, firstId);
+  assert.equal(events[0].source.swipe_id, 1);
+  fixture.runtime.destroy();
+});
 
-test('stable lifecycle message IDs are not confused with array indexes', async () => {
+test("previous API state follows the active Swipe owner after switching", async () => {
+  const inputs = [];
+  const message = {
+    message_id: "message-swipe-history",
+    floor: 3,
+    swipe_id: 0,
+    swipes: ["版本 A", "版本 B"],
+    swipe_info: [{}, {}],
+    role: "assistant",
+  };
   const fixture = createFixture({
     messages: [
-      { message_id: '0', floor: 3, content: '楼层三', role: 'assistant' },
-      { message_id: '1', floor: 1, content: '楼层一', role: 'assistant' },
+      message,
+      {
+        message_id: "message-target",
+        floor: 4,
+        content: "目标楼层",
+        role: "assistant",
+      },
     ],
-  })
-  await fixture.runtime.init()
-  fixture.emit('message-received', { message_id: '0' })
-  await settle()
+    analyzer: {
+      async analyzeFloor(request) {
+        inputs.push(request.analysisInput);
+        return { events: [eventResult(`event-${inputs.length}`)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  assert.equal(fixture.runtime.store.getActiveSwipeId(0), 0);
+  assert.ok(fixture.runtime.store.getFloor(0, 0).analysis);
+  const swipeAEventId =
+    fixture.runtime.store.getActiveFloor(0).events[0].event_id;
+
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", { message_id: message.message_id });
+  await settle();
+  const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
+  assert.equal(swipeBEvents.length, 1);
+  assert.notEqual(swipeBEvents[0].event_id, swipeAEventId);
+  assert.equal(swipeBEvents[0].source.swipe_id, 1);
+
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+  const previous = inputs.at(-1).existing_bioweave;
+  assert.equal(previous.analysis.floor_version.swipe_id, 1);
+  assert.deepEqual(
+    previous.events.map((event) => event.source.swipe_id),
+    [1],
+  );
+  assert.doesNotMatch(JSON.stringify(previous), new RegExp(swipeAEventId, "u"));
+  fixture.runtime.destroy();
+});
+
+test("active Swipe deletion rebuilds the registry and fails closed without a slot", async () => {
+  const message = {
+    message_id: "message-swipe-delete",
+    floor: 3,
+    swipe_id: 0,
+    swipes: ["版本 A"],
+    swipe_info: [{}],
+    role: "assistant",
+  };
+  const fixture = createFixture({ messages: [message] });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(
+    (await fixture.runtime.getTrackingRegistry()).tracking_subjects["char-a"]
+      .status,
+    "active",
+  );
+
+  delete message.swipes[0];
+  delete message.swipe_info[0];
+  fixture.emit("message-swipe-deleted", { message_id: message.message_id });
+  await settle();
+
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
+  assert.deepEqual(
+    fixture.context.chatMetadata.bioweave.tracking_candidates,
+    {},
+  );
+  assert.deepEqual(
+    fixture.context.chatMetadata.bioweave.character_profiles,
+    {},
+  );
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("plugin reload rebuilds empty derived state before analyzing a new Floor", async () => {
+  let input;
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-owner",
+        floor: 1,
+        content: "已删除的历史楼",
+        role: "assistant",
+      },
+      {
+        message_id: "message-new",
+        floor: 10,
+        content: "重载后的新楼",
+        role: "assistant",
+      },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  const deletedEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
+  fixture.runtime.destroy();
+  fixture.context.chat.splice(0, 1);
+
+  const reloaded = createRuntime({
+    adapter: fixture.runtime.st,
+    analyzer: {
+      async analyzeFloor(request) {
+        input = request.analysisInput;
+        return { events: [] };
+      },
+    },
+  });
+  await reloaded.init();
+  await settle();
+
+  assert.deepEqual(
+    (await reloaded.getTrackingRegistry()).tracking_subjects,
+    {},
+  );
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
+  await reloaded.refreshCurrentFloorAnalysis();
+  assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
+  assert.deepEqual(input.character_context.profiles, {});
+  assert.doesNotMatch(JSON.stringify(input), new RegExp(deletedEventId, "u"));
+  reloaded.destroy();
+});
+
+test("stable lifecycle message IDs are not confused with array indexes", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "0", floor: 3, content: "楼层三", role: "assistant" },
+      { message_id: "1", floor: 1, content: "楼层一", role: "assistant" },
+    ],
+  });
+  await fixture.runtime.init();
+  fixture.emit("message-received", { message_id: "0" });
+  await settle();
   assert.equal(
     fixture.runtime.store.getFloor(0).analysis.floor_version.message_id,
-    '0',
-  )
+    "0",
+  );
   assert.equal(
     fixture.runtime.store.getFloor(0).analysis.floor_version.floor,
     3,
-  )
-  assert.equal(fixture.runtime.store.getFloor(1).analysis, null)
-  fixture.runtime.destroy()
-})
+  );
+  assert.equal(fixture.runtime.store.getFloor(1).analysis, null);
+  fixture.runtime.destroy();
+});
 
-test('event edit updates the Floor fact and delete rebuilds Registry without dangling refs', async () => {
-  const fixture = createFixture()
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
-  await fixture.runtime.updateEvent(eventId, { location: '新地点' })
+test("event edit updates the Floor fact and delete rebuilds Registry without dangling refs", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  await fixture.runtime.updateEvent(eventId, { location: "新地点" });
   assert.equal(
     (await fixture.runtime.getCurrentFloorEvents())[0].location,
-    '新地点',
-  )
-  await fixture.runtime.deleteEvent(eventId)
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.active_event_count, 0)
-  assert.equal(data.tracking_subject_count, 0)
-  fixture.runtime.destroy()
-})
+    "新地点",
+  );
+  await fixture.runtime.deleteEvent(eventId);
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 0);
+  assert.equal(data.tracking_subject_count, 0);
+  fixture.runtime.destroy();
+});
 
-test('event edit validates the complete Floor collection before saving or rebuilding Registry', async () => {
+test("event edit validates the complete Floor collection before saving or rebuilding Registry", async () => {
   const subjectEvent = (eventId, subjectId, sourceId) =>
     eventResult(eventId, {
       participants: [
         {
           character_id: subjectId,
           display_name: `${subjectId} display`,
-          event_role: 'potential_gestational_subject',
+          event_role: "potential_gestational_subject",
           reproductive_capabilities_used: { can_carry_pregnancy: true },
-          evidence: [{ kind: 'narrative', text: 'subject evidence' }],
+          evidence: [{ kind: "narrative", text: "subject evidence" }],
         },
         {
           character_id: sourceId,
           display_name: `${sourceId} display`,
-          event_role: 'potential_conception_source',
+          event_role: "potential_conception_source",
           reproductive_capabilities_used: { can_cause_pregnancy: true },
-          evidence: [{ kind: 'narrative', text: 'source evidence' }],
+          evidence: [{ kind: "narrative", text: "source evidence" }],
         },
       ],
       pregnancy_relevance: {
@@ -1744,407 +2061,675 @@ test('event edit validates the complete Floor collection before saving or rebuil
         counterpart_ids: [sourceId],
         confidence: 0.8,
       },
-    })
+    });
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
         return {
           events: [
-            subjectEvent('event-a', 'subject-a', 'source-a'),
-            subjectEvent('event-b', 'subject-b', 'source-b'),
+            subjectEvent("event-a", "subject-a", "source-a"),
+            subjectEvent("event-b", "subject-b", "source-b"),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  const beforeEvents = await fixture.runtime.getCurrentFloorEvents()
-  const beforeFloorSaveCalls = fixture.saveFloorCalls()
-  const beforeRegistrySaveCalls = fixture.saveChatMetadataCalls()
+  const beforeEvents = await fixture.runtime.getCurrentFloorEvents();
+  const beforeFloorSaveCalls = fixture.saveFloorCalls();
+  const beforeRegistrySaveCalls = fixture.saveChatMetadataCalls();
   const secondEvent = beforeEvents.find(
     (event) =>
-      event.pregnancy_relevance.gestational_subject_ids[0] === 'subject-b',
-  )
+      event.pregnancy_relevance.gestational_subject_ids[0] === "subject-b",
+  );
   await assert.rejects(
     fixture.runtime.updateEvent(secondEvent.event_id, {
       participants: [
-        { ...secondEvent.participants[0], character_id: 'subject-a' },
+        { ...secondEvent.participants[0], character_id: "subject-a" },
         { ...secondEvent.participants[1] },
       ],
       pregnancy_relevance: {
         ...secondEvent.pregnancy_relevance,
-        gestational_subject_ids: ['subject-a'],
+        gestational_subject_ids: ["subject-a"],
       },
     }),
     (error) =>
-      error?.code === 'EVENT_ANALYSIS_INVALID' &&
-      error?.diagnostic_code === 'duplicate_gestational_subject_event' &&
+      error?.code === "EVENT_ANALYSIS_INVALID" &&
+      error?.diagnostic_code === "duplicate_gestational_subject_event" &&
       error?.error_path ===
-        '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
-  )
+        "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
+  );
 
-  assert.equal(fixture.saveFloorCalls(), beforeFloorSaveCalls)
-  assert.equal(fixture.saveChatMetadataCalls(), beforeRegistrySaveCalls)
+  assert.equal(fixture.saveFloorCalls(), beforeFloorSaveCalls);
+  assert.equal(fixture.saveChatMetadataCalls(), beforeRegistrySaveCalls);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.pregnancy_relevance.gestational_subject_ids,
     ),
-    [['subject-a'], ['subject-b']],
-  )
-  fixture.runtime.destroy()
-})
+    [["subject-a"], ["subject-b"]],
+  );
+  fixture.runtime.destroy();
+});
 
-test('deleted Floor facts leave no orphan derived references', async () => {
-  const fixture = createFixture()
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
+test("deleted Floor facts leave no orphan derived references", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
   assert.equal(
     (await fixture.runtime.collectActiveBusinessData()).active_event_count,
     1,
-  )
-  fixture.context.chat.splice(0, 1)
-  fixture.emit('message-deleted', { message_id: 'message-stable' })
-  await settle()
-  const data = await fixture.runtime.collectActiveBusinessData()
-  assert.equal(data.active_event_count, 0)
-  assert.equal(data.tracking_subject_count, 0)
-  assert.deepEqual(data.tracking_subjects, {})
-  assert.deepEqual(data.tracking_candidates, {})
-  assert.deepEqual(data.active_events, [])
-  assert.deepEqual(data.tracking_decisions, [])
-  assert.equal(JSON.stringify(data).includes(eventId), false)
-  fixture.runtime.destroy()
-})
+  );
+  fixture.context.chat.splice(0, 1);
+  fixture.emit("message-deleted", { message_id: "message-stable" });
+  await settle();
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(data.active_event_count, 0);
+  assert.equal(data.tracking_subject_count, 0);
+  assert.deepEqual(data.tracking_subjects, {});
+  assert.deepEqual(data.tracking_candidates, {});
+  assert.deepEqual(data.active_events, []);
+  assert.deepEqual(data.tracking_decisions, []);
+  assert.equal(JSON.stringify(data).includes(eventId), false);
+  fixture.runtime.destroy();
+});
 
-test('API failure exits running and exposes the real request diagnostic', async () => {
+test("current-derived reads ignore deleted Floor metadata without a lifecycle callback", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-owner",
+        floor: 1,
+        content: "被删除的 owner",
+        role: "assistant",
+      },
+      {
+        message_id: "message-target",
+        floor: 2,
+        content: "当前目标",
+        role: "assistant",
+      },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  assert.equal(
+    (await fixture.runtime.getTrackingRegistry()).tracking_subjects["char-a"]
+      .status,
+    "active",
+  );
+
+  fixture.context.chat.splice(0, 1);
+  const registry = await fixture.runtime.getTrackingRegistry();
+  assert.deepEqual(registry.tracking_subjects, {});
+  assert.deepEqual(registry.tracking_candidates, {});
+  assert.deepEqual(registry.character_profiles, {});
+
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(data.active_events, []);
+  assert.deepEqual(data.tracking_subjects, {});
+  assert.deepEqual(data.tracking_candidates, {});
+  assert.deepEqual(data.character_profiles, {});
+  assert.equal(data.tracking_subject_count, 0);
+  fixture.runtime.destroy();
+});
+
+test("deleted derived profiles and candidates do not enter Event API input or request messages", async () => {
+  const fixture = createFixture({
+    rawApiResponse: JSON.stringify({ schema_version: 1, events: [] }),
+  });
+  await fixture.runtime.init();
+  await settle();
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: { chat_id: "chat-runtime" },
+    character_profiles: {
+      stale_character: {
+        character_id: "stale_character",
+        display_name: "旧人物",
+        species: "stale_species",
+        biological_type: "stale_type",
+        reproductive_capabilities: { can_carry_pregnancy: true },
+        evidence: ["STALE_PROFILE_EVIDENCE"],
+      },
+    },
+    tracking_candidates: {
+      stale_character: {
+        character_id: "stale_character",
+        display_name: "旧人物",
+        reproductive_capabilities: { can_carry_pregnancy: true },
+        evidence: ["STALE_CANDIDATE_EVIDENCE"],
+      },
+    },
+  };
+
+  const input = await fixture.runtime.getCurrentFloorAnalysisInput();
+  assert.deepEqual(input.character_context.profiles, {});
+  assert.equal(input.character_registry.entities.stale_character, undefined);
+
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const requestText = JSON.stringify(fixture.apiRequests[0]);
+  assert.doesNotMatch(requestText, /STALE_PROFILE_EVIDENCE/u);
+  assert.doesNotMatch(requestText, /STALE_CANDIDATE_EVIDENCE/u);
+  assert.doesNotMatch(requestText, /stale_character/u);
+  fixture.runtime.destroy();
+});
+
+test("Floor save rechecks the current target Version before committing an old result", async () => {
+  let fixture;
+  fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        fixture.context.chat[0].content = "分析期间被编辑的正文";
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /REQUEST_ABORTED/u,
+  );
+  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  fixture.runtime.destroy();
+});
+
+test("target Version changes during request build prevent the API call", async () => {
+  let fixture;
+  let analyzerCalls = 0;
+  fixture = createFixture({
+    characterContextResolver: () => {
+      fixture.context.chat[0].content = "请求构建期间被编辑的正文";
+      return {};
+    },
+    analyzer: {
+      async analyzeFloor() {
+        analyzerCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /REQUEST_ABORTED/u,
+  );
+  assert.equal(analyzerCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("cancelled Floor save rolls back a late result for the same owner", async () => {
+  let releaseSave;
+  let saveStartedResolve;
+  let saveInvocations = 0;
+  const saveStarted = new Promise((resolve) => {
+    saveStartedResolve = resolve;
+  });
+  const fixture = createFixture({
+    saveFloorHook: async () => {
+      saveInvocations += 1;
+      if (saveInvocations > 1) return;
+      saveStartedResolve();
+      await new Promise((resolve) => {
+        releaseSave = resolve;
+      });
+    },
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.refreshCurrentFloorAnalysis();
+  await saveStarted;
+  fixture.runtime.chat.invalidate("during-floor-save");
+  releaseSave();
+  await assert.rejects(pending, /REQUEST_ABORTED/u);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("failed analysis does not write terminal metadata into a shifted message", async () => {
+  let fixture;
+  fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-owner",
+        floor: 1,
+        content: "被删除的 owner",
+        role: "assistant",
+      },
+      {
+        message_id: "message-target",
+        floor: 2,
+        content: "当前目标",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor() {
+        fixture.context.chat.splice(0, 1);
+        throw new Error("REQUEST_TIMEOUT");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 0 },
+      { force: true },
+    ),
+    /REQUEST_TIMEOUT/u,
+  );
+  assert.equal(fixture.context.chat[0].message_id, "message-target");
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  fixture.runtime.destroy();
+});
+
+test("chat invalidation aborts in-flight Event analysis before a stale request can retry", async () => {
+  let signal;
+  let release;
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      analyzeFloor(request) {
+        calls += 1;
+        signal = request.signal;
+        startedResolve();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.refreshCurrentFloorAnalysis();
+  await started;
+  fixture.runtime.chat.invalidate("direct-owner-delete");
+  assert.equal(signal.aborted, true);
+  release({ events: [] });
+  await assert.rejects(pending, /REQUEST_ABORTED/u);
+  assert.equal(calls, 1);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  fixture.runtime.destroy();
+});
+
+test("automatic interval scheduling recomputes a stale last_processed_floor hint", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-3",
+        floor: 3,
+        content: "已有分析楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-6",
+        floor: 6,
+        content: "需要分析楼层",
+        role: "assistant",
+      },
+    ],
+  });
+  await fixture.runtime.init();
+  await settle();
+  const ownerVersion = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: "message-3",
+    floor: 3,
+    swipeId: 0,
+    text: "已有分析楼层",
+  });
+  await fixture.runtime.store.saveFloor(0, 0, {
+    analysis: { status: "success", floor_version: ownerVersion },
+    events: [],
+  });
+  const chat = fixture.runtime.store.getChat("chat-runtime");
+  await fixture.runtime.store.saveChat("chat-runtime", {
+    ...chat,
+    index: { ...(chat.index ?? {}), last_processed_floor: 999 },
+  });
+
+  fixture.emit("message-received", { message_id: "message-6" });
+  await settle();
+  assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("API failure exits running and exposes the real request diagnostic", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        const error = new Error('REQUEST_TIMEOUT')
-        error.code = 'REQUEST_TIMEOUT'
-        throw error
+        const error = new Error("REQUEST_TIMEOUT");
+        error.code = "REQUEST_TIMEOUT";
+        throw error;
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /REQUEST_TIMEOUT/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_stage, 'api_request')
-  assert.equal(status.error_code, 'REQUEST_TIMEOUT')
-  assert.match(status.safe_error_summary, /超时/)
-  fixture.runtime.destroy()
-})
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_stage, "api_request");
+  assert.equal(status.error_code, "REQUEST_TIMEOUT");
+  assert.match(status.safe_error_summary, /超时/);
+  fixture.runtime.destroy();
+});
 
-test('API HTTP diagnostics preserve status and metadata in Runtime status', async () => {
+test("API HTTP diagnostics preserve status and metadata in Runtime status", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        const error = new Error('host timeout-like failure')
+        const error = new Error("host timeout-like failure");
         Object.assign(error, {
-          code: 'REQUEST_TIMEOUT',
-          diagnosticCode: 'server',
-          diagnostic_code: 'server',
-          error_code: 'server',
+          code: "REQUEST_TIMEOUT",
+          diagnosticCode: "server",
+          diagnostic_code: "server",
+          error_code: "server",
           status: 503,
-          phase: 'response',
+          phase: "response",
           attempt: 2,
           timeoutSec: 15,
           timeout_ms: 15000,
-        })
-        throw error
+        });
+        throw error;
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /host timeout-like failure/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_code, 'server')
-  assert.equal(status.diagnostic_code, 'server')
-  assert.equal(status.http_status, 503)
-  assert.equal(status.phase, 'response')
-  assert.equal(status.attempt, 1)
-  assert.equal(status.timeoutSec, 15)
-  assert.equal(status.timeout_ms, 15000)
-  assert.match(status.safe_error_summary, /HTTP 503/)
-  assert.doesNotMatch(status.safe_error_summary, /超时/)
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_code, "server");
+  assert.equal(status.diagnostic_code, "server");
+  assert.equal(status.http_status, 503);
+  assert.equal(status.phase, "response");
+  assert.equal(status.attempt, 1);
+  assert.equal(status.timeoutSec, 15);
+  assert.equal(status.timeout_ms, 15000);
+  assert.match(status.safe_error_summary, /HTTP 503/);
+  assert.doesNotMatch(status.safe_error_summary, /超时/);
   const persistedAttempt =
-    fixture.context.chat[0].extra.bioweave.analysis.last_attempt
-  assert.equal(persistedAttempt.attempt, 2)
-  assert.equal(persistedAttempt.http_status, 503)
-  fixture.runtime.destroy()
-})
+    fixture.context.chat[0].extra.bioweave.analysis.last_attempt;
+  assert.equal(persistedAttempt.attempt, 2);
+  assert.equal(persistedAttempt.http_status, 503);
+  fixture.runtime.destroy();
+});
 
-test('Domain validation failure keeps a specific diagnostic code and path', async () => {
+test("Domain validation failure keeps a specific diagnostic code and path", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
         return {
           events: [
-            eventResult('ignored-by-runtime', {
-              type: 'not_a_biological_event_type',
+            eventResult("ignored-by-runtime", {
+              type: "not_a_biological_event_type",
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /EVENT_DOMAIN_VALIDATION_FAILED/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_code, 'domain_validation_failed')
-  assert.equal(status.error_path, '$.events[0].type')
-  assert.match(status.safe_error_summary, /Event JSON Schema/)
-  fixture.runtime.destroy()
-})
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_code, "domain_validation_failed");
+  assert.equal(status.error_path, "$.events[0].type");
+  assert.match(status.safe_error_summary, /Event JSON Schema/);
+  fixture.runtime.destroy();
+});
 
-test('Domain collection duplicate subject keeps its stable diagnostic code and path', async () => {
+test("Domain collection duplicate subject keeps its stable diagnostic code and path", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
         return {
-          events: [eventResult('duplicate-a'), eventResult('duplicate-b')],
-        }
+          events: [eventResult("duplicate-a"), eventResult("duplicate-b")],
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     (error) =>
-      error?.code === 'EVENT_DOMAIN_VALIDATION_FAILED' &&
-      error?.diagnostic_code === 'duplicate_gestational_subject_event' &&
+      error?.code === "EVENT_DOMAIN_VALIDATION_FAILED" &&
+      error?.diagnostic_code === "duplicate_gestational_subject_event" &&
       error?.error_path ===
-        '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_code, 'duplicate_gestational_subject_event')
+        "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_code, "duplicate_gestational_subject_event");
   assert.equal(
     status.error_path,
-    '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
-  )
-  fixture.runtime.destroy()
-})
+    "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
+  );
+  fixture.runtime.destroy();
+});
 
-test('Runtime rejects a possible conception Event without the canonical exposure evidence marker', async () => {
+test("Runtime rejects a possible conception Event without the canonical exposure evidence marker", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
         return {
           events: [
-            eventResult('missing-exposure-marker', {
+            eventResult("missing-exposure-marker", {
               source_evidence: [
                 {
-                  kind: 'narrative',
-                  text: 'barrier outcome without typed marker',
+                  kind: "narrative",
+                  text: "barrier outcome without typed marker",
                 },
               ],
             }),
           ],
-        }
+        };
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /EVENT_DOMAIN_VALIDATION_FAILED/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.error_code, 'domain_validation_failed')
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.error_code, "domain_validation_failed");
   assert.equal(
     status.error_path,
-    '$.events[0].source_evidence.conception_relevant_exposure',
-  )
-  fixture.runtime.destroy()
-})
+    "$.events[0].source_evidence.conception_relevant_exposure",
+  );
+  fixture.runtime.destroy();
+});
 
-test('response parse failure exits running with a response_parse diagnostic', async () => {
+test("response parse failure exits running with a response_parse diagnostic", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        const error = new Error('EVENT_RESPONSE_JSON_INVALID')
-        error.code = 'EVENT_ANALYSIS_INVALID'
-        error.analysis_stage = 'response_parse'
-        throw error
+        const error = new Error("EVENT_RESPONSE_JSON_INVALID");
+        error.code = "EVENT_ANALYSIS_INVALID";
+        error.analysis_stage = "response_parse";
+        throw error;
       },
     },
-  })
-  await fixture.runtime.init()
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /EVENT_RESPONSE_JSON_INVALID/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_stage, 'response_parse')
-  assert.equal(status.error_code, 'EVENT_RESPONSE_JSON_INVALID')
-  fixture.runtime.destroy()
-})
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_stage, "response_parse");
+  assert.equal(status.error_code, "EVENT_RESPONSE_JSON_INVALID");
+  fixture.runtime.destroy();
+});
 
-test('Floor save failure exits running even when failure metadata cannot be saved', async () => {
+test("Floor save failure exits running even when failure metadata cannot be saved", async () => {
   const fixture = createFixture({
-    saveFloorError: 'ST_FLOOR_STORAGE_UNAVAILABLE',
-  })
-  await fixture.runtime.init()
+    saveFloorError: "ST_FLOOR_STORAGE_UNAVAILABLE",
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /ST_FLOOR_STORAGE_UNAVAILABLE/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_stage, 'floor_save')
-  assert.equal(status.error_code, 'ST_FLOOR_STORAGE_UNAVAILABLE')
-  fixture.runtime.destroy()
-})
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_stage, "floor_save");
+  assert.equal(status.error_code, "ST_FLOOR_STORAGE_UNAVAILABLE");
+  fixture.runtime.destroy();
+});
 
-test('Registry rebuild failure exits running while the Floor Event remains available', async () => {
-  const fixture = createFixture({ saveChatMetadataErrorAt: 3 })
-  await fixture.runtime.init()
-  await settle()
+test("Registry rebuild failure exits running while the Floor Event remains available", async () => {
+  const fixture = createFixture({ saveChatMetadataErrorAt: 3 });
+  await fixture.runtime.init();
+  await settle();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /ST_METADATA_STORAGE_UNAVAILABLE/,
-  )
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(status.error_stage, 'registry_rebuild')
-  assert.equal(status.error_code, 'ST_METADATA_STORAGE_UNAVAILABLE')
-  assert.equal(status.current_floor_events.length, 1)
-  fixture.runtime.destroy()
-})
+  );
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.error_stage, "registry_rebuild");
+  assert.equal(status.error_code, "ST_METADATA_STORAGE_UNAVAILABLE");
+  assert.equal(status.current_floor_events.length, 1);
+  fixture.runtime.destroy();
+});
 
-test('confirmed cancellation releases execution and preserves the previous successful Events', async () => {
-  let release
-  let startedResolve
+test("confirmed cancellation releases execution and preserves the previous successful Events", async () => {
+  let release;
+  let startedResolve;
   const started = new Promise((resolve) => {
-    startedResolve = resolve
-  })
-  let calls = 0
+    startedResolve = resolve;
+  });
+  let calls = 0;
   const fixture = createFixture({
     analyzer: {
       analyzeFloor: () => {
-        calls += 1
+        calls += 1;
         if (calls === 1)
-          return Promise.resolve({ events: [eventResult('prior-event')] })
+          return Promise.resolve({ events: [eventResult("prior-event")] });
         return new Promise((resolve) => {
-          release = resolve
-          startedResolve()
-        })
+          release = resolve;
+          startedResolve();
+        });
       },
     },
-  })
-  await fixture.runtime.init()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const previousId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
-  const pending = fixture.runtime.refreshCurrentFloorAnalysis()
-  await started
-  const running = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(running.state, 'running')
-  assert.equal(await fixture.runtime.requestAbortCurrentFloorAnalysis(), true)
-  const cancelled = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(cancelled.state, 'cancelled')
-  assert.equal(cancelled.busy, false)
-  assert.equal(cancelled.error_code, 'REQUEST_ABORTED')
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const previousId = (await fixture.runtime.getCurrentFloorEvents())[0]
+    .event_id;
+  const pending = fixture.runtime.refreshCurrentFloorAnalysis();
+  await started;
+  const running = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(running.state, "running");
+  assert.equal(await fixture.runtime.requestAbortCurrentFloorAnalysis(), true);
+  const cancelled = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(cancelled.state, "cancelled");
+  assert.equal(cancelled.busy, false);
+  assert.equal(cancelled.error_code, "REQUEST_ABORTED");
   assert.deepEqual(
     cancelled.current_floor_events.map((event) => event.event_id),
     [previousId],
-  )
-  release({ events: [eventResult('late-event')] })
-  await assert.rejects(pending, /REQUEST_ABORTED/)
+  );
+  release({ events: [eventResult("late-event")] });
+  await assert.rejects(pending, /REQUEST_ABORTED/);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.event_id,
     ),
     [previousId],
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('late result from an aborted execution cannot overwrite a newer execution', async () => {
-  let firstRelease
-  let firstStartedResolve
+test("late result from an aborted execution cannot overwrite a newer execution", async () => {
+  let firstRelease;
+  let firstStartedResolve;
   const firstStarted = new Promise((resolve) => {
-    firstStartedResolve = resolve
-  })
-  let calls = 0
+    firstStartedResolve = resolve;
+  });
+  let calls = 0;
   const fixture = createFixture({
     analyzer: {
       analyzeFloor: () => {
-        calls += 1
+        calls += 1;
         if (calls === 1) {
-          firstStartedResolve()
+          firstStartedResolve();
           return new Promise((resolve) => {
-            firstRelease = resolve
-          })
+            firstRelease = resolve;
+          });
         }
-        return Promise.resolve({ events: [eventResult('new-event')] })
+        return Promise.resolve({ events: [eventResult("new-event")] });
       },
     },
-  })
-  await fixture.runtime.init()
-  const first = fixture.runtime.refreshCurrentFloorAnalysis()
-  await firstStarted
-  await fixture.runtime.requestAbortCurrentFloorAnalysis()
-  await fixture.runtime.refreshCurrentFloorAnalysis()
-  const newId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
-  assert.notEqual(newId, 'new-event')
-  firstRelease({ events: [eventResult('old-event')] })
-  await assert.rejects(first, /REQUEST_ABORTED/)
+  });
+  await fixture.runtime.init();
+  const first = fixture.runtime.refreshCurrentFloorAnalysis();
+  await firstStarted;
+  await fixture.runtime.requestAbortCurrentFloorAnalysis();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const newId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  assert.notEqual(newId, "new-event");
+  firstRelease({ events: [eventResult("old-event")] });
+  await assert.rejects(first, /REQUEST_ABORTED/);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.event_id,
     ),
     [newId],
-  )
-  fixture.runtime.destroy()
-})
+  );
+  fixture.runtime.destroy();
+});
 
-test('stale Chat completion releases execution without writing stale failure metadata', async () => {
-  let release
-  let startedResolve
+test("stale Chat completion releases execution without writing stale failure metadata", async () => {
+  let release;
+  let startedResolve;
   const started = new Promise((resolve) => {
-    startedResolve = resolve
-  })
+    startedResolve = resolve;
+  });
   const fixture = createFixture({
     analyzer: {
       analyzeFloor: () =>
         new Promise((resolve) => {
-          release = resolve
-          startedResolve()
+          release = resolve;
+          startedResolve();
         }),
     },
-  })
-  await fixture.runtime.init()
-  const pending = fixture.runtime.refreshCurrentFloorAnalysis()
-  await started
-  fixture.runtime.chat.invalidate('test-stale-chat')
-  release({ events: [eventResult('stale-event')] })
-  await assert.rejects(pending, /STALE_CHAT/)
-  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
-  assert.equal(status.busy, false)
-  assert.equal(status.state, 'failed')
-  assert.equal(fixture.runtime.store.getFloor(0).analysis, null)
-  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), [])
-  fixture.runtime.destroy()
-})
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.refreshCurrentFloorAnalysis();
+  await started;
+  fixture.runtime.chat.invalidate("test-stale-chat");
+  release({ events: [eventResult("stale-event")] });
+  await assert.rejects(pending, /REQUEST_ABORTED/);
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.busy, false);
+  assert.equal(status.state, "cancelled");
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
