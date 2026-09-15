@@ -1,4 +1,4 @@
-import {normalizeStoryTime} from '../story/time.js';
+import { normalizeStoryTime } from '../story/time.js';
 
 export const EVENT_SCHEMA_VERSION = 1;
 
@@ -43,7 +43,8 @@ export const CAPABILITY_KEYS = Object.freeze([
   'can_cause_pregnancy',
 ]);
 
-export const CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND = 'conception_relevant_exposure';
+export const CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND =
+  'conception_relevant_exposure';
 
 export const STORY_TIME_PRECISIONS = Object.freeze([
   'year',
@@ -99,7 +100,9 @@ function hasOwn(value, key) {
 }
 
 function recordValue(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 function textValue(value) {
@@ -171,9 +174,9 @@ function normalizeIdArray(value) {
 
 function normalizeEvidence(value) {
   if (!Array.isArray(value)) return [];
-  return value.map(item => {
+  return value.map((item) => {
     if (typeof item === 'string') {
-      return {kind: 'unknown', text: item.trim()};
+      return { kind: 'unknown', text: item.trim() };
     }
     const source = recordValue(item);
     return {
@@ -186,24 +189,35 @@ function normalizeEvidence(value) {
 
 function normalizeCapabilities(rawParticipant) {
   const participant = recordValue(rawParticipant);
-  const source = recordValue(hasOwn(participant, 'reproductive_capabilities_used')
-    ? participant.reproductive_capabilities_used
-    : participant.reproductive_capabilities);
-  const merged = {...participant, ...source};
+  const source = recordValue(
+    hasOwn(participant, 'reproductive_capabilities_used')
+      ? participant.reproductive_capabilities_used
+      : participant.reproductive_capabilities,
+  );
+  const merged = { ...participant, ...source };
   return {
     can_produce_sperm: readCapability(merged, 'can_produce_sperm'),
     can_produce_ova: readCapability(merged, 'can_produce_ova'),
     can_be_fertilized: readCapability(merged, 'can_be_fertilized'),
     can_carry_pregnancy: readCapability(merged, 'can_carry_pregnancy'),
-    can_cause_pregnancy: readCapability(merged, 'can_cause_pregnancy', ['can_fertilize']),
+    can_cause_pregnancy: readCapability(merged, 'can_cause_pregnancy', [
+      'can_fertilize',
+    ]),
   };
 }
 
 function normalizeParticipant(rawParticipant = {}) {
   const source = recordValue(rawParticipant);
   const rawContext = recordValue(source.biological_context);
+  const {
+    identity_status: _identityStatus,
+    mention_id: _mentionId,
+    alias_candidate: _aliasCandidate,
+    identity_evidence: _identityEvidence,
+    ...persistedSource
+  } = source;
   return {
-    ...source,
+    ...persistedSource,
     character_id: identifierValue(source.character_id),
     display_name: nullableText(source.display_name),
     event_role: REPRODUCTIVE_ROLES.includes(source.event_role)
@@ -272,10 +286,12 @@ export function normalizeEvent(raw = {}) {
     status: nullableText(source.status),
     location: nullableText(source.location),
     participants: normalizeParticipants(source.participants),
-    pregnancy_relevance: normalizePregnancyRelevance(source.pregnancy_relevance),
+    pregnancy_relevance: normalizePregnancyRelevance(
+      source.pregnancy_relevance,
+    ),
     source_evidence: normalizeEvidence(source.source_evidence),
     source: normalizeSource(source.source),
-    story_time: normalizeStoryTime(source.story_time, {formatDisplay: true}),
+    story_time: normalizeStoryTime(source.story_time, { formatDisplay: true }),
     physical_effect: recordValue(source.physical_effect),
   };
 }
@@ -285,9 +301,11 @@ function addError(errors, path) {
 }
 
 function validScalar(value) {
-  return value === null
-    || (typeof value === 'number' && Number.isFinite(value))
-    || (typeof value === 'string' && value.trim() !== '');
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isFinite(value)) ||
+    (typeof value === 'string' && value.trim() !== '')
+  );
 }
 
 function validateEvidence(value, path, errors) {
@@ -314,11 +332,16 @@ function validateIdArrayShape(value, path, errors) {
 }
 
 export function hasConceptionRelevantExposureEvidence(value) {
-  return Array.isArray(value)
-    && value.some(item => item
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && textValue(item.kind) === CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND);
+  return (
+    Array.isArray(value) &&
+    value.some(
+      (item) =>
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        textValue(item.kind) === CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+    )
+  );
 }
 
 function validateExposureConsistency(normalized, participantIds, errors) {
@@ -331,62 +354,93 @@ function validateExposureConsistency(normalized, participantIds, errors) {
     });
   };
 
-  validateReferences(gestationalSubjectIds, 'pregnancy_relevance.gestational_subject_ids');
+  validateReferences(
+    gestationalSubjectIds,
+    'pregnancy_relevance.gestational_subject_ids',
+  );
   validateReferences(counterpartIds, 'pregnancy_relevance.counterpart_ids');
 
   if (relevance.possible_conception === true) {
-    if (relevance.relevant !== true) addError(errors, 'pregnancy_relevance.relevant');
-    if (!gestationalSubjectIds.length) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
-    if (!counterpartIds.length) addError(errors, 'pregnancy_relevance.counterpart_ids');
-    const exposureParticipantIds = new Set([...gestationalSubjectIds, ...counterpartIds]);
+    if (relevance.relevant !== true)
+      addError(errors, 'pregnancy_relevance.relevant');
+    if (!gestationalSubjectIds.length)
+      addError(errors, 'pregnancy_relevance.gestational_subject_ids');
+    if (!counterpartIds.length)
+      addError(errors, 'pregnancy_relevance.counterpart_ids');
+    const exposureParticipantIds = new Set([
+      ...gestationalSubjectIds,
+      ...counterpartIds,
+    ]);
     if (normalized.type === 'sexual_activity') {
       if (gestationalSubjectIds.length !== 1) {
         addError(errors, 'pregnancy_relevance.gestational_subject_ids');
       }
       const subjectSet = new Set(gestationalSubjectIds);
       counterpartIds.forEach((id, index) => {
-        if (subjectSet.has(id)) addError(errors, `pregnancy_relevance.counterpart_ids[${index}]`);
+        if (subjectSet.has(id))
+          addError(errors, `pregnancy_relevance.counterpart_ids[${index}]`);
       });
       normalized.participants.forEach((participant, index) => {
-        if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
+        if (
+          participant.character_id &&
+          !exposureParticipantIds.has(participant.character_id)
+        ) {
           addError(errors, `participants[${index}].character_id`);
         }
       });
-      if (participantIds.size !== exposureParticipantIds.size) addError(errors, 'participants');
+      if (participantIds.size !== exposureParticipantIds.size)
+        addError(errors, 'participants');
     } else {
       normalized.participants.forEach((participant, index) => {
-        if (participant.character_id && !exposureParticipantIds.has(participant.character_id)) {
+        if (
+          participant.character_id &&
+          !exposureParticipantIds.has(participant.character_id)
+        ) {
           addError(errors, `participants[${index}].character_id`);
         }
       });
     }
     if (!hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
-      addError(errors, `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`);
+      addError(
+        errors,
+        `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
+      );
     }
   } else if (normalized.type === 'sexual_activity') {
-    if (relevance.relevant !== false) addError(errors, 'pregnancy_relevance.relevant');
-    if (gestationalSubjectIds.length) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
-    if (counterpartIds.length) addError(errors, 'pregnancy_relevance.counterpart_ids');
+    if (relevance.relevant !== false)
+      addError(errors, 'pregnancy_relevance.relevant');
+    if (gestationalSubjectIds.length)
+      addError(errors, 'pregnancy_relevance.gestational_subject_ids');
+    if (counterpartIds.length)
+      addError(errors, 'pregnancy_relevance.counterpart_ids');
     if (normalized.participants.length) addError(errors, 'participants');
   }
 
-  if (normalized.physical_effect.gestational_substance_intake === true
-    && !hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
-    addError(errors, `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`);
+  if (
+    normalized.physical_effect.gestational_substance_intake === true &&
+    !hasConceptionRelevantExposureEvidence(normalized.source_evidence)
+  ) {
+    addError(
+      errors,
+      `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
+    );
   }
 }
 
-export function validateEvent(event) {
+export function validateEvent(
+  event,
+  { strictCanonicalParticipants = false } = {},
+) {
   const errors = [];
   if (!event || typeof event !== 'object' || Array.isArray(event)) {
-    return {ok: false, errors: ['event']};
+    return { ok: false, errors: ['event'] };
   }
 
   let normalized;
   try {
     normalized = normalizeEvent(event);
   } catch (error) {
-    return {ok: false, errors: [error?.message || 'event']};
+    return { ok: false, errors: [error?.message || 'event'] };
   }
   if (!normalized.event_id) addError(errors, 'event_id');
   if (!EVENT_TYPES.includes(normalized.type)) addError(errors, 'type');
@@ -395,62 +449,115 @@ export function validateEvent(event) {
 
   const rawSource = recordValue(event.source);
   for (const key of ['message_id', 'floor', 'swipe_id', 'message_version']) {
-    if (hasOwn(rawSource, key) && !validScalar(rawSource[key])) addError(errors, `source.${key}`);
+    if (hasOwn(rawSource, key) && !validScalar(rawSource[key]))
+      addError(errors, `source.${key}`);
   }
-  if (hasOwn(rawSource, 'content_hash')
-    && rawSource.content_hash !== null
-    && (!textValue(rawSource.content_hash))) {
+  if (
+    hasOwn(rawSource, 'content_hash') &&
+    rawSource.content_hash !== null &&
+    !textValue(rawSource.content_hash)
+  ) {
     addError(errors, 'source.content_hash');
   }
 
   if (hasOwn(event, 'participants') && !Array.isArray(event.participants)) {
     addError(errors, 'participants');
   }
-  const rawParticipants = Array.isArray(event.participants) ? event.participants : [];
+  const rawParticipants = Array.isArray(event.participants)
+    ? event.participants
+    : [];
+  if (strictCanonicalParticipants) {
+    const seenParticipantIds = new Set();
+    rawParticipants.forEach((rawParticipant, index) => {
+      const characterId = identifierValue(rawParticipant?.character_id);
+      if (!characterId || seenParticipantIds.has(characterId)) {
+        if (characterId)
+          addError(errors, `participants[${index}].character_id`);
+        return;
+      }
+      seenParticipantIds.add(characterId);
+    });
+  }
   normalized.participants.forEach((participant, index) => {
-    if (!participant.character_id) addError(errors, `participants[${index}].character_id`);
+    if (!participant.character_id)
+      addError(errors, `participants[${index}].character_id`);
     if (!REPRODUCTIVE_ROLES.includes(participant.event_role)) {
       addError(errors, `participants[${index}].event_role`);
     }
     const capabilities = participant.reproductive_capabilities_used;
     for (const key of CAPABILITY_KEYS) {
-      if (capabilities[key] !== null && capabilities[key] !== true && capabilities[key] !== false) {
-        addError(errors, `participants[${index}].reproductive_capabilities_used.${key}`);
+      if (
+        capabilities[key] !== null &&
+        capabilities[key] !== true &&
+        capabilities[key] !== false
+      ) {
+        addError(
+          errors,
+          `participants[${index}].reproductive_capabilities_used.${key}`,
+        );
       }
     }
   });
   rawParticipants.forEach((rawParticipant, index) => {
-    if (rawParticipant && typeof rawParticipant === 'object' && !Array.isArray(rawParticipant)) {
-      if (hasOwn(rawParticipant, 'event_role')
-        && !REPRODUCTIVE_ROLES.includes(rawParticipant.event_role)) {
+    if (
+      rawParticipant &&
+      typeof rawParticipant === 'object' &&
+      !Array.isArray(rawParticipant)
+    ) {
+      if (
+        hasOwn(rawParticipant, 'event_role') &&
+        !REPRODUCTIVE_ROLES.includes(rawParticipant.event_role)
+      ) {
         addError(errors, `participants[${index}].event_role`);
       }
-      const rawCapabilities = hasOwn(rawParticipant, 'reproductive_capabilities_used')
+      const rawCapabilities = hasOwn(
+        rawParticipant,
+        'reproductive_capabilities_used',
+      )
         ? rawParticipant.reproductive_capabilities_used
         : rawParticipant.reproductive_capabilities;
       if (rawCapabilities !== undefined) {
-        if (!rawCapabilities || typeof rawCapabilities !== 'object' || Array.isArray(rawCapabilities)) {
-          addError(errors, `participants[${index}].reproductive_capabilities_used`);
+        if (
+          !rawCapabilities ||
+          typeof rawCapabilities !== 'object' ||
+          Array.isArray(rawCapabilities)
+        ) {
+          addError(
+            errors,
+            `participants[${index}].reproductive_capabilities_used`,
+          );
         } else {
           for (const key of CAPABILITY_KEYS) {
-            if (hasOwn(rawCapabilities, key)
-              && rawCapabilities[key] !== null
-              && rawCapabilities[key] !== true
-              && rawCapabilities[key] !== false) {
-              addError(errors, `participants[${index}].reproductive_capabilities_used.${key}`);
+            if (
+              hasOwn(rawCapabilities, key) &&
+              rawCapabilities[key] !== null &&
+              rawCapabilities[key] !== true &&
+              rawCapabilities[key] !== false
+            ) {
+              addError(
+                errors,
+                `participants[${index}].reproductive_capabilities_used.${key}`,
+              );
             }
           }
         }
       }
       if (hasOwn(rawParticipant, 'evidence')) {
-        validateEvidence(rawParticipant.evidence, `participants[${index}].evidence`, errors);
+        validateEvidence(
+          rawParticipant.evidence,
+          `participants[${index}].evidence`,
+          errors,
+        );
       }
     }
   });
 
-  if (hasOwn(event, 'pregnancy_relevance')
-    && (!event.pregnancy_relevance || typeof event.pregnancy_relevance !== 'object'
-      || Array.isArray(event.pregnancy_relevance))) {
+  if (
+    hasOwn(event, 'pregnancy_relevance') &&
+    (!event.pregnancy_relevance ||
+      typeof event.pregnancy_relevance !== 'object' ||
+      Array.isArray(event.pregnancy_relevance))
+  ) {
     addError(errors, 'pregnancy_relevance');
   }
   const relevance = normalized.pregnancy_relevance;
@@ -465,79 +572,122 @@ export function validateEvent(event) {
     if (!Array.isArray(rawRelevance[key])) {
       addError(errors, `pregnancy_relevance.${key}`);
     } else {
-      validateIdArrayShape(rawRelevance[key], `pregnancy_relevance.${key}`, errors);
+      validateIdArrayShape(
+        rawRelevance[key],
+        `pregnancy_relevance.${key}`,
+        errors,
+      );
     }
   }
-  if (hasOwn(rawRelevance, 'confidence')
-    && rawRelevance.confidence !== null
-    && (!Number.isFinite(Number(rawRelevance.confidence))
-      || Number(rawRelevance.confidence) < 0
-      || Number(rawRelevance.confidence) > 1)) {
+  if (
+    hasOwn(rawRelevance, 'confidence') &&
+    rawRelevance.confidence !== null &&
+    (!Number.isFinite(Number(rawRelevance.confidence)) ||
+      Number(rawRelevance.confidence) < 0 ||
+      Number(rawRelevance.confidence) > 1)
+  ) {
     addError(errors, 'pregnancy_relevance.confidence');
   }
-  if (!Array.isArray(relevance.gestational_subject_ids)) addError(errors, 'pregnancy_relevance.gestational_subject_ids');
-  if (!Array.isArray(relevance.counterpart_ids)) addError(errors, 'pregnancy_relevance.counterpart_ids');
-  if (relevance.confidence !== null && (!Number.isFinite(relevance.confidence) || relevance.confidence < 0 || relevance.confidence > 1)) {
+  if (!Array.isArray(relevance.gestational_subject_ids))
+    addError(errors, 'pregnancy_relevance.gestational_subject_ids');
+  if (!Array.isArray(relevance.counterpart_ids))
+    addError(errors, 'pregnancy_relevance.counterpart_ids');
+  if (
+    relevance.confidence !== null &&
+    (!Number.isFinite(relevance.confidence) ||
+      relevance.confidence < 0 ||
+      relevance.confidence > 1)
+  ) {
     addError(errors, 'pregnancy_relevance.confidence');
   }
 
-  if (hasOwn(event, 'source_evidence')) validateEvidence(event.source_evidence, 'source_evidence', errors);
-  if (hasOwn(event, 'physical_effect')
-    && event.physical_effect !== null
-    && (typeof event.physical_effect !== 'object' || Array.isArray(event.physical_effect))) {
+  if (hasOwn(event, 'source_evidence'))
+    validateEvidence(event.source_evidence, 'source_evidence', errors);
+  if (
+    hasOwn(event, 'physical_effect') &&
+    event.physical_effect !== null &&
+    (typeof event.physical_effect !== 'object' ||
+      Array.isArray(event.physical_effect))
+  ) {
     addError(errors, 'physical_effect');
   }
   const rawPhysicalEffect = recordValue(event.physical_effect);
-  if (hasOwn(rawPhysicalEffect, 'gestational_substance_intake')
-    && rawPhysicalEffect.gestational_substance_intake !== null
-    && typeof rawPhysicalEffect.gestational_substance_intake !== 'boolean') {
+  if (
+    hasOwn(rawPhysicalEffect, 'gestational_substance_intake') &&
+    rawPhysicalEffect.gestational_substance_intake !== null &&
+    typeof rawPhysicalEffect.gestational_substance_intake !== 'boolean'
+  ) {
     addError(errors, 'physical_effect.gestational_substance_intake');
   }
-  const participantIds = new Set(normalized.participants.map(participant => participant.character_id).filter(Boolean));
+  const participantIds = new Set(
+    normalized.participants
+      .map((participant) => participant.character_id)
+      .filter(Boolean),
+  );
   validateExposureConsistency(normalized, participantIds, errors);
   for (const key of ['message_id', 'floor', 'swipe_id', 'message_version']) {
     if (!validScalar(normalized.source[key])) addError(errors, `source.${key}`);
   }
 
   const storyTime = normalized.story_time;
-  if (hasOwn(event, 'story_time')
-    && (!event.story_time || typeof event.story_time !== 'object' || Array.isArray(event.story_time))) {
+  if (
+    hasOwn(event, 'story_time') &&
+    (!event.story_time ||
+      typeof event.story_time !== 'object' ||
+      Array.isArray(event.story_time))
+  ) {
     addError(errors, 'story_time');
   }
   const rawStoryTime = recordValue(event.story_time);
-  if (hasOwn(rawStoryTime, 'precision') && !STORY_TIME_PRECISIONS.includes(rawStoryTime.precision)) {
+  if (
+    hasOwn(rawStoryTime, 'precision') &&
+    !STORY_TIME_PRECISIONS.includes(rawStoryTime.precision)
+  ) {
     addError(errors, 'story_time.precision');
   }
-  const rawDayIndex = hasOwn(rawStoryTime, 'day_index') ? rawStoryTime.day_index : rawStoryTime.dayIndex;
-  if ((hasOwn(rawStoryTime, 'day_index') || hasOwn(rawStoryTime, 'dayIndex'))
-    && rawDayIndex !== null
-    && rawDayIndex !== undefined
-    && !Number.isFinite(Number(rawDayIndex))) {
+  const rawDayIndex = hasOwn(rawStoryTime, 'day_index')
+    ? rawStoryTime.day_index
+    : rawStoryTime.dayIndex;
+  if (
+    (hasOwn(rawStoryTime, 'day_index') || hasOwn(rawStoryTime, 'dayIndex')) &&
+    rawDayIndex !== null &&
+    rawDayIndex !== undefined &&
+    !Number.isFinite(Number(rawDayIndex))
+  ) {
     addError(errors, 'story_time.day_index');
   }
-  if (hasOwn(rawStoryTime, 'confidence')
-    && rawStoryTime.confidence !== null
-    && (!Number.isFinite(Number(rawStoryTime.confidence))
-      || Number(rawStoryTime.confidence) < 0
-      || Number(rawStoryTime.confidence) > 1)) {
+  if (
+    hasOwn(rawStoryTime, 'confidence') &&
+    rawStoryTime.confidence !== null &&
+    (!Number.isFinite(Number(rawStoryTime.confidence)) ||
+      Number(rawStoryTime.confidence) < 0 ||
+      Number(rawStoryTime.confidence) > 1)
+  ) {
     addError(errors, 'story_time.confidence');
   }
-  if (!STORY_TIME_PRECISIONS.includes(storyTime.precision)) addError(errors, 'story_time.precision');
-  if (storyTime.day_index !== null && !Number.isFinite(storyTime.day_index)) addError(errors, 'story_time.day_index');
-  if (storyTime.confidence !== null && (!Number.isFinite(storyTime.confidence) || storyTime.confidence < 0 || storyTime.confidence > 1)) {
+  if (!STORY_TIME_PRECISIONS.includes(storyTime.precision))
+    addError(errors, 'story_time.precision');
+  if (storyTime.day_index !== null && !Number.isFinite(storyTime.day_index))
+    addError(errors, 'story_time.day_index');
+  if (
+    storyTime.confidence !== null &&
+    (!Number.isFinite(storyTime.confidence) ||
+      storyTime.confidence < 0 ||
+      storyTime.confidence > 1)
+  ) {
     addError(errors, 'story_time.confidence');
   }
 
-  return {ok: errors.length === 0, errors};
+  return { ok: errors.length === 0, errors };
 }
 
-export function validateEventCollection(events = []) {
-  if (!Array.isArray(events)) return {ok: false, errors: ['events']};
+export function validateEventCollection(events = [], options = {}) {
+  if (!Array.isArray(events)) return { ok: false, errors: ['events'] };
   const errors = [];
   const subjectEvents = new Map();
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
-    const validation = validateEvent(event);
+    const validation = validateEvent(event, options);
     for (const error of validation.errors) {
       addError(errors, `events[${index}]${error ? `.${error}` : ''}`);
     }
@@ -548,20 +698,25 @@ export function validateEventCollection(events = []) {
       normalized = null;
     }
     const relevance = normalized?.pregnancy_relevance;
-    if (normalized?.type !== 'sexual_activity'
-      || relevance?.relevant !== true
-      || relevance?.possible_conception !== true
-      || relevance.gestational_subject_ids.length !== 1) {
+    if (
+      normalized?.type !== 'sexual_activity' ||
+      relevance?.relevant !== true ||
+      relevance?.possible_conception !== true ||
+      relevance.gestational_subject_ids.length !== 1
+    ) {
       continue;
     }
     const subjectId = relevance.gestational_subject_ids[0];
     if (subjectEvents.has(subjectId)) {
-      addError(errors, `events[${index}].pregnancy_relevance.gestational_subject_ids[0]`);
+      addError(
+        errors,
+        `events[${index}].pregnancy_relevance.gestational_subject_ids[0]`,
+      );
       continue;
     }
     subjectEvents.set(subjectId, index);
   }
-  return {ok: errors.length === 0, errors};
+  return { ok: errors.length === 0, errors };
 }
 
 function sortableNumber(value, fallback) {
@@ -572,11 +727,21 @@ function sortableNumber(value, fallback) {
 export function sortEvents(events = []) {
   if (!Array.isArray(events)) return [];
   return [...events].sort((left, right) => {
-    const floorOrder = sortableNumber(left?.source?.floor, 0) - sortableNumber(right?.source?.floor, 0);
+    const floorOrder =
+      sortableNumber(left?.source?.floor, 0) -
+      sortableNumber(right?.source?.floor, 0);
     if (floorOrder) return floorOrder;
-    const leftDay = sortableNumber(left?.story_time?.day_index, Number.POSITIVE_INFINITY);
-    const rightDay = sortableNumber(right?.story_time?.day_index, Number.POSITIVE_INFINITY);
+    const leftDay = sortableNumber(
+      left?.story_time?.day_index,
+      Number.POSITIVE_INFINITY,
+    );
+    const rightDay = sortableNumber(
+      right?.story_time?.day_index,
+      Number.POSITIVE_INFINITY,
+    );
     if (leftDay !== rightDay) return leftDay - rightDay;
-    return String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''));
+    return String(left?.event_id ?? '').localeCompare(
+      String(right?.event_id ?? ''),
+    );
   });
 }

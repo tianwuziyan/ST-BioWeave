@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/prd.md", "reason": "Verify acceptance criteria and scope boundaries."}
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/design.md", "reason": "Verify identity contract, compatibility, and failure semantics."}
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/implement.md", "reason": "Verify execution order and gates."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Check spec compliance and cross-layer contract."}
+{"file": "docs/DEVELOPMENT.md", "reason": "Check documented module/data-flow boundaries."}

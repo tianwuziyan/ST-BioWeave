@@ -1,4 +1,7 @@
-import { normalizeAnalysisPrompt, WORLD_MODEL_SCHEMA } from '../storage/schema.js'
+import {
+  normalizeAnalysisPrompt,
+  WORLD_MODEL_SCHEMA,
+} from '../storage/schema.js'
 import {
   CAPABILITY_KEYS,
   CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
@@ -10,28 +13,40 @@ import {
 import { normalizeEventAnalysisInput } from './input-builder.js'
 export { WORLD_MODEL_SCHEMA }
 export const CORE_PROMPTS = {
-  world: 'Analyze world rules into the required JSON schema. Unknown facts remain unknown.',
-  event: 'Extract biological facts from the target Floor Version. Do not convert symptoms into confirmed pregnancy.',
-  projection: 'Generate non-factual future possibilities only. Never rewrite history.',
+  world:
+    'Analyze world rules into the required JSON schema. Unknown facts remain unknown.',
+  event:
+    'Extract biological facts from the target Floor Version. Do not convert symptoms into confirmed pregnancy.',
+  projection:
+    'Generate non-factual future possibilities only. Never rewrite history.',
 }
-export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(WORLD_MODEL_SCHEMA, null, 2)
+export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(
+  WORLD_MODEL_SCHEMA,
+  null,
+  2,
+)
 
 export const EVENT_TYPES = Object.freeze([...DOMAIN_EVENT_TYPES])
 export const EVENT_STATUS = Object.freeze([...DOMAIN_EVENT_STATUS])
 export const EVENT_REPRODUCTIVE_ROLES = Object.freeze([...REPRODUCTIVE_ROLES])
 export const EVENT_CAPABILITY_KEYS = Object.freeze([...CAPABILITY_KEYS])
-export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([...STORY_TIME_PRECISIONS])
+export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([
+  ...STORY_TIME_PRECISIONS,
+])
 
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
   '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实或不同 gestational subject 的暴露压进同一个 Event，也不要在 Runtime 或 UI 合并事件。',
   '对 pregnancy-related sexual_activity，先识别当前 Floor 中所有有实际 conception-relevant exposure 的 gestational subject，再按 subject 分组：同一 subject 的多个 actual exposure source 合并到同一个 Event，不同 subject 必须输出不同 Event；同一响应中同一 subject 最多出现一个 pregnancy-related Event，不能把多个 subject 填进同一个 Event。',
-  'recipient discovery 必须 exhaustive：先完整扫描整个 Target Floor，建立临时 exposure candidate 集合，收集全部 actual pregnancy-relevant exposure recipients，再对集合中的每个 recipient 依次执行 identity resolution、World Model mapping、capability resolution 与 eligibility decision。不得因 Persona、current user、current Character Card、existing profile、首个 eligible recipient，或某个 recipient 为 false/unknown 而提前 return、break、跳过后续扫描；character_context 只提供上下文，不是 participant whitelist，也不赋予任何扫描优先级；首次在当前 narrative 出现且有稳定 character_id 的对象同样可以进入分析。',
+  'recipient discovery 必须 exhaustive：先完整扫描整个 Target Floor，建立临时 exposure candidate 集合，收集全部 actual pregnancy-relevant exposure recipients，再对集合中的每个 recipient 依次执行 identity resolution、World Model mapping、capability resolution 与 eligibility decision。不得因 Persona、current user、current Character Card、existing profile、首个 eligible recipient，或某个 recipient 为 false/unknown 而提前 return、break、跳过后续扫描；character_context 只提供上下文，不是 participant whitelist，也不赋予任何扫描优先级；首次在当前 narrative 出现的对象也可以进入分析，但不得由模型自行创造永久 character_id。',
+  'character_id 是 Runtime/Plugin 管理的 canonical entity identifier，不是姓名、拼音、romanization、lowercase、snake_case、slug、翻译、hash 或缩写的格式化结果。existing participant 只能原样引用输入 character_registry 中的 canonical character_id；new participant 使用 response-local mention_id 和 character_id:null，unresolved 同样使用 mention_id 和 character_id:null。模型只判断 mention 指向谁，Runtime 才创建、校验和持久化实体 ID；不确定同名、同音、同 alias 或别名归属时必须返回 unresolved。',
+  'identity_status=new 表示 narrative 明确出现了此前未登记的实体；如果 display_name 或 alias 命中已有 registry candidate，不能仅凭名称复用或创建，除非 narrative 明确说明这是另一个人物，并在 identity_evidence 使用 explicit_new_entity 等证据类型，否则返回 unresolved。',
+  '如果 narrative 明确揭示真名、化名、改名或“此前称呼”与当前人物是同一人，existing mention 必须继续引用原有 canonical character_id，并通过 identity_evidence 表达明确的 name revelation；不得因为 display_name 改变而创建新的 character_id。',
   '每个 pregnancy-related sexual_activity Event 必须保持 subject-local：gestational_subject_ids[] 恰好一个，counterpart_ids[] 至少一个，participants[] 的 ID 集合恰好等于该 subject 与这些 actual exposure source 的并集；不重复、不让 subject 出现在 counterpart、不混入另一 subject 的 source 或仅在场对象。',
   '同一 subject 的 Event 可合并其多个 actual exposure source、即时症状、physical effect、直接身体反应与相关证据；不同的独立 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event，静态外貌、体质、长期设定和人物描写没有本楼新变化时不产生 physical_symptom。',
   '只有明确的医疗检查、诊断、治疗、给药、干预或医学监测才允许唯一的 medical_event；普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event。外貌、体质、长期设定和静态人物描写没有本楼新变化时不产生 physical_symptom。',
-  '对 sexual_activity 只提取实际 conception-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用稳定 character_id，姓名只作为 display_name。',
+  '对 sexual_activity 只提取实际 conception-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用已由 Runtime 提供或后续分配的 canonical character_id，姓名只作为 display_name。',
   '仅对 event.type === "sexual_activity" 且 pregnancy_relevance.relevant === true、possible_conception === true 的 pregnancy-related Event 强制要求 participant biological_context：该 Event 的每个 participant 都必须包含 biological_context 对象，且必须有 species 与 biological_type 两个字段；两个值只能是非空字符串或 null，资料不足时填 null。species 来自当前 World Model；biological_type 是该 species 下稳定的生理/生殖分类。允许综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体结构/生理/生殖事实与多条一致上下文，把对象映射到当前 World Model 的 species/type；明确 identity、高度一致的稳定生理证据或明确的生理性别事实，都可以作为 biological_type 映射证据之一。生理性别只参与 identity/type 映射，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌只能作为综合上下文，任一单一弱线索不能独立决定 species、biological_type 或 capability；证据不足或冲突时保留 null 并让候选进入 pending，不得让候选消失。',
   'exposure recipient、exposure source 与是否构成 actual pregnancy-relevant exposure，必须由当前 World Model、匹配 species/type 的 reproduction_rules/capabilities 与 Narrative evidence 共同决定；不要把任何一种现实物种、性别、解剖结构、行为位置、接触方式或其它单一现实生殖机制硬编码成所有世界的必要条件。只有当前世界规则与目标楼层证据共同支持有效生殖路径时，才提取对应 recipient 与直接 source；possible_conception 只表示本次暴露具有潜在受孕相关性，不表示 actual conception 或 pregnancy。',
   '对其它 BiologicalEvent 类型，participants 只保留对该生物事实有直接作用的对象；在场、说话、被提及或普通递送行为不能自动成为参与者。',
@@ -39,7 +54,8 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   'participant capability 判断顺序固定为：先参考 current World Model 的匹配 species/type baseline，再参考 existing character profile，然后综合 Character、Persona、Worldbook、稳定设定、身体/生理/生殖事实与 current narrative evidence；个体明确证据可以覆盖或补充 baseline，未知字段保持 null。明确的生理性别事实只能作为 biological_type 映射的上下文证据，不能单独授权或补齐 capability。biological_context 只记录本次 capability 判断所采用的生物身份背景；不能根据角色、位置、主动/被动、姓名、外貌或性别补齐完整 capability 套装。',
   'event_role 与 gender/生理性别/biological_type 是不同字段。明确生理性别可以参与 identity/type 映射，但不能单独授权 capability；只能依据 current World Model baseline、个体 capability 证据与本次事件证据填写 reproductive role。不得从 gender、性别词、攻受、姓名、外貌或社会角色单独推导 can_carry_pregnancy、can_cause_pregnancy 或其它 capability。不要添加 gender eligibility 分支。',
   'reproductive_capabilities_used 固定包含 can_produce_sperm、can_produce_ova、can_be_fertilized、can_carry_pregnancy、can_cause_pregnancy；每个值只能是 true、false 或 null。null 表示未知/没有证据，禁止把 unknown、缺失、模糊描述或模型常识自动变成 true。',
-  'pregnancy_relevance.gestational_subject_ids[] 与 counterpart_ids[] 永远是稳定 character_id 数组，一般允许 0、1 或 N 个值；但 pregnancy-related sexual_activity 的 subject 数组必须恰好一个、counterpart 数组至少一个。不要输出逗号拼接字符串，也不要用姓名代替 ID。',
+  'pregnancy_relevance.gestational_subject_ids[] 与 counterpart_ids[] 在最终 Event 中永远是 Runtime 已验证的 canonical character_id 数组；raw response 可以用 participant mention_id 引用尚未注册的新人物，不能输出姓名、逗号拼接字符串或模型伪造的永久 ID。',
+  'mention resolution、alias discovery、alias persistence 是三个不同动作。当前 mention 解析到某个 entity 不会自动把该称呼写入 aliases；正文中 display_name 与另一个称呼同时出现、连续性推断或单次高置信度判断都不是 alias establishment evidence。只有“以后叫我 X”“小名是 X”“众人都称她为 X”等明确命名证据才可以返回 alias_candidate；关系称谓、泛称和代词只用于当前上下文，绝不能作为永久 alias。alias 精确匹配只能提供完整 candidate set，不能 first-match-wins；多候选且无法可靠消歧时返回 unresolved。',
   '不要因为 NSFW、性交、体液、症状、恶心、腹痛或其它 physical_symptom 自动判定 conception 或 pregnancy；只有 World Model baseline 与 narrative evidence 共同明确支持时才填写 possible_conception 或 pregnancy relevance。',
   '不要把 UI 显示、人物列表或其它后续层的判断写入结果；UI 不会也不应二次判断生殖资格。输出的是完整事实 DTO。',
 ].join('\n')
@@ -65,15 +81,15 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
   `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、provider、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
   'story_time.day_index 只有在证据提供真实、连续且可排序的 canonical index 时才能填写 number；否则必须是 null。不要把月内第几日或 display 文本解析成 day_index，时间计算不读取 display。',
-  'location 固定为 string | null；已知地点使用抽象字符串示例 {"location": "location_alpha"}，未知或无法确认时使用 {"location": null}；禁止 {"location": {"display": "location_alpha"}} 及其它 object/array 形状，不要输出地点对象或数组。',
-  `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 character_id、display_name、event_role、reproductive_capabilities_used 和 evidence；仅对 event.type === "sexual_activity" 且 pregnancy_relevance.relevant === true、possible_conception === true 的 pregnancy-related Event，每个 participant 还必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null。identity 可以由明确标签、多条一致的稳定生理/生殖上下文或明确生理性别事实映射到当前 World Model；生理性别只能作为 biological_type 映射证据之一，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力，冲突/不足时保持 null。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
+  'location 固定为 string | null；已知地点必须保留 narrative、Target Floor、Recent Context 或 Worldbook 中出现的原始文字和原始语言，例如“传灯院”仍输出“传灯院”；不得拼音化、romanize、翻译、snake_case、slugify 或 ASCII 化。无法可靠确定时使用 {"location": null}；禁止地点对象或数组。',
+  `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 identity_status、character_id、mention_id、display_name、event_role、reproductive_capabilities_used 和 evidence；identity_status 只能是 existing、new 或 unresolved。existing 只能原样引用 character_registry 中的 ID；new/unresolved 的 character_id 必须为 null，并用 mention_id 供本次 raw response 内部引用。只有 Runtime 完成 identity resolution 后，最终 Event 才能保存 canonical character_id。仅对 event.type === "sexual_activity" 且 pregnancy_relevance.relevant === true、possible_conception === true 的 pregnancy-related Event，每个 participant 还必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null。identity 可以由明确标签、多条一致的稳定生理/生殖上下文或明确生理性别事实映射到当前 World Model；生理性别只能作为 biological_type 映射证据之一，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力，冲突/不足时保持 null。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
   `capability 判断顺序固定为：current World Model 的匹配 species/type baseline → existing character profile → Character / Persona / Worldbook / current narrative evidence；明确生理性别只能参与 biological_type 映射，不能单独授权或补齐 capability；个体明确证据可覆盖或补充 baseline，未知 capability 保持 null。reproductive_capabilities_used 固定包含 ${EVENT_CAPABILITY_KEYS.join('、')}；每个值只能是 true、false 或 null。`,
   'participant.evidence 与 source_evidence 都必须是数组；每项必须是 {"kind":"...","text":"..."} 对象，kind 和 text 都是非空字符串。不得输出裸字符串、content 替代 text 或其它 evidence 形状。',
   `每个 event 必须包含 type、status、story_time、location、participants、pregnancy_relevance、source_evidence；physical_effect 是可选对象，其中 gestational_substance_intake 只能是 true、false 或 null。`,
   'pregnancy_relevance 必须包含 relevant、possible_conception、gestational_subject_ids[]、counterpart_ids[]、confidence；relevant 与 possible_conception 都只能是 boolean，不能是 null、字符串或 probable/possible/unknown。两个 ID 字段始终是数组，可为空、单个或多个；不能是字符串。对于 pregnancy-related sexual_activity，subject 数组必须恰好一个，counterpart 数组必须至少一个，并遵守 subject-local participants 闭包。',
   `没有 actual reproductive exposure 的 sexual_activity 必须使用 participants=[]、relevant=false、possible_conception=false、gestational_subject_ids=[]、counterpart_ids=[]；如果没有其它独立生物学价值，可以不输出该 Event。possible_conception=true 时必须有非空 subject/source ID 数组，两个数组中的 ID 必须来自 participants，且 participants 只能包含这些 subject/source，source_evidence[] 必须包含 kind 为 ${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} 的结构化证据。`,
   'physical_effect.gestational_substance_intake=true 只能在 narrative evidence 明确支持 actual reproductive exposure 时填写，并必须与 pregnancy_relevance 保持一致；不要把该字段单独当作受孕结论。',
-  'confidence 只能是 null 或 0 到 1 之间的 number。',
+  'alias_candidate 只能是建议，不是 Registry 写入命令；仅在 narrative 明确建立稳定 name_variant/nickname 且同时提供 alias establishment identity_evidence 时返回。不得因为一次普通称呼、正文共现、连续性或高置信度 mention 自动学习 alias。confidence 只能是 null 或 0 到 1 之间的 number。',
   '模型不要生成 source；六字段 Floor Version 只存在于输入的 Authoritative Floor Metadata，并由 Runtime 写入最终 Event：chat_id、message_id、floor、swipe_id、content_hash、message_version。',
 ].join('\n')
 
@@ -81,7 +97,11 @@ export const EVENT_ANALYZER_SCHEMA = Object.freeze({
   schema_version: 1,
   events: [],
 })
-export const EVENT_ANALYZER_SCHEMA_TEXT = JSON.stringify(EVENT_ANALYZER_SCHEMA, null, 2)
+export const EVENT_ANALYZER_SCHEMA_TEXT = JSON.stringify(
+  EVENT_ANALYZER_SCHEMA,
+  null,
+  2,
+)
 const WORLD_MODEL_CORE_INSTRUCTIONS = [
   '任务：从本次 AnalysisInput 提取当前 Chat 的生物学 World Model。只使用资料实际支持的内容，不把模型常识补写成 species、biological_type、能力或规则。',
   '结构与 biological_type Contract：按 species → biological_types → capabilities / reproduction_rules / lifecycle / special_rules 分层。species.name 和 biological_type.name 都是开放字符串；species 回答“这是什么生物”；biological_type 只回答“该 species 内属于哪一种稳定的生理/生殖分类”，也就是该 species 内稳定存在的性别、生殖角色或直接影响生殖机制的生物分类。它不表示 species、亚种、血统、职业、身份、阵营、来源、属性、等级、形态等其它分类轴。固定生殖分类必须由资料支持；候选 type 必须同时满足以下 A–E 才能保留：A. 明确位于同一 species 内；B. 是稳定存在的分类，而非一次性或条件状态；C. 直接涉及身体结构、生理机制、生殖角色或生殖能力；D. 去掉职业、身份、社会角色、组织归属、文化群体、阵营、能力体系、等级或成长阶段等非生物背景后仍成立；E. 当前 AnalysisInput 对该分类有充分直接证据。直接点名属于证据；数量、频率、对比、并存或例外语义所提供的确定性低推理存在信息也属于证据。多数、少数、极少、少量、罕见、通常、也存在、除……外、例外等表达不能因为该分类人数少、不是主要类型或是例外而被遗漏；原文不必逐字使用最终 canonical type name，但候选必须能唯一回指输入中的稳定分类，不能唯一回指时仍不得创建 type。species 别名、普通 taxonomy 子类、职业、身份、社会角色、组织归属、文化群体、阵营、能力体系、等级/境界、成长阶段、训练状态、临时或可逆身体变化、疾病或异常状态、个体特质、行为模式及其它非稳定生物分类均排除；任一条件不满足就不要建立 type。证据不足时保留 biological_types: []；空数组优于无证据猜测，但遗漏已由 AnalysisInput 直接或确定性低推理语义明确证明存在的稳定 type 同样是错误。',
@@ -113,7 +133,12 @@ function expandPlaceholders(value, names) {
     .replace(/\{\{user\}\}|<user>/gi, names.userName)
     .replace(/\{\{char\}\}|<char>/gi, names.characterName)
 }
-function addBlock(lines, title, value, names = { userName: '用户', characterName: '角色' }) {
+function addBlock(
+  lines,
+  title,
+  value,
+  names = { userName: '用户', characterName: '角色' },
+) {
   const text = expandPlaceholders(value, names)
   if (!text) return
   lines.push(`${title}\n${text}`)
@@ -121,27 +146,38 @@ function addBlock(lines, title, value, names = { userName: '用户', characterNa
 
 function addMessage(messages, role, content) {
   const text = readableText(content)
-  if (text) messages.push({role, content: text})
+  if (text) messages.push({ role, content: text })
 }
 
 function formatPromptValue(value, indent = 0, seen = new Set()) {
   if (value === null || value === undefined) return 'null'
   if (typeof value === 'string') return readableText(value) || '（空）'
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
   if (typeof value !== 'object') return '（不支持的值）'
   if (seen.has(value)) return '（重复引用已省略）'
   seen.add(value)
   if (Array.isArray(value)) {
     if (!value.length) return '（空数组）'
-    return value.map(item => `${' '.repeat(indent)}- ${formatPromptValue(item, indent + 2, seen)}`).join('\n')
+    return value
+      .map(
+        (item) =>
+          `${' '.repeat(indent)}- ${formatPromptValue(item, indent + 2, seen)}`,
+      )
+      .join('\n')
   }
-  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right),
+  )
   if (!entries.length) return '（空对象）'
-  return entries.map(([key, item]) => {
-    const valueText = formatPromptValue(item, indent + 2, seen)
-    if (valueText.includes('\n')) return `${' '.repeat(indent)}${key}:\n${valueText}`
-    return `${' '.repeat(indent)}${key}: ${valueText}`
-  }).join('\n')
+  return entries
+    .map(([key, item]) => {
+      const valueText = formatPromptValue(item, indent + 2, seen)
+      if (valueText.includes('\n'))
+        return `${' '.repeat(indent)}${key}:\n${valueText}`
+      return `${' '.repeat(indent)}${key}: ${valueText}`
+    })
+    .join('\n')
 }
 
 function hasPromptValue(value, seen = new Set()) {
@@ -151,8 +187,8 @@ function hasPromptValue(value, seen = new Set()) {
   if (typeof value !== 'object' || seen.has(value)) return false
   seen.add(value)
   return Array.isArray(value)
-    ? value.some(item => hasPromptValue(item, seen))
-    : Object.values(value).some(item => hasPromptValue(item, seen))
+    ? value.some((item) => hasPromptValue(item, seen))
+    : Object.values(value).some((item) => hasPromptValue(item, seen))
 }
 
 function eventContextBlock(title, value, fallback = '（本次没有可用内容）') {
@@ -162,30 +198,34 @@ function eventContextBlock(title, value, fallback = '（本次没有可用内容
 
 function formatCommonAnalysisPrompt(settings, names) {
   const blocks = [settings.task, settings.input_prefix]
-    .map(value => expandPlaceholders(value, names))
+    .map((value) => expandPlaceholders(value, names))
     .filter(Boolean)
-  return blocks.length
-    ? `【公共分析提示词】\n${blocks.join('\n\n')}`
-    : ''
+  return blocks.length ? `【公共分析提示词】\n${blocks.join('\n\n')}` : ''
 }
 
 function formatAnalysisPromptTail(settings, names) {
   const blocks = [settings.input_suffix]
-    .map(value => expandPlaceholders(value, names))
+    .map((value) => expandPlaceholders(value, names))
     .filter(Boolean)
-  return blocks.length
-    ? `【公共分析补充】\n${blocks.join('\n\n')}`
-    : ''
+  return blocks.length ? `【公共分析补充】\n${blocks.join('\n\n')}` : ''
 }
 
 function formatCharacterReference(input, names) {
-  const character = input?.character && typeof input.character === 'object'
-    ? input.character
-    : {}
+  const character =
+    input?.character && typeof input.character === 'object'
+      ? input.character
+      : {}
   const lines = []
   addBlock(lines, '角色背景', character.description, names)
-  for (const greeting of Array.isArray(character.greetings) ? character.greetings : []) {
-    addBlock(lines, greeting?.is_current ? '开场信息（当前）' : greeting?.label || '开场信息', greeting?.content, names)
+  for (const greeting of Array.isArray(character.greetings)
+    ? character.greetings
+    : []) {
+    addBlock(
+      lines,
+      greeting?.is_current ? '开场信息（当前）' : greeting?.label || '开场信息',
+      greeting?.content,
+      names,
+    )
   }
   if (!lines.length) return ''
   return [
@@ -198,7 +238,9 @@ function formatCharacterReference(input, names) {
 function formatWorldbookReference(worldbooks, names) {
   const lines = []
   for (const worldbook of Array.isArray(worldbooks) ? worldbooks : []) {
-    for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : []) {
+    for (const entry of Array.isArray(worldbook?.entries)
+      ? worldbook.entries
+      : []) {
       const content = expandPlaceholders(entry?.content, names)
       if (!content) continue
       const label = expandPlaceholders(entry?.label || '未命名条目', names)
@@ -229,14 +271,20 @@ function formatPersonaReference(persona, names) {
 function formatExternalMemoryReference(externalMemory, names) {
   const lines = []
   for (const provider of Array.isArray(externalMemory) ? externalMemory : []) {
-    if (provider?.enabled !== true
-      || provider?.available !== true
-      || provider?.content_available !== true
-      || ['disabled', 'unavailable', 'error'].includes(provider?.read_status)) continue
+    if (
+      provider?.enabled !== true ||
+      provider?.available !== true ||
+      provider?.content_available !== true ||
+      ['disabled', 'unavailable', 'error'].includes(provider?.read_status)
+    )
+      continue
     for (const item of Array.isArray(provider?.items) ? provider.items : []) {
       const content = expandPlaceholders(item?.content, names)
       if (!content) continue
-      const label = expandPlaceholders(item?.label || provider?.label || '历史记录', names)
+      const label = expandPlaceholders(
+        item?.label || provider?.label || '历史记录',
+        names,
+      )
       lines.push(`【${label}】\n${content}`)
     }
   }
@@ -270,10 +318,15 @@ function formatStoryTimeReference(storyTime, names) {
   const normalized = expandPlaceholders(storyTime.normalized, names)
   const calendarId = expandPlaceholders(storyTime.calendar_id, names)
   const provider = expandPlaceholders(storyTime.provider, names)
-  const hasKnownValue = Boolean(display || normalized || calendarId || provider
-    || storyTime.day_index !== null && storyTime.day_index !== undefined
-    || storyTime.precision && storyTime.precision !== 'unknown'
-    || storyTime.confidence !== null && storyTime.confidence !== undefined)
+  const hasKnownValue = Boolean(
+    display ||
+    normalized ||
+    calendarId ||
+    provider ||
+    (storyTime.day_index !== null && storyTime.day_index !== undefined) ||
+    (storyTime.precision && storyTime.precision !== 'unknown') ||
+    (storyTime.confidence !== null && storyTime.confidence !== undefined),
+  )
   if (!hasKnownValue) return ''
   return [
     '故事时间结构化参考：',
@@ -294,23 +347,41 @@ function narrativeItemsMatch(left, right) {
   const leftSwipeId = Number.isInteger(left.swipe_id) ? left.swipe_id : null
   const rightSwipeId = Number.isInteger(right.swipe_id) ? right.swipe_id : null
   if (leftMessageId && rightMessageId) {
-    return leftMessageId === rightMessageId
-      && (leftSwipeId === null || rightSwipeId === null || leftSwipeId === rightSwipeId)
+    return (
+      leftMessageId === rightMessageId &&
+      (leftSwipeId === null ||
+        rightSwipeId === null ||
+        leftSwipeId === rightSwipeId)
+    )
   }
-  const leftFloor = left.floor === null || left.floor === undefined ? null : Number(left.floor)
-  const rightFloor = right.floor === null || right.floor === undefined ? null : Number(right.floor)
-  return Number.isFinite(leftFloor) && Number.isFinite(rightFloor) && leftFloor === rightFloor
+  const leftFloor =
+    left.floor === null || left.floor === undefined ? null : Number(left.floor)
+  const rightFloor =
+    right.floor === null || right.floor === undefined
+      ? null
+      : Number(right.floor)
+  return (
+    Number.isFinite(leftFloor) &&
+    Number.isFinite(rightFloor) &&
+    leftFloor === rightFloor
+  )
 }
 
 function formatNarrativeContent(item, names) {
   return expandPlaceholders(item?.content ?? item?.narrative, names)
 }
 
-function formatNarrativeContext(items, targetItem = null, names, storyTime = null) {
-  const recentItems = (Array.isArray(items) ? items : [])
-    .filter(item => !narrativeItemsMatch(item, targetItem))
+function formatNarrativeContext(
+  items,
+  targetItem = null,
+  names,
+  storyTime = null,
+) {
+  const recentItems = (Array.isArray(items) ? items : []).filter(
+    (item) => !narrativeItemsMatch(item, targetItem),
+  )
   const recentContent = recentItems
-    .map(item => formatNarrativeContent(item, names))
+    .map((item) => formatNarrativeContent(item, names))
     .filter(Boolean)
   if (!targetItem) {
     return recentContent.length
@@ -320,19 +391,68 @@ function formatNarrativeContext(items, targetItem = null, names, storyTime = nul
 
   const targetContent = formatNarrativeContent(targetItem, names)
   const sections = []
-  if (recentContent.length) sections.push(['【剧情上下文】', recentContent.join('\n\n')].join('\n\n'))
+  if (recentContent.length)
+    sections.push(['【剧情上下文】', recentContent.join('\n\n')].join('\n\n'))
   if (targetContent) {
-    sections.push([
-      '【本次分析内容】',
-      formatStoryTimeReference(storyTime, names),
-      targetContent,
-    ].filter(Boolean).join('\n\n'))
+    sections.push(
+      [
+        '【本次分析内容】',
+        formatStoryTimeReference(storyTime, names),
+        targetContent,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    )
   }
   return sections.join('\n\n')
 }
 
 function formatEventCharacterReference(input, names) {
-  return formatCharacterReference({character: input?.character}, names)
+  return formatCharacterReference({ character: input?.character }, names)
+}
+
+function formatEventCharacterRegistry(registry, names) {
+  const value =
+    registry && typeof registry === 'object' && !Array.isArray(registry)
+      ? registry
+      : {}
+  const entities =
+    value.entities &&
+    typeof value.entities === 'object' &&
+    !Array.isArray(value.entities)
+      ? value.entities
+      : {}
+  const blocks = Object.entries(entities)
+    .map(([fallbackId, rawEntity]) => {
+      const entity =
+        rawEntity && typeof rawEntity === 'object' && !Array.isArray(rawEntity)
+          ? rawEntity
+          : {}
+      const characterId = expandPlaceholders(
+        entity.character_id ?? fallbackId,
+        names,
+      )
+      if (!characterId) return ''
+      const displayName = expandPlaceholders(entity.display_name, names)
+      const aliases = Array.isArray(entity.aliases)
+        ? entity.aliases
+            .map((alias) => expandPlaceholders(alias, names))
+            .filter(Boolean)
+        : []
+      return [
+        `canonical character_id（Runtime 原样提供）：${characterId}`,
+        displayName ? `display_name：${displayName}` : 'display_name：未知',
+        `aliases：${aliases.length ? aliases.join('、') : '（无）'}`,
+      ].join('\n')
+    })
+    .filter(Boolean)
+  return [
+    '【Runtime Canonical Character Registry】',
+    '以下是 Runtime 已登记的 canonical identity candidates。character_id 是不透明、稳定且只读的实体 ID；existing 只能从这些 ID 中原样选择，不能根据 display_name 或 alias 改写、翻译、拼音化或自行生成 ID。display_name/alias 只用于理解 mention，alias 可能属于多个实体，不能 first-match-wins。没有足够证据时请返回 unresolved；首次出现的新人物使用 identity_status=new、character_id=null 和本次响应内唯一的 mention_id。',
+    blocks.length
+      ? blocks.join('\n\n')
+      : '当前没有已登记的 canonical identity candidate。',
+  ].join('\n')
 }
 
 const EVENT_CHARACTER_CAPABILITY_LABELS = Object.freeze({
@@ -344,67 +464,107 @@ const EVENT_CHARACTER_CAPABILITY_LABELS = Object.freeze({
 })
 
 function formatEventCharacterContext(characterContext, names) {
-  const value = characterContext && typeof characterContext === 'object' && !Array.isArray(characterContext)
-    ? characterContext
-    : {}
-  const profiles = value.profiles && typeof value.profiles === 'object' && !Array.isArray(value.profiles)
-    ? value.profiles
-    : {}
-  const profileBlocks = Object.entries(profiles).map(([fallbackId, rawProfile]) => {
-    const profile = rawProfile && typeof rawProfile === 'object' && !Array.isArray(rawProfile)
-      ? rawProfile
+  const value =
+    characterContext &&
+    typeof characterContext === 'object' &&
+    !Array.isArray(characterContext)
+      ? characterContext
       : {}
-    const characterId = expandPlaceholders(profile.character_id ?? fallbackId, names)
-    if (!characterId) return ''
-    const lines = [`角色标识：${characterId}`]
-    const displayName = expandPlaceholders(profile.display_name, names)
-    const species = expandPlaceholders(profile.species, names)
-    const biologicalType = expandPlaceholders(profile.biological_type, names)
-    if (displayName) lines.push(`显示名称：${displayName}`)
-    if (species) lines.push(`物种：${species}`)
-    if (biologicalType) lines.push(`生物类型：${biologicalType}`)
+  const profiles =
+    value.profiles &&
+    typeof value.profiles === 'object' &&
+    !Array.isArray(value.profiles)
+      ? value.profiles
+      : {}
+  const profileBlocks = Object.entries(profiles)
+    .map(([fallbackId, rawProfile]) => {
+      const profile =
+        rawProfile &&
+        typeof rawProfile === 'object' &&
+        !Array.isArray(rawProfile)
+          ? rawProfile
+          : {}
+      const characterId = expandPlaceholders(
+        profile.character_id ?? fallbackId,
+        names,
+      )
+      if (!characterId) return ''
+      const lines = [`角色标识：${characterId}`]
+      const displayName = expandPlaceholders(profile.display_name, names)
+      const species = expandPlaceholders(profile.species, names)
+      const biologicalType = expandPlaceholders(profile.biological_type, names)
+      if (displayName) lines.push(`显示名称：${displayName}`)
+      if (species) lines.push(`物种：${species}`)
+      if (biologicalType) lines.push(`生物类型：${biologicalType}`)
 
-    const capabilities = profile.reproductive_capabilities
-      ?? profile.reproductive_capabilities_used
-    if (capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities)) {
-      lines.push('已知生殖能力：')
-      for (const key of EVENT_CAPABILITY_KEYS) {
-        const value = capabilities[key] === true || capabilities[key] === false || capabilities[key] === null
-          ? capabilities[key]
-          : null
-        lines.push(`- ${EVENT_CHARACTER_CAPABILITY_LABELS[key] ?? key}：${value === null ? '未知' : value ? '是' : '否'}`)
-      }
-    }
-
-    const evidence = Array.isArray(profile.evidence)
-      ? profile.evidence.map(item => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-          const text = expandPlaceholders(item.text ?? item.content, names)
-          const kind = expandPlaceholders(item.kind, names)
-          return text ? `${kind ? `${kind}：` : ''}${text}` : ''
+      const capabilities =
+        profile.reproductive_capabilities ??
+        profile.reproductive_capabilities_used
+      if (
+        capabilities &&
+        typeof capabilities === 'object' &&
+        !Array.isArray(capabilities)
+      ) {
+        lines.push('已知生殖能力：')
+        for (const key of EVENT_CAPABILITY_KEYS) {
+          const value =
+            capabilities[key] === true ||
+            capabilities[key] === false ||
+            capabilities[key] === null
+              ? capabilities[key]
+              : null
+          lines.push(
+            `- ${EVENT_CHARACTER_CAPABILITY_LABELS[key] ?? key}：${value === null ? '未知' : value ? '是' : '否'}`,
+          )
         }
-        return expandPlaceholders(item, names)
-      }).filter(Boolean)
-      : []
-    if (evidence.length) {
-      lines.push('资料证据：')
-      evidence.forEach(item => lines.push(`- ${item}`))
-    }
-    return lines.join('\n')
-  }).filter(Boolean)
-  const currentCharacter = expandPlaceholders(value.current_character ?? value.currentCharacter, names)
+      }
+
+      const evidence = Array.isArray(profile.evidence)
+        ? profile.evidence
+            .map((item) => {
+              if (item && typeof item === 'object' && !Array.isArray(item)) {
+                const text = expandPlaceholders(
+                  item.text ?? item.content,
+                  names,
+                )
+                const kind = expandPlaceholders(item.kind, names)
+                return text ? `${kind ? `${kind}：` : ''}${text}` : ''
+              }
+              return expandPlaceholders(item, names)
+            })
+            .filter(Boolean)
+        : []
+      if (evidence.length) {
+        lines.push('资料证据：')
+        evidence.forEach((item) => lines.push(`- ${item}`))
+      }
+      return lines.join('\n')
+    })
+    .filter(Boolean)
+  const currentCharacter = expandPlaceholders(
+    value.current_character ?? value.currentCharacter,
+    names,
+  )
   if (!currentCharacter && !profileBlocks.length) return ''
   return [
     '【事件相关角色参考】',
-    '以下内容来自 BioWeave 已建立的角色资料，仅作为角色身份和已知能力的背景证据参考；它不代表本次目标楼层已经发生了任何事件，也不能替代当前剧情证据。',
+    '以下 character_context 内容来自 BioWeave 已建立的角色资料，仅作为角色身份和已知能力的语义背景证据参考；它不代表本次目标楼层已经发生了任何事件，也不是 canonical identity candidates 的白名单，不能替代上面的 Runtime Character Registry。',
     currentCharacter ? `当前角色显示名：${currentCharacter}` : '',
     profileBlocks.join('\n\n'),
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function formatEventFloorMetadata(input) {
-  const scope = input.chat_scope && typeof input.chat_scope === 'object' ? input.chat_scope : {}
-  const version = input.floor_version && typeof input.floor_version === 'object' ? input.floor_version : {}
+  const scope =
+    input.chat_scope && typeof input.chat_scope === 'object'
+      ? input.chat_scope
+      : {}
+  const version =
+    input.floor_version && typeof input.floor_version === 'object'
+      ? input.floor_version
+      : {}
   return [
     '【本次分析边界】',
     `目标楼层：${formatPromptValue(version.floor)}`,
@@ -450,6 +610,7 @@ function formatEventAnalysisRules(input, settings, names) {
 
 function formatEventAnalysisReferences(input, names) {
   return joinPromptSections([
+    formatEventCharacterRegistry(input.character_registry, names),
     formatEventCharacterReference(input, names),
     formatPersonaReference(input.persona, names),
     formatEventCharacterContext(input.character_context, names),
@@ -463,42 +624,86 @@ function formatEventAnalysisReferences(input, names) {
 function inputNames(input) {
   const meta = input?.meta && typeof input.meta === 'object' ? input.meta : {}
   return {
-    userName: expandPlaceholders(meta.user_name ?? meta.userName ?? '用户', { userName: '用户', characterName: '角色' }) || '用户',
-    characterName: expandPlaceholders(meta.character_name ?? meta.characterName ?? '角色', { userName: '用户', characterName: '角色' }) || '角色',
+    userName:
+      expandPlaceholders(meta.user_name ?? meta.userName ?? '用户', {
+        userName: '用户',
+        characterName: '角色',
+      }) || '用户',
+    characterName:
+      expandPlaceholders(meta.character_name ?? meta.characterName ?? '角色', {
+        userName: '用户',
+        characterName: '角色',
+      }) || '角色',
   }
 }
-const WORLD_MODEL_TASK_PROMPT = '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
+const WORLD_MODEL_TASK_PROMPT =
+  '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
 
-export function buildWorldModelMessages(analysisInput = {}, promptSettings = {}) {
+export function buildWorldModelMessages(
+  analysisInput = {},
+  promptSettings = {},
+) {
   const settings = normalizeAnalysisPrompt(promptSettings)
-  const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
+  const input =
+    analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
   const names = inputNames(input)
   const messages = []
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', formatWorldModelRules(settings, names))
   addMessage(messages, 'system', formatWorldModelReferences(input, names))
-  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', '请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。')
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
+  addMessage(
+    messages,
+    'assistant',
+    formatNarrativeContext(input.recent_story?.items, null, names),
+  )
+  addMessage(
+    messages,
+    'user',
+    '请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。',
+  )
+  addMessage(
+    messages,
+    'system',
+    expandPlaceholders(settings.system_bottom, names),
+  )
   return messages
 }
 
-export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = {}) {
+export function buildEventAnalysisMessages(
+  analysisInput = {},
+  promptSettings = {},
+) {
   const input = normalizeEventAnalysisInput(analysisInput)
   const settings = normalizeAnalysisPrompt(promptSettings)
   const names = inputNames(input)
   const messages = []
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
-  addMessage(messages, 'system', formatEventAnalysisRules(input, settings, names))
+  addMessage(
+    messages,
+    'system',
+    formatEventAnalysisRules(input, settings, names),
+  )
   addMessage(messages, 'system', formatEventAnalysisReferences(input, names))
-  addMessage(messages, 'assistant', formatNarrativeContext(
-    input.recent_story?.items ?? input.recent_context,
-    input.current_floor,
-    names,
-    input.story_time,
-  ))
-  addMessage(messages, 'user', '请根据以上资料分析本次目标楼层，只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。')
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
+  addMessage(
+    messages,
+    'assistant',
+    formatNarrativeContext(
+      input.recent_story?.items ?? input.recent_context,
+      input.current_floor,
+      names,
+      input.story_time,
+    ),
+  )
+  addMessage(
+    messages,
+    'user',
+    '请根据以上资料分析本次目标楼层，只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。',
+  )
+  addMessage(
+    messages,
+    'system',
+    expandPlaceholders(settings.system_bottom, names),
+  )
   return messages
 }
 
@@ -531,6 +736,6 @@ export function buildPrompt({
 // 构造最小 World Analysis 请求，不复用会引入其他业务约束的复杂 Prompt Pipeline。
 export function buildWorldModelPrompt(analysisInput = {}, promptSettings = {}) {
   return buildWorldModelMessages(analysisInput, promptSettings)
-    .map(message => message.content)
+    .map((message) => message.content)
     .join('\n\n')
 }

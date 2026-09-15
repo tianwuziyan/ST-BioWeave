@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/prd.md", "reason": "Settled requirements, compatibility constraints, and acceptance criteria."}
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/design.md", "reason": "Approved technical design and raw-to-canonical identity boundary."}
+{"file": ".trellis/tasks/09-15-runtime-authoritative-character-identity/implement.md", "reason": "Ordered implementation and verification plan."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Existing Event, pregnancy, Runtime, and test contracts to extend."}
+{"file": "docs/DEVELOPMENT.md", "reason": "Repository module boundaries and Phase 2A data flow."}

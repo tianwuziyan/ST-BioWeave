@@ -9,6 +9,7 @@ import {
   normalizeApiProfile,
   normalizeApiSource,
   normalizeAnalysisPrompt,
+  normalizeCharacterRegistry,
   normalizeExtensionSettings,
   normalizeModelListCache,
   normalizeRecentStoryGlobalSettings,
@@ -17,7 +18,10 @@ import {
   isStableApiProfileId,
   sanitizeSecrets,
 } from './schema.js';
-import {floorVersionFromData as floorVersionFromStoredData, getActiveFloorEvents as filterActiveFloorEvents} from '../runtime/floor.js';
+import {
+  floorVersionFromData as floorVersionFromStoredData,
+  getActiveFloorEvents as filterActiveFloorEvents,
+} from '../runtime/floor.js';
 
 function staleChatError() {
   return new Error('STALE_CHAT');
@@ -28,7 +32,7 @@ function currentChatId(adapter, boundary) {
 }
 
 function captureToken(adapter, boundary) {
-  return boundary?.token?.() ?? {chatId: adapter.getChatId()};
+  return boundary?.token?.() ?? { chatId: adapter.getChatId() };
 }
 
 function assertToken(adapter, boundary, token) {
@@ -39,7 +43,13 @@ function assertToken(adapter, boundary, token) {
   if (adapter.getChatId() !== token.chatId) throw staleChatError();
 }
 
-const CHAT_PROFILE_CONFIGURATION_FIELDS = new Set(['api_profiles', 'api_model_caches', 'profile_assignments', 'assignments', 'api_request_settings']);
+const CHAT_PROFILE_CONFIGURATION_FIELDS = new Set([
+  'api_profiles',
+  'api_model_caches',
+  'profile_assignments',
+  'assignments',
+  'api_request_settings',
+]);
 
 function stripChatProfileConfiguration(value) {
   if (Array.isArray(value)) return value.map(stripChatProfileConfiguration);
@@ -61,22 +71,29 @@ function hasOwn(value, key) {
 }
 
 function profileIdFrom(value) {
-  const id = typeof value === 'string' ? value : (value?.profile_id ?? value?.id);
+  const id =
+    typeof value === 'string' ? value : (value?.profile_id ?? value?.id);
   return typeof id === 'string' ? id.trim() : '';
 }
 
 function profileInputWithLegacyProvider(raw, existing) {
   const source = raw && typeof raw === 'object' ? raw : {};
-  const suppliedProvider = typeof source.provider === 'string' ? source.provider.trim() : '';
-  const existingProvider = typeof existing?.provider === 'string' ? existing.provider.trim() : '';
+  const suppliedProvider =
+    typeof source.provider === 'string' ? source.provider.trim() : '';
+  const existingProvider =
+    typeof existing?.provider === 'string' ? existing.provider.trim() : '';
   const provider = suppliedProvider || existingProvider;
-  return provider ? {...source, provider} : source;
+  return provider ? { ...source, provider } : source;
 }
 
 function readGlobalSettings(adapter) {
-  if (typeof adapter.getGlobalSettings === 'function') return adapter.getGlobalSettings() ?? {};
+  if (typeof adapter.getGlobalSettings === 'function')
+    return adapter.getGlobalSettings() ?? {};
   const extensionSettings = adapter.getExtensionSettings?.();
-  if (extensionSettings?.bioweave && typeof extensionSettings.bioweave === 'object') {
+  if (
+    extensionSettings?.bioweave &&
+    typeof extensionSettings.bioweave === 'object'
+  ) {
     return extensionSettings.bioweave;
   }
   return extensionSettings ?? {};
@@ -101,8 +118,12 @@ function requestHeaders(getRequestHeaders) {
   } catch {
     headers = {};
   }
-  const contentType = Object.keys(headers).find(key => key.toLowerCase() === 'content-type');
-  return contentType ? headers : {...headers, 'Content-Type': 'application/json'};
+  const contentType = Object.keys(headers).find(
+    (key) => key.toLowerCase() === 'content-type',
+  );
+  return contentType
+    ? headers
+    : { ...headers, 'Content-Type': 'application/json' };
 }
 
 function statusError(prefix, response) {
@@ -123,7 +144,8 @@ export function createSecretStore({
   async function write(value, label = 'BioWeave API Profile') {
     const secretValue = typeof value === 'string' ? value : '';
     if (!secretValue) return null;
-    if (typeof fetchRef !== 'function') throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+    if (typeof fetchRef !== 'function')
+      throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
     let response;
     try {
       response = await fetchRef(`${endpoint}/write`, {
@@ -153,13 +175,14 @@ export function createSecretStore({
   async function remove(secretRef) {
     const id = typeof secretRef === 'string' ? secretRef.trim() : '';
     if (!id) return false;
-    if (typeof fetchRef !== 'function') throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+    if (typeof fetchRef !== 'function')
+      throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
     let response;
     try {
       response = await fetchRef(`${endpoint}/delete`, {
         method: 'POST',
         headers: requestHeaders(getRequestHeaders),
-        body: JSON.stringify({key: secretKey, id}),
+        body: JSON.stringify({ key: secretKey, id }),
       });
     } catch {
       throw new Error('ST_SECRET_DELETE_FAILED');
@@ -186,7 +209,9 @@ function secretWriter(secretStore) {
 }
 
 function secretRemover(secretStore) {
-  return secretStore?.remove ?? secretStore?.deleteSecret ?? secretStore?.delete;
+  return (
+    secretStore?.remove ?? secretStore?.deleteSecret ?? secretStore?.delete
+  );
 }
 
 async function removeSecretOrThrow(secretStore, secretRef) {
@@ -204,7 +229,11 @@ async function removeSecretOrThrow(secretStore, secretRef) {
 
 function secretRefUsed(settings, secretRef, exceptProfileId = '') {
   if (!secretRef) return false;
-  return Object.values(settings.api_profiles ?? {}).some(profile => profile.profile_id !== exceptProfileId && profile.secret_ref === secretRef);
+  return Object.values(settings.api_profiles ?? {}).some(
+    (profile) =>
+      profile.profile_id !== exceptProfileId &&
+      profile.secret_ref === secretRef,
+  );
 }
 
 function keyInput(raw) {
@@ -217,8 +246,9 @@ function clearSecretRequested(raw) {
   return raw?.clear_secret === true || raw?.clearSecret === true;
 }
 
-export function createApiProfileStore(adapter, {secretStore = null} = {}) {
-  if (!adapter || typeof adapter !== 'object') throw new TypeError('PROFILE_ADAPTER_REQUIRED');
+export function createApiProfileStore(adapter, { secretStore = null } = {}) {
+  if (!adapter || typeof adapter !== 'object')
+    throw new TypeError('PROFILE_ADAPTER_REQUIRED');
   const secrets =
     secretStore ??
     createSecretStore({
@@ -260,9 +290,18 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
   async function saveModelListCache(profileId, rawCache = {}) {
     const id = profileIdFrom(profileId);
     const settings = read();
-    if (!isStableApiProfileId(id) || !settings.api_profiles[id]) throw new Error('API_PROFILE_NOT_FOUND');
-    const source = rawCache && typeof rawCache === 'object' && !Array.isArray(rawCache) ? rawCache : {};
-    const fallbackRefreshedAt = Object.prototype.hasOwnProperty.call(source, 'refreshed_at') ? 0 : Date.now();
+    if (!isStableApiProfileId(id) || !settings.api_profiles[id])
+      throw new Error('API_PROFILE_NOT_FOUND');
+    const source =
+      rawCache && typeof rawCache === 'object' && !Array.isArray(rawCache)
+        ? rawCache
+        : {};
+    const fallbackRefreshedAt = Object.prototype.hasOwnProperty.call(
+      source,
+      'refreshed_at',
+    )
+      ? 0
+      : Date.now();
     const cache = normalizeModelListCache(source, {
       profileId: id,
       fallbackRefreshedAt,
@@ -285,17 +324,20 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     const profile = normalizeApiProfile(profileInput, {
       profileId: requestedId || null,
     });
-    if (!profile.api_url || !profile.model) throw new Error('API_PROFILE_INVALID');
+    if (!profile.api_url || !profile.model)
+      throw new Error('API_PROFILE_INVALID');
     const oldSecretRef = existing?.secret_ref ?? null;
     const suppliedKey = keyInput(raw);
-    const hasNewKey = typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
+    const hasNewKey =
+      typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
     const shouldClear = clearSecretRequested(raw);
     let nextSecretRef = oldSecretRef;
     let newlyWrittenRef = null;
 
     if (hasNewKey) {
       const writeSecret = secretWriter(secrets);
-      if (typeof writeSecret !== 'function') throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+      if (typeof writeSecret !== 'function')
+        throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
       // 不把用户可编辑的 Profile 名称传给 Secret Store，避免误把 Key 写进 label。
       newlyWrittenRef = await writeSecret.call(secrets, suppliedKey.trim());
       if (!newlyWrittenRef) throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
@@ -308,7 +350,7 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
       ...settings,
       api_profiles: {
         ...settings.api_profiles,
-        [profile.profile_id]: {...profile, secret_ref: nextSecretRef},
+        [profile.profile_id]: { ...profile, secret_ref: nextSecretRef },
       },
     };
 
@@ -325,7 +367,11 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
       throw error;
     }
 
-    if (oldSecretRef && oldSecretRef !== nextSecretRef && !secretRefUsed(nextSettings, oldSecretRef, profile.profile_id)) {
+    if (
+      oldSecretRef &&
+      oldSecretRef !== nextSecretRef &&
+      !secretRefUsed(nextSettings, oldSecretRef, profile.profile_id)
+    ) {
       try {
         await removeSecretOrThrow(secrets, oldSecretRef);
       } catch (error) {
@@ -344,12 +390,13 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
   async function saveApiRequestSettings(raw = {}) {
     const settings = read();
     const requestSettings = normalizeApiRequestSettings(raw);
-    await write({...settings, api_request_settings: requestSettings});
+    await write({ ...settings, api_request_settings: requestSettings });
     return cloneValue(requestSettings);
   }
 
   async function withTestProfile(raw = {}, callback, options = {}) {
-    if (typeof callback !== 'function') throw new TypeError('PROFILE_TEST_CALLBACK_REQUIRED');
+    if (typeof callback !== 'function')
+      throw new TypeError('PROFILE_TEST_CALLBACK_REQUIRED');
     const settings = read();
     const requestedId = profileIdFrom(raw);
     const existing = requestedId ? settings.api_profiles[requestedId] : null;
@@ -359,18 +406,22 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
       secretRef: existing?.secret_ref ?? null,
     });
     const requireModel = options?.requireModel !== false;
-    if (!profile.api_url || (requireModel && !profile.model)) throw new Error('API_PROFILE_INVALID');
+    if (!profile.api_url || (requireModel && !profile.model))
+      throw new Error('API_PROFILE_INVALID');
 
     const suppliedKey = keyInput(raw);
-    const hasNewKey = typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
+    const hasNewKey =
+      typeof suppliedKey === 'string' && suppliedKey.trim().length > 0;
     const shouldClear = clearSecretRequested(raw);
     let temporarySecretRef = null;
 
     if (hasNewKey) {
       const writeSecret = secretWriter(secrets);
-      if (typeof writeSecret !== 'function') throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
+      if (typeof writeSecret !== 'function')
+        throw new Error('ST_SECRET_STORAGE_UNAVAILABLE');
       temporarySecretRef = await writeSecret.call(secrets, suppliedKey.trim());
-      if (!temporarySecretRef) throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
+      if (!temporarySecretRef)
+        throw new Error('ST_SECRET_WRITE_INVALID_RESPONSE');
       profile.secret_ref = temporarySecretRef;
     } else if (shouldClear) {
       profile.secret_ref = null;
@@ -379,7 +430,8 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     try {
       return await callback(cloneValue(profile));
     } finally {
-      if (temporarySecretRef) await removeSecretOrThrow(secrets, temporarySecretRef);
+      if (temporarySecretRef)
+        await removeSecretOrThrow(secrets, temporarySecretRef);
     }
   }
 
@@ -389,13 +441,13 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
     const settings = read();
     const existing = settings.api_profiles[id];
     if (!existing) return false;
-    const profiles = {...settings.api_profiles};
+    const profiles = { ...settings.api_profiles };
     delete profiles[id];
-    const assignments = {...settings.assignments};
+    const assignments = { ...settings.assignments };
     for (const slot of API_ASSIGNMENTS) {
       if (assignments[slot] === id) assignments[slot] = null;
     }
-    const apiModelCaches = {...settings.api_model_caches};
+    const apiModelCaches = { ...settings.api_model_caches };
     delete apiModelCaches[id];
     const nextSettings = {
       ...settings,
@@ -404,27 +456,38 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
       api_model_caches: apiModelCaches,
     };
     await write(nextSettings);
-    if (existing.secret_ref && !secretRefUsed(nextSettings, existing.secret_ref)) {
+    if (
+      existing.secret_ref &&
+      !secretRefUsed(nextSettings, existing.secret_ref)
+    ) {
       await removeSecretOrThrow(secrets, existing.secret_ref);
     }
     return true;
   }
 
   async function setAssignment(slot, value) {
-    if (!API_ASSIGNMENTS.includes(slot)) throw new Error('API_ASSIGNMENT_INVALID');
+    if (!API_ASSIGNMENTS.includes(slot))
+      throw new Error('API_ASSIGNMENT_INVALID');
     const settings = read();
     let nextValue = typeof value === 'string' ? value.trim() : '';
     if (!nextValue) nextValue = null;
-    else if (nextValue.toLowerCase() === FOLLOW_DEFAULT_API || nextValue.toLowerCase() === 'follow_default' || nextValue.toLowerCase() === 'default_api') {
+    else if (
+      nextValue.toLowerCase() === FOLLOW_DEFAULT_API ||
+      nextValue.toLowerCase() === 'follow_default' ||
+      nextValue.toLowerCase() === 'default_api'
+    ) {
       nextValue = FOLLOW_DEFAULT_API;
-    } else if (nextValue.toLowerCase() === SILLYTAVERN_CURRENT_API || nextValue.toLowerCase() === 'current') {
+    } else if (
+      nextValue.toLowerCase() === SILLYTAVERN_CURRENT_API ||
+      nextValue.toLowerCase() === 'current'
+    ) {
       nextValue = SILLYTAVERN_CURRENT_API;
     } else if (!settings.api_profiles[nextValue]) {
       throw new Error('API_PROFILE_NOT_FOUND');
     }
     const nextSettings = {
       ...settings,
-      assignments: {...settings.assignments, [slot]: nextValue},
+      assignments: { ...settings.assignments, [slot]: nextValue },
     };
     await write(nextSettings);
     return nextValue;
@@ -433,15 +496,16 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
   async function setApiSource(value) {
     const nextValue = normalizeApiSource(value);
     const settings = read();
-    await write({...settings, api_source: nextValue});
+    await write({ ...settings, api_source: nextValue });
     return nextValue;
   }
 
   async function setDefaultProfile(profileId) {
     const settings = read();
     const nextValue = profileIdFrom(profileId) || null;
-    if (nextValue && !settings.api_profiles[nextValue]) throw new Error('API_PROFILE_NOT_FOUND');
-    await write({...settings, default_profile_id: nextValue});
+    if (nextValue && !settings.api_profiles[nextValue])
+      throw new Error('API_PROFILE_NOT_FOUND');
+    await write({ ...settings, default_profile_id: nextValue });
     return nextValue;
   }
 
@@ -452,15 +516,19 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
   async function saveAnalysisPrompt(raw = {}) {
     const settings = read();
     const source = raw && typeof raw === 'object' ? raw : {};
-    const merged = {...settings.analysis_prompt};
+    const merged = { ...settings.analysis_prompt };
     for (const [key, value] of Object.entries(source)) {
       if (value !== undefined) merged[key] = value;
     }
-    if (source.labels && typeof source.labels === 'object' && !Array.isArray(source.labels)) {
-      merged.labels = {...settings.analysis_prompt.labels, ...source.labels};
+    if (
+      source.labels &&
+      typeof source.labels === 'object' &&
+      !Array.isArray(source.labels)
+    ) {
+      merged.labels = { ...settings.analysis_prompt.labels, ...source.labels };
     }
     const prompt = normalizeAnalysisPrompt(merged);
-    const nextSettings = {...settings, analysis_prompt: prompt};
+    const nextSettings = { ...settings, analysis_prompt: prompt };
     delete nextSettings.world_analysis_prompt;
     await write(nextSettings);
     return cloneValue(prompt);
@@ -477,7 +545,7 @@ export function createApiProfileStore(adapter, {secretStore = null} = {}) {
   async function saveRecentStoryGlobal(raw = {}) {
     const settings = read();
     const recentStoryGlobal = normalizeRecentStoryGlobalSettings(raw);
-    await write({...settings, recent_story_global: recentStoryGlobal});
+    await write({ ...settings, recent_story_global: recentStoryGlobal });
     return cloneValue(recentStoryGlobal);
   }
 
@@ -518,18 +586,24 @@ function hasMatchingFloorScope(data, chatId) {
 }
 
 export function hasSwipeStructure(message) {
-  return Array.isArray(message?.swipes) || Boolean(message?.swipe_info && typeof message.swipe_info === 'object');
+  return (
+    Array.isArray(message?.swipes) ||
+    Boolean(message?.swipe_info && typeof message.swipe_info === 'object')
+  );
 }
 
 function normalizedSwipeId(swipeId) {
   if (Number.isInteger(swipeId) && swipeId >= 0) return swipeId;
-  if (typeof swipeId === 'string' && /^\d+$/u.test(swipeId.trim())) return Number(swipeId);
+  if (typeof swipeId === 'string' && /^\d+$/u.test(swipeId.trim()))
+    return Number(swipeId);
   return null;
 }
 
 export function activeSwipeId(message, fallback = 0) {
   if (!hasSwipeStructure(message)) return 0;
-  return normalizedSwipeId(message.swipe_id) ?? normalizedSwipeId(fallback) ?? 0;
+  return (
+    normalizedSwipeId(message.swipe_id) ?? normalizedSwipeId(fallback) ?? 0
+  );
 }
 
 export const getActiveSwipeId = activeSwipeId;
@@ -550,20 +624,28 @@ export function createStore(adapter, boundary = null) {
     if (stored?.chat_scope?.chat_id !== chatId) return emptyChat(chatId);
     return cloneForStorage({
       ...stored,
+      character_registry: normalizeCharacterRegistry(stored.character_registry),
       tracking_subjects: normalizeTrackingSubjects(stored.tracking_subjects),
-      tracking_candidates: normalizeTrackingCandidates(stored.tracking_candidates),
+      tracking_candidates: normalizeTrackingCandidates(
+        stored.tracking_candidates,
+      ),
     });
   }
 
   async function saveChat(chatId, data) {
-    if (data?.chat_scope?.chat_id !== chatId) throw new Error('CHAT_SCOPE_MISMATCH');
-    if (typeof adapter.saveChatMetadata !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
+    if (data?.chat_scope?.chat_id !== chatId)
+      throw new Error('CHAT_SCOPE_MISMATCH');
+    if (typeof adapter.saveChatMetadata !== 'function')
+      throw new Error('ST_METADATA_STORAGE_UNAVAILABLE');
     const token = captureToken(adapter, boundary);
     if (token.chatId !== chatId) throw staleChatError();
     const safeData = cloneForStorage({
       ...data,
+      character_registry: normalizeCharacterRegistry(data?.character_registry),
       tracking_subjects: normalizeTrackingSubjects(data?.tracking_subjects),
-      tracking_candidates: normalizeTrackingCandidates(data?.tracking_candidates),
+      tracking_candidates: normalizeTrackingCandidates(
+        data?.tracking_candidates,
+      ),
     });
     await adapter.saveChatMetadata('bioweave', safeData, token.chatId);
     assertToken(adapter, boundary, token);
@@ -573,8 +655,13 @@ export function createStore(adapter, boundary = null) {
     const message = adapter.getMessage?.(messageId);
     if (!message) return null;
     const targetSwipeId = validSwipeId(swipeId);
-    const stored = hasSwipeStructure(message) ? message.swipe_info?.[targetSwipeId]?.extra?.bioweave : message.extra?.bioweave;
-    if (!stored || !hasMatchingFloorScope(stored, currentChatId(adapter, boundary))) {
+    const stored = hasSwipeStructure(message)
+      ? message.swipe_info?.[targetSwipeId]?.extra?.bioweave
+      : message.extra?.bioweave;
+    if (
+      !stored ||
+      !hasMatchingFloorScope(stored, currentChatId(adapter, boundary))
+    ) {
       return emptyFloor();
     }
     return cloneForStorage(stored);
@@ -595,22 +682,47 @@ export function createStore(adapter, boundary = null) {
   }
 
   function getTrackingSubjects(chatId) {
-    return cloneValue(normalizeTrackingSubjects(getChat(chatId).tracking_subjects));
+    return cloneValue(
+      normalizeTrackingSubjects(getChat(chatId).tracking_subjects),
+    );
   }
 
   function getTrackingCandidates(chatId) {
-    return cloneValue(normalizeTrackingCandidates(getChat(chatId).tracking_candidates));
+    return cloneValue(
+      normalizeTrackingCandidates(getChat(chatId).tracking_candidates),
+    );
   }
 
   async function saveTrackingSubjects(chatId, registry) {
     const chat = getChat(chatId);
-    const trackingSubjects = normalizeTrackingSubjects(registry?.tracking_subjects ?? registry);
-    const nextChat = {...chat, tracking_subjects: trackingSubjects};
-    if (registry && typeof registry === 'object' && Object.prototype.hasOwnProperty.call(registry, 'tracking_candidates')) {
-      nextChat.tracking_candidates = cloneValue(normalizeTrackingCandidates(registry.tracking_candidates));
+    const trackingSubjects = normalizeTrackingSubjects(
+      registry?.tracking_subjects ?? registry,
+    );
+    const nextChat = { ...chat, tracking_subjects: trackingSubjects };
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'tracking_candidates')
+    ) {
+      nextChat.tracking_candidates = cloneValue(
+        normalizeTrackingCandidates(registry.tracking_candidates),
+      );
     }
-    if (registry && typeof registry === 'object' && Object.prototype.hasOwnProperty.call(registry, 'character_profiles')) {
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'character_profiles')
+    ) {
       nextChat.character_profiles = cloneValue(registry.character_profiles);
+    }
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'character_registry')
+    ) {
+      nextChat.character_registry = normalizeCharacterRegistry(
+        registry.character_registry,
+      );
     }
     await saveChat(chatId, nextChat);
     return cloneValue(trackingSubjects);
@@ -618,13 +730,34 @@ export function createStore(adapter, boundary = null) {
 
   async function saveTrackingCandidates(chatId, registry) {
     const chat = getChat(chatId);
-    const trackingCandidates = normalizeTrackingCandidates(registry?.tracking_candidates ?? registry);
-    const nextChat = {...chat, tracking_candidates: trackingCandidates};
-    if (registry && typeof registry === 'object' && Object.prototype.hasOwnProperty.call(registry, 'tracking_subjects')) {
-      nextChat.tracking_subjects = cloneValue(normalizeTrackingSubjects(registry.tracking_subjects));
+    const trackingCandidates = normalizeTrackingCandidates(
+      registry?.tracking_candidates ?? registry,
+    );
+    const nextChat = { ...chat, tracking_candidates: trackingCandidates };
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'tracking_subjects')
+    ) {
+      nextChat.tracking_subjects = cloneValue(
+        normalizeTrackingSubjects(registry.tracking_subjects),
+      );
     }
-    if (registry && typeof registry === 'object' && Object.prototype.hasOwnProperty.call(registry, 'character_profiles')) {
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'character_profiles')
+    ) {
       nextChat.character_profiles = cloneValue(registry.character_profiles);
+    }
+    if (
+      registry &&
+      typeof registry === 'object' &&
+      Object.prototype.hasOwnProperty.call(registry, 'character_registry')
+    ) {
+      nextChat.character_registry = normalizeCharacterRegistry(
+        registry.character_registry,
+      );
     }
     await saveChat(chatId, nextChat);
     return cloneValue(trackingCandidates);
@@ -634,12 +767,18 @@ export function createStore(adapter, boundary = null) {
     const targetSwipeId = validSwipeId(swipeId);
     const token = captureToken(adapter, boundary);
     const version = floorVersionFromStoredData(data);
-    if (version?.chat_id && version.chat_id !== token.chatId) throw new Error('CHAT_SCOPE_MISMATCH');
+    if (version?.chat_id && version.chat_id !== token.chatId)
+      throw new Error('CHAT_SCOPE_MISMATCH');
     const safeData = cloneForStorage(data);
     if (typeof adapter.saveFloorBioWeave !== 'function') {
       throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE');
     }
-    await adapter.saveFloorBioWeave(messageId, targetSwipeId, safeData, token.chatId);
+    await adapter.saveFloorBioWeave(
+      messageId,
+      targetSwipeId,
+      safeData,
+      token.chatId,
+    );
     assertToken(adapter, boundary, token);
   }
 

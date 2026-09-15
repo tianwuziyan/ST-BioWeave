@@ -1,11 +1,44 @@
-import { buildEventAnalysisInput, collectAnalysisContext, mergeRecentStorySettings, processNarrativeFloor } from '../ai/input-builder.js'
+import {
+  buildEventAnalysisInput,
+  collectAnalysisContext,
+  mergeRecentStorySettings,
+  processNarrativeFloor,
+} from '../ai/input-builder.js'
 import { createWorldbookCache, loadAnalysisSources } from '../ai/worldbook.js'
-import { safeErrorSummary as clientSafeErrorSummary, statusFromError as clientStatusFromError, traceApi } from '../ai/client.js'
-import { normalizeEvent, sortEvents, validateEventCollection } from '../core/events.js'
-import { explainTrackingDecision, rebuildTrackingRegistry } from '../core/tracking.js'
+import {
+  safeErrorSummary as clientSafeErrorSummary,
+  statusFromError as clientStatusFromError,
+  traceApi,
+} from '../ai/client.js'
+import {
+  normalizeEvent,
+  sortEvents,
+  validateEventCollection,
+} from '../core/events.js'
+import {
+  bootstrapCharacterRegistryFromLegacy,
+  hasCharacterId,
+  normalizeCharacterRegistry,
+  resolveEventAnalysisIdentities,
+} from '../core/identity.js'
+import {
+  explainTrackingDecision,
+  rebuildTrackingRegistry,
+} from '../core/tracking.js'
 import { normalizeStoryTime } from '../story/time.js'
-import { detectExternalMemoryProviders, probeExternalMemoryProviders } from '../story/seven-days-cal.js'
-import { commitAnalysis, floorVersion, floorVersionFromData, hashText, isIntervalTarget, sameFloorVersion, shouldAnalyze } from './floor.js'
+import {
+  detectExternalMemoryProviders,
+  probeExternalMemoryProviders,
+} from '../story/seven-days-cal.js'
+import {
+  commitAnalysis,
+  floorVersion,
+  floorVersionFromData,
+  hashText,
+  isIntervalTarget,
+  sameFloorVersion,
+  shouldAnalyze,
+} from './floor.js'
 const AUTO_ANALYSIS_EVENTS = new Set([
   'MESSAGE_RECEIVED',
   'GENERATION_ENDED',
@@ -14,21 +47,32 @@ const AUTO_ANALYSIS_EVENTS = new Set([
   'MESSAGE_SWIPED',
   'MESSAGE_SWIPE_DELETED',
 ])
-const FORCED_LIFECYCLE_EVENTS = new Set(['MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'])
+const FORCED_LIFECYCLE_EVENTS = new Set([
+  'MESSAGE_UPDATED',
+  'MESSAGE_EDITED',
+  'MESSAGE_SWIPED',
+  'MESSAGE_SWIPE_DELETED',
+])
 function scalar(value) {
   if (typeof value === 'string') return value.trim() || null
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return null
 }
 function messagePartText(value) {
-  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (typeof value === 'string' || typeof value === 'number')
+    return String(value)
   if (!value || typeof value !== 'object') return ''
   return String(value.mes ?? value.content ?? value.message ?? value.text ?? '')
 }
 function messageText(message, swipeId = 0) {
-  if (typeof message === 'string' || typeof message === 'number') return String(message)
+  if (typeof message === 'string' || typeof message === 'number')
+    return String(message)
   if (!message || typeof message !== 'object') return ''
-  if (message.swipes && typeof message.swipes === 'object' && message.swipes[swipeId] !== undefined) {
+  if (
+    message.swipes &&
+    typeof message.swipes === 'object' &&
+    message.swipes[swipeId] !== undefined
+  ) {
     return messagePartText(message.swipes[swipeId])
   }
   return messagePartText(message.mes ?? message.content ?? message.message)
@@ -43,21 +87,40 @@ function messageRole(message) {
   return 'assistant'
 }
 function messageFloor(message, index, storedVersion = null) {
-  for (const candidate of [message?.floor, message?.floor_id, message?.floorIndex, storedVersion?.floor, index]) {
+  for (const candidate of [
+    message?.floor,
+    message?.floor_id,
+    message?.floorIndex,
+    storedVersion?.floor,
+    index,
+  ]) {
     const parsed = Number(candidate)
     if (Number.isFinite(parsed)) return Math.round(parsed)
   }
   return index
 }
 function messageId(message, index, storedVersion = null) {
-  for (const candidate of [message?.message_id, message?.messageId, message?.id, storedVersion?.message_id, index]) {
+  for (const candidate of [
+    message?.message_id,
+    message?.messageId,
+    message?.id,
+    storedVersion?.message_id,
+    index,
+  ]) {
     const value = scalar(candidate)
     if (value !== null) return value
   }
   return index
 }
 function messageVersion(message, storedVersion = null) {
-  return scalar(message?.message_version ?? message?.messageVersion ?? message?.version ?? storedVersion?.message_version) ?? undefined
+  return (
+    scalar(
+      message?.message_version ??
+        message?.messageVersion ??
+        message?.version ??
+        storedVersion?.message_version,
+    ) ?? undefined
+  )
 }
 function defaultCharacterContext(_context, chatData = {}, analysisInput = {}) {
   return {
@@ -68,7 +131,11 @@ function defaultCharacterContext(_context, chatData = {}, analysisInput = {}) {
 }
 function analysisTimestamp(analysis) {
   return (
-    analysis?.last_success?.analyzed_at ?? analysis?.last_success?.last_analyzed_at ?? analysis?.analyzed_at ?? analysis?.last_analyzed_at ?? null
+    analysis?.last_success?.analyzed_at ??
+    analysis?.last_success?.last_analyzed_at ??
+    analysis?.analyzed_at ??
+    analysis?.last_analyzed_at ??
+    null
   )
 }
 function isRequestAborted(error) {
@@ -95,9 +162,15 @@ function requestAbortedError() {
   return error
 }
 function diagnosticCode(error) {
-  const code = String(error?.diagnostic_code ?? error?.error_code ?? error?.diagnosticCode ?? '').trim()
+  const code = String(
+    error?.diagnostic_code ?? error?.error_code ?? error?.diagnosticCode ?? '',
+  ).trim()
   if (code) return code
-  if (error?.code === 'EVENT_ANALYSIS_INVALID' && error?.message && error.message !== error.code) {
+  if (
+    error?.code === 'EVENT_ANALYSIS_INVALID' &&
+    error?.message &&
+    error.message !== error.code
+  ) {
     return String(error.message)
   }
   return String(error?.code ?? error?.message ?? 'EVENT_ANALYSIS_FAILED')
@@ -105,7 +178,8 @@ function diagnosticCode(error) {
 function safeDiagnosticSummary(error, stage = null) {
   const code = diagnosticCode(error)
   if (code === 'REQUEST_ABORTED') return '用户取消'
-  if (code === 'API_PROFILE_NOT_CONFIGURED') return '事件分析任务没有解析到可用 API 配置'
+  if (code === 'API_PROFILE_NOT_CONFIGURED')
+    return '事件分析任务没有解析到可用 API 配置'
   if (code === 'EVENT_RESPONSE_EMPTY') return 'AI 响应为空或未能提取正文'
   if (code === 'EVENT_RESPONSE_JSON_INVALID') return 'AI 响应不是有效 JSON'
   if (
@@ -128,20 +202,33 @@ function safeDiagnosticSummary(error, stage = null) {
   ) {
     return 'AI 返回未通过 Event JSON Schema 校验'
   }
-  if (code === 'ST_CHAT_STORAGE_UNAVAILABLE') return 'SillyTavern Chat 存储不可用'
-  if (code === 'ST_METADATA_STORAGE_UNAVAILABLE') return 'SillyTavern Chat metadata 存储不可用'
-  if (code === 'ST_METADATA_UNAVAILABLE') return 'SillyTavern Chat metadata 存储不可用'
-  if (code === 'ST_FLOOR_STORAGE_UNAVAILABLE') return 'SillyTavern Floor 存储不可用'
+  if (code === 'ST_CHAT_STORAGE_UNAVAILABLE')
+    return 'SillyTavern Chat 存储不可用'
+  if (code === 'ST_METADATA_STORAGE_UNAVAILABLE')
+    return 'SillyTavern Chat metadata 存储不可用'
+  if (code === 'ST_METADATA_UNAVAILABLE')
+    return 'SillyTavern Chat metadata 存储不可用'
+  if (code === 'ST_FLOOR_STORAGE_UNAVAILABLE')
+    return 'SillyTavern Floor 存储不可用'
   if (stage === 'floor_resolution') return '当前 Floor 解析失败，未生成分析版本'
   if (stage === 'floor_version') return 'Floor Version 计算失败，未生成完整版本'
   if (stage === 'request_build') return 'Event Analysis 请求构建失败'
+  if (stage === 'identity_resolution')
+    return 'Event 中存在未解析或未经 Runtime 授权的人物身份'
   if (stage === 'normalization') return 'BiologicalEvent 归一化失败'
   if (stage === 'registry_rebuild') return 'Tracking Registry 重建失败'
   return clientSafeErrorSummary(error)
 }
 function floorExecutionKey(version) {
-  return [version?.chat_id, version?.message_id, version?.floor, version?.swipe_id, version?.content_hash, version?.message_version]
-    .map(value => String(value ?? ''))
+  return [
+    version?.chat_id,
+    version?.message_id,
+    version?.floor,
+    version?.swipe_id,
+    version?.content_hash,
+    version?.message_version,
+  ]
+    .map((value) => String(value ?? ''))
     .join('\u001f')
 }
 async function deterministicEventId(version, ordinal) {
@@ -155,7 +242,7 @@ async function deterministicEventId(version, ordinal) {
     version?.message_version,
     ordinal,
   ]
-    .map(value => String(value ?? ''))
+    .map((value) => String(value ?? ''))
     .join('\u001f')
   const digest = await hashText(material)
   return `evt_${digest.slice(0, 24)}_${ordinal + 1}`
@@ -164,7 +251,9 @@ function executionError(error, stage = null) {
   const code = diagnosticCode(error)
   const resolvedStage = error?.analysis_stage ?? stage ?? 'analysis'
   const path = error?.diagnostic_path ?? error?.error_path ?? null
-  const diagnostic = String(error?.diagnostic_code ?? error?.diagnosticCode ?? '').trim()
+  const diagnostic = String(
+    error?.diagnostic_code ?? error?.diagnosticCode ?? '',
+  ).trim()
   const status = clientStatusFromError(error)
   const result = {
     stage: resolvedStage,
@@ -176,12 +265,20 @@ function executionError(error, stage = null) {
   if (diagnostic) result.diagnostic_code = diagnostic
   if (status !== null) result.http_status = status
   if (error?.phase) result.phase = String(error.phase)
-  if (error?.retryable !== undefined) result.retryable = error.retryable === true
-  if (Number.isInteger(error?.attempt) && error.attempt > 0) result.attempt = error.attempt
-  if (Number.isFinite(Number(error?.timeoutSec)) && Number(error.timeoutSec) > 0) {
+  if (error?.retryable !== undefined)
+    result.retryable = error.retryable === true
+  if (Number.isInteger(error?.attempt) && error.attempt > 0)
+    result.attempt = error.attempt
+  if (
+    Number.isFinite(Number(error?.timeoutSec)) &&
+    Number(error.timeoutSec) > 0
+  ) {
     result.timeoutSec = Number(error.timeoutSec)
   }
-  if (Number.isFinite(Number(error?.timeout_ms)) && Number(error.timeout_ms) > 0) {
+  if (
+    Number.isFinite(Number(error?.timeout_ms)) &&
+    Number(error.timeout_ms) > 0
+  ) {
     result.timeout_ms = Number(error.timeout_ms)
   }
   return result
@@ -202,20 +299,33 @@ function pregnancyExposureSubjectId(event) {
     return null
   }
 }
-function domainValidationError(validation, message = 'EVENT_DOMAIN_VALIDATION_FAILED', events = null) {
+function domainValidationError(
+  validation,
+  message = 'EVENT_DOMAIN_VALIDATION_FAILED',
+  events = null,
+) {
   const errors = Array.isArray(validation?.errors) ? validation.errors : []
-  const firstError = errors.find(error => typeof error === 'string') ?? null
+  const firstError = errors.find((error) => typeof error === 'string') ?? null
   const duplicateSubjectError = Array.isArray(events)
-    ? errors.find(error => {
+    ? errors.find((error) => {
         if (typeof error !== 'string') return false
-        const match = error.match(/^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[0\]$/u)
+        const match = error.match(
+          /^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[0\]$/u,
+        )
         if (!match) return false
         const index = Number(match[1])
         const subjectId = pregnancyExposureSubjectId(events[index])
-        return subjectId !== null && events.slice(0, index).some(event => pregnancyExposureSubjectId(event) === subjectId)
+        return (
+          subjectId !== null &&
+          events
+            .slice(0, index)
+            .some((event) => pregnancyExposureSubjectId(event) === subjectId)
+        )
       })
     : null
-  const diagnosticCode = duplicateSubjectError ? 'duplicate_gestational_subject_event' : 'domain_validation_failed'
+  const diagnosticCode = duplicateSubjectError
+    ? 'duplicate_gestational_subject_event'
+    : 'domain_validation_failed'
   const diagnosticPath = duplicateSubjectError ?? firstError ?? 'events'
   const error = new Error(message)
   error.code = message
@@ -224,6 +334,36 @@ function domainValidationError(validation, message = 'EVENT_DOMAIN_VALIDATION_FA
   error.diagnostic_path = `$.${diagnosticPath}`
   error.error_path = error.diagnostic_path
   return error
+}
+
+function identityResolutionError(result) {
+  const first = Array.isArray(result?.errors)
+    ? result.errors.find((item) => item && typeof item === 'object')
+    : null
+  const code =
+    String(first?.error_code ?? 'identity_resolution_failed').trim() ||
+    'identity_resolution_failed'
+  const path = first?.path ?? null
+  const error = new Error('EVENT_IDENTITY_RESOLUTION_FAILED')
+  error.code = 'EVENT_IDENTITY_RESOLUTION_FAILED'
+  error.analysis_stage = 'identity_resolution'
+  error.diagnostic_code = code
+  error.error_code = code
+  if (path) {
+    error.diagnostic_path = path
+    error.error_path = path
+  }
+  return error
+}
+
+function analysisNarrative(input = {}) {
+  const current = input?.current_floor?.narrative ?? ''
+  const recent = Array.isArray(input?.recent_context)
+    ? input.recent_context
+        .map((item) => item?.content ?? item?.narrative ?? '')
+        .filter(Boolean)
+    : []
+  return [current, ...recent].join('\n')
 }
 function withAnalysisStage(error, stage) {
   if (error && typeof error === 'object') {
@@ -238,7 +378,10 @@ function isFloorPreflightStage(stage) {
   return stage === 'floor_resolution' || stage === 'floor_version'
 }
 function safeFloorPreflightStatus(error, trackingSubjectCount = 0) {
-  const diagnostic = executionError(error, error?.analysis_stage ?? 'floor_resolution')
+  const diagnostic = executionError(
+    error,
+    error?.analysis_stage ?? 'floor_resolution',
+  )
   return {
     state: 'failed',
     busy: false,
@@ -273,9 +416,11 @@ export function createEventAnalysisCoordinator({
   externalMemoryProviderLoader = null,
   globalRecentStoryResolver = () => ({}),
   analysisSourceCache = null,
+  allowLegacyIdentity = false,
   notify = () => {},
 } = {}) {
-  if (!st || !chat || !store) throw new TypeError('EVENT_ANALYSIS_DEPENDENCIES_REQUIRED')
+  if (!st || !chat || !store)
+    throw new TypeError('EVENT_ANALYSIS_DEPENDENCIES_REQUIRED')
   const inFlight = new Map()
   const lastTerminal = new Map()
   let attemptSequence = 0
@@ -323,25 +468,33 @@ export function createEventAnalysisCoordinator({
     }
     if (
       typeof selector === 'object' &&
-      (selector.__messageIndex === true || selector.messageIndex !== undefined || selector.index !== undefined) &&
+      (selector.__messageIndex === true ||
+        selector.messageIndex !== undefined ||
+        selector.index !== undefined) &&
       selector.message_id === undefined &&
       selector.messageId === undefined
     ) {
       const index = Number(selector.messageIndex ?? selector.index)
-      if (Number.isInteger(index) && index >= 0 && index < all.length) return { index, message: all[index] }
+      if (Number.isInteger(index) && index >= 0 && index < all.length)
+        return { index, message: all[index] }
       throw new Error('MESSAGE_NOT_FOUND')
     }
-    const requested = typeof selector === 'object' ? (selector.message_id ?? selector.messageId) : selector
+    const requested =
+      typeof selector === 'object'
+        ? (selector.message_id ?? selector.messageId)
+        : selector
     if (requested === null || requested === undefined || requested === '') {
       const index = all.length - 1
       return { index, message: all[index] }
     }
     for (let index = 0; index < all.length; index += 1) {
       const stored = floorVersionFromData(store.getActiveFloor?.(index))
-      if (String(messageId(all[index], index, stored)) === String(requested)) return { index, message: all[index] }
+      if (String(messageId(all[index], index, stored)) === String(requested))
+        return { index, message: all[index] }
     }
     const index = Number(requested)
-    if (Number.isInteger(index) && index >= 0 && index < all.length) return { index, message: all[index] }
+    if (Number.isInteger(index) && index >= 0 && index < all.length)
+      return { index, message: all[index] }
     throw new Error('MESSAGE_NOT_FOUND')
   }
   async function resolveFloor(selector = null) {
@@ -387,7 +540,8 @@ export function createEventAnalysisCoordinator({
       if (analysis?.status !== 'success') continue
       const candidate = await resolveFloor({ __messageIndex: true, index })
       if (candidate.version.floor >= target.version.floor) continue
-      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue
+      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
+        continue
       return {
         analysis,
         events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
@@ -422,6 +576,22 @@ export function createEventAnalysisCoordinator({
     }
     return sortEvents(activeEvents)
   }
+  async function characterRegistryForAnalysis(target, token, chatData) {
+    let activeEvents = []
+    try {
+      activeEvents = await collectActiveEvents(token)
+    } catch {
+      // Existing profile IDs still provide a safe fallback when an unrelated
+      // legacy Floor cannot be reconstructed during request preparation.
+    }
+    chat.assert(token)
+    return bootstrapCharacterRegistryFromLegacy({
+      events: activeEvents,
+      character_profiles: chatData.character_profiles,
+      character_registry: chatData.character_registry,
+      target_floor: target.version.floor,
+    })
+  }
   function refreshTrackingRegistry(reason = 'runtime') {
     const refresh = async () => {
       if (!messageCollection()) return null
@@ -430,14 +600,27 @@ export function createEventAnalysisCoordinator({
       chat.assert(token)
       const previousChat = store.getChat(token.chatId)
       const registry = rebuildTrackingRegistry(activeEvents, previousChat)
-      await store.saveChat(token.chatId, { ...previousChat, ...registry })
+      const characterRegistry = bootstrapCharacterRegistryFromLegacy({
+        events: activeEvents,
+        character_profiles: previousChat.character_profiles,
+        character_registry: previousChat.character_registry,
+      })
+      await store.saveChat(token.chatId, {
+        ...previousChat,
+        ...registry,
+        character_registry: characterRegistry,
+      })
       chat.assert(token)
       notify({
         type: 'TRACKING_REGISTRY_REFRESHED',
         payload: { reason, event_count: activeEvents.length },
         chatId: token.chatId,
       })
-      return { ...registry, active_events: activeEvents }
+      return {
+        ...registry,
+        character_registry: characterRegistry,
+        active_events: activeEvents,
+      }
     }
     const result = registryRefreshChain.then(refresh, refresh)
     registryRefreshChain = result.catch(() => null)
@@ -448,9 +631,15 @@ export function createEventAnalysisCoordinator({
     try {
       target = await resolveFloor()
     } catch (error) {
-      if (error?.message !== 'MESSAGE_NOT_FOUND' && isFloorPreflightStage(error?.analysis_stage)) {
+      if (
+        error?.message !== 'MESSAGE_NOT_FOUND' &&
+        isFloorPreflightStage(error?.analysis_stage)
+      ) {
         const chatData = store.getChat(chat.current())
-        return safeFloorPreflightStatus(error, Object.keys(chatData.tracking_subjects ?? {}).length)
+        return safeFloorPreflightStatus(
+          error,
+          Object.keys(chatData.tracking_subjects ?? {}).length,
+        )
       }
       if (error?.message !== 'MESSAGE_NOT_FOUND') throw error
       const chatId = chat.current()
@@ -464,33 +653,63 @@ export function createEventAnalysisCoordinator({
         last_success: null,
         last_error: null,
         event_count: 0,
-        tracking_subject_count: Object.keys(chatData.tracking_subjects ?? {}).length,
+        tracking_subject_count: Object.keys(chatData.tracking_subjects ?? {})
+          .length,
         current_floor_events: [],
       }
     }
     const analysis = target.floorData?.analysis ?? null
-    const matchesCurrent = sameFloorVersion(analysis?.floor_version, target.version)
+    const matchesCurrent = sameFloorVersion(
+      analysis?.floor_version,
+      target.version,
+    )
     const key = floorExecutionKey(target.version)
     const activeAttempt = inFlight.get(key)
     const terminal = lastTerminal.get(key)
-    const persistedState = matchesCurrent && ['success', 'failed', 'cancelled'].includes(analysis?.status) ? analysis.status : 'not_analyzed'
-    const state = activeAttempt && !activeAttempt.cancelRequested ? 'running' : (terminal?.state ?? persistedState)
+    const persistedState =
+      matchesCurrent &&
+      ['success', 'failed', 'cancelled'].includes(analysis?.status)
+        ? analysis.status
+        : 'not_analyzed'
+    const state =
+      activeAttempt && !activeAttempt.cancelRequested
+        ? 'running'
+        : (terminal?.state ?? persistedState)
     const busy = Boolean(activeAttempt && !activeAttempt.cancelRequested)
-    const currentFloorEvents = store.getActiveFloorEvents?.(target.index, target.version) ?? []
+    const currentFloorEvents =
+      store.getActiveFloorEvents?.(target.index, target.version) ?? []
     const diagnostic =
       terminal?.diagnostic ??
       (analysis?.last_attempt && analysis.last_attempt.status !== 'success'
         ? {
             stage: analysis.error_stage ?? analysis.last_attempt.stage ?? null,
-            error_code: analysis.error_code ?? analysis.last_attempt.error_code ?? analysis.last_error ?? null,
-            diagnostic_code: analysis.diagnostic_code ?? analysis.last_attempt.diagnostic_code ?? null,
-            error_path: analysis.error_path ?? analysis.last_attempt.error_path ?? null,
-            diagnostic_path: analysis.diagnostic_path ?? analysis.last_attempt.diagnostic_path ?? analysis.last_attempt.error_path ?? null,
-            safe_error_summary: analysis.safe_error_summary ?? analysis.last_attempt.safe_error_summary ?? null,
-            http_status: analysis.http_status ?? analysis.last_attempt.http_status ?? null,
+            error_code:
+              analysis.error_code ??
+              analysis.last_attempt.error_code ??
+              analysis.last_error ??
+              null,
+            diagnostic_code:
+              analysis.diagnostic_code ??
+              analysis.last_attempt.diagnostic_code ??
+              null,
+            error_path:
+              analysis.error_path ?? analysis.last_attempt.error_path ?? null,
+            diagnostic_path:
+              analysis.diagnostic_path ??
+              analysis.last_attempt.diagnostic_path ??
+              analysis.last_attempt.error_path ??
+              null,
+            safe_error_summary:
+              analysis.safe_error_summary ??
+              analysis.last_attempt.safe_error_summary ??
+              null,
+            http_status:
+              analysis.http_status ?? analysis.last_attempt.http_status ?? null,
             phase: analysis.phase ?? analysis.last_attempt.phase ?? null,
-            timeoutSec: analysis.timeoutSec ?? analysis.last_attempt.timeoutSec ?? null,
-            timeout_ms: analysis.timeout_ms ?? analysis.last_attempt.timeout_ms ?? null,
+            timeoutSec:
+              analysis.timeoutSec ?? analysis.last_attempt.timeoutSec ?? null,
+            timeout_ms:
+              analysis.timeout_ms ?? analysis.last_attempt.timeout_ms ?? null,
           }
         : null)
     return {
@@ -510,28 +729,66 @@ export function createEventAnalysisCoordinator({
         (analysis
           ? {
               status: analysis.status,
-              analyzed_at: analysis.analyzed_at ?? analysis.attempted_at ?? null,
+              analyzed_at:
+                analysis.analyzed_at ?? analysis.attempted_at ?? null,
             }
           : null),
       last_success: analysisTimestamp(analysis),
-      last_error: diagnostic?.error_code ?? analysis?.last_error ?? analysis?.last_attempt?.error ?? null,
+      last_error:
+        diagnostic?.error_code ??
+        analysis?.last_error ??
+        analysis?.last_attempt?.error ??
+        null,
       error_stage: diagnostic?.stage ?? analysis?.error_stage ?? null,
       error_code: diagnostic?.error_code ?? analysis?.error_code ?? null,
-      diagnostic_code: diagnostic?.diagnostic_code ?? analysis?.diagnostic_code ?? analysis?.last_attempt?.diagnostic_code ?? null,
-      http_status: diagnostic?.http_status ?? analysis?.http_status ?? analysis?.last_attempt?.http_status ?? null,
-      phase: diagnostic?.phase ?? analysis?.phase ?? analysis?.last_attempt?.phase ?? null,
-      timeoutSec: diagnostic?.timeoutSec ?? analysis?.timeoutSec ?? analysis?.last_attempt?.timeoutSec ?? null,
-      timeout_ms: diagnostic?.timeout_ms ?? analysis?.timeout_ms ?? analysis?.last_attempt?.timeout_ms ?? null,
-      error_path: diagnostic?.error_path ?? analysis?.error_path ?? analysis?.last_attempt?.error_path ?? null,
+      diagnostic_code:
+        diagnostic?.diagnostic_code ??
+        analysis?.diagnostic_code ??
+        analysis?.last_attempt?.diagnostic_code ??
+        null,
+      http_status:
+        diagnostic?.http_status ??
+        analysis?.http_status ??
+        analysis?.last_attempt?.http_status ??
+        null,
+      phase:
+        diagnostic?.phase ??
+        analysis?.phase ??
+        analysis?.last_attempt?.phase ??
+        null,
+      timeoutSec:
+        diagnostic?.timeoutSec ??
+        analysis?.timeoutSec ??
+        analysis?.last_attempt?.timeoutSec ??
+        null,
+      timeout_ms:
+        diagnostic?.timeout_ms ??
+        analysis?.timeout_ms ??
+        analysis?.last_attempt?.timeout_ms ??
+        null,
+      error_path:
+        diagnostic?.error_path ??
+        analysis?.error_path ??
+        analysis?.last_attempt?.error_path ??
+        null,
       diagnostic_path:
         diagnostic?.diagnostic_path ??
         analysis?.diagnostic_path ??
         analysis?.last_attempt?.diagnostic_path ??
         analysis?.last_attempt?.error_path ??
         null,
-      safe_error_summary: diagnostic?.safe_error_summary ?? analysis?.safe_error_summary ?? null,
-      started_at: activeAttempt?.started_at ?? terminal?.started_at ?? analysis?.last_attempt?.started_at ?? null,
-      finished_at: activeAttempt?.finished_at ?? terminal?.finished_at ?? analysis?.last_attempt?.finished_at ?? null,
+      safe_error_summary:
+        diagnostic?.safe_error_summary ?? analysis?.safe_error_summary ?? null,
+      started_at:
+        activeAttempt?.started_at ??
+        terminal?.started_at ??
+        analysis?.last_attempt?.started_at ??
+        null,
+      finished_at:
+        activeAttempt?.finished_at ??
+        terminal?.finished_at ??
+        analysis?.last_attempt?.finished_at ??
+        null,
       event_count: currentFloorEvents.length,
       current_floor_events: currentFloorEvents,
     }
@@ -549,7 +806,14 @@ export function createEventAnalysisCoordinator({
       activeEvents = await collectActiveEvents(token)
     } catch (error) {
       if (!isFloorPreflightStage(error?.analysis_stage)) throw error
-      return buildBusinessData(safeFloorPreflightStatus(error, Object.keys(chatData.tracking_subjects ?? {}).length), [], chatData)
+      return buildBusinessData(
+        safeFloorPreflightStatus(
+          error,
+          Object.keys(chatData.tracking_subjects ?? {}).length,
+        ),
+        [],
+        chatData,
+      )
     }
     chat.assert(token)
     return buildBusinessData(status, activeEvents, chatData)
@@ -557,16 +821,29 @@ export function createEventAnalysisCoordinator({
   function buildBusinessData(status, activeEvents, chatData) {
     const trackingSubjects = chatData.tracking_subjects ?? {}
     const trackingCandidates = chatData.tracking_candidates ?? {}
-    const trackingDecisions = activeEvents.flatMap(event =>
-      explainTrackingDecision(event, chatData).map(decision => ({ event_id: event.event_id, ...decision })),
+    const trackingDecisions = activeEvents.flatMap((event) =>
+      explainTrackingDecision(event, chatData).map((decision) => ({
+        event_id: event.event_id,
+        ...decision,
+      })),
     )
-    const sexualActivityCount = activeEvents.filter(event => event.type === 'sexual_activity').length
+    const sexualActivityCount = activeEvents.filter(
+      (event) => event.type === 'sexual_activity',
+    ).length
     const exposureEventCount = Object.values(trackingSubjects).reduce(
-      (total, subject) => total + (Array.isArray(subject?.exposure_event_ids) ? subject.exposure_event_ids.length : 0),
+      (total, subject) =>
+        total +
+        (Array.isArray(subject?.exposure_event_ids)
+          ? subject.exposure_event_ids.length
+          : 0),
       0,
     )
     const pendingExposureEventCount = Object.values(trackingCandidates).reduce(
-      (total, candidate) => total + (Array.isArray(candidate?.exposure_event_ids) ? candidate.exposure_event_ids.length : 0),
+      (total, candidate) =>
+        total +
+        (Array.isArray(candidate?.exposure_event_ids)
+          ? candidate.exposure_event_ids.length
+          : 0),
       0,
     )
     const analysisStatus = {
@@ -612,10 +889,13 @@ export function createEventAnalysisCoordinator({
   }
   function finalizeExecution(execution, state, error = null) {
     if (execution.released) return execution.terminal
-    if (inFlight.get(execution.key) === execution) inFlight.delete(execution.key)
+    if (inFlight.get(execution.key) === execution)
+      inFlight.delete(execution.key)
     execution.released = true
     execution.finished_at = new Date().toISOString()
-    const diagnostic = error ? executionError(error, execution.stage) : (execution.diagnostic ?? null)
+    const diagnostic = error
+      ? executionError(error, execution.stage)
+      : (execution.diagnostic ?? null)
     const terminal = {
       state,
       attempt: execution.attempt,
@@ -653,8 +933,15 @@ export function createEventAnalysisCoordinator({
     }
     return terminal
   }
-  async function persistTerminalAttempt(execution, target, savedAnalysis, status, diagnostic = null) {
-    const currentFloorData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {}
+  async function persistTerminalAttempt(
+    execution,
+    target,
+    savedAnalysis,
+    status,
+    diagnostic = null,
+  ) {
+    const currentFloorData =
+      store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {}
     const previousAnalysis = currentFloorData.analysis ?? savedAnalysis
     const events = Array.isArray(currentFloorData.events)
       ? currentFloorData.events
@@ -671,7 +958,11 @@ export function createEventAnalysisCoordinator({
       attempt: execution.attempt,
       ...(diagnostic ?? {}),
     }
-    const analysis = commitAnalysis(previousAnalysis, attemptRecord, target.version)
+    const analysis = commitAnalysis(
+      previousAnalysis,
+      attemptRecord,
+      target.version,
+    )
     await store.saveFloor(target.index, target.swipeId, {
       ...currentFloorData,
       analysis,
@@ -682,7 +973,11 @@ export function createEventAnalysisCoordinator({
   async function rollbackLateFloorCommit(execution, target) {
     if (!execution.floorSaved || !store.getFloor) return
     const current = store.getFloor(target.index, target.swipeId)
-    if (current?.analysis?.attempt !== execution.attempt || current?.analysis?.status !== 'success') return
+    if (
+      current?.analysis?.attempt !== execution.attempt ||
+      current?.analysis?.status !== 'success'
+    )
+      return
     try {
       await store.saveFloor(target.index, target.swipeId, target.floorData)
     } catch {
@@ -692,11 +987,22 @@ export function createEventAnalysisCoordinator({
   }
   async function buildFloorAnalysisInput(target, token) {
     const chatData = store.getChat(token.chatId)
+    const characterRegistry = await characterRegistryForAnalysis(
+      target,
+      token,
+      chatData,
+    )
     const context = st.getContext?.() ?? {}
     const globalRecentStory = globalRecentStoryResolver?.() ?? {}
-    const recentStorySettings = mergeRecentStorySettings(globalRecentStory, chatData.settings?.recent_story ?? {})
+    const recentStorySettings = mergeRecentStorySettings(
+      globalRecentStory,
+      chatData.settings?.recent_story ?? {},
+    )
     const storyTimeValue =
-      storyTime?.atFloor?.(target.version.floor) ?? normalizeStoryTime(target.message?.story_time ?? target.message?.storyTime ?? null)
+      storyTime?.atFloor?.(target.version.floor) ??
+      normalizeStoryTime(
+        target.message?.story_time ?? target.message?.storyTime ?? null,
+      )
     const commonInput = await analysisContextCollector({
       context,
       chatId: token.chatId,
@@ -711,7 +1017,8 @@ export function createEventAnalysisCoordinator({
         ...analysisSourceLoaderOptions,
         context,
         fetchRef: analysisSourceLoaderOptions.fetchRef ?? st.fetch,
-        getRequestHeaders: analysisSourceLoaderOptions.getRequestHeaders ?? st.getRequestHeaders,
+        getRequestHeaders:
+          analysisSourceLoaderOptions.getRequestHeaders ?? st.getRequestHeaders,
         cache: analysisSourceLoaderOptions.cache ?? sourceCache,
       },
       externalMemoryProviderLoader: collectExternalMemoryProviders,
@@ -722,9 +1029,15 @@ export function createEventAnalysisCoordinator({
       },
       includePersonaInTokenEstimate: true,
     })
-    const characterContext = characterContextResolver(context, chatData, commonInput)
+    const characterContext = characterContextResolver(
+      context,
+      chatData,
+      commonInput,
+    )
     const targetMessage =
-      target.message && typeof target.message === 'object' && !Array.isArray(target.message)
+      target.message &&
+      typeof target.message === 'object' &&
+      !Array.isArray(target.message)
         ? {
             ...target.message,
             floor: target.version.floor,
@@ -763,6 +1076,7 @@ export function createEventAnalysisCoordinator({
       worldModel: chatData.world_model,
       storyTime: storyTimeValue,
       characterContext,
+      characterRegistry,
       existingBioWeave,
     })
   }
@@ -774,7 +1088,8 @@ export function createEventAnalysisCoordinator({
       token = chat.token()
       execution.stage = 'request_build'
       const analysisInput = await buildFloorAnalysisInput(target, token)
-      if (typeof analyzer?.analyzeFloor !== 'function') throw new Error('EVENT_ANALYZER_UNAVAILABLE')
+      if (typeof analyzer?.analyzeFloor !== 'function')
+        throw new Error('EVENT_ANALYZER_UNAVAILABLE')
       execution.stage = 'api_request'
       const result = await analyzer.analyzeFloor({
         analysisInput,
@@ -783,27 +1098,48 @@ export function createEventAnalysisCoordinator({
         signal: execution.controller.signal,
       })
       assertExecutionCurrent(execution, token)
+      execution.stage = 'identity_resolution'
+      const identityResult = resolveEventAnalysisIdentities(result, {
+        registry: normalizeCharacterRegistry(analysisInput.character_registry),
+        allowLegacy: allowLegacyIdentity,
+        persistAliases: true,
+        narrative: analysisNarrative(analysisInput),
+      })
+      if (!identityResult.ok) throw identityResolutionError(identityResult)
       execution.stage = 'normalization'
       const enrichedEvents = await Promise.all(
-        (Array.isArray(result?.events) ? result.events : []).map(async (event, ordinal) => {
-          const facts =
-            event && typeof event === 'object' && !Array.isArray(event)
-              ? Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'event_id' && key !== 'source'))
-              : event
-          if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return facts
-          return {
-            ...facts,
-            event_id: await deterministicEventId(target.version, ordinal),
-            source: target.version,
-          }
-        }),
+        (Array.isArray(identityResult.events) ? identityResult.events : []).map(
+          async (event, ordinal) => {
+            const facts =
+              event && typeof event === 'object' && !Array.isArray(event)
+                ? Object.fromEntries(
+                    Object.entries(event).filter(
+                      ([key]) => key !== 'event_id' && key !== 'source',
+                    ),
+                  )
+                : event
+            if (!facts || typeof facts !== 'object' || Array.isArray(facts))
+              return facts
+            return {
+              ...facts,
+              event_id: await deterministicEventId(target.version, ordinal),
+              source: target.version,
+            }
+          },
+        ),
       )
       execution.stage = 'schema_validation'
-      const collectionValidation = validateEventCollection(enrichedEvents)
+      const collectionValidation = validateEventCollection(enrichedEvents, {
+        strictCanonicalParticipants: true,
+      })
       if (!collectionValidation.ok) {
-        throw domainValidationError(collectionValidation, 'EVENT_DOMAIN_VALIDATION_FAILED', enrichedEvents)
+        throw domainValidationError(
+          collectionValidation,
+          'EVENT_DOMAIN_VALIDATION_FAILED',
+          enrichedEvents,
+        )
       }
-      const events = enrichedEvents.map(event => normalizeEvent(event))
+      const events = enrichedEvents.map((event) => normalizeEvent(event))
       const analyzedAt = new Date().toISOString()
       const analysis = commitAnalysis(
         savedAnalysis,
@@ -821,19 +1157,29 @@ export function createEventAnalysisCoordinator({
       )
       execution.stage = 'floor_save'
       assertExecutionCurrent(execution, token)
-      await store.saveFloor(target.index, target.swipeId, { ...target.floorData, analysis, events })
+      await store.saveFloor(target.index, target.swipeId, {
+        ...target.floorData,
+        analysis,
+        events,
+      })
       execution.floorSaved = true
       assertExecutionCurrent(execution, token)
       execution.stage = 'chat_save'
       const currentChat = store.getChat(token.chatId)
-      const previousProcessedFloor = Number(currentChat.index?.last_processed_floor)
+      const previousProcessedFloor = Number(
+        currentChat.index?.last_processed_floor,
+      )
       const lastProcessedFloor = Number.isFinite(previousProcessedFloor)
         ? Math.max(previousProcessedFloor, target.version.floor)
         : target.version.floor
       assertExecutionCurrent(execution, token)
       await store.saveChat(token.chatId, {
         ...currentChat,
-        index: { ...(currentChat.index ?? {}), last_processed_floor: lastProcessedFloor },
+        character_registry: identityResult.character_registry,
+        index: {
+          ...(currentChat.index ?? {}),
+          last_processed_floor: lastProcessedFloor,
+        },
       })
       execution.stage = 'registry_rebuild'
       assertExecutionCurrent(execution, token)
@@ -850,9 +1196,17 @@ export function createEventAnalysisCoordinator({
         registryComplete: true,
       })
       terminalState = 'success'
-      return { events, version: target.version, status: 'success', attempt: execution.attempt }
+      return {
+        events,
+        version: target.version,
+        status: 'success',
+        attempt: execution.attempt,
+      }
     } catch (error) {
-      const cancelled = execution.cancelRequested || isRequestAborted(error) || error?.code === 'REQUEST_ABORTED'
+      const cancelled =
+        execution.cancelRequested ||
+        isRequestAborted(error) ||
+        error?.code === 'REQUEST_ABORTED'
       traceApi('runtime-error', {
         error,
         phase: execution.stage,
@@ -867,7 +1221,13 @@ export function createEventAnalysisCoordinator({
         await rollbackLateFloorCommit(execution, target)
         if (!execution.released) {
           try {
-            await persistTerminalAttempt(execution, target, savedAnalysis, 'cancelled', execution.diagnostic)
+            await persistTerminalAttempt(
+              execution,
+              target,
+              savedAnalysis,
+              'cancelled',
+              execution.diagnostic,
+            )
           } catch {
             // Cancellation must remain an informational terminal state even if
             // the host cannot persist the diagnostic metadata.
@@ -885,7 +1245,13 @@ export function createEventAnalysisCoordinator({
       // Floor 的失败元数据写回当前 Chat/Swipe。
       if (!execution.released && !isStaleChat(error)) {
         try {
-          await persistTerminalAttempt(execution, target, savedAnalysis, 'failed', execution.diagnostic)
+          await persistTerminalAttempt(
+            execution,
+            target,
+            savedAnalysis,
+            'failed',
+            execution.diagnostic,
+          )
           try {
             await refreshTrackingRegistry('analysis-failed')
           } catch (registryError) {
@@ -897,15 +1263,21 @@ export function createEventAnalysisCoordinator({
       }
       throw error
     } finally {
-      if (!execution.released) finalizeExecution(execution, terminalState, terminalError)
+      if (!execution.released)
+        finalizeExecution(execution, terminalState, terminalError)
     }
   }
-  async function analyzeFloor(selector = null, { force = false, reason = 'automatic' } = {}) {
+  async function analyzeFloor(
+    selector = null,
+    { force = false, reason = 'automatic' } = {},
+  ) {
     const target = await resolveFloor(selector)
     const requestKey = floorExecutionKey(target.version)
     if (inFlight.has(requestKey)) return inFlight.get(requestKey).promise
     const savedAnalysis = target.floorData?.analysis ?? null
-    if (!shouldAnalyze(savedAnalysis, { version: target.version, manual: force })) {
+    if (
+      !shouldAnalyze(savedAnalysis, { version: target.version, manual: force })
+    ) {
       return { skipped: true, version: target.version, status: 'success' }
     }
     const attempt = ++attemptSequence
@@ -958,7 +1330,8 @@ export function createEventAnalysisCoordinator({
       throw error
     }
     const execution = inFlight.get(floorExecutionKey(target.version))
-    if (!execution || execution.cancelRequested || execution.released) return false
+    if (!execution || execution.cancelRequested || execution.released)
+      return false
     execution.cancelRequested = true
     const controller = execution.controller
     controller?.abort?.()
@@ -966,7 +1339,13 @@ export function createEventAnalysisCoordinator({
     execution.diagnostic = executionError(terminalError, 'cancelled')
     finalizeExecution(execution, 'cancelled', terminalError)
     try {
-      await persistTerminalAttempt(execution, target, target.floorData?.analysis ?? null, 'cancelled', execution.diagnostic)
+      await persistTerminalAttempt(
+        execution,
+        target,
+        target.floorData?.analysis ?? null,
+        'cancelled',
+        execution.diagnostic,
+      )
     } catch {
       // The in-memory terminal state remains visible; persistence failure must
       // not turn an intentional cancellation into an error notification.
@@ -978,15 +1357,22 @@ export function createEventAnalysisCoordinator({
       await refreshTrackingRegistry(event.type)
       return { skipped: true, reason: event.type }
     }
-    if (!AUTO_ANALYSIS_EVENTS.has(event?.type)) return { skipped: true, reason: 'unsupported-event' }
+    if (!AUTO_ANALYSIS_EVENTS.has(event?.type))
+      return { skipped: true, reason: 'unsupported-event' }
     const target = resolveMessage(event?.payload ?? null)
     const floor = messageFloor(target.message, target.index)
     const chatData = store.getChat(chat.current())
     const interval = Number(chatData.settings?.analysis_interval ?? 3)
-    if (!FORCED_LIFECYCLE_EVENTS.has(event.type) && !isIntervalTarget(floor, chatData.index?.last_processed_floor, interval)) {
+    if (
+      !FORCED_LIFECYCLE_EVENTS.has(event.type) &&
+      !isIntervalTarget(floor, chatData.index?.last_processed_floor, interval)
+    ) {
       return { skipped: true, reason: 'interval' }
     }
-    return analyzeFloor({ __messageIndex: true, index: target.index }, { force: false, reason: event.type })
+    return analyzeFloor(
+      { __messageIndex: true, index: target.index },
+      { force: false, reason: event.type },
+    )
   }
   async function findActiveEvent(eventId) {
     const targetId = String(eventId ?? '').trim()
@@ -995,32 +1381,75 @@ export function createEventAnalysisCoordinator({
     for (let index = 0; index < all.length; index += 1) {
       const target = await resolveFloor({ __messageIndex: true, index })
       const events = store.getActiveFloorEvents?.(index, target.version) ?? []
-      const eventIndex = events.findIndex(event => String(event?.event_id) === targetId)
+      const eventIndex = events.findIndex(
+        (event) => String(event?.event_id) === targetId,
+      )
       if (eventIndex >= 0) return { ...target, event: events[eventIndex] }
     }
     throw new Error('EVENT_NOT_FOUND')
   }
   async function updateEvent(eventId, patch = {}) {
     const target = await findActiveEvent(eventId)
-    const nextEvent = normalizeEvent({ ...target.event, ...patch, event_id: target.event.event_id, source: target.event.source })
-    const events = [...(Array.isArray(target.floorData.events) ? target.floorData.events : [])]
-    const index = events.findIndex(event => String(event?.event_id) === String(eventId))
+    const nextEvent = normalizeEvent({
+      ...target.event,
+      ...patch,
+      event_id: target.event.event_id,
+      source: target.event.source,
+    })
+    const chatData = store.getChat(target.chatId)
+    const characterRegistry = bootstrapCharacterRegistryFromLegacy({
+      events: target.floorData?.events,
+      character_profiles: chatData.character_profiles,
+      character_registry: chatData.character_registry,
+    })
+    for (const [
+      participantIndex,
+      participant,
+    ] of nextEvent.participants.entries()) {
+      if (hasCharacterId(characterRegistry, participant.character_id)) continue
+      const error = new Error('EVENT_IDENTITY_RESOLUTION_FAILED')
+      error.code = 'EVENT_IDENTITY_RESOLUTION_FAILED'
+      error.analysis_stage = 'identity_resolution'
+      error.diagnostic_code = 'unknown_character_id'
+      error.error_code = 'unknown_character_id'
+      error.diagnostic_path = `participants[${participantIndex}].character_id`
+      error.error_path = error.diagnostic_path
+      throw error
+    }
+    const events = [
+      ...(Array.isArray(target.floorData.events)
+        ? target.floorData.events
+        : []),
+    ]
+    const index = events.findIndex(
+      (event) => String(event?.event_id) === String(eventId),
+    )
     if (index < 0) throw new Error('EVENT_NOT_FOUND')
     events[index] = nextEvent
     const collectionValidation = validateEventCollection(events)
     if (!collectionValidation.ok) {
-      throw domainValidationError(collectionValidation, 'EVENT_ANALYSIS_INVALID', events)
+      throw domainValidationError(
+        collectionValidation,
+        'EVENT_ANALYSIS_INVALID',
+        events,
+      )
     }
-    await store.saveFloor(target.index, target.swipeId, { ...target.floorData, events })
+    await store.saveFloor(target.index, target.swipeId, {
+      ...target.floorData,
+      events,
+    })
     await refreshTrackingRegistry('event-edit')
     return nextEvent
   }
   async function deleteEvent(eventId) {
     const target = await findActiveEvent(eventId)
-    const events = (Array.isArray(target.floorData.events) ? target.floorData.events : []).filter(
-      event => String(event?.event_id) !== String(eventId),
-    )
-    await store.saveFloor(target.index, target.swipeId, { ...target.floorData, events })
+    const events = (
+      Array.isArray(target.floorData.events) ? target.floorData.events : []
+    ).filter((event) => String(event?.event_id) !== String(eventId))
+    await store.saveFloor(target.index, target.swipeId, {
+      ...target.floorData,
+      events,
+    })
     await refreshTrackingRegistry('event-delete')
     return true
   }
@@ -1041,13 +1470,17 @@ export function createEventAnalysisCoordinator({
     getCurrentFloorAnalysisInput,
     requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
-    getCurrentFloorEvents: async () => (await statusForCurrentFloor()).current_floor_events,
+    getCurrentFloorEvents: async () =>
+      (await statusForCurrentFloor()).current_floor_events,
     getTrackingRegistry: async () => {
       const chatData = store.getChat(chat.current())
       return {
         tracking_subjects: chatData.tracking_subjects ?? {},
         tracking_candidates: chatData.tracking_candidates ?? {},
         character_profiles: chatData.character_profiles ?? {},
+        character_registry: normalizeCharacterRegistry(
+          chatData.character_registry,
+        ),
       }
     },
     collectActiveBusinessData,

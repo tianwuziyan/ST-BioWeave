@@ -3,6 +3,7 @@
 ## 模块边界
 
 - `core/events.js`：BiologicalEvent 类型、固定结构、normalize / validate / sort；统一拥有 Event 边界，不让 UI 或其它消费者各自解析原始 payload。
+- `core/identity.js`：Chat-local Character Registry、Runtime canonical character ID、existing/new/unresolved identity resolution、alias candidate policy 和 legacy ID lazy bootstrap；不按姓名建立键，不执行 destructive merge。
 - Tracking Registry 领域逻辑：从已验证的 Floor-bound Event 建立/重建 Chat-local Tracking Subject 索引；只保存稳定人物信息和 `event_id` 引用，不访问 DOM、AI 或宿主。
 - `core/state.js`：纯程序 State Reducer，不调用 AI；Phase 2A 不接通完整妊娠状态归约。
 - `core/snapshot.js`：检查点与删除楼层后的局部恢复。
@@ -17,7 +18,7 @@
 - `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、生产输入构建（含 `getCurrentFloorAnalysisInput()`）、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。Prompt Preview 复用该 Runtime 输入，不在 UI 重建 Floor Version。
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
 - `storage/store.js`：两级存储统一入口。
-- `storage/schema.js`：默认结构和版本，包括 Chat-local Tracking Registry 的兼容读取边界。
+- `storage/schema.js`：默认结构和版本，包括独立于 Tracking Registry 的 Chat-local Character Registry 兼容读取边界。
 
 ### Analysis Context / Prompt Contract
 
@@ -36,7 +37,8 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 ```text
 当前 Chat / Floor / 最近剧情 / World Model / Story Time
-  → Event Analyzer 固定 JSON
+  → Event Analyzer raw JSON（existing/new/unresolved mention）
+  → Runtime Character Identity resolution / registration
   → Event normalize / validate
   → Floor-bound BiologicalEvent[0..N]（每个 Target Floor Version）
   → Chat-local Tracking Subject Registry
@@ -48,6 +50,8 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 - 人物列表不是当前 Chat 的全角色列表，只读取 `tracking_subjects` 中 `eligibility: "eligible"` 的 active Tracking Subject。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 `can_carry_pregnancy` 三态解析决定，pending recipient 保存在独立 `tracking_candidates`，UI 不参与判断。
 - BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
 - Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`，每个 Target Floor Version 允许 `events.length >= 0`。对于 pregnancy-related `sexual_activity`，AI 先识别所有实际暴露的 gestational subject，再按 subject 分组；每个 Event 恰好一个 subject，同一 subject 的多个 actual exposure source 合并，不同 subject 分 Event。即时症状、physical effect 和相关证据仍并入同一 subject 的 sexual Event；其它真正独立的 BiologicalEvent 可以并存。只有通过统一 normalize / validate 的结果才能写入 Floor。
+- Event Analyzer 另外接收独立的 Runtime `character_registry` candidate block。participant 的 `identity_status` 必须是 `existing`、`new` 或 `unresolved`；模型只能原样引用 registry 中的 existing ID，new/unresolved 使用 `character_id: null` 与 response-local `mention_id`。Runtime 完成 identity resolution/registration 后，才将 mention/reference 转为 canonical IDs 并执行 participant-backed pregnancy closure。`character_context`、profile 和 Tracking Registry 都不是 canonical identity source。
+- mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved；旧 ID lazy bootstrap 只保留历史引用，不合并疑似重复实体。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
 - `story_time` 是结构化存储对象；`display` 只用于显示。SevenDaysCal 公开 Adapter 可在输入边界把原始中文日期与传统时辰转换为结构化 `normalized`；已有 `normalized`、`day_index` 等字段仍是权威值。在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，日期部分可以独立数字化并保留任意后续原文，但不得重新推断或覆盖结构化字段。fallback 和 `formatStoryTime()` 不从 display 生成结构化日期/时间。排序和计算只使用结构化字段，无法可靠获取时保存 `null`。SevenDaysCal 只能通过公开、可注入的 Adapter 使用，缺失时降级到 BioWeave Fallback StoryTimeProvider。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段只实现 `sexual_activity` 的 Tracking 闭环。

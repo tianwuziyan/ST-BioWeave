@@ -1,9 +1,12 @@
-import {createChatBoundary} from './chat.js';
-import {createStore, hasSwipeStructure} from '../storage/store.js';
-import {createAnalyzer} from '../ai/analyzer.js';
-import {createStoryTime} from '../story/time.js';
-import {FOLLOW_DEFAULT_API, SILLYTAVERN_CURRENT_API} from '../storage/schema.js';
-import {createEventAnalysisCoordinator} from './event-analysis.js';
+import { createChatBoundary } from './chat.js';
+import { createStore, hasSwipeStructure } from '../storage/store.js';
+import { createAnalyzer } from '../ai/analyzer.js';
+import { createStoryTime } from '../story/time.js';
+import {
+  FOLLOW_DEFAULT_API,
+  SILLYTAVERN_CURRENT_API,
+} from '../storage/schema.js';
+import { createEventAnalysisCoordinator } from './event-analysis.js';
 
 const LIFECYCLE_EVENTS = [
   'CHAT_CHANGED',
@@ -28,10 +31,16 @@ export function createSillyTavernAdapter() {
     fetch: (...args) => globalThis.fetch(...args),
     async saveGlobalSettings(value) {
       const context = getContext();
-      if (!context?.extensionSettings || typeof context.saveSettingsDebounced !== 'function') {
+      if (
+        !context?.extensionSettings ||
+        typeof context.saveSettingsDebounced !== 'function'
+      ) {
         throw new Error('ST_EXTENSION_SETTINGS_UNAVAILABLE');
       }
-      const hadPrevious = Object.prototype.hasOwnProperty.call(context.extensionSettings, 'bioweave');
+      const hadPrevious = Object.prototype.hasOwnProperty.call(
+        context.extensionSettings,
+        'bioweave',
+      );
       const previous = context.extensionSettings.bioweave;
       context.extensionSettings.bioweave = value;
       try {
@@ -44,18 +53,24 @@ export function createSillyTavernAdapter() {
     },
     getChatId: () => getContext()?.chatId ?? null,
     getChatMetadata: () => getContext()?.chatMetadata ?? null,
-    getMessage: index => getContext()?.chat?.[index] ?? null,
+    getMessage: (index) => getContext()?.chat?.[index] ?? null,
     async saveChatMetadata(key, value, expectedChatId) {
       const context = getContext();
       if (expectedChatId !== undefined && context?.chatId !== expectedChatId) {
         throw new Error('STALE_CHAT');
       }
-      if (!context?.chatMetadata || typeof context.saveMetadata !== 'function') {
+      if (
+        !context?.chatMetadata ||
+        typeof context.saveMetadata !== 'function'
+      ) {
         throw new Error('ST_METADATA_UNAVAILABLE');
       }
       context.chatMetadata[key] = value;
       await context.saveMetadata();
-      if (expectedChatId !== undefined && getContext()?.chatId !== expectedChatId) {
+      if (
+        expectedChatId !== undefined &&
+        getContext()?.chatId !== expectedChatId
+      ) {
         throw new Error('STALE_CHAT');
       }
     },
@@ -66,7 +81,8 @@ export function createSillyTavernAdapter() {
       }
       const message = context?.chat?.[messageIndex];
       if (!message) throw new Error('MESSAGE_NOT_FOUND');
-      const targetSwipeId = Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
+      const targetSwipeId =
+        Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
       if (hasSwipeStructure(message)) {
         message.swipe_info ??= [];
         message.swipe_info[targetSwipeId] ??= {};
@@ -76,9 +92,13 @@ export function createSillyTavernAdapter() {
         message.extra ??= {};
         message.extra.bioweave = value;
       }
-      if (typeof context.saveChat !== 'function') throw new Error('ST_CHAT_STORAGE_UNAVAILABLE');
+      if (typeof context.saveChat !== 'function')
+        throw new Error('ST_CHAT_STORAGE_UNAVAILABLE');
       await context.saveChat();
-      if (expectedChatId !== undefined && getContext()?.chatId !== expectedChatId) {
+      if (
+        expectedChatId !== undefined &&
+        getContext()?.chatId !== expectedChatId
+      ) {
         throw new Error('STALE_CHAT');
       }
     },
@@ -95,6 +115,7 @@ export function createRuntime({
   analysisSourceLoaderOptions = {},
   externalMemoryProviderLoader = null,
   analysisSourceCache = null,
+  allowLegacyIdentity = false,
 } = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
@@ -119,33 +140,51 @@ export function createRuntime({
     const assignment = settings.assignments?.event_analysis ?? null;
     if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
     if (assignment === FOLLOW_DEFAULT_API) {
-      if (settings.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
+      if (settings.api_source === SILLYTAVERN_CURRENT_API)
+        return SILLYTAVERN_CURRENT_API;
       return settings.default_profile_id
-        ? store.profileStore?.getProfile?.(settings.default_profile_id) ?? null
+        ? (store.profileStore?.getProfile?.(settings.default_profile_id) ??
+            null)
         : null;
     }
-    return assignment ? store.profileStore?.getProfile?.(assignment) ?? null : null;
+    return assignment
+      ? (store.profileStore?.getProfile?.(assignment) ?? null)
+      : null;
   }
 
-  const eventAnalyzer = analyzer ?? createAnalyzer({
-    profileResolver: resolveEventAnalysisProfile,
-    contextResolver: () => st.getContext?.() ?? null,
-    requestSettingsResolver: () => store.profileStore?.getApiRequestSettings?.() ?? {},
-    analysisPromptResolver: () => store.profileStore?.getAnalysisPrompt?.() ?? {},
-  });
+  const eventAnalyzer =
+    analyzer ??
+    createAnalyzer({
+      profileResolver: resolveEventAnalysisProfile,
+      contextResolver: () => st.getContext?.() ?? null,
+      requestSettingsResolver: () =>
+        store.profileStore?.getApiRequestSettings?.() ?? {},
+      analysisPromptResolver: () =>
+        store.profileStore?.getAnalysisPrompt?.() ?? {},
+    });
   const eventAnalysis = createEventAnalysisCoordinator({
     st,
     chat,
     store,
     analyzer: eventAnalyzer,
     storyTime: storyTime ?? createStoryTime(),
-    ...(typeof characterContextResolver === 'function' ? {characterContextResolver} : {}),
-    ...(typeof analysisContextCollector === 'function' ? {analysisContextCollector} : {}),
-    ...(typeof analysisSourceLoader === 'function' ? {analysisSourceLoader} : {}),
+    ...(typeof characterContextResolver === 'function'
+      ? { characterContextResolver }
+      : {}),
+    ...(typeof analysisContextCollector === 'function'
+      ? { analysisContextCollector }
+      : {}),
+    ...(typeof analysisSourceLoader === 'function'
+      ? { analysisSourceLoader }
+      : {}),
     analysisSourceLoaderOptions,
-    ...(typeof externalMemoryProviderLoader === 'function' ? {externalMemoryProviderLoader} : {}),
-    ...(analysisSourceCache ? {analysisSourceCache} : {}),
-    globalRecentStoryResolver: () => store.profileStore?.getSettings?.()?.recent_story_global ?? {},
+    ...(typeof externalMemoryProviderLoader === 'function'
+      ? { externalMemoryProviderLoader }
+      : {}),
+    ...(analysisSourceCache ? { analysisSourceCache } : {}),
+    allowLegacyIdentity,
+    globalRecentStoryResolver: () =>
+      store.profileStore?.getSettings?.()?.recent_story_global ?? {},
     notify,
   });
 
@@ -153,7 +192,7 @@ export function createRuntime({
     const epochBefore = chat.getEpoch();
     const chatId = chat.current();
     const chatChanged = chat.getEpoch() !== epochBefore;
-    if (!chatChanged) chat.invalidate(key, {checkCurrent: false});
+    if (!chatChanged) chat.invalidate(key, { checkCurrent: false });
     notify({
       type: key,
       eventType,
@@ -162,25 +201,32 @@ export function createRuntime({
       epoch: chat.getEpoch(),
       chatChanged,
     });
-    void eventAnalysis.handleLifecycleEvent({type: key, eventType, payload, chatId}).catch(error => {
-      if (!['STALE_CHAT', 'MESSAGE_NOT_FOUND'].includes(error?.message)) {
-        console.error('[BioWeave] event analysis lifecycle failed', error);
-      }
-    });
+    void eventAnalysis
+      .handleLifecycleEvent({ type: key, eventType, payload, chatId })
+      .catch((error) => {
+        if (!['STALE_CHAT', 'MESSAGE_NOT_FOUND'].includes(error?.message)) {
+          console.error('[BioWeave] event analysis lifecycle failed', error);
+        }
+      });
   }
 
   function bindLifecycleEvents() {
     const context = st.getContext?.();
     const source = context?.eventSource;
     const types = context?.eventTypes;
-    if (!source || typeof source.on !== 'function' || typeof source.removeListener !== 'function') {
+    if (
+      !source ||
+      typeof source.on !== 'function' ||
+      typeof source.removeListener !== 'function'
+    ) {
       return;
     }
     const boundEventTypes = new Set();
     for (const key of LIFECYCLE_EVENTS) {
       const eventType = types?.[key];
       if (eventType == null || boundEventTypes.has(eventType)) continue;
-      const listener = payload => handleLifecycleEvent(key, eventType, payload);
+      const listener = (payload) =>
+        handleLifecycleEvent(key, eventType, payload);
       source.on(eventType, listener);
       boundEventTypes.add(eventType);
       unbind.push(() => source.removeListener(eventType, listener));
@@ -198,16 +244,20 @@ export function createRuntime({
     chat.current();
     bindLifecycleEvents();
     initialized = true;
-    void eventAnalysis.refreshTrackingRegistry('init').catch(error => {
+    void eventAnalysis.refreshTrackingRegistry('init').catch((error) => {
       if (error?.message !== 'STALE_CHAT') {
-        console.error('[BioWeave] initial tracking registry refresh failed', error);
+        console.error(
+          '[BioWeave] initial tracking registry refresh failed',
+          error,
+        );
       }
     });
     return true;
   }
 
   function subscribe(listener) {
-    if (typeof listener !== 'function') throw new TypeError('RUNTIME_LISTENER_REQUIRED');
+    if (typeof listener !== 'function')
+      throw new TypeError('RUNTIME_LISTENER_REQUIRED');
     subscriptions.add(listener);
     return () => subscriptions.delete(listener);
   }
@@ -246,7 +296,8 @@ export function createRuntime({
     analyzeCurrentFloor: eventAnalysis.analyzeCurrentFloor,
     analyzeFloor: eventAnalysis.analyzeFloor,
     refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
-    requestAbortCurrentFloorAnalysis: eventAnalysis.requestAbortCurrentFloorAnalysis,
+    requestAbortCurrentFloorAnalysis:
+      eventAnalysis.requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
