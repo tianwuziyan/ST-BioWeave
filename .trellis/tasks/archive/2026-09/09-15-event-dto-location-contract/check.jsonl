@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify location scalar contract, subject-local Events and failed-result retention"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify cross-layer regression coverage and no contract leakage"}
