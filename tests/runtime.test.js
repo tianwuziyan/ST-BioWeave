@@ -90,6 +90,43 @@ test("Floor ownership isolates each Swipe slot without cross-Swipe fallback", as
   assert.equal(store.getFloor(0, 2).value, undefined);
 });
 
+test("Floor character snapshots round-trip independently per Swipe", async () => {
+  const adapter = createAdapter();
+  const store = createStore(adapter, createChatBoundary(adapter));
+  const entry = (characterId, displayName) => ({
+    character_id: characterId,
+    display_name: displayName,
+    aliases: [],
+  });
+
+  await store.saveFloor(0, 0, {
+    analysis: { status: "success" },
+    character_registry: {
+      schema_version: 1,
+      entities: { character_a: entry("character_a", "角色甲") },
+    },
+  });
+  await store.saveFloor(0, 1, {
+    analysis: { status: "success" },
+    character_registry: {
+      schema_version: 1,
+      entities: { character_b: entry("character_b", "角色乙") },
+    },
+  });
+
+  assert.deepEqual(store.getFloor(0, 0).character_registry.entities, {
+    character_a: entry("character_a", "角色甲"),
+  });
+  assert.deepEqual(store.getFloor(0, 1).character_registry.entities, {
+    character_b: entry("character_b", "角色乙"),
+  });
+  assert.deepEqual(store.getFloor(0, 2).character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
+  assert.equal(adapter.message.extra?.bioweave, undefined);
+});
+
 test("active Swipe selects only its Floor and a deleted message contributes no facts", async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
@@ -251,7 +288,7 @@ test("tracking candidate storage round-trips pending evidence without changing F
   );
 });
 
-test("runtime registry refresh scans current Floor facts without requesting AI", async () => {
+test("runtime registry refresh scans current Floor snapshots without requesting AI", async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
   adapter.message.swipes = ["story"];
@@ -300,6 +337,21 @@ test("runtime registry refresh scans current Floor facts without requesting AI",
         ],
       },
     ],
+    character_registry: {
+      schema_version: 1,
+      entities: {
+        "char-a": {
+          character_id: "char-a",
+          display_name: "同名",
+          aliases: [],
+        },
+        "char-b": {
+          character_id: "char-b",
+          display_name: "同名",
+          aliases: [],
+        },
+      },
+    },
   });
   const runtime = createRuntime({ adapter });
   assert.equal(await runtime.init(), true);

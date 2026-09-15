@@ -22,7 +22,7 @@ boundary.
 - `normalizeCharacterRegistry(raw) -> {schema_version: 1, entities: Record<character_id, CharacterRegistryEntry>}`
 - `resolveEventAnalysisIdentities(rawAnalysis, {registry, allowLegacy = false, persistAliases = false}) -> {ok, events, character_registry, errors[]}`
 - `resolveRawParticipantIdentity(registry, rawParticipant, options?) -> IdentityResolutionResult`
-- `bootstrapCharacterRegistryFromLegacy({events, character_profiles, character_registry}) -> CharacterRegistry`
+- `bootstrapCharacterRegistryFromLegacy({events, character_profiles, character_registry}) -> CharacterRegistry` (explicit migration/legacy adapter only; never ordinary API input)
 - `createOpaqueCharacterId(options?) -> string`
 - `discoverAliasCandidate(rawCandidate, identityEvidence) -> AliasCandidate | null`
 - `persistAliasCandidate(registry, characterId, candidate) -> {accepted, registry}`
@@ -33,6 +33,7 @@ boundary.
 - `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, tracking_candidates, character_profiles}`
 - `explainTrackingDecision(event, previousChat?) -> Array<{character_id, eligibility, reasons[]}>`, where `eligibility` is `eligible | pending | ineligible`
 - `getActiveFloorEvents(floorData, floorVersion) -> BiologicalEvent[]`
+- `findPreviousSuccessfulBioWeave(target) -> {analysis, events, character_registry}`
 - `createEventAnalysisCoordinator(deps) -> EventAnalysisRuntimeAPI`
 - `runtime.analyzeCurrentFloor({force = false}) -> AnalysisResult`
 - `runtime.analyzeFloor(messageIdOrIndex, {force = false}) -> AnalysisResult`
@@ -64,11 +65,13 @@ boundary.
 ### Input
 
 `EventAnalysisInput` contains `chat_scope`, `floor_version`, `current_floor`,
-`recent_context`, `world_model`, `story_time`, an explicit Chat-local
-`character_registry`, `character_context`, a sanitized `persona`, and optional
-existing BioWeave context. `character_registry` is the only identity candidate
-source; `character_context` is semantic/profile evidence and is not an ID
-whitelist.
+`recent_context`, `world_model`, `story_time`, an explicit
+Floor-provenance-checked `character_registry` snapshot, `character_context`, a
+sanitized `persona`, and optional existing BioWeave context.
+`character_registry` is the only identity candidate source;
+`character_context` is semantic/profile evidence and is not an ID whitelist.
+For ordinary analysis, the registry may only come from the nearest valid
+previous Floor snapshot; a Chat-level registry is not a historical input.
 The input boundary is text-oriented and removes secret-like keys before prompt
 construction. The analyzer receives a fixed JSON-only output contract.
 
@@ -121,8 +124,15 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 
 #### 2. Signatures
 
-- `CharacterRegistry` is persisted at `chatMetadata.bioweave.character_registry`:
+- A successful Floor owner persists a cumulative `CharacterRegistry` snapshot in
+  its exact `message.extra.bioweave` or
+  `message.swipe_info[swipe_id].extra.bioweave` slot:
   `{schema_version: 1, entities: {[canonicalId]: {character_id, display_name, aliases[]}}}`.
+  The enclosing successful analysis and complete six-field Floor Version bind
+  its validity. Cumulative does not mean global authoritative ownership.
+- `chatMetadata.bioweave.character_registry`, if retained, is only a
+  materialized projection/cache or an explicitly bounded legacy-migration
+  input. It is not an independent historical source for Analyzer API input.
 - `identity_status` is one of `existing`, `new`, or `unresolved` in the raw
   participant DTO. `new` and `unresolved` require `character_id: null` and a
   response-local `mention_id`; `existing` requires an ID supplied by the
@@ -148,7 +158,8 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
    authorize an ID absent from the registry.
 4. The production order is:
    `raw AI DTO -> identity resolution/registration -> Runtime event_id/source ->
-   strict Domain validation -> normalize -> Floor/Chat persistence -> Tracking`.
+   strict Domain validation -> normalize -> Floor snapshot persistence -> Chat
+   projection -> Tracking`.
    Raw provisional null IDs are therefore not passed to final participant-backed
    validation.
 
@@ -166,7 +177,7 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 | Raw participants repeat a canonical ID before canonicalization | Preserve/check the raw records; strict post-resolution validation rejects the duplicate instead of allowing a last-record-wins write |
 | Alias candidate is empty, a duplicate, display name, pronoun, generic reference, title, or lacks explicit establishment evidence | Reject the candidate; do not modify aliases |
 | Existing ID has explicit name-revelation evidence and a new display name | Update the same registry entry, retain the old stable display form as an alias, and never create/merge an ID |
-| Legacy Event/profile contains old IDs | Lazy-bootstrap those exact IDs as separate entries; never derive IDs from names, rewrite references, or destructive-merge suspected duplicates |
+| Legacy Event/profile contains old IDs | Only an explicit bounded migration/legacy adapter may import exact IDs proven by a current valid Floor Event into that Floor snapshot; never derive IDs from names, rewrite references, destructively merge, or use Chat registry as an ordinary-request fallback |
 
 #### 5. Good / Base / Bad Cases
 
@@ -197,7 +208,7 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 - Identity unit tests assert existing/new/unresolved, membership rejection,
   response-local references, atomic conflict handling, new-identity re-check,
   nickname-only newcomers, explicit name revelation, no destructive merge, and
-  legacy bootstrap preserving every historical ID.
+  explicit bounded legacy migration preserving every historical ID.
 - Alias tests separately assert mention resolution, alias discovery, and alias
   persistence; continuity/co-occurrence/high confidence alone must return no
   candidate, while explicit establishment evidence may be accepted by Runtime.
@@ -205,9 +216,12 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   backfill, next-input registry visibility, unresolved batch rollback, strict
   hallucinated-ID rejection, alias collision behavior, raw duplicate rejection,
   and Chinese `location` preservation.
-- Storage tests assert old Chat reads default to an empty registry without a
-  schema migration, while refresh lazily adds legacy Event/profile IDs without
-  changing historical Event references.
+- Storage/runtime tests assert old Chat reads default to an empty registry
+  without an ordinary-request migration, Floor snapshots round-trip only
+  through their exact message/Swipe owner, and deleting or invalidating that
+  owner cannot restore its identities from Chat Metadata. Any legacy Event or
+  profile migration is explicit, exact-ID scoped, and does not change
+  historical Event references.
 
 #### 7. Wrong vs Correct
 
@@ -219,10 +233,11 @@ registry[characterId].aliases.push(participant.display_name)
 ```
 
 ```js
-// Correct: Runtime validates/creates the ID, and only an explicitly proposed
-// stable nickname is considered for a separate persistence decision.
+// Correct: Runtime takes candidates from the one provenance-checked previous
+// Floor snapshot, then persists the result in the target Floor owner.
+const previous = findPreviousSuccessfulBioWeave(target)
 const resolved = resolveEventAnalysisIdentities(rawAnalysis, {
-  registry: chat.character_registry,
+  registry: previous.character_registry,
   persistAliases: true,
 })
 if (!resolved.ok) throw new Error('EVENT_IDENTITY_RESOLUTION_FAILED')
@@ -541,11 +556,12 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 - Runtime assertions that every successful AI response receives a generated
   canonical Event ID and authoritative source before Floor save; model-provided
   identity/provenance never survives as persisted identity.
-- Character identity assertions for `character_registry` Chat persistence,
+- Character identity assertions for Floor-owned cumulative snapshots,
   Runtime-opaque ID generation, existing/new/unresolved resolution, full exact
   candidate sets, alias establishment evidence, no automatic continuity alias
   learning, alias collision unresolved behavior, name-revelation updates,
-  lazy legacy bootstrap without merge, and strict hallucinated-ID rejection.
+  explicit bounded legacy migration without merge, and strict hallucinated-ID
+  rejection.
 - Raw-to-canonical ordering assertions that a new participant is registered and
   its mention/reference handles are converted before pregnancy participant
   closure and collection validation.
@@ -558,10 +574,11 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 - Scheduling assertions for Floor Version deduplication, manual replacement,
   and failed-refresh preservation.
 - Runtime input assertions that the nearest previous successful current-version
-  Floor supplies `existing_bioweave`, no prior valid Floor yields
-  `{analysis: null, events: []}`, stale candidates are skipped, the target
-  Floor never self-references, and repeated force analysis replaces rather than
-  accumulates its Events.
+  Floor supplies `existing_bioweave` and its own `character_registry` snapshot,
+  no prior valid Floor yields an empty previous bundle, stale candidates are
+  skipped, the target Floor never self-references, repeated force analysis
+  replaces rather than accumulates its Events or identity snapshot, and the
+  final Prompt/request contains no deleted or Chat-only identity.
 - Runtime integration assertions that lifecycle analysis requires no UI
   subscriber, UI reopen causes no AI call, stable message IDs and active Swipes
   select the correct Floor Version, and status DTOs distinguish zero Events

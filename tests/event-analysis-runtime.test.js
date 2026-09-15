@@ -65,6 +65,7 @@ function createFixture({
   rawApiResponse = null,
   saveFloorError = null,
   saveFloorHook = null,
+  saveChatMetadataHook = null,
   saveChatMetadataError = null,
   saveChatMetadataErrorAt = 0,
   allowLegacyIdentity = true,
@@ -116,6 +117,8 @@ function createFixture({
     getMessage: (index) => context.chat[index] ?? null,
     async saveChatMetadata(key, value) {
       saveChatMetadataCalls += 1;
+      if (typeof saveChatMetadataHook === "function")
+        await saveChatMetadataHook({ call: saveChatMetadataCalls, key, value });
       if (
         saveChatMetadataErrorAt &&
         saveChatMetadataCalls === saveChatMetadataErrorAt
@@ -348,6 +351,43 @@ function identityLifecycleEvent({
   return result;
 }
 
+function identityEventForCharacters(
+  registry,
+  subjectName,
+  sourceName,
+  eventId = "evt-1",
+) {
+  const knownEntry = (displayName) =>
+    Object.values(registry?.entities ?? {}).find(
+      (entry) => entry.display_name === displayName,
+    );
+  const participant = (displayName, eventRole, capabilities, mentionId) => {
+    const entry = knownEntry(displayName);
+    return identityParticipant({
+      identityStatus: entry ? "existing" : "new",
+      characterId: entry?.character_id ?? null,
+      mentionId,
+      displayName,
+      eventRole,
+      capabilities,
+    });
+  };
+  return identityLifecycleEvent({
+    subject: participant(
+      subjectName,
+      "potential_gestational_subject",
+      { can_carry_pregnancy: true },
+      `${subjectName}-${eventId}-subject`,
+    ),
+    source: participant(
+      sourceName,
+      "potential_conception_source",
+      { can_cause_pregnancy: true },
+      `${sourceName}-${eventId}-source`,
+    ),
+  });
+}
+
 async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
@@ -457,6 +497,20 @@ test(
     let sourceId = null;
     const inputRegistries = [];
     const fixture = createFixture({
+      messages: [
+        {
+          message_id: "identity-first-floor",
+          floor: 1,
+          content: "首次出现人物的楼层",
+          role: "assistant",
+        },
+        {
+          message_id: "identity-second-floor",
+          floor: 2,
+          content: "后续复用人物的楼层",
+          role: "assistant",
+        },
+      ],
       allowLegacyIdentity: false,
       analyzer: {
         async analyzeFloor({ analysisInput }) {
@@ -533,9 +587,12 @@ test(
       async () => {
         await fixture.runtime.init();
         await settle();
-        await fixture.runtime.refreshCurrentFloorAnalysis();
+        await fixture.runtime.analyzeFloor(
+          { __messageIndex: true, index: 0 },
+          { force: true },
+        );
 
-        const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
+        const firstEvent = fixture.runtime.store.getFloor(0).events[0];
         subjectId = firstEvent.participants[0].character_id;
         sourceId = firstEvent.participants[1].character_id;
         const firstRegistry = (await fixture.runtime.getTrackingRegistry())
@@ -563,8 +620,15 @@ test(
           display_name: "陆行",
           aliases: [],
         });
+        assert.deepEqual(
+          fixture.runtime.store.getFloor(0).character_registry,
+          firstRegistry,
+        );
 
-        await fixture.runtime.refreshCurrentFloorAnalysis();
+        await fixture.runtime.analyzeFloor(
+          { __messageIndex: true, index: 1 },
+          { force: true },
+        );
         const secondEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
         const secondRegistry = (await fixture.runtime.getTrackingRegistry())
           .character_registry;
@@ -583,6 +647,10 @@ test(
           [subjectId, sourceId],
         );
         assert.equal(Object.keys(secondRegistry.entities).length, 2);
+        assert.deepEqual(
+          fixture.runtime.store.getFloor(1).character_registry,
+          secondRegistry,
+        );
       },
     );
     fixture.runtime.destroy();
@@ -702,6 +770,65 @@ test("generic API response with legacy source reaches Floor save, Registry, and 
   assert.equal(data.tracking_subjects.character_source, undefined);
   fixture.runtime.destroy();
 });
+
+test(
+  "successful analysis saves the complete identity result to Floor before Chat projection",
+  { concurrency: false },
+  async () => {
+    const saveOrder = [];
+    const fixture = createFixture({
+      allowLegacyIdentity: false,
+      saveFloorHook: async ({ value }) => {
+        saveOrder.push({ kind: "floor", value: structuredClone(value) });
+      },
+      saveChatMetadataHook: async ({ value }) => {
+        saveOrder.push({ kind: "chat", value: structuredClone(value) });
+      },
+      analyzer: {
+        async analyzeFloor({ analysisInput }) {
+          return {
+            events: [
+              identityEventForCharacters(
+                analysisInput.character_registry,
+                "原子角色",
+                "原子来源",
+                "atomic-save",
+              ),
+            ],
+          };
+        },
+      },
+    });
+
+    await withGlobalCrypto(
+      {
+        randomUUID: (() => {
+          const ids = ["char_atomic", "char_atomic_source"];
+          return () => ids.shift();
+        })(),
+      },
+      async () => {
+        await fixture.runtime.init();
+        await fixture.runtime.refreshTrackingRegistry("before-analysis");
+        saveOrder.length = 0;
+
+        await fixture.runtime.refreshCurrentFloorAnalysis();
+      },
+    );
+
+    assert.deepEqual(
+      saveOrder.map(({ kind }) => kind),
+      ["floor", "chat"],
+    );
+    assert.equal(saveOrder[0].value.analysis.status, "success");
+    assert.equal(saveOrder[0].value.events.length, 1);
+    assert.deepEqual(
+      saveOrder[1].value.character_registry,
+      saveOrder[0].value.character_registry,
+    );
+    fixture.runtime.destroy();
+  },
+);
 
 test("Runtime persists pending candidates and re-evaluates them after a World Model update", async () => {
   const abstractEvent = canonicalApiEvent({
@@ -1302,6 +1429,142 @@ test("API input uses the nearest valid previous Floor Version provenance", async
   fixture.runtime.destroy();
 });
 
+test("Floor character snapshots accumulate from the nearest previous Floor", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-2",
+        floor: 2,
+        content: "第二楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-5",
+        floor: 5,
+        content: "第五楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-9",
+        floor: 9,
+        content: "第九楼层",
+        role: "assistant",
+      },
+    ],
+    allowLegacyIdentity: false,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        const names = {
+          2: ["角色A", "来源A"],
+          5: ["角色B", "来源B"],
+          9: ["角色C", "来源C"],
+        }[analysisInput.current_floor.floor];
+        const resolvedNames =
+          analysisInput.current_floor.floor === 9 && inputs.length > 3
+            ? ["角色D", "来源D"]
+            : names;
+        return {
+          events: resolvedNames
+            ? [
+                identityEventForCharacters(
+                  analysisInput.character_registry,
+                  resolvedNames[0],
+                  resolvedNames[1],
+                  `floor-${analysisInput.current_floor.floor}-${inputs.length}`,
+                ),
+              ]
+            : [],
+        };
+      },
+    },
+  });
+
+  await withGlobalCrypto(
+    {
+      randomUUID: (() => {
+        const ids = [
+          "char_a",
+          "char_source_a",
+          "char_b",
+          "char_source_b",
+          "char_c",
+          "char_source_c",
+          "char_d",
+          "char_source_d",
+        ];
+        return () => ids.shift();
+      })(),
+    },
+    async () => {
+      await fixture.runtime.init();
+      for (const index of [0, 1, 2]) {
+        await fixture.runtime.analyzeFloor(
+          { __messageIndex: true, index },
+          { force: true },
+        );
+      }
+
+      const entityIds = (registry) => Object.keys(registry.entities).sort();
+      assert.deepEqual(entityIds(inputs[0].character_registry), []);
+      assert.deepEqual(entityIds(inputs[1].character_registry), [
+        "char_a",
+        "char_source_a",
+      ]);
+      assert.deepEqual(entityIds(inputs[2].character_registry), [
+        "char_a",
+        "char_b",
+        "char_source_a",
+        "char_source_b",
+      ]);
+      assert.deepEqual(
+        entityIds(fixture.runtime.store.getFloor(1).character_registry),
+        ["char_a", "char_b", "char_source_a", "char_source_b"],
+      );
+      assert.deepEqual(
+        entityIds(fixture.runtime.store.getFloor(2).character_registry),
+        [
+          "char_a",
+          "char_b",
+          "char_c",
+          "char_source_a",
+          "char_source_b",
+          "char_source_c",
+        ],
+      );
+
+      await fixture.runtime.analyzeFloor(
+        { __messageIndex: true, index: 2 },
+        { force: true },
+      );
+      assert.doesNotMatch(
+        JSON.stringify(inputs[3].character_context),
+        /角色C|来源C|char_c|char_source_c/u,
+      );
+      assert.deepEqual(entityIds(inputs[3].character_registry), [
+        "char_a",
+        "char_b",
+        "char_source_a",
+        "char_source_b",
+      ]);
+      assert.equal(inputs[3].character_registry.entities.char_c, undefined);
+      assert.deepEqual(
+        entityIds(fixture.runtime.store.getFloor(2).character_registry),
+        [
+          "char_a",
+          "char_b",
+          "char_d",
+          "char_source_a",
+          "char_source_b",
+          "char_source_d",
+        ],
+      );
+    },
+  );
+  fixture.runtime.destroy();
+});
+
 test("API input uses 6F when the unanalysed target is 9F", async () => {
   let input;
   const fixture = createFixture({
@@ -1429,6 +1692,104 @@ test("deleted latest Floor falls back to the nearest remaining valid previous Fl
   fixture.runtime.destroy();
 });
 
+test("deleting analyzed Floors rolls identity snapshots back to older owners", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-3",
+        floor: 3,
+        content: "第三楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-6",
+        floor: 6,
+        content: "第六楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-9",
+        floor: 9,
+        content: "第九楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-target",
+        floor: 10,
+        content: "目标楼层",
+        role: "assistant",
+      },
+    ],
+    allowLegacyIdentity: false,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        const names = {
+          3: ["角色A", "来源A"],
+          6: ["角色B", "来源B"],
+          9: ["角色C", "来源C"],
+          10: ["角色D", "来源D"],
+        }[analysisInput.current_floor.floor];
+        return {
+          events: names
+            ? [
+                identityEventForCharacters(
+                  analysisInput.character_registry,
+                  names[0],
+                  names[1],
+                  `deletion-${inputs.length}`,
+                ),
+              ]
+            : [],
+        };
+      },
+    },
+  });
+  const ids = [
+    "char_a",
+    "char_source_a",
+    "char_b",
+    "char_source_b",
+    "char_c",
+    "char_source_c",
+    "char_d",
+    "char_source_d",
+    "char_e",
+    "char_source_e",
+  ];
+
+  await withGlobalCrypto({ randomUUID: () => ids.shift() }, async () => {
+    await fixture.runtime.init();
+    for (const index of [0, 1, 2]) {
+      await fixture.runtime.analyzeFloor(
+        { __messageIndex: true, index },
+        { force: true },
+      );
+    }
+
+    fixture.context.chat.splice(2, 1);
+    await fixture.runtime.analyzeFloor("message-target", { force: true });
+    assert.deepEqual(
+      Object.values(inputs.at(-1).character_registry.entities)
+        .map((entry) => entry.display_name)
+        .sort(),
+      ["来源A", "来源B", "角色A", "角色B"],
+    );
+    assert.equal(inputs.at(-1).character_registry.entities.char_c, undefined);
+
+    fixture.context.chat.splice(1, 1);
+    await fixture.runtime.analyzeFloor("message-target", { force: true });
+    assert.deepEqual(
+      Object.values(inputs.at(-1).character_registry.entities).map(
+        (entry) => entry.display_name,
+      ),
+      ["角色A", "来源A"],
+    );
+  });
+  fixture.runtime.destroy();
+});
+
 test("API input is empty when no valid previous Floor exists", async () => {
   let input;
   const fixture = createFixture({
@@ -1442,6 +1803,68 @@ test("API input is empty when no valid previous Floor exists", async () => {
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
+  fixture.runtime.destroy();
+});
+
+test("first analysis does not inherit an orphan Chat character registry", async () => {
+  let input;
+  const fixture = createFixture({
+    allowLegacyIdentity: false,
+    characterContextResolver: (_context, chatData) => ({
+      profiles: Object.fromEntries(
+        Object.entries(chatData.character_registry?.entities ?? {}).map(
+          ([characterId, entry]) => [characterId, entry],
+        ),
+      ),
+    }),
+    rawApiResponse: JSON.stringify({ schema_version: 1, events: [] }),
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: { chat_id: "chat-runtime" },
+    character_registry: {
+      schema_version: 1,
+      entities: {
+        orphan_id_a: {
+          character_id: "orphan_id_a",
+          display_name: "孤立角色甲",
+          aliases: [],
+        },
+        orphan_id_b: {
+          character_id: "orphan_id_b",
+          display_name: "孤立角色乙",
+          aliases: [],
+        },
+        orphan_id_c: {
+          character_id: "orphan_id_c",
+          display_name: "孤立角色丙",
+          aliases: [],
+        },
+      },
+    },
+  };
+
+  await fixture.runtime.init();
+  await settle();
+  input = await fixture.runtime.getCurrentFloorAnalysisInput();
+  assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
+  assert.deepEqual(input.character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
+
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(fixture.apiRequests.length, 1);
+  const requestText = JSON.stringify(fixture.apiRequests[0]);
+  for (const value of [
+    "orphan_id_a",
+    "orphan_id_b",
+    "orphan_id_c",
+    "孤立角色甲",
+    "孤立角色乙",
+    "孤立角色丙",
+  ]) {
+    assert.doesNotMatch(requestText, new RegExp(value, "u"));
+  }
   fixture.runtime.destroy();
 });
 
@@ -1620,6 +2043,88 @@ test("stale Floor Version is skipped during previous-state resolution", async ()
   assert.deepEqual(
     baseline.events.map((event) => event.source.message_id),
     ["message-1"],
+  );
+  fixture.runtime.destroy();
+});
+
+test("stale Floor identity snapshots cannot become previous state", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-1",
+        floor: 1,
+        content: "第一楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-2",
+        floor: 2,
+        content: "第二楼层",
+        role: "assistant",
+        message_version: "v1",
+      },
+      {
+        message_id: "message-3",
+        floor: 3,
+        content: "第三楼层",
+        role: "assistant",
+      },
+    ],
+    allowLegacyIdentity: false,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        return {
+          events:
+            analysisInput.current_floor.floor === 2
+              ? [
+                  identityEventForCharacters(
+                    analysisInput.character_registry,
+                    "版本角色A",
+                    "版本来源A",
+                    "versioned-floor",
+                  ),
+                ]
+              : [],
+        };
+      },
+    },
+  });
+
+  await withGlobalCrypto(
+    {
+      randomUUID: (() => {
+        const ids = ["char_versioned_a", "char_versioned_source_a"];
+        return () => ids.shift();
+      })(),
+    },
+    async () => {
+      await fixture.runtime.init();
+      await fixture.runtime.analyzeFloor(
+        { __messageIndex: true, index: 1 },
+        { force: true },
+      );
+
+      fixture.context.chat[1].message_version = "v2";
+      await fixture.runtime.analyzeFloor(
+        { __messageIndex: true, index: 2 },
+        { force: true },
+      );
+
+      assert.deepEqual(inputs.at(-1).existing_bioweave, {
+        analysis: null,
+        events: [],
+      });
+      assert.deepEqual(inputs.at(-1).character_registry, {
+        schema_version: 1,
+        entities: {},
+      });
+      assert.doesNotMatch(
+        JSON.stringify(inputs.at(-1)),
+        /版本角色A|版本来源A|char_versioned/u,
+      );
+    },
   );
   fixture.runtime.destroy();
 });
@@ -1873,39 +2378,121 @@ test("previous API state follows the active Swipe owner after switching", async 
         role: "assistant",
       },
     ],
+    allowLegacyIdentity: false,
     analyzer: {
-      async analyzeFloor(request) {
-        inputs.push(request.analysisInput);
-        return { events: [eventResult(`event-${inputs.length}`)] };
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        const names =
+          analysisInput.current_floor.floor === 3
+            ? analysisInput.floor_version.swipe_id === 0
+              ? ["Swipe角色A", "Swipe来源A"]
+              : ["Swipe角色B", "Swipe来源B"]
+            : null;
+        return {
+          events: names
+            ? [
+                identityEventForCharacters(
+                  analysisInput.character_registry,
+                  names[0],
+                  names[1],
+                  `swipe-${inputs.length}`,
+                ),
+              ]
+            : [],
+        };
       },
     },
   });
-  await fixture.runtime.init();
-  await fixture.runtime.analyzeFloor(
-    { __messageIndex: true, index: 0 },
-    { force: true },
-  );
-  assert.equal(fixture.runtime.store.getActiveSwipeId(0), 0);
-  assert.ok(fixture.runtime.store.getFloor(0, 0).analysis);
-  const swipeAEventId =
-    fixture.runtime.store.getActiveFloor(0).events[0].event_id;
+  await withGlobalCrypto(
+    {
+      randomUUID: (() => {
+        const ids = [
+          "char_swipe_a",
+          "char_swipe_source_a",
+          "char_swipe_b",
+          "char_swipe_source_b",
+        ];
+        return () => ids.shift();
+      })(),
+    },
+    async () => {
+      await fixture.runtime.init();
+      await fixture.runtime.analyzeFloor(
+        { __messageIndex: true, index: 0 },
+        { force: true },
+      );
+      assert.equal(fixture.runtime.store.getActiveSwipeId(0), 0);
+      assert.ok(fixture.runtime.store.getFloor(0, 0).analysis);
+      const swipeAEventId =
+        fixture.runtime.store.getActiveFloor(0).events[0].event_id;
 
-  message.swipe_id = 1;
-  fixture.emit("message-swiped", { message_id: message.message_id });
-  await settle();
-  const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
-  assert.equal(swipeBEvents.length, 1);
-  assert.notEqual(swipeBEvents[0].event_id, swipeAEventId);
-  assert.equal(swipeBEvents[0].source.swipe_id, 1);
+      message.swipe_id = 1;
+      fixture.emit("message-swiped", { message_id: message.message_id });
+      await settle();
+      const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
+      assert.equal(swipeBEvents.length, 1);
+      assert.notEqual(swipeBEvents[0].event_id, swipeAEventId);
+      assert.equal(swipeBEvents[0].source.swipe_id, 1);
+      assert.deepEqual(
+        Object.values(
+          fixture.runtime.store.getFloor(0, 0).character_registry.entities,
+        ).map((entry) => entry.display_name),
+        ["Swipe角色A", "Swipe来源A"],
+      );
+      assert.deepEqual(
+        Object.values(
+          fixture.runtime.store.getFloor(0, 1).character_registry.entities,
+        ).map((entry) => entry.display_name),
+        ["Swipe角色B", "Swipe来源B"],
+      );
 
-  await fixture.runtime.analyzeFloor("message-target", { force: true });
-  const previous = inputs.at(-1).existing_bioweave;
-  assert.equal(previous.analysis.floor_version.swipe_id, 1);
-  assert.deepEqual(
-    previous.events.map((event) => event.source.swipe_id),
-    [1],
+      await fixture.runtime.analyzeFloor("message-target", { force: true });
+      const previous = inputs.at(-1).existing_bioweave;
+      assert.equal(previous.analysis.floor_version.swipe_id, 1);
+      assert.deepEqual(
+        previous.events.map((event) => event.source.swipe_id),
+        [1],
+      );
+      assert.deepEqual(
+        Object.values(inputs.at(-1).character_registry.entities).map(
+          (entry) => entry.display_name,
+        ),
+        ["Swipe角色B", "Swipe来源B"],
+      );
+      assert.doesNotMatch(
+        JSON.stringify(inputs.at(-1).character_registry),
+        /Swipe角色A|Swipe来源A/u,
+      );
+
+      fixture.context.chat.splice(1, 1);
+      delete message.swipes[1];
+      delete message.swipe_info[1];
+      fixture.emit("message-swipe-deleted", { message_id: message.message_id });
+      await settle();
+      assert.deepEqual(
+        (await fixture.runtime.getTrackingRegistry()).character_registry,
+        { schema_version: 1, entities: {} },
+      );
+
+      message.swipe_id = 0;
+      await fixture.runtime.refreshTrackingRegistry("swipe-delete");
+      fixture.context.chat.push({
+        message_id: "message-after-swipe-delete",
+        floor: 4,
+        content: "删除 Swipe 后的新楼层",
+        role: "assistant",
+      });
+      await fixture.runtime.analyzeFloor("message-after-swipe-delete", {
+        force: true,
+      });
+      assert.deepEqual(
+        Object.values(inputs.at(-1).character_registry.entities).map(
+          (entry) => entry.display_name,
+        ),
+        ["Swipe角色A", "Swipe来源A"],
+      );
+    },
   );
-  assert.doesNotMatch(JSON.stringify(previous), new RegExp(swipeAEventId, "u"));
   fixture.runtime.destroy();
 });
 
@@ -1988,9 +2575,21 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
     (await reloaded.getTrackingRegistry()).tracking_subjects,
     {},
   );
+  assert.deepEqual((await reloaded.getTrackingRegistry()).character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
   assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
   await reloaded.refreshCurrentFloorAnalysis();
   assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
+  assert.deepEqual(input.character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
   assert.deepEqual(input.character_context.profiles, {});
   assert.doesNotMatch(JSON.stringify(input), new RegExp(deletedEventId, "u"));
   reloaded.destroy();
@@ -2601,8 +3200,8 @@ test("Floor save failure exits running even when failure metadata cannot be save
   fixture.runtime.destroy();
 });
 
-test("Registry rebuild failure exits running while the Floor Event remains available", async () => {
-  const fixture = createFixture({ saveChatMetadataErrorAt: 3 });
+test("Registry rebuild failure leaves the authoritative Floor result available", async () => {
+  const fixture = createFixture({ saveChatMetadataErrorAt: 2 });
   await fixture.runtime.init();
   await settle();
   await assert.rejects(
@@ -2615,6 +3214,7 @@ test("Registry rebuild failure exits running while the Floor Event remains avail
   assert.equal(status.error_stage, "registry_rebuild");
   assert.equal(status.error_code, "ST_METADATA_STORAGE_UNAVAILABLE");
   assert.equal(status.current_floor_events.length, 1);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis.status, "success");
   fixture.runtime.destroy();
 });
 

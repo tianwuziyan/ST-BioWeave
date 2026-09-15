@@ -668,9 +668,9 @@ export function normalizeTrackingCandidates(raw) {
   return cloneValue(raw);
 }
 
-// Canonical character identity is a separate Chat-local registry. Older Chats
-// simply read as an empty registry until Runtime can bootstrap their existing
-// Event/profile IDs without rewriting historical references.
+// Canonical character identity history is owned by each successful Floor
+// snapshot. The Chat field remains an empty-by-default materialized projection
+// or explicit migration input; it is not an Analyzer history source.
 export { normalizeCharacterRegistry };
 
 export function emptyChat(chatId) {
@@ -690,5 +690,12 @@ export function emptyChat(chatId) {
 }
 
 export function emptyFloor() {
-  return { v: 1, analysis: null, events: [], snapshot: null, projections: [] };
+  return {
+    v: 1,
+    analysis: null,
+    events: [],
+    character_registry: normalizeCharacterRegistry(null),
+    snapshot: null,
+    projections: [],
+  };
 }

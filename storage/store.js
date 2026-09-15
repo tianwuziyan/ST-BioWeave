@@ -585,6 +585,15 @@ function hasMatchingFloorScope(data, chatId) {
   return !version?.chat_id || version.chat_id === chatId;
 }
 
+function normalizeFloorData(data) {
+  const source =
+    data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  return {
+    ...source,
+    character_registry: normalizeCharacterRegistry(source.character_registry),
+  };
+}
+
 export function hasSwipeStructure(message) {
   return (
     Array.isArray(message?.swipes) ||
@@ -688,7 +697,7 @@ export function createStore(adapter, boundary = null) {
     ) {
       return emptyFloor();
     }
-    return cloneForStorage(stored);
+    return cloneForStorage(normalizeFloorData(stored));
   }
 
   function getActiveSwipe(messageId) {
@@ -800,7 +809,7 @@ export function createStore(adapter, boundary = null) {
     const version = floorVersionFromStoredData(data);
     if (version?.chat_id && version.chat_id !== token.chatId)
       throw new Error("CHAT_SCOPE_MISMATCH");
-    const safeData = cloneForStorage(data);
+    const safeData = cloneForStorage(normalizeFloorData(data));
     if (typeof adapter.saveFloorBioWeave !== "function") {
       throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
     }

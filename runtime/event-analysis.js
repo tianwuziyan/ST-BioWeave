@@ -16,7 +16,6 @@ import {
   validateEventCollection,
 } from "../core/events.js";
 import {
-  bootstrapCharacterRegistryFromLegacy,
   hasCharacterId,
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
@@ -135,6 +134,19 @@ function defaultCharacterContext(_context, chatData = {}, analysisInput = {}) {
     character_card: analysisInput.character ?? {},
     profiles: chatData.character_profiles ?? {},
   };
+}
+function currentCharacterRegistryFromStates(states) {
+  for (let index = states.length - 1; index >= 0; index -= 1) {
+    const state = states[index];
+    const analysis = state.floorData?.analysis;
+    if (
+      analysis?.status !== "success" ||
+      !sameFloorVersion(floorVersionFromData(state.floorData), state.version)
+    )
+      continue;
+    return normalizeCharacterRegistry(state.floorData.character_registry);
+  }
+  return normalizeCharacterRegistry(null);
 }
 function analysisTimestamp(analysis) {
   return (
@@ -562,9 +574,16 @@ export function createEventAnalysisCoordinator({
       return {
         analysis,
         events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
+        character_registry: normalizeCharacterRegistry(
+          floorData.character_registry,
+        ),
       };
     }
-    return { analysis: null, events: [] };
+    return {
+      analysis: null,
+      events: [],
+      character_registry: normalizeCharacterRegistry(null),
+    };
   }
   async function collectCurrentFloorStates(token = chat.token()) {
     const states = [];
@@ -628,10 +647,7 @@ export function createEventAnalysisCoordinator({
     const activeEvents = sortEvents(states.flatMap((state) => state.events));
     const currentChat = chatData ?? store.getChat(token.chatId);
     const registry = rebuildTrackingRegistry(activeEvents, currentChat);
-    const characterRegistry = bootstrapCharacterRegistryFromLegacy({
-      events: activeEvents,
-      character_registry: currentChat.character_registry,
-    });
+    const characterRegistry = currentCharacterRegistryFromStates(states);
     chat.assert(token);
     return {
       states,
@@ -1105,7 +1121,34 @@ export function createEventAnalysisCoordinator({
   async function buildFloorAnalysisInput(target, token) {
     const chatData = store.getChat(token.chatId);
     const derived = await collectCurrentDerivedState(token, chatData);
-    const derivedChatData = { ...chatData, ...derived.registry };
+    const previous = await findPreviousSuccessfulBioWeave(target);
+    const existingBioWeave = {
+      analysis: previous.analysis,
+      events: previous.events,
+    };
+    const characterRegistry = normalizeCharacterRegistry(
+      previous.character_registry,
+    );
+    const causalEvents = sortEvents(
+      derived.states
+        .filter(
+          (state) =>
+            state.index < target.index &&
+            state.version.floor < target.version.floor &&
+            state.floorData?.analysis?.status === "success" &&
+            sameFloorVersion(
+              floorVersionFromData(state.floorData),
+              state.version,
+            ),
+        )
+        .flatMap((state) => state.events),
+    );
+    const causalRegistry = rebuildTrackingRegistry(causalEvents, chatData);
+    const derivedChatData = {
+      ...chatData,
+      ...causalRegistry,
+      character_registry: characterRegistry,
+    };
     const context = st.getContext?.() ?? {};
     const globalRecentStory = globalRecentStoryResolver?.() ?? {};
     const recentStorySettings = mergeRecentStorySettings(
@@ -1175,7 +1218,6 @@ export function createEventAnalysisCoordinator({
       settings: recentStorySettings,
     });
     // Input history is provenance-checked before the API boundary; see .trellis/spec/domain/floor-state.md.
-    const existingBioWeave = await findPreviousSuccessfulBioWeave(target);
     chat.assert(token);
     return buildEventAnalysisInput({
       ...commonInput,
@@ -1191,7 +1233,7 @@ export function createEventAnalysisCoordinator({
       worldModel: chatData.world_model,
       storyTime: storyTimeValue,
       characterContext,
-      characterRegistry: derived.characterRegistry,
+      characterRegistry,
       existingBioWeave,
     });
   }
@@ -1278,22 +1320,10 @@ export function createEventAnalysisCoordinator({
         ...target.floorData,
         analysis,
         events,
+        character_registry: identityResult.character_registry,
       });
       execution.floorSaved = true;
       await assertExecutionTargetCurrent(execution, target, token);
-      execution.stage = "chat_save";
-      const currentChat = store.getChat(token.chatId);
-      const lastProcessedFloor = await recomputeLastProcessedFloor(token);
-      await assertExecutionTargetCurrent(execution, target, token);
-      assertExecutionCurrent(execution, token);
-      await store.saveChat(token.chatId, {
-        ...currentChat,
-        character_registry: identityResult.character_registry,
-        index: {
-          ...(currentChat.index ?? {}),
-          last_processed_floor: lastProcessedFloor,
-        },
-      });
       execution.stage = "registry_rebuild";
       assertExecutionCurrent(execution, token);
       await refreshTrackingRegistry(execution.reason);
@@ -1356,7 +1386,7 @@ export function createEventAnalysisCoordinator({
       error.safe_error_summary ??= execution.diagnostic.safe_error_summary;
       // Chat epoch 变化后的结果不属于当前作用域；释放执行即可，不能把旧
       // Floor 的失败元数据写回当前 Chat/Swipe。
-      if (!execution.released && !isStaleChat(error)) {
+      if (!execution.released && !isStaleChat(error) && !execution.floorSaved) {
         try {
           await persistTerminalAttempt(
             execution,
@@ -1525,11 +1555,9 @@ export function createEventAnalysisCoordinator({
       event_id: target.event.event_id,
       source: target.event.source,
     });
-    const chatData = store.getChat(target.chatId);
-    const characterRegistry = bootstrapCharacterRegistryFromLegacy({
-      events: store.getActiveFloorEvents?.(target.index, target.version),
-      character_registry: chatData.character_registry,
-    });
+    const characterRegistry = normalizeCharacterRegistry(
+      target.floorData.character_registry,
+    );
     for (const [
       participantIndex,
       participant,
@@ -1617,9 +1645,7 @@ export function createEventAnalysisCoordinator({
           tracking_subjects: {},
           tracking_candidates: {},
           character_profiles: {},
-          character_registry: normalizeCharacterRegistry(
-            chatData.character_registry,
-          ),
+          character_registry: normalizeCharacterRegistry(null),
         };
       }
       return {

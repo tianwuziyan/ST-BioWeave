@@ -429,8 +429,10 @@ function resultWithRegistry(base, fields = {}) {
 }
 
 /**
- * Create the additive, Chat-local registry shape. The registry is independent
- * from tracking_subjects, tracking_candidates, and character_profiles.
+ * Create the additive registry shape. Ownership is supplied by the caller;
+ * Floor-derived history is persisted in the Floor snapshot rather than here.
+ * The registry remains independent from tracking_subjects, tracking_candidates,
+ * and character_profiles.
  */
 export function createEmptyCharacterRegistry() {
   return {
@@ -1646,8 +1648,10 @@ function collectLegacyEventRecords(events, records) {
 }
 
 /**
- * Bootstrap only IDs already present in legacy Events/profiles. It never
- * derives an ID from a name, merges entries, or rewrites historical Events.
+ * Explicit legacy-migration helper: bootstrap only IDs already present in
+ * caller-supplied legacy Events/profiles. Ordinary Runtime analysis must not
+ * call this helper. It never derives an ID from a name, merges entries, or
+ * rewrites historical Events.
  */
 export function bootstrapLegacyCharacterRegistry(
   input = {},

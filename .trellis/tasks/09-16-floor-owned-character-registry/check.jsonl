@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/domain/index.md", "reason": "领域规范入口，确认本任务涉及的 Floor、Event Pipeline 与 World Model 边界。"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe/Version/previous/derived state/API provenance 的权威 ownership contract。"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Event、identity resolution、registry 与 legacy bootstrap 的现有契约，实施后需同步。"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "保留 Character Card、Persona、World Model 等当前配置/context 边界。"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层规划与质量检查指南入口。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "追踪 Chat/Floor/Runtime/AI/API source-to-sink provenance。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有 store、previous resolver 与 identity resolution，避免重复历史模型。"}
+{"file": "AGENTS.md", "reason": "项目 ownership redlines、最小改动、格式化与授权约束。"}
+{"file": ".trellis/tasks/09-16-floor-owned-character-registry/prd.md", "reason": "本任务 R1-R6、baseline 证据与 Case J-P 验收要求。"}
+{"file": ".trellis/tasks/09-16-floor-owned-character-registry/design.md", "reason": "source audit、Floor snapshot 数据模型、legacy boundary 与修改边界。"}
+{"file": ".trellis/tasks/09-16-floor-owned-character-registry/implement.md", "reason": "TDD 红绿顺序、实施阶段、质量门和真实宿主验收。"}
+{"file": ".trellis/tasks/09-16-floor-owned-character-registry/research/character-registry-audit.md", "reason": "独立 source-level audit、完整 read/write/bootstrap 链与测试缺口。"}
+{"file": ".trellis/tasks/09-16-floor-owned-character-registry/research/reference-snapshot.md", "reason": "ST-SevenDaysCal per-message/per-swipe ownership 参考结论。"}

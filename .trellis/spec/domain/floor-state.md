@@ -10,7 +10,7 @@ The data flow is intentionally one-way:
 ```text
 current message + active Swipe
   -> authoritative Floor Version
-  -> Floor/Swipe analysis and Events
+  -> Floor/Swipe analysis, Events, and cumulative canonical identity snapshot
   -> current valid Floor facts
   -> derived runtime state, registries, UI model, and API context
 ```
@@ -46,10 +46,15 @@ a historical source of Floor facts. BioWeave does not add a permanent Floor ID
 database.
 
 Chat Metadata may still own independent configuration: user choices, role or
-plugin settings, canonical identity configuration, and other explicitly
-authoritative Chat-local values. That configuration is not silently migrated
-to a Floor. Event-derived profile fields and all historical biological facts
-remain subject to the Floor ownership and provenance rules below.
+plugin settings, current Character Card/Persona/World Model context, and other
+explicitly authoritative Chat-local values. Floor-derived canonical identity
+history is Floor-owned cumulative snapshot state; it is not Chat configuration.
+If a Chat-level
+`character_registry` is retained, it is only a materialized projection/cache
+or an explicitly bounded legacy-migration input; it is never an independent
+historical source for Analyzer API input. Event-derived profile fields and all
+historical biological facts remain subject to the Floor ownership and
+provenance rules below.
 
 ## 2. Floor lifecycle
 
@@ -60,14 +65,14 @@ deletion callback or a stale cache.
 
 | Lifecycle change                           | Required result                                                                                                                                                                                                                                                                               |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First analysis or successful reanalysis    | Save the complete analysis and Events in the existing message/Swipe Floor slot, bound to the current six-field version.                                                                                                                                                                       |
+| First analysis or successful reanalysis    | Save the complete analysis, Events, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current six-field version.                                                                                                                            |
 | Manual regeneration or force reanalysis    | Replace that slot's successful result for the same current version; do not accumulate a second history record. The target is never its own previous state.                                                                                                                                    |
 | Edit or regenerated text                   | Recompute `content_hash` and/or `message_version`. The old result is stale and its Events are inactive until a successful result for the new version is saved. A failed attempt may preserve the old stored result for diagnostics, but it cannot make old Events active for the new version. |
 | Message deletion                           | The message's Floor facts disappear from active reads. Rebuild derived state from the remaining current messages.                                                                                                                                                                             |
 | Multi-Floor deletion or history truncation | Every removed message loses ownership of its facts; no array index, registry, summary, cache, or Chat hint may recreate them.                                                                                                                                                                 |
 | Swipe deletion                             | The deleted `swipe_info[swipe_id]` owner contributes no Floor, previous state, Event, or derived reference.                                                                                                                                                                                   |
 | Swipe switch                               | Reads select only the newly active Swipe's slot. Facts from another Swipe are inactive even when the message and Floor number are the same.                                                                                                                                                   |
-| Chat reload or plugin reload               | Recompute from the current host message collection and valid slots. Runtime memory is disposable.                                                                                                                                                                                             |
+| Chat reload or plugin reload               | Recompute from the current host message collection and valid slots, including Floor-owned canonical identity snapshots. Runtime memory is disposable.                                                                                                                                            |
 | Chat switch                                | Chat scope and token checks prevent reads or writes from crossing Chats; pending work must not save facts into the new Chat.                                                                                                                                                                  |
 
 An inactive or missing Floor is represented by the existing empty storage
@@ -105,7 +110,9 @@ candidate that satisfies every condition:
    stored analysis version;
 5. `analysis.status === "success"`;
 6. the candidate Floor is lower than the target Floor; and
-7. the candidate Events pass current-version filtering.
+7. the candidate Events pass current-version filtering; and
+8. the candidate owner contains a normalized cumulative
+   `character_registry` snapshot when identity history is requested.
 
 The target's own old analysis and Events are structurally excluded by starting
 the scan before the target. A target's old result, Chat Metadata, a runtime
@@ -116,8 +123,20 @@ candidate may be selected.
 When no candidate passes, the normalized previous value is exactly:
 
 ```json
-{ "analysis": null, "events": [] }
+{
+  "analysis": null,
+  "events": [],
+  "character_registry": { "schema_version": 1, "entities": {} }
+}
 ```
+
+The `character_registry` returned for a valid candidate is read from that same
+candidate's exact Floor/Swipe owner slot. It is a cumulative snapshot as of
+that Floor, not a Chat-global ledger. The target Floor's old snapshot is
+excluded by the same scan boundary as its old analysis and Events. A candidate
+without a valid snapshot cannot fall back to Chat Metadata; its identity
+history is empty until an explicit, bounded legacy migration establishes an
+owner snapshot.
 
 The same rule applies during reanalysis, after message or Swipe deletion,
 after edit/regeneration, after history truncation, and after reload.
@@ -128,7 +147,8 @@ Current valid Floor facts are the only input for materialized runtime state:
 
 - active tracking subjects and pending candidates;
 - exposure/Event references, indexes, summaries, counts, and UI models;
-- event-derived portions of character profiles or registries;
+- event-derived portions of character profiles or registries, including the
+  canonical identity snapshot owned by each successful Floor;
 - current biological state, including a future disease tracker; and
 - historical biological context sent to an API.
 
@@ -141,9 +161,10 @@ complete Event fact.
 
 Chat Metadata must be classified by provenance:
 
-- **A. Authoritative configuration** — user, role, plugin, identity, or World
-  Model configuration. This remains Chat-owned and is preserved when a Floor
-  disappears.
+- **A. Authoritative configuration** — user, role, plugin, or explicit current
+  Character Card/Persona/World Model configuration. This remains Chat-owned and
+  is preserved when a Floor disappears. It is distinct from the historical
+  canonical identities learned by BioWeave analysis.
 - **B. Derived state** — tracking subjects, candidates, event-derived profile
   fields, registries, indexes, summaries, counts, UI models, and caches. This
   is a materialized view, never a second source of truth.
@@ -159,14 +180,21 @@ currentValidFloorFacts)` unless every retained fact has explicit, still-valid
 Floor provenance and passes current validity checks. A mixed profile or
 registry is handled field by field: independent configuration is not deleted
 merely because a related Floor was deleted, while Floor-derived evidence is
-never allowed to become an independent historical ledger.
+never allowed to become an independent historical ledger. In particular,
+Floor-derived canonical identity history is stored as a cumulative snapshot on
+each successful Floor owner. Cumulative does not mean global authoritative
+ownership: deleting or invalidating the latest owner removes identities that
+only it can prove, and the next valid older Floor snapshot becomes the source
+for subsequent history.
 
 For a future disease state tracker, the diagnosis/exposure/medication fact is
 a Floor fact; the current disease state, subject index, and UI/API projection
 are derived state. Deleting its owning message or Swipe, changing its Floor
 Version, or removing it from history removes it from the current projection.
-An independent tracking preference or character identity remains Chat
-configuration.
+An independent tracking preference remains Chat configuration. Current
+Character Card/Persona identity context remains configuration/context; a
+canonical identity first established by historical BioWeave analysis remains
+Floor-owned snapshot state.
 
 ## 6. Provenance
 
@@ -201,8 +229,8 @@ AI request must therefore be one of:
 
 - the nearest successful previous Floor's current-version analysis and active
   Events, with complete provenance; or
-- the exact empty shape `{ "analysis": null, "events": [] }` when no legal
-  previous Floor exists.
+- the exact empty shape `{ "analysis": null, "events": [],
+  "character_registry": emptyRegistry }` when no legal previous Floor exists.
 
 The API must never receive facts from the target Floor's old result, a
 deleted message/Swipe, a stale Floor Version, an orphan registry entry, or a
@@ -263,7 +291,8 @@ version changes, reload, or an asynchronous analysis completion.
 - `store.saveFloor(messageId, swipeId, data)` writes one existing owner slot and
   rejects a missing structured Swipe with `SWIPE_NOT_FOUND`.
 - `findPreviousSuccessfulBioWeave(target)` returns either the nearest valid
-  `{ analysis, events }` or exactly `{ analysis: null, events: [] }`.
+  `{ analysis, events, character_registry }` from one Floor owner or exactly
+  `{ analysis: null, events: [], character_registry: emptyRegistry }`.
 - `rebuildTrackingRegistry(activeEvents, chatConfig)` returns the materialized
   `tracking_subjects`, `tracking_candidates`, and event-derived
   `character_profiles` for that `activeEvents` collection. `chatConfig` may
@@ -279,9 +308,17 @@ version changes, reload, or an asynchronous analysis completion.
   Floor-derived history are functions of current valid Floor slots and complete
   six-field Versions. A Chat projection may be persisted for speed, but a read
   must be correct when that projection is stale or absent.
-- `character_registry` contains canonical identity configuration only
-  (`character_id`, display name, aliases). It may survive deletion of an Event;
-  biological capability, exposure, evidence, and Event references may not.
+- `character_registry` in a successful Floor owner contains the cumulative
+  canonical identity snapshot as of that Floor (`character_id`, display name,
+  aliases). Its validity is bound to the same successful analysis and complete
+  six-field Floor Version. It may only be read from the current valid
+  message/per-Swipe owner. Cumulative does not mean global authoritative
+  ownership.
+- A Chat-level `character_registry`, if retained, is only a materialized
+  projection/cache or explicitly bounded legacy-migration input. It is not an
+  Analyzer historical source and cannot restore a deleted, stale, or
+  Swipe-inactive snapshot. Current Character Card/Persona/World Model data
+  remains independent configuration/context.
 - `last_processed_floor` is recomputed from current successful valid Floors when
   needed for scheduling. It never supplies historical input or validates a fact.
 
@@ -292,7 +329,7 @@ version changes, reload, or an asynchronous analysis completion.
 | Structured active Swipe or its owner slot is absent | Read the empty Floor shape; do not read a mirror or create a slot; a save fails with `SWIPE_NOT_FOUND`. |
 | Stored Floor Version is incomplete, stale, or differs from current text/Swipe | Exclude its analysis and Events from active state and previous/API history. |
 | Candidate is the target Floor, not lower, not current active Swipe, or not `success` | Skip it and continue scanning older messages. |
-| No candidate passes every previous-state check | Pass `{ analysis: null, events: [] }`; never consult Chat derived state or a cache. |
+| No candidate passes every previous-state check | Pass `{ analysis: null, events: [], character_registry: emptyRegistry }`; never consult Chat derived state or a cache. |
 | Chat invalidation, owner deletion, or Version change happens during analysis | Abort/ignore the old execution and do not save its Events or terminal facts to a different owner. |
 | Current valid Floor collection changes | Rebuild subjects, candidates, profiles, references, counts, and API history from that collection. |
 
