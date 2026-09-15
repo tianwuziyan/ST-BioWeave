@@ -547,3 +547,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: Event DTO location contract 修复与同步
+<!-- trellis-session: v=2 fp=d25a52818035bb16 -->
+
+**Date**: 2026-09-15
+**Task**: Event DTO location contract 修复与同步
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 Event location string|null Prompt contract 与严格 parser 回归测试；验证 477 个检查通过；代码工作提交已在 origin，当前任务已归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6180e778becfd1c1c10c978eb602e495b2bf8f38` | 修正多人物妊娠暴露追踪与待确认候选重评估 |
+
+### Status
+
+[OK] **Completed**
