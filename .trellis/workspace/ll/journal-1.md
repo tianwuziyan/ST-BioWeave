@@ -591,3 +591,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 建立 Runtime 权威的人物身份解析闭环
+<!-- trellis-session: v=2 fp=6ed0a8c40a16e0ff -->
+
+**Date**: 2026-09-16
+**Task**: 建立 Runtime 权威的人物身份解析闭环
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 Chat-local Character Registry、opaque canonical character_id、existing/new/unresolved 解析、alias candidate 与 Runtime 持久化边界、legacy lazy bootstrap、pregnancy identity-before-closure validation 及 location 原文保真；新增同名/同音/alias collision、新人生命周期、unresolved 隔离和旧 Event 不合并测试，npm test 509/509 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3614380` | 建立 Runtime 权威的人物身份解析闭环 |
+
+### Status
+
+[OK] **Completed**

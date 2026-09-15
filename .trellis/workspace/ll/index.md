@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-09-15
+- **Total Sessions**: 27
+- **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~593 | Active |
+| `journal-1.md` | ~615 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-09-16 | 建立 Runtime 权威的人物身份解析闭环 | `3614380` | `fix/world-model-prompt-baseline` |
 | 26 | 2026-09-15 | 独立 API 模型缓存与编辑器状态隔离 | `7d410506ddb7684d8e856eab33e0530d7b666c20` | `fix/world-model-prompt-baseline` |
 | 25 | 2026-09-15 | Event DTO location contract 修复与同步 | `6180e778becfd1c1c10c978eb602e495b2bf8f38` | `fix/world-model-prompt-baseline` |
 | 24 | 2026-09-15 | 完成 API 成功返回丢失诊断并推送 | `6fce659` | `fix/world-model-prompt-baseline` |
