@@ -569,3 +569,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: 独立 API 模型缓存与编辑器状态隔离
+<!-- trellis-session: v=2 fp=656b06898f190567 -->
+
+**Date**: 2026-09-15
+**Task**: 独立 API 模型缓存与编辑器状态隔离
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+为独立 API profile 增加按 profile_id 隔离的模型列表持久化缓存，补齐刷新失败保留、保存迁移与 editor 自动关闭生命周期，并修复任务分配事件误触发 profile editor 的回归。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d410506ddb7684d8e856eab33e0530d7b666c20` | 修复独立 API 模型缓存与任务分配编辑状态隔离 |
+
+### Status
+
+[OK] **Completed**
