@@ -15,7 +15,12 @@ import { normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } fro
 import { statePage } from './state.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
-import { diagnosticMessage as sharedDiagnosticMessage, isTransportDiagnostic, statusFromError as sharedStatusFromError, traceApi } from '../ai/client.js'
+import {
+  diagnosticMessage as sharedDiagnosticMessage,
+  isTransportDiagnostic,
+  statusFromError as sharedStatusFromError,
+  traceApi,
+} from '../ai/client.js'
 import { createAnalyzer, normalizeWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
@@ -39,6 +44,9 @@ import {
   FOLLOW_DEFAULT_API,
   normalizeExternalMemorySettings,
   normalizeApiRequestSettings,
+  normalizeModelListCache,
+  normalizeModelListCaches,
+  isStableApiProfileId,
   normalizeRecentStoryGlobalSettings,
   normalizeRecentStorySettings,
   normalizeAnalysisPrompt,
@@ -505,6 +513,8 @@ export function createApp(runtime, options = {}) {
     drafts: {},
     modelList: [],
     modelListProfileKey: null,
+    modelListCaches: {},
+    modelListRefreshedAt: null,
     modelSearch: '',
     modelRefreshBusy: false,
     notice: null,
@@ -576,12 +586,14 @@ export function createApp(runtime, options = {}) {
   function updateSettingsState() {
     const settings = profileStore.getSettings?.() ?? {}
     loadGlobalRecentStoryState()
+    const profiles = settings.api_profiles ?? {}
     settingsState = {
       ...settingsState,
-      profiles: settings.api_profiles ?? {},
+      profiles,
       assignments: settings.assignments ?? {},
       apiSource: settings.api_source ?? SILLYTAVERN_CURRENT_API,
       defaultProfileId: settings.default_profile_id ?? null,
+      modelListCaches: normalizeModelListCaches(settings.api_model_caches, profiles),
       apiRequestSettings: normalizeApiRequestSettings(
         typeof profileStore.getApiRequestSettings === 'function' ? profileStore.getApiRequestSettings() : settings.api_request_settings,
       ),
@@ -797,7 +809,10 @@ export function createApp(runtime, options = {}) {
           return
         }
         if (requestId !== analysisSourceRequestSequence || analysisSourcesState.chatId !== chatId) return
-        analysisSourcesState = { ...analysisSourcesState, externalMemoryProviders: providers }
+        analysisSourcesState = {
+          ...analysisSourcesState,
+          externalMemoryProviders: providers,
+        }
         if (route === 'settings') render()
       })
       .catch(() => {
@@ -933,7 +948,10 @@ export function createApp(runtime, options = {}) {
     if (recentStorySaveTimer !== null) clearTimeout(recentStorySaveTimer)
     recentStorySaveTimer = setTimeout(() => {
       recentStorySaveTimer = null
-      void persistAnalysisSettings({ recentStory: snapshot, renderAfterSave: false })
+      void persistAnalysisSettings({
+        recentStory: snapshot,
+        renderAfterSave: false,
+      })
     }, 250)
   }
   function queueRecentStoryGlobalSettingsSave(settings) {
@@ -941,7 +959,9 @@ export function createApp(runtime, options = {}) {
     if (globalRecentStorySaveTimer !== null) clearTimeout(globalRecentStorySaveTimer)
     globalRecentStorySaveTimer = setTimeout(() => {
       globalRecentStorySaveTimer = null
-      void persistRecentStoryGlobalSettings(snapshot, { renderAfterSave: false })
+      void persistRecentStoryGlobalSettings(snapshot, {
+        renderAfterSave: false,
+      })
     }, 250)
   }
   async function persistRecentStoryGlobalSettings(settings, { renderAfterSave = true } = {}) {
@@ -1121,7 +1141,9 @@ export function createApp(runtime, options = {}) {
     if (!source) return
     captureAnalysisSourceDisclosure()
     if (!source.content_loaded) {
-      await loadWorldbookSourceForUi(sourceId, { selectAll: Boolean(target.checked) })
+      await loadWorldbookSourceForUi(sourceId, {
+        selectAll: Boolean(target.checked),
+      })
       return
     }
     const selected = setWorldbookEntriesSelection(analysisSourcesState.selected, source, Boolean(target.checked))
@@ -1252,7 +1274,13 @@ export function createApp(runtime, options = {}) {
       const loadedById = new Map(loaded.map(source => [source.source_id, source]))
       const sources = analysisSourcesState.sources.map(source => {
         const next = loadedById.get(source.source_id)
-        return next ? { ...source, ...next, scopes: [...new Set([...(source.scopes ?? []), ...(next.scopes ?? [])])] } : source
+        return next
+          ? {
+              ...source,
+              ...next,
+              scopes: [...new Set([...(source.scopes ?? []), ...(next.scopes ?? [])])],
+            }
+          : source
       })
       const failed = loaded.some(source => !source?.content_loaded)
       analysisSourcesState = syncAnalysisSourcesState({
@@ -1301,7 +1329,9 @@ export function createApp(runtime, options = {}) {
     }
     assertAnalysisChatToken(token)
     const context = runtime.st?.getContext?.() ?? hostContextForApp()
-    const externalMemoryProviders = await probeExternalMemoryProviders({ context }).catch(() => detectExternalMemoryProviders({ context }))
+    const externalMemoryProviders = await probeExternalMemoryProviders({
+      context,
+    }).catch(() => detectExternalMemoryProviders({ context }))
     assertAnalysisChatToken(token)
     if (!globalRecentStoryLoaded) loadGlobalRecentStoryState()
     const input = await collectAnalysisContext({
@@ -1553,7 +1583,10 @@ export function createApp(runtime, options = {}) {
       await runtime.refreshTrackingRegistry(reason)
     } catch (error) {
       // World Model 已经成功保存；Registry 会在下一次 Runtime 生命周期事件中重试。
-      traceApi('tracking-registry-refresh-after-world-model-save-error', { error, reason })
+      traceApi('tracking-registry-refresh-after-world-model-save-error', {
+        error,
+        reason,
+      })
     }
   }
   async function saveWorldModelSection() {
@@ -1651,7 +1684,10 @@ export function createApp(runtime, options = {}) {
       if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE')
       let result
       try {
-        result = await analyze({ analysisInput: collected.input, signal: controller.signal })
+        result = await analyze({
+          analysisInput: collected.input,
+          signal: controller.signal,
+        })
         traceApi('world-model-analyzer-success', {
           phase: 'analyzer',
           resultType: typeof result,
@@ -1706,7 +1742,11 @@ export function createApp(runtime, options = {}) {
       })
       notify('世界模型分析成功并已保存。', 'success', documentRef)
     } catch (error) {
-      traceApi('world-model-ui-error', { error, phase: 'world-model-ui', state: 'error' })
+      traceApi('world-model-ui-error', {
+        error,
+        phase: 'world-model-ui',
+        state: 'error',
+      })
       try {
         assertAnalysisChatToken(token)
       } catch {
@@ -1746,9 +1786,19 @@ export function createApp(runtime, options = {}) {
     const current = normalizeRecentStorySettings(analysisSourcesState.recentStory)
     const next =
       target?.dataset?.bioweaveRecentStoryUserRegex !== undefined
-        ? normalizeRecentStorySettings({ ...current, regex_user_enabled: Boolean(target.checked) })
-        : normalizeRecentStorySettings({ ...current, floor_count: target?.value })
-    analysisSourcesState = { ...analysisSourcesState, recentStory: next, notice: null }
+        ? normalizeRecentStorySettings({
+            ...current,
+            regex_user_enabled: Boolean(target.checked),
+          })
+        : normalizeRecentStorySettings({
+            ...current,
+            floor_count: target?.value,
+          })
+    analysisSourcesState = {
+      ...analysisSourcesState,
+      recentStory: next,
+      notice: null,
+    }
     return next
   }
   function readRecentStoryRegexSettings(scope = 'character') {
@@ -1764,7 +1814,9 @@ export function createApp(runtime, options = {}) {
       enabled: row.querySelector?.('[data-bioweave-recent-story-regex-enabled]')?.checked !== false,
     }))
     return isGlobal
-      ? { regex_rules: normalizeRecentStorySettings({ regex_rules: regexRules }).regex_rules }
+      ? {
+          regex_rules: normalizeRecentStorySettings({ regex_rules: regexRules }).regex_rules,
+        }
       : normalizeRecentStorySettings({ ...current, regex_rules: regexRules })
   }
   function updateRecentStoryRegexState(scope = 'character') {
@@ -1774,7 +1826,11 @@ export function createApp(runtime, options = {}) {
       globalRecentStoryLoaded = true
       return recentStory
     }
-    analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    analysisSourcesState = {
+      ...analysisSourcesState,
+      recentStory,
+      notice: null,
+    }
     return recentStory
   }
   async function persistRecentStorySettings(target) {
@@ -1812,7 +1868,11 @@ export function createApp(runtime, options = {}) {
       globalRecentStoryLoaded = true
       analysisSourcesState = { ...analysisSourcesState, notice: null }
     } else {
-      analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+      analysisSourcesState = {
+        ...analysisSourcesState,
+        recentStory,
+        notice: null,
+      }
     }
     render()
     if (scope === 'global') await persistRecentStoryGlobalSettings(recentStory)
@@ -1828,10 +1888,18 @@ export function createApp(runtime, options = {}) {
     if (index < 0 || index >= current.regex_rules.length || nextIndex < 0 || nextIndex >= current.regex_rules.length) return
     const regexRules = [...current.regex_rules]
     ;[regexRules[index], regexRules[nextIndex]] = [regexRules[nextIndex], regexRules[index]]
-    const normalized = normalizeRecentStorySettings({ ...current, regex_rules: regexRules })
+    const normalized = normalizeRecentStorySettings({
+      ...current,
+      regex_rules: regexRules,
+    })
     const recentStory = resolvedScope === 'global' ? { regex_rules: normalized.regex_rules } : normalized
     if (resolvedScope === 'global') globalRecentStory = recentStory
-    else analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    else
+      analysisSourcesState = {
+        ...analysisSourcesState,
+        recentStory,
+        notice: null,
+      }
     render()
     if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory)
     else await persistAnalysisSettings({ recentStory })
@@ -1849,7 +1917,12 @@ export function createApp(runtime, options = {}) {
     })
     const recentStory = resolvedScope === 'global' ? { regex_rules: normalized.regex_rules } : normalized
     if (resolvedScope === 'global') globalRecentStory = recentStory
-    else analysisSourcesState = { ...analysisSourcesState, recentStory, notice: null }
+    else
+      analysisSourcesState = {
+        ...analysisSourcesState,
+        recentStory,
+        notice: null,
+      }
     render()
     if (resolvedScope === 'global') await persistRecentStoryGlobalSettings(recentStory)
     else await persistAnalysisSettings({ recentStory })
@@ -1861,7 +1934,11 @@ export function createApp(runtime, options = {}) {
       ...analysisSourcesState.externalMemory,
       [key]: Boolean(target.checked),
     })
-    analysisSourcesState = { ...analysisSourcesState, externalMemory, notice: null }
+    analysisSourcesState = {
+      ...analysisSourcesState,
+      externalMemory,
+      notice: null,
+    }
     render()
     await persistAnalysisSettings({ externalMemory })
   }
@@ -2202,8 +2279,30 @@ export function createApp(runtime, options = {}) {
     return {
       modelList: [],
       modelListProfileKey: null,
+      modelListRefreshedAt: null,
       modelSearch: '',
       modelRefreshBusy: false,
+    }
+  }
+  function modelPickerStateForProfile(profileId) {
+    const id = profileDraftKey(profileId)
+    const next = resetModelPickerState()
+    if (!isStableApiProfileId(id)) return next
+    let cache = settingsState.modelListCaches?.[id] ?? null
+    if (!cache && typeof profileStore.getModelListCache === 'function') {
+      try {
+        cache = profileStore.getModelListCache(id)
+      } catch {
+        cache = null
+      }
+    }
+    if (!cache) return next
+    const normalized = normalizeModelListCache(cache, { profileId: id })
+    return {
+      ...next,
+      modelList: [...normalized.models],
+      modelListProfileKey: id,
+      modelListRefreshedAt: normalized.refreshed_at,
     }
   }
   function formField(form, name) {
@@ -2330,6 +2429,7 @@ export function createApp(runtime, options = {}) {
     render()
   }
   function editProfile(profileId) {
+    if (settingsState.busy) return
     captureSettingsDraft()
     const id = String(profileId ?? '').trim()
     const profile = profileStore.getProfile?.(id) ?? settingsState.profiles?.[id] ?? null
@@ -2343,7 +2443,7 @@ export function createApp(runtime, options = {}) {
     focusedCharacterId = null
     settingsState = {
       ...settingsState,
-      ...resetModelPickerState(),
+      ...modelPickerStateForProfile(id),
       editingProfile: profile,
       editingDraft: currentDraft(profile),
       testResult: null,
@@ -2352,6 +2452,7 @@ export function createApp(runtime, options = {}) {
     render()
   }
   function startNewProfile() {
+    if (settingsState.busy) return
     captureSettingsDraft()
     route = 'settings'
     focusedCharacterId = null
@@ -2366,6 +2467,7 @@ export function createApp(runtime, options = {}) {
     render()
   }
   function cancelProfileEdit() {
+    if (settingsState.busy) return
     const drafts = { ...settingsState.drafts }
     delete drafts[profileDraftKey(settingsState.editingProfile?.profile_id)]
     settingsState = {
@@ -2381,6 +2483,7 @@ export function createApp(runtime, options = {}) {
     render()
   }
   async function saveSettingsForm() {
+    if (settingsState.busy) return
     const form = root?.querySelector?.('[data-bioweave-settings-form]')
     if (!form) return
     if (typeof profileStore.saveProfile !== 'function') {
@@ -2391,24 +2494,68 @@ export function createApp(runtime, options = {}) {
     }
     const raw = captureSettingsDraft(form)
     const draftKey = profileDraftKey(raw.profile_id)
+    const unsavedModelCache =
+      !isStableApiProfileId(draftKey) && settingsState.modelListProfileKey === draftKey && Number.isInteger(settingsState.modelListRefreshedAt)
+        ? {
+            models: [...(settingsState.modelList ?? [])],
+            refreshed_at: settingsState.modelListRefreshedAt,
+          }
+        : null
     settingsState = { ...settingsState, busy: true, notice: null }
+    render()
     try {
       const saved = await profileStore.saveProfile(raw)
       updateSettingsState()
       const savedDraft = profileDraftFrom(saved)
-      const drafts = { ...settingsState.drafts, [saved.profile_id]: savedDraft }
+      const drafts = {
+        ...settingsState.drafts,
+        [saved.profile_id]: savedDraft,
+      }
       delete drafts.__new__
+      let migratedModelCache = null
+      let modelCacheMigrationError = null
+      if (unsavedModelCache && typeof profileStore.saveModelListCache === 'function') {
+        try {
+          migratedModelCache = await profileStore.saveModelListCache(saved.profile_id, unsavedModelCache)
+        } catch (error) {
+          modelCacheMigrationError = error
+        }
+      }
+      if (migratedModelCache) {
+        migratedModelCache = normalizeModelListCache(migratedModelCache, {
+          profileId: saved.profile_id,
+        })
+        settingsState = {
+          ...settingsState,
+          modelListCaches: {
+            ...settingsState.modelListCaches,
+            [saved.profile_id]: migratedModelCache,
+          },
+        }
+      }
       const modelPickerState = settingsState.modelListProfileKey === draftKey ? { modelListProfileKey: saved.profile_id } : {}
+      const editorState = modelCacheMigrationError
+        ? {
+            editingProfile: saved,
+            editingDraft: savedDraft,
+          }
+        : {
+            editingProfile: undefined,
+            editingDraft: undefined,
+          }
       settingsState = {
         ...settingsState,
         ...modelPickerState,
-        editingProfile: saved,
-        editingDraft: savedDraft,
+        ...editorState,
         drafts,
         testResult: null,
         notice: null,
       }
-      notify('API 配置已保存；API 密钥仅保存在 Secret Store。', 'success', documentRef)
+      notify(
+        modelCacheMigrationError ? settingsOperationError(modelCacheMigrationError) : 'API 配置已保存；API 密钥仅保存在 Secret Store。',
+        modelCacheMigrationError ? 'warning' : 'success',
+        documentRef,
+      )
       render()
     } catch (error) {
       const latestDraft = latestDraftFor(draftKey, raw)
@@ -2432,12 +2579,21 @@ export function createApp(runtime, options = {}) {
     const runTest = typeof apiClient === 'function' ? apiClient : apiClient.testProfile
     if (typeof runTest !== 'function') {
       const errorMessage = '测试连接不可用，请确认 SillyTavern API 已加载。'
-      settingsState = { ...settingsState, notice: null, testResult: { ok: false, error: errorMessage } }
+      settingsState = {
+        ...settingsState,
+        notice: null,
+        testResult: { ok: false, error: errorMessage },
+      }
       notify(errorMessage, 'error', documentRef)
       render()
       return
     }
-    settingsState = { ...settingsState, busy: true, notice: null, testResult: null }
+    settingsState = {
+      ...settingsState,
+      busy: true,
+      notice: null,
+      testResult: null,
+    }
     try {
       const context = runtime.st?.getContext?.() ?? hostContextForApp()
       const requestSettings = settingsState.apiRequestDraft ?? settingsState.apiRequestSettings
@@ -2448,7 +2604,10 @@ export function createApp(runtime, options = {}) {
       settingsState = {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
-        drafts: { ...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw) },
+        drafts: {
+          ...settingsState.drafts,
+          [draftKey]: latestDraftFor(draftKey, raw),
+        },
         testResult: result,
         notice: null,
       }
@@ -2456,7 +2615,10 @@ export function createApp(runtime, options = {}) {
       settingsState = {
         ...settingsState,
         editingDraft: latestDraftFor(draftKey, raw),
-        drafts: { ...settingsState.drafts, [draftKey]: latestDraftFor(draftKey, raw) },
+        drafts: {
+          ...settingsState.drafts,
+          [draftKey]: latestDraftFor(draftKey, raw),
+        },
         testResult: { ok: false, error: settingsOperationError(error) },
         notice: null,
       }
@@ -2535,10 +2697,12 @@ export function createApp(runtime, options = {}) {
     const draftKey = profileDraftKey(raw.profile_id || settingsState.editingProfile?.profile_id)
     const requestId = ++modelRefreshSequence
     const existingModels = settingsState.modelListProfileKey === draftKey ? settingsState.modelList : []
+    const existingRefreshedAt = settingsState.modelListProfileKey === draftKey ? settingsState.modelListRefreshedAt : null
     settingsState = {
       ...settingsState,
       modelList: existingModels,
       modelListProfileKey: draftKey,
+      modelListRefreshedAt: existingRefreshedAt,
       modelRefreshBusy: true,
       notice: null,
     }
@@ -2557,11 +2721,31 @@ export function createApp(runtime, options = {}) {
       )
       if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return
       const nextModels = normalizeModelList(models)
+      const refreshedAt = Date.now()
+      let savedModelCache = null
+      if (isStableApiProfileId(draftKey) && typeof profileStore.saveModelListCache === 'function') {
+        savedModelCache = await profileStore.saveModelListCache(draftKey, {
+          models: nextModels,
+          refreshed_at: refreshedAt,
+        })
+        if (requestId !== modelRefreshSequence || activeSettingsDraftKey() !== draftKey) return
+      }
       const latestDraft = latestDraftFor(draftKey, raw)
+      const normalizedCache = isStableApiProfileId(draftKey)
+        ? normalizeModelListCache(
+            savedModelCache ?? {
+              models: nextModels,
+              refreshed_at: refreshedAt,
+            },
+            { profileId: draftKey },
+          )
+        : null
       settingsState = {
         ...settingsState,
         modelList: nextModels,
         modelListProfileKey: draftKey,
+        modelListRefreshedAt: normalizedCache?.refreshed_at ?? refreshedAt,
+        modelListCaches: normalizedCache ? { ...settingsState.modelListCaches, [draftKey]: normalizedCache } : settingsState.modelListCaches,
         editingDraft: latestDraft,
         drafts: { ...settingsState.drafts, [draftKey]: latestDraft },
         notice: null,
@@ -2643,6 +2827,10 @@ export function createApp(runtime, options = {}) {
     }
     render()
   }
+  function assignmentControlForEvent(target) {
+    // Assignment selectors share the root event delegation, but never belong to the profile editor flow.
+    return target?.closest?.('[data-bioweave-assignment]') ?? null
+  }
   async function changeApiSource(target) {
     const value = target?.value
     try {
@@ -2658,7 +2846,11 @@ export function createApp(runtime, options = {}) {
   async function changeDefaultProfile(target) {
     try {
       const saved = typeof profileStore.setDefaultProfile === 'function' ? await profileStore.setDefaultProfile(target?.value) : target?.value || null
-      settingsState = { ...settingsState, defaultProfileId: saved, notice: null }
+      settingsState = {
+        ...settingsState,
+        defaultProfileId: saved,
+        notice: null,
+      }
       notify('默认 API 配置已保存。', 'success', documentRef)
     } catch (error) {
       settingsState = { ...settingsState, notice: null }
@@ -2669,6 +2861,7 @@ export function createApp(runtime, options = {}) {
   function handleSettingsInput(event) {
     if (!root?.contains(event.target)) return
     const target = event.target
+    if (assignmentControlForEvent(target)) return
     if (target.closest?.('[data-bioweave-world-section-form]')) {
       captureWorldModelSectionDraft()
       return
@@ -2703,7 +2896,10 @@ export function createApp(runtime, options = {}) {
     }
     if (target?.dataset?.bioweaveModelSearch !== undefined) {
       captureSettingsDraft()
-      settingsState = { ...settingsState, modelSearch: String(target.value ?? '') }
+      settingsState = {
+        ...settingsState,
+        modelSearch: String(target.value ?? ''),
+      }
       applyModelSearch(target.value)
       return
     }
@@ -2783,6 +2979,7 @@ export function createApp(runtime, options = {}) {
   }
   async function handleClick(event) {
     if (!root?.contains(event.target)) return
+    if (assignmentControlForEvent(event.target)) return
     captureAnalysisSourceDisclosure()
     if (handleAnalysisParentToggleClick(event)) return
     if (event.target.closest?.('[data-bioweave-analysis-prompt-settings], [data-bioweave-world-analysis-prompt-settings]')) {
@@ -2896,11 +3093,7 @@ export function createApp(runtime, options = {}) {
           await manualRefreshEventAnalysis()
         }
       } catch (error) {
-        if (
-          !manualAnalysisRequested &&
-          error?.message !== 'REQUEST_ABORTED' &&
-          error?.code !== 'REQUEST_ABORTED'
-        ) {
+        if (!manualAnalysisRequested && error?.message !== 'REQUEST_ABORTED' && error?.code !== 'REQUEST_ABORTED') {
           notify(eventAnalysisError(error), 'error', documentRef)
         }
       }
@@ -3059,6 +3252,11 @@ export function createApp(runtime, options = {}) {
   }
   async function handleChange(event) {
     if (!root?.contains(event.target)) return
+    const assignment = assignmentControlForEvent(event.target)
+    if (assignment) {
+      await changeAssignment(assignment)
+      return
+    }
     captureAnalysisSourceDisclosure()
     const eventFilterControl = event.target.closest?.('[data-bioweave-event-filter]')
     if (eventFilterControl) {
@@ -3127,9 +3325,6 @@ export function createApp(runtime, options = {}) {
       await changeDefaultProfile(defaultProfile)
       return
     }
-    const target = event.target.closest?.('[data-bioweave-assignment]')
-    if (!target) return
-    await changeAssignment(target)
   }
   function handleSubmit(event) {
     if (event.target?.closest?.('[data-bioweave-world-section-form]')) {
@@ -3307,6 +3502,8 @@ export function createApp(runtime, options = {}) {
       drafts: {},
       modelList: [],
       modelListProfileKey: null,
+      modelListCaches: {},
+      modelListRefreshedAt: null,
       modelSearch: '',
       modelRefreshBusy: false,
       apiSource: SILLYTAVERN_CURRENT_API,
@@ -3335,6 +3532,9 @@ export function createApp(runtime, options = {}) {
       ...settingsState,
       profiles: { ...settingsState.profiles },
       assignments: { ...settingsState.assignments },
+      modelListCaches: Object.fromEntries(
+        Object.entries(settingsState.modelListCaches ?? {}).map(([profileId, cache]) => [profileId, normalizeModelListCache(cache, { profileId })]),
+      ),
       globalRecentStory: {
         regex_rules: [...(globalRecentStory.regex_rules ?? [])],
       },

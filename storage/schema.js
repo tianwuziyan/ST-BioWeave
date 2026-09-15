@@ -52,7 +52,12 @@ export const DEFAULT_SETTINGS = {
   retry_failed_analysis: true,
   context_injection: {enabled: true, max_tokens: 1600},
   worldbooks: {mode: 'selected_only', selected: []},
-  recent_story: {enabled: true, floor_count: 4, regex_rules: [], regex_user_enabled: false},
+  recent_story: {
+    enabled: true,
+    floor_count: 4,
+    regex_rules: [],
+    regex_user_enabled: false,
+  },
   external_memory: {
     anima: false,
     baobaoshu: false,
@@ -125,22 +130,9 @@ function migrateLegacyWorldAnalysisPrompt(raw) {
   return normalizeAnalysisPrompt(migrated);
 }
 
-export const API_PROFILE_FIELDS = [
-  'name',
-  'provider',
-  'api_url',
-  'model',
-  'context_size',
-  'max_output_tokens',
-  'temperature',
-];
+export const API_PROFILE_FIELDS = ['name', 'provider', 'api_url', 'model', 'context_size', 'max_output_tokens', 'temperature'];
 
-export const API_ASSIGNMENTS = [
-  'world_analysis',
-  'event_analysis',
-  'projection',
-  'history_scan',
-];
+export const API_ASSIGNMENTS = ['world_analysis', 'event_analysis', 'projection', 'history_scan'];
 
 export const SILLYTAVERN_CURRENT_API = 'sillytavern';
 export const BIOWEAVE_INDEPENDENT_API = 'bioweave';
@@ -175,6 +167,7 @@ export const DEFAULT_EXTENSION_SETTINGS = {
   api_source: SILLYTAVERN_CURRENT_API,
   default_profile_id: null,
   api_profiles: {},
+  api_model_caches: {},
   assignments: Object.fromEntries(API_ASSIGNMENTS.map(slot => [slot, null])),
   api_request_settings: {...DEFAULT_API_REQUEST_SETTINGS},
   recent_story_global: {regex_rules: []},
@@ -201,11 +194,7 @@ export function normalizeWorldbookSettings(raw = {}) {
     const entryId = item && typeof item === 'object' ? String(item.entry_id ?? '').trim() : '';
     const fieldKey = item && typeof item === 'object' ? String(item.field_key ?? '').trim() : '';
     // 旧版本只有 source_id；保留它用于读取兼容，但新调用方应提供子项 ID。
-    const identity = entryId
-      ? `${sourceId}\u0000entry\u0000${entryId}`
-      : fieldKey
-        ? `${sourceId}\u0000field\u0000${fieldKey}`
-        : `${sourceId}\u0000source`;
+    const identity = entryId ? `${sourceId}\u0000entry\u0000${entryId}` : fieldKey ? `${sourceId}\u0000field\u0000${fieldKey}` : `${sourceId}\u0000source`;
     if (seen.has(identity) || (entryId && fieldKey)) continue;
     seen.add(identity);
     const normalized = {source_id: sourceId};
@@ -221,24 +210,20 @@ export function normalizeWorldbookSettings(raw = {}) {
 export function normalizeRecentStorySettings(raw = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const parsedFloorCount = Number(source.floor_count ?? source.floorCount);
-  const floorCount = Number.isFinite(parsedFloorCount)
-    ? Math.min(1000, Math.max(0, Math.round(parsedFloorCount)))
-    : 4;
-  const rawRules = Array.isArray(source.regex_rules)
-    ? source.regex_rules
-    : Array.isArray(source.regexRules)
-      ? source.regexRules
-      : [];
+  const floorCount = Number.isFinite(parsedFloorCount) ? Math.min(1000, Math.max(0, Math.round(parsedFloorCount))) : 4;
+  const rawRules = Array.isArray(source.regex_rules) ? source.regex_rules : Array.isArray(source.regexRules) ? source.regexRules : [];
   const regexRules = [];
   for (const item of rawRules) {
     if (regexRules.length >= 50) break;
     const isStringRule = typeof item === 'string';
     const rule = item && typeof item === 'object' ? item : {};
-    const rawPattern = isStringRule ? item : rule.pattern ?? rule.regex;
+    const rawPattern = isStringRule ? item : (rule.pattern ?? rule.regex);
     if (typeof rawPattern !== 'string') continue;
     const pattern = rawPattern.trim().slice(0, 2000);
     if (!pattern && isStringRule) continue;
-    const rawType = String(rule.type ?? '').trim().toLowerCase();
+    const rawType = String(rule.type ?? '')
+      .trim()
+      .toLowerCase();
     const type = ['exclude', 'clean', 'remove', '清洗'].includes(rawType) ? 'exclude' : 'extract';
     regexRules.push({
       pattern,
@@ -262,11 +247,7 @@ export function normalizeRecentStoryGlobalSettings(raw = {}) {
   };
 }
 
-export const EXTERNAL_MEMORY_KEYS = [
-  'anima',
-  'baobaoshu',
-  'database_memory',
-];
+export const EXTERNAL_MEMORY_KEYS = ['anima', 'baobaoshu', 'database_memory'];
 
 export function normalizeExternalMemorySettings(raw = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -288,7 +269,9 @@ const SECRET_FIELD_NAMES = new Set([
 ]);
 
 function normalizedFieldName(fieldName) {
-  return String(fieldName).replace(/[-_\s]/g, '').toLowerCase();
+  return String(fieldName)
+    .replace(/[-_\s]/g, '')
+    .toLowerCase();
 }
 
 function isSecretField(fieldName) {
@@ -322,9 +305,7 @@ function normalizeApiUrl(value) {
     // SillyTavern custom backend 会直接在 custom_url 后追加路径；保留 query
     // 会把 `/chat/completions` 拼到 query 值后面，既不可靠也容易携带秘密。
     if (url.search) return '';
-    url.pathname = url.pathname
-      .replace(/\/chat\/completions\/?$/i, '')
-      .replace(/\/completions\/?$/i, '');
+    url.pathname = url.pathname.replace(/\/chat\/completions\/?$/i, '').replace(/\/completions\/?$/i, '');
     url.hash = '';
     return url.toString().replace(/\/$/, '');
   } catch {
@@ -357,9 +338,7 @@ export function normalizeApiProfile(raw = {}, {profileId = null, secretRef = und
   const model = firstString(source.model);
   const name = firstString(source.name) || model || 'API 配置';
   const apiUrl = normalizeApiUrl(source.api_url ?? source.base_url ?? source.custom_url);
-  const existingSecretRef = secretRef === undefined
-    ? firstString(source.secret_ref, source.secret_id) || null
-    : firstString(secretRef) || null;
+  const existingSecretRef = secretRef === undefined ? firstString(source.secret_ref, source.secret_id) || null : firstString(secretRef) || null;
 
   return {
     profile_id: id,
@@ -376,6 +355,49 @@ export function normalizeApiProfile(raw = {}, {profileId = null, secretRef = und
 
 export const normalizeProfile = normalizeApiProfile;
 
+function stableModelCacheProfileId(value) {
+  const id = firstString(value).toLowerCase();
+  return Boolean(id && id !== 'new' && id !== '__new__');
+}
+
+function normalizeModelCacheTimestamp(value, fallback = 0) {
+  return numberInRange(value, fallback, 0, Number.MAX_SAFE_INTEGER, true);
+}
+
+export function normalizeModelListCache(raw = {}, {profileId = null, fallbackRefreshedAt = 0} = {}) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const id = firstString(profileId, source.profile_id);
+  const rawModels = Array.isArray(source.models) ? source.models : [];
+  const models = [
+    ...new Set(
+      rawModels
+        .filter(model => typeof model === 'string')
+        .map(model => model.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const timestampFallback = normalizeModelCacheTimestamp(fallbackRefreshedAt);
+  const refreshedAt = Object.prototype.hasOwnProperty.call(source, 'refreshed_at') ? source.refreshed_at : timestampFallback;
+  return {
+    profile_id: id,
+    models,
+    refreshed_at: normalizeModelCacheTimestamp(refreshedAt, timestampFallback),
+  };
+}
+
+export function normalizeModelListCaches(raw = {}, profiles = {}) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const normalized = {};
+  for (const [profileId, rawCache] of Object.entries(source)) {
+    const id = firstString(profileId, rawCache?.profile_id);
+    if (!stableModelCacheProfileId(id) || !profiles?.[id]) continue;
+    normalized[id] = normalizeModelListCache(rawCache, {profileId: id});
+  }
+  return normalized;
+}
+
+export const isStableApiProfileId = stableModelCacheProfileId;
+
 export function normalizeApiSource(value) {
   const normalized = firstString(value).toLowerCase();
   if (['bioweave', 'independent', 'independent_api', 'bio_weave'].includes(normalized)) {
@@ -388,18 +410,9 @@ function normalizeAssignment(value, profiles) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   if (!normalized) return null;
-  if (new Set([
-    FOLLOW_DEFAULT_API,
-    'follow_default',
-    'default_api',
-  ]).has(normalized.toLowerCase())) return FOLLOW_DEFAULT_API;
-  if (new Set([
-    SILLYTAVERN_CURRENT_API,
-    'sillytavern_current',
-    'current',
-    'current_api',
-    'st_current_api',
-  ]).has(normalized.toLowerCase())) return SILLYTAVERN_CURRENT_API;
+  if (new Set([FOLLOW_DEFAULT_API, 'follow_default', 'default_api']).has(normalized.toLowerCase())) return FOLLOW_DEFAULT_API;
+  if (new Set([SILLYTAVERN_CURRENT_API, 'sillytavern_current', 'current', 'current_api', 'st_current_api']).has(normalized.toLowerCase()))
+    return SILLYTAVERN_CURRENT_API;
   return profiles[normalized] ? normalized : null;
 }
 
@@ -427,9 +440,8 @@ export function normalizeExtensionSettings(raw = {}) {
 
   const safe = sanitizeSecrets(source);
   const legacyWorldPrompt = source.world_analysis_prompt;
-  const canonicalPrompt = source.analysis_prompt !== undefined
-    ? normalizeAnalysisPrompt(source.analysis_prompt)
-    : migrateLegacyWorldAnalysisPrompt(legacyWorldPrompt);
+  const canonicalPrompt =
+    source.analysis_prompt !== undefined ? normalizeAnalysisPrompt(source.analysis_prompt) : migrateLegacyWorldAnalysisPrompt(legacyWorldPrompt);
   delete safe.world_analysis_prompt;
   delete safe.analysis_prompt;
   return {
@@ -439,6 +451,7 @@ export function normalizeExtensionSettings(raw = {}) {
       ? firstString(source.default_profile_id, source.defaultProfileId)
       : null,
     api_profiles: profiles,
+    api_model_caches: normalizeModelListCaches(source.api_model_caches, profiles),
     assignments,
     api_request_settings: normalizeApiRequestSettings(source.api_request_settings),
     recent_story_global: normalizeRecentStoryGlobalSettings(source.recent_story_global),

@@ -44,7 +44,10 @@ function currentApiContext(result) {
   return {
     requestSettings: { retry_count: 0 },
     context: {
-      chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        openai_max_tokens: 1200,
+      },
       getChatCompletionModel: () => 'current-model',
       ChatCompletionService: {
         async processRequest() {
@@ -81,7 +84,9 @@ function responseLikeSse(body, { contentType = 'text/event-stream' } = {}) {
   return {
     ok: true,
     status: 200,
-    headers: { get: name => (name.toLowerCase() === 'content-type' ? contentType : null) },
+    headers: {
+      get: name => (name.toLowerCase() === 'content-type' ? contentType : null),
+    },
     body: {
       getReader() {
         return {
@@ -165,7 +170,10 @@ test('global API request settings normalize and round-trip without Chat storage'
     },
   })
   assert.deepEqual(profileStore.getApiRequestSettings(), DEFAULT_API_REQUEST_SETTINGS)
-  const saved = await profileStore.saveApiRequestSettings({ timeout: 45000, retry_count: 2 })
+  const saved = await profileStore.saveApiRequestSettings({
+    timeout: 45000,
+    retry_count: 2,
+  })
   assert.deepEqual(saved, { timeout: 45000, retry_count: 2 })
   assert.deepEqual(profileStore.getApiRequestSettings(), saved)
   assert.deepEqual(globalSettings.api_request_settings, saved)
@@ -208,11 +216,26 @@ test('providerless profiles save and legacy provider values survive edits', asyn
 test('profile URL normalization strips completion suffixes and rejects URL credentials', () => {
   const normalized = normalizeExtensionSettings({
     api_profiles: {
-      safe: { api_url: 'https://api.example/v1/chat/completions/', model: 'model-a' },
-      unsafe: { api_url: 'https://user:password@api.example/v1', model: 'model-b' },
-      query: { api_url: 'https://api.example/v1?api_key=DO-NOT-PERSIST', model: 'model-c' },
-      nestedQuery: { api_url: 'https://api.example/v1?redirect=Bearer%20DO-NOT-PERSIST', model: 'model-d' },
-      ordinaryQuery: { api_url: 'https://api.example/v1?region=global', model: 'model-e' },
+      safe: {
+        api_url: 'https://api.example/v1/chat/completions/',
+        model: 'model-a',
+      },
+      unsafe: {
+        api_url: 'https://user:password@api.example/v1',
+        model: 'model-b',
+      },
+      query: {
+        api_url: 'https://api.example/v1?api_key=DO-NOT-PERSIST',
+        model: 'model-c',
+      },
+      nestedQuery: {
+        api_url: 'https://api.example/v1?redirect=Bearer%20DO-NOT-PERSIST',
+        model: 'model-d',
+      },
+      ordinaryQuery: {
+        api_url: 'https://api.example/v1?region=global',
+        model: 'model-e',
+      },
       malformed: { api_url: 'not a URL', model: 'model-e' },
     },
   })
@@ -279,6 +302,100 @@ test('profile secret lifecycle preserves, replaces, clears, and deletes referenc
   await profileStore.deleteProfile('profile-a')
   assert.equal(profileStore.getProfile('profile-a'), null)
   assert.equal(profileStore.getAssignment('world_analysis'), null)
+})
+test('model list cache is profile-scoped, replaces atomically, and is deleted with its profile', async () => {
+  let globalSettings = {}
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  await profileStore.saveProfile({
+    profile_id: 'profile-a',
+    ...independentApiProfile({ model: 'model-a' }),
+  })
+  await profileStore.saveProfile({
+    profile_id: 'profile-b',
+    ...independentApiProfile({ model: 'model-b' }),
+  })
+
+  await profileStore.saveModelListCache('profile-a', {
+    profile_id: 'profile-a',
+    models: [' model-a ', 'model-a', '', 42],
+    refreshed_at: 100,
+    api_key: 'MUST-NOT-PERSIST',
+    secret_ref: 'MUST-NOT-PERSIST',
+  })
+  await profileStore.saveModelListCache('profile-b', {
+    models: ['model-b'],
+    refreshed_at: 200,
+    secret: 'MUST-NOT-PERSIST',
+  })
+  assert.deepEqual(profileStore.getModelListCache('profile-a'), {
+    profile_id: 'profile-a',
+    models: ['model-a'],
+    refreshed_at: 100,
+  })
+  assert.deepEqual(profileStore.getModelListCache('profile-b'), {
+    profile_id: 'profile-b',
+    models: ['model-b'],
+    refreshed_at: 200,
+  })
+  assert.equal(JSON.stringify(globalSettings).includes('MUST-NOT-PERSIST'), false)
+
+  await profileStore.saveModelListCache('profile-a', {
+    models: ['model-a-new', 'model-a-new-2'],
+    refreshed_at: 300,
+  })
+  assert.deepEqual(profileStore.getModelListCache('profile-a'), {
+    profile_id: 'profile-a',
+    models: ['model-a-new', 'model-a-new-2'],
+    refreshed_at: 300,
+  })
+  assert.deepEqual(profileStore.getModelListCache('profile-b')?.models, ['model-b'])
+
+  await profileStore.deleteProfile('profile-a')
+  assert.equal(profileStore.getModelListCache('profile-a'), null)
+  assert.equal(globalSettings.api_model_caches['profile-a'], undefined)
+  assert.deepEqual(profileStore.getModelListCache('profile-b')?.models, ['model-b'])
+})
+test('model list cache normalizer drops orphan and new keys and never carries secrets', async () => {
+  const normalized = normalizeExtensionSettings({
+    api_profiles: {
+      stable: independentApiProfile({ profile_id: 'stable' }),
+    },
+    api_model_caches: {
+      stable: {
+        models: ['model-a'],
+        refreshed_at: 123,
+        secret: 'MUST-NOT-PERSIST',
+      },
+      orphan: { models: ['orphan'], refreshed_at: 456 },
+      new: { models: ['temporary'], refreshed_at: 789 },
+      __new__: { models: ['temporary-2'], refreshed_at: 790 },
+    },
+  })
+  assert.deepEqual(normalized.api_model_caches, {
+    stable: {
+      profile_id: 'stable',
+      models: ['model-a'],
+      refreshed_at: 123,
+    },
+  })
+  assert.equal(JSON.stringify(normalized).includes('MUST-NOT-PERSIST'), false)
+
+  let globalSettings = {}
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  await assert.rejects(() => profileStore.saveModelListCache('new', { models: ['temporary'] }), {
+    message: 'API_PROFILE_NOT_FOUND',
+  })
+  assert.equal(globalSettings.api_model_caches, undefined)
 })
 test('profile test uses a temporary secret and source settings stay global', async () => {
   let globalSettings = {
@@ -497,7 +614,12 @@ test('independent API uses raw fetch with an opaque secret and returns safe fail
 
   const failingResult = await testProfile(
     independentApiProfile(),
-    independentApiOptions(async () => new Response(JSON.stringify({ error: 'Bearer SHOULD-NOT-BE-SHOWN' }), { status: 401 })),
+    independentApiOptions(
+      async () =>
+        new Response(JSON.stringify({ error: 'Bearer SHOULD-NOT-BE-SHOWN' }), {
+          status: 401,
+        }),
+    ),
   )
   assert.equal(failingResult.ok, false)
   assert.equal(failingResult.http_status, 401)
@@ -521,7 +643,9 @@ test('independent raw fetch preserves HTTP status classification without guessin
         [{ role: 'user', content: '测试' }],
         independentApiOptions(async url => {
           assert.equal(url, '/api/backends/chat-completions/generate')
-          return new Response(JSON.stringify({ error: 'Bearer DO-NOT-SHOW' }), { status })
+          return new Response(JSON.stringify({ error: 'Bearer DO-NOT-SHOW' }), {
+            status,
+          })
         }),
       ),
       error => {
@@ -556,7 +680,9 @@ test('independent raw response classifies HTTP 200 error, invalid JSON, and upst
   const scenarios = [
     {
       name: 'response error',
-      response: new Response(JSON.stringify({ error: 'Bearer DO-NOT-SHOW' }), { status: 200 }),
+      response: new Response(JSON.stringify({ error: 'Bearer DO-NOT-SHOW' }), {
+        status: 200,
+      }),
       diagnostic: 'response-error',
     },
     {
@@ -566,7 +692,9 @@ test('independent raw response classifies HTTP 200 error, invalid JSON, and upst
     },
     {
       name: 'upstream timeout',
-      response: new Response(JSON.stringify(UPSTREAM_TIMEOUT_BODY), { status: 200 }),
+      response: new Response(JSON.stringify(UPSTREAM_TIMEOUT_BODY), {
+        status: 200,
+      }),
       diagnostic: 'upstream-timeout',
     },
   ]
@@ -591,10 +719,7 @@ test('independent raw response classifies HTTP 200 error, invalid JSON, and upst
   }
 })
 test('successful response shapes remain available to the client normalization boundary', async () => {
-  const currentShapes = [
-    { content: '{"schema_version":"test"}' },
-    { choices: [{ message: { content: '{"schema_version":"test"}' } }] },
-  ]
+  const currentShapes = [{ content: '{"schema_version":"test"}' }, { choices: [{ message: { content: '{"schema_version":"test"}' } }] }]
   for (const shape of currentShapes) {
     const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], currentApiContext(shape))
     assert.deepEqual(result, shape)
@@ -603,19 +728,28 @@ test('successful response shapes remain available to the client normalization bo
   const jsonResult = await callOpenAICompatible(
     independentApiProfile(),
     [{ role: 'user', content: '测试' }],
-    independentApiOptions(async () => new Response(JSON.stringify({ content: '{"schema_version":"test"}' }), { status: 200 })),
+    independentApiOptions(
+      async () =>
+        new Response(JSON.stringify({ content: '{"schema_version":"test"}' }), {
+          status: 200,
+        }),
+    ),
   )
   assert.deepEqual(jsonResult, { content: '{"schema_version":"test"}' })
 
   const sseResult = await callOpenAICompatible(
     independentApiProfile(),
     [{ role: 'user', content: '测试' }],
-    independentApiOptions(async () => responseLikeSse([
-      `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
-      `data: ${JSON.stringify({ choices: [{ delta: { content: '}' } }] })}`,
-      'data: [DONE]',
-      '',
-    ].join('\n'))),
+    independentApiOptions(async () =>
+      responseLikeSse(
+        [
+          `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
+          `data: ${JSON.stringify({ choices: [{ delta: { content: '}' } }] })}`,
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+      ),
+    ),
   )
   assert.deepEqual(sseResult, { content: '{}' })
 })
@@ -624,10 +758,13 @@ test('standard native Response SSE remains an explicit json-first diagnostic', a
     callOpenAICompatible(
       independentApiProfile(),
       [{ role: 'user', content: '测试' }],
-      independentApiOptions(async () => new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\ndata: [DONE]\n', {
-        status: 200,
-        headers: { 'content-type': 'text/event-stream' },
-      })),
+      independentApiOptions(
+        async () =>
+          new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\ndata: [DONE]\n', {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          }),
+      ),
     ),
     error => {
       assert.equal(error.status, 200)
@@ -654,7 +791,10 @@ test('a delayed HTTP 200 body reader completes before the local timeout', async 
                   if (read) return { done: true, value: undefined }
                   await new Promise(resolve => setTimeout(resolve, 25))
                   read = true
-                  return { done: false, value: new TextEncoder().encode('{"content":"delayed"}') }
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode('{"content":"delayed"}'),
+                  }
                 },
                 releaseLock() {},
               }
@@ -670,18 +810,28 @@ test('a delayed HTTP 200 body reader completes before the local timeout', async 
 test('API TRACE is disabled by default and enabled TRACE contains only safe metadata', async () => {
   const disabled = await captureApiTrace(false, async () =>
     callOpenAICompatible(
-      independentApiProfile({ model: 'trace-model', secret_ref: 'opaque-secret-id' }),
+      independentApiProfile({
+        model: 'trace-model',
+        secret_ref: 'opaque-secret-id',
+      }),
       [{ role: 'user', content: 'PRIVATE PROMPT SHOULD NOT BE LOGGED' }],
-      independentApiOptions(async () => responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n')),
+      independentApiOptions(async () =>
+        responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n'),
+      ),
     ),
   )
   assert.equal(disabled.entries.length, 0)
 
   const enabled = await captureApiTrace(true, async () =>
     callOpenAICompatible(
-      independentApiProfile({ model: 'trace-model', secret_ref: 'opaque-secret-id' }),
+      independentApiProfile({
+        model: 'trace-model',
+        secret_ref: 'opaque-secret-id',
+      }),
       [{ role: 'user', content: 'PRIVATE PROMPT SHOULD NOT BE LOGGED' }],
-      independentApiOptions(async () => responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n')),
+      independentApiOptions(async () =>
+        responseLikeSse('data: {"choices":[{"delta":{"content":"PRIVATE RESPONSE SHOULD NOT BE LOGGED"}}]}\ndata: [DONE]\n'),
+      ),
     ),
   )
   const logText = JSON.stringify(enabled.entries)
@@ -749,7 +899,11 @@ test('API TRACE distinguishes JSON body completion from JSON body failure', asyn
       independentApiProfile(),
       [{ role: 'user', content: '测试' }],
       independentApiOptions(
-        async () => new Response(JSON.stringify({ content: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        async () =>
+          new Response(JSON.stringify({ content: 'ok' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
       ),
     ),
   )
@@ -770,7 +924,11 @@ test('API TRACE distinguishes JSON body completion from JSON body failure', asyn
         independentApiProfile(),
         [{ role: 'user', content: '测试' }],
         independentApiOptions(
-          async () => new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } }),
+          async () =>
+            new Response('not-json', {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            }),
         ),
       ),
       error => error?.diagnosticCode === 'invalid-json',
@@ -789,13 +947,15 @@ test('SSE TRACE records each supported content extraction branch', async () => {
       independentApiProfile(),
       [{ role: 'user', content: '测试' }],
       independentApiOptions(async () =>
-        responseLikeSse([
-          `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
-          `data: ${JSON.stringify({ choices: [{ message: { content: '"schema_version"' } }] })}`,
-          `data: ${JSON.stringify({ choices: [{ text: ':"test"}' }] })}`,
-          'data: [DONE]',
-          '',
-        ].join('\n')),
+        responseLikeSse(
+          [
+            `data: ${JSON.stringify({ choices: [{ delta: { content: '{' } }] })}`,
+            `data: ${JSON.stringify({ choices: [{ message: { content: '"schema_version"' } }] })}`,
+            `data: ${JSON.stringify({ choices: [{ text: ':"test"}' }] })}`,
+            'data: [DONE]',
+            '',
+          ].join('\n'),
+        ),
       ),
     ),
   )
@@ -882,7 +1042,9 @@ test('independent raw fetch keeps local request, body, and SSE timeouts distinct
       callOpenAICompatible(
         independentApiProfile(),
         [{ role: 'user', content: '测试' }],
-        independentApiOptions(scenario.fetchRef, { requestSettings: { timeout: 250 } }),
+        independentApiOptions(scenario.fetchRef, {
+          requestSettings: { timeout: 250 },
+        }),
       ),
       error => {
         assert.equal(error.code, 'REQUEST_TIMEOUT', scenario.name)
@@ -922,7 +1084,9 @@ test('independent raw fetch forwards external abort without retry', async () => 
       async (_url, { signal }) => {
         fetchCalls += 1
         await new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), { once: true })
+          signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), {
+            once: true,
+          })
         })
       },
       { requestSettings: { retry_count: 1 }, signal: controller.signal },
@@ -965,7 +1129,10 @@ test('World Model analyzer forwards request settings from its resolver', async (
     profileResolver: () => SILLYTAVERN_CURRENT_API,
     requestSettingsResolver: () => ({ timeout: 180000, retry_count: 0 }),
     contextResolver: () => ({
-      chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        openai_max_tokens: 1200,
+      },
       getChatCompletionModel: () => 'current-model',
       ChatCompletionService: {
         async processRequest() {
@@ -1072,7 +1239,10 @@ test('current API abort does not trigger an automatic second request', async () 
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { retry_count: 1 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest() {
@@ -1093,7 +1263,10 @@ test('current API caller abort does not trigger an automatic second request', as
     requestSettings: { retry_count: 1 },
     signal: controller.signal,
     context: {
-      chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        openai_max_tokens: 1200,
+      },
       getChatCompletionModel: () => 'current-model',
       ChatCompletionService: {
         async processRequest(_payload, _options, _extractData, signal) {
@@ -1116,7 +1289,10 @@ test('current API timeout-induced internal abort does not trigger an automatic s
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { timeout: 250, retry_count: 1 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest(_payload, _options, _extractData, signal) {
@@ -1138,7 +1314,10 @@ test('transient 5xx and network errors retain one retry', async () => {
     const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { retry_count: 1 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest() {
@@ -1207,7 +1386,9 @@ test('timeout-induced internal abort does not trigger an automatic second reques
           fetchRef: async (_url, { signal }) => {
             requestCalls += 1
             await new Promise((_resolve, reject) => {
-              signal.addEventListener('abort', () => reject(abortError), { once: true })
+              signal.addEventListener('abort', () => reject(abortError), {
+                once: true,
+              })
             })
           },
         },
@@ -1355,7 +1536,10 @@ test('local timeout remains timeout while reading an HTTP 200 response', async (
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { timeout: 250, retry_count: 0 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest() {
@@ -1389,7 +1573,10 @@ test('local timeout remains timeout while reading an HTTP 200 SSE stream', async
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { timeout: 250, retry_count: 0 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest() {
@@ -1471,7 +1658,10 @@ test('network failures stay network and retryable HTTP statuses retain existing 
     const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
       requestSettings: { retry_count: 1 },
       context: {
-        chatCompletionSettings: { chat_completion_source: 'openai', openai_max_tokens: 1200 },
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
         getChatCompletionModel: () => 'current-model',
         ChatCompletionService: {
           async processRequest() {
@@ -1528,7 +1718,9 @@ test('model refresh uses the SillyTavern custom status endpoint with only an opa
           ok: true,
           status: 200,
           async json() {
-            return { data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }] }
+            return {
+              data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }],
+            }
           },
         }
       },
@@ -1827,7 +2019,7 @@ test('legacy World Analysis prompt migrates to canonical analysis prompt storage
   assert.ok(globalSettings.analysis_prompt)
   assert.equal('world_analysis_prompt' in globalSettings, false)
 })
-test('model picker keeps its list temporary and closes after selection', () => {
+test('model picker renders its current list and closes after selection', () => {
   const html = settingsPage({
     apiSource: BIOWEAVE_INDEPENDENT_API,
     editingProfile: { profile_id: 'stable' },

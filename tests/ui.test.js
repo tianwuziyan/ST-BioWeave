@@ -12,6 +12,7 @@ import {
   notify,
   restoreScrollPositions,
 } from '../ui/app.js'
+import { createApiProfileStore } from '../storage/store.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
@@ -78,15 +79,38 @@ test('top app header drag moves only the panel and ignores header controls', () 
     }
   }
   const documentRef = createPointerTarget(null)
-  const overlay = createPointerTarget({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 })
-  const root = createPointerTarget({ left: 200, top: 150, width: 400, height: 300, right: 600, bottom: 450 })
+  const overlay = createPointerTarget({
+    left: 0,
+    top: 0,
+    width: 800,
+    height: 600,
+    right: 800,
+    bottom: 600,
+  })
+  const root = createPointerTarget({
+    left: 200,
+    top: 150,
+    width: 400,
+    height: 300,
+    right: 600,
+    bottom: 450,
+  })
   const handle = createPointerTarget(null)
   root.parentElement = overlay
   const controller = createPanelDragController({ root, handle, documentRef })
-  const down = handle.dispatch('pointerdown', { clientX: 100, clientY: 100, pointerId: 7, button: 0 })
+  const down = handle.dispatch('pointerdown', {
+    clientX: 100,
+    clientY: 100,
+    pointerId: 7,
+    button: 0,
+  })
   assert.equal(down.defaultPrevented, true)
   assert.equal(handle.capturedPointerId, 7)
-  documentRef.dispatch('pointermove', { clientX: 140, clientY: 130, pointerId: 7 })
+  documentRef.dispatch('pointermove', {
+    clientX: 140,
+    clientY: 130,
+    pointerId: 7,
+  })
   assert.equal(root.style.left, '40px')
   assert.equal(root.style.top, '30px')
   assert.equal(root.dataset.dragging, 'true')
@@ -94,8 +118,18 @@ test('top app header drag moves only the panel and ignores header controls', () 
   assert.equal(root.dataset.dragging, undefined)
   assert.equal(handle.capturedPointerId, undefined)
   const blockedTarget = { closest: () => ({}) }
-  handle.dispatch('pointerdown', { clientX: 100, clientY: 100, pointerId: 8, button: 0, target: blockedTarget })
-  documentRef.dispatch('pointermove', { clientX: 180, clientY: 180, pointerId: 8 })
+  handle.dispatch('pointerdown', {
+    clientX: 100,
+    clientY: 100,
+    pointerId: 8,
+    button: 0,
+    target: blockedTarget,
+  })
+  documentRef.dispatch('pointermove', {
+    clientX: 180,
+    clientY: 180,
+    pointerId: 8,
+  })
   assert.equal(root.style.left, '40px')
   assert.equal(root.style.top, '30px')
   controller.destroy()
@@ -112,7 +146,10 @@ test('production shell uses the unified top routebar on every viewport', () => {
   assert.match(APP_SOURCE, /class="bioweave-routebar"/)
   assert.match(APP_SOURCE, /class="bioweave-route-items"/)
   assert.match(APP_SOURCE, /data-bioweave-action="cycle-theme"/)
-  assert.match(APP_SOURCE, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/)
+  assert.match(
+    APP_SOURCE,
+    /const desktopRoutes = \[\s*["']overview["'],\s*["']characters["'],\s*["']events["'],\s*["']projection["'],\s*["']genealogy["'],\s*["']world["'],\s*["']settings["'],\s*["']state["']\s*,?\s*\]/,
+  )
   assert.doesNotMatch(APP_SOURCE, /bioweave-bottom|bioweave-more-menu|data-bioweave-action="more"/)
   assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-bottom|\.bioweave-more-menu|\.bioweave-nav-item/)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-routebar\s*\{[\s\S]*?display:\s*flex !important;[\s\S]*?gap:\s*2px !important;/)
@@ -450,6 +487,130 @@ class FakeMutationObserver {
     if (!this.disconnected) this.callback([])
   }
 }
+function createSettingsForm(values = {}) {
+  const fields = Object.fromEntries(
+    Object.entries({
+      profile_id: '',
+      name: '',
+      api_url: 'https://api.example/v1',
+      model: '',
+      api_key: '',
+      clear_secret: false,
+      ...values,
+    }).map(([name, value]) => [name, name === 'clear_secret' ? { checked: Boolean(value), value: '' } : { value: String(value ?? '') }]),
+  )
+  return {
+    fields,
+    elements: {
+      namedItem(name) {
+        return fields[name] ?? null
+      },
+    },
+  }
+}
+function attachSettingsForm(root, form) {
+  root.selectorNodes.set('[data-bioweave-settings-form]', [form])
+  return form
+}
+function actionTarget(root, dataset) {
+  return {
+    __root: root,
+    dataset,
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null
+    },
+  }
+}
+function assignmentTarget(root, value, { slot = 'world_analysis', form = null, action = '', profileId = '' } = {}) {
+  const target = {
+    __root: root,
+    value,
+    dataset: {
+      bioweaveAssignment: slot,
+      ...(action ? { bioweaveAction: action } : {}),
+      ...(profileId ? { profileId } : {}),
+    },
+    closest(selector) {
+      if (selector === '[data-bioweave-assignment]') return this
+      if (form && selector === '[data-bioweave-settings-form]') return form
+      if (action && selector.includes('[data-bioweave-action]')) return this
+      return null
+    },
+  }
+  return target
+}
+function settingsSourceTarget(root, value) {
+  return {
+    __root: root,
+    value,
+    dataset: {
+      bioweaveApiSource: true,
+    },
+    closest(selector) {
+      if (selector === '[data-bioweave-api-source]') return this
+      return null
+    },
+  }
+}
+function settingsDefaultProfileTarget(root, value) {
+  return {
+    __root: root,
+    value,
+    dataset: {
+      bioweaveDefaultProfile: true,
+    },
+    closest(selector) {
+      return selector === '[data-bioweave-default-profile]' ? this : null
+    },
+  }
+}
+function settingsFormTarget(root, form) {
+  return {
+    __root: root,
+    dataset: {},
+    closest(selector) {
+      return selector === '[data-bioweave-settings-form]' ? form : null
+    },
+  }
+}
+function apiProfileRuntime(chatId = 'chat-model-cache') {
+  return {
+    chat: {
+      current: () => chatId,
+      token: () => ({ chatId }),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({ settings: {} }),
+      saveChat: async () => {},
+    },
+    st: {
+      getContext: () => ({ chatId }),
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+}
+function createSettingsTestApp(profileStore, { apiClient = undefined, chatId = 'chat-profile-save' } = {}) {
+  const documentRef = new AppFakeDocument()
+  const app = createApp(apiProfileRuntime(chatId), {
+    documentRef,
+    storageRef: {},
+    profileStore,
+    apiClient,
+  })
+  const root = app.openBioWeave()
+  app.go('settings')
+  return { app, documentRef, root }
+}
+async function clickSettingsAction(root, dataset) {
+  const click = [...root.listeners.get('click')][0]
+  await click({
+    target: actionTarget(root, dataset),
+    preventDefault() {},
+  })
+}
 function createMenuDocument() {
   const documentRef = new FakeDocument()
   const menu = documentRef.createElement('div')
@@ -558,10 +719,19 @@ test('render scroll helper restores main and worldbook list positions', () => {
   }
   const positions = captureScrollPositions(root)
   nodes.set('.bioweave-main', { scrollTop: 0, scrollLeft: 0 })
-  nodes.set('[data-bioweave-analysis-source-list]', { scrollTop: 0, scrollLeft: 0 })
+  nodes.set('[data-bioweave-analysis-source-list]', {
+    scrollTop: 0,
+    scrollLeft: 0,
+  })
   restoreScrollPositions(root, positions)
-  assert.deepEqual(nodes.get('.bioweave-main'), { scrollTop: 123, scrollLeft: 7 })
-  assert.deepEqual(nodes.get('[data-bioweave-analysis-source-list]'), { scrollTop: 456, scrollLeft: 11 })
+  assert.deepEqual(nodes.get('.bioweave-main'), {
+    scrollTop: 123,
+    scrollLeft: 7,
+  })
+  assert.deepEqual(nodes.get('[data-bioweave-analysis-source-list]'), {
+    scrollTop: 456,
+    scrollLeft: 11,
+  })
 })
 test('notify dispatches each toastr method and trims empty messages', () => {
   const calls = []
@@ -658,7 +828,12 @@ test('settings API source and default profile keep fallback values without host 
     },
   }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -702,6 +877,697 @@ test('settings API source and default profile keep fallback values without host 
   assert.deepEqual(toastCalls, ['默认 API 来源已保存。', '默认 API 配置已保存。'])
   app.destroyBioWeave()
 })
+test('settings restores each profile model cache after recreation and switches caches by profile', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {
+      'profile-a': {
+        profile_id: 'profile-a',
+        name: '配置一',
+        api_url: 'https://api.example/v1',
+        model: 'model-a',
+      },
+      'profile-b': {
+        profile_id: 'profile-b',
+        name: '配置二',
+        api_url: 'https://api.example/v1',
+        model: 'model-b',
+      },
+    },
+    api_model_caches: {
+      'profile-a': { models: ['a-model-1', 'a-model-2'], refreshed_at: 101 },
+      'profile-b': { models: ['b-model-1'], refreshed_at: 202 },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const apiClient = { fetchModels: async () => [] }
+  const createSettingsApp = () => {
+    const documentRef = new AppFakeDocument()
+    const app = createApp(apiProfileRuntime(), {
+      documentRef,
+      storageRef: {},
+      profileStore,
+      apiClient,
+    })
+    const root = app.openBioWeave()
+    app.go('settings')
+    return { app, root }
+  }
+
+  const first = createSettingsApp()
+  const click = [...first.root.listeners.get('click')][0]
+  await click({
+    target: actionTarget(first.root, {
+      bioweaveAction: 'edit-profile',
+      profileId: 'profile-a',
+    }),
+    preventDefault() {},
+  })
+  assert.deepEqual(first.app.getSettingsState().modelList, ['a-model-1', 'a-model-2'])
+  assert.equal(first.app.getSettingsState().modelListProfileKey, 'profile-a')
+  await click({
+    target: actionTarget(first.root, {
+      bioweaveAction: 'edit-profile',
+      profileId: 'profile-b',
+    }),
+    preventDefault() {},
+  })
+  assert.deepEqual(first.app.getSettingsState().modelList, ['b-model-1'])
+  assert.equal(first.app.getSettingsState().modelListProfileKey, 'profile-b')
+  first.app.destroyBioWeave()
+
+  const reopened = createSettingsApp()
+  const reopenedClick = [...reopened.root.listeners.get('click')][0]
+  await reopenedClick({
+    target: actionTarget(reopened.root, {
+      bioweaveAction: 'edit-profile',
+      profileId: 'profile-a',
+    }),
+    preventDefault() {},
+  })
+  assert.deepEqual(reopened.app.getSettingsState().modelList, ['a-model-1', 'a-model-2'])
+  assert.equal(reopened.app.getSettingsState().modelListProfileKey, 'profile-a')
+  reopened.app.destroyBioWeave()
+})
+test('task assignment events stay isolated from closed and active profile editors', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    default_profile_id: 'profile-a',
+    api_profiles: {
+      'profile-a': {
+        profile_id: 'profile-a',
+        name: '配置一',
+        api_url: 'https://api.example/v1',
+        model: 'model-a',
+      },
+      'profile-b': {
+        profile_id: 'profile-b',
+        name: '配置二',
+        api_url: 'https://api.example/v1',
+        model: 'model-b',
+      },
+      'profile-c': {
+        profile_id: 'profile-c',
+        name: '配置三',
+        api_url: 'https://api.example/v1',
+        model: 'model-c',
+      },
+    },
+    assignments: {
+      world_analysis: 'profile-b',
+      event_analysis: 'profile-b',
+      projection: 'sillytavern',
+      history_scan: 'default',
+    },
+    api_model_caches: {
+      'profile-a': { profile_id: 'profile-a', models: ['a-model'], refreshed_at: 101 },
+      'profile-b': { profile_id: 'profile-b', models: ['b-model'], refreshed_at: 202 },
+      'profile-c': { profile_id: 'profile-c', models: ['c-model'], refreshed_at: 303 },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const { app, root } = createSettingsTestApp(profileStore)
+  const click = [...root.listeners.get('click')][0]
+  const input = [...root.listeners.get('input')][0]
+  const change = [...root.listeners.get('change')][0]
+  const cacheBefore = structuredClone(globalSettings.api_model_caches)
+  const closedStateBefore = app.getSettingsState()
+  const assignmentValues = ['profile-c', 'profile-a', 'default', 'sillytavern', '']
+  let profileLookupCount = 0
+  const originalGetProfile = profileStore.getProfile
+  profileStore.getProfile = (...args) => {
+    profileLookupCount += 1
+    return originalGetProfile(...args)
+  }
+
+  assert.equal(closedStateBefore.editingProfile, undefined)
+  for (const value of assignmentValues) {
+    const target = assignmentTarget(root, value, {
+      action: 'edit-profile',
+      profileId: 'profile-a',
+    })
+    await input({ target })
+    await click({ target, preventDefault() {} })
+    await change({ target })
+    const state = app.getSettingsState()
+    assert.equal(state.editingProfile, undefined)
+    assert.equal(state.editingDraft, undefined)
+    assert.deepEqual(state.modelList, [])
+    assert.deepEqual(state.modelListCaches, closedStateBefore.modelListCaches)
+    assert.deepEqual(globalSettings.api_model_caches, cacheBefore)
+    assert.equal(state.assignments.world_analysis, value || null)
+    assert.equal(state.assignments.event_analysis, 'profile-b')
+  }
+  assert.equal(profileLookupCount, 0)
+
+  await click({
+    target: actionTarget(root, {
+      bioweaveAction: 'edit-profile',
+      profileId: 'profile-a',
+    }),
+    preventDefault() {},
+  })
+  profileLookupCount = 0
+  const profileForm = attachSettingsForm(
+    root,
+    createSettingsForm({
+      profile_id: 'profile-a',
+      name: '配置一草稿',
+      api_url: 'https://api.example/v2',
+      model: 'draft-model-a',
+    }),
+  )
+  await input({ target: settingsFormTarget(root, profileForm) })
+  const profileDraftBefore = app.getSettingsState().editingDraft
+  const profileCacheStateBefore = app.getSettingsState().modelListCaches
+  profileForm.fields.name.value = '不应被 assignment capture 覆盖'
+  for (const value of assignmentValues) {
+    const target = assignmentTarget(root, value, {
+      form: profileForm,
+      action: 'edit-profile',
+      profileId: 'profile-b',
+    })
+    await input({ target })
+    await click({ target, preventDefault() {} })
+    await change({ target })
+    const state = app.getSettingsState()
+    assert.equal(state.editingProfile.profile_id, 'profile-a')
+    assert.deepEqual(state.editingDraft, profileDraftBefore)
+    assert.deepEqual(state.modelList, ['a-model'])
+    assert.deepEqual(state.modelListCaches, profileCacheStateBefore)
+    assert.deepEqual(globalSettings.api_model_caches, cacheBefore)
+    assert.equal(state.assignments.world_analysis, value || null)
+    assert.equal(state.assignments.event_analysis, 'profile-b')
+  }
+  assert.equal(profileLookupCount, 0)
+
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'new-profile' }),
+    preventDefault() {},
+  })
+  const newProfileForm = attachSettingsForm(
+    root,
+    createSettingsForm({
+      name: '新配置草稿',
+      api_url: 'https://api.example/v3',
+      model: 'draft-model-new',
+    }),
+  )
+  await input({ target: settingsFormTarget(root, newProfileForm) })
+  const newProfileDraftBefore = app.getSettingsState().editingDraft
+  newProfileForm.fields.name.value = '不应被 new assignment capture 覆盖'
+  for (const value of assignmentValues) {
+    const target = assignmentTarget(root, value, {
+      form: newProfileForm,
+      action: 'edit-profile',
+      profileId: 'profile-a',
+    })
+    await input({ target })
+    await click({ target, preventDefault() {} })
+    await change({ target })
+    const state = app.getSettingsState()
+    assert.equal(state.editingProfile, null)
+    assert.deepEqual(state.editingDraft, newProfileDraftBefore)
+    assert.deepEqual(state.modelList, [])
+    assert.deepEqual(state.modelListCaches, profileCacheStateBefore)
+    assert.deepEqual(globalSettings.api_model_caches, cacheBefore)
+    assert.equal(state.assignments.world_analysis, value || null)
+    assert.equal(state.assignments.event_analysis, 'profile-b')
+  }
+  const profileFormAfterAssignment = app.getSettingsState().editingDraft
+  const sourceTarget = settingsSourceTarget(root, 'sillytavern')
+  await input({ target: sourceTarget })
+  await click({ target: sourceTarget, preventDefault() {} })
+  await change({ target: sourceTarget })
+  assert.equal(app.getSettingsState().editingProfile, null)
+  assert.deepEqual(app.getSettingsState().editingDraft, profileFormAfterAssignment)
+  assert.equal(profileLookupCount, 0)
+  const defaultProfileTarget = settingsDefaultProfileTarget(root, 'profile-c')
+  await input({ target: defaultProfileTarget })
+  await click({ target: defaultProfileTarget, preventDefault() {} })
+  await change({ target: defaultProfileTarget })
+  assert.equal(app.getSettingsState().editingProfile, null)
+  assert.deepEqual(app.getSettingsState().editingDraft, profileFormAfterAssignment)
+  assert.equal(app.getSettingsState().defaultProfileId, 'profile-c')
+  assert.deepEqual(app.getSettingsState().modelListCaches, profileCacheStateBefore)
+  assert.deepEqual(globalSettings.api_model_caches, cacheBefore)
+  assert.equal(profileLookupCount, 0)
+  app.destroyBioWeave()
+})
+test('successful model refresh replaces the cache and a failed refresh preserves it', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {
+      'profile-a': {
+        profile_id: 'profile-a',
+        name: '配置一',
+        api_url: 'https://api.example/v1',
+        model: 'model-a',
+      },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const responses = [[{ id: 'model-z' }, { id: 'model-a' }, { id: 'model-a' }], new Error('API_MODELS_FETCH_FAILED')]
+  const apiClient = {
+    async fetchModels() {
+      const response = responses.shift()
+      if (response instanceof Error) throw response
+      return response
+    },
+  }
+  const documentRef = new AppFakeDocument()
+  const errors = []
+  documentRef.defaultView.toastr = { error: message => errors.push(message) }
+  const app = createApp(apiProfileRuntime(), {
+    documentRef,
+    storageRef: {},
+    profileStore,
+    apiClient,
+  })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const click = [...root.listeners.get('click')][0]
+  await click({
+    target: actionTarget(root, {
+      bioweaveAction: 'edit-profile',
+      profileId: 'profile-a',
+    }),
+    preventDefault() {},
+  })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      profile_id: 'profile-a',
+      name: '配置一',
+      model: 'model-a',
+    }),
+  )
+
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'refresh-models' }),
+    preventDefault() {},
+  })
+  assert.deepEqual(app.getSettingsState().modelList, ['model-a', 'model-z'])
+  assert.deepEqual(profileStore.getModelListCache('profile-a')?.models, ['model-a', 'model-z'])
+  const firstCache = structuredClone(globalSettings.api_model_caches['profile-a'])
+
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'refresh-models' }),
+    preventDefault() {},
+  })
+  assert.deepEqual(app.getSettingsState().modelList, ['model-a', 'model-z'])
+  assert.deepEqual(globalSettings.api_model_caches['profile-a'], firstCache)
+  assert.deepEqual(errors, ['模型列表请求失败，请检查地址和权限。'])
+  app.destroyBioWeave()
+})
+test('unsaved model discovery stays in memory and migrates only after a profile gets a stable id', async () => {
+  let globalSettings = {}
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const apiClient = { fetchModels: async () => [{ id: 'temporary-model' }] }
+  const documentRef = new AppFakeDocument()
+  const app = createApp(apiProfileRuntime('chat-unsaved-model'), {
+    documentRef,
+    storageRef: {},
+    profileStore,
+    apiClient,
+  })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const click = [...root.listeners.get('click')][0]
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'new-profile' }),
+    preventDefault() {},
+  })
+  const form = createSettingsForm({ name: '待保存配置', model: '' })
+  attachSettingsForm(root, form)
+
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'refresh-models' }),
+    preventDefault() {},
+  })
+  assert.deepEqual(app.getSettingsState().modelList, ['temporary-model'])
+  assert.equal(app.getSettingsState().modelListProfileKey, '__new__')
+  assert.equal(globalSettings.api_model_caches, undefined)
+
+  form.fields.model.value = 'temporary-model'
+  await click({
+    target: actionTarget(root, { bioweaveAction: 'save-profile' }),
+    preventDefault() {},
+  })
+  const savedState = app.getSettingsState()
+  const savedId = Object.keys(savedState.profiles).find(profileId => savedState.profiles[profileId].name === '待保存配置')
+  assert.notEqual(savedId, '__new__')
+  assert.equal(savedState.editingProfile, undefined)
+  assert.equal(savedState.editingDraft, undefined)
+  assert.equal(globalSettings.api_model_caches.__new__, undefined)
+  assert.equal(globalSettings.api_model_caches.new, undefined)
+  assert.deepEqual(profileStore.getModelListCache(savedId)?.models, ['temporary-model'])
+  app.destroyBioWeave()
+})
+test('saving a new profile closes the editor and updates the profile list immediately', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    default_profile_id: null,
+    api_profiles: {},
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const { app, root } = createSettingsTestApp(profileStore)
+  await clickSettingsAction(root, { bioweaveAction: 'new-profile' })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      name: '新建配置',
+      api_url: 'https://api.example/v1',
+      model: 'new-model',
+    }),
+  )
+
+  await clickSettingsAction(root, { bioweaveAction: 'save-profile' })
+
+  const state = app.getSettingsState()
+  assert.equal(state.editingProfile, undefined)
+  assert.equal(state.editingDraft, undefined)
+  assert.equal(state.apiSource, 'bioweave')
+  assert.equal(state.defaultProfileId, null)
+  assert.equal(Object.values(state.profiles).length, 1)
+  assert.equal(Object.values(state.profiles)[0].name, '新建配置')
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /新建配置/)
+  app.destroyBioWeave()
+})
+test('saving an existing profile closes the editor, preserves default state, and reopens saved data', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    default_profile_id: 'profile-a',
+    api_profiles: {
+      'profile-a': {
+        profile_id: 'profile-a',
+        name: '原配置',
+        api_url: 'https://api.example/v1',
+        model: 'old-model',
+      },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const { app, root } = createSettingsTestApp(profileStore)
+  await clickSettingsAction(root, {
+    bioweaveAction: 'edit-profile',
+    profileId: 'profile-a',
+  })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      profile_id: 'profile-a',
+      name: '更新后的配置',
+      api_url: 'https://api.example/v2',
+      model: 'new-model',
+    }),
+  )
+
+  await clickSettingsAction(root, { bioweaveAction: 'save-profile' })
+
+  let state = app.getSettingsState()
+  assert.equal(state.editingProfile, undefined)
+  assert.equal(state.editingDraft, undefined)
+  assert.equal(state.defaultProfileId, 'profile-a')
+  assert.equal(state.profiles['profile-a'].name, '更新后的配置')
+  assert.equal(state.profiles['profile-a'].model, 'new-model')
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /更新后的配置/)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+
+  await clickSettingsAction(root, {
+    bioweaveAction: 'edit-profile',
+    profileId: 'profile-a',
+  })
+  state = app.getSettingsState()
+  assert.equal(state.editingProfile.name, '更新后的配置')
+  assert.equal(state.editingProfile.api_url, 'https://api.example/v2')
+  assert.equal(state.editingDraft.name, '更新后的配置')
+  assert.equal(state.editingDraft.model, 'new-model')
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  app.destroyBioWeave()
+})
+test('profile save failure keeps the editor and current draft data', async () => {
+  const profile = {
+    profile_id: 'profile-failure',
+    name: '原配置',
+    api_url: 'https://api.example/v1',
+    model: 'old-model',
+  }
+  const errors = []
+  const profileStore = {
+    getSettings: () => ({
+      api_source: 'bioweave',
+      default_profile_id: 'profile-failure',
+      api_profiles: { 'profile-failure': profile },
+      assignments: {},
+    }),
+    getProfile: profileId => (profileId === 'profile-failure' ? { ...profile } : null),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({ regex_rules: [] }),
+    saveProfile: async () => {
+      throw new Error('SAVE_FAILED')
+    },
+  }
+  const { app, documentRef, root } = createSettingsTestApp(profileStore)
+  documentRef.defaultView.toastr = { error: message => errors.push(message) }
+  await clickSettingsAction(root, {
+    bioweaveAction: 'edit-profile',
+    profileId: 'profile-failure',
+  })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      profile_id: 'profile-failure',
+      name: '未保存名称',
+      api_url: 'https://api.example/v1',
+      model: '未保存模型',
+    }),
+  )
+
+  await clickSettingsAction(root, { bioweaveAction: 'save-profile' })
+
+  const state = app.getSettingsState()
+  assert.equal(state.editingProfile.profile_id, 'profile-failure')
+  assert.equal(state.editingDraft.name, '未保存名称')
+  assert.equal(state.editingDraft.model, '未保存模型')
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  assert.deepEqual(errors, ['设置操作失败，请检查 SillyTavern 状态后重试。'])
+  app.destroyBioWeave()
+})
+test('profile validation failure keeps the editor, draft data, and validation error', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {
+      'profile-invalid': {
+        profile_id: 'profile-invalid',
+        name: '原配置',
+        api_url: 'https://api.example/v1',
+        model: 'old-model',
+      },
+    },
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const errors = []
+  const { app, documentRef, root } = createSettingsTestApp(profileStore)
+  documentRef.defaultView.toastr = { error: message => errors.push(message) }
+  await clickSettingsAction(root, {
+    bioweaveAction: 'edit-profile',
+    profileId: 'profile-invalid',
+  })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      profile_id: 'profile-invalid',
+      name: '校验失败草稿',
+      api_url: 'https://api.example/v1',
+      model: '',
+    }),
+  )
+
+  await clickSettingsAction(root, { bioweaveAction: 'save-profile' })
+
+  const state = app.getSettingsState()
+  assert.equal(state.editingProfile.profile_id, 'profile-invalid')
+  assert.equal(state.editingDraft.name, '校验失败草稿')
+  assert.equal(state.editingDraft.model, '')
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  assert.deepEqual(errors, ['请填写有效的 API URL 和 Model。'])
+  app.destroyBioWeave()
+})
+test('cancelling profile edit still closes the editor without saving the draft', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {},
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const { app, root } = createSettingsTestApp(profileStore)
+  await clickSettingsAction(root, { bioweaveAction: 'new-profile' })
+  attachSettingsForm(
+    root,
+    createSettingsForm({
+      name: '取消的草稿',
+      model: 'draft-model',
+    }),
+  )
+
+  await clickSettingsAction(root, { bioweaveAction: 'cancel-profile' })
+
+  const state = app.getSettingsState()
+  assert.equal(state.editingProfile, undefined)
+  assert.equal(state.editingDraft, undefined)
+  assert.equal(Object.keys(state.profiles).length, 0)
+  assert.deepEqual(globalSettings.api_profiles, {})
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  app.destroyBioWeave()
+})
+test('new profile cache migration completes before the editor closes', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {},
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  const saveModelListCache = profileStore.saveModelListCache.bind(profileStore)
+  let resolveMigration
+  let migrationStartedResolve
+  let migrationCompleted = false
+  const migrationGate = new Promise(resolve => {
+    resolveMigration = resolve
+  })
+  const migrationStarted = new Promise(resolve => {
+    migrationStartedResolve = resolve
+  })
+  profileStore.saveModelListCache = async (...args) => {
+    migrationStartedResolve()
+    await migrationGate
+    const saved = await saveModelListCache(...args)
+    migrationCompleted = true
+    return saved
+  }
+  const { app, root } = createSettingsTestApp(profileStore, {
+    apiClient: { fetchModels: async () => [{ id: 'migrated-model' }] },
+  })
+  await clickSettingsAction(root, { bioweaveAction: 'new-profile' })
+  const form = attachSettingsForm(
+    root,
+    createSettingsForm({
+      name: '待迁移配置',
+      api_url: 'https://api.example/v1',
+    }),
+  )
+  await clickSettingsAction(root, { bioweaveAction: 'refresh-models' })
+  form.fields.model.value = 'migrated-model'
+
+  const savePromise = clickSettingsAction(root, {
+    bioweaveAction: 'save-profile',
+  })
+  await migrationStarted
+  assert.equal(app.getSettingsState().editingProfile, null)
+  assert.equal(migrationCompleted, false)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+
+  resolveMigration()
+  await savePromise
+  const state = app.getSettingsState()
+  const savedId = Object.keys(state.profiles)[0]
+  assert.equal(migrationCompleted, true)
+  assert.equal(state.editingProfile, undefined)
+  assert.equal(state.editingDraft, undefined)
+  assert.deepEqual(profileStore.getModelListCache(savedId)?.models, ['migrated-model'])
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  app.destroyBioWeave()
+})
+test('cache migration failure keeps the saved profile editor open without a false cache', async () => {
+  let globalSettings = {
+    api_source: 'bioweave',
+    api_profiles: {},
+  }
+  const profileStore = createApiProfileStore({
+    getGlobalSettings: () => globalSettings,
+    saveGlobalSettings: async value => {
+      globalSettings = structuredClone(value)
+    },
+  })
+  profileStore.saveModelListCache = async () => {
+    throw new Error('CACHE_MIGRATION_FAILED')
+  }
+  const { app, documentRef, root } = createSettingsTestApp(profileStore, {
+    apiClient: { fetchModels: async () => [{ id: 'migration-model' }] },
+  })
+  const warnings = []
+  documentRef.defaultView.toastr = {
+    warning: message => warnings.push(message),
+  }
+  await clickSettingsAction(root, { bioweaveAction: 'new-profile' })
+  const form = attachSettingsForm(
+    root,
+    createSettingsForm({
+      name: '迁移失败配置',
+      api_url: 'https://api.example/v1',
+    }),
+  )
+  await clickSettingsAction(root, { bioweaveAction: 'refresh-models' })
+  form.fields.model.value = 'migration-model'
+
+  await clickSettingsAction(root, { bioweaveAction: 'save-profile' })
+
+  const state = app.getSettingsState()
+  const savedId = Object.keys(state.profiles)[0]
+  assert.ok(savedId)
+  assert.equal(state.editingProfile.profile_id, savedId)
+  assert.equal(state.editingDraft.profile_id, savedId)
+  assert.deepEqual(state.modelList, ['migration-model'])
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-settings-editor/)
+  assert.deepEqual(globalSettings.api_model_caches, {})
+  assert.deepEqual(warnings, ['设置操作失败，请检查 SillyTavern 状态后重试。'])
+  app.destroyBioWeave()
+})
 test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview actions local', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []
@@ -717,7 +1583,12 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
     }
   }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -769,7 +1640,10 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
   assert.equal(popupCalls.length, 1)
   assert.equal(popupCalls[0].type, 'display')
   assert.equal(popupCalls[0].title, '')
-  assert.deepEqual(popupCalls[0].options, { wide: true, allowVerticalScrolling: true })
+  assert.deepEqual(popupCalls[0].options, {
+    wide: true,
+    allowVerticalScrolling: true,
+  })
   assert.equal(popupCalls[0].content.ownerDocument, documentRef)
   assert.match(popupCalls[0].content.innerHTML, /data-bioweave-analysis-preview/)
   const popupContent = popupCalls[0].content
@@ -894,7 +1768,10 @@ test('settings and World Model analysis debug actions share one Popup and prompt
   const settingsPopup = popupCalls[0]
   assert.equal(settingsPopup.type, 'display')
   assert.equal(settingsPopup.title, '')
-  assert.deepEqual(settingsPopup.options, { wide: true, allowVerticalScrolling: true })
+  assert.deepEqual(settingsPopup.options, {
+    wide: true,
+    allowVerticalScrolling: true,
+  })
   const popupActionTarget = (content, action, mode = undefined) => ({
     __root: content,
     dataset: {
@@ -949,17 +1826,32 @@ test('settings and World Model analysis debug actions share one Popup and prompt
 test('analysis debug shows a safe Toast and no custom modal when Popup is unavailable', async () => {
   const documentRef = new AppFakeDocument()
   const toastCalls = []
-  documentRef.defaultView.toastr = { error: message => toastCalls.push(message) }
+  documentRef.defaultView.toastr = {
+    error: message => toastCalls.push(message),
+  }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
   }
   const runtime = {
-    chat: { current: () => 'chat-no-popup', token: () => ({ chatId: 'chat-no-popup' }), assert: () => {} },
+    chat: {
+      current: () => 'chat-no-popup',
+      token: () => ({ chatId: 'chat-no-popup' }),
+      assert: () => {},
+    },
     store: { getChat: () => ({ settings: {} }), saveChat: async () => {} },
-    st: { getContext: () => ({ chatId: 'chat-no-popup' }), fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
+    st: {
+      getContext: () => ({ chatId: 'chat-no-popup' }),
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
     subscribe: () => () => {},
   }
   const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
@@ -997,7 +1889,9 @@ test('API profile deletion uses Popup.show.confirm and cancels on a negative res
     },
     POPUP_RESULT: { AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative' },
   }
-  documentRef.defaultView.toastr = { success: message => toastCalls.push(message) }
+  documentRef.defaultView.toastr = {
+    success: message => toastCalls.push(message),
+  }
   const profileStore = {
     getSettings: () => ({
       api_source: 'bioweave',
@@ -1013,9 +1907,17 @@ test('API profile deletion uses Popup.show.confirm and cancels on a negative res
     },
   }
   const runtime = {
-    chat: { current: () => 'chat-delete', token: () => ({ chatId: 'chat-delete' }), assert: () => {} },
+    chat: {
+      current: () => 'chat-delete',
+      token: () => ({ chatId: 'chat-delete' }),
+      assert: () => {},
+    },
     store: { getChat: () => ({ settings: {} }), saveChat: async () => {} },
-    st: { getContext: () => context, fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
     subscribe: () => () => {},
   }
   const previousConfirm = globalThis.confirm
@@ -1023,7 +1925,11 @@ test('API profile deletion uses Popup.show.confirm and cancels on a negative res
     throw new Error('native confirm must not be called')
   }
   try {
-    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+    const app = createApp(runtime, {
+      documentRef,
+      storageRef: {},
+      profileStore,
+    })
     const root = app.openBioWeave()
     app.go('settings')
     const click = [...root.listeners.get('click')][0]
@@ -1069,23 +1975,40 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
   const model = {
     schema_version: 1,
     species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
-    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
+    medical_context: {
+      childbirth_difficulty: null,
+      care_level: null,
+      evidence: null,
+    },
     exceptions: [],
     unknowns: ['旧未知'],
   }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
   }
   const runtime = {
-    chat: { current: () => 'chat-dirty-world', token: () => ({ chatId: 'chat-dirty-world' }), assert: () => {} },
+    chat: {
+      current: () => 'chat-dirty-world',
+      token: () => ({ chatId: 'chat-dirty-world' }),
+      assert: () => {},
+    },
     store: {
       getChat: () => ({ settings: {}, world_model: model }),
       saveChat: async () => {},
     },
-    st: { getContext: () => context, fetch: async () => ({ ok: true, json: async () => [] }), getRequestHeaders: () => ({}) },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
     subscribe: () => () => {},
   }
   const app = createApp(runtime, {
@@ -1112,7 +2035,10 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
       return selector.includes('[data-bioweave-action]') ? this : null
     },
   })
-  await click({ target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {} })
+  await click({
+    target: actionTarget('world-model-edit-section', 'unknowns'),
+    preventDefault() {},
+  })
   const row = {
     querySelector(selector) {
       return selector.includes('data-bioweave-world-section-field="value"') ? { value: '新未知' } : null
@@ -1133,7 +2059,10 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
       },
     },
   })
-  await click({ target: actionTarget('world-model-reanalyze'), preventDefault() {} })
+  await click({
+    target: actionTarget('world-model-reanalyze'),
+    preventDefault() {},
+  })
   assert.deepEqual(confirmCalls, [['放弃未保存修改', '当前修改尚未保存，是否放弃？']])
   assert.equal(analyzeCalls, 0)
   app.destroyBioWeave()
@@ -1151,7 +2080,11 @@ test('busy World Model analysis asks before aborting and keeps the button action
   const model = {
     schema_version: 1,
     species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
-    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
+    medical_context: {
+      childbirth_difficulty: null,
+      care_level: null,
+      evidence: null,
+    },
     exceptions: [],
     unknowns: ['已有模型'],
   }
@@ -1196,7 +2129,12 @@ test('busy World Model analysis asks before aborting and keeps the button action
     characters: [],
   }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -1220,7 +2158,12 @@ test('busy World Model analysis asks before aborting and keeps the button action
     },
     subscribe: () => () => {},
   }
-  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+  const app = createApp(runtime, {
+    documentRef,
+    storageRef: {},
+    profileStore,
+    analyzer,
+  })
   const root = app.openBioWeave()
   app.go('world')
   const click = [...root.listeners.get('click')][0]
@@ -1285,7 +2228,11 @@ test('busy World Model analysis safely cancels when the host confirm Popup is un
   const model = {
     schema_version: 1,
     species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
-    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
+    medical_context: {
+      childbirth_difficulty: null,
+      care_level: null,
+      evidence: null,
+    },
     exceptions: [],
     unknowns: ['已有模型'],
   }
@@ -1316,9 +2263,16 @@ test('busy World Model analysis safely cancels when the host confirm Popup is un
     chatId: 'chat-world-abort-no-popup',
     characters: [],
   }
-  documentRef.defaultView.toastr = { error: message => toastCalls.push(message) }
+  documentRef.defaultView.toastr = {
+    error: message => toastCalls.push(message),
+  }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -1340,7 +2294,12 @@ test('busy World Model analysis safely cancels when the host confirm Popup is un
     },
     subscribe: () => () => {},
   }
-  const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+  const app = createApp(runtime, {
+    documentRef,
+    storageRef: {},
+    profileStore,
+    analyzer,
+  })
   const root = app.openBioWeave()
   app.go('world')
   const click = [...root.listeners.get('click')][0]
@@ -1374,7 +2333,11 @@ test('World Model analysis routes success and failure feedback through semantic 
   const previousModel = {
     schema_version: 1,
     species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
-    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
+    medical_context: {
+      childbirth_difficulty: null,
+      care_level: null,
+      evidence: null,
+    },
     exceptions: [],
     unknowns: ['旧模型'],
   }
@@ -1420,7 +2383,12 @@ test('World Model analysis routes success and failure feedback through semantic 
     let savedChat = { settings: {}, world_model: previousModel }
     let refreshCalls = 0
     const profileStore = {
-      getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+      getSettings: () => ({
+        api_source: 'sillytavern',
+        default_profile_id: null,
+        api_profiles: {},
+        assignments: {},
+      }),
       getApiRequestSettings: () => ({}),
       getWorldAnalysisPrompt: () => ({}),
       getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -1461,7 +2429,12 @@ test('World Model analysis routes success and failure feedback through semantic 
         throw error
       },
     }
-    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore, analyzer })
+    const app = createApp(runtime, {
+      documentRef,
+      storageRef: {},
+      profileStore,
+      analyzer,
+    })
     const root = app.openBioWeave()
     app.go('world')
     const click = [...root.listeners.get('click')][0]
@@ -1494,7 +2467,11 @@ test('World Model section save routes success and failure feedback through Toast
   const baseModel = {
     schema_version: 1,
     species: [{ name: '潮汐生物', description: '描述', biological_types: [] }],
-    medical_context: { childbirth_difficulty: null, care_level: null, evidence: null },
+    medical_context: {
+      childbirth_difficulty: null,
+      care_level: null,
+      evidence: null,
+    },
     exceptions: [],
     unknowns: ['旧模块内容'],
   }
@@ -1524,7 +2501,12 @@ test('World Model section save routes success and failure feedback through Toast
     let savedChat = { settings: {}, world_model: baseModel }
     let refreshCalls = 0
     const profileStore = {
-      getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+      getSettings: () => ({
+        api_source: 'sillytavern',
+        default_profile_id: null,
+        api_profiles: {},
+        assignments: {},
+      }),
       getApiRequestSettings: () => ({}),
       getWorldAnalysisPrompt: () => ({}),
       getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -1550,13 +2532,20 @@ test('World Model section save routes success and failure feedback through Toast
         refreshCalls += 1
       },
       st: {
-        getContext: () => ({ chatId: 'chat-world-section-feedback', characters: [] }),
+        getContext: () => ({
+          chatId: 'chat-world-section-feedback',
+          characters: [],
+        }),
         fetch: async () => ({ ok: true, json: async () => [] }),
         getRequestHeaders: () => ({}),
       },
       subscribe: () => () => {},
     }
-    const app = createApp(runtime, { documentRef, storageRef: {}, profileStore })
+    const app = createApp(runtime, {
+      documentRef,
+      storageRef: {},
+      profileStore,
+    })
     const root = app.openBioWeave()
     app.go('world')
     const actionTarget = (action, section = undefined) => ({
@@ -1570,7 +2559,10 @@ test('World Model section save routes success and failure feedback through Toast
       },
     })
     const click = [...root.listeners.get('click')][0]
-    await click({ target: actionTarget('world-model-edit-section', 'unknowns'), preventDefault() {} })
+    await click({
+      target: actionTarget('world-model-edit-section', 'unknowns'),
+      preventDefault() {},
+    })
     const row = {
       querySelector(selector) {
         return selector.includes('data-bioweave-world-section-field="value"') ? { value: '新模块内容' } : null
@@ -1591,7 +2583,10 @@ test('World Model section save routes success and failure feedback through Toast
         },
       },
     })
-    await click({ target: actionTarget('world-model-save-section'), preventDefault() {} })
+    await click({
+      target: actionTarget('world-model-save-section'),
+      preventDefault() {},
+    })
     assert.deepEqual(toastCalls, [[scenario.type, scenario.message]])
     const markup = root.querySelector('.bioweave-main').innerHTML
     assert.doesNotMatch(markup, /class="bioweave-settings-notice"/)
@@ -1614,7 +2609,12 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
     },
   }
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getWorldAnalysisPrompt: () => ({}),
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
@@ -1645,7 +2645,16 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
       getContext: () => ({
         chatId: 'chat-sources',
         characterId: 0,
-        characters: [{ avatar: 'alice.png', data: { name: '爱丽丝', description: '角色描述', first_mes: '你好' } }],
+        characters: [
+          {
+            avatar: 'alice.png',
+            data: {
+              name: '爱丽丝',
+              description: '角色描述',
+              first_mes: '你好',
+            },
+          },
+        ],
       }),
       fetch: async () => ({ ok: true, json: async () => [] }),
       getRequestHeaders: () => ({}),
@@ -1699,7 +2708,12 @@ test('analysis prompt save keeps data behavior and uses a success Toast without 
   }
   let savedPrompt = null
   const profileStore = {
-    getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
     getApiRequestSettings: () => ({}),
     getAnalysisPrompt: () => savedPrompt ?? {},
     getRecentStoryGlobal: () => ({ regex_rules: [] }),

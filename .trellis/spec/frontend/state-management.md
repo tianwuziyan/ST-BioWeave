@@ -77,6 +77,132 @@ Storage removes obvious secret value fields recursively, including `api_key`,
 Chat metadata, Floor data, events, snapshots, projections, logs, exports, or
 Prompt Inspector payloads.
 
+### Independent API model caches
+
+#### 1. Scope / Trigger
+
+This contract applies when the independent API settings page discovers model
+IDs or when an API profile is created, selected, or deleted. The cache is
+extension-global configuration, not Chat-local state and not a Secret Store.
+
+#### 2. Signatures
+
+```js
+normalizeModelListCache(raw, {profileId, fallbackRefreshedAt})
+  -> {profile_id: string, models: string[], refreshed_at: integer}
+
+normalizeModelListCaches(raw, profiles)
+  -> {[profileId: string]: ModelListCache}
+
+profileStore.getModelListCache(profileId)
+  -> ModelListCache | null
+
+profileStore.saveModelListCache(profileId, cache)
+  -> Promise<ModelListCache>
+```
+
+#### 3. Contracts
+
+- The extension-global settings root may contain `api_model_caches`, keyed only
+  by an existing stable API profile ID.
+- Each cache value is exactly `{profile_id, models, refreshed_at}`. `models`
+  contains trimmed, de-duplicated string model IDs and `refreshed_at` is a
+  non-negative integer.
+- `ui/app.js` reads the cache when an existing profile becomes the active
+  editor. An explicit refresh still performs the normal API request and
+  `normalizeModelList` flow.
+- Only a successful response replaces that profile's cache. A failed response
+  leaves both the cache and the displayed previous list unchanged.
+- An unsaved editor may keep an in-memory list under `__new__`, but neither
+  `__new__` nor `new` is persisted. A successful in-memory result may be
+  migrated after the profile receives its stable ID.
+- Deleting a profile removes its cache in the same global-settings write.
+- API keys, Secret values, headers, Secret references, and draft fields are
+  excluded from the cache.
+- After profile persistence and any required cache migration both succeed,
+  clear the editor state and render the updated profile list. Save, validation,
+  or migration failures keep the editor and draft open.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Cache key is not a stable existing profile ID | Ignore on normalization; store read returns `null`; store write throws `API_PROFILE_NOT_FOUND` |
+| Cache contains non-string model entries or duplicate/whitespace IDs | Keep only trimmed, unique string IDs |
+| Cache contains authentication fields | Drop all fields outside the three allowed cache fields |
+| Explicit model refresh succeeds | Normalize, replace the profile cache completely, set `refreshed_at`, and update the UI list |
+| Explicit model refresh fails | Keep the previous cache/list and route the error through the existing settings error notification |
+| Profile is deleted | Remove the profile cache while writing the updated profile/assignment map |
+| Profile save or validation fails | Keep the editor open with the current draft and existing error feedback |
+| Profile save succeeds but required cache migration fails | Keep the editor open; do not claim the cache migration succeeded |
+| Profile save and required migration both succeed | Clear editor state and render the updated profile list |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: Store `api_model_caches['profile-a']` with only normalized IDs and a
+  timestamp, then restore it when editing `profile-a`.
+- Base: An older settings object has no cache field and normalizes to an empty
+  cache map.
+- Bad: Use the API URL, profile name, `new`, or `__new__` as a permanent cache
+  key, or copy the form/API profile object into the cache.
+
+#### 6. Tests Required
+
+- Assert a successful UI refresh writes `api_model_caches[profile_id]` after
+  `normalizeModelList` and includes `refreshed_at`.
+- Assert closing/recreating the settings app restores the selected profile's
+  cache and switching A/B selects the matching cache only.
+- Assert a second success fully replaces the prior models and a second failure
+  preserves the first cache and list.
+- Assert deleting a profile removes its cache without removing another
+  profile's cache.
+- Assert an unsaved refresh creates no `new`/`__new__` persisted key and that
+  an optional save migration uses the generated stable profile ID.
+- Assert serialized cache data contains no API key, Secret value, or Secret
+  reference.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: a temporary UI key and the whole profile/form are persisted.
+settings.api_model_caches.__new__ = {...profile, api_key: form.api_key, models}
+```
+
+```js
+// Correct: persist only the successful normalized result for a stable profile.
+await profileStore.saveModelListCache(profile.profile_id, {
+  models: normalizeModelList(response),
+  refreshed_at: Date.now(),
+})
+```
+
+### API profile editor and task assignment isolation
+
+Task-assignment controls and the independent API profile editor are separate
+state flows. The assignment event boundary must be classified before generic
+settings-form draft capture and before action delegation:
+
+```text
+assignment change
+  -> changeAssignment()
+  -> persist only assignments[slot]
+  -> render()
+```
+
+An assignment `input`, `change`, or `click` event must not call
+`editProfile()`/`startNewProfile()`, capture or replace `editingDraft`, clear an
+editor, or read/write `api_model_caches`. If an editor is already open, its
+`editingProfile`, `editingDraft`, model list, and cache view remain unchanged;
+if it is closed, it remains closed. Only explicit `edit-profile` or
+`new-profile` actions may enter the editor state flow. Profile-save success may
+still clear the editor, but only after profile persistence and any required
+model-cache migration have completed.
+
+The regression seam is the root event delegation in `ui/app.js`, including
+synthetic/host DOM cases where an assignment target appears to have a form or
+profile action ancestor. Regression tests must assert assignment persistence,
+editor/draft preservation, no edit-profile lookup, and unchanged cache data.
+
 ### Worldbook source selection
 
 The settings UI owns an in-memory source catalog. The “世界书来源” view contains
@@ -165,14 +291,14 @@ setWorldbookEntriesSelection(selected, source, enabled)
 
 #### Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Worldbook item has no `file_id`, `host_key`, or stable `source_id` | Skip the item; never use display `name` as its identity |
-| Unknown `source_type` | Reject the source DTO |
-| Worldbook list request fails but public names are available | Use the public host-name fallback and surface a safe warning |
-| Worldbook list request fails and no fallback exists | Keep the previous catalog; retain the current selection and show a safe warning |
-| Chat changes during refresh or save | Reject the stale result/write; do not copy it into the new Chat |
-| SevenDaysCal is absent | Keep an unavailable external-provider status; the selector remains usable |
+| Condition                                                          | Result                                                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Worldbook item has no `file_id`, `host_key`, or stable `source_id` | Skip the item; never use display `name` as its identity                         |
+| Unknown `source_type`                                              | Reject the source DTO                                                           |
+| Worldbook list request fails but public names are available        | Use the public host-name fallback and surface a safe warning                    |
+| Worldbook list request fails and no fallback exists                | Keep the previous catalog; retain the current selection and show a safe warning |
+| Chat changes during refresh or save                                | Reject the stale result/write; do not copy it into the new Chat                 |
+| SevenDaysCal is absent                                             | Keep an unavailable external-provider status; the selector remains usable       |
 
 #### Good / Base / Bad Cases
 
@@ -202,29 +328,33 @@ setWorldbookEntriesSelection(selected, source, enabled)
 
 ```js
 // Wrong: display text becomes the Chat identity and source content is saved.
-chat.settings.worldbooks = {selected: [{source_id: source.name, entries: source.content}]};
+chat.settings.worldbooks = {
+  selected: [{ source_id: source.name, entries: source.content }],
+};
 ```
 
 ```js
 // Correct: persist only the stable source identity in the current Chat.
 chat.settings.worldbooks = {
-  mode: 'selected_only',
-  selected: [{source_id: source.source_id, entry_id: entry.entry_id, enabled: true}],
+  mode: "selected_only",
+  selected: [
+    { source_id: source.source_id, entry_id: entry.entry_id, enabled: true },
+  ],
 };
 ```
 
 ## 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Requested Chat ID is not the current `chatId` | Return default on read; throw `STALE_CHAT` on async write |
-| `chat_scope.chat_id` does not match | Throw `CHAT_SCOPE_MISMATCH` on write; return default on read |
-| Floor Version is missing or changed | Automatic analysis is allowed |
-| Same successful Floor Version | Automatic analysis is skipped |
-| Analysis attempt fails with an older success | Keep the old result in `last_success`; retain it for display/recovery and allow retry |
-| Message has swipe structure | Read/write only the requested `swipe_info[swipe_id]` slot |
-| Message is deleted or unavailable | Do not create an independent BioWeave Floor database |
-| Host context or required save API is unavailable | Throw a descriptive `ST_*_UNAVAILABLE` error |
+| Condition                                        | Result                                                                                |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| Requested Chat ID is not the current `chatId`    | Return default on read; throw `STALE_CHAT` on async write                             |
+| `chat_scope.chat_id` does not match              | Throw `CHAT_SCOPE_MISMATCH` on write; return default on read                          |
+| Floor Version is missing or changed              | Automatic analysis is allowed                                                         |
+| Same successful Floor Version                    | Automatic analysis is skipped                                                         |
+| Analysis attempt fails with an older success     | Keep the old result in `last_success`; retain it for display/recovery and allow retry |
+| Message has swipe structure                      | Read/write only the requested `swipe_info[swipe_id]` slot                             |
+| Message is deleted or unavailable                | Do not create an independent BioWeave Floor database                                  |
+| Host context or required save API is unavailable | Throw a descriptive `ST_*_UNAVAILABLE` error                                          |
 
 ## 5. Good / Base / Bad Cases
 
@@ -364,19 +494,19 @@ through `options.requestSettings`.
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| API URL is not HTTP(S), contains credentials, or a secret query value | Normalize to invalid; saving throws `API_PROFILE_INVALID` |
-| API URL ends in `/chat/completions` or `/completions` | Strip the suffix before saving/requesting |
-| Required URL or Model is missing | Do not write Secret or extension settings; throw `API_PROFILE_INVALID` |
-| New Secret write fails or returns no opaque ID | Keep the previous Profile/reference; throw an `ST_SECRET_*` error |
-| Extension settings save fails after a new Secret write | Restore host settings when possible and remove the new reference |
-| Old Secret cleanup fails after a new reference is saved | Keep the new reference, surface `ST_SECRET_DELETE_FAILED`, never restore the old reference |
-| Profile deletion cleanup fails | Remove the Profile/assignments from settings, surface `ST_SECRET_DELETE_FAILED`, and do not expose the Secret value |
-| Profile has no Secret reference | Independent request uses a sentinel `secret_id`; it must not fall through to the host's active custom key |
-| Current API is selected | Call host `generateRaw`; do not read or copy the host API key |
-| Timeout input is a finite seconds value | Clamp to the safe range in the UI and persist the corresponding integer milliseconds in `api_request_settings` |
-| Timeout or retry input is blank/non-numeric | Let global request-settings normalization apply the safe default; never persist the raw UI string or copy it into a Profile |
+| Condition                                                             | Result                                                                                                                      |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| API URL is not HTTP(S), contains credentials, or a secret query value | Normalize to invalid; saving throws `API_PROFILE_INVALID`                                                                   |
+| API URL ends in `/chat/completions` or `/completions`                 | Strip the suffix before saving/requesting                                                                                   |
+| Required URL or Model is missing                                      | Do not write Secret or extension settings; throw `API_PROFILE_INVALID`                                                      |
+| New Secret write fails or returns no opaque ID                        | Keep the previous Profile/reference; throw an `ST_SECRET_*` error                                                           |
+| Extension settings save fails after a new Secret write                | Restore host settings when possible and remove the new reference                                                            |
+| Old Secret cleanup fails after a new reference is saved               | Keep the new reference, surface `ST_SECRET_DELETE_FAILED`, never restore the old reference                                  |
+| Profile deletion cleanup fails                                        | Remove the Profile/assignments from settings, surface `ST_SECRET_DELETE_FAILED`, and do not expose the Secret value         |
+| Profile has no Secret reference                                       | Independent request uses a sentinel `secret_id`; it must not fall through to the host's active custom key                   |
+| Current API is selected                                               | Call host `generateRaw`; do not read or copy the host API key                                                               |
+| Timeout input is a finite seconds value                               | Clamp to the safe range in the UI and persist the corresponding integer milliseconds in `api_request_settings`              |
+| Timeout or retry input is blank/non-numeric                           | Let global request-settings normalization apply the safe default; never persist the raw UI string or copy it into a Profile |
 
 ### 5. Good / Base / Bad Cases
 
@@ -431,7 +561,10 @@ through `options.requestSettings`.
 ```js
 // Wrong: reads a Secret into the extension and persists it with the Profile.
 const key = await secretStore.get(profile.secret_ref);
-await saveGlobalSettings({...settings, api_profiles: {...profile, api_key: key}});
+await saveGlobalSettings({
+  ...settings,
+  api_profiles: { ...profile, api_key: key },
+});
 ```
 
 #### Correct
@@ -440,9 +573,9 @@ await saveGlobalSettings({...settings, api_profiles: {...profile, api_key: key}}
 // Correct: write once, persist only the opaque reference, and let the host
 // resolve it while proxying the request.
 const secretRef = await secretStore.write(passwordInput.value);
-await profileStore.saveProfile({...formData, secret_ref: secretRef});
+await profileStore.saveProfile({ ...formData, secret_ref: secretRef });
 await context.ChatCompletionService.processRequest({
-  chat_completion_source: 'custom',
+  chat_completion_source: "custom",
   custom_url: profile.api_url,
   secret_id: profile.secret_ref,
 });
@@ -454,7 +587,7 @@ const requestSettings = await profileStore.saveApiRequestSettings({
   timeout: timeoutSeconds * 1000,
   retry_count: retryCount,
 });
-await callOpenAICompatible(profile, messages, {requestSettings});
+await callOpenAICompatible(profile, messages, { requestSettings });
 ```
 
 ## World Model Species / Biological Type Contract
@@ -552,18 +685,18 @@ species[].biological_types[].capabilities
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Top-level `biological_types` is present | Throw `WORLD_MODEL_INVALID`; never guess a species owner |
-| Strict response has no `species` array or a species has no `biological_types` array | Throw `WORLD_MODEL_INVALID` |
-| Species has a `capabilities` field | Drop it during normalization; never persist species-level capabilities |
-| Type name is outside any familiar sex list | Accept it as an open type name and keep capability values evidence-based |
-| Capability or non-human rule evidence is missing | Normalize that individual field to `null` |
-| Non-human capability is only absent, unobserved, unrecorded, or pseudo-pregnancy evidence | Keep the capability `null`; do not infer `false` |
-| Non-human capability has explicit same-type inability evidence | Allow that individual capability to be `false` |
-| AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered |
-| AI analysis returns a rule that conflicts with a `false` capability | Clear only the conflicting downstream reproduction rule after the evidence guard |
-| Capability is `null` while a reproduction rule has direct evidence | Preserve the rule; do not infer `false` |
+| Condition                                                                                  | Result                                                                           |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Top-level `biological_types` is present                                                    | Throw `WORLD_MODEL_INVALID`; never guess a species owner                         |
+| Strict response has no `species` array or a species has no `biological_types` array        | Throw `WORLD_MODEL_INVALID`                                                      |
+| Species has a `capabilities` field                                                         | Drop it during normalization; never persist species-level capabilities           |
+| Type name is outside any familiar sex list                                                 | Accept it as an open type name and keep capability values evidence-based         |
+| Capability or non-human rule evidence is missing                                           | Normalize that individual field to `null`                                        |
+| Non-human capability is only absent, unobserved, unrecorded, or pseudo-pregnancy evidence  | Keep the capability `null`; do not infer `false`                                 |
+| Non-human capability has explicit same-type inability evidence                             | Allow that individual capability to be `false`                                   |
+| AI returns an unsupported familiar biological type, species-unlinked type, or dual unknown | Remove it from analysis output; manual editing is not filtered                   |
+| AI analysis returns a rule that conflicts with a `false` capability                        | Clear only the conflicting downstream reproduction rule after the evidence guard |
+| Capability is `null` while a reproduction rule has direct evidence                         | Preserve the rule; do not infer `false`                                          |
 
 ### 5. Good / Base / Bad Cases
 
@@ -621,13 +754,17 @@ species[].biological_types[].capabilities
 
 ```js
 {
-  species: [{
-    name: '人类',
-    biological_types: [{
-      name: '男性',
-      capabilities: {can_produce_sperm: null, can_carry_pregnancy: null}
-    }]
-  }]
+  species: [
+    {
+      name: "人类",
+      biological_types: [
+        {
+          name: "男性",
+          capabilities: { can_produce_sperm: null, can_carry_pregnancy: null },
+        },
+      ],
+    },
+  ];
 }
 ```
 
@@ -677,14 +814,14 @@ extractWorldModelSection(form, section)
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Unknown section key | Reject the UI action; do not mutate the model |
-| Save a type-level section | Replace only the selected type's matching key |
-| Save a world-level section | Replace only `medical_context`, `exceptions`, or `unknowns` |
-| Save normalization or Chat persistence fails | Keep old model and current draft; show a safe notice |
-| `last_saved_at` / `last_saved_by` is absent | Do not add either property |
-| Dirty draft and type/section switch | Ask for confirmation before discarding |
+| Condition                                    | Result                                                      |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Unknown section key                          | Reject the UI action; do not mutate the model               |
+| Save a type-level section                    | Replace only the selected type's matching key               |
+| Save a world-level section                   | Replace only `medical_context`, `exceptions`, or `unknowns` |
+| Save normalization or Chat persistence fails | Keep old model and current draft; show a safe notice        |
+| `last_saved_at` / `last_saved_by` is absent  | Do not add either property                                  |
+| Dirty draft and type/section switch          | Ask for confirmation before discarding                      |
 
 ### 5. Good / Base / Bad Cases
 
@@ -710,13 +847,18 @@ extractWorldModelSection(form, section)
 
 ```js
 // Wrong: replace all sections from a page-wide draft.
-await runtime.store.saveChat(chatId, {...chat, world_model: pageDraft});
+await runtime.store.saveChat(chatId, { ...chat, world_model: pageDraft });
 ```
 
 ```js
 // Correct: clone and replace one selected section before saving.
-const nextModel = applyWorldModelSection(currentModel, section, draft, selection);
-await runtime.store.saveChat(chatId, {...chat, world_model: nextModel});
+const nextModel = applyWorldModelSection(
+  currentModel,
+  section,
+  draft,
+  selection,
+);
+await runtime.store.saveChat(chatId, { ...chat, world_model: nextModel });
 ```
 
 ## Recent Story Regex Collection
@@ -769,14 +911,14 @@ applyRecentStoryRegex(content, rules)
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| `/pattern/flags` omits `g` | Add `g` before compiling |
-| Invalid pattern or flags | Skip that rule; preserve other processing |
-| Only cleaning rules remain | Return cleaned, trimmed floor text |
-| A floor becomes empty after processing | Omit that floor from `recent_story.items` |
-| Global settings contain an empty rule or non-rule field | Ignore the empty global rule and discard all non-rule fields; never persist Chat read controls at extension level |
-| Existing Chat-local rules are loaded after adding global rules | Keep them Chat-local and execute them after global rules; never rewrite them as global |
+| Condition                                                      | Result                                                                                                            |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `/pattern/flags` omits `g`                                     | Add `g` before compiling                                                                                          |
+| Invalid pattern or flags                                       | Skip that rule; preserve other processing                                                                         |
+| Only cleaning rules remain                                     | Return cleaned, trimmed floor text                                                                                |
+| A floor becomes empty after processing                         | Omit that floor from `recent_story.items`                                                                         |
+| Global settings contain an empty rule or non-rule field        | Ignore the empty global rule and discard all non-rule fields; never persist Chat read controls at extension level |
+| Existing Chat-local rules are loaded after adding global rules | Keep them Chat-local and execute them after global rules; never rewrite them as global                            |
 
 ### 5. Good / Base / Bad Cases
 
@@ -817,6 +959,6 @@ for (const rule of rules) text = applyOneRule(text, rule);
 
 ```js
 const cleaned = applyAllExclusions(floorText, excludeRules);
-const parts = extractRules.flatMap(rule => extractAll(cleaned, rule));
-return parts.join('\n');
+const parts = extractRules.flatMap((rule) => extractAll(cleaned, rule));
+return parts.join("\n");
 ```
