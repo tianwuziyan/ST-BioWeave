@@ -232,7 +232,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 </div>
 ~~~
 
-详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。日期下方的相对时间只允许读取 `story_time.normalized` 这样的规范日期，不解析展示文案。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态仍按原业务语义显示。
+详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。日期下方的相对时间只允许读取 `story_time.normalized` 这样的规范日期，不解析展示文案。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态只表示能力待确认；后台 pending candidate 不在普通人物列表中，也不能被 UI 显示为 confirmed eligible。
 
 ## 事件页面格式
 

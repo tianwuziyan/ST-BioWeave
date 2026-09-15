@@ -106,7 +106,7 @@ Event Persona 必须先经过 sanitization 和 Secret redaction，再使用中�
 【{{user}} 的人物设定】
 ```
 
-Persona name 只用于显示，不作为稳定 `character_id`。Persona 中出现性别、外貌或身份文字时，也不能直接变成 reproductive capability；`unknown` 仍然是 unknown。
+Persona name 只用于显示，不作为稳定 `character_id`，也不是 participant whitelist 或扫描优先级。Persona 中出现性别、外貌或身份文字时，不能单独变成 reproductive capability；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability。Persona 可以与 Character Card、Worldbook、Narrative、Existing profile、稳定设定和其它一致生理/生殖事实一起作为上下文证据。证据不足时 `unknown` 仍然是 unknown，并由 Runtime 保留 pending candidate。
 
 ## 8. Message role contract
 
@@ -135,7 +135,8 @@ Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。�
 
 Event Analysis V1 的 Output Contract 允许一个 Target Floor Version 产生
 `0 / 1 / N` 个 BiologicalEvents。对于 pregnancy-related `sexual_activity`，Event
-granularity is per gestational subject：先识别本楼所有实际发生
+granularity is per gestational subject：先 exhaustive scan 整个 Target Floor，建立临时
+candidate 集合并收集全部实际发生
 conception-relevant exposure 的 gestational subject，再按 subject 分组。同一
 subject 的多个 actual exposure source 合并为一个 Event；不同 subject 必须输出
 不同 Event，即使时间、地点和 type 相同。每个该类 Event 必须有且仅有一个
@@ -145,6 +146,12 @@ source、在场人物或无 actual exposure 的参与者。同一 subject 在同
 最多一个 pregnancy-related sexual_activity Event；重复 subject 或非法
 subject/source 闭包由 parser/domain validator 拒绝，Runtime 不自动合并。
 
+收集完成后再逐 recipient 进行 identity、World Model species/type mapping、capability
+和 eligibility resolution；不得因 current user/Persona/current Character、已有 profile、
+首个 eligible 或某个 false/unknown recipient 提前结束。允许多条一致上下文支持
+biological identity；姓名、称谓、外貌、event_role、位置、主动/被动、社会身份、穿着或
+气质等单一弱线索不能独立决定 identity/capability，冲突或不足时保留 null/pending。
+
 同一 subject 的 sexual exposure、即时 symptoms、physical effects、直接身体反应
 和证据保持在同一 Event；其它真正独立的 `physical_symptom`、`medical_event` 或
 BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外貌/体质描写不自动
@@ -152,13 +159,14 @@ BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外
 
 对 pregnancy-related `sexual_activity`，每个 participant 都必须返回
 `biological_context: {species, biological_type}`；两个字段值只能是字符串或
-`null`，资料不足时不得猜测。`species` 取当前 World Model 对应人物的 species，
+`null`，资料不足时不得单一线索猜测。`species` 取当前 World Model 对应人物的 species，
 `biological_type` 取该 species 下稳定的生理/生殖分类。`reproductive_capabilities_used`
-必须先综合当前 World Model、已有 character profile、Character / Worldbook 与当前
-剧情证据，再逐项填写；event_role、性行为位置、主动/被动、姓名、外貌或 gender
-都不能替代生物身份证据。species/type 均为 `null` 且没有直接人物证据时，未知
-capability 必须保持 `null`，不输出凭空推导的完整 capability 套装。非 pregnancy
-Event 继续使用既有 participant 合同；不新增 `gender` 字段。
+必须先使用匹配 World Model species/type 的 baseline，再综合已有 character profile、
+Character / Persona / Worldbook 与当前剧情证据逐项填写；个体明确证据可覆盖或补充，
+未知保持 `null`。exposure recipient/source 和 `possible_conception` 由 World Model、
+species/type reproduction rules/capabilities 与 Narrative evidence 共同决定，不将任一
+现实物种、性别、解剖结构或单一现实生殖机制硬编码为通用要求。非 pregnancy Event
+继续使用既有 participant 合同；不新增 `gender` 字段。
 
 ## 9. Chinese semantic source labels
 

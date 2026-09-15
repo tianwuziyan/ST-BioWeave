@@ -141,6 +141,7 @@ test('global profile normalization removes API key values and emptyChat stays ch
   assert.equal(JSON.stringify(settings).includes('DO-NOT-PERSIST'), false)
   assert.equal('api_profiles' in emptyChat('chat-a'), false)
   assert.deepEqual(emptyChat('chat-a').tracking_subjects, {})
+  assert.deepEqual(emptyChat('chat-a').tracking_candidates, {})
 })
 test('providerless profile normalization uses a stable display fallback', () => {
   assert.equal(normalizeApiProfile({ api_url: 'https://api.example/v1', model: 'model-a' }).name, 'model-a')

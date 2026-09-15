@@ -271,7 +271,7 @@ test('manual analysis targets the current Floor and exposes observable status', 
   const data = await fixture.runtime.collectActiveBusinessData()
   assert.equal(data.active_event_count, 1)
   assert.equal(data.tracking_subject_count, 1)
-  assert.equal(data.tracking_decisions[0].eligible, true)
+  assert.equal(data.tracking_decisions[0].eligibility, 'eligible')
   fixture.runtime.destroy()
 })
 
@@ -349,6 +349,113 @@ test('generic API response with legacy source reaches Floor save, Registry, and 
   fixture.runtime.destroy()
 })
 
+test('Runtime persists pending candidates and re-evaluates them after a World Model update', async () => {
+  const abstractEvent = canonicalApiEvent({subjectId: 'subject_a', sourceId: 'source_a'})
+  abstractEvent.participants = abstractEvent.participants.map((participant, index) => ({
+    ...participant,
+    biological_context: {
+      species: 'species_alpha',
+      biological_type: index === 0 ? 'type_a' : 'type_b',
+    },
+    reproductive_capabilities_used: index === 0
+      ? {...participant.reproductive_capabilities_used, can_carry_pregnancy: null}
+      : participant.reproductive_capabilities_used,
+  }))
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [abstractEvent]}
+      },
+    },
+  })
+  await fixture.runtime.init()
+  await settle()
+  await fixture.runtime.refreshCurrentFloorAnalysis()
+
+  const pendingRegistry = await fixture.runtime.getTrackingRegistry()
+  assert.equal(pendingRegistry.tracking_subjects.subject_a, undefined)
+  assert.equal(pendingRegistry.tracking_candidates.subject_a.eligibility, 'pending')
+  const storedEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+  const pendingRecord = pendingRegistry.tracking_candidates.subject_a.exposure_records[0]
+  assert.equal(pendingRecord.event_id, storedEvent.event_id)
+  assert.equal(pendingRecord.source.floor, 3)
+  assert.equal(pendingRecord.story_time.display, storedEvent.story_time.display)
+
+  const chat = fixture.runtime.store.getChat('chat-runtime')
+  await fixture.runtime.store.saveChat('chat-runtime', {
+    ...chat,
+    world_model: {
+      schema_version: 1,
+      species: [{
+        name: 'species_alpha',
+        biological_types: [
+          {name: 'type_a', capabilities: {can_carry_pregnancy: true}},
+          {name: 'type_b', capabilities: {can_carry_pregnancy: false}},
+        ],
+      }],
+    },
+  })
+  await fixture.runtime.refreshTrackingRegistry('world-model-update')
+
+  const resolvedRegistry = await fixture.runtime.getTrackingRegistry()
+  assert.ok(resolvedRegistry.tracking_subjects.subject_a)
+  assert.equal(resolvedRegistry.tracking_subjects.subject_a.created_from_event_id, storedEvent.event_id)
+  assert.deepEqual(resolvedRegistry.tracking_candidates, {})
+  assert.equal('pregnant' in resolvedRegistry.tracking_subjects.subject_a, false)
+  assert.equal('conception_confirmed' in resolvedRegistry.tracking_subjects.subject_a, false)
+  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].event_id, storedEvent.event_id)
+  fixture.runtime.destroy()
+})
+
+test('Runtime re-evaluates a pending candidate after Event evidence updates its profile', async () => {
+  const abstractEvent = canonicalApiEvent({subjectId: 'subject_profile', sourceId: 'source_profile'})
+  abstractEvent.participants = abstractEvent.participants.map((participant, index) => ({
+    ...participant,
+    biological_context: {
+      species: 'species_alpha',
+      biological_type: index === 0 ? 'type_a' : 'type_b',
+    },
+    reproductive_capabilities_used: index === 0
+      ? {...participant.reproductive_capabilities_used, can_carry_pregnancy: null}
+      : participant.reproductive_capabilities_used,
+  }))
+  let analysisCount = 0
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        analysisCount += 1
+        const event = structuredClone(abstractEvent)
+        if (analysisCount > 1) {
+          event.participants[0].reproductive_capabilities_used.can_carry_pregnancy = true
+          event.participants[0].evidence.push({
+            kind: 'profile',
+            text: 'trusted profile capability fixture evidence',
+          })
+        }
+        return {events: [event]}
+      },
+    },
+  })
+  await fixture.runtime.init()
+  await settle()
+  await fixture.runtime.refreshCurrentFloorAnalysis()
+  assert.equal((await fixture.runtime.getTrackingRegistry()).tracking_candidates.subject_profile.eligibility, 'pending')
+
+  const firstEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+  await fixture.runtime.refreshCurrentFloorAnalysis()
+
+  const resolvedRegistry = await fixture.runtime.getTrackingRegistry()
+  assert.ok(resolvedRegistry.tracking_subjects.subject_profile)
+  assert.deepEqual(resolvedRegistry.tracking_candidates, {})
+  assert.equal(resolvedRegistry.tracking_subjects.subject_profile.created_from_event_id, firstEvent.event_id)
+  assert.equal(
+    fixture.runtime.store.getChat('chat-runtime').character_profiles.subject_profile.reproductive_capabilities.can_carry_pregnancy,
+    true,
+  )
+  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].event_id, firstEvent.event_id)
+  fixture.runtime.destroy()
+})
+
 test('narrative StoryTime keeps structured fields when persisted through Runtime', async () => {
   const event = {
     ...canonicalApiEvent(),
@@ -415,10 +522,12 @@ test('narrative StoryTime persists a formatted first-year display when time rema
 
 test('production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local', async () => {
   const firstEvent = canonicalApiEvent()
+  firstEvent.location = 'location_alpha'
   const secondEvent = canonicalApiEvent({
     subjectId: 'character_subject_b',
     sourceId: 'character_source_b',
   })
+  secondEvent.location = 'location_beta'
   let rawResponse = JSON.stringify({
     schema_version: 1,
     events: [firstEvent],
@@ -451,6 +560,8 @@ test('production analyzer accepts multi-Event force refresh and keeps exposure t
   assert.ok(subjectBEvent)
   assert.equal(subjectAEvent.event_id, previousId)
   assert.notEqual(subjectBEvent.event_id, subjectAEvent.event_id)
+  assert.equal(subjectAEvent.location, 'location_alpha')
+  assert.equal(subjectBEvent.location, 'location_beta')
   assert.deepEqual(subjectAEvent.pregnancy_relevance.counterpart_ids, ['character_source'])
   assert.deepEqual(subjectBEvent.pregnancy_relevance.counterpart_ids, ['character_source_b'])
   assert.deepEqual(
@@ -465,8 +576,49 @@ test('production analyzer accepts multi-Event force refresh and keeps exposure t
   const data = await fixture.runtime.collectActiveBusinessData()
   assert.equal(data.active_event_count, 2)
   assert.equal(data.tracking_subject_count, 2)
+  assert.deepEqual(Object.keys(data.tracking_subjects).sort(), ['character_subject', 'character_subject_b'])
+  assert.deepEqual(Object.keys(data.character_profiles).sort(), ['character_subject', 'character_subject_b'])
   assert.deepEqual(data.tracking_subjects.character_subject.exposure_event_ids, [subjectAEvent.event_id])
   assert.deepEqual(data.tracking_subjects.character_subject_b.exposure_event_ids, [subjectBEvent.event_id])
+  fixture.runtime.destroy()
+})
+
+test('invalid raw location response preserves the previous successful Event and Registry batch', async () => {
+  const firstEvent = canonicalApiEvent({subjectId: 'subject_a', sourceId: 'source_a'})
+  firstEvent.location = 'location_alpha'
+  const secondEvent = canonicalApiEvent({subjectId: 'subject_b', sourceId: 'source_b'})
+  secondEvent.location = {display: 'location_alpha'}
+  let rawResponse = JSON.stringify({schema_version: 1, events: [firstEvent]})
+  const fixture = createFixture({rawApiResponse: () => rawResponse})
+
+  await fixture.runtime.init()
+  await fixture.runtime.refreshCurrentFloorAnalysis()
+  const previousEvent = (await fixture.runtime.getCurrentFloorEvents())[0]
+
+  rawResponse = JSON.stringify({schema_version: 1, events: [firstEvent, secondEvent]})
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.message === 'EVENT_ANALYSIS_LOCATION_INVALID',
+  )
+
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus()
+  assert.equal(status.state, 'failed')
+  assert.equal(status.last_error, 'EVENT_ANALYSIS_LOCATION_INVALID')
+  assert.equal(status.error_code, 'EVENT_ANALYSIS_LOCATION_INVALID')
+  assert.deepEqual(status.current_floor_events.map(event => event.event_id), [previousEvent.event_id])
+
+  const events = await fixture.runtime.getCurrentFloorEvents()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].event_id, previousEvent.event_id)
+  assert.equal(events[0].location, 'location_alpha')
+  assert.deepEqual(events[0].pregnancy_relevance.gestational_subject_ids, ['subject_a'])
+
+  const data = await fixture.runtime.collectActiveBusinessData()
+  assert.deepEqual(Object.keys(data.tracking_subjects), ['subject_a'])
+  assert.deepEqual(Object.keys(data.character_profiles), ['subject_a'])
+  assert.equal(data.tracking_subjects.subject_b, undefined)
+  assert.equal(data.character_profiles.subject_b, undefined)
   fixture.runtime.destroy()
 })
 

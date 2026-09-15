@@ -127,15 +127,18 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /biological_context/);
   assert.match(prompt, /species/);
   assert.match(prompt, /biological_type/);
+  assert.match(prompt, /明确的?生理性别.*biological_type.*映射/);
+  assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /character profile/);
-  assert.match(prompt, /完整有效阻隔/);
-  assert.match(prompt, /破裂、脱落、摘除后/);
+  assert.match(prompt, /完整 Target Floor exhaustive scan/);
+  assert.match(prompt, /临时.*candidate/);
+  assert.match(prompt, /character_context.*whitelist|whitelist.*character_context/);
+  assert.match(prompt, /现实.*生殖机制/);
   assert.match(prompt, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
   assert.doesNotMatch(prompt, /全部实际参与者/);
   assert.match(prompt, /目标楼层：12/);
   assert.match(prompt, /Event source 由 Runtime 绑定/);
   assert.doesNotMatch(prompt, /Chat ID:/);
-  assert.doesNotMatch(prompt, /character_context/);
   assert.equal(JSON.stringify(messages).includes('DO-NOT-SEND'), false);
 });
 
@@ -314,7 +317,9 @@ test('Event parser accepts zero, one, and multiple Events while rejecting duplic
   const single = parseEventAnalysisResponse(response([event()]), floorVersion);
   assert.equal(single.events.length, 1);
 
+  const firstSubject = event({location: 'location_alpha'});
   const secondSubject = event({
+    location: 'location_beta',
     participants: [
       participant('character_subject_2', {event_role: 'potential_gestational_subject'}),
       participant('character_source_2', {event_role: 'potential_conception_source'}),
@@ -327,12 +332,13 @@ test('Event parser accepts zero, one, and multiple Events while rejecting duplic
       confidence: null,
     },
   });
-  const multiple = parseEventAnalysisResponse(response([event(), secondSubject]), floorVersion);
+  const multiple = parseEventAnalysisResponse(response([firstSubject, secondSubject]), floorVersion);
   assert.equal(multiple.events.length, 2);
   assert.deepEqual(multiple.events.map(item => item.pregnancy_relevance.gestational_subject_ids), [
     ['character_subject'],
     ['character_subject_2'],
   ]);
+  assert.deepEqual(multiple.events.map(item => item.location), ['location_alpha', 'location_beta']);
 
   const duplicateIds = parseEventAnalysisResponse(response([event({
     participants: [
@@ -367,6 +373,17 @@ test('Event parser accepts zero, one, and multiple Events while rejecting duplic
       && error?.diagnostic_path === '$.events[1].pregnancy_relevance.gestational_subject_ids'
       && error?.error_path === '$.events[1].pregnancy_relevance.gestational_subject_ids'
       && error?.message === 'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
+  );
+});
+
+test('Event parser accepts null location and rejects object location without compatibility normalization', () => {
+  const unknownLocation = parseEventAnalysisResponse(response([event({location: null})]), floorVersion);
+  assert.equal(unknownLocation.events[0].location, null);
+
+  assert.throws(
+    () => parseEventAnalysisResponse(response([event({location: {display: 'location_alpha'}})]), floorVersion),
+    error => error?.code === 'EVENT_ANALYSIS_INVALID'
+      && error?.message === 'EVENT_ANALYSIS_LOCATION_INVALID',
   );
 });
 
@@ -634,6 +651,10 @@ test('Event protected output contract exposes the exact Domain enums and scalar 
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /gestational_substance_intake/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /actual reproductive exposure chain/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /location 固定为 string \| null/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /\{"location": "location_alpha"\}/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /\{"location": null\}/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /禁止 \{"location": \{"display": "location_alpha"\}\}.*object\/array/);
 });
 
 test('AI Event DTO may omit identity and ignore only the legacy top-level source', () => {

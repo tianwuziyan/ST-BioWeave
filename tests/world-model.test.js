@@ -2979,6 +2979,8 @@ test('World Model prompt states the complete generic field semantic contract', (
   assert.match(prompt, /证据不足时保留 biological_types: \[\]/)
   assert.match(prompt, /五个 capability 逐字段独立举证/)
   assert.match(prompt, /true 需要明确具备证据、false 需要明确不具备证据/)
+  assert.match(prompt, /明确生理性别事实可以作为 biological_type 映射证据之一/)
+  assert.match(prompt, /生理性别事实.*不能单独授权 capability/)
   assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/)
   assert.match(prompt, /性交、体液\/能量交换、感染\/寄生、侵蚀\/异化/)
   assert.match(prompt, /lifecycle\.maturation 只描述生物成熟或生命阶段变化/)

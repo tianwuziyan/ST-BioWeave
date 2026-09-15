@@ -67,7 +67,7 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 ### 人物列表语义与进入条件
 
-人物列表不是当前 Chat 的全角色列表，只展示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通聊天角色、当前主卡角色、出现过的名字和仅被事件提及的参与者不会自动进入列表。
+人物列表不是当前 Chat 的全角色列表，只展示当前 Chat 中 `eligibility: "eligible"` 的 active Tracking Subjects。普通聊天角色、当前主卡角色、出现过的名字和仅被事件提及的参与者不会自动进入列表；有 exposure 但能力未知的 recipient 保留在后台 `tracking_candidates` pending 中。
 
 创建或更新 Subject 必须同时有：
 
@@ -76,7 +76,7 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 3. World Model 与 Narrative Evidence 对相关 reproductive capability 提供支持；
 4. 本次事件存在实际受孕暴露可能。
 
-`gender`、攻受/receiver 文本、姓名、代词和 UI 选择都不能替代上述判断。`true`、`false`、`null` 三态 capability 必须保留；`null` 表示 unknown，不能自动变成 `true`。非 NSFW、没有受孕暴露、能力未知或明确不具备承载能力的 Event 都不能建立 Subject；NSFW 本身、症状或猜测也不能自动变成 conception / pregnancy。一个 Event 可以产生 0、1 或多个 Subject；一个 Subject 可以累积多个 exposure Event。
+`gender`、攻受/receiver 文本、姓名、代词和 UI 选择都不能替代上述判断。`true`、`false`、`null` 三态 capability 必须保留；`null` 表示当前未知，不能在当前解析中被当作 `true` 或 `false`，但后续可信 World Model/profile/narrative evidence 更新可以重评 pending candidate。非 NSFW、没有受孕暴露或明确不具备承载能力的 Event 不建立 Subject；能力未知的有效 exposure 保存为 pending candidate；NSFW 本身、症状或猜测也不能自动变成 conception / pregnancy。一个 Event 可以产生 0、1 或多个 Subject；一个 Subject 可以累积多个 exposure Event。
 
 ### BiologicalEvent：完整事实的单一来源
 
@@ -126,9 +126,9 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
 | `story_time` | 结构化故事时间，不能只保存展示字符串。 |
 
-`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。对妊娠相关 `sexual_activity`，完整有效阻隔未进入有效路径、体外或其它无有效路径的排出、仅插入和仅身体接触都不产生妊娠相关参与者；保护动作只是证据，最终实际暴露结果优先，破裂、脱落或摘除后实际进入有效路径时才保留对应 source。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`，不由名称、外貌或 event_role 补全。`reproductive_capabilities_used` 必须先依据当前 World Model、已有 character profile 与 Character / Worldbook / 当前剧情证据判断；若没有直接人物证据，未知 capability 保持 `null`。
+`event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。实际 exposure recipient/source 与 `possible_conception` 必须由当前 World Model、匹配 species/type 的 reproduction rules/capabilities 和 Narrative evidence 共同决定；不能把任何现实物种、性别、解剖结构、行为位置或单一现实生殖机制硬编码成所有世界的必要条件。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`。AI 可综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体/生理/生殖事实和多条一致上下文进行映射；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability；名称、称谓、外貌、event_role、位置、主动/被动或社会身份等单一弱线索不能单独补全 identity/capability，证据冲突或不足时保持 `null` 并进入 pending。`reproductive_capabilities_used` 必须先依据当前 World Model baseline，再结合已有 character profile 与 Character / Persona / Worldbook / 当前剧情证据判断；个体明确值可覆盖或补充 baseline，未知 capability 保持 `null`。
 
-`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、真实受孕暴露和有效 Event 共同满足时，相关参与者才能成为 gestational Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
+`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、实际 pregnancy-relevant exposure 和有效 Event 共同满足时，相关参与者才能成为 `eligible` gestational Subject；明确 `false` 为 `ineligible`，`null`/无法确认必须保存为 `pending` candidate，不能当作 reject 后丢失。`can_be_fertilized === true` 不能单独授权 Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测也不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
 
 `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。对 pregnancy-related `sexual_activity`，`gestational_subject_ids[]` 严格只有一个 ID，`counterpart_ids[]` 至少一个且去重，是 `participants[]` 的 subject-local 子集，只记录最终实际造成该 subject conception-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
 
@@ -193,7 +193,7 @@ Story Time 采用结构化 DTO：
 
 ### Tracking Subject Registry
 
-Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的唯一来源。Subject 的索引形状如下：
+Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的唯一来源。`tracking_subjects` 只保存当前已确认具备承孕能力的 eligible Subject；能力未知的 exposure recipient 不进入人物列表，而保存在独立的 `tracking_candidates`。Subject 的索引形状如下：
 
 ```json
 {
@@ -209,13 +209,38 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 }
 ```
 
-`created_from_event_id` 与 `exposure_event_ids[]` 必须指向当前有效 Event；Registry 重建时去重并清理 dangling 引用。同一角色多次事件复用同一个 Subject 并累积多个 exposure 引用；pregnancy-related `sexual_activity` 的单个 Event 只关联一个 gestational Subject，其它非 pregnancy Event 是否关联 Subject 仍由既有 Domain/Tracking 规则决定。只有真正进入 Tracking 的角色才建立必要的 `character_profiles` 最小资料或证据摘要；这些资料不替代历史 Event，也不复制完整事实，普通聊天角色不进入通用生理数据库。
+`created_from_event_id` 与 `exposure_event_ids[]` 必须指向当前有效 Event；Registry 重建时去重并清理 dangling 引用。同一角色多次事件复用同一个 Subject 并累积多个 exposure 引用；pregnancy-related `sexual_activity` 的单个 Event 只关联一个 gestational Subject，其它非 pregnancy Event 是否关联 Subject 仍由既有 Domain/Tracking 规则决定。eligible Subject 与 pending candidate 可建立必要的 `character_profiles` 最小资料或证据摘要；这些资料不替代历史 Event，也不复制完整事实，普通聊天角色不进入通用生理数据库。
+
+Registry rebuild 必须先 exhaustive scan 当前全部有效 Floor Event，收集所有 actual pregnancy-relevant exposure recipient，再逐 recipient 做 identity、World Model mapping、capability 和 eligibility resolution；不能因 Persona/current user、已有 profile、首个 eligible 或某个 false/unknown recipient 提前停止。`can_carry_pregnancy === true` 为 `eligible` 并进入 `tracking_subjects`，明确 `false` 为 `ineligible` 且不进入任何 active Registry，`null`/未知为 `pending` 并进入 `tracking_candidates`。`can_be_fertilized === true` 不能单独授权承孕追踪。
+
+`tracking_candidates` 的最小形状如下；它保留原始 exposure Event ID、Story Time、authoritative Floor/Swipe Source Version、当前 identity、resolved capabilities 与 evidence，供可信 World Model/profile/narrative 更新后重评：
+
+```json
+{
+  "tracking_candidates": {
+    "subject_pending": {
+      "character_id": "subject_pending",
+      "exposure_event_ids": ["evt_pending"],
+      "exposure_records": [{
+        "event_id": "evt_pending",
+        "story_time": {},
+        "source": {}
+      }],
+      "eligibility": "pending",
+      "species": null,
+      "biological_type": null,
+      "reproductive_capabilities": {},
+      "evidence": []
+    }
+  }
+}
+```
 
 没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
 
-`BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者在 `sexual_activity` 中只记录 actual reproductive exposure chain 的直接参与者，其中 `counterpart_ids[]` 标记实际 exposure source；后者只表示 Core 根据受孕暴露、事件相关性和生殖能力计算后正式进入追踪流程的角色。参与者的 profile 存在也不代表该角色是 Tracking Subject。
+`BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者在 `sexual_activity` 中只记录 actual reproductive exposure chain 的直接参与者，其中 `counterpart_ids[]` 标记实际 exposure source；后者只表示 Core 根据受孕暴露、事件相关性和 `can_carry_pregnancy` 三态能力解析后正式进入追踪流程的 eligible 角色。pending recipient 只进入 `tracking_candidates`，参与者的 profile 存在也不代表该角色是 Tracking Subject。
 
-`explainTrackingDecision(event)` 与正式 Registry 构建共享同一条 Core 判定路径，返回 `{character_id, eligible, reasons[]}`。Reason code 只用于 Core、Runtime 的诊断、Debug 或 Analysis Detail，例如 `CAN_CARRY_PREGNANCY_UNKNOWN`、`POSSIBLE_CONCEPTION_FALSE` 或 `NOT_GESTATIONAL_SUBJECT`；它不是第二套 eligibility 规则，也不是人物实体，普通 Characters UI 不读取或展示这些诊断。
+`explainTrackingDecision(event, previousChat?)` 与正式 Registry 构建共享同一条 Core 判定路径，返回 `{character_id, eligibility, reasons[]}`，其中 `eligibility` 为 `eligible | pending | ineligible`。Reason code 只用于 Core、Runtime 的诊断、Debug 或 Analysis Detail，例如 `CAN_CARRY_PREGNANCY_UNKNOWN`、`POSSIBLE_CONCEPTION_FALSE` 或 `NOT_GESTATIONAL_SUBJECT`；它不是第二套 eligibility 规则，也不是人物实体，普通 Characters UI 不读取或展示这些诊断。eligible/pending 都不代表 actual conception 或 pregnancy。
 
 Product UI（Overview、Characters、Character Detail、Events）只显示用户可读的业务
 投影和明确空状态，不渲染 `event_id`、`character_id`、`source`、Floor Version、

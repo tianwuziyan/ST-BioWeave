@@ -28,11 +28,11 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 ### 人物列表与 Tracking Subject
 
-人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中已经进入妊娠相关追踪流程的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表。对 `sexual_activity`，`BiologicalEvent.participants[]` 只记录 actual reproductive exposure chain 的直接参与者，不等于 Tracking Subject；Character Profile 也不等于人物列表实体。
+人物列表不是当前 Chat 的全角色列表，只显示当前 Chat 中 `eligibility: "eligible"` 的 active Tracking Subjects。普通出场角色、当前主卡角色、只有姓名的参与者和 capability 为 unknown 的参与者不会因为出现在 Chat 中就进入列表；unknown/无法确认的 exposure recipient 由 Runtime 保存在后台 `tracking_candidates`，状态为 pending。对 `sexual_activity`，`BiologicalEvent.participants[]` 只记录 actual reproductive exposure chain 的直接参与者，不等于 Tracking Subject；Character Profile 也不等于人物列表实体。
 
 进入列表由业务层依据 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定；UI 只接收并展示 Registry 结果，不根据 gender、攻受/receiver、姓名、参与者文本或 NSFW 标记二次推导资格。
 
-没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision reason code（例如 `CAN_CARRY_PREGNANCY_UNKNOWN`）只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
+没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 eligible Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。pending candidate 不在普通人物列表中，也不应被显示为 confirmed eligible。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision 的三态 `eligibility` 与 reason code 只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
 人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
 

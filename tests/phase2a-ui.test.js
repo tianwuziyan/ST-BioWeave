@@ -68,7 +68,7 @@ test('characters page distinguishes not analyzed from analyzed with zero subject
       active_event_count: 1,
       sexual_activity_count: 1,
       tracking_subject_count: 0,
-      tracking_decisions: [{character_id: 'char-a', eligible: false, reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN']}],
+      tracking_decisions: [{character_id: 'char-a', eligibility: 'pending', reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN']}],
     },
   });
   assert.match(analyzed, /当前没有需要事件追踪的角色。/);
@@ -111,8 +111,8 @@ test('characters page only enumerates tracking subjects and ignores diagnostic d
     analysisStatus: {
       state: 'success',
       tracking_decisions: [
-        {character_id: 'character_source', eligible: false, reasons: ['CAN_CARRY_PREGNANCY_FALSE']},
-        {character_id: 'character_other', eligible: false, reasons: ['NOT_SEXUAL_ACTIVITY']},
+        {character_id: 'character_source', eligibility: 'ineligible', reasons: ['CAN_CARRY_PREGNANCY_FALSE']},
+        {character_id: 'character_other', eligibility: 'ineligible', reasons: ['NOT_SEXUAL_ACTIVITY']},
       ],
     },
   });
@@ -120,6 +120,23 @@ test('characters page only enumerates tracking subjects and ignores diagnostic d
   assert.match(html, /subject_display/);
   assert.doesNotMatch(html, /source_display|other_display/);
   assert.doesNotMatch(html, /Tracking Decision 诊断|CAN_CARRY_PREGNANCY_FALSE|NOT_SEXUAL_ACTIVITY/);
+});
+
+test('characters page renders every supplied tracking subject', () => {
+  const html = charactersPage({
+    trackingSubjects: [
+      {character_id: 'subject_a', display_name: 'subject_a_display', exposure_event_ids: ['event_a'], status: 'active'},
+      {character_id: 'subject_b', display_name: 'subject_b_display', exposure_event_ids: ['event_b'], status: 'active'},
+    ],
+    characterProfiles: {
+      subject_a: {character_id: 'subject_a', display_name: 'subject_a_display'},
+      subject_b: {character_id: 'subject_b', display_name: 'subject_b_display'},
+    },
+  });
+
+  assert.equal((html.match(/class="bioweave-card bioweave-character-row/g) ?? []).length, 2);
+  assert.match(html, /subject_a_display/);
+  assert.match(html, /subject_b_display/);
 });
 
 test('events page distinguishes not analyzed from analyzed with zero events', () => {

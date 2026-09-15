@@ -474,6 +474,14 @@ export function normalizeTrackingSubjects(raw) {
   return cloneValue(raw);
 }
 
+// Pending exposure recipients use the same Chat-local persistence boundary as
+// Tracking Subjects.  Keep the normalizer deliberately shape-preserving so a
+// later trusted World Model/profile refresh can re-evaluate the saved evidence.
+export function normalizeTrackingCandidates(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return cloneValue(raw);
+}
+
 export function emptyChat(chatId) {
   return {
     schema_version: SCHEMA_VERSION,
@@ -482,6 +490,7 @@ export function emptyChat(chatId) {
     world_model_meta: null,
     character_profiles: {},
     tracking_subjects: {},
+    tracking_candidates: {},
     relationships: [],
     settings: cloneValue(DEFAULT_SETTINGS),
     index: {snapshot_floors: [], last_processed_floor: null},

@@ -127,6 +127,34 @@ test('tracking registry writes retain Chat scope and secret sanitization',async(
   assert.deepEqual(adapter.metadata.bioweave.chat_scope,{chat_id:'chat-a'});
 });
 
+test('tracking candidate storage round-trips pending evidence without changing Floor storage',async()=>{
+  const adapter=createAdapter();
+  const store=createStore(adapter,createChatBoundary(adapter));
+  await store.saveChat('chat-a',{
+    chat_scope:{chat_id:'chat-a'},
+    tracking_subjects:{},
+    tracking_candidates:{
+      subject_pending:{
+        character_id:'subject_pending',
+        exposure_event_ids:['evt-pending'],
+        exposure_records:[{
+          event_id:'evt-pending',
+          story_time:{day_index:10,precision:'day'},
+          source:{chat_id:'chat-a',floor:10,swipe_id:2},
+        }],
+        eligibility:'pending',
+        species:'species_alpha',
+        biological_type:'type_a',
+        reproductive_capabilities:{can_carry_pregnancy:null},
+        evidence:['pending evidence'],
+      },
+    },
+  });
+  assert.equal(store.getTrackingCandidates('chat-a').subject_pending.eligibility,'pending');
+  assert.equal(store.getTrackingCandidates('chat-a').subject_pending.exposure_records[0].source.swipe_id,2);
+  assert.deepEqual(adapter.metadata.bioweave.tracking_candidates.subject_pending.exposure_event_ids,['evt-pending']);
+});
+
 test('runtime registry refresh scans current Floor facts without requesting AI',async()=>{
   const adapter=createAdapter();
   adapter.message.swipe_id=0;

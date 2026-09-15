@@ -17,8 +17,8 @@ duplicates the Event fact.
 - `normalizeEvent(raw) -> BiologicalEvent`
 - `validateEvent(event) -> {ok, errors}`
 - `validateEventCollection(events) -> {ok, errors}`
-- `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, character_profiles}`
-- `explainTrackingDecision(event) -> Array<{character_id, eligible, reasons[]}>`
+- `rebuildTrackingRegistry(events, previousChat) -> {tracking_subjects, tracking_candidates, character_profiles}`
+- `explainTrackingDecision(event, previousChat?) -> Array<{character_id, eligibility, reasons[]}>`, where `eligibility` is `eligible | pending | ineligible`
 - `getActiveFloorEvents(floorData, floorVersion) -> BiologicalEvent[]`
 - `createEventAnalysisCoordinator(deps) -> EventAnalysisRuntimeAPI`
 - `runtime.analyzeCurrentFloor({force = false}) -> AnalysisResult`
@@ -152,8 +152,8 @@ Every persisted, accepted Domain Event has:
   `negated`, or `fictional` statuses;
 - structured `story_time` with `display`, `normalized`, `calendar_id`,
   `day_index`, `provider`, `precision`, and `confidence`;
-- `location`, `participants[]`, `pregnancy_relevance`, `source_evidence`,
-  and a complete Floor/Swipe `source`;
+- scalar `location` (`string | null`), `participants[]`,
+  `pregnancy_relevance`, `source_evidence`, and a complete Floor/Swipe `source`;
 - for `possible_conception: true`, `relevant: true`, non-empty
   participant-backed subject/source arrays, and a
   `source_evidence` item whose `kind` is
@@ -166,21 +166,31 @@ For a pregnancy-related `sexual_activity` AI participant, `biological_context`
 is required and must contain `species` and `biological_type`, each a string or
 `null`. `species` comes from the participant's current World Model identity;
 `biological_type` is the stable physiological/reproductive classification under
-that species. Missing evidence uses `null`; no `gender` field is added and no
-identity or capability is inferred from event role, position, active/passive
-labels, name, or appearance. Capability evaluation first uses the current World
-Model, existing character profile, and Character/Worldbook/current narrative
-evidence. Without direct character evidence, unknown capabilities remain
-`null`. Non-pregnancy Events retain the existing optional participant context
-compatibility.
+that species. The Analyzer may combine Character Card, Persona, Worldbook,
+narrative, existing profile, stable setting, body/physiology/reproductive facts,
+and multiple consistent context clues to map an object to the current World
+Model. An explicit physiological-sex fact may be one piece of evidence for
+mapping `biological_type`, but it does not by itself authorize any capability.
+A name, title, event role, position, active/passive label, social role,
+clothing, demeanor, or one appearance clue is never sufficient by itself.
+Insufficient or conflicting evidence remains `null` and the recipient remains
+pending rather than disappearing. No `gender` field is added. Capability
+evaluation uses the current World Model baseline first, then existing profile
+and individual Character/Persona/Worldbook/current narrative evidence; explicit
+individual values may override or complete the baseline, while unknown values
+remain `null`. Non-pregnancy Events retain the existing optional participant
+context compatibility.
 
 For `sexual_activity`, `counterpart_ids[]` is a subset of `participants[]`
-containing only actual exposure source IDs. A sexual activity with no
+containing only actual exposure source IDs. Whether an interaction is an actual
+pregnancy-relevant exposure is determined by the current World Model,
+species/type reproductive rules, and narrative evidence; no one real-world
+species, gender, anatomy, behavior position, contact mode, or reproductive
+mechanism is a universal requirement. A sexual activity with no
 conception-relevant exposure, if retained at all, has no participants, uses
 `relevant: false`, `possible_conception: false`, and empty subject/source
-arrays. A valid barrier with no exposure, external/no-path outcome,
-insertion-only, and contact-only cases follow that shape. Barrier/protection
-actions are evidence; the final actual exposure outcome controls the Event.
+arrays. `possible_conception` expresses potential relevance only, not actual
+conception or pregnancy. Exposure/source evidence controls the Event.
 `physical_effect.gestational_substance_intake`,
 when present, is only `true`, `false`, or `null`; `true` requires the same
 canonical exposure evidence marker.
@@ -204,6 +214,20 @@ An active subject stores only stable references and display/profile indexes:
 The registry is rebuilt from currently active Floor-bound Events. Dangling
 Event IDs are removed. Historical sanitized profile data may remain after the
 active subject has no exposure, but it is not displayed as an active subject.
+The rebuild first exhaustively collects every exposure recipient from the full
+active Event collection, then resolves each recipient independently. It must
+not stop at the current user/Persona, a current Character Card, an existing
+profile, the first eligible recipient, or a false/unknown recipient.
+
+`tracking_subjects` contains only recipients whose resolved
+`can_carry_pregnancy` is `true`. A resolved `false` is `ineligible` and enters
+neither active registry. A `null` or unresolved value is `pending` and is saved
+in the separate `tracking_candidates` map with `character_id`, exposure Event
+IDs, each original Event `story_time` and authoritative Floor/Swipe `source`,
+resolved identity, capabilities, and evidence. Candidate records are rebuilt
+and re-evaluated after trusted World Model/profile/narrative updates; a
+transition to `eligible` keeps the original Event reference and a transition
+to `ineligible` removes only the registry index, never the historical Event.
 
 ### UI boundary
 
@@ -254,15 +278,16 @@ later Floors.
 `EventAnalysisBusinessDTO.analysis_status` contains `state`, `busy`,
 `current_floor`, `floor_version`, `attempt`, `last_success`, `last_error`,
 `event_count`, `active_event_count`, `sexual_activity_count`,
-`tracking_subject_count`, `current_floor_events`, `active_events`,
-`tracking_decisions`, and `registry_summary`. Current-Floor counts and Chat-wide
-active counts are distinct. Raw AI responses, request bodies, headers, and
-secrets are not persisted for diagnostics. `running` is transient execution
-state, not a persisted historical result. Terminal diagnostics expose
-`error_stage`, `error_code`, `safe_error_summary`, `started_at`, and
-`finished_at`; a failed force refresh keeps `last_success` and its valid
-Events. `cancelled` uses `REQUEST_ABORTED` and is informational rather than an
-API/schema failure.
+`tracking_subject_count`, `tracking_candidate_count`, `current_floor_events`,
+`active_events`, `tracking_decisions`, and `registry_summary`. Current-Floor
+counts and Chat-wide active counts are distinct. `tracking_decisions` exposes
+the same three-state `eligibility` contract as Core; pending is never rendered
+as confirmed eligible. Raw AI responses, request bodies, headers, and secrets
+are not persisted for diagnostics. `running` is transient execution state, not
+a persisted historical result. Terminal diagnostics expose `error_stage`,
+`error_code`, `safe_error_summary`, `started_at`, and `finished_at`; a failed
+force refresh keeps `last_success` and its valid Events. `cancelled` uses
+`REQUEST_ABORTED` and is informational rather than an API/schema failure.
 
 ## 4. Validation & Error Matrix
 
@@ -283,7 +308,9 @@ API/schema failure.
 | `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |
 | Invalid `physical_effect.gestational_substance_intake` shape | Reject with a safe field path; only boolean/null is accepted |
 | Incomplete or mismatched Floor Version source | Bind to the authoritative version or reject before storage; stale Events are inactive |
-| `can_carry_pregnancy: null` | Never create a Tracking Subject |
+| `can_carry_pregnancy: true` | Create an active Tracking Subject |
+| `can_carry_pregnancy: false` | Keep the recipient out of active subjects and pending candidates |
+| `can_carry_pregnancy: null` or unresolved identity/capability | Persist a `pending` tracking candidate; do not create a Subject |
 | NSFW without `relevant === true` and `possible_conception === true` | Create zero Tracking Subjects |
 | Floor deletion or inactive Swipe | Event is absent from active reads; rebuild removes dangling references |
 | Analysis failure after prior success | Keep the prior successful Events and record the failed attempt |
@@ -310,10 +337,10 @@ API/schema failure.
 - Good: one sexual Event has a direct gestational subject, one or more actual
   source IDs, and the canonical exposure evidence marker; one subject
   references that Event.
-- Good: intact barrier, external/no-path outcome, insertion-only, and
-  contact-only cases remain valid unrelated Events with empty relevance IDs;
-  barrier failure/removal that reaches a valid exposure path retains only the
-  actual source IDs.
+- Good: interactions that do not satisfy the current World Model's effective
+  reproductive path remain unrelated Events with empty relevance IDs; an
+  interaction supported by the current species/type rules and narrative
+  evidence retains only its actual source IDs.
 - Good: one Floor response emits two subject-local sexual Events for two explicit
   gestational subjects; each Registry subject references only its own Event and
   counterpart sources remain local to that Event.
@@ -324,7 +351,8 @@ API/schema failure.
   coordinator and performs interval-eligible analysis.
 - Base: a non-sexual BiologicalEvent passes the same envelope and remains
   available to the shared Event system without creating a subject.
-- Base: unknown capability stays `null` and is shown as unknown where exposed.
+- Base: unknown capability stays `null`, is persisted as a `pending` candidate
+  when an exposure exists, and is never shown as confirmed eligible.
 - Good: `霜月初七`, `中秋节`, and an unregistered era label resolve through the
   shared alias/parser path; the sample labels are test data, not production
   branches.
@@ -377,8 +405,8 @@ API/schema failure.
   select the correct Floor Version, and status DTOs distinguish zero Events
   from no analysis.
 - Diagnostic assertions that `eligibleGestationalSubjects()` and
-  `explainTrackingDecision()` share the same decision path and unknown carrying
-  capability remains ineligible.
+  `explainTrackingDecision()` share the same decision path, while unknown
+  carrying capability is `pending` and never enters the eligible selector.
 - Date assertions for all fixed month aliases and festival aliases, longest
   matching, Chinese numerals, full Chinese year/month/day forms, open era labels,
   formal custom month names, invalid Gregorian/custom dates, relative-day

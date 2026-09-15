@@ -60,7 +60,7 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 
 1. **以当前 Chat 为一级作用域**：聊天切换会重置运行时焦点和异步边界，避免把 A Chat 的状态写入 B Chat。
 2. **World Model 结构化分析**：按 species → biological_types 保存开放的生物分类，不把男性、女性或“双性”写死成 UI 选项。
-3. **证据边界与未知值**：没有资料支持的能力保持 null，界面显示为“未知”，不会把未知误判为“否”；人类 baseline 与非人类证据分开处理。
+3. **证据边界与未知值**：没有资料支持的能力保持 null，界面显示为“未知”，不会把未知误判为“否”；有效 exposure 的未知候选保留为 pending，后续可信证据可重评；人类 baseline 与非人类证据分开处理。
 4. **可控的 AI 输入**：选择角色卡字段、世界书条目、最近剧情楼层和可用的公开记忆来源，生成可预览的 AnalysisInput。
 5. **Phase 2A 追踪边界**：人物列表只显示已进入妊娠相关流程的 Tracking Subjects，不是当前 Chat 的全角色列表；是否进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 共同决定，UI 不参与判断。
 6. **楼层版本与失败保护**：通过 Chat、message、swipe、内容 SHA-256 和版本号识别楼层；相同成功版本不自动重复分析，失败可重试且保留旧成功结果。
@@ -273,8 +273,8 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 
 ### Phase 2A Event / Tracking 契约
 
-- 人物列表只来自当前 Chat 的 active Tracking Subject Registry。普通聊天角色、主卡角色、出现过的名字和不满足受孕暴露条件的参与者不会自动进入人物列表。
-- 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际受孕暴露可能时，才允许创建或更新 Subject。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断；`null` 仍是 unknown，不得变为 `true`。
+- 人物列表只来自当前 Chat 的 active `tracking_subjects` Registry。普通聊天角色、主卡角色、出现过的名字和不满足受孕暴露条件的参与者不会自动进入人物列表；有 exposure 但能力未知的 recipient 保留在后台 `tracking_candidates`。
+- 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际 pregnancy-relevant exposure 时，才允许创建或更新 Subject。`can_carry_pregnancy` 为 `true` 才是 `eligible`；`false` 为 `ineligible`，`null`/无法确认是 `pending`，不能把 pending 当作 eligible，也不能把 `can_be_fertilized` 单独当作承孕资格。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断。
 - BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
 - Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
 - `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`provider`、`precision`、`confidence`。SevenDaysCal Adapter 只在可信 provider 输入边界解析原始中文日期与传统时辰；在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，`display` 的可靠日期部分可独立数字化并保留后续原文，且不覆盖已有 `normalized` / `day_index`；fallback、排序和计算不得从显示文本生成结构化值；无法可靠得到规范值时保留 `null`。
@@ -473,7 +473,7 @@ Chat-local settings 主要包括：
 | analysis_interval / snapshot_interval | 分析和 Snapshot 的间隔基础配置 |
 | projection_enabled / retry_failed_analysis | 推演与失败重试意向 |
 
-当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、world_model、world_model_meta、character_profiles、relationships、settings 和 index。Phase 2A 的 Chat-local 字段包含 `tracking_subjects` Registry：它是人物列表唯一来源，只保存进入追踪流程的人物索引和有效 Event 引用；老 Chat 缺少该字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只为真正进入追踪的角色保留最小、带证据的资料，不复制完整 Event。
+当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、world_model、world_model_meta、character_profiles、`tracking_subjects`、`tracking_candidates`、relationships、settings 和 index。`tracking_subjects` 是人物列表唯一来源，只保存已解析为 eligible 的人物索引和有效 Event 引用；`tracking_candidates` 独立保存有 exposure 但承孕能力尚未确认的 pending recipient，不会进入普通人物列表。老 Chat 缺少任一字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只保留最小、带证据的资料，不复制完整 Event。
 
 ### Floor 数据
 
@@ -600,7 +600,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 
 ### 人物列表为什么不等于当前 Chat 的全部角色？
 
-人物列表只展示已经进入妊娠相关追踪流程的 Tracking Subjects。角色要先由 BiologicalEvent、World Model、Narrative Evidence 和明确的 reproductive capability 共同支持，并存在实际受孕暴露可能；普通出场角色、只有姓名或未知能力的参与者不会自动建立人物卡。UI 只展示 Registry 结果，不负责重新判断资格。
+人物列表只展示已经进入妊娠相关追踪流程且 `eligibility: "eligible"` 的 Tracking Subjects。角色要先由 BiologicalEvent、World Model、Narrative Evidence 和明确的 `can_carry_pregnancy` 共同支持，并存在实际 pregnancy-relevant exposure；`false` 为 ineligible，`null`/无法确认的 recipient 保留为后台 `tracking_candidates` pending，不会自动建立人物卡。UI 只展示 Registry 结果，不负责重新判断资格；Tracking 也不代表 actual conception 或 pregnancy。
 
 ### Event 和人物卡分别保存什么？
 

@@ -53,6 +53,76 @@ function event(overrides = {}) {
   };
 }
 
+function abstractWorldModel(typeCapabilities = {}) {
+  return {
+    schema_version: 1,
+    species: [{
+      name: 'species_alpha',
+      biological_types: Object.entries(typeCapabilities).map(([name, capabilities]) => ({
+        name,
+        capabilities,
+      })),
+    }],
+  };
+}
+
+function abstractExposureEvent({
+  eventId = 'evt_abstract',
+  subjectId = 'subject_a',
+  sourceId = 'source_a',
+  subjectType = null,
+  subjectSpecies = subjectType ? 'species_alpha' : null,
+  subjectCapabilities = {},
+  sourceCapabilities = {can_cause_pregnancy: true},
+  floor = 10,
+  swipeId = 0,
+  storyTime = {display: `story-${floor}`, precision: 'day', day_index: floor},
+} = {}) {
+  return {
+    event_id: eventId,
+    type: 'sexual_activity',
+    status: 'confirmed',
+    location: 'abstract-location',
+    story_time: storyTime,
+    source: {
+      chat_id: 'chat-abstract',
+      message_id: `message-${floor}`,
+      floor,
+      swipe_id: swipeId,
+      content_hash: `hash-${eventId}`,
+      message_version: `version-${eventId}`,
+    },
+    participants: [
+      {
+        character_id: subjectId,
+        display_name: `${subjectId}-display`,
+        event_role: 'potential_gestational_subject',
+        biological_context: {species: subjectSpecies, biological_type: subjectType},
+        reproductive_capabilities_used: subjectCapabilities,
+        evidence: [{kind: 'narrative', text: `${subjectId}-evidence`}],
+      },
+      {
+        character_id: sourceId,
+        display_name: `${sourceId}-display`,
+        event_role: 'potential_conception_source',
+        biological_context: {species: 'species_alpha', biological_type: 'type_b'},
+        reproductive_capabilities_used: sourceCapabilities,
+        evidence: [{kind: 'narrative', text: `${sourceId}-evidence`}],
+      },
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: [sourceId],
+      confidence: 0.9,
+    },
+    source_evidence: [
+      {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `${eventId}-exposure`},
+    ],
+  };
+}
+
 test('tracking requires sexual activity, both relevance flags, and explicit carrying capability', () => {
   assert.deepEqual(eligibleGestationalSubjects(event()), ['char-a']);
   assert.deepEqual(eligibleGestationalSubjects(event({type: 'physical_symptom'})), []);
@@ -91,8 +161,8 @@ test('gender-like labels and event roles do not create a subject when capability
 
 test('tracking diagnostics explain eligible and non-subject participants', () => {
   assert.deepEqual(explainTrackingDecision(event()), [
-    {character_id: 'char-a', eligible: true, reasons: []},
-    {character_id: 'char-b', eligible: false, reasons: ['NOT_GESTATIONAL_SUBJECT']},
+    {character_id: 'char-a', eligibility: 'eligible', reasons: []},
+    {character_id: 'char-b', eligibility: 'ineligible', reasons: ['NOT_GESTATIONAL_SUBJECT']},
   ]);
 });
 
@@ -132,7 +202,7 @@ test('tracking diagnostics explain unknown and false carrying capability', () =>
   }));
   assert.deepEqual(unknown.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'pending',
     reasons: ['CAN_CARRY_PREGNANCY_UNKNOWN'],
   });
 
@@ -143,7 +213,7 @@ test('tracking diagnostics explain unknown and false carrying capability', () =>
   }));
   assert.deepEqual(falseCapability.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['CAN_CARRY_PREGNANCY_FALSE'],
   });
 });
@@ -159,7 +229,7 @@ test('tracking diagnostics explain absent conception exposure and missing partic
   }));
   assert.deepEqual(irrelevant.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['INVALID_EVENT', 'NOT_GESTATIONAL_SUBJECT'],
   });
 
@@ -173,7 +243,7 @@ test('tracking diagnostics explain absent conception exposure and missing partic
   }));
   assert.deepEqual(noExposure.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['INVALID_EVENT', 'NOT_GESTATIONAL_SUBJECT'],
   });
 
@@ -186,7 +256,7 @@ test('tracking diagnostics explain absent conception exposure and missing partic
   }));
   assert.deepEqual(missingParticipant.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['INVALID_EVENT', 'PARTICIPANT_NOT_FOUND'],
   });
 });
@@ -209,19 +279,19 @@ test('tracking diagnostics explain nonsexual, excluded, and invalid events', () 
   const nonsexual = explainTrackingDecision(event({type: 'physical_symptom'}));
   assert.deepEqual(nonsexual.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['NOT_SEXUAL_ACTIVITY'],
   });
 
   const excluded = explainTrackingDecision(event({status: 'negated'}));
   assert.deepEqual(excluded.find(decision => decision.character_id === 'char-a'), {
     character_id: 'char-a',
-    eligible: false,
+    eligibility: 'ineligible',
     reasons: ['EVENT_STATUS_EXCLUDED'],
   });
 
   assert.deepEqual(explainTrackingDecision({}), [
-    {character_id: null, eligible: false, reasons: ['INVALID_EVENT']},
+    {character_id: null, eligibility: 'ineligible', reasons: ['INVALID_EVENT']},
   ]);
 });
 
@@ -342,4 +412,202 @@ test('empty current events remove active subjects while retaining sanitized hist
     },
     evidence: [],
   });
+});
+
+test('legacy nested registry data remains available when the outer Chat reserves empty fields', () => {
+  const candidateEvent = abstractExposureEvent({
+    eventId: 'evt_nested_legacy',
+    subjectId: 'subject_nested',
+    sourceId: 'source_nested',
+    subjectCapabilities: {can_carry_pregnancy: null},
+  });
+  candidateEvent.participants[0].biological_context = {
+    species: null,
+    biological_type: null,
+  };
+  const registry = rebuildTrackingRegistry([candidateEvent], {
+    tracking_subjects: {},
+    tracking_candidates: {},
+    character_profiles: {},
+    bioweave: {
+      character_profiles: {
+        subject_nested: {
+          character_id: 'subject_nested',
+          display_name: 'subject_nested-display',
+          species: 'species_alpha',
+          biological_type: 'type_a',
+          reproductive_capabilities: {can_carry_pregnancy: true},
+        },
+      },
+    },
+  });
+
+  assert.ok(registry.tracking_subjects.subject_nested);
+  assert.deepEqual(registry.tracking_candidates, {});
+});
+
+test('conflicting identity or capability evidence remains pending instead of becoming eligible', () => {
+  const identityConflictEvent = abstractExposureEvent({
+    eventId: 'evt_identity_conflict',
+    subjectType: 'type_a',
+    subjectCapabilities: {can_carry_pregnancy: true},
+  });
+  const identityConflict = rebuildTrackingRegistry([identityConflictEvent], {
+    character_profiles: {
+      subject_a: {
+        character_id: 'subject_a',
+        species: 'species_alpha',
+        biological_type: 'type_b',
+        reproductive_capabilities: {can_carry_pregnancy: true},
+      },
+    },
+  });
+  assert.equal(identityConflict.tracking_subjects.subject_a, undefined);
+  assert.equal(identityConflict.tracking_candidates.subject_a.eligibility, 'pending');
+  assert.equal(identityConflict.tracking_candidates.subject_a.reproductive_capabilities.can_carry_pregnancy, null);
+
+  const capabilityConflictEvent = abstractExposureEvent({
+    eventId: 'evt_capability_conflict',
+    subjectId: 'subject_capability_conflict',
+    sourceId: 'source_capability_conflict',
+    subjectCapabilities: {can_carry_pregnancy: true},
+  });
+  const capabilityConflict = rebuildTrackingRegistry([capabilityConflictEvent], {
+    character_profiles: {
+      subject_capability_conflict: {
+        character_id: 'subject_capability_conflict',
+        reproductive_capabilities: {can_carry_pregnancy: false},
+      },
+    },
+  });
+  assert.equal(capabilityConflict.tracking_subjects.subject_capability_conflict, undefined);
+  assert.equal(capabilityConflict.tracking_candidates.subject_capability_conflict.eligibility, 'pending');
+  assert.equal(capabilityConflict.tracking_candidates.subject_capability_conflict.reproductive_capabilities.can_carry_pregnancy, null);
+});
+
+test('exhaustive candidate collection keeps later recipients after an ineligible recipient', () => {
+  const events = [
+    abstractExposureEvent({eventId: 'evt_true_first', subjectId: 'subject_first', sourceId: 'source_first', subjectCapabilities: {can_carry_pregnancy: true}}),
+    abstractExposureEvent({eventId: 'evt_false_middle', subjectId: 'subject_middle', sourceId: 'source_middle', subjectCapabilities: {can_carry_pregnancy: false}}),
+    abstractExposureEvent({eventId: 'evt_true_last', subjectId: 'subject_last', sourceId: 'source_last', subjectCapabilities: {can_carry_pregnancy: true}}),
+  ];
+  const registry = rebuildTrackingRegistry(events);
+
+  assert.deepEqual(Object.keys(registry.tracking_subjects), ['subject_first', 'subject_last']);
+  assert.deepEqual(registry.tracking_candidates, {});
+  assert.equal(registry.tracking_subjects.subject_middle, undefined);
+  assert.equal(registry.character_profiles.subject_last.character_id, 'subject_last');
+});
+
+test('unknown carry capability is pending and does not enter eligible subjects', () => {
+  const candidateEvent = abstractExposureEvent({
+    eventId: 'evt_pending',
+    subjectCapabilities: {can_be_fertilized: true, can_carry_pregnancy: null},
+  });
+  const decisions = explainTrackingDecision(candidateEvent);
+  assert.equal(decisions.find(item => item.character_id === 'subject_a').eligibility, 'pending');
+
+  const registry = rebuildTrackingRegistry([candidateEvent]);
+  assert.deepEqual(registry.tracking_subjects, {});
+  assert.equal(registry.tracking_candidates.subject_a.eligibility, 'pending');
+  assert.deepEqual(registry.tracking_candidates.subject_a.exposure_event_ids, ['evt_pending']);
+});
+
+test('World Model type baseline resolves identity and keeps fertilized-only recipients ineligible', () => {
+  const worldModel = abstractWorldModel({
+    type_a: {can_be_fertilized: true, can_carry_pregnancy: true},
+    type_b: {can_be_fertilized: true, can_carry_pregnancy: false},
+  });
+  const eligibleEvent = abstractExposureEvent({
+    eventId: 'evt_baseline_true',
+    subjectCapabilities: {can_be_fertilized: null, can_carry_pregnancy: null},
+    subjectType: 'type_a',
+  });
+  const ineligibleEvent = abstractExposureEvent({
+    eventId: 'evt_baseline_false',
+    subjectId: 'subject_b',
+    sourceId: 'source_b',
+    subjectCapabilities: {can_be_fertilized: true, can_carry_pregnancy: null},
+    subjectType: 'type_b',
+  });
+  const registry = rebuildTrackingRegistry([eligibleEvent, ineligibleEvent], {world_model: worldModel});
+
+  assert.ok(registry.tracking_subjects.subject_a);
+  assert.equal(registry.tracking_subjects.subject_b, undefined);
+  assert.deepEqual(registry.tracking_candidates, {});
+});
+
+test('pending candidate re-evaluation preserves the original exposure Story Time and Source Version', () => {
+  const exposure = abstractExposureEvent({
+    eventId: 'evt_original',
+    floor: 10,
+    swipeId: 2,
+    storyTime: {
+      display: 'story-time-original',
+      normalized: null,
+      day_index: 10,
+      calendar_id: 'calendar_alpha',
+      provider: 'narrative',
+      precision: 'day',
+      confidence: 0.7,
+    },
+    subjectCapabilities: {can_carry_pregnancy: null},
+    subjectType: 'type_a',
+  });
+  const pending = rebuildTrackingRegistry([exposure], {world_model: null});
+  assert.equal(pending.tracking_candidates.subject_a.eligibility, 'pending');
+  assert.equal(pending.tracking_candidates.subject_a.exposure_records[0].source.floor, 10);
+  assert.equal(pending.tracking_candidates.subject_a.exposure_records[0].source.swipe_id, 2);
+  assert.equal(pending.tracking_candidates.subject_a.exposure_records[0].story_time.day_index, 10);
+
+  const resolved = rebuildTrackingRegistry([exposure], {
+    ...pending,
+    world_model: abstractWorldModel({type_a: {can_carry_pregnancy: true}}),
+  });
+  assert.ok(resolved.tracking_subjects.subject_a);
+  assert.equal(resolved.tracking_subjects.subject_a.created_from_event_id, 'evt_original');
+  assert.deepEqual(resolved.tracking_candidates, {});
+  assert.equal(exposure.story_time.day_index, 10);
+  assert.equal(exposure.source.floor, 10);
+  assert.equal(exposure.source.swipe_id, 2);
+});
+
+test('pending candidate becomes absent when trusted World Model resolves carry as false', () => {
+  const exposure = abstractExposureEvent({
+    eventId: 'evt_resolved_false',
+    subjectCapabilities: {can_carry_pregnancy: null},
+    subjectType: 'type_b',
+  });
+  const pending = rebuildTrackingRegistry([exposure]);
+  const resolved = rebuildTrackingRegistry([exposure], {
+    ...pending,
+    world_model: abstractWorldModel({type_b: {can_be_fertilized: true, can_carry_pregnancy: false}}),
+  });
+
+  assert.deepEqual(resolved.tracking_subjects, {});
+  assert.deepEqual(resolved.tracking_candidates, {});
+  assert.equal(exposure.event_id, 'evt_resolved_false');
+});
+
+test('exact identity mapping can use a baseline while weak-only identity remains pending', () => {
+  const worldModel = abstractWorldModel({type_a: {can_carry_pregnancy: true}});
+  const mapped = abstractExposureEvent({
+    eventId: 'evt_mapped',
+    subjectType: 'type_a',
+    subjectCapabilities: {can_carry_pregnancy: null},
+  });
+  const weakOnly = abstractExposureEvent({
+    eventId: 'evt_weak_only',
+    subjectId: 'subject_weak',
+    sourceId: 'source_weak',
+    subjectType: null,
+    subjectCapabilities: {can_carry_pregnancy: null},
+  });
+  const registry = rebuildTrackingRegistry([mapped, weakOnly], {world_model: worldModel});
+
+  assert.ok(registry.tracking_subjects.subject_a);
+  assert.equal(registry.tracking_subjects.subject_weak, undefined);
+  assert.equal(registry.tracking_candidates.subject_weak.eligibility, 'pending');
+  assert.equal(registry.tracking_candidates.subject_weak.species, null);
+  assert.equal(registry.tracking_candidates.subject_weak.biological_type, null);
 });

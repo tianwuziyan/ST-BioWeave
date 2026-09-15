@@ -556,12 +556,17 @@ export function createEventAnalysisCoordinator({
   }
   function buildBusinessData(status, activeEvents, chatData) {
     const trackingSubjects = chatData.tracking_subjects ?? {}
+    const trackingCandidates = chatData.tracking_candidates ?? {}
     const trackingDecisions = activeEvents.flatMap(event =>
-      explainTrackingDecision(event).map(decision => ({ event_id: event.event_id, ...decision })),
+      explainTrackingDecision(event, chatData).map(decision => ({ event_id: event.event_id, ...decision })),
     )
     const sexualActivityCount = activeEvents.filter(event => event.type === 'sexual_activity').length
     const exposureEventCount = Object.values(trackingSubjects).reduce(
       (total, subject) => total + (Array.isArray(subject?.exposure_event_ids) ? subject.exposure_event_ids.length : 0),
+      0,
+    )
+    const pendingExposureEventCount = Object.values(trackingCandidates).reduce(
+      (total, candidate) => total + (Array.isArray(candidate?.exposure_event_ids) ? candidate.exposure_event_ids.length : 0),
       0,
     )
     const analysisStatus = {
@@ -569,16 +574,21 @@ export function createEventAnalysisCoordinator({
       active_event_count: activeEvents.length,
       sexual_activity_count: sexualActivityCount,
       tracking_subject_count: Object.keys(trackingSubjects).length,
+      tracking_candidate_count: Object.keys(trackingCandidates).length,
+      pending_tracking_candidate_count: Object.keys(trackingCandidates).length,
       active_events: activeEvents,
       tracking_decisions: trackingDecisions,
       registry_summary: {
         tracking_subject_count: Object.keys(trackingSubjects).length,
+        tracking_candidate_count: Object.keys(trackingCandidates).length,
         character_ids: Object.keys(trackingSubjects),
         exposure_event_count: exposureEventCount,
+        pending_exposure_event_count: pendingExposureEventCount,
       },
     }
     return {
       tracking_subjects: trackingSubjects,
+      tracking_candidates: trackingCandidates,
       character_profiles: chatData.character_profiles ?? {},
       active_events: activeEvents,
       current_floor: status.current_floor,
@@ -1036,6 +1046,7 @@ export function createEventAnalysisCoordinator({
       const chatData = store.getChat(chat.current())
       return {
         tracking_subjects: chatData.tracking_subjects ?? {},
+        tracking_candidates: chatData.tracking_candidates ?? {},
         character_profiles: chatData.character_profiles ?? {},
       }
     },

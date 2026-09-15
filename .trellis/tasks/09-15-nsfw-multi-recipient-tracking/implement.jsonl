@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"定义 BiologicalEvent 0/1/N、subject-local participants、Floor source、Tracking registry 与 Runtime 边界。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"定义 species -> biological_type -> capabilities 的证据边界、独立字段未知语义与禁止猜测规则。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨 AI、Domain、Storage、Runtime 与 UI，需要按边界追踪数据格式和职责。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"约束复用现有 trackingDecisionPath、Registry rebuild 和统一归一化入口，避免重复资格逻辑。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"若触及 World Model 保存后的 Runtime refresh，确认 UI 只消费/触发 Runtime DTO，不复制业务判断。"}

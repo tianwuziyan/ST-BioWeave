@@ -45,14 +45,14 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 实现时必须保持以下边界：
 
-- 人物列表不是当前 Chat 的全角色列表，只读取 active Tracking Subject Registry。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 reproductive capability 决定，UI 不参与判断。
+- 人物列表不是当前 Chat 的全角色列表，只读取 `tracking_subjects` 中 `eligibility: "eligible"` 的 active Tracking Subject。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 `can_carry_pregnancy` 三态解析决定，pending recipient 保存在独立 `tracking_candidates`，UI 不参与判断。
 - BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
 - Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、World Model、结构化 Story Time 和必要角色设定上下文。输出只能是固定 `{schema_version, events[]}`，每个 Target Floor Version 允许 `events.length >= 0`。对于 pregnancy-related `sexual_activity`，AI 先识别所有实际暴露的 gestational subject，再按 subject 分组；每个 Event 恰好一个 subject，同一 subject 的多个 actual exposure source 合并，不同 subject 分 Event。即时症状、physical effect 和相关证据仍并入同一 subject 的 sexual Event；其它真正独立的 BiologicalEvent 可以并存。只有通过统一 normalize / validate 的结果才能写入 Floor。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
 - `story_time` 是结构化存储对象；`display` 只用于显示。SevenDaysCal 公开 Adapter 可在输入边界把原始中文日期与传统时辰转换为结构化 `normalized`；已有 `normalized`、`day_index` 等字段仍是权威值。在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，日期部分可以独立数字化并保留任意后续原文，但不得重新推断或覆盖结构化字段。fallback 和 `formatStoryTime()` 不从 display 生成结构化日期/时间。排序和计算只使用结构化字段，无法可靠获取时保存 `null`。SevenDaysCal 只能通过公开、可注入的 Adapter 使用，缺失时降级到 BioWeave Fallback StoryTimeProvider。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段只实现 `sexual_activity` 的 Tracking 闭环。
 - `counterpart_ids[]` 只保存该 Event 的 `participants[]` 中最终实际造成该 gestational subject conception-relevant exposure 的 source ID；不能跨 subject 或跨 Event 借用 source。对于 pregnancy-related `sexual_activity`，subject 数组严格一个、counterpart 至少一个、participants ID 集合严格等于 subject + counterpart 且各自去重；`possible_conception=true` 必须同时有 `relevant=true`、participant-backed 的数组和 `source_evidence` 中 kind 为 `conception_relevant_exposure` 的 marker。无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
-- `true`、`false`、`null` capability 三态不可压缩；`null` 不能变为 `true`。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
+- `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
 - StateReducer、Snapshot、Projection、Genealogy、完整妊娠计算、Gestational Age 和预计分娩日不在本阶段接通；对应页面/领域模块保持空状态或兼容骨架。
 
 ### Floor / Swipe / Version 生命周期
@@ -65,7 +65,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 `createRuntime()` 对 UI 暴露 `analyzeCurrentFloor({force})`、`analyzeFloor(target, {force})`、`refreshCurrentFloorAnalysis()`、`requestAbortCurrentFloorAnalysis()`、`getCurrentFloorAnalysisStatus()`、`getCurrentFloorEvents()`、`getTrackingRegistry()`、`collectActiveBusinessData()`、`updateEvent()` 与 `deleteEvent()`。当前楼层始终是当前 Chat 最后一条消息的 active Swipe；指定消息优先按稳定 `message_id` 匹配，不能直接假定 lifecycle payload 的 `message_id` 是数组下标。
 
-`collectActiveBusinessData()` 的 `analysis_status` 至少包含 `state`、`busy`、`current_floor`、`floor_version`、`attempt`、`last_success`、`last_error`、`event_count`、`active_event_count`、`sexual_activity_count`、`tracking_subject_count`、`current_floor_events`、`active_events`、`tracking_decisions` 与 `registry_summary`，并在有执行记录时提供 `error_stage`、`error_code`、`safe_error_summary`、`started_at` 和 `finished_at`。其中 `tracking_decisions` 是 Core/Runtime 诊断兼容数据，不是人物业务实体，普通 Characters UI 不消费它。`running` 只存在于 Runtime transient execution，不作为持久历史状态；终止分析使用 Runtime AbortController，迟到结果不能写回 Floor 或 Registry。该 DTO 只包含结构化、可脱敏显示的数据；Raw AI Response 与 API Secret 不写入 Chat。
+`collectActiveBusinessData()` 的 `analysis_status` 至少包含 `state`、`busy`、`current_floor`、`floor_version`、`attempt`、`last_success`、`last_error`、`event_count`、`active_event_count`、`sexual_activity_count`、`tracking_subject_count`、`tracking_candidate_count`、`pending_tracking_candidate_count`、`current_floor_events`、`active_events`、`tracking_decisions` 与 `registry_summary`，并在有执行记录时提供 `error_stage`、`error_code`、`safe_error_summary`、`started_at` 和 `finished_at`。其中 `tracking_decisions` 是 Core/Runtime 诊断兼容数据，不是人物业务实体，普通 Characters UI 不消费它。`running` 只存在于 Runtime transient execution，不作为持久历史状态；终止分析使用 Runtime AbortController，迟到结果不能写回 Floor 或 Registry。该 DTO 只包含结构化、可脱敏显示的数据；Raw AI Response 与 API Secret 不写入 Chat。
 
 UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` 或页面模块重新实现 Floor Version 有效性、Event normalize/validate、Tracking eligibility 或 Registry rebuild。强制刷新失败时，Runtime 写入失败状态，但保留同一 Floor Version 的上一份成功 Events；UI 不清空事件或人物。
 
@@ -114,6 +114,6 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 ## Phase 2A 验证与真实宿主验收
 
-实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`null` 不变 `true`、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
+实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
 自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、自动 N-floor 触发、相同 Floor Version 去重、UI 重复打开不重复请求、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、SevenDaysCal 可用/不可用时的 Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

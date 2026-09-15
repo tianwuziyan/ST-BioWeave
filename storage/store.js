@@ -11,6 +11,7 @@ import {
   normalizeAnalysisPrompt,
   normalizeExtensionSettings,
   normalizeRecentStoryGlobalSettings,
+  normalizeTrackingCandidates,
   normalizeTrackingSubjects,
   sanitizeSecrets,
 } from './schema.js';
@@ -514,6 +515,7 @@ export function createStore(adapter, boundary = null) {
     return cloneForStorage({
       ...stored,
       tracking_subjects: normalizeTrackingSubjects(stored.tracking_subjects),
+      tracking_candidates: normalizeTrackingCandidates(stored.tracking_candidates),
     });
   }
 
@@ -525,6 +527,7 @@ export function createStore(adapter, boundary = null) {
     const safeData = cloneForStorage({
       ...data,
       tracking_subjects: normalizeTrackingSubjects(data?.tracking_subjects),
+      tracking_candidates: normalizeTrackingCandidates(data?.tracking_candidates),
     });
     await adapter.saveChatMetadata('bioweave', safeData, token.chatId);
     assertToken(adapter, boundary, token);
@@ -561,6 +564,10 @@ export function createStore(adapter, boundary = null) {
     return cloneValue(normalizeTrackingSubjects(getChat(chatId).tracking_subjects));
   }
 
+  function getTrackingCandidates(chatId) {
+    return cloneValue(normalizeTrackingCandidates(getChat(chatId).tracking_candidates));
+  }
+
   async function saveTrackingSubjects(chatId, registry) {
     const chat = getChat(chatId);
     const trackingSubjects = normalizeTrackingSubjects(
@@ -568,11 +575,37 @@ export function createStore(adapter, boundary = null) {
     );
     const nextChat = {...chat, tracking_subjects: trackingSubjects};
     if (registry && typeof registry === 'object'
+      && Object.prototype.hasOwnProperty.call(registry, 'tracking_candidates')) {
+      nextChat.tracking_candidates = cloneValue(
+        normalizeTrackingCandidates(registry.tracking_candidates),
+      );
+    }
+    if (registry && typeof registry === 'object'
       && Object.prototype.hasOwnProperty.call(registry, 'character_profiles')) {
       nextChat.character_profiles = cloneValue(registry.character_profiles);
     }
     await saveChat(chatId, nextChat);
     return cloneValue(trackingSubjects);
+  }
+
+  async function saveTrackingCandidates(chatId, registry) {
+    const chat = getChat(chatId);
+    const trackingCandidates = normalizeTrackingCandidates(
+      registry?.tracking_candidates ?? registry,
+    );
+    const nextChat = {...chat, tracking_candidates: trackingCandidates};
+    if (registry && typeof registry === 'object'
+      && Object.prototype.hasOwnProperty.call(registry, 'tracking_subjects')) {
+      nextChat.tracking_subjects = cloneValue(
+        normalizeTrackingSubjects(registry.tracking_subjects),
+      );
+    }
+    if (registry && typeof registry === 'object'
+      && Object.prototype.hasOwnProperty.call(registry, 'character_profiles')) {
+      nextChat.character_profiles = cloneValue(registry.character_profiles);
+    }
+    await saveChat(chatId, nextChat);
+    return cloneValue(trackingCandidates);
   }
 
   async function saveFloor(messageId, swipeId, data) {
@@ -597,7 +630,9 @@ export function createStore(adapter, boundary = null) {
     getActiveFloor,
     getActiveFloorEvents,
     getTrackingSubjects,
+    getTrackingCandidates,
     saveTrackingSubjects,
+    saveTrackingCandidates,
     saveFloor,
     profileStore,
     ...profileStore,

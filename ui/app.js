@@ -1547,6 +1547,15 @@ export function createApp(runtime, options = {}) {
     }
     render()
   }
+  async function refreshTrackingAfterWorldModelSave(reason) {
+    if (typeof runtime.refreshTrackingRegistry !== 'function') return
+    try {
+      await runtime.refreshTrackingRegistry(reason)
+    } catch (error) {
+      // World Model 已经成功保存；Registry 会在下一次 Runtime 生命周期事件中重试。
+      traceApi('tracking-registry-refresh-after-world-model-save-error', { error, reason })
+    }
+  }
   async function saveWorldModelSection() {
     const section = worldModelState.editingSection
     if (!section || !worldModelState.model) return
@@ -1591,6 +1600,7 @@ export function createApp(runtime, options = {}) {
       }
       await runtime.store.saveChat(chatId, nextChat)
       assertAnalysisChatToken(token)
+      await refreshTrackingAfterWorldModelSave('world-model-manual-save')
       worldModelState = {
         ...worldModelState,
         busy: false,
@@ -1668,6 +1678,7 @@ export function createApp(runtime, options = {}) {
         world_model_meta: meta,
       })
       assertAnalysisChatToken(token)
+      await refreshTrackingAfterWorldModelSave('world-model-ai-save')
       analysisPreviewState = {
         ...analysisPreviewState,
         busy: false,

@@ -1418,6 +1418,7 @@ test('World Model analysis routes success and failure feedback through semantic 
       },
     }
     let savedChat = { settings: {}, world_model: previousModel }
+    let refreshCalls = 0
     const profileStore = {
       getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
       getApiRequestSettings: () => ({}),
@@ -1435,6 +1436,9 @@ test('World Model analysis routes success and failure feedback through semantic 
         saveChat: async (_chatId, nextChat) => {
           savedChat = nextChat
         },
+      },
+      refreshTrackingRegistry: async () => {
+        refreshCalls += 1
       },
       st: {
         getContext: () => ({ chatId: 'chat-world-feedback', characters: [] }),
@@ -1481,6 +1485,7 @@ test('World Model analysis routes success and failure feedback through semantic 
     } else {
       assert.match(markup, /新模型/)
       assert.deepEqual(savedChat.world_model, nextModel)
+      assert.equal(refreshCalls, 1)
     }
     app.destroyBioWeave()
   }
@@ -1517,6 +1522,7 @@ test('World Model section save routes success and failure feedback through Toast
       },
     }
     let savedChat = { settings: {}, world_model: baseModel }
+    let refreshCalls = 0
     const profileStore = {
       getSettings: () => ({ api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {} }),
       getApiRequestSettings: () => ({}),
@@ -1539,6 +1545,9 @@ test('World Model section save routes success and failure feedback through Toast
           }
           savedChat = nextChat
         },
+      },
+      refreshTrackingRegistry: async () => {
+        refreshCalls += 1
       },
       st: {
         getContext: () => ({ chatId: 'chat-world-section-feedback', characters: [] }),
@@ -1591,6 +1600,7 @@ test('World Model section save routes success and failure feedback through Toast
       assert.deepEqual(savedChat.world_model, baseModel)
     } else {
       assert.deepEqual(savedChat.world_model.unknowns, ['新模块内容'])
+      assert.equal(refreshCalls, 1)
     }
     app.destroyBioWeave()
   }

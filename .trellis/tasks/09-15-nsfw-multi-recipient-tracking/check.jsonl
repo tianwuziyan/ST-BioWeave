@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验收 Event identity/source、subject-local 粒度、Registry rebuild、UI boundary 与旧事件保存契约。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"验收 explicit identity mapping、capability null 保留和无 species/type registry 硬编码。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验收 pending 数据在 AI -> Domain -> Storage -> Runtime -> UI 边界上的 round-trip 与职责隔离。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验收 Characters/UI 不重新判断 eligibility，不展示 pending debug/provenance。"}
