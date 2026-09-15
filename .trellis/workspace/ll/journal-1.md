@@ -613,3 +613,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 修复 Floor 分析事实污染并同步 GitHub
+<!-- trellis-session: v=2 fp=2a4ac6f5f130d015 -->
+
+**Date**: 2026-09-16
+**Task**: 修复 Floor 分析事实污染并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+按 Floor State Ownership Contract 修复当前有效 Floor/Swipe provenance、previous BioWeave、Tracking 派生视图、删除/版本/异步边界及 API 防污染路径；补充 Case A-I 回归测试，npm run check 527/527 通过。用户已授权同步 GitHub。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d5d69013a8c77fa048d9027dc3a3a5b20aae24d9` | 修复 Floor 分析事实污染并按有效楼层重建状态 |
+
+### Status
+
+[OK] **Completed**
