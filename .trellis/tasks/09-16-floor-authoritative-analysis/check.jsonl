@@ -1,0 +1,8 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"复核分析事实是否只来自当前有效 Floor/Swipe，以及 registry 是否只保留当前 Event 可证明的投影。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核版本、存储、派生状态和 API prompt 输入之间没有第二历史事实源。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行并审查定向/全量测试、语法检查、格式化和宿主集成风险。"}
+{"file":".trellis/tasks/09-16-floor-authoritative-analysis/prd.md","reason":"按用户指定 Invariants 与 Case A-I 验收逐项检查最终实现。"}
+{"file":".trellis/tasks/09-16-floor-authoritative-analysis/design.md","reason":"按数据流、兼容边界、失败安全与回滚点审查实际 diff。"}
+{"file":".trellis/tasks/09-16-floor-authoritative-analysis/research/reference-snapshot.md","reason":"检查 Swipe 双写镜像没有替代 per-Swipe authoritative slot，也没有新增独立历史存储。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"按用户指定的 Floor State Ownership Contract 逐节审查所有权、生命周期、derived state 与 API provenance。"}
+{"file":"AGENTS.md","reason":"检查强制入口位于 Trellis managed block 外，且只保留五条数据所有权红线。"}

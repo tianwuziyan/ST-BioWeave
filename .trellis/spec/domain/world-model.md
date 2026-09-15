@@ -6,6 +6,11 @@ This contract applies when World Model AI output is converted into the
 canonical `species[] -> biological_types[]` structure. It protects generic
 type recall without turning the Analyzer into a world-knowledge parser.
 
+When World Model values participate in Floor-bound analysis, storage,
+previous-state, derived-state, and API provenance follow [Floor State
+Ownership](./floor-state.md); this document owns only World Model evidence and
+canonicalization.
+
 ## 2. Signatures
 
 - `buildWorldModelMessages(analysisInput, promptSettings) -> ChatMessage[]`

@@ -516,6 +516,7 @@ function collectExposureCandidates(events) {
  * and counterpart lists remain in the event source of truth.
  */
 export function rebuildTrackingRegistry(events = [], previousChat = null) {
+  // Derived registry state is rebuilt from current valid Floor facts; see .trellis/spec/domain/floor-state.md.
   const subjects = {};
   const profiles = previousProfiles(previousChat);
   const oldSubjects = previousSubjects(previousChat);

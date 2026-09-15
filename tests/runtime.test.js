@@ -73,7 +73,7 @@ test('chat boundary rejects a token after chat switch', () => {
   assert.equal(boundary.current(), 'chat-b');
 });
 
-test('per-swipe floor storage isolates swipe zero and other swipes', async () => {
+test('Floor ownership isolates each Swipe slot without cross-Swipe fallback', async () => {
   const adapter = createAdapter();
   const store = createStore(adapter, createChatBoundary(adapter));
   await store.saveFloor(0, 0, {
@@ -90,7 +90,7 @@ test('per-swipe floor storage isolates swipe zero and other swipes', async () =>
   assert.equal(store.getFloor(0, 2).value, undefined);
 });
 
-test('active floor reads the message swipe and drops deleted floors', async () => {
+test('active Swipe selects only its Floor and a deleted message contributes no facts', async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
   const store = createStore(adapter, createChatBoundary(adapter));

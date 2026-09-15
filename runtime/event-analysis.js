@@ -533,6 +533,7 @@ export function createEventAnalysisCoordinator({
     return { index, message, swipeId, floorData, version, chatId }
   }
   async function findPreviousSuccessfulBioWeave(target) {
+    // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
     for (let index = target.index - 1; index >= 0; index -= 1) {
       const swipeId = store.getActiveSwipeId?.(index) ?? 0
       const floorData = store.getFloor?.(index, swipeId)
@@ -1060,6 +1061,7 @@ export function createEventAnalysisCoordinator({
       role: messageRole(target.message),
       settings: recentStorySettings,
     })
+    // Input history is provenance-checked before the API boundary; see .trellis/spec/domain/floor-state.md.
     const existingBioWeave = await findPreviousSuccessfulBioWeave(target)
     chat.assert(token)
     return buildEventAnalysisInput({

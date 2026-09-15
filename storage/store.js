@@ -655,6 +655,7 @@ export function createStore(adapter, boundary = null) {
     const message = adapter.getMessage?.(messageId);
     if (!message) return null;
     const targetSwipeId = validSwipeId(swipeId);
+    // The message/per-Swipe slot owns Floor facts; active reads select one slot. See .trellis/spec/domain/floor-state.md.
     const stored = hasSwipeStructure(message)
       ? message.swipe_info?.[targetSwipeId]?.extra?.bioweave
       : message.extra?.bioweave;

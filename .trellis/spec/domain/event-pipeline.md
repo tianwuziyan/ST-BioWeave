@@ -10,6 +10,11 @@ The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
 
+Floor/active-Swipe ownership, lifecycle invalidation, previous resolution, and
+provenance are defined by [Floor State Ownership](./floor-state.md). This
+document owns the BiologicalEvent contract and only points to that shared
+boundary.
+
 ## 2. Signatures
 
 - `buildEventAnalysisInput(options) -> EventAnalysisInput`
@@ -282,6 +287,9 @@ invents an absolute `day_index`.
 
 ### Persisted BiologicalEvent
 
+The complete Event `source` binds the Event to its owning Floor/Swipe according
+to [Floor State Ownership](./floor-state.md).
+
 Every persisted, accepted Domain Event has:
 
 - `event_id`, `type`, and one of `confirmed`, `probable`, `ambiguous`,
@@ -340,6 +348,9 @@ translation, pinyin, romanization, snake_case, slug, or ASCII identifier is
 allowed. Unknown locations remain `null`.
 
 ### Tracking registry
+
+Tracking rebuild and orphan invalidation follow [Floor State Ownership](./floor-state.md);
+the rules below define the Tracking projection shape and eligibility only.
 
 An active subject stores only stable references and display/profile indexes:
 
@@ -410,6 +421,8 @@ its saved `analysis.status` is `success`, its current authoritative version has
 Candidate Events must come from `getActiveFloorEvents(candidateIndex, version)`
 so inactive Swipes and stale Event sources are excluded. If no candidate
 passes, the normalized baseline is exactly `{analysis: null, events: []}`.
+The ownership and API provenance boundary for this input is
+[Floor State Ownership](./floor-state.md).
 Successful analysis replaces the target Floor's `analysis/events` in its
 existing storage slot; request failure, cancellation, or response/domain
 validation failure must not pre-delete the previous successful target result.

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Floor Version、active Swipe、Event persistence、identity resolution 与 Tracking rebuild 的领域合同。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 storage、runtime、tracking、input-builder、analyzer 与测试之间的 Source of Truth 边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵循跨层 JavaScript 质量门、回归测试、diff 范围和真实宿主验收边界。"}
+{"file":".trellis/tasks/09-16-floor-authoritative-analysis/research/reference-snapshot.md","reason":"记录参考项目 snapshot.js 的 per-floor/per-swipe 存储与 active message 镜像设计。"}

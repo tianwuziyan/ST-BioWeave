@@ -1220,7 +1220,7 @@ test('successful Floor skips non-force analysis and force success replaces Event
   fixture.runtime.destroy()
 })
 
-test('analysis input uses the nearest successful previous Floor baseline', async () => {
+test('API input uses the nearest valid previous Floor Version provenance', async () => {
   const inputs = []
   const fixture = createFixture({
     messages: [
@@ -1274,7 +1274,7 @@ test('analysis input uses the nearest successful previous Floor baseline', async
   fixture.runtime.destroy()
 })
 
-test('first analysis sends an empty previous Floor baseline', async () => {
+test('API input is empty when no valid previous Floor exists', async () => {
   let input
   const fixture = createFixture({
     analyzer: {
@@ -1290,7 +1290,74 @@ test('first analysis sends an empty previous Floor baseline', async () => {
   fixture.runtime.destroy()
 })
 
-test('force re-analysis never uses the target Floor as its own baseline', async () => {
+test('deleted Floor and Swipe owners cannot contribute previous API state', async () => {
+  async function assertEmptyPrevious(messages, removeOwner) {
+    const inputs = []
+    const fixture = createFixture({
+      messages,
+      analyzer: {
+        async analyzeFloor(request) {
+          inputs.push(request.analysisInput)
+          return { events: [eventResult('event-' + inputs.length)] }
+        },
+      },
+    })
+    await fixture.runtime.init()
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 0 },
+      { force: true },
+    )
+    removeOwner(fixture.context.chat)
+    await fixture.runtime.analyzeFloor('message-target', { force: true })
+    assert.deepEqual(inputs[1].existing_bioweave, {
+      analysis: null,
+      events: [],
+    })
+    fixture.runtime.destroy()
+  }
+
+  await assertEmptyPrevious(
+    [
+      {
+        message_id: 'message-owner',
+        floor: 1,
+        content: '被删除的 Floor',
+        role: 'assistant',
+      },
+      {
+        message_id: 'message-target',
+        floor: 2,
+        content: '目标 Floor',
+        role: 'assistant',
+      },
+    ],
+    (chat) => chat.splice(0, 1),
+  )
+
+  await assertEmptyPrevious(
+    [
+      {
+        message_id: 'message-owner',
+        floor: 1,
+        swipes: ['版本 A', '版本 B'],
+        swipe_info: [{}, {}],
+        swipe_id: 1,
+        role: 'assistant',
+      },
+      {
+        message_id: 'message-target',
+        floor: 2,
+        content: '目标 Floor',
+        role: 'assistant',
+      },
+    ],
+    (chat) => {
+      delete chat[0].swipe_info[1]
+    },
+  )
+})
+
+test('reanalyzing a Floor never uses that Floor as its own previous state', async () => {
   const inputs = []
   const fixture = createFixture({
     messages: [
@@ -1347,7 +1414,7 @@ test('force re-analysis never uses the target Floor as its own baseline', async 
   fixture.runtime.destroy()
 })
 
-test('stale previous Floor analysis is skipped in favor of the next valid baseline', async () => {
+test('stale Floor Version is skipped during previous-state resolution', async () => {
   const inputs = []
   const fixture = createFixture({
     messages: [
@@ -1469,7 +1536,7 @@ test('repeated force analysis leaves only the final successful Event result', as
   fixture.runtime.destroy()
 })
 
-test('stale target success is never selected as its own baseline', async () => {
+test('reanalyzing an edited Floor never uses its stale own result as previous state', async () => {
   const inputs = []
   const fixture = createFixture({
     messages: [
@@ -1554,7 +1621,7 @@ test('failed force refresh preserves the previous successful Events and records 
   fixture.runtime.destroy()
 })
 
-test('failed analysis of an edited Floor removes old-version exposures from active Registry', async () => {
+test('stale Floor Version removes old Events from the derived Registry', async () => {
   let calls = 0
   const fixture = createFixture({
     analyzer: {
@@ -1588,7 +1655,7 @@ test('Runtime lifecycle performs interval analysis without any UI subscriber', a
   fixture.runtime.destroy()
 })
 
-test('lifecycle stable message id and swipe switch select the authoritative Floor Version', async () => {
+test('active Swipe switching selects isolated authoritative Floor Versions', async () => {
   const message = {
     message_id: 'message-swipe',
     floor: 3,
@@ -1729,10 +1796,11 @@ test('event edit validates the complete Floor collection before saving or rebuil
   fixture.runtime.destroy()
 })
 
-test('deleted Floor facts and inactive swipes no longer participate', async () => {
+test('deleted Floor facts leave no orphan derived references', async () => {
   const fixture = createFixture()
   await fixture.runtime.init()
   await fixture.runtime.refreshCurrentFloorAnalysis()
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id
   assert.equal(
     (await fixture.runtime.collectActiveBusinessData()).active_event_count,
     1,
@@ -1743,6 +1811,11 @@ test('deleted Floor facts and inactive swipes no longer participate', async () =
   const data = await fixture.runtime.collectActiveBusinessData()
   assert.equal(data.active_event_count, 0)
   assert.equal(data.tracking_subject_count, 0)
+  assert.deepEqual(data.tracking_subjects, {})
+  assert.deepEqual(data.tracking_candidates, {})
+  assert.deepEqual(data.active_events, [])
+  assert.deepEqual(data.tracking_decisions, [])
+  assert.equal(JSON.stringify(data).includes(eventId), false)
   fixture.runtime.destroy()
 })
 
