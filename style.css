@@ -7178,3 +7178,51 @@
   min-width: 0 !important;
   max-width: 100% !important;
 }
+
+.bioweave-settings-page .bioweave-data-management-list {
+  display: grid !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+.bioweave-settings-page .bioweave-data-management-operation {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+  padding: 9px 10px !important;
+  border: 1px solid var(--bioweave-border-soft) !important;
+  border-radius: 7px !important;
+  background: var(--bioweave-card) !important;
+}
+
+.bioweave-settings-page .bioweave-data-management-operation-copy {
+  min-width: 0 !important;
+}
+
+.bioweave-settings-page .bioweave-data-management-operation h3,
+.bioweave-settings-page .bioweave-data-management-operation p {
+  margin: 0 !important;
+}
+
+.bioweave-settings-page .bioweave-data-management-operation h3 {
+  font-size: 13px !important;
+}
+
+.bioweave-settings-page .bioweave-data-management-operation p {
+  margin-top: 3px !important;
+  overflow-wrap: anywhere !important;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+}
+
+@media (max-width: 767px) {
+  .bioweave-settings-page .bioweave-data-management-operation {
+    grid-template-columns: 1fr !important;
+  }
+
+  .bioweave-settings-page .bioweave-data-management-operation .bioweave-danger-action {
+    width: 100% !important;
+  }
+}

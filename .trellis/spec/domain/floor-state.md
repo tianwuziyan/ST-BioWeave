@@ -397,3 +397,30 @@ self-exclusion, nearest valid previous, empty previous, active-Swipe
 isolation, stale-version invalidation, deleted-owner exclusion, API
 provenance, and orphan-free derived state. If any answer is unclear, do not
 implement the feature yet.
+
+## 12. Data lifecycle pointer
+
+The detailed clear, Chat-boundary, mutation, async, and persistence contract is
+maintained in [BioWeave Data Lifecycle](../../docs/bioweave-data-lifecycle.md).
+This pointer does not replace or alter the Floor ownership rules above.
+
+Lifecycle implementations MUST preserve this contract while applying the
+registry-driven rules:
+
+- Manual Character and World clear may invalidate their derived
+  Snapshot/Projection state, but retain valid Floor `analysis`, `events[]`,
+  and Floor-owned `character_registry` identity snapshots.
+- Manual All and verified Start New Chat source cleanup remove the BioWeave
+  root from the Chat and from every ordinary message and exact
+  `swipe_info[*]` owner, including inactive/history Swipes, while preserving
+  text and unrelated fields.
+- Ordinary `CHAT_CHANGED` loads the target and preserves the source. A
+  destructive source clear requires an immutable source identity, a one-shot
+  transition token, official lifecycle evidence, and post-save owner checks;
+  a bare `CHAT_CREATED` never supplies that proof.
+- Edit, deletion, Swipe changes, and async completions continue to use the
+  complete six-field Floor Version and reject stale provenance or late writes.
+
+The lifecycle registry is the source of truth for any future persisted field;
+new fields require domain, exact owner/location, clear and mutation behavior,
+provenance, async guards, and contract-test coverage before acceptance.

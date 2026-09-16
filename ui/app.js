@@ -11,7 +11,7 @@ import {
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
 } from './world.js'
-import { normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
+import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
 import { statePage } from './state.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
@@ -25,6 +25,7 @@ import { createAnalyzer, normalizeWorldModel, summarizeAnalysisInput } from '../
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
   characterOpeningSelectionState,
+  clearWorldbookCache,
   createWorldbookCache,
   selectAllSources,
   selectNoneSources,
@@ -275,6 +276,13 @@ function createWorldModelState() {
     notice: null,
   }
 }
+function createDataManagementState() {
+  return {
+    busy: false,
+    operation: null,
+    chatId: null,
+  }
+}
 function themeLabel(value) {
   return value === 'light' ? '日' : value === 'dark' ? '夜' : '跟随酒馆'
 }
@@ -490,6 +498,7 @@ export function createApp(runtime, options = {}) {
   let analysisSourcesState = createAnalysisSourcesState()
   let analysisPreviewState = createAnalysisPreviewState()
   let worldModelState = createWorldModelState()
+  let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
   let worldModelAbortConfirmOpen = false
   let eventAnalysisAbortConfirmOpen = false
@@ -656,6 +665,8 @@ export function createApp(runtime, options = {}) {
     if (analysisSourcesState.chatId !== null && analysisSourcesState.chatId !== chatId) {
       analysisSourceRequestSequence += 1
       analysisSourceSaveSequence += 1
+      abortUiWorldModelRequest()
+      worldbookCache = clearWorldbookCache(worldbookCache)
       analysisSourcesState = createAnalysisSourcesState()
       worldModelState = createWorldModelState()
       clearAnalysisPreview()
@@ -1969,6 +1980,156 @@ export function createApp(runtime, options = {}) {
       return '当前 Chat'
     }
   }
+  function abortUiWorldModelRequest() {
+    const controller = worldModelAbortController
+    worldModelAbortController = null
+    worldModelAbortConfirmOpen = false
+    if (controller && !controller.signal?.aborted) controller.abort()
+  }
+  function dataManagementOperationForKey(value) {
+    const key = String(value ?? '').trim()
+    return DATA_MANAGEMENT_OPERATIONS.find(operation => operation.key === key) ?? null
+  }
+  function dataManagementOperationForAction(value) {
+    const action = String(value ?? '').trim()
+    return DATA_MANAGEMENT_OPERATIONS.find(operation => operation.action === action) ?? null
+  }
+  function dataManagementOperationForEvent(event) {
+    const type = String(event?.type ?? '').trim().toUpperCase()
+    const payload = event?.payload ?? {}
+    const explicitValues = [payload?.operation, payload?.operation_key, payload?.domain, payload?.scope, event?.operation]
+    for (const explicit of explicitValues) {
+      const byExplicit = dataManagementOperationForKey(explicit) ?? dataManagementOperationForAction(explicit)
+      if (byExplicit) return byExplicit
+    }
+    if (type.includes('CHARACTER')) return dataManagementOperationForKey('character')
+    if (type.includes('WORLD')) return dataManagementOperationForKey('world')
+    return dataManagementOperationForKey('all')
+  }
+  function isRuntimeDataClearEvent(event) {
+    const type = String(event?.type ?? '').trim().toUpperCase()
+    if (!type) return false
+    if (['BIOWEAVE_DATA_CLEARED', 'BIOWEAVE_CLEAR_COMPLETED', 'BIOWEAVE_CLEAR_SUCCEEDED', 'BIOWEAVE_CHAT_DATA_CLEARED', 'DATA_CLEARED', 'CLEAR_COMPLETED', 'CLEAR_SUCCEEDED'].includes(type)) return true
+    return type.includes('CLEAR') && (type.includes('BIOWEAVE') || type.includes('DATA')) && !type.includes('FAIL') && !type.includes('ERROR')
+  }
+  function dataClearConfirmation(operation) {
+    const chatLabel = currentChatLabel()
+    const messages = {
+      character: `当前 Chat「${chatLabel}」的人物数据将被永久删除且不可撤销：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、事件/楼层分析、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
+      world: `当前 Chat「${chatLabel}」的世界数据将被永久删除且不可撤销：删除 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
+      all: `当前 Chat「${chatLabel}」的全部 BioWeave 数据将被永久删除且不可撤销：删除 Chat-local、Floor-local、Swipe-local 与 derived BioWeave 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
+    }
+    return messages[operation.key] ?? messages.all
+  }
+  function dataClearErrorMessage(error) {
+    const code = String(error?.code ?? error?.error_code ?? error?.message ?? '').trim().toUpperCase()
+    const messages = {
+      CLEAR_RUNTIME_UNAVAILABLE: '当前宿主尚未提供 BioWeave 数据清除接口。',
+      CLEAR_FAILED: '当前 Chat 数据清除失败，未报告成功。',
+      CLEAR_SAVE_FAILED: '当前 Chat 数据保存失败，清除未完成。',
+      CLEAR_PERSISTENCE_UNKNOWN: '当前 Chat 清除保存状态未知，未报告成功。',
+      PERSISTENCE_UNKNOWN: '当前 Chat 清除保存状态未知，未报告成功。',
+      STALE_CHAT: 'Chat 已切换，本次清除未执行。',
+      CHAT_SCOPE_MISMATCH: 'Chat 已切换，本次清除未执行。',
+      CLEAR_ABORTED: '当前 Chat 数据清除已取消。',
+    }
+    const matchedCode = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`))
+    return messages[matchedCode] ?? '当前 Chat 的 BioWeave 数据清除失败，未报告成功。'
+  }
+  function dataClearFailureFromResult(result) {
+    if (!result || typeof result !== 'object') return Object.assign(new Error('CLEAR_FAILED'), {code: 'CLEAR_FAILED'})
+    const persistence = result.persistence ?? result.persisted ?? {}
+    const state = String(result.commitState ?? result.commit_state ?? result.persistence_state ?? persistence.commitState ?? persistence.commit_state ?? persistence.state ?? '').trim().toLowerCase()
+    if (result.ok !== true || result.success === false || result.error || state !== 'confirmed') {
+      const failureCode = result.error_code ?? result.code ?? (state === 'unknown' || state === 'unconfirmed' ? 'CLEAR_PERSISTENCE_UNKNOWN' : state === 'failed' ? 'CLEAR_FAILED' : 'CLEAR_PERSISTENCE_UNKNOWN')
+      const error = new Error(String(failureCode))
+      error.code = String(failureCode)
+      return error
+    }
+    return null
+  }
+  function resolveDataClearInvoker(operation) {
+    const direct = runtime?.[operation.method]
+    if (typeof direct === 'function') return () => direct.call(runtime)
+    const unified = runtime?.clearBioWeaveData ?? runtime?.clearData
+    if (typeof unified === 'function') return () => unified.call(runtime, operation.key)
+    const nestedFacade = runtime?.dataLifecycle ?? runtime?.lifecycle
+    const nested = nestedFacade?.[operation.method]
+    if (typeof nested === 'function') return () => nested.call(nestedFacade)
+    return null
+  }
+  function resetBusinessStateAfterDataClear(operation) {
+    const all = operation.key === 'all'
+    const character = operation.key === 'character' || all
+    businessRefreshSequence += 1
+    businessState = {
+      ...businessState,
+      loaded: false,
+      loading: false,
+      error: null,
+      ...(character ? {trackingSubjects: {}, characterProfiles: {}} : {}),
+      ...(all
+        ? {
+            activeEvents: [],
+            currentFloor: null,
+            lastAnalysis: null,
+            analysisStatus: {state: 'not_analyzed', busy: false},
+          }
+        : {}),
+    }
+  }
+  function refreshUiAfterDataClear(operation) {
+    analysisSourceRequestSequence += 1
+    analysisSourceSaveSequence += 1
+    clearAnalysisPreview()
+    worldModelTraceChatId = null
+    worldbookCache = clearWorldbookCache(worldbookCache)
+    resetBusinessStateAfterDataClear(operation)
+    if (operation.key === 'world' || operation.key === 'all') worldModelState = createWorldModelState()
+    if (operation.key === 'all') {
+      const openSettingsSections = [...(analysisSourcesState.openSettingsSections ?? [])]
+      analysisSourcesState = {...createAnalysisSourcesState(), openSettingsSections}
+    }
+  }
+  async function clearDataManagement(action) {
+    const operation = dataManagementOperationForAction(action) ?? dataManagementOperationForKey(action)
+    if (!operation || dataManagementState.busy) return false
+    const chatId = runtime.chat.current()
+    dataManagementState = {
+      busy: true,
+      operation: operation.key,
+      chatId,
+    }
+    render()
+    try {
+      if (!(await confirmWithPopup(operation.title, dataClearConfirmation(operation)))) return false
+      if (runtime.chat.current() !== chatId) throw Object.assign(new Error('STALE_CHAT'), {code: 'STALE_CHAT'})
+      abortUiWorldModelRequest()
+      const invoke = resolveDataClearInvoker(operation)
+      if (!invoke) throw Object.assign(new Error('CLEAR_RUNTIME_UNAVAILABLE'), {code: 'CLEAR_RUNTIME_UNAVAILABLE'})
+      const result = await invoke()
+      if (runtime.chat.current() !== chatId) throw Object.assign(new Error('STALE_CHAT'), {code: 'STALE_CHAT'})
+      const failure = dataClearFailureFromResult(result)
+      if (failure) throw failure
+      refreshUiAfterDataClear(operation)
+      const noOp = result?.changed === false || result?.changed === 0 || result?.noOp === true || result?.no_op === true || ['noop', 'no_op', 'already_empty'].includes(String(result?.status ?? result?.outcome ?? '').trim().toLowerCase())
+      notify(
+        noOp ? `当前 Chat 的${operation.title.replace(/^清除/, '')}已经是空状态，无需清除。` : `当前 Chat 的${operation.title}已完成。`,
+        noOp ? 'info' : 'success',
+        documentRef,
+      )
+      const refresh = refreshBusinessState({reason: `data-clear-${operation.key}`, force: true})
+      if (root?.dataset.open === 'true') render()
+      await refresh
+      return true
+    } catch (error) {
+      notify(dataClearErrorMessage(error), 'error', documentRef)
+      return false
+    } finally {
+      if (dataManagementState.operation === operation.key) dataManagementState = createDataManagementState()
+      if (root?.dataset.open === 'true') render()
+    }
+  }
   async function refreshBusinessState({ reason = 'ui-read', force = false } = {}) {
     if (businessState.loading && !force) return
     const requestId = ++businessRefreshSequence
@@ -2154,6 +2315,7 @@ export function createApp(runtime, options = {}) {
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
+      ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
         ? {
             worldbookSources: {
@@ -2914,6 +3076,9 @@ export function createApp(runtime, options = {}) {
       clearPendingRecentStorySaves()
       analysisSourceRequestSequence += 1
       analysisSourceSaveSequence += 1
+      abortUiWorldModelRequest()
+      worldbookCache = clearWorldbookCache(worldbookCache)
+      dataManagementState = createDataManagementState()
       analysisSourcesState = createAnalysisSourcesState()
       worldModelState = createWorldModelState()
       clearAnalysisPreview()
@@ -2932,6 +3097,15 @@ export function createApp(runtime, options = {}) {
         lastAnalysis: null,
         analysisStatus: { state: 'not_analyzed', busy: false },
         error: null,
+      }
+    }
+    if (isRuntimeDataClearEvent(event)) {
+      const eventChatId = event?.chatId ?? event?.payload?.chatId ?? event?.payload?.result?.chatId
+      if (eventChatId === undefined || String(eventChatId) === String(runtime.chat.current())) {
+        const operation = dataManagementOperationForEvent(event)
+        abortUiWorldModelRequest()
+        refreshUiAfterDataClear(operation)
+        void refreshBusinessState({reason: event.type, force: true})
       }
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED') {
@@ -3077,6 +3251,11 @@ export function createApp(runtime, options = {}) {
     if (action === 'refresh-analysis-sources') {
       event.preventDefault()
       await loadAnalysisSourcesState({ forceRefresh: true })
+      return
+    }
+    if (dataManagementOperationForAction(action)) {
+      event.preventDefault()
+      await clearDataManagement(action)
       return
     }
     if (action === 'analyze-current-floor' || action === 'refresh') {
@@ -3459,6 +3638,7 @@ export function createApp(runtime, options = {}) {
   }
   function destroyBioWeave() {
     clearPendingRecentStorySaves()
+    abortUiWorldModelRequest()
     modelRefreshSequence += 1
     analysisSourceRequestSequence += 1
     analysisSourceSaveSequence += 1
@@ -3473,6 +3653,7 @@ export function createApp(runtime, options = {}) {
     focusedCharacterId = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()
+    dataManagementState = createDataManagementState()
     businessState = {
       loaded: false,
       loading: false,
@@ -3530,6 +3711,7 @@ export function createApp(runtime, options = {}) {
     getFocusedCharacterId: () => focusedCharacterId,
     getSettingsState: () => ({
       ...settingsState,
+      dataManagement: {...dataManagementState},
       profiles: { ...settingsState.profiles },
       assignments: { ...settingsState.assignments },
       modelListCaches: Object.fromEntries(

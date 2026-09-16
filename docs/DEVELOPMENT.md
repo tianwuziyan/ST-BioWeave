@@ -27,6 +27,16 @@
 - `context/builder.js`：向 Tavern 注入短、稳定、结构化的 BioWeave Context。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。
 
+### Data Lifecycle Contract
+
+凡新增或修改 BioWeave 的持久化字段、Floor/Swipe 派生结果或 Runtime
+异步任务，必须先阅读并遵守 [`docs/bioweave-data-lifecycle.md`](./bioweave-data-lifecycle.md)。
+字段必须登记到 `storage/lifecycle.js`，并同时回答人物/世界/全部清除、普通
+`CHAT_CHANGED`、SillyTavern 原生 Start New Chat、消息编辑/删除、Swipe
+切换、异步失效和保存失败处理。普通 Chat 切换只加载目标；只有经过一次性
+官方生命周期证据配对的 Start New Chat 才会定向清除 source Chat。设置页的
+手动清除入口统一位于“数据管理”，UI 只能调用 Runtime/Clear Service。
+
 ## 不再继续细拆的规则
 
 只有文件稳定超过约 500–800 行、出现两个独立职责、或独立测试明显更清楚时才拆。不要建立 event-store / event-validator / event-factory / event-interface 这类碎片目录。

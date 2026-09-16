@@ -4,7 +4,11 @@ import {
   mergeRecentStorySettings,
   processNarrativeFloor,
 } from "../ai/input-builder.js";
-import { createWorldbookCache, loadAnalysisSources } from "../ai/worldbook.js";
+import {
+  clearWorldbookCache,
+  createWorldbookCache,
+  loadAnalysisSources,
+} from "../ai/worldbook.js";
 import {
   safeErrorSummary as clientSafeErrorSummary,
   statusFromError as clientStatusFromError,
@@ -24,7 +28,8 @@ import {
   explainTrackingDecision,
   rebuildTrackingRegistry,
 } from "../core/tracking.js";
-import { hasSwipeSlot } from "../storage/store.js";
+import { emptyFloor } from "../storage/schema.js";
+import { hasSwipeSlot, hasSwipeStructure } from "../storage/store.js";
 import { normalizeStoryTime } from "../story/time.js";
 import {
   detectExternalMemoryProviders,
@@ -179,6 +184,18 @@ function requestAbortedError() {
   error.code = "REQUEST_ABORTED";
   error.analysis_stage = "cancelled";
   return error;
+}
+function hasOwn(value, key) {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+}
+function stableLifecycleValue(value) {
+  if (Array.isArray(value)) return value.map(stableLifecycleValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableLifecycleValue(value[key])]),
+  );
 }
 function diagnosticCode(error) {
   const code = String(
@@ -446,9 +463,225 @@ export function createEventAnalysisCoordinator({
   const lastTerminal = new Map();
   let attemptSequence = 0;
   let registryRefreshChain = Promise.resolve();
+  let lifecycleMutationChain = Promise.resolve();
   let destroyed = false;
   let removeChatBoundaryListener = null;
   const sourceCache = analysisSourceCache ?? createWorldbookCache();
+  const invalidatedFloors = new Map();
+  let lifecycleSnapshot = null;
+
+  function floorRootExists(index, swipeId) {
+    const message = messages()[index];
+    if (!message || !hasSwipeSlot(message, swipeId)) return false;
+    if (hasSwipeStructure(message))
+      return hasOwn(message.swipe_info?.[swipeId]?.extra, "bioweave");
+    return hasOwn(message.extra, "bioweave");
+  }
+
+  async function captureLifecycleSnapshot(token = chat.token()) {
+    const all = messages();
+    const entries = [];
+    for (let index = 0; index < all.length; index += 1) {
+      const swipeId = store.getActiveSwipeId?.(index);
+      if (swipeId === null || swipeId === undefined) continue;
+      const version = await floorVersion({
+        chatId: token.chatId,
+        messageId: messageId(all[index], index),
+        floor: messageFloor(all[index], index),
+        swipeId,
+        text: messageText(all[index], swipeId),
+        messageVersion: messageVersion(all[index]),
+      });
+      chat.assert(token);
+      entries.push({
+        index,
+        message_id: version.message_id,
+        floor: version.floor,
+        swipe_id: version.swipe_id,
+        content_hash: version.content_hash,
+        message_version: version.message_version,
+      });
+    }
+    return { chat_id: token.chatId, epoch: token.epoch, entries };
+  }
+
+  async function primeLifecycleSnapshot() {
+    try {
+      lifecycleSnapshot = await captureLifecycleSnapshot();
+      return lifecycleSnapshot;
+    } catch {
+      lifecycleSnapshot = null;
+      return null;
+    }
+  }
+
+  function lifecycleEntryEqual(left, right) {
+    return [
+      "message_id",
+      "floor",
+      "swipe_id",
+      "content_hash",
+      "message_version",
+    ].every((field) => left?.[field] === right?.[field]);
+  }
+
+  function lifecycleMutationIndex(event, currentSnapshot) {
+    const payload = event?.payload;
+    const requestedIndex = Number(
+      typeof payload === "object"
+        ? (payload?.messageIndex ?? payload?.index)
+        : NaN,
+    );
+    let index = Number.isInteger(requestedIndex) && requestedIndex >= 0
+      ? requestedIndex
+      : null;
+    const requestedId =
+      typeof payload === "object"
+        ? (payload?.message_id ?? payload?.messageId)
+        : payload;
+    if (index === null && requestedId !== undefined && requestedId !== null) {
+      index = currentSnapshot.entries.findIndex(
+        (entry) => String(entry.message_id) === String(requestedId),
+      );
+      if (index < 0)
+        index = lifecycleSnapshot?.entries.findIndex(
+          (entry) => String(entry.message_id) === String(requestedId),
+        );
+      if (index < 0) index = null;
+    }
+    const previous = lifecycleSnapshot?.entries ?? [];
+    const current = currentSnapshot?.entries ?? [];
+    const changedIndex = Math.min(previous.length, current.length);
+    const firstDifference = Array.from(
+      { length: Math.max(previous.length, current.length) },
+      (_, candidate) => candidate,
+    ).find(
+      (candidate) => !lifecycleEntryEqual(previous[candidate], current[candidate]),
+    );
+    if (firstDifference !== undefined)
+      index = index === null ? firstDifference : Math.min(index, firstDifference);
+    if (index === null && event?.type === "MESSAGE_DELETED") return changedIndex;
+    return index;
+  }
+
+  function isFloorInvalidated(state) {
+    return invalidatedFloors.has(floorExecutionKey(state.version));
+  }
+
+  function resetBoundary(chatData) {
+    const marker = chatData?.data_lifecycle?.character_reset;
+    if (!marker || typeof marker !== "object") return null;
+    const rawMessageIndex = marker.message_index;
+    let messageIndex =
+      rawMessageIndex === null || rawMessageIndex === undefined || rawMessageIndex === ''
+        ? NaN
+        : Number(rawMessageIndex);
+    if (!Number.isFinite(messageIndex) && marker.message_id !== undefined) {
+      const currentMessages = messages();
+      messageIndex = currentMessages.findIndex(
+        (message, index) =>
+          String(messageId(message, index)) === String(marker.message_id),
+      );
+    }
+    const rawFloor = marker.floor;
+    const floor =
+      rawFloor === null || rawFloor === undefined || rawFloor === ''
+        ? NaN
+        : Number(rawFloor);
+    return {
+      messageIndex: Number.isFinite(messageIndex) ? Math.trunc(messageIndex) : null,
+      floor: Number.isFinite(floor) ? floor : null,
+      messageId: marker.message_id ?? null,
+    };
+  }
+
+  function stateIsAfterReset(state, boundary) {
+    if (boundary === null) return true;
+    if (Number.isFinite(boundary.messageIndex))
+      return Number(state.index) > boundary.messageIndex;
+    if (Number.isFinite(boundary.floor))
+      return Number(state.version.floor) > boundary.floor;
+    // An old marker with no resolvable ordering information is not proof that
+    // an existing Floor is newer.  Fail closed until a new Floor is analyzed.
+    return false;
+  }
+
+  function eventIsAfterReset(event, boundary, state = null) {
+    if (boundary === null) return true;
+    if (state && !stateIsAfterReset(state, boundary)) return false;
+    if (Number.isFinite(boundary.messageIndex)) return state !== null;
+    if (Number.isFinite(boundary.floor))
+      return Number(event?.source?.floor) > boundary.floor;
+    return false;
+  }
+
+  function currentFloorDataIsReusable(index, swipeId, version) {
+    const floorData = store.getFloor?.(index, swipeId);
+    return Boolean(
+      floorData?.analysis?.status === "success" &&
+        sameFloorVersion(floorVersionFromData(floorData), version),
+    );
+  }
+
+  async function invalidateMutation(
+    event,
+    targetIndex,
+    { preserveTarget = false, clearRoots = true } = {},
+  ) {
+    if (typeof chat.invalidate === "function")
+      chat.invalidate(`mutation:${event?.type ?? "unknown"}`, { checkCurrent: false });
+    invalidateInFlightExecutions();
+    lastTerminal.clear();
+    invalidatedFloors.clear();
+    clearWorldbookCache(sourceCache);
+    const token = chat.token();
+    if (!clearRoots) return chat.token();
+    const all = messages();
+    const start = Number.isInteger(targetIndex) && targetIndex >= 0 ? targetIndex : 0;
+    for (let index = start; index < all.length; index += 1) {
+      const swipeId = store.getActiveSwipeId?.(index);
+      if (swipeId === null || swipeId === undefined) continue;
+      let version;
+      try {
+        const target = await resolveFloor({ __messageIndex: true, index });
+        version = target.version;
+      } catch {
+        continue;
+      }
+      const key = floorExecutionKey(version);
+      if (preserveTarget && index === targetIndex) {
+        if (currentFloorDataIsReusable(index, swipeId, version))
+          invalidatedFloors.delete(key);
+        else invalidatedFloors.set(key, true);
+        continue;
+      }
+      invalidatedFloors.set(key, true);
+      if (floorRootExists(index, swipeId)) {
+        await store.saveFloor(index, swipeId, emptyFloor());
+        chat.assert(token);
+      }
+    }
+    return token;
+  }
+
+  async function dependencyHashForTarget(target, token) {
+    const states = await collectCurrentFloorStates(token);
+    const dependencies = states
+      .filter(
+        (state) =>
+          state.index < target.index &&
+          state.version.floor < target.version.floor &&
+          !isFloorInvalidated(state) &&
+          state.floorData?.analysis?.status === "success" &&
+          sameFloorVersion(floorVersionFromData(state.floorData), state.version),
+      )
+      .map((state) => state.version);
+    return hashText(
+      JSON.stringify(
+        stableLifecycleValue({ target: target.version, dependencies }),
+      ),
+    );
+  }
   async function collectExternalMemoryProviders(context) {
     if (typeof externalMemoryProviderLoader === "function") {
       return externalMemoryProviderLoader({ context });
@@ -561,6 +794,7 @@ export function createEventAnalysisCoordinator({
   }
   async function findPreviousSuccessfulBioWeave(target) {
     // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
+    const resetAt = resetBoundary(store.getChat?.(target.chatId));
     for (let index = target.index - 1; index >= 0; index -= 1) {
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
@@ -569,6 +803,8 @@ export function createEventAnalysisCoordinator({
       if (analysis?.status !== "success") continue;
       const candidate = await resolveFloor({ __messageIndex: true, index });
       if (candidate.version.floor >= target.version.floor) continue;
+      if (!stateIsAfterReset(candidate, resetAt)) continue;
+      if (isFloorInvalidated(candidate)) continue;
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
         continue;
       return {
@@ -644,18 +880,27 @@ export function createEventAnalysisCoordinator({
   }
   async function collectCurrentDerivedState(token, chatData = null) {
     const states = await collectCurrentFloorStates(token);
-    const activeEvents = sortEvents(states.flatMap((state) => state.events));
     const currentChat = chatData ?? store.getChat(token.chatId);
+    const resetAt = resetBoundary(currentChat);
+    const validStates = states.filter(
+      (state) => !isFloorInvalidated(state) && stateIsAfterReset(state, resetAt),
+    );
+    const activeEvents = sortEvents(
+      validStates
+        .flatMap((state) =>
+          state.events.filter((event) => eventIsAfterReset(event, resetAt, state)),
+        ),
+    );
     const registry = rebuildTrackingRegistry(activeEvents, currentChat);
-    const characterRegistry = currentCharacterRegistryFromStates(states);
+    const characterRegistry = currentCharacterRegistryFromStates(validStates);
     chat.assert(token);
     return {
-      states,
+      states: validStates,
       activeEvents,
       registry,
       characterRegistry,
       chatData: currentChat,
-      lastProcessedFloor: lastProcessedFloorFromStates(states),
+      lastProcessedFloor: lastProcessedFloorFromStates(validStates),
     };
   }
   function refreshTrackingRegistry(reason = "runtime") {
@@ -1052,6 +1297,9 @@ export function createEventAnalysisCoordinator({
       finished_at: finishedAt,
       reason: execution.reason,
       attempt: execution.attempt,
+      ...(execution.dependency_hash
+        ? { dependency_hash: execution.dependency_hash }
+        : {}),
       ...(diagnostic ?? {}),
     };
     const analysis = commitAnalysis(
@@ -1113,6 +1361,13 @@ export function createEventAnalysisCoordinator({
       throw error;
     }
     if (!sameFloorVersion(current.version, target.version)) {
+      invalidateExecution(execution);
+      throw requestAbortedError();
+    }
+    if (
+      execution.source_provenance &&
+      !sameFloorVersion(execution.source_provenance, current.version)
+    ) {
       invalidateExecution(execution);
       throw requestAbortedError();
     }
@@ -1245,6 +1500,8 @@ export function createEventAnalysisCoordinator({
       token = chat.token();
       execution.stage = "request_build";
       const analysisInput = await buildFloorAnalysisInput(target, token);
+      execution.source_provenance = { ...target.version };
+      execution.dependency_hash = await dependencyHashForTarget(target, token);
       await assertExecutionTargetCurrent(execution, target, token);
       if (typeof analyzer?.analyzeFloor !== "function")
         throw new Error("EVENT_ANALYZER_UNAVAILABLE");
@@ -1313,6 +1570,14 @@ export function createEventAnalysisCoordinator({
         },
         target.version,
       );
+      analysis.dependency_hash = execution.dependency_hash;
+      analysis.source_provenance = { ...target.version };
+      await assertExecutionTargetCurrent(execution, target, token);
+      const currentDependencyHash = await dependencyHashForTarget(target, token);
+      if (currentDependencyHash !== execution.dependency_hash) {
+        invalidateExecution(execution);
+        throw requestAbortedError();
+      }
       execution.stage = "floor_save";
       await assertExecutionTargetCurrent(execution, target, token);
       execution.floorSaveStarted = true;
@@ -1324,6 +1589,7 @@ export function createEventAnalysisCoordinator({
       });
       execution.floorSaved = true;
       await assertExecutionTargetCurrent(execution, target, token);
+      invalidatedFloors.delete(floorExecutionKey(target.version));
       execution.stage = "registry_rebuild";
       assertExecutionCurrent(execution, token);
       await refreshTrackingRegistry(execution.reason);
@@ -1418,7 +1684,9 @@ export function createEventAnalysisCoordinator({
     const requestKey = floorExecutionKey(target.version);
     if (inFlight.has(requestKey)) return inFlight.get(requestKey).promise;
     const savedAnalysis = target.floorData?.analysis ?? null;
+    const dependencyInvalidated = invalidatedFloors.has(requestKey);
     if (
+      !dependencyInvalidated &&
       !shouldAnalyze(savedAnalysis, { version: target.version, manual: force })
     ) {
       return { skipped: true, version: target.version, status: "success" };
@@ -1437,6 +1705,8 @@ export function createEventAnalysisCoordinator({
       released: false,
       floorSaved: false,
       floorSaveStarted: false,
+      source_provenance: null,
+      dependency_hash: null,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -1497,41 +1767,78 @@ export function createEventAnalysisCoordinator({
     return true;
   }
   async function handleLifecycleEvent(event) {
-    const isSwipeBoundaryEvent = [
-      "MESSAGE_SWIPED",
-      "MESSAGE_SWIPE_DELETED",
-    ].includes(event?.type);
-    if (isSwipeBoundaryEvent) await refreshTrackingRegistry(event.type);
-    if (event?.type === "MESSAGE_DELETED" || event?.type === "CHAT_CHANGED") {
-      await refreshTrackingRegistry(event.type);
-      return { skipped: true, reason: event.type };
-    }
-    if (!AUTO_ANALYSIS_EVENTS.has(event?.type))
-      return { skipped: true, reason: "unsupported-event" };
-    const target = resolveMessage(event?.payload ?? null);
-    const floor = messageFloor(target.message, target.index);
-    const chatData = store.getChat(chat.current());
-    const interval = Number(chatData.settings?.analysis_interval ?? 3);
-    const lastProcessedFloor = FORCED_LIFECYCLE_EVENTS.has(event.type)
-      ? null
-      : await recomputeLastProcessedFloor(chat.token());
-    if (
-      !FORCED_LIFECYCLE_EVENTS.has(event.type) &&
-      !isIntervalTarget(floor, lastProcessedFloor, interval)
-    ) {
-      return { skipped: true, reason: "interval" };
-    }
-    try {
-      return await analyzeFloor(
-        { __messageIndex: true, index: target.index },
-        { force: false, reason: event.type },
-      );
-    } catch (error) {
-      if (isSwipeBoundaryEvent && error?.message === "SWIPE_NOT_FOUND") {
-        return { skipped: true, reason: "swipe-not-found" };
+    const work = async () => {
+      const type = event?.type;
+      if (type === "CHAT_CHANGED") {
+        await primeLifecycleSnapshot();
+        await refreshTrackingRegistry(type);
+        return { skipped: true, reason: type };
       }
-      throw error;
-    }
+      if (type === "CHAT_CREATED")
+        return { skipped: true, reason: "unsupported-event" };
+      if (!AUTO_ANALYSIS_EVENTS.has(type))
+        return { skipped: true, reason: "unsupported-event" };
+
+      let currentSnapshot;
+      try {
+        currentSnapshot = await captureLifecycleSnapshot();
+      } catch {
+        currentSnapshot = { entries: [] };
+      }
+      const targetIndex = lifecycleMutationIndex(event, currentSnapshot);
+      const isSwipeBoundaryEvent =
+        type === "MESSAGE_SWIPED" || type === "MESSAGE_SWIPE_DELETED";
+      const isSourceMutation = [
+        "MESSAGE_UPDATED",
+        "MESSAGE_EDITED",
+        "MESSAGE_DELETED",
+        "MESSAGE_SWIPED",
+        "MESSAGE_SWIPE_DELETED",
+      ].includes(type);
+      await invalidateMutation(event, targetIndex, {
+        preserveTarget: isSwipeBoundaryEvent,
+        clearRoots: isSourceMutation,
+      });
+      lifecycleSnapshot = await primeLifecycleSnapshot();
+      if (isSwipeBoundaryEvent) await refreshTrackingRegistry(type);
+      if (type === "MESSAGE_DELETED") {
+        await refreshTrackingRegistry(type);
+        return { skipped: true, reason: type };
+      }
+      let target;
+      try {
+        target = resolveMessage(event?.payload ?? null);
+      } catch (error) {
+        if (isSwipeBoundaryEvent && error?.message === "MESSAGE_NOT_FOUND")
+          return { skipped: true, reason: "swipe-not-found" };
+        throw error;
+      }
+      const floor = messageFloor(target.message, target.index);
+      const chatData = store.getChat(chat.current());
+      const interval = Number(chatData.settings?.analysis_interval ?? 3);
+      const lastProcessedFloor = FORCED_LIFECYCLE_EVENTS.has(type)
+        ? null
+        : await recomputeLastProcessedFloor(chat.token());
+      if (
+        !FORCED_LIFECYCLE_EVENTS.has(type) &&
+        !isIntervalTarget(floor, lastProcessedFloor, interval)
+      ) {
+        return { skipped: true, reason: "interval" };
+      }
+      try {
+        return await analyzeFloor(
+          { __messageIndex: true, index: target.index },
+          { force: false, reason: type },
+        );
+      } catch (error) {
+        if (isSwipeBoundaryEvent && error?.message === "SWIPE_NOT_FOUND")
+          return { skipped: true, reason: "swipe-not-found" };
+        throw error;
+      }
+    };
+    const result = lifecycleMutationChain.then(work, work);
+    lifecycleMutationChain = result.catch(() => null);
+    return result;
   }
   async function findActiveEvent(eventId) {
     const targetId = String(eventId ?? "").trim();
@@ -1590,10 +1897,17 @@ export function createEventAnalysisCoordinator({
         events,
       );
     }
+    const mutationToken = await invalidateMutation(
+      { type: "MESSAGE_EDITED", payload: { message_id: target.version.message_id } },
+      target.index,
+      { preserveTarget: true },
+    );
     await store.saveFloor(target.index, target.swipeId, {
       ...target.floorData,
       events,
     });
+    chat.assert(mutationToken);
+    invalidatedFloors.delete(floorExecutionKey(target.version));
     await refreshTrackingRegistry("event-edit");
     return nextEvent;
   }
@@ -1602,12 +1916,64 @@ export function createEventAnalysisCoordinator({
     const events = (
       Array.isArray(target.floorData.events) ? target.floorData.events : []
     ).filter((event) => String(event?.event_id) !== String(eventId));
+    const mutationToken = await invalidateMutation(
+      { type: "MESSAGE_DELETED", payload: { message_id: target.version.message_id } },
+      target.index,
+      { preserveTarget: true },
+    );
     await store.saveFloor(target.index, target.swipeId, {
       ...target.floorData,
       events,
     });
+    chat.assert(mutationToken);
+    invalidatedFloors.delete(floorExecutionKey(target.version));
     await refreshTrackingRegistry("event-delete");
     return true;
+  }
+  async function invalidateForClear(payload = {}) {
+    if (typeof chat.invalidate === "function")
+      chat.invalidate(`clear:${payload.reason ?? payload.domain ?? "unknown"}`, {
+        checkCurrent: false,
+      });
+    invalidateInFlightExecutions();
+    lastTerminal.clear();
+    invalidatedFloors.clear();
+    clearWorldbookCache(sourceCache);
+    // A registry rebuild may already be between its derived read and Chat
+    // save. Invalidate first, then wait for that old writer to settle before
+    // the Clear Service applies its plan; otherwise its late Chat save could
+    // repopulate a projection immediately after a successful clear.
+    const barriers = [lifecycleMutationChain, registryRefreshChain];
+    await Promise.all(
+      barriers.map((barrier) => Promise.resolve(barrier).catch(() => null)),
+    );
+    return {
+      invalidated: true,
+      reason: payload.reason ?? payload.domain ?? "clear",
+    };
+  }
+  async function completeClear(result) {
+    if (!result) return result;
+    await invalidateForClear({ reason: `clear:${result.domain ?? "unknown"}` });
+    if (
+      result.ok === true &&
+      result.persistence?.commitState === "confirmed" &&
+      result.changed === true &&
+      result.sourceTargeted !== true
+    ) {
+      await primeLifecycleSnapshot();
+      await refreshTrackingRegistry(`clear:${result.domain ?? "unknown"}`);
+    }
+    return result;
+  }
+  function handleChatBoundarySignal(signal) {
+    invalidateInFlightExecutions();
+    clearWorldbookCache(sourceCache);
+    if (signal?.changed) {
+      lastTerminal.clear();
+      invalidatedFloors.clear();
+      lifecycleSnapshot = null;
+    }
   }
   function destroy() {
     destroyed = true;
@@ -1623,7 +1989,7 @@ export function createEventAnalysisCoordinator({
     inFlight.clear();
   }
   if (typeof chat.subscribe === "function")
-    removeChatBoundaryListener = chat.subscribe(invalidateInFlightExecutions);
+    removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
   return {
     analyzeCurrentFloor,
     analyzeFloor,
@@ -1655,6 +2021,10 @@ export function createEventAnalysisCoordinator({
     },
     collectActiveBusinessData,
     handleLifecycleEvent,
+    primeLifecycleSnapshot,
+    getLifecycleSnapshot: () => lifecycleSnapshot,
+    invalidateForClear,
+    completeClear,
     refreshTrackingRegistry,
     updateEvent,
     deleteEvent,

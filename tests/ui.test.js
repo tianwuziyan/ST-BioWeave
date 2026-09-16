@@ -2870,3 +2870,149 @@ test('menu re-registration retires the stale handler and observer', () => {
   secondUnregister()
   assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
 })
+
+test('settings data management uses three distinct confirmations and the Runtime clear facade', async () => {
+  const documentRef = new AppFakeDocument()
+  const confirmCalls = []
+  const clearCalls = []
+  const context = {
+    chatId: 'chat-data-management',
+    Popup: {
+      show: {
+        async confirm(title, message) {
+          confirmCalls.push({ title, message })
+          return 'affirmative'
+        },
+      },
+    },
+    POPUP_RESULT: { AFFIRMATIVE: 'affirmative' },
+  }
+  const runtime = {
+    chat: {
+      current: () => context.chatId,
+      token: () => ({ chatId: context.chatId, epoch: 1 }),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({ settings: {} }),
+      saveChat: async () => {},
+    },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+    collectActiveBusinessData: async () => ({}),
+    clearCharacterData: async () => {
+      clearCalls.push('character')
+      return { ok: true, changed: false, persistence: { commitState: 'confirmed' } }
+    },
+    clearWorldData: async () => {
+      clearCalls.push('world')
+      return { ok: true, changed: false, persistence: { commitState: 'confirmed' } }
+    },
+    clearAllBioWeaveData: async () => {
+      clearCalls.push('all')
+      return { ok: true, changed: false, persistence: { commitState: 'confirmed' } }
+    },
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {} })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const click = [...root.listeners.get('click')][0]
+  for (const action of ['clear-character-data', 'clear-world-data', 'clear-all-bioweave-data']) {
+    await click({
+      target: actionTarget(root, { bioweaveAction: action }),
+      preventDefault() {},
+    })
+  }
+  assert.deepEqual(clearCalls, ['character', 'world', 'all'])
+  assert.equal(confirmCalls.length, 3)
+  assert.equal(new Set(confirmCalls.map(call => call.message)).size, 3)
+  for (const call of confirmCalls) {
+    assert.match(call.message, /当前 Chat/)
+    assert.match(call.message, /聊天正文/)
+    assert.match(call.message, /Swipe 正文/)
+    assert.match(call.message, /其它插件/)
+    assert.match(call.message, /API \/ Secret \/ 全局设置/)
+    assert.match(call.message, /不可撤销/)
+  }
+  const markup = root.querySelector('.bioweave-main').innerHTML
+  assert.match(markup, /data-bioweave-data-management/)
+  assert.match(markup, /data-bioweave-action="clear-character-data"/)
+  assert.match(markup, /data-bioweave-action="clear-world-data"/)
+  assert.match(markup, /data-bioweave-action="clear-all-bioweave-data"/)
+  assert.doesNotMatch(APP_SOURCE, /delete\s+[^\n]*(?:bioweave|swipe_info|extra)/i)
+  app.destroyBioWeave()
+})
+
+test('data management disables every clear action while saving and never reports a failed clear as success', async () => {
+  const documentRef = new AppFakeDocument()
+  const toasts = []
+  documentRef.defaultView.toastr = {
+    success: message => toasts.push(['success', message]),
+    info: message => toasts.push(['info', message]),
+    error: message => toasts.push(['error', message]),
+  }
+  let resolveClear
+  const clearPromise = new Promise(resolve => {
+    resolveClear = resolve
+  })
+  let clearCalls = 0
+  const context = {
+    chatId: 'chat-data-management-busy',
+    Popup: {
+      show: {
+        async confirm() {
+          return 'affirmative'
+        },
+      },
+    },
+    POPUP_RESULT: { AFFIRMATIVE: 'affirmative' },
+  }
+  const runtime = {
+    chat: {
+      current: () => context.chatId,
+      token: () => ({ chatId: context.chatId, epoch: 1 }),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({ settings: {} }),
+      saveChat: async () => {},
+    },
+    st: {
+      getContext: () => context,
+      fetch: async () => ({ ok: true, json: async () => [] }),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+    collectActiveBusinessData: async () => ({}),
+    clearAllBioWeaveData: async () => {
+      clearCalls += 1
+      return clearPromise
+    },
+  }
+  const app = createApp(runtime, { documentRef, storageRef: {} })
+  const root = app.openBioWeave()
+  app.go('settings')
+  const click = [...root.listeners.get('click')][0]
+  const pending = click({
+    target: actionTarget(root, { bioweaveAction: 'clear-all-bioweave-data' }),
+    preventDefault() {},
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  const busyMarkup = root.querySelector('.bioweave-main').innerHTML
+  assert.equal(clearCalls, 1)
+  assert.match(busyMarkup, /data-bioweave-action="clear-character-data"[^>]*disabled/)
+  assert.match(busyMarkup, /data-bioweave-action="clear-world-data"[^>]*disabled/)
+  assert.match(busyMarkup, /data-bioweave-action="clear-all-bioweave-data"[^>]*disabled[^>]*aria-busy="true"[^>]*>清除中…/)
+
+  resolveClear({ ok: false, changed: true, error_code: 'CLEAR_SAVE_FAILED', persistence: { commitState: 'failed' } })
+  await pending
+  assert.equal(toasts.some(([type]) => type === 'success'), false)
+  assert.deepEqual(toasts.map(([type]) => type), ['error'])
+  assert.match(toasts[0][1], /失败/)
+  app.destroyBioWeave()
+})

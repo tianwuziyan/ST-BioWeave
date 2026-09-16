@@ -162,8 +162,11 @@ npm run check    # index.js 语法检查 + 全部 Node 测试
 5. **预览输入**：先查看 AnalysisInput 的结构和实际 World Model 消息，确认没有不需要的剧情或来源；可编辑的首尾 SYSTEM 会按真实请求位置显示。
 6. **分析世界模型**：进入世界模型，点击重新分析。成功后，结果才会写入当前 Chat 的 chat_metadata.bioweave。
 7. **按模块维护**：选择一个物种和生物类型，按需编辑生殖能力、生殖规则、生命周期、特殊规则、医疗与照护、例外或未知项；每个模块独立保存或取消。
+8. **管理当前 Chat 数据**：在设置页的“数据管理”中使用“清除人物数据”“清除世界数据”或“清除全部 BioWeave 数据”。每项都会先弹出二次确认；清除只针对当前 Chat，聊天正文、所有 Swipe 正文、其它插件数据以及 API / Secret / 全局配置都会保留。
 
 切换 Chat 后，BioWeave 会重新读取当前 Chat 的数据。World Model 重新分析失败时，原有成功模型不会被清空。
+
+用户在 SillyTavern 点击原生“开始新聊天”时，BioWeave 会把发起操作时锁定的旧 Chat 作为 source Chat，清除其中全部 BioWeave Chat/Floor/Swipe 数据，然后让新 Chat 从空状态开始。这个生命周期没有额外的 BioWeave 按钮或确认框；普通切换已有 Chat、刷新页面、初始化和切换角色不会触发该清除。
 
 ## 使用说明
 
@@ -224,6 +227,16 @@ unknowns[]
 当前 UI 路由包括总览、人物、事件、推演、家系、世界模型和设置。World Model 与设置是当前 Chat 级页面；人物详情的焦点不会改变 Chat 作用域。
 
 事件、状态、Snapshot、Projection 和 Genealogy 页面已经有渲染壳或领域模块，但部分页面仍使用空状态/演示 DTO。它们不会把演示数据写入 Chat，也不应被理解为已经完成端到端自动追踪。
+
+### 5. 数据管理与开始新聊天
+
+设置页的“数据管理”是 BioWeave 唯一的手动清除入口，且三个操作都只作用于当前 Chat：
+
+- “清除人物数据”删除人物当前状态、tracking、关系和人物派生结果；保留世界模型、有效历史 Event/Floor 分析、正文以及全局/API 配置。
+- “清除世界数据”删除 World Model 和世界派生结果；保留人物独立数据、有效历史 Event/Floor 分析、正文以及全局/API 配置，并使相关世界引用失效。
+- “清除全部 BioWeave 数据”删除当前 Chat 的 Chat-local、Floor-local、Swipe-local 和 derived BioWeave 数据，包括所有普通消息和所有 Swipe；聊天正文、Swipe 正文、其它插件数据以及全局/API 配置不删除。
+
+用户主动点击 SillyTavern 原生“开始新聊天”时，旧 Chat 是一次特殊的 destructive lifecycle source：旧 Chat 的上述 BioWeave Chat/Floor/Swipe 数据会被清除，新 Chat 从空 BioWeave 状态开始。切换到已经存在的 Chat 只加载目标 Chat 自己的数据，不会删除来源 Chat。完整的数据所有权、生命周期和失败语义见 [BioWeave Data Lifecycle](docs/bioweave-data-lifecycle.md)。
 
 ## 系统架构
 
@@ -387,7 +400,9 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   └── floor.js              # Floor Version、分析去重、失败保护
 ├── storage/
 │   ├── schema.js            # Global/Chat/Floor 默认值与规范化
-│   └── store.js              # Profile、Secret、Chat、Floor 存储边界
+│   ├── store.js              # Profile、Secret、Chat、Floor 存储边界
+│   ├── lifecycle.js          # 持久化字段 ownership/domain registry
+│   └── clear.js              # Registry 驱动的手动/source-targeted Clear Service
 ├── story/
 │   ├── seven-days-cal.js    # Anima/柏宝书公开记忆探测与适配
 │   └── time.js              # Story Time provider 与结构化时间适配
@@ -419,7 +434,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 - index.js：创建 Runtime 与 App，挂载 overlay，向 SillyTavern 扩展菜单注册入口，并导出 onInstall、onUpdate、onEnable、onDisable、onActivate、onDelete。
 - runtime/event-analysis.js：拥有当前/指定 Floor 分析、N-floor 自动调度、强制刷新、去重、失败保护、Floor-bound Event 提交、Event CRUD 与 Tracking Registry 重建。
 - ui/app.js：拥有页面路由、主题、overlay 生命周期和全局事件委托；只调用 Runtime Event Analysis API 并显示状态，不生产或判定 Event/Tracking 业务结果。
-- storage/schema.js / storage/store.js：集中定义配置和数据保存边界，避免 API Profile 或 Secret 进入 Chat 数据。
+- storage/schema.js / storage/store.js / storage/lifecycle.js / storage/clear.js：集中定义配置和数据保存边界、字段 ownership/domain 以及 Registry 驱动的手动/source-targeted 清除，避免 API Profile 或 Secret 进入 Chat 数据。
 - ai/analyzer.js：把模型输出解析为固定 World Model，并执行分析专用的证据边界与一致性校验。
 
 ## 配置说明

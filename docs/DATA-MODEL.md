@@ -269,3 +269,9 @@ Projection、Genealogy、完整 StateReducer、Snapshot 恢复、Gestational Age
 `Floor Version → BiologicalEvent → Tracking Subject Registry → Characters / Events / Overview → State Reducer → Current State → Snapshot → Projection → Context`。
 
 用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Projection 不进入事实历史，Phase 2A 不提前接通 State/Snapshot/Projection/Genealogy。
+
+## Data lifecycle contract pointer
+
+The normative clear and lifecycle rules live in [BioWeave Data Lifecycle](./bioweave-data-lifecycle.md). Read it whenever a change touches the global settings boundary, Chat metadata, message/Swipe Floor roots, derived state, Chat lifecycle events, or asynchronous persistence. It is the single detailed contract for Manual Character/World/All clear, verified Start New Chat source cleanup, mutation invalidation, provenance, rollback, and contract-test coverage.
+
+The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns Chat-local configuration and materialized projections; `message.extra.bioweave` owns an ordinary-message Floor; and `message.swipe_info[*].extra.bioweave` owns every structured-message Swipe, including inactive and historical slots. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.

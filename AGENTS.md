@@ -34,6 +34,30 @@ state、world state、API context，或新增任何跨楼层状态，开始前�
 4. tracking、registry、event-derived profile、index、summary、UI model 和 cache 必须从当前有效 Floor facts 重建；Chat-level derived state 不是第二事实源，Chat cache、runtime cache 和 `last_processed_floor` 只能作 hint。
 5. 所有 Floor-derived API fact 必须保留可追溯的 Floor/Swipe provenance；删除、Swipe 切换/删除或版本变化后不得继续贡献事实。
 
+## BioWeave Data Lifecycle Contract
+
+For lifecycle changes involving BioWeave global, Chat, message/Swipe, derived,
+or Runtime state, read [BioWeave Data Lifecycle](docs/bioweave-data-lifecycle.md)
+first. That document is the single detailed contract; do not create a second
+field list in a feature module. The lifecycle registry is the source of truth
+for persistent-field ownership and clear/invalidation rules. Preserve
+`extensionSettings.bioweave` and the Secret Store; expose manual clear only
+under Settings → 数据管理; keep ordinary Chat changes non-destructive; allow
+source-A cleanup only from the verified one-shot Start New Chat transition;
+and guard writes with owner/epoch/Floor-Version checks and explicit
+persistence outcomes.
+
+Any change that adds or modifies BioWeave persistent or derived state is done
+only when the developer has answered, in the registry/tests/docs, which domain
+owns the field, its exact storage location, its source provenance, Character /
+World / All clear behavior, ordinary Chat switch and Start New Chat behavior,
+message edit/delete behavior, Swipe switch/delete behavior, async stale-result
+protection, persistence-failure and rollback behavior, and the required
+lifecycle tests. A field that can be written but has no lifecycle answer is
+incomplete. The Definition of Done is the combination of implementation,
+registry entry, lifecycle invalidation, tests, and an updated
+`docs/bioweave-data-lifecycle.md`.
+
 # AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.

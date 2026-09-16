@@ -68,6 +68,13 @@ export const DEFAULT_SETTINGS = {
   prompts: { prefix: '', suffix: '', task: {} },
 };
 
+// Lifecycle markers are Chat-local control state.  They are intentionally
+// separate from settings and from Floor facts; the runtime may later use the
+// character reset boundary when rebuilding projections.
+export const DEFAULT_DATA_LIFECYCLE = Object.freeze({
+  character_reset: null,
+});
+
 // 所有 AI Analyzer 共用的可编辑提示块；核心约束、任务契约和结果校验
 // 仍由 BioWeave 代码维护，避免用户误删后失去校验边界。
 export const DEFAULT_ANALYSIS_PROMPT = Object.freeze({
@@ -686,15 +693,18 @@ export function emptyChat(chatId) {
     relationships: [],
     settings: cloneValue(DEFAULT_SETTINGS),
     index: { snapshot_floors: [], last_processed_floor: null },
+    data_lifecycle: cloneValue(DEFAULT_DATA_LIFECYCLE),
   };
 }
 
 export function emptyFloor() {
   return {
     v: 1,
+    floor_version: null,
     analysis: null,
     events: [],
     character_registry: normalizeCharacterRegistry(null),
+    history: null,
     snapshot: null,
     projections: [],
   };

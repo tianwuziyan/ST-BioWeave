@@ -1,0 +1,36 @@
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/prd.md","reason":"本次批准的产品语义、清除边界、Start New Chat source ownership、UI 与验收条件。"}
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/design.md","reason":"审计后的真实数据域、共同 Clear Engine、source revision merge、生命周期与并发设计。"}
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/implement.md","reason":"实施切片、写入边界、测试矩阵、验证顺序与非目标。"}
+{"file":"AGENTS.md","reason":"仓库 ownership redlines、Floor/Swipe 事实源、AI 开发规则、UI 与 Git 安全约束。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership、六字段 Version、provenance、删除编辑失效和 derived state 权威契约。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event、tracking subject、identity 与有效 Floor facts 的领域边界。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model、Character Card/Persona configuration 与 world-derived reference 边界。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"plain DOM settings UI、单一 app owner、Popup/Toast、生命周期与事件委托规则。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Chat/Floor/Swipe scope、runtime transient、stale async guard 与 UI/storage 分层。"}
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"保存/API 错误分类、失败反馈与 transient error 传播规则。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"宿主 UI、danger/响应式、测试、语法检查和真实宿主验收规则。"}
+{"file":".trellis/spec/guides/index.md","reason":"跨层与代码复用思考指南入口，确保新 clear engine 不产生重复事实源。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 storage、runtime、AI、UI、事件和 persistence 之间的 owner/provenance 链路。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用既有 store、boundary、Popup、cache 与 error helper，避免两套 clear 逻辑。"}
+{"file":"storage/schema.js","reason":"真实 Chat/Floor schema、默认数据域和 future lifecycle registry 的字段清单。"}
+{"file":"storage/store.js","reason":"现有 Chat/Floor storage abstraction、per-Swipe owner、scope 校验与持久化边界。"}
+{"file":"runtime/chat.js","reason":"Chat owner、epoch/token、boundary 与 async invalidation seam。"}
+{"file":"runtime/events.js","reason":"SillyTavern lifecycle listener、save adapter、CHAT_CHANGED/MESSAGE mutation 入口。"}
+{"file":"runtime/event-analysis.js","reason":"分析任务、AbortController、Floor provenance、tracking rebuild 与 late commit guard。"}
+{"file":"runtime/floor.js","reason":"六字段 Floor Version、active Swipe、hash 和 Floor commit 规则。"}
+{"file":"ai/worldbook.js","reason":"现有 worldbook cache 清理与 generation invalidation helper。"}
+{"file":"ui/app.js","reason":"单一 UI owner、action delegation、Chat boundary、Popup/Toast、runtime refresh 与 transient state。"}
+{"file":"ui/settings.js","reason":"现有 settings UI 结构、数据管理区域位置、data-bioweave action hooks。"}
+{"file":"docs/DATA-MODEL.md","reason":"当前 Global/Chat/Floor 数据模型与 Secret reference 边界。"}
+{"file":"README.md","reason":"面向用户说明设置页数据管理入口、手动清除范围和原生 Start New Chat 语义。"}
+{"file":"docs/DEVELOPMENT.md","reason":"模块职责、生命周期、测试与 host acceptance 约定。"}
+{"file":"docs/ui-framework.config.json","reason":"UI tokens、components、hooks、settings group 与同步契约。"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"生产 settings UI 的组件层级、交互、响应式和同步规则。"}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"新增数据管理控件应遵循的结构、class、data hook 与三端布局示例。"}
+{"file":"docs/UI_FULL_REFERENCE.html","reason":"完整 UI reference 必须同步 data-management settings 结构。"}
+{"file":"storage/lifecycle.js","reason":"集中式生命周期 domain/ownership registry 与 schema coverage。"}
+{"file":"storage/clear.js","reason":"Manual Clear 与 source-targeted Start New Chat 共用的 registry-driven Clear Engine。"}
+{"file":"tests/storage-clear.test.js","reason":"Chat/Floor/Swipe owned-field 清除、保留字段、rollback、unknown 与 source revision verification。"}
+{"file":"tests/lifecycle-contract.test.js","reason":"persistent field 分类、global preserve 与 Clear All 覆盖的 contract tests。"}
+{"file":"tests/start-new-chat-lifecycle.test.js","reason":"source Chat A destructive Start New Chat、普通切换、transition proof、race 与 persistence failure。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"正式 Data Lifecycle Contract、清除矩阵、生命周期、async ownership 与开发 checklist。"}

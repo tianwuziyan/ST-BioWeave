@@ -642,6 +642,115 @@ function validSwipeId(swipeId) {
   return normalizedSwipeId(swipeId) ?? 0;
 }
 
+function readAdapterRevision(adapter, chatId) {
+  const readers = [
+    adapter?.getChatRevision,
+    adapter?.getRevision,
+    adapter?.getChatStateRevision,
+  ];
+  for (const reader of readers) {
+    if (typeof reader !== "function") continue;
+    const value = reader.call(adapter, chatId);
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
+function sourceReader(adapter) {
+  return [
+    "readChatOwner",
+    "readChatSnapshot",
+    "readChatState",
+    "getChatOwnerSnapshot",
+    "getChatSnapshot",
+    "getChatStateByOwner",
+  ].find((name) => typeof adapter?.[name] === "function");
+}
+
+function sourceWriter(adapter) {
+  return [
+    "compareAndSaveChatOwner",
+    "compareAndSwapChatOwner",
+    "saveChatOwnerCAS",
+    "commitChatOwnerCAS",
+    "saveChatOwner",
+    "saveChatSnapshot",
+    "saveChatStateByOwner",
+    "commitChatOwner",
+  ].find((name) => typeof adapter?.[name] === "function");
+}
+
+function sourceWriterSupportsRevisionCAS(adapter, writerName) {
+  const canonicalCASWriters = new Set([
+    "compareAndSaveChatOwner",
+    "compareAndSwapChatOwner",
+    "saveChatOwnerCAS",
+    "commitChatOwnerCAS",
+  ]);
+  return Boolean(
+    canonicalCASWriters.has(writerName) ||
+      adapter?.sourceOwnerRevisionCAS === true ||
+      adapter?.supportsSourceOwnerRevisionCAS === true ||
+      adapter?.capabilities?.sourceOwnerRevisionCAS === true ||
+      adapter?.sourceOwnerLatestMerge === true ||
+      adapter?.supportsSourceOwnerLatestMerge === true ||
+      adapter?.capabilities?.sourceOwnerLatestMerge === true ||
+      adapter?.[writerName]?.supportsRevisionCAS === true,
+  );
+}
+
+function atomicBioWeaveWriter(adapter) {
+  return [
+    "commitBioWeaveMutation",
+    "saveBioWeaveState",
+    "saveChatBioWeaveState",
+  ].find((name) => typeof adapter?.[name] === "function");
+}
+
+function normalizeOwnerId(owner) {
+  const value =
+    typeof owner === "string"
+      ? owner
+      : owner?.chatId ?? owner?.chat_id ?? owner?.owner?.chatId ?? owner?.owner?.chat_id;
+  return typeof value === "string" ? value.trim() : value ?? null;
+}
+
+function normalizeOwnerState(raw, owner, { requireRevision = false } = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const chatId = normalizeOwnerId(source) ?? normalizeOwnerId(owner);
+  const revision =
+    source.revision ??
+    source.sourceRevision ??
+    source.source_revision ??
+    source.owner?.revision;
+  const metadata = source.chatMetadata ?? source.metadata ?? {};
+  const messages = source.messages ?? source.chat ?? [];
+  if (!chatId) throw new Error("CHAT_OWNER_REQUIRED");
+  if (!metadata || typeof metadata !== "object")
+    throw new Error("CHAT_METADATA_INVALID");
+  if (!Array.isArray(messages)) throw new Error("CHAT_MESSAGES_INVALID");
+  if (requireRevision && (revision === undefined || revision === null)) {
+    throw new Error("SOURCE_REVISION_UNVERIFIED");
+  }
+  return {
+    owner: {
+      chatId,
+      characterId:
+        source.characterId ?? source.character_id ?? source.owner?.characterId ?? null,
+      groupId: source.groupId ?? source.group_id ?? source.owner?.groupId ?? null,
+      revision,
+    },
+    chatId,
+    revision,
+    header: cloneValue(source.header),
+    chatMetadata: cloneValue(metadata),
+    metadata: cloneValue(metadata),
+    chat: cloneValue(messages),
+    messages: cloneValue(messages),
+    bioweave: cloneValue(metadata.bioweave),
+  };
+}
+
 export function createStore(adapter, boundary = null) {
   if (!adapter || typeof adapter.getChatId !== "function") {
     throw new TypeError("STORAGE_ADAPTER_REQUIRED");
@@ -822,8 +931,149 @@ export function createStore(adapter, boundary = null) {
     assertToken(adapter, boundary, token);
   }
 
+  function getCurrentChatOwnerSnapshot(chatId = currentChatId(adapter, boundary)) {
+    if (currentChatId(adapter, boundary) !== chatId) throw staleChatError();
+    const metadata = adapter.getChatMetadata?.() ?? {};
+    const messages = adapter.getChat?.() ?? [];
+    if (!Array.isArray(messages)) throw new Error("CHAT_MESSAGES_INVALID");
+    return normalizeOwnerState(
+      {
+        chatId,
+        revision: readAdapterRevision(adapter, chatId),
+        chatMetadata: metadata,
+        messages,
+      },
+      { chatId },
+    );
+  }
+
+  // Source-targeted reads are intentionally separate from getChatMetadata()
+  // and getChat().  A source clear must never fall back to the mutable current
+  // host context after a Chat boundary.
+  async function readChatOwnerSnapshot(owner, { source = true } = {}) {
+    const chatId = normalizeOwnerId(owner);
+    if (!chatId) throw new Error("CHAT_OWNER_REQUIRED");
+    if (!source) return getCurrentChatOwnerSnapshot(chatId);
+    const readerName = sourceReader(adapter);
+    if (!readerName) throw new Error("SOURCE_OWNER_ADAPTER_UNAVAILABLE");
+    const raw = await adapter[readerName].call(adapter, {
+      chatId,
+      chat_id: chatId,
+      owner: cloneValue(owner),
+    });
+    return normalizeOwnerState(raw, owner, { requireRevision: true });
+  }
+
+  function applyBioWeavePlanToCurrent(plan, { restore = false } = {}) {
+    const chatId = plan?.chatId ?? normalizeOwnerId(plan?.owner);
+    if (!chatId || currentChatId(adapter, boundary) !== chatId)
+      throw staleChatError();
+    const metadata = adapter.getChatMetadata?.();
+    const liveMessages = adapter.getChat?.();
+    if (!metadata || !Array.isArray(liveMessages))
+      throw new Error("ST_CHAT_STORAGE_UNAVAILABLE");
+    const chatRoot = restore ? plan.previous?.chatRoot : plan.chat?.after;
+    const previousRoot = restore ? plan.chat?.after : plan.chat?.before;
+    if (chatRoot === undefined) {
+      delete metadata.bioweave;
+    } else if (previousRoot === undefined) {
+      metadata.bioweave = cloneValue(chatRoot);
+    } else if (!plan.chat?.fields?.length) {
+      // No Chat-root operation is part of this plan.  In particular, do not
+      // overwrite a concurrent metadata update merely because a Floor slot is
+      // being cleared.
+    } else {
+      const liveRoot = metadata.bioweave;
+      if (!liveRoot || typeof liveRoot !== "object")
+        throw new Error("CHAT_ROOT_CHANGED");
+      for (const field of plan.chat.fields) {
+        if (field === "data_lifecycle.character_reset") {
+          const marker = chatRoot?.data_lifecycle?.character_reset;
+          liveRoot.data_lifecycle ??= {};
+          if (marker === undefined) delete liveRoot.data_lifecycle.character_reset;
+          else liveRoot.data_lifecycle.character_reset = cloneValue(marker);
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(chatRoot, field))
+          liveRoot[field] = cloneValue(chatRoot[field]);
+        else delete liveRoot[field];
+      }
+    }
+    for (const slot of plan.slots ?? []) {
+      if (!slot.changed) continue;
+      const message = liveMessages[slot.messageIndex];
+      if (!message || String(message.message_id ?? slot.messageId) !== String(slot.messageId))
+        throw new Error("MESSAGE_OWNER_CHANGED");
+      const next = restore ? slot.before : slot.after;
+      if (slot.kind === "message_extra") {
+        if (next === undefined) delete message.extra?.bioweave;
+        else {
+          message.extra ??= {};
+          message.extra.bioweave = cloneValue(next);
+        }
+        continue;
+      }
+      const swipeInfo = message.swipe_info;
+      if (!swipeInfo || typeof swipeInfo !== "object")
+        throw new Error("SWIPE_OWNER_CHANGED");
+      const swipe = swipeInfo[slot.swipeId];
+      if (!swipe || typeof swipe !== "object")
+        throw new Error("SWIPE_OWNER_CHANGED");
+      if (next === undefined) delete swipe.extra?.bioweave;
+      else {
+        swipe.extra ??= {};
+        swipe.extra.bioweave = cloneValue(next);
+      }
+    }
+  }
+
+  function restoreBioWeavePlanToCurrent(plan) {
+    return applyBioWeavePlanToCurrent(plan, { restore: true });
+  }
+
+  async function saveSourceChatOwner(owner, state, options = {}) {
+    const writerName = sourceWriter(adapter);
+    if (!writerName) throw new Error("SOURCE_OWNER_ADAPTER_UNAVAILABLE");
+    const chatId = normalizeOwnerId(owner);
+    if (!chatId) throw new Error("CHAT_OWNER_REQUIRED");
+    if (!sourceWriterSupportsRevisionCAS(adapter, writerName)) {
+      const error = new Error("SOURCE_REVISION_CAS_UNVERIFIED");
+      error.code = "SOURCE_REVISION_CAS_UNVERIFIED";
+      throw error;
+    }
+    if (options.expectedRevision === undefined || options.expectedRevision === null) {
+      const error = new Error("SOURCE_REVISION_UNVERIFIED");
+      error.code = "SOURCE_REVISION_UNVERIFIED";
+      throw error;
+    }
+    const payload = {
+      owner: cloneValue(owner),
+      chatId,
+      chat_id: chatId,
+      state: cloneValue(state),
+      expectedRevision: options.expectedRevision,
+      expected_revision: options.expectedRevision,
+      plan: options.plan ? cloneValue(options.plan) : undefined,
+      previous: options.previous ? cloneValue(options.previous) : undefined,
+      signal: options.signal,
+    };
+    if (adapter[writerName].length >= 2)
+      return adapter[writerName].call(adapter, cloneValue(owner), cloneValue(state), payload);
+    return adapter[writerName].call(adapter, payload);
+  }
+
+  async function commitAtomicBioWeaveMutation(payload) {
+    const writerName = atomicBioWeaveWriter(adapter);
+    if (!writerName) throw new Error("ATOMIC_BIOWEAVE_ADAPTER_UNAVAILABLE");
+    return adapter[writerName].call(adapter, cloneValue(payload));
+  }
+
   const profileStore = createApiProfileStore(adapter);
   return {
+    // Exposed only so storage services can share the same host boundary.  New
+    // business code should still use the methods below rather than mutating
+    // the adapter's message objects directly.
+    adapter,
     getChat,
     saveChat,
     getFloor,
@@ -835,6 +1085,12 @@ export function createStore(adapter, boundary = null) {
     saveTrackingSubjects,
     saveTrackingCandidates,
     saveFloor,
+    getCurrentChatOwnerSnapshot,
+    readChatOwnerSnapshot,
+    applyBioWeavePlanToCurrent,
+    restoreBioWeavePlanToCurrent,
+    saveSourceChatOwner,
+    commitAtomicBioWeaveMutation,
     profileStore,
     ...profileStore,
   };

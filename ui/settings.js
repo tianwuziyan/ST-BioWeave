@@ -23,6 +23,30 @@ const ASSIGNMENT_LABELS = {
   history_scan: '历史扫描',
 };
 
+export const DATA_MANAGEMENT_OPERATIONS = Object.freeze([
+  {
+    key: 'character',
+    action: 'clear-character-data',
+    method: 'clearCharacterData',
+    title: '清除人物数据',
+    description: '仅当前 Chat：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、事件/楼层分析、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+  },
+  {
+    key: 'world',
+    action: 'clear-world-data',
+    method: 'clearWorldData',
+    title: '清除世界数据',
+    description: '仅当前 Chat：删除 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+  },
+  {
+    key: 'all',
+    action: 'clear-all-bioweave-data',
+    method: 'clearAllBioWeaveData',
+    title: '清除全部 BioWeave 数据',
+    description: '仅当前 Chat：删除全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+  },
+]);
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -875,6 +899,32 @@ function renderAnalysisPromptSettings(prompt = {}, openSettingsSections = []) {
   ].join('');
 }
 
+function renderDataManagementSettings(dataManagement = {}, openSettingsSections = []) {
+  const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('data_management');
+  const busy = dataManagement?.busy === true;
+  const activeOperation = String(dataManagement?.operation ?? '').trim();
+  const operations = DATA_MANAGEMENT_OPERATIONS.map(operation => {
+    const active = busy && activeOperation === operation.key;
+    return [
+      '<article class="bioweave-data-management-operation" data-bioweave-clear-operation="' + operation.key + '">',
+      '<div class="bioweave-data-management-operation-copy"><h3>' + operation.title + '</h3><p class="bioweave-muted">' + operation.description + '</p></div>',
+      '<button type="button" class="bioweave-danger-action" data-bioweave-action="' + operation.action + '" data-bioweave-clear-operation="' + operation.key + '"' + (busy ? ' disabled' : '') + ' aria-busy="' + active + '">' + (active ? '清除中…' : operation.title) + '</button>',
+      '</article>',
+    ].join('');
+  }).join('');
+  return [
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-data-management-disclosure" data-bioweave-settings-disclosure="data_management"' + (open ? ' open' : '') + '>',
+    renderSettingsSummary('数据管理', '仅当前 Chat 的 BioWeave 数据；不可撤销操作', null, {label: '仅当前 Chat'}),
+    '<section class="bioweave-card bioweave-data-management" data-bioweave-data-management>',
+    '<header class="bioweave-settings-card-header"><div><h3>当前 Chat 数据</h3><p class="bioweave-muted">三个危险操作都只处理当前 Chat；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p></div></header>',
+    '<div class="bioweave-data-management-list">',
+    operations,
+    '</div>',
+    '</section>',
+    '</details>',
+  ].join('');
+}
+
 function renderAnalysisMessagePreview(messages = [], mode = 'structure', analysisType = 'world') {
   const roleLabels = {system: 'SYSTEM', assistant: 'ASSISTANT', user: 'USER'};
   const typeLabel = analysisType === 'event' ? 'Event Analysis' : 'World Analysis';
@@ -1043,6 +1093,7 @@ export function settingsPage({
   analysisPromptDraft = null,
   worldAnalysisPrompt = null,
   worldAnalysisPromptDraft = null,
+  dataManagement = {},
 } = {}) {
   const profiles = Array.isArray(rawProfiles)
     ? rawProfiles.map(profile => normalizeApiProfileForDisplay(profile))
@@ -1060,6 +1111,7 @@ export function settingsPage({
       analysisPromptDraft ?? analysisPrompt ?? worldAnalysisPromptDraft ?? worldAnalysisPrompt ?? {},
       worldbookSources.openSettingsSections,
     ),
+    renderDataManagementSettings(dataManagement, worldbookSources.openSettingsSections),
     renderApiSource(apiSource, defaultProfileId, profiles, {
       loading,
       editingProfile,

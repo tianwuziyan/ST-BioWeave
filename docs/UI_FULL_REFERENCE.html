@@ -1595,6 +1595,34 @@
         border-top: 1px solid var(--line);
         background: var(--panel-raised);
       }
+      .data-management-list {
+        display: grid;
+        gap: 8px;
+        padding-top: 8px;
+      }
+      .data-management-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 10px;
+        padding: 9px 10px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: var(--card);
+      }
+      .data-management-card h3,
+      .data-management-card p {
+        margin: 0;
+      }
+      .data-management-card h3 {
+        font-size: 13px;
+      }
+      .data-management-card p {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
       .settings-group-body .field,
       .settings-group-body .setting-grid,
       .settings-group-body select {
@@ -2565,6 +2593,12 @@
       body[data-device='mobile'] .settings-group.expanded .settings-group-head {
         padding-left: 5px;
       }
+      body[data-device='mobile'] .data-management-card {
+        grid-template-columns: 1fr;
+      }
+      body[data-device='mobile'] .data-management-card .button {
+        width: 100%;
+      }
       body[data-device='mobile'] .settings-group-head > .badge {
         margin-top: 2px;
       }
@@ -3024,7 +3058,8 @@
       function settingsGroup(key, title, summary, body, badge = '') {
         const expanded = Boolean(state.settingsExpanded[key])
         const modifier = key === 'api' ? ' api-source-group' : ''
-        return `<section class="settings-group${modifier} ${expanded ? 'expanded' : ''}"><div class="settings-group-head"><button class="settings-toggle" type="button" data-settings-toggle="${key}" aria-expanded="${expanded}"><span class="settings-chevron">${expanded ? '−' : '+'}</span><span class="settings-toggle-copy"><b>${title}</b><small>${summary}</small></span></button>${badge ? `<span class="badge ${expanded ? 'good' : ''}">${badge}</span>` : ''}</div>${expanded ? `<div class="settings-group-body">${body}</div>` : ''}</section>`
+        const disclosureKey = key === 'dataManagement' ? 'data_management' : key
+        return `<section class="settings-group${modifier} ${expanded ? 'expanded' : ''}" data-bioweave-settings-disclosure="${disclosureKey}"><div class="settings-group-head"><button class="settings-toggle" type="button" data-settings-toggle="${key}" aria-expanded="${expanded}"><span class="settings-chevron">${expanded ? '−' : '+'}</span><span class="settings-toggle-copy"><b>${title}</b><small>${summary}</small></span></button>${badge ? `<span class="badge ${expanded ? 'good' : ''}">${badge}</span>` : ''}</div>${expanded ? `<div class="settings-group-body">${body}</div>` : ''}</section>`
       }
 
       function sourceBranchMarkup(branch) {
@@ -3065,6 +3100,7 @@
         const recentBody = `<div class="setting-grid recent-story-read-options"><label class="field">读取最近楼层<input type="number" min="0" max="1000" value="${escapeHtml(state.settings.recentStoryCount)}" data-setting-recent-count></label><label class="control-row"><span class="check-copy"><b>对用户楼应用正则</b><small>开场楼（0 楼）始终保留原文</small></span><span class="switch"><input type="checkbox" data-setting-regex-user ${state.settings.regexUser ? 'checked' : ''}><span class="switch-track"><span class="switch-thumb"></span></span></span></label></div><div class="regex-section"><div class="regex-section-head"><div><h3>全局正则</h3><p>适用于所有角色卡，先于当前角色卡规则。</p></div><button class="button" type="button" data-setting-regex-add="global">新增规则</button></div><div class="regex-list">${regexRows('global', state.settings.globalRegex)}</div></div><div class="regex-section"><div class="regex-section-head"><div><h3>当前角色卡正则</h3><p>只作用于当前 Chat 与当前角色卡。</p></div><button class="button" type="button" data-setting-regex-add="character">新增规则</button></div><div class="regex-list">${regexRows('character', state.settings.characterRegex)}</div></div><p class="setting-note">规则按从上到下依次处理；无效规则会跳过。</p>`
         const externalBody = `<div class="memory-list"><div class="memory-row"><label><input type="checkbox" data-setting-memory="anima" ${state.settings.externalSources.anima ? 'checked' : ''}><span><strong>读取 Anima</strong><small>已检测到公开接口，可用于分析输入。</small></span></label><span class="badge good">可用</span></div><div class="memory-row"><label><input type="checkbox" data-setting-memory="baobaoshu" disabled><span><strong>读取柏宝书</strong><small>未检测到公开接口。</small></span></label><span class="badge">未检测</span></div><div class="memory-row"><label><input type="checkbox" data-setting-memory="database_memory" disabled><span><strong>读取数据库记忆</strong><small>未检测到公开接口。</small></span></label><span class="badge">未检测</span></div></div>`
         const promptBody = `<div class="prompt-grid"><label class="field">顶部 SYSTEM<textarea data-setting-prompt="systemTop">${escapeHtml(state.settings.prompt.systemTop)}</textarea></label><label class="field">分析任务补充<textarea data-setting-prompt="task">${escapeHtml(state.settings.prompt.task)}</textarea></label><label class="field">输入前说明<textarea data-setting-prompt="inputPrefix">${escapeHtml(state.settings.prompt.inputPrefix)}</textarea></label><label class="field">输入后说明<textarea data-setting-prompt="inputSuffix">${escapeHtml(state.settings.prompt.inputSuffix)}</textarea></label><label class="field">尾部 SYSTEM<textarea data-setting-prompt="systemBottom">${escapeHtml(state.settings.prompt.systemBottom)}</textarea></label></div><p class="setting-note">核心约束和结果校验始终保留；这里不会保存角色正文、世界书正文或 API Key。</p><div class="settings-actions"><button class="button primary" type="button">保存提示词设置</button><button class="button" type="button">高级 / 调试</button></div>`
+        const dataManagementBody = `<p class="setting-note">以下三个危险操作只作用于当前 Chat。聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p><div class="data-management-list" data-bioweave-data-management><article class="data-management-card" data-bioweave-clear-operation="character"><div><h3>清除人物数据</h3><p>仅当前 Chat：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；正文、Swipe 正文、其它插件数据和 API / Secret / 全局设置保留。</p></div><button class="button danger" type="button" data-bioweave-action="clear-character-data">清除人物数据</button></article><article class="data-management-card" data-bioweave-clear-operation="world"><div><h3>清除世界数据</h3><p>仅当前 Chat：删除 World Model、世界派生引用和世界 runtime cache；人物、事件/楼层分析、正文、Swipe 正文、其它插件数据和 API / Secret / 全局设置保留。</p></div><button class="button danger" type="button" data-bioweave-action="clear-world-data">清除世界数据</button></article><article class="data-management-card" data-bioweave-clear-operation="all"><div><h3>清除全部 BioWeave 数据</h3><p>仅当前 Chat：删除全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；正文、Swipe 正文、其它插件数据和 API / Secret / 全局设置保留。</p></div><button class="button danger" type="button" data-bioweave-action="clear-all-bioweave-data">清除全部 BioWeave 数据</button></article></div>`
         const apiProfile = state.settings.apiProfile
         const apiProfileBody =
           state.settings.apiSource === 'bioweave_independent_api'
@@ -3078,7 +3114,7 @@
           )
           .join('')}</div><p class="setting-note">每项可跟随默认、指定 API 或暂时禁用；这里只保存选择，不触发分析。</p>`
         const previewBody = `<div class="settings-summary-line"><strong>预计 1,240 tokens</strong><span>预览只存在当前页面内存，不保存正文。</span></div><div class="preview-strip"><button class="button ${state.settings.previewMode === 'structure' ? 'active' : ''}" type="button" data-setting-preview-mode="structure">结构预览</button><button class="button ${state.settings.previewMode === 'raw' ? 'active' : ''}" type="button" data-setting-preview-mode="raw">原始内容</button></div><details class="mini-disclosure" open><summary>实际发送消息</summary><p class="setting-note">SYSTEM / USER 消息分层来自同一份 World Model 请求数据。</p></details>`
-        return `<section class="page">${pageHead('设置', '连接参数是全局配置；任务数据仍属于当前 Chat', '<button class="button" type="button">保存设置</button>')}<div class="settings-groups">${settingsGroup('worldbook', '世界书来源', '选择角色卡字段和世界书条目作为分析输入', worldbookBody, `${worldbookSelectionSummary()} 项已选`)}${settingsGroup('recentStory', '最近剧情', '读取最近楼层，并按规则提取与清洗', recentBody, `${state.settings.recentStoryCount} 楼`)}${settingsGroup('externalMemory', '外部记忆来源', '选择可用于分析输入的公开记忆来源', externalBody, '1/3 可用')}${settingsGroup('prompt', '世界分析提示词', '可修改发送给模型的补充内容', promptBody, '核心约束保留')}${settingsGroup('api', 'API 来源', '选择酒馆当前 API 或 BioWeave 独立 API', apiBody, state.settings.apiSource === 'sillytavern_current_api' ? '当前 API' : '独立 API')}${settingsGroup('assignments', '任务分配', '为不同分析任务选择默认或指定 API', assignmentBody, `${enabledCount}/4`)}${settingsGroup('preview', '高级 / 调试', '临时检查本次分析实际读取的内容和发送消息', previewBody)}</div></section>`
+        return `<section class="page">${pageHead('设置', '连接参数是全局配置；任务数据仍属于当前 Chat', '<button class="button" type="button">保存设置</button>')}<div class="settings-groups">${settingsGroup('worldbook', '世界书来源', '选择角色卡字段和世界书条目作为分析输入', worldbookBody, `${worldbookSelectionSummary()} 项已选`)}${settingsGroup('recentStory', '最近剧情', '读取最近楼层，并按规则提取与清洗', recentBody, `${state.settings.recentStoryCount} 楼`)}${settingsGroup('externalMemory', '外部记忆来源', '选择可用于分析输入的公开记忆来源', externalBody, '1/3 可用')}${settingsGroup('prompt', '世界分析提示词', '可修改发送给模型的补充内容', promptBody, '核心约束保留')}${settingsGroup('dataManagement', '数据管理', '仅当前 Chat 的 BioWeave 数据；不可撤销操作', dataManagementBody, '仅当前 Chat')}${settingsGroup('api', 'API 来源', '选择酒馆当前 API 或 BioWeave 独立 API', apiBody, state.settings.apiSource === 'sillytavern_current_api' ? '当前 API' : '独立 API')}${settingsGroup('assignments', '任务分配', '为不同分析任务选择默认或指定 API', assignmentBody, `${enabledCount}/4`)}${settingsGroup('preview', '高级 / 调试', '临时检查本次分析实际读取的内容和发送消息', previewBody)}</div></section>`
       }
 
       function statePage() {

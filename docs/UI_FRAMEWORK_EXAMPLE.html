@@ -324,6 +324,33 @@
       .bw-settings-group.bw-api-source-group {
         overflow: visible;
       }
+      .bw-data-management-list {
+        display: grid;
+        gap: 8px;
+      }
+      .bw-data-management-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 10px;
+        padding: 9px 10px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 7px;
+        background: var(--bw-card);
+      }
+      .bw-data-management-card h3,
+      .bw-data-management-card p {
+        margin: 0;
+      }
+      .bw-data-management-card h3 {
+        font-size: 13px;
+      }
+      .bw-data-management-card p {
+        margin-top: 3px;
+        color: var(--bw-muted);
+        font-size: 11px;
+        line-height: 1.45;
+      }
       .bw-section-head {
         display: flex;
         align-items: center;
@@ -1709,6 +1736,12 @@
         .bw-page > .bw-settings-group {
           margin-left: 5px;
         }
+        .bw-data-management-card {
+          grid-template-columns: 1fr;
+        }
+        .bw-data-management-card .bw-button {
+          width: 100%;
+        }
         .bw-section {
           padding: 10px;
         }
@@ -2331,6 +2364,30 @@
                   <div class="bw-settings-actions">
                     <button class="bw-button primary" type="button">保存提示词设置</button
                     ><button class="bw-button" type="button">高级 / 调试</button>
+                  </div>
+                </div>
+              </details>
+              <details class="bw-settings-group bw-data-management-group" data-bioweave-settings-disclosure="data_management">
+                <summary class="bw-settings-head">
+                  <span class="bw-settings-chevron" aria-hidden="true">+</span
+                  ><span class="bw-settings-title"><b>数据管理</b><small>仅当前 Chat 的 BioWeave 数据；不可撤销操作</small></span
+                  ><span class="bw-badge">仅当前 Chat</span>
+                </summary>
+                <div class="bw-settings-body">
+                  <p class="bw-note">以下三个危险操作只作用于当前 Chat。聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p>
+                  <div class="bw-data-management-list" data-bioweave-data-management>
+                    <article class="bw-data-management-card" data-bioweave-clear-operation="character">
+                      <div><h3>清除人物数据</h3><p>删除当前 Chat 的人物当前状态、tracking 和人物派生结果。</p></div>
+                      <button class="bw-button danger" type="button" data-bioweave-action="clear-character-data" data-bioweave-clear-operation="character">清除人物数据</button>
+                    </article>
+                    <article class="bw-data-management-card" data-bioweave-clear-operation="world">
+                      <div><h3>清除世界数据</h3><p>删除当前 Chat 的 World Model 与世界派生引用。</p></div>
+                      <button class="bw-button danger" type="button" data-bioweave-action="clear-world-data" data-bioweave-clear-operation="world">清除世界数据</button>
+                    </article>
+                    <article class="bw-data-management-card" data-bioweave-clear-operation="all">
+                      <div><h3>清除全部 BioWeave 数据</h3><p>删除当前 Chat 的全部 BioWeave Chat/Floor/Swipe/derived 数据。</p></div>
+                      <button class="bw-button danger" type="button" data-bioweave-action="clear-all-bioweave-data" data-bioweave-clear-operation="all">清除全部 BioWeave 数据</button>
+                    </article>
                   </div>
                 </div>
               </details>

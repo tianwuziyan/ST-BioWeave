@@ -4,7 +4,7 @@ import { createRuntime } from "../runtime/events.js";
 import { createAnalyzer } from "../ai/analyzer.js";
 import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 import { floorVersion } from "../runtime/floor.js";
-import { SILLYTAVERN_CURRENT_API } from "../storage/schema.js";
+import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schema.js";
 
 function eventResult(eventId = "evt-1", overrides = {}) {
   return {
@@ -2355,6 +2355,179 @@ test("active Swipe switching selects isolated authoritative Floor Versions", asy
   assert.equal(events.length, 1);
   assert.notEqual(events[0].event_id, firstId);
   assert.equal(events[0].source.swipe_id, 1);
+  fixture.runtime.destroy();
+});
+
+test("character clear boundary suppresses historical character facts without deleting Floor facts", async () => {
+  const messages = [
+    { message_id: "old-message-0", content: "旧剧情 0", role: "assistant" },
+    { message_id: "old-message-1", content: "旧剧情 1", role: "assistant" },
+  ];
+  const oldFloors = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const version = await floorVersion({
+      chatId: "chat-runtime",
+      messageId: messages[index].message_id,
+      floor: index,
+      swipeId: 0,
+      text: messages[index].content,
+    });
+    oldFloors.push({
+      ...emptyFloor(),
+      floor_version: version,
+      analysis: { status: "success", floor_version: version },
+      events: [eventResult(`old-event-${index}`, { source: version })],
+      character_registry: {
+        schema_version: 1,
+        entities: {
+          [`old-character-${index}`]: {
+            character_id: `old-character-${index}`,
+            display_name: `旧人物 ${index}`,
+            aliases: [],
+          },
+        },
+      },
+    });
+    messages[index].extra = { bioweave: oldFloors[index] };
+  }
+  const inputs = [];
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        return { events: [] };
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    ...emptyChat("chat-runtime"),
+    character_profiles: { old: { display_name: "旧人物" } },
+    tracking_subjects: { old: { character_id: "old" } },
+  };
+
+  await fixture.runtime.init();
+  const result = await fixture.runtime.clearCharacterData();
+  assert.equal(result.ok, true);
+  assert.equal(result.persistence.commitState, "confirmed");
+  assert.equal(
+    fixture.context.chatMetadata.bioweave.data_lifecycle.character_reset.message_index,
+    1,
+  );
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.character_profiles, {});
+  assert.equal(fixture.context.chat[0].extra.bioweave.events.length, 1);
+  assert.equal(fixture.context.chat[1].extra.bioweave.events.length, 1);
+  assert.deepEqual(await fixture.runtime.getTrackingRegistry(), {
+    tracking_subjects: {},
+    tracking_candidates: {},
+    character_profiles: {},
+    character_registry: { schema_version: 1, entities: {} },
+  });
+
+  fixture.context.chat.push({
+    message_id: "new-message",
+    content: "清除后的新剧情",
+    role: "assistant",
+  });
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 2 },
+    { force: true },
+  );
+  assert.deepEqual(inputs.at(-1).existing_bioweave, {
+    analysis: null,
+    events: [],
+  });
+  fixture.runtime.destroy();
+});
+
+test("character reset made in an empty Chat accepts the first post-reset Floor", async () => {
+  const fixture = createFixture({ messages: [] });
+  fixture.context.chatMetadata.bioweave = {
+    ...emptyChat("chat-runtime"),
+    character_profiles: { old: { display_name: "旧人物" } },
+  };
+
+  await fixture.runtime.init();
+  const result = await fixture.runtime.clearCharacterData();
+  assert.equal(result.ok, true);
+  assert.equal(
+    fixture.context.chatMetadata.bioweave.data_lifecycle.character_reset.message_index,
+    -1,
+  );
+
+  const message = {
+    message_id: "post-reset-message",
+    floor: 1,
+    content: "清除后第一层",
+    role: "assistant",
+  };
+  fixture.context.chat.push(message);
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: version,
+    analysis: { status: "success", floor_version: version },
+    events: [eventResult("post-reset-event", { source: version })],
+    character_registry: {
+      schema_version: 1,
+      entities: {
+        "char-a": { character_id: "char-a", display_name: "Alice", aliases: [] },
+        "char-b": { character_id: "char-b", display_name: "Bob", aliases: [] },
+      },
+    },
+  });
+
+  const businessData = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(businessData.active_events?.[0]?.event_id, "post-reset-event");
+  fixture.runtime.destroy();
+});
+
+test("Swipe switch reuses a still-valid target Swipe analysis", async () => {
+  const message = {
+    message_id: "message-reusable-swipe",
+    floor: 3,
+    swipe_id: 0,
+    swipes: ["版本 A", "版本 B"],
+    swipe_info: [{}, {}],
+    role: "assistant",
+  };
+  const fixture = createFixture({ messages: [message] });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  const targetVersion = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: 3,
+    swipeId: 1,
+    text: "版本 B",
+  });
+  message.swipe_info[1].extra = {
+    bioweave: {
+      ...emptyFloor(),
+      floor_version: targetVersion,
+      analysis: { status: "success", floor_version: targetVersion },
+      events: [],
+    },
+  };
+  const callsBeforeSwitch = fixture.calls();
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", { message_id: message.message_id });
+  await settle();
+  assert.equal(fixture.calls(), callsBeforeSwitch);
+  assert.equal(
+    fixture.runtime.store.getFloor(0, 1).analysis.status,
+    "success",
+  );
   fixture.runtime.destroy();
 });
 

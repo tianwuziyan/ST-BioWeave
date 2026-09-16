@@ -1,0 +1,35 @@
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/prd.md","reason":"按最终批准语义逐项审查 Manual Clear、Start New Chat、普通 CHAT_CHANGED、全局保留和验收条件。"}
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/design.md","reason":"审查共同 Clear Engine、source-targeted latest merge、transition proof、rollback 与 fail-closed 设计。"}
+{"file":".trellis/tasks/09-16-bioweave-data-lifecycle-clear/implement.md","reason":"审查实际写集、测试矩阵、非目标和验证顺序是否完成。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查 Floor/Swipe source ownership、六字段 Version、provenance 和 invalidation 没有被破坏。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"检查 Event history、tracking、registry rebuild 和历史事实保留语义。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"检查 World Model 清除与人物独立事实、配置和 dangling reference 处理。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查设置页数据管理区域、Popup、Toast、单一 app owner 和无重复 listener。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查 clear/boundary/async owner、runtime cache 和 UI 状态刷新。"}
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"检查明确失败、unknown commit、用户反馈和无假成功。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 UI naming、danger styling、测试、静态检查和真实宿主限制。"}
+{"file":".trellis/spec/guides/index.md","reason":"确认跨层和代码复用质量门已覆盖。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"独立复核 source-to-sink、存储、运行时、UI 和 API 的数据生命周期。"}
+{"file":"storage/schema.js","reason":"对照 schema 发现未注册字段、Chat/Floor/Swipe root 漏清或错误清 global。"}
+{"file":"storage/store.js","reason":"检查 exact BioWeave ownership、全部 Swipe traversal、source latest read/merge 和 persistence scope。"}
+{"file":"runtime/chat.js","reason":"检查普通 Chat 切换、source transition token、epoch 和跨 Chat 防污染。"}
+{"file":"runtime/events.js","reason":"检查 CHAT_CHANGED/CHAT_CREATED 的真实时序接入、listener 幂等与保存失败传播。"}
+{"file":"runtime/event-analysis.js","reason":"检查删除/编辑/Swipe invalidation、late commit、pending task abort 和 tracking rebuild。"}
+{"file":"runtime/floor.js","reason":"检查 source identity/hash/provenance 和 invalidation 的版本判断。"}
+{"file":"ui/app.js","reason":"检查 UI 仅调用 Clear Service、确认/disabled/loading/no-op/failure/refresh，以及不触发新聊天清除。"}
+{"file":"ui/settings.js","reason":"检查三个真实确认文案、当前 Chat 保留说明、数据管理区域和 danger action。"}
+{"file":"tests/runtime.test.js","reason":"验证 Start New Chat source ownership、普通切换、刷新/切角色、race 与 transition idempotency。"}
+{"file":"tests/event-analysis-runtime.test.js","reason":"验证楼层删除/编辑、Swipe 切换、provenance invalidation 和 late analysis response。"}
+{"file":"tests/ui.test.js","reason":"验证设置页数据管理 UI、Popup 文案、loading/disabled/no-op/failure/success refresh。"}
+{"file":"AGENTS.md","reason":"检查 AI 开发规则已要求新 persistent/derived 字段接入 domain、clear、新聊天、mutation、Swipe、async、测试和文档。"}
+{"file":"README.md","reason":"检查用户文档已说明数据管理入口、当前 Chat 范围、全局/API 保留和 Start New Chat 特殊清除。"}
+{"file":"docs/ui-framework.config.json","reason":"检查 UI 配置、规范、示例、完整 reference 与 production settings markup 同步。"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"检查数据管理设置控件的交互和 host UI 约束记录。"}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"检查示例 DOM/data hooks 与生产 UI 一致。"}
+{"file":"docs/UI_FULL_REFERENCE.html","reason":"检查完整 UI reference 不遗漏数据管理区域。"}
+{"file":"storage/lifecycle.js","reason":"复核 domain/ownership registry 是否覆盖真实持久化 Chat/Floor roots。"}
+{"file":"storage/clear.js","reason":"复核共同 Clear Engine、全部普通 message/Swipe traversal、source merge、rollback 与 unknown state。"}
+{"file":"tests/storage-clear.test.js","reason":"复核 owned/unowned 保留、global 边界、source revision、rollback 与 failure contract。"}
+{"file":"tests/lifecycle-contract.test.js","reason":"复核 registry 分类和 global fixture 不变的生命周期契约。"}
+{"file":"tests/start-new-chat-lifecycle.test.js","reason":"复核 Start New Chat source A 锁定、一次性 transition、普通切换隔离、B 防污染和 late response。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"复核最终 Start New Chat destructive 语义、Manual Clear UI 入口和未来开发 Definition of Done。"}

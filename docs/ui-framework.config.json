@@ -638,6 +638,67 @@
       "duplicateInnerHeading": false,
       "debugActionPlacement": "body-actions"
     },
+    "dataManagement": {
+      "root": "bioweave-data-management",
+      "disclosure": "bioweave-data-management-disclosure",
+      "interaction": "details-summary",
+      "scope": "current-chat-only",
+      "summary": {
+        "title": "数据管理",
+        "supportingText": "仅当前 Chat 的 BioWeave 数据；不可撤销操作",
+        "status": "仅当前 Chat"
+      },
+      "operations": [
+        {
+          "key": "character",
+          "label": "清除人物数据",
+          "hook": "data-bioweave-action=clear-character-data",
+          "operationHook": "data-bioweave-clear-operation=character",
+          "buttonClass": "bioweave-danger-action",
+          "description": "删除当前 Chat 的人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。"
+        },
+        {
+          "key": "world",
+          "label": "清除世界数据",
+          "hook": "data-bioweave-action=clear-world-data",
+          "operationHook": "data-bioweave-clear-operation=world",
+          "buttonClass": "bioweave-danger-action",
+          "description": "删除当前 Chat 的 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。"
+        },
+        {
+          "key": "all",
+          "label": "清除全部 BioWeave 数据",
+          "hook": "data-bioweave-action=clear-all-bioweave-data",
+          "operationHook": "data-bioweave-clear-operation=all",
+          "buttonClass": "bioweave-danger-action",
+          "description": "删除当前 Chat 的全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。"
+        }
+      ],
+      "confirmation": {
+        "helper": "confirmWithPopup",
+        "required": true,
+        "messages": "每个操作使用不同文案，并包含当前 Chat、删除范围、保留范围和不可撤销提示",
+        "windowConfirm": false
+      },
+      "busyState": {
+        "allActionsDisabled": true,
+        "activeLabel": "清除中…",
+        "ariaBusy": true,
+        "doubleClickGuard": "single in-flight operation"
+      },
+      "resultFeedback": {
+        "noOp": "info Toast",
+        "success": "success Toast and in-place Runtime DTO/empty-state refresh",
+        "failure": "error Toast without success Toast"
+      },
+      "retained": [
+        "chat text",
+        "all Swipe text",
+        "other-plugin chat/message/swipe extra",
+        "API / Secret / global settings"
+      ],
+      "excludedRoutes": ["overview", "characters", "events", "projection", "genealogy", "world", "state"]
+    },
     "regexRow": {
       "root": "bioweave-regex-row",
       "productionClass": "bioweave-recent-story-regex-row",
@@ -674,6 +735,11 @@
     "data-bioweave-analysis-source",
     "data-bioweave-analysis-section-toggle",
     "data-bioweave-external-memory",
+    "data-bioweave-data-management",
+    "data-bioweave-clear-operation",
+    "data-bioweave-action=clear-character-data",
+    "data-bioweave-action=clear-world-data",
+    "data-bioweave-action=clear-all-bioweave-data",
     "data-character-id",
     "data-bioweave-event-id",
     "data-bioweave-event-filter"
