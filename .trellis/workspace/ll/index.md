@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~659 | Active |
+| `journal-1.md` | ~681 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-09-19 | 修复空 Character Registry 的 Event Prompt Bootstrap | `e4276436692e6a04a23956898ec01a0fa00f0d07` | `fix/world-model-prompt-baseline` |
 | 29 | 2026-09-19 | Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复 | `c2bb9caadb257ca350d6414df9999d8fcd68a436` | `fix/world-model-prompt-baseline` |
 | 28 | 2026-09-16 | 修复 Floor 分析事实污染并同步 GitHub | `d5d69013a8c77fa048d9027dc3a3a5b20aae24d9` | `fix/world-model-prompt-baseline` |
 | 27 | 2026-09-16 | 建立 Runtime 权威的人物身份解析闭环 | `3614380` | `fix/world-model-prompt-baseline` |

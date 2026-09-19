@@ -657,3 +657,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: 修复空 Character Registry 的 Event Prompt Bootstrap
+<!-- trellis-session: v=2 fp=096b32cf44328787 -->
+
+**Date**: 2026-09-19
+**Task**: 修复空 Character Registry 的 Event Prompt Bootstrap
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+审计并补强空 Character Registry 的 Event Prompt bootstrap：明确无合法 existing、new 使用 null character_id 与 opaque mention_N，禁止 char_000000 和模型自造永久 ID；保持 Runtime fail-closed、顺序 allocator、response-global mention map、pregnancy remap、Floor lifecycle 与 UI 不变。新增 Prompt、空 Registry fail-closed、四人顺序注册回归，npm test/npm run check 均 574/574 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e4276436692e6a04a23956898ec01a0fa00f0d07` | 补强空 Character Registry 的 Event Prompt bootstrap 契约 |
+
+### Status
+
+[OK] **Completed**
