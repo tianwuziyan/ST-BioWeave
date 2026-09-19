@@ -337,6 +337,37 @@ test('existing identity uses exact unique display or alias fallback and rejects 
   );
 });
 
+test('empty registry rejects the char_000000 existing placeholder without converting it to new', () => {
+  const registry = createEmptyCharacterRegistry();
+  const result = resolveRawParticipantIdentity(registry, {
+    identity_status: 'existing',
+    character_id: 'char_000000',
+    mention_id: null,
+    display_name: '霁棱',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.error_code,
+    IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
+  );
+  assert.deepEqual(result.registry, registry);
+  assert.equal(result.character_id, null);
+
+  const nameShaped = resolveRawParticipantIdentity(registry, {
+    identity_status: 'existing',
+    character_id: NAMES.subject,
+    mention_id: NAMES.subject,
+    display_name: NAMES.subject,
+  });
+  assert.equal(nameShaped.ok, false);
+  assert.equal(
+    nameShaped.error_code,
+    IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
+  );
+  assert.deepEqual(nameShaped.registry, registry);
+});
+
 test('new identity re-checks exact collisions and only explicit distinct evidence permits a same-name entity', () => {
   const registry = registryWith({
     character_id: 'char_000001',
@@ -433,6 +464,30 @@ test('different response-local mentions allocate independently without same-name
   assert.deepEqual(Object.keys(sameName.registry.entities).sort(), [
     'char_000001',
     'char_000002',
+  ]);
+});
+
+test('empty registry assigns four new response mentions in sequential order', () => {
+  const result = resolveRawParticipantIdentities(
+    [
+      participant({ mentionId: 'mention-1', displayName: '霁棱' }),
+      participant({ mentionId: 'mention-2', displayName: '曜柘' }),
+      participant({ mentionId: 'mention-3', displayName: '岚烬' }),
+      participant({ mentionId: 'mention-4', displayName: '澄砾' }),
+    ],
+    createEmptyCharacterRegistry(),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.participants.map((item) => item.character_id),
+    ['char_000001', 'char_000002', 'char_000003', 'char_000004'],
+  );
+  assert.deepEqual(Object.keys(result.registry.entities).sort(), [
+    'char_000001',
+    'char_000002',
+    'char_000003',
+    'char_000004',
   ]);
 });
 

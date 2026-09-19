@@ -134,8 +134,10 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   for Analyzer API input.
 - `identity_status` is one of `existing`, `new`, or `unresolved` in the raw
   participant DTO. `new` and `unresolved` require `character_id: null` and a
-  response-local `mention_id`; `existing` requires an ID supplied by the
-  Runtime registry input.
+  response-local, opaque `mention_id`; `existing` requires an ID supplied by the
+  Runtime registry input and has `mention_id: null`. A mention handle has no
+  business meaning, is unique within the complete response, and must not be a
+  display name, alias, role label, or canonical ID.
 - `alias_candidate` is a proposal with `value`, `kind: name_variant | nickname`,
   optional `confidence`, and separate identity evidence. It is never a registry
   write command.
@@ -151,8 +153,13 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
    Same display names, same-sounding names, and same aliases may belong to
    different IDs. Exact lookup returns the complete candidate ID set.
 3. The request prompt contains a separate Runtime Canonical Character Registry
-   block. `character_context` and profiles remain semantic evidence and cannot
-   authorize an ID absent from the registry.
+  block. `character_context` and profiles remain semantic evidence and cannot
+  authorize an ID absent from the registry. When the registry is empty, the
+  prompt is an Initial Registry Bootstrap: there are no valid `existing`
+  participants; new or unresolved raw participants use `character_id: null` and
+  opaque handles such as `mention_1`, while Runtime allocates the next canonical
+  ID starting at `char_000001`. The model MUST NOT emit `char_000000`, any
+  self-created `char_XXXXXX`, or a name-shaped permanent ID or mention handle.
 4. One complete AI response shares one response-local mention map. The production
    order is: `raw AI DTO -> response-global identity resolution/registration ->
    Runtime event_id/source -> strict Domain validation -> normalize -> Floor

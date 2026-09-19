@@ -1,0 +1,9 @@
+{"file":"AGENTS.md","reason":"确认最小修改、Floor/Swipe ownership、AI identity authority、Git 与 UI 保护边界。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 previous Registry/API context 仍来自合法 Floor Snapshot，本轮不改生命周期。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event raw identity、canonicalization、mention map、pregnancy references 与 Runtime validation 合同。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 Prompt -> raw DTO -> Runtime canonical Event 的跨层边界。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有 registry formatter 与 identity tests，避免新增架构。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/prd.md","reason":"本任务已审计的目标、约束、非目标与可观察验收标准。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/design.md","reason":"formatter 分支、raw/canonical 边界、测试策略与回滚设计。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/implement.md","reason":"实施顺序、验证命令、禁止操作与回滚点。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/research/prompt-bootstrap-audit.md","reason":"代码审计结论、现状 Prompt、Runtime fail-closed 边界与 parser 风险说明。"}

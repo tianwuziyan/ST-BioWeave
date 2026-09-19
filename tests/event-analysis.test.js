@@ -148,7 +148,18 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   const prompt = messages.map((message) => message.content).join('\n');
   assert.match(prompt, /Runtime Canonical Character Registry/);
   assert.match(prompt, /character_id.*Runtime.*canonical/);
-  assert.match(prompt, /不能根据 display_name 或 alias.*自行生成 ID/);
+  assert.match(prompt, /绝不能自行生成永久 ID/);
+  assert.match(prompt, /Initial Registry Bootstrap/);
+  assert.match(prompt, /没有任何合法的 canonical identity candidate/);
+  assert.match(prompt, /不存在合法的 identity_status=existing participant/);
+  assert.match(prompt, /identity_status=new 或 unresolved、character_id:null/);
+  assert.match(prompt, /mention_1/);
+  assert.match(prompt, /无业务语义/);
+  assert.match(prompt, /mention_id 必须为 null/);
+  assert.match(prompt, /禁止输出 char_000000/);
+  assert.match(prompt, /禁止模型自行生成任何 char_XXXXXX/);
+  assert.match(prompt, /禁止把姓名、拼音、slug、hash 等模型字符串当作 character_id/);
+  assert.match(prompt, /<当前人物显示名>/);
   assert.match(prompt, /explicit_new_entity.*unresolved/);
   assert.match(prompt, /sexual_activity/);
   assert.match(prompt, /World Model/);
@@ -212,6 +223,10 @@ test('Event input renders a separate canonical registry candidate block', () => 
   assert.match(prompt, /aliases：祁鸢、沈姑娘/);
   assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_000002/);
   assert.match(prompt, /Runtime Canonical Character Registry/);
+  assert.doesNotMatch(prompt, /Initial Registry Bootstrap/);
+  assert.match(prompt, /existing 只能从这些 ID 中原样选择，且 mention_id 必须为 null/);
+  assert.match(prompt, /identity_status=new、character_id=null.*mention_N/);
+  assert.match(prompt, /mention_1/);
 });
 
 test('Event parser preserves new and unresolved raw identity handles for Runtime resolution', () => {
