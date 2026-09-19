@@ -635,3 +635,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复
+<!-- trellis-session: v=2 fp=b1dfc6d13fa66039 -->
+
+**Date**: 2026-09-19
+**Task**: Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 Character Registry 的 char_000001 顺序分配、完整 Floor/Swipe snapshot previous lookup、response-global mention 与 pregnancy reference canonicalization、existing 精确唯一 fallback，以及 MESSAGE_DELETED 因果失效路由修复。移除 Character ID 的随机/UUID/legacy allocator，保持 Chat projection、Swipe/reset isolation 与失败重分析原子保留。npm test 与 npm run check 均为 572/572；node --check、git diff --check 通过；未执行真实 SillyTavern 宿主验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2bb9caadb257ca350d6414df9999d8fcd68a436` | 修复 Character Registry 快照生命周期与顺序人物 ID |
+
+### Status
+
+[OK] **Completed**
