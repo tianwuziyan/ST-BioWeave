@@ -157,9 +157,10 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   authorize an ID absent from the registry. When the registry is empty, the
   prompt is an Initial Registry Bootstrap: there are no valid `existing`
   participants; new or unresolved raw participants use `character_id: null` and
-  opaque handles such as `mention_1`, while Runtime allocates the next canonical
-  ID starting at `char_000001`. The model MUST NOT emit `char_000000`, any
-  self-created `char_XXXXXX`, or a name-shaped permanent ID or mention handle.
+  opaque handles such as `mention_1`. The prompt does not expose the formal ID
+  format or sequence examples; the model does not need to know, predict, or emit
+  a formal `character_id`, and Runtime assigns it after the response. The model
+  MUST NOT use a name-shaped permanent ID or mention handle.
 4. One complete AI response shares one response-local mention map. The production
    order is: `raw AI DTO -> response-global identity resolution/registration ->
    Runtime event_id/source -> strict Domain validation -> normalize -> Floor

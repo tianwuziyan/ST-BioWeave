@@ -156,9 +156,10 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /mention_1/);
   assert.match(prompt, /无业务语义/);
   assert.match(prompt, /mention_id 必须为 null/);
-  assert.match(prompt, /禁止输出 char_000000/);
-  assert.match(prompt, /禁止模型自行生成任何 char_XXXXXX/);
-  assert.match(prompt, /禁止把姓名、拼音、slug、hash 等模型字符串当作 character_id/);
+  assert.match(prompt, /模型不需要知道、预测或输出正式 character_id/);
+  assert.doesNotMatch(prompt, /char_000001|char_000000|char_XXXXXX|char_999999/);
+  assert.doesNotMatch(prompt, /从 char_|六位十进制|正式 character_id 形态/);
+  assert.doesNotMatch(prompt, /禁止把姓名、拼音、slug、hash 等模型字符串当作 character_id/);
   assert.match(prompt, /<当前人物显示名>/);
   assert.match(prompt, /explicit_new_entity.*unresolved/);
   assert.match(prompt, /sexual_activity/);

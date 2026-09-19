@@ -337,22 +337,24 @@ test('existing identity uses exact unique display or alias fallback and rejects 
   );
 });
 
-test('empty registry rejects the char_000000 existing placeholder without converting it to new', () => {
+test('empty registry rejects forged existing IDs without converting them to new', () => {
   const registry = createEmptyCharacterRegistry();
-  const result = resolveRawParticipantIdentity(registry, {
-    identity_status: 'existing',
-    character_id: 'char_000000',
-    mention_id: null,
-    display_name: '霁棱',
-  });
+  for (const characterId of ['char_000000', 'char_000001', 'char_000002']) {
+    const result = resolveRawParticipantIdentity(registry, {
+      identity_status: 'existing',
+      character_id: characterId,
+      mention_id: null,
+      display_name: '霁棱',
+    });
 
-  assert.equal(result.ok, false);
-  assert.equal(
-    result.error_code,
-    IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
-  );
-  assert.deepEqual(result.registry, registry);
-  assert.equal(result.character_id, null);
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.error_code,
+      IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
+    );
+    assert.deepEqual(result.registry, registry);
+    assert.equal(result.character_id, null);
+  }
 
   const nameShaped = resolveRawParticipantIdentity(registry, {
     identity_status: 'existing',
