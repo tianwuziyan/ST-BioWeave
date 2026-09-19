@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Prompt, parser, identity resolution, and canonical Event contracts remain aligned."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check existing Prompt formatter and test patterns before adding regression assertions."}
