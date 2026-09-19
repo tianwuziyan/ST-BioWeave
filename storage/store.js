@@ -22,6 +22,7 @@ import {
   floorVersionFromData as floorVersionFromStoredData,
   getActiveFloorEvents as filterActiveFloorEvents,
 } from "../runtime/floor.js";
+import { isCompleteCharacterRegistrySnapshot } from "../core/identity.js";
 
 function staleChatError() {
   return new Error("STALE_CHAT");
@@ -585,13 +586,22 @@ function hasMatchingFloorScope(data, chatId) {
   return !version?.chat_id || version.chat_id === chatId;
 }
 
+function isCharacterRegistrySnapshot(value) {
+  return isCompleteCharacterRegistrySnapshot(value);
+}
+
 function normalizeFloorData(data) {
   const source =
     data && typeof data === "object" && !Array.isArray(data) ? data : {};
-  return {
-    ...source,
-    character_registry: normalizeCharacterRegistry(source.character_registry),
-  };
+  const normalized = { ...source };
+  if (hasOwn(source, "character_registry")) {
+    normalized.character_registry = isCharacterRegistrySnapshot(
+      source.character_registry,
+    )
+      ? normalizeCharacterRegistry(source.character_registry)
+      : cloneValue(source.character_registry);
+  }
+  return normalized;
 }
 
 export function hasSwipeStructure(message) {

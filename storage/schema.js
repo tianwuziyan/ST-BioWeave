@@ -676,8 +676,8 @@ export function normalizeTrackingCandidates(raw) {
 }
 
 // Canonical character identity history is owned by each successful Floor
-// snapshot. The Chat field remains an empty-by-default materialized projection
-// or explicit migration input; it is not an Analyzer history source.
+// snapshot. The Chat field remains an empty-by-default materialized projection;
+// it is not an Analyzer history source or an independent registry.
 export { normalizeCharacterRegistry };
 
 export function emptyChat(chatId) {

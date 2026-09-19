@@ -191,13 +191,13 @@ test('Event input renders a separate canonical registry candidate block', () => 
     characterRegistry: {
       schema_version: 1,
       entities: {
-        char_001: {
-          character_id: 'char_001',
+        char_000001: {
+          character_id: 'char_000001',
           display_name: '沈祁鸢',
           aliases: ['祁鸢', '沈姑娘'],
         },
-        char_002: {
-          character_id: 'char_002',
+        char_000002: {
+          character_id: 'char_000002',
           display_name: '沈琪媛',
           aliases: ['琪媛'],
         },
@@ -207,10 +207,10 @@ test('Event input renders a separate canonical registry candidate block', () => 
   const prompt = buildEventAnalysisMessages(input)
     .map((message) => message.content)
     .join('\n');
-  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_001/);
+  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_000001/);
   assert.match(prompt, /display_name：沈祁鸢/);
   assert.match(prompt, /aliases：祁鸢、沈姑娘/);
-  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_002/);
+  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_000002/);
   assert.match(prompt, /Runtime Canonical Character Registry/);
 });
 

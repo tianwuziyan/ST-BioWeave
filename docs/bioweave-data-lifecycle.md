@@ -306,6 +306,13 @@ valid and whether the Event can contribute to derived state.
 identity snapshot owned by that successful Floor. It is not the same as the
 Chat-level `character_registry` projection.
 
+The only formal new `character_id` shape is `char_` plus six decimal digits,
+from `char_000001` through `char_999999`. Runtime allocates it from the
+selected previous surviving snapshot; it does not use a Chat-global counter,
+name-derived value, UUID, timestamp, random value, migration, or tombstone.
+Development-era IDs are outside the current Contract and are not read or
+migrated by the production identity path.
+
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the six-field Version checks. The
 working-tree schema also reserves `history` as a Floor root, but the connected
@@ -717,8 +724,8 @@ state. `last_processed_floor` is a scheduling hint only.
 New analysis results carry dependency provenance for the active Floor-Version
 chain. A retained non-active Swipe result is reusable after switching back
 when its source Floor Version is still valid; dependency changes still
-invalidate downstream Chat-level state. A legacy result without provenance is
-treated conservatively and is not allowed to reintroduce downstream state.
+invalidate downstream Chat-level state. A result without provenance is treated
+conservatively and is not allowed to reintroduce downstream state.
 
 The mutation flow is:
 

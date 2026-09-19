@@ -50,9 +50,9 @@ plugin settings, current Character Card/Persona/World Model context, and other
 explicitly authoritative Chat-local values. Floor-derived canonical identity
 history is Floor-owned cumulative snapshot state; it is not Chat configuration.
 If a Chat-level
-`character_registry` is retained, it is only a materialized projection/cache
-or an explicitly bounded legacy-migration input; it is never an independent
-historical source for Analyzer API input. Event-derived profile fields and all
+`character_registry` is retained, it is only a materialized projection/cache;
+it is never an independent historical source for Analyzer API input.
+Event-derived profile fields and all
 historical biological facts remain subject to the Floor ownership and
 provenance rules below.
 
@@ -111,8 +111,9 @@ candidate that satisfies every condition:
 5. `analysis.status === "success"`;
 6. the candidate Floor is lower than the target Floor; and
 7. the candidate Events pass current-version filtering; and
-8. the candidate owner contains a normalized cumulative
-   `character_registry` snapshot when identity history is requested.
+8. the candidate owner contains a complete normalized cumulative
+   `character_registry` snapshot with only formal `char_` plus six-digit
+   canonical IDs when identity history is requested.
 
 The target's own old analysis and Events are structurally excluded by starting
 the scan before the target. A target's old result, Chat Metadata, a runtime
@@ -134,9 +135,8 @@ The `character_registry` returned for a valid candidate is read from that same
 candidate's exact Floor/Swipe owner slot. It is a cumulative snapshot as of
 that Floor, not a Chat-global ledger. The target Floor's old snapshot is
 excluded by the same scan boundary as its old analysis and Events. A candidate
-without a valid snapshot cannot fall back to Chat Metadata; its identity
-history is empty until an explicit, bounded legacy migration establishes an
-owner snapshot.
+without a valid snapshot cannot fall back to Chat Metadata. It is skipped; if
+no valid candidate remains, the initial empty Registry is used.
 
 The same rule applies during reanalysis, after message or Swipe deletion,
 after edit/regeneration, after history truncation, and after reload.
@@ -315,7 +315,7 @@ version changes, reload, or an asynchronous analysis completion.
   message/per-Swipe owner. Cumulative does not mean global authoritative
   ownership.
 - A Chat-level `character_registry`, if retained, is only a materialized
-  projection/cache or explicitly bounded legacy-migration input. It is not an
+  projection/cache. It is not an
   Analyzer historical source and cannot restore a deleted, stale, or
   Swipe-inactive snapshot. Current Character Card/Persona/World Model data
   remains independent configuration/context.

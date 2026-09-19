@@ -23,27 +23,37 @@ function eventResult(eventId = "evt-1", overrides = {}) {
     location: "房间",
     participants: [
       {
-        character_id: "char-a",
+        identity_status: "new",
+        character_id: null,
+        mention_id: `${eventId}-subject`,
         display_name: "Alice",
         event_role: "potential_gestational_subject",
         biological_context: { species: "species-a", biological_type: "type-a" },
         reproductive_capabilities_used: { can_carry_pregnancy: true },
+        identity_evidence: [
+          { kind: "explicit_distinct_entity", text: "fixture subject" },
+        ],
         evidence: [{ kind: "narrative", text: "明确证据" }],
       },
       {
-        character_id: "char-b",
+        identity_status: "new",
+        character_id: null,
+        mention_id: `${eventId}-source`,
         display_name: "Bob",
         event_role: "potential_conception_source",
         biological_context: { species: "species-b", biological_type: "type-b" },
         reproductive_capabilities_used: { can_cause_pregnancy: true },
+        identity_evidence: [
+          { kind: "explicit_distinct_entity", text: "fixture source" },
+        ],
         evidence: [{ kind: "narrative", text: "实际来源证据" }],
       },
     ],
     pregnancy_relevance: {
       relevant: true,
       possible_conception: true,
-      gestational_subject_ids: ["char-a"],
-      counterpart_ids: ["char-b"],
+      gestational_subject_ids: [`${eventId}-subject`],
+      counterpart_ids: [`${eventId}-source`],
       confidence: 0.8,
     },
     source_evidence: [
@@ -68,7 +78,6 @@ function createFixture({
   saveChatMetadataHook = null,
   saveChatMetadataError = null,
   saveChatMetadataErrorAt = 0,
-  allowLegacyIdentity = true,
 } = {}) {
   const listeners = new Map();
   const context = {
@@ -166,7 +175,6 @@ function createFixture({
   let calls = 0;
   const runtime = createRuntime({
     adapter,
-    allowLegacyIdentity,
     ...(typeof characterContextResolver === "function"
       ? { characterContextResolver }
       : {}),
@@ -221,7 +229,9 @@ function canonicalApiEvent({
     location: "location_fixture",
     participants: participants ?? [
       {
-        character_id: subjectId,
+        identity_status: "new",
+        character_id: null,
+        mention_id: `${subjectId}-mention`,
         display_name: `${subjectId}_display`,
         event_role: "potential_gestational_subject",
         biological_context: {
@@ -235,6 +245,9 @@ function canonicalApiEvent({
           can_carry_pregnancy: true,
           can_cause_pregnancy: false,
         },
+        identity_evidence: [
+          { kind: "explicit_distinct_entity", text: "fixture subject" },
+        ],
         evidence: [
           {
             kind: "capability",
@@ -243,7 +256,9 @@ function canonicalApiEvent({
         ],
       },
       {
-        character_id: sourceId,
+        identity_status: "new",
+        character_id: null,
+        mention_id: `${sourceId}-mention`,
         display_name: `${sourceId}_display`,
         event_role: "potential_conception_source",
         biological_context: {
@@ -257,6 +272,9 @@ function canonicalApiEvent({
           can_carry_pregnancy: false,
           can_cause_pregnancy: true,
         },
+        identity_evidence: [
+          { kind: "explicit_distinct_entity", text: "fixture source" },
+        ],
         evidence: [
           {
             kind: "capability",
@@ -268,8 +286,8 @@ function canonicalApiEvent({
     pregnancy_relevance: pregnancyRelevance ?? {
       relevant: true,
       possible_conception: true,
-      gestational_subject_ids: [subjectId],
-      counterpart_ids: [sourceId],
+      gestational_subject_ids: [`${subjectId}-mention`],
+      counterpart_ids: [`${sourceId}-mention`],
       confidence: 0.9,
     },
     source_evidence: [
@@ -289,6 +307,42 @@ function canonicalApiEvent({
       swipe_id: 9,
     },
   };
+}
+
+function canonicalApiEventForRegistry(registry, options = {}) {
+  const event = canonicalApiEvent(options);
+  const entries = Object.values(registry?.entities ?? {});
+  event.participants = event.participants.map((participant) => {
+    const entry = entries.find(
+      (candidate) => candidate.display_name === participant.display_name,
+    );
+    return entry
+      ? {
+          ...participant,
+          identity_status: "existing",
+          character_id: entry.character_id,
+        }
+      : participant;
+  });
+  return event;
+}
+
+function eventResultForRegistry(registry, eventId = "evt-1", overrides = {}) {
+  const event = eventResult(eventId, overrides);
+  const entries = Object.values(registry?.entities ?? {});
+  event.participants = event.participants.map((participant) => {
+    const entry = entries.find(
+      (candidate) => candidate.display_name === participant.display_name,
+    );
+    return entry
+      ? {
+          ...participant,
+          identity_status: "existing",
+          character_id: entry.character_id,
+        }
+      : participant;
+  });
+  return event;
 }
 
 function identityParticipant({
@@ -475,7 +529,7 @@ test("Runtime owns canonical Event IDs and Floor provenance", async () => {
   const second = (await fixture.runtime.getCurrentFloorEvents())[0];
   assert.equal(second.event_id, firstId);
   const registry = await fixture.runtime.getTrackingRegistry();
-  assert.deepEqual(registry.tracking_subjects["char-a"].exposure_event_ids, [
+  assert.deepEqual(registry.tracking_subjects["char_000001"].exposure_event_ids, [
     firstId,
   ]);
   await fixture.runtime.updateEvent(firstId, { location: "updated-location" });
@@ -511,7 +565,6 @@ test(
           role: "assistant",
         },
       ],
-      allowLegacyIdentity: false,
       analyzer: {
         async analyzeFloor({ analysisInput }) {
           inputRegistries.push(
@@ -577,81 +630,64 @@ test(
       },
     });
 
-    await withGlobalCrypto(
-      {
-        randomUUID: (() => {
-          const ids = ["char_runtime_subject_001", "char_runtime_source_001"];
-          return () => ids.shift();
-        })(),
-      },
-      async () => {
-        await fixture.runtime.init();
-        await settle();
-        await fixture.runtime.analyzeFloor(
-          { __messageIndex: true, index: 0 },
-          { force: true },
-        );
+    await fixture.runtime.init();
+    await settle();
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 0 },
+      { force: true },
+    );
 
-        const firstEvent = fixture.runtime.store.getFloor(0).events[0];
-        subjectId = firstEvent.participants[0].character_id;
-        sourceId = firstEvent.participants[1].character_id;
-        const firstRegistry = (await fixture.runtime.getTrackingRegistry())
-          .character_registry;
-        assert.deepEqual(inputRegistries[0], {
-          schema_version: 1,
-          entities: {},
-        });
-        assert.deepEqual(firstEvent.pregnancy_relevance, {
-          relevant: true,
-          possible_conception: true,
-          gestational_subject_ids: [subjectId],
-          counterpart_ids: [sourceId],
-          confidence: 0.9,
-        });
-        assert.equal(firstEvent.location, "传灯院");
-        assert.equal("mention_id" in firstEvent.participants[0], false);
-        assert.deepEqual(firstRegistry.entities[subjectId], {
-          character_id: subjectId,
-          display_name: "苏晚",
-          aliases: ["晚儿"],
-        });
-        assert.deepEqual(firstRegistry.entities[sourceId], {
-          character_id: sourceId,
-          display_name: "陆行",
-          aliases: [],
-        });
-        assert.deepEqual(
-          fixture.runtime.store.getFloor(0).character_registry,
-          firstRegistry,
-        );
+    const firstEvent = fixture.runtime.store.getFloor(0).events[0];
+    subjectId = firstEvent.participants[0].character_id;
+    sourceId = firstEvent.participants[1].character_id;
+    const firstRegistry = (await fixture.runtime.getTrackingRegistry())
+      .character_registry;
+    assert.deepEqual(inputRegistries[0], {
+      schema_version: 1,
+      entities: {},
+    });
+    assert.deepEqual(firstEvent.pregnancy_relevance, {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: [sourceId],
+      confidence: 0.9,
+    });
+    assert.equal(firstEvent.location, "传灯院");
+    assert.equal("mention_id" in firstEvent.participants[0], false);
+    assert.deepEqual(firstRegistry.entities[subjectId], {
+      character_id: subjectId,
+      display_name: "苏晚",
+      aliases: ["晚儿"],
+    });
+    assert.deepEqual(firstRegistry.entities[sourceId], {
+      character_id: sourceId,
+      display_name: "陆行",
+      aliases: [],
+    });
+    assert.deepEqual(
+      fixture.runtime.store.getFloor(0).character_registry,
+      firstRegistry,
+    );
 
-        await fixture.runtime.analyzeFloor(
-          { __messageIndex: true, index: 1 },
-          { force: true },
-        );
-        const secondEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
-        const secondRegistry = (await fixture.runtime.getTrackingRegistry())
-          .character_registry;
-        assert.equal(analysisCount, 2);
-        assert.equal(
-          inputRegistries[1].entities[subjectId].display_name,
-          "苏晚",
-        );
-        assert.deepEqual(inputRegistries[1].entities[subjectId].aliases, [
-          "晚儿",
-        ]);
-        assert.deepEqual(
-          secondEvent.participants.map(
-            (participant) => participant.character_id,
-          ),
-          [subjectId, sourceId],
-        );
-        assert.equal(Object.keys(secondRegistry.entities).length, 2);
-        assert.deepEqual(
-          fixture.runtime.store.getFloor(1).character_registry,
-          secondRegistry,
-        );
-      },
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 1 },
+      { force: true },
+    );
+    const secondEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
+    const secondRegistry = (await fixture.runtime.getTrackingRegistry())
+      .character_registry;
+    assert.equal(analysisCount, 2);
+    assert.equal(inputRegistries[1].entities[subjectId].display_name, "苏晚");
+    assert.deepEqual(inputRegistries[1].entities[subjectId].aliases, ["晚儿"]);
+    assert.deepEqual(
+      secondEvent.participants.map((participant) => participant.character_id),
+      [subjectId, sourceId],
+    );
+    assert.equal(Object.keys(secondRegistry.entities).length, 2);
+    assert.deepEqual(
+      fixture.runtime.store.getFloor(1).character_registry,
+      secondRegistry,
     );
     fixture.runtime.destroy();
   },
@@ -659,7 +695,6 @@ test(
 
 test("unresolved identity aborts the whole Event batch without registry or Floor pollution", async () => {
   const fixture = createFixture({
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor() {
         return {
@@ -710,7 +745,6 @@ test("strict Runtime rejects a hallucinated existing character ID", async () => 
     character_id: index === 0 ? "shen_qi_yuan" : "other-forged-id",
   }));
   const fixture = createFixture({
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor() {
         return { events: [forged] };
@@ -749,7 +783,7 @@ test("generic API response with legacy source reaches Floor save, Registry, and 
   assert.equal(events.length, 1);
   assert.equal(events[0].type, "sexual_activity");
   assert.equal(events[0].participants.length, 2);
-  assert.equal(events[0].participants[1].character_id, "character_source");
+  assert.equal(events[0].participants[1].character_id, "char_000002");
   assert.equal(
     events[0].participants[1].reproductive_capabilities_used
       .can_carry_pregnancy,
@@ -764,10 +798,10 @@ test("generic API response with legacy source reaches Floor save, Registry, and 
   assert.equal(data.active_event_count, 1);
   assert.equal(data.tracking_subject_count, 1);
   assert.deepEqual(
-    data.tracking_subjects.character_subject.exposure_event_ids,
+    data.tracking_subjects.char_000001.exposure_event_ids,
     [events[0].event_id],
   );
-  assert.equal(data.tracking_subjects.character_source, undefined);
+  assert.equal(data.tracking_subjects.char_000002, undefined);
   fixture.runtime.destroy();
 });
 
@@ -777,7 +811,6 @@ test(
   async () => {
     const saveOrder = [];
     const fixture = createFixture({
-      allowLegacyIdentity: false,
       saveFloorHook: async ({ value }) => {
         saveOrder.push({ kind: "floor", value: structuredClone(value) });
       },
@@ -800,21 +833,11 @@ test(
       },
     });
 
-    await withGlobalCrypto(
-      {
-        randomUUID: (() => {
-          const ids = ["char_atomic", "char_atomic_source"];
-          return () => ids.shift();
-        })(),
-      },
-      async () => {
-        await fixture.runtime.init();
-        await fixture.runtime.refreshTrackingRegistry("before-analysis");
-        saveOrder.length = 0;
+    await fixture.runtime.init();
+    await fixture.runtime.refreshTrackingRegistry("before-analysis");
+    saveOrder.length = 0;
 
-        await fixture.runtime.refreshCurrentFloorAnalysis();
-      },
-    );
+    await fixture.runtime.refreshCurrentFloorAnalysis();
 
     assert.deepEqual(
       saveOrder.map(({ kind }) => kind),
@@ -863,14 +886,14 @@ test("Runtime persists pending candidates and re-evaluates them after a World Mo
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
   const pendingRegistry = await fixture.runtime.getTrackingRegistry();
-  assert.equal(pendingRegistry.tracking_subjects.subject_a, undefined);
+  assert.equal(pendingRegistry.tracking_subjects.char_000001, undefined);
   assert.equal(
-    pendingRegistry.tracking_candidates.subject_a.eligibility,
+    pendingRegistry.tracking_candidates.char_000001.eligibility,
     "pending",
   );
   const storedEvent = (await fixture.runtime.getCurrentFloorEvents())[0];
   const pendingRecord =
-    pendingRegistry.tracking_candidates.subject_a.exposure_records[0];
+    pendingRegistry.tracking_candidates.char_000001.exposure_records[0];
   assert.equal(pendingRecord.event_id, storedEvent.event_id);
   assert.equal(pendingRecord.source.floor, 3);
   assert.equal(
@@ -897,18 +920,18 @@ test("Runtime persists pending candidates and re-evaluates them after a World Mo
   await fixture.runtime.refreshTrackingRegistry("world-model-update");
 
   const resolvedRegistry = await fixture.runtime.getTrackingRegistry();
-  assert.ok(resolvedRegistry.tracking_subjects.subject_a);
+  assert.ok(resolvedRegistry.tracking_subjects.char_000001);
   assert.equal(
-    resolvedRegistry.tracking_subjects.subject_a.created_from_event_id,
+    resolvedRegistry.tracking_subjects.char_000001.created_from_event_id,
     storedEvent.event_id,
   );
   assert.deepEqual(resolvedRegistry.tracking_candidates, {});
   assert.equal(
-    "pregnant" in resolvedRegistry.tracking_subjects.subject_a,
+    "pregnant" in resolvedRegistry.tracking_subjects.char_000001,
     false,
   );
   assert.equal(
-    "conception_confirmed" in resolvedRegistry.tracking_subjects.subject_a,
+    "conception_confirmed" in resolvedRegistry.tracking_subjects.char_000001,
     false,
   );
   assert.equal(
@@ -961,7 +984,7 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal(
     (await fixture.runtime.getTrackingRegistry()).tracking_candidates
-      .subject_profile.eligibility,
+      .char_000001.eligibility,
     "pending",
   );
 
@@ -969,15 +992,15 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
   const resolvedRegistry = await fixture.runtime.getTrackingRegistry();
-  assert.ok(resolvedRegistry.tracking_subjects.subject_profile);
+  assert.ok(resolvedRegistry.tracking_subjects.char_000001);
   assert.deepEqual(resolvedRegistry.tracking_candidates, {});
   assert.equal(
-    resolvedRegistry.tracking_subjects.subject_profile.created_from_event_id,
+    resolvedRegistry.tracking_subjects.char_000001.created_from_event_id,
     firstEvent.event_id,
   );
   assert.equal(
     fixture.runtime.store.getChat("chat-runtime").character_profiles
-      .subject_profile.reproductive_capabilities.can_carry_pregnancy,
+      .char_000001.reproductive_capabilities.can_carry_pregnancy,
     true,
   );
   assert.equal(
@@ -1052,38 +1075,38 @@ test("narrative StoryTime persists a formatted first-year display when time rema
 });
 
 test("production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local", async () => {
-  const firstEvent = canonicalApiEvent();
-  firstEvent.location = "location_alpha";
-  const secondEvent = canonicalApiEvent({
-    subjectId: "character_subject_b",
-    sourceId: "character_source_b",
-  });
-  secondEvent.location = "location_beta";
-  let rawResponse = JSON.stringify({
-    schema_version: 1,
-    events: [firstEvent],
-    source: {
-      chat_id: "legacy-chat",
-      message_id: "legacy-message",
-      floor: 999,
+  let responseCount = 0;
+  const fixture = createFixture({
+    rawApiResponse: () => {
+      const registry = { schema_version: 1, entities: {} };
+      const firstEvent = canonicalApiEventForRegistry(registry);
+      firstEvent.location = "location_alpha";
+      const events = [firstEvent];
+      if (responseCount++ > 0) {
+        const secondEvent = canonicalApiEventForRegistry(registry, {
+          subjectId: "character_subject_b",
+          sourceId: "character_source_b",
+        });
+        secondEvent.location = "location_beta";
+        events.push(secondEvent);
+      }
+      return JSON.stringify({
+        schema_version: 1,
+        events,
+        source: {
+          chat_id: "legacy-chat",
+          message_id: "legacy-message",
+          floor: 999,
+        },
+      });
     },
   });
-  const fixture = createFixture({ rawApiResponse: () => rawResponse });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
   const previousEvents = await fixture.runtime.getCurrentFloorEvents();
   const previousId = previousEvents[0].event_id;
 
-  rawResponse = JSON.stringify({
-    schema_version: 1,
-    events: [firstEvent, secondEvent],
-    source: {
-      chat_id: "legacy-chat",
-      message_id: "legacy-message",
-      floor: 999,
-    },
-  });
   const result = await fixture.runtime.refreshCurrentFloorAnalysis();
 
   assert.equal(fixture.apiRequests.length, 2);
@@ -1096,12 +1119,12 @@ test("production analyzer accepts multi-Event force refresh and keeps exposure t
   const subjectAEvent = events.find(
     (event) =>
       event.pregnancy_relevance.gestational_subject_ids[0] ===
-      "character_subject",
+      "char_000001",
   );
   const subjectBEvent = events.find(
     (event) =>
       event.pregnancy_relevance.gestational_subject_ids[0] ===
-      "character_subject_b",
+      "char_000003",
   );
   assert.ok(subjectAEvent);
   assert.ok(subjectBEvent);
@@ -1110,37 +1133,37 @@ test("production analyzer accepts multi-Event force refresh and keeps exposure t
   assert.equal(subjectAEvent.location, "location_alpha");
   assert.equal(subjectBEvent.location, "location_beta");
   assert.deepEqual(subjectAEvent.pregnancy_relevance.counterpart_ids, [
-    "character_source",
+    "char_000002",
   ]);
   assert.deepEqual(subjectBEvent.pregnancy_relevance.counterpart_ids, [
-    "character_source_b",
+    "char_000004",
   ]);
   assert.deepEqual(
     subjectAEvent.participants.map((item) => item.character_id),
-    ["character_subject", "character_source"],
+    ["char_000001", "char_000002"],
   );
   assert.deepEqual(
     subjectBEvent.participants.map((item) => item.character_id),
-    ["character_subject_b", "character_source_b"],
+    ["char_000003", "char_000004"],
   );
 
   const data = await fixture.runtime.collectActiveBusinessData();
   assert.equal(data.active_event_count, 2);
   assert.equal(data.tracking_subject_count, 2);
   assert.deepEqual(Object.keys(data.tracking_subjects).sort(), [
-    "character_subject",
-    "character_subject_b",
+    "char_000001",
+    "char_000003",
   ]);
   assert.deepEqual(Object.keys(data.character_profiles).sort(), [
-    "character_subject",
-    "character_subject_b",
+    "char_000001",
+    "char_000003",
   ]);
   assert.deepEqual(
-    data.tracking_subjects.character_subject.exposure_event_ids,
+    data.tracking_subjects.char_000001.exposure_event_ids,
     [subjectAEvent.event_id],
   );
   assert.deepEqual(
-    data.tracking_subjects.character_subject_b.exposure_event_ids,
+    data.tracking_subjects.char_000003.exposure_event_ids,
     [subjectBEvent.event_id],
   );
   fixture.runtime.destroy();
@@ -1189,14 +1212,14 @@ test("invalid raw location response preserves the previous successful Event and 
   assert.equal(events[0].event_id, previousEvent.event_id);
   assert.equal(events[0].location, "location_alpha");
   assert.deepEqual(events[0].pregnancy_relevance.gestational_subject_ids, [
-    "subject_a",
+    "char_000001",
   ]);
 
   const data = await fixture.runtime.collectActiveBusinessData();
-  assert.deepEqual(Object.keys(data.tracking_subjects), ["subject_a"]);
-  assert.deepEqual(Object.keys(data.character_profiles), ["subject_a"]);
-  assert.equal(data.tracking_subjects.subject_b, undefined);
-  assert.equal(data.character_profiles.subject_b, undefined);
+  assert.deepEqual(Object.keys(data.tracking_subjects), ["char_000001"]);
+  assert.deepEqual(Object.keys(data.character_profiles), ["char_000001"]);
+  assert.equal(data.tracking_subjects.char_000003, undefined);
+  assert.equal(data.character_profiles.char_000003, undefined);
   fixture.runtime.destroy();
 });
 
@@ -1390,7 +1413,9 @@ test("API input uses the nearest valid previous Floor Version provenance", async
     analyzer: {
       async analyzeFloor(request) {
         inputs.push(request.analysisInput);
-        return { events: [eventResult()] };
+        return {
+          events: [eventResultForRegistry(request.analysisInput.character_registry)],
+        };
       },
     },
   });
@@ -1452,7 +1477,6 @@ test("Floor character snapshots accumulate from the nearest previous Floor", asy
         role: "assistant",
       },
     ],
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         inputs.push(analysisInput);
@@ -1481,24 +1505,7 @@ test("Floor character snapshots accumulate from the nearest previous Floor", asy
     },
   });
 
-  await withGlobalCrypto(
-    {
-      randomUUID: (() => {
-        const ids = [
-          "char_a",
-          "char_source_a",
-          "char_b",
-          "char_source_b",
-          "char_c",
-          "char_source_c",
-          "char_d",
-          "char_source_d",
-        ];
-        return () => ids.shift();
-      })(),
-    },
-    async () => {
-      await fixture.runtime.init();
+  await fixture.runtime.init();
       for (const index of [0, 1, 2]) {
         await fixture.runtime.analyzeFloor(
           { __messageIndex: true, index },
@@ -1509,28 +1516,28 @@ test("Floor character snapshots accumulate from the nearest previous Floor", asy
       const entityIds = (registry) => Object.keys(registry.entities).sort();
       assert.deepEqual(entityIds(inputs[0].character_registry), []);
       assert.deepEqual(entityIds(inputs[1].character_registry), [
-        "char_a",
-        "char_source_a",
+        "char_000001",
+        "char_000002",
       ]);
       assert.deepEqual(entityIds(inputs[2].character_registry), [
-        "char_a",
-        "char_b",
-        "char_source_a",
-        "char_source_b",
+        "char_000001",
+        "char_000002",
+        "char_000003",
+        "char_000004",
       ]);
       assert.deepEqual(
         entityIds(fixture.runtime.store.getFloor(1).character_registry),
-        ["char_a", "char_b", "char_source_a", "char_source_b"],
+        ["char_000001", "char_000002", "char_000003", "char_000004"],
       );
       assert.deepEqual(
         entityIds(fixture.runtime.store.getFloor(2).character_registry),
         [
-          "char_a",
-          "char_b",
-          "char_c",
-          "char_source_a",
-          "char_source_b",
-          "char_source_c",
+          "char_000001",
+          "char_000002",
+          "char_000003",
+          "char_000004",
+          "char_000005",
+          "char_000006",
         ],
       );
 
@@ -1540,28 +1547,29 @@ test("Floor character snapshots accumulate from the nearest previous Floor", asy
       );
       assert.doesNotMatch(
         JSON.stringify(inputs[3].character_context),
-        /角色C|来源C|char_c|char_source_c/u,
+        /角色C|来源C|char_000005|char_000006/u,
       );
       assert.deepEqual(entityIds(inputs[3].character_registry), [
-        "char_a",
-        "char_b",
-        "char_source_a",
-        "char_source_b",
+        "char_000001",
+        "char_000002",
+        "char_000003",
+        "char_000004",
       ]);
-      assert.equal(inputs[3].character_registry.entities.char_c, undefined);
+      assert.equal(
+        inputs[3].character_registry.entities.char_000005,
+        undefined,
+      );
       assert.deepEqual(
         entityIds(fixture.runtime.store.getFloor(2).character_registry),
         [
-          "char_a",
-          "char_b",
-          "char_d",
-          "char_source_a",
-          "char_source_b",
-          "char_source_d",
+          "char_000001",
+          "char_000002",
+          "char_000003",
+          "char_000004",
+          "char_000005",
+          "char_000006",
         ],
       );
-    },
-  );
   fixture.runtime.destroy();
 });
 
@@ -1591,7 +1599,9 @@ test("API input uses 6F when the unanalysed target is 9F", async () => {
     analyzer: {
       async analyzeFloor(request) {
         input = request.analysisInput;
-        return { events: [eventResult()] };
+        return {
+          events: [eventResultForRegistry(request.analysisInput.character_registry)],
+        };
       },
     },
   });
@@ -1652,7 +1662,14 @@ test("deleted latest Floor falls back to the nearest remaining valid previous Fl
     analyzer: {
       async analyzeFloor(request) {
         inputs.push(request.analysisInput);
-        return { events: [eventResult(`event-${inputs.length}`)] };
+        return {
+          events: [
+            eventResultForRegistry(
+              request.analysisInput.character_registry,
+              `event-${inputs.length}`,
+            ),
+          ],
+        };
       },
     },
   });
@@ -1692,6 +1709,173 @@ test("deleted latest Floor falls back to the nearest remaining valid previous Fl
   fixture.runtime.destroy();
 });
 
+test("MESSAGE_DELETED invalidates the downstream active path without analyzing", async () => {
+  let analyzerCalls = 0;
+  const namesByFloor = {
+    3: ["雾港编录员", "青砾引路人"],
+    6: ["折线观测者", "石榴守门人"],
+    9: ["潮汐记录者", "银杉信使"],
+  };
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-owner",
+        floor: 3,
+        content: "保留的旧楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-middle",
+        floor: 6,
+        content: "将被删除的中间楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-downstream",
+        floor: 9,
+        content: "需要失效的下游楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analyzerCalls += 1;
+        const names = namesByFloor[analysisInput.current_floor.floor];
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              names[0],
+              names[1],
+              `message-deleted-${analyzerCalls}`,
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  for (const index of [0, 1, 2]) {
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index },
+      { force: true },
+    );
+  }
+  const downstreamEventId = fixture.runtime.store.getFloor(2).events[0].event_id;
+
+  fixture.context.chat.splice(1, 1);
+  fixture.emit("message-deleted", fixture.context.chat.length);
+  await settle();
+
+  assert.equal(analyzerCalls, 3);
+  assert.equal(fixture.runtime.store.getFloor(1).analysis, null);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).events, []);
+  const businessData = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(
+    businessData.active_events.map((event) => event.source.message_id),
+    ["message-owner"],
+  );
+  assert.equal(JSON.stringify(businessData).includes(downstreamEventId), false);
+  assert.deepEqual(
+    Object.values(
+      (await fixture.runtime.getTrackingRegistry()).character_registry.entities,
+    )
+      .map((entry) => entry.display_name)
+      .sort(),
+    ["青砾引路人", "雾港编录员"].sort(),
+  );
+  fixture.runtime.destroy();
+});
+
+test("latest MESSAGE_DELETED lets the next analysis use the surviving snapshot", async () => {
+  const inputs = [];
+  let analyzerCalls = 0;
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-survivor",
+        floor: 3,
+        content: "删除后仍存活的楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-latest",
+        floor: 6,
+        content: "删除的最新已分析楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-target",
+        floor: 9,
+        content: "删除后的下一分析楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analyzerCalls += 1;
+        inputs.push(analysisInput);
+        if (analysisInput.current_floor.message_id === "message-target")
+          return { events: [] };
+        const names =
+          analysisInput.current_floor.message_id === "message-survivor"
+            ? ["灰阶航标员", "琥珀采集者"]
+            : ["被删观测员", "被删守门人"];
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              names[0],
+              names[1],
+              `latest-deleted-${analyzerCalls}`,
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  for (const index of [0, 1]) {
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index },
+      { force: true },
+    );
+  }
+  const deletedEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
+  fixture.context.chat.splice(1, 1);
+  fixture.emit("message-deleted", fixture.context.chat.length);
+  await settle();
+
+  assert.equal(analyzerCalls, 2);
+  assert.equal(
+    JSON.stringify(await fixture.runtime.collectActiveBusinessData()).includes(
+      deletedEventId,
+    ),
+    false,
+  );
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+  assert.equal(analyzerCalls, 3);
+  const previous = inputs.at(-1).existing_bioweave;
+  assert.equal(previous.analysis.floor_version.message_id, "message-survivor");
+  assert.deepEqual(
+    previous.events.map((event) => event.source.message_id),
+    ["message-survivor"],
+  );
+  assert.deepEqual(
+    Object.values(inputs.at(-1).character_registry.entities)
+      .map((entry) => entry.display_name)
+      .sort(),
+    ["灰阶航标员", "琥珀采集者"].sort(),
+  );
+  assert.doesNotMatch(
+    JSON.stringify(inputs.at(-1)),
+    /被删观测员|被删守门人/u,
+  );
+  fixture.runtime.destroy();
+});
+
 test("deleting analyzed Floors rolls identity snapshots back to older owners", async () => {
   const inputs = [];
   const fixture = createFixture({
@@ -1721,7 +1905,6 @@ test("deleting analyzed Floors rolls identity snapshots back to older owners", a
         role: "assistant",
       },
     ],
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         inputs.push(analysisInput);
@@ -1746,47 +1929,56 @@ test("deleting analyzed Floors rolls identity snapshots back to older owners", a
       },
     },
   });
-  const ids = [
-    "char_a",
-    "char_source_a",
-    "char_b",
-    "char_source_b",
-    "char_c",
-    "char_source_c",
-    "char_d",
-    "char_source_d",
-    "char_e",
-    "char_source_e",
-  ];
-
-  await withGlobalCrypto({ randomUUID: () => ids.shift() }, async () => {
-    await fixture.runtime.init();
-    for (const index of [0, 1, 2]) {
-      await fixture.runtime.analyzeFloor(
-        { __messageIndex: true, index },
-        { force: true },
-      );
-    }
-
-    fixture.context.chat.splice(2, 1);
-    await fixture.runtime.analyzeFloor("message-target", { force: true });
-    assert.deepEqual(
-      Object.values(inputs.at(-1).character_registry.entities)
-        .map((entry) => entry.display_name)
-        .sort(),
-      ["来源A", "来源B", "角色A", "角色B"],
+  await fixture.runtime.init();
+  for (const index of [0, 1, 2]) {
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index },
+      { force: true },
     );
-    assert.equal(inputs.at(-1).character_registry.entities.char_c, undefined);
+  }
 
-    fixture.context.chat.splice(1, 1);
-    await fixture.runtime.analyzeFloor("message-target", { force: true });
-    assert.deepEqual(
-      Object.values(inputs.at(-1).character_registry.entities).map(
-        (entry) => entry.display_name,
-      ),
-      ["角色A", "来源A"],
-    );
-  });
+  fixture.context.chat.splice(2, 1);
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+  assert.deepEqual(
+    Object.values(inputs.at(-1).character_registry.entities)
+      .map((entry) => entry.display_name)
+      .sort(),
+    ["来源A", "来源B", "角色A", "角色B"],
+  );
+  assert.deepEqual(Object.keys(inputs.at(-1).character_registry.entities).sort(), [
+    "char_000001",
+    "char_000002",
+    "char_000003",
+    "char_000004",
+  ]);
+  assert.deepEqual(
+    Object.keys(fixture.runtime.store.getFloor(2).character_registry.entities).sort(),
+    [
+      "char_000001",
+      "char_000002",
+      "char_000003",
+      "char_000004",
+      "char_000005",
+      "char_000006",
+    ],
+  );
+
+  fixture.context.chat.splice(1, 1);
+  await fixture.runtime.analyzeFloor("message-target", { force: true });
+  assert.deepEqual(
+    Object.values(inputs.at(-1).character_registry.entities).map(
+      (entry) => entry.display_name,
+    ),
+    ["角色A", "来源A"],
+  );
+  assert.deepEqual(Object.keys(inputs.at(-1).character_registry.entities).sort(), [
+    "char_000001",
+    "char_000002",
+  ]);
+  assert.deepEqual(
+    Object.keys(fixture.runtime.store.getFloor(1).character_registry.entities).sort(),
+    ["char_000001", "char_000002", "char_000003", "char_000004"],
+  );
   fixture.runtime.destroy();
 });
 
@@ -1809,7 +2001,6 @@ test("API input is empty when no valid previous Floor exists", async () => {
 test("first analysis does not inherit an orphan Chat character registry", async () => {
   let input;
   const fixture = createFixture({
-    allowLegacyIdentity: false,
     characterContextResolver: (_context, chatData) => ({
       profiles: Object.fromEntries(
         Object.entries(chatData.character_registry?.entities ?? {}).map(
@@ -1992,6 +2183,76 @@ test("reanalyzing a Floor never uses that Floor as its own previous state", asyn
   fixture.runtime.destroy();
 });
 
+test("formal identity reanalysis excludes the target's own Registry and Events", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "formal-history-owner",
+        floor: 1,
+        content: "正式身份历史楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "formal-history-target",
+        floor: 2,
+        content: "正式身份重分析目标",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        const names =
+          analysisInput.current_floor.message_id === "formal-history-owner"
+            ? ["墨蓝航标员", "白砾守门人"]
+            : ["回声观测员", "赤陶引路人"];
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              names[0],
+              names[1],
+              `formal-reanalysis-${inputs.length}`,
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true },
+  );
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 1 },
+    { force: true },
+  );
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 1 },
+    { force: true },
+  );
+
+  assert.equal(inputs.length, 3);
+  for (const input of inputs.slice(1)) {
+    assert.equal(
+      input.existing_bioweave.analysis.floor_version.message_id,
+      "formal-history-owner",
+    );
+    assert.deepEqual(
+      input.existing_bioweave.events.map((event) => event.source.message_id),
+      ["formal-history-owner"],
+    );
+    assert.doesNotMatch(
+      JSON.stringify(input.character_registry),
+      /回声观测员|赤陶引路人/u,
+    );
+  }
+  fixture.runtime.destroy();
+});
+
 test("stale Floor Version is skipped during previous-state resolution", async () => {
   const inputs = [];
   const fixture = createFixture({
@@ -2071,7 +2332,6 @@ test("stale Floor identity snapshots cannot become previous state", async () => 
         role: "assistant",
       },
     ],
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         inputs.push(analysisInput);
@@ -2092,40 +2352,121 @@ test("stale Floor identity snapshots cannot become previous state", async () => 
     },
   });
 
-  await withGlobalCrypto(
-    {
-      randomUUID: (() => {
-        const ids = ["char_versioned_a", "char_versioned_source_a"];
-        return () => ids.shift();
-      })(),
-    },
-    async () => {
-      await fixture.runtime.init();
-      await fixture.runtime.analyzeFloor(
-        { __messageIndex: true, index: 1 },
-        { force: true },
-      );
-
-      fixture.context.chat[1].message_version = "v2";
-      await fixture.runtime.analyzeFloor(
-        { __messageIndex: true, index: 2 },
-        { force: true },
-      );
-
-      assert.deepEqual(inputs.at(-1).existing_bioweave, {
-        analysis: null,
-        events: [],
-      });
-      assert.deepEqual(inputs.at(-1).character_registry, {
-        schema_version: 1,
-        entities: {},
-      });
-      assert.doesNotMatch(
-        JSON.stringify(inputs.at(-1)),
-        /版本角色A|版本来源A|char_versioned/u,
-      );
-    },
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 1 },
+    { force: true },
   );
+
+  fixture.context.chat[1].message_version = "v2";
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 2 },
+    { force: true },
+  );
+
+  assert.deepEqual(inputs.at(-1).existing_bioweave, {
+    analysis: null,
+    events: [],
+  });
+  assert.deepEqual(inputs.at(-1).character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
+  assert.doesNotMatch(
+    JSON.stringify(inputs.at(-1)),
+    /版本角色A|版本来源A|char_versioned/u,
+  );
+  fixture.runtime.destroy();
+});
+
+test("previous lookup skips successful Floors without a complete Registry snapshot", async () => {
+  const inputs = [];
+  let invalidRegistryMode = "missing";
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "registry-owner",
+        floor: 1,
+        content: "合法 Registry 所属楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "registry-invalid",
+        floor: 2,
+        content: "缺少 Registry 的楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "registry-target",
+        floor: 3,
+        content: "读取 previous 的目标楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        if (analysisInput.current_floor.message_id === "registry-target")
+          return { events: [] };
+        const names =
+          analysisInput.current_floor.message_id === "registry-owner"
+            ? ["砂砾档案员", "青铜引路人"]
+            : ["无册观测员", "雾线守门人"];
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              names[0],
+              names[1],
+              `registry-snapshot-${inputs.length}`,
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  for (const index of [0, 1]) {
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index },
+      { force: true },
+    );
+  }
+
+  const originalGetFloor = fixture.runtime.store.getFloor;
+  fixture.runtime.store.getFloor = (index, swipeId) => {
+    const floorData = originalGetFloor.call(fixture.runtime.store, index, swipeId);
+    if (index !== 1 || !floorData) return floorData;
+    const invalid = structuredClone(floorData);
+    if (invalidRegistryMode === "missing") delete invalid.character_registry;
+    else invalid.character_registry = { schema_version: 1, entities: [] };
+    return invalid;
+  };
+
+  for (const mode of ["missing", "invalid"]) {
+    invalidRegistryMode = mode;
+    await fixture.runtime.analyzeFloor("registry-target", { force: true });
+    const previous = inputs.at(-1).existing_bioweave;
+    assert.equal(
+      previous.analysis.floor_version.message_id,
+      "registry-owner",
+    );
+    assert.deepEqual(
+      previous.events.map((event) => event.source.message_id),
+      ["registry-owner"],
+    );
+    assert.deepEqual(
+      Object.values(inputs.at(-1).character_registry.entities)
+        .map((entry) => entry.display_name)
+        .sort(),
+      ["砂砾档案员", "青铜引路人"].sort(),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(previous),
+      /无册观测员|雾线守门人/u,
+    );
+  }
   fixture.runtime.destroy();
 });
 
@@ -2277,6 +2618,49 @@ test("failed force refresh preserves the previous successful Events and records 
   assert.deepEqual(
     status.current_floor_events.map((event) => event.event_id),
     [firstId],
+  );
+  fixture.runtime.destroy();
+});
+
+test("failed formal reanalysis preserves the prior successful Registry snapshot", async () => {
+  let analyzerCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analyzerCalls += 1;
+        if (analyzerCalls === 2) throw new Error("FORMAL_REANALYSIS_FAILED");
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              "琥珀档案员",
+              "灰岩引路人",
+              "formal-failure-event",
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const before = fixture.runtime.store.getFloor(0);
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /FORMAL_REANALYSIS_FAILED/u,
+  );
+
+  const after = fixture.runtime.store.getFloor(0);
+  assert.equal(after.analysis.status, "failed");
+  assert.equal(after.analysis.last_success.status, "success");
+  assert.deepEqual(after.events, before.events);
+  assert.deepEqual(after.character_registry, before.character_registry);
+  assert.deepEqual(
+    (await fixture.runtime.getCurrentFloorEvents()).map(
+      (event) => event.event_id,
+    ),
+    before.events.map((event) => event.event_id),
   );
   fixture.runtime.destroy();
 });
@@ -2551,7 +2935,6 @@ test("previous API state follows the active Swipe owner after switching", async 
         role: "assistant",
       },
     ],
-    allowLegacyIdentity: false,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         inputs.push(analysisInput);
@@ -2576,20 +2959,7 @@ test("previous API state follows the active Swipe owner after switching", async 
       },
     },
   });
-  await withGlobalCrypto(
-    {
-      randomUUID: (() => {
-        const ids = [
-          "char_swipe_a",
-          "char_swipe_source_a",
-          "char_swipe_b",
-          "char_swipe_source_b",
-        ];
-        return () => ids.shift();
-      })(),
-    },
-    async () => {
-      await fixture.runtime.init();
+  await fixture.runtime.init();
       await fixture.runtime.analyzeFloor(
         { __messageIndex: true, index: 0 },
         { force: true },
@@ -2664,8 +3034,6 @@ test("previous API state follows the active Swipe owner after switching", async 
         ),
         ["Swipe角色A", "Swipe来源A"],
       );
-    },
-  );
   fixture.runtime.destroy();
 });
 
@@ -2682,7 +3050,9 @@ test("active Swipe deletion rebuilds the registry and fails closed without a slo
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal(
-    (await fixture.runtime.getTrackingRegistry()).tracking_subjects["char-a"]
+    (await fixture.runtime.getTrackingRegistry()).tracking_subjects[
+      "char_000001"
+    ]
       .status,
     "active",
   );
@@ -2811,26 +3181,26 @@ test("event edit validates the complete Floor collection before saving or rebuil
   const subjectEvent = (eventId, subjectId, sourceId) =>
     eventResult(eventId, {
       participants: [
-        {
-          character_id: subjectId,
-          display_name: `${subjectId} display`,
-          event_role: "potential_gestational_subject",
-          reproductive_capabilities_used: { can_carry_pregnancy: true },
-          evidence: [{ kind: "narrative", text: "subject evidence" }],
-        },
-        {
-          character_id: sourceId,
-          display_name: `${sourceId} display`,
-          event_role: "potential_conception_source",
-          reproductive_capabilities_used: { can_cause_pregnancy: true },
-          evidence: [{ kind: "narrative", text: "source evidence" }],
-        },
+        identityParticipant({
+          identityStatus: "new",
+          mentionId: `${eventId}-subject`,
+          displayName: `${subjectId} display`,
+          eventRole: "potential_gestational_subject",
+          capabilities: { can_carry_pregnancy: true },
+        }),
+        identityParticipant({
+          identityStatus: "new",
+          mentionId: `${eventId}-source`,
+          displayName: `${sourceId} display`,
+          eventRole: "potential_conception_source",
+          capabilities: { can_cause_pregnancy: true },
+        }),
       ],
       pregnancy_relevance: {
         relevant: true,
         possible_conception: true,
-        gestational_subject_ids: [subjectId],
-        counterpart_ids: [sourceId],
+        gestational_subject_ids: [`${eventId}-subject`],
+        counterpart_ids: [`${eventId}-source`],
         confidence: 0.8,
       },
     });
@@ -2852,19 +3222,25 @@ test("event edit validates the complete Floor collection before saving or rebuil
   const beforeEvents = await fixture.runtime.getCurrentFloorEvents();
   const beforeFloorSaveCalls = fixture.saveFloorCalls();
   const beforeRegistrySaveCalls = fixture.saveChatMetadataCalls();
+  const firstEvent = beforeEvents[0];
   const secondEvent = beforeEvents.find(
     (event) =>
-      event.pregnancy_relevance.gestational_subject_ids[0] === "subject-b",
+      event.pregnancy_relevance.gestational_subject_ids[0] ===
+      "char_000003",
   );
+  const firstSubjectId =
+    firstEvent.pregnancy_relevance.gestational_subject_ids[0];
+  const secondSubjectId =
+    secondEvent.pregnancy_relevance.gestational_subject_ids[0];
   await assert.rejects(
     fixture.runtime.updateEvent(secondEvent.event_id, {
       participants: [
-        { ...secondEvent.participants[0], character_id: "subject-a" },
+        { ...secondEvent.participants[0], character_id: firstSubjectId },
         { ...secondEvent.participants[1] },
       ],
       pregnancy_relevance: {
         ...secondEvent.pregnancy_relevance,
-        gestational_subject_ids: ["subject-a"],
+        gestational_subject_ids: [firstSubjectId],
       },
     }),
     (error) =>
@@ -2880,7 +3256,7 @@ test("event edit validates the complete Floor collection before saving or rebuil
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.pregnancy_relevance.gestational_subject_ids,
     ),
-    [["subject-a"], ["subject-b"]],
+    [[firstSubjectId], [secondSubjectId]],
   );
   fixture.runtime.destroy();
 });
@@ -2931,7 +3307,9 @@ test("current-derived reads ignore deleted Floor metadata without a lifecycle ca
     { force: true },
   );
   assert.equal(
-    (await fixture.runtime.getTrackingRegistry()).tracking_subjects["char-a"]
+    (await fixture.runtime.getTrackingRegistry()).tracking_subjects[
+      "char_000001"
+    ]
       .status,
     "active",
   );
@@ -3274,8 +3652,11 @@ test("Domain collection duplicate subject keeps its stable diagnostic code and p
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
+        const firstEvent = eventResult("duplicate-a");
+        const secondEvent = structuredClone(firstEvent);
+        secondEvent.event_id = "duplicate-b";
         return {
-          events: [eventResult("duplicate-a"), eventResult("duplicate-b")],
+          events: [firstEvent, secondEvent],
         };
       },
     },

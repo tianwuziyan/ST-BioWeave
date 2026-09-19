@@ -596,7 +596,6 @@ export function createRuntime({
   analysisSourceLoaderOptions = {},
   externalMemoryProviderLoader = null,
   analysisSourceCache = null,
-  allowLegacyIdentity = false,
 } = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
@@ -663,7 +662,6 @@ export function createRuntime({
       ? { externalMemoryProviderLoader }
       : {}),
     ...(analysisSourceCache ? { analysisSourceCache } : {}),
-    allowLegacyIdentity,
     globalRecentStoryResolver: () =>
       store.profileStore?.getSettings?.()?.recent_story_global ?? {},
     notify,
