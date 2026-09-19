@@ -161,6 +161,9 @@ repopulate the cleared projection. Clear All resets the marker with the clean
 Chat shape. The registry, not a field-name convention, defines this behavior.
 When Character clear runs in an empty Chat, the marker stores
 `message_index: -1`, an explicit boundary before the first future message.
+A Floor that existed at the boundary may re-enter the derived projection only
+after a successful analysis completed after the reset marker was created;
+older unchanged facts at that boundary remain excluded.
 
 The current `settings` object is:
 
@@ -492,7 +495,8 @@ Because a Runtime rebuild from valid Events could otherwise repopulate the
 projection immediately, the implementation persists the bounded, versioned
 `character_reset` boundary described above. The marker is a rebuild boundary,
 not a second fact source: post-reset Floors may create new projection state,
-while old facts remain historical and provenance-bound.
+including a boundary Floor only after it is successfully reanalyzed after the
+reset; old unchanged facts remain historical and provenance-bound.
 
 ### 6.3 Manual World clear
 

@@ -196,6 +196,14 @@ Character Card/Persona identity context remains configuration/context; a
 canonical identity first established by historical BioWeave analysis remains
 Floor-owned snapshot state.
 
+A Character reset boundary excludes existing valid Floor facts at or before
+the recorded message/Floor boundary until they are analyzed successfully
+again after the reset. A successful reanalysis of the boundary Floor is
+therefore a new post-reset projection source, while an older unchanged Floor
+at the same boundary remains excluded. This exception changes only derived
+projection eligibility; it does not restore the cleared Chat projection or
+change Floor/Swipe ownership.
+
 ## 6. Provenance
 
 Every persisted Floor Event and every historical biological fact that crosses

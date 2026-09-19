@@ -2873,6 +2873,66 @@ test("character reset made in an empty Chat accepts the first post-reset Floor",
   fixture.runtime.destroy();
 });
 
+test(
+  "character reset reanalysis of the boundary Floor rebuilds projection without restoring older Floors",
+  async () => {
+    const messages = [
+      { message_id: "reset-old-floor", floor: 3, content: "旧楼层", role: "assistant" },
+      { message_id: "reset-boundary-floor", floor: 6, content: "边界楼层", role: "assistant" },
+    ];
+    const fixture = createFixture({
+      messages,
+      analyzer: {
+        async analyzeFloor() {
+          return { events: [eventResult("reset-boundary-event")] };
+        },
+      },
+    });
+
+    await fixture.runtime.init();
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 0 },
+      { force: true },
+    );
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 1 },
+      { force: true },
+    );
+    const oldEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
+
+    const cleared = await fixture.runtime.clearCharacterData();
+    assert.equal(cleared.ok, true);
+
+    await fixture.runtime.analyzeFloor(
+      { __messageIndex: true, index: 1 },
+      { force: true },
+    );
+
+    const stored = fixture.runtime.store.getFloor(1);
+    const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+    const businessData = await fixture.runtime.collectActiveBusinessData();
+
+    assert.equal(stored.analysis.status, "success");
+    assert.equal(stored.events.length, 1);
+    assert.equal(status.current_floor_events.length, 1);
+    assert.equal(businessData.active_events.length, 1);
+    assert.deepEqual(
+      businessData.active_events.map((event) => event.event_id),
+      [stored.events[0].event_id],
+    );
+    assert.equal(
+      businessData.active_events.some((event) => event.event_id === oldEventId),
+      false,
+    );
+    assert.equal(Object.keys(businessData.tracking_subjects).length, 1);
+    assert.equal(
+      Object.keys((await fixture.runtime.getTrackingRegistry()).character_registry.entities).length,
+      2,
+    );
+    fixture.runtime.destroy();
+  },
+);
+
 test("Swipe switch reuses a still-valid target Swipe analysis", async () => {
   const message = {
     message_id: "message-reusable-swipe",

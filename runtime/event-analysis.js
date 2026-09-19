@@ -605,15 +605,42 @@ export function createEventAnalysisCoordinator({
       messageIndex: Number.isFinite(messageIndex) ? Math.trunc(messageIndex) : null,
       floor: Number.isFinite(floor) ? floor : null,
       messageId: marker.message_id ?? null,
+      createdAt: marker.created_at ?? null,
     };
+  }
+
+  function timestampMilliseconds(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string" || !value.trim()) return NaN;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function stateWasReanalyzedAfterReset(state, boundary) {
+    const resetAt = timestampMilliseconds(boundary?.createdAt);
+    const analysis = state?.floorData?.analysis;
+    const analyzedAt = timestampMilliseconds(
+      analysis?.analyzed_at ?? analysis?.last_analyzed_at,
+    );
+    return Number.isFinite(resetAt) && Number.isFinite(analyzedAt) && analyzedAt > resetAt;
   }
 
   function stateIsAfterReset(state, boundary) {
     if (boundary === null) return true;
-    if (Number.isFinite(boundary.messageIndex))
-      return Number(state.index) > boundary.messageIndex;
-    if (Number.isFinite(boundary.floor))
-      return Number(state.version.floor) > boundary.floor;
+    if (Number.isFinite(boundary.messageIndex)) {
+      if (Number(state.index) > boundary.messageIndex) return true;
+      if (Number(state.index) === boundary.messageIndex)
+        return stateWasReanalyzedAfterReset(state, boundary);
+      return false;
+    }
+    if (Number.isFinite(boundary.floor)) {
+      if (Number(state.version.floor) > boundary.floor) return true;
+      if (Number(state.version.floor) === boundary.floor)
+        return stateWasReanalyzedAfterReset(state, boundary);
+      return false;
+    }
     // An old marker with no resolvable ordering information is not proof that
     // an existing Floor is newer.  Fail closed until a new Floor is analyzed.
     return false;
