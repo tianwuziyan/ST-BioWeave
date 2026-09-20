@@ -1,4 +1,4 @@
-import { formatStoryTime, normalizeStoryTime } from '../story/time.js'
+import { formatStoryTime } from '../story/time.js'
 import {
   analysisStatusCount,
   analysisStatusEvents,
@@ -7,10 +7,12 @@ import {
   renderAnalysisActionButton,
   trackingSubjectTone,
 } from './overview.js'
+import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
 const capabilityLabels = {
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
   can_be_fertilized: '可受精',
+  can_fertilize: '可使对方受精',
   can_carry_pregnancy: '可承载妊娠',
   can_cause_pregnancy: '可导致受孕',
 }
@@ -65,24 +67,6 @@ function displayValue(value, fallback = '—') {
 }
 function renderValue(value, fallback = '—') {
   return escapeHtml(displayValue(value, fallback))
-}
-function relativeDateLabel(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))) return ''
-  const [year, month, day] = String(value).split('-').map(Number)
-  const timestamp = Date.UTC(year, month - 1, day)
-  const date = new Date(timestamp)
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return ''
-  const today = new Date()
-  const todayTimestamp = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
-  const days = Math.floor((todayTimestamp - timestamp) / 86400000)
-  if (days < 0) return '未来日期'
-  if (days === 0) return '今天'
-  if (days < 30) return days + '天前'
-  if (days < 365) return Math.floor(days / 30) + '个月前'
-  return Math.floor(days / 365) + '年前'
-}
-function storyTimeRelative(event) {
-  return relativeDateLabel(normalizeStoryTime(event?.story_time).normalized)
 }
 function renderTriState(value) {
   if (value === true) return '是'
@@ -145,7 +129,7 @@ function subjectStatusLabel(value) {
   if (value === 'inactive') return '已结束'
   return displayValue(value, '追踪中')
 }
-function renderExposureEvent(event, fallbackEventId, index = 0) {
+function renderExposureEvent(event, fallbackEventId, index = 0, currentStoryTime = null, storyTimeDifferences = {}) {
   const eventId = eventIdOf(event, fallbackEventId)
   if (!event) {
     return (
@@ -156,7 +140,7 @@ function renderExposureEvent(event, fallbackEventId, index = 0) {
   }
   const type = eventTypeLabel(event.type)
   const date = formatStoryTime(event?.story_time)
-  const relative = storyTimeRelative(event)
+  const relative = formatStoryTimeRelative(resolveStoryTimeDifference(storyTimeDifferences, eventId))
   const location = displayValue(event.location)
   const counterpart = counterpartSummary(event)
   const meta = [location, counterpart !== '—' ? counterpart : ''].filter(Boolean).join(' · ') || '—'
@@ -169,11 +153,11 @@ function renderExposureEvent(event, fallbackEventId, index = 0) {
     '<summary class="bioweave-character-exposure-summary">' +
     '<span class="bioweave-character-exposure-date" title="' +
     escapeHtml(date) +
-    '"><span>' +
+    '"><span class="bioweave-event-story-time">' +
     escapeHtml(date) +
     '</span>' +
-    (relative ? '<small>' + escapeHtml(relative) + '</small>' : '') +
     '</span>' +
+    (relative ? '<small class="bioweave-event-relative-time bioweave-character-exposure-relative">' + escapeHtml(relative) + '</small>' : '') +
     '<b class="bioweave-character-exposure-type" title="' +
     escapeHtml(type) +
     '">' +
@@ -194,7 +178,7 @@ function renderExposureEvent(event, fallbackEventId, index = 0) {
     '<div><dt>日期</dt><dd><span>' +
     escapeHtml(date) +
     '</span>' +
-    (relative ? '<small class="bioweave-character-exposure-age-inline">' + escapeHtml(relative) + '</small>' : '') +
+    (relative ? '<small class="bioweave-event-relative-time bioweave-character-exposure-age-inline">' + escapeHtml(relative) + '</small>' : '') +
     '</dd></div>' +
     '<div><dt>地点</dt><dd>' +
     renderValue(event.location) +
@@ -210,7 +194,7 @@ function renderCapabilities(profile) {
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
     return '<div class="bioweave-empty bioweave-character-empty">尚无可显示的生殖能力资料。</div>'
   }
-  const keys = Object.keys(capabilities)
+  const keys = Object.keys(capabilities).filter(key => Object.prototype.hasOwnProperty.call(capabilityLabels, key))
   if (!keys.length) return '<div class="bioweave-empty bioweave-character-empty">尚无可显示的生殖能力资料。</div>'
   return (
     '<dl class="bioweave-data-list bioweave-capabilities bioweave-character-capabilities">' +
@@ -248,7 +232,7 @@ function renderCharacterFacts(profile) {
     '</span></div>'
   )
 }
-function renderExposures(subject, activeEvents) {
+function renderExposures(subject, activeEvents, currentStoryTime = null, storyTimeDifferences = {}) {
   const exposureIds = Array.isArray(subject?.exposure_event_ids)
     ? [...new Set(subject.exposure_event_ids.map(value => String(value ?? '').trim()).filter(Boolean))]
     : []
@@ -259,7 +243,7 @@ function renderExposures(subject, activeEvents) {
     '<div class="bioweave-character-exposure-list-head"><span>按时间引用顺序</span><strong>' +
     exposureIds.length +
     ' 条记录</strong></div>' +
-    exposureIds.map((eventId, index) => renderExposureEvent(events.get(eventId), eventId, index)).join('') +
+    exposureIds.map((eventId, index) => renderExposureEvent(events.get(eventId), eventId, index, currentStoryTime, storyTimeDifferences)).join('') +
     '</div>'
   )
 }
@@ -278,11 +262,11 @@ function renderCurrentState() {
     '<section class="bioweave-card bioweave-character-detail-section"><h3>当前状态</h3>' + '<p class="bioweave-muted">等待状态引擎计算</p></section>'
   )
 }
-function renderExposuresSection(subject, activeEvents) {
+function renderExposuresSection(subject, activeEvents, currentStoryTime = null, storyTimeDifferences = {}) {
   return (
     '<section class="bioweave-card bioweave-character-detail-section bioweave-character-exposure-section"><h3>事件追踪</h3>' +
     '<p class="bioweave-muted">仅显示当前仍在跟进的相关记录。</p>' +
-    renderExposures(subject, activeEvents) +
+    renderExposures(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     '</section>'
   )
 }
@@ -304,7 +288,7 @@ function renderNotesSection() {
     '<div class="bioweave-empty bioweave-character-empty">当前没有可显示的人物备注。</div></section>'
   )
 }
-function detailPage({ subject, profile, activeEvents }) {
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences }) {
   return (
     '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-enter" data-character-detail-id="' +
     escapeHtml(characterIdOf(subject)) +
@@ -315,7 +299,7 @@ function detailPage({ subject, profile, activeEvents }) {
     renderCapabilities(profile) +
     '</section>' +
     renderCurrentState() +
-    renderExposuresSection(subject, activeEvents) +
+    renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     renderProjectionSection() +
     renderRelationsSection() +
     renderNotesSection() +
@@ -329,7 +313,7 @@ function unavailableDetailPage() {
     '</section>'
   )
 }
-export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null } = {}) {
+export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {} } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
   const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events')
@@ -383,7 +367,7 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
   const selectedSubject = subjects.find(item => item.key === selectedId)?.value
   const detail = selectedId
     ? selectedSubject
-      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents })
+      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences })
       : unavailableDetailPage()
     : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
   if (selectedId && !subjects.length) {

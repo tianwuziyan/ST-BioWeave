@@ -23,7 +23,7 @@
 ### Analysis Context / Prompt Contract
 
 所有新的或调整中的 Analyzer 必须遵守 [`docs/CONTEXT-AND-PROMPT.md`](./CONTEXT-AND-PROMPT.md)，尤其是 Settings selection、SYSTEM 首尾边界、逐楼层 narrative regex 和 Preview parity contract。设置先决定可读取的数据源、楼层数量、regex、Persona、Worldbook 和 External Memory；共享 Collector 完成选择、清洗和脱敏后，任务 Prompt Builder 才能格式化稳定的 `messages[]`。Prompt Preview 必须直接复用真实请求的同一个 message builder。多个 `SYSTEM` message 是合法的，但应按职责聚合，关键是绝对边界、稳定顺序，以及 Preview 与实际请求一致。
-- `story/*`：外部记忆公开接口适配；`story/time.js` 负责结构化 Story Time provider、fallback 和 display formatter。SevenDaysCal 原始日期与传统时辰值只在可信 Adapter 输入边界交给 `utils/cn-date.js` 解析；在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，可独立将可靠日期部分数字化并保留后续原文；fallback 和 `formatStoryTime()` 不从 display 生成结构化日期/时间。
+- `story/*`：StoryTimeCoordinator、BioWeave 本地 canonical parser、era-aware 标准月份算术，以及独立的外部记忆适配。`story/time.js` 负责本地 Story Time 归一化、Calendar Engine 接线和 display formatter；`formatStoryTime()` 不从 display 反向推导日期。
 - `context/builder.js`：向 Tavern 注入短、稳定、结构化的 BioWeave Context。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。
 
@@ -63,7 +63,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 - Event Analyzer 另外接收独立的 Runtime `character_registry` candidate block。participant 的 `identity_status` 必须是 `existing`、`new` 或 `unresolved`；模型只能原样引用 registry 中的 existing ID，new/unresolved 使用 `character_id: null` 与 response-local `mention_id`。Runtime 完成 identity resolution/registration 后，才将 mention/reference 转为 canonical IDs 并执行 participant-backed pregnancy closure。`character_context`、profile 和 Tracking Registry 都不是 canonical identity source。
 - mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved。新人物 ID 只能由 Runtime 从当前 previous Floor Registry 的最大正式序号递增生成，不能从姓名、UUID、时间或随机值派生。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
-- `story_time` 是结构化存储对象；`display` 只用于显示。SevenDaysCal 公开 Adapter 可在输入边界把原始中文日期与传统时辰转换为结构化 `normalized`；已有 `normalized`、`day_index` 等字段仍是权威值。在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，日期部分可以独立数字化并保留任意后续原文，但不得重新推断或覆盖结构化字段。fallback 和 `formatStoryTime()` 不从 display 生成结构化日期/时间。排序和计算只使用结构化字段，无法可靠获取时保存 `null`。SevenDaysCal 只能通过公开、可注入的 Adapter 使用，缺失时降级到 BioWeave Fallback StoryTimeProvider。
+- `story_time` 是结构化对象；`display` 只用于显示。Floor 的 trusted candidate 由 StoryTimeCoordinator 提取，日期和传统时辰由 BioWeave 本地 parser 归一化，排序和计算只使用结构化字段，无法可靠获取时保存 `null`。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段以 pregnancy-relevant exposure 作为 Tracking gate。
 - `counterpart_ids[]` 只保存该 Event 的 `participants[]` 中最终实际造成该 gestational subject pregnancy-relevant exposure 的 source ID；不能跨 subject 或跨 Event 借用 source。对于 pregnancy-related `sexual_activity`，subject 数组严格一个、counterpart 至少一个、participants ID 集合严格等于 subject + counterpart 且各自去重；`relevant=true` 必须有 pregnancy-relevant exposure evidence、participant-backed 的数组和 `source_evidence` 中 kind 为 `pregnancy_relevant_exposure` 的 marker。无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
 - `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
@@ -130,4 +130,4 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
-自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、自动 N-floor 触发、相同 Floor Version 去重、UI 重复打开不重复请求、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、SevenDaysCal 可用/不可用时的 Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。
+自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、自动 N-floor 触发、相同 Floor Version 去重、UI 重复打开不重复请求、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

@@ -232,11 +232,11 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 </div>
 ~~~
 
-详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。日期下方的相对时间只允许读取 `story_time.normalized` 这样的规范日期，不解析展示文案。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态只表示能力待确认；后台 pending candidate 不在普通人物列表中，也不能被 UI 显示为 confirmed eligible。
+详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。事件追踪的 Story Time 与可选相对时间是同一日期信息组中的两个相邻 DOM 项，消费 Runtime 当前 Story Time 与共享比较 helper 的结果，只允许使用规范化结构化时间，不解析展示文案或读取系统时间。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态只表示能力待确认；后台 pending candidate 不在普通人物列表中，也不能被 UI 显示为 confirmed eligible。
 
 ## 事件页面格式
 
-事件页面采用参考页同款的紧凑审阅索引：标题为“事件审阅”，主区块标题为“当前事件索引”，状态筛选使用原生 `bioweave-select`，并通过 `data-bioweave-event-filter` 触发现有 App 的本地筛选。Desktop 每行列为 `128px minmax(170px, 1.1fr) minmax(130px, .9fr) auto`，最小高度 `45px`、间距 `8px`；Mobile 改为两行网格，第一行放事件类型/状态，第二行放时间/摘要，不产生页面级横向滚动：
+事件页面采用参考页同款的紧凑审阅索引：标题为“事件审阅”，主区块标题为“当前事件索引”，状态筛选使用原生 `bioweave-select`，并通过 `data-bioweave-event-filter` 触发现有 App 的本地筛选。Desktop 每行固定按“剧情日期 / 相对时间 / 事件摘要 / 追踪数量 / 状态”排列，时间组使用 `minmax(150px, max-content) max-content`，最小高度 `45px`、间距 `8px`；Mobile 仍允许整体自然换行，时间组位于第一行，不把相对时间固定成日期下方的子行，不产生页面级横向滚动：
 
 ~~~html
 <section class="bioweave-card bioweave-event-review-panel">
@@ -258,7 +258,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 </section>
 ~~~
 
-事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。时间下方的相对时间只允许读取规范 `story_time.normalized`，不能解析展示文本。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
+事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。相对时间紧跟剧情日期，由 Runtime 当前 Story Time 与共享 Story Time helper 得出；不可比较时只显示事件自身规范 Story Time，不能解析展示文本或使用系统时间。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
 
 状态徽标必须沿用概念页的胶囊形样式：22px 高、`2px 7px` 内边距、999px 圆角、透明背景。成功/已选/有效使用 `good`，处理中/较可能使用 `warn`，失败/否定使用 `danger`；世界书来源的“已选数量”即使处于部分选择也使用绿色 `good`，黄色只表示 checkbox 的 `indeterminate` 状态；没有明确语义时使用中性徽标，不根据文案猜测业务状态。
 

@@ -296,20 +296,24 @@ const CN_NUMBER_RE = `[${CN_NUMBER_TOKEN}]+`
 const DAY_RE = `(初(?:${CN_NUMBER_RE})|\\d{1,2}|${CN_NUMBER_RE})`
 const DATE_BOUNDARY = '[\\s|｜,，、;；=＝]'
 
-const TRADITIONAL_TIME_RE_SOURCE = `([${Object.keys(TRADITIONAL_TIME_START_HOURS).join('')}])\\s*([时時])(?:\\s*([0-9０-９${CN_NUMBER_TOKEN}]+)\\s*刻)?`
+const TRADITIONAL_TIME_RE_SOURCE = `([${Object.keys(TRADITIONAL_TIME_START_HOURS).join('')}])\\s*([时時])(?:\\s*(?:(初|中|末)|([0-9０-９${CN_NUMBER_TOKEN}]+)\\s*刻))?`
 const TRADITIONAL_TIME_PREFIX_RE_SOURCE = `([${Object.keys(TRADITIONAL_TIME_START_HOURS).join('')}])\\s*([时時])`
 const TRADITIONAL_TIME_BOUNDARY = '[\\s|｜,，、;；。！？!?=＝]'
 
 function traditionalTimeValue(match) {
   if (!match || !match[2]) return null
-  const marks = match[3] == null
+  const segment = match[3] ?? null
+  const marks = segment
+    ? ({初: 0, 中: 4, 末: 8}[segment] ?? null)
+    : match[4] == null
     ? 0
-    : _cnToNumber(normalizeCnDateDigits(match[3]))
-  if (match[3] != null && (!Number.isInteger(marks) || marks < 1 || marks > 8)) return null
+    : _cnToNumber(normalizeCnDateDigits(match[4]))
+  if (!segment && match[4] != null && (!Number.isInteger(marks) || marks < 1 || marks > 8)) return null
   const totalMinutes = TRADITIONAL_TIME_START_HOURS[match[1]] * 60 + marks * 15
   return {
     branch: match[1],
     marks,
+    ...(segment ? {segment} : {}),
     hour: Math.floor((totalMinutes % 1440) / 60),
     minute: totalMinutes % 60,
     dayOffset: Math.floor(totalMinutes / 1440),
@@ -352,7 +356,7 @@ export function parseTraditionalTime(text) {
 }
 
 function calendarIsGregorian(calendar) {
-  return calendar == null || calendar.kind === 'gregorian' || calendar.id === 'default-gregorian'
+  return calendar == null || calendar.kind === 'gregorian' || calendar.kind === 'era-standard' || calendar.id === 'default-gregorian'
 }
 function defaultValidMonthDay(month, day, calendar) {
   if (!Number.isInteger(month) || !Number.isInteger(day) || month < 1 || day < 1) return null
@@ -456,7 +460,7 @@ function readMonthDate(text, options, start = 0) {
   return hit ? { ...hit, index: hit.index + start } : null
 }
 function parseYearToken(token) {
-  return /^\d+$/.test(token) ? +token : _cnToNumber(token)
+  return token === '元' ? 1 : /^\d+$/.test(token) ? +token : _cnToNumber(token)
 }
 function parseFullChineseDate(text, options) {
   const monthRe = monthTokenPattern(options.monthAlias)
@@ -477,7 +481,7 @@ function parseFullChineseFestival(text, options) {
   return normalizeParsedDate(options.festivalAlias[match[2]], options, parseYearToken(match[1]))
 }
 function parseEraDate(text, options) {
-  const eraYearRe = new RegExp(`(?:^|${DATE_BOUNDARY})(?:(?:【([^】]{1,20})】)|([\\u3400-\\u9fff]{1,20}?))\\s*(\\d{1,4}|${CN_NUMBER_RE})\\s*年`)
+  const eraYearRe = new RegExp(`(?:^|${DATE_BOUNDARY})(?:(?:【([^】]{1,20})】)|([\\u3400-\\u9fff]{1,20}?))\\s*(元|\\d{1,4}|${CN_NUMBER_RE})\\s*年`)
   const match = eraYearRe.exec(text)
   if (!match) return null
   const eraLabel = match[1] || match[2] || null
@@ -519,7 +523,7 @@ export function parseCnDate(
   }
   // 与 SevenDaysCal 相同：精确数字日期优先。
   let match = value.match(
-    new RegExp(`(?:^|${DATE_BOUNDARY})(\\d{4})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})(?=$|[\\s|｜,，、;；]|周|週|星期|礼拜|禮拜)`),
+    new RegExp(`(?:^|${DATE_BOUNDARY})(\\d{4})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})(?=$|[Tt]|[\\s|｜,，、;；]|周|週|星期|礼拜|禮拜)`),
   )
   if (match) return normalizeParsedDate({ month: +match[2], day: +match[3] }, options, +match[1])
   const fullChinese = parseFullChineseDate(value, options)

@@ -1,5 +1,6 @@
-import { formatStoryTime, normalizeStoryTime } from '../story/time.js'
+import { formatStoryTime } from '../story/time.js'
 import { analysisStatusCount, analysisStatusEvents, eventStatusTone, normalizeAnalysisStatus, renderAnalysisActionButton } from './overview.js'
+import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
 
 const eventStatuses = ['confirmed', 'probable', 'ambiguous', 'negated', 'fictional']
 let eventFilter = 'all'
@@ -63,26 +64,6 @@ function displayValue(value, fallback = '—') {
 
 function renderValue(value, fallback = '—') {
   return escapeHtml(displayValue(value, fallback))
-}
-
-function relativeDateLabel(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))) return ''
-  const [year, month, day] = String(value).split('-').map(Number)
-  const timestamp = Date.UTC(year, month - 1, day)
-  const date = new Date(timestamp)
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return ''
-  const today = new Date()
-  const todayTimestamp = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
-  const days = Math.floor((todayTimestamp - timestamp) / 86400000)
-  if (days < 0) return '未来日期'
-  if (days === 0) return '今天'
-  if (days < 30) return days + '天前'
-  if (days < 365) return Math.floor(days / 30) + '个月前'
-  return Math.floor(days / 365) + '年前'
-}
-
-function storyTimeRelative(event) {
-  return relativeDateLabel(normalizeStoryTime(event?.story_time).normalized)
 }
 
 function renderTriState(value) {
@@ -226,13 +207,13 @@ function renderEditForm(event) {
   )
 }
 
-function renderEventCard(event, editingEventId) {
+function renderEventCard(event, editingEventId, currentStoryTime = null, storyTimeDifferences = {}) {
   const eventId = eventIdOf(event)
   const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence
   const open = editingEventId === eventId
   const type = eventTypeLabel(event.type)
   const time = formatStoryTime(event?.story_time)
-  const relative = storyTimeRelative(event)
+  const relative = formatStoryTimeRelative(resolveStoryTimeDifference(storyTimeDifferences, eventId))
   const people = eventReviewPeople(event)
   return (
     '<details class="bioweave-card bioweave-event-card bioweave-event-review-item" data-bioweave-event-id="' +
@@ -242,11 +223,10 @@ function renderEventCard(event, editingEventId) {
     '><summary class="bioweave-event-review-row">' +
     '<span class="bioweave-event-review-time" title="' +
     escapeHtml(time) +
-    '"><b>' +
+    '"><b class="bioweave-event-story-time">' +
     escapeHtml(time) +
-    '</b>' +
-    (relative ? '<small>' + escapeHtml(relative) + '</small>' : '') +
-    '</span>' +
+    '</b></span>' +
+    (relative ? '<small class="bioweave-event-relative-time bioweave-event-review-relative">' + escapeHtml(relative) + '</small>' : '') +
     '<span class="bioweave-event-review-main"><b>' +
     escapeHtml(type) +
     '</b><small>' +
@@ -284,7 +264,7 @@ function renderEventCard(event, editingEventId) {
   )
 }
 
-export function eventsPage({ activeEvents, events, editingEventId = null, analysisStatus = null } = {}) {
+export function eventsPage({ activeEvents, events, editingEventId = null, analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {} } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const fallbackEvents = Array.isArray(activeEvents) ? activeEvents : entriesOf(events)
   const biologicalEvents = analysisStatusEvents(status, fallbackEvents, 'active_events')
@@ -309,7 +289,7 @@ export function eventsPage({ activeEvents, events, editingEventId = null, analys
         : status.state === 'not_analyzed' && biologicalEvents.length
           ? '<p class="bioweave-muted">当前楼层尚未完成分析；下方为当前 Chat 已保存的历史事件。</p>'
           : ''
-  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId)).join('')
+  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId, currentStoryTime, currentStoryTimeDifferences)).join('')
   const firstSubjectId =
     visibleEvents
       .flatMap(event => (Array.isArray(event?.pregnancy_relevance?.gestational_subject_ids) ? event.pregnancy_relevance.gestational_subject_ids : []))

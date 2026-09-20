@@ -1072,6 +1072,65 @@ export function renderAnalysisDebugPopupContent({
   return content;
 }
 
+function storyTimeDebugValue(value, fallback = '—') {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  return escapeHtml(value);
+}
+
+function renderStoryTimeDebugRow(label, value, fallback = '—') {
+  return '<div><dt>' + escapeHtml(label) + '</dt><dd>' + storyTimeDebugValue(value, fallback) + '</dd></div>';
+}
+
+function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections = []) {
+  const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('story_time_debug');
+  const enabled = storyTimeDebug.enabled === true;
+  const loading = storyTimeDebug.loading === true;
+  const info = storyTimeDebug.info ?? null;
+  const floor = info?.floor ?? null;
+  const storyTime = info?.story_time ?? null;
+  const parsed = info?.parsed_parts ?? null;
+  const calendar = info?.calendar ?? null;
+  const event = info?.recent_event ?? null;
+  const eventStoryTime = event?.story_time ?? null;
+  const difference = event?.difference ?? info?.difference ?? null;
+  const error = storyTimeDebug.error ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(storyTimeDebug.error) + '</p>' : '';
+  const body = !enabled
+    ? '<p class="bioweave-muted">默认关闭。开启后只读取当前 Character Floor 的 Story Time 解析结果，不调用 AI，也不保存调试内容。</p>'
+    : [
+      error,
+      loading ? '<p class="bioweave-muted">正在读取当前 Floor…</p>' : '',
+      info ? '<section class="bioweave-card bioweave-story-time-debug-card"><h3>Floor Detection</h3><dl class="bioweave-data-list">' + [
+        renderStoryTimeDebugRow('状态', info.status), renderStoryTimeDebugRow('Chat', info.chat_id),
+        renderStoryTimeDebugRow('Floor', floor?.floor), renderStoryTimeDebugRow('message id', floor?.message_id),
+        renderStoryTimeDebugRow('Active Swipe', floor?.swipe_id), renderStoryTimeDebugRow('content hash', floor?.content_hash),
+        renderStoryTimeDebugRow('message version', floor?.message_version), renderStoryTimeDebugRow('Resolution Source', info.resolution_source ?? info.source),
+        renderStoryTimeDebugRow('Candidate Source', info.candidate_source ?? info.source),
+        renderStoryTimeDebugRow('候选文本', info.candidate), renderStoryTimeDebugRow('Parsed Display', storyTime?.display),
+        renderStoryTimeDebugRow('Normalized', storyTime?.normalized), renderStoryTimeDebugRow('Precision', storyTime?.precision),
+        renderStoryTimeDebugRow('Era', parsed?.era_label), renderStoryTimeDebugRow('Year', parsed?.year),
+        renderStoryTimeDebugRow('Month', parsed?.month), renderStoryTimeDebugRow('Day', parsed?.day),
+        renderStoryTimeDebugRow('Hour', parsed?.hour), renderStoryTimeDebugRow('Minute', parsed?.minute),
+      ].join('') + '</dl></section>' : '',
+      info ? '<section class="bioweave-card bioweave-story-time-debug-card"><h3>Calendar Resolution</h3><dl class="bioweave-data-list">' + [
+        renderStoryTimeDebugRow('Calendar ID', calendar?.calendar_id), renderStoryTimeDebugRow('Era', calendar?.era_label),
+        renderStoryTimeDebugRow('Calculation Level', calendar?.calculation_level),
+        renderStoryTimeDebugRow('Ordinal In Year', calendar?.ordinal_in_year), renderStoryTimeDebugRow('Day Index', calendar?.day_index),
+      ].join('') + '</dl></section>' : '',
+      info ? '<section class="bioweave-card bioweave-story-time-debug-card"><h3>最近可比较事件</h3><dl class="bioweave-data-list">' + [
+        renderStoryTimeDebugRow('event id', event?.event_id), renderStoryTimeDebugRow('Event Story Time', eventStoryTime?.display),
+        renderStoryTimeDebugRow('Event Normalized', eventStoryTime?.normalized), renderStoryTimeDebugRow('Event Calendar ID', eventStoryTime?.calendar_id),
+        renderStoryTimeDebugRow('Event Day Index', eventStoryTime?.day_index), renderStoryTimeDebugRow('Current Story Time', storyTime?.display),
+        renderStoryTimeDebugRow('Current Calendar ID', storyTime?.calendar_id), renderStoryTimeDebugRow('Current Day Index', storyTime?.day_index),
+        renderStoryTimeDebugRow('Difference', difference ? `${difference.value} ${difference.unit}` : null), renderStoryTimeDebugRow('Failure Reason', info.failure_reason),
+      ].join('') + '</dl></section>' : '',
+    ].join('');
+  return '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-story-time-debug-disclosure" data-bioweave-settings-disclosure="story_time_debug"' + (open ? ' open' : '') + '>' +
+    renderSettingsSummary('Story Time 调试', '只读检查当前 Character Floor 的 Story Time 解析链', null, {label: enabled ? '已开启' : '已关闭', tone: enabled ? 'good' : ''}) +
+    '<section class="bioweave-card bioweave-story-time-debug-settings"><div class="bioweave-settings-card-header"><div><h3>Story Time</h3><p class="bioweave-muted">不调用 Event Analyzer，不读取完整剧情正文。</p></div><label class="bioweave-checkbox-label"><input type="checkbox" class="bioweave-checkbox" data-bioweave-action="toggle-story-time-debug"' + (enabled ? ' checked' : '') + '>开启 Story Time 调试</label></div>' +
+    '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-story-time-debug"' + (!enabled || loading ? ' disabled' : '') + '>' + (loading ? '读取中…' : '刷新') + '</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-story-time-debug"' + (!enabled || !info ? ' disabled' : '') + '>复制调试信息</button></div>' + body + '</section></details>';
+}
+
 export function settingsPage({
   profiles: rawProfiles = {},
   assignments = {},
@@ -1094,6 +1153,7 @@ export function settingsPage({
   worldAnalysisPrompt = null,
   worldAnalysisPromptDraft = null,
   dataManagement = {},
+  storyTimeDebug = {},
 } = {}) {
   const profiles = Array.isArray(rawProfiles)
     ? rawProfiles.map(profile => normalizeApiProfileForDisplay(profile))
@@ -1134,6 +1194,7 @@ export function settingsPage({
     `<div class="bioweave-assignment-grid">${assignmentsMarkup}</div>`,
     '</section>',
     '</details>',
+    renderStoryTimeDebugSettings(storyTimeDebug, worldbookSources.openSettingsSections),
     '</section>',
   ].join('');
 }

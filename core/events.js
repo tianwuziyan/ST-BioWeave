@@ -44,6 +44,27 @@ export const CAPABILITY_KEYS = Object.freeze([
   'can_cause_pregnancy',
 ]);
 
+export const STATE_FACT_EVENT_TYPES = Object.freeze([
+  'conception',
+  'pregnancy_suspicion',
+  'pregnancy_confirmation',
+  'pregnancy_loss',
+  'abortion',
+  'labor',
+  'delivery',
+  'postpartum',
+  'menstrual_event',
+  'ovulation_event',
+  'fertility_change',
+  'physical_symptom',
+  'medical_event',
+  'other_biological',
+]);
+
+const STATE_FACT_EVENT_TYPE_SET = new Set(STATE_FACT_EVENT_TYPES);
+const STATE_FACT_REFERENCE_KINDS = new Set(['new', 'existing']);
+const CANONICAL_CHARACTER_ID_PATTERN = /^char_\d{6}$/u;
+
 export const PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND =
   'pregnancy_relevant_exposure';
 
@@ -84,6 +105,9 @@ export const BIOLOGICAL_EVENT_SCHEMA = Object.freeze({
   physical_effect: {
     gestational_substance_intake: null,
   },
+  // State facts are only present for type-specific state transitions. Exposure
+  // remains authoritative in pregnancy_relevance and must not be duplicated.
+  state_fact: null,
   source: {
     chat_id: null,
     message_id: null,
@@ -97,7 +121,6 @@ export const BIOLOGICAL_EVENT_SCHEMA = Object.freeze({
     normalized: null,
     day_index: null,
     calendar_id: null,
-    provider: null,
     precision: 'unknown',
     confidence: null,
   },
@@ -148,6 +171,20 @@ function nullableNumber(value) {
 function confidenceValue(value) {
   const parsed = nullableNumber(value);
   return parsed === null ? null : Math.max(0, Math.min(1, parsed));
+}
+
+function isRecord(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizeStateFact(raw = null) {
+  if (!isRecord(raw)) return null;
+  const source = recordValue(raw);
+  const payload = recordValue(source.payload);
+  return {
+    subject_id: identifierValue(source.subject_id),
+    payload: { ...payload },
+  };
 }
 
 function capabilityValue(value) {
@@ -308,7 +345,154 @@ export function normalizeEvent(raw = {}) {
     source: normalizeSource(source.source),
     story_time: normalizeStoryTime(source.story_time, { formatDisplay: true }),
     physical_effect: recordValue(source.physical_effect),
+    state_fact: normalizeStateFact(source.state_fact),
   };
+}
+
+export function hasStateFactContract(eventType) {
+  return STATE_FACT_EVENT_TYPE_SET.has(eventType);
+}
+
+export function isCanonicalCharacterId(value) {
+  return typeof value === 'string' && CANONICAL_CHARACTER_ID_PATTERN.test(value);
+}
+
+export function getStateFactStoryTime(event) {
+  return normalizeStoryTime(event?.story_time ?? null);
+}
+
+function validStateFactReference(value, {allowNew = false} = {}) {
+  if (!isRecord(value)) return false;
+  if (!STATE_FACT_REFERENCE_KINDS.has(value.kind)) return false;
+  if (value.kind === 'new') return allowNew && value.id === undefined;
+  return typeof value.id === 'string' && value.id.trim() !== '';
+}
+
+function validateStateFactPayload(type, payload, errors, path) {
+  const keys = Object.keys(payload);
+  const only = (...allowed) => keys.every((key) => allowed.includes(key));
+  const text = (value) => typeof value === 'string' && value.trim() !== '';
+  const factRecord = (value, field) => {
+    if (!isRecord(value) || !text(value.kind)) {
+      addError(errors, `${path}.${field}`);
+      return;
+    }
+    if (value.description !== undefined && value.description !== null && !text(value.description)) {
+      addError(errors, `${path}.${field}.description`);
+    }
+  };
+
+  switch (type) {
+    case 'menstrual_event':
+    case 'ovulation_event':
+      if (keys.length !== 0) addError(errors, path);
+      return;
+    case 'conception':
+      if (!only('pregnancy_id') || !text(payload.pregnancy_id)) addError(errors, path);
+      return;
+    case 'pregnancy_suspicion':
+      if (!only('pregnancy_id', 'observation') || !Object.hasOwn(payload, 'observation')) {
+        addError(errors, path);
+      }
+      if (payload.pregnancy_id !== undefined && payload.pregnancy_id !== null && !text(payload.pregnancy_id)) {
+        addError(errors, `${path}.pregnancy_id`);
+      }
+      factRecord(payload.observation, 'observation');
+      return;
+    case 'pregnancy_confirmation':
+      if (!only('pregnancy_id') || !text(payload.pregnancy_id)) addError(errors, path);
+      return;
+    case 'pregnancy_loss':
+    case 'abortion':
+      if (!only('pregnancy_id') || !text(payload.pregnancy_id)) addError(errors, path);
+      return;
+    case 'labor':
+      if (!only('pregnancy_id', 'labor_id') || !text(payload.pregnancy_id) || !text(payload.labor_id)) addError(errors, path);
+      return;
+    case 'delivery':
+      if (!only('pregnancy_id', 'delivery_id') || !text(payload.pregnancy_id) || !text(payload.delivery_id)) addError(errors, path);
+      return;
+    case 'postpartum':
+      if (!only('pregnancy_id', 'postpartum_id') || !text(payload.pregnancy_id) || !text(payload.postpartum_id)) addError(errors, path);
+      return;
+    case 'fertility_change': {
+      const changes = payload.capability_changes;
+      if (!only('capability_changes') || !isRecord(changes) || !Object.keys(changes).length) {
+        addError(errors, path);
+        return;
+      }
+      for (const key of Object.keys(changes)) {
+        if (!CAPABILITY_KEYS.includes(key) || ![true, false, null].includes(changes[key])) {
+          addError(errors, `${path}.capability_changes.${key}`);
+        }
+      }
+      return;
+    }
+    case 'physical_symptom':
+      if (!only('symptom')) addError(errors, path);
+      factRecord(payload.symptom, 'symptom');
+      return;
+    case 'medical_event':
+      if (!only('fact')) addError(errors, path);
+      factRecord(payload.fact, 'fact');
+      return;
+    case 'other_biological':
+      if (!only('fact')) addError(errors, path);
+      factRecord(payload.fact, 'fact');
+      return;
+    default:
+      addError(errors, path);
+  }
+}
+
+function validateStateFact(normalized, errors, {strictCanonicalParticipants = false} = {}) {
+  const type = normalized.type;
+  const stateFact = normalized.state_fact;
+  const isExposure = normalized.pregnancy_relevance.relevant === true;
+  if (isExposure) {
+    if (stateFact !== null) addError(errors, 'state_fact');
+    return;
+  }
+  if (type === 'sexual_activity') {
+    if (stateFact !== null) addError(errors, 'state_fact');
+    return;
+  }
+  if (!hasStateFactContract(type)) return;
+  if (!stateFact) {
+    addError(errors, 'state_fact');
+    return;
+  }
+  if (!stateFact.subject_id) addError(errors, 'state_fact.subject_id');
+  if (strictCanonicalParticipants && !isCanonicalCharacterId(stateFact.subject_id)) {
+    addError(errors, 'state_fact.subject_id');
+  }
+  const participantIds = new Set(normalized.participants.map((item) => item.character_id).filter(Boolean));
+  if (!participantIds.has(stateFact.subject_id)) addError(errors, 'state_fact.subject_id');
+  validateStateFactPayload(type, stateFact.payload, errors, 'state_fact.payload');
+}
+
+export function validateCharacterFacts(raw = {}) {
+  const source = isRecord(raw) ? raw : {};
+  const result = {};
+  for (const [characterId, value] of Object.entries(source)) {
+    if (!isCanonicalCharacterId(characterId) || !isRecord(value) || !isRecord(value.identity) || value.identity.character_id !== characterId) continue;
+    const capabilities = isRecord(value.reproductive_capabilities)
+      ? Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, [true, false, null].includes(value.reproductive_capabilities[key]) ? value.reproductive_capabilities[key] : null]))
+      : Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, null]));
+    result[characterId] = {
+      identity: {
+        character_id: characterId,
+        display_name: nullableText(value.identity.display_name),
+        species: nullableText(value.identity.species),
+        biological_type: nullableText(value.identity.biological_type),
+      },
+      reproductive_capabilities: capabilities,
+      resolved_mechanism_facts: Array.isArray(value.resolved_mechanism_facts)
+        ? value.resolved_mechanism_facts.map((item) => ({...recordValue(item)}))
+        : [],
+    };
+  }
+  return result;
 }
 
 function addError(errors, path) {
@@ -677,6 +861,9 @@ export function validateEvent(
   ) {
     addError(errors, 'physical_effect.gestational_substance_intake');
   }
+  if (hasOwn(event, 'state_fact') && event.state_fact !== null && !isRecord(event.state_fact)) {
+    addError(errors, 'state_fact');
+  }
   const participantIds = new Set(
     normalized.participants
       .map((participant) => participant.character_id)
@@ -736,6 +923,8 @@ export function validateEvent(
     addError(errors, 'story_time.confidence');
   }
 
+  validateStateFact(normalized, errors, {strictCanonicalParticipants});
+
   return { ok: errors.length === 0, errors };
 }
 
@@ -743,8 +932,18 @@ export function validateEventCollection(events = [], options = {}) {
   if (!Array.isArray(events)) return { ok: false, errors: ['events'] };
   const errors = [];
   const subjectEvents = new Map();
+  const seenEventIds = new Map();
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
+    const eventId = identifierValue(event?.event_id);
+    if (eventId && seenEventIds.has(eventId)) {
+      const previous = seenEventIds.get(eventId);
+      if (stableEventFingerprint(previous) !== stableEventFingerprint(event)) {
+        addError(errors, `events[${index}].event_id_conflict`);
+      }
+      continue;
+    }
+    if (eventId) seenEventIds.set(eventId, event);
     const validation = validateEvent(event, options);
     for (const error of validation.errors) {
       addError(errors, `events[${index}]${error ? `.${error}` : ''}`);
@@ -771,6 +970,38 @@ export function validateEventCollection(events = [], options = {}) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+function stableEventValue(value) {
+  if (Array.isArray(value)) return value.map(stableEventValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableEventValue(value[key])]),
+  );
+}
+
+function stableEventFingerprint(value) {
+  return JSON.stringify(stableEventValue(value));
+}
+
+export function dedupeEvents(events = []) {
+  if (!Array.isArray(events)) return [];
+  const result = [];
+  const seen = new Map();
+  for (const event of events) {
+    const eventId = identifierValue(event?.event_id);
+    if (!eventId || !seen.has(eventId)) {
+      if (eventId) seen.set(eventId, event);
+      result.push(event);
+      continue;
+    }
+    if (stableEventFingerprint(seen.get(eventId)) !== stableEventFingerprint(event)) {
+      result.push(event);
+    }
+  }
+  return result;
 }
 
 function sortableNumber(value, fallback) {

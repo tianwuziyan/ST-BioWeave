@@ -134,6 +134,11 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 | `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
 | `story_time` | 结构化故事时间，不能只保存展示字符串。 |
+| `state_fact` | 仅用于非 exposure 的类型化生物事实；固定 envelope 为 `{subject_id, payload}`。`subject_id` 必须是参与该 Event 的 canonical character ID，`payload` 按 Event type 严格校验。有效 pregnancy-related exposure 不重复写入 `state_fact`，仍以 `pregnancy_relevance` 为唯一 exposure fact。 |
+
+`state_fact` 是事实契约，不是 Current State，也不是 Projection。其有效时间直接引用同一 Event 的结构化 `story_time`，不复制第二份时间字段；缺少可靠 `day_index` 时不得进行时间数学。`conception`、`pregnancy_confirmation`、终止、分娩和产后事实通过最小类型 payload 引用稳定的 Chat-local `pregnancy_id`；conception 与后续 pregnancy facts 共用该 episode identity，不另建 `conception_id`。AI 只声明 `new` / `existing` reference，Runtime 以 Floor Version、Event ordinal、subject 和 fact kind 生成确定性 ID。不得使用随机数、系统时间或 UUID。
+
+`pregnancy_suspicion` 保留 suspicion fact，不等价于 confirmed pregnancy；`possible_conception: true` 也不创建 conception fact。`confirmed`、`probable`、`ambiguous`、`negated`、`fictional` 保持独立的 Event status 维度，后两者不能改变 factual Current State。相同 `event_id` 的完全相同事实可以去重；同 ID 不同事实必须报告 conflict，禁止 last-write-wins。
 
 `event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。实际 exposure recipient/source 与 `possible_conception` 必须由当前 World Model、匹配 species/type 的 reproduction rules/capabilities 和 Narrative evidence 共同决定；不能把任何现实物种、性别、解剖结构、行为位置或单一现实生殖机制硬编码成所有世界的必要条件。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`。AI 可综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体/生理/生殖事实和多条一致上下文进行映射；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability；名称、称谓、外貌、event_role、位置、主动/被动或社会身份等单一弱线索不能单独补全 identity/capability，证据冲突或不足时保持 `null` 并进入 pending。`reproductive_capabilities_used` 必须先依据当前 World Model baseline，再结合已有 character profile 与 Character / Persona / Worldbook / 当前剧情证据判断；个体明确值可覆盖或补充 baseline，未知 capability 保持 `null`。
 
@@ -188,17 +193,22 @@ Story Time 采用结构化 DTO：
   "normalized": "2026-08-20",
   "calendar_id": "calendar_main",
   "day_index": 20685,
-  "provider": "bioweave_fallback",
   "precision": "day",
   "confidence": 1
 }
 ```
 
-字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。优先使用可用的 SevenDaysCal 公开 Story Time Adapter；该 Adapter 只在可信 provider 输入边界解析原始中文日期，并只依赖公开 context 或注入的 provider，不读取 SevenDaysCal 私有 Store。不可用时使用 BioWeave Fallback StoryTimeProvider。
+字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。Story Time 只由 BioWeave 本地 trusted candidate extraction、canonical parser 和 Calendar Engine 计算；不读取外部日期 Store。
 
-`display` 不是排序或计算输入。可信 SevenDaysCal Adapter 可以把 provider 的原始日期/时辰转换为结构化字段；在明确的 display-formatting 边界（trusted provider 或最终 Event 归一化）中，也可以复用 `parseCnDate()` 独立把可靠的日期部分数字化，并保留后续任意原文。该操作不得重新推断、覆盖 `normalized` 或 `day_index`；fallback 与 `formatStoryTime()` 仍保持保守的 display-only 语义，不从 display 生成结构化日期/时间。传统十二时辰及可选数字刻在 trusted provider 边界转换为现代 `HH:MM`：纯时辰的 `normalized` 为 `HH:MM`，日期加时辰则在既有日期 key 后追加 `THH:MM`，并把可解析的日期格式化为数字年月日后与原始时辰子串以空格连接；date-only 输入仍按既有兼容规则处理（显式年月日可数字化，节日 alias-only display 保留原文）。时辰跨日时只有在公历或注入的自定义历法能够可靠推进日期时才更新日期 key；否则保留 `normalized: null`，不伪造 `day_index`。模糊时间仍可保存 display、`precision` 和 `confidence`，但不制造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+`display` 不是排序或计算输入。`parseCnDate()`、传统时辰解析和 Calendar Engine 都是 BioWeave 本地能力；解析失败时保留显示值并返回 `null`，不伪造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
 
-公历完整日使用 `YYYY-MM-DD`；传统月份、节日或开放纪年在无法证明连续公历纪元时可保留 SevenDaysCal 兼容的 `cn-year-month-day` 规范 key，但 `day_index` 必须保持 `null`。
+公历完整日使用 `YYYY-MM-DD`；传统月份、节日或开放纪年在无法证明连续历法序数时使用 BioWeave 当前 `cn-year-month-day` 规范 key，但 `day_index` 必须保持 `null`。
+
+Custom Calendar 不属于 Event 或 Floor payload。BioWeave 对带 era 的年月日
+使用内建标准 12 月月份长度和闰年规则进行 elapsed-time arithmetic；`eraLabel`
+只负责纪年语义与同一纪年体系的比较，不被当作 Gregorian 身份。不同 era 不直接
+比较；无法确定同一纪年体系时，相对差值保持 `null`。公历继续使用同一套内建
+Calendar Engine。
 
 ### Tracking Subject Registry
 

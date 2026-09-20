@@ -66,7 +66,7 @@ const traditionalMarkVariants = [
   [['子时八刻'], {branch: '子', marks: 8, hour: 1, minute: 0, dayOffset: 1}],
 ];
 
-test('SevenDaysCal Chinese number conversion and digit normalization are preserved', () => {
+test('Chinese number conversion and digit normalization are preserved', () => {
   assert.equal(normalizeCnDateDigits('２０２４年０３月１５日'), '2024年03月15日');
   assert.deepEqual(
     ['元', '十', '十一', '二十', '廿三', '卄九', '卅一', '壹拾贰', '仟贰'].map(_cnToNumber),
@@ -108,7 +108,7 @@ test('traditional time search rejects partial matches and malformed suffixes', (
   });
 });
 
-test('SevenDaysCal day-key extraction keeps its branch priority and aliases feed the same key flow', () => {
+test('Day-key extraction keeps its branch priority and aliases feed the same key flow', () => {
   assert.equal(extractDayFromTime('2024年3月15日'), '2024-3-15');
   assert.equal(extractDayFromTime('2024/03/19'), '2024-3-19');
   assert.equal(extractDayFromTime('2024-03-19'), '2024-3-19');

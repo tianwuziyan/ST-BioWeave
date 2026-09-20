@@ -549,6 +549,13 @@ export function createApp(runtime, options = {}) {
     analysisPrompt: {},
     analysisPromptDraft: null,
   }
+  let storyTimeDebugState = {
+    enabled: false,
+    loading: false,
+    info: null,
+    error: null,
+  }
+  let storyTimeDebugSequence = 0
   let worldModelTraceChatId = null
   let businessState = {
     loaded: false,
@@ -558,6 +565,10 @@ export function createApp(runtime, options = {}) {
     characterProfiles: {},
     activeEvents: [],
     currentFloor: null,
+    currentState: null,
+    currentStateStatus: 'NO_CHARACTER_FLOOR',
+    currentStoryTime: null,
+    currentStoryTimeDifferences: {},
     lastAnalysis: null,
     analysisStatus: { state: 'not_analyzed', busy: false },
     error: null,
@@ -2321,9 +2332,16 @@ export function createApp(runtime, options = {}) {
         ? {
             activeEvents: [],
             currentFloor: null,
+            currentState: null,
+            currentStateStatus: 'NO_CHARACTER_FLOOR',
+            currentStoryTime: null,
+            currentStoryTimeDifferences: {},
             lastAnalysis: null,
             analysisStatus: {state: 'not_analyzed', busy: false},
           }
+        : {}),
+      ...(operation.key === 'character' || operation.key === 'world'
+        ? {currentState: null, currentStateStatus: 'NO_CHARACTER_FLOOR'}
         : {}),
     }
   }
@@ -2400,11 +2418,16 @@ export function createApp(runtime, options = {}) {
         characterProfiles: collected.character_profiles ?? collected.characterProfiles ?? {},
         activeEvents: collected.active_events ?? collected.activeEvents ?? [],
         currentFloor: collected.current_floor ?? collected.currentFloor ?? null,
+        currentState: collected.current_state ?? collected.currentState ?? null,
+        currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
+        currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
+        currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
         lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
         analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
         error: null,
       }
       if (root?.dataset.open === 'true') render()
+      if (storyTimeDebugState.enabled) void refreshStoryTimeDebug({renderAfter: true})
     } catch (error) {
       if (requestId !== businessRefreshSequence) return
       businessState = {
@@ -2412,9 +2435,59 @@ export function createApp(runtime, options = {}) {
         loaded: true,
         loading: false,
         chatId,
+        currentState: null,
+        currentStateStatus: 'STATE_ERROR',
+        currentStoryTime: null,
+        currentStoryTimeDifferences: {},
         error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
       }
       if (root?.dataset.open === 'true') render()
+    }
+  }
+  async function refreshStoryTimeDebug({renderAfter = true} = {}) {
+    if (!storyTimeDebugState.enabled || typeof runtime.getStoryTimeDebugInfo !== 'function') return null
+    const requestId = ++storyTimeDebugSequence
+    storyTimeDebugState = {...storyTimeDebugState, loading: true, error: null}
+    if (renderAfter && route === 'settings') render()
+    try {
+      const info = await runtime.getStoryTimeDebugInfo()
+      if (requestId !== storyTimeDebugSequence) return null
+      storyTimeDebugState = {...storyTimeDebugState, loading: false, info, error: null}
+      if (renderAfter && route === 'settings') render()
+      return info
+    } catch (error) {
+      if (requestId !== storyTimeDebugSequence) return null
+      storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: error?.message ?? 'STORY_TIME_DEBUG_FAILED'}
+      if (renderAfter && route === 'settings') render()
+      return null
+    }
+  }
+  async function copyStoryTimeDebug() {
+    const info = storyTimeDebugState.info
+    if (!info) return false
+    const {trace: _trace, ...safeInfo} = info
+    const text = JSON.stringify(safeInfo, null, 2)
+    const clipboard = documentRef?.defaultView?.navigator?.clipboard ?? globalThis.navigator?.clipboard
+    try {
+      if (typeof clipboard?.writeText === 'function') {
+        await clipboard.writeText(text)
+      } else {
+        const textarea = documentRef?.createElement?.('textarea')
+        if (!textarea || typeof documentRef?.execCommand !== 'function') throw new Error('CLIPBOARD_UNAVAILABLE')
+        textarea.value = text
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        documentRef.body?.append?.(textarea)
+        textarea.select?.()
+        if (!documentRef.execCommand('copy')) throw new Error('CLIPBOARD_COPY_FAILED')
+        textarea.remove?.()
+      }
+      notify('Story Time 调试信息已复制。', 'success', documentRef)
+      return true
+    } catch {
+      notify('无法复制 Story Time 调试信息。', 'error', documentRef)
+      return false
     }
   }
   function activeEventById(eventId) {
@@ -2561,11 +2634,16 @@ export function createApp(runtime, options = {}) {
       characterProfiles: businessState.characterProfiles,
       activeEvents: businessState.activeEvents,
       currentFloor: businessState.currentFloor,
+      currentState: businessState.currentState,
+      currentStateStatus: businessState.currentStateStatus,
+      currentStoryTime: businessState.currentStoryTime,
+      currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
+      ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
         ? {
@@ -3342,6 +3420,8 @@ export function createApp(runtime, options = {}) {
       analysisSourcesState = createAnalysisSourcesState()
       invalidateWorldModelView({ deferReload: false, renderView: false })
       clearAnalysisPreview()
+      storyTimeDebugSequence += 1
+      storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: null}
       route = 'overview'
       focusedCharacterId = null
       businessRefreshSequence += 1
@@ -3354,6 +3434,10 @@ export function createApp(runtime, options = {}) {
         characterProfiles: {},
         activeEvents: [],
         currentFloor: null,
+        currentState: null,
+        currentStateStatus: 'NO_CHARACTER_FLOOR',
+        currentStoryTime: null,
+        currentStoryTimeDifferences: {},
         lastAnalysis: null,
         analysisStatus: { state: 'not_analyzed', busy: false },
         error: null,
@@ -3415,7 +3499,7 @@ export function createApp(runtime, options = {}) {
       event?.type === 'MESSAGE_SWIPED' ||
       event?.type === 'MESSAGE_SWIPE_DELETED'
     ) {
-      businessState = { ...businessState, loaded: false, loading: false }
+      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
@@ -3457,7 +3541,7 @@ export function createApp(runtime, options = {}) {
     const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]')
     const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]')
     const target = event.target.closest?.(
-      '[data-route], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]',
+      '[data-route], [data-character-id], [data-bioweave-state-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]',
     )
     if (!target) {
       if (!clickedPicker || !clickedDropdown) closeModelPickers()
@@ -3475,6 +3559,28 @@ export function createApp(runtime, options = {}) {
       return
     }
     const action = target.dataset.bioweaveAction
+    if (action === 'toggle-story-time-debug') {
+      event.preventDefault()
+      storyTimeDebugState = {
+        ...storyTimeDebugState,
+        enabled: target.checked === true,
+        info: target.checked === true ? storyTimeDebugState.info : null,
+        error: null,
+      }
+      render()
+      if (storyTimeDebugState.enabled) await refreshStoryTimeDebug()
+      return
+    }
+    if (action === 'refresh-story-time-debug') {
+      event.preventDefault()
+      await refreshStoryTimeDebug()
+      return
+    }
+    if (action === 'copy-story-time-debug') {
+      event.preventDefault()
+      await copyStoryTimeDebug()
+      return
+    }
     if (action === 'open-analysis-debug') {
       event.preventDefault()
       await openAnalysisDebugPopup()
@@ -3713,6 +3819,12 @@ export function createApp(runtime, options = {}) {
     if (target.dataset.characterId) {
       event.preventDefault()
       openCharacter(target.dataset.characterId)
+      return
+    }
+    if (target.dataset.bioweaveStateCharacterId) {
+      event.preventDefault()
+      focusedCharacterId = String(target.dataset.bioweaveStateCharacterId).trim()
+      render()
       return
     }
     if (target.dataset.backToCharacters !== undefined) {
@@ -3972,6 +4084,10 @@ export function createApp(runtime, options = {}) {
       characterProfiles: {},
       activeEvents: [],
       currentFloor: null,
+      currentState: null,
+      currentStateStatus: 'NO_CHARACTER_FLOOR',
+      currentStoryTime: null,
+      currentStoryTimeDifferences: {},
       lastAnalysis: null,
       analysisStatus: { state: 'not_analyzed', busy: false },
       error: null,

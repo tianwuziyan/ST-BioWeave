@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
+import {statePage} from '../ui/state.js';
+import {worldPage} from '../ui/world.js';
 import {PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 
 const event = {
@@ -15,7 +17,6 @@ const event = {
     normalized: null,
     day_index: null,
     calendar_id: 'story',
-    provider: 'bioweave_fallback',
     precision: 'unknown',
     confidence: 0.4,
   },
@@ -151,6 +152,156 @@ test('events page distinguishes not analyzed from analyzed with zero events', ()
   assert.match(analyzed, /当前 Chat 的历史事件/);
   assert.match(analyzed, /evt-1/);
   assert.match(analyzed, /重新分析当前楼层/);
+});
+
+test('events page formats relative Story Time from the supplied current Story Time', () => {
+  const html = eventsPage({
+    currentStoryTime: {display: '第十日', normalized: null, day_index: 10, calendar_id: 'story', precision: 'day'},
+    activeEvents: [{...event, story_time: {display: '第七日', normalized: null, day_index: 7, calendar_id: 'story', precision: 'day'}}],
+    currentStoryTimeDifferences: {'evt-1': {value: 3, unit: 'day'}},
+  });
+  assert.match(html, /3天前/);
+  assert.match(html, /第七日/);
+});
+
+test('event row orders Story Time, relative time, event details, tracking count, and status', () => {
+  const storyTime = {display: '羲和1年3月4日 巳时中', normalized: null, day_index: null, calendar_id: null, precision: 'minute'};
+  const html = eventsPage({
+    activeEvents: [{...event, story_time: storyTime}],
+    currentStoryTimeDifferences: {'evt-1': {value: 60, unit: 'day'}},
+  });
+  assert.match(html, /class="bioweave-event-review-time"[^>]*>[\s\S]*class="bioweave-event-story-time">羲和1年3月4日 巳时中<\/b><\/span>[\s\S]*class="bioweave-event-relative-time bioweave-event-review-relative">60天前<\/small>[\s\S]*class="bioweave-event-review-main"[\s\S]*class="bioweave-event-review-detail"[\s\S]*class="bioweave-badge/);
+  assert.match(html, /亲密互动/);
+  assert.match(html, /花园 · 阿甲 · 阿乙/);
+});
+
+test('event relative formatter handles zero, one, and unavailable Runtime differences without hiding the date', () => {
+  const storyTime = {display: '第三日夜间', normalized: null, day_index: null, calendar_id: null, precision: 'day'};
+  const render = difference => eventsPage({activeEvents: [{...event, story_time: storyTime}], currentStoryTimeDifferences: {'evt-1': difference}});
+  assert.match(render({value: 1, unit: 'day'}), /1天前/);
+  assert.match(render({value: 0, unit: 'day'}), /今天/);
+  const unavailable = render(null);
+  assert.match(unavailable, /class="bioweave-event-story-time">第三日夜间<\/b>/);
+  assert.doesNotMatch(unavailable, /class="bioweave-event-relative-time"/);
+});
+
+test('event tracking omits the relative item completely when Runtime difference is unavailable', () => {
+  const html = eventsPage({
+    activeEvents: [{...event, story_time: {display: '第三日', normalized: null, day_index: null, calendar_id: null, precision: 'day'}}],
+    currentStoryTimeDifferences: {'evt-1': null},
+  });
+  assert.match(html, /class="bioweave-event-story-time">第三日<\/b>/);
+  assert.doesNotMatch(html, /class="bioweave-event-relative-time"/);
+});
+
+test('events page uses precise Story Time for hours and future values, without system time', () => {
+  const eventAtTen = {...event, story_time: {display: '8月17日 10:00', normalized: '2026-08-17T10:00', day_index: 20682, calendar_id: 'story', precision: 'hour'}};
+  const currentAtTwelve = {display: '8月17日 12:00', normalized: '2026-08-17T12:00', day_index: 20682, calendar_id: 'story', precision: 'hour'};
+  assert.match(eventsPage({currentStoryTime: currentAtTwelve, activeEvents: [eventAtTen], currentStoryTimeDifferences: {'evt-1': {value: 120, unit: 'minute'}}}), /2小时前/);
+  assert.match(eventsPage({currentStoryTime: eventAtTen, activeEvents: [{...eventAtTen, story_time: currentAtTwelve}], currentStoryTimeDifferences: {'evt-1': {value: -120, unit: 'minute'}}}), /2小时后/);
+  const incomparable = eventsPage({currentStoryTime: {...currentAtTwelve, calendar_id: 'other'}, activeEvents: [eventAtTen], currentStoryTimeDifferences: {'evt-1': null}});
+  assert.doesNotMatch(incomparable, /2小时前|2小时后/);
+  assert.doesNotMatch(readFileSync(new URL('../ui/events.js', import.meta.url), 'utf8'), /Date\.now|Date\.UTC|new Date/);
+});
+
+test('character event tracking orders Story Time, relative time, event details, and status', () => {
+  const xiheEvent = {
+    ...event,
+    story_time: {display: '羲和1年3月4日 巳时中', normalized: 'cn-1-3-4', day_index: 63, calendar_id: 'xihe', precision: 'day'},
+  };
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {subject: {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'}},
+    characterProfiles: {subject: {character_id: 'char-a', display_name: '阿甲', reproductive_capabilities: {can_fertilize: false}}},
+    activeEvents: [xiheEvent],
+    currentStoryTime: {display: '羲和1年3月7日', normalized: 'cn-1-3-7', day_index: 66, calendar_id: 'xihe', precision: 'day'},
+    currentStoryTimeDifferences: {'evt-1': {value: 3, unit: 'day'}},
+  });
+  assert.match(html, /class="bioweave-character-exposure-date"[\s\S]*羲和1年3月4日 巳时中<\/span><\/span>[\s\S]*class="bioweave-event-relative-time bioweave-character-exposure-relative"[^>]*>3天前<\/small>[\s\S]*class="bioweave-character-exposure-type"[\s\S]*class="bioweave-character-exposure-meta"[\s\S]*class="bioweave-badge/);
+  const dateBlock = html.match(/<span class="bioweave-character-exposure-date"[\s\S]*?<\/span><\/span>/)?.[0] ?? '';
+  assert.doesNotMatch(dateBlock, /bioweave-event-relative-time/);
+  assert.doesNotMatch(html, />can_fertilize<|>can_fertilize<\/dt>/);
+});
+
+test('character event tracking renders Runtime custom-calendar difference for display-only Story Time', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {subject: {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'}},
+    characterProfiles: {subject: {character_id: 'char-a', display_name: '阿甲'}},
+    activeEvents: [{...event, story_time: {display: '羲和元年三月四日 巳时中', normalized: null, day_index: null, calendar_id: null, precision: 'minute'}}],
+    currentStoryTime: {display: '羲和元年五月初四 未时', normalized: null, day_index: null, calendar_id: null, precision: 'hour'},
+    currentStoryTimeDifferences: {'evt-1': {value: 60, unit: 'day'}},
+  });
+  assert.match(html, /羲和元年三月四日 巳时中/);
+  assert.match(html, /class="bioweave-event-relative-time bioweave-character-exposure-relative"[^>]*>60天前<\/small>/);
+});
+
+test('event and exposure records use the same relative-time presentation formatter', () => {
+  const difference = {value: 60, unit: 'day'};
+  const storyTime = {display: '羲和1年3月4日 巳时中', normalized: null, day_index: null, calendar_id: null, precision: 'minute'};
+  const eventHtml = eventsPage({activeEvents: [{...event, story_time: storyTime}], currentStoryTimeDifferences: {'evt-1': difference}});
+  const characterHtml = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {subject: {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'}},
+    characterProfiles: {subject: {character_id: 'char-a', display_name: '阿甲'}},
+    activeEvents: [{...event, story_time: storyTime}],
+    currentStoryTimeDifferences: {'evt-1': difference},
+  });
+  assert.match(eventHtml, /class="bioweave-event-relative-time bioweave-event-review-relative">60天前<\/small>/);
+  assert.match(characterHtml, /class="bioweave-event-relative-time bioweave-character-exposure-relative">60天前<\/small>/);
+});
+
+test('event and character rows preserve the date block without a relative placeholder', () => {
+  const storyTime = {display: '不可比较日期', normalized: null, day_index: null, calendar_id: null, precision: 'unknown'};
+  const eventHtml = eventsPage({activeEvents: [{...event, story_time: storyTime}], currentStoryTimeDifferences: {'evt-1': null}});
+  const characterHtml = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {subject: {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'}},
+    characterProfiles: {subject: {character_id: 'char-a', display_name: '阿甲'}},
+    activeEvents: [{...event, story_time: storyTime}],
+    currentStoryTimeDifferences: {'evt-1': null},
+  });
+  assert.match(eventHtml, /class="bioweave-event-story-time">不可比较日期<\/b>/);
+  assert.match(characterHtml, /class="bioweave-event-story-time">不可比较日期<\/span>/);
+  assert.doesNotMatch(eventHtml, /bioweave-event-review-relative/);
+  assert.doesNotMatch(characterHtml, /bioweave-character-exposure-relative/);
+});
+
+test('character exposure visual divider follows the relative Story Time item', () => {
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.match(style, /\.bioweave-character-exposure-date\s*\{[^}]*border-right:\s*0\s*!important;/);
+  assert.match(style, /\.bioweave-character-exposure-relative\s*\{[^}]*border-right:\s*1px solid var\(--bioweave-border-soft\)\s*!important;/);
+});
+
+test('event review details start two tab stops after the time group', () => {
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.match(style, /\.bioweave-event-review-main\s*\{[^}]*margin-left:\s*2em\s*!important;/);
+});
+
+test('character tracking uses day fallback, precise clock, future values, and unknown safely', () => {
+  const subject = {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'};
+  const render = (eventStoryTime, currentStoryTime, difference) => charactersPage({
+    characterId: 'char-a', trackingSubjects: {subject}, characterProfiles: {subject: {character_id: 'char-a'}},
+    activeEvents: [{...event, story_time: eventStoryTime}], currentStoryTime, currentStoryTimeDifferences: {'evt-1': difference},
+  });
+  const sameDay = {display: '同日', normalized: 'cn-1-3-4', day_index: 63, calendar_id: 'xihe', precision: 'day'};
+  assert.match(render(sameDay, {...sameDay, display: '当前'}, {value: 0, unit: 'day'}), /今天/);
+  const eventAtTen = {...sameDay, display: '巳时', normalized: 'cn-1-3-4T10:00', precision: 'hour'};
+  const currentAtTwelve = {...sameDay, display: '午时', normalized: 'cn-1-3-4T12:00', precision: 'hour'};
+  assert.match(render(eventAtTen, currentAtTwelve, {value: 120, unit: 'minute'}), /2小时前/);
+  assert.match(render(currentAtTwelve, {...sameDay, day_index: 61, display: '前两日'}, {value: -2, unit: 'day'}), /2天后/);
+  assert.doesNotMatch(render({...sameDay, calendar_id: 'other'}, sameDay, null), /今天|天前|天后/);
+  assert.match(render({...sameDay, display: null, day_index: null, normalized: null}, sameDay, null), /未知时间/);
+});
+
+test('capability labels remain Chinese across Character, State, and World UI', () => {
+  const stateHtml = statePage({trackingSubjects: {char: {character_id: 'char', display_name: '角色', status: 'active'}}, currentStateStatus: 'ready', currentState: {characters: {char: {identity: {display_name: '角色'}, reproductive_capabilities: {can_fertilize: false}}}, diagnostics: []}, focusedCharacterId: 'char'});
+  const characterHtml = charactersPage({characterId: 'char', trackingSubjects: {char: {character_id: 'char', display_name: '角色', exposure_event_ids: [], status: 'active'}}, characterProfiles: {char: {character_id: 'char', reproductive_capabilities: {can_fertilize: false}}}});
+  const worldHtml = worldPage({worldModel: {schema_version: 1, species: [{name: '物种', capabilities: {can_fertilize: false}, biological_types: [{name: '类型', capabilities: {can_fertilize: false}}]}]}, selectedSpeciesIndex: 0, selectedTypeIndex: 0});
+  for (const html of [stateHtml, characterHtml, worldHtml]) {
+    assert.match(html, /可使对方受精/);
+    assert.doesNotMatch(html, />can_fertilize</);
+  }
 });
 
 test('overview renders business analysis status without execution diagnostics', () => {
@@ -417,4 +568,93 @@ test('page DTO text remains HTML-escaped', () => {
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(html, /&lt;角色&gt;&#39;&quot;/);
+});
+
+test('state page renders no Character Floor and empty Current State without fabricating facts', () => {
+  const noFloor = statePage({currentStateStatus: 'NO_CHARACTER_FLOOR'});
+  assert.match(noFloor, /暂无可分析的角色楼层/);
+  const empty = statePage({currentStateStatus: 'ready', currentState: {characters: {}, diagnostics: []}});
+  assert.match(empty, /暂无生物状态数据/);
+  assert.doesNotMatch(empty, /pregnancy|已怀孕|排卵预测/);
+});
+
+test('state page renders tri-state capabilities and factual exposure fields only', () => {
+  const html = statePage({
+    trackingSubjects: {subject: {character_id: 'char-1', display_name: '角色甲', status: 'active'}},
+    focusedCharacterId: 'char-1',
+    currentStateStatus: 'ready',
+    currentState: {
+      schema_version: 1,
+      diagnostics: [],
+      characters: {
+        'char-1': {
+          identity: {character_id: 'char-1', display_name: '角色甲', species: null, biological_type: 'type-a'},
+          reproductive_capabilities: {
+            can_produce_sperm: true,
+            can_produce_ova: false,
+            can_be_fertilized: null,
+            can_fertilize: true,
+            can_carry_pregnancy: null,
+            can_cause_pregnancy: false,
+          },
+          reproductive_exposure: {
+            records: [{event_id: 'evt-1', counterpart_ids: ['char-2'], status: 'confirmed', story_time: null, reproductive_mechanism: {kind: 'fixture'}}],
+            last_exposure_event_id: 'evt-1', last_exposure_story_time: null, elapsed_story_days: null,
+          },
+          conception: {status: 'unknown', pregnancy_ids: [], confirmed_event_ids: [], uncertain_event_ids: []},
+          pregnancy: {current_status: 'unknown', active_pregnancy_ids: [], episodes: {}},
+          cycle: {factual_event_ids: ['cycle-1'], uncertain_event_ids: []},
+          postpartum: {factual_event_ids: [], episodes: {}},
+          symptoms: {records: []}, medical: {records: []}, activity_chain: {event_ids: ['evt-1']},
+        },
+      },
+    },
+  });
+  assert.match(html, /角色甲/);
+  assert.match(html, /可产生精子[\s\S]*?是/);
+  assert.match(html, /可产生卵子[\s\S]*?否/);
+  assert.match(html, /可受精[\s\S]*?未知/);
+  assert.match(html, /经过 Story Time 天数[\s\S]*?未知/);
+  assert.match(html, /暴露事实不等于受孕确认/);
+  assert.match(html, /明确周期事实/);
+  assert.doesNotMatch(html, /下次月经|fertile window|概率/);
+});
+
+test('state page keeps pregnancy episodes separate and surfaces diagnostics without changing facts', () => {
+  const html = statePage({
+    trackingSubjects: {subject: {character_id: 'char-1', display_name: '角色甲', status: 'active'}},
+    currentStateStatus: 'ready', focusedCharacterId: 'char-1',
+    currentState: {
+      characters: {
+        'char-1': {
+          identity: {display_name: '角色甲'}, reproductive_capabilities: {}, reproductive_exposure: {},
+          conception: {status: 'confirmed', pregnancy_ids: ['preg-a', 'preg-b'], confirmed_event_ids: ['confirm-a'], uncertain_event_ids: []},
+          pregnancy: {current_status: 'confirmed', active_pregnancy_ids: ['preg-b'], episodes: {
+            'preg-a': {status: 'ended', confirmation_event_ids: ['confirm-a'], termination_event_ids: ['loss-a'], delivery_event_ids: [], labor_event_ids: []},
+            'preg-b': {status: 'confirmed', confirmation_event_ids: ['confirm-b'], termination_event_ids: [], delivery_event_ids: [], labor_event_ids: []},
+          }},
+          cycle: {}, postpartum: {}, symptoms: {}, medical: {}, activity_chain: {},
+        },
+      },
+      diagnostics: [{code: 'pregnancy_episode_conflict', detail: 'fixture conflict'}],
+    },
+  });
+  assert.match(html, /妊娠记录 1/);
+  assert.match(html, /妊娠记录 2/);
+  assert.match(html, /已结束/);
+  assert.match(html, /已确认/);
+  assert.match(html, /部分状态存在事实冲突或信息不完整/);
+  assert.match(html, /pregnancy_episode_conflict/);
+  assert.doesNotMatch(html, /从未怀孕/);
+});
+
+test('state page focus selection is presentation-only and does not expose source as a character card', () => {
+  const html = statePage({
+    focusedCharacterId: 'char-source',
+    trackingSubjects: {subject: {character_id: 'char-subject', display_name: '承孕角色', status: 'active'}},
+    currentStateStatus: 'ready',
+    currentState: {characters: {'char-source': {identity: {display_name: '来源角色'}}}, diagnostics: []},
+  });
+  assert.match(html, /该角色当前无可用 State/);
+  assert.doesNotMatch(html, /来源角色/);
 });

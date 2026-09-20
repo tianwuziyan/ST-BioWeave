@@ -161,6 +161,11 @@ external_memory: { anima, baobaoshu, database_memory }
 prompts: { prefix, suffix, task }
 ```
 
+Story Time does not introduce a Chat-level Calendar configuration field. Era
+dates use BioWeave's built-in standard-month elapsed-time convention; the era
+label remains part of the parsed Story Time semantics and different eras are
+not compared without an explicit conversion rule.
+
 `worldbooks.selected[]` contains stable source and child identifiers. A
 Worldbook child is `{source_id, entry_id, enabled}`; a Character Card field is
 `{source_id, field_key, enabled}`. Source content, labels, request headers,
@@ -277,7 +282,6 @@ event:
     normalized
     day_index
     calendar_id
-    provider
     precision
     confidence
 ```

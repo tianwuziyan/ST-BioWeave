@@ -16,7 +16,6 @@ function eventResult(eventId = "evt-1", overrides = {}) {
       normalized: null,
       day_index: null,
       calendar_id: null,
-      provider: "bioweave_fallback",
       precision: "unknown",
       confidence: 0.6,
     },
@@ -71,6 +70,8 @@ function createFixture({
   floor = 3,
   messages = null,
   analyzer = null,
+  storyTimeDebug = false,
+  storyTimeTrace = null,
   characterContextResolver = null,
   rawApiResponse = null,
   saveFloorError = null,
@@ -195,7 +196,9 @@ function createFixture({
               calls += 1;
               return { events: [eventResult(`evt-${calls}`)] };
             },
-          }),
+        }),
+    storyTimeDebug,
+    storyTimeTrace,
   });
   return {
     runtime,
@@ -228,7 +231,6 @@ function canonicalApiEvent({
       normalized: null,
       day_index: null,
       calendar_id: null,
-      provider: null,
       precision: "unknown",
       confidence: null,
     },
@@ -1202,7 +1204,6 @@ test("narrative StoryTime keeps structured fields when persisted through Runtime
       normalized: "0042-03-18T12:45:00",
       day_index: 42,
       calendar_id: "tianhe",
-      provider: "narrative",
       precision: "hour",
       confidence: 0.73,
     },
@@ -1219,7 +1220,6 @@ test("narrative StoryTime keeps structured fields when persisted through Runtime
     normalized: "0042-03-18T12:45:00",
     day_index: 42,
     calendar_id: "tianhe",
-    provider: "narrative",
     precision: "hour",
     confidence: 0.73,
   });
@@ -1234,7 +1234,6 @@ test("narrative StoryTime persists a formatted first-year display when time rema
       normalized: null,
       day_index: null,
       calendar_id: null,
-      provider: "narrative",
       precision: "minute",
       confidence: 1,
     },
@@ -1251,7 +1250,6 @@ test("narrative StoryTime persists a formatted first-year display when time rema
     normalized: null,
     day_index: null,
     calendar_id: null,
-    provider: "narrative",
     precision: "minute",
     confidence: 1,
   });
@@ -4483,5 +4481,443 @@ test("Event Analysis consumes only the strictly previous Floor World Model and n
   assert.equal(inputs.at(-1).world_model.species[0].name, "W20");
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
   assert.equal(inputs.at(-1).world_model, null);
+  fixture.runtime.destroy();
+});
+
+test("Runtime State read replays all surviving Character Floors and ignores a trailing User Floor", async () => {
+  const messages = [
+    { message_id: "state-floor-3", floor: 3, content: "F3", role: "assistant" },
+    { message_id: "state-floor-6", floor: 6, content: "F6", role: "assistant" },
+    { message_id: "state-user-7", floor: 7, content: "U7", role: "user" },
+  ];
+  let call = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor() {
+        call += 1;
+        return {
+          events: [eventResult(`state-event-${call}`, {
+            story_time: {
+              display: `第${call}日`, normalized: null, day_index: call,
+              calendar_id: "gregorian",
+              precision: "day", confidence: 1,
+            },
+          })],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+
+  const state = await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(state.status, "ready");
+  assert.equal(
+    Object.values(state.current_state.characters)
+      .flatMap((character) => character.reproductive_exposure.records).length,
+    2,
+  );
+  assert.equal((await fixture.runtime.collectActiveBusinessData()).current_floor.message_id, "state-floor-6");
+  assert.equal(state.current_story_time.day_index, null);
+  assert.equal(state.current_story_time.calendar_id, null);
+  assert.deepEqual(state.current_story_time_differences, {});
+  assert.equal(state.current_state.diagnostics.length, 0);
+  fixture.runtime.destroy();
+});
+
+test("Runtime uses BioWeave standard month arithmetic for raw era Floor/Event Story Time", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "state-xihe-floor",
+      floor: 5,
+      content: "羲和元年五月初四 未时\n当前剧情",
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("xihe-exposure", {
+          story_time: {
+            display: "羲和元年三月四日 巳时中",
+            normalized: null,
+            day_index: null,
+            calendar_id: null,
+            precision: "minute",
+            confidence: 1,
+          },
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const state = await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(state.current_story_time.calendar_id, null);
+  assert.equal(state.current_story_time.day_index, null);
+  assert.deepEqual(Object.values(state.current_story_time_differences), [{value: 61, unit: "day"}]);
+  fixture.runtime.destroy();
+});
+
+test("events=[] does not block current Character Floor Story Time progression", async () => {
+  let analysisCount = 0;
+  const analysisInputs = [];
+  const storyTimeTrace = [];
+  const fixture = createFixture({
+    storyTimeDebug: true,
+    storyTimeTrace: entry => storyTimeTrace.push(entry),
+    messages: [
+      {
+        message_id: "story-floor-58",
+        floor: 58,
+        content: "羲和元年三月四日 巳时中\n历史剧情",
+        role: "assistant",
+      },
+      {
+        message_id: "story-floor-60",
+        floor: 60,
+        content: "羲和元年五月初四 午时\n她回忆羲和元年三月四日发生的事情",
+        role: "assistant",
+      },
+      {
+        message_id: "story-user-61",
+        floor: 61,
+        content: "羲和元年六月初四 用户文本",
+        role: "user",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        analysisInputs.push(analysisInput);
+        return analysisCount === 1
+          ? {events: [eventResult("story-exposure", {
+              story_time: {
+                display: "羲和元年三月四日 巳时中",
+                normalized: null,
+                day_index: null,
+                calendar_id: null,
+                precision: "minute",
+                confidence: 1,
+              },
+            })]}
+          : {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  assert.equal(analysisInputs[1].story_time.display, "羲和元年五月初四 午时");
+  assert.equal(analysisInputs[1].story_time.calendar_id, null);
+  assert.equal(analysisInputs[1].story_time.day_index, null);
+  const state = await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(state.current_story_time.display, "羲和元年五月初四 午时");
+  assert.equal(state.current_story_time.calendar_id, null);
+  assert.equal(state.current_story_time.day_index, null);
+  assert.deepEqual(Object.values(state.current_story_time_differences), [{value: 61, unit: "day"}]);
+  assert.equal(storyTimeTrace.some(entry => entry.source === "historical_event_difference" && entry.difference?.value === 61), true);
+  assert.equal((await fixture.runtime.collectActiveBusinessData()).current_floor.message_id, "story-floor-60");
+  fixture.runtime.destroy();
+});
+
+test("StoryTimeCoordinator resolves surviving Character Floors without Event Analyzer", async () => {
+  let analyzerCalls = 0;
+  const trace = [];
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "coordinator-floor-58",
+        floor: 58,
+        content: "羲和元年三月四日 巳时中",
+        role: "assistant",
+      },
+      {
+        message_id: "coordinator-floor-60",
+        floor: 60,
+        content: "羲和元年五月初四 午时",
+        role: "assistant",
+      },
+    ],
+    storyTimeDebug: true,
+    storyTimeTrace: entry => trace.push(entry),
+    analyzer: {
+      async analyzeFloor() {
+        analyzerCalls += 1;
+        throw new Error("ANALYZER_MUST_NOT_RUN");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const info = await fixture.runtime.getCurrentStoryTimeInfo();
+  assert.equal(analyzerCalls, 0);
+  assert.equal(info.floor.version.message_id, "coordinator-floor-60");
+  assert.equal(info.story_time.calendar_id, null);
+  assert.equal(info.story_time.day_index, null);
+  assert.equal(trace.at(-1).raw_header, "羲和元年五月初四 午时");
+  assert.equal(trace.at(-1).source, "header");
+  fixture.runtime.destroy();
+});
+
+test("Story Time debug DTO reads the current Floor without invoking Event Analyzer", async () => {
+  let analyzerCalls = 0;
+  const fixture = createFixture({
+    messages: [{
+      message_id: "debug-floor-60",
+      floor: 60,
+      content: "[SYNOPSIS_BLOCK]\nTIME: 羲和元年五月初四 午时\n[/SYNOPSIS_BLOCK]\n正文",
+      role: "assistant",
+    }],
+    analyzer: {async analyzeFloor() { analyzerCalls += 1; throw new Error("ANALYZER_MUST_NOT_RUN"); }},
+  });
+  await fixture.runtime.init();
+  const debug = await fixture.runtime.getStoryTimeDebugInfo();
+  assert.equal(analyzerCalls, 0);
+  assert.equal(debug.floor.message_id, "debug-floor-60");
+  assert.equal(debug.source, "synopsis_block_time");
+  assert.equal(debug.candidate, "羲和元年五月初四 午时");
+  assert.equal(debug.parsed_parts.era_label, "羲和");
+  assert.equal(debug.parsed_parts.year, 1);
+  assert.equal(debug.parsed_parts.month, 5);
+  assert.equal(debug.parsed_parts.day, 4);
+  assert.equal(debug.story_time.day_index, null);
+  assert.equal(debug.candidate_source, "synopsis_block_time");
+  assert.equal(debug.resolution_source, "fresh");
+  const cached = await fixture.runtime.getStoryTimeDebugInfo();
+  assert.equal(cached.candidate_source, "synopsis_block_time");
+  assert.equal(cached.resolution_source, "cache");
+  fixture.runtime.destroy();
+});
+
+test("Story Time debug normalizes persisted display-only Event time without mutating the Floor", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "legacy-story-time-floor",
+      floor: 60,
+      content: "[SYNOPSIS_BLOCK]\nTIME: 羲和元年五月初四 午时\n[/SYNOPSIS_BLOCK]",
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("legacy-display-event", {
+          story_time: {
+            display: "羲和1年3月4日 巳时中",
+            normalized: null,
+            day_index: null,
+            calendar_id: null,
+            precision: "hour",
+            confidence: 1,
+          },
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const persisted = structuredClone(fixture.context.chat[0].extra.bioweave.events[0].story_time);
+  const debug = await fixture.runtime.getStoryTimeDebugInfo();
+  const transient = debug.recent_event.story_time;
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.events[0].story_time, persisted);
+  assert.equal(transient.display, "羲和1年3月4日 巳时中");
+  assert.equal(transient.normalized, "cn-1-3-4T10:00");
+  assert.equal(transient.day_index, null);
+  assert.equal(transient.calendar_id, null);
+  assert.deepEqual(debug.difference, {value: 61, unit: "day"});
+  assert.equal(debug.failure_reason, null);
+  fixture.runtime.destroy();
+});
+
+test("StoryTimeCoordinator supports explicit tags and rebuilds after deletion", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "tagged-floor-58",
+        floor: 58,
+        content: "【时间】羲和元年三月四日 巳时中\n历史文本",
+        role: "assistant",
+      },
+      {
+        message_id: "tagged-floor-60",
+        floor: 60,
+        content: "正文\n<story_time>羲和元年五月初四 午时</story_time>\n她想起羲和元年三月四日",
+        role: "assistant",
+      },
+      {
+        message_id: "tagged-user-61",
+        floor: 61,
+        content: "羲和元年六月初四",
+        role: "user",
+      },
+    ],
+    analyzer: {async analyzeFloor() { return {events: []}; }},
+  });
+  await fixture.runtime.init();
+  assert.equal((await fixture.runtime.getCurrentStoryTime()).day_index, null);
+  fixture.context.chat[1].content = "羲和元年五月初五 午时";
+  fixture.emit("message-updated", {message_id: "tagged-floor-60"});
+  await settle();
+  assert.equal((await fixture.runtime.getCurrentStoryTime()).day_index, null);
+  fixture.context.chat.splice(1, 1);
+  fixture.emit("message-deleted", {message_id: "tagged-floor-60"});
+  await settle();
+  assert.equal((await fixture.runtime.getCurrentStoryTime()).day_index, null);
+  fixture.runtime.destroy();
+});
+
+test("StoryTimeCoordinator extracts bounded affinity and synopsis Floor time without scanning narrative", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "bounded-floor-58",
+        floor: 58,
+        content: "羲和元年三月四日 巳时中\n旧楼",
+        role: "assistant",
+      },
+      {
+        message_id: "bounded-floor-60",
+        floor: 60,
+        content: [
+          "[affinity_status]",
+          "『羲和元年五月初四 · 周二 · 午时｜📍藏书阁』",
+          "[/affinity_status]",
+          "<content>",
+          "她想起羲和元年三月四日发生的事情。",
+          "</content>",
+          "[SYNOPSIS_BLOCK]",
+          "TIME: 羲和元年五月初四 午时",
+          "LOCATION: 藏书阁",
+          "[/SYNOPSIS_BLOCK]",
+        ].join("\n"),
+        role: "assistant",
+      },
+      {
+        message_id: "bounded-user-61",
+        floor: 61,
+        content: "到了羲和元年六月初一。",
+        role: "user",
+      },
+    ],
+    analyzer: {async analyzeFloor() { throw new Error("ANALYZER_MUST_NOT_RUN"); }},
+  });
+  await fixture.runtime.init();
+  const info = await fixture.runtime.getCurrentStoryTimeInfo();
+  assert.equal(info.floor.version.message_id, "bounded-floor-60");
+  assert.equal(info.story_time.display, "羲和元年五月初四 午时");
+  assert.equal(info.story_time.calendar_id, null);
+  assert.equal(info.story_time.day_index, null);
+  fixture.runtime.destroy();
+});
+
+test("StoryTimeCoordinator keeps Chat-local Floor Story Time isolated", async () => {
+  const fixture = createFixture({
+    messages: [{message_id: "chat-a-floor", floor: 1, content: "羲和元年五月初四", role: "assistant"}],
+    analyzer: {async analyzeFloor() { throw new Error("ANALYZER_MUST_NOT_RUN"); }},
+  });
+  await fixture.runtime.init();
+  assert.equal((await fixture.runtime.getCurrentStoryTime()).day_index, null);
+  fixture.context.chatId = "chat-runtime-b";
+  fixture.context.chat = [{message_id: "chat-b-floor", floor: 1, content: "羲和元年九月初九", role: "assistant"}];
+  fixture.emit("chat-changed", {chatId: "chat-runtime-b"});
+  await settle();
+  assert.equal((await fixture.runtime.getCurrentStoryTime()).day_index, null);
+  fixture.runtime.destroy();
+});
+
+test("active Swipe Story Time is resolved from the active Character Floor only", async () => {
+  const message = {
+    message_id: "story-swipe-time",
+    floor: 60,
+    role: "assistant",
+    swipe_id: 0,
+    swipes: ["羲和元年五月初四 午时", "羲和元年六月初四 午时"],
+    swipe_info: [{}, {}],
+  };
+  const fixture = createFixture({
+    messages: [message],
+    analyzer: {async analyzeFloor() { return {events: []}; }},
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal((await fixture.runtime.getCurrentBiologicalState()).current_story_time.day_index, null);
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", {message_id: message.message_id});
+  await settle();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal((await fixture.runtime.getCurrentBiologicalState()).current_story_time.day_index, null);
+  fixture.runtime.destroy();
+});
+
+test("Runtime State read follows the active Swipe and never persists Current State", async () => {
+  const message = {
+    message_id: "state-swipe",
+    floor: 3,
+    swipe_id: 0,
+    swipes: ["A", "B"],
+    swipe_info: [{}, {}],
+    role: "assistant",
+  };
+  let call = 0;
+  const fixture = createFixture({
+    messages: [message],
+    analyzer: {
+      async analyzeFloor() {
+        call += 1;
+        return { events: [eventResult(`swipe-state-${call}`)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const stateA = await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(stateA.current_state.processed_event_ids.length, 1);
+
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", { message_id: message.message_id });
+  await settle();
+  const stateB = await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(stateB.current_state.processed_event_ids.length, 1);
+  assert.notDeepEqual(
+    stateB.current_state.processed_event_ids,
+    stateA.current_state.processed_event_ids,
+  );
+  assert.equal(message.extra?.bioweave?.current_state, undefined);
+  assert.equal(message.swipe_info[0].extra?.bioweave?.current_state, undefined);
+  assert.equal(message.swipe_info[1].extra?.bioweave?.current_state, undefined);
+  assert.equal(fixture.context.chatMetadata.bioweave?.current_state, undefined);
+  assert.deepEqual(stateB, await fixture.runtime.getCurrentBiologicalState());
+  fixture.runtime.destroy();
+});
+
+test("Runtime State read preserves unknown capabilities and does not infer identity from display names", async () => {
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        const original = eventResult();
+        return {
+          events: [eventResult("state-capability-unknown", {
+            participants: original.participants.map((participant) => ({
+              ...participant,
+              biological_context: {},
+              reproductive_capabilities_used: {},
+            })),
+            pregnancy_relevance: {
+              ...original.pregnancy_relevance,
+              possible_conception: true,
+            },
+          })],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const result = await fixture.runtime.getCurrentBiologicalState();
+  const characters = Object.values(result.current_state.characters);
+  assert.equal(characters.length, 1);
+  assert.equal(characters[0].reproductive_capabilities.can_cause_pregnancy, null);
+  assert.equal(characters[0].reproductive_capabilities.can_carry_pregnancy, null);
+  assert.equal(result.current_state.characters.Bob, undefined);
+  assert.equal(characters[0].conception.status, "unknown");
   fixture.runtime.destroy();
 });

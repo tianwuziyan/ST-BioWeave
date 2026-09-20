@@ -290,7 +290,7 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际 pregnancy-relevant exposure 时，才允许创建或更新 Subject。`can_carry_pregnancy` 为 `true` 才是 `eligible`；`false` 为 `ineligible`，`null`/无法确认是 `pending`，不能把 pending 当作 eligible，也不能把 `can_be_fertilized` 单独当作承孕资格。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断。
 - BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
 - Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
-- `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`provider`、`precision`、`confidence`。SevenDaysCal Adapter 只在可信 provider 输入边界解析原始中文日期与传统时辰；在可信 provider 或最终 Event 归一化这个明确 display-formatting 边界，`display` 的可靠日期部分可独立数字化并保留后续原文，且不覆盖已有 `normalized` / `day_index`；fallback、排序和计算不得从显示文本生成结构化值；无法可靠得到规范值时保留 `null`。
+- `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
 - 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 Registry 的原因，UI 不复制资格条件。
@@ -354,7 +354,7 @@ Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、�
 
 自动分析继续使用当前 Chat 的 `analysis_interval`（N-floor）和六字段 Floor Version 去重：同一成功版本不会因为 UI 初始化、打开或重新打开而重复请求；版本变化和失败允许重试；`manual: true` 的手动刷新强制请求。手动刷新成功替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本事实不能进入当前有效 Registry。Floor 删除、Swipe 切换、Event 编辑/删除后，当前有效 Event 集合和 Registry 必须重新筛选或重建。
 
-当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 N-floor 触发、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time provider；Node 检查不能替代这些验收。
+当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 N-floor 触发、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time；Node 检查不能替代这些验收。
 
 ### 外部记忆边界
 
@@ -405,7 +405,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   └── clear.js              # Registry 驱动的手动/source-targeted Clear Service
 ├── story/
 │   ├── seven-days-cal.js    # Anima/柏宝书公开记忆探测与适配
-│   └── time.js              # Story Time provider 与结构化时间适配
+│   └── time.js              # BioWeave 本地 Story Time 与结构化时间适配
 ├── ui/
 │   ├── app.js               # overlay、路由、主题、状态、事件委托
 │   ├── characters.js        # 人物列表/详情基础页面
@@ -417,7 +417,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   ├── state.js             # 状态页面基础组件
 │   └── world.js             # World Model 浏览和模块级编辑
 ├── utils/
-│   ├── cn-date.js           # SevenDaysCal 中文日期、月份/节日 alias 与 day key
+│   ├── cn-date.js           # BioWeave 中文日期、月份/节日 alias 与 day key
 │   ├── hash.js              # 通用 hash 工具
 │   └── helpers.js           # 通用 DOM/值处理
 ├── tests/                   # API、Runtime、UI、World Model、Worldbook 与 Core 测试

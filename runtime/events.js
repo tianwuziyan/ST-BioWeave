@@ -19,6 +19,8 @@ import {
 } from "../storage/clear.js";
 import { createEventAnalysisCoordinator } from "./event-analysis.js";
 import { hashText } from "./floor.js";
+import { createStoryTimeCoordinator } from "../story/coordinator.js";
+import { createCalendarResolver } from "../story/calendar.js";
 
 const LIFECYCLE_EVENTS = [
   "CHAT_CHANGED",
@@ -592,7 +594,8 @@ export function createSillyTavernAdapter() {
 export function createRuntime({
   adapter = createSillyTavernAdapter(),
   analyzer = null,
-  storyTime = null,
+  storyTimeDebug = false,
+  storyTimeTrace = null,
   characterContextResolver = null,
   analysisContextCollector = null,
   analysisSourceLoader = null,
@@ -656,12 +659,23 @@ export function createRuntime({
       analysisPromptResolver: () =>
         store.profileStore?.getAnalysisPrompt?.() ?? {},
     });
+  const calendarResolver = createCalendarResolver();
+  const resolvedStoryTime = createStoryTime({calendarResolver});
+  const storyTimeCoordinator = createStoryTimeCoordinator({
+    st,
+    chat,
+    store,
+    storyTime: resolvedStoryTime,
+    debug: storyTimeDebug,
+    trace: storyTimeTrace,
+  });
   const eventAnalysis = createEventAnalysisCoordinator({
     st,
     chat,
     store,
     analyzer: eventAnalyzer,
-    storyTime: storyTime ?? createStoryTime(),
+    storyTime: resolvedStoryTime,
+    storyTimeCoordinator,
     ...(typeof characterContextResolver === "function"
       ? { characterContextResolver }
       : {}),
@@ -1091,6 +1105,12 @@ export function createRuntime({
     });
     const work = lifecycleTail.then(
       async () => {
+        storyTimeCoordinator.handleLifecycleEvent({
+          type: key,
+          eventType,
+          payload,
+          chatId,
+        });
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
         try {
           await eventAnalysis.handleLifecycleEvent({
@@ -1156,6 +1176,7 @@ export function createRuntime({
         console.warn("[BioWeave] Chat index unavailable; Start New Chat cleanup is disabled", error);
     }
     await refreshActiveOwner(currentChatId);
+    storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
     await eventAnalysis.primeLifecycleSnapshot?.();
     bindLifecycleEvents();
     initialized = true;
@@ -1223,6 +1244,86 @@ export function createRuntime({
     return clearAllBioWeaveData(target, options);
   }
 
+  async function getStoryTimeDebugInfo() {
+    const info = await storyTimeCoordinator.getCurrentStoryTimeInfo();
+    const resolutionTrace = Array.isArray(info.trace) ? info.trace : [];
+    let business = null;
+    try {
+      // This is a read-only derived-data read. It does not invoke Event Analyzer.
+      business = await eventAnalysis.collectActiveBusinessData();
+    } catch {
+      business = null;
+    }
+    const trace = storyTimeCoordinator.getDebugTrace();
+    const latestResolution = [...resolutionTrace].reverse().find(entry => entry?.source !== 'historical_event_difference' && (entry?.story_time || entry?.source)) ?? null;
+    const currentStoryTime = info.story_time ?? null;
+    const differences = business?.current_story_time_differences ?? {};
+    const events = Array.isArray(business?.active_events) ? business.active_events : [];
+    const event = events.find(item => Object.prototype.hasOwnProperty.call(differences, String(item?.event_id ?? '')))
+      ?? events[0]
+      ?? null;
+    const eventId = event?.event_id ? String(event.event_id) : null;
+    const difference = eventId ? (differences[eventId] ?? null) : null;
+    const eventStoryTime = event
+      ? (storyTimeCoordinator.normalizeStoryTimeForRead?.(event.story_time) ?? event.story_time ?? null)
+      : null;
+    const calendar = latestResolution?.calendar ?? null;
+    const normalizeCandidateSource = source => source === 'synopsis_time' ? 'synopsis_block_time' : (source ?? 'unknown');
+    const debugSource = normalizeCandidateSource(latestResolution?.source);
+    const candidateSource = normalizeCandidateSource(latestResolution?.candidate_source ?? debugSource);
+    const currentStoryTimeParsed = Boolean(currentStoryTime?.normalized || currentStoryTime?.day_index !== null);
+    const eventStoryTimeParsed = Boolean(eventStoryTime?.normalized || eventStoryTime?.day_index !== null);
+    const failureReason = difference
+      ? null
+      : info.status === 'NO_CHARACTER_FLOOR'
+        ? 'CURRENT_STORY_TIME_UNKNOWN'
+        : !currentStoryTimeParsed
+          ? 'CURRENT_STORY_TIME_PARSE_FAILED'
+          : event && !eventStoryTimeParsed
+            ? 'HISTORICAL_STORY_TIME_PARSE_FAILED'
+            : (calendar?.failure_reason ?? 'STORY_TIME_NOT_COMPARABLE');
+    return {
+      status: info.status ?? 'unknown',
+      chat_id: chat.current() === undefined || chat.current() === null ? null : String(chat.current()),
+      floor: info.floor?.version ? {
+        floor: info.floor.version.floor ?? null,
+        message_id: info.floor.version.message_id ?? null,
+        swipe_id: info.floor.version.swipe_id ?? info.floor.swipeId ?? null,
+        content_hash: info.floor.version.content_hash ?? null,
+        message_version: info.floor.version.message_version ?? null,
+      } : null,
+      source: debugSource,
+      resolution_source: latestResolution?.resolution_source ?? (latestResolution?.source === 'cache' ? 'cache' : 'fresh'),
+      candidate_source: candidateSource,
+      candidate: latestResolution?.candidate ?? null,
+      story_time: currentStoryTime,
+      parsed_parts: latestResolution?.parsed_parts ?? null,
+      calendar: calendar ? {
+        calendar_id: calendar.calendar_id ?? currentStoryTime?.calendar_id ?? null,
+        era_label: calendar.era_label ?? latestResolution?.parsed_parts?.era_label ?? null,
+        calculation_level: calendar.calculation_level ?? null,
+        ordinal_in_year: latestResolution?.ordinal_in_year ?? null,
+        day_index: currentStoryTime?.day_index ?? null,
+        failure_reason: calendar.failure_reason ?? null,
+      } : {
+        calendar_id: currentStoryTime?.calendar_id ?? null,
+        era_label: latestResolution?.parsed_parts?.era_label ?? null,
+        calculation_level: null,
+        ordinal_in_year: null,
+        day_index: currentStoryTime?.day_index ?? null,
+        failure_reason: info.status === 'NO_CHARACTER_FLOOR' ? 'CURRENT_STORY_TIME_UNKNOWN' : 'NO_CALENDAR_MAPPING',
+      },
+      recent_event: event ? {
+        event_id: eventId,
+        story_time: eventStoryTime,
+        difference,
+      } : null,
+      difference,
+      failure_reason: difference ? null : failureReason,
+      trace,
+    };
+  }
+
   const dataLifecycle = {
     clearCharacterData,
     clearWorldData,
@@ -1233,6 +1334,7 @@ export function createRuntime({
 
   function destroy() {
     if (destroyed) return;
+    storyTimeCoordinator.destroy();
     eventAnalysis.destroy();
     while (unbind.length) unbind.pop()();
     subscriptions.clear();
@@ -1256,11 +1358,16 @@ export function createRuntime({
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
+    getCurrentStoryTime: storyTimeCoordinator.getCurrentStoryTime,
+    getCurrentStoryTimeInfo: storyTimeCoordinator.getCurrentStoryTimeInfo,
+    getStoryTimeDebugTrace: storyTimeCoordinator.getDebugTrace,
+    getStoryTimeDebugInfo,
     resolveWorldModelAtOrBefore: eventAnalysis.resolveWorldModelAtOrBefore,
     resolveWorldModelStrictlyBefore: eventAnalysis.resolveWorldModelStrictlyBefore,
     saveWorldModel: eventAnalysis.saveWorldModel,
     getTrackingRegistry: eventAnalysis.getTrackingRegistry,
     collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,
+    getCurrentBiologicalState: eventAnalysis.getCurrentBiologicalState,
     refreshTrackingRegistry: eventAnalysis.refreshTrackingRegistry,
     updateEvent: eventAnalysis.updateEvent,
     deleteEvent: eventAnalysis.deleteEvent,

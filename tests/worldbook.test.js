@@ -905,7 +905,8 @@ test('settings page separates worldbook sources, recent story, and external memo
   assert.match(html, /select-all-analysis-sources/);
   assert.match(html, /select-none-analysis-sources/);
   assert.match(html, /<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-worldbook-source-disclosure"[^>]*data-bioweave-settings-disclosure="worldbook">/);
-  const settingsSummaryStart = html.indexOf('<summary class="bioweave-settings-summary">');
+  const worldbookSettingsStart = html.indexOf('data-bioweave-settings-disclosure="worldbook"');
+  const settingsSummaryStart = html.indexOf('<summary class="bioweave-settings-summary">', worldbookSettingsStart);
   const settingsSummaryEnd = html.indexOf('</summary>', settingsSummaryStart);
   const settingsSummary = html.slice(settingsSummaryStart, settingsSummaryEnd);
   assert.ok(settingsSummary.indexOf('bioweave-settings-summary-arrow') < settingsSummary.indexOf('<strong>世界书来源</strong>'));
@@ -961,8 +962,8 @@ test('settings categories reuse the compact disclosure shell with left arrows an
   for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '分析提示词', '数据管理', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
-  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 7);
-  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 7);
+  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 8);
+  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 8);
   assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 0);
   assert.match(html, /bioweave-settings-summary-status">0\/3 可用/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-summary-arrow/);

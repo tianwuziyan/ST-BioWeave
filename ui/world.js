@@ -1,10 +1,10 @@
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
-  can_be_fertilized: '可被受精',
-  can_fertilize: '可使其受精',
-  can_cause_pregnancy: '可导致妊娠',
-  can_carry_pregnancy: '可承担妊娠',
+  can_be_fertilized: '可受精',
+  can_fertilize: '可使对方受精',
+  can_cause_pregnancy: '可导致受孕',
+  can_carry_pregnancy: '可承载妊娠',
 });
 
 const RULE_LABELS = Object.freeze({
@@ -667,9 +667,9 @@ function renderTypeCardSummary(type) {
   const capabilityKeys = Object.keys(CAPABILITY_LABELS);
   const knownCount = capabilityKeys.filter(key => capabilities[key] === true || capabilities[key] === false).length;
   const pregnancy = capabilities.can_carry_pregnancy === true
-    ? '可承担妊娠'
+    ? '可承载妊娠'
     : capabilities.can_carry_pregnancy === false
-      ? '不可承担妊娠'
+      ? '不可承载妊娠'
       : '妊娠未知';
   return `${knownCount}/${capabilityKeys.length} 项能力已知 · ${pregnancy}`;
 }

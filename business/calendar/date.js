@@ -37,7 +37,7 @@ export function weekdayFor(date, calendar = null, reference = { ordinal: 1, week
 }
 
 export function isGregorian(calendar) {
-  return calendar == null || calendar.kind === 'gregorian' || calendar.id === 'default-gregorian'
+  return calendar == null || calendar.kind === 'gregorian' || calendar.kind === 'era-standard' || calendar.id === 'default-gregorian'
 }
 
 export function daysInMonth(calendar, month, year = null) {

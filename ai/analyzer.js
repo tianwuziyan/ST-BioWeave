@@ -1424,6 +1424,7 @@ const EVENT_AI_FIELDS = new Set([
   'source_evidence',
   'source',
   'physical_effect',
+  'state_fact',
 ]);
 
 function invalidEventAnalysis(
@@ -1870,7 +1871,6 @@ function validateRawEventShape(raw, eventIndex) {
     'normalized',
     'calendar_id',
     'day_index',
-    'provider',
     'precision',
     'confidence',
   ]) {
@@ -1886,7 +1886,7 @@ function validateRawEventShape(raw, eventIndex) {
   ) {
     throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_PRECISION_INVALID');
   }
-  for (const field of ['display', 'normalized', 'calendar_id', 'provider']) {
+  for (const field of ['display', 'normalized', 'calendar_id']) {
     if (
       storyTime[field] !== null &&
       typeof storyTime[field] !== 'string' &&
@@ -1995,6 +1995,125 @@ function validateRawEventShape(raw, eventIndex) {
       'EVENT_ANALYSIS_PHYSICAL_EFFECT_GESTATIONAL_SUBSTANCE_INTAKE_INVALID',
     );
   }
+  validateRawStateFactShape(raw, eventIndex);
+}
+
+function stateFactText(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function validateRawStateFactReference(value, path, {allowNew = false} = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw eventDiagnostic('invalid_state_fact_payload', path, 'EVENT_STATE_FACT_REFERENCE_INVALID');
+  }
+  if (value.kind === 'new' && allowNew && value.id === undefined) return;
+  if (value.kind !== 'existing' || !stateFactText(value.id)) {
+    throw eventDiagnostic('invalid_state_fact_payload', path, 'EVENT_STATE_FACT_REFERENCE_INVALID');
+  }
+}
+
+function validateRawStateFactRecord(value, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !stateFactText(value.kind)) {
+    throw eventDiagnostic('invalid_state_fact_payload', path, 'EVENT_STATE_FACT_RECORD_INVALID');
+  }
+  if (value.description !== undefined && value.description !== null && !stateFactText(value.description)) {
+    throw eventDiagnostic('invalid_state_fact_payload', `${path}.description`, 'EVENT_STATE_FACT_DESCRIPTION_INVALID');
+  }
+}
+
+function validateRawStateFactShape(raw, eventIndex) {
+  const type = String(raw.type ?? '').trim();
+  const stateFact = raw.state_fact;
+  const exposure = raw.pregnancy_relevance?.relevant === true;
+  if (stateFact === undefined || stateFact === null) {
+    if (eventDomain.STATE_FACT_EVENT_TYPES?.includes(type) && !exposure) {
+      throw eventDiagnostic('missing_state_fact', `${eventPath(eventIndex)}.state_fact`, 'EVENT_STATE_FACT_REQUIRED');
+    }
+    return;
+  }
+  if (!stateFact || typeof stateFact !== 'object' || Array.isArray(stateFact)) {
+    throw eventDiagnostic('invalid_state_fact', `${eventPath(eventIndex)}.state_fact`, 'EVENT_STATE_FACT_INVALID');
+  }
+  if (!stateFactText(stateFact.subject_id)) {
+    throw eventDiagnostic('missing_state_fact_subject', `${eventPath(eventIndex)}.state_fact.subject_id`, 'EVENT_STATE_FACT_SUBJECT_REQUIRED');
+  }
+  const participantHandles = (Array.isArray(raw.participants) ? raw.participants : [])
+    .flatMap((participant) => [participant?.character_id, participant?.mention_id])
+    .filter(stateFactText);
+  if (!participantHandles.includes(stateFact.subject_id)) {
+    throw eventDiagnostic(
+      'state_fact_subject_not_participant',
+      `${eventPath(eventIndex)}.state_fact.subject_id`,
+      'EVENT_STATE_FACT_SUBJECT_NOT_PARTICIPANT',
+    );
+  }
+  if (!stateFact.payload || typeof stateFact.payload !== 'object' || Array.isArray(stateFact.payload)) {
+    throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_STATE_FACT_PAYLOAD_INVALID');
+  }
+  const payload = stateFact.payload;
+  const payloadKeys = Object.keys(payload);
+  const only = (...allowed) => payloadKeys.every((key) => allowed.includes(key));
+  if (exposure || type === 'sexual_activity') {
+    throw eventDiagnostic('state_fact_not_allowed', `${eventPath(eventIndex)}.state_fact`, 'EVENT_STATE_FACT_NOT_ALLOWED_FOR_EXPOSURE');
+  }
+  switch (type) {
+    case 'menstrual_event':
+    case 'ovulation_event':
+      if (payloadKeys.length) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_STATE_FACT_PAYLOAD_MUST_BE_EMPTY');
+      break;
+    case 'conception':
+      if (!only('pregnancy_ref') || !Object.hasOwn(payload, 'pregnancy_ref')) throw eventDiagnostic('missing_state_fact_identity', `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, 'EVENT_PREGNANCY_IDENTITY_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, {allowNew: true});
+      break;
+    case 'pregnancy_suspicion':
+      if (!only('pregnancy_ref', 'observation') || !Object.hasOwn(payload, 'observation')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_STATE_FACT_OBSERVATION_REQUIRED');
+      if (payload.pregnancy_ref !== undefined) validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, {allowNew: true});
+      validateRawStateFactRecord(payload.observation, `${eventPath(eventIndex)}.state_fact.payload.observation`);
+      break;
+    case 'pregnancy_confirmation':
+      if (!only('pregnancy_ref') || !Object.hasOwn(payload, 'pregnancy_ref')) throw eventDiagnostic('missing_state_fact_identity', `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, 'EVENT_PREGNANCY_IDENTITY_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, {allowNew: true});
+      break;
+    case 'pregnancy_loss':
+    case 'abortion':
+      if (!only('pregnancy_ref') || !Object.hasOwn(payload, 'pregnancy_ref')) throw eventDiagnostic('missing_state_fact_identity', `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`, 'EVENT_PREGNANCY_IDENTITY_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`);
+      break;
+    case 'labor':
+      if (!only('pregnancy_ref', 'labor_ref') || !Object.hasOwn(payload, 'pregnancy_ref') || !Object.hasOwn(payload, 'labor_ref')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload.labor_ref`, 'EVENT_LABOR_ID_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`);
+      validateRawStateFactReference(payload.labor_ref, `${eventPath(eventIndex)}.state_fact.payload.labor_ref`, {allowNew: true});
+      break;
+    case 'delivery':
+      if (!only('pregnancy_ref', 'delivery_ref') || !Object.hasOwn(payload, 'pregnancy_ref') || !Object.hasOwn(payload, 'delivery_ref')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload.delivery_ref`, 'EVENT_DELIVERY_ID_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`);
+      validateRawStateFactReference(payload.delivery_ref, `${eventPath(eventIndex)}.state_fact.payload.delivery_ref`, {allowNew: true});
+      break;
+    case 'postpartum':
+      if (!only('pregnancy_ref', 'postpartum_ref') || !Object.hasOwn(payload, 'pregnancy_ref') || !Object.hasOwn(payload, 'postpartum_ref')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload.postpartum_ref`, 'EVENT_POSTPARTUM_ID_REQUIRED');
+      validateRawStateFactReference(payload.pregnancy_ref, `${eventPath(eventIndex)}.state_fact.payload.pregnancy_ref`);
+      validateRawStateFactReference(payload.postpartum_ref, `${eventPath(eventIndex)}.state_fact.payload.postpartum_ref`, {allowNew: true});
+      break;
+    case 'fertility_change': {
+      const changes = payload.capability_changes;
+      if (!only('capability_changes') || !changes || typeof changes !== 'object' || Array.isArray(changes) || !Object.keys(changes).length) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload.capability_changes`, 'EVENT_CAPABILITY_CHANGES_REQUIRED');
+      for (const [key, value] of Object.entries(changes)) {
+        if (!eventDomain.CAPABILITY_KEYS.includes(key) || ![true, false, null].includes(value)) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload.capability_changes.${key}`, 'EVENT_CAPABILITY_CHANGE_INVALID');
+      }
+      break;
+    }
+    case 'physical_symptom':
+      if (!only('symptom')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_SYMPTOM_PAYLOAD_INVALID');
+      validateRawStateFactRecord(payload.symptom, `${eventPath(eventIndex)}.state_fact.payload.symptom`);
+      break;
+    case 'medical_event':
+    case 'other_biological':
+      if (!only('fact')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_FACT_PAYLOAD_INVALID');
+      validateRawStateFactRecord(payload.fact, `${eventPath(eventIndex)}.state_fact.payload.fact`);
+      break;
+    default:
+      throw eventDiagnostic('state_fact_type_invalid', `${eventPath(eventIndex)}.state_fact`, 'EVENT_STATE_FACT_TYPE_INVALID');
+  }
 }
 
 function normalizeEventStoryTime(value) {
@@ -2004,7 +2123,6 @@ function normalizeEventStoryTime(value) {
       normalized: null,
       calendar_id: null,
       day_index: null,
-      provider: null,
       precision: 'unknown',
       confidence: null,
     };
@@ -2034,9 +2152,16 @@ function normalizeEventStoryTime(value) {
     normalized: eventText(value.normalized, 'story_time_normalized'),
     calendar_id: eventText(value.calendar_id, 'story_time_calendar_id'),
     day_index: dayIndex,
-    provider: eventText(value.provider, 'story_time_provider'),
     precision,
     confidence: eventConfidence(value.confidence, 'story_time_confidence'),
+  };
+}
+
+function normalizeRawStateFact(value) {
+  if (value === undefined || value === null) return null;
+  return {
+    subject_id: String(value.subject_id).trim(),
+    payload: JSON.parse(JSON.stringify(value.payload)),
   };
 }
 
@@ -2315,6 +2440,7 @@ function normalizeEventRecord(
       `${eventPath(eventIndex)}.source_evidence`,
     ),
     physical_effect: safeEventValue(raw.physical_effect ?? {}),
+    state_fact: normalizeRawStateFact(raw.state_fact),
   };
   const hasProvisionalIdentity = participants.some(
     (item) => item.identity_status !== 'existing' || !item.character_id,

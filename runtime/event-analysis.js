@@ -15,11 +15,14 @@ import {
   traceApi,
 } from "../ai/client.js";
 import {
+  CAPABILITY_KEYS,
   isPregnancyRelevantExposure,
   normalizeEvent,
+  dedupeEvents,
   sortEvents,
   validateEventCollection,
 } from "../core/events.js";
+import { reduceState } from "../core/state.js";
 import {
   hasCharacterId,
   isCompleteCharacterRegistrySnapshot,
@@ -36,7 +39,10 @@ import {
   hasSwipeStructure,
   isCharacterMessage,
 } from "../storage/store.js";
-import { normalizeStoryTime } from "../story/time.js";
+import {
+  differenceStoryTime,
+  normalizeStoryTime,
+} from "../story/time.js";
 import {
   detectExternalMemoryProviders,
   probeExternalMemoryProviders,
@@ -207,6 +213,55 @@ function normalizedCharacterRegistrySnapshot(raw) {
     ? normalizeCharacterRegistry(raw)
     : null;
 }
+
+function buildCharacterFacts(activeEvents, registry = null, characterRegistry = null) {
+  const source = registry ?? {};
+  const subjects = source.tracking_subjects ?? {};
+  const candidates = source.tracking_candidates ?? {};
+  const profiles = source.character_profiles ?? {};
+  const entities = characterRegistry?.entities ?? {};
+  const characterIds = new Set([
+    ...Object.keys(subjects),
+    ...Object.keys(candidates),
+  ]);
+  for (const event of activeEvents ?? []) {
+    for (const characterId of event?.pregnancy_relevance?.gestational_subject_ids ?? [])
+      characterIds.add(characterId);
+    const subjectId = event?.state_fact?.subject_id;
+    if (subjectId) characterIds.add(subjectId);
+  }
+  const result = {};
+  for (const characterId of [...characterIds].sort()) {
+    const profile = profiles[characterId] ?? {};
+    const subject = subjects[characterId] ?? {};
+    const candidate = candidates[characterId] ?? {};
+    const identity = entities[characterId] ?? {};
+    const capabilities = candidate.reproductive_capabilities
+      ?? profile.reproductive_capabilities
+      ?? {};
+    result[characterId] = {
+      identity: {
+        character_id: characterId,
+        display_name:
+          profile.display_name
+          ?? candidate.display_name
+          ?? subject.display_name
+          ?? identity.display_name
+          ?? null,
+        species: profile.species ?? candidate.species ?? null,
+        biological_type: profile.biological_type ?? candidate.biological_type ?? null,
+      },
+      reproductive_capabilities: Object.fromEntries(
+        CAPABILITY_KEYS.map((key) => [
+          key,
+          [true, false, null].includes(capabilities[key]) ? capabilities[key] : null,
+        ]),
+      ),
+      resolved_mechanism_facts: [],
+    };
+  }
+  return result;
+}
 function stableLifecycleValue(value) {
   if (Array.isArray(value)) return value.map(stableLifecycleValue);
   if (!value || typeof value !== "object") return value;
@@ -303,6 +358,58 @@ async function deterministicEventId(version, ordinal) {
     .join("\u001f");
   const digest = await hashText(material);
   return `evt_${digest.slice(0, 24)}_${ordinal + 1}`;
+}
+
+async function deterministicStateFactId(version, ordinal, subjectId, kind) {
+  const material = [
+    'bioweave-state-fact-id-v1',
+    kind,
+    version?.chat_id,
+    version?.message_id,
+    version?.floor,
+    version?.swipe_id,
+    version?.content_hash,
+    version?.message_version,
+    subjectId,
+    ordinal,
+  ].map((value) => String(value ?? '')).join('\u001f');
+  const digest = await hashText(material);
+  return `${kind}_${digest.slice(0, 24)}_${ordinal + 1}`;
+}
+
+async function materializeStateFact(event, version, ordinal) {
+  if (!event?.state_fact || typeof event.state_fact !== 'object') return event;
+  const stateFact = structuredClone(event.state_fact);
+  const payload = stateFact.payload && typeof stateFact.payload === 'object'
+    ? stateFact.payload
+    : {};
+  const ref = payload.pregnancy_ref;
+  if (ref?.kind === 'new') {
+    payload.pregnancy_id = await deterministicStateFactId(
+      version,
+      ordinal,
+      stateFact.subject_id,
+      'preg',
+    );
+    delete payload.pregnancy_ref;
+  } else if (ref?.kind === 'existing') {
+    payload.pregnancy_id = ref.id;
+    delete payload.pregnancy_ref;
+  }
+  for (const [referenceKey, idKey, kind] of [
+    ['labor_ref', 'labor_id', 'labor'],
+    ['delivery_ref', 'delivery_id', 'delivery'],
+    ['postpartum_ref', 'postpartum_id', 'postpartum'],
+  ]) {
+    const reference = payload[referenceKey];
+    if (!reference) continue;
+    payload[idKey] = reference.kind === 'new'
+      ? await deterministicStateFactId(version, ordinal, stateFact.subject_id, kind)
+      : reference.id;
+    delete payload[referenceKey];
+  }
+  stateFact.payload = payload;
+  return { ...event, state_fact: stateFact };
 }
 function executionError(error, stage = null) {
   const code = diagnosticCode(error);
@@ -463,6 +570,7 @@ export function createEventAnalysisCoordinator({
   store,
   analyzer,
   storyTime = null,
+  storyTimeCoordinator = null,
   characterContextResolver = defaultCharacterContext,
   analysisContextCollector = collectAnalysisContext,
   analysisSourceLoader = loadAnalysisSources,
@@ -927,6 +1035,44 @@ export function createEventAnalysisCoordinator({
   async function recomputeLastProcessedFloor(token = chat.token()) {
     return lastProcessedFloorFromStates(await collectCurrentFloorStates(token));
   }
+  function currentStoryTimeDifferences(activeEvents, currentStoryTime) {
+    const differences = {};
+    for (const event of Array.isArray(activeEvents) ? activeEvents : []) {
+      const eventId = String(event?.event_id ?? '').trim();
+      if (!eventId) continue;
+      const normalizedEventStoryTime = storyTimeCoordinator?.normalizeStoryTimeForRead?.(event.story_time)
+        ?? storyTime?.normalize?.(event.story_time)
+        ?? event.story_time;
+      const calculatedDifference = storyTime?.getDateDifference?.(
+        currentStoryTime,
+        normalizedEventStoryTime,
+      );
+      const difference = calculatedDifference === undefined || calculatedDifference === null
+        ? differenceStoryTime(currentStoryTime, event.story_time)
+        : typeof calculatedDifference === 'number'
+          ? {value: calculatedDifference, unit: 'day'}
+          : calculatedDifference;
+      storyTimeCoordinator?.traceHistoricalDifference?.(
+        eventId,
+        normalizedEventStoryTime,
+        currentStoryTime,
+        difference,
+      );
+      if (difference && Number.isFinite(Number(difference.value))) differences[eventId] = difference;
+    }
+    return differences;
+  }
+  function stateErrorState(error) {
+    const state = reduceState({});
+    state.diagnostics = [{
+      code: "STATE_REDUCE_ERROR",
+      event_id: null,
+      subject_id: null,
+      pregnancy_id: null,
+      detail: String(error?.code ?? error?.message ?? "STATE_REDUCE_FAILED"),
+    }];
+    return state;
+  }
   async function collectCurrentDerivedState(token, chatData = null) {
     const states = await collectCurrentFloorStates(token);
     const currentChat = chatData ?? store.getChat(token.chatId);
@@ -948,12 +1094,46 @@ export function createEventAnalysisCoordinator({
       { world_model: world?.model ?? null },
     );
     const characterRegistry = currentCharacterRegistryFromStates(validStates);
+    let currentFloor = null;
+    try {
+      currentFloor = await resolveCurrentBioWeaveFloor();
+    } catch (error) {
+      if (error?.message !== "NO_CHARACTER_FLOOR" && error?.message !== "MESSAGE_NOT_FOUND") throw error;
+    }
+    const storyTimeInfo = storyTimeCoordinator
+      ? await storyTimeCoordinator.getCurrentStoryTimeInfo()
+      : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
+    const currentStoryTime = storyTimeInfo.story_time;
+    const characterFacts = buildCharacterFacts(
+      activeEvents,
+      registry,
+      characterRegistry,
+    );
+    let currentState;
+    let currentStateStatus = currentFloor ? "ready" : "NO_CHARACTER_FLOOR";
+    try {
+      currentState = reduceState({
+        events: activeEvents,
+        currentStoryTime,
+        characterFacts,
+      });
+    } catch (error) {
+      currentState = stateErrorState(error);
+      currentStateStatus = "STATE_ERROR";
+    }
     chat.assert(token);
     return {
       states: validStates,
       activeEvents,
       registry,
       characterRegistry,
+      characterFacts,
+      currentFloor,
+      currentStoryTime,
+      currentStoryTimeStatus: storyTimeInfo.status,
+      currentStoryTimeDifferences: currentStoryTimeDifferences(activeEvents, currentStoryTime),
+      currentState,
+      currentStateStatus,
       chatData: currentChat,
       lastProcessedFloor: lastProcessedFloorFromStates(validStates),
     };
@@ -1166,7 +1346,13 @@ export function createEventAnalysisCoordinator({
     chat.assert(token);
     const chatData = store.getChat(token.chatId);
     if (isFloorPreflightStage(status.error_stage)) {
-      return buildBusinessData(status, [], chatData, null);
+      return buildBusinessData(status, [], chatData, null, {
+        current_state: reduceState({}),
+        current_state_status: status.current_floor === null ? "NO_CHARACTER_FLOOR" : "STATE_ERROR",
+        current_story_time: null,
+        current_story_time_status: "NO_CHARACTER_FLOOR",
+        current_story_time_differences: {},
+      });
     }
     let derived;
     try {
@@ -1178,6 +1364,13 @@ export function createEventAnalysisCoordinator({
         [],
         chatData,
         null,
+        {
+          current_state: reduceState({}),
+          current_state_status: "STATE_ERROR",
+          current_story_time: null,
+          current_story_time_status: "STATE_ERROR",
+          current_story_time_differences: {},
+        },
       );
     }
     chat.assert(token);
@@ -1186,9 +1379,47 @@ export function createEventAnalysisCoordinator({
       derived.activeEvents,
       derived.chatData,
       derived.registry,
+      {
+        current_state: derived.currentState,
+        current_state_status: derived.currentStateStatus,
+        current_story_time: derived.currentStoryTime,
+        current_story_time_status: derived.currentStoryTimeStatus,
+        current_story_time_differences: derived.currentStoryTimeDifferences,
+      },
     );
   }
-  function buildBusinessData(status, activeEvents, chatData, registry = null) {
+  async function getCurrentBiologicalState() {
+    const token = chat.token();
+    try {
+      const derived = await collectCurrentDerivedState(token);
+      chat.assert(token);
+      return {
+        current_state: derived.currentState,
+        current_story_time: derived.currentStoryTime,
+        current_story_time_status: derived.currentStoryTimeStatus,
+        current_story_time_differences: derived.currentStoryTimeDifferences,
+        status: derived.currentStateStatus,
+      };
+    } catch (error) {
+      if (!isFloorPreflightStage(error?.analysis_stage) && error?.message !== "NO_CHARACTER_FLOOR" && error?.message !== "MESSAGE_NOT_FOUND") {
+        throw error;
+      }
+      return {
+        current_state: reduceState({}),
+        current_story_time: null,
+        current_story_time_status: "NO_CHARACTER_FLOOR",
+        current_story_time_differences: {},
+        status: "NO_CHARACTER_FLOOR",
+      };
+    }
+  }
+  function buildBusinessData(
+    status,
+    activeEvents,
+    chatData,
+    registry = null,
+    stateInfo = null,
+  ) {
     const trackingSubjects = registry?.tracking_subjects ?? {};
     const trackingCandidates = registry?.tracking_candidates ?? {};
     const characterProfiles = registry?.character_profiles ?? {};
@@ -1245,6 +1476,11 @@ export function createEventAnalysisCoordinator({
       tracking_candidates: trackingCandidates,
       character_profiles: characterProfiles,
       active_events: activeEvents,
+      current_state: stateInfo?.current_state ?? reduceState({}),
+      current_state_status: stateInfo?.current_state_status ?? "NO_CHARACTER_FLOOR",
+      current_story_time: stateInfo?.current_story_time ?? null,
+      current_story_time_status: stateInfo?.current_story_time_status ?? "NO_CHARACTER_FLOOR",
+      current_story_time_differences: stateInfo?.current_story_time_differences ?? {},
       current_floor: status.current_floor,
       last_success: status.last_success,
       analysis_status: analysisStatus,
@@ -1463,11 +1699,9 @@ export function createEventAnalysisCoordinator({
       globalRecentStory,
       chatData.settings?.recent_story ?? {},
     );
-    const storyTimeValue =
-      storyTime?.atFloor?.(target.version.floor) ??
-      normalizeStoryTime(
-        target.message?.story_time ?? target.message?.storyTime ?? null,
-      );
+    const storyTimeValue = storyTimeCoordinator
+      ? await storyTimeCoordinator.resolveFloorStoryTime(target)
+      : normalizeStoryTime(null);
     const commonInput = await analysisContextCollector({
       context,
       chatId: token.chatId,
@@ -1582,11 +1816,12 @@ export function createEventAnalysisCoordinator({
                 : event;
             if (!facts || typeof facts !== "object" || Array.isArray(facts))
               return facts;
-            return {
+            const enriched = {
               ...facts,
               event_id: await deterministicEventId(target.version, ordinal),
               source: target.version,
             };
+            return materializeStateFact(enriched, target.version, ordinal);
           },
         ),
       );
@@ -1601,7 +1836,7 @@ export function createEventAnalysisCoordinator({
           enrichedEvents,
         );
       }
-      const events = enrichedEvents.map((event) => normalizeEvent(event));
+      const events = dedupeEvents(enrichedEvents).map((event) => normalizeEvent(event));
       const analyzedAt = new Date().toISOString();
       const analysis = commitAnalysis(
         savedAnalysis,
@@ -2101,6 +2336,7 @@ export function createEventAnalysisCoordinator({
       };
     },
     collectActiveBusinessData,
+    getCurrentBiologicalState,
     handleLifecycleEvent,
     primeLifecycleSnapshot,
     getLifecycleSnapshot: () => lifecycleSnapshot,

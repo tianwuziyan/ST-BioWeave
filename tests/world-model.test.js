@@ -3730,7 +3730,7 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(html, /生物类型详情/)
   assert.doesNotMatch(html, /切换类型/)
   assert.match(html, /生殖能力/)
-  assert.match(html, /可承担妊娠/)
+  assert.match(html, /可承载妊娠/)
   assert.match(html, /医疗与照护/)
   assert.match(html, /分娩难度/)
   assert.match(html, /当前资料不足以确定难度/)
@@ -3928,7 +3928,7 @@ test('World UI Fixture A keeps one species, two types, card summaries, fixed fie
   assert.doesNotMatch(firstTypeHtml, /Fixture A 物种描述。|第二行仍然可读。/)
   assert.match(firstTypeHtml, /Fixture A 类型一描述。/)
   assert.match(firstTypeHtml, /类型说明第二行。/)
-  assert.match(firstTypeHtml, /4\/6 项能力已知 · 不可承担妊娠/)
+  assert.match(firstTypeHtml, /4\/6 项能力已知 · 不可承载妊娠/)
   assert.match(firstTypeHtml, /Fixture A 受精方式|Fixture A 妊娠方式|Fixture A 生理周期/)
   assert.match(firstTypeHtml, /Fixture A 排卵机制|Fixture A 妊娠周期|Fixture A 分娩方式/)
   assert.match(firstTypeHtml, /Fixture A 成熟|Fixture A 衰老|Fixture A 特殊规则/)
@@ -4015,9 +4015,9 @@ test('World UI Fixture B maps four species and dynamic card summaries', () => {
       for (const label of [
         '可产生精子',
         '可产生卵子',
-        '可被受精',
-        '可使其受精',
-        '可承担妊娠',
+        '可受精',
+        '可使对方受精',
+        '可承载妊娠',
         '受精方式',
         '妊娠方式',
         '生理周期',
@@ -4144,8 +4144,8 @@ test('World Model cards render arbitrary Runtime types and derive pregnancy only
   const html = worldPage({ worldModel: runtimeModel, selectedSpeciesIndex: 0, selectedTypeIndex: 1 })
 
   assert.match(html, /3 个类型 · Gamma \/ Delta \/ Epsilon/)
-  assert.match(html, /<b>Gamma<\/b>[\s\S]*?5\/6 项能力已知 · 不可承担妊娠/)
-  assert.match(html, /<b>Delta<\/b>[\s\S]*?5\/6 项能力已知 · 可承担妊娠/)
+  assert.match(html, /<b>Gamma<\/b>[\s\S]*?5\/6 项能力已知 · 不可承载妊娠/)
+  assert.match(html, /<b>Delta<\/b>[\s\S]*?5\/6 项能力已知 · 可承载妊娠/)
   assert.match(html, /<b>Epsilon<\/b>[\s\S]*?0\/6 项能力已知 · 妊娠未知/)
   assert.doesNotMatch(html, /<b>男性<\/b>|<b>女性<\/b>/)
   assert.match(html, /data-bioweave-world-type-index="1"[^>]*aria-pressed="true"/)

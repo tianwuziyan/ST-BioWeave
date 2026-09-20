@@ -134,7 +134,6 @@ function sourceEvent(version, overrides = {}) {
       normalized: '2026-08-20',
       day_index: 20685,
       calendar_id: 'calendar_main',
-      provider: 'bioweave_fallback',
       precision: 'day',
       confidence: 1,
     },

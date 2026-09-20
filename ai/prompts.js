@@ -59,6 +59,9 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   'mention resolution、alias discovery、alias persistence 是三个不同动作。当前 mention 解析到某个 entity 不会自动把该称呼写入 aliases；正文中 display_name 与另一个称呼同时出现、连续性推断或单次高置信度判断都不是 alias establishment evidence。只有“以后叫我 X”“小名是 X”“众人都称她为 X”等明确命名证据才可以返回 alias_candidate；关系称谓、泛称和代词只用于当前上下文，绝不能作为永久 alias。alias 精确匹配只能提供完整 candidate set，不能 first-match-wins；多候选且无法可靠消歧时返回 unresolved。',
   '不要因为 NSFW、性交、体液、症状、恶心、腹痛或其它 physical_symptom 自动判定 conception 或 pregnancy；只有 World Model baseline 与 narrative evidence 共同明确支持时才填写 possible_conception 或 pregnancy relevance。',
   '不要把 UI 显示、人物列表或其它后续层的判断写入结果；UI 不会也不应二次判断生殖资格。输出的是完整事实 DTO。',
+  '除非 Event 是非 exposure 的 sexual_activity，否则会改变角色 Biological State 的 Event 必须包含 state_fact：{subject_id, payload}。subject_id 必须是 participants 中的 canonical character_id 或 response-local mention_id，不能使用 display_name、gender、event_role 或 participants[0] 位置猜测。state_fact 是 factual contract，不是 Current State，也不是 Projection；不要输出概率、未来结果或阶段推演。',
+  'state_fact 不重复保存 story_time；其 effective Story Time 始终引用同一 Event 的 story_time。非 exposure sexual_activity 不输出 state_fact；有效 pregnancy-relevant exposure 继续只使用 pregnancy_relevance 作为 authoritative exposure fact。',
+  'conception 使用 pregnancy_ref 绑定同一 reproductive episode；menstrual_event、ovulation_event 的 state_fact.payload 必须是空对象；pregnancy_suspicion 使用 observation 与可选 pregnancy_ref；pregnancy_confirmation 使用 pregnancy_ref；pregnancy_loss、abortion、labor、delivery、postpartum 只能引用 existing pregnancy_ref；fertility_change 只允许六个 capability keys 的 true/false/null；physical_symptom 使用 symptom；medical_event 与 other_biological 使用 fact。不要添加概率、duration、projection 或 UI 字段。pregnancy_ref.kind=new 只表示 Runtime 应创建新 episode identity，不是模型生成随机 ID。',
 ].join('\n')
 
 export const EVENT_ANALYZER_TASK_CONTRACT = [
@@ -80,7 +83,7 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   '同一 subject Event 合并直接相关的即时症状、physical effect、直接身体反应和证据；独立的 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。实际 pregnancy-relevant sexual exposure 使用 sexual_activity；普通补品、食物、饮料、照顾、休息建议、外貌、体质和静态人物描写不单独输出 Event。',
   'AI Event DTO 不生成 event_id 或 source；它们不是 AI 事实字段。Runtime 会按响应顺序生成 deterministic、同一响应内唯一且不依赖 display_name 的 event_id，并强制绑定 authoritative Floor Version。若兼容旧响应而出现 event.event_id、event.source，它们会被忽略，不能覆盖 Runtime 身份。',
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
-  `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、provider、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
+  `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
   'story_time.day_index 只有在证据提供真实、连续且可排序的 canonical index 时才能填写 number；否则必须是 null。不要把月内第几日或 display 文本解析成 day_index，时间计算不读取 display。',
   'location 固定为 string | null；已知地点必须保留 narrative、Target Floor、Recent Context 或 Worldbook 中出现的原始文字和原始语言，例如“传灯院”仍输出“传灯院”；不得拼音化、romanize、翻译、snake_case、slugify 或 ASCII 化。无法可靠确定时使用 {"location": null}；禁止地点对象或数组。',
   `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 identity_status、character_id、mention_id、display_name、event_role、reproductive_capabilities_used 和 evidence；identity_status 只能是 existing、new 或 unresolved。existing 只能原样引用 character_registry 中的 ID，且 mention_id 必须为 null；new/unresolved 的 character_id 必须为 null，并使用当前完整 raw response 内唯一、无语义的 mention_N（如 mention_1）供内部引用。只有 Runtime 完成 identity resolution 后，最终 Event 才能保存 canonical character_id。仅对 pregnancy_relevance.relevant === true 的 pregnancy-related Event，每个 participant 还必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null。identity 可以由明确标签、多条一致的稳定生理/生殖上下文或明确生理性别事实映射到当前 World Model；生理性别只能作为 biological_type 映射证据之一，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力，冲突/不足时保持 null。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
@@ -90,6 +93,7 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   'pregnancy_relevance 必须包含 relevant、possible_conception、gestational_subject_ids[]、counterpart_ids[]、reproductive_mechanism、confidence；relevant 与 possible_conception 都只能是 boolean，不能是 null、字符串或 probable/possible/unknown。两个 ID 字段始终是数组，可为空、单个或多个；不能是字符串。reproductive_mechanism 是结构化对象，包含开放的 kind/label/pathway、world_model_rule_refs[] 与 evidence[]，不得使用固定机制 enum。relevant === true 时必须有潜在 gestational subject、至少一个 source/counterpart、机制/事实证据和 participant closure；不得把 sexual_activity 或 possible_conception 当作唯一 gate。',
   `没有 actual reproductive exposure 的 sexual_activity 必须使用 participants=[]、relevant=false、possible_conception=false、gestational_subject_ids=[]、counterpart_ids=[]；如果没有其它独立生物学价值，可以不输出该 Event。relevant=true 时必须有非空 subject/source ID 数组，两个数组中的 ID 必须来自 participants，且 participants 只能包含这些 subject/source，source_evidence[] 必须包含 kind 为 ${PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND} 的结构化证据。possible_conception 只记录本次是否发生 conception 事实，不是 exposure eligibility gate。`,
   'physical_effect.gestational_substance_intake=true 只能在 narrative evidence 明确支持 actual reproductive exposure 时填写，并必须与 pregnancy_relevance 保持一致；不要把该字段单独当作受孕结论。',
+  '非 exposure 的 state-changing Event 必须包含 state_fact.subject_id 与严格按 type 定义的 payload；缺少 subject、pregnancy_ref 或 capability change 时不要输出该 Event。state_fact.subject_id 必须引用 participants 中的对象。',
   'alias_candidate 只能是建议，不是 Registry 写入命令；仅在 narrative 明确建立稳定 name_variant/nickname 且同时提供 alias establishment identity_evidence 时返回。不得因为一次普通称呼、正文共现、连续性或高置信度 mention 自动学习 alias。confidence 只能是 null 或 0 到 1 之间的 number。',
   '模型不要生成 source；六字段 Floor Version 只存在于输入的 Authoritative Floor Metadata，并由 Runtime 写入最终 Event：chat_id、message_id、floor、swipe_id、content_hash、message_version。',
 ].join('\n')
@@ -324,12 +328,10 @@ function formatStoryTimeReference(storyTime, names) {
   const display = expandPlaceholders(storyTime.display, names)
   const normalized = expandPlaceholders(storyTime.normalized, names)
   const calendarId = expandPlaceholders(storyTime.calendar_id, names)
-  const provider = expandPlaceholders(storyTime.provider, names)
   const hasKnownValue = Boolean(
     display ||
     normalized ||
     calendarId ||
-    provider ||
     (storyTime.day_index !== null && storyTime.day_index !== undefined) ||
     (storyTime.precision && storyTime.precision !== 'unknown') ||
     (storyTime.confidence !== null && storyTime.confidence !== undefined),
@@ -341,7 +343,6 @@ function formatStoryTimeReference(storyTime, names) {
     `标准化时间：${normalized || '未知'}`,
     `日历：${calendarId || '未知'}`,
     `连续日索引：${storyTime.day_index === null || storyTime.day_index === undefined ? '未知' : formatPromptValue(storyTime.day_index)}`,
-    `提供者：${provider || '未知'}`,
     `精度：${expandPlaceholders(storyTime.precision, names) || '未知'}`,
     `置信度：${storyTime.confidence === null || storyTime.confidence === undefined ? '未知' : formatPromptValue(storyTime.confidence)}`,
   ].join('\n')

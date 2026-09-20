@@ -1817,6 +1817,23 @@ export function resolveEventAnalysisIdentities(
       if (errors.length) break;
       nextEvent.pregnancy_relevance = relevance;
     }
+    if (event.state_fact && typeof event.state_fact === 'object' && !Array.isArray(event.state_fact)) {
+      const stateFact = cloneValue(event.state_fact);
+      const resolvedSubject = canonicalReference(
+        stateFact.subject_id,
+        { raw_to_canonical: identityContext.rawToCanonical },
+        working,
+      );
+      if (!resolvedSubject.ok) {
+        errors.push({
+          ...resolvedSubject,
+          path: `events[${eventIndex}].state_fact.subject_id`,
+        });
+        break;
+      }
+      stateFact.subject_id = resolvedSubject.character_id;
+      nextEvent.state_fact = stateFact;
+    }
   }
 
   if (errors.length) {

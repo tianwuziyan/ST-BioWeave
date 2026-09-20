@@ -13,6 +13,7 @@ import {
   restoreScrollPositions,
 } from '../ui/app.js'
 import { createApiProfileStore } from '../storage/store.js'
+import { settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
@@ -25,6 +26,7 @@ const UI_SOURCE = [
   fs.readFileSync(new URL('../ui/events.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8'),
   fs.readFileSync(new URL('../ui/settings.js', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../ui/state.js', import.meta.url), 'utf8'),
 ].join('\n')
 const CUSTOM_ABORT_UI_PATTERN =
   /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i
@@ -37,6 +39,36 @@ test('BioWeave overlay stays between ordinary host UI and host modal layers', ()
   assert.ok(zIndex < 999999, 'BioWeave must stay below SillyTavern Toast')
   assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/)
 })
+
+test('Story Time debug settings are off by default and render only the supplied Runtime DTO when enabled', () => {
+  const closed = settingsPage({});
+  assert.match(closed, /Story Time 调试/);
+  assert.match(closed, /默认关闭/);
+  assert.doesNotMatch(closed, /羲和元年五月初四/);
+  const open = settingsPage({storyTimeDebug: {
+    enabled: true,
+    info: {
+      status: 'ready',
+      chat_id: 'chat-debug',
+      floor: {floor: 60, message_id: 'message-60', swipe_id: 0},
+      source: 'synopsis_time',
+      candidate: '羲和元年五月初四 午时',
+      story_time: {display: '羲和元年五月初四 午时', normalized: 'cn-1-5-4T11:00', calendar_id: null, day_index: null, precision: 'hour'},
+      parsed_parts: {era_label: '羲和', year: 1, month: 5, day: 4},
+      calendar: {calendar_id: null, era_label: '羲和', calculation_level: 2, day_index: null},
+      recent_event: null,
+      failure_reason: null,
+    },
+  }});
+  assert.match(open, /synopsis_time/);
+  assert.match(open, /羲和元年五月初四 午时/);
+  assert.match(open, /data-bioweave-action="refresh-story-time-debug"/);
+  assert.match(open, /data-bioweave-action="copy-story-time-debug"/);
+  assert.doesNotMatch(open, /她回忆/);
+  const disclosureNames = [...open.matchAll(/data-bioweave-settings-disclosure="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(disclosureNames.at(-1), 'story_time_debug');
+  assert.ok(open.indexOf('data-bioweave-settings-disclosure="story_time_debug"') > open.indexOf('data-bioweave-settings-disclosure="assignments"'));
+});
 test('top app header drag moves only the panel and ignores header controls', () => {
   const createPointerTarget = rect => {
     const listeners = new Map()

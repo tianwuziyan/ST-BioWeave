@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Validate Event contract and regressions"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Validate provenance and lifecycle boundaries"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "Validate no executable World Model DSL"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Validate cross-layer consistency"}

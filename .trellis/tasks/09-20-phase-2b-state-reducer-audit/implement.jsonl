@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "BiologicalEvent schema, subject-local exposure, status and Story Time contract"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, provenance and derived-state input boundary"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model capability and descriptive-rule boundaries"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer contract synchronization"}

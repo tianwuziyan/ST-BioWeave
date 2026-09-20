@@ -634,8 +634,8 @@
       }
       .bw-character-exposure > summary {
         display: grid;
-        grid-template-columns: 132px max-content max-content minmax(0, 1fr) auto 14px;
-        grid-template-areas: 'date type meta . status chevron';
+        grid-template-columns: max-content max-content max-content minmax(0, 1fr) auto 14px;
+        grid-template-areas: 'date relative type meta status chevron';
         align-items: center;
         column-gap: 14px;
         row-gap: 4px;
@@ -651,10 +651,10 @@
         background: var(--bw-hover);
       }
       .bw-character-exposure-date {
-        display: grid;
+        display: block;
         grid-area: date;
         gap: 2px;
-        width: 132px;
+        width: auto;
         min-width: 0;
         padding-right: 12px;
         border-right: 1px solid var(--bw-line-soft);
@@ -674,7 +674,10 @@
         color: var(--bw-muted);
         font-size: 10px;
       }
-      .bw-character-exposure-date > small {
+      .bw-character-exposure-relative {
+        grid-area: relative;
+        min-width: max-content;
+        white-space: nowrap;
         color: var(--bw-accent);
         font-size: 9px;
         line-height: 1;
@@ -767,7 +770,7 @@
       }
       .bw-event-review-row {
         display: grid;
-        grid-template-columns: 128px minmax(170px, 1.1fr) minmax(130px, 0.9fr) auto;
+        grid-template-columns: max-content max-content minmax(170px, 1.1fr) minmax(130px, 0.9fr) max-content;
         gap: 8px;
         align-items: center;
         min-width: 0;
@@ -1665,24 +1668,24 @@
           padding: 3px 0;
         }
         .bw-character-exposure > summary {
-          grid-template-columns: 100px minmax(0, 1fr) auto 14px;
-          grid-template-rows: auto auto;
+          grid-template-columns: max-content max-content auto 14px;
+          grid-template-rows: auto auto auto;
+          grid-template-areas: 'date relative status chevron' 'type type type type' 'meta meta meta meta';
           column-gap: 9px;
           row-gap: 5px;
           min-height: 55px;
           padding: 7px;
         }
         .bw-character-exposure-date {
-          grid-column: 1;
+          grid-area: date;
           padding-right: 0;
           border-right: 0;
         }
         .bw-character-exposure-type {
-          grid-column: 2;
+          grid-area: type;
         }
         .bw-character-exposure-meta {
-          grid-column: 1 / 3;
-          grid-row: 2;
+          grid-area: meta;
         }
         .bw-character-exposure > summary > .bw-badge {
           grid-column: 3;
@@ -1696,20 +1699,19 @@
           margin-left: 5px;
         }
         .bw-event-review-row {
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: minmax(0, 1fr) max-content auto;
           grid-template-rows: auto auto;
+          grid-template-areas: 'time relative status' 'main main detail';
           gap: 3px 7px;
           min-height: 52px;
           padding: 7px 0;
         }
         .bw-event-review-time {
-          grid-column: 1;
-          grid-row: 2;
+          grid-area: time;
           font-size: 10px;
         }
         .bw-event-review-main {
-          grid-column: 1;
-          grid-row: 1;
+          grid-area: main;
         }
         .bw-event-review-main b {
           font-size: 11px;
@@ -1718,14 +1720,12 @@
           font-size: 10px;
         }
         .bw-event-review-detail {
-          grid-column: 2;
-          grid-row: 2;
+          grid-area: detail;
           justify-self: end;
           font-size: 10px;
         }
         .bw-event-review-row > .bw-badge {
-          grid-column: 2;
-          grid-row: 1;
+          grid-area: status;
         }
         .bw-event-review-foot {
           align-items: flex-start;
@@ -1892,8 +1892,8 @@
                       <div class="bw-character-exposure-list-head"><span>按 Runtime 引用顺序</span><strong>n 条记录</strong></div>
                       <details class="bw-character-exposure" open>
                         <summary>
-                          <span class="bw-character-exposure-date"><span>Runtime story time</span><small>相对时间</small></span
-                          ><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span
+                          <span class="bw-character-exposure-date"><span>Runtime story time</span></span
+                          ><small class="bw-character-exposure-relative">相对时间</small><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span
                           ><span class="bw-badge good">已确认</span><span class="bw-character-exposure-chevron">⌄</span>
                         </summary>
                         <div class="bw-character-exposure-detail">
@@ -1956,8 +1956,8 @@
               <div class="bw-event-review-list">
                 <details class="bw-event-review-item" data-bioweave-event-id="runtime-event-id">
                   <summary class="bw-event-review-row">
-                    <span class="bw-event-review-time"><b>Runtime story time</b><small>相对时间</small></span
-                    ><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span
+                    <span class="bw-event-review-time"><b>Runtime story time</b></span
+                    ><small class="bw-event-review-relative">相对时间</small><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span
                     ><span class="bw-event-review-detail">n 个追踪对象</span><span class="bw-badge good">已确认</span>
                   </summary>
                   <div class="bw-event-review-detail-panel">原有事件事实、妊娠相关性、证据、编辑和删除操作位于展开内容。</div>

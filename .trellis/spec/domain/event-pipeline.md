@@ -116,9 +116,27 @@ unknown top-level field is rejected. An AI event does not require or trust
 ignored. Each accepted AI event contains biological facts such as `type`,
 `status`, structured `story_time`, `location`, directly relevant
 `participants`, `pregnancy_relevance`, `source_evidence`, and optional
-`physical_effect`. For `sexual_activity`, participants are only the direct
+`physical_effect`, and for non-exposure biological transitions a type-specific
+`state_fact: {subject_id, payload}`. `state_fact` is a factual contract rather
+than Current State or Projection. Its subject must be one of the Event's
+explicit participant identities; no display-name, gender, role, or positional
+inference is allowed. For `sexual_activity`, participants are only the direct
 members of the actual reproductive exposure chain; other Event types retain
 only objects directly relevant to that biological fact.
+
+Valid pregnancy-related exposure keeps `pregnancy_relevance` as its sole
+authoritative exposure fact and must not duplicate it in `state_fact`. The
+payload is type-specific and minimal: conception and later pregnancy facts
+share one explicit pregnancy episode reference, capability changes name one of the six independent tri-state
+capabilities, and symptoms/medical facts carry a factual kind (plus optional
+description). AI may use `new` / `existing` references; Runtime materializes
+deterministic Chat-local IDs from Floor Version, Event ordinal, subject and fact
+kind. `possible_conception` never creates a conception fact.
+
+`state_fact` reuses the Event's normalized `story_time`; it does not create a
+second effective-time source. `confirmed`, `probable`, `ambiguous`, `negated`,
+and `fictional` remain separate status values. Only factual statuses are
+transition candidates; negated and fictional facts do not change factual state.
 
 For pregnancy-related `sexual_activity`, Event granularity is per gestational
 subject: first identify all subjects with actual pregnancy-relevant exposure,
@@ -143,6 +161,15 @@ authoritative `source`. The ordinal remains an identity compatibility detail and
 keeps multiple Events in one response stable. Runtime calls
 `validateEventCollection()` before saving; only this enriched collection is
 normalized and validated as persisted `BiologicalEvent` Domain DTOs.
+Identical duplicate `event_id` records are deterministically deduped; the same
+ID with different normalized facts is a validation conflict and is never
+resolved by input order or last-write-wins.
+
+`sortEvents()` remains the existing provenance order used by Event/Tracking
+flows. Story-time chronology uses the separate `sortEventsByStoryTime()` helper:
+compatible structured domains sort by `day_index`; different or unresolved
+domains use a deterministic domain/provenance fallback. `display`, Floor index,
+message send time, and system clock are never Story Time arithmetic inputs.
 
 ### Runtime Character Identity Contract
 

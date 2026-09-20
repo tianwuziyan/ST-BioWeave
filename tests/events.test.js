@@ -4,12 +4,16 @@ import {
   PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
   EVENT_TYPES,
   normalizeEvent,
+  getStateFactStoryTime,
+  dedupeEvents,
   sortEvents,
+  STATE_FACT_EVENT_TYPES,
+  validateCharacterFacts,
   validateEvent,
   validateEventCollection,
 } from '../core/events.js';
 
-test('legacy event types remain valid with the old minimal source shape', () => {
+test('state-changing event types no longer accept the old minimal source shape', () => {
   assert.equal(
     validateEvent({
       event_id: 'e1',
@@ -17,7 +21,7 @@ test('legacy event types remain valid with the old minimal source shape', () => 
       status: 'confirmed',
       source: { chat_id: 'c' },
     }).ok,
-    true,
+    false,
   );
 });
 
@@ -27,7 +31,6 @@ test('normalizeEvent formats narrative StoryTime dates without changing structur
     normalized: '0042-03-18T12:45:00',
     day_index: 42,
     calendar_id: 'tianhe',
-    provider: 'narrative',
     precision: 'hour',
     confidence: 0.73,
   };
@@ -43,7 +46,6 @@ test('normalizeEvent formats narrative StoryTime dates without changing structur
     normalized: '0042-03-18T12:45:00',
     day_index: 42,
     calendar_id: 'tianhe',
-    provider: 'narrative',
     precision: 'hour',
     confidence: 0.73,
   });
@@ -75,6 +77,47 @@ test('capability facts keep fertilization and pregnancy causation independent', 
   assert.equal(Object.hasOwn(event.participants[0].reproductive_capabilities_used, 'can_cause_pregnancy'), true);
 });
 
+test('characterFacts stays minimal, canonical, and tri-state without gender inference', () => {
+  const facts = validateCharacterFacts({
+    char_000007: {
+      identity: {
+        character_id: 'char_000007',
+        display_name: 'A',
+        species: 'Species-A',
+        biological_type: 'Type-A',
+        gender: 'female',
+      },
+      reproductive_capabilities: {
+        can_carry_pregnancy: true,
+        can_fertilize: true,
+      },
+      resolved_mechanism_facts: [{ kind: 'mechanism', text: 'explicit' }],
+    },
+    display_only_id: {
+      identity: { character_id: 'display_only_id' },
+    },
+  });
+  assert.deepEqual(facts, {
+    char_000007: {
+      identity: {
+        character_id: 'char_000007',
+        display_name: 'A',
+        species: 'Species-A',
+        biological_type: 'Type-A',
+      },
+      reproductive_capabilities: {
+        can_produce_sperm: null,
+        can_produce_ova: null,
+        can_be_fertilized: null,
+        can_fertilize: true,
+        can_carry_pregnancy: true,
+        can_cause_pregnancy: null,
+      },
+      resolved_mechanism_facts: [{ kind: 'mechanism', text: 'explicit' }],
+    },
+  });
+});
+
 test('normalizeEvent formats narrative first-year dates while preserving an unresolved time suffix', () => {
   const event = normalizeEvent({
     event_id: 'evt-narrative-first-year',
@@ -85,7 +128,6 @@ test('normalizeEvent formats narrative first-year dates while preserving an unre
       normalized: null,
       calendar_id: null,
       day_index: null,
-      provider: 'narrative',
       precision: 'minute',
       confidence: 1,
     },
@@ -96,7 +138,6 @@ test('normalizeEvent formats narrative first-year dates while preserving an unre
     normalized: null,
     day_index: null,
     calendar_id: null,
-    provider: 'narrative',
     precision: 'minute',
     confidence: 1,
   });
@@ -752,19 +793,102 @@ test('validateEvent checks the typed gestational substance effect without choosi
   );
 });
 
-test('all existing biological event types remain accepted by the shared validator', () => {
-  for (const [index, type] of EVENT_TYPES.entries()) {
+test('state fact contracts validate each state-changing event type', () => {
+  const payloads = {
+    conception: { pregnancy_id: 'preg_existing' },
+    pregnancy_suspicion: { observation: { kind: 'test', description: 'observed' } },
+    pregnancy_confirmation: { pregnancy_id: 'preg_existing' },
+    pregnancy_loss: { pregnancy_id: 'preg_existing' },
+    abortion: { pregnancy_id: 'preg_existing' },
+    labor: { pregnancy_id: 'preg_existing', labor_id: 'labor_1' },
+    delivery: { pregnancy_id: 'preg_existing', delivery_id: 'delivery_1' },
+    postpartum: { pregnancy_id: 'preg_existing', postpartum_id: 'postpartum_1' },
+    menstrual_event: {},
+    ovulation_event: {},
+    fertility_change: { capability_changes: { can_carry_pregnancy: null } },
+    physical_symptom: { symptom: { kind: 'nausea', description: 'observed' } },
+    medical_event: { fact: { kind: 'diagnosis', description: 'observed' } },
+    other_biological: { fact: { kind: 'other', description: 'observed' } },
+  };
+  for (const [index, type] of STATE_FACT_EVENT_TYPES.entries()) {
     assert.equal(
       validateEvent({
         event_id: `event-${index}`,
         type,
         status: 'ambiguous',
         source: { chat_id: 'chat-1' },
+        participants: [{ character_id: 'char-a', event_role: 'unknown' }],
+        state_fact: { subject_id: 'char-a', payload: payloads[type] },
       }).ok,
       true,
       type,
     );
   }
+});
+
+test('state fact subject must be a participant and pregnancy identity is type-specific', () => {
+  const base = {
+    event_id: 'state-fact',
+    type: 'pregnancy_confirmation',
+    status: 'confirmed',
+    source: { chat_id: 'chat-1' },
+    participants: [{ character_id: 'char-a', event_role: 'unknown' }],
+  };
+  assert.equal(validateEvent({
+    ...base,
+    state_fact: { subject_id: 'char-b', payload: { pregnancy_id: 'preg-1' } },
+  }).ok, false);
+  assert.equal(validateEvent({
+    ...base,
+    state_fact: { subject_id: 'char-a', payload: {} },
+  }).ok, false);
+  assert.equal(validateEvent({
+    ...base,
+    state_fact: { subject_id: 'char-a', payload: { pregnancy_id: 'preg-1' } },
+  }).ok, true);
+});
+
+test('exposure remains authoritative in pregnancy_relevance without state_fact', () => {
+  assert.equal(validateEvent(validExposureEvent()).ok, true);
+  assert.equal(validateEvent({
+    ...validExposureEvent(),
+    state_fact: { subject_id: 'char-a', payload: {} },
+  }).ok, false);
+});
+
+test('possible_conception does not create a conception state fact', () => {
+  const exposure = validExposureEvent({
+    pregnancy_relevance: {
+      ...validExposureEvent().pregnancy_relevance,
+      possible_conception: true,
+    },
+  });
+  assert.equal(exposure.state_fact, undefined);
+  assert.equal(validateEvent(exposure).ok, true);
+});
+
+test('duplicate event IDs dedupe identical facts and reject conflicting facts', () => {
+  const first = validExposureEvent({ event_id: 'same-event' });
+  const same = structuredClone(first);
+  const different = { ...structuredClone(first), location: 'different' };
+  assert.equal(validateEventCollection([first, same]).ok, true);
+  assert.equal(validateEventCollection([first, different]).ok, false);
+  assert.equal(dedupeEvents([first, same]).length, 1);
+  assert.equal(dedupeEvents([first, different]).length, 2);
+});
+
+test('state fact effective Story Time references Event story_time', () => {
+  const event = validExposureEvent({
+    story_time: { normalized: '2026-08-20', day_index: 20685, precision: 'day' },
+  });
+  assert.deepEqual(getStateFactStoryTime(event), {
+    display: null,
+    normalized: '2026-08-20',
+    day_index: 20685,
+    calendar_id: null,
+    precision: 'day',
+    confidence: null,
+  });
 });
 
 test('sortEvents uses source floor and canonical day index without parsing display text', () => {
