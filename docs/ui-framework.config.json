@@ -431,7 +431,14 @@
       "root": "bioweave-world-card",
       "productionClass": "bioweave-world-model-species-card bioweave-world-card",
       "interaction": "button",
-      "selectionHook": "data-bioweave-action=world-model-select-species"
+      "selectionHook": "data-bioweave-action=world-model-select-species",
+      "collectionActions": {
+        "add": "data-bioweave-action=world-model-add-species",
+        "remove": "data-bioweave-action=world-model-delete-species",
+        "placement": "section header actions, margin-left auto",
+        "iconOnly": true,
+        "requiresTitleAndAriaLabel": true
+      }
     },
     "worldTypeCard": {
       "root": "bioweave-type-card",
@@ -474,8 +481,30 @@
       "speciesSource": "Runtime DTO worldModel.species",
       "typeSource": "Runtime DTO worldModel.species[].biological_types[]",
       "typeNameSource": "Runtime DTO biological_types[].name; never replace it with a fixed gender label",
+      "typeLabel": "性别 / 生物类型",
+      "typeScope": "selected species only; never flatten biological_types across species",
+      "typeCollectionActions": {
+        "add": "data-bioweave-action=world-model-add-biological-type",
+        "remove": "data-bioweave-action=world-model-delete-biological-type",
+        "placement": "biological_types section header actions, margin-left auto",
+        "iconOnly": true,
+        "requiresTitleAndAriaLabel": true
+      },
       "pregnancySource": "Runtime DTO biological_types[].capabilities.can_carry_pregnancy; preserve true, false, and null",
       "exampleDataPolicy": "reference labels are illustrative only; production must not hardcode Male, Female, or any other type name"
+    },
+    "worldModelSectionActions": {
+      "root": "bioweave-world-model-section-actions",
+      "actions": [
+        "data-bioweave-action=world-model-add-species",
+        "data-bioweave-action=world-model-delete-species",
+        "data-bioweave-action=world-model-add-biological-type",
+        "data-bioweave-action=world-model-delete-biological-type"
+      ],
+      "iconOnly": true,
+      "requiresTitleAndAriaLabel": true,
+      "layout": "each collection section owns one header action group; no per-item actions",
+      "selectionState": "runtime-only selectedSpecies and selectedBiologicalType with name snapshots for stale-target validation"
     },
     "worldModule": {
       "root": "bioweave-world-module",

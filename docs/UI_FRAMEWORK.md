@@ -264,7 +264,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 ## 世界模型格式
 
-世界模型采用“物种卡网格 → 当前物种的生物类型卡网格 → 当前类型模块”的层级。物种卡和类型卡使用按钮语义，不能用普通 div 模拟点击；类型卡不能继续嵌套在每张物种卡内部。类型超过三项时不截断、不改名：所有类型保持 Runtime 数组顺序，点击只改变选中样式，不重新排序或交换左右位置，在类型卡网格中自然换行。物种卡显示 Runtime 提供的物种名称，副文案显示 `N 个类型 · 类型 / 类型`；类型卡显示 Runtime 提供的 `species[].biological_types[].name`，副文案显示 `已知数/总能力数 项能力已知 · 妊娠状态`。妊娠状态只读取对应类型的 `capabilities.can_carry_pregnancy`，保留 true / false / null 三态；不再把原始 description 当作这两行摘要，也不根据名称、性别、代词或外貌补造能力。下面的名称只用于演示结构，不是生产枚举：
+世界模型采用“种族卡网格 → 当前选中种族的性别 / 生物类型卡网格 → 当前类型模块”的层级。种族卡和类型卡使用按钮语义，不能用普通 div 模拟点击；类型卡不能继续嵌套在每张种族卡内部。类型超过三项时不截断、不改名：所有类型保持 Runtime 数组顺序，点击只改变选中样式，不重新排序或交换左右位置，在类型卡网格中自然换行。种族和类型各自的 section header 右侧拥有自己的 `[+]` / `[trash]` 图标按钮，条目本身不放操作按钮。种族加号不依赖 selection；类型加号和删除依赖当前选中种族，类型删除还依赖当前选中类型。所有按钮使用 Font Awesome 图标，必须有 `title` 与 `aria-label`，不得把所有 species 的类型扁平化。下面的名称只用于演示结构，不是生产枚举：
 
 ~~~html
 <button
@@ -311,6 +311,8 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
   </div>
 </article>
 ~~~
+
+世界模型集合编辑使用两个独立的运行时 selection：`selectedSpecies` 与 `selectedBiologicalType`，均携带当前名称快照用于 stale-target 校验，不写入 Floor。切换种族会清空 biological type selection；删除种族会同时清空两者。保存成功后才更新 authoritative UI，保存失败保留仍有效的 selection 与原模型。
 
 能力模块编辑使用原生 checkbox，不再使用三态下拉框。`true` 初始为勾选，`false` 初始为未勾选，`null` 初始为 `indeterminate`；交互后由现有表单读取逻辑写回 true / false，未操作的 indeterminate 继续保存为 null：
 

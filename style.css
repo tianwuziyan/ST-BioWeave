@@ -436,8 +436,16 @@
 .bioweave-world-model-section-heading p,
 .bioweave-world-model-detail-header p { margin-top: 3px; color: var(--bioweave-text-muted); font-size: 12px; }
 .bioweave-world-model-species-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.bioweave-world-model-icon-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 28px; min-width: 28px; min-height: 28px; border: 1px solid var(--bioweave-border-soft); border-radius: 6px; background: var(--bioweave-control-surface); color: var(--bioweave-text-muted); cursor: pointer; padding: 0; }
+.bioweave-world-model-icon-button:hover,
+.bioweave-world-model-icon-button:focus-visible { border-color: var(--bioweave-accent); background: var(--bioweave-accent-soft); color: var(--bioweave-accent); }
+.bioweave-world-model-icon-button:disabled { cursor: not-allowed; opacity: .55; }
+.bioweave-world-model-section-actions { display: inline-flex; flex: 0 0 auto; gap: 5px; margin-left: auto; }
+.bioweave-world-model-collection-add { display: flex; min-width: 0; gap: 5px; align-items: center; margin: 6px 0; }
+.bioweave-world-model-collection-add .bioweave-input { flex: 1 1 auto; min-width: 0; }
 .bioweave-world-model-species-card { min-width: 0; overflow: hidden; border: 1px solid var(--bioweave-border-soft); border-radius: 8px; background: var(--bioweave-card); padding: 8px; }
 .bioweave-world-model-species-card.active { border-color: var(--bioweave-accent); background: var(--bioweave-card-selected); }
+.bioweave-world-model-species-card.parent-active { border-color: var(--bioweave-accent); background: var(--bioweave-accent-soft); }
 .bioweave-world-model-description { margin: 4px 4px 0; color: var(--bioweave-text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .bioweave-world-model-type-button { min-width: 0; min-height: 30px; overflow: hidden; border: 1px solid var(--bioweave-border-soft); border-radius: 6px; background: var(--bioweave-surface-soft); color: var(--bioweave-text-secondary); cursor: pointer; padding: 4px 6px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .bioweave-world-model-type-button:hover,
@@ -4479,7 +4487,10 @@
 }
 
 .bioweave-world-model-page .bioweave-world-model-section-heading {
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
   margin: 16px 0 9px;
 }
 

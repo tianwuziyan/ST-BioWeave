@@ -1,0 +1,8 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify current Floor/Swipe ownership, stale result protection, and no historical Floor mutation."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify no schema duplication, open biological_types semantics, and preservation of canonical normalization boundaries."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Verify async save failure recovery, state ownership, and stale Chat handling."}
+{"file":"docs/ui-framework.config.json","reason":"Verify UI selectors, component hierarchy, data source, and responsive contract remain synchronized."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Verify icon control accessibility, card hierarchy, and desktop/tablet/mobile layout requirements."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/prd.md","reason":"Check implementation against the settled product semantics and acceptance criteria."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/design.md","reason":"Check implementation against the approved persistence and AI replacement design."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/implement.md","reason":"Run the planned validation and review gates."}

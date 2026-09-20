@@ -1,0 +1,8 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor and active Swipe ownership, current-version checks, and authoritative World Model persistence boundary."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Canonical species to biological_types schema, evidence/normalization boundary, and no fixed gender enum contract."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"UI async state, stale Chat token protection, and store/runtime write boundaries."}
+{"file":"docs/ui-framework.config.json","reason":"World Model production UI structure, data hooks, responsive layout, and Runtime DTO source contract."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"World Model card hierarchy, component semantics, responsive rules, and accessibility conventions."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/prd.md","reason":"Approved product requirements and acceptance criteria for species-scoped manual collections."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/design.md","reason":"Technical data flow, state ownership, canonical shapes, and rollback constraints."}
+{"file":".trellis/tasks/09-20-world-analysis-manual-species-gender/implement.md","reason":"Ordered implementation and validation plan."}

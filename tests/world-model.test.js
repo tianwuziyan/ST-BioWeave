@@ -13,7 +13,7 @@ import {
   normalizeWorldAnalysisPrompt,
 } from '../storage/schema.js'
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
-import { applyWorldModelSection, resolveWorldModelSelection, WORLD_MODEL_SECTION_KEYS, worldPage } from '../ui/world.js'
+import { applyWorldModelCollectionEdit, applyWorldModelSection, createWorldModelBiologicalTypeSelection, createWorldModelSelection, createWorldModelSpeciesSelection, normalizeWorldModelBiologicalTypeSelection, normalizeWorldModelSelection, normalizeWorldModelSpeciesSelection, resolveWorldModelSelection, WORLD_MODEL_SECTION_KEYS, worldPage } from '../ui/world.js'
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 
@@ -3610,6 +3610,8 @@ test('World Model external memory uses the neutral history memory heading', () =
 test('World Model page uses Chinese labels and shows null as 未知', () => {
   const html = worldPage({
     worldModel: modelFixture,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
     worldModelMeta: {
       last_analyzed_at: '2026-09-07T00:00:00.000Z',
       last_saved_at: '2026-09-07T00:00:00.000Z',
@@ -3622,8 +3624,8 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(html, /最后分析：<\/strong>\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/)
   assert.match(html, /来源：<\/strong>角色卡 · 1 本世界书/)
   assert.doesNotMatch(html, /角色卡 1 项|条目|令牌|最后保存|AI 分析/)
-  assert.match(html, /物种与生物类型/)
-  assert.match(html, /先选物种，再查看对应的生物类型/)
+  assert.match(html, /种族/)
+  assert.match(html, /当前世界中已识别的种族/)
   assert.match(html, /bioweave-world-model-content-grid/)
   assert.match(html, /bioweave-world-model-species-grid/)
   assert.match(html, /bioweave-world-model-type-grid/)
@@ -3643,6 +3645,8 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(html, /当前资料不足以确定难度/)
   assert.match(html, /未知/)
   assert.equal(/\b(?:unknown|null|undefined|N\/A)\b/i.test(html), false)
+  assert.match(html, /data-bioweave-action="world-model-add-species"[^>]*title="新增种族"[^>]*aria-label="新增种族"/)
+  assert.match(html, /data-bioweave-action="world-model-add-biological-type"[^>]*title="新增性别 \/ 生物类型"[^>]*aria-label="新增性别 \/ 生物类型"/)
 
   const canonicalDualModel = normalizeWorldModel({
     ...modelFixture,
@@ -3674,12 +3678,105 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
       },
     ],
   })
-  const visibleTypesHtml = worldPage({ worldModel: visibleTypesModel })
+  const visibleTypesHtml = worldPage({ worldModel: visibleTypesModel, selectedSpeciesIndex: 0, selectedTypeIndex: 0 })
   assert.equal((visibleTypesHtml.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 6)
   assert.equal((visibleTypesHtml.match(/<section class="[^"]*bioweave-world-model-type-detail[^"]*">/g) ?? []).length, 1)
   for (const typeName of ['潮汐生物型', '甲型', '穗核型', 'Alpha', 'Beta', 'Omega']) {
     assert.match(visibleTypesHtml, new RegExp(`<b>${typeName}</b>`))
   }
+})
+
+test('World Model collection edits are species-scoped, canonical, unique, and immutable', () => {
+  const base = normalizeWorldModel(modelFixture)
+  const original = structuredClone(base)
+  const addSpecies = applyWorldModelCollectionEdit(base, {operation: 'add-species', name: '  镜生体  '})
+  assert.equal(addSpecies.changed, true)
+  assert.equal(addSpecies.model.species.at(-1).name, '镜生体')
+  assert.deepEqual(addSpecies.model.species.at(-1), {
+    name: '镜生体',
+    description: null,
+    biological_types: [],
+  })
+  assert.deepEqual(base, original)
+
+  const duplicateSpecies = applyWorldModelCollectionEdit(addSpecies.model, {operation: 'add-species', name: '镜生体'})
+  assert.equal(duplicateSpecies.changed, false)
+  assert.equal(duplicateSpecies.model.species.length, 2)
+
+  const addType = applyWorldModelCollectionEdit(addSpecies.model, {
+    operation: 'add-biological-type',
+    speciesIndex: 1,
+    name: '  甲型  ',
+  })
+  assert.equal(addType.changed, true)
+  assert.equal(addType.model.species[1].biological_types[0].name, '甲型')
+  assert.equal(addType.model.species[0].biological_types.length, 1)
+  assert.deepEqual(addType.model.medical_context, base.medical_context)
+  assert.deepEqual(addType.model.unknowns, base.unknowns)
+
+  const duplicateType = applyWorldModelCollectionEdit(addType.model, {
+    operation: 'add-biological-type',
+    speciesIndex: 1,
+    name: '甲型',
+  })
+  assert.equal(duplicateType.changed, false)
+  assert.equal(duplicateType.model.species[1].biological_types.length, 1)
+
+  const removedType = applyWorldModelCollectionEdit(addType.model, {
+    operation: 'remove-biological-type',
+    speciesIndex: 1,
+    typeIndex: 0,
+  })
+  assert.equal(removedType.changed, true)
+  assert.deepEqual(removedType.model.species[1].biological_types, [])
+  assert.equal(removedType.model.species[0].name, base.species[0].name)
+
+  const removedSpecies = applyWorldModelCollectionEdit(addType.model, {
+    operation: 'remove-species',
+    speciesIndex: 1,
+  })
+  assert.equal(removedSpecies.changed, true)
+  assert.deepEqual(removedSpecies.model.species, [base.species[0]])
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'add-species', name: '   '}).changed, false)
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'add-biological-type', speciesIndex: 0, name: '   '}).changed, false)
+})
+
+test('World Model collection controls stay icon-only, accessible, and species-scoped', () => {
+  const html = worldPage({worldModel: modelFixture, selectedSpeciesIndex: 0, selectedTypeIndex: 0})
+  assert.equal((html.match(/data-bioweave-action="world-model-add-species"/g) ?? []).length, 1)
+  assert.equal((html.match(/data-bioweave-action="world-model-delete-species"/g) ?? []).length, 1)
+  assert.equal((html.match(/data-bioweave-action="world-model-add-biological-type"/g) ?? []).length, 1)
+  assert.equal((html.match(/data-bioweave-action="world-model-delete-biological-type"/g) ?? []).length, 1)
+  assert.match(html, /bioweave-world-model-section-heading["]?[^>]*>.*data-bioweave-action="world-model-add-species"/s)
+  assert.match(html, /bioweave-world-model-type-picker-head["]?[^>]*>.*data-bioweave-action="world-model-add-biological-type"/s)
+  assert.doesNotMatch(html, /world-model-remove-species|world-model-remove-biological-type|world-model-open-add-menu|world-model-delete-selection|world-model-add-menu/)
+  assert.doesNotMatch(STYLE_SOURCE, /bioweave-world-model-toolbar|bioweave-world-model-add-menu|bioweave-world-model-collection-card|bioweave-world-model-delete-button/)
+
+  const speciesOnlyHtml = worldPage({worldModel: modelFixture, selectedSpeciesIndex: 0})
+  assert.doesNotMatch(speciesOnlyHtml, /data-bioweave-action="world-model-add-biological-type"[^>]*disabled/)
+  assert.match(speciesOnlyHtml, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
+
+  const noSelectionHtml = worldPage({worldModel: modelFixture})
+  assert.match(noSelectionHtml, /data-bioweave-action="world-model-add-biological-type"[^>]*disabled/)
+  assert.match(noSelectionHtml, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
+})
+
+test('World Model UI selection is typed and stale name snapshots fail closed', () => {
+  const speciesSelection = createWorldModelSelection(modelFixture, 0)
+  const typeSelection = createWorldModelSelection(modelFixture, 0, 0)
+  assert.deepEqual(speciesSelection, {kind: 'species', speciesIndex: 0, typeIndex: null, speciesName: '潮汐生物'})
+  assert.deepEqual(typeSelection, {kind: 'biological_type', speciesIndex: 0, typeIndex: 0, speciesName: '潮汐生物', typeName: '潮汐生物型'})
+  assert.deepEqual(normalizeWorldModelSelection(modelFixture, speciesSelection), speciesSelection)
+  assert.deepEqual(normalizeWorldModelSelection(modelFixture, typeSelection), typeSelection)
+  assert.equal(normalizeWorldModelSelection({...modelFixture, species: [{...modelFixture.species[0], name: '已改名'}]}, typeSelection), null)
+  assert.equal(normalizeWorldModelSelection({...modelFixture, species: []}, typeSelection), null)
+  const selectedSpecies = createWorldModelSpeciesSelection(modelFixture, 0)
+  const selectedType = createWorldModelBiologicalTypeSelection(modelFixture, 0, 0)
+  assert.deepEqual(selectedSpecies, {speciesIndex: 0, speciesName: '潮汐生物'})
+  assert.deepEqual(selectedType, {speciesIndex: 0, typeIndex: 0, speciesName: '潮汐生物', typeName: '潮汐生物型'})
+  assert.deepEqual(normalizeWorldModelSpeciesSelection(modelFixture, selectedSpecies), selectedSpecies)
+  assert.deepEqual(normalizeWorldModelBiologicalTypeSelection(modelFixture, selectedType), selectedType)
+  assert.equal(normalizeWorldModelBiologicalTypeSelection({...modelFixture, species: [{...modelFixture.species[0], name: '已改名'}]}, selectedType), null)
 })
 
 test('World UI Fixture A keeps one species, two types, card summaries, fixed fields, and exception labels', () => {
@@ -3841,7 +3938,7 @@ test('World UI card CSS keeps the reference density across devices', () => {
   )
   assert.match(
     STYLE_SOURCE,
-    /\.bioweave-world-model-page \.bioweave-world-model-species-selector > \.bioweave-world-model-section-heading\s*\{[^}]*margin:\s*0 0 5px\s*!important/s,
+    /\.bioweave-world-model-page \.bioweave-world-model-section-heading\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*flex-start;[^}]*justify-content:\s*space-between;[^}]*margin:\s*16px 0 9px/s,
   )
   assert.match(
     STYLE_SOURCE,
@@ -3990,6 +4087,7 @@ test('World Model page preserves a species with no inferred biological type', ()
       exceptions: [],
       unknowns: [],
     },
+    selectedSpeciesIndex: 0,
   })
   assert.match(html, /人类/)
   assert.match(html, /尚未识别出生物类型/)
@@ -4016,6 +4114,8 @@ test('World Model UI renders Human and an original species through the same rend
       exceptions: [],
       unknowns: [],
     },
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
   })
 
   assert.match(html, /人类/)
@@ -4066,6 +4166,8 @@ test('World Model page keeps invalid saved-model feedback as a persistent state 
 test('World UI uses seven independent section editors and keeps the global editor removed', () => {
   const viewHtml = worldPage({
     worldModel: modelFixture,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
   })
   assert.deepEqual(WORLD_MODEL_SECTION_KEYS, [
     'capabilities',

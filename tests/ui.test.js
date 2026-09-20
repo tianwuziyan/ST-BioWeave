@@ -13,6 +13,7 @@ import {
   restoreScrollPositions,
 } from '../ui/app.js'
 import { createApiProfileStore } from '../storage/store.js'
+import { normalizeWorldModel } from '../ai/analyzer.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
@@ -2591,6 +2592,138 @@ test('World Model section save routes success and failure feedback through Toast
     }
     app.destroyBioWeave()
   }
+})
+test('World Model collection edits persist on the current resolver and preserve metadata', async () => {
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
+  documentRef.defaultView.toastr = {
+    success(message) { toastCalls.push(['success', message]) },
+    error(message) { toastCalls.push(['error', message]) },
+    warning(message) { toastCalls.push(['warning', message]) },
+  }
+  const baseModel = {
+    schema_version: 1,
+    species: [{
+      name: '种族 A',
+      description: 'A 描述',
+      biological_types: [{name: '类型 A'}],
+    }],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [{statement: '保留'}],
+    unknowns: ['保留未知'],
+  }
+  const meta = {last_saved_by: 'ai', source_summary: {character_fields: 1}}
+  let currentModel = normalizeWorldModel(baseModel)
+  let currentMeta = structuredClone(meta)
+  let failSave = false
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-collections',
+      token: () => ({chatId: 'chat-world-collections', epoch: 0}),
+      assert: () => {},
+    },
+    resolveWorldModelAtOrBefore: async () => ({model: currentModel, meta: currentMeta}),
+    saveWorldModel: async ({model, meta: nextMeta}) => {
+      if (failSave) {
+        const error = new Error('WORLD_MODEL_SAVE_FAILED')
+        error.code = 'WORLD_MODEL_SAVE_FAILED'
+        throw error
+      }
+      currentModel = structuredClone(model)
+      currentMeta = structuredClone(nextMeta)
+    },
+    refreshTrackingRegistry: async () => {},
+    st: {
+      getContext: () => ({chatId: 'chat-world-collections', characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('world')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const click = [...root.listeners.get('click')][0]
+  const actionTarget = (action, dataset = {}, form = null) => ({
+    __root: root,
+    dataset: {bioweaveAction: action, ...dataset},
+    closest(selector) {
+      if (selector.includes('[data-bioweave-world-model-collection-form]')) return form
+      return selector.includes('[data-bioweave-action]') ? this : null
+    },
+  })
+  const nestedActionTarget = (action, dataset = {}, form = null) => {
+    const button = actionTarget(action, dataset, form)
+    return {
+      __root: root,
+      dataset: {},
+      closest(selector) {
+        return button.closest(selector)
+      },
+    }
+  }
+  const clickCollection = async (action, dataset, value) => {
+    const form = {
+      dataset: {
+        bioweaveWorldModelCollectionKind: dataset.bioweaveWorldModelCollectionKind,
+        bioweaveWorldSpeciesIndex: dataset.bioweaveWorldSpeciesIndex ?? '',
+      },
+      querySelector(selector) {
+        return selector.includes('data-bioweave-world-model-collection-input') ? {value} : null
+      },
+    }
+    await click({target: actionTarget(action, dataset, form), preventDefault() {}})
+  }
+  await click({target: actionTarget('world-model-add-species'), preventDefault() {}})
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-world-model-collection-form/)
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '  种族 B  ')
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A', '种族 B'])
+  assert.deepEqual(currentMeta, meta)
+  assert.deepEqual(currentModel.medical_context, normalizeWorldModel(baseModel).medical_context)
+  assert.deepEqual(currentModel.exceptions, normalizeWorldModel(baseModel).exceptions)
+
+  assert.doesNotMatch(
+    root.querySelector('.bioweave-main').innerHTML,
+    /data-bioweave-action="world-model-add-biological-type"[^>]*disabled/,
+  )
+  await click({target: nestedActionTarget('world-model-add-biological-type'), preventDefault() {}})
+  await clickCollection('world-model-save-biological-type', {
+    bioweaveWorldModelCollectionKind: 'biological-type',
+    bioweaveWorldSpeciesIndex: '1',
+  }, '类型 B')
+  assert.deepEqual(currentModel.species[1].biological_types.map(item => item.name), ['类型 B'])
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '0'}), preventDefault() {}})
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /类型 A/)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '1'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-select-type', {bioweaveWorldSpeciesIndex: '1', bioweaveWorldTypeIndex: '0'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-delete-biological-type'), preventDefault() {}})
+  assert.deepEqual(currentModel.species[1].biological_types, [])
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '1'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-delete-species'), preventDefault() {}})
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
+
+  failSave = true
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '失败后不应显示')
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /失败后不应显示/)
+  assert.equal(toastCalls.at(-1)[0], 'error')
+
+  app.destroyBioWeave()
+  const reloaded = createApp(runtime, {documentRef: new AppFakeDocument(), storageRef: {}, profileStore})
+  const reloadedRoot = reloaded.openBioWeave()
+  reloaded.go('world')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.match(reloadedRoot.querySelector('.bioweave-main').innerHTML, /种族 A/)
+  assert.doesNotMatch(reloadedRoot.querySelector('.bioweave-main').innerHTML, /种族 B/)
+  reloaded.destroyBioWeave()
 })
 test('worldbook source checkbox updates immediately and saves with a success Toast without a page notice', async () => {
   const documentRef = new AppFakeDocument()
