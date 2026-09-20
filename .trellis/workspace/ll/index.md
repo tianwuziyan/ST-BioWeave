@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
+- **Total Sessions**: 33
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~725 | Active |
+| `journal-1.md` | ~747 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-09-20 | 删除世界分析页面的分析输入入口并同步 GitHub | `473843c` | `fix/world-model-prompt-baseline` |
 | 32 | 2026-09-20 | 修复角色卡开场白 Prompt 边界并同步 GitHub | `2b739ce` | `fix/world-model-prompt-baseline` |
 | 31 | 2026-09-19 | 隐藏空 Registry Prompt 的正式 ID 诱导 | `27ac7b33a756d70b63c75f7189490a33601fc9e` | `fix/world-model-prompt-baseline` |
 | 30 | 2026-09-19 | 修复空 Character Registry 的 Event Prompt Bootstrap | `e4276436692e6a04a23956898ec01a0fa00f0d07` | `fix/world-model-prompt-baseline` |

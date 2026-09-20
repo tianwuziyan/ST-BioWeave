@@ -723,3 +723,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: 删除世界分析页面的分析输入入口并同步 GitHub
+<!-- trellis-session: v=2 fp=c623a93fd15fda3d -->
+
+**Date**: 2026-09-20
+**Task**: 删除世界分析页面的分析输入入口并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+移除 World Analysis 页面查看本次分析输入入口及其专属 action 分支，保留设置页高级调试与 Analysis Preview 基础设施；相关测试与 npm run check 全部通过，已推送当前分支。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `473843c` | 删除世界分析页面的分析输入入口 |
+
+### Status
+
+[OK] **Completed**
