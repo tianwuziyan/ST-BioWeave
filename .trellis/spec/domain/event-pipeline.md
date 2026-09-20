@@ -101,6 +101,11 @@ previous Floor snapshot; a Chat-level registry is not a historical input.
 The input boundary is text-oriented and removes secret-like keys before prompt
 construction. The analyzer receives a fixed JSON-only output contract.
 
+Event Analysis character references contain only the selected Character Card
+background. `character.greetings` may remain present in the shared
+`AnalysisInput` for World Model composition, but Event Analysis must not format
+or send greeting content or the `【开场白】` section.
+
 ### AI DTO / Domain DTO boundary
 
 `AIEventAnalysisDTO` has only `schema_version: 1` and `events[]` at the top

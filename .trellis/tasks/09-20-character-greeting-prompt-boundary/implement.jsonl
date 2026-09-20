@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 Analysis 输入与 Floor/derived state 的所有权边界，避免把 Prompt 修复扩大为数据层修改"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event Analysis 的输入与角色/事件职责边界"}
+{"file":".trellis/spec/domain/world-model.md","reason":"确认 World Model references 与世界模型分析边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"新增 formatter 前检查现有 formatter 复用与最小职责边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 AnalysisInput 到 World/Event Prompt 的跨层数据流"}

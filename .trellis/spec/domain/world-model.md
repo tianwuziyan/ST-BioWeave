@@ -66,6 +66,19 @@ Event, analysis, and registry semantics.
 
 ## 3. Contracts
 
+### Prompt reference source boundary
+
+- `formatCharacterReference()` only formats the selected Character Card
+  background.
+- `character.greetings` remains collected in `AnalysisInput`, but its only
+  Prompt consumer is `formatCharacterGreetingReference()` in World Model
+  references.
+- When greetings exist, the World Model references SYSTEM message orders its
+  sections as Character background, Worldbook, external memory, then
+  `【开场白】` as the final section. Empty greetings produce no section or
+  message.
+- The greeting formatter is not used by Event Analysis.
+
 - `biological_type` is a stable physiological or reproductive classification
   inside one `species`; it is not a general taxonomy, identity, occupation,
   route, level, phase, temporary state, or individual label.

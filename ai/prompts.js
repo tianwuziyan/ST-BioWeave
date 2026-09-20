@@ -222,22 +222,23 @@ function formatCharacterReference(input, names) {
       : {}
   const lines = []
   addBlock(lines, '角色背景', character.description, names)
-  for (const greeting of Array.isArray(character.greetings)
-    ? character.greetings
-    : []) {
-    addBlock(
-      lines,
-      greeting?.is_current ? '开场信息（当前）' : greeting?.label || '开场信息',
-      greeting?.content,
-      names,
-    )
-  }
   if (!lines.length) return ''
   return [
     `【角色卡：${names.characterName} 的背景资料】`,
     '以下内容来自当前角色卡中用户允许 BioWeave 读取的字段，仅作为本次分析的背景资料与证据参考。角色卡未描述的内容不能因此自动视为已知事实。',
     lines.join('\n\n'),
   ].join('\n')
+}
+
+function formatCharacterGreetingReference(input, names) {
+  const greetings = Array.isArray(input?.character?.greetings)
+    ? input.character.greetings
+    : []
+  const contents = greetings
+    .map((greeting) => expandPlaceholders(greeting?.content, names))
+    .filter(Boolean)
+  if (!contents.length) return ''
+  return ['【开场白】', contents.join('\n\n')].join('\n')
 }
 
 function formatWorldbookReference(worldbooks, names) {
@@ -602,6 +603,7 @@ function formatWorldModelReferences(input, names) {
     formatCharacterReference(input, names),
     formatWorldbookReference(input.worldbooks, names),
     formatExternalMemoryReference(input.external_memory, names),
+    formatCharacterGreetingReference(input, names),
   ])
 }
 

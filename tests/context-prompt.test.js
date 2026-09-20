@@ -488,11 +488,33 @@ test('selected context, readable external memory, and token estimate are shared 
   assert.match(eventPrompt, /【本次目标楼层】/);
   assert.match(eventPrompt, /CHARACTER_SELECTED|WORLDBOOK_SELECTED|EXTERNAL_ENABLED/);
   assert.doesNotMatch(eventPrompt, /CHARACTER_NOT_SELECTED|WORLDBOOK_NOT_SELECTED|EXTERNAL_DISABLED|EXTERNAL_ERROR_RESPONSE/);
+  assert.doesNotMatch(eventPrompt, /CHARACTER_OPENING_SELECTED|【开场白】/);
   assert.doesNotMatch(eventPrompt, /(?:^|\n)(?:persona|description|persona_description|user_persona)\s*:/iu);
   assert.doesNotMatch(eventPrompt, /"(?:character|persona|worldbooks|external_memory)"\s*:/u);
 
   assert.match(worldPrompt, /CHARACTER_SELECTED|WORLDBOOK_SELECTED|EXTERNAL_ENABLED/);
+  assert.match(worldPrompt, /【开场白】\nCHARACTER_OPENING_SELECTED/);
+  assert.doesNotMatch(worldPrompt, /CHARACTER_NOT_SELECTED/);
+  const worldReferenceMessage = worldMessages.find(
+    message => message.role === 'system' && message.content.includes('CHARACTER_OPENING_SELECTED'),
+  );
+  assert.ok(worldReferenceMessage);
+  assert.equal(worldReferenceMessage.role, 'system');
+  assert.match(worldReferenceMessage.content, /【开场白】\nCHARACTER_OPENING_SELECTED/);
+  assert.equal(worldReferenceMessage.content.trimEnd().endsWith('CHARACTER_OPENING_SELECTED'), true);
   assert.doesNotMatch(worldPrompt, /PERSONA_SELECTED|【persona_display 的人物设定】/);
+});
+
+test('empty character greetings do not create a greeting section or message', () => {
+  const messages = buildWorldModelMessages({
+    character: {description: 'CHARACTER_BACKGROUND', greetings: []},
+    worldbooks: [],
+    external_memory: [],
+  });
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.doesNotMatch(prompt, /【开场白】/);
+  assert.equal(messages.some(message => message.content === ''), false);
+  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'user']);
 });
 
 test('Event formats normalized character profiles as a bounded reference block', () => {
