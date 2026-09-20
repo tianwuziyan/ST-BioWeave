@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Authoritative Floor/Swipe ownership, provenance, lifecycle and derived-state rules for all analysis facts."}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model ownership, capability evidence and Character/Event dependency boundary."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event parser, validation, Runtime persistence and cross-layer event contract."}
+{"file":"docs/DATA-MODEL.md","reason":"Current BiologicalEvent, exposure, participant, capability and Tracking data contract."}

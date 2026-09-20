@@ -3,6 +3,7 @@ import {
   createStore,
   hasSwipeSlot,
   hasSwipeStructure,
+  isCharacterMessage,
 } from "../storage/store.js";
 import { createAnalyzer } from "../ai/analyzer.js";
 import { createStoryTime } from "../story/time.js";
@@ -561,6 +562,8 @@ export function createSillyTavernAdapter() {
       }
       const message = context?.chat?.[messageIndex];
       if (!message) throw new Error("MESSAGE_NOT_FOUND");
+      if (!isCharacterMessage(message))
+        throw new Error("BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN");
       const targetSwipeId =
         Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
       if (hasSwipeStructure(message)) {
@@ -613,6 +616,17 @@ export function createRuntime({
         console.error("[BioWeave] runtime subscriber failed", error);
       }
     }
+  }
+
+  function notifyLifecycleSettled(key, eventType, payload) {
+    notify({
+      type: "BIOWEAVE_LIFECYCLE_SETTLED",
+      eventType,
+      mutationType: key,
+      payload,
+      chatId: chat.current(),
+      epoch: chat.getEpoch(),
+    });
   }
 
   function resolveEventAnalysisProfile() {
@@ -1090,10 +1104,12 @@ export function createRuntime({
             console.error("[BioWeave] event analysis lifecycle failed", error);
         }
         await refreshActiveOwner(chat.current());
+        notifyLifecycleSettled(key, eventType, payload);
       },
       async () => {
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
         await refreshActiveOwner(chat.current());
+        notifyLifecycleSettled(key, eventType, payload);
       },
     );
     lifecycleTail = work.catch(() => null);
@@ -1232,6 +1248,7 @@ export function createRuntime({
     init,
     subscribe,
     analyzeCurrentFloor: eventAnalysis.analyzeCurrentFloor,
+    resolveCurrentBioWeaveFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     analyzeFloor: eventAnalysis.analyzeFloor,
     refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
     requestAbortCurrentFloorAnalysis:

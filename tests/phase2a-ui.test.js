@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
-import {CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
+import {PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
 
 const event = {
   event_id: 'evt-1',
@@ -34,7 +34,7 @@ const event = {
   },
   source_evidence: [
     {kind: 'narrative', text: '明确的当前楼层证据'},
-    {kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: '实际暴露证据'},
+    {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: '实际暴露证据'},
   ],
   source: {
     chat_id: 'chat-1',
@@ -312,7 +312,7 @@ test('events ordinary cards keep user-readable facts and preserve operation bind
   assert.match(html, /data-bioweave-event-id="evt-1"/);
   assert.match(html, /data-bioweave-action="edit-event"[^>]*data-bioweave-event-id="evt-1"/);
   assert.match(html, /data-bioweave-action="delete-event"[^>]*data-bioweave-event-id="evt-1"/);
-  assert.doesNotMatch(html, /参与者|事件角色|结构化标识|来源与调试信息|narrative|conception_relevant_exposure/);
+  assert.doesNotMatch(html, /参与者|事件角色|结构化标识|来源与调试信息|narrative|pregnancy_relevant_exposure/);
   assert.doesNotMatch(html, /chat-1|message-1|hash-1|content_hash|message_version|normalized|day_index|calendar_id/);
 });
 

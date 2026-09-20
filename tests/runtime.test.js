@@ -4,7 +4,7 @@ import { createChatBoundary, STALE_CHAT } from "../runtime/chat.js";
 import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
 import { floorVersion } from "../runtime/floor.js";
 import { createStore } from "../storage/store.js";
-import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 
 function createAdapter() {
   let chatId = "chat-a";
@@ -71,6 +71,22 @@ test("chat boundary rejects a token after chat switch", () => {
   chatId = "chat-b";
   assert.throws(() => boundary.assert(token), new RegExp(STALE_CHAT));
   assert.equal(boundary.current(), "chat-b");
+});
+
+test("Store rejects every BioWeave write targeting a User message", async () => {
+  const message = { message_id: "user-only", role: "user", content: "用户正文" };
+  const adapter = {
+    getChatId: () => "chat-user-floor",
+    getMessage: () => message,
+    async saveFloorBioWeave() {
+      throw new Error("ADAPTER_WRITE_MUST_NOT_BE_REACHED");
+    },
+  };
+  const store = createStore(adapter, createChatBoundary(adapter));
+  await assert.rejects(
+    store.saveFloor(0, 0, { marker: "forbidden" }),
+    /BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN/,
+  );
 });
 
 test("Floor ownership isolates each Swipe slot without cross-Swipe fallback", async () => {
@@ -298,7 +314,7 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
         },
         source_evidence: [
           {
-            kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+            kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
             text: "actual exposure",
           },
         ],

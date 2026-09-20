@@ -3,6 +3,7 @@ const CAPABILITY_LABELS = Object.freeze({
   can_produce_ova: '可产生卵子',
   can_be_fertilized: '可被受精',
   can_fertilize: '可使其受精',
+  can_cause_pregnancy: '可导致妊娠',
   can_carry_pregnancy: '可承担妊娠',
 });
 
@@ -111,6 +112,7 @@ export function createWorldModelBiologicalType(name) {
       can_produce_ova: null,
       can_be_fertilized: null,
       can_fertilize: null,
+      can_cause_pregnancy: null,
       can_carry_pregnancy: null,
     },
     reproduction_rules: {

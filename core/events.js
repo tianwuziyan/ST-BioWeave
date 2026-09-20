@@ -39,12 +39,13 @@ export const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
   'can_produce_ova',
   'can_be_fertilized',
+  'can_fertilize',
   'can_carry_pregnancy',
   'can_cause_pregnancy',
 ]);
 
-export const CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND =
-  'conception_relevant_exposure';
+export const PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND =
+  'pregnancy_relevant_exposure';
 
 export const STORY_TIME_PRECISIONS = Object.freeze([
   'year',
@@ -70,6 +71,13 @@ export const BIOLOGICAL_EVENT_SCHEMA = Object.freeze({
     possible_conception: false,
     gestational_subject_ids: [],
     counterpart_ids: [],
+    reproductive_mechanism: {
+      kind: null,
+      label: null,
+      pathway: null,
+      world_model_rule_refs: [],
+      evidence: [],
+    },
     confidence: null,
   },
   source_evidence: [],
@@ -199,10 +207,9 @@ function normalizeCapabilities(rawParticipant) {
     can_produce_sperm: readCapability(merged, 'can_produce_sperm'),
     can_produce_ova: readCapability(merged, 'can_produce_ova'),
     can_be_fertilized: readCapability(merged, 'can_be_fertilized'),
+    can_fertilize: readCapability(merged, 'can_fertilize'),
     can_carry_pregnancy: readCapability(merged, 'can_carry_pregnancy'),
-    can_cause_pregnancy: readCapability(merged, 'can_cause_pregnancy', [
-      'can_fertilize',
-    ]),
+    can_cause_pregnancy: readCapability(merged, 'can_cause_pregnancy'),
   };
 }
 
@@ -254,12 +261,20 @@ function normalizeParticipants(value) {
 
 function normalizePregnancyRelevance(raw = {}) {
   const source = recordValue(raw);
+  const mechanism = recordValue(source.reproductive_mechanism);
   return {
     ...source,
     relevant: source.relevant === true,
     possible_conception: source.possible_conception === true,
     gestational_subject_ids: normalizeIdArray(source.gestational_subject_ids),
     counterpart_ids: normalizeIdArray(source.counterpart_ids),
+    reproductive_mechanism: {
+      kind: nullableText(mechanism.kind),
+      label: nullableText(mechanism.label),
+      pathway: nullableText(mechanism.pathway),
+      world_model_rule_refs: normalizeIdArray(mechanism.world_model_rule_refs),
+      evidence: normalizeEvidence(mechanism.evidence),
+    },
     confidence: confidenceValue(source.confidence),
   };
 }
@@ -331,7 +346,7 @@ function validateIdArrayShape(value, path, errors) {
   });
 }
 
-export function hasConceptionRelevantExposureEvidence(value) {
+export function hasPregnancyRelevantExposureEvidence(value) {
   return (
     Array.isArray(value) &&
     value.some(
@@ -339,8 +354,21 @@ export function hasConceptionRelevantExposureEvidence(value) {
         item &&
         typeof item === 'object' &&
         !Array.isArray(item) &&
-        textValue(item.kind) === CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        textValue(item.kind) === PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
     )
+  );
+}
+
+export function isPregnancyRelevantExposure(rawEvent) {
+  const normalized = normalizeEvent(rawEvent);
+  const relevance = normalized.pregnancy_relevance;
+  return (
+    validateEvent(normalized).ok &&
+    !['negated', 'fictional'].includes(normalized.status) &&
+    relevance.relevant === true &&
+    relevance.gestational_subject_ids.length > 0 &&
+    relevance.counterpart_ids.length > 0 &&
+    hasPregnancyRelevantExposureEvidence(normalized.source_evidence)
   );
 }
 
@@ -360,9 +388,7 @@ function validateExposureConsistency(normalized, participantIds, errors) {
   );
   validateReferences(counterpartIds, 'pregnancy_relevance.counterpart_ids');
 
-  if (relevance.possible_conception === true) {
-    if (relevance.relevant !== true)
-      addError(errors, 'pregnancy_relevance.relevant');
+  if (relevance.relevant === true) {
     if (!gestationalSubjectIds.length)
       addError(errors, 'pregnancy_relevance.gestational_subject_ids');
     if (!counterpartIds.length)
@@ -400,15 +426,13 @@ function validateExposureConsistency(normalized, participantIds, errors) {
         }
       });
     }
-    if (!hasConceptionRelevantExposureEvidence(normalized.source_evidence)) {
+    if (!hasPregnancyRelevantExposureEvidence(normalized.source_evidence)) {
       addError(
         errors,
-        `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
+        `source_evidence.${PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
       );
     }
   } else if (normalized.type === 'sexual_activity') {
-    if (relevance.relevant !== false)
-      addError(errors, 'pregnancy_relevance.relevant');
     if (gestationalSubjectIds.length)
       addError(errors, 'pregnancy_relevance.gestational_subject_ids');
     if (counterpartIds.length)
@@ -418,11 +442,11 @@ function validateExposureConsistency(normalized, participantIds, errors) {
 
   if (
     normalized.physical_effect.gestational_substance_intake === true &&
-    !hasConceptionRelevantExposureEvidence(normalized.source_evidence)
+    !hasPregnancyRelevantExposureEvidence(normalized.source_evidence)
   ) {
     addError(
       errors,
-      `source_evidence.${CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
+      `source_evidence.${PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND}`,
     );
   }
 }
@@ -592,6 +616,40 @@ export function validateEvent(
     addError(errors, 'pregnancy_relevance.gestational_subject_ids');
   if (!Array.isArray(relevance.counterpart_ids))
     addError(errors, 'pregnancy_relevance.counterpart_ids');
+  const rawMechanism = recordValue(rawRelevance.reproductive_mechanism);
+  if (
+    hasOwn(rawRelevance, 'reproductive_mechanism') &&
+    (!rawRelevance.reproductive_mechanism ||
+      typeof rawRelevance.reproductive_mechanism !== 'object' ||
+      Array.isArray(rawRelevance.reproductive_mechanism))
+  ) {
+    addError(errors, 'pregnancy_relevance.reproductive_mechanism');
+  }
+  for (const key of ['kind', 'label', 'pathway']) {
+    if (
+      hasOwn(rawMechanism, key) &&
+      rawMechanism[key] !== null &&
+      !textValue(rawMechanism[key])
+    ) {
+      addError(errors, `pregnancy_relevance.reproductive_mechanism.${key}`);
+    }
+  }
+  for (const key of ['world_model_rule_refs', 'evidence']) {
+    if (hasOwn(rawMechanism, key) && !Array.isArray(rawMechanism[key]))
+      addError(errors, `pregnancy_relevance.reproductive_mechanism.${key}`);
+  }
+  if (Array.isArray(rawMechanism.world_model_rule_refs))
+    validateIdArrayShape(
+      rawMechanism.world_model_rule_refs,
+      'pregnancy_relevance.reproductive_mechanism.world_model_rule_refs',
+      errors,
+    );
+  if (hasOwn(rawMechanism, 'evidence'))
+    validateEvidence(
+      rawMechanism.evidence,
+      'pregnancy_relevance.reproductive_mechanism.evidence',
+      errors,
+    );
   if (
     relevance.confidence !== null &&
     (!Number.isFinite(relevance.confidence) ||
@@ -698,23 +756,19 @@ export function validateEventCollection(events = [], options = {}) {
       normalized = null;
     }
     const relevance = normalized?.pregnancy_relevance;
-    if (
-      normalized?.type !== 'sexual_activity' ||
-      relevance?.relevant !== true ||
-      relevance?.possible_conception !== true ||
-      relevance.gestational_subject_ids.length !== 1
-    ) {
+    if (relevance?.relevant !== true) {
       continue;
     }
-    const subjectId = relevance.gestational_subject_ids[0];
-    if (subjectEvents.has(subjectId)) {
-      addError(
-        errors,
-        `events[${index}].pregnancy_relevance.gestational_subject_ids[0]`,
-      );
-      continue;
+    for (const [subjectIndex, subjectId] of relevance.gestational_subject_ids.entries()) {
+      if (subjectEvents.has(subjectId)) {
+        addError(
+          errors,
+          `events[${index}].pregnancy_relevance.gestational_subject_ids[${subjectIndex}]`,
+        );
+        continue;
+      }
+      subjectEvents.set(subjectId, index);
     }
-    subjectEvents.set(subjectId, index);
   }
   return { ok: errors.length === 0, errors };
 }

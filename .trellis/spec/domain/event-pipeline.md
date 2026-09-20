@@ -121,7 +121,7 @@ members of the actual reproductive exposure chain; other Event types retain
 only objects directly relevant to that biological fact.
 
 For pregnancy-related `sexual_activity`, Event granularity is per gestational
-subject: first identify all subjects with actual conception-relevant exposure,
+subject: first identify all subjects with actual pregnancy-relevant exposure,
 then emit one Event per subject. Each such Event has exactly one
 `gestational_subject_ids` ID, at least one subject-local `counterpart_ids` source,
 and a participant ID set exactly equal to subject plus counterparts. Same-subject
@@ -356,7 +356,7 @@ Every persisted, accepted Domain Event has:
 - for `possible_conception: true`, `relevant: true`, non-empty
   participant-backed subject/source arrays, and a
   `source_evidence` item whose `kind` is
-  `conception_relevant_exposure`;
+  `pregnancy_relevant_exposure`;
 - participant capability keys that are each `true`, `false`, or `null`;
 - `gestational_subject_ids[]` and `counterpart_ids[]`, never a scalar or a
   comma-delimited display string.
@@ -386,7 +386,7 @@ pregnancy-relevant exposure is determined by the current World Model,
 species/type reproductive rules, and narrative evidence; no one real-world
 species, gender, anatomy, behavior position, contact mode, or reproductive
 mechanism is a universal requirement. A sexual activity with no
-conception-relevant exposure, if retained at all, has no participants, uses
+pregnancy-relevant exposure, if retained at all, has no participants, uses
 `relevant: false`, `possible_conception: false`, and empty subject/source
 arrays. `possible_conception` expresses potential relevance only, not actual
 conception or pregnancy. Exposure/source evidence controls the Event.
@@ -513,14 +513,14 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 | Pregnancy Event participants are not exactly subject plus actual counterparts, or counterpart overlaps subject | Reject with subject-local structure diagnostics |
 | Pregnancy `sexual_activity` participant lacks `biological_context`, lacks `species`/`biological_type`, or uses a non-string/non-null value | Reject with `invalid_biological_context` and a safe participant context path |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |
-| `possible_conception: true` without direct exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
+| `relevant: true` without direct pregnancy-relevant exposure marker, non-empty subject/source IDs, or participant membership | Reject before Floor save; no partial Event or Registry update |
 | `sexual_activity` has no actual exposure but keeps participants, relevance, or subject/source IDs | Reject; represent it as unrelated with no participants and both ID arrays empty |
 | Invalid `physical_effect.gestational_substance_intake` shape | Reject with a safe field path; only boolean/null is accepted |
 | Incomplete or mismatched Floor Version source | Bind to the authoritative version or reject before storage; stale Events are inactive |
 | `can_carry_pregnancy: true` | Create an active Tracking Subject |
 | `can_carry_pregnancy: false` | Keep the recipient out of active subjects and pending candidates |
 | `can_carry_pregnancy: null` or unresolved identity/capability | Persist a `pending` tracking candidate; do not create a Subject |
-| NSFW without `relevant === true` and `possible_conception === true` | Create zero Tracking Subjects |
+| Any Event without `relevant === true` and a valid pregnancy-relevant exposure fact | Create zero Tracking Subjects |
 | Floor deletion or inactive Swipe | Event is absent from active reads; rebuild removes dangling references |
 | Analysis failure after prior success | Keep the prior successful Events and record the failed attempt |
 | Analysis is cancelled or the Chat becomes stale | Release execution resources; preserve the previous success and ignore late results |
@@ -592,7 +592,7 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
   diagnostic paths, and ignoring legacy identity/source fields.
 - Domain assertions for actual-exposure consistency, one-subject pregnancy
   cardinality, 0/1/N source IDs, participant-backed references, no-exposure sexual Events, collection duplicate-subject rejection, and the
-  `conception_relevant_exposure` evidence marker.
+  `pregnancy_relevant_exposure` evidence marker.
 - Runtime assertions that every successful AI response receives a generated
   canonical Event ID and authoritative source before Floor save; model-provided
   identity/provenance never survives as persisted identity.

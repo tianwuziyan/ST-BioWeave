@@ -4,8 +4,9 @@ import {
   eligibleGestationalSubjects,
   explainTrackingDecision,
   rebuildTrackingRegistry,
+  resolveCarryingCapability,
 } from "../core/tracking.js";
-import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 
 function event(overrides = {}) {
   return {
@@ -48,7 +49,7 @@ function event(overrides = {}) {
     source_evidence: [
       { kind: "current_floor", text: "event evidence" },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: "actual exposure evidence",
       },
     ],
@@ -132,18 +133,18 @@ function abstractExposureEvent({
     },
     source_evidence: [
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: `${eventId}-exposure`,
       },
     ],
   };
 }
 
-test("tracking requires sexual activity, both relevance flags, and explicit carrying capability", () => {
+test("tracking requires a pregnancy-relevant exposure and explicit carrying capability", () => {
   assert.deepEqual(eligibleGestationalSubjects(event()), ["char-a"]);
   assert.deepEqual(
     eligibleGestationalSubjects(event({ type: "physical_symptom" })),
-    [],
+    ["char-a"],
   );
   assert.deepEqual(
     eligibleGestationalSubjects(
@@ -165,7 +166,7 @@ test("tracking requires sexual activity, both relevance flags, and explicit carr
         },
       }),
     ),
-    [],
+    ["char-a"],
   );
   assert.deepEqual(
     eligibleGestationalSubjects(
@@ -189,6 +190,83 @@ test("tracking requires sexual activity, both relevance flags, and explicit carr
     eligibleGestationalSubjects(event({ status: "fictional" })),
     [],
   );
+});
+
+test("non-sexual mechanism exposure enters tracking without a conception flag", () => {
+  const nonSexualExposure = event({
+    type: "medical_event",
+    pregnancy_relevance: {
+      ...event().pregnancy_relevance,
+      possible_conception: false,
+      reproductive_mechanism: {
+        kind: "world_defined_implant_path",
+        label: "直接植入胚胎",
+        pathway: "implantation",
+        world_model_rule_refs: ["rule-implant"],
+        evidence: [{ kind: "world_model", text: "明确机制规则" }],
+      },
+    },
+  });
+  assert.deepEqual(
+    eligibleGestationalSubjects(nonSexualExposure, {
+      world_model: {
+        species: [{
+          name: "human",
+          biological_types: [{
+            name: "type-a",
+            reproductive_mechanisms: [{
+              key: "world_defined_implant_path",
+              carrying_compatibility: true,
+            }],
+          }],
+        }],
+      },
+    }),
+    ["char-a"],
+  );
+});
+
+test("carrying capability resolves independently in mechanism context", () => {
+  const characterFacts = {
+    capabilities: { can_carry_pregnancy: false },
+    type: {
+      reproductive_mechanisms: [
+        { key: "natural_path", carrying_compatibility: false },
+        { key: "implant_path", carrying_compatibility: true },
+        { key: "parasitic_path", carrying_compatibility: null },
+      ],
+    },
+  };
+  const eventFor = (key) => ({
+    pregnancy_relevance: { reproductive_mechanism: { kind: key } },
+  });
+  assert.equal(resolveCarryingCapability({ characterFacts, exposureEvent: eventFor("natural_path") }).value, false);
+  assert.equal(resolveCarryingCapability({ characterFacts, exposureEvent: eventFor("implant_path") }).value, true);
+  assert.equal(resolveCarryingCapability({ characterFacts, exposureEvent: eventFor("parasitic_path") }).value, null);
+  assert.equal(resolveCarryingCapability({ characterFacts, exposureEvent: eventFor("unknown_path") }).value, null);
+});
+
+test("explicit exposure carrying evidence resolves when the World Model mechanism entry is absent", () => {
+  const exposure = event({
+    type: "medical_event",
+    pregnancy_relevance: {
+      ...event().pregnancy_relevance,
+      possible_conception: false,
+      reproductive_mechanism: { kind: "world_defined_implant_path" },
+    },
+  });
+
+  assert.deepEqual(
+    rebuildTrackingRegistry([exposure]).tracking_subjects,
+    { "char-a": {
+      character_id: "char-a",
+      display_name: "A",
+      created_from_event_id: "evt-1",
+      exposure_event_ids: ["evt-1"],
+      status: "active",
+    } },
+  );
+  assert.deepEqual(rebuildTrackingRegistry([exposure]).tracking_candidates, {});
 });
 
 test("gender-like labels and event roles do not create a subject when capability is unknown", () => {
@@ -371,8 +449,8 @@ test("tracking diagnostics explain nonsexual, excluded, and invalid events", () 
     nonsexual.find((decision) => decision.character_id === "char-a"),
     {
       character_id: "char-a",
-      eligibility: "ineligible",
-      reasons: ["NOT_SEXUAL_ACTIVITY"],
+      eligibility: "eligible",
+      reasons: [],
     },
   );
 
@@ -382,7 +460,10 @@ test("tracking diagnostics explain nonsexual, excluded, and invalid events", () 
     {
       character_id: "char-a",
       eligibility: "ineligible",
-      reasons: ["EVENT_STATUS_EXCLUDED"],
+      reasons: [
+        "EVENT_STATUS_EXCLUDED",
+        "PREGNANCY_RELEVANT_EXPOSURE_INVALID",
+      ],
     },
   );
 

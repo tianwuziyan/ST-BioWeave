@@ -69,6 +69,16 @@ const pages = {
   state: ['状态', 'fa-chart-line', statePage],
 }
 const desktopRoutes = ['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state']
+const WORLD_MODEL_OWNER_MUTATIONS = new Set([
+  'CHAT_CHANGED',
+  'MESSAGE_DELETED',
+  'MESSAGE_SWIPED',
+  'MESSAGE_SWIPE_DELETED',
+  'MESSAGE_EDITED',
+  'MESSAGE_UPDATED',
+  'MESSAGE_RECEIVED',
+  'GENERATION_ENDED',
+])
 const THEME_KEY = 'bioweave_ui_theme'
 const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown'
 const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe'
@@ -267,6 +277,7 @@ function createAnalysisPreviewState() {
 function createWorldModelState() {
   return {
     loaded: false,
+    reloadPending: false,
     loading: false,
     busy: false,
     chatId: null,
@@ -503,6 +514,7 @@ export function createApp(runtime, options = {}) {
   let analysisSourcesState = createAnalysisSourcesState()
   let analysisPreviewState = createAnalysisPreviewState()
   let worldModelState = createWorldModelState()
+  let worldModelLoadGeneration = 0
   let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
   let worldModelAbortConfirmOpen = false
@@ -673,7 +685,7 @@ export function createApp(runtime, options = {}) {
       abortUiWorldModelRequest()
       worldbookCache = clearWorldbookCache(worldbookCache)
       analysisSourcesState = createAnalysisSourcesState()
-      worldModelState = createWorldModelState()
+      invalidateWorldModelView({ deferReload: false })
       clearAnalysisPreview()
     }
     return chatId
@@ -1345,6 +1357,17 @@ export function createApp(runtime, options = {}) {
     }
     assertAnalysisChatToken(token)
     const context = runtime.st?.getContext?.() ?? hostContextForApp()
+    const currentBioWeaveFloor =
+      typeof runtime.resolveCurrentBioWeaveFloor === 'function'
+        ? await runtime.resolveCurrentBioWeaveFloor()
+        : null
+    const boundedContext =
+      currentBioWeaveFloor && Array.isArray(context?.chat)
+        ? {
+            ...context,
+            chat: context.chat.slice(0, currentBioWeaveFloor.index + 1),
+          }
+        : context
     const externalMemoryProviders = await probeExternalMemoryProviders({
       context,
     }).catch(() => detectExternalMemoryProviders({ context }))
@@ -1353,7 +1376,7 @@ export function createApp(runtime, options = {}) {
     const input = await collectAnalysisContext({
       sources: analysisSourcesState.sources,
       selected: analysisSourcesState.selected,
-      context,
+      context: boundedContext,
       chatId,
       recentStory: analysisSourcesState.recentStory,
       globalRecentStory,
@@ -1415,17 +1438,41 @@ export function createApp(runtime, options = {}) {
     }
     if (requestId === analysisPreviewSequence && (route === 'settings' || route === 'world')) render()
   }
-  function loadWorldModelState() {
+  function invalidateWorldModelView({ deferReload = true, renderView = true } = {}) {
+    worldModelLoadGeneration += 1
+    worldModelState = {
+      ...createWorldModelState(),
+      chatId: runtime.chat.current(),
+      reloadPending: deferReload,
+    }
+    if (renderView && route === 'world') render()
+  }
+  function reloadWorldModelFromRuntime() {
     const chatId = runtime.chat.current()
-    if ((worldModelState.loaded || worldModelState.loading) && worldModelState.chatId === chatId) return
-    worldModelState = { ...createWorldModelState(), loading: true, chatId }
+    const token = runtime.chat.token?.()
+    const generation = ++worldModelLoadGeneration
     const resolver = runtime.resolveWorldModelAtOrBefore
+    worldModelState = {
+      ...createWorldModelState(),
+      loading: true,
+      chatId,
+    }
     if (typeof resolver !== 'function') {
-      worldModelState = { ...worldModelState, loaded: true, loading: false }
+      worldModelState = {
+        ...worldModelState,
+        loaded: true,
+        loading: false,
+      }
       return
     }
     void resolver().then((resolved) => {
+      if (generation !== worldModelLoadGeneration) return
       if (runtime.chat.current() !== chatId) return
+      try {
+        runtime.chat.assert?.(token)
+      } catch {
+        return
+      }
       let model = null
       let notice = null
       try {
@@ -1439,16 +1486,32 @@ export function createApp(runtime, options = {}) {
         chatId,
         model,
         meta: resolved?.meta ?? null,
-        selectedSpecies: null,
-        selectedBiologicalType: null,
         notice,
       }
       if (route === 'world') render()
     }).catch(() => {
+      if (generation !== worldModelLoadGeneration) return
       if (runtime.chat.current() !== chatId) return
-      worldModelState = { ...createWorldModelState(), loaded: true, chatId, notice: '世界模型读取失败，请重试。' }
+      try {
+        runtime.chat.assert?.(token)
+      } catch {
+        return
+      }
+      worldModelState = {
+        ...createWorldModelState(),
+        loaded: true,
+        chatId,
+        notice: '世界模型读取失败，请重试。',
+      }
       if (route === 'world') render()
     })
+  }
+  function loadWorldModelState() {
+    const chatId = runtime.chat.current()
+    if (worldModelState.reloadPending) return
+    if (worldModelState.loading && worldModelState.chatId === chatId) return
+    if (worldModelState.loaded && worldModelState.chatId === chatId) return
+    reloadWorldModelFromRuntime()
   }
   function worldModelOperationError(error) {
     const code = String(error?.code ?? error?.message ?? '')
@@ -1481,6 +1544,8 @@ export function createApp(runtime, options = {}) {
       SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
       ST_SAVE_CHAT_FAILED: '保存失败，当前模块草稿仍保留。',
       ST_CHAT_SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
+      NO_CHARACTER_FLOOR: '当前没有可分析的 Character Floor，分析结果未保存。',
+      BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN: '当前目标不是 Character Floor，BioWeave 数据未保存。',
       REQUEST_TIMEOUT: '世界模型分析请求超时，上一份模型已保留。',
       REQUEST_ABORTED: '世界模型分析请求已取消，上一份模型已保留。',
     }
@@ -2275,7 +2340,9 @@ export function createApp(runtime, options = {}) {
     worldModelTraceChatId = null
     worldbookCache = clearWorldbookCache(worldbookCache)
     resetBusinessStateAfterDataClear(operation)
-    if (operation.key === 'world' || operation.key === 'all') worldModelState = createWorldModelState()
+    if (operation.key === 'world' || operation.key === 'all') {
+      invalidateWorldModelView({ deferReload: false })
+    }
     if (operation.key === 'all') {
       const openSettingsSections = [...(analysisSourcesState.openSettingsSections ?? [])]
       analysisSourcesState = {...createAnalysisSourcesState(), openSettingsSections}
@@ -3279,7 +3346,7 @@ export function createApp(runtime, options = {}) {
       worldbookCache = clearWorldbookCache(worldbookCache)
       dataManagementState = createDataManagementState()
       analysisSourcesState = createAnalysisSourcesState()
-      worldModelState = createWorldModelState()
+      invalidateWorldModelView({ deferReload: false, renderView: false })
       clearAnalysisPreview()
       route = 'overview'
       focusedCharacterId = null
@@ -3305,6 +3372,18 @@ export function createApp(runtime, options = {}) {
         abortUiWorldModelRequest()
         refreshUiAfterDataClear(operation)
         void refreshBusinessState({reason: event.type, force: true})
+      }
+    }
+    const lifecycleMutationType =
+      event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED'
+        ? event?.mutationType
+        : event?.type
+    if (WORLD_MODEL_OWNER_MUTATIONS.has(lifecycleMutationType)) {
+      if (event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED') {
+        if (route === 'world') reloadWorldModelFromRuntime()
+        else worldModelState = { ...worldModelState, reloadPending: false }
+      } else if (event?.type !== 'CHAT_CHANGED') {
+        invalidateWorldModelView()
       }
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED') {
@@ -3342,9 +3421,6 @@ export function createApp(runtime, options = {}) {
       event?.type === 'MESSAGE_SWIPED' ||
       event?.type === 'MESSAGE_SWIPE_DELETED'
     ) {
-      if (event?.type === 'MESSAGE_SWIPED' || event?.type === 'MESSAGE_SWIPE_DELETED') {
-        worldModelState = createWorldModelState()
-      }
       businessState = { ...businessState, loaded: false, loading: false }
       void refreshBusinessState({ reason: event.type })
     }
@@ -3878,6 +3954,7 @@ export function createApp(runtime, options = {}) {
   function destroyBioWeave() {
     clearPendingRecentStorySaves()
     abortUiWorldModelRequest()
+    worldModelLoadGeneration += 1
     modelRefreshSequence += 1
     analysisSourceRequestSequence += 1
     analysisSourceSaveSequence += 1

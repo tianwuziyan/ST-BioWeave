@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Chat-level authoritative biological persistence and Floor/Swipe isolation after implementation."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify mechanism and capability semantics remain World Model-owned and evidence-based."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify parser/domain/runtime contracts and stale-write protections."}
+{"file":"docs/DATA-MODEL.md","reason":"Verify schema, provenance, Tracking population and future-boundary documentation."}

@@ -14,6 +14,7 @@ const CAPABILITY_KEYS = Object.freeze([
   'can_produce_ova',
   'can_be_fertilized',
   'can_fertilize',
+  'can_cause_pregnancy',
   'can_carry_pregnancy',
 ]);
 
@@ -61,6 +62,8 @@ const CAPABILITY_EVIDENCE_PATTERNS = Object.freeze({
     /(?:被|接受|可被|能被|能够被|可以被)[^。！？!?；;\n，,]{0,8}受精|(?:可|能|能够|可以|会|不能|无法|不可|不会)受精(?:能力)?|受精[^。！？!?；;\n，,]{0,8}(?:能力|资格)/iu,
   can_fertilize:
     /(?:使|让|令)[^。！？!?；;\n，,]{0,8}受精|授精|(?:可|能|能够|可以|会|不能|无法|不可|不会)[^。！？!?；;\n，,]{0,8}(?:使|让|令)[^。！？!?；;\n，,]{0,8}受精/iu,
+  can_cause_pregnancy:
+    /(?:导致|引发|造成|使|让|令)[^。！？!?；;\n，,]{0,12}(?:怀孕|妊娠|受孕|孕育)/iu,
   can_carry_pregnancy: /(?:怀孕|妊娠|孕育|携带胎儿|承担妊娠|妊娠能力|生育)/iu,
 });
 const REPRODUCTION_RULE_EVIDENCE_PATTERNS = Object.freeze({
@@ -200,6 +203,19 @@ function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false
   const capabilities = objectOrEmpty(raw.capabilities, `${path}.capabilities`);
   const reproductionRules = objectOrEmpty(raw.reproduction_rules, `${path}.reproduction_rules`);
   const lifecycle = objectOrEmpty(raw.lifecycle, `${path}.lifecycle`);
+  const mechanismValues = raw.reproductive_mechanisms;
+  if (mechanismValues !== undefined && !Array.isArray(mechanismValues))
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path: `${path}.reproductive_mechanisms`,
+      expected: 'array',
+      received: typeof mechanismValues,
+    });
+  const reproductiveMechanisms = (Array.isArray(mechanismValues) ? mechanismValues : []).map(
+    (item, mechanismIndex) => normalizeReproductiveMechanism(
+      item,
+      `${path}.reproductive_mechanisms[${mechanismIndex}]`,
+    ),
+  );
   return {
     name: normalizeBiologicalTypeName(raw.name, parentSpeciesName),
     description: localizedWorldModelText(raw.description),
@@ -215,7 +231,48 @@ function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false
     lifecycle: Object.fromEntries(
       LIFECYCLE_KEYS.map((key) => [key, normalizeRuleText(lifecycle[key], `${path}.lifecycle.${key}`)]),
     ),
+    reproductive_mechanisms: reproductiveMechanisms,
     special_rules: stringList(raw.special_rules, localizedWorldModelText, { path: `${path}.special_rules` }),
+  };
+}
+
+function normalizeReproductiveMechanism(raw, path) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path,
+      expected: 'object',
+      received: Array.isArray(raw) ? 'array' : typeof raw,
+    });
+  const ruleRefs = raw.world_model_rule_refs;
+  const evidence = raw.evidence;
+  if (ruleRefs !== undefined && !Array.isArray(ruleRefs))
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path: `${path}.world_model_rule_refs`,
+      expected: 'array',
+      received: typeof ruleRefs,
+    });
+  if (evidence !== undefined && !Array.isArray(evidence))
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path: `${path}.evidence`,
+      expected: 'array',
+      received: typeof evidence,
+    });
+  return {
+    key: nullableText(raw.key),
+    label: nullableText(raw.label),
+    pathway: nullableText(raw.pathway),
+    carrying_compatibility: nullableBoolean(
+      raw.carrying_compatibility,
+      `${path}.carrying_compatibility`,
+    ),
+    world_model_rule_refs: stringList(
+      ruleRefs,
+      localizedWorldModelText,
+      { path: `${path}.world_model_rule_refs` },
+    ),
+    evidence: stringList(evidence, localizedWorldModelText, {
+      path: `${path}.evidence`,
+    }),
   };
 }
 
@@ -259,6 +316,10 @@ function mergeKnownValue(first, second) {
 }
 
 function mergeBiologicalTypes(first, second) {
+  const mechanismMap = new Map(
+    [...(first.reproductive_mechanisms ?? []), ...(second.reproductive_mechanisms ?? [])]
+      .map((mechanism) => [mechanism.key ?? mechanism.label ?? mechanism.pathway, mechanism]),
+  );
   return {
     ...first,
     description: mergeKnownValue(first.description, second.description),
@@ -285,6 +346,7 @@ function mergeBiologicalTypes(first, second) {
         mergeKnownValue(first.lifecycle[key], second.lifecycle[key]),
       ]),
     ),
+    reproductive_mechanisms: [...mechanismMap.values()],
     special_rules: [
       ...new Set([...first.special_rules, ...second.special_rules]),
     ],
@@ -738,6 +800,7 @@ function humanBaseline(typeName) {
         can_produce_ova: false,
         can_be_fertilized: false,
         can_fertilize: true,
+        can_cause_pregnancy: null,
         can_carry_pregnancy: false,
       },
       reproduction_rules: {
@@ -757,6 +820,7 @@ function humanBaseline(typeName) {
         can_produce_ova: true,
         can_be_fertilized: true,
         can_fertilize: false,
+        can_cause_pregnancy: null,
         can_carry_pregnancy: true,
       },
       reproduction_rules: {
@@ -1324,6 +1388,7 @@ const EVENT_CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
   'can_produce_ova',
   'can_be_fertilized',
+  'can_fertilize',
   'can_carry_pregnancy',
   'can_cause_pregnancy',
 ]);
@@ -1983,11 +2048,10 @@ function normalizeEventCapabilities(value) {
     throw invalidEventAnalysis('EVENT_ANALYSIS_CAPABILITIES_INVALID');
   }
   return Object.fromEntries(
-    EVENT_CAPABILITY_KEYS.map((key) => {
-      const alias =
-        key === 'can_cause_pregnancy' ? value.can_fertilize : undefined;
-      return [key, eventBoolean(value[key] ?? alias, key)];
-    }),
+    EVENT_CAPABILITY_KEYS.map((key) => [
+      key,
+      eventBoolean(value[key], key),
+    ]),
   );
 }
 
@@ -2103,6 +2167,39 @@ function participantIdentityHandles(participant) {
   return [participant.mention_id, participant.character_id].filter(Boolean);
 }
 
+function normalizeEventMechanism(value, eventIndex) {
+  if (value === undefined || value === null) {
+    return {
+      kind: null,
+      label: null,
+      pathway: null,
+      world_model_rule_refs: [],
+      evidence: [],
+    };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw eventDiagnostic(
+      'invalid_reproductive_mechanism',
+      `${eventPath(eventIndex)}.pregnancy_relevance.reproductive_mechanism`,
+      'EVENT_SCHEMA_REPRODUCTIVE_MECHANISM_INVALID',
+    );
+  }
+  return {
+    kind: eventText(value.kind, 'reproductive_mechanism_kind'),
+    label: eventText(value.label, 'reproductive_mechanism_label'),
+    pathway: eventText(value.pathway, 'reproductive_mechanism_pathway'),
+    world_model_rule_refs: eventIdArray(
+      value.world_model_rule_refs,
+      'reproductive_mechanism_world_model_rule_refs',
+    ),
+    evidence: eventEvidence(
+      value.evidence,
+      'reproductive_mechanism_evidence',
+      `${eventPath(eventIndex)}.pregnancy_relevance.reproductive_mechanism.evidence`,
+    ),
+  };
+}
+
 function normalizeEventPregnancyRelevance(value, participantIds, eventIndex) {
   if (
     value !== undefined &&
@@ -2145,6 +2242,10 @@ function normalizeEventPregnancyRelevance(value, participantIds, eventIndex) {
     ),
     gestational_subject_ids: gestationalSubjectIds,
     counterpart_ids: counterpartIds,
+    reproductive_mechanism: normalizeEventMechanism(
+      source.reproductive_mechanism,
+      eventIndex,
+    ),
     confidence: eventConfidence(
       source.confidence,
       'pregnancy_relevance_confidence',
@@ -2177,10 +2278,7 @@ function normalizeEventRecord(
     throw invalidEventAnalysis('EVENT_ANALYSIS_TYPE_INVALID');
   if (!eventStatuses.has(eventStatus))
     throw invalidEventAnalysis('EVENT_ANALYSIS_STATUS_INVALID');
-  const pregnancyExposure =
-    eventType === 'sexual_activity' &&
-    raw.pregnancy_relevance?.relevant === true &&
-    raw.pregnancy_relevance?.possible_conception === true;
+  const pregnancyExposure = raw.pregnancy_relevance?.relevant === true;
   const participants = normalizeEventParticipants(
     raw.participants.map((participant, participantIndex) => {
       if (pregnancyExposure) {
@@ -2230,7 +2328,7 @@ function normalizeEventRecord(
 function validateEventExposureStructure(event, eventIndex) {
   const basePath = eventPath(eventIndex);
   const hasExposureEvidence =
-    eventDomain.hasConceptionRelevantExposureEvidence?.(
+    eventDomain.hasPregnancyRelevantExposureEvidence?.(
       event.source_evidence,
     ) === true;
   if (
@@ -2238,34 +2336,25 @@ function validateEventExposureStructure(event, eventIndex) {
     !hasExposureEvidence
   ) {
     throw eventDiagnostic(
-      'missing_conception_relevant_exposure_evidence',
+      'missing_pregnancy_relevant_exposure_evidence',
       `${basePath}.source_evidence`,
-      'EVENT_SCHEMA_CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
+      'EVENT_SCHEMA_PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
     );
   }
-  if (event.type !== 'sexual_activity') return;
   const relevance = event.pregnancy_relevance;
   const subjectIds = relevance.gestational_subject_ids;
   const counterpartIds = relevance.counterpart_ids;
   const participantIds = new Set(
     event.participants.map((participant) => participant.character_id),
   );
-  const pregnancyExposure =
-    relevance.relevant === true && relevance.possible_conception === true;
+  const pregnancyExposure = relevance.relevant === true;
 
   if (!pregnancyExposure) {
-    if (relevance.relevant !== false) {
-      throw eventDiagnostic(
-        'invalid_pregnancy_relevance',
-        `${basePath}.pregnancy_relevance.relevant`,
-        'EVENT_SCHEMA_PREGNANCY_RELEVANCE_INVALID',
-      );
-    }
-    if (
+    if (event.type === 'sexual_activity' && (
       subjectIds.length ||
       counterpartIds.length ||
       event.participants.length
-    ) {
+    )) {
       throw eventDiagnostic(
         'invalid_pregnancy_participants',
         `${basePath}.participants`,
@@ -2275,7 +2364,14 @@ function validateEventExposureStructure(event, eventIndex) {
     return;
   }
 
-  if (subjectIds.length !== 1) {
+  if (subjectIds.length < 1) {
+    throw eventDiagnostic(
+      'invalid_gestational_subject_cardinality',
+      `${basePath}.pregnancy_relevance.gestational_subject_ids`,
+      'EVENT_SCHEMA_GESTATIONAL_SUBJECT_REQUIRED',
+    );
+  }
+  if (event.type === 'sexual_activity' && subjectIds.length !== 1) {
     throw eventDiagnostic(
       'invalid_gestational_subject_cardinality',
       `${basePath}.pregnancy_relevance.gestational_subject_ids`,
@@ -2298,7 +2394,10 @@ function validateEventExposureStructure(event, eventIndex) {
       'EVENT_SCHEMA_GESTATIONAL_SUBJECT_COUNTERPART_OVERLAP',
     );
   }
-  const expectedParticipantIds = new Set([subjectId, ...counterpartIds]);
+  const expectedParticipantIds = new Set([
+    ...subjectIds,
+    ...counterpartIds,
+  ]);
   if (
     participantIds.size !== expectedParticipantIds.size ||
     [...participantIds].some((id) => !expectedParticipantIds.has(id))
@@ -2311,9 +2410,9 @@ function validateEventExposureStructure(event, eventIndex) {
   }
   if (!hasExposureEvidence) {
     throw eventDiagnostic(
-      'missing_conception_relevant_exposure_evidence',
+      'missing_pregnancy_relevant_exposure_evidence',
       `${basePath}.source_evidence`,
-      'EVENT_SCHEMA_CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
+      'EVENT_SCHEMA_PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_REQUIRED',
     );
   }
 }
@@ -2380,21 +2479,17 @@ export function parseEventAnalysisResponse(
   const gestationalSubjects = new Set();
   for (const [index, event] of events.entries()) {
     const relevance = event.pregnancy_relevance;
-    if (
-      event.type !== 'sexual_activity' ||
-      relevance.relevant !== true ||
-      relevance.possible_conception !== true
-    )
-      continue;
-    const subjectId = relevance.gestational_subject_ids[0];
-    if (gestationalSubjects.has(subjectId)) {
-      throw eventDiagnostic(
-        'duplicate_gestational_subject_event',
-        `${eventPath(index)}.pregnancy_relevance.gestational_subject_ids`,
-        'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
-      );
+    if (relevance.relevant !== true) continue;
+    for (const subjectId of relevance.gestational_subject_ids) {
+      if (gestationalSubjects.has(subjectId)) {
+        throw eventDiagnostic(
+          'duplicate_gestational_subject_event',
+          `${eventPath(index)}.pregnancy_relevance.gestational_subject_ids`,
+          'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
+        );
+      }
+      gestationalSubjects.add(subjectId);
     }
-    gestationalSubjects.add(subjectId);
   }
   return { schema_version: EVENT_SCHEMA_VERSION, events };
 }

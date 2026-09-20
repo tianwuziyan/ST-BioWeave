@@ -12,7 +12,7 @@ import {
 } from '../ai/prompts.js';
 import { buildEventAnalysisInput } from '../ai/input-builder.js';
 import { createAnalyzer, parseEventAnalysisResponse } from '../ai/analyzer.js';
-import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from '../core/events.js';
+import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from '../core/events.js';
 import { renderAnalysisDebugPopupContent } from '../ui/settings.js';
 import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js';
 
@@ -38,6 +38,7 @@ function participant(characterId, overrides = {}) {
       can_produce_sperm: null,
       can_produce_ova: null,
       can_be_fertilized: null,
+        can_fertilize: null,
       can_carry_pregnancy: null,
       can_cause_pregnancy: null,
     },
@@ -83,7 +84,7 @@ function event(overrides = {}) {
         text: 'The current floor contains the event evidence.',
       },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: 'Actual exposure evidence.',
       },
     ],
@@ -187,7 +188,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
     /character_context.*whitelist|whitelist.*character_context/,
   );
   assert.match(prompt, /现实.*生殖机制/);
-  assert.match(prompt, new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND));
+  assert.match(prompt, new RegExp(PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND));
   assert.doesNotMatch(prompt, /全部实际参与者/);
   assert.match(prompt, /目标楼层：12/);
   assert.match(prompt, /Event source 由 Runtime 绑定/);
@@ -330,6 +331,11 @@ test('Event parser preserves unknown capability and never derives it from gender
         participants: [
           participant('character_subject', {
             fixture_label: 'receiver-like label',
+            reproductive_capabilities_used: {
+              ...participant('character_subject').reproductive_capabilities_used,
+              can_fertilize: true,
+              can_cause_pregnancy: null,
+            },
           }),
           participant('character_source'),
         ],
@@ -340,6 +346,14 @@ test('Event parser preserves unknown capability and never derives it from gender
   assert.equal(
     parsed.events[0].participants[0].reproductive_capabilities_used
       .can_carry_pregnancy,
+    null,
+  );
+  assert.equal(
+    parsed.events[0].participants[0].reproductive_capabilities_used.can_fertilize,
+    true,
+  );
+  assert.equal(
+    parsed.events[0].participants[0].reproductive_capabilities_used.can_cause_pregnancy,
     null,
   );
   assert.equal('gender' in parsed.events[0].participants[0], false);
@@ -414,6 +428,7 @@ test('pregnancy participants may use null identity context while unknown capabil
       biological_type: null,
     });
     assert.deepEqual(Object.values(item.reproductive_capabilities_used), [
+      null,
       null,
       null,
       null,
@@ -642,7 +657,7 @@ test('Event parser accepts zero, one, and multiple Events while rejecting duplic
             source_evidence: [
               { kind: 'current_floor', text: 'duplicate subject event' },
               {
-                kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+                kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
                 text: 'duplicate exposure',
               },
             ],
@@ -949,6 +964,7 @@ function conceptionFixture(overrides = {}) {
           can_produce_sperm: false,
           can_produce_ova: true,
           can_be_fertilized: true,
+        can_fertilize: null,
           can_carry_pregnancy: true,
           can_cause_pregnancy: false,
         },
@@ -965,6 +981,7 @@ function conceptionFixture(overrides = {}) {
           can_produce_sperm: true,
           can_produce_ova: false,
           can_be_fertilized: false,
+        can_fertilize: null,
           can_carry_pregnancy: false,
           can_cause_pregnancy: true,
         },
@@ -989,7 +1006,7 @@ function conceptionFixture(overrides = {}) {
         text: 'The current floor establishes actual conception exposure.',
       },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: 'An abstract reproductive mechanism entered the valid path.',
       },
     ],
@@ -1042,7 +1059,7 @@ test('Event protected output contract exposes the exact Domain enums and scalar 
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /gestational_substance_intake/);
   assert.match(
     EVENT_ANALYZER_OUTPUT_CONTRACT,
-    new RegExp(CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND),
+    new RegExp(PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND),
   );
   assert.match(
     EVENT_ANALYZER_OUTPUT_CONTRACT,
@@ -1371,7 +1388,7 @@ test('canonical generic sexual-activity response parses with structured evidence
       text: 'The current floor establishes actual conception exposure.',
     },
     {
-      kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+      kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
       text: 'An abstract reproductive mechanism entered the valid path.',
     },
   ]);

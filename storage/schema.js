@@ -18,6 +18,7 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
             can_produce_ova: null,
             can_be_fertilized: null,
             can_fertilize: null,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: {
@@ -28,6 +29,16 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
             gestation: null,
             labor: null,
           },
+          reproductive_mechanisms: [
+            {
+              key: null,
+              label: null,
+              pathway: null,
+              carrying_compatibility: null,
+              world_model_rule_refs: [],
+              evidence: [],
+            },
+          ],
           lifecycle: {
             maturation: null,
             aging: null,

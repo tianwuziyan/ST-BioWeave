@@ -15,6 +15,7 @@ import {
   traceApi,
 } from "../ai/client.js";
 import {
+  isPregnancyRelevantExposure,
   normalizeEvent,
   sortEvents,
   validateEventCollection,
@@ -30,7 +31,11 @@ import {
   rebuildTrackingRegistry,
 } from "../core/tracking.js";
 import { emptyFloor } from "../storage/schema.js";
-import { hasSwipeSlot, hasSwipeStructure } from "../storage/store.js";
+import {
+  hasSwipeSlot,
+  hasSwipeStructure,
+  isCharacterMessage,
+} from "../storage/store.js";
 import { normalizeStoryTime } from "../story/time.js";
 import {
   detectExternalMemoryProviders,
@@ -247,7 +252,7 @@ function safeDiagnosticSummary(error, stage = null) {
     code === "invalid_pregnancy_participants" ||
     code === "gestational_subject_counterpart_overlap" ||
     code === "duplicate_gestational_subject_event" ||
-    code === "missing_conception_relevant_exposure_evidence" ||
+    code === "missing_pregnancy_relevant_exposure_evidence" ||
     code.startsWith("EVENT_ANALYSIS_")
   ) {
     return "AI 返回未通过 Event JSON Schema 校验";
@@ -340,15 +345,13 @@ function pregnancyExposureSubjectId(event) {
     const normalized = normalizeEvent(event);
     const relevance = normalized?.pregnancy_relevance;
     if (
-      normalized?.type !== "sexual_activity" ||
       relevance?.relevant !== true ||
-      relevance?.possible_conception !== true ||
-      relevance.gestational_subject_ids.length !== 1
+      !Array.isArray(relevance.gestational_subject_ids)
     )
-      return null;
-    return relevance.gestational_subject_ids[0];
+      return [];
+    return relevance.gestational_subject_ids;
   } catch {
-    return null;
+    return [];
   }
 }
 function domainValidationError(
@@ -362,17 +365,16 @@ function domainValidationError(
     ? errors.find((error) => {
         if (typeof error !== "string") return false;
         const match = error.match(
-          /^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[0\]$/u,
+          /^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[(\d+)\]$/u,
         );
         if (!match) return false;
         const index = Number(match[1]);
-        const subjectId = pregnancyExposureSubjectId(events[index]);
-        return (
-          subjectId !== null &&
-          events
-            .slice(0, index)
-            .some((event) => pregnancyExposureSubjectId(event) === subjectId)
-        );
+        const subjectIndex = Number(match[2]);
+        const subjectIds = pregnancyExposureSubjectId(events[index]);
+        const subjectId = subjectIds[subjectIndex] ?? null;
+        return subjectId !== null && events
+          .slice(0, index)
+          .some((event) => pregnancyExposureSubjectId(event).includes(subjectId));
       })
     : null;
   const diagnosticCode = duplicateSubjectError
@@ -497,6 +499,14 @@ export function createEventAnalysisCoordinator({
     for (let index = 0; index < all.length; index += 1) {
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
+      if (!isCharacterMessage(all[index])) {
+        entries.push({
+          index,
+          message_id: messageId(all[index], index),
+          role: messageRole(all[index]),
+        });
+        continue;
+      }
       const version = await floorVersion({
         chatId: token.chatId,
         messageId: messageId(all[index], index),
@@ -511,6 +521,7 @@ export function createEventAnalysisCoordinator({
         message_id: version.message_id,
         floor: version.floor,
         swipe_id: version.swipe_id,
+        role: messageRole(all[index]),
         content_hash: version.content_hash,
         message_version: version.message_version,
       });
@@ -533,6 +544,7 @@ export function createEventAnalysisCoordinator({
       "message_id",
       "floor",
       "swipe_id",
+      "role",
       "content_hash",
       "message_version",
     ].every((field) => left?.[field] === right?.[field]);
@@ -605,11 +617,12 @@ export function createEventAnalysisCoordinator({
     const all = messages();
     const start = Number.isInteger(targetIndex) && targetIndex >= 0 ? targetIndex : 0;
     for (let index = start; index < all.length; index += 1) {
+      if (!isCharacterMessage(all[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       let version;
       try {
-        const target = await resolveFloor({ __messageIndex: true, index });
+        const target = await resolveFloorAtIndex({ __messageIndex: true, index });
         version = target.version;
       } catch {
         continue;
@@ -720,7 +733,7 @@ export function createEventAnalysisCoordinator({
       return { index, message: all[index] };
     throw new Error("MESSAGE_NOT_FOUND");
   }
-  async function resolveFloor(selector = null) {
+  async function resolveFloorAtIndex(selector = null) {
     let resolved;
     try {
       resolved = resolveMessage(selector);
@@ -728,6 +741,8 @@ export function createEventAnalysisCoordinator({
       throw withAnalysisStage(error, "floor_resolution");
     }
     const { index, message } = resolved;
+    if (!isCharacterMessage(message))
+      throw withAnalysisStage(new Error("NO_CHARACTER_FLOOR"), "floor_resolution");
     let swipeId;
     let floorData;
     let storedVersion;
@@ -758,15 +773,28 @@ export function createEventAnalysisCoordinator({
     }
     return { index, message, swipeId, floorData, version, chatId };
   }
+  async function resolveCurrentBioWeaveFloor(selector = null) {
+    const resolved = resolveMessage(selector);
+    for (let index = resolved.index; index >= 0; index -= 1) {
+      const message = messages()[index];
+      if (!isCharacterMessage(message)) continue;
+      return resolveFloorAtIndex({ __messageIndex: true, index });
+    }
+    throw withAnalysisStage(new Error("NO_CHARACTER_FLOOR"), "floor_resolution");
+  }
+  async function resolveFloor(selector = null) {
+    return resolveCurrentBioWeaveFloor(selector);
+  }
   async function findPreviousSuccessfulBioWeave(target) {
     // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
     for (let index = target.index - 1; index >= 0; index -= 1) {
+      if (!isCharacterMessage(messages()[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       const floorData = store.getFloor?.(index, swipeId);
       const analysis = floorData?.analysis;
       if (analysis?.status !== "success") continue;
-      const candidate = await resolveFloor({ __messageIndex: true, index });
+      const candidate = await resolveFloorAtIndex({ __messageIndex: true, index });
       if (candidate.version.floor >= target.version.floor) continue;
       if (isFloorInvalidated(candidate)) continue;
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
@@ -798,11 +826,12 @@ export function createEventAnalysisCoordinator({
   async function resolveWorldModelAtOrBefore(selector = null, { strictBefore = false } = {}) {
     const target = await resolveFloor(selector);
     for (let index = target.index - (strictBefore ? 1 : 0); index >= 0; index -= 1) {
+      if (!isCharacterMessage(messages()[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       let candidate;
       try {
-        candidate = await resolveFloor({ __messageIndex: true, index });
+        candidate = await resolveFloorAtIndex({ __messageIndex: true, index });
       } catch {
         continue;
       }
@@ -825,7 +854,7 @@ export function createEventAnalysisCoordinator({
     const target = await resolveFloor(selector);
     chat.assert(token);
     const current = store.getFloor?.(target.index, target.swipeId) ?? emptyFloor();
-    const currentTarget = await resolveFloor({ __messageIndex: true, index: target.index });
+    const currentTarget = await resolveFloorAtIndex({ __messageIndex: true, index: target.index });
     if (!sameFloorVersion(currentTarget.version, target.version)) throw requestAbortedError();
     await store.saveFloor(target.index, target.swipeId, {
       ...current,
@@ -844,6 +873,7 @@ export function createEventAnalysisCoordinator({
     const states = [];
     const all = messages();
     for (let index = 0; index < all.length; index += 1) {
+      if (!isCharacterMessage(all[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       const floorData = store.getFloor?.(index, swipeId);
@@ -1173,6 +1203,9 @@ export function createEventAnalysisCoordinator({
     const sexualActivityCount = activeEvents.filter(
       (event) => event.type === "sexual_activity",
     ).length;
+    const pregnancyRelevantExposureCount = activeEvents.filter((event) =>
+      isPregnancyRelevantExposure(event),
+    ).length;
     const exposureEventCount = Object.values(trackingSubjects).reduce(
       (total, subject) =>
         total +
@@ -1193,6 +1226,7 @@ export function createEventAnalysisCoordinator({
       ...status,
       active_event_count: activeEvents.length,
       sexual_activity_count: sexualActivityCount,
+      pregnancy_relevant_exposure_count: pregnancyRelevantExposureCount,
       tracking_subject_count: Object.keys(trackingSubjects).length,
       tracking_candidate_count: Object.keys(trackingCandidates).length,
       pending_tracking_candidate_count: Object.keys(trackingCandidates).length,
@@ -1332,7 +1366,7 @@ export function createEventAnalysisCoordinator({
   }
   async function targetVersionIsCurrent(target) {
     try {
-      const current = await resolveFloor({
+      const current = await resolveFloorAtIndex({
         __messageIndex: true,
         index: target.index,
       });
@@ -1361,7 +1395,7 @@ export function createEventAnalysisCoordinator({
     assertExecutionCurrent(execution, token);
     let current;
     try {
-      current = await resolveFloor({
+      current = await resolveFloorAtIndex({
         __messageIndex: true,
         index: target.index,
       });
@@ -1807,6 +1841,23 @@ export function createEventAnalysisCoordinator({
         currentSnapshot = { entries: [] };
       }
       const targetIndex = lifecycleMutationIndex(event, currentSnapshot);
+      const prefersPreviousMutationEntry =
+        type === "MESSAGE_DELETED" || type === "MESSAGE_SWIPE_DELETED";
+      const mutationEntry =
+        (targetIndex !== null && targetIndex !== undefined
+          ? prefersPreviousMutationEntry
+            ? lifecycleSnapshot?.entries?.[targetIndex] ??
+              currentSnapshot.entries[targetIndex]
+            : currentSnapshot.entries[targetIndex] ??
+              lifecycleSnapshot?.entries?.[targetIndex]
+          : null) ?? null;
+      const latestMessage = messages().at(-1) ?? null;
+      const mutationIsUserOnly =
+        (mutationEntry && mutationEntry.role === "user") ||
+        (!mutationEntry && latestMessage && !isCharacterMessage(latestMessage));
+      if (mutationIsUserOnly) {
+        return { skipped: true, reason: "user-message-not-a-bioweave-floor" };
+      }
       const isSwipeBoundaryEvent =
         type === "MESSAGE_SWIPED" || type === "MESSAGE_SWIPE_DELETED";
       const isSourceMutation = [
@@ -1866,7 +1917,8 @@ export function createEventAnalysisCoordinator({
     if (!targetId) throw new Error("EVENT_NOT_FOUND");
     const all = messages();
     for (let index = 0; index < all.length; index += 1) {
-      const target = await resolveFloor({ __messageIndex: true, index });
+      if (!isCharacterMessage(all[index])) continue;
+      const target = await resolveFloorAtIndex({ __messageIndex: true, index });
       const events = store.getActiveFloorEvents?.(index, target.version) ?? [];
       const eventIndex = events.findIndex(
         (event) => String(event?.event_id) === targetId,
@@ -2020,6 +2072,7 @@ export function createEventAnalysisCoordinator({
   if (typeof chat.subscribe === "function")
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
   return {
+    resolveCurrentBioWeaveFloor,
     analyzeCurrentFloor,
     analyzeFloor,
     refreshCurrentFloorAnalysis,

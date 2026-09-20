@@ -504,6 +504,7 @@ export function collectRecentStory({
   context = null,
   settings = {},
   items = null,
+  upperBoundIndex = null,
 } = {}) {
   const normalized = normalizeRecentStorySettings(settings)
   if (!normalized.enabled) {
@@ -516,11 +517,28 @@ export function collectRecentStory({
     }
   }
 
-  const providedItems = Array.isArray(items) ? items : null
+  const providedItems = Array.isArray(items)
+    ? items.filter((item) => {
+        if (!Number.isInteger(upperBoundIndex) || upperBoundIndex < 0)
+          return true
+        const contextIndex = Array.isArray(context?.chat)
+          ? context.chat.indexOf(item)
+          : -1
+        return contextIndex < 0 || contextIndex <= upperBoundIndex
+      })
+    : null
+  const boundedChat = Array.isArray(context?.chat)
+    ? context.chat.slice(
+        0,
+        Number.isInteger(upperBoundIndex) && upperBoundIndex >= 0
+          ? upperBoundIndex + 1
+          : undefined,
+      )
+    : null
   const rawItems = providedItems
     ? providedItems.slice(-normalized.floor_count)
-    : Array.isArray(context?.chat)
-      ? context.chat.slice(-normalized.floor_count)
+    : boundedChat
+      ? boundedChat.slice(-normalized.floor_count)
       : []
   const storyItems = rawItems
     .map((message, offset) => {
@@ -700,6 +718,7 @@ export function buildAnalysisInput({
   externalMemoryProviders = [],
   excludeRecentFloor = null,
   includePersonaInTokenEstimate = false,
+  upperBoundIndex = null,
 } = {}) {
   const worldbookSettings = normalizeWorldbookSettings({
     ...(chatSettings?.worldbooks ?? {}),
@@ -716,6 +735,7 @@ export function buildAnalysisInput({
     context,
     settings: recentSettings,
     items: recentStoryItems ?? recentSettings?.items ?? null,
+    upperBoundIndex,
   })
   const recent_story = excludeRecentStoryTarget(
     collectedRecentStory,
@@ -795,6 +815,7 @@ export async function collectAnalysisContext({
   externalMemoryProviderLoader = null,
   excludeRecentFloor = null,
   includePersonaInTokenEstimate = false,
+  upperBoundIndex = null,
 } = {}) {
   const selectedItems = selected ?? chatSettings?.worldbooks?.selected ?? []
   const worldbookSettings = normalizeWorldbookSettings({
@@ -856,6 +877,7 @@ export async function collectAnalysisContext({
     recentStory,
     globalRecentStory,
     recentStoryItems,
+    upperBoundIndex,
     externalMemory,
     externalMemoryProviders: collectedProviders ?? [],
     excludeRecentFloor,

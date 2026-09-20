@@ -294,7 +294,7 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
 - 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 Registry 的原因，UI 不复制资格条件。
-- 本阶段保留其它 BiologicalEvent 类型兼容，但只实现 `sexual_activity` 的 Tracking 闭环；妊娠概率、Gestational Age、预计分娩日、完整状态归约、Snapshot、Projection 和 Genealogy 仍是空状态或下一阶段。
+- 本阶段保留其它 BiologicalEvent 类型兼容，但以 pregnancy-relevant exposure 作为 Tracking gate；妊娠概率、Gestational Age、预计分娩日、完整状态归约、Snapshot、Projection 和 Genealogy 仍是空状态或下一阶段。
 
 ## AI / World Model 工作流
 

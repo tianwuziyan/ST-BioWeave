@@ -1,5 +1,6 @@
 import {
   CAPABILITY_KEYS,
+  isPregnancyRelevantExposure,
   normalizeEvent,
   sortEvents,
   validateEvent,
@@ -30,12 +31,6 @@ function capabilityValue(value) {
 function readCapability(source, key) {
   if (Object.prototype.hasOwnProperty.call(source, key))
     return capabilityValue(source[key]);
-  if (
-    key === "can_cause_pregnancy" &&
-    Object.prototype.hasOwnProperty.call(source, "can_fertilize")
-  ) {
-    return capabilityValue(source.can_fertilize);
-  }
   return null;
 }
 
@@ -128,13 +123,12 @@ function eventDecisionReasons(event, valid) {
   if (!valid) return ["INVALID_EVENT"];
 
   const reasons = [];
-  if (event.type !== "sexual_activity") reasons.push("NOT_SEXUAL_ACTIVITY");
   if (EXCLUDED_EVENT_STATUSES.has(event.status))
     reasons.push("EVENT_STATUS_EXCLUDED");
   if (event.pregnancy_relevance.relevant !== true)
     reasons.push("PREGNANCY_RELEVANCE_FALSE");
-  if (event.pregnancy_relevance.possible_conception !== true)
-    reasons.push("POSSIBLE_CONCEPTION_FALSE");
+  if (!isPregnancyRelevantExposure(event))
+    reasons.push("PREGNANCY_RELEVANT_EXPOSURE_INVALID");
   return reasons;
 }
 
@@ -246,9 +240,77 @@ function resolvedParticipantFacts(participantRecords, worldModel) {
   const type = identity.conflict ? null : worldModelType(worldModel, identity);
   return {
     identity,
+    type,
+    explicitCapabilities: resolveCapabilities(participantRecords, null),
     capabilities: identity.conflict
       ? normalizeCapabilities()
       : resolveCapabilities(participantRecords, type?.capabilities),
+  };
+}
+
+function mechanismKey(mechanism) {
+  return [mechanism?.kind, mechanism?.label, mechanism?.pathway]
+    .map((value) => textValue(value)?.toLowerCase() ?? "")
+    .find(Boolean) ?? null;
+}
+
+function mechanismEntryKey(entry) {
+  return [entry?.key, entry?.kind, entry?.label, entry?.pathway]
+    .map((value) => textValue(value)?.toLowerCase() ?? "")
+    .find(Boolean) ?? null;
+}
+
+/**
+ * Resolve carrying compatibility for one exposure without calculating a
+ * probability or an outcome. World Model mechanism entries are open keyed
+ * records; no real-world mechanism names are special-cased here.
+ */
+export function resolveCarryingCapability({
+  characterFacts = {},
+  exposureEvent = null,
+  mechanism = null,
+  worldModel = null,
+} = {}) {
+  const eventMechanism = mechanism ?? exposureEvent?.pregnancy_relevance
+    ?.reproductive_mechanism;
+  const requestedKey = mechanismKey(eventMechanism);
+  const type = characterFacts.type ?? null;
+  const entries = Array.isArray(type?.reproductive_mechanisms)
+    ? type.reproductive_mechanisms
+    : [];
+  if (requestedKey) {
+    const matches = entries.filter(
+      (entry) => mechanismEntryKey(entry) === requestedKey,
+    );
+    if (matches.length !== 1) {
+      const exposureCapability = capabilityValue(
+        characterFacts.explicitCapabilities?.can_carry_pregnancy,
+      );
+      if (exposureCapability !== null) {
+        return {
+          value: exposureCapability,
+          evidence: [],
+          reason: "EXPOSURE_CARRYING_CAPABILITY",
+        };
+      }
+      return { value: null, evidence: [], reason: "MECHANISM_UNKNOWN" };
+    }
+    const compatibility = capabilityValue(matches[0].carrying_compatibility);
+    return {
+      value: compatibility,
+      evidence: participantEvidence(matches[0].evidence),
+      reason:
+        compatibility === null
+          ? "MECHANISM_CARRYING_COMPATIBILITY_UNKNOWN"
+          : "MECHANISM_CARRYING_COMPATIBILITY_RESOLVED",
+    };
+  }
+
+  const value = capabilityValue(characterFacts.capabilities?.can_carry_pregnancy);
+  return {
+    value,
+    evidence: [],
+    reason: value === null ? "CAN_CARRY_PREGNANCY_UNKNOWN" : "BASELINE_CARRYING_CAPABILITY",
   };
 }
 
@@ -323,13 +385,21 @@ export function trackingDecisionPath(rawEvent, previousChat = null) {
       participant ? [participant] : [],
       context.worldModel,
     );
+    const carrying = resolveCarryingCapability({
+      characterFacts: facts,
+      exposureEvent: event,
+      worldModel: context.worldModel,
+    });
     return decisionForParticipant({
       valid: normalized.valid,
       characterId,
       participant,
       gestationalSubjectIds,
       eventReasons,
-      capabilities: facts.capabilities,
+      capabilities: {
+        ...facts.capabilities,
+        can_carry_pregnancy: carrying.value,
+      },
     });
   });
 
@@ -399,11 +469,7 @@ function collectExposureCandidates(events) {
   const validEvents = uniqueEventList(events);
   for (const event of validEvents) {
     const relevance = event.pregnancy_relevance;
-    const isExposure =
-      event.type === "sexual_activity" &&
-      !EXCLUDED_EVENT_STATUSES.has(event.status) &&
-      relevance.relevant === true &&
-      relevance.possible_conception === true;
+    const isExposure = isPregnancyRelevantExposure(event);
     if (!isExposure) continue;
     activeEventIds.add(event.event_id);
     const participants = new Map(
@@ -421,6 +487,7 @@ function collectExposureCandidates(events) {
           exposure_event_ids: [],
           exposure_records: [],
           participant_records: [],
+          exposure_events: [],
           evidence: [],
         };
         candidates.set(characterId, candidate);
@@ -428,6 +495,7 @@ function collectExposureCandidates(events) {
       if (!candidate.display_name && participant?.display_name)
         candidate.display_name = participant.display_name;
       addExposureRecord(candidate, event);
+      candidate.exposure_events.push(event);
       candidate.evidence.push(...participantEvidence(event.source_evidence));
       if (participant) {
         candidate.participant_records.push(participant);
@@ -458,14 +526,28 @@ export function rebuildTrackingRegistry(events = [], previousChat = null) {
       candidate.participant_records,
       context.worldModel,
     );
-    const decision = decisionForParticipant({
-      valid: true,
-      characterId,
-      participant,
-      gestationalSubjectIds: new Set([characterId]),
-      eventReasons: [],
-      capabilities: facts.capabilities,
-    });
+    const resolutions = candidate.exposure_events.map((event) =>
+      resolveCarryingCapability({
+        characterFacts: facts,
+        exposureEvent: event,
+        worldModel: context.worldModel,
+      }),
+    );
+    const eligibility = resolutions.some((item) => item.value === true)
+      ? "eligible"
+      : resolutions.some((item) => item.value === null)
+        ? "pending"
+        : "ineligible";
+    const decision = {
+      character_id: characterId,
+      eligibility,
+      reasons:
+        eligibility === "pending"
+          ? ["CAN_CARRY_PREGNANCY_UNKNOWN"]
+          : eligibility === "ineligible"
+            ? ["CAN_CARRY_PREGNANCY_FALSE"]
+            : [],
+    };
 
     for (const participantRecord of candidate.participant_records) {
       profiles[characterId] = mergeProfiles(

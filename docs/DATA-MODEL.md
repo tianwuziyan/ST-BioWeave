@@ -80,7 +80,7 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 创建或更新 Subject 必须同时有：
 
-1. 真实或可靠识别的 `sexual_activity` BiologicalEvent；
+1. 真实或可靠识别的、带有 pregnancy-relevant exposure 事实的 BiologicalEvent；
 2. Event 参与者实际存在，并有稳定的 `character_id`；
 3. World Model 与 Narrative Evidence 对相关 reproductive capability 提供支持；
 4. 本次事件存在实际受孕暴露可能。
@@ -89,7 +89,7 @@ World Model 规则字段使用统一三态语义：`null` 表示未知、未提�
 
 ### BiologicalEvent：完整事实的单一来源
 
-BiologicalEvent 是当前范围内实际生物事实（尤其是 conception-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
+BiologicalEvent 是当前范围内实际生物事实（尤其是 pregnancy-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Tracking Subject 不复制完整 Event；它只保存稳定人物索引、active 状态和有效 Event 的 `event_id` 引用。人物详情需要展示事件事实时，必须沿引用读取当前有效 Event，不能在人物索引中另存一份事件正文，也不建立 Chat-level 唯一事件大数组。
 
 Event Analysis V1 的输入单位是一个 Target Floor Version，但一个分析响应可以产生
 零个、一个或多个彼此独立的 Event：
@@ -99,7 +99,7 @@ One Target Floor Version → 0 / 1 / N BiologicalEvents
 ```
 
 对于 pregnancy-related `sexual_activity`，Event 的粒度是一个 gestational subject
-在本 Floor Version 中的一组实际 conception-relevant exposure。先识别所有实际
+在本 Floor Version 中的一组实际 pregnancy-relevant exposure。先识别所有实际
 发生暴露的 subject，再按 subject 分组：每个 Event 的
 `gestational_subject_ids.length === 1`，并且 `counterpart_ids[]` 只包含实际对该
 subject 造成暴露的一个或多个 source。participant ID 集合必须严格等于该 subject
@@ -117,7 +117,7 @@ Floor 并存。普通照顾、送汤、食物、补品和静态外貌/体质背�
 Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtime 与 UI 不
 选择、丢弃、合并或按人物重建 Event。
 
-本阶段保留现有其它 BiologicalEvent 类型的兼容性，但只实现 `sexual_activity` 的妊娠相关 Tracking 闭环。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
+本阶段保留现有其它 BiologicalEvent 类型，但 Tracking 入口是结构化 pregnancy-relevant reproductive exposure，不依赖单一 Event type。`conception`、`pregnancy_suspicion`、`pregnancy_confirmation`、`pregnancy_loss`、`abortion`、`labor`、`delivery`、`postpartum`、`menstrual_event`、`ovulation_event`、`fertility_change`、`physical_symptom`、`medical_event` 和 `other_biological` 等类型仍可被领域层接受或展示，但不能因为类型存在就自动创建 Subject。
 
 ### BiologicalEvent 固定结构
 
@@ -126,20 +126,20 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 | 字段 | 语义 |
 | --- | --- |
 | `event_id` | Event 稳定标识；Registry 只通过它引用 Event。 |
-| `type` | 现有 BiologicalEvent 类型；本阶段以 `sexual_activity` 为 Tracking 入口。 |
+| `type` | 现有 BiologicalEvent 类型；Tracking 入口是结构化 pregnancy-relevant reproductive exposure，不依赖单一 Event type。 |
 | `status` | Event 状态；`negated` / `fictional` 不得成为受孕追踪事实。 |
 | `location` | 事件地点，允许未知值按领域规范化处理。 |
 | `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`；pregnancy-related `sexual_activity` 的每项还必须包含 `biological_context: {species, biological_type}`，两个值均为 `string | null`。 |
-| `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`confidence`。 |
+| `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`reproductive_mechanism`、`confidence`；`relevant` 表示进入未来推演池的资格，`possible_conception` 不表示该资格，也不表示已经 conception。 |
 | `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
 | `story_time` | 结构化故事时间，不能只保存展示字符串。 |
 
 `event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。实际 exposure recipient/source 与 `possible_conception` 必须由当前 World Model、匹配 species/type 的 reproduction rules/capabilities 和 Narrative evidence 共同决定；不能把任何现实物种、性别、解剖结构、行为位置或单一现实生殖机制硬编码成所有世界的必要条件。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`。AI 可综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体/生理/生殖事实和多条一致上下文进行映射；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability；名称、称谓、外貌、event_role、位置、主动/被动或社会身份等单一弱线索不能单独补全 identity/capability，证据冲突或不足时保持 `null` 并进入 pending。`reproductive_capabilities_used` 必须先依据当前 World Model baseline，再结合已有 character profile 与 Character / Persona / Worldbook / 当前剧情证据判断；个体明确值可覆盖或补充 baseline，未知 capability 保持 `null`。
 
-`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、实际 pregnancy-relevant exposure 和有效 Event 共同满足时，相关参与者才能成为 `eligible` gestational Subject；明确 `false` 为 `ineligible`，`null`/无法确认必须保存为 `pending` candidate，不能当作 reject 后丢失。`can_be_fertilized === true` 不能单独授权 Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测也不能授权 Subject。`possible_conception === true` 时，`relevant` 必须为 true，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `conception_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
+`reproductive_capabilities_used` 的字段使用 `true | false | null`。只有明确的 `can_carry_pregnancy === true`、实际 pregnancy-relevant exposure 和有效 Event 共同满足时，相关参与者才能成为 `eligible` gestational Subject；明确 `false` 为 `ineligible`，`null`/无法确认必须保存为 `pending` candidate，不能当作 reject 后丢失。`can_be_fertilized === true` 不能单独授权 Subject；只靠 event role、gender、NSFW 状态、症状或自然语言猜测也不能授权 Subject。`relevant === true` 时，两个 ID 数组都必须非空、每个 ID 都必须来自 `participants[]`，`participants[]` 只能包含这些 subject/source，且 `source_evidence[]` 必须包含 kind 为 `pregnancy_relevant_exposure` 的结构化证据。没有实际暴露的 `sexual_activity`（若保留）必须没有 participants，使用 `relevant=false`、`possible_conception=false` 和两个空数组。
 
-`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。对 pregnancy-related `sexual_activity`，`gestational_subject_ids[]` 严格只有一个 ID，`counterpart_ids[]` 至少一个且去重，是 `participants[]` 的 subject-local 子集，只记录最终实际造成该 subject conception-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
+`counterpart_ids` 与 `gestational_subject_ids` 永远是数组，允许 `[]`、单项或多项；不得保存为逗号分隔字符串，也不得用姓名代替稳定 `character_id`。对 pregnancy-related `sexual_activity`，`gestational_subject_ids[]` 严格只有一个 ID，`counterpart_ids[]` 至少一个且去重，是 `participants[]` 的 subject-local 子集，只记录最终实际造成该 subject pregnancy-relevant exposure 的 source ID，不表示所有性伴侣、在场者、能力具备者或所有曾出现的对象。
 
 AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
 和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
@@ -275,7 +275,7 @@ Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊�
 `message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
 
 ## 核心链
-`Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
+`Character/assistant BioWeave Floor → Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
 
 用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Phase 2A 不提前接通 StateReducer/Genealogy。
 
@@ -283,4 +283,4 @@ Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊�
 
 The normative clear and lifecycle rules live in [BioWeave Data Lifecycle](./bioweave-data-lifecycle.md). Read it whenever a change touches the global settings boundary, Chat metadata, message/Swipe Floor roots, derived state, Chat lifecycle events, or asynchronous persistence. It is the single detailed contract for Manual Character/World/All clear, verified Start New Chat source cleanup, mutation invalidation, provenance, rollback, and contract-test coverage.
 
-The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns only Chat-local configuration/control state; `message.extra.bioweave` owns an ordinary-message Floor; and `message.swipe_info[*].extra.bioweave` owns every structured-message Swipe, including inactive and historical slots. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.
+The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns only Chat-local configuration/control state; `message.extra.bioweave` owns a Character/assistant message without Swipe structure; and `message.swipe_info[*].extra.bioweave` owns every structured Character/assistant Swipe, including inactive and historical slots. User messages are not BioWeave Floors and must never receive a BioWeave payload. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.

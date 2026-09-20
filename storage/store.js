@@ -69,6 +69,13 @@ function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
 }
 
+export function isCharacterMessage(message) {
+  const role = String(message?.role ?? '').trim().toLowerCase();
+  if (role === 'user' || message?.is_user === true) return false;
+  if (role === 'system' || message?.is_system === true) return false;
+  return true;
+}
+
 function profileIdFrom(value) {
   const id =
     typeof value === "string" ? value : (value?.profile_id ?? value?.id);
@@ -786,6 +793,7 @@ export function createStore(adapter, boundary = null) {
   function getFloor(messageId, swipeId = 0) {
     const message = adapter.getMessage?.(messageId);
     if (!message) return null;
+    if (!isCharacterMessage(message)) return emptyFloor();
     const targetSwipeId = validSwipeId(swipeId);
     if (hasSwipeStructure(message) && !hasSwipeSlot(message, targetSwipeId))
       return emptyFloor();
@@ -819,8 +827,9 @@ export function createStore(adapter, boundary = null) {
   async function saveFloor(messageId, swipeId, data) {
     const targetSwipeId = validSwipeId(swipeId);
     const message = adapter.getMessage?.(messageId);
+    if (!message || !isCharacterMessage(message))
+      throw new Error('BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN');
     if (
-      message &&
       hasSwipeStructure(message) &&
       !hasSwipeSlot(message, targetSwipeId)
     )
@@ -909,6 +918,8 @@ export function createStore(adapter, boundary = null) {
       if (!message || String(message.message_id ?? slot.messageId) !== String(slot.messageId))
         throw new Error("MESSAGE_OWNER_CHANGED");
       const next = restore ? slot.before : slot.after;
+      if (next !== undefined && !isCharacterMessage(message))
+        throw new Error('BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN');
       if (slot.kind === "message_extra") {
         if (next === undefined) delete message.extra?.bioweave;
         else {

@@ -103,6 +103,7 @@ const modelFixture = {
             can_produce_ova: null,
             can_be_fertilized: false,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: {
@@ -114,6 +115,7 @@ const modelFixture = {
             labor: '产程规则尚未明确。',
           },
           lifecycle: { maturation: null, aging: '寿命尚未明确。' },
+          reproductive_mechanisms: [],
           special_rules: ['潮汐期能力会变化。'],
         },
       ],
@@ -143,6 +145,7 @@ function structuredFixtureType(name, description, overrides = {}) {
       can_produce_ova: null,
       can_be_fertilized: null,
       can_fertilize: null,
+            can_cause_pregnancy: null,
       can_carry_pregnancy: null,
     },
     reproduction_rules: {
@@ -153,7 +156,8 @@ function structuredFixtureType(name, description, overrides = {}) {
       gestation: null,
       labor: null,
     },
-    lifecycle: { maturation: null, aging: null },
+      lifecycle: { maturation: null, aging: null },
+    reproductive_mechanisms: [],
     special_rules: [],
     ...overrides,
   }
@@ -173,6 +177,7 @@ const fixtureA = {
             can_produce_ova: false,
             can_be_fertilized: null,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
           reproduction_rules: {
@@ -192,6 +197,7 @@ const fixtureA = {
             can_produce_ova: false,
             can_be_fertilized: null,
             can_fertilize: null,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
         }),
@@ -305,6 +311,7 @@ test('World Model schema keeps capability unknowns as null and drops extra field
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(WORLD_MODEL_SCHEMA.species[0].biological_types[0].reproduction_rules, {
@@ -329,6 +336,7 @@ test('World Model schema drops model-invented capability keys', () => {
     can_produce_ova: null,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
     can_lactate: true,
     can_regenerate: true,
@@ -343,8 +351,37 @@ test('World Model schema drops model-invented capability keys', () => {
     can_produce_ova: null,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
+})
+
+test('World Model keeps open structured reproductive mechanisms without an enum', () => {
+  const model = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '开放机制物种',
+      biological_types: [{
+        name: '载体型',
+        reproductive_mechanisms: [{
+          key: 'world_custom_seed_host',
+          label: '世界自定义繁殖体植入',
+          pathway: 'seed_host_transfer',
+          carrying_compatibility: true,
+          world_model_rule_refs: ['rule-custom-1'],
+          evidence: ['世界规则明确支持该机制。'],
+        }],
+      }],
+    }],
+  });
+  assert.deepEqual(model.species[0].biological_types[0].reproductive_mechanisms[0], {
+    key: 'world_custom_seed_host',
+    label: '世界自定义繁殖体植入',
+    pathway: 'seed_host_transfer',
+    carrying_compatibility: true,
+    world_model_rule_refs: ['rule-custom-1'],
+    evidence: ['世界规则明确支持该机制。'],
+  });
 })
 
 test('World Model nested fixtures keep old fields and default new fields to null', () => {
@@ -527,6 +564,7 @@ test('World Model parser keeps bisexual/intersex capabilities independently evid
       can_produce_ova: null,
       can_be_fertilized: false,
       can_fertilize: null,
+            can_cause_pregnancy: null,
       can_carry_pregnancy: null,
     },
   }
@@ -538,6 +576,7 @@ test('World Model parser keeps bisexual/intersex capabilities independently evid
     can_produce_ova: null,
     can_be_fertilized: false,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -853,6 +892,7 @@ test('World Model keeps species and biological type recognition separate and sup
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -1008,6 +1048,7 @@ test('World Model analysis keeps non-human female mechanisms unknown when raw fi
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(type.reproduction_rules, {
@@ -1027,6 +1068,7 @@ test('World Model analysis preserves schema-valid non-human capabilities without
     can_produce_ova: null,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -1092,6 +1134,7 @@ test('World Model analysis preserves generic raw fields after type-only retentio
       can_produce_ova: true,
       can_be_fertilized: true,
       can_fertilize: true,
+            can_cause_pregnancy: null,
       can_carry_pregnancy: true,
     },
     reproduction_rules: {
@@ -1130,6 +1173,7 @@ test('World Model analysis preserves raw fields for custom types under human spe
       can_produce_ova: true,
       can_be_fertilized: true,
       can_fertilize: true,
+            can_cause_pregnancy: null,
       can_carry_pregnancy: true,
     },
     reproduction_rules: {
@@ -1169,6 +1213,7 @@ test('World Model analysis preserves generic null and empty raw fields', async (
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(result.species[0].biological_types[0].reproduction_rules, {
@@ -1545,6 +1590,7 @@ test('World Model analysis preserves arbitrary non-human male and female capabil
             can_produce_ova: true,
             can_be_fertilized: true,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
         }),
@@ -1554,6 +1600,7 @@ test('World Model analysis preserves arbitrary non-human male and female capabil
             can_produce_ova: true,
             can_be_fertilized: true,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
         }),
@@ -1569,6 +1616,7 @@ test('World Model analysis preserves arbitrary non-human male and female capabil
         can_produce_ova: true,
         can_be_fertilized: true,
         can_fertilize: true,
+            can_cause_pregnancy: null,
         can_carry_pregnancy: true,
       },
       {
@@ -1576,6 +1624,7 @@ test('World Model analysis preserves arbitrary non-human male and female capabil
         can_produce_ova: true,
         can_be_fertilized: true,
         can_fertilize: true,
+            can_cause_pregnancy: null,
         can_carry_pregnancy: true,
       },
     ],
@@ -1627,6 +1676,7 @@ test('World Model analysis keeps prompt-supplied unknown fertilization for inter
           capabilities: {
             can_be_fertilized: false,
             can_fertilize: false,
+            can_cause_pregnancy: null,
           },
           reproduction_rules: { fertilization: null },
         }),
@@ -1688,6 +1738,7 @@ test('World Model analysis preserves a directly evidenced rule when capability i
             can_produce_ova: null,
             can_be_fertilized: null,
             can_fertilize: null,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: { fertilization: '体内配子结合。' },
@@ -1805,6 +1856,7 @@ test('World Model analysis preserves generic fields while applying final contrad
             can_produce_ova: false,
             can_be_fertilized: false,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
           reproduction_rules: {
@@ -1828,6 +1880,7 @@ test('World Model analysis preserves generic fields while applying final contrad
     can_produce_ova: false,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: false,
   })
   assert.deepEqual(type.reproduction_rules, {
@@ -1871,6 +1924,7 @@ test('World Model analysis keeps generic type-local fields across separate paren
               can_produce_ova: true,
               can_be_fertilized: null,
               can_fertilize: null,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: null,
             },
             reproduction_rules: {
@@ -1890,6 +1944,7 @@ test('World Model analysis keeps generic type-local fields across separate paren
               can_produce_ova: true,
               can_be_fertilized: null,
               can_fertilize: null,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: true,
             },
             reproduction_rules: {
@@ -1914,6 +1969,7 @@ test('World Model analysis keeps generic type-local fields across separate paren
     can_produce_ova: true,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(typeX.reproduction_rules, {
@@ -1935,6 +1991,7 @@ test('World Model analysis keeps generic type-local fields across separate paren
     can_produce_ova: true,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.deepEqual(typeY.reproduction_rules, {
@@ -2013,6 +2070,7 @@ test('World Model analysis keeps a retained type raw while ignoring species-leve
             can_produce_ova: false,
             can_be_fertilized: true,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
           reproduction_rules: { fertilization: null },
@@ -2028,6 +2086,7 @@ test('World Model analysis keeps a retained type raw while ignoring species-leve
     can_produce_ova: false,
     can_be_fertilized: true,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: false,
   })
   assert.deepEqual(type.reproduction_rules, {
@@ -2087,6 +2146,7 @@ test('World Model analysis preserves original non-human sex-label capabilities',
     can_produce_ova: true,
     can_be_fertilized: true,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   }
   const result = await analyzeDescription('浮芯体稳定分为男性和女性，但没有说明其生殖能力。', [
@@ -2100,7 +2160,11 @@ test('World Model analysis preserves original non-human sex-label capabilities',
     result.species[0].biological_types.map(type => type.name),
     ['男性', '女性'],
   )
-  assert.ok(result.species[0].biological_types.every(type => Object.values(type.capabilities).every(value => value === true)))
+  assert.ok(result.species[0].biological_types.every(type =>
+    Object.entries(type.capabilities).every(([key, value]) =>
+      key === 'can_cause_pregnancy' ? value === null : value === true,
+    ),
+  ))
 })
 
 test('World Model analysis preserves normalized lifecycle text for a retained original type', async () => {
@@ -2139,6 +2203,7 @@ test('World Model analysis keeps absent or pseudo-pregnancy raw capabilities unk
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -2152,6 +2217,7 @@ test('World Model analysis keeps generic null capabilities despite source-only i
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -2167,6 +2233,7 @@ test('World Model analysis applies only the named human-equivalence field to non
             can_produce_ova: true,
             can_be_fertilized: true,
             can_fertilize: false,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
           reproduction_rules: {
@@ -2188,6 +2255,7 @@ test('World Model analysis applies only the named human-equivalence field to non
     can_produce_ova: true,
     can_be_fertilized: true,
     can_fertilize: false,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.deepEqual(type.reproduction_rules, {
@@ -2211,6 +2279,7 @@ test('World Model final guard preserves explicit Human rules while applying stru
             can_produce_ova: false,
             can_be_fertilized: false,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
           reproduction_rules: {
@@ -2228,6 +2297,7 @@ test('World Model final guard preserves explicit Human rules while applying stru
             can_produce_ova: true,
             can_be_fertilized: true,
             can_fertilize: false,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
           reproduction_rules: {
@@ -2275,6 +2345,7 @@ test('World Model final guard marks non-human rules absent when capabilities are
               can_produce_ova: false,
               can_be_fertilized: null,
               can_fertilize: null,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: false,
             },
             reproduction_rules: {
@@ -2315,6 +2386,7 @@ test('World Model final guard clears only conflicting fertilization roles', asyn
               can_produce_ova: false,
               can_be_fertilized: false,
               can_fertilize: true,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: false,
             },
             reproduction_rules: {
@@ -2327,6 +2399,7 @@ test('World Model final guard clears only conflicting fertilization roles', asyn
               can_produce_ova: true,
               can_be_fertilized: true,
               can_fertilize: false,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: true,
             },
             reproduction_rules: {
@@ -2354,6 +2427,7 @@ test('World Model final guard preserves known absence for fertilization', async 
             can_produce_ova: null,
             can_be_fertilized: false,
             can_fertilize: false,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: { fertilization: '无' },
@@ -2376,6 +2450,7 @@ test('World Model final guard keeps evidence-backed rules when capabilities are 
             can_produce_ova: null,
             can_be_fertilized: null,
             can_fertilize: null,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: {
@@ -2392,6 +2467,7 @@ test('World Model final guard keeps evidence-backed rules when capabilities are 
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.equal(type.reproduction_rules.fertilization, '体内受精')
@@ -2483,6 +2559,7 @@ test('World Model final guard preserves all non-empty rules when capabilities ar
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(type.reproduction_rules, reproductionRules)
@@ -2500,6 +2577,7 @@ test('World Model Human baseline fills only null fields and preserves explicit d
             can_produce_ova: true,
             can_be_fertilized: null,
             can_fertilize: false,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
           reproduction_rules: {
@@ -2517,6 +2595,7 @@ test('World Model Human baseline fills only null fields and preserves explicit d
             can_produce_ova: false,
             can_be_fertilized: null,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: null,
           },
           reproduction_rules: {
@@ -2538,6 +2617,7 @@ test('World Model Human baseline fills only null fields and preserves explicit d
     can_produce_ova: true,
     can_be_fertilized: false,
     can_fertilize: false,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.deepEqual(male.reproduction_rules, {
@@ -2553,6 +2633,7 @@ test('World Model Human baseline fills only null fields and preserves explicit d
     can_produce_ova: false,
     can_be_fertilized: true,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.deepEqual(female.reproduction_rules, {
@@ -2577,6 +2658,7 @@ test('World Model keeps non-human evidence boundaries without applying Human bas
             can_produce_ova: true,
             can_be_fertilized: true,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
         }),
@@ -2594,6 +2676,7 @@ test('World Model keeps non-human evidence boundaries without applying Human bas
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
   assert.deepEqual(species.biological_types[0].reproduction_rules, {
@@ -2617,6 +2700,7 @@ test('World Model Human baseline yields only the established female type', async
     can_produce_ova: true,
     can_be_fertilized: true,
     can_fertilize: false,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.deepEqual(type.reproduction_rules, {
@@ -2641,6 +2725,7 @@ test('World Model can use an implicit Human baseline without a Human label', asy
     can_produce_ova: false,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: false,
   })
 })
@@ -2656,6 +2741,7 @@ test('World Model applies a Human delta to one capability and keeps other baseli
             can_produce_ova: null,
             can_be_fertilized: null,
             can_fertilize: null,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
           reproduction_rules: {
@@ -2672,6 +2758,7 @@ test('World Model applies a Human delta to one capability and keeps other baseli
     can_produce_ova: false,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: true,
   })
   assert.equal(type.reproduction_rules.pregnancy_or_carrying, '该路线允许男性承担妊娠。')
@@ -2719,6 +2806,7 @@ test('World Model does not use implicit Human fallback when an independent speci
     can_produce_ova: null,
     can_be_fertilized: null,
     can_fertilize: null,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: null,
   })
 })
@@ -2742,6 +2830,7 @@ test('World Model preserves the current transformed species label and its synthe
             can_produce_ova: false,
             can_be_fertilized: false,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: false,
           },
         }),
@@ -2758,6 +2847,7 @@ test('World Model preserves the current transformed species label and its synthe
     can_produce_ova: false,
     can_be_fertilized: false,
     can_fertilize: true,
+            can_cause_pregnancy: null,
     can_carry_pregnancy: false,
   })
 })
@@ -2773,6 +2863,7 @@ test('World Model Human world rules override the ordinary baseline', async () =>
             can_produce_ova: false,
             can_be_fertilized: false,
             can_fertilize: true,
+            can_cause_pregnancy: null,
             can_carry_pregnancy: true,
           },
           reproduction_rules: { pregnancy_or_carrying: '该世界男性可以承担妊娠。' },
@@ -3051,7 +3142,7 @@ test('World Model prompt states the complete generic field semantic contract', (
   assert.match(prompt, /【2\. Biological Type Discovery】[\s\S]*稳定生理、生殖或直接影响生殖机制/)
   assert.match(prompt, /职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级\/境界、成长阶段/)
   assert.match(prompt, /证据不足保持 biological_types: \[\]/)
-  assert.match(prompt, /【4\. Field Evidence】[\s\S]*五个 capability/)
+  assert.match(prompt, /【4\. Field Evidence】[\s\S]*六个 capability/)
   assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/)
   assert.match(prompt, /生理性别事实可以支持 type 存在/)
   assert.match(prompt, /不得从男性、女性、雄性、雌性等 type 名称直接推 capability/)
@@ -3302,9 +3393,9 @@ test('World Model prompt requires Chinese string values and human type names', (
   assert.match(prompt, /JSON key 使用 schema 规定的英文/)
   assert.match(prompt, /说明、规则和列表字符串使用中文/)
   assert.match(prompt, /species\[\] 包含 name、description、biological_types\[\]/)
-  assert.match(prompt, /每个 biological_type 包含 name、description、capabilities、reproduction_rules、lifecycle、special_rules/)
+  assert.match(prompt, /每个 biological_type 包含 name、description、capabilities、reproductive_mechanisms\[\]、reproduction_rules、lifecycle、special_rules/)
   assert.match(prompt, /名称保持开放字符串/)
-  assert.match(prompt, /固定包含五个 key/)
+  assert.match(prompt, /固定包含六个 key/)
   assert.match(prompt, /reproduction_rules 固定包含 fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|Homo sapiens|极少女剑灵/)
 })
@@ -3635,7 +3726,7 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   assert.match(html, /潮汐生物/)
   assert.match(html, /潮汐生物型/)
   assert.match(html, /1 个类型 · 潮汐生物型/)
-  assert.match(html, /3\/5 项能力已知 · 妊娠未知/)
+  assert.match(html, /3\/6 项能力已知 · 妊娠未知/)
   assert.match(html, /生物类型详情/)
   assert.doesNotMatch(html, /切换类型/)
   assert.match(html, /生殖能力/)
@@ -3813,6 +3904,7 @@ test('World UI Fixture A keeps one species, two types, card summaries, fixed fie
   assert.deepEqual(Object.keys(fixtureA.species[0].biological_types[0].capabilities).sort(), [
     'can_be_fertilized',
     'can_carry_pregnancy',
+    'can_cause_pregnancy',
     'can_fertilize',
     'can_produce_ova',
     'can_produce_sperm',
@@ -3836,7 +3928,7 @@ test('World UI Fixture A keeps one species, two types, card summaries, fixed fie
   assert.doesNotMatch(firstTypeHtml, /Fixture A 物种描述。|第二行仍然可读。/)
   assert.match(firstTypeHtml, /Fixture A 类型一描述。/)
   assert.match(firstTypeHtml, /类型说明第二行。/)
-  assert.match(firstTypeHtml, /4\/5 项能力已知 · 不可承担妊娠/)
+  assert.match(firstTypeHtml, /4\/6 项能力已知 · 不可承担妊娠/)
   assert.match(firstTypeHtml, /Fixture A 受精方式|Fixture A 妊娠方式|Fixture A 生理周期/)
   assert.match(firstTypeHtml, /Fixture A 排卵机制|Fixture A 妊娠周期|Fixture A 分娩方式/)
   assert.match(firstTypeHtml, /Fixture A 成熟|Fixture A 衰老|Fixture A 特殊规则/)
@@ -4021,6 +4113,7 @@ test('World Model cards render arbitrary Runtime types and derive pregnancy only
               can_produce_ova: true,
               can_be_fertilized: true,
               can_fertilize: true,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: false,
             },
           }),
@@ -4030,6 +4123,7 @@ test('World Model cards render arbitrary Runtime types and derive pregnancy only
               can_produce_ova: true,
               can_be_fertilized: true,
               can_fertilize: true,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: true,
             },
           }),
@@ -4039,6 +4133,7 @@ test('World Model cards render arbitrary Runtime types and derive pregnancy only
               can_produce_ova: null,
               can_be_fertilized: null,
               can_fertilize: null,
+            can_cause_pregnancy: null,
               can_carry_pregnancy: null,
             },
           }),
@@ -4049,9 +4144,9 @@ test('World Model cards render arbitrary Runtime types and derive pregnancy only
   const html = worldPage({ worldModel: runtimeModel, selectedSpeciesIndex: 0, selectedTypeIndex: 1 })
 
   assert.match(html, /3 个类型 · Gamma \/ Delta \/ Epsilon/)
-  assert.match(html, /<b>Gamma<\/b>[\s\S]*?5\/5 项能力已知 · 不可承担妊娠/)
-  assert.match(html, /<b>Delta<\/b>[\s\S]*?5\/5 项能力已知 · 可承担妊娠/)
-  assert.match(html, /<b>Epsilon<\/b>[\s\S]*?0\/5 项能力已知 · 妊娠未知/)
+  assert.match(html, /<b>Gamma<\/b>[\s\S]*?5\/6 项能力已知 · 不可承担妊娠/)
+  assert.match(html, /<b>Delta<\/b>[\s\S]*?5\/6 项能力已知 · 可承担妊娠/)
+  assert.match(html, /<b>Epsilon<\/b>[\s\S]*?0\/6 项能力已知 · 妊娠未知/)
   assert.doesNotMatch(html, /<b>男性<\/b>|<b>女性<\/b>/)
   assert.match(html, /data-bioweave-world-type-index="1"[^>]*aria-pressed="true"/)
 })

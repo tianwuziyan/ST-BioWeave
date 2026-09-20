@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
 import { createAnalyzer } from "../ai/analyzer.js";
-import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 import { floorVersion } from "../runtime/floor.js";
 import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schema.js";
 
@@ -59,7 +59,7 @@ function eventResult(eventId = "evt-1", overrides = {}) {
     source_evidence: [
       { kind: "current_floor", text: "当前楼层" },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: "实际暴露证据",
       },
     ],
@@ -248,6 +248,7 @@ function canonicalApiEvent({
           can_produce_sperm: false,
           can_produce_ova: true,
           can_be_fertilized: true,
+        can_fertilize: null,
           can_carry_pregnancy: true,
           can_cause_pregnancy: false,
         },
@@ -275,6 +276,7 @@ function canonicalApiEvent({
           can_produce_sperm: true,
           can_produce_ova: false,
           can_be_fertilized: false,
+        can_fertilize: null,
           can_carry_pregnancy: false,
           can_cause_pregnancy: true,
         },
@@ -302,7 +304,7 @@ function canonicalApiEvent({
         text: "explicit current-floor exposure fixture evidence",
       },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: "abstract exposure entered the valid path",
       },
     ],
@@ -375,6 +377,7 @@ function identityParticipant({
       can_produce_sperm: null,
       can_produce_ova: null,
       can_be_fertilized: null,
+        can_fertilize: null,
       can_carry_pregnancy: null,
       can_cause_pregnancy: null,
       ...capabilities,
@@ -489,6 +492,175 @@ test("manual analysis targets the current Floor and exposes observable status", 
   assert.equal(data.active_event_count, 1);
   assert.equal(data.tracking_subject_count, 1);
   assert.equal(data.tracking_decisions[0].eligibility, "eligible");
+  fixture.runtime.destroy();
+});
+
+test("Character-only current Floor ignores a trailing User message and writes only the Character slot", async () => {
+  let input = null;
+  const fixture = createFixture({
+    messages: [
+      { message_id: "user-4", floor: 4, role: "user", content: "上一轮用户叙事" },
+      { message_id: "char-5", floor: 5, role: "assistant", content: "角色回复" },
+      { message_id: "user-6", floor: 6, role: "user", content: "尾部用户消息" },
+    ],
+    analyzer: {
+      async analyzeFloor(request) {
+        input = request.analysisInput;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const current = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  assert.equal(current.version.message_id, "char-5");
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(input.current_floor.message_id, "char-5");
+  assert.equal(input.current_floor.narrative, "角色回复");
+  assert.equal(fixture.context.chat[1].extra.bioweave.analysis.status, "success");
+  assert.equal(fixture.context.chat[0].extra?.bioweave, undefined);
+  assert.equal(fixture.context.chat[2].extra?.bioweave, undefined);
+  assert.equal(fixture.context.chat[2].swipe_info?.[0]?.extra?.bioweave, undefined);
+  fixture.runtime.destroy();
+});
+
+test("a Chat with only User messages returns NO_CHARACTER_FLOOR without AI or persistence", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "user-0", floor: 0, role: "user", content: "只有用户正文" }],
+    analyzer: {
+      async analyzeFloor() {
+        throw new Error("AI_MUST_NOT_BE_CALLED");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /NO_CHARACTER_FLOOR/,
+  );
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.equal(fixture.context.chat[0].extra?.bioweave, undefined);
+  assert.equal(fixture.context.chatMetadata.bioweave, undefined);
+  fixture.runtime.destroy();
+});
+
+test("pregnancy-relevant mechanism facts persist on the owning Floor only", async () => {
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        return {
+          events: [eventResult("evt-medical", {
+            type: "medical_event",
+            pregnancy_relevance: {
+              ...eventResult().pregnancy_relevance,
+              possible_conception: false,
+              gestational_subject_ids: ["evt-medical-subject"],
+              counterpart_ids: ["evt-medical-source"],
+              reproductive_mechanism: {
+                kind: "world_defined_implant_path",
+                label: "直接植入胚胎",
+                pathway: "implantation",
+                world_model_rule_refs: ["rule-implant-1"],
+                evidence: [{ kind: "world_model", text: "世界规则支持直接植入" }],
+              },
+            },
+          })],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const floor = fixture.runtime.store.getFloor(0);
+  assert.equal(fixture.context.chatMetadata.biological_events, undefined);
+  assert.equal(floor.events[0].type, "medical_event");
+  assert.equal(
+    floor.events[0].pregnancy_relevance.reproductive_mechanism.kind,
+    "world_defined_implant_path",
+  );
+  assert.equal(fixture.runtime.store.getActiveFloor(0).events.length, 1);
+  fixture.runtime.destroy();
+});
+
+test("two new mechanism exposures canonicalize on Swipe 0 and rebuild eligible subjects", async () => {
+  const messages = [{
+    message_id: "message-floor-58",
+    floor: 58,
+    content: "当前剧情",
+    role: "assistant",
+    swipes: ["当前剧情"],
+    swipe_info: [{}],
+    swipe_id: 0,
+  }];
+  const makeExposure = (eventId, subjectName, sourceName) => {
+    const value = eventResult(eventId, {
+      type: "medical_event",
+      participants: eventResult(eventId).participants.map((participant, index) => ({
+        ...participant,
+        display_name: index === 0 ? subjectName : sourceName,
+      })),
+      pregnancy_relevance: {
+        ...eventResult(eventId).pregnancy_relevance,
+        possible_conception: false,
+        reproductive_mechanism: {
+          kind: "world_defined_implant_path",
+          label: "直接植入胚胎",
+          pathway: "implantation",
+          world_model_rule_refs: ["rule-implant"],
+          evidence: [{ kind: "world_model", text: "明确机制规则" }],
+        },
+      },
+    });
+    return value;
+  };
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor() {
+        return {
+          events: [
+            makeExposure("evt-q", "祁鸢", "觉心"),
+            makeExposure("evt-l", "柳如烟", "孙大壮"),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const floor = fixture.runtime.store.getFloor(0, 0);
+  assert.equal(fixture.context.chat[0].extra?.bioweave, undefined);
+  assert.equal(floor.events.length, 2);
+  assert.deepEqual(
+    floor.events.map((item) => item.participants.map((participant) => participant.character_id)),
+    [["char_000001", "char_000002"], ["char_000003", "char_000004"]],
+  );
+  assert.deepEqual(
+    floor.events.map((item) => item.pregnancy_relevance.gestational_subject_ids),
+    [["char_000001"], ["char_000003"]],
+  );
+  assert.deepEqual(
+    floor.events.map((item) => item.pregnancy_relevance.counterpart_ids),
+    [["char_000002"], ["char_000004"]],
+  );
+  assert.equal(fixture.context.chatMetadata.bioweave?.events, undefined);
+  assert.equal(fixture.context.chatMetadata.bioweave?.tracking_subjects, undefined);
+
+  const data = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(Object.keys(data.tracking_subjects).sort(), [
+    "char_000001",
+    "char_000003",
+  ]);
+  assert.deepEqual(data.tracking_candidates, {});
+  assert.deepEqual(Object.keys(data.character_profiles).sort(), [
+    "char_000001",
+    "char_000003",
+  ]);
+  assert.equal(data.tracking_subjects.char_000002, undefined);
+  assert.equal(data.tracking_subjects.char_000004, undefined);
+
   fixture.runtime.destroy();
 });
 
@@ -658,6 +830,13 @@ test(
       gestational_subject_ids: [subjectId],
       counterpart_ids: [sourceId],
       confidence: 0.9,
+      reproductive_mechanism: {
+        kind: null,
+        label: null,
+        pathway: null,
+        world_model_rule_refs: [],
+        evidence: [],
+      },
     });
     assert.equal(firstEvent.location, "传灯院");
     assert.equal("mention_id" in firstEvent.participants[0], false);
@@ -3956,7 +4135,7 @@ test("Runtime rejects a possible conception Event without the canonical exposure
   assert.equal(status.error_code, "domain_validation_failed");
   assert.equal(
     status.error_path,
-    "$.events[0].source_evidence.conception_relevant_exposure",
+    "$.events[0].source_evidence.pregnancy_relevant_exposure",
   );
   fixture.runtime.destroy();
 });

@@ -8,8 +8,8 @@ history or ownership model.
 The data flow is intentionally one-way:
 
 ```text
-current message + active Swipe
-  -> authoritative Floor Version
+current Character/assistant message + its active Swipe
+  -> authoritative BioWeave Floor Version
   -> Floor/Swipe analysis, Events, and cumulative canonical identity snapshot
   -> current valid Floor facts
   -> derived runtime state, registries, UI model, and API context
@@ -21,9 +21,13 @@ new disease, medication, reproduction, exposure, or other cross-Floor state.
 
 ## 1. Source of Truth
 
-A Floor-derived analysis, Event, or biological fact belongs to the message
-Floor that produced it and, when the message has Swipe structure, to the
-active message's durable per-Swipe slot. The authoritative binding is the
+A BioWeave Floor is a Character/assistant message. User messages are narrative
+context only: they never create a BioWeave Floor, Floor Version, or
+authoritative payload. Runtime resolves the current BioWeave Floor as the
+nearest Character/assistant message at or before the current host message.
+
+A Floor-derived analysis, Event, or biological fact belongs to that Character
+message and, when it has Swipe structure, to its durable per-Swipe slot. The authoritative binding is the
 complete six-field Floor Version owned by `runtime/floor.js`:
 
 `chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
@@ -32,9 +36,10 @@ complete six-field Floor Version owned by `runtime/floor.js`:
 `storage/store.js` is the business storage boundary. Its read/write contract
 is:
 
-- an ordinary message uses `message.extra.bioweave`;
-- a message with Swipe structure uses exactly
+- a Character message without Swipe structure uses `message.extra.bioweave`;
+- a Character message with Swipe structure uses exactly
   `message.swipe_info[swipe_id].extra.bioweave`;
+- a User message is rejected as a BioWeave Floor owner;
 - the requested message, Chat, and Swipe must still exist;
 - an Event is active only when its complete `source` matches the current
   Floor Version.
@@ -60,8 +65,8 @@ provenance rules below.
 
 ## 2. Floor lifecycle
 
-The current message collection and host-owned message/Swipe slots determine
-validity on every read. Lifecycle handlers can trigger a rebuild for
+The current Character message collection and host-owned message/Swipe slots
+determine validity on every read. Lifecycle handlers can trigger a rebuild for
 responsiveness, but correctness must be recoverable without trusting a
 deletion callback or a stale cache.
 
@@ -70,7 +75,8 @@ deletion callback or a stale cache.
 | First analysis or successful reanalysis    | Save the complete analysis, Events, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current six-field version.                                                                                                                            |
 | Manual regeneration or force reanalysis    | Replace that slot's successful result for the same current version; do not accumulate a second history record. The target is never its own previous state.                                                                                                                                    |
 | Edit or regenerated text                   | Recompute `content_hash` and/or `message_version`. The old result is stale and its Events are inactive until a successful result for the new version is saved. A failed attempt may preserve the old stored result for diagnostics, but it cannot make old Events active for the new version. |
-| Message deletion                           | The message's Floor facts disappear from active reads. Rebuild derived state from the remaining current messages.                                                                                                                                                                             |
+| Character message deletion                 | The message's Floor facts disappear from active reads. Rebuild derived state from the remaining Character messages.                                                                                                                                                                           |
+| User message mutation                      | No BioWeave Floor is created, invalidated, or reanalyzed solely because a User message changed.                                                                                                                                                                                                  |
 | Multi-Floor deletion or history truncation | Every removed message loses ownership of its facts; no array index, registry, summary, cache, or Chat hint may recreate them.                                                                                                                                                                 |
 | Swipe deletion                             | The deleted `swipe_info[swipe_id]` owner contributes no Floor, previous state, Event, or derived reference.                                                                                                                                                                                   |
 | Swipe switch                               | Reads select only the newly active Swipe's slot. Facts from another Swipe are inactive even when the message and Floor number are the same.                                                                                                                                                   |

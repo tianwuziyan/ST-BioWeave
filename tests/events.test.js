@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+  PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
   EVENT_TYPES,
   normalizeEvent,
   sortEvents,
@@ -58,6 +58,21 @@ test('normalizeEvent formats narrative StoryTime dates without changing structur
     }).story_time.display,
     '天河42年3月18日',
   );
+});
+
+test('capability facts keep fertilization and pregnancy causation independent', () => {
+  const event = normalizeEvent({
+    type: 'physical_symptom',
+    participants: [{
+      character_id: 'char-source',
+      reproductive_capabilities_used: {
+        can_fertilize: true,
+      },
+    }],
+  });
+  assert.equal(event.participants[0].reproductive_capabilities_used.can_fertilize, true);
+  assert.equal(event.participants[0].reproductive_capabilities_used.can_cause_pregnancy, null);
+  assert.equal(Object.hasOwn(event.participants[0].reproductive_capabilities_used, 'can_cause_pregnancy'), true);
 });
 
 test('normalizeEvent formats narrative first-year dates while preserving an unresolved time suffix', () => {
@@ -137,7 +152,7 @@ test('normalizeEvent emits the fixed source, story time, participants, and relev
     source_evidence: [
       { kind: 'current_floor', text: 'current floor' },
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: 'explicit exposure',
       },
     ],
@@ -240,7 +255,7 @@ function validExposureEvent(overrides = {}) {
     },
     source_evidence: [
       {
-        kind: CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+        kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
         text: 'actual exposure',
       },
     ],
@@ -329,7 +344,7 @@ function actualExposureOutcome({
     source_evidence: [
       {
         kind: possibleConception
-          ? CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND
+          ? PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND
           : 'narrative',
         text: evidenceText,
       },
@@ -683,7 +698,7 @@ test('validateEvent represents sexual activity without exposure as unrelated and
         },
       }),
     ).ok,
-    false,
+    true,
   );
   assert.equal(
     validateEvent(

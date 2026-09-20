@@ -85,8 +85,9 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 | --- | --- | --- | --- |
 | Extension-global settings | `SillyTavern.getContext().extensionSettings.bioweave` | API source, API Profiles, opaque Secret references, task assignments, request settings, prompts, model-list caches, and global recent-story regex | Preserved by all Chat and Start New Chat operations |
 | Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, structural scope/schema markers, and reserved lifecycle root | Preserved by Manual Clear and by source-targeted Floor cleanup |
-| Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that message Floor | Read/write only through the storage abstraction; clear removes only explicit allowlisted fields |
-| Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when Swipe structure exists | Independent analysis and derived Floor data for that exact Swipe | Every existing slot is enumerated; active selection never authorizes fallback to another slot |
+| Character/assistant Floor | `message.extra.bioweave` when the Character message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that Character Floor | Read/write only through the storage abstraction; User messages are rejected as BioWeave owners |
+| Character/assistant Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when a Character message has Swipe structure | Independent analysis and derived Floor data for that exact Swipe | Every existing Character slot is enumerated; active selection never authorizes fallback to another slot |
+| User message | No BioWeave storage location | Narrative context only; never a BioWeave Floor or Floor Version | No BioWeave payload may be created, updated, or cleared on a User message |
 | Runtime transient | Runtime/UI memory: tokens, epochs, AbortControllers, in-flight maps, terminal maps, caches, refresh chains, drafts, and status DTOs | Transient work, read projections, diagnostics, and cache acceleration | Abort, invalidate, and discard on owner changes; never a persistent fact source |
 
 For a structured message, `swipe_info[0]` is a real owner just like every
@@ -633,11 +634,14 @@ The authoritative Floor Version contains exactly:
 chat_id, message_id, floor, swipe_id, content_hash, message_version
 ```
 
-`runtime/floor.js` computes the content hash from the current selected message
-or Swipe text. An Event is active only when its complete `source` exactly
-matches the current Floor Version and the owning message/Swipe still exists.
+`runtime/floor.js` computes the content hash from the current selected
+Character/assistant message or Swipe text. User messages do not create a
+BioWeave Floor Version. An Event is active only when its complete `source`
+exactly matches the current Character Floor Version and the owning
+message/Swipe still exists.
 
-For a target Floor, Runtime scans older current messages and selects the
+For a target BioWeave Floor, Runtime scans older Character/assistant messages
+and selects the
 nearest candidate only when all of these are true:
 
 1. the message still exists;

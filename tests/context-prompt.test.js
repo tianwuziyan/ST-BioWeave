@@ -187,6 +187,23 @@ test('shared collector loads only selected source IDs and excludes the target fr
   assert.equal(JSON.stringify(input).includes('TARGET_FLOOR_EVENT'), false);
 });
 
+test('Recent Story upper bound stops at the current Character Floor', async () => {
+  const input = await collectAnalysisContext({
+    context: {
+      chat: [
+        {floor: 4, role: 'user', content: '历史用户叙事'},
+        {floor: 5, role: 'assistant', content: '当前角色正文'},
+        {floor: 6, role: 'user', content: '尾部用户消息'},
+      ],
+    },
+    chatId: 'chat-upper-bound',
+    chatSettings: {recent_story: {enabled: true, floor_count: 5}},
+    upperBoundIndex: 1,
+  });
+  assert.deepEqual(input.recent_story.items.map(item => item.floor), [4, 5]);
+  assert.equal(input.recent_story.items.some(item => item.floor === 6), false);
+});
+
 test('shared collector enforces Worldbook mode before Prompt formatting', async () => {
   let loaderOptions = null;
   const all = await collectAnalysisContext({
