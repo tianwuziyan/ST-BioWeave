@@ -11,6 +11,52 @@ previous-state, derived-state, and API provenance follow [Floor State
 Ownership](./floor-state.md); this document owns only World Model evidence and
 canonicalization.
 
+## 1.1 Business ownership boundary
+
+World Model and Character/Event Analysis are independent business domains.
+They share only Floor infrastructure: the complete Floor Version, the existing
+`store.getFloor()` / `store.saveFloor()` boundary, the ordinary/per-Swipe owner
+slots, lifecycle invalidation, and business-neutral previous-Floor traversal.
+The fact that one Floor container contains multiple fields does not merge their
+owners.
+
+World Model owns:
+
+- world-rule analysis, `species`, `biological_types`, capability baselines,
+  reproduction rules, lifecycle/special rules, and medical/world context;
+- World Model prompt construction, parser, normalizer, evidence guard;
+- World Model Floor persistence and World-specific resolution.
+
+Character/Event owns character identity, Character Registry, character
+profile/context, participant resolution, `BiologicalEvent`, Tracking
+Subject/Candidate, and the corresponding prompt/parser/normalizer/validation.
+Event Analysis may consume an already resolved World Model DTO as an input, but
+Character/Event code does not own, modify, or redefine World Model.
+
+Allowed dependency direction:
+
+```text
+             Floor infrastructure
+                    |
+        +-----------+-----------+
+        |                       |
+   World Model             Character / Event
+```
+
+World Model persistence updates only `world_model` and `world_model_meta` and
+preserves `analysis`, `events`, and `character_registry`. Character/Event
+persistence updates only its own analysis/events/registry fields and preserves
+World Model fields. Only an explicit complete Floor lifecycle invalidation may
+clear multiple business-owned fields together. Do not introduce a combined
+World + Character save/update helper.
+
+World resolvers such as `resolveWorldModelAtOrBefore()` and
+`resolveWorldModelStrictlyBefore()` belong to the World/Floor boundary.
+Character Registry previous-snapshot resolution remains independent. Shared
+mechanical scanning may use a business-neutral primitive such as
+`findPreviousValidFloor()`, but no universal resolver may understand all World,
+Event, analysis, and registry semantics.
+
 ## 2. Signatures
 
 - `buildWorldModelMessages(analysisInput, promptSettings) -> ChatMessage[]`

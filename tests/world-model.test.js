@@ -406,6 +406,61 @@ test('World Model response parser accepts JSON object content and rejects invali
   )
 })
 
+test('World Model strict parser enforces canonical list shapes with diagnostics', () => {
+  const canonical = parseWorldModelResponse(JSON.stringify(modelFixture))
+  assert.deepEqual(canonical.exceptions, modelFixture.exceptions)
+  assert.deepEqual(canonical.unknowns, modelFixture.unknowns)
+  for (const [field, value] of [['exceptions', { entity: '例外' }], ['unknowns', { entity: '未知' }]]) {
+    assert.throws(
+      () => parseWorldModelResponse(JSON.stringify({ ...modelFixture, [field]: value })),
+      error => error?.code === 'WORLD_MODEL_INVALID' && error.path === field && error.expected === 'array',
+    )
+  }
+  assert.throws(
+    () => parseWorldModelResponse(JSON.stringify({
+      ...modelFixture,
+      species: [{ ...modelFixture.species[0], biological_types: [{ ...modelFixture.species[0].biological_types[0], capabilities: { can_fertilize: { value: true } } }] }],
+    })),
+    error => error?.path === 'species[0].biological_types[0].capabilities.can_fertilize' && error.expected === 'boolean|null',
+  )
+})
+
+test('World Model prompt states canonical exceptions, unknowns, and special_rules shapes', () => {
+  const messages = buildWorldModelMessages({ character: { description: 'generic evidence' } })
+  const prompt = messages.map(message => message.content).join('\n\n')
+  assert.match(prompt, /exceptions 必须是 JSON 数组/)
+  assert.match(prompt, /每项必须是对象，固定包含 statement、applies_to、evidence/)
+  assert.match(prompt, /三者均为 nullable string/)
+  assert.match(prompt, /unknowns 必须是 JSON 字符串数组/)
+  assert.match(prompt, /special_rules 必须是 JSON 字符串数组/)
+  assert.match(prompt, /实体名称为 key 的对象映射/)
+  assert.match(prompt, /没有例外时输出 \[\]/)
+  assert.match(prompt, /不得使用对象映射；没有未知项时输出 \[\]/)
+  assert.match(prompt, /没有特殊规则时输出 \[\]/)
+  assert.doesNotMatch(prompt, /Canonical JSON shape/)
+  assert.doesNotMatch(prompt, /"schema_version"\s*:\s*1/)
+  assert.doesNotMatch(prompt, /"statement"\s*:\s*null/)
+})
+
+test('World Model parser distinguishes JSON syntax errors from schema diagnostics', () => {
+  assert.throws(
+    () => parseWorldModelResponse('{ not valid json'),
+    error =>
+      error?.code === 'WORLD_MODEL_INVALID' &&
+      error.stage === 'json_parse' &&
+      error.path === '$',
+  )
+  assert.throws(
+    () => parseWorldModelResponse(JSON.stringify({ ...modelFixture, unknowns: { entity: 'unknown' } })),
+    error =>
+      error?.code === 'WORLD_MODEL_INVALID' &&
+      error.stage === 'schema_validation' &&
+      error.path === 'unknowns' &&
+      error.expected === 'array' &&
+      error.received === 'object',
+  )
+})
+
 test('World Model analyzer preserves processRequest content and OpenAI message content', async () => {
   const response = JSON.stringify(modelFixture)
   for (const raw of [
@@ -1008,6 +1063,26 @@ test('World Model analysis keeps an arbitrary fantasy species empty without type
   ])
 
   assert.deepEqual(result.species[0].biological_types, [])
+})
+
+test('World Model keeps every evidenced species when type details and mechanisms are unknown', async () => {
+  const result = await analyzeInput(
+    {
+      character: {
+        description: '资料明确证明甲类、乙类和丙类三个 species 存在；乙类的详细 reproduction mechanism 未知。',
+      },
+    },
+    [
+      { name: '甲类', biological_types: [] },
+      { name: '乙类', biological_types: [] },
+      { name: '丙类', biological_types: [] },
+    ],
+    ['乙类的详细 reproduction mechanism 未知'],
+  )
+
+  assert.deepEqual(result.species.map(species => species.name), ['甲类', '乙类', '丙类'])
+  assert.ok(result.species.every(species => species.biological_types.length === 0))
+  assert.deepEqual(result.unknowns, ['乙类的详细 reproduction mechanism 未知'])
 })
 
 test('World Model analysis preserves generic raw fields after type-only retention', async () => {
@@ -2916,15 +2991,15 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   })
   const prompt = messages.map(message => message.content).join('\n')
   assert.match(prompt, /人类/)
-  assert.match(prompt, /Human baseline 与显式 delta/)
-  assert.match(prompt, /唯一内置的现实生物 baseline/)
-  assert.match(prompt, /Human baseline 不创建缺失 type/)
-  assert.match(prompt, /明确当前个体事实 > 明确转化后\/特殊体系规则 > 明确世界级规则 > 可靠推断的 Human baseline > 未知/)
-  assert.match(prompt, /species → biological_types/)
-  assert.match(prompt, /不从 biological_type 名称套用 Human template/)
-  assert.match(prompt, /该 species 和该 type 的直接证据/)
-  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/)
-  assert.match(prompt, /fertilization/)
+  assert.match(prompt, /【3\. Baseline \/ Origin \/ Transformation】/)
+  assert.match(prompt, /Human 是唯一内置现实生物 baseline/)
+  assert.match(prompt, /不创建缺失 type/)
+  assert.match(prompt, /字段优先级为明确当前个体事实 > 明确 transformation\/特殊体系规则 > 明确世界级规则 > Human baseline > unknown/)
+  assert.match(prompt, /【2\. Biological Type Discovery】[\s\S]*species → biological_types/)
+  assert.match(prompt, /Nonhuman 不使用 Human template/)
+  assert.match(prompt, /该 species\/type 自身证据/)
+  assert.match(prompt, /未说明\/未知\/证据不足为 null/)
+  assert.match(prompt, /【5\. Reproduction \/ Lifecycle】[\s\S]*fertilization/)
   assert.match(prompt, /medical_context/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
   assert.match(
@@ -2939,9 +3014,10 @@ test('World Model prompt keeps the Human fallback bounded and generic', () => {
     character: { description: '资料只呈现默认男性/女性二元，没有明确非人类证据。' },
   })
   const prompt = messages[0].content
-  assert.match(prompt, /只有当前资料支持普通人类背景时才建立“人类”/)
-  assert.match(prompt, /Human baseline 不创建缺失 type/)
-  assert.match(prompt, /只使用资料实际支持的内容，不把模型常识补写成 species、biological_type/)
+  assert.match(prompt, /普通 Human 支持可来自显式 Human\/人类/)
+  assert.match(prompt, /没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分/)
+  assert.match(prompt, /Human 是唯一内置现实生物 baseline，只能用于已经成立的普通 Human Male\/Female，不创建缺失 type/)
+  assert.match(prompt, /只输出资料实际支持的 species、biological_type、能力和规则，不使用模型常识补写/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
 })
 
@@ -2950,12 +3026,10 @@ test('World Model prompt distinguishes fixed dual evidence from temporary dualiz
     character: { description: '明确证据：角色本身是双性，并明确可产生精子；也可以短暂双性化。' },
   })
   const prompt = messages[0].content
-  assert.match(prompt, /固定生殖分类必须由资料支持/)
-  assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化.*不能建立新的 biological_type/)
-  assert.match(prompt, /固定双性统一使用名称“双性”/)
+  assert.match(prompt, /固定双性分类统一使用名称“双性”/)
+  assert.match(prompt, /临时、可逆或条件性的性征、器官、生殖能力或身体变化不得建立新的 biological_type/)
   assert.match(messageStartingWith(messages, '【角色卡：角色 的背景资料】'), /角色本身是双性/)
-  assert.match(prompt, /明确支持才写 true\/false/)
-  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/)
+  assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/)
 })
 
 test('World Model prompt rejects dual types inferred from default male/female input', () => {
@@ -2963,8 +3037,8 @@ test('World Model prompt rejects dual types inferred from default male/female in
     character: { description: '资料只呈现默认男性/女性二元，没有其它生殖类型描述。' },
   })
   const prompt = messages[0].content
-  assert.match(prompt, /biological_type\.name 都是开放字符串/)
-  assert.match(prompt, /证据不足时保留 biological_types: \[\]/)
+  assert.match(prompt, /名称保持开放字符串/)
+  assert.match(prompt, /证据不足保持 biological_types: \[\]/)
   assert.doesNotMatch(prompt, /默认人类基础类型包含男性、女性和双性/)
   const characterMessage = messageStartingWith(messages, '【角色卡：角色 的背景资料】')
   assert.match(characterMessage, /资料只呈现默认男性\/女性二元/)
@@ -2974,23 +3048,21 @@ test('World Model prompt rejects dual types inferred from default male/female in
 test('World Model prompt states the complete generic field semantic contract', () => {
   const prompt = buildWorldModelMessages()[0].content
 
-  assert.match(prompt, /该 species 内稳定存在的性别、生殖角色或直接影响生殖机制/)
-  assert.match(prompt, /species、亚种、血统、职业、身份、阵营、来源、属性、等级、形态/)
-  assert.match(prompt, /证据不足时保留 biological_types: \[\]/)
-  assert.match(prompt, /五个 capability 逐字段独立举证/)
-  assert.match(prompt, /true 需要明确具备证据、false 需要明确不具备证据/)
-  assert.match(prompt, /明确生理性别事实可以作为 biological_type 映射证据之一/)
-  assert.match(prompt, /生理性别事实.*不能单独授权 capability/)
-  assert.match(prompt, /未说明、未知或仅凭“通常\/一般”不足以判断时写 null/)
-  assert.match(prompt, /性交、体液\/能量交换、感染\/寄生、侵蚀\/异化/)
+  assert.match(prompt, /【2\. Biological Type Discovery】[\s\S]*稳定生理、生殖或直接影响生殖机制/)
+  assert.match(prompt, /职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级\/境界、成长阶段/)
+  assert.match(prompt, /证据不足保持 biological_types: \[\]/)
+  assert.match(prompt, /【4\. Field Evidence】[\s\S]*五个 capability/)
+  assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/)
+  assert.match(prompt, /生理性别事实可以支持 type 存在/)
+  assert.match(prompt, /不得从男性、女性、雄性、雌性等 type 名称直接推 capability/)
+  assert.match(prompt, /Nonhuman 不使用 Human template/)
+  assert.match(prompt, /【5\. Reproduction \/ Lifecycle】[\s\S]*性交、体液\/能量交换、感染、寄生、侵蚀、异化/)
   assert.match(prompt, /lifecycle\.maturation 只描述生物成熟或生命阶段变化/)
-  assert.match(prompt, /职业、修炼、技能、关系或力量 progression 不属于生命周期/)
-  assert.match(prompt, /临时、可逆或条件性的性征、器官或生殖能力变化/)
-  assert.match(prompt, /null 只表示未知、未提及、证据不足或无法判断/)
-  assert.match(prompt, /“无”只表示已经知道不存在、明确不具备或明确不适用/)
-  assert.match(prompt, /非 Human 没有资料时必须保持 null/)
-  assert.match(prompt, /输出前进行内部自检（不要输出过程）/)
-  assert.match(prompt, /没有可靠答案就把字段降为 null 或删除错误 type/)
+  assert.match(prompt, /修炼境界、技能\/力量 progression、职业\/关系成长、觉醒流程、单纯 transformation\/化形流程不得写入 lifecycle/)
+  assert.match(prompt, /【6\. Temporary \/ Exceptions \/ Unknowns】[\s\S]*不得建立新的 biological_type/)
+  assert.match(prompt, /null 表示未知、未提及、证据不足或无法判断/)
+  assert.match(prompt, /“无”只表示明确不存在、不具备或不适用/)
+  assert.match(prompt, /【7\. Final Self-check】/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
 })
 
@@ -2998,41 +3070,119 @@ test('World Model prompt requires a full biological type candidate gate without 
   const prompt = buildWorldModelMessages()[0].content
 
   for (const pattern of [
-    /species.*这是什么生物/u,
-    /biological_type.*稳定.*生理.*生殖/u,
-    /必须同时满足/u,
-    /普通 taxonomy 子类/u,
-    /职业.*身份.*社会角色.*组织归属/u,
-    /等级.*成长阶段.*训练状态/u,
-    /疾病或异常.*个体特质.*行为模式/u,
-    /AnalysisInput.*充分.*证据/u,
-    /biological_types: \[\].*优于无证据猜测/u,
+    /species 回答“这是什么生物或稳定生命类别”/u,
+    /稳定生理、生殖或直接影响生殖机制/u,
+    /候选必须同时满足 A–E/u,
+    /普通 taxonomy/u,
+    /职业.*身份.*社会角色.*组织.*文化群体.*阵营/u,
+    /等级.*成长阶段/u,
+    /疾病.*异常.*个体特质.*行为/u,
+    /AnalysisInput 有充分直接证据或确定性低推理证据/u,
     /多数.*少数.*极少.*少量.*罕见.*通常.*也存在.*除……外.*例外/u,
-    /原文不必逐字使用最终 canonical type name.*唯一回指/u,
-    /遗漏.*确定性低推理语义.*稳定 type.*错误/u,
-    /完成每个 species 的 biological_types 后.*回扫/u,
-    /不得因为已有一个 type.*配对 type.*补全/u,
-    /只有一个.*候选.*不能.*自动/u,
-    /A\..*稳定生物分类/u,
-    /E\..*证据/u,
+    /不能因数量少或已有主要 type 而遗漏/u,
+    /原文无需提供 classification name.*分类边界能由同一 species 的直接生理\/生殖证据唯一确定.*无法唯一确定边界时才不得创建/u,
+    /不得按常识补齐配对 type/u,
+    /A\. 明确绑定当前 species/u,
+    /E\. 当前 AnalysisInput 有充分/u,
+    /证据不足保持 biological_types: \[\]/u,
   ]) {
     assert.match(prompt, pattern)
   }
   assert.doesNotMatch(prompt, /例如|比如|示例/u)
 })
 
+test('World Model prompt allows unnamed structural reproductive classes without paired-type invention', () => {
+  const prompt = buildWorldModelMessages()[0].content
+
+  const genericCases = [
+    /稳定 biological classification 的 existence evidence 不要求原文显式命名该 classification/u,
+    /同一 species 的 species-wide 资料明确描述两种或多种稳定、互相可区分的 reproductive physiology \/ reproductive role \/ reproductive capability clusters/u,
+    /sperm-producing \/ fertilizing reproductive role.*ova-producing \/ pregnancy-carrying reproductive role/u,
+    /即使没有 male\/female 标签，也可以使用证据最直接对应的简洁 canonical label/u,
+    /只有一个稳定结构\/角色 cluster 的证据时不得按常识补齐配对 type/u,
+    /同一稳定 type 明确同时具有这些结构或能力时不得强行拆分/u,
+    /可选 mutation、异常状态、职业\/法术效果、个体差异或其它非 species-wide、非 type-level 证据不得拆分或升级 type/u,
+    /不得跨 species 借证据/u,
+    /仅有 type 名称仍不能推 capability/u,
+    /Nonhuman 仍不使用 Human baseline/u,
+  ]
+
+  for (const pattern of genericCases) {
+    assert.match(prompt, pattern)
+  }
+  assert.doesNotMatch(prompt, /具体角色|具体世界|具体物种/u)
+  assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/u)
+})
+
 test('World Model prompt defines conditional implicit Human baseline and field-level delta', () => {
   const prompt = buildWorldModelMessages()[0].content
 
-  assert.match(prompt, /完整 AnalysisInput.*Character Card、Worldbook、Recent Story、External Memory/u)
-  assert.match(prompt, /没有 Human 字样.*不是充分条件/u)
-  assert.match(prompt, /类人外形、男性\/女性称谓、性交行为或社会结构本身都不是充分条件/u)
-  assert.match(prompt, /明确当前个体事实 > 明确转化后\/特殊体系规则 > 明确世界级规则 > 可靠推断的 Human baseline > 未知/u)
-  assert.match(prompt, /delta 只覆盖明确改变的字段，其余稳定字段保留/u)
-  assert.match(prompt, /当前 species label.*不新增 source_species、origin 或 inheritance 字段/u)
-  assert.match(prompt, /个体 Human 来源也不能自动扩展为整个新 species 的来源/u)
-  assert.match(prompt, /gestation 只描述真实妊娠或孕育过程，非妊娠的身体转化不属于 gestation/u)
+  assert.match(prompt, /Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景/u)
+  assert.match(prompt, /不要求字面出现 Human\/人类/u)
+  assert.match(prompt, /没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分/u)
+  assert.match(prompt, /字段优先级为明确当前个体事实 > 明确 transformation\/特殊体系规则 > 明确世界级规则 > Human baseline > unknown/u)
+  assert.match(prompt, /delta 只覆盖明确改变的字段，其余稳定 baseline 保留/u)
+  assert.match(prompt, /只输出最终当前 species\/type 与合成字段，不新增 source_species、origin、inheritance 字段/u)
+  assert.match(prompt, /个体来自 Human 不等于整个 species 有 Human origin/u)
+  assert.match(prompt, /gestation 只描述真实妊娠或孕育/u)
   assert.doesNotMatch(prompt, /例如|比如|示例/u)
+})
+
+test('World Model prompt requires exhaustive Human type recall without baseline invention', () => {
+  const prompt = buildWorldModelMessages()[0].content
+
+  assert.match(prompt, /Human species 与 Human biological_type 不同层级/u)
+  assert.match(prompt, /Human species 可靠成立后.*明确男性、女性、稳定双性（canonical “双性”）/u)
+  assert.match(prompt, /其它满足 §2 A–E 的自定义分类才建立对应 type/u)
+  assert.match(prompt, /不要求归入男性、女性或双性体系/u)
+  assert.match(prompt, /不要求字面出现 Human\/人类/u)
+  assert.match(prompt, /普通 Human.*不创建缺失 type/u)
+  assert.match(prompt, /独立 Nonhuman、陌生生命、不同生理体系、冲突证据或无法判断时禁止 fallback/u)
+  assert.match(prompt, /临时或可逆状态（见 §6）都不是 type/u)
+  assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/u)
+})
+
+test('World Model prompt requires global species discovery before field analysis', () => {
+  const prompt = buildWorldModelMessages()[0].content
+
+  assert.match(prompt, /在分析任何 biological_type、capability、reproduction_rules 或 lifecycle 前/u)
+  assert.match(prompt, /exhaustive scan.*整个 AnalysisInput.*建立全部有可靠 existence evidence 的 species/u)
+  assert.match(prompt, /species existence 与 biological_type、capability、reproduction_rules、lifecycle 的完整程度独立/u)
+  assert.match(prompt, /只要资料明确证明 species 存在就必须保留/u)
+  assert.match(prompt, /不得因为 type 不完整、生殖机制未知、capability 未知、lifecycle 未知或资料较少而删除/u)
+  assert.match(prompt, /没有足够 type evidence 时输出 biological_types: \[\]/u)
+  assert.match(prompt, /unknowns 替代/u)
+  assert.doesNotMatch(prompt, /具体角色|具体世界|Species A|Species B|Species C/u)
+})
+
+test('World Model prompt declares ordered discovery, continuity, and final self-check stages', () => {
+  const prompt = buildWorldModelMessages()[0].content
+
+  const stages = [
+    '【0. 总原则 / Analysis Order】',
+    '【1. Species Discovery】',
+    '【2. Biological Type Discovery】',
+    '【3. Baseline / Origin / Transformation】',
+    '【4. Field Evidence】',
+    '【5. Reproduction / Lifecycle】',
+    '【6. Temporary / Exceptions / Unknowns】',
+    '【7. Final Self-check】',
+  ]
+  let previousIndex = -1
+  for (const stage of stages) {
+    const index = prompt.indexOf(stage)
+    assert.ok(index > previousIndex, `${stage} must follow the previous analysis stage`)
+    previousIndex = index
+  }
+  assert.equal((prompt.match(/【[0-7]\. /g) ?? []).length, 8)
+  assert.equal((prompt.match(/候选必须同时满足 A–E/g) ?? []).length, 1)
+  assert.equal((prompt.match(/lifecycle\.maturation 只描述/g) ?? []).length, 1)
+  assert.equal((prompt.match(/Human 是唯一内置现实生物 baseline/g) ?? []).length, 1)
+  assert.match(prompt, /前层未知不代表后层不存在.*后层资料不足也不能删除前层已可靠建立的实体/u)
+  assert.match(prompt, /来源中已成立且未被明确改变、替换或消除的稳定 type\/字段可 continuity/u)
+  assert.match(prompt, /来源不明时禁止 inheritance/u)
+  assert.match(prompt, /个体来自 Human 不等于整个 species 有 Human origin/u)
+  assert.match(prompt, /不新增 source_species、origin、inheritance 字段/u)
 })
 
 test('World Model keeps an empty type list when original evidence only names other classification axes', async () => {
@@ -3153,7 +3303,7 @@ test('World Model prompt requires Chinese string values and human type names', (
   assert.match(prompt, /说明、规则和列表字符串使用中文/)
   assert.match(prompt, /species\[\] 包含 name、description、biological_types\[\]/)
   assert.match(prompt, /每个 biological_type 包含 name、description、capabilities、reproduction_rules、lifecycle、special_rules/)
-  assert.match(prompt, /biological_type\.name 都是开放字符串/)
+  assert.match(prompt, /名称保持开放字符串/)
   assert.match(prompt, /固定包含五个 key/)
   assert.match(prompt, /reproduction_rules 固定包含 fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|Homo sapiens|极少女剑灵/)
@@ -3992,10 +4142,10 @@ test('World UI section patches only the selected type or world-level section', (
   assert.deepEqual(worldPatched.exceptions, base.exceptions)
 })
 
-test('empty Chat reserves only Chat-local World Model slots', () => {
+test('empty Chat does not reserve Chat-level World Model slots', () => {
   const chat = emptyChat('chat-a')
-  assert.equal(chat.world_model, null)
-  assert.equal(chat.world_model_meta, null)
+  assert.equal(Object.hasOwn(chat, 'world_model'), false)
+  assert.equal(Object.hasOwn(chat, 'world_model_meta'), false)
   assert.deepEqual(chat.settings.external_memory, {
     anima: false,
     baobaoshu: false,

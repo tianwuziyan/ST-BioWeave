@@ -761,14 +761,19 @@ export function createStore(adapter, boundary = null) {
     const metadata = adapter.getChatMetadata?.();
     const stored = metadata?.bioweave;
     if (stored?.chat_scope?.chat_id !== chatId) return emptyChat(chatId);
-    return cloneForStorage({
+    const normalized = {
       ...stored,
       character_registry: normalizeCharacterRegistry(stored.character_registry),
       tracking_subjects: normalizeTrackingSubjects(stored.tracking_subjects),
       tracking_candidates: normalizeTrackingCandidates(
         stored.tracking_candidates,
       ),
-    });
+    };
+    // Legacy Chat-level World Model fields remain ignored compatibility
+    // residue. They are deliberately not exposed as runtime state.
+    delete normalized.world_model;
+    delete normalized.world_model_meta;
+    return cloneForStorage(normalized);
   }
 
   async function saveChat(chatId, data) {
@@ -778,15 +783,17 @@ export function createStore(adapter, boundary = null) {
       throw new Error("ST_METADATA_STORAGE_UNAVAILABLE");
     const token = captureToken(adapter, boundary);
     if (token.chatId !== chatId) throw staleChatError();
-    const safeData = cloneForStorage({
+    const safeData = {
       ...data,
       character_registry: normalizeCharacterRegistry(data?.character_registry),
       tracking_subjects: normalizeTrackingSubjects(data?.tracking_subjects),
       tracking_candidates: normalizeTrackingCandidates(
         data?.tracking_candidates,
       ),
-    });
-    await adapter.saveChatMetadata("bioweave", safeData, token.chatId);
+    };
+    delete safeData.world_model;
+    delete safeData.world_model_meta;
+    await adapter.saveChatMetadata("bioweave", cloneForStorage(safeData), token.chatId);
     assertToken(adapter, boundary, token);
   }
 

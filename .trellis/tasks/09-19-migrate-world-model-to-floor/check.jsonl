@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Review implementation against Floor/Swipe provenance and invalidation invariants"}
+{"file":".trellis/spec/domain/world-model.md","reason":"Check World Model remains a separate business owner and resolver boundary"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Check Character/Event analysis preserves World Model and only consumes resolved DTO input"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Check registry, schema and lifecycle documentation remain synchronized"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Independent cross-layer verification of resolver and persistence flow"}

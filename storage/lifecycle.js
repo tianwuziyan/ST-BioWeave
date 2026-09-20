@@ -66,18 +66,6 @@ const CHAT_FIELDS = Object.freeze({
     domain: 'structural',
     clear: 'preserve',
   }),
-  world_model: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.WORLD,
-    clearOn: Object.freeze(['world', 'all']),
-    empty: null,
-  }),
-  world_model_meta: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.WORLD,
-    clearOn: Object.freeze(['world', 'all']),
-    empty: null,
-  }),
   character_profiles: Object.freeze({
     scope: 'chat',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
@@ -164,6 +152,18 @@ const FLOOR_FIELDS = Object.freeze({
     domain: LIFECYCLE_DOMAINS.FLOOR_IDENTITY,
     kind: 'authoritative_floor_snapshot',
     clearOn: Object.freeze(['all']),
+  }),
+  world_model: Object.freeze({
+    scope: 'floor',
+    domain: LIFECYCLE_DOMAINS.WORLD,
+    empty: null,
+    clearOn: Object.freeze(['world', 'all']),
+  }),
+  world_model_meta: Object.freeze({
+    scope: 'floor',
+    domain: LIFECYCLE_DOMAINS.WORLD,
+    empty: null,
+    clearOn: Object.freeze(['world', 'all']),
   }),
   history: Object.freeze({
     scope: 'floor',

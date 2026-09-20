@@ -32,7 +32,7 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
             maturation: null,
             aging: null,
           },
-          special_rules: [],
+          special_rules: ['A canonical special rule.'],
         },
       ],
     },
@@ -42,8 +42,14 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
     care_level: null,
     evidence: null,
   },
-  exceptions: [],
-  unknowns: [],
+  exceptions: [
+    {
+      statement: null,
+      applies_to: null,
+      evidence: null,
+    },
+  ],
+  unknowns: ['An unresolved biological rule or fact.'],
 });
 
 export const DEFAULT_SETTINGS = {
@@ -684,8 +690,6 @@ export function emptyChat(chatId) {
   return {
     schema_version: SCHEMA_VERSION,
     chat_scope: { chat_id: chatId },
-    world_model: null,
-    world_model_meta: null,
     character_profiles: {},
     character_registry: normalizeCharacterRegistry(null),
     tracking_subjects: {},
@@ -704,6 +708,8 @@ export function emptyFloor() {
     analysis: null,
     events: [],
     character_registry: normalizeCharacterRegistry(null),
+    world_model: null,
+    world_model_meta: null,
     history: null,
     snapshot: null,
     projections: [],

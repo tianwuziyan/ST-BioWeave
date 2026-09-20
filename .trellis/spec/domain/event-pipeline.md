@@ -15,6 +15,33 @@ provenance are defined by [Floor State Ownership](./floor-state.md). This
 document owns the BiologicalEvent contract and only points to that shared
 boundary.
 
+## 1.1 Business boundary with World Model
+
+Event Analysis and Character are independent from the World Model domain. They
+share Floor infrastructure only: Floor Version, `store.getFloor()` /
+`store.saveFloor()`, exact message/Swipe owner slots, lifecycle invalidation,
+and business-neutral previous-Floor traversal.
+
+Event Analysis may consume a resolved World Model DTO in `EventAnalysisInput`
+to evaluate participant biological context, reproductive capability, and
+exposure semantics. It must not own, persist, modify, parse, normalize, or
+redefine the World Model. In particular, identity resolution, Character
+Registry persistence, Tracking rebuild, Event CRUD, and ordinary Event
+reanalysis must never update or clear valid `world_model` /
+`world_model_meta` fields.
+
+The reverse boundary also applies: World Model AI/manual saves and World
+resolvers must preserve valid `analysis`, `events`, and
+`character_registry`. World Model code must not update Character Registry,
+Events, profiles, or Tracking. The Floor object is a shared storage container,
+not a combined business owner. Only explicit complete Floor lifecycle
+invalidation may clear both domains together.
+
+`findPreviousSuccessfulBioWeave()` remains the Character/Event previous
+analysis and registry resolver. World Model resolvers are separate World/Floor
+operations; if they share mechanical traversal, the shared primitive must not
+understand either domain's fields.
+
 ## 2. Signatures
 
 - `buildEventAnalysisInput(options) -> EventAnalysisInput`

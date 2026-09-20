@@ -8,7 +8,8 @@ import { cloneValue, emptyChat, emptyFloor } from '../storage/schema.js';
 function completeRoot(chatId) {
   return {
     ...emptyChat(chatId),
-    world_model: { species: [{ name: '世界' }] },
+    // Legacy Chat-level fields remain only as ignored compatibility residue.
+    world_model: { species: [{ name: '旧世界' }] },
     world_model_meta: { saved_at: 1 },
     character_profiles: { char_a: { name: '甲' } },
     character_registry: {
@@ -45,6 +46,8 @@ function completeFloor(marker, chatId, swipeId = 0) {
       schema_version: 1,
       entities: { [`char-${marker}`]: { character_id: `char-${marker}` } },
     },
+    world_model: { species: [{ name: `世界-${marker}` }] },
+    world_model_meta: { saved_at: marker },
     snapshot: { marker },
     projections: [{ marker }],
     history: [{ marker }],
@@ -203,10 +206,12 @@ test('character and world clear use domain ranges and keep historical Floor fact
   const analysisBefore = cloneValue(fixture.messages[0].extra.bioweave.analysis);
   const eventsBefore = cloneValue(fixture.messages[0].extra.bioweave.events);
   const identityBefore = cloneValue(fixture.messages[0].extra.bioweave.character_registry);
+  const worldModelBefore = cloneValue(fixture.messages[0].extra.bioweave.world_model);
+  const worldModelMetaBefore = cloneValue(fixture.messages[0].extra.bioweave.world_model_meta);
 
   const characterResult = await fixture.service.clearCharacterData();
   assert.equal(characterResult.ok, true);
-  assert.deepEqual(fixture.chatMetadata.bioweave.world_model, { species: [{ name: '世界' }] });
+  assert.deepEqual(fixture.chatMetadata.bioweave.world_model, { species: [{ name: '旧世界' }] });
   assert.deepEqual(fixture.chatMetadata.bioweave.settings, settingsBefore);
   assert.deepEqual(fixture.chatMetadata.bioweave.character_profiles, {});
   assert.deepEqual(fixture.chatMetadata.bioweave.tracking_subjects, {});
@@ -215,19 +220,20 @@ test('character and world clear use domain ranges and keep historical Floor fact
   assert.deepEqual(fixture.messages[0].extra.bioweave.analysis, analysisBefore);
   assert.deepEqual(fixture.messages[0].extra.bioweave.events, eventsBefore);
   assert.deepEqual(fixture.messages[0].extra.bioweave.character_registry, identityBefore);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.world_model, worldModelBefore);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.world_model_meta, worldModelMetaBefore);
   assert.deepEqual(fixture.globalSettings, globalBefore);
   assert.deepEqual(fixture.messages[0].extra.bioweave.snapshot, null);
   assert.deepEqual(fixture.messages[0].extra.bioweave.projections, []);
 
   const worldResult = await fixture.service.clearWorldData();
   assert.equal(worldResult.ok, true);
-  assert.equal(fixture.chatMetadata.bioweave.world_model, null);
-  assert.equal(fixture.chatMetadata.bioweave.world_model_meta, null);
-  assert.deepEqual(fixture.chatMetadata.bioweave.character_profiles, {});
-  assert.ok(fixture.chatMetadata.bioweave.data_lifecycle.character_reset);
+  assert.equal(fixture.chatMetadata.bioweave, undefined);
   assert.deepEqual(fixture.messages[0].extra.bioweave.analysis, analysisBefore);
   assert.deepEqual(fixture.messages[0].extra.bioweave.events, eventsBefore);
   assert.deepEqual(fixture.messages[0].extra.bioweave.character_registry, identityBefore);
+  assert.equal(fixture.messages[0].extra.bioweave.world_model, null);
+  assert.equal(fixture.messages[0].extra.bioweave.world_model_meta, null);
   assert.deepEqual(fixture.globalSettings, globalBefore);
   assert.deepEqual(fixture.secretStoreCalls, []);
 });

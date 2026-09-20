@@ -878,9 +878,9 @@ test("Runtime persists pending candidates and re-evaluates them after a World Mo
     storedEvent.story_time.display,
   );
 
-  const chat = fixture.runtime.store.getChat("chat-runtime");
-  await fixture.runtime.store.saveChat("chat-runtime", {
-    ...chat,
+  const currentFloor = fixture.runtime.store.getFloor(0, 0);
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...currentFloor,
     world_model: {
       schema_version: 1,
       species: [
@@ -3504,5 +3504,170 @@ test("stale Chat completion releases execution without writing stale failure met
   assert.equal(status.state, "cancelled");
   assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
   assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("World Model save writes only the current Floor and preserves Event-owned fields", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    analysis: { status: "success", marker: "analysis" },
+    events: [{ event_id: "event-1" }],
+    character_registry: {
+      schema_version: 1,
+      entities: { char_a: { character_id: "char_a" } },
+    },
+  });
+  const model = { schema_version: 1, species: [{ name: "Floor World" }] };
+  const meta = { last_saved_by: "manual" };
+  await fixture.runtime.saveWorldModel({ model, meta });
+  const floor = fixture.runtime.store.getFloor(0, 0);
+  assert.deepEqual(floor.world_model, model);
+  assert.deepEqual(floor.world_model_meta, meta);
+  assert.deepEqual(floor.analysis, { status: "success", marker: "analysis" });
+  assert.deepEqual(floor.events, [{ event_id: "event-1" }]);
+  assert.deepEqual(floor.character_registry.entities.char_a, {
+    character_id: "char_a",
+    display_name: null,
+    aliases: [],
+  });
+  assert.equal(fixture.saveChatMetadataCalls(), 0);
+  assert.equal(fixture.runtime.store.getChat("chat-runtime").world_model, undefined);
+  fixture.runtime.destroy();
+});
+
+test("World Model resolver follows the nearest valid Floor and naturally rolls back after deletion", async () => {
+  const messages = [
+    { message_id: "m10", floor: 10, content: "F10", role: "assistant" },
+    { message_id: "m20", floor: 20, content: "F20", role: "assistant" },
+    { message_id: "m30", floor: 30, content: "F30", role: "assistant" },
+  ];
+  const fixture = createFixture({ messages });
+  await fixture.runtime.init();
+  for (const [index, model] of [[0, "W10"], [1, "W20"]]) {
+    const message = messages[index];
+    const version = await floorVersion({
+      chatId: "chat-runtime",
+      messageId: message.message_id,
+      floor: message.floor,
+      text: message.content,
+    });
+    await fixture.runtime.store.saveFloor(index, 0, {
+      ...emptyFloor(),
+      floor_version: version,
+      world_model: { schema_version: 1, species: [{ name: model }] },
+      world_model_meta: { source: model },
+    });
+  }
+  assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W20");
+  messages.splice(1, 1);
+  assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W10");
+  fixture.runtime.destroy();
+});
+
+test("World Model resolver skips an edited Floor with a stale Version", async () => {
+  const messages = [
+    { message_id: "m10-stale", floor: 10, content: "F10", role: "assistant" },
+    { message_id: "m20-stale", floor: 20, content: "F20", role: "assistant" },
+    { message_id: "m30-stale", floor: 30, content: "F30", role: "assistant" },
+  ];
+  const fixture = createFixture({ messages });
+  await fixture.runtime.init();
+  for (const [index, model] of [[0, "W10"], [1, "W20"]]) {
+    const message = messages[index];
+    await fixture.runtime.store.saveFloor(index, 0, {
+      ...emptyFloor(),
+      floor_version: await floorVersion({
+        chatId: "chat-runtime",
+        messageId: message.message_id,
+        floor: message.floor,
+        text: message.content,
+      }),
+      world_model: { schema_version: 1, species: [{ name: model }] },
+    });
+  }
+  messages[1].content = "F20 已编辑";
+  assert.equal(
+    (await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name,
+    "W10",
+  );
+  fixture.runtime.destroy();
+});
+
+test("World Model resolver isolates Swipe owners and ignores a deleted Swipe", async () => {
+  const message = {
+    message_id: "m-swipe-world",
+    floor: 10,
+    content: "镜像 A",
+    role: "assistant",
+    swipe_id: 0,
+    swipes: ["镜像 A", "镜像 B"],
+    swipe_info: [{}, {}],
+  };
+  const fixture = createFixture({ messages: [message] });
+  await fixture.runtime.init();
+  for (const [swipeId, textValue, model] of [[0, "镜像 A", "W_A"], [1, "镜像 B", "W_B"]]) {
+    const version = await floorVersion({
+      chatId: "chat-runtime",
+      messageId: message.message_id,
+      floor: 10,
+      swipeId,
+      text: textValue,
+    });
+    await fixture.runtime.store.saveFloor(0, swipeId, {
+      ...emptyFloor(),
+      floor_version: version,
+      world_model: { schema_version: 1, species: [{ name: model }] },
+    });
+  }
+  message.swipe_id = 1;
+  assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W_B");
+  message.swipe_id = 0;
+  assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W_A");
+  delete message.swipes[1];
+  delete message.swipe_info[1];
+  fixture.runtime.destroy();
+});
+
+test("Event Analysis consumes only the strictly previous Floor World Model and never Chat legacy state", async () => {
+  const inputs = [];
+  const messages = [
+    { message_id: "m10", floor: 10, content: "F10", role: "assistant" },
+    { message_id: "m20", floor: 20, content: "F20", role: "assistant" },
+    { message_id: "m30", floor: 30, content: "F30", role: "assistant" },
+  ];
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        return { events: [] };
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    ...emptyChat("chat-runtime"),
+    world_model: { schema_version: 1, species: [{ name: "CHAT-FUTURE" }] },
+  };
+  await fixture.runtime.init();
+  for (const [index, model] of [[0, "W10"], [1, "W20"], [2, "W30"]]) {
+    const message = messages[index];
+    const version = await floorVersion({
+      chatId: "chat-runtime",
+      messageId: message.message_id,
+      floor: message.floor,
+      text: message.content,
+    });
+    await fixture.runtime.store.saveFloor(index, 0, {
+      ...emptyFloor(),
+      floor_version: version,
+      world_model: { schema_version: 1, species: [{ name: model }] },
+    });
+  }
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 2 }, { force: true });
+  assert.equal(inputs.at(-1).world_model.species[0].name, "W20");
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  assert.equal(inputs.at(-1).world_model, null);
   fixture.runtime.destroy();
 });

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership, exact active-Swipe storage, version validity, previous resolution and mutation rules"}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model evidence boundary and the independent World versus Character/Event business ownership contract"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event/Character ownership, explicit World Model input consumption, and forbidden cross-domain writers"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent-field ownership, clear/invalidation and stale-result contracts"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing Floor Store and avoid duplicate persistence seams"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace storage, runtime, AI input and UI contracts across the migration"}

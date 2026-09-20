@@ -85,7 +85,7 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 | Owner | Actual location | Owned meaning | Lifecycle treatment |
 | --- | --- | --- | --- |
 | Extension-global settings | `SillyTavern.getContext().extensionSettings.bioweave` | API source, API Profiles, opaque Secret references, task assignments, request settings, prompts, model-list caches, and global recent-story regex | Preserved by all Chat and Start New Chat operations |
-| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | World Model, Chat settings, materialized character/tracking projections, relationships, indexes, and lifecycle markers | Targeted by Manual Clear; source-targeted by verified Start New Chat |
+| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, materialized character/tracking projections, relationships, indexes, lifecycle markers, and ignored legacy World Model residue | Targeted by Manual Clear; source-targeted by verified Start New Chat; legacy World Model fields are never a runtime source |
 | Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, identity snapshot, Snapshot, and Projection for that message Floor | Read/write only through the storage abstraction; full clear removes the owned root |
 | Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when Swipe structure exists | Independent analysis and derived Floor data for that exact Swipe | Every existing slot is enumerated; active selection never authorizes fallback to another slot |
 | Runtime transient | Runtime/UI memory: tokens, epochs, AbortControllers, in-flight maps, terminal maps, caches, refresh chains, drafts, and status DTOs | Transient work, read projections, diagnostics, and cache acceleration | Abort, invalidate, and discard on owner changes; never a persistent fact source |
@@ -143,8 +143,6 @@ on the Secret Store for zero calls.
 | --- | --- | --- |
 | `schema_version` | Numeric schema marker | Structural; retained/reset to the clean schema |
 | `chat_scope.chat_id` | `{chat_id}` | Structural owner binding; always matches the target Chat |
-| `world_model` | World Model v1 object or `null` | World domain |
-| `world_model_meta` | Metadata object or `null` | World domain; current metadata is a summary, not a source document |
 | `character_profiles` | Character ID keyed object | Chat-level character projection |
 | `character_registry` | `{schema_version: 1, entities: {…}}` | Chat-level materialized projection/cache; never ordinary historical input |
 | `tracking_subjects` | Character ID keyed active-subject index | Character-derived projection |
@@ -236,6 +234,8 @@ floor_version
 analysis
 events[]
 character_registry
+world_model
+world_model_meta
 history
 snapshot
 projections[]
@@ -248,6 +248,13 @@ record, including `status`, the bound `floor_version`, attempt timestamps and
 diagnostic/last-attempt fields as produced by `runtime/floor.js` and
 `runtime/event-analysis.js`. A failed attempt may retain `last_success`; a
 stale version never makes that old success active.
+
+`world_model` and `world_model_meta` are World-domain fields in the same exact
+Floor/Swipe owner. They are not Chat-level runtime state. World Model saves
+replace only these two fields and preserve `analysis`, `events`,
+`character_registry`, `history`, `snapshot`, and `projections`. Character/Event
+saves replace only their own fields and preserve the World fields. The shared
+Floor container does not merge these business owners.
 
 The canonical `events[]` field set from `core/events.js` is:
 
@@ -351,7 +358,7 @@ recursive deletion. The current domain vocabulary is:
 | --- | --- | --- |
 | `global_settings` | `extensionSettings.bioweave` and its recognized fields | Guarded, global, never clearable by this contract |
 | `chat_settings` | `chatMetadata.bioweave.settings` | Chat configuration; preserve for Character/World clear, reset for All |
-| `world` | `world_model`, `world_model_meta`; future explicit world references | Chat-owned World Model; clear World and All |
+| `world` | Floor `world_model`, Floor `world_model_meta`; future explicit world references | Floor-owned World Model history; clear World and All across exact message/Swipe owners |
 | `character` | Chat `character_profiles`, Chat `character_registry`, `tracking_subjects`, `tracking_candidates`, `relationships`; character-dependent derived records in Floor `snapshot`/`projections` | Current character projection; clear Character and All; rebuild only from valid facts after a reset boundary |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
@@ -474,8 +481,8 @@ state:
 
 It preserves:
 
-- `world_model`, `world_model_meta`, Chat `settings`, and independent Chat
-  configuration;
+- Floor `world_model`, Floor `world_model_meta`, Chat `settings`, and
+  independent Chat configuration;
 - Floor `analysis`, Floor `events[]`, and valid Floor-owned
   `character_registry` identity snapshots;
 - Chat text, all Swipe text, unrelated fields, global settings, and the Secret
@@ -489,16 +496,18 @@ while old facts remain historical and provenance-bound.
 
 ### 6.3 Manual World clear
 
-The World operation removes:
+The World operation removes from every existing exact message/Swipe Floor
+owner:
 
-- Chat `world_model` and `world_model_meta`;
+- Floor `world_model` and `world_model_meta`;
 - the derived index hint as classified by the registry; and
 - World-dependent Floor `snapshot`/`projections` entries, or the whole
   derived slot when exact dependency preservation cannot be proven.
 
 It preserves Chat settings, independent character projections, Floor Events,
 Floor analysis, Floor identity snapshots, Chat/Swipe text, unrelated data,
-global settings, and the Secret Store.
+global settings, and the Secret Store. It does not clear or rewrite
+Character/Event-owned Floor fields during the World-domain operation.
 
 The audit found no current persisted `world_entity_id`, `rule_id`, or
 equivalent foreign-key field in the Character or Tracking schema. Therefore
@@ -531,7 +540,7 @@ removal coverage in contract tests.
 | Target | Chat metadata removed/reset | Floor/Swipe treatment | Facts/projections retained | Runtime and global treatment |
 | --- | --- | --- | --- | --- |
 | Character | Character projection roots, character-derived index, and any registered reset boundary | Remove registered character-facing Snapshot/Projection data in every message and every Swipe owner | World Model, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
-| World | `world_model`, `world_model_meta`, World-derived index/reference state | Remove or conservatively invalidate World-dependent Snapshot/Projection data in every message and every Swipe owner | Character projection, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
+| World | Floor `world_model`, Floor `world_model_meta`, World-derived index/reference state | Remove or conservatively invalidate World-dependent Snapshot/Projection data in every message and every Swipe owner | Character projection, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
 | All | Replace Chat BioWeave root with clean scoped schema | Remove every BioWeave root from every ordinary message and every Swipe slot | Chat metadata outside BioWeave, text, Swipe text, unrelated plugin fields | Abort/invalidate all work; preserve global settings and Secret Store |
 | Start New source A | Same All plan, applied to immutable source A | Same All traversal across A's metadata, ordinary messages, and all Swipe slots | A's text, Swipe text, unrelated fields, and global settings | A is invalidated; B is loaded clean and is never the source target |
 

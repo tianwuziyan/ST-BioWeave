@@ -2004,6 +2004,8 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
       getChat: () => ({ settings: {}, world_model: model }),
       saveChat: async () => {},
     },
+    resolveWorldModelAtOrBefore: async () => ({ model, meta: null }),
+    saveWorldModel: async () => {},
     st: {
       getContext: () => context,
       fetch: async () => ({ ok: true, json: async () => [] }),
@@ -2024,6 +2026,7 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
   })
   const root = app.openBioWeave()
   app.go('world')
+  await new Promise(resolve => setTimeout(resolve, 0))
   const click = [...root.listeners.get('click')][0]
   const actionTarget = (action, section = undefined) => ({
     __root: root,
@@ -2151,6 +2154,8 @@ test('busy World Model analysis asks before aborting and keeps the button action
         savedChat = nextChat
       },
     },
+    resolveWorldModelAtOrBefore: async () => ({ model, meta: null }),
+    saveWorldModel: async () => {},
     st: {
       getContext: () => context,
       fetch: async () => ({ ok: true, json: async () => [] }),
@@ -2405,6 +2410,10 @@ test('World Model analysis routes success and failure feedback through semantic 
           savedChat = nextChat
         },
       },
+      resolveWorldModelAtOrBefore: async () => ({ model: previousModel, meta: null }),
+      saveWorldModel: async ({ model }) => {
+        savedChat = { ...savedChat, world_model: model }
+      },
       refreshTrackingRegistry: async () => {
         refreshCalls += 1
       },
@@ -2437,6 +2446,7 @@ test('World Model analysis routes success and failure feedback through semantic 
     })
     const root = app.openBioWeave()
     app.go('world')
+    await new Promise(resolve => setTimeout(resolve, 0))
     const click = [...root.listeners.get('click')][0]
     await click({
       target: {
@@ -2528,6 +2538,15 @@ test('World Model section save routes success and failure feedback through Toast
           savedChat = nextChat
         },
       },
+      resolveWorldModelAtOrBefore: async () => ({ model: baseModel, meta: null }),
+      saveWorldModel: async ({ model }) => {
+        if (scenario.errorCode) {
+          const error = new Error(scenario.errorCode)
+          error.code = scenario.errorCode
+          throw error
+        }
+        savedChat = { ...savedChat, world_model: model }
+      },
       refreshTrackingRegistry: async () => {
         refreshCalls += 1
       },
@@ -2548,6 +2567,7 @@ test('World Model section save routes success and failure feedback through Toast
     })
     const root = app.openBioWeave()
     app.go('world')
+    await new Promise(resolve => setTimeout(resolve, 0))
     const actionTarget = (action, section = undefined) => ({
       __root: root,
       dataset: {

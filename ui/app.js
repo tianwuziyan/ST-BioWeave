@@ -1412,28 +1412,39 @@ export function createApp(runtime, options = {}) {
   }
   function loadWorldModelState() {
     const chatId = runtime.chat.current()
-    if (worldModelState.loaded && worldModelState.chatId === chatId) return
-    const chatData = runtime.store?.getChat?.(chatId)
-    let model = null
-    let notice = null
-    if (chatData?.world_model) {
+    if ((worldModelState.loaded || worldModelState.loading) && worldModelState.chatId === chatId) return
+    worldModelState = { ...createWorldModelState(), loading: true, chatId }
+    const resolver = runtime.resolveWorldModelAtOrBefore
+    if (typeof resolver !== 'function') {
+      worldModelState = { ...worldModelState, loaded: true, loading: false }
+      return
+    }
+    void resolver().then((resolved) => {
+      if (runtime.chat.current() !== chatId) return
+      let model = null
+      let notice = null
       try {
-        model = normalizeWorldModel(chatData.world_model)
+        model = resolved?.model ? normalizeWorldModel(resolved.model) : null
       } catch {
         notice = '已保存的世界模型格式无效，请重新分析。'
       }
-    }
-    const selection = resolveWorldModelSelection(model)
-    worldModelState = {
-      ...createWorldModelState(),
-      loaded: true,
-      chatId,
-      model,
-      meta: chatData?.world_model_meta ?? null,
-      selectedSpeciesIndex: selection.speciesIndex,
-      selectedTypeIndex: selection.typeIndex,
-      notice,
-    }
+      const selection = resolveWorldModelSelection(model)
+      worldModelState = {
+        ...createWorldModelState(),
+        loaded: true,
+        chatId,
+        model,
+        meta: resolved?.meta ?? null,
+        selectedSpeciesIndex: selection.speciesIndex,
+        selectedTypeIndex: selection.typeIndex,
+        notice,
+      }
+      if (route === 'world') render()
+    }).catch(() => {
+      if (runtime.chat.current() !== chatId) return
+      worldModelState = { ...createWorldModelState(), loaded: true, chatId, notice: '世界模型读取失败，请重试。' }
+      if (route === 'world') render()
+    })
   }
   function worldModelOperationError(error) {
     const code = String(error?.code ?? error?.message ?? '')
@@ -1459,7 +1470,7 @@ export function createApp(runtime, options = {}) {
       ST_CURRENT_API_UNAVAILABLE: 'SillyTavern 当前 API 不可用。',
       ST_CHAT_COMPLETION_UNAVAILABLE: '独立 API 服务不可用，请检查 API 来源设置。',
       WORLD_ANALYZER_UNAVAILABLE: '世界分析功能暂不可用，请重新加载 BioWeave。',
-      WORLD_MODEL_INVALID: 'AI 返回的世界模型无法通过 JSON 校验，上一份模型已保留。',
+      WORLD_MODEL_INVALID: 'AI 返回的世界模型格式不符合要求，上一份模型已保留。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
       STALE_CHAT: 'Chat 已切换，本次世界模型结果未保存。',
       WORLD_MODEL_SAVE_FAILED: '保存失败，当前模块草稿仍保留。',
@@ -1623,11 +1634,8 @@ export function createApp(runtime, options = {}) {
     worldModelState = { ...worldModelState, busy: true, notice: null }
     render()
     try {
-      const currentChat = runtime.store?.getChat?.(chatId)
-      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
-      const hasPersistedMeta = Object.prototype.hasOwnProperty.call(currentChat, 'world_model_meta')
-      const currentMeta = hasPersistedMeta ? currentChat.world_model_meta : worldModelState.meta
-      const existingMeta = currentMeta && typeof currentMeta === 'object' ? currentMeta : null
+      if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
+      const existingMeta = worldModelState.meta && typeof worldModelState.meta === 'object' ? worldModelState.meta : null
       const nextMeta = existingMeta ? { ...existingMeta } : null
       let metadataChanged = false
       if (nextMeta && Object.prototype.hasOwnProperty.call(nextMeta, 'last_saved_at')) {
@@ -1638,18 +1646,14 @@ export function createApp(runtime, options = {}) {
         nextMeta.last_saved_by = 'manual'
         metadataChanged = true
       }
-      const nextChat = { ...currentChat, world_model: model }
-      if (metadataChanged && hasPersistedMeta) {
-        nextChat.world_model_meta = nextMeta
-      }
-      await runtime.store.saveChat(chatId, nextChat)
+      await runtime.saveWorldModel({ model, meta: metadataChanged ? nextMeta : worldModelState.meta })
       assertAnalysisChatToken(token)
       await refreshTrackingAfterWorldModelSave('world-model-manual-save')
       worldModelState = {
         ...worldModelState,
         busy: false,
         model,
-        meta: metadataChanged && hasPersistedMeta ? nextMeta : worldModelState.meta,
+        meta: metadataChanged ? nextMeta : worldModelState.meta,
         editingSection: null,
         sectionDraft: null,
         sectionDirty: false,
@@ -1710,8 +1714,6 @@ export function createApp(runtime, options = {}) {
       }
       const model = normalizeWorldModel(result)
       assertAnalysisChatToken(token)
-      const currentChat = runtime.store?.getChat?.(chatId)
-      if (!currentChat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
       const analyzedAt = new Date().toISOString()
       const meta = {
         last_analyzed_at: analyzedAt,
@@ -1719,11 +1721,8 @@ export function createApp(runtime, options = {}) {
         last_saved_by: 'ai',
         source_summary: summarizeAnalysisInput(collected.input),
       }
-      await runtime.store.saveChat(chatId, {
-        ...currentChat,
-        world_model: model,
-        world_model_meta: meta,
-      })
+      if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
+      await runtime.saveWorldModel({ model, meta })
       assertAnalysisChatToken(token)
       await refreshTrackingAfterWorldModelSave('world-model-ai-save')
       analysisPreviewState = {

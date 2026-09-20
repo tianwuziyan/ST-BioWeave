@@ -40,7 +40,7 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 | Current State | 由事件按确定性规则归约出的状态 | 下一阶段的当前 Chat 数据结构 |
 | Snapshot | 用于恢复或检查的状态检查点 | 当前楼层数据和 Chat 索引 |
 | Projection | 面向后续剧情的非事实推演 | 当前楼层消息的 BioWeave 数据 |
-| World Model | 当前 Chat 的物种、生物类型和世界级生殖规则 | chat_metadata.bioweave |
+| World Model | 当前有效 Floor/Swipe 的物种、生物类型和世界级生殖规则 | message.extra.bioweave 或 message.swipe_info[swipe_id].extra.bioweave |
 
 插件不会把 AI 的一次输出直接当作最终事实。World Model 分析结果要经过响应解析、固定 schema、字段规范化和证据边界校验；失败时保留最后一次成功结果。
 
@@ -48,7 +48,7 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| World Model v1 | ✅ 可用 | 当前 Chat 世界模型的分析、查看、重新分析和模块级编辑。 |
+| World Model v1 | ✅ 可用 | 当前 Floor/Swipe 世界模型的分析、查看、重新分析和模块级编辑。 |
 | AnalysisInput / Worldbook | ✅ 可用 | 角色卡、世界书、最近剧情和可选公开记忆的选择、预览与输入构建。 |
 | API Profile / Secret | ✅ 可用 | 使用 SillyTavern 当前 API，或配置独立的 OpenAI-compatible Profile。 |
 | Runtime / Storage | ✅ 基础实现 | Chat 切换、楼层版本、作用域校验、宿主生命周期和失败保护。 |
@@ -224,7 +224,7 @@ unknowns[]
 
 ### 4. 其他页面与当前边界
 
-当前 UI 路由包括总览、人物、事件、推演、家系、世界模型和设置。World Model 与设置是当前 Chat 级页面；人物详情的焦点不会改变 Chat 作用域。
+当前 UI 路由包括总览、人物、事件、推演、家系、世界模型和设置。World Model 与设置是当前 Chat 作用域下的页面；World Model 历史仍按当前有效 Floor/Swipe 读取，人物详情的焦点不会改变 Chat 作用域。
 
 事件、状态、Snapshot、Projection 和 Genealogy 页面已经有渲染壳或领域模块，但部分页面仍使用空状态/演示 DTO。它们不会把演示数据写入 Chat，也不应被理解为已经完成端到端自动追踪。
 
@@ -271,8 +271,8 @@ flowchart LR
 | 边界 | 保存内容 | 作用域 |
 | --- | --- | --- |
 | 扩展设置 | API 来源、Profile、Profile assignments、请求超时/重试、全局最近剧情规则、World Model 可编辑提示块 | SillyTavern 全局扩展设置 |
-| Chat metadata | world_model、World Model 元数据、角色档案、关系、Chat-local 设置和索引 | 当前 Chat |
-| Floor extra | 分析状态、事件、Snapshot、Projection | 当前消息/楼层，支持 swipe 隔离 |
+| Chat metadata | 角色档案、关系、Chat-local 设置和索引；旧 World Model 字段仅作忽略的兼容残留 | 当前 Chat |
+| Floor extra | 分析状态、事件、World Model、Snapshot、Projection | 当前消息/楼层，支持 swipe 隔离 |
 | Secret Store | API Secret 的宿主引用和临时生命周期 | SillyTavern 宿主 Secret Store |
 
 核心概念链路为：
@@ -316,7 +316,7 @@ flowchart TD
     Client["ChatCompletionService<br/>当前 API 或独立 Profile"]
     Parse["响应解析<br/>对象 / JSON 文本 / 容错代码围栏"]
     Guard["schema + normalize<br/>证据边界 + 一致性校验"]
-    Save["成功后保存<br/>当前 Chat World Model"]
+    Save["成功后保存<br/>当前 Floor/Swipe World Model"]
     Keep["失败<br/>保留最后一次成功结果"]
 
     Sources --> Input
@@ -488,7 +488,7 @@ Chat-local settings 主要包括：
 | analysis_interval / snapshot_interval | 分析和 Snapshot 的间隔基础配置 |
 | projection_enabled / retry_failed_analysis | 推演与失败重试意向 |
 
-当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、world_model、world_model_meta、character_profiles、`tracking_subjects`、`tracking_candidates`、relationships、settings 和 index。`tracking_subjects` 是人物列表唯一来源，只保存已解析为 eligible 的人物索引和有效 Event 引用；`tracking_candidates` 独立保存有 exposure 但承孕能力尚未确认的 pending recipient，不会进入普通人物列表。老 Chat 缺少任一字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只保留最小、带证据的资料，不复制完整 Event。
+当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、character_profiles、`tracking_subjects`、`tracking_candidates`、relationships、settings 和 index。World Model 与元数据保存在对应 Floor/Swipe owner 中，不从 Chat metadata 读取或写入。`tracking_subjects` 是人物列表唯一来源，只保存已解析为 eligible 的人物索引和有效 Event 引用；`tracking_candidates` 独立保存有 exposure 但承孕能力尚未确认的 pending recipient，不会进入普通人物列表。老 Chat 缺少任一字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只保留最小、带证据的资料，不复制完整 Event。
 
 ### Floor 数据
 
@@ -539,7 +539,7 @@ BioWeave 不提供独立用户认证、权限系统或服务端隔离能力；�
 - Chat/Floor 作用域、楼层版本 hash、stale async guard 和失败保留策略。
 - API Profile、任务分配、超时/重试、模型列表和宿主 Secret Store 边界。
 - 角色卡/Worldbook 稳定来源选择、延迟加载、最近剧情规则和输入预览。
-- World Model v1 schema、首尾可选 SYSTEM 加四段普通消息、JSON 解析、证据 guard、模块级编辑和 Chat 保存。
+- World Model v1 schema、首尾可选 SYSTEM 加四段普通消息、JSON 解析、证据 guard、模块级编辑和 Floor/Swipe 保存。
 - Tavern / Light / Dark 主题与 Desktop / Tablet / Mobile 基础布局。
 
 ### Phase 2A 与后续建设
@@ -607,7 +607,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 
 ### 重新分析失败会丢掉旧世界模型吗？
 
-不会。解析失败、结构无效、超时或请求失败时，当前 Chat 保留最后一次成功的 World Model；失败信息作为分析元数据记录。
+不会。解析失败、结构无效、超时或请求失败时，当前有效 Floor/Swipe 保留最后一次成功的 World Model；失败信息作为分析元数据记录。
 
 ### Projection 是已经发生的事实吗？
 

@@ -595,7 +595,7 @@ await callOpenAICompatible(profile, messages, { requestSettings });
 ### 1. Scope / Trigger
 
 This contract applies when the World Model schema, AI response normalizer,
-Chat-local save path, or World Model view/editor reads or writes biological
+World Model Floor save path, or World Model view/editor reads or writes biological
 classification data. The trigger is a cross-layer payload change where species
 recognition and biological-type recognition must remain independent.
 
@@ -773,7 +773,7 @@ species[].biological_types[].capabilities
 ### 1. Scope / Trigger
 
 This contract applies when `ui/world.js` and `ui/app.js` render or edit the
-existing Chat-local World Model. It covers presentation-only section drafts;
+existing Floor-owned World Model. It covers presentation-only section drafts;
 it does not change the World Model schema or its analyzer contract.
 
 ### 2. Signatures
@@ -846,19 +846,20 @@ extractWorldModelSection(form, section)
 ### 7. Wrong vs Correct
 
 ```js
-// Wrong: replace all sections from a page-wide draft.
+// Wrong: persist World Model in Chat metadata or replace unrelated Floor data.
 await runtime.store.saveChat(chatId, { ...chat, world_model: pageDraft });
 ```
 
 ```js
-// Correct: clone and replace one selected section before saving.
+// Correct: clone and replace one selected section before saving through the
+// World/Floor runtime helper; the helper preserves analysis/events/registry.
 const nextModel = applyWorldModelSection(
   currentModel,
   section,
   draft,
   selection,
 );
-await runtime.store.saveChat(chatId, { ...chat, world_model: nextModel });
+await runtime.saveWorldModel({ model: nextModel, meta: currentMeta });
 ```
 
 ## Recent Story Regex Collection

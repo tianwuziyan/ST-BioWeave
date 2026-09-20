@@ -46,9 +46,11 @@ a historical source of Floor facts. BioWeave does not add a permanent Floor ID
 database.
 
 Chat Metadata may still own independent configuration: user choices, role or
-plugin settings, current Character Card/Persona/World Model context, and other
-explicitly authoritative Chat-local values. Floor-derived canonical identity
-history is Floor-owned cumulative snapshot state; it is not Chat configuration.
+plugin settings, current Character Card/Persona context, and other explicitly
+authoritative Chat-local values. Historical World Model state is not Chat
+configuration: `world_model` and `world_model_meta` are Floor-owned fields.
+Floor-derived canonical identity history is Floor-owned cumulative snapshot
+state; it is not Chat configuration.
 If a Chat-level
 `character_registry` is retained, it is only a materialized projection/cache
 or an explicitly bounded legacy-migration input; it is never an independent
@@ -78,6 +80,22 @@ deletion callback or a stale cache.
 An inactive or missing Floor is represented by the existing empty storage
 shape, not by a fallback to another message, Swipe, or Chat-level historical
 copy.
+
+### Business-domain separation inside one Floor
+
+The Floor object is a storage container, not a merged business owner. World
+Model and Character/Event Analysis share Floor Version, Store, owner slots,
+invalidation, and business-neutral traversal only. World Model owns its world
+rules/prompt/parser/normalizer/evidence guard and its own persistence/resolver;
+Character/Event owns identity, registry, profile/context, participant
+resolution, BiologicalEvent, Tracking, and its own validation/persistence.
+
+Saving one domain must preserve the other domain's valid fields. A World Model
+save may replace only `world_model` and `world_model_meta`; Character/Event
+analysis may replace only `analysis`, `events`, and `character_registry`.
+Cross-domain clearing is allowed only when the lifecycle contract explicitly
+invalidates the complete Floor Version or owner. Neither domain may place its
+resolver or save logic inside the other domain's business helper.
 
 ## 3. Per-swipe ownership
 
@@ -290,13 +308,18 @@ version changes, reload, or an asynchronous analysis completion.
   `store.getActiveFloor(messageId)` selects the current host active Swipe.
 - `store.saveFloor(messageId, swipeId, data)` writes one existing owner slot and
   rejects a missing structured Swipe with `SWIPE_NOT_FOUND`.
+- World Model resolution is exposed by the World/Floor boundary (for example,
+  `resolveWorldModelAtOrBefore` and `resolveWorldModelStrictlyBefore`). It is
+  not a Character Registry helper. A shared traversal primitive, if needed,
+  must remain unaware of World Model, Events, analysis, and registry meaning.
 - `findPreviousSuccessfulBioWeave(target)` returns either the nearest valid
   `{ analysis, events, character_registry }` from one Floor owner or exactly
   `{ analysis: null, events: [], character_registry: emptyRegistry }`.
 - `rebuildTrackingRegistry(activeEvents, chatConfig)` returns the materialized
   `tracking_subjects`, `tracking_candidates`, and event-derived
-  `character_profiles` for that `activeEvents` collection. `chatConfig` may
-  supply configuration such as `world_model`, not prior derived facts.
+  `character_profiles` for that `activeEvents` collection. It must not own,
+  write, or refresh Floor `world_model` / `world_model_meta`; World Model is
+  passed to Event Analysis only as an already resolved input DTO.
 
 ### 3. Contracts
 
@@ -318,7 +341,12 @@ version changes, reload, or an asynchronous analysis completion.
   projection/cache or explicitly bounded legacy-migration input. It is not an
   Analyzer historical source and cannot restore a deleted, stale, or
   Swipe-inactive snapshot. Current Character Card/Persona/World Model data
-  remains independent configuration/context.
+  remains independent configuration/context; historical World Model data is
+  read only from its own valid Floor owner.
+- Character/Event analysis, identity resolution, Character Registry updates,
+  Tracking rebuilds, and Event CRUD must preserve valid Floor World Model
+  fields. World Model AI/manual saves must preserve valid analysis, Events, and
+  Character Registry fields. A combined update helper is forbidden.
 - `last_processed_floor` is recomputed from current successful valid Floors when
   needed for scheduling. It never supplies historical input or validates a fact.
 
@@ -363,7 +391,7 @@ const candidates = chatData.tracking_candidates;
 // Correct: Chat fields are only the destination of a rebuild.
 const activeEvents = collectCurrentValidFloorEvents();
 const registry = rebuildTrackingRegistry(activeEvents, {
-  world_model: chatData.world_model,
+  world_model: resolveWorldModelStrictlyBefore(target)?.model ?? null,
 });
 const previous = findPreviousSuccessfulBioWeave(target);
 ```

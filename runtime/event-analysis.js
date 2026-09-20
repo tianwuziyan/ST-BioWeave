@@ -821,6 +821,60 @@ export function createEventAnalysisCoordinator({
       character_registry: normalizeCharacterRegistry(null),
     };
   }
+  function cloneWorldValue(value) {
+    if (value === undefined || value === null) return value;
+    if (typeof structuredClone === "function") return structuredClone(value);
+    if (Array.isArray(value)) return value.map(cloneWorldValue);
+    if (typeof value === "object")
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneWorldValue(item)]));
+    return value;
+  }
+  async function resolveWorldModelAtOrBefore(selector = null, { strictBefore = false } = {}) {
+    const target = await resolveFloor(selector);
+    const resetAt = resetBoundary(store.getChat?.(target.chatId));
+    for (let index = target.index - (strictBefore ? 1 : 0); index >= 0; index -= 1) {
+      const swipeId = store.getActiveSwipeId?.(index);
+      if (swipeId === null || swipeId === undefined) continue;
+      let candidate;
+      try {
+        candidate = await resolveFloor({ __messageIndex: true, index });
+      } catch {
+        continue;
+      }
+      if (candidate.version.floor > target.version.floor) continue;
+      if (!strictBefore && index === target.index && !sameFloorVersion(candidate.version, target.version)) continue;
+      if (!stateIsAfterReset(candidate, resetAt) || isFloorInvalidated(candidate)) continue;
+      const floorData = store.getFloor?.(index, swipeId) ?? {};
+      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
+      if (floorData.world_model === null || floorData.world_model === undefined) continue;
+      return {
+        model: cloneWorldValue(floorData.world_model),
+        meta: cloneWorldValue(floorData.world_model_meta),
+        floor_version: cloneWorldValue(candidate.version),
+      };
+    }
+    return null;
+  }
+  async function saveWorldModel({ model, meta = null, selector = null } = {}) {
+    const token = chat.token();
+    const target = await resolveFloor(selector);
+    chat.assert(token);
+    const current = store.getFloor?.(target.index, target.swipeId) ?? emptyFloor();
+    const currentTarget = await resolveFloor({ __messageIndex: true, index: target.index });
+    if (!sameFloorVersion(currentTarget.version, target.version)) throw requestAbortedError();
+    await store.saveFloor(target.index, target.swipeId, {
+      ...current,
+      floor_version: target.version,
+      world_model: cloneWorldValue(model),
+      world_model_meta: cloneWorldValue(meta),
+    });
+    chat.assert(token);
+    return {
+      model: cloneWorldValue(model),
+      meta: cloneWorldValue(meta),
+      floor_version: cloneWorldValue(target.version),
+    };
+  }
   async function collectCurrentFloorStates(token = chat.token()) {
     const states = [];
     const all = messages();
@@ -891,7 +945,16 @@ export function createEventAnalysisCoordinator({
           state.events.filter((event) => eventIsAfterReset(event, resetAt, state)),
         ),
     );
-    const registry = rebuildTrackingRegistry(activeEvents, currentChat);
+    let world = null;
+    try {
+      world = await resolveWorldModelAtOrBefore();
+    } catch {
+      // An empty Chat has no target Floor and therefore no World Model.
+    }
+    const registry = rebuildTrackingRegistry(
+      activeEvents,
+      { world_model: world?.model ?? null },
+    );
     const characterRegistry = currentCharacterRegistryFromStates(validStates);
     chat.assert(token);
     return {
@@ -1398,7 +1461,11 @@ export function createEventAnalysisCoordinator({
         )
         .flatMap((state) => state.events),
     );
-    const causalRegistry = rebuildTrackingRegistry(causalEvents, chatData);
+    const causalWorld = await resolveWorldModelAtOrBefore(target, { strictBefore: true });
+    const causalRegistry = rebuildTrackingRegistry(
+      causalEvents,
+      { world_model: causalWorld?.model ?? null },
+    );
     const derivedChatData = {
       ...chatData,
       ...causalRegistry,
@@ -1485,7 +1552,7 @@ export function createEventAnalysisCoordinator({
         narrative: processedTarget?.content ?? "",
         role: messageRole(target.message),
       },
-      worldModel: chatData.world_model,
+      worldModel: (await resolveWorldModelAtOrBefore(target, { strictBefore: true }))?.model ?? null,
       storyTime: storyTimeValue,
       characterContext,
       characterRegistry,
@@ -1999,6 +2066,10 @@ export function createEventAnalysisCoordinator({
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
     getCurrentFloorEvents: async () =>
       (await statusForCurrentFloor()).current_floor_events,
+    resolveWorldModelAtOrBefore,
+    resolveWorldModelStrictlyBefore: (selector) =>
+      resolveWorldModelAtOrBefore(selector, { strictBefore: true }),
+    saveWorldModel,
     getTrackingRegistry: async () => {
       const token = chat.token();
       const chatData = store.getChat(token.chatId);

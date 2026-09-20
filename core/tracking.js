@@ -98,29 +98,11 @@ function mergeProfiles(previous, next) {
   };
 }
 
-function meaningfulConfigurationValue(value) {
-  if (value === null || value === undefined) return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return typeof value !== "string" || value.trim().length > 0;
-}
-
-function worldModelFromChat(previousChat) {
-  const roots = [
-    previousChat,
-    previousChat?.bioweave,
-    previousChat?.chat_metadata?.bioweave,
-    previousChat?.chatMetadata?.bioweave,
-    previousChat?.registry,
-  ].filter((root) => root && typeof root === "object" && !Array.isArray(root));
-  const fallback = roots.find((root) =>
-    Object.prototype.hasOwnProperty.call(root, "world_model"),
-  );
-  if (!fallback) return {};
-  const source =
-    roots.find((root) => meaningfulConfigurationValue(root.world_model)) ??
-    fallback;
-  return recordValue(source.world_model);
+function resolvedWorldModel(input) {
+  // Runtime passes a provenance-checked DTO from the World/Floor resolver.
+  // Never discover World Model state from Chat metadata or derived registries.
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return recordValue(input.world_model);
 }
 
 const EXCLUDED_EVENT_STATUSES = new Set(["negated", "fictional"]);
@@ -187,7 +169,7 @@ function participantCandidates(event) {
 
 function trackingContext(previousChat) {
   return {
-    worldModel: worldModelFromChat(previousChat),
+    worldModel: resolvedWorldModel(previousChat),
   };
 }
 

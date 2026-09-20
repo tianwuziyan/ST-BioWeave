@@ -105,22 +105,28 @@ const TYPE_PARENT_SPECIES = Symbol('world_model_parent_species');
 const TYPE_KNOWN_SPECIES = Symbol('world_model_known_species');
 const TYPE_SIBLING_NAMES = Symbol('world_model_sibling_names');
 
-function invalidWorldModel(message = 'WORLD_MODEL_INVALID') {
+function invalidWorldModel(message = 'WORLD_MODEL_INVALID', details = {}) {
   const error = new Error(message);
   error.code = 'WORLD_MODEL_INVALID';
+  error.analysis_stage = details.stage ?? 'schema_validation';
+  error.stage = details.stage ?? 'schema_validation';
+  error.diagnosticCode = details.diagnosticCode ?? 'WORLD_MODEL_SCHEMA_INVALID';
+  if (details.path) error.path = details.path;
+  if (details.expected) error.expected = details.expected;
+  if (details.received) error.received = details.received;
   return error;
 }
 
-function nullableText(value) {
+function nullableText(value, path) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') throw invalidWorldModel();
+  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'string|null', received: Array.isArray(value) ? 'array' : typeof value });
   const text = value.trim();
   return UNKNOWN_TEXT.has(text.toLowerCase()) ? null : text || null;
 }
 
 // 归一化模型可能返回的常见人类标签，避免拉丁学名泄露到用户可见 World Model。
-function localizedWorldModelText(value) {
-  const text = nullableText(value);
+function localizedWorldModelText(value, path) {
+  const text = nullableText(value, path);
   if (!text) return text;
   return text
     .replace(/\bHomo\s+sapiens\b/gi, '人类')
@@ -130,39 +136,39 @@ function localizedWorldModelText(value) {
     .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性');
 }
 
-function normalizeRuleText(value) {
-  const text = localizedWorldModelText(value);
+function normalizeRuleText(value, path) {
+  const text = localizedWorldModelText(value, path);
   if (!text) return text;
   const compact = text.replace(/\s+/gu, '').replace(/[。！？!?]+$/gu, '');
   if (UNKNOWN_RULE_TEXT_PATTERN.test(compact)) return null;
   return KNOWN_ABSENT_RULE_PATTERN.test(compact) ? '无' : text;
 }
 
-function nullableBoolean(value) {
+function nullableBoolean(value, path) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') throw invalidWorldModel();
+  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: Array.isArray(value) ? 'array' : typeof value });
   const text = value.trim().toLowerCase();
   if (UNKNOWN_TEXT.has(text)) return null;
   if (['true', 'yes', '是'].includes(text)) return true;
   if (['false', 'no', '否'].includes(text)) return false;
-  throw invalidWorldModel();
+  throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: 'string' });
 }
 
-function stringList(value, mapText = nullableText) {
+function stringList(value, mapText = nullableText, { strict = false, path } = {}) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    if (typeof value === 'string' && value.trim())
+    if (!strict && typeof value === 'string' && value.trim())
       return [mapText(value)].filter(Boolean);
-    throw invalidWorldModel();
+    throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'array<string>', received: Array.isArray(value) ? 'array' : typeof value });
   }
   return [...new Set(value.map((item) => mapText(item)).filter(Boolean))];
 }
 
-function objectOrEmpty(value) {
+function objectOrEmpty(value, path) {
   if (value === undefined || value === null) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw invalidWorldModel();
+    throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'object', received: Array.isArray(value) ? 'array' : typeof value });
   return value;
 }
 
@@ -188,28 +194,28 @@ function normalizeBiologicalTypeName(value, parentSpeciesName) {
   return name;
 }
 
-function normalizeBiologicalType(raw, index, parentSpeciesName) {
+function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false, path = `biological_types[${index}]` } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     throw invalidWorldModel(`WORLD_MODEL_TYPE_${index}`);
-  const capabilities = objectOrEmpty(raw.capabilities);
-  const reproductionRules = objectOrEmpty(raw.reproduction_rules);
-  const lifecycle = objectOrEmpty(raw.lifecycle);
+  const capabilities = objectOrEmpty(raw.capabilities, `${path}.capabilities`);
+  const reproductionRules = objectOrEmpty(raw.reproduction_rules, `${path}.reproduction_rules`);
+  const lifecycle = objectOrEmpty(raw.lifecycle, `${path}.lifecycle`);
   return {
     name: normalizeBiologicalTypeName(raw.name, parentSpeciesName),
     description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(
-      CAPABILITY_KEYS.map((key) => [key, nullableBoolean(capabilities[key])]),
+      CAPABILITY_KEYS.map((key) => [key, nullableBoolean(capabilities[key], `${path}.capabilities.${key}`)]),
     ),
     reproduction_rules: Object.fromEntries(
       WORLD_RULE_KEYS.map((key) => [
         key,
-        normalizeRuleText(reproductionRules[key]),
+        normalizeRuleText(reproductionRules[key], `${path}.reproduction_rules.${key}`),
       ]),
     ),
     lifecycle: Object.fromEntries(
-      LIFECYCLE_KEYS.map((key) => [key, normalizeRuleText(lifecycle[key])]),
+      LIFECYCLE_KEYS.map((key) => [key, normalizeRuleText(lifecycle[key], `${path}.lifecycle.${key}`)]),
     ),
-    special_rules: stringList(raw.special_rules, localizedWorldModelText),
+    special_rules: stringList(raw.special_rules, localizedWorldModelText, { path: `${path}.special_rules` }),
   };
 }
 
@@ -238,7 +244,7 @@ function normalizeSpecies(raw, index, { strict = false } = {}) {
   const speciesName = canonicalSpeciesName(raw.name);
   const biologicalTypes = Array.isArray(raw.biological_types)
     ? raw.biological_types.map((item, typeIndex) =>
-        normalizeBiologicalType(item, typeIndex, speciesName),
+        normalizeBiologicalType(item, typeIndex, speciesName, { strict, path: `species[${index}].biological_types[${typeIndex}]` }),
       )
     : [];
   return {
@@ -323,10 +329,10 @@ function mergeHumanSpeciesEntries(species) {
   return merged;
 }
 
-function normalizeExceptions(value) {
+function normalizeExceptions(value, { strict = false } = {}) {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw invalidWorldModel();
-  return value.map((item) => {
+  if (!Array.isArray(value)) throw invalidWorldModel('WORLD_MODEL_INVALID', { path: 'exceptions', expected: 'array<object>', received: Array.isArray(value) ? 'array' : typeof value });
+  return value.map((item, index) => {
     if (typeof item === 'string') {
       return {
         statement: localizedWorldModelText(item),
@@ -335,10 +341,10 @@ function normalizeExceptions(value) {
       };
     }
     if (!item || typeof item !== 'object' || Array.isArray(item))
-      throw invalidWorldModel();
+      throw invalidWorldModel('WORLD_MODEL_INVALID', { path: `exceptions[${index}]`, expected: 'object', received: Array.isArray(item) ? 'array' : typeof item });
     const statement =
       [item.statement, item.description, item.name]
-        .map(localizedWorldModelText)
+        .map((entry) => localizedWorldModelText(entry))
         .find(Boolean) ?? null;
     return {
       statement,
@@ -349,7 +355,7 @@ function normalizeExceptions(value) {
 }
 
 function normalizeMedicalContext(value) {
-  const medicalContext = objectOrEmpty(value);
+  const medicalContext = objectOrEmpty(value, 'medical_context');
   return Object.fromEntries(
     MEDICAL_CONTEXT_KEYS.map((key) => [
       key,
@@ -1206,7 +1212,16 @@ export function normalizeWorldModel(raw, { strict = false } = {}) {
       !Array.isArray(raw.exceptions) ||
       !Array.isArray(raw.unknowns))
   ) {
-    throw invalidWorldModel();
+    const path = !Array.isArray(raw.species)
+      ? 'species'
+      : !Array.isArray(raw.exceptions)
+        ? 'exceptions'
+        : 'unknowns';
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path,
+      expected: 'array',
+      received: Array.isArray(raw[path]) ? 'array' : typeof raw[path],
+    });
   }
   if (raw.species !== undefined && !Array.isArray(raw.species))
     throw invalidWorldModel();
@@ -1221,8 +1236,8 @@ export function normalizeWorldModel(raw, { strict = false } = {}) {
     schema_version: WORLD_MODEL_SCHEMA.schema_version,
     species,
     medical_context: normalizeMedicalContext(raw.medical_context),
-    exceptions: normalizeExceptions(raw.exceptions),
-    unknowns: stringList(raw.unknowns, localizedWorldModelText),
+    exceptions: normalizeExceptions(raw.exceptions, { strict }),
+    unknowns: stringList(raw.unknowns, localizedWorldModelText, { strict, path: 'unknowns' }),
   };
 }
 
@@ -1297,6 +1312,11 @@ function traceParserError(error) {
           : typeof error?.error_code === 'string'
             ? error.error_code
             : null,
+    analysisStage: typeof error?.analysis_stage === 'string' ? error.analysis_stage : null,
+    stage: typeof error?.stage === 'string' ? error.stage : null,
+    path: typeof error?.path === 'string' ? error.path : null,
+    expected: typeof error?.expected === 'string' ? error.expected : null,
+    received: typeof error?.received === 'string' ? error.received : null,
   };
 }
 
@@ -2401,14 +2421,38 @@ export function parseWorldModelResponse(raw) {
   ) {
     return validateWorldModel(raw);
   }
+  let lastSchemaError = null;
+  let lastParseError = null;
   for (const candidate of jsonCandidates(responseText(raw))) {
+    let parsed;
     try {
-      return validateWorldModel(JSON.parse(candidate));
-    } catch {
-      // 继续尝试代码围栏或正文中的 JSON 对象，最终统一返回安全错误。
+      parsed = JSON.parse(candidate);
+    } catch (error) {
+      lastParseError = invalidWorldModel('WORLD_MODEL_INVALID', {
+        stage: 'json_parse',
+        diagnosticCode: 'WORLD_MODEL_JSON_PARSE',
+        path: '$',
+        expected: 'valid JSON object',
+        received: error?.message ?? 'invalid JSON',
+      });
+      continue;
+    }
+    try {
+      return validateWorldModel(parsed);
+    } catch (error) {
+      if (error?.code === 'WORLD_MODEL_INVALID') lastSchemaError = error;
+      else throw error;
     }
   }
-  throw invalidWorldModel();
+  if (lastSchemaError) throw lastSchemaError;
+  if (lastParseError) throw lastParseError;
+  throw invalidWorldModel('WORLD_MODEL_INVALID', {
+    stage: 'json_parse',
+    diagnosticCode: 'WORLD_MODEL_JSON_EMPTY',
+    path: '$',
+    expected: 'JSON object',
+    received: 'empty response',
+  });
 }
 
 // 只保存来源数量、范围和状态，不保存 AnalysisInput 正文。
