@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
-- **Last Active**: 2026-09-16
+- **Total Sessions**: 31
+- **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~637 | Active |
+| `journal-1.md` | ~703 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-09-19 | 隐藏空 Registry Prompt 的正式 ID 诱导 | `27ac7b33a756d70b63c75f7189490a33601fc9e` | `fix/world-model-prompt-baseline` |
+| 30 | 2026-09-19 | 修复空 Character Registry 的 Event Prompt Bootstrap | `e4276436692e6a04a23956898ec01a0fa00f0d07` | `fix/world-model-prompt-baseline` |
+| 29 | 2026-09-19 | Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复 | `c2bb9caadb257ca350d6414df9999d8fcd68a436` | `fix/world-model-prompt-baseline` |
 | 28 | 2026-09-16 | 修复 Floor 分析事实污染并同步 GitHub | `d5d69013a8c77fa048d9027dc3a3a5b20aae24d9` | `fix/world-model-prompt-baseline` |
 | 27 | 2026-09-16 | 建立 Runtime 权威的人物身份解析闭环 | `3614380` | `fix/world-model-prompt-baseline` |
 | 26 | 2026-09-15 | 独立 API 模型缓存与编辑器状态隔离 | `7d410506ddb7684d8e856eab33e0530d7b666c20` | `fix/world-model-prompt-baseline` |

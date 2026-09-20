@@ -635,3 +635,69 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复
+<!-- trellis-session: v=2 fp=b1dfc6d13fa66039 -->
+
+**Date**: 2026-09-19
+**Task**: Character Registry 顺序 ID 与 Floor Snapshot 生命周期修复
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 Character Registry 的 char_000001 顺序分配、完整 Floor/Swipe snapshot previous lookup、response-global mention 与 pregnancy reference canonicalization、existing 精确唯一 fallback，以及 MESSAGE_DELETED 因果失效路由修复。移除 Character ID 的随机/UUID/legacy allocator，保持 Chat projection、Swipe/reset isolation 与失败重分析原子保留。npm test 与 npm run check 均为 572/572；node --check、git diff --check 通过；未执行真实 SillyTavern 宿主验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2bb9caadb257ca350d6414df9999d8fcd68a436` | 修复 Character Registry 快照生命周期与顺序人物 ID |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 30: 修复空 Character Registry 的 Event Prompt Bootstrap
+<!-- trellis-session: v=2 fp=096b32cf44328787 -->
+
+**Date**: 2026-09-19
+**Task**: 修复空 Character Registry 的 Event Prompt Bootstrap
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+审计并补强空 Character Registry 的 Event Prompt bootstrap：明确无合法 existing、new 使用 null character_id 与 opaque mention_N，禁止 char_000000 和模型自造永久 ID；保持 Runtime fail-closed、顺序 allocator、response-global mention map、pregnancy remap、Floor lifecycle 与 UI 不变。新增 Prompt、空 Registry fail-closed、四人顺序注册回归，npm test/npm run check 均 574/574 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e4276436692e6a04a23956898ec01a0fa00f0d07` | 补强空 Character Registry 的 Event Prompt bootstrap 契约 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 31: 隐藏空 Registry Prompt 的正式 ID 诱导
+<!-- trellis-session: v=2 fp=c7f70cd7e808925a -->
+
+**Date**: 2026-09-19
+**Task**: 隐藏空 Registry Prompt 的正式 ID 诱导
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+移除 Event Analysis 生产 Prompt 中的通用 character_id 格式和编号示例，保留非空 Registry 实际候选；补充空 Registry Prompt 与伪造 existing ID fail-closed 回归。npm test 与 npm run check 均 574/574 通过，未执行真实 SillyTavern 宿主验收，未 push。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27ac7b33a756d70b63c75f7189490a33601fc9e` | 隐藏 Event Prompt 正式 character_id 示例并补充空 Registry 回归 |
+
+### Status
+
+[OK] **Completed**

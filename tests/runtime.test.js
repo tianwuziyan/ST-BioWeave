@@ -127,6 +127,51 @@ test("Floor character snapshots round-trip independently per Swipe", async () =>
   assert.equal(adapter.message.extra?.bioweave, undefined);
 });
 
+test("Floor storage does not normalize a missing or malformed Registry into an empty snapshot", async () => {
+  const adapter = createAdapter();
+  const store = createStore(adapter, createChatBoundary(adapter));
+  await store.saveFloor(0, 0, {
+    analysis: { status: "success" },
+  });
+  await store.saveFloor(0, 1, {
+    analysis: { status: "success" },
+    character_registry: { schema_version: 1, entities: [] },
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      store.getFloor(0, 0),
+      "character_registry",
+    ),
+    false,
+  );
+  assert.deepEqual(store.getFloor(0, 1).character_registry, {
+    schema_version: 1,
+    entities: [],
+  });
+
+  await store.saveFloor(0, 0, {
+    analysis: { status: "success" },
+    character_registry: {
+      schema_version: 1,
+      entities: {
+        char_000001: {
+          display_name: "缺少正式字段",
+          aliases: [],
+        },
+      },
+    },
+  });
+  assert.deepEqual(store.getFloor(0, 0).character_registry, {
+    schema_version: 1,
+    entities: {
+      char_000001: {
+        display_name: "缺少正式字段",
+        aliases: [],
+      },
+    },
+  });
+});
+
 test("active Swipe selects only its Floor and a deleted message contributes no facts", async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
@@ -311,13 +356,13 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
         source: version,
         participants: [
           {
-            character_id: "char-a",
+            character_id: "char_000001",
             display_name: "同名",
             event_role: "potential_gestational_subject",
             reproductive_capabilities_used: { can_carry_pregnancy: true },
           },
           {
-            character_id: "char-b",
+            character_id: "char_000002",
             display_name: "同名",
             event_role: "potential_conception_source",
             reproductive_capabilities_used: { can_cause_pregnancy: true },
@@ -326,8 +371,8 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
         pregnancy_relevance: {
           relevant: true,
           possible_conception: true,
-          gestational_subject_ids: ["char-a"],
-          counterpart_ids: ["char-b"],
+          gestational_subject_ids: ["char_000001"],
+          counterpart_ids: ["char_000002"],
         },
         source_evidence: [
           {
@@ -340,13 +385,13 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
     character_registry: {
       schema_version: 1,
       entities: {
-        "char-a": {
-          character_id: "char-a",
+        char_000001: {
+          character_id: "char_000001",
           display_name: "同名",
           aliases: [],
         },
-        "char-b": {
-          character_id: "char-b",
+        char_000002: {
+          character_id: "char_000002",
           display_name: "同名",
           aliases: [],
         },
@@ -357,30 +402,30 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
   assert.equal(await runtime.init(), true);
   const registry = await runtime.refreshTrackingRegistry("focused-test");
   assert.equal(
-    registry.tracking_subjects["char-a"].created_from_event_id,
+    registry.tracking_subjects["char_000001"].created_from_event_id,
     "evt-refresh",
   );
-  assert.deepEqual(registry.character_registry.entities["char-a"], {
-    character_id: "char-a",
+  assert.deepEqual(registry.character_registry.entities.char_000001, {
+    character_id: "char_000001",
     display_name: "同名",
     aliases: [],
   });
-  assert.deepEqual(registry.character_registry.entities["char-b"], {
-    character_id: "char-b",
+  assert.deepEqual(registry.character_registry.entities.char_000002, {
+    character_id: "char_000002",
     display_name: "同名",
     aliases: [],
   });
   assert.deepEqual(Object.keys(registry.character_registry.entities).sort(), [
-    "char-a",
-    "char-b",
+    "char_000001",
+    "char_000002",
   ]);
   assert.deepEqual(
-    adapter.metadata.bioweave.tracking_subjects["char-a"].exposure_event_ids,
+    adapter.metadata.bioweave.tracking_subjects["char_000001"].exposure_event_ids,
     ["evt-refresh"],
   );
   assert.deepEqual(
     Object.keys(adapter.metadata.bioweave.character_registry.entities).sort(),
-    ["char-a", "char-b"],
+    ["char_000001", "char_000002"],
   );
 });
 

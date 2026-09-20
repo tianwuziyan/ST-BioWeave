@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/prd.md","reason":"按批准的空 Registry bootstrap、Runtime fail-closed 与非目标边界复核。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/design.md","reason":"复核 formatter 分支、raw/canonical 边界、测试策略与回滚范围。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/implement.md","reason":"复核实施顺序、验证命令、禁止操作与文件写集。"}
+{"file":".trellis/tasks/09-19-empty-registry-bootstrap-prompt/research/prompt-bootstrap-audit.md","reason":"对照实际代码审计结论复核本轮根因、边界和未修改项。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 previous snapshot、Chat projection 与 Floor ownership 未被 Prompt 修复越界。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"检查 Prompt wording 与 Event identity/pregnancy canonicalization 合同一致。"}
+{"file":"AGENTS.md","reason":"检查最终 diff 遵循最小修改、保护 unrelated dirty work、禁止 UI/Runtime 越界等仓库约束。"}

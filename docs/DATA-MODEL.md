@@ -207,8 +207,8 @@ Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的�
 ```json
 {
   "tracking_subjects": {
-    "char_A": {
-      "character_id": "char_A",
+    "char_000001": {
+      "character_id": "char_000001",
       "display_name": "A",
       "created_from_event_id": "evt_001",
       "exposure_event_ids": ["evt_001", "evt_008"],

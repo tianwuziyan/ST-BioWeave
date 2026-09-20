@@ -159,6 +159,9 @@ repopulate the cleared projection. Clear All resets the marker with the clean
 Chat shape. The registry, not a field-name convention, defines this behavior.
 When Character clear runs in an empty Chat, the marker stores
 `message_index: -1`, an explicit boundary before the first future message.
+A Floor that existed at the boundary may re-enter the derived projection only
+after a successful analysis completed after the reset marker was created;
+older unchanged facts at that boundary remain excluded.
 
 The current `settings` object is:
 
@@ -312,6 +315,13 @@ valid and whether the Event can contribute to derived state.
 `character_id`, `display_name`, and `aliases[]`. It is a cumulative canonical
 identity snapshot owned by that successful Floor. It is not the same as the
 Chat-level `character_registry` projection.
+
+The only formal new `character_id` shape is `char_` plus six decimal digits,
+from `char_000001` through `char_999999`. Runtime allocates it from the
+selected previous surviving snapshot; it does not use a Chat-global counter,
+name-derived value, UUID, timestamp, random value, migration, or tombstone.
+Development-era IDs are outside the current Contract and are not read or
+migrated by the production identity path.
 
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the six-field Version checks. The
@@ -492,7 +502,8 @@ Because a Runtime rebuild from valid Events could otherwise repopulate the
 projection immediately, the implementation persists the bounded, versioned
 `character_reset` boundary described above. The marker is a rebuild boundary,
 not a second fact source: post-reset Floors may create new projection state,
-while old facts remain historical and provenance-bound.
+including a boundary Floor only after it is successfully reanalyzed after the
+reset; old unchanged facts remain historical and provenance-bound.
 
 ### 6.3 Manual World clear
 
@@ -726,8 +737,8 @@ state. `last_processed_floor` is a scheduling hint only.
 New analysis results carry dependency provenance for the active Floor-Version
 chain. A retained non-active Swipe result is reusable after switching back
 when its source Floor Version is still valid; dependency changes still
-invalidate downstream Chat-level state. A legacy result without provenance is
-treated conservatively and is not allowed to reintroduce downstream state.
+invalidate downstream Chat-level state. A result without provenance is treated
+conservatively and is not allowed to reintroduce downstream state.
 
 The mutation flow is:
 

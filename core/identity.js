@@ -45,6 +45,8 @@ export const IDENTITY_ERROR_CODES = Object.freeze({
   DISPLAY_NAME_REQUIRED: 'display_name_required',
   DISPLAY_NAME_NOT_PERSISTABLE: 'display_name_not_persistable',
   CHARACTER_ID_COLLISION: 'character_id_collision',
+  CHARACTER_ID_SEQUENCE_EXHAUSTED: 'character_id_sequence_exhausted',
+  MENTION_ID_REQUIRED: 'mention_id_required',
   UNKNOWN_CHARACTER_ID: 'unknown_character_id',
   ALIAS_CANDIDATE_REJECTED: 'alias_candidate_rejected',
   RAW_IDENTITY_CONFLICT: 'raw_identity_conflict',
@@ -160,7 +162,8 @@ const CONTEXTUAL_REFERENCE_VALUES = new Set([
 const CONTEXTUAL_REFERENCE_PATTERN =
   /^(?:这|那|某|一名|一位|一个|该).*(?:人|女孩|男孩|女子|男子|男人|女人|孩子|家伙|身影|人影)$/;
 
-let fallbackIdCounter = 0;
+const CHARACTER_ID_SEQUENCE_PATTERN = /^char_([0-9]{6})$/;
+const MAX_CHARACTER_ID_SEQUENCE = 999999;
 
 function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
@@ -458,8 +461,8 @@ export function normalizeCharacterEntry(raw = {}, characterId = null) {
 }
 
 /**
- * Normalize an untrusted/legacy registry without mutating its input.
- * Historical IDs are retained as supplied; only their entry shape is cleaned.
+ * Normalize an untrusted registry without mutating its input. The registry key
+ * remains the canonical identity; only the entry shape is cleaned.
  */
 export function normalizeCharacterRegistry(raw = {}) {
   const source = recordValue(raw);
@@ -510,31 +513,67 @@ export function projectCharacterRegistryCandidates(registry = {}) {
 
 export const projectCharacterCandidates = projectCharacterRegistryCandidates;
 
-/**
- * Generate an opaque Runtime ID. A supplied/runtime crypto.randomUUID is
- * preferred. The fallback is random/time based and never reads a name.
- */
-export function createOpaqueCharacterId(options = {}) {
-  const source = recordValue(options);
-  const cryptoSource = source.crypto ?? globalThis.crypto;
-  const randomUUID = source.randomUUID ?? cryptoSource?.randomUUID;
-  if (typeof randomUUID === 'function') {
-    try {
-      const token = textValue(randomUUID.call(cryptoSource));
-      if (token) return token.startsWith('char_') ? token : `char_${token}`;
-    } catch {
-      // Fall through to the dependency-free opaque fallback.
+export function isCanonicalCharacterId(value) {
+  const match = CHARACTER_ID_SEQUENCE_PATTERN.exec(identifierValue(value) ?? '');
+  if (!match) return false;
+  const sequence = Number(match[1]);
+  return sequence >= 1 && sequence <= MAX_CHARACTER_ID_SEQUENCE;
+}
+
+export function isCompleteCharacterRegistrySnapshot(raw = {}) {
+  const source = recordValue(raw);
+  const entities = source.entities;
+  if (
+    source.schema_version !== CHARACTER_REGISTRY_SCHEMA_VERSION ||
+    !hasOwn(source, 'entities') ||
+    !entities ||
+    typeof entities !== 'object' ||
+    Array.isArray(source.entities)
+  )
+    return false;
+
+  for (const [key, value] of Object.entries(entities)) {
+    const entry = recordValue(value);
+    if (
+      !isCanonicalCharacterId(key) ||
+      entry.character_id !== key ||
+      !hasOwn(entry, 'display_name') ||
+      (entry.display_name !== null && typeof entry.display_name !== 'string') ||
+      !Array.isArray(entry.aliases) ||
+      entry.aliases.some((alias) => typeof alias !== 'string')
+    )
+      return false;
+  }
+  return true;
+}
+
+export function allocateSequentialCharacterId(registry = {}) {
+  let maxSequence = 0;
+  const entities = recordValue(recordValue(registry).entities);
+
+  for (const [key, value] of Object.entries(entities)) {
+    const candidates = [key, recordValue(value).character_id];
+    for (const candidate of candidates) {
+      const match = CHARACTER_ID_SEQUENCE_PATTERN.exec(identifierValue(candidate) ?? '');
+      if (!match) continue;
+      const sequence = Number(match[1]);
+      if (sequence >= 1 && sequence <= MAX_CHARACTER_ID_SEQUENCE)
+        maxSequence = Math.max(maxSequence, sequence);
     }
   }
 
-  fallbackIdCounter += 1;
-  const now = typeof source.now === 'function' ? source.now() : Date.now();
-  const timePart = Number.isFinite(now) ? Math.floor(now).toString(36) : '0';
-  const randomPart = Math.random().toString(36).slice(2, 10) || '0';
-  return `char_${timePart}_${randomPart}_${fallbackIdCounter.toString(36)}`;
-}
+  if (maxSequence >= MAX_CHARACTER_ID_SEQUENCE) {
+    return {
+      character_id: null,
+      error_code: IDENTITY_ERROR_CODES.CHARACTER_ID_SEQUENCE_EXHAUSTED,
+    };
+  }
 
-export const generateOpaqueCharacterId = createOpaqueCharacterId;
+  return {
+    character_id: `char_${String(maxSequence + 1).padStart(6, '0')}`,
+    error_code: null,
+  };
+}
 
 /**
  * Collect every entity whose display name or alias exactly matches value.
@@ -828,17 +867,8 @@ export function updateCharacterDisplayName(
 
 export const renameCharacter = updateCharacterDisplayName;
 
-function generatedCharacterId(registry, options = {}) {
-  const source = recordValue(options);
-  const factory =
-    typeof source.idFactory === 'function'
-      ? source.idFactory
-      : () => createOpaqueCharacterId(source);
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const generated = identifierValue(factory());
-    if (generated && !hasOwn(registry.entities, generated)) return generated;
-  }
-  return null;
+function generatedCharacterId(registry) {
+  return allocateSequentialCharacterId(registry);
 }
 
 function candidateIdsForNewCharacter(
@@ -863,7 +893,7 @@ function candidateIdsForNewCharacter(
 
 /**
  * Re-check a proposed new identity against the current registry, then either
- * reuse a reliably selected entity or register one opaque Runtime ID.
+ * reuse a reliably selected entity or register one sequential Runtime ID.
  */
 export function registerNewCharacter(
   registry = {},
@@ -886,6 +916,18 @@ export function registerNewCharacter(
   }
 
   const displayName = nullableText(source.display_name);
+  const mentionId = textValue(source.mention_id ?? source.mentionId);
+  if (!mentionId) {
+    return resultWithRegistry(base, {
+      ok: false,
+      resolved: false,
+      identity_status: 'unresolved',
+      character_id: null,
+      entry: null,
+      candidate_ids: [],
+      error_code: IDENTITY_ERROR_CODES.MENTION_ID_REQUIRED,
+    });
+  }
   if (!displayName) {
     return resultWithRegistry(base, {
       ok: false,
@@ -969,8 +1011,8 @@ export function registerNewCharacter(
     };
   }
 
-  const characterId = generatedCharacterId(base, options);
-  if (!characterId) {
+  const allocation = generatedCharacterId(base);
+  if (!allocation.character_id) {
     return resultWithRegistry(base, {
       ok: false,
       resolved: false,
@@ -978,10 +1020,12 @@ export function registerNewCharacter(
       character_id: null,
       entry: null,
       candidate_ids: [],
-      error_code: IDENTITY_ERROR_CODES.CHARACTER_ID_COLLISION,
+      error_code:
+        allocation.error_code ?? IDENTITY_ERROR_CODES.CHARACTER_ID_COLLISION,
     });
   }
 
+  const characterId = allocation.character_id;
   const next = cloneCharacterRegistry(base);
   next.entities[characterId] = {
     character_id: characterId,
@@ -1011,6 +1055,29 @@ export function registerNewCharacter(
   };
 }
 
+function exactExistingFallbackCandidateIds(registry, source) {
+  const values = [source.display_name];
+  const aliasSource = recordValue(
+    source.alias_candidate ?? source.aliasCandidate,
+  );
+  if (hasExplicitAliasEstablishmentEvidence(identityEvidenceFrom(source))) {
+    values.push(
+      source.alias,
+      source.alias_name,
+      source.aliasName,
+      source.nickname,
+      aliasSource.value ?? aliasSource.alias,
+    );
+  }
+
+  const candidates = new Set();
+  for (const value of values) {
+    for (const id of collectExactCharacterCandidates(registry, value))
+      candidates.add(id);
+  }
+  return sortedIds(candidates);
+}
+
 /**
  * Resolve one raw Analyzer participant. Existing IDs are membership-checked;
  * new IDs are ignored/rejected until Runtime registration; unresolved input
@@ -1027,9 +1094,7 @@ export function resolveRawParticipantIdentity(
   const requestedStatus = textValue(
     source.identity_status ?? source.identityStatus,
   );
-  const allowLegacy = recordValue(options).allowLegacy === true;
-  const status =
-    requestedStatus || (allowLegacy && suppliedId ? 'existing' : null);
+  const status = requestedStatus;
 
   if (!status) {
     return resolutionFailure(
@@ -1065,22 +1130,20 @@ export function resolveRawParticipantIdentity(
       );
     }
     if (!hasOwn(base.entities, suppliedId)) {
-      if (allowLegacy) {
-        const legacyRegistry = cloneCharacterRegistry(base);
-        legacyRegistry.entities[suppliedId] = {
-          character_id: suppliedId,
-          display_name: nullableText(source.display_name),
-          aliases: [],
-        };
+      const candidateIds = exactExistingFallbackCandidateIds(
+        base,
+        source,
+      );
+      if (candidateIds.length === 1) {
+        const canonicalId = candidateIds[0];
         return resolutionSuccess(
-          legacyRegistry,
+          base,
           source,
           status,
-          suppliedId,
-          legacyRegistry.entities[suppliedId],
+          canonicalId,
+          base.entities[canonicalId],
           {
-            resolution: 'legacy_bootstrap',
-            alias_candidate: null,
+            resolution: 'exact_unique_display_fallback',
             alias_persisted: false,
             source_character_id: suppliedId,
           },
@@ -1090,17 +1153,36 @@ export function resolveRawParticipantIdentity(
         base,
         source,
         status,
-        IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
-        collectExactCharacterCandidateIds(base, source.display_name),
+        candidateIds.length > 1
+          ? IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED
+          : IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
+        candidateIds,
       );
     }
 
-    if (!(allowLegacy && !requestedStatus)) {
-      const mention = nullableText(source.display_name);
-      const candidateIds = mention
-        ? collectExactCharacterCandidateIds(base, mention)
-        : [];
-      if (candidateIds.length && !candidateIds.includes(suppliedId)) {
+    const mention = nullableText(source.display_name);
+    const candidateIds = mention
+      ? collectExactCharacterCandidateIds(base, mention)
+      : [];
+    if (candidateIds.length && !candidateIds.includes(suppliedId)) {
+      return resolutionFailure(
+        base,
+        source,
+        status,
+        IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED,
+        candidateIds,
+      );
+    }
+    if (candidateIds.length > 1) {
+      const choice = resolveCandidateChoice(candidateIds, {
+        ...options,
+        contextual_character_id: suppliedId,
+        context_evidence:
+          resolveContextEvidence(options) ??
+          identityEvidenceFrom(source) ??
+          source.evidence,
+      });
+      if (!choice || choice.character_id !== suppliedId) {
         return resolutionFailure(
           base,
           source,
@@ -1108,25 +1190,6 @@ export function resolveRawParticipantIdentity(
           IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED,
           candidateIds,
         );
-      }
-      if (candidateIds.length > 1) {
-        const choice = resolveCandidateChoice(candidateIds, {
-          ...options,
-          contextual_character_id: suppliedId,
-          context_evidence:
-            resolveContextEvidence(options) ??
-            identityEvidenceFrom(source) ??
-            source.evidence,
-        });
-        if (!choice || choice.character_id !== suppliedId) {
-          return resolutionFailure(
-            base,
-            source,
-            status,
-            IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED,
-            candidateIds,
-          );
-        }
       }
     }
 
@@ -1220,6 +1283,199 @@ function rawHandle(source, status) {
   return null;
 }
 
+function createIdentityResolutionContext() {
+  return {
+    mentionToCanonical: new Map(),
+    mentionRecords: new Map(),
+    rawToCanonical: new Map(),
+    createdCharacterIds: new Set(),
+  };
+}
+
+function identityResolutionContext(options = {}) {
+  const context = recordValue(options).identityContext;
+  if (!context || typeof context !== 'object' || Array.isArray(context))
+    return null;
+  if (!(context.mentionToCanonical instanceof Map))
+    context.mentionToCanonical = new Map();
+  if (!(context.mentionRecords instanceof Map))
+    context.mentionRecords = new Map();
+  if (!(context.rawToCanonical instanceof Map))
+    context.rawToCanonical = new Map();
+  if (!(context.createdCharacterIds instanceof Set))
+    context.createdCharacterIds = new Set();
+  return context;
+}
+
+function mentionContextConflict(context, handle, source, status, registry) {
+  const previous = context.mentionRecords.get(handle);
+  const canonicalId = context.mentionToCanonical.get(handle);
+  if (!previous || !canonicalId) return null;
+
+  const suppliedId = identifierValue(source.character_id);
+  if (previous.character_id !== canonicalId) {
+    return {
+      error_code: IDENTITY_ERROR_CODES.RAW_IDENTITY_CONFLICT,
+      candidate_ids: sortedIds([previous.character_id, canonicalId]),
+    };
+  }
+  if (status === 'unresolved') {
+    return { error_code: IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED };
+  }
+  if (status === 'existing' && !suppliedId) {
+    return { error_code: IDENTITY_ERROR_CODES.EXISTING_ID_REQUIRED };
+  }
+  if (status === 'new' && suppliedId) {
+    return {
+      error_code: IDENTITY_ERROR_CODES.PROVISIONAL_ID_NOT_ALLOWED,
+    };
+  }
+  if (previous.source_status === 'existing' && status === 'new') {
+    return {
+      error_code: IDENTITY_ERROR_CODES.RAW_IDENTITY_CONFLICT,
+      candidate_ids: [canonicalId],
+    };
+  }
+  if (
+    status === 'existing' &&
+    suppliedId &&
+    suppliedId !== canonicalId &&
+    context.rawToCanonical.get(suppliedId) !== canonicalId
+  ) {
+    return {
+      error_code: IDENTITY_ERROR_CODES.RAW_IDENTITY_CONFLICT,
+      candidate_ids: [canonicalId],
+    };
+  }
+
+  const previousDisplayName = textValue(previous.display_name);
+  const displayName = textValue(source.display_name);
+  const entry = getCharacterEntry(registry, canonicalId);
+  const displayMatchesEntry = Boolean(
+    entry &&
+      displayName &&
+      (entry.display_name === displayName || entry.aliases.includes(displayName)),
+  );
+  if (
+    previousDisplayName &&
+    displayName &&
+    previousDisplayName !== displayName &&
+    !displayMatchesEntry &&
+    !(
+      status === 'existing' &&
+      hasExplicitDisplayNameUpdateEvidence(identityEvidenceFrom(source))
+    )
+  ) {
+    return {
+      error_code: IDENTITY_ERROR_CODES.RAW_IDENTITY_CONFLICT,
+      candidate_ids: [canonicalId],
+    };
+  }
+  return null;
+}
+
+function reuseMentionIdentity(registry, source, status, context, handle, options) {
+  const characterId = context.mentionToCanonical.get(handle);
+  const entry = getCharacterEntry(registry, characterId);
+  if (!entry) {
+    return resolutionFailure(
+      registry,
+      source,
+      status,
+      IDENTITY_ERROR_CODES.UNKNOWN_CHARACTER_ID,
+    );
+  }
+
+  let next = cloneCharacterRegistry(registry);
+  let nextEntry = next.entities[characterId];
+  const proposedDisplayName = nullableText(source.display_name);
+  if (
+    status === 'existing' &&
+    proposedDisplayName &&
+    proposedDisplayName !== nextEntry.display_name &&
+    hasExplicitDisplayNameUpdateEvidence(identityEvidenceFrom(source))
+  ) {
+    const updated = updateCharacterDisplayName(
+      next,
+      characterId,
+      proposedDisplayName,
+    );
+    if (!updated.ok) {
+      return resolutionFailure(
+        registry,
+        source,
+        status,
+        updated.reason ?? IDENTITY_ERROR_CODES.DISPLAY_NAME_NOT_PERSISTABLE,
+      );
+    }
+    next = updated.registry;
+    nextEntry = next.entities[characterId];
+  }
+
+  const aliasCandidate = discoverAliasCandidate(
+    source.alias_candidate ?? source.aliasCandidate,
+    identityEvidenceFrom(source),
+    { entry: nextEntry },
+  );
+  let aliasPersisted = false;
+  if (shouldPersistAliases(options) && aliasCandidate) {
+    const persisted = persistAliasCandidate(
+      next,
+      characterId,
+      aliasCandidate,
+    );
+    next = persisted.registry;
+    nextEntry = next.entities[characterId];
+    aliasPersisted = persisted.accepted;
+  }
+  return resolutionSuccess(
+    next,
+    source,
+    status,
+    characterId,
+    nextEntry,
+    {
+      resolution: 'mention_reuse',
+      alias_candidate: aliasCandidate,
+      alias_persisted: aliasPersisted,
+      source_character_id: identifierValue(source.character_id),
+    },
+  );
+}
+
+function rememberIdentityResolution(context, handle, source, result) {
+  const references = [
+    textValue(source.mention_id ?? source.mentionId),
+    result.source_character_id,
+  ]
+    .map(identifierValue)
+    .filter(Boolean);
+  for (const reference of references) {
+    const previous = context.rawToCanonical.get(reference);
+    if (previous && previous !== result.character_id) {
+      return {
+        error_code: IDENTITY_ERROR_CODES.RAW_IDENTITY_CONFLICT,
+        candidate_ids: sortedIds([previous, result.character_id]),
+      };
+    }
+  }
+  for (const reference of references)
+    context.rawToCanonical.set(reference, result.character_id);
+
+  const mentionId = textValue(source.mention_id ?? source.mentionId);
+  if (mentionId) {
+    context.mentionToCanonical.set(mentionId, result.character_id);
+    if (!context.mentionRecords.has(mentionId)) {
+      context.mentionRecords.set(mentionId, {
+        character_id: result.character_id,
+        source_status: result.source_identity_status,
+        display_name: nullableText(source.display_name),
+      });
+    }
+  }
+  return null;
+}
+
 /**
  * Resolve a participant collection atomically. Raw handles are checked for
  * conflicting canonical results before canonical-ID deduplication.
@@ -1245,12 +1501,13 @@ export function resolveRawParticipantIdentities(
   }
 
   let working = cloneCharacterRegistry(base);
+  const context = identityResolutionContext(options);
   const resolutions = [];
   const participants = [];
   const handles = new Map();
   const canonicalIds = new Set();
   const errors = [];
-  const createdCharacterIds = new Set();
+  const createdCharacterIds = context?.createdCharacterIds ?? new Set();
 
   rawParticipants.forEach((rawParticipant, index) => {
     if (errors.length) return;
@@ -1258,16 +1515,41 @@ export function resolveRawParticipantIdentities(
     const requestedStatus = textValue(
       source.identity_status ?? source.identityStatus,
     );
-    const status =
-      requestedStatus ||
-      (recordValue(options).allowLegacy === true &&
-      identifierValue(source.character_id)
-        ? 'existing'
-        : null);
-    const result = resolveRawParticipantIdentity(working, source, {
-      ...options,
-      excludeCharacterIds: [...createdCharacterIds],
-    });
+    const status = requestedStatus;
+    const mentionId = textValue(source.mention_id ?? source.mentionId);
+    let result;
+    if (!status || !IDENTITY_STATUSES.includes(status)) {
+      result = resolveRawParticipantIdentity(working, source, options);
+    } else if (context && mentionId && context.mentionToCanonical.has(mentionId)) {
+      const conflict = mentionContextConflict(
+        context,
+        mentionId,
+        source,
+        status,
+        working,
+      );
+      if (conflict) {
+        errors.push({
+          ...conflict,
+          path: `participants[${index}]`,
+          mention_id: mentionId,
+        });
+        return;
+      }
+      result = reuseMentionIdentity(
+        working,
+        source,
+        status,
+        context,
+        mentionId,
+        options,
+      );
+    } else {
+      result = resolveRawParticipantIdentity(working, source, {
+        ...options,
+        excludeCharacterIds: [...createdCharacterIds],
+      });
+    }
     if (!result.ok) {
       errors.push({
         ...result,
@@ -1298,6 +1580,22 @@ export function resolveRawParticipantIdentities(
         });
     }
 
+    if (context) {
+      const contextError = rememberIdentityResolution(
+        context,
+        handle,
+        source,
+        result,
+      );
+      if (contextError) {
+        errors.push({
+          ...contextError,
+          path: `participants[${index}]`,
+          mention_id: mentionId || handle,
+        });
+        return;
+      }
+    }
     working = result.registry;
     if (
       result.source_identity_status === 'new' &&
@@ -1332,15 +1630,19 @@ export function resolveRawParticipantIdentities(
     };
   }
 
-  const rawToCanonical = new Map();
-  for (const resolution of resolutions) {
-    if (resolution.mention_id)
-      rawToCanonical.set(resolution.mention_id, resolution.character_id);
-    if (resolution.source_character_id)
-      rawToCanonical.set(
-        resolution.source_character_id,
-        resolution.character_id,
-      );
+  const rawToCanonical = context
+    ? new Map(context.rawToCanonical)
+    : new Map();
+  if (!context) {
+    for (const resolution of resolutions) {
+      if (resolution.mention_id)
+        rawToCanonical.set(resolution.mention_id, resolution.character_id);
+      if (resolution.source_character_id)
+        rawToCanonical.set(
+          resolution.source_character_id,
+          resolution.character_id,
+        );
+    }
   }
   return {
     ok: true,
@@ -1356,6 +1658,9 @@ export function resolveRawParticipantIdentities(
         ...cloneValue(resolution.alias_candidate),
         character_id: resolution.character_id,
       })),
+    mention_to_canonical: context
+      ? new Map(context.mentionToCanonical)
+      : new Map(),
     errors: [],
   };
 }
@@ -1435,17 +1740,20 @@ export function resolveEventAnalysisIdentities(
   }
 
   let working = cloneCharacterRegistry(base);
+  const identityContext = createIdentityResolutionContext();
+  const identityOptions = { ...options, identityContext };
   const canonicalEvents = [];
   const allResolutions = [];
   const errors = [];
 
-  rawEvents.forEach((rawEvent, eventIndex) => {
-    if (errors.length) return;
+  for (let eventIndex = 0; eventIndex < rawEvents.length; eventIndex += 1) {
+    if (errors.length) break;
+    const rawEvent = rawEvents[eventIndex];
     const event = recordValue(rawEvent);
     const participantResolution = resolveRawParticipantIdentities(
       event.participants ?? [],
       working,
-      options,
+      identityOptions,
     );
     if (!participantResolution.ok) {
       errors.push(
@@ -1454,14 +1762,23 @@ export function resolveEventAnalysisIdentities(
           path: `events[${eventIndex}].${error.path ?? 'participants'}`,
         })),
       );
-      return;
+      break;
     }
     working = participantResolution.registry;
     allResolutions.push(...participantResolution.resolutions);
 
-    const rawToCanonical = participantResolution.raw_to_canonical;
     const nextEvent = cloneValue(event);
     nextEvent.participants = participantResolution.participants;
+    canonicalEvents.push(nextEvent);
+  }
+
+  for (
+    let eventIndex = 0;
+    !errors.length && eventIndex < canonicalEvents.length;
+    eventIndex += 1
+  ) {
+    const event = recordValue(rawEvents[eventIndex]);
+    const nextEvent = canonicalEvents[eventIndex];
     if (
       event.pregnancy_relevance &&
       typeof event.pregnancy_relevance === 'object' &&
@@ -1475,13 +1792,13 @@ export function resolveEventAnalysisIdentities(
             error_code: IDENTITY_ERROR_CODES.INVALID_REFERENCE_COLLECTION,
             path: `events[${eventIndex}].pregnancy_relevance.${field}`,
           });
-          return;
+          break;
         }
         const canonicalReferences = [];
         for (const value of relevance[field]) {
           const resolvedReference = canonicalReference(
             value,
-            participantResolution,
+            { raw_to_canonical: identityContext.rawToCanonical },
             working,
           );
           if (!resolvedReference.ok) {
@@ -1489,18 +1806,19 @@ export function resolveEventAnalysisIdentities(
               ...resolvedReference,
               path: `events[${eventIndex}].pregnancy_relevance.${field}`,
             });
-            return;
+            break;
           }
           if (!canonicalReferences.includes(resolvedReference.character_id)) {
             canonicalReferences.push(resolvedReference.character_id);
           }
         }
+        if (errors.length) break;
         relevance[field] = canonicalReferences;
       }
+      if (errors.length) break;
       nextEvent.pregnancy_relevance = relevance;
     }
-    canonicalEvents.push(nextEvent);
-  });
+  }
 
   if (errors.length) {
     return {
@@ -1541,187 +1859,12 @@ export function resolveEventAnalysisIdentities(
     resolutions: allResolutions,
     registry: working,
     character_registry: cloneValue(working),
+    mention_to_canonical: new Map(identityContext.mentionToCanonical),
+    raw_to_canonical: new Map(identityContext.rawToCanonical),
     alias_candidates: aliasCandidates,
     errors: [],
   };
   if (Array.isArray(rawAnalysis)) return result;
   result.analysis = { ...cloneValue(source), events: canonicalEvents };
   return result;
-}
-
-function legacyIdentifier(value) {
-  if (typeof value === 'string') return value || null;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return null;
-}
-
-function appendLegacyRecord(
-  records,
-  characterId,
-  displayName = null,
-  aliases = [],
-) {
-  const id = legacyIdentifier(characterId);
-  if (!id) return;
-  const existing = records.get(id) ?? {
-    character_id: id,
-    display_name: null,
-    aliases: [],
-  };
-  const nextDisplayName = nullableText(displayName);
-  if (!existing.display_name && nextDisplayName)
-    existing.display_name = nextDisplayName;
-  if (Array.isArray(aliases)) {
-    for (const alias of aliases) {
-      const value = textValue(alias);
-      if (
-        value &&
-        value !== existing.display_name &&
-        !existing.aliases.includes(value) &&
-        !isContextualReferenceValue(value)
-      ) {
-        existing.aliases.push(value);
-      }
-    }
-  }
-  records.set(id, existing);
-}
-
-function collectLegacyProfileRecords(profiles, records) {
-  if (Array.isArray(profiles)) {
-    for (const profile of profiles) {
-      const source = recordValue(profile);
-      appendLegacyRecord(
-        records,
-        source.character_id,
-        source.display_name,
-        source.aliases,
-      );
-    }
-    return;
-  }
-  const source = recordValue(profiles);
-  if (hasOwn(source, 'character_id')) {
-    appendLegacyRecord(
-      records,
-      source.character_id,
-      source.display_name,
-      source.aliases,
-    );
-    return;
-  }
-  for (const [key, value] of Object.entries(source)) {
-    const profile = recordValue(value);
-    appendLegacyRecord(
-      records,
-      profile.character_id ?? key,
-      profile.display_name,
-      profile.aliases,
-    );
-  }
-}
-
-function collectLegacyEventRecords(events, records) {
-  const values = Array.isArray(events) ? events : events ? [events] : [];
-  for (const event of values) {
-    const source = recordValue(event);
-    for (const participant of Array.isArray(source.participants)
-      ? source.participants
-      : []) {
-      const item = recordValue(participant);
-      appendLegacyRecord(
-        records,
-        item.character_id,
-        item.display_name,
-        item.aliases,
-      );
-    }
-    const relevance = recordValue(source.pregnancy_relevance);
-    for (const field of ['gestational_subject_ids', 'counterpart_ids']) {
-      for (const characterId of Array.isArray(relevance[field])
-        ? relevance[field]
-        : []) {
-        appendLegacyRecord(records, characterId);
-      }
-    }
-  }
-}
-
-/**
- * Explicit legacy-migration helper: bootstrap only IDs already present in
- * caller-supplied legacy Events/profiles. Ordinary Runtime analysis must not
- * call this helper. It never derives an ID from a name, merges entries, or
- * rewrites historical Events.
- */
-export function bootstrapLegacyCharacterRegistry(
-  input = {},
-  maybeProfiles = {},
-  maybeRegistry = null,
-) {
-  let events = [];
-  let profiles = {};
-  let registry = maybeRegistry;
-  const source = recordValue(input);
-
-  if (Array.isArray(input)) {
-    events = input;
-    profiles = maybeProfiles;
-  } else if (Array.isArray(input?.events)) {
-    events = input.events;
-    profiles =
-      input.character_profiles ??
-      input.characterProfiles ??
-      input.profiles ??
-      maybeProfiles;
-    registry =
-      input.character_registry ??
-      input.characterRegistry ??
-      input.registry ??
-      registry;
-  } else if (hasOwn(input, 'event_id') || Array.isArray(input?.participants)) {
-    events = [input];
-    profiles = maybeProfiles;
-  } else if (input?.entities) {
-    registry = input;
-  } else {
-    profiles =
-      input.character_profiles ??
-      input.characterProfiles ??
-      input.profiles ??
-      maybeProfiles;
-    registry =
-      input.character_registry ??
-      input.characterRegistry ??
-      input.registry ??
-      registry;
-  }
-
-  const base = normalizeCharacterRegistry(registry ?? {});
-  const records = new Map();
-  collectLegacyEventRecords(events, records);
-  collectLegacyProfileRecords(profiles, records);
-
-  const next = cloneCharacterRegistry(base);
-  for (const [characterId, record] of records) {
-    if (hasOwn(next.entities, characterId)) continue;
-    setObjectValue(next.entities, characterId, {
-      character_id: characterId,
-      display_name: record.display_name,
-      aliases: [...record.aliases].filter(
-        (alias) => alias !== record.display_name,
-      ),
-    });
-  }
-  return next;
-}
-
-export const bootstrapLegacyRegistry = bootstrapLegacyCharacterRegistry;
-
-/** Runtime-shaped alias for bootstrapping IDs from legacy Event/profile data. */
-export function bootstrapCharacterRegistryFromLegacy(
-  input = {},
-  maybeProfiles = {},
-  maybeRegistry = null,
-) {
-  return bootstrapLegacyCharacterRegistry(input, maybeProfiles, maybeRegistry);
 }

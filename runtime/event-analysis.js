@@ -21,6 +21,7 @@ import {
 } from "../core/events.js";
 import {
   hasCharacterId,
+  isCompleteCharacterRegistrySnapshot,
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
 } from "../core/identity.js";
@@ -51,6 +52,11 @@ const AUTO_ANALYSIS_EVENTS = new Set([
   "MESSAGE_EDITED",
   "MESSAGE_SWIPED",
   "MESSAGE_SWIPE_DELETED",
+]);
+const LIFECYCLE_ONLY_EVENTS = new Set([
+  // Deletion only invalidates the downstream active path; it never analyzes
+  // the message collection after the owner has been removed.
+  "MESSAGE_DELETED",
 ]);
 const FORCED_LIFECYCLE_EVENTS = new Set([
   "MESSAGE_UPDATED",
@@ -149,7 +155,10 @@ function currentCharacterRegistryFromStates(states) {
       !sameFloorVersion(floorVersionFromData(state.floorData), state.version)
     )
       continue;
-    return normalizeCharacterRegistry(state.floorData.character_registry);
+    const snapshot = normalizedCharacterRegistrySnapshot(
+      state.floorData.character_registry,
+    );
+    if (snapshot) return snapshot;
   }
   return normalizeCharacterRegistry(null);
 }
@@ -187,6 +196,11 @@ function requestAbortedError() {
 }
 function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+}
+function normalizedCharacterRegistrySnapshot(raw) {
+  return isCompleteCharacterRegistrySnapshot(raw)
+    ? normalizeCharacterRegistry(raw)
+    : null;
 }
 function stableLifecycleValue(value) {
   if (Array.isArray(value)) return value.map(stableLifecycleValue);
@@ -454,7 +468,6 @@ export function createEventAnalysisCoordinator({
   externalMemoryProviderLoader = null,
   globalRecentStoryResolver = () => ({}),
   analysisSourceCache = null,
-  allowLegacyIdentity = false,
   notify = () => {},
 } = {}) {
   if (!st || !chat || !store)
@@ -592,15 +605,42 @@ export function createEventAnalysisCoordinator({
       messageIndex: Number.isFinite(messageIndex) ? Math.trunc(messageIndex) : null,
       floor: Number.isFinite(floor) ? floor : null,
       messageId: marker.message_id ?? null,
+      createdAt: marker.created_at ?? null,
     };
+  }
+
+  function timestampMilliseconds(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string" || !value.trim()) return NaN;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function stateWasReanalyzedAfterReset(state, boundary) {
+    const resetAt = timestampMilliseconds(boundary?.createdAt);
+    const analysis = state?.floorData?.analysis;
+    const analyzedAt = timestampMilliseconds(
+      analysis?.analyzed_at ?? analysis?.last_analyzed_at,
+    );
+    return Number.isFinite(resetAt) && Number.isFinite(analyzedAt) && analyzedAt > resetAt;
   }
 
   function stateIsAfterReset(state, boundary) {
     if (boundary === null) return true;
-    if (Number.isFinite(boundary.messageIndex))
-      return Number(state.index) > boundary.messageIndex;
-    if (Number.isFinite(boundary.floor))
-      return Number(state.version.floor) > boundary.floor;
+    if (Number.isFinite(boundary.messageIndex)) {
+      if (Number(state.index) > boundary.messageIndex) return true;
+      if (Number(state.index) === boundary.messageIndex)
+        return stateWasReanalyzedAfterReset(state, boundary);
+      return false;
+    }
+    if (Number.isFinite(boundary.floor)) {
+      if (Number(state.version.floor) > boundary.floor) return true;
+      if (Number(state.version.floor) === boundary.floor)
+        return stateWasReanalyzedAfterReset(state, boundary);
+      return false;
+    }
     // An old marker with no resolvable ordering information is not proof that
     // an existing Floor is newer.  Fail closed until a new Floor is analyzed.
     return false;
@@ -807,12 +847,14 @@ export function createEventAnalysisCoordinator({
       if (isFloorInvalidated(candidate)) continue;
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
         continue;
+      const characterRegistry = normalizedCharacterRegistrySnapshot(
+        floorData.character_registry,
+      );
+      if (!characterRegistry) continue;
       return {
         analysis,
         events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
-        character_registry: normalizeCharacterRegistry(
-          floorData.character_registry,
-        ),
+        character_registry: characterRegistry,
       };
     }
     return {
@@ -1583,7 +1625,6 @@ export function createEventAnalysisCoordinator({
       execution.stage = "identity_resolution";
       const identityResult = resolveEventAnalysisIdentities(result, {
         registry: normalizeCharacterRegistry(analysisInput.character_registry),
-        allowLegacy: allowLegacyIdentity,
         persistAliases: true,
         narrative: analysisNarrative(analysisInput),
       });
@@ -1843,7 +1884,10 @@ export function createEventAnalysisCoordinator({
       }
       if (type === "CHAT_CREATED")
         return { skipped: true, reason: "unsupported-event" };
-      if (!AUTO_ANALYSIS_EVENTS.has(type))
+      if (
+        !AUTO_ANALYSIS_EVENTS.has(type) &&
+        !LIFECYCLE_ONLY_EVENTS.has(type)
+      )
         return { skipped: true, reason: "unsupported-event" };
 
       let currentSnapshot;
@@ -1868,7 +1912,7 @@ export function createEventAnalysisCoordinator({
       });
       lifecycleSnapshot = await primeLifecycleSnapshot();
       if (isSwipeBoundaryEvent) await refreshTrackingRegistry(type);
-      if (type === "MESSAGE_DELETED") {
+      if (LIFECYCLE_ONLY_EVENTS.has(type)) {
         await refreshTrackingRegistry(type);
         return { skipped: true, reason: type };
       }
