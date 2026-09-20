@@ -3957,7 +3957,13 @@ test("World Model save writes only the current Floor and preserves Event-owned f
     events: [{ event_id: "event-1" }],
     character_registry: {
       schema_version: 1,
-      entities: { char_a: { character_id: "char_a" } },
+      entities: {
+        char_000001: {
+          character_id: "char_000001",
+          display_name: null,
+          aliases: [],
+        },
+      },
     },
   });
   const model = { schema_version: 1, species: [{ name: "Floor World" }] };
@@ -3968,8 +3974,8 @@ test("World Model save writes only the current Floor and preserves Event-owned f
   assert.deepEqual(floor.world_model_meta, meta);
   assert.deepEqual(floor.analysis, { status: "success", marker: "analysis" });
   assert.deepEqual(floor.events, [{ event_id: "event-1" }]);
-  assert.deepEqual(floor.character_registry.entities.char_a, {
-    character_id: "char_a",
+  assert.deepEqual(floor.character_registry.entities.char_000001, {
+    character_id: "char_000001",
     display_name: null,
     aliases: [],
   });
