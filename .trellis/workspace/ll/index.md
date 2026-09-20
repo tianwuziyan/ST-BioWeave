@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~747 | Active |
+| `journal-1.md` | ~769 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-09-20 | 收敛 Floor 数据所有权并修复 World clear 回归 | `0cdd648` | `fix/world-model-prompt-baseline` |
 | 33 | 2026-09-20 | 删除世界分析页面的分析输入入口并同步 GitHub | `473843c` | `fix/world-model-prompt-baseline` |
 | 32 | 2026-09-20 | 修复角色卡开场白 Prompt 边界并同步 GitHub | `2b739ce` | `fix/world-model-prompt-baseline` |
 | 31 | 2026-09-19 | 隐藏空 Registry Prompt 的正式 ID 诱导 | `27ac7b33a756d70b63c75f7189490a33601fc9e` | `fix/world-model-prompt-baseline` |

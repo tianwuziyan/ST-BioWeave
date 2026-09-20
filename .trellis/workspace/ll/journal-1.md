@@ -745,3 +745,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: 收敛 Floor 数据所有权并修复 World clear 回归
+<!-- trellis-session: v=2 fp=0ecd4d7bbf18f976 -->
+
+**Date**: 2026-09-20
+**Task**: 收敛 Floor 数据所有权并修复 World clear 回归
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+删除旧 Chat-level 派生持久化框架，完成 Floor-only 数据管理 clear 白名单与 reload/Swipe 回归测试；修复 World clear 失败或未知提交后的 Runtime 恢复和后续 World Model 分析取消问题。npm test 与 npm run check 均通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0cdd648` | 收敛 Floor 数据所有权并修复 World clear 回归 |
+
+### Status
+
+[OK] **Completed**
