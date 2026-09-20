@@ -20,9 +20,6 @@ export const LIFECYCLE_DOMAINS = Object.freeze({
   EVENTS: 'events',
   FLOOR_ANALYSIS: 'floor_analysis',
   FLOOR_IDENTITY: 'floor_identity',
-  HISTORY: 'history',
-  SNAPSHOT: 'snapshot',
-  PROJECTION: 'projection',
   RUNTIME_CACHE: 'runtime_cache',
   ALL: 'all',
 });
@@ -66,52 +63,11 @@ const CHAT_FIELDS = Object.freeze({
     domain: 'structural',
     clear: 'preserve',
   }),
-  character_profiles: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.CHARACTER,
-    clearOn: Object.freeze(['character', 'all']),
-    empty: Object.freeze({}),
-  }),
-  character_registry: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'materialized_projection',
-    clearOn: Object.freeze(['character', 'all']),
-    empty: Object.freeze({ schema_version: 1, entities: {} }),
-  }),
-  tracking_subjects: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'materialized_projection',
-    clearOn: Object.freeze(['character', 'all']),
-    empty: Object.freeze({}),
-  }),
-  tracking_candidates: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'materialized_projection',
-    clearOn: Object.freeze(['character', 'all']),
-    empty: Object.freeze({}),
-  }),
-  relationships: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'materialized_projection',
-    clearOn: Object.freeze(['character', 'all']),
-    empty: Object.freeze([]),
-  }),
   settings: Object.freeze({
     scope: 'chat',
     domain: LIFECYCLE_DOMAINS.CHAT_SETTINGS,
     clearOn: Object.freeze(['all']),
     clear: 'preserve_for_domain_clear',
-  }),
-  index: Object.freeze({
-    scope: 'chat',
-    domain: LIFECYCLE_DOMAINS.PROJECTION,
-    kind: 'derived_index_hint',
-    clearOn: Object.freeze(['character', 'world', 'all']),
-    empty: Object.freeze({ snapshot_floors: [], last_processed_floor: null }),
   }),
   data_lifecycle: Object.freeze({
     scope: 'chat',
@@ -165,24 +121,6 @@ const FLOOR_FIELDS = Object.freeze({
     empty: null,
     clearOn: Object.freeze(['world', 'all']),
   }),
-  history: Object.freeze({
-    scope: 'floor',
-    domain: LIFECYCLE_DOMAINS.HISTORY,
-    kind: 'reserved_future_root',
-    clearOn: Object.freeze(['all']),
-  }),
-  snapshot: Object.freeze({
-    scope: 'floor',
-    domain: LIFECYCLE_DOMAINS.SNAPSHOT,
-    kind: 'derived_snapshot',
-    clearOn: Object.freeze(['character', 'world', 'all']),
-  }),
-  projections: Object.freeze({
-    scope: 'floor',
-    domain: LIFECYCLE_DOMAINS.PROJECTION,
-    kind: 'derived_projection',
-    clearOn: Object.freeze(['character', 'world', 'all']),
-  }),
 });
 
 const RUNTIME_FIELDS = Object.freeze([
@@ -191,7 +129,6 @@ const RUNTIME_FIELDS = Object.freeze([
   'terminal_status',
   'worldbook_cache',
   'tracking_cache',
-  'last_processed_floor',
 ]);
 
 export const CHAT_SCHEMA_KEYS = Object.freeze(Object.keys(CHAT_FIELDS));

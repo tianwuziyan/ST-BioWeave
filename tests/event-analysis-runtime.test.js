@@ -194,6 +194,7 @@ function createFixture({
   });
   return {
     runtime,
+    adapter,
     context,
     listeners,
     apiRequests,
@@ -806,16 +807,13 @@ test("generic API response with legacy source reaches Floor save, Registry, and 
 });
 
 test(
-  "successful analysis saves the complete identity result to Floor before Chat projection",
+  "successful analysis saves the complete identity result only to Floor",
   { concurrency: false },
   async () => {
     const saveOrder = [];
     const fixture = createFixture({
       saveFloorHook: async ({ value }) => {
         saveOrder.push({ kind: "floor", value: structuredClone(value) });
-      },
-      saveChatMetadataHook: async ({ value }) => {
-        saveOrder.push({ kind: "chat", value: structuredClone(value) });
       },
       analyzer: {
         async analyzeFloor({ analysisInput }) {
@@ -841,14 +839,11 @@ test(
 
     assert.deepEqual(
       saveOrder.map(({ kind }) => kind),
-      ["floor", "chat"],
+      ["floor"],
     );
     assert.equal(saveOrder[0].value.analysis.status, "success");
     assert.equal(saveOrder[0].value.events.length, 1);
-    assert.deepEqual(
-      saveOrder[1].value.character_registry,
-      saveOrder[0].value.character_registry,
-    );
+    assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, "character_registry"), false);
     fixture.runtime.destroy();
   },
 );
@@ -999,8 +994,8 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
     firstEvent.event_id,
   );
   assert.equal(
-    fixture.runtime.store.getChat("chat-runtime").character_profiles
-      .char_000001.reproductive_capabilities.can_carry_pregnancy,
+    resolvedRegistry.character_profiles.char_000001.reproductive_capabilities
+      .can_carry_pregnancy,
     true,
   );
   assert.equal(
@@ -2784,11 +2779,7 @@ test("character clear boundary suppresses historical character facts without del
       },
     },
   });
-  fixture.context.chatMetadata.bioweave = {
-    ...emptyChat("chat-runtime"),
-    character_profiles: { old: { display_name: "旧人物" } },
-    tracking_subjects: { old: { character_id: "old" } },
-  };
+  fixture.context.chatMetadata.bioweave = emptyChat("chat-runtime");
 
   await fixture.runtime.init();
   const result = await fixture.runtime.clearCharacterData();
@@ -2798,8 +2789,14 @@ test("character clear boundary suppresses historical character facts without del
     fixture.context.chatMetadata.bioweave.data_lifecycle.character_reset.message_index,
     1,
   );
-  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
-  assert.deepEqual(fixture.context.chatMetadata.bioweave.character_profiles, {});
+  for (const field of [
+    "character_profiles",
+    "character_registry",
+    "tracking_subjects",
+    "tracking_candidates",
+    "relationships",
+    "index",
+  ]) assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false);
   assert.equal(fixture.context.chat[0].extra.bioweave.events.length, 1);
   assert.equal(fixture.context.chat[1].extra.bioweave.events.length, 1);
   assert.deepEqual(await fixture.runtime.getTrackingRegistry(), {
@@ -2827,10 +2824,7 @@ test("character clear boundary suppresses historical character facts without del
 
 test("character reset made in an empty Chat accepts the first post-reset Floor", async () => {
   const fixture = createFixture({ messages: [] });
-  fixture.context.chatMetadata.bioweave = {
-    ...emptyChat("chat-runtime"),
-    character_profiles: { old: { display_name: "旧人物" } },
-  };
+  fixture.context.chatMetadata.bioweave = emptyChat("chat-runtime");
 
   await fixture.runtime.init();
   const result = await fixture.runtime.clearCharacterData();
@@ -3122,15 +3116,14 @@ test("active Swipe deletion rebuilds the registry and fails closed without a slo
   fixture.emit("message-swipe-deleted", { message_id: message.message_id });
   await settle();
 
-  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
-  assert.deepEqual(
-    fixture.context.chatMetadata.bioweave.tracking_candidates,
-    {},
-  );
-  assert.deepEqual(
-    fixture.context.chatMetadata.bioweave.character_profiles,
-    {},
-  );
+  for (const field of [
+    "character_profiles",
+    "character_registry",
+    "tracking_subjects",
+    "tracking_candidates",
+    "relationships",
+    "index",
+  ]) assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false);
   assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
   fixture.runtime.destroy();
 });
@@ -3182,11 +3175,16 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
     schema_version: 1,
     entities: {},
   });
-  assert.deepEqual(fixture.context.chatMetadata.bioweave.tracking_subjects, {});
-  assert.deepEqual(fixture.context.chatMetadata.bioweave.character_registry, {
-    schema_version: 1,
-    entities: {},
-  });
+  for (const field of [
+    "character_profiles",
+    "character_registry",
+    "tracking_subjects",
+    "tracking_candidates",
+    "relationships",
+    "index",
+    "world_model",
+    "world_model_meta",
+  ]) assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false);
   await reloaded.refreshCurrentFloorAnalysis();
   assert.deepEqual(input.existing_bioweave, { analysis: null, events: [] });
   assert.deepEqual(input.character_registry, {
@@ -3195,6 +3193,96 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
   });
   assert.deepEqual(input.character_context.profiles, {});
   assert.doesNotMatch(JSON.stringify(input), new RegExp(deletedEventId, "u"));
+  reloaded.destroy();
+});
+
+test("reload restores all business state from three Floor facts without Chat mirrors", async () => {
+  const messages = [
+    { message_id: "floor-1", floor: 1, content: "F1", role: "assistant" },
+    { message_id: "floor-2", floor: 2, content: "F2", role: "assistant" },
+    { message_id: "floor-3", floor: 3, content: "F3", role: "assistant" },
+  ];
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              "Alice",
+              "Bob",
+              `analysis-event-${analysisInput.current_floor.floor}`,
+            ),
+          ],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  for (const [index, worldName] of ["W1", "W2", "W3"].entries()) {
+    const message = messages[index];
+    await fixture.runtime.analyzeFloor({ __messageIndex: true, index }, { force: true });
+    const current = fixture.runtime.store.getFloor(index, 0);
+    await fixture.runtime.store.saveFloor(index, 0, {
+      ...current,
+      world_model: {
+        schema_version: 1,
+        species: [
+          {
+            name: "species-fixture",
+            biological_types: [
+              { name: "type-fixture", capabilities: { can_carry_pregnancy: true } },
+            ],
+          },
+          { name: worldName },
+        ],
+      },
+      world_model_meta: { source_floor: message.floor },
+    });
+  }
+  const canonicalRegistry = fixture.runtime.store.getFloor(2, 0).character_registry;
+  fixture.runtime.destroy();
+
+  const reloaded = createRuntime({ adapter: fixture.adapter });
+  await reloaded.init();
+  const business = await reloaded.collectActiveBusinessData();
+  const rebuilt = await reloaded.getTrackingRegistry();
+  assert.equal(business.active_event_count, 3);
+  assert.equal(business.tracking_subject_count, 1);
+  const subjectId = Object.keys(rebuilt.tracking_subjects)[0];
+  assert.ok(rebuilt.tracking_subjects[subjectId]);
+  assert.deepEqual(rebuilt.tracking_candidates, {});
+  assert.equal(rebuilt.character_profiles[subjectId].display_name, "Alice");
+  assert.deepEqual(rebuilt.character_registry, canonicalRegistry);
+  assert.equal(
+    (await reloaded.resolveWorldModelAtOrBefore()).model.species.at(-1).name,
+    "W3",
+  );
+  const input = await reloaded.getCurrentFloorAnalysisInput();
+  assert.equal(input.world_model.species.at(-1).name, "W2");
+  assert.equal(
+    Object.values(input.character_registry.entities).find(
+      (entry) => entry.display_name === "Alice",
+    ).display_name,
+    "Alice",
+  );
+
+  const forbidden = [
+    "character_profiles",
+    "character_registry",
+    "tracking_subjects",
+    "tracking_candidates",
+    "relationships",
+    "index",
+    "world_model",
+    "world_model_meta",
+  ];
+  for (const field of forbidden)
+    assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false, field);
+  await reloaded.refreshTrackingRegistry("reload-proof");
+  for (const field of forbidden)
+    assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false, field);
   reloaded.destroy();
 });
 
@@ -3814,19 +3902,14 @@ test("Floor save failure exits running even when failure metadata cannot be save
   fixture.runtime.destroy();
 });
 
-test("Registry rebuild failure leaves the authoritative Floor result available", async () => {
+test("Registry refresh leaves the authoritative Floor result available without Chat persistence", async () => {
   const fixture = createFixture({ saveChatMetadataErrorAt: 2 });
   await fixture.runtime.init();
   await settle();
-  await assert.rejects(
-    fixture.runtime.refreshCurrentFloorAnalysis(),
-    /ST_METADATA_STORAGE_UNAVAILABLE/,
-  );
+  await fixture.runtime.refreshCurrentFloorAnalysis();
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(status.busy, false);
-  assert.equal(status.state, "failed");
-  assert.equal(status.error_stage, "registry_rebuild");
-  assert.equal(status.error_code, "ST_METADATA_STORAGE_UNAVAILABLE");
+  assert.equal(status.state, "success");
   assert.equal(status.current_floor_events.length, 1);
   assert.equal(fixture.runtime.store.getFloor(0).analysis.status, "success");
   fixture.runtime.destroy();

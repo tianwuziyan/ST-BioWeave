@@ -197,14 +197,11 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   const chatData = {
     schema_version: 1,
     chat_scope: {chat_id: 'chat-app'},
-    world_model: null,
-    world_model_meta: null,
-    character_profiles: {},
-    tracking_subjects: event ? {'char-a': {
+  };
+  let trackingSubjects = event ? {'char-a': {
       character_id: 'char-a', display_name: 'Alice', created_from_event_id: event.event_id,
       exposure_event_ids: [event.event_id], status: 'active',
-    }} : {},
-  };
+    }} : {};
   let floor = floorData;
   let chat = chatData;
   let runtimeListener = null;
@@ -215,8 +212,8 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let deleteCalls = 0;
   const context = {chatId: 'chat-app', chat: [message], characters: [], ...contextOverrides};
   const businessData = () => ({
-    tracking_subjects: chat.tracking_subjects,
-    character_profiles: chat.character_profiles,
+    tracking_subjects: trackingSubjects,
+    character_profiles: event ? {'char-a': {character_id: 'char-a', display_name: 'Alice'}} : {},
     active_events: floor.events,
     current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
     last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
@@ -230,11 +227,11 @@ async function createFixture({event = null, analysisState = 'success', analysisB
       event_count: floor.events.length,
       active_event_count: floor.events.length,
       sexual_activity_count: floor.events.filter(item => item.type === 'sexual_activity').length,
-      tracking_subject_count: Object.keys(chat.tracking_subjects).length,
+      tracking_subject_count: Object.keys(trackingSubjects).length,
       current_floor_events: floor.events,
       active_events: floor.events,
       tracking_decisions: [],
-      registry_summary: {tracking_subject_count: Object.keys(chat.tracking_subjects).length},
+      registry_summary: {tracking_subject_count: Object.keys(trackingSubjects).length},
     },
   });
   const runtime = {
@@ -271,7 +268,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     async deleteEvent(eventId) {
       deleteCalls += 1;
       floor.events = floor.events.filter(item => item.event_id !== eventId);
-      chat.tracking_subjects = {};
+      trackingSubjects = {};
       return true;
     },
     subscribe: listener => {
@@ -341,7 +338,7 @@ test('App consumes persisted events and Tracking Registry without creating Chat-
   const events = fixture.root.querySelector('.bioweave-main').innerHTML;
   assert.match(events, /2026-08-20/);
   assert.doesNotMatch(visibleMarkup(events), /evt-1|event_id|chat-app|message_id|content_hash|message_version/);
-  assert.equal(Object.keys(fixture.getChat().tracking_subjects).length, 1);
+  assert.equal(Object.hasOwn(fixture.getChat(), 'tracking_subjects'), false);
   fixture.app.destroyBioWeave();
 });
 
@@ -480,7 +477,7 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
   });
   assert.equal(fixture.calls().delete, 1);
   assert.deepEqual(fixture.getFloor().events, []);
-  assert.deepEqual(fixture.getChat().tracking_subjects, {});
+  assert.equal(Object.hasOwn(fixture.getChat(), 'tracking_subjects'), false);
   fixture.app.destroyBioWeave();
 });
 

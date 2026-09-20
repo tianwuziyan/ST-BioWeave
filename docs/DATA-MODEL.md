@@ -22,7 +22,7 @@
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 
 ## Chat Level
-`chat_metadata.bioweave`：当前 Chat 的 CharacterProfiles、Relationships、Settings、Indexes，以及仅用于兼容隔离的旧 World Model residue。API Profiles 不属于 Chat 数据。World Model 的正常运行时权威状态不在 Chat Level。
+`chat_metadata.bioweave` 只保存当前 Chat 的 `schema_version`、`chat_scope`、`settings` 和 `data_lifecycle.character_reset`。API Profiles 不属于 Chat 数据。人物 profiles、Tracking Registry、关系/索引等均为 Runtime DTO，不写入 Chat；World Model 的权威状态也不在 Chat Level。
 
 ## Floor Level
 `message.extra.bioweave` 或当前结构化消息的
@@ -202,7 +202,7 @@ Story Time 采用结构化 DTO：
 
 ### Tracking Subject Registry
 
-Registry 保存在当前 Chat 的 `chat_metadata.bioweave`，是人物列表的唯一来源。`tracking_subjects` 只保存当前已确认具备承孕能力的 eligible Subject；能力未知的 exposure recipient 不进入人物列表，而保存在独立的 `tracking_candidates`。Subject 的索引形状如下：
+Runtime 从当前有效 Floor Events、World Model 和 Floor `character_registry` 重建 Tracking Registry，人物列表只消费其中的 `tracking_subjects`。`tracking_subjects` 只保存当前已确认具备承孕能力的 eligible Subject；能力未知的 exposure recipient 不进入人物列表，而保存在 Runtime `tracking_candidates`。Subject 的索引形状如下：
 
 ```json
 {
@@ -269,18 +269,18 @@ Phase 2A 的闭环为：
          → Tracking Subject Registry → Characters / Events / Overview
 ```
 
-Projection、Genealogy、完整 StateReducer、Snapshot 恢复、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
+Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
 
 ## Floor Level
-`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、Snapshot、Projections；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
+`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
 
 ## 核心链
-`Floor Version → BiologicalEvent → Tracking Subject Registry → Characters / Events / Overview → State Reducer → Current State → Snapshot → Projection → Context`。
+`Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
 
-用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Projection 不进入事实历史，Phase 2A 不提前接通 State/Snapshot/Projection/Genealogy。
+用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Phase 2A 不提前接通 StateReducer/Genealogy。
 
 ## Data lifecycle contract pointer
 
 The normative clear and lifecycle rules live in [BioWeave Data Lifecycle](./bioweave-data-lifecycle.md). Read it whenever a change touches the global settings boundary, Chat metadata, message/Swipe Floor roots, derived state, Chat lifecycle events, or asynchronous persistence. It is the single detailed contract for Manual Character/World/All clear, verified Start New Chat source cleanup, mutation invalidation, provenance, rollback, and contract-test coverage.
 
-The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns Chat-local configuration and materialized projections; `message.extra.bioweave` owns an ordinary-message Floor; and `message.swipe_info[*].extra.bioweave` owns every structured-message Swipe, including inactive and historical slots. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.
+The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns only Chat-local configuration/control state; `message.extra.bioweave` owns an ordinary-message Floor; and `message.swipe_info[*].extra.bioweave` owns every structured-message Swipe, including inactive and historical slots. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.

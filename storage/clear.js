@@ -207,9 +207,6 @@ function clearDefault(scope, field) {
   if (field === 'events') return [];
   if (field === 'character_registry')
     return { schema_version: 1, entities: {} };
-  if (field === 'snapshot') return null;
-  if (field === 'projections') return [];
-  if (field === 'history') return null;
   if (field === 'floor_version') return null;
   return undefined;
 }
@@ -291,12 +288,10 @@ function applyChatClear(root, domain, chatId, messages, now) {
         const value = slot.value;
         if (!value || typeof value !== 'object') return false;
         if (Array.isArray(value.events) && value.events.length > 0) return true;
-        if (value.character_registry?.entities && Object.keys(value.character_registry.entities).length > 0) return true;
-        if (value.snapshot !== null && value.snapshot !== undefined) return true;
-        return Array.isArray(value.projections) && value.projections.length > 0;
+        return value.character_registry?.entities && Object.keys(value.character_registry.entities).length > 0;
       }),
     );
-  if (!hasChatData && !hasCharacterBoundary) {
+  if (!hasChatData && !hasCharacterBoundary && domain !== 'character') {
     return { before, after: undefined, fields: [] };
   }
   const after = before ? cloneValue(before) : emptyChat(chatId);
@@ -357,8 +352,8 @@ function applyFloorClear(slot, domain) {
 }
 
 function dependenciesFor(domain) {
-  if (domain === 'character') return ['character', 'projection'];
-  if (domain === 'world') return ['world', 'projection'];
+  if (domain === 'character') return ['character'];
+  if (domain === 'world') return ['world'];
   return [
     'chat_settings',
     'world',
@@ -366,9 +361,6 @@ function dependenciesFor(domain) {
     'events',
     'floor_analysis',
     'floor_identity',
-    'history',
-    'snapshot',
-    'projection',
   ];
 }
 

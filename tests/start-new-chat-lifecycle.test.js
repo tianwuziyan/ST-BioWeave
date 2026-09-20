@@ -18,8 +18,6 @@ function floorRoot(marker, chatId = "chat-a") {
     floor_version: version,
     analysis: { status: "success", floor_version: version },
     events: [{ event_id: `${marker}-event`, source: version }],
-    snapshot: { marker },
-    projections: [{ marker }],
   };
 }
 
@@ -33,10 +31,6 @@ function sourceChat(chatId = "chat-a") {
       unrelated_plugin_metadata: { keep: true },
       bioweave: {
         ...emptyChat(chatId),
-        world_model: { species: [{ name: "世界" }] },
-        character_profiles: { "character-1": { name: "人物" } },
-        tracking_subjects: { "character-1": { character_id: "character-1" } },
-        relationships: [{ from: "character-1", to: "character-2" }],
       },
     },
     messages: [
@@ -114,7 +108,6 @@ function makeFixture({ chatIndex = ["chat-a"], sourceSave = null, analyzer = nul
         unrelated_plugin_metadata: { keep: "chat-c" },
         bioweave: {
           ...emptyChat("chat-c"),
-          character_profiles: { existing: { name: "保留" } },
         },
       },
     },
@@ -488,9 +481,6 @@ test("a character switch fails closed, and a late analysis response cannot reviv
   runtime.subscribe((event) => fixture.events.push(event));
   assert.equal(await runtime.init(), true);
   await settleLifecycle();
-  const characterProjectionBefore = cloneValue(
-    fixture.owners["chat-a"].chatMetadata.bioweave.character_profiles,
-  );
 
   const pendingAnalysis = runtime.refreshCurrentFloorAnalysis();
   const safePendingAnalysis = pendingAnalysis.catch(() => null);
@@ -501,9 +491,9 @@ test("a character switch fails closed, and a late analysis response cannot reviv
   await safePendingAnalysis;
   await settleLifecycle();
 
-  assert.deepEqual(
-    fixture.owners["chat-a"].chatMetadata.bioweave.character_profiles,
-    characterProjectionBefore,
+  assert.equal(
+    Object.hasOwn(fixture.owners["chat-a"].chatMetadata.bioweave, "character_profiles"),
+    false,
   );
   assert.equal(fixture.events.some((event) => event.type === "BIOWEAVE_DATA_CLEARED"), false);
 });
@@ -538,7 +528,6 @@ test("a pending source-A analysis cannot revive A after Start New Chat cleanup",
   ]);
   assert.deepEqual(fixture.owners["chat-b"].chatMetadata, {
     unrelated_plugin_metadata: { keep: true },
-    bioweave: emptyChat("chat-b"),
   });
   assert.equal(fixture.owners["chat-b"].messages[0].extra.bioweave, undefined);
 });

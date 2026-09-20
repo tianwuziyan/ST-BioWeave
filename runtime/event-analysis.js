@@ -139,11 +139,11 @@ function messageVersion(message, storedVersion = null) {
     ) ?? undefined
   );
 }
-function defaultCharacterContext(_context, chatData = {}, analysisInput = {}) {
+function defaultCharacterContext(_context, derivedState = {}, analysisInput = {}) {
   return {
     current_character: analysisInput.meta?.character_name ?? null,
     character_card: analysisInput.character ?? {},
-    profiles: chatData.character_profiles ?? {},
+    profiles: derivedState.character_profiles ?? {},
   };
 }
 function currentCharacterRegistryFromStates(states) {
@@ -1013,16 +1013,7 @@ export function createEventAnalysisCoordinator({
       if (!messageCollection()) return null;
       const token = chat.token();
       const derived = await collectCurrentDerivedState(token);
-      const { activeEvents, registry, characterRegistry, chatData } = derived;
-      await store.saveChat(token.chatId, {
-        ...chatData,
-        ...registry,
-        character_registry: characterRegistry,
-        index: {
-          ...(chatData.index ?? {}),
-          last_processed_floor: derived.lastProcessedFloor,
-        },
-      });
+      const { activeEvents, registry, characterRegistry } = derived;
       chat.assert(token);
       notify({
         type: "TRACKING_REGISTRY_REFRESHED",
@@ -1508,8 +1499,7 @@ export function createEventAnalysisCoordinator({
       causalEvents,
       { world_model: causalWorld?.model ?? null },
     );
-    const derivedChatData = {
-      ...chatData,
+    const derivedState = {
       ...causalRegistry,
       character_registry: characterRegistry,
     };
@@ -1552,7 +1542,7 @@ export function createEventAnalysisCoordinator({
     });
     const characterContext = characterContextResolver(
       context,
-      derivedChatData,
+      derivedState,
       commonInput,
     );
     const targetMessage =

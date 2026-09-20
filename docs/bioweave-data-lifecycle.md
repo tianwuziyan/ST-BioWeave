@@ -24,8 +24,7 @@ The lifecycle boundary covers:
 - current-Chat metadata;
 - every message-owned and Swipe-owned Floor slot, including inactive and
   historical Swipe slots;
-- materialized character, World, Event, Snapshot, Projection, index, and
-  tracking state; and
+- Runtime-derived character, World, Event, identity, index, and tracking state; and
 - Runtime and UI transient work that can otherwise write after its owner has
   changed.
 
@@ -85,8 +84,8 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 | Owner | Actual location | Owned meaning | Lifecycle treatment |
 | --- | --- | --- | --- |
 | Extension-global settings | `SillyTavern.getContext().extensionSettings.bioweave` | API source, API Profiles, opaque Secret references, task assignments, request settings, prompts, model-list caches, and global recent-story regex | Preserved by all Chat and Start New Chat operations |
-| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, materialized character/tracking projections, relationships, indexes, lifecycle markers, and ignored legacy World Model residue | Targeted by Manual Clear; source-targeted by verified Start New Chat; legacy World Model fields are never a runtime source |
-| Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, identity snapshot, Snapshot, and Projection for that message Floor | Read/write only through the storage abstraction; full clear removes the owned root |
+| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, structural scope/schema markers, and lifecycle control markers | Targeted by Manual Clear; source-targeted by verified Start New Chat |
+| Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that message Floor | Read/write only through the storage abstraction; full clear removes the owned root |
 | Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when Swipe structure exists | Independent analysis and derived Floor data for that exact Swipe | Every existing slot is enumerated; active selection never authorizes fallback to another slot |
 | Runtime transient | Runtime/UI memory: tokens, epochs, AbortControllers, in-flight maps, terminal maps, caches, refresh chains, drafts, and status DTOs | Transient work, read projections, diagnostics, and cache acceleration | Abort, invalidate, and discard on owner changes; never a persistent fact source |
 
@@ -143,13 +142,7 @@ on the Secret Store for zero calls.
 | --- | --- | --- |
 | `schema_version` | Numeric schema marker | Structural; retained/reset to the clean schema |
 | `chat_scope.chat_id` | `{chat_id}` | Structural owner binding; always matches the target Chat |
-| `character_profiles` | Character ID keyed object | Chat-level character projection |
-| `character_registry` | `{schema_version: 1, entities: {…}}` | Chat-level materialized projection/cache; never ordinary historical input |
-| `tracking_subjects` | Character ID keyed active-subject index | Character-derived projection |
-| `tracking_candidates` | Character ID keyed pending-exposure index | Character-derived projection |
-| `relationships` | Array | Character-derived projection |
 | `settings` | See the nested inventory below | Chat configuration; preserved by Character and World clear |
-| `index` | `{snapshot_floors[], last_processed_floor}` | Derived scheduling/index hint |
 | `data_lifecycle` | `{character_reset: {chat_id, message_id, message_index, floor, created_at} | null}` | Lifecycle marker; the registry defines its reset semantics |
 
 The `data_lifecycle.character_reset` marker is a Chat-local rebuild boundary.
@@ -219,13 +212,10 @@ World Model scalar capability and rule values retain the existing `null`,
 known absence, or known-text semantics. Lifecycle clearing does not alter
 those domain meanings.
 
-`character_profiles` contains the normalized Event-derived profile projection
-currently produced by `core/tracking.js`; `tracking_subjects` stores stable
-character indexes and Event ID references; `tracking_candidates` stores
-pending exposure records, Story Time, Floor/Swipe source, identity,
-capabilities, and evidence. Their detailed business fields are owned by the
-Event/Tracking contracts, not guessed by the clear walker. The registry
-classifies each root even when a root has no independent fixed schema.
+Character profiles, tracking subjects, tracking candidates, active Events, and
+business indexes are Runtime DTOs. They are rebuilt from valid Floor Events,
+Floor World Model data, and the Floor canonical identity snapshot. They are
+never written back to Chat metadata.
 
 ### 4.3 Floor and Swipe roots
 
@@ -239,9 +229,6 @@ events[]
 character_registry
 world_model
 world_model_meta
-history
-snapshot
-projections[]
 ```
 
 The root is stored in `message.extra.bioweave` for an ordinary message, or in
@@ -254,10 +241,10 @@ stale version never makes that old success active.
 
 `world_model` and `world_model_meta` are World-domain fields in the same exact
 Floor/Swipe owner. They are not Chat-level runtime state. World Model saves
-replace only these two fields and preserve `analysis`, `events`,
-`character_registry`, `history`, `snapshot`, and `projections`. Character/Event
-saves replace only their own fields and preserve the World fields. The shared
-Floor container does not merge these business owners.
+replace only these two fields and preserve `analysis`, `events`, and
+`character_registry`. Character/Event saves replace only their own fields and
+preserve the World fields. The shared Floor container does not merge these
+business owners.
 
 The canonical `events[]` field set from `core/events.js` is:
 
@@ -314,7 +301,7 @@ valid and whether the Event can contribute to derived state.
 `{schema_version: 1, entities: {[character_id]: entry}}`. Each entry contains
 `character_id`, `display_name`, and `aliases[]`. It is a cumulative canonical
 identity snapshot owned by that successful Floor. It is not the same as the
-Chat-level `character_registry` projection.
+There is no Chat-level `character_registry` persistence layer.
 
 The only formal new `character_id` shape is `char_` plus six decimal digits,
 from `char_000001` through `char_999999`. Runtime allocates it from the
@@ -325,17 +312,9 @@ migrated by the production identity path.
 
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the six-field Version checks. The
-working-tree schema also reserves `history` as a Floor root, but the connected
-State/Snapshot/Projection reducer and a separate historical table are not
-present. Both roots are classified by the registry so a later implementation
-cannot bypass lifecycle semantics.
-
-`snapshot` and `projections[]` are current schema slots. Their fields still
-require registry classification. Because the current slots do not establish a
-uniform per-record dependency key, a targeted clear must remove a slot
-conservatively whenever the registry cannot prove that an entry is
-independent; it must never preserve an untraceable or world-dependent record
-by guesswork.
+working-tree schema does not persist `history`, `snapshot`, or `projections[]`.
+Future reducers may use pure Runtime modules, but they must define a new
+Floor-owned contract before introducing persistent facts.
 
 ### 4.4 Runtime transient state
 
@@ -369,14 +348,11 @@ recursive deletion. The current domain vocabulary is:
 | `global_settings` | `extensionSettings.bioweave` and its recognized fields | Guarded, global, never clearable by this contract |
 | `chat_settings` | `chatMetadata.bioweave.settings` | Chat configuration; preserve for Character/World clear, reset for All |
 | `world` | Floor `world_model`, Floor `world_model_meta`; future explicit world references | Floor-owned World Model history; clear World and All across exact message/Swipe owners |
-| `character` | Chat `character_profiles`, Chat `character_registry`, `tracking_subjects`, `tracking_candidates`, `relationships`; character-dependent derived records in Floor `snapshot`/`projections` | Current character projection; clear Character and All; rebuild only from valid facts after a reset boundary |
+| `character` | Valid Floor `events[]` and Floor `character_registry`; Runtime tracking/profile DTOs | Current character projection is rebuilt from valid facts; Character and All clear keep the reset boundary semantics |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
 | `floor_identity` | Floor `character_registry` | Floor-owned canonical identity snapshot; preserve for Character/World clear while its Floor remains valid, remove for All/source clear |
 | `lifecycle_marker` | Chat `data_lifecycle.character_reset` | Rebuild boundary metadata; preserve/update for Character clear, reset for All |
-| `snapshot` | Floor `snapshot` | Derived historical/state slot; targeted by registry dependency, removed by All/source clear |
-| `projection` | Floor `projections[]` and Chat `index` hints | Materialized derived state; targeted by registry dependency, rebuilt from current valid facts, removed by All/source clear |
-| `history` | Reserved Floor root `history` (currently an empty/null compatibility slot); no connected historical table/reducer | Semantic category for future history fields; current historical facts are Floor `events[]` and Floor identity snapshots, each subject to provenance |
 | `runtime_cache` | Runtime/UI maps, chains, drafts, controllers, and status DTOs | Transient; abort/invalidate/discard, never a clearable fact source |
 | `all` | The complete current Chat BioWeave root plus every owned message and Swipe root | The union of all Chat-local/Floor-local BioWeave domains; excludes global settings, Secret Store, text, and unrelated fields |
 
@@ -389,7 +365,7 @@ delete the identity marker needed to keep the data scoped.
 Contract tests MUST enumerate every key in `emptyChat(chatId)` and
 `emptyFloor()` and require a registry classification. The fixture MUST also
 cover nested persistent fields that the schema owns, including all World Model
-fields, Chat settings, index hints, Event fields, identity snapshots, and all
+fields, Chat settings, Event fields, identity snapshots, and all
 Swipe roots. A newly persisted key without a domain, owner, exact location,
 clear behavior, mutation behavior, Swipe behavior, provenance rule, async
 guard, failure policy, and test is a contract failure.
@@ -480,14 +456,8 @@ and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 
 ### 6.2 Manual Character clear
 
-The Character operation removes the current Chat's materialized character
-state:
-
-- Chat `character_profiles`, Chat `character_registry`,
-  `tracking_subjects`, `tracking_candidates`, and `relationships`;
-- character-derived `index` entries and character-dependent Floor
-  `snapshot`/`projections` identified by the registry; and
-- character Runtime caches, in-flight work, and derived UI state.
+The Character operation invalidates character Runtime caches, in-flight work,
+and derived UI state while preserving authoritative Floor facts.
 
 It preserves:
 
@@ -511,11 +481,8 @@ The World operation removes from every existing exact message/Swipe Floor
 owner:
 
 - Floor `world_model` and `world_model_meta`;
-- the derived index hint as classified by the registry; and
-- World-dependent Floor `snapshot`/`projections` entries, or the whole
-  derived slot when exact dependency preservation cannot be proven.
 
-It preserves Chat settings, independent character projections, Floor Events,
+It preserves Chat settings, Runtime-derived character projections, Floor Events,
 Floor analysis, Floor identity snapshots, Chat/Swipe text, unrelated data,
 global settings, and the Secret Store. It does not clear or rewrite
 Character/Event-owned Floor fields during the World-domain operation.
@@ -536,8 +503,8 @@ Clear All removes only the BioWeave Chat-local namespace:
 - remove the BioWeave root from every existing
   `message.swipe_info[swipe_id].extra.bioweave` owner, including Swipe 0,
   inactive Swipes, and historical Swipes; and
-- invalidate all character, World, Event, analysis, identity, Snapshot,
-  Projection, index, tracking, cache, and UI-derived state for that Chat.
+- invalidate all character, World, Event, analysis, identity, tracking, cache,
+  and UI-derived state for that Chat.
 
 The walker preserves all surrounding host objects: Chat metadata outside the
 BioWeave key, message bodies, every Swipe body, other `extra` keys, other
@@ -550,8 +517,8 @@ removal coverage in contract tests.
 
 | Target | Chat metadata removed/reset | Floor/Swipe treatment | Facts/projections retained | Runtime and global treatment |
 | --- | --- | --- | --- | --- |
-| Character | Character projection roots, character-derived index, and any registered reset boundary | Remove registered character-facing Snapshot/Projection data in every message and every Swipe owner | World Model, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
-| World | Floor `world_model`, Floor `world_model_meta`, World-derived index/reference state | Remove or conservatively invalidate World-dependent Snapshot/Projection data in every message and every Swipe owner | Character projection, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
+| Character | The `character_reset` boundary and Runtime character DTOs | Preserve Floor facts; invalidate/rebuild Runtime state from valid Events, World Model, and Floor identity | World Model, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
+| World | Floor `world_model`, Floor `world_model_meta` | Remove those exact fields in every message and every Swipe owner | Runtime character DTOs, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
 | All | Replace Chat BioWeave root with clean scoped schema | Remove every BioWeave root from every ordinary message and every Swipe slot | Chat metadata outside BioWeave, text, Swipe text, unrelated plugin fields | Abort/invalidate all work; preserve global settings and Secret Store |
 | Start New source A | Same All plan, applied to immutable source A | Same All traversal across A's metadata, ordinary messages, and all Swipe slots | A's text, Swipe text, unrelated fields, and global settings | A is invalidated; B is loaded clean and is never the source target |
 
@@ -718,9 +685,10 @@ When no candidate passes, the API receives the exact empty previous shape:
 }
 ```
 
-The target's old analysis, a stale Chat projection, `last_processed_floor`, a
-deleted registry entry, another Swipe, and a Runtime cache are never previous
-state. `last_processed_floor` is a scheduling hint only.
+The target's old analysis, a stale Runtime DTO, a deleted registry entry,
+another Swipe, and a Runtime cache are never previous state. The
+`last_processed_floor` value is recomputed from successful valid Floor
+analysis records for scheduling and is not persisted.
 
 ### 9.2 Mutation invalidation matrix
 
@@ -728,16 +696,16 @@ state. `last_processed_floor` is a scheduling hint only.
 | --- | --- |
 | `MESSAGE_EDITED` or regenerated text | Recompute the affected Floor Version; make the old active-slot analysis and Events inactive; invalidate downstream active-path derived data from the earliest affected Floor; retain a non-active Swipe slot only when its own text and provenance are unchanged |
 | `MESSAGE_DELETED` or history truncation | Identify the earliest changed message by stable identity/sequence, remove ownership of the deleted message, invalidate every downstream active-path Floor/derived result, and rebuild from surviving current owners; never recreate the deleted message or facts from an index |
-| `MESSAGE_SWIPED` | Select only the new active Swipe's exact owner, invalidate downstream derived state whose dependency chain changed, preserve independent non-active Swipe analysis when its source is unchanged, and rebuild Chat-level projections from the new active path |
+| `MESSAGE_SWIPED` | Select only the new active Swipe's exact owner, invalidate downstream derived state whose dependency chain changed, preserve independent non-active Swipe analysis when its source is unchanged, and rebuild Runtime projections from the new active path |
 | `MESSAGE_SWIPE_DELETED` | The deleted Swipe contributes no Floor, previous state, Event, or derived reference; preserve other existing Swipe owners and rebuild the active path |
-| direct Event edit | Preserve `event_id` and authoritative `source`, validate the complete affected Event collection atomically, save through the Floor abstraction, and rebuild Tracking/projections from valid Events |
+| direct Event edit | Preserve `event_id` and authoritative `source`, validate the complete affected Event collection atomically, save through the Floor abstraction, and rebuild Runtime Tracking/projections from valid Events |
 | direct Event delete | Remove the Event from its owning Floor collection and rebuild all derived references; dangling Event IDs are removed |
 | any mutation during analysis | Abort/invalidate affected execution and require owner, epoch, and Floor Version checks before a response can commit |
 
 New analysis results carry dependency provenance for the active Floor-Version
 chain. A retained non-active Swipe result is reusable after switching back
 when its source Floor Version is still valid; dependency changes still
-invalidate downstream Chat-level state. A result without provenance is treated
+invalidate downstream Runtime state. A result without provenance is treated
 conservatively and is not allowed to reintroduce downstream state.
 
 The mutation flow is:
@@ -748,9 +716,9 @@ host message/Swipe change
   -> compare stable identity + six-field Floor Versions
   -> locate earliest affected Floor
   -> abort affected work and advance epoch
-  -> invalidate stale downstream sources/projections
+  -> invalidate stale downstream sources/Runtime projections
   -> retain only independent unchanged Swipe owners
-  -> rebuild Events/Tracking/Character/World-dependent projections
+  -> rebuild Events/Tracking/Character/World-dependent Runtime projections
   -> persist the safe invalidation through the storage boundary
 ```
 
@@ -815,7 +783,7 @@ host Chat/message/Swipe state
   -> exact Chat/Floor storage read
   -> six-field Floor Version + provenance validation
   -> current valid Events/identity facts
-  -> derived Tracking/Character/World/Snapshot/Projection/API input
+  -> derived Tracking/Character/World/API input and Runtime DTOs
   -> UI business projection
 ```
 

@@ -271,8 +271,8 @@ flowchart LR
 | 边界 | 保存内容 | 作用域 |
 | --- | --- | --- |
 | 扩展设置 | API 来源、Profile、Profile assignments、请求超时/重试、全局最近剧情规则、World Model 可编辑提示块 | SillyTavern 全局扩展设置 |
-| Chat metadata | 角色档案、关系、Chat-local 设置和索引；旧 World Model 字段仅作忽略的兼容残留 | 当前 Chat |
-| Floor extra | 分析状态、事件、World Model、Snapshot、Projection | 当前消息/楼层，支持 swipe 隔离 |
+| Chat metadata | Chat-local 设置、结构性 scope/schema 和 lifecycle control state | 当前 Chat |
+| Floor extra | 分析状态、事件、canonical character registry、World Model、World Model metadata | 当前消息/楼层，支持 swipe 隔离 |
 | Secret Store | API Secret 的宿主引用和临时生命周期 | SillyTavern 宿主 Secret Store |
 
 核心概念链路为：
@@ -488,7 +488,7 @@ Chat-local settings 主要包括：
 | analysis_interval / snapshot_interval | 分析和 Snapshot 的间隔基础配置 |
 | projection_enabled / retry_failed_analysis | 推演与失败重试意向 |
 
-当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，包含 chat_scope、character_profiles、`tracking_subjects`、`tracking_candidates`、relationships、settings 和 index。World Model 与元数据保存在对应 Floor/Swipe owner 中，不从 Chat metadata 读取或写入。`tracking_subjects` 是人物列表唯一来源，只保存已解析为 eligible 的人物索引和有效 Event 引用；`tracking_candidates` 独立保存有 exposure 但承孕能力尚未确认的 pending recipient，不会进入普通人物列表。老 Chat 缺少任一字段时按空 Registry 读取，不把所有角色迁入通用生理数据库。`character_profiles` 只保留最小、带证据的资料，不复制完整 Event。
+当前 Chat 的固定数据骨架由 emptyChat(chatId) 创建，只保留 chat_scope、settings、schema_version 和 data_lifecycle。人物 profiles、`tracking_subjects`、`tracking_candidates`、identity DTO、关系/索引等均由 Runtime 从当前有效 Floor Events、World Model 和 Floor `character_registry` 重建，不写回 Chat metadata。人物列表只消费 Runtime 的 `tracking_subjects`；有 exposure 但承孕能力尚未确认的 recipient 保留在 Runtime `tracking_candidates`，不会进入普通人物列表。
 
 ### Floor 数据
 
@@ -499,8 +499,9 @@ Chat-local settings 主要包括：
   "v": 1,
   "analysis": null,
   "events": [],
-  "snapshot": null,
-  "projections": []
+  "character_registry": {"schema_version": 1, "entities": {}},
+  "world_model": null,
+  "world_model_meta": null
 }
 ```
 

@@ -255,84 +255,6 @@ test("chat reads never return another chat metadata", () => {
   assert.equal(store.getChat("chat-b").marker, undefined);
 });
 
-test("legacy Chat reads as an empty tracking registry without writing a migration", () => {
-  const adapter = createAdapter();
-  adapter.metadata.bioweave = {
-    chat_scope: { chat_id: "chat-a" },
-    marker: "legacy",
-  };
-  const store = createStore(adapter, createChatBoundary(adapter));
-  const restored = store.getChat("chat-a");
-  assert.deepEqual(restored.tracking_subjects, {});
-  assert.deepEqual(restored.character_registry, {
-    schema_version: 1,
-    entities: {},
-  });
-  assert.equal(adapter.metadata.bioweave.tracking_subjects, undefined);
-  assert.equal(adapter.metadata.bioweave.character_registry, undefined);
-  assert.equal(restored.marker, "legacy");
-});
-
-test("tracking registry writes retain Chat scope and secret sanitization", async () => {
-  const adapter = createAdapter();
-  const store = createStore(adapter, createChatBoundary(adapter));
-  await store.saveTrackingSubjects("chat-a", {
-    charA: {
-      character_id: "charA",
-      status: "active",
-      exposure_event_ids: ["evt-a"],
-    },
-    api_key: "do-not-persist",
-  });
-  assert.deepEqual(
-    store.getTrackingSubjects("chat-a").charA.exposure_event_ids,
-    ["evt-a"],
-  );
-  assert.equal(adapter.metadata.bioweave.tracking_subjects.api_key, undefined);
-  assert.deepEqual(adapter.metadata.bioweave.chat_scope, { chat_id: "chat-a" });
-});
-
-test("tracking candidate storage round-trips pending evidence without changing Floor storage", async () => {
-  const adapter = createAdapter();
-  const store = createStore(adapter, createChatBoundary(adapter));
-  await store.saveChat("chat-a", {
-    chat_scope: { chat_id: "chat-a" },
-    tracking_subjects: {},
-    tracking_candidates: {
-      subject_pending: {
-        character_id: "subject_pending",
-        exposure_event_ids: ["evt-pending"],
-        exposure_records: [
-          {
-            event_id: "evt-pending",
-            story_time: { day_index: 10, precision: "day" },
-            source: { chat_id: "chat-a", floor: 10, swipe_id: 2 },
-          },
-        ],
-        eligibility: "pending",
-        species: "species_alpha",
-        biological_type: "type_a",
-        reproductive_capabilities: { can_carry_pregnancy: null },
-        evidence: ["pending evidence"],
-      },
-    },
-  });
-  assert.equal(
-    store.getTrackingCandidates("chat-a").subject_pending.eligibility,
-    "pending",
-  );
-  assert.equal(
-    store.getTrackingCandidates("chat-a").subject_pending.exposure_records[0]
-      .source.swipe_id,
-    2,
-  );
-  assert.deepEqual(
-    adapter.metadata.bioweave.tracking_candidates.subject_pending
-      .exposure_event_ids,
-    ["evt-pending"],
-  );
-});
-
 test("runtime registry refresh scans current Floor snapshots without requesting AI", async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
@@ -419,14 +341,16 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
     "char_000001",
     "char_000002",
   ]);
-  assert.deepEqual(
-    adapter.metadata.bioweave.tracking_subjects["char_000001"].exposure_event_ids,
-    ["evt-refresh"],
-  );
-  assert.deepEqual(
-    Object.keys(adapter.metadata.bioweave.character_registry.entities).sort(),
-    ["char_000001", "char_000002"],
-  );
+  for (const field of [
+    "character_profiles",
+    "character_registry",
+    "tracking_subjects",
+    "tracking_candidates",
+    "relationships",
+    "index",
+    "world_model",
+    "world_model_meta",
+  ]) assert.equal(Object.hasOwn(adapter.metadata.bioweave, field), false);
 });
 
 test("stale async chat save is rejected after chat switch", async () => {

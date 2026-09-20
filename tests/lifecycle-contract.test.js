@@ -20,9 +20,6 @@ test('current Chat and Floor schema roots are all classified by the lifecycle re
   assert.ok(Object.keys(CHAT_FIELD_REGISTRY).includes('data_lifecycle'));
   assert.ok(Object.keys(FLOOR_FIELD_REGISTRY).includes('floor_version'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('events'));
-  assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('snapshot'));
-  assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('projection'));
-  assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('history'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('runtime_cache'));
 });
 

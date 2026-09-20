@@ -13,8 +13,6 @@ import {
   normalizeExtensionSettings,
   normalizeModelListCache,
   normalizeRecentStoryGlobalSettings,
-  normalizeTrackingCandidates,
-  normalizeTrackingSubjects,
   isStableApiProfileId,
   sanitizeSecrets,
 } from "./schema.js";
@@ -771,19 +769,7 @@ export function createStore(adapter, boundary = null) {
     const metadata = adapter.getChatMetadata?.();
     const stored = metadata?.bioweave;
     if (stored?.chat_scope?.chat_id !== chatId) return emptyChat(chatId);
-    const normalized = {
-      ...stored,
-      character_registry: normalizeCharacterRegistry(stored.character_registry),
-      tracking_subjects: normalizeTrackingSubjects(stored.tracking_subjects),
-      tracking_candidates: normalizeTrackingCandidates(
-        stored.tracking_candidates,
-      ),
-    };
-    // Legacy Chat-level World Model fields remain ignored compatibility
-    // residue. They are deliberately not exposed as runtime state.
-    delete normalized.world_model;
-    delete normalized.world_model_meta;
-    return cloneForStorage(normalized);
+    return cloneForStorage(stored);
   }
 
   async function saveChat(chatId, data) {
@@ -793,17 +779,7 @@ export function createStore(adapter, boundary = null) {
       throw new Error("ST_METADATA_STORAGE_UNAVAILABLE");
     const token = captureToken(adapter, boundary);
     if (token.chatId !== chatId) throw staleChatError();
-    const safeData = {
-      ...data,
-      character_registry: normalizeCharacterRegistry(data?.character_registry),
-      tracking_subjects: normalizeTrackingSubjects(data?.tracking_subjects),
-      tracking_candidates: normalizeTrackingCandidates(
-        data?.tracking_candidates,
-      ),
-    };
-    delete safeData.world_model;
-    delete safeData.world_model_meta;
-    await adapter.saveChatMetadata("bioweave", cloneForStorage(safeData), token.chatId);
+    await adapter.saveChatMetadata("bioweave", cloneForStorage(data), token.chatId);
     assertToken(adapter, boundary, token);
   }
 
@@ -838,88 +814,6 @@ export function createStore(adapter, boundary = null) {
 
   function getActiveFloorEvents(messageId, version) {
     return filterActiveFloorEvents(getActiveFloor(messageId), version);
-  }
-
-  function getTrackingSubjects(chatId) {
-    return cloneValue(
-      normalizeTrackingSubjects(getChat(chatId).tracking_subjects),
-    );
-  }
-
-  function getTrackingCandidates(chatId) {
-    return cloneValue(
-      normalizeTrackingCandidates(getChat(chatId).tracking_candidates),
-    );
-  }
-
-  async function saveTrackingSubjects(chatId, registry) {
-    const chat = getChat(chatId);
-    const trackingSubjects = normalizeTrackingSubjects(
-      registry?.tracking_subjects ?? registry,
-    );
-    const nextChat = { ...chat, tracking_subjects: trackingSubjects };
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "tracking_candidates")
-    ) {
-      nextChat.tracking_candidates = cloneValue(
-        normalizeTrackingCandidates(registry.tracking_candidates),
-      );
-    }
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "character_profiles")
-    ) {
-      nextChat.character_profiles = cloneValue(registry.character_profiles);
-    }
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "character_registry")
-    ) {
-      nextChat.character_registry = normalizeCharacterRegistry(
-        registry.character_registry,
-      );
-    }
-    await saveChat(chatId, nextChat);
-    return cloneValue(trackingSubjects);
-  }
-
-  async function saveTrackingCandidates(chatId, registry) {
-    const chat = getChat(chatId);
-    const trackingCandidates = normalizeTrackingCandidates(
-      registry?.tracking_candidates ?? registry,
-    );
-    const nextChat = { ...chat, tracking_candidates: trackingCandidates };
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "tracking_subjects")
-    ) {
-      nextChat.tracking_subjects = cloneValue(
-        normalizeTrackingSubjects(registry.tracking_subjects),
-      );
-    }
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "character_profiles")
-    ) {
-      nextChat.character_profiles = cloneValue(registry.character_profiles);
-    }
-    if (
-      registry &&
-      typeof registry === "object" &&
-      Object.prototype.hasOwnProperty.call(registry, "character_registry")
-    ) {
-      nextChat.character_registry = normalizeCharacterRegistry(
-        registry.character_registry,
-      );
-    }
-    await saveChat(chatId, nextChat);
-    return cloneValue(trackingCandidates);
   }
 
   async function saveFloor(messageId, swipeId, data) {
@@ -1097,10 +991,6 @@ export function createStore(adapter, boundary = null) {
     getActiveSwipeId: getActiveSwipe,
     getActiveFloor,
     getActiveFloorEvents,
-    getTrackingSubjects,
-    getTrackingCandidates,
-    saveTrackingSubjects,
-    saveTrackingCandidates,
     saveFloor,
     getCurrentChatOwnerSnapshot,
     readChatOwnerSnapshot,

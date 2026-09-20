@@ -666,37 +666,15 @@ export function sanitizeSecrets(value) {
   return safe;
 }
 
-// Tracking Subjects are a Chat-local index.  Older Chats do not have this
-// field; treat that shape as an empty registry without writing a migration.
-export function normalizeTrackingSubjects(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return cloneValue(raw);
-}
-
-// Pending exposure recipients use the same Chat-local persistence boundary as
-// Tracking Subjects.  Keep the normalizer deliberately shape-preserving so a
-// later trusted World Model/profile refresh can re-evaluate the saved evidence.
-export function normalizeTrackingCandidates(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return cloneValue(raw);
-}
-
 // Canonical character identity history is owned by each successful Floor
-// snapshot. The Chat field remains an empty-by-default materialized projection;
-// it is not an Analyzer history source or an independent registry.
+// snapshot. Runtime projections are rebuilt in memory and are never Chat data.
 export { normalizeCharacterRegistry };
 
 export function emptyChat(chatId) {
   return {
     schema_version: SCHEMA_VERSION,
     chat_scope: { chat_id: chatId },
-    character_profiles: {},
-    character_registry: normalizeCharacterRegistry(null),
-    tracking_subjects: {},
-    tracking_candidates: {},
-    relationships: [],
     settings: cloneValue(DEFAULT_SETTINGS),
-    index: { snapshot_floors: [], last_processed_floor: null },
     data_lifecycle: cloneValue(DEFAULT_DATA_LIFECYCLE),
   };
 }
@@ -710,8 +688,5 @@ export function emptyFloor() {
     character_registry: normalizeCharacterRegistry(null),
     world_model: null,
     world_model_meta: null,
-    history: null,
-    snapshot: null,
-    projections: [],
   };
 }

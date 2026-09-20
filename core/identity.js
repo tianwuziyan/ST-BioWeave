@@ -433,9 +433,8 @@ function resultWithRegistry(base, fields = {}) {
 
 /**
  * Create the additive registry shape. Ownership is supplied by the caller;
- * Floor-derived history is persisted in the Floor snapshot rather than here.
- * The registry remains independent from tracking_subjects, tracking_candidates,
- * and character_profiles.
+ * the canonical snapshot is persisted in the owning Floor. Runtime tracking
+ * subjects, candidates, and profiles are derived separately from valid facts.
  */
 export function createEmptyCharacterRegistry() {
   return {
