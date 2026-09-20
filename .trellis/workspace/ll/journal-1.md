@@ -701,3 +701,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: 修复角色卡开场白 Prompt 边界并同步 GitHub
+<!-- trellis-session: v=2 fp=48d820dcbd3ef5f5 -->
+
+**Date**: 2026-09-20
+**Task**: 修复角色卡开场白 Prompt 边界并同步 GitHub
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+将角色卡 greeting 从公共角色 formatter 拆出，仅追加到 World Model references SYSTEM message 末尾；Event Analysis 完全排除 greeting。补充回归测试与领域契约，指定测试和完整 589 项测试通过，已推送 fix/world-model-prompt-baseline。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b739ce` | 修复角色卡开场白的 World Model 与 Event Prompt 边界 |
+
+### Status
+
+[OK] **Completed**
