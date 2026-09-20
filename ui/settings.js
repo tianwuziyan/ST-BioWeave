@@ -29,21 +29,21 @@ export const DATA_MANAGEMENT_OPERATIONS = Object.freeze([
     action: 'clear-character-data',
     method: 'clearCharacterData',
     title: '清除人物数据',
-    description: '仅当前 Chat：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、事件/楼层分析、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+    description: '清除当前聊天的人物分析和事件数据。',
   },
   {
     key: 'world',
     action: 'clear-world-data',
     method: 'clearWorldData',
     title: '清除世界数据',
-    description: '仅当前 Chat：删除 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+    description: '清除当前聊天的世界模型数据。',
   },
   {
     key: 'all',
     action: 'clear-all-bioweave-data',
     method: 'clearAllBioWeaveData',
-    title: '清除全部 BioWeave 数据',
-    description: '仅当前 Chat：删除全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。',
+    title: '清除全部分析数据',
+    description: '清除当前聊天的全部 BioWeave 分析数据。',
   },
 ]);
 
@@ -914,9 +914,9 @@ function renderDataManagementSettings(dataManagement = {}, openSettingsSections 
   }).join('');
   return [
     '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-data-management-disclosure" data-bioweave-settings-disclosure="data_management"' + (open ? ' open' : '') + '>',
-    renderSettingsSummary('数据管理', '仅当前 Chat 的 BioWeave 数据；不可撤销操作', null, {label: '仅当前 Chat'}),
+    renderSettingsSummary('数据管理', '管理当前聊天的 BioWeave 分析数据。不会影响 API、世界书、角色卡、插件设置或聊天内容。', null, {label: '仅当前聊天'}),
     '<section class="bioweave-card bioweave-data-management" data-bioweave-data-management>',
-    '<header class="bioweave-settings-card-header"><div><h3>当前 Chat 数据</h3><p class="bioweave-muted">三个危险操作都只处理当前 Chat；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p></div></header>',
+    '<header class="bioweave-settings-card-header"><div><h3>数据管理</h3><p class="bioweave-muted">管理当前聊天的 BioWeave 分析数据。不会影响 API、世界书、角色卡、插件设置或聊天内容。</p></div></header>',
     '<div class="bioweave-data-management-list">',
     operations,
     '</div>',

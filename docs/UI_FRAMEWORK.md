@@ -345,7 +345,7 @@ API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重
 
 分析提示词 body 不再重复显示第二个“分析提示词”标题，只保留首层设置栏标题；字段顺序和文字固定为“顶部 SYSTEM、分析任务补充、输入前说明、输入后说明、尾部 SYSTEM”。保存和“高级 / 调试”操作位于 body 底部，字段 key、保存逻辑和调试 Popup 入口不变。
 
-数据管理是设置页唯一的清除入口，使用独立的 `bioweave-data-management-disclosure` 设置栏，且不出现在人物、世界或其它页面。栏内恰好提供“清除人物数据”“清除世界数据”“清除全部 BioWeave 数据”三个危险操作；每个操作都明确写出“仅当前 Chat”、删除范围，以及聊天正文、所有 Swipe 正文、其它插件 `chat/message/swipe extra` 和 API / Secret / 全局设置永不删除。生产按钮只通过 `data-bioweave-action` 委托给 Runtime facade，UI 不读取或删除 Chat、Message、Swipe storage 字段，也不提供“清除并开始新聊天”操作。
+数据管理是设置页唯一的清除入口，使用独立的 `bioweave-data-management-disclosure` 设置栏，且不出现在人物、世界或其它页面。栏内恰好提供“清除人物数据”“清除世界数据”“清除全部分析数据”三个危险操作；每个操作都明确写出“仅当前聊天”、删除范围，以及 API、世界书、角色卡、插件设置、聊天正文、所有 Swipe 正文和其它插件数据不会被删除。生产按钮只通过 `data-bioweave-action` 委托给 Runtime facade，UI 不读取或删除 Chat、Message、Swipe storage 字段，也不提供“清除并开始新聊天”操作。
 
 每个危险操作都必须经过现有 `confirmWithPopup(title, message)`，三条确认文案必须彼此不同，并同时包含当前 Chat、该操作的删除/保留范围和“不可撤销”。确认等待及 Runtime 清除期间，三个按钮统一 disabled，当前按钮显示“清除中…”并设置 `aria-busy`，同一时间只允许一个请求。Runtime 返回成功、幂等 no-op 或失败时分别使用 success、info 或 error Toast；成功/no-op 后原地刷新 Runtime DTO 和空状态，失败不得显示成功 Toast，也不得整页刷新。
 
@@ -365,7 +365,7 @@ API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重
   <section class="bioweave-card bioweave-data-management"
     data-bioweave-data-management>
     <header class="bioweave-settings-card-header">
-      <div><h3>当前 Chat 数据</h3><p class="bioweave-muted">三个危险操作都只处理当前 Chat；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p></div>
+      <div><h3>当前聊天的分析数据</h3><p class="bioweave-muted">仅清除当前聊天中由 BioWeave 生成的分析数据；API、世界书、角色卡、插件设置、聊天正文、所有 Swipe 正文和其它插件数据不会被删除。</p></div>
     </header>
     <article class="bioweave-data-management-operation"
       data-bioweave-clear-operation="character">
@@ -381,9 +381,9 @@ API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重
     </article>
     <article class="bioweave-data-management-operation"
       data-bioweave-clear-operation="all">
-      <div class="bioweave-data-management-operation-copy"><h3>清除全部 BioWeave 数据</h3><p>仅当前 Chat：删除全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。</p></div>
+      <div class="bioweave-data-management-operation-copy"><h3>清除全部分析数据</h3><p>仅当前聊天：只清除 BioWeave 明确允许清除的 Floor 分析字段；API、世界书、角色卡、插件设置、聊天正文、所有 Swipe 正文和其它插件数据不会被删除。</p></div>
       <button class="bioweave-danger-action" type="button"
-        data-bioweave-action="clear-all-bioweave-data" data-bioweave-clear-operation="all">清除全部 BioWeave 数据</button>
+        data-bioweave-action="clear-all-bioweave-data" data-bioweave-clear-operation="all">清除全部分析数据</button>
     </article>
   </section>
 </details>

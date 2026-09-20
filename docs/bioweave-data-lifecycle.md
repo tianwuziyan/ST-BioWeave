@@ -84,8 +84,8 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 | Owner | Actual location | Owned meaning | Lifecycle treatment |
 | --- | --- | --- | --- |
 | Extension-global settings | `SillyTavern.getContext().extensionSettings.bioweave` | API source, API Profiles, opaque Secret references, task assignments, request settings, prompts, model-list caches, and global recent-story regex | Preserved by all Chat and Start New Chat operations |
-| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, structural scope/schema markers, and lifecycle control markers | Targeted by Manual Clear; source-targeted by verified Start New Chat |
-| Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that message Floor | Read/write only through the storage abstraction; full clear removes the owned root |
+| Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, structural scope/schema markers, and reserved lifecycle root | Preserved by Manual Clear and by source-targeted Floor cleanup |
+| Ordinary-message Floor | `message.extra.bioweave` when the message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that message Floor | Read/write only through the storage abstraction; clear removes only explicit allowlisted fields |
 | Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when Swipe structure exists | Independent analysis and derived Floor data for that exact Swipe | Every existing slot is enumerated; active selection never authorizes fallback to another slot |
 | Runtime transient | Runtime/UI memory: tokens, epochs, AbortControllers, in-flight maps, terminal maps, caches, refresh chains, drafts, and status DTOs | Transient work, read projections, diagnostics, and cache acceleration | Abort, invalidate, and discard on owner changes; never a persistent fact source |
 
@@ -93,8 +93,8 @@ For a structured message, `swipe_info[0]` is a real owner just like every
 other Swipe. The lifecycle walker MUST include Swipe 0, inactive Swipes, and
 historical Swipes still present in the host object. `message.extra.bioweave`
 is not a fallback for a structured message. If a host leaves an owned
-BioWeave mirror there, a full clear inspects and removes that mirror as
-cleanup, but ordinary reads never use it as Floor provenance.
+BioWeave mirror there, a clear inspects only the explicit allowlisted fields,
+but ordinary reads never use it as Floor provenance.
 
 The host message text (`mes`, `content`, or equivalent), `swipes[]` text,
 other `message.extra` keys, other `swipe_info[*]` keys, other
@@ -143,18 +143,7 @@ on the Secret Store for zero calls.
 | `schema_version` | Numeric schema marker | Structural; retained/reset to the clean schema |
 | `chat_scope.chat_id` | `{chat_id}` | Structural owner binding; always matches the target Chat |
 | `settings` | See the nested inventory below | Chat configuration; preserved by Character and World clear |
-| `data_lifecycle` | `{character_reset: {chat_id, message_id, message_index, floor, created_at} | null}` | Lifecycle marker; the registry defines its reset semantics |
-
-The `data_lifecycle.character_reset` marker is a Chat-local rebuild boundary.
-Character clear records the last existing message identity and index, so
-historical Events remain physically available but cannot immediately
-repopulate the cleared projection. Clear All resets the marker with the clean
-Chat shape. The registry, not a field-name convention, defines this behavior.
-When Character clear runs in an empty Chat, the marker stores
-`message_index: -1`, an explicit boundary before the first future message.
-A Floor that existed at the boundary may re-enter the derived projection only
-after a successful analysis completed after the reset marker was created;
-older unchanged facts at that boundary remain excluded.
+| `data_lifecycle` | `{}` reserved Chat-local control root | Preserved; no active reset marker is required because clear removes authoritative Floor facts |
 
 The current `settings` object is:
 
@@ -346,19 +335,19 @@ recursive deletion. The current domain vocabulary is:
 | Domain | Current fields/locations | Ownership and lifecycle |
 | --- | --- | --- |
 | `global_settings` | `extensionSettings.bioweave` and its recognized fields | Guarded, global, never clearable by this contract |
-| `chat_settings` | `chatMetadata.bioweave.settings` | Chat configuration; preserve for Character/World clear, reset for All |
+| `chat_settings` | `chatMetadata.bioweave.settings` | Chat configuration; preserve for every Data Management operation |
 | `world` | Floor `world_model`, Floor `world_model_meta`; future explicit world references | Floor-owned World Model history; clear World and All across exact message/Swipe owners |
-| `character` | Valid Floor `events[]` and Floor `character_registry`; Runtime tracking/profile DTOs | Current character projection is rebuilt from valid facts; Character and All clear keep the reset boundary semantics |
+| `character` | Valid Floor `analysis`, `events[]` and Floor `character_registry`; Runtime tracking/profile DTOs | Character and All clear remove these authoritative facts and rebuild empty Runtime DTOs |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
 | `floor_identity` | Floor `character_registry` | Floor-owned canonical identity snapshot; preserve for Character/World clear while its Floor remains valid, remove for All/source clear |
-| `lifecycle_marker` | Chat `data_lifecycle.character_reset` | Rebuild boundary metadata; preserve/update for Character clear, reset for All |
+| `lifecycle_marker` | Reserved empty Chat `data_lifecycle` root | No current clearable state; preserve for every operation |
 | `runtime_cache` | Runtime/UI maps, chains, drafts, controllers, and status DTOs | Transient; abort/invalidate/discard, never a clearable fact source |
-| `all` | The complete current Chat BioWeave root plus every owned message and Swipe root | The union of all Chat-local/Floor-local BioWeave domains; excludes global settings, Secret Store, text, and unrelated fields |
+| `all` | Explicit Character and World Floor allowlists across every owned message and Swipe root | The union of user-clearable Floor fields; preserves Chat metadata, structural owner/version fields, unknown fields, global settings, Secret Store, text, and unrelated fields |
 
-`chat_scope.chat_id` and `schema_version`/`v` are structural markers. A clear
-operation writes the clean structural shape for the target owner; it does not
-delete the identity marker needed to keep the data scoped.
+`chat_scope.chat_id` and `schema_version`/`v` are structural markers. Clear
+operations preserve them and never delete the owner root needed to keep data
+scoped.
 
 ### Registry enforcement
 
@@ -370,9 +359,8 @@ Swipe roots. A newly persisted key without a domain, owner, exact location,
 clear behavior, mutation behavior, Swipe behavior, provenance rule, async
 guard, failure policy, and test is a contract failure.
 
-The current implementation includes the versioned
-`data_lifecycle.character_reset` boundary, `floor_version`, the reserved
-`history` root, dependency provenance for analysis results, and source
+The current implementation includes the reserved empty `data_lifecycle` root,
+`floor_version`, dependency provenance for analysis results, and source
 transition ownership metadata. Any future root must be added to the registry
 before it is persisted; the contract test is intentionally fail-closed for an
 unregistered schema key.
@@ -456,24 +444,13 @@ and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 
 ### 6.2 Manual Character clear
 
-The Character operation invalidates character Runtime caches, in-flight work,
-and derived UI state while preserving authoritative Floor facts.
-
-It preserves:
-
-- Floor `world_model`, Floor `world_model_meta`, Chat `settings`, and
-  independent Chat configuration;
-- Floor `analysis`, Floor `events[]`, and valid Floor-owned
-  `character_registry` identity snapshots;
-- Chat text, all Swipe text, unrelated fields, global settings, and the Secret
-  Store.
-
-Because a Runtime rebuild from valid Events could otherwise repopulate the
-projection immediately, the implementation persists the bounded, versioned
-`character_reset` boundary described above. The marker is a rebuild boundary,
-not a second fact source: post-reset Floors may create new projection state,
-including a boundary Floor only after it is successfully reanalyzed after the
-reset; old unchanged facts remain historical and provenance-bound.
+The Character operation removes `analysis`, `events[]`, and
+`character_registry` from every exact message and Swipe Floor owner. These are
+the authoritative sources for character Events, canonical identity, tracking
+subjects/candidates, and profiles; removing only Runtime projections would
+allow reload to rebuild the old state. It preserves World Model fields,
+`v`, `floor_version`, Chat settings, text, Swipe text, unrelated fields, global
+settings, and the Secret Store. No reset marker is written.
 
 ### 6.3 Manual World clear
 
@@ -496,15 +473,11 @@ silently retained.
 
 ### 6.4 Manual Clear All
 
-Clear All removes only the BioWeave Chat-local namespace:
-
-- replace `chatMetadata.bioweave` with the clean `emptyChat(chatId)` shape;
-- remove the BioWeave root from every ordinary `message.extra.bioweave` owner;
-- remove the BioWeave root from every existing
-  `message.swipe_info[swipe_id].extra.bioweave` owner, including Swipe 0,
-  inactive Swipes, and historical Swipes; and
-- invalidate all character, World, Event, analysis, identity, tracking, cache,
-  and UI-derived state for that Chat.
+Clear All removes the explicit union of the Character and World Floor
+allowlists: `analysis`, `events`, `character_registry`, `world_model`, and
+`world_model_meta`. It never replaces Chat metadata or removes a whole Floor
+root. `v`, `floor_version`, unknown future fields, settings, text, and
+unrelated data remain intact.
 
 The walker preserves all surrounding host objects: Chat metadata outside the
 BioWeave key, message bodies, every Swipe body, other `extra` keys, other
@@ -517,9 +490,9 @@ removal coverage in contract tests.
 
 | Target | Chat metadata removed/reset | Floor/Swipe treatment | Facts/projections retained | Runtime and global treatment |
 | --- | --- | --- | --- | --- |
-| Character | The `character_reset` boundary and Runtime character DTOs | Preserve Floor facts; invalidate/rebuild Runtime state from valid Events, World Model, and Floor identity | World Model, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
+| Character | Runtime character DTOs | Remove Floor `analysis`, `events`, and `character_registry` in every owner | World Model, `v`, `floor_version`, settings, text, Swipe text, unknown fields, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
 | World | Floor `world_model`, Floor `world_model_meta` | Remove those exact fields in every message and every Swipe owner | Runtime character DTOs, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
-| All | Replace Chat BioWeave root with clean scoped schema | Remove every BioWeave root from every ordinary message and every Swipe slot | Chat metadata outside BioWeave, text, Swipe text, unrelated plugin fields | Abort/invalidate all work; preserve global settings and Secret Store |
+| All | No Chat metadata | Remove only the explicit union of Character and World Floor fields in every ordinary message and every Swipe slot | Chat metadata, `v`, `floor_version`, unknown fields, text, Swipe text, unrelated plugin fields | Abort/invalidate all work; preserve global settings and Secret Store |
 | Start New source A | Same All plan, applied to immutable source A | Same All traversal across A's metadata, ordinary messages, and all Swipe slots | A's text, Swipe text, unrelated fields, and global settings | A is invalidated; B is loaded clean and is never the source target |
 
 ## 7. User-facing clear boundary
@@ -539,9 +512,9 @@ The three confirmation messages are intentionally operation-specific. The
 current production copy is:
 
 ```text
-人物：当前 Chat「{chatId}」的人物数据将被永久删除且不可撤销：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、事件/楼层分析、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？
-世界：当前 Chat「{chatId}」的世界数据将被永久删除且不可撤销：删除 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？
-全部：当前 Chat「{chatId}」的全部 BioWeave 数据将被永久删除且不可撤销：删除 Chat-local、Floor-local、Swipe-local 与 derived BioWeave 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？
+人物：当前聊天「{chatId}」的人物分析数据将被永久删除且不可撤销：清除人物相关 Floor 分析、事件和 canonical identity；API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？
+世界：当前聊天「{chatId}」的 World Model 分析数据将被永久删除且不可撤销：清除 Floor-owned World Model 及其 metadata；人物事件、identity、API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？
+全部：当前聊天「{chatId}」的全部分析数据将被永久删除且不可撤销：仅清除 BioWeave 明确允许清除的 Floor 分析数据；API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？
 ```
 
 `{chatId}` is replaced by the current Chat label at render time. Any copy

@@ -6,6 +6,7 @@ import {
   FLOOR_FIELD_REGISTRY,
   GLOBAL_FIELD_REGISTRY,
   LIFECYCLE_DOMAINS,
+  USER_CLEARABLE_FLOOR_FIELDS,
   getClearableFields,
 } from '../storage/lifecycle.js';
 import { DEFAULT_EXTENSION_SETTINGS, emptyChat, emptyFloor } from '../storage/schema.js';
@@ -55,4 +56,24 @@ test('global settings are explicitly non-clearable and every clearable root exis
       assert.ok(Object.hasOwn(emptyFloor(), field), `${operation}: ${field}`);
     }
   }
+});
+
+test('user Floor clear operations are explicit allowlists and never include owner metadata', () => {
+  assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.character, [
+    'analysis',
+    'events',
+    'character_registry',
+  ]);
+  assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.world, [
+    'world_model',
+    'world_model_meta',
+  ]);
+  assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.all, [
+    ...USER_CLEARABLE_FLOOR_FIELDS.character,
+    ...USER_CLEARABLE_FLOOR_FIELDS.world,
+  ]);
+  for (const field of ['v', 'floor_version', 'future_field']) {
+    assert.equal(USER_CLEARABLE_FLOOR_FIELDS.all.includes(field), false, field);
+  }
+  assert.deepEqual(getClearableFields('chat', 'all'), []);
 });

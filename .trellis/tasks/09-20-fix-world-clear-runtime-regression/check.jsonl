@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查回归修复没有恢复 Chat-level World Model 或破坏 Floor authoritative source"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查失败/unknown persistence 后 runtime 恢复与并发保护仍符合生命周期契约"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行修改范围、测试和静态检查验收"}

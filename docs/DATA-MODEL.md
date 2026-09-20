@@ -22,7 +22,7 @@
 Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由 SillyTavern Secret Store 保存，不能进入 Chat、Floor、Event、Snapshot、Projection、Log、Export 或 Prompt Inspector。
 
 ## Chat Level
-`chat_metadata.bioweave` 只保存当前 Chat 的 `schema_version`、`chat_scope`、`settings` 和 `data_lifecycle.character_reset`。API Profiles 不属于 Chat 数据。人物 profiles、Tracking Registry、关系/索引等均为 Runtime DTO，不写入 Chat；World Model 的权威状态也不在 Chat Level。
+`chat_metadata.bioweave` 只保存当前 Chat 的 `schema_version`、`chat_scope`、`settings` 和空的 `data_lifecycle` 保留根。API Profiles 不属于 Chat 数据。人物 profiles、Tracking Registry、关系/索引等均为 Runtime DTO，不写入 Chat；World Model 的权威状态也不在 Chat Level。
 
 ## Floor Level
 `message.extra.bioweave` 或当前结构化消息的

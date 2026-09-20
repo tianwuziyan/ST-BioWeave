@@ -267,6 +267,19 @@ function bioWeaveRoots(owner) {
   ]);
 }
 
+function assertClearedFloorRoots(roots) {
+  assert.equal(roots.length, 5);
+  for (const root of roots) {
+    assert.equal(root.analysis, null);
+    assert.deepEqual(root.events, []);
+    assert.deepEqual(root.character_registry, { schema_version: 1, entities: {} });
+    assert.equal(root.world_model, null);
+    assert.equal(root.world_model_meta, null);
+    assert.ok(root.v);
+    assert.ok(root.floor_version);
+  }
+}
+
 test("Start New Chat clears source A through the same source owner while B stays clean", async () => {
   let releaseSave;
   let sourceSaveStarted;
@@ -309,13 +322,7 @@ test("Start New Chat clears source A through the same source owner while B stays
   await settleLifecycle();
 
   assert.deepEqual(fixture.owners["chat-a"].chatMetadata.bioweave, emptyChat("chat-a"));
-  assert.deepEqual(bioWeaveRoots(fixture.owners["chat-a"]), [
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-  ]);
+  assertClearedFloorRoots(bioWeaveRoots(fixture.owners["chat-a"]));
   assert.deepEqual(
     fixture.owners["chat-a"].messages.map((message) => ({
       mes: message.mes,
@@ -519,13 +526,7 @@ test("a pending source-A analysis cannot revive A after Start New Chat cleanup",
   await settleLifecycle();
 
   assert.deepEqual(fixture.owners["chat-a"].chatMetadata.bioweave, emptyChat("chat-a"));
-  assert.deepEqual(bioWeaveRoots(fixture.owners["chat-a"]), [
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-  ]);
+  assertClearedFloorRoots(bioWeaveRoots(fixture.owners["chat-a"]));
   assert.deepEqual(fixture.owners["chat-b"].chatMetadata, {
     unrelated_plugin_metadata: { keep: true },
   });
@@ -660,13 +661,7 @@ test("the official ST adapter reads the latest source and merges only the regist
     assert.equal(result.mergeMode, "latest-source");
     assert.equal(requests.at(-1).endpoint, "/api/chats/save");
     assert.deepEqual(remote.chatMetadata.bioweave, emptyChat("chat-a"));
-    assert.deepEqual(bioWeaveRoots(remote), [
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    ]);
+    assertClearedFloorRoots(bioWeaveRoots(remote));
     assert.equal(remote.messages[0].mes, "Chat A 普通正文");
     assert.deepEqual(remote.chatMetadata.boundary_plugin_update, { keep: "latest" });
     assert.deepEqual(remote.messages[0].extra.boundary_plugin_update, { keep: "latest" });

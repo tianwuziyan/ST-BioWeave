@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRuntime } from "../runtime/events.js";
+import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
 import { createAnalyzer } from "../ai/analyzer.js";
 import { CONCEPTION_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 import { floorVersion } from "../runtime/floor.js";
@@ -78,6 +78,8 @@ function createFixture({
   saveChatMetadataHook = null,
   saveChatMetadataError = null,
   saveChatMetadataErrorAt = 0,
+  saveChatResponse = undefined,
+  saveChatError = null,
 } = {}) {
   const listeners = new Map();
   const context = {
@@ -111,7 +113,10 @@ function createFixture({
       },
     },
     async saveMetadata() {},
-    async saveChat() {},
+    async saveChat() {
+      if (saveChatError) throw new Error(saveChatError);
+      return saveChatResponse;
+    },
   };
   let saveChatMetadataCalls = 0;
   let saveFloorCalls = 0;
@@ -2737,7 +2742,7 @@ test("active Swipe switching selects isolated authoritative Floor Versions", asy
   fixture.runtime.destroy();
 });
 
-test("character clear boundary suppresses historical character facts without deleting Floor facts", async () => {
+test("character clear removes Floor character facts without changing Chat configuration", async () => {
   const messages = [
     { message_id: "old-message-0", content: "旧剧情 0", role: "assistant" },
     { message_id: "old-message-1", content: "旧剧情 1", role: "assistant" },
@@ -2769,36 +2774,22 @@ test("character clear boundary suppresses historical character facts without del
     });
     messages[index].extra = { bioweave: oldFloors[index] };
   }
-  const inputs = [];
-  const fixture = createFixture({
-    messages,
-    analyzer: {
-      async analyzeFloor({ analysisInput }) {
-        inputs.push(analysisInput);
-        return { events: [] };
-      },
-    },
-  });
+  const fixture = createFixture({ messages });
   fixture.context.chatMetadata.bioweave = emptyChat("chat-runtime");
+  const settingsBefore = structuredClone(fixture.context.chatMetadata.bioweave.settings);
 
   await fixture.runtime.init();
   const result = await fixture.runtime.clearCharacterData();
   assert.equal(result.ok, true);
   assert.equal(result.persistence.commitState, "confirmed");
-  assert.equal(
-    fixture.context.chatMetadata.bioweave.data_lifecycle.character_reset.message_index,
-    1,
-  );
-  for (const field of [
-    "character_profiles",
-    "character_registry",
-    "tracking_subjects",
-    "tracking_candidates",
-    "relationships",
-    "index",
-  ]) assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, field), false);
-  assert.equal(fixture.context.chat[0].extra.bioweave.events.length, 1);
-  assert.equal(fixture.context.chat[1].extra.bioweave.events.length, 1);
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.settings, settingsBefore);
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.data_lifecycle, {});
+  for (const message of fixture.context.chat)
+    assert.equal(message.extra.bioweave.events.length, 0);
+  for (const message of fixture.context.chat)
+    assert.deepEqual(message.extra.bioweave.character_registry, { schema_version: 1, entities: {} });
+  for (const message of fixture.context.chat)
+    assert.equal(message.extra.bioweave.analysis, null);
   assert.deepEqual(await fixture.runtime.getTrackingRegistry(), {
     tracking_subjects: {},
     tracking_candidates: {},
@@ -2806,69 +2797,30 @@ test("character clear boundary suppresses historical character facts without del
     character_registry: { schema_version: 1, entities: {} },
   });
 
-  fixture.context.chat.push({
-    message_id: "new-message",
-    content: "清除后的新剧情",
-    role: "assistant",
-  });
-  await fixture.runtime.analyzeFloor(
-    { __messageIndex: true, index: 2 },
-    { force: true },
-  );
-  assert.deepEqual(inputs.at(-1).existing_bioweave, {
-    analysis: null,
-    events: [],
-  });
   fixture.runtime.destroy();
+  const reloaded = createRuntime({ adapter: fixture.adapter });
+  await reloaded.init();
+  assert.deepEqual(await reloaded.getTrackingRegistry(), {
+    tracking_subjects: {}, tracking_candidates: {}, character_profiles: {},
+    character_registry: { schema_version: 1, entities: {} },
+  });
+  reloaded.destroy();
 });
 
-test("character reset made in an empty Chat accepts the first post-reset Floor", async () => {
+test("character clear in an empty Chat is an idempotent no-op", async () => {
   const fixture = createFixture({ messages: [] });
   fixture.context.chatMetadata.bioweave = emptyChat("chat-runtime");
 
   await fixture.runtime.init();
   const result = await fixture.runtime.clearCharacterData();
   assert.equal(result.ok, true);
-  assert.equal(
-    fixture.context.chatMetadata.bioweave.data_lifecycle.character_reset.message_index,
-    -1,
-  );
-
-  const message = {
-    message_id: "post-reset-message",
-    floor: 1,
-    content: "清除后第一层",
-    role: "assistant",
-  };
-  fixture.context.chat.push(message);
-  const version = await floorVersion({
-    chatId: "chat-runtime",
-    messageId: message.message_id,
-    floor: message.floor,
-    swipeId: 0,
-    text: message.content,
-  });
-  await fixture.runtime.store.saveFloor(0, 0, {
-    ...emptyFloor(),
-    floor_version: version,
-    analysis: { status: "success", floor_version: version },
-    events: [eventResult("post-reset-event", { source: version })],
-    character_registry: {
-      schema_version: 1,
-      entities: {
-        "char-a": { character_id: "char-a", display_name: "Alice", aliases: [] },
-        "char-b": { character_id: "char-b", display_name: "Bob", aliases: [] },
-      },
-    },
-  });
-
-  const businessData = await fixture.runtime.collectActiveBusinessData();
-  assert.equal(businessData.active_events?.[0]?.event_id, "post-reset-event");
+  assert.equal(result.changed, false);
+  assert.deepEqual(fixture.context.chatMetadata.bioweave.data_lifecycle, {});
   fixture.runtime.destroy();
 });
 
 test(
-  "character reset reanalysis of the boundary Floor rebuilds projection without restoring older Floors",
+  "character clear allows explicit reanalysis without restoring deleted Floors",
   async () => {
     const messages = [
       { message_id: "reset-old-floor", floor: 3, content: "旧楼层", role: "assistant" },
@@ -2892,10 +2844,10 @@ test(
       { __messageIndex: true, index: 1 },
       { force: true },
     );
-    const oldEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
-
     const cleared = await fixture.runtime.clearCharacterData();
     assert.equal(cleared.ok, true);
+    assert.equal(fixture.runtime.store.getFloor(0).events.length, 0);
+    assert.equal(fixture.runtime.store.getFloor(1).events.length, 0);
 
     await fixture.runtime.analyzeFloor(
       { __messageIndex: true, index: 1 },
@@ -2914,10 +2866,6 @@ test(
       businessData.active_events.map((event) => event.event_id),
       [stored.events[0].event_id],
     );
-    assert.equal(
-      businessData.active_events.some((event) => event.event_id === oldEventId),
-      false,
-    );
     assert.equal(Object.keys(businessData.tracking_subjects).length, 1);
     assert.equal(
       Object.keys((await fixture.runtime.getTrackingRegistry()).character_registry.entities).length,
@@ -2926,6 +2874,158 @@ test(
     fixture.runtime.destroy();
   },
 );
+
+test("world and all clear survive Runtime reload without reviving deleted Floor facts", async () => {
+  const message = { message_id: "clear-reload-floor", floor: 2, content: "可重载楼层", role: "assistant" };
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  message.extra = {
+    bioweave: {
+      ...emptyFloor(),
+      floor_version: version,
+      analysis: { status: "success", floor_version: version },
+      events: [eventResult("clear-reload-event", { source: version })],
+      character_registry: {
+        schema_version: 1,
+        entities: { "character-1": { character_id: "character-1", display_name: "Alice" } },
+      },
+      world_model: { species: [{ name: "世界 A" }] },
+      world_model_meta: { saved_at: "fixture" },
+    },
+  };
+  const fixture = createFixture({ messages: [message] });
+  await fixture.runtime.init();
+
+  const worldResult = await fixture.runtime.clearWorldData();
+  assert.equal(worldResult.ok, true);
+  assert.equal(fixture.context.chat[0].extra.bioweave.world_model, null);
+  assert.equal(fixture.context.chat[0].extra.bioweave.world_model_meta, null);
+  assert.equal(fixture.context.chat[0].extra.bioweave.events.length, 1);
+
+  fixture.runtime.destroy();
+  const reloadedAfterWorld = createRuntime({ adapter: fixture.adapter });
+  await reloadedAfterWorld.init();
+  assert.equal((await reloadedAfterWorld.collectActiveBusinessData()).active_events.length, 1);
+  assert.equal(await reloadedAfterWorld.resolveWorldModelAtOrBefore(), null);
+
+  const allResult = await reloadedAfterWorld.clearAllBioWeaveData();
+  assert.equal(allResult.ok, true);
+  reloadedAfterWorld.destroy();
+  const reloadedAfterAll = createRuntime({ adapter: fixture.adapter });
+  await reloadedAfterAll.init();
+  const businessData = await reloadedAfterAll.collectActiveBusinessData();
+  assert.deepEqual(businessData.active_events, []);
+  assert.deepEqual(businessData.tracking_subjects, {});
+  assert.equal(await reloadedAfterAll.resolveWorldModelAtOrBefore(), null);
+  reloadedAfterAll.destroy();
+});
+
+test("failed World clear rebuilds Runtime and permits a subsequent World Model save", async () => {
+  const message = { message_id: "world-clear-failure-recovery", floor: 2, content: "世界模型重试", role: "assistant" };
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  message.extra = {
+    bioweave: {
+      ...emptyFloor(),
+      floor_version: version,
+      analysis: { status: "success", floor_version: version },
+      world_model: { species: [{ name: "旧世界" }] },
+      world_model_meta: { saved_at: "fixture" },
+    },
+  };
+  const fixture = createFixture({
+    messages: [message],
+    saveChatResponse: { commitState: "failed" },
+  });
+  await fixture.runtime.init();
+
+  const clearResult = await fixture.runtime.clearWorldData();
+  assert.equal(clearResult.ok, false);
+  assert.equal(clearResult.persistence.commitState, "failed");
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model, { species: [{ name: "旧世界" }] });
+
+  fixture.context.saveChat = async () => undefined;
+  const nextModel = { species: [{ name: "新世界" }] };
+  await fixture.runtime.saveWorldModel({ model: nextModel, meta: { saved_by: "retry" } });
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model, nextModel);
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model_meta, { saved_by: "retry" });
+  fixture.runtime.destroy();
+});
+
+test("unknown World clear recovers Runtime without treating the commit as success", async () => {
+  const message = { message_id: "world-clear-unknown-recovery", floor: 2, content: "世界模型未知提交", role: "assistant" };
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  message.extra = {
+    bioweave: {
+      ...emptyFloor(),
+      floor_version: version,
+      analysis: { status: "success", floor_version: version },
+      world_model: { species: [{ name: "旧世界" }] },
+      world_model_meta: { saved_at: "fixture" },
+    },
+  };
+  const fixture = createFixture({
+    messages: [message],
+    saveChatResponse: { commitState: "unknown" },
+  });
+  await fixture.runtime.init();
+
+  const clearResult = await fixture.runtime.clearWorldData();
+  assert.equal(clearResult.ok, false);
+  assert.equal(clearResult.persistence.commitState, "unknown");
+
+  fixture.context.saveChat = async () => undefined;
+  await fixture.runtime.saveWorldModel({
+    model: { species: [{ name: "重试世界" }] },
+    meta: { saved_by: "retry" },
+  });
+  assert.equal(fixture.context.chat[0].extra.bioweave.world_model.species[0].name, "重试世界");
+  fixture.runtime.destroy();
+});
+
+test("SillyTavern adapter treats a normal void saveChat as a confirmed commit", async () => {
+  const context = {
+    chatId: "chat-sillytavern-adapter",
+    chat: [{ message_id: "message-adapter", extra: {} }],
+    async saveChat() {},
+  };
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.SillyTavern = { getContext: () => context };
+  try {
+    const adapter = createSillyTavernAdapter();
+    assert.deepEqual(
+      await adapter.saveChat({ expectedChatId: context.chatId }),
+      { commitState: "confirmed" },
+    );
+    const result = await adapter.saveFloorBioWeave(
+      0,
+      0,
+      { ...emptyFloor(), future_field: { must_survive: true } },
+      context.chatId,
+    );
+    assert.deepEqual(result, { commitState: "confirmed" });
+    assert.deepEqual(context.chat[0].extra.bioweave.future_field, { must_survive: true });
+  } finally {
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
 
 test("Swipe switch reuses a still-valid target Swipe analysis", async () => {
   const message = {

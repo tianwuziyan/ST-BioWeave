@@ -66,15 +66,15 @@ const CHAT_FIELDS = Object.freeze({
   settings: Object.freeze({
     scope: 'chat',
     domain: LIFECYCLE_DOMAINS.CHAT_SETTINGS,
-    clearOn: Object.freeze(['all']),
-    clear: 'preserve_for_domain_clear',
+    clearOn: Object.freeze([]),
+    clear: 'preserve',
   }),
   data_lifecycle: Object.freeze({
     scope: 'chat',
     domain: LIFECYCLE_DOMAINS.LIFECYCLE_MARKER,
-    clearOn: Object.freeze(['all']),
-    special: Object.freeze({ character: 'character_reset_marker' }),
-    empty: Object.freeze({ character_reset: null }),
+    clearOn: Object.freeze([]),
+    clear: 'preserve',
+    empty: Object.freeze({}),
   }),
 });
 
@@ -90,24 +90,24 @@ const FLOOR_FIELDS = Object.freeze({
   floor_version: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.FLOOR_ANALYSIS,
-    clearOn: Object.freeze(['all']),
+    clearOn: Object.freeze([]),
     kind: 'binding_metadata',
   }),
   analysis: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.FLOOR_ANALYSIS,
-    clearOn: Object.freeze(['all']),
+    clearOn: Object.freeze(['character', 'all']),
   }),
   events: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.EVENTS,
-    clearOn: Object.freeze(['all']),
+    clearOn: Object.freeze(['character', 'all']),
   }),
   character_registry: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.FLOOR_IDENTITY,
     kind: 'authoritative_floor_snapshot',
-    clearOn: Object.freeze(['all']),
+    clearOn: Object.freeze(['character', 'all']),
   }),
   world_model: Object.freeze({
     scope: 'floor',
@@ -121,6 +121,21 @@ const FLOOR_FIELDS = Object.freeze({
     empty: null,
     clearOn: Object.freeze(['world', 'all']),
   }),
+});
+
+// User clear operations are intentionally allowlist-based.  A future Floor
+// field is preserved until its ownership and clear semantics are explicitly
+// added here; it must never become clearable merely by existing in a Floor.
+export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
+  character: Object.freeze(['analysis', 'events', 'character_registry']),
+  world: Object.freeze(['world_model', 'world_model_meta']),
+  all: Object.freeze([
+    'analysis',
+    'events',
+    'character_registry',
+    'world_model',
+    'world_model_meta',
+  ]),
 });
 
 const RUNTIME_FIELDS = Object.freeze([
@@ -183,6 +198,8 @@ export function isRegisteredField(scope, field) {
 }
 
 export function getClearableFields(scope, operation) {
+  if (scope === 'floor' && USER_CLEARABLE_FLOOR_FIELDS[operation])
+    return [...USER_CLEARABLE_FLOOR_FIELDS[operation]];
   const table =
     scope === 'global'
       ? GLOBAL_FIELDS_REGISTRY

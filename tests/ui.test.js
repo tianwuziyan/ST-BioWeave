@@ -2923,7 +2923,7 @@ test('settings data management uses three distinct confirmations and the Runtime
   assert.equal(confirmCalls.length, 3)
   assert.equal(new Set(confirmCalls.map(call => call.message)).size, 3)
   for (const call of confirmCalls) {
-    assert.match(call.message, /当前 Chat/)
+    assert.match(call.message, /当前聊天/)
     assert.match(call.message, /聊天正文/)
     assert.match(call.message, /Swipe 正文/)
     assert.match(call.message, /其它插件/)

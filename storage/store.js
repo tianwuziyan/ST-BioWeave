@@ -898,13 +898,6 @@ export function createStore(adapter, boundary = null) {
       if (!liveRoot || typeof liveRoot !== "object")
         throw new Error("CHAT_ROOT_CHANGED");
       for (const field of plan.chat.fields) {
-        if (field === "data_lifecycle.character_reset") {
-          const marker = chatRoot?.data_lifecycle?.character_reset;
-          liveRoot.data_lifecycle ??= {};
-          if (marker === undefined) delete liveRoot.data_lifecycle.character_reset;
-          else liveRoot.data_lifecycle.character_reset = cloneValue(marker);
-          continue;
-        }
         if (Object.prototype.hasOwnProperty.call(chatRoot, field))
           liveRoot[field] = cloneValue(chatRoot[field]);
         else delete liveRoot[field];

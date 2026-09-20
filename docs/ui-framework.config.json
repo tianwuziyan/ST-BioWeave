@@ -667,11 +667,11 @@
         },
         {
           "key": "all",
-          "label": "清除全部 BioWeave 数据",
+          "label": "清除全部分析数据",
           "hook": "data-bioweave-action=clear-all-bioweave-data",
           "operationHook": "data-bioweave-clear-operation=all",
           "buttonClass": "bioweave-danger-action",
-          "description": "删除当前 Chat 的全部 BioWeave Chat-local、Floor-local、Swipe-local 与 derived 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置永不删除。"
+          "description": "仅清除当前聊天中由 BioWeave 生成的分析数据；API、世界书、角色卡、插件设置、聊天正文、所有 Swipe 正文和其它插件数据不会被删除。"
         }
       ],
       "confirmation": {

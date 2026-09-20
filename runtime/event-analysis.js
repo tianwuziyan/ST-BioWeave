@@ -581,80 +581,6 @@ export function createEventAnalysisCoordinator({
     return invalidatedFloors.has(floorExecutionKey(state.version));
   }
 
-  function resetBoundary(chatData) {
-    const marker = chatData?.data_lifecycle?.character_reset;
-    if (!marker || typeof marker !== "object") return null;
-    const rawMessageIndex = marker.message_index;
-    let messageIndex =
-      rawMessageIndex === null || rawMessageIndex === undefined || rawMessageIndex === ''
-        ? NaN
-        : Number(rawMessageIndex);
-    if (!Number.isFinite(messageIndex) && marker.message_id !== undefined) {
-      const currentMessages = messages();
-      messageIndex = currentMessages.findIndex(
-        (message, index) =>
-          String(messageId(message, index)) === String(marker.message_id),
-      );
-    }
-    const rawFloor = marker.floor;
-    const floor =
-      rawFloor === null || rawFloor === undefined || rawFloor === ''
-        ? NaN
-        : Number(rawFloor);
-    return {
-      messageIndex: Number.isFinite(messageIndex) ? Math.trunc(messageIndex) : null,
-      floor: Number.isFinite(floor) ? floor : null,
-      messageId: marker.message_id ?? null,
-      createdAt: marker.created_at ?? null,
-    };
-  }
-
-  function timestampMilliseconds(value) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value !== "string" || !value.trim()) return NaN;
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) return numeric;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : NaN;
-  }
-
-  function stateWasReanalyzedAfterReset(state, boundary) {
-    const resetAt = timestampMilliseconds(boundary?.createdAt);
-    const analysis = state?.floorData?.analysis;
-    const analyzedAt = timestampMilliseconds(
-      analysis?.analyzed_at ?? analysis?.last_analyzed_at,
-    );
-    return Number.isFinite(resetAt) && Number.isFinite(analyzedAt) && analyzedAt > resetAt;
-  }
-
-  function stateIsAfterReset(state, boundary) {
-    if (boundary === null) return true;
-    if (Number.isFinite(boundary.messageIndex)) {
-      if (Number(state.index) > boundary.messageIndex) return true;
-      if (Number(state.index) === boundary.messageIndex)
-        return stateWasReanalyzedAfterReset(state, boundary);
-      return false;
-    }
-    if (Number.isFinite(boundary.floor)) {
-      if (Number(state.version.floor) > boundary.floor) return true;
-      if (Number(state.version.floor) === boundary.floor)
-        return stateWasReanalyzedAfterReset(state, boundary);
-      return false;
-    }
-    // An old marker with no resolvable ordering information is not proof that
-    // an existing Floor is newer.  Fail closed until a new Floor is analyzed.
-    return false;
-  }
-
-  function eventIsAfterReset(event, boundary, state = null) {
-    if (boundary === null) return true;
-    if (state && !stateIsAfterReset(state, boundary)) return false;
-    if (Number.isFinite(boundary.messageIndex)) return state !== null;
-    if (Number.isFinite(boundary.floor))
-      return Number(event?.source?.floor) > boundary.floor;
-    return false;
-  }
-
   function currentFloorDataIsReusable(index, swipeId, version) {
     const floorData = store.getFloor?.(index, swipeId);
     return Boolean(
@@ -834,7 +760,6 @@ export function createEventAnalysisCoordinator({
   }
   async function findPreviousSuccessfulBioWeave(target) {
     // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
-    const resetAt = resetBoundary(store.getChat?.(target.chatId));
     for (let index = target.index - 1; index >= 0; index -= 1) {
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
@@ -843,7 +768,6 @@ export function createEventAnalysisCoordinator({
       if (analysis?.status !== "success") continue;
       const candidate = await resolveFloor({ __messageIndex: true, index });
       if (candidate.version.floor >= target.version.floor) continue;
-      if (!stateIsAfterReset(candidate, resetAt)) continue;
       if (isFloorInvalidated(candidate)) continue;
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
         continue;
@@ -873,7 +797,6 @@ export function createEventAnalysisCoordinator({
   }
   async function resolveWorldModelAtOrBefore(selector = null, { strictBefore = false } = {}) {
     const target = await resolveFloor(selector);
-    const resetAt = resetBoundary(store.getChat?.(target.chatId));
     for (let index = target.index - (strictBefore ? 1 : 0); index >= 0; index -= 1) {
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
@@ -885,7 +808,7 @@ export function createEventAnalysisCoordinator({
       }
       if (candidate.version.floor > target.version.floor) continue;
       if (!strictBefore && index === target.index && !sameFloorVersion(candidate.version, target.version)) continue;
-      if (!stateIsAfterReset(candidate, resetAt) || isFloorInvalidated(candidate)) continue;
+      if (isFloorInvalidated(candidate)) continue;
       const floorData = store.getFloor?.(index, swipeId) ?? {};
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
       if (floorData.world_model === null || floorData.world_model === undefined) continue;
@@ -977,15 +900,12 @@ export function createEventAnalysisCoordinator({
   async function collectCurrentDerivedState(token, chatData = null) {
     const states = await collectCurrentFloorStates(token);
     const currentChat = chatData ?? store.getChat(token.chatId);
-    const resetAt = resetBoundary(currentChat);
     const validStates = states.filter(
-      (state) => !isFloorInvalidated(state) && stateIsAfterReset(state, resetAt),
+      (state) => !isFloorInvalidated(state),
     );
     const activeEvents = sortEvents(
       validStates
-        .flatMap((state) =>
-          state.events.filter((event) => eventIsAfterReset(event, resetAt, state)),
-        ),
+        .flatMap((state) => state.events),
     );
     let world = null;
     try {
@@ -2055,15 +1975,23 @@ export function createEventAnalysisCoordinator({
   }
   async function completeClear(result) {
     if (!result) return result;
-    await invalidateForClear({ reason: `clear:${result.domain ?? "unknown"}` });
-    if (
-      result.ok === true &&
-      result.persistence?.commitState === "confirmed" &&
-      result.changed === true &&
-      result.sourceTargeted !== true
-    ) {
-      await primeLifecycleSnapshot();
-      await refreshTrackingRegistry(`clear:${result.domain ?? "unknown"}`);
+    try {
+      await invalidateForClear({ reason: `clear:${result.domain ?? "unknown"}` });
+      // A failed or unknown current-Chat clear has already invalidated the
+      // runtime before its commit. Rebuild from the post-rollback/current
+      // Floor state as well, otherwise a failed clear leaves the runtime in a
+      // permanently invalidated half-state. Source-targeted clears belong to
+      // another Chat and must not refresh the current Chat's registry.
+      if (result.sourceTargeted !== true) {
+        await primeLifecycleSnapshot();
+        await refreshTrackingRegistry(`clear:${result.domain ?? "unknown"}`);
+      }
+    } catch (error) {
+      // The persistence result remains authoritative. A failed/unknown clear
+      // must still reach its caller as such, while a confirmed clear keeps
+      // the existing runtime-refresh failure reporting behavior.
+      if (result.ok === true) throw error;
+      console.error("[BioWeave] failed clear state recovery failed", error);
     }
     return result;
   }

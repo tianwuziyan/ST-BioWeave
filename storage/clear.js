@@ -211,48 +211,6 @@ function clearDefault(scope, field) {
   return undefined;
 }
 
-function lastMessageBoundary(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || typeof message !== 'object') continue;
-    return {
-      message_id: messageIdOf(message, index),
-      message_index: index,
-      floor: message.floor ?? message.metadata?.floor ?? null,
-    };
-  }
-  // `-1` is an explicit boundary before the first future message. Keeping
-  // this distinct from an unknown/legacy marker lets a character reset made
-  // in an empty Chat accept the first post-reset Floor without treating it as
-  // historical data.
-  return { message_id: null, message_index: -1, floor: null };
-}
-
-function markerBoundaryEqual(left, right) {
-  return Boolean(
-    left &&
-      right &&
-      String(left.chat_id ?? left.chatId) === String(right.chat_id) &&
-      String(left.message_id) === String(right.message_id) &&
-      Object.is(left.message_index ?? null, right.message_index ?? null) &&
-      Object.is(left.floor ?? null, right.floor ?? null),
-  );
-}
-
-function makeCharacterResetMarker(chatId, messages, now, previous) {
-  const boundary = lastMessageBoundary(messages);
-  const next = {
-    schema_version: 1,
-    chat_id: chatId,
-    message_id: boundary.message_id,
-    message_index: boundary.message_index,
-    floor: boundary.floor,
-    created_at: now(),
-  };
-  if (markerBoundaryEqual(previous, next)) return cloneValue(previous);
-  return next;
-}
-
 function chatRootForState(state, chatId) {
   const root = state.chatRoot;
   return root === undefined ? undefined : cloneValue(root);
@@ -262,82 +220,20 @@ function applyChatClear(root, domain, chatId, messages, now) {
   const before = root === undefined ? undefined : cloneValue(root);
   if (before !== undefined && !isRecord(before))
     throw errorWithCode('CHAT_ROOT_INVALID');
-  if (domain === 'all') {
-    if (before === undefined) return { before, after: undefined, fields: [] };
-    return {
-      before,
-      after: emptyChat(chatId),
-      fields: Object.keys(before).filter((field) =>
-        !deepEqual(before[field], emptyChat(chatId)[field]),
-      ),
-    };
-  }
-
-  const defaults = emptyChat(chatId);
-  const clearableFields = getClearableFields('chat', domain);
-  const hasChatData = Boolean(
-    before &&
-      clearableFields.some(
-        (field) => hasOwn(before, field) && !deepEqual(before[field], defaults[field]),
-      ),
-  );
-  const hasCharacterBoundary =
-    domain === 'character' &&
-    messages.some((message) =>
-      enumerateOwnedSlots([message]).some((slot) => {
-        const value = slot.value;
-        if (!value || typeof value !== 'object') return false;
-        if (Array.isArray(value.events) && value.events.length > 0) return true;
-        return value.character_registry?.entities && Object.keys(value.character_registry.entities).length > 0;
-      }),
-    );
-  if (!hasChatData && !hasCharacterBoundary && domain !== 'character') {
-    return { before, after: undefined, fields: [] };
-  }
-  const after = before ? cloneValue(before) : emptyChat(chatId);
-  const changedFields = [];
-  for (const field of clearableFields) {
-    if (!hasOwn(after, field)) continue;
-    const next = hasOwn(defaults, field)
-      ? cloneValue(defaults[field])
-      : clearDefault('chat', field, chatId);
-    if (!deepEqual(after[field], next)) changedFields.push(field);
-    after[field] = next;
-  }
-
-  if (domain === 'character') {
-    const lifecycle = isRecord(after.data_lifecycle)
-      ? after.data_lifecycle
-      : { character_reset: null };
-    const marker = makeCharacterResetMarker(
-      chatId,
-      messages,
-      now,
-      lifecycle.character_reset,
-    );
-    if (!deepEqual(lifecycle.character_reset, marker)) {
-      changedFields.push('data_lifecycle.character_reset');
-      lifecycle.character_reset = marker;
-    }
-    after.data_lifecycle = lifecycle;
-  }
-  return { before, after, fields: [...new Set(changedFields)] };
+  // Data Management never clears Chat metadata.  The arguments remain in the
+  // helper signature because the clear plan still reports owner state and
+  // persistence safety uniformly for all operations.
+  void domain;
+  void chatId;
+  void messages;
+  void now;
+  return { before, after: before === undefined ? undefined : cloneValue(before), fields: [] };
 }
 
 function applyFloorClear(slot, domain) {
   const before = slot.value === undefined ? undefined : cloneValue(slot.value);
   if (before === undefined) return { before, after: undefined, fields: [] };
-  if (!isRecord(before)) {
-    if (domain === 'all') return { before, after: undefined, fields: ['<root>'] };
-    throw errorWithCode('FLOOR_ROOT_INVALID', { slotId: slot.slotId });
-  }
-  if (domain === 'all') {
-    return {
-      before,
-      after: undefined,
-      fields: Object.keys(before),
-    };
-  }
+  if (!isRecord(before)) throw errorWithCode('FLOOR_ROOT_INVALID', { slotId: slot.slotId });
   const after = cloneValue(before);
   const fields = [];
   for (const field of getClearableFields('floor', domain)) {
@@ -355,7 +251,6 @@ function dependenciesFor(domain) {
   if (domain === 'character') return ['character'];
   if (domain === 'world') return ['world'];
   return [
-    'chat_settings',
     'world',
     'character',
     'events',

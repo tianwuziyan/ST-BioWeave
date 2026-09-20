@@ -1984,6 +1984,11 @@ export function createApp(runtime, options = {}) {
     worldModelAbortController = null
     worldModelAbortConfirmOpen = false
     if (controller && !controller.signal?.aborted) controller.abort()
+    // Clear operations deliberately abort an in-flight request before
+    // touching Floor data. Its stale-token catch exits before the normal
+    // World Model error handler can release `busy`; release it here so a
+    // failed/unknown clear cannot block the next analysis forever.
+    if (worldModelState.busy) worldModelState = { ...worldModelState, busy: false }
   }
   function dataManagementOperationForKey(value) {
     const key = String(value ?? '').trim()
@@ -2014,9 +2019,9 @@ export function createApp(runtime, options = {}) {
   function dataClearConfirmation(operation) {
     const chatLabel = currentChatLabel()
     const messages = {
-      character: `当前 Chat「${chatLabel}」的人物数据将被永久删除且不可撤销：删除人物当前状态、tracking、人物派生结果和人物 runtime cache；聊天正文、所有 Swipe 正文、事件/楼层分析、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
-      world: `当前 Chat「${chatLabel}」的世界数据将被永久删除且不可撤销：删除 World Model、世界派生引用和世界 runtime cache；人物独立数据、事件/楼层分析、聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
-      all: `当前 Chat「${chatLabel}」的全部 BioWeave 数据将被永久删除且不可撤销：删除 Chat-local、Floor-local、Swipe-local 与 derived BioWeave 数据；聊天正文、所有 Swipe 正文、其它插件 chat/message/swipe extra、API / Secret / 全局设置均保留。确定继续吗？`,
+      character: `当前聊天「${chatLabel}」的人物分析数据将被永久删除且不可撤销：清除人物相关 Floor 分析、事件和 canonical identity；API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？`,
+      world: `当前聊天「${chatLabel}」的 World Model 分析数据将被永久删除且不可撤销：清除 Floor-owned World Model 及其 metadata；人物事件、identity、API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？`,
+      all: `当前聊天「${chatLabel}」的全部分析数据将被永久删除且不可撤销：仅清除 BioWeave 明确允许清除的 Floor 分析数据；API / Secret / 全局设置、世界书、角色卡、插件设置、Chat settings、聊天正文、Swipe 正文和其它插件数据均保留。确定继续吗？`,
     }
     return messages[operation.key] ?? messages.all
   }

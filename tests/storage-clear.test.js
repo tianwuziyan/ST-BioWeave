@@ -10,7 +10,6 @@ function completeRoot(chatId) {
     ...emptyChat(chatId),
     settings: { ...emptyChat(chatId).settings, custom: true },
     data_lifecycle: {
-      character_reset: null,
       future_marker: 'preserve-on-domain-clear',
     },
   };
@@ -36,6 +35,7 @@ function completeFloor(marker, chatId, swipeId = 0) {
     },
     world_model: { species: [{ name: `世界-${marker}` }] },
     world_model_meta: { saved_at: marker },
+    future_field: { must_survive: true },
   };
 }
 
@@ -149,8 +149,9 @@ function floorRoots(fixture) {
   ];
 }
 
-test('full clear removes every exact Chat/Floor/Swipe BioWeave root and preserves host data', async () => {
+test('full clear removes only the explicit Floor allowlist and preserves host data', async () => {
   const fixture = makeFixture();
+  const chatBefore = cloneValue(fixture.chatMetadata.bioweave);
   const globalBefore = cloneValue(fixture.globalSettings);
   const textAndHostBefore = {
     metadata: fixture.chatMetadata.unrelated_plugin_metadata,
@@ -178,47 +179,44 @@ test('full clear removes every exact Chat/Floor/Swipe BioWeave root and preserve
     },
     textAndHostBefore,
   );
-  assert.deepEqual(fixture.chatMetadata.bioweave, emptyChat('chat-a'));
-  assert.deepEqual(floorRoots(fixture), [undefined, undefined, undefined, undefined, undefined]);
-  assert.equal(Object.hasOwn(fixture.messages[1].extra, 'bioweave'), false);
-  assert.equal(Object.hasOwn(fixture.messages[1].swipe_info[2].extra, 'bioweave'), false);
+  assert.deepEqual(fixture.chatMetadata.bioweave, chatBefore);
+  for (const root of floorRoots(fixture)) {
+    assert.equal(root.analysis, null);
+    assert.deepEqual(root.events, []);
+    assert.deepEqual(root.character_registry, { schema_version: 1, entities: {} });
+    assert.equal(root.world_model, null);
+    assert.equal(root.world_model_meta, null);
+    assert.ok(root.v);
+    assert.ok(root.floor_version);
+    assert.deepEqual(root.future_field, { must_survive: true });
+  }
 });
 
-test('character and world clear use domain ranges and keep historical Floor facts', async () => {
+test('character and world clear use domain allowlists and preserve unrelated facts', async () => {
   const fixture = makeFixture();
   const globalBefore = cloneValue(fixture.globalSettings);
   const settingsBefore = cloneValue(fixture.chatMetadata.bioweave.settings);
-  const analysisBefore = cloneValue(fixture.messages[0].extra.bioweave.analysis);
-  const eventsBefore = cloneValue(fixture.messages[0].extra.bioweave.events);
-  const identityBefore = cloneValue(fixture.messages[0].extra.bioweave.character_registry);
 
   const characterResult = await fixture.service.clearCharacterData();
   assert.equal(characterResult.ok, true);
   assert.deepEqual(fixture.chatMetadata.bioweave.settings, settingsBefore);
-  for (const field of [
-    'character_profiles',
-    'character_registry',
-    'tracking_subjects',
-    'tracking_candidates',
-    'relationships',
-    'index',
-    'world_model',
-    'world_model_meta',
-  ]) assert.equal(Object.hasOwn(fixture.chatMetadata.bioweave, field), false);
-  assert.ok(fixture.chatMetadata.bioweave.data_lifecycle.character_reset);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.analysis, analysisBefore);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.events, eventsBefore);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.character_registry, identityBefore);
+  assert.deepEqual(fixture.chatMetadata.bioweave.data_lifecycle, { future_marker: 'preserve-on-domain-clear' });
+  assert.equal(fixture.messages[0].extra.bioweave.analysis, null);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.events, []);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.character_registry, { schema_version: 1, entities: {} });
+  assert.ok(fixture.messages[0].extra.bioweave.world_model);
+  assert.ok(fixture.messages[0].extra.bioweave.world_model_meta);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.future_field, { must_survive: true });
   assert.deepEqual(fixture.globalSettings, globalBefore);
 
   const worldResult = await fixture.service.clearWorldData();
   assert.equal(worldResult.ok, true);
-  assert.equal(fixture.chatMetadata.bioweave, undefined);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.analysis, analysisBefore);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.events, eventsBefore);
-  assert.deepEqual(fixture.messages[0].extra.bioweave.character_registry, identityBefore);
+  assert.deepEqual(fixture.chatMetadata.bioweave.settings, settingsBefore);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.events, []);
   assert.equal(fixture.messages[0].extra.bioweave.world_model, null);
   assert.equal(fixture.messages[0].extra.bioweave.world_model_meta, null);
+  assert.ok(fixture.messages[0].extra.bioweave.floor_version);
+  assert.deepEqual(fixture.messages[0].extra.bioweave.future_field, { must_survive: true });
   assert.deepEqual(fixture.globalSettings, globalBefore);
   assert.deepEqual(fixture.secretStoreCalls, []);
 });
@@ -294,14 +292,18 @@ test('source-targeted clear removes source A only after reading its latest revis
   assert.equal(savedOwner, 'chat-a');
   assert.deepEqual(currentMetadata, bBefore.metadata);
   assert.deepEqual(currentMessages, bBefore.messages);
-  assert.deepEqual(sourceState.chatMetadata.bioweave, emptyChat('chat-a'));
-  assert.deepEqual(
-    sourceState.messages.flatMap((message) => [
-      message.extra?.bioweave,
-      ...(message.swipe_info ?? []).map((slot) => slot.extra?.bioweave),
-    ]),
-    [undefined, undefined, undefined, undefined, undefined],
-  );
+  assert.deepEqual(sourceState.chatMetadata.bioweave, source.chatMetadata.bioweave);
+  for (const root of sourceState.messages.flatMap((message) => [
+    message.extra?.bioweave,
+    ...(message.swipe_info ?? []).map((slot) => slot.extra?.bioweave),
+  ])) {
+    assert.equal(root.analysis, null);
+    assert.deepEqual(root.events, []);
+    assert.deepEqual(root.character_registry, { schema_version: 1, entities: {} });
+    assert.equal(root.world_model, null);
+    assert.equal(root.world_model_meta, null);
+    assert.deepEqual(root.future_field, { must_survive: true });
+  }
 });
 
 test('manual Clear All and source Start New Chat cleanup share the same registry removal coverage', async () => {
@@ -352,14 +354,18 @@ test('manual Clear All and source Start New Chat cleanup share the same registry
   assert.equal(manualResult.ok, true);
   assert.equal(sourceResult.ok, true);
   assert.deepEqual(sourceResult.removed, manualResult.removed);
-  assert.deepEqual(sourceState.chatMetadata.bioweave, emptyChat('chat-a'));
-  assert.deepEqual(
-    sourceState.messages.flatMap((message) => [
-      message.extra?.bioweave,
-      ...(message.swipe_info ?? []).map((slot) => slot.extra?.bioweave),
-    ]),
-    [undefined, undefined, undefined, undefined, undefined],
-  );
+  assert.deepEqual(sourceState.chatMetadata.bioweave, source.chatMetadata.bioweave);
+  for (const root of sourceState.messages.flatMap((message) => [
+    message.extra?.bioweave,
+    ...(message.swipe_info ?? []).map((slot) => slot.extra?.bioweave),
+  ])) {
+    assert.equal(root.analysis, null);
+    assert.deepEqual(root.events, []);
+    assert.deepEqual(root.character_registry, { schema_version: 1, entities: {} });
+    assert.equal(root.world_model, null);
+    assert.equal(root.world_model_meta, null);
+    assert.deepEqual(root.future_field, { must_survive: true });
+  }
 });
 
 test('source clear fails closed when the owner writer cannot prove revision CAS', async () => {
@@ -508,9 +514,12 @@ test('source verification detects a boundary-time header change instead of claim
 });
 
 test('known persistence failure restores the exact in-memory snapshot and is not reported as success', async () => {
+  let saveCalls = 0;
   const fixture = makeFixture({
-    saveMetadata: async () => {
-      throw Object.assign(new Error('metadata write rejected'), { code: 'SAVE_FAILED' });
+    saveChat: async () => {
+      saveCalls += 1;
+      if (saveCalls > 1) return { commitState: 'confirmed' };
+      throw Object.assign(new Error('Floor write rejected'), { code: 'SAVE_FAILED' });
     },
   });
   const before = { metadata: cloneValue(fixture.chatMetadata), messages: cloneValue(fixture.messages) };
@@ -518,12 +527,12 @@ test('known persistence failure restores the exact in-memory snapshot and is not
 
   assert.equal(result.ok, false);
   assert.equal(result.persistence.commitState, 'failed');
-  assert.equal(result.persistence.rollback.state, 'memory_confirmed');
+  assert.equal(result.persistence.rollback.state, 'confirmed');
   assert.deepEqual(fixture.chatMetadata, before.metadata);
   assert.deepEqual(fixture.messages, before.messages);
 });
 
-test('a known Floor save failure compensates an already persisted metadata clear', async () => {
+test('a known Floor save failure is compensated without a Chat metadata write', async () => {
   let saveChatCalls = 0;
   const fixture = makeFixture({
     saveChat: async () => {
@@ -544,13 +553,13 @@ test('a known Floor save failure compensates an already persisted metadata clear
   assert.equal(result.persistence.commitState, 'failed');
   assert.equal(result.persistence.rollback.state, 'confirmed');
   assert.equal(result.persistence.rollback.durable, 'confirmed');
-  assert.deepEqual(result.persistence.rollback.steps, ['metadata', 'messages']);
+  assert.deepEqual(result.persistence.rollback.steps, ['messages']);
   assert.equal(saveChatCalls, 2);
   assert.deepEqual(fixture.chatMetadata, before.metadata);
   assert.deepEqual(fixture.messages, before.messages);
 });
 
-test('an unconfirmed compensating save is reported as partial failure', async () => {
+test('an unconfirmed compensating Floor save is reported as partial failure', async () => {
   const fixture = makeFixture({
     saveChat: async () => {
       throw Object.assign(new Error('Floor persistence unavailable'), {
@@ -566,8 +575,8 @@ test('an unconfirmed compensating save is reported as partial failure', async ()
   assert.equal(result.persistence.partial, true);
   assert.equal(result.changed, true);
   assert.equal(result.persistence.rollback.state, 'failed');
-  assert.equal(result.persistence.rollback.durable, 'partial');
-  assert.deepEqual(result.persistence.rollback.steps, ['metadata']);
+  assert.equal(result.persistence.rollback.durable, 'not_confirmed');
+  assert.deepEqual(result.persistence.rollback.steps, []);
   assert.equal(result.persistence.rollback.error, 'FLOOR_SAVE_FAILED');
 });
 
