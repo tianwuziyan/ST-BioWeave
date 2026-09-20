@@ -770,8 +770,9 @@
       }
       .bw-event-review-row {
         display: grid;
-        grid-template-columns: max-content max-content minmax(170px, 1.1fr) minmax(130px, 0.9fr) max-content;
-        gap: 8px;
+        grid-template-columns: 166px minmax(0, 1fr) max-content 16px;
+        grid-template-areas: 'time main status chevron';
+        gap: 12px;
         align-items: center;
         min-width: 0;
         min-height: 45px;
@@ -792,6 +793,12 @@
         white-space: nowrap;
       }
       .bw-event-review-time {
+        grid-area: time;
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        padding-right: 12px;
+        border-right: 1px solid var(--bw-line-soft);
         color: var(--bw-muted);
         font-size: 11px;
       }
@@ -805,14 +812,18 @@
         font-size: 11px;
       }
       .bw-event-review-time small {
+        flex: 0 0 auto;
         color: var(--bw-accent);
-        font-size: 9px;
+        font-size: 10px;
         line-height: 1;
+        white-space: nowrap;
       }
       .bw-event-review-main {
-        display: flex;
+        display: grid;
+        grid-area: main;
+        grid-template-columns: minmax(110px, .8fr) minmax(170px, 1.4fr) max-content;
         align-items: baseline;
-        gap: 7px;
+        gap: 10px;
       }
       .bw-event-review-main b {
         flex: 0 0 auto;
@@ -826,16 +837,36 @@
         white-space: nowrap;
       }
       .bw-event-review-detail {
+        min-width: 0;
         color: var(--bw-muted);
         font-size: 11px;
       }
       .bw-event-review-row > .bw-badge {
+        grid-area: status;
         justify-self: end;
       }
+      .bw-event-review-chevron { grid-area: chevron; color: var(--bw-muted); font-size: 13px; line-height: 1; }
       .bw-event-review-detail-panel {
         padding: 8px 0;
         border-bottom: 1px solid var(--bw-line-soft);
       }
+      .bw-event-form {
+        display: none;
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid var(--bw-line);
+        border-radius: 7px;
+        background: var(--bw-panel-raised);
+      }
+      .bw-event-form.open { display: block; }
+      .bw-event-form h3 { color: var(--bw-text); font-size: 13px; line-height: 1.4; }
+      .bw-event-form > p { margin-top: 2px; color: var(--bw-muted); font-size: 10px; }
+      .bw-event-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
+      .bw-event-form label { display: grid; gap: 3px; color: var(--bw-text-2); font-size: 10px; }
+      .bw-event-form .bw-input,
+      .bw-event-form .bw-select { min-height: 28px; padding: 4px 7px; font-size: 11px; }
+      .bw-event-form textarea.bw-input { min-height: 58px; line-height: 1.4; }
+      .bw-event-form .full { grid-column: 1 / -1; }
       .bw-event-review-foot {
         display: flex;
         align-items: center;
@@ -1701,13 +1732,15 @@
         .bw-event-review-row {
           grid-template-columns: minmax(0, 1fr) max-content auto;
           grid-template-rows: auto auto;
-          grid-template-areas: 'time relative status' 'main main detail';
+          grid-template-areas: 'time status chevron' 'main main main';
           gap: 3px 7px;
           min-height: 52px;
           padding: 7px 0;
         }
         .bw-event-review-time {
           grid-area: time;
+          padding-right: 0;
+          border-right: 0;
           font-size: 10px;
         }
         .bw-event-review-main {
@@ -1720,12 +1753,16 @@
           font-size: 10px;
         }
         .bw-event-review-detail {
-          grid-area: detail;
+          grid-column: 3;
+          grid-row: 2;
           justify-self: end;
           font-size: 10px;
         }
         .bw-event-review-row > .bw-badge {
           grid-area: status;
+        }
+        .bw-event-review-chevron {
+          grid-area: chevron;
         }
         .bw-event-review-foot {
           align-items: flex-start;
@@ -1956,11 +1993,15 @@
               <div class="bw-event-review-list">
                 <details class="bw-event-review-item" data-bioweave-event-id="runtime-event-id">
                   <summary class="bw-event-review-row">
-                    <span class="bw-event-review-time"><b>Runtime story time</b></span
-                    ><small class="bw-event-review-relative">相对时间</small><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 追踪对象摘要</small></span
-                    ><span class="bw-event-review-detail">n 个追踪对象</span><span class="bw-badge good">已确认</span>
+                    <span class="bw-event-review-time"><b>Runtime Story Time</b><small class="bw-event-review-relative">相对时间</small></span
+                    ><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 参与者摘要</small><span class="bw-event-review-detail">n 个追踪对象</span></span
+                    ><span class="bw-badge good">已确认</span><span class="bw-event-review-chevron" aria-hidden="true">⌄</span>
                   </summary>
-                  <div class="bw-event-review-detail-panel">原有事件事实、妊娠相关性、证据、编辑和删除操作位于展开内容。</div>
+                  <div class="bw-event-review-detail-panel">
+                    <div class="bw-event-detail-grid"><section class="bw-event-detail-section"><h4>妊娠相关性</h4><dl class="bw-data-list"><div><dt>与妊娠相关</dt><dd>是</dd></div><div><dt>判断置信度</dt><dd>Runtime DTO</dd></div></dl></section><section class="bw-event-detail-section"><h4>事件证据</h4><ul class="bw-event-evidence"><li>Runtime 事件证据。</li></ul></section></div>
+                    <div class="bw-event-detail-actions"><button class="bw-secondary-action" type="button" data-bioweave-action="edit-event">编辑事件</button><button class="bw-danger-action" type="button" data-bioweave-action="delete-event">删除事件</button></div>
+                    <form class="bw-card bw-event-form" data-bioweave-event-form><h3>编辑当前有效事件</h3><p>事件 ID 为只读；保存由当前页面处理。</p><div class="bw-event-form-grid"><label>事件 ID<input class="bw-input" readonly></label><label>类型<input class="bw-input"></label><label>状态<select class="bw-select"><option>已确认</option></select></label><label>地点<input class="bw-input"></label><label class="full">剧情时间<textarea class="bw-input"></textarea></label><label class="full">参与者 / 角色<textarea class="bw-input"></textarea></label><label class="full">事件证据<textarea class="bw-input"></textarea></label></div><div class="bw-event-detail-actions"><button class="bw-primary-action" type="button" data-bioweave-action="save-event">保存事件</button><button class="bw-secondary-action" type="button" data-bioweave-action="cancel-event-edit">取消</button></div></form>
+                  </div>
                 </details>
               </div>
               <div class="bw-event-review-foot">

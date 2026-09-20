@@ -1358,6 +1358,8 @@ export function createRuntime({
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
+    getCurrentCharacterIdentity: eventAnalysis.getCurrentCharacterIdentity,
+    updateCharacterAliases: eventAnalysis.updateCharacterAliases,
     getCurrentStoryTime: storyTimeCoordinator.getCurrentStoryTime,
     getCurrentStoryTimeInfo: storyTimeCoordinator.getCurrentStoryTimeInfo,
     getStoryTimeDebugTrace: storyTimeCoordinator.getDebugTrace,

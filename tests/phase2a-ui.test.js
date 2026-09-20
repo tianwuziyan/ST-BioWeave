@@ -140,6 +140,26 @@ test('characters page renders every supplied tracking subject', () => {
   assert.match(html, /subject_b_display/);
 });
 
+test('character detail exposes a read/write nickname editor without changing the displayed canonical name', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '柳如烟', exposure_event_ids: [], status: 'active'}],
+    characterProfiles: {char: {character_id: 'char-a', display_name: '柳如烟'}},
+    aliasEditor: {open: true, loading: false, characterId: 'char-a', draftAliases: ['如烟', '烟儿'], saving: false},
+  });
+  assert.match(html, /data-bioweave-action="open-character-aliases"/);
+  assert.match(html, /昵称 \/ 别名/);
+  assert.match(html, /用于识别同一人物，不会改变正式名称“柳如烟”。/);
+  assert.match(html, /2 个/);
+  assert.match(html, /bioweave-character-alias-field/);
+  assert.match(html, /bioweave-character-alias-remove/);
+  assert.match(html, /value="如烟"/);
+  assert.match(html, /value="烟儿"/);
+  assert.match(html, /data-bioweave-action="save-character-aliases"/);
+  assert.match(html, /display_name|柳如烟/);
+  assert.doesNotMatch(html, /character_registry/);
+});
+
 test('events page distinguishes not analyzed from analyzed with zero events', () => {
   const pending = eventsPage({analysisStatus: {state: 'not_analyzed'}});
   assert.match(pending, /当前 Chat 尚无 BiologicalEvent。/);
@@ -170,7 +190,7 @@ test('event row orders Story Time, relative time, event details, tracking count,
     activeEvents: [{...event, story_time: storyTime}],
     currentStoryTimeDifferences: {'evt-1': {value: 60, unit: 'day'}},
   });
-  assert.match(html, /class="bioweave-event-review-time"[^>]*>[\s\S]*class="bioweave-event-story-time">羲和1年3月4日 巳时中<\/b><\/span>[\s\S]*class="bioweave-event-relative-time bioweave-event-review-relative">60天前<\/small>[\s\S]*class="bioweave-event-review-main"[\s\S]*class="bioweave-event-review-detail"[\s\S]*class="bioweave-badge/);
+  assert.match(html, /class="bioweave-event-review-time"[^>]*>[\s\S]*class="bioweave-event-story-time">羲和1年3月4日 巳时中<\/b>[\s\S]*class="bioweave-event-relative-time bioweave-event-review-relative">60天前<\/small><\/span>[\s\S]*class="bioweave-event-review-main"[\s\S]*class="bioweave-event-review-type"[\s\S]*class="bioweave-event-review-meta"[\s\S]*class="bioweave-event-review-detail"[\s\S]*class="bioweave-badge[\s\S]*class="bioweave-event-review-chevron"/);
   assert.match(html, /亲密互动/);
   assert.match(html, /花园 · 阿甲 · 阿乙/);
 });
@@ -275,7 +295,8 @@ test('character exposure visual divider follows the relative Story Time item', (
 
 test('event review details start two tab stops after the time group', () => {
   const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-  assert.match(style, /\.bioweave-event-review-main\s*\{[^}]*margin-left:\s*2em\s*!important;/);
+  assert.match(style, /\.bioweave-event-review-row\s*\{[^}]*grid-template-columns:\s*166px\s+minmax\(0, 1fr\)\s+max-content\s+16px\s*!important;/);
+  assert.match(style, /\.bioweave-event-review-main\s*\{[^}]*grid-template-columns:\s*minmax\(110px, \.8fr\)\s+minmax\(170px, 1\.4fr\)\s+max-content\s*!important;/);
 });
 
 test('character tracking uses day fallback, precise clock, future values, and unknown safely', () => {

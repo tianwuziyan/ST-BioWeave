@@ -987,8 +987,9 @@
       }
       .event-review-row {
         display: grid;
-        grid-template-columns: max-content max-content minmax(170px, 1.1fr) minmax(130px, 0.9fr) max-content;
-        gap: 8px;
+        grid-template-columns: 166px minmax(0, 1fr) max-content 16px;
+        grid-template-areas: 'time main status chevron';
+        gap: 12px;
         align-items: center;
         min-width: 0;
         min-height: 45px;
@@ -1004,13 +1005,22 @@
         white-space: nowrap;
       }
       .event-review-time {
-        color: var(--muted);
-        font-size: 11px;
-      }
-      .event-review-main {
+        grid-area: time;
         display: flex;
         align-items: baseline;
         gap: 7px;
+        padding-right: 12px;
+        border-right: 1px solid var(--line-soft);
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .event-review-time small { flex: 0 0 auto; color: var(--accent); font-size: 10px; line-height: 1; white-space: nowrap; }
+      .event-review-main {
+        display: grid;
+        grid-area: main;
+        grid-template-columns: minmax(110px, .8fr) minmax(170px, 1.4fr) max-content;
+        align-items: baseline;
+        gap: 10px;
       }
       .event-review-main b {
         flex: 0 0 auto;
@@ -1028,12 +1038,24 @@
         font-size: 11px;
       }
       .event-review-row > .badge {
+        grid-area: status;
         justify-self: end;
       }
+      .event-review-chevron { grid-area: chevron; color: var(--muted); font-size: 13px; line-height: 1; }
       .event-review-detail-panel {
         padding: 8px 0;
         border-bottom: 1px solid var(--line-soft);
       }
+      .event-form { display: none; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-raised); }
+      .event-form.open { display: block; }
+      .event-form h3 { color: var(--text); font-size: 13px; line-height: 1.4; }
+      .event-form > p { margin-top: 2px; color: var(--muted); font-size: 10px; }
+      .event-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
+      .event-form label { display: grid; gap: 3px; color: var(--text-2); font-size: 10px; }
+      .event-form .input,
+      .event-form .select { min-height: 28px; padding: 4px 7px; font-size: 11px; }
+      .event-form textarea.input { min-height: 58px; line-height: 1.4; }
+      .event-form .full { grid-column: 1 / -1; }
       .event-review-foot {
         display: flex;
         align-items: center;
@@ -2971,7 +2993,7 @@
         const rows = visibleEvents
           .map(
             event =>
-              `<article class="event-review-row"><span class="event-review-time"><b>${event[1]}</b></span><small class="event-review-relative">相对时间</small><span class="event-review-main"><b>${event[2]}</b><small>${event[3]}</small></span><span class="event-review-detail">${event[4]}</span><span class="badge ${event[5]}">${event[0]}</span></article>`,
+              `<article class="event-review-row"><span class="event-review-time"><b>${event[1]}</b><small class="event-review-relative">相对时间</small></span><span class="event-review-main"><b>${event[2]}</b><small>${event[3]}</small><span class="event-review-detail">${event[4]}</span></span><span class="badge ${event[5]}">${event[0]}</span><span class="event-review-chevron" aria-hidden="true">⌄</span></article>`,
           )
           .join('')
         return `<section class="page events-page">${pageHead('事件审阅', '全局只保留快速索引；完整记录在对应人物内查看', '<button class="button primary" type="button">重新分析当前楼层</button>')}

@@ -24,6 +24,10 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
 
+人物详情的人物名栏右侧提供“昵称”入口。昵称编辑器只读取并提交当前 Character Floor active Swipe 的 `character_registry.entities[character_id].aliases[]`，canonical `character_id` 与 `display_name` 始终保持不变；草稿只在编辑器本地维护，点击保存时一次性通过 Runtime Floor 写入口提交，取消不写入。该入口不创建 Chat metadata，也不回写历史 Floor、其它 Swipe 或 User Floor。
+
+事件审阅页按“剧情日期 → 相对时间 → 事件类型 → 地点 · 参与者 → 追踪对象数量 → 状态”显示紧凑事件行。相对时间直接消费 Runtime `current_story_time_differences[event_id]` 与统一 formatter；不可比较时保留事件日期并省略相对时间。展开事件后保留妊娠相关性、证据、编辑和删除操作；“编辑当前有效事件”标题使用 13px 正文色，字段、输入控件和按钮使用紧凑辅助层级，Event ID 仅作为只读编辑字段。
+
 ## Phase 2A 业务页面契约
 
 ### 人物列表与 Tracking Subject

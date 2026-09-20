@@ -252,9 +252,31 @@ function renderCharacterSummary({ subject, profile }) {
   return (
     '<section class="bioweave-card bioweave-character-summary"><header class="bioweave-character-summary-head"><b>' +
     escapeHtml(displayValue(displayName)) +
-    '</b><span class="bioweave-badge good">事件追踪</span></header>' +
+    '</b><span class="bioweave-character-summary-actions"><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
+    escapeHtml(characterIdOf(subject)) +
+    '">昵称</button><span class="bioweave-badge good">事件追踪</span></span></header>' +
     renderCharacterFacts(profile) +
     '</section>'
+  )
+}
+function renderAliasEditor(aliasEditor, displayName) {
+  if (!aliasEditor?.open) return ''
+  if (aliasEditor.loading) return '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器"><p class="bioweave-muted">正在读取当前 Floor 昵称…</p></div>'
+  const aliases = Array.isArray(aliasEditor.draftAliases) ? aliasEditor.draftAliases : []
+  return (
+    '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器">' +
+    '<div class="bioweave-character-alias-editor-head"><div><h3>昵称 / 别名</h3><p>用于识别同一人物，不会改变正式名称“' +
+    escapeHtml(displayValue(displayName)) +
+    '”。</p></div><span class="bioweave-character-alias-count" aria-live="polite">' +
+    aliases.length +
+    ' 个</span></div>' +
+    '<div class="bioweave-character-alias-list">' +
+    (aliases.length
+      ? aliases.map((alias, index) => '<div class="bioweave-character-alias-row"><label class="bioweave-character-alias-field"><input class="bioweave-input" type="text" value="' + escapeHtml(alias) + '" data-bioweave-alias-input="' + index + '" aria-label="昵称 ' + (index + 1) + '"></label><button type="button" class="bioweave-button bioweave-character-alias-remove" data-bioweave-action="remove-character-alias" data-bioweave-alias-index="' + index + '" aria-label="删除昵称' + escapeHtml(alias) + '" title="删除"' + (aliasEditor.saving ? ' disabled' : '') + '>×</button></div>').join('')
+      : '<p class="bioweave-muted">暂无昵称/别名</p>') +
+    '</div><div class="bioweave-character-alias-actions"><button type="button" class="bioweave-button bioweave-character-alias-add" data-bioweave-action="add-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>＋ 添加昵称</button><span class="bioweave-spacer"></span><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-aliases"' + (aliasEditor.saving ? ' disabled' : '') + '>保存</button></div>' +
+    (aliasEditor.error ? '<p class="bioweave-form-error">' + escapeHtml(aliasEditor.error) + '</p>' : '') +
+    '</div>'
   )
 }
 function renderCurrentState() {
@@ -288,13 +310,15 @@ function renderNotesSection() {
     '<div class="bioweave-empty bioweave-character-empty">当前没有可显示的人物备注。</div></section>'
   )
 }
-function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences }) {
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor }) {
+  const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
   return (
     '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-enter" data-character-detail-id="' +
     escapeHtml(characterIdOf(subject)) +
     '"><header class="bioweave-character-detail-head"><div><h2>人物详情</h2>' +
     '<p>当前 Chat · 事件追踪</p></div></header>' +
     renderCharacterSummary({ subject, profile }) +
+    renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><h3>生殖能力</h3>' +
     renderCapabilities(profile) +
     '</section>' +
@@ -313,7 +337,7 @@ function unavailableDetailPage() {
     '</section>'
   )
 }
-export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {} } = {}) {
+export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {}, aliasEditor = null } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
   const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events')
@@ -367,7 +391,7 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
   const selectedSubject = subjects.find(item => item.key === selectedId)?.value
   const detail = selectedId
     ? selectedSubject
-      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences })
+      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences, aliasEditor })
       : unavailableDetailPage()
     : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
   if (selectedId && !subjects.length) {

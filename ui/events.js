@@ -171,37 +171,36 @@ function renderEditForm(event) {
   return (
     '<form class="bioweave-card bioweave-event-form" data-bioweave-event-form data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '"><h3>编辑当前有效 Event</h3>' +
-    '<p class="bioweave-muted">Event ID 为只读；保存由页面所属 App 处理。</p>' +
-    '<label>Event ID<input class="bioweave-input" data-bioweave-event-field="event_id" value="' +
+    '"><h3>编辑当前有效事件</h3>' +
+    '<p class="bioweave-muted">事件 ID 为只读；保存由当前页面处理。</p>' +
+    '<div class="bioweave-event-form-grid"><label>事件 ID<input class="bioweave-input" data-bioweave-event-field="event_id" value="' +
     escapeHtml(eventId) +
     '" readonly></label>' +
-    '<label>Type<input class="bioweave-input" data-bioweave-event-field="type" value="' +
+    '<label>类型<input class="bioweave-input" data-bioweave-event-field="type" value="' +
     escapeHtml(displayValue(event.type, '')) +
     '" /></label>' +
-    '<label>Status<select class="bioweave-select" data-bioweave-event-field="status">' +
+    '<label>状态<select class="bioweave-select" data-bioweave-event-field="status">' +
     eventStatuses
       .map(status => '<option value="' + status + '"' + (event.status === status ? ' selected' : '') + '>' + status + '</option>')
       .join('') +
     '</select></label>' +
-    '<label>Location<input class="bioweave-input" data-bioweave-event-field="location" value="' +
+    '<label>地点<input class="bioweave-input" data-bioweave-event-field="location" value="' +
     escapeHtml(displayValue(event.location, '')) +
     '" /></label>' +
-    '<label>Story Time<textarea class="bioweave-input" data-bioweave-event-field="story_time">' +
+    '<label class="full">剧情时间<textarea class="bioweave-input" data-bioweave-event-field="story_time">' +
     jsonValue(event.story_time) +
     '</textarea></label>' +
-    '<label>Participants / Roles<textarea class="bioweave-input" data-bioweave-event-field="participants">' +
+    '<label class="full">参与者 / 角色<textarea class="bioweave-input" data-bioweave-event-field="participants">' +
     jsonValue(event.participants) +
     '</textarea></label>' +
-    '<label>Pregnancy Relevance<textarea class="bioweave-input" data-bioweave-event-field="pregnancy_relevance">' +
+    '<label class="full">妊娠相关性<textarea class="bioweave-input" data-bioweave-event-field="pregnancy_relevance">' +
     jsonValue(event.pregnancy_relevance) +
     '</textarea></label>' +
-    '<label>Source Evidence<textarea class="bioweave-input" data-bioweave-event-field="source_evidence">' +
+    '<label class="full">事件证据<textarea class="bioweave-input" data-bioweave-event-field="source_evidence">' +
     jsonValue(event.source_evidence) +
-    '</textarea></label>' +
-    '<div class="bioweave-page-actions"><button type="button" class="bioweave-primary-action" data-bioweave-action="save-event" data-bioweave-event-id="' +
+    '</textarea></label></div><div class="bioweave-event-detail-actions"><button type="button" class="bioweave-primary-action" data-bioweave-action="save-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '">保存 Event</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="cancel-event-edit" data-bioweave-event-id="' +
+    '">保存事件</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="cancel-event-edit" data-bioweave-event-id="' +
     escapeHtml(eventId) +
     '">取消</button></div></form>'
   )
@@ -225,40 +224,37 @@ function renderEventCard(event, editingEventId, currentStoryTime = null, storyTi
     escapeHtml(time) +
     '"><b class="bioweave-event-story-time">' +
     escapeHtml(time) +
-    '</b></span>' +
+    '</b>' +
     (relative ? '<small class="bioweave-event-relative-time bioweave-event-review-relative">' + escapeHtml(relative) + '</small>' : '') +
-    '<span class="bioweave-event-review-main"><b>' +
+    '</span>' +
+    '<span class="bioweave-event-review-main"><b class="bioweave-event-review-type">' +
     escapeHtml(type) +
-    '</b><small>' +
+    '</b><small class="bioweave-event-review-meta">' +
     escapeHtml(displayValue(event.location)) +
     ' · ' +
     escapeHtml(people) +
-    '</small></span>' +
-    '<span class="bioweave-event-review-detail">' +
+    '</small><span class="bioweave-event-review-detail">' +
     escapeHtml(eventReviewCount(event)) +
-    '</span>' +
+    '</span></span>' +
     '<span class="bioweave-badge ' +
     eventStatusTone(event.status) +
     '">' +
     escapeHtml(eventStatusLabel(event.status)) +
-    '</span>' +
-    '</summary><div class="bioweave-event-review-detail-panel">' +
-    renderDefinitionList([
-      ['发生时间', `__html__${renderValue(time)}`],
-      ['地点', `__html__${renderValue(event.location)}`],
-      ['判断置信度', `__html__${renderValue(confidence)}`],
-    ]) +
-    '<section><h4>妊娠相关性</h4>' +
+    '</span><span class="bioweave-event-review-chevron" aria-hidden="true">⌄</span>' +
+    '</summary><div class="bioweave-event-review-detail-panel"><div class="bioweave-event-fact-strip">' +
+    '<div class="bioweave-event-fact"><span>发生时间</span><strong>' + renderValue(time) + '</strong></div>' +
+    '<div class="bioweave-event-fact"><span>地点</span><strong>' + renderValue(event.location) + '</strong></div>' +
+    '<div class="bioweave-event-fact"><span>判断置信度</span><strong>' + renderValue(confidence) + '</strong></div>' +
+    '</div><div class="bioweave-event-detail-grid"><section class="bioweave-event-detail-section"><h4>妊娠相关性</h4>' +
     renderPregnancyRelevance(event) +
-    '</section>' +
-    '<section><h4>事件证据</h4>' +
+    '</section><section class="bioweave-event-detail-section"><h4>事件证据</h4>' +
     renderEvidence(event) +
-    '</section>' +
-    '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="edit-event" data-bioweave-event-id="' +
+    '</section></div>' +
+    '<div class="bioweave-event-detail-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="edit-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '">编辑 Event</button><button type="button" class="bioweave-danger-action" data-bioweave-action="delete-event" data-bioweave-event-id="' +
+    '">编辑事件</button><button type="button" class="bioweave-danger-action" data-bioweave-action="delete-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '">删除 Event</button></div>' +
+    '">删除事件</button></div>' +
     (open ? renderEditForm(event) : '') +
     '</div></details>'
   )

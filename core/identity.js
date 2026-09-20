@@ -460,6 +460,51 @@ export function normalizeCharacterEntry(raw = {}, characterId = null) {
 }
 
 /**
+ * Validate aliases supplied by a human editor. Unlike AI alias candidates,
+ * manual edits do not require confidence or identity evidence, but they must
+ * still preserve the canonical registry invariants.
+ */
+export function validateCharacterAliases(registry = {}, characterId, aliases) {
+  const normalized = normalizeCharacterRegistry(registry);
+  const id = identifierValue(characterId);
+  if (!id || !hasOwn(normalized.entities, id)) {
+    return { ok: false, aliases: [], reason: IDENTITY_ERROR_CODES.UNKNOWN_CHARACTER_ID };
+  }
+  if (!Array.isArray(aliases)) {
+    return { ok: false, aliases: [], reason: 'aliases_required' };
+  }
+
+  const displayName = normalized.entities[id].display_name;
+  const next = [];
+  const seen = new Set();
+  for (const rawAlias of aliases) {
+    if (typeof rawAlias !== 'string')
+      return { ok: false, aliases: [], reason: 'alias_invalid' };
+    const alias = rawAlias.trim();
+    if (!alias) continue;
+    if (alias === displayName)
+      return { ok: false, aliases: [], reason: 'alias_matches_display_name', alias };
+    if (isContextualReferenceValue(alias))
+      return { ok: false, aliases: [], reason: 'alias_not_persistable', alias };
+    if (seen.has(alias)) continue;
+    const owners = [...collectExactCharacterCandidates(normalized, alias)]
+      .filter(ownerId => ownerId !== id);
+    if (owners.length) {
+      return {
+        ok: false,
+        aliases: [],
+        reason: 'alias_collision',
+        alias,
+        conflicting_character_ids: owners,
+      };
+    }
+    seen.add(alias);
+    next.push(alias);
+  }
+  return { ok: true, aliases: next, reason: null };
+}
+
+/**
  * Normalize an untrusted registry without mutating its input. The registry key
  * remains the canonical identity; only the entry shape is cleaned.
  */

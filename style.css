@@ -7032,6 +7032,31 @@
 .bioweave-character-detail-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
 .bioweave-character-summary { margin-top: 6px !important; padding: 6px 10px !important; border-left: 2px solid var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; }
 .bioweave-character-summary-head { margin-bottom: 0 !important; }
+.bioweave-character-summary-actions { display: inline-flex !important; align-items: center !important; gap: 6px !important; flex: 0 0 auto !important; }
+.bioweave-main .bioweave-character-summary-actions .bioweave-button { min-height: 25px !important; padding: 2px 7px !important; border: 1px solid var(--bioweave-border) !important; border-radius: 7px !important; color: var(--bioweave-text-secondary) !important; background: var(--bioweave-surface-raised) !important; font-size: 10px !important; line-height: 1.5 !important; }
+.bioweave-main .bioweave-character-summary-actions .bioweave-button:hover,
+.bioweave-main .bioweave-character-summary-actions .bioweave-button:focus-visible { border-color: var(--bioweave-accent) !important; color: var(--bioweave-text) !important; background: var(--bioweave-surface-raised) !important; }
+.bioweave-character-alias-editor { margin-top: 6px !important; padding: 10px !important; border: 1px solid var(--bioweave-border) !important; border-radius: var(--bioweave-radius-small) !important; background: var(--bioweave-surface-raised) !important; }
+.bioweave-character-alias-editor { overflow: hidden !important; border-color: color-mix(in srgb, var(--bioweave-accent) 46%, var(--bioweave-border)) !important; }
+.bioweave-character-alias-editor-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 12px !important; margin: -10px -10px 0 !important; padding: 11px 12px 9px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-alias-editor-head h3 { color: var(--bioweave-text) !important; font-size: 13px !important; }
+.bioweave-character-alias-editor-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-alias-count { flex: 0 0 auto !important; padding: 2px 6px !important; border-radius: 99px !important; color: var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; font-size: 10px !important; line-height: 18px !important; }
+.bioweave-character-alias-list { display: grid !important; gap: 6px !important; padding: 10px 2px 4px !important; }
+.bioweave-character-alias-row { display: grid !important; grid-template-columns: minmax(0, 1fr) 28px !important; align-items: center !important; gap: 6px !important; }
+.bioweave-character-alias-field { position: relative !important; min-width: 0 !important; }
+.bioweave-character-alias-field::before { content: "别名" !important; position: absolute !important; top: 50% !important; left: 9px !important; z-index: 1 !important; padding-right: 8px !important; border-right: 1px solid var(--bioweave-border-soft) !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 16px !important; transform: translateY(-50%) !important; pointer-events: none !important; }
+.bioweave-character-alias-row .bioweave-input { display: block !important; width: 100% !important; min-width: 0 !important; min-height: 30px !important; padding: 4px 8px 4px 44px !important; border: 1px solid var(--bioweave-border) !important; border-radius: 7px !important; color: var(--bioweave-text) !important; background: var(--bioweave-input-bg) !important; font-size: 12px !important; }
+.bioweave-character-alias-row .bioweave-input:hover { border-color: color-mix(in srgb, var(--bioweave-accent) 55%, var(--bioweave-border)) !important; }
+.bioweave-main .bioweave-character-alias-remove { display: grid !important; width: 28px !important; min-width: 28px !important; min-height: 28px !important; padding: 0 !important; place-items: center !important; border: 0 !important; color: var(--bioweave-text-muted) !important; background: transparent !important; font-size: 16px !important; line-height: 1 !important; }
+.bioweave-main .bioweave-character-alias-remove:hover,
+.bioweave-main .bioweave-character-alias-remove:focus-visible { border: 0 !important; color: var(--bioweave-danger) !important; background: color-mix(in srgb, var(--bioweave-danger) 8%, transparent) !important; }
+.bioweave-character-alias-actions { display: flex !important; align-items: center !important; gap: 6px !important; margin: 0 -10px -10px !important; padding: 8px 12px 10px !important; }
+.bioweave-character-alias-actions .bioweave-spacer { flex: 1 1 auto !important; }
+.bioweave-main .bioweave-character-alias-actions > .bioweave-button { min-height: 28px !important; padding: 3px 8px !important; font-size: 11px !important; }
+.bioweave-main .bioweave-character-alias-add { min-height: 28px !important; padding: 3px 0 !important; border-color: transparent !important; color: var(--bioweave-accent) !important; background: transparent !important; }
+.bioweave-main .bioweave-character-alias-add:hover,
+.bioweave-main .bioweave-character-alias-add:focus-visible { border-color: transparent !important; color: var(--bioweave-text) !important; background: transparent !important; }
 .bioweave-character-summary-head b { min-width: 0 !important; overflow: hidden !important; font-size: 16px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
 .bioweave-character-summary-head .bioweave-badge { min-height: 20px !important; padding: 1px 6px !important; font-size: 10px !important; }
 .bioweave-character-summary-facts { display: flex !important; align-items: center !important; width: 100% !important; min-width: 0 !important; gap: 6px !important; margin-top: 3px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.15 !important; white-space: nowrap !important; }
@@ -7109,26 +7134,54 @@
 .bioweave-field-inline .bioweave-select { min-width: 94px !important; min-height: 32px !important; }
 .bioweave-event-review-summary { display: flex !important; align-items: baseline !important; gap: 7px !important; margin: 2px 0 5px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
 .bioweave-event-review-summary strong { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
-.bioweave-event-review-list { display: grid !important; gap: 0 !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
-.bioweave-event-review-item { min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; }
-.bioweave-event-review-item + .bioweave-event-review-item { margin-top: 0 !important; }
-.bioweave-event-review-row { display: grid !important; grid-template-columns: max-content max-content minmax(170px, 1.1fr) minmax(130px, .9fr) max-content !important; gap: 8px !important; align-items: center !important; min-width: 0 !important; min-height: 45px !important; padding: 6px 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; cursor: pointer !important; list-style: none !important; }
+.bioweave-event-review-list { display: grid !important; gap: 6px !important; border-top: 0 !important; }
+.bioweave-event-review-item { min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 7px !important; background: var(--bioweave-surface-raised) !important; }
+.bioweave-event-review-item[open] { border-color: color-mix(in srgb, var(--bioweave-accent) 45%, var(--bioweave-border)) !important; }
+.bioweave-event-review-row { display: grid !important; grid-template-columns: 166px minmax(0, 1fr) max-content 16px !important; grid-template-areas: "time main status chevron" !important; gap: 12px !important; align-items: center !important; min-width: 0 !important; min-height: 45px !important; padding: 5px 10px !important; cursor: pointer !important; list-style: none !important; }
 .bioweave-event-review-row::-webkit-details-marker { display: none !important; }
 .bioweave-event-review-row:hover { background: var(--bioweave-hover) !important; }
-.bioweave-event-review-time,
-.bioweave-event-review-main,
-.bioweave-event-review-detail { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
-.bioweave-event-review-time { display: grid !important; gap: 1px !important; align-content: center !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-review-item[open] > .bioweave-event-review-row { background: var(--bioweave-hover) !important; }
+.bioweave-event-review-time { display: flex !important; grid-area: time !important; align-items: baseline !important; gap: 7px !important; min-width: 0 !important; padding-right: 12px !important; border-right: 1px solid var(--bioweave-border-soft) !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-story-time { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
 .bioweave-event-review-time b { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
-.bioweave-event-review-time small { color: var(--bioweave-accent) !important; font-size: 9px !important; line-height: 1 !important; }
-.bioweave-event-review-main { display: flex !important; align-items: baseline !important; flex-wrap: wrap !important; gap: 7px !important; margin-left: 2em !important; overflow: visible !important; white-space: normal !important; }
-.bioweave-event-review-main b { flex: 0 0 auto !important; font-size: 12px !important; }
-.bioweave-event-review-main small { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
-.bioweave-event-review-relative { min-width: max-content !important; overflow: visible !important; color: var(--bioweave-accent) !important; font-size: 10px !important; white-space: nowrap !important; }
-.bioweave-event-review-detail { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-review-time small { flex: 0 0 auto !important; color: var(--bioweave-accent) !important; font-size: 10px !important; line-height: 1 !important; white-space: nowrap !important; }
+.bioweave-event-review-main { display: grid !important; grid-area: main !important; grid-template-columns: minmax(110px, .8fr) minmax(170px, 1.4fr) max-content !important; align-items: center !important; gap: 10px !important; min-width: 0 !important; }
+.bioweave-event-review-main b { min-width: 0 !important; overflow: hidden !important; font-size: 13px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-event-review-main small { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-event-review-detail { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
 .bioweave-event-review-row > .bioweave-badge { justify-self: end !important; }
-.bioweave-event-review-detail-panel { padding: 8px 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
-.bioweave-event-review-foot { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding-top: 8px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-event-review-row > .bioweave-badge { grid-area: status !important; }
+.bioweave-event-review-chevron { grid-area: chevron !important; color: var(--bioweave-text-muted) !important; font-size: 13px !important; line-height: 1 !important; transition: transform .15s ease !important; }
+.bioweave-event-review-item[open] .bioweave-event-review-chevron { transform: rotate(180deg) !important; }
+.bioweave-event-review-detail-panel { padding: 10px !important; border-top: 1px solid var(--bioweave-border-soft) !important; border-bottom: 0 !important; background: color-mix(in srgb, var(--bioweave-surface-raised) 72%, var(--bioweave-surface) 28%) !important; }
+.bioweave-event-fact-strip { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important; }
+.bioweave-event-fact { min-width: 0 !important; padding: 7px 8px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-card) !important; }
+.bioweave-event-fact span { display: block !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-event-fact strong { display: block !important; margin-top: 2px !important; overflow: hidden !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-event-detail-grid { display: grid !important; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr) !important; gap: 8px !important; margin-top: 8px !important; }
+.bioweave-event-detail-section { min-width: 0 !important; padding: 8px 9px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-card) !important; }
+.bioweave-event-detail-section h4 { margin: 0 !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; line-height: 1.4 !important; }
+.bioweave-event-detail-section .bioweave-data-list { display: grid !important; gap: 0 !important; margin: 4px 0 0 !important; }
+.bioweave-event-detail-section .bioweave-data-list > div { display: grid !important; grid-template-columns: minmax(82px, max-content) minmax(0, 1fr) !important; align-items: baseline !important; justify-content: initial !important; gap: 10px !important; min-width: 0 !important; padding: 4px 0 !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-event-detail-section .bioweave-data-list > div:first-child { border-top: 0 !important; }
+.bioweave-event-detail-section .bioweave-data-list dt { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-event-detail-section .bioweave-data-list dd { min-width: 0 !important; margin: 0 !important; color: var(--bioweave-text-secondary) !important; font-size: 11px !important; text-align: left !important; overflow-wrap: anywhere !important; }
+.bioweave-event-detail-section .bioweave-event-evidence { margin: 5px 0 0 !important; padding-left: 17px !important; color: var(--bioweave-text-secondary) !important; font-size: 11px !important; line-height: 1.5 !important; }
+.bioweave-event-detail-section .bioweave-event-evidence li + li { margin-top: 4px !important; }
+.bioweave-event-detail-actions { display: flex !important; justify-content: flex-end !important; gap: 6px !important; margin-top: 8px !important; }
+.bioweave-main .bioweave-event-review-detail-panel > .bioweave-event-detail-actions > .bioweave-secondary-action,
+.bioweave-main .bioweave-event-review-detail-panel > .bioweave-event-detail-actions > .bioweave-danger-action { min-height: 26px !important; padding: 2px 7px !important; border-radius: 7px !important; font-size: 10px !important; line-height: 1.5 !important; }
+.bioweave-main .bioweave-event-form { font-size: 11px !important; }
+.bioweave-main .bioweave-event-form h3 { color: var(--bioweave-text) !important; font-size: 13px !important; line-height: 1.4 !important; }
+.bioweave-main .bioweave-event-form > p { margin-top: 2px !important; font-size: 10px !important; }
+.bioweave-main .bioweave-event-form label { gap: 3px !important; color: var(--bioweave-text-secondary) !important; font-size: 10px !important; }
+.bioweave-main .bioweave-event-form .bioweave-input,
+.bioweave-main .bioweave-event-form .bioweave-select { min-height: 28px !important; padding: 4px 7px !important; font-size: 11px !important; }
+.bioweave-main .bioweave-event-form textarea.bioweave-input { min-height: 58px !important; line-height: 1.4 !important; }
+.bioweave-main .bioweave-event-form .bioweave-event-detail-actions > .bioweave-button,
+.bioweave-main .bioweave-event-form .bioweave-event-detail-actions > .bioweave-primary-action,
+.bioweave-main .bioweave-event-form .bioweave-event-detail-actions > .bioweave-secondary-action { min-height: 26px !important; padding: 2px 7px !important; font-size: 10px !important; }
+.bioweave-event-review-foot { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding-top: 9px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
 @keyframes bioweave-character-detail-reveal { from { opacity: .55; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 767px) {
@@ -7157,14 +7210,18 @@
   .bioweave-character-exposure-meta { max-width: none !important; padding-top: 1px !important; }
   .bioweave-character-exposure-detail { padding: 7px !important; }
   .bioweave-event-review-panel { margin-left: 5px !important; }
-  .bioweave-event-review-row { grid-template-columns: minmax(0, 1fr) max-content auto !important; grid-template-areas: "time relative status" "main main detail" !important; gap: 3px 7px !important; min-height: 52px !important; padding: 7px 0 !important; }
-  .bioweave-event-review-time { grid-area: time !important; font-size: 10px !important; }
-  .bioweave-event-review-relative { grid-area: relative !important; justify-self: start !important; }
-  .bioweave-event-review-main { grid-area: main !important; min-width: 0 !important; }
+  .bioweave-event-review-row { grid-template-columns: minmax(0, 1fr) max-content 16px !important; grid-template-areas: "time status chevron" "main main main" !important; gap: 6px 8px !important; min-height: 52px !important; padding: 7px 10px !important; }
+  .bioweave-event-review-time { padding-right: 0 !important; border-right: 0 !important; font-size: 10px !important; white-space: nowrap !important; }
+  .bioweave-event-review-main { grid-area: main !important; grid-template-columns: minmax(88px, max-content) minmax(0, 1fr) max-content !important; gap: 6px 9px !important; min-width: 0 !important; }
   .bioweave-event-review-main b { font-size: 11px !important; }
   .bioweave-event-review-main small { font-size: 10px !important; }
-  .bioweave-event-review-detail { grid-area: detail !important; justify-self: end !important; font-size: 10px !important; }
+  .bioweave-event-review-detail { font-size: 10px !important; }
   .bioweave-event-review-row > .bioweave-badge { grid-area: status !important; }
+  .bioweave-event-review-chevron { grid-area: chevron !important; }
+  .bioweave-event-fact-strip,
+  .bioweave-event-detail-grid { grid-template-columns: 1fr !important; }
+  .bioweave-event-form-grid { grid-template-columns: 1fr !important; }
+  .bioweave-event-form .full { grid-column: auto !important; }
   .bioweave-event-review-foot { align-items: flex-start !important; flex-direction: column !important; gap: 4px !important; }
 }
 

@@ -215,6 +215,35 @@ function createFixture({
   };
 }
 
+test('Runtime updates aliases only in the current Character Floor without re-running analysis', async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: 'character-floor', floor: 1, content: '当前楼层', role: 'assistant' }],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  const registry = fixture.runtime.store.getFloor(0, 0).character_registry;
+  const characterId = Object.keys(registry.entities)[0];
+  const beforeCalls = fixture.calls();
+
+  const identity = await fixture.runtime.getCurrentCharacterIdentity(characterId);
+  assert.equal(identity.display_name, 'Alice');
+  assert.deepEqual(identity.aliases, []);
+
+  const result = await fixture.runtime.updateCharacterAliases({
+    character_id: characterId,
+    aliases: [' 如烟 ', '如烟', ''],
+  });
+  assert.deepEqual(result.character.aliases, ['如烟']);
+  assert.equal(fixture.calls(), beforeCalls);
+  assert.equal(fixture.runtime.store.getFloor(0, 0).character_registry.entities[characterId].display_name, 'Alice');
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).character_registry.entities[characterId].aliases, ['如烟']);
+  await assert.rejects(
+    fixture.runtime.updateCharacterAliases({ character_id: characterId, aliases: ['Bob'] }),
+    error => error.code === 'alias_collision',
+  );
+  fixture.runtime.destroy();
+});
+
 function canonicalApiEvent({
   type = "sexual_activity",
   pregnancyRelevance,

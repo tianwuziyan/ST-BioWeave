@@ -28,12 +28,13 @@ import {
   isCompleteCharacterRegistrySnapshot,
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
+  validateCharacterAliases,
 } from "../core/identity.js";
 import {
   explainTrackingDecision,
   rebuildTrackingRegistry,
 } from "../core/tracking.js";
-import { emptyFloor } from "../storage/schema.js";
+import { cloneValue, emptyFloor } from "../storage/schema.js";
 import {
   hasSwipeSlot,
   hasSwipeStructure,
@@ -892,6 +893,50 @@ export function createEventAnalysisCoordinator({
   }
   async function resolveFloor(selector = null) {
     return resolveCurrentBioWeaveFloor(selector);
+  }
+
+  async function getCurrentCharacterIdentity(characterId) {
+    const token = chat.token();
+    const target = await resolveCurrentBioWeaveFloor();
+    chat.assert(token);
+    const registry = normalizeCharacterRegistry(target.floorData?.character_registry);
+    const id = typeof characterId === "string" ? characterId.trim() : "";
+    const entry = id ? registry.entities[id] : null;
+    if (!entry) throw new Error("CHARACTER_ID_NOT_FOUND");
+    return cloneValue(entry);
+  }
+
+  async function updateCharacterAliases({ character_id: characterId, aliases } = {}) {
+    const token = chat.token();
+    const target = await resolveCurrentBioWeaveFloor();
+    chat.assert(token);
+    const current = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
+    if (!sameFloorVersion(floorVersionFromData(current), target.version))
+      throw new Error("FLOOR_VERSION_STALE");
+    const registry = normalizeCharacterRegistry(current.character_registry);
+    const validation = validateCharacterAliases(registry, characterId, aliases);
+    if (!validation.ok) {
+      const error = new Error(validation.reason ?? "ALIAS_INVALID");
+      error.code = validation.reason ?? "ALIAS_INVALID";
+      error.alias = validation.alias ?? null;
+      error.conflicting_character_ids = validation.conflicting_character_ids ?? [];
+      throw error;
+    }
+    const nextFloor = cloneValue(current);
+    nextFloor.character_registry = cloneValue(registry);
+    nextFloor.character_registry.entities[String(characterId).trim()].aliases = validation.aliases;
+
+    const latest = await resolveCurrentBioWeaveFloor();
+    if (!sameFloorVersion(latest.version, target.version))
+      throw new Error("FLOOR_VERSION_STALE");
+    chat.assert(token);
+    await store.saveFloor(target.index, target.swipeId, nextFloor);
+    chat.assert(token);
+    await refreshTrackingRegistry("character-alias-update");
+    return {
+      ok: true,
+      character: cloneValue(nextFloor.character_registry.entities[String(characterId).trim()]),
+    };
   }
   async function findPreviousSuccessfulBioWeave(target) {
     // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
@@ -2303,6 +2348,8 @@ export function createEventAnalysisCoordinator({
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
   return {
     resolveCurrentBioWeaveFloor,
+    getCurrentCharacterIdentity,
+    updateCharacterAliases,
     analyzeCurrentFloor,
     analyzeFloor,
     refreshCurrentFloorAnalysis,

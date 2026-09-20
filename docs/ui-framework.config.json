@@ -380,17 +380,27 @@
       "list": "bioweave-event-review-list",
       "item": "bioweave-event-review-item",
       "row": "bioweave-event-review-row",
-      "rowColumns": "max-content max-content minmax(170px, 1.1fr) minmax(130px, .9fr) max-content",
+      "rowColumns": "166px minmax(0, 1fr) max-content 16px",
       "rowMinHeight": "45px",
-      "rowGap": "8px",
-      "timeGroup": "story time followed by optional relative time; both are independent row items",
+      "rowGap": "12px",
+      "timeGroup": "story time followed by optional relative time inside one time information group; both are independent inline DOM items",
       "filter": "native bioweave-select with data-bioweave-event-filter",
       "detail": "bioweave-event-review-detail-panel",
       "summary": "bioweave-event-review-summary",
       "footer": "bioweave-event-review-foot",
       "mobileRows": "time/relative/status first row, main/detail second row",
       "preserveHooks": ["data-bioweave-event-id", "data-bioweave-action=edit-event", "data-bioweave-action=delete-event", "data-bioweave-event-form"],
-      "dataPolicy": "rows are built only from Runtime BiologicalEvent DTOs; full pregnancy relevance, evidence, edit and delete controls remain in the expandable detail"
+      "dataPolicy": "rows are built only from Runtime BiologicalEvent DTOs; full pregnancy relevance, evidence, edit and delete controls remain in the expandable detail",
+      "editForm": {
+        "title": "编辑当前有效事件",
+        "titleFontSize": "13px",
+        "titleColor": "text",
+        "supportingFontSize": "10px",
+        "fieldLabelFontSize": "10px",
+        "controlFontSize": "11px",
+        "actionFontSize": "10px",
+        "preserveEventId": true
+      }
     },
     "button": {
       "root": "bioweave-button",

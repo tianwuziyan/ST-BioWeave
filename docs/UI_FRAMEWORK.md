@@ -236,7 +236,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 ## 事件页面格式
 
-事件页面采用参考页同款的紧凑审阅索引：标题为“事件审阅”，主区块标题为“当前事件索引”，状态筛选使用原生 `bioweave-select`，并通过 `data-bioweave-event-filter` 触发现有 App 的本地筛选。Desktop 每行固定按“剧情日期 / 相对时间 / 事件摘要 / 追踪数量 / 状态”排列，时间组使用 `minmax(150px, max-content) max-content`，最小高度 `45px`、间距 `8px`；Mobile 仍允许整体自然换行，时间组位于第一行，不把相对时间固定成日期下方的子行，不产生页面级横向滚动：
+事件页面采用参考页同款的紧凑审阅索引：标题为“事件审阅”，主区块标题为“当前事件索引”，状态筛选使用原生 `bioweave-select`，并通过 `data-bioweave-event-filter` 触发现有 App 的本地筛选。Desktop 每行按“剧情日期 / 相对时间 / 事件类型 / 地点 · 参与者 / 追踪数量 / 状态”排列；时间组内部仍是两个独立的相邻 DOM 项，视觉上显示为“剧情日期  相对时间”，不把相对时间固定成日期下方的第二行。事件主信息中的类型、地点/参与者和追踪数量保持独立信息项，状态位于最右侧。Mobile 允许整体自然换行，不产生页面级横向滚动：
 
 ~~~html
 <section class="bioweave-card bioweave-event-review-panel">
@@ -249,16 +249,38 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
   <div class="bioweave-event-review-summary"><strong>n 条</strong><span>当前筛选结果</span></div>
   <div class="bioweave-event-review-list">
     <details class="bioweave-card bioweave-event-review-item" data-bioweave-event-id="runtime-event-id">
-      <summary class="bioweave-event-review-row">时间 / 类型 / 真实对象摘要 / 状态</summary>
+      <summary class="bioweave-event-review-row">
+        <span class="bioweave-event-review-time">
+          <b class="bioweave-event-story-time">Runtime Story Time</b>
+          <small class="bioweave-event-relative-time bioweave-event-review-relative">相对时间</small>
+        </span>
+        <span class="bioweave-event-review-main">
+          <b class="bioweave-event-review-type">事件类型</b>
+          <small class="bioweave-event-review-meta">Runtime 地点 · 参与者摘要</small>
+          <span class="bioweave-event-review-detail">n 个追踪对象</span>
+        </span>
+        <span class="bioweave-badge">已确认</span>
+        <span class="bioweave-event-review-chevron" aria-hidden="true">⌄</span>
+      </summary>
       <div class="bioweave-event-review-detail-panel">
-        <!-- 原有妊娠相关性、证据、编辑和删除 hooks 保留在这里 -->
+        <!-- 妊娠相关性、事件证据、编辑和删除 hooks 保留在这里。 -->
+        <div class="bioweave-event-detail-actions">
+          <button class="bioweave-secondary-action" type="button" data-bioweave-action="edit-event">编辑事件</button>
+          <button class="bioweave-danger-action" type="button" data-bioweave-action="delete-event">删除事件</button>
+        </div>
+        <form class="bioweave-card bioweave-event-form" data-bioweave-event-form>
+          <h3>编辑当前有效事件</h3>
+          <p>事件 ID 为只读；保存由当前页面处理。</p>
+          <div class="bioweave-event-form-grid"><label>事件 ID<input class="bioweave-input" readonly></label><label>类型<input class="bioweave-input"></label></div>
+          <div class="bioweave-event-detail-actions"><button class="bioweave-primary-action" type="button" data-bioweave-action="save-event">保存事件</button><button class="bioweave-secondary-action" type="button" data-bioweave-action="cancel-event-edit">取消</button></div>
+        </form>
       </div>
     </details>
   </div>
 </section>
 ~~~
 
-事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。相对时间紧跟剧情日期，由 Runtime 当前 Story Time 与共享 Story Time helper 得出；不可比较时只显示事件自身规范 Story Time，不能解析展示文本或使用系统时间。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
+事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。相对时间紧跟剧情日期，由 Runtime 当前 Story Time 与共享 Story Time helper 得出；不可比较时只显示事件自身规范 Story Time，不能解析展示文本或使用系统时间。编辑表单标题“编辑当前有效事件”使用参考页的 13px 正文色层级，说明文字、字段标签、输入控件和操作按钮使用紧凑辅助层级；表单不改变 Event ID，只通过现有 Runtime 更新入口保存。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
 
 状态徽标必须沿用概念页的胶囊形样式：22px 高、`2px 7px` 内边距、999px 圆角、透明背景。成功/已选/有效使用 `good`，处理中/较可能使用 `warn`，失败/否定使用 `danger`；世界书来源的“已选数量”即使处于部分选择也使用绿色 `good`，黄色只表示 checkbox 的 `indeterminate` 状态；没有明确语义时使用中性徽标，不根据文案猜测业务状态。
 

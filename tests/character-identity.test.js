@@ -15,6 +15,7 @@ import {
   resolveMentionIdentity,
   resolveRawParticipantIdentities,
   resolveRawParticipantIdentity,
+  validateCharacterAliases,
 } from '../core/identity.js';
 
 const NAMES = Object.freeze({
@@ -92,6 +93,20 @@ test('registry entries remain keyed by canonical IDs and clone without shared st
   assert.deepEqual(raw.entities.char_000001.aliases, [NAMES.alias]);
   assert.equal(hasCharacterId(clone, 'char_000001'), true);
   assert.equal(hasCharacterId(clone, NAMES.subject), false);
+});
+
+test('manual aliases reuse registry invariants without changing canonical identity', () => {
+  const registry = registryWith(
+    { character_id: 'char_000001', display_name: '柳如烟', aliases: ['如烟'] },
+    { character_id: 'char_000002', display_name: '孙大壮', aliases: [] },
+  );
+  assert.deepEqual(
+    validateCharacterAliases(registry, 'char_000001', [' 如烟 ', '烟儿', '烟儿', '']),
+    { ok: true, aliases: ['如烟', '烟儿'], reason: null },
+  );
+  assert.equal(validateCharacterAliases(registry, 'char_000001', ['孙大壮']).reason, 'alias_collision');
+  assert.equal(validateCharacterAliases(registry, 'char_000001', ['柳如烟']).reason, 'alias_matches_display_name');
+  assert.equal(validateCharacterAliases(registry, 'char_000001', ['她']).reason, 'alias_not_persistable');
 });
 
 test('exact display and alias lookup returns every candidate without merging names', () => {

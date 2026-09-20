@@ -573,6 +573,15 @@ export function createApp(runtime, options = {}) {
     analysisStatus: { state: 'not_analyzed', busy: false },
     error: null,
   }
+  let aliasEditorState = {
+    open: false,
+    loading: false,
+    saving: false,
+    characterId: null,
+    canonicalName: null,
+    draftAliases: [],
+    error: null,
+  }
   let businessRefreshSequence = 0
   let eventEditingId = null
   function receiveWorldModelTrace(trace) {
@@ -2444,6 +2453,70 @@ export function createApp(runtime, options = {}) {
       if (root?.dataset.open === 'true') render()
     }
   }
+  function aliasErrorMessage(error) {
+    const code = String(error?.code ?? error?.message ?? '').toLowerCase()
+    if (code === 'no_character_floor' || code === 'message_not_found') return '当前没有可编辑的 Character Floor。'
+    if (code === 'character_id_not_found' || code === 'unknown_character_id') return '当前人物不在有效 Floor 身份快照中。'
+    if (code === 'swipe_not_found') return '当前 Swipe 已不可用，请重新读取人物信息。'
+    if (code === 'floor_version_stale') return '当前楼层已变化，请重新打开昵称编辑器。'
+    if (code === 'alias_collision') return '该昵称已属于其他人物，不能重复绑定。'
+    if (code === 'alias_matches_display_name') return '昵称不能与人物 canonical name 相同。'
+    if (code === 'alias_not_persistable') return '该称呼不能作为稳定昵称保存。'
+    if (code === 'alias_invalid' || code === 'aliases_required') return '昵称格式无效。'
+    if (code === 'bioweave_user_floor_write_forbidden') return '当前不是可写入的 Character Floor。'
+    return '昵称保存失败，请重新读取当前人物信息。'
+  }
+  async function openCharacterAliases(characterId) {
+    const id = String(characterId ?? '').trim()
+    if (!id || typeof runtime.getCurrentCharacterIdentity !== 'function') return
+    aliasEditorState = { ...aliasEditorState, open: true, loading: true, saving: false, characterId: id, canonicalName: null, draftAliases: [], error: null }
+    render()
+    try {
+      const identity = await runtime.getCurrentCharacterIdentity(id)
+      if (String(focusedCharacterId ?? '') !== id) return
+      aliasEditorState = { ...aliasEditorState, open: true, loading: false, characterId: id, canonicalName: identity.display_name, draftAliases: [...(identity.aliases ?? [])], error: null }
+    } catch (error) {
+      aliasEditorState = { ...aliasEditorState, loading: false, error: aliasErrorMessage(error) }
+    }
+    render()
+  }
+  function closeCharacterAliases() {
+    aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+    render()
+  }
+  function addCharacterAlias() {
+    aliasEditorState = { ...aliasEditorState, draftAliases: [...aliasEditorState.draftAliases, ''], error: null }
+    render()
+  }
+  function removeCharacterAlias(index) {
+    if (!Number.isInteger(index) || index < 0) return
+    aliasEditorState = { ...aliasEditorState, draftAliases: aliasEditorState.draftAliases.filter((_, itemIndex) => itemIndex !== index), error: null }
+    render()
+  }
+  function updateCharacterAliasDraft(target) {
+    const index = Number(target?.dataset?.bioweaveAliasInput)
+    if (!Number.isInteger(index) || index < 0) return
+    const draftAliases = [...aliasEditorState.draftAliases]
+    draftAliases[index] = String(target.value ?? '')
+    aliasEditorState = { ...aliasEditorState, draftAliases, error: null }
+  }
+  async function saveCharacterAliases() {
+    if (aliasEditorState.saving || !aliasEditorState.characterId || typeof runtime.updateCharacterAliases !== 'function') return
+    aliasEditorState = { ...aliasEditorState, saving: true, error: null }
+    render()
+    try {
+      const result = await runtime.updateCharacterAliases({ character_id: aliasEditorState.characterId, aliases: aliasEditorState.draftAliases })
+      await refreshBusinessState({ reason: 'character-alias-update', force: true })
+      const identity = result?.character ?? await runtime.getCurrentCharacterIdentity(aliasEditorState.characterId)
+      aliasEditorState = { ...aliasEditorState, saving: false, loading: false, canonicalName: identity.display_name, draftAliases: [...(identity.aliases ?? [])], error: null }
+      notify('昵称已保存。', 'success', documentRef)
+    } catch (error) {
+      aliasEditorState = { ...aliasEditorState, saving: false, error: aliasErrorMessage(error) }
+      await refreshBusinessState({ reason: 'character-alias-update-failed', force: true }).catch(() => {})
+      notify(aliasErrorMessage(error), 'error', documentRef)
+    }
+    render()
+  }
   async function refreshStoryTimeDebug({renderAfter = true} = {}) {
     if (!storyTimeDebugState.enabled || typeof runtime.getStoryTimeDebugInfo !== 'function') return null
     const requestId = ++storyTimeDebugSequence
@@ -2638,6 +2711,7 @@ export function createApp(runtime, options = {}) {
       currentStateStatus: businessState.currentStateStatus,
       currentStoryTime: businessState.currentStoryTime,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
+      aliasEditor: aliasEditorState,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
       editingEventId: eventEditingId,
@@ -2705,6 +2779,7 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure()
     route = nextRoute
     focusedCharacterId = null
+    if (nextRoute !== 'characters') aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
     if (nextRoute !== 'events') setEventFilter()
     render()
     return true
@@ -2714,6 +2789,7 @@ export function createApp(runtime, options = {}) {
     if (!nextId) return
     route = 'characters'
     focusedCharacterId = nextId
+    if (aliasEditorState.characterId !== nextId) aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
     render()
   }
   function settingsOperationError(error) {
@@ -3361,6 +3437,10 @@ export function createApp(runtime, options = {}) {
   function handleSettingsInput(event) {
     if (!root?.contains(event.target)) return
     const target = event.target
+    if (target?.dataset?.bioweaveAliasInput !== undefined) {
+      updateCharacterAliasDraft(target)
+      return
+    }
     if (assignmentControlForEvent(target)) return
     if (target.closest?.('[data-bioweave-world-section-form]')) {
       captureWorldModelSectionDraft()
@@ -3422,6 +3502,7 @@ export function createApp(runtime, options = {}) {
       clearAnalysisPreview()
       storyTimeDebugSequence += 1
       storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: null}
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
       route = 'overview'
       focusedCharacterId = null
       businessRefreshSequence += 1
@@ -3499,6 +3580,9 @@ export function createApp(runtime, options = {}) {
       event?.type === 'MESSAGE_SWIPED' ||
       event?.type === 'MESSAGE_SWIPE_DELETED'
     ) {
+      if (['MESSAGE_DELETED', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
+        aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+      }
       businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }
@@ -3579,6 +3663,31 @@ export function createApp(runtime, options = {}) {
     if (action === 'copy-story-time-debug') {
       event.preventDefault()
       await copyStoryTimeDebug()
+      return
+    }
+    if (action === 'open-character-aliases') {
+      event.preventDefault()
+      await openCharacterAliases(target.dataset.characterId)
+      return
+    }
+    if (action === 'add-character-alias') {
+      event.preventDefault()
+      addCharacterAlias()
+      return
+    }
+    if (action === 'remove-character-alias') {
+      event.preventDefault()
+      removeCharacterAlias(Number(target.dataset.bioweaveAliasIndex))
+      return
+    }
+    if (action === 'cancel-character-alias') {
+      event.preventDefault()
+      closeCharacterAliases()
+      return
+    }
+    if (action === 'save-character-aliases') {
+      event.preventDefault()
+      await saveCharacterAliases()
       return
     }
     if (action === 'open-analysis-debug') {
