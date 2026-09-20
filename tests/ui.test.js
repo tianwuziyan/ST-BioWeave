@@ -1677,7 +1677,7 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
   assert.equal(root.dataset.open, 'false')
   app.destroyBioWeave()
 })
-test('settings and World Model analysis debug actions share one Popup and prompt source boundary', async () => {
+test('settings analysis debug keeps one Popup and the persisted prompt source boundary', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []
   let resolvePopup
@@ -1793,34 +1793,6 @@ test('settings and World Model analysis debug actions share one Popup and prompt
   assert.match(settingsPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
   resolvePopup()
   await settingsOpen
-  app.go('world')
-  const worldPageMarkup = root.querySelector('.bioweave-main').innerHTML
-  const worldOpen = clickAction('world-model-view-input')
-  await new Promise(resolve => setTimeout(resolve, 0))
-  assert.equal(root.querySelector('.bioweave-main').innerHTML, worldPageMarkup)
-  assert.equal(popupCalls.length, 2)
-  const worldPopup = popupCalls[1]
-  assert.equal(worldPopup.type, settingsPopup.type)
-  assert.equal(worldPopup.title, settingsPopup.title)
-  assert.deepEqual(worldPopup.options, settingsPopup.options)
-  assert.match(worldPopup.content.innerHTML, /SAVED TOP/)
-  assert.match(worldPopup.content.innerHTML, /SAVED BOTTOM/)
-  assert.doesNotMatch(worldPopup.content.innerHTML, /DRAFT TOP|DRAFT BOTTOM/)
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-analysis-preview/)
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
-  const worldPopupClick = [...worldPopup.content.listeners.get('click')][0]
-  await worldPopupClick({
-    target: popupActionTarget(worldPopup.content, 'refresh-analysis-preview'),
-    preventDefault() {},
-  })
-  assert.match(worldPopup.content.innerHTML, /data-bioweave-world-model-message-preview/)
-  await worldPopupClick({
-    target: popupActionTarget(worldPopup.content, 'analysis-preview-mode', 'raw'),
-    preventDefault() {},
-  })
-  assert.match(worldPopup.content.innerHTML, /bioweave-analysis-preview-raw/)
-  resolvePopup()
-  await worldOpen
   app.destroyBioWeave()
 })
 test('analysis debug shows a safe Toast and no custom modal when Popup is unavailable', async () => {

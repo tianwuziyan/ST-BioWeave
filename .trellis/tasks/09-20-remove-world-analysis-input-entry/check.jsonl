@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"质量检查 World Model 页面入口删除不影响分析逻辑和 API 边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"质量检查高级调试预览的调用链仍完整"}

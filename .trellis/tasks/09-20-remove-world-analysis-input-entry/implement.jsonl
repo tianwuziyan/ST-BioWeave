@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"确认 World Model UI 与分析/API 边界，避免入口删除影响分析逻辑"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对页面 action、状态、Prompt 预览和 API 调用之间的边界"}

@@ -4050,10 +4050,9 @@ test('World Model UI renders Human and an original species through the same rend
   assert.equal((originalSpeciesHtml.match(/data-bioweave-action="world-model-select-type"/g) ?? []).length, 1)
 })
 
-test('World Model page keeps the analysis input action without an embedded preview', () => {
+test('World Model page does not expose the analysis input preview entry', () => {
   const html = worldPage()
-  assert.match(html, /data-bioweave-action="world-model-view-input">查看本次分析输入<\/button>/)
-  assert.doesNotMatch(html, /收起本次分析输入/)
+  assert.doesNotMatch(html, /查看本次分析输入|world-model-view-input/)
   assert.doesNotMatch(html, /data-bioweave-analysis-preview/)
   assert.doesNotMatch(html, /data-bioweave-world-model-message-preview/)
 })

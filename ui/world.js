@@ -628,7 +628,6 @@ export function worldPage({
     : '';
   const actions = [
     '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-reanalyze">' + (worldModelBusy ? '分析中…' : (model ? '重新分析' : '开始分析')) + '</button>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-view-input">查看本次分析输入</button>',
   ].join('');
   const metadata = model ? [
     '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',

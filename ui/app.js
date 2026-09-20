@@ -3315,11 +3315,6 @@ export function createApp(runtime, options = {}) {
       else await analyzeWorldModel()
       return
     }
-    if (action === 'world-model-view-input') {
-      event.preventDefault()
-      await openAnalysisDebugPopup()
-      return
-    }
     if (action === 'world-model-select-species') {
       event.preventDefault()
       await selectWorldModelType(Number(target.dataset.bioweaveWorldSpeciesIndex), null)
