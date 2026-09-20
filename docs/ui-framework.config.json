@@ -434,6 +434,7 @@
       "selectionHook": "data-bioweave-action=world-model-select-species",
       "collectionActions": {
         "add": "data-bioweave-action=world-model-add-species",
+        "edit": "data-bioweave-action=world-model-edit-species",
         "remove": "data-bioweave-action=world-model-delete-species",
         "placement": "section header actions, margin-left auto",
         "iconOnly": true,
@@ -485,6 +486,7 @@
       "typeScope": "selected species only; never flatten biological_types across species",
       "typeCollectionActions": {
         "add": "data-bioweave-action=world-model-add-biological-type",
+        "edit": "data-bioweave-action=world-model-edit-biological-type",
         "remove": "data-bioweave-action=world-model-delete-biological-type",
         "placement": "biological_types section header actions, margin-left auto",
         "iconOnly": true,
@@ -497,8 +499,10 @@
       "root": "bioweave-world-model-section-actions",
       "actions": [
         "data-bioweave-action=world-model-add-species",
+        "data-bioweave-action=world-model-edit-species",
         "data-bioweave-action=world-model-delete-species",
         "data-bioweave-action=world-model-add-biological-type",
+        "data-bioweave-action=world-model-edit-biological-type",
         "data-bioweave-action=world-model-delete-biological-type"
       ],
       "iconOnly": true,

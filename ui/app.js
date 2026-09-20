@@ -1704,6 +1704,43 @@ export function createApp(runtime, options = {}) {
     worldModelState = {...worldModelState, collectionEditor: null, notice: null}
     render()
   }
+  async function beginWorldModelCollectionEdit(kind) {
+    if (worldModelState.busy) return
+    const base = normalizeWorldModel(worldModelState.model)
+    const selectedSpecies = normalizeWorldModelSpeciesSelection(base, worldModelState.selectedSpecies)
+    const selectedBiologicalType = normalizeWorldModelBiologicalTypeSelection(base, worldModelState.selectedBiologicalType)
+    if (kind === 'species' && selectedSpecies) {
+      worldModelState = {
+        ...worldModelState,
+        collectionEditor: {
+          kind,
+          mode: 'edit',
+          speciesIndex: selectedSpecies.speciesIndex,
+          typeIndex: null,
+          initialName: selectedSpecies.speciesName,
+        },
+        notice: null,
+      }
+    } else if (kind === 'biological-type' && selectedSpecies && selectedBiologicalType && selectedBiologicalType.speciesIndex === selectedSpecies.speciesIndex) {
+      worldModelState = {
+        ...worldModelState,
+        collectionEditor: {
+          kind,
+          mode: 'edit',
+          speciesIndex: selectedBiologicalType.speciesIndex,
+          typeIndex: selectedBiologicalType.typeIndex,
+          initialName: selectedBiologicalType.typeName,
+        },
+        notice: null,
+      }
+    } else {
+      return
+    }
+    render()
+    const input = root?.querySelector?.('[data-bioweave-world-model-collection-input]')
+    input?.focus?.()
+    input?.select?.()
+  }
   async function saveWorldModelCollectionEdit(operation, {speciesIndex = null, typeIndex = null, name = ''} = {}) {
     if (worldModelState.busy) return
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
@@ -1729,6 +1766,17 @@ export function createApp(runtime, options = {}) {
       speciesIndex = selectedBiologicalType.speciesIndex
       typeIndex = selectedBiologicalType.typeIndex
       operation = 'remove-biological-type'
+    }
+    if (operation === 'rename-species-selection') {
+      if (!selectedSpecies) return
+      speciesIndex = selectedSpecies.speciesIndex
+      operation = 'rename-species'
+    }
+    if (operation === 'rename-biological-type-selection') {
+      if (!selectedSpecies || !selectedBiologicalType || selectedBiologicalType.speciesIndex !== selectedSpecies.speciesIndex) return
+      speciesIndex = selectedBiologicalType.speciesIndex
+      typeIndex = selectedBiologicalType.typeIndex
+      operation = 'rename-biological-type'
     }
     const result = applyWorldModelCollectionEdit(base, {operation, speciesIndex, typeIndex, name})
     if (!result.changed) {
@@ -1769,6 +1817,16 @@ export function createApp(runtime, options = {}) {
         nextBiologicalType = null
       }
       if (operation === 'remove-biological-type') nextBiologicalType = null
+      if (operation === 'rename-species') {
+        nextSpecies = createWorldModelSpeciesSelection(model, speciesIndex)
+        nextBiologicalType = selectedBiologicalType
+          ? createWorldModelBiologicalTypeSelection(model, speciesIndex, selectedBiologicalType.typeIndex)
+          : null
+      }
+      if (operation === 'rename-biological-type') {
+        nextSpecies = createWorldModelSpeciesSelection(model, speciesIndex)
+        nextBiologicalType = createWorldModelBiologicalTypeSelection(model, speciesIndex, typeIndex)
+      }
       worldModelState = {
         ...worldModelState,
         loaded: true,
@@ -1794,11 +1852,12 @@ export function createApp(runtime, options = {}) {
     const form = actionTarget.closest?.('[data-bioweave-world-model-collection-form]')
     const name = form?.querySelector?.('[data-bioweave-world-model-collection-input]')?.value ?? ''
     const kind = form?.dataset?.bioweaveWorldModelCollectionKind
+    const mode = form?.dataset?.bioweaveWorldModelCollectionMode ?? 'add'
     const speciesIndex = Number.isInteger(Number(form?.dataset?.bioweaveWorldSpeciesIndex))
       ? Number(form?.dataset?.bioweaveWorldSpeciesIndex)
       : null
-    if (kind === 'species') return saveWorldModelCollectionEdit('add-species', {name})
-    if (kind === 'biological-type') return saveWorldModelCollectionEdit('add-biological-type', {speciesIndex, name})
+    if (kind === 'species') return saveWorldModelCollectionEdit(mode === 'edit' ? 'rename-species-selection' : 'add-species', {name})
+    if (kind === 'biological-type') return saveWorldModelCollectionEdit(mode === 'edit' ? 'rename-biological-type-selection' : 'add-biological-type', {speciesIndex, name})
     return undefined
   }
   async function analyzeWorldModel() {
@@ -3469,6 +3528,16 @@ export function createApp(runtime, options = {}) {
       const selected = normalizeWorldModelSpeciesSelection(worldModelState.model, worldModelState.selectedSpecies)
       if (!selected) return
       await beginWorldModelCollectionAdd('biological-type', selected.speciesIndex)
+      return
+    }
+    if (action === 'world-model-edit-species') {
+      event.preventDefault()
+      await beginWorldModelCollectionEdit('species')
+      return
+    }
+    if (action === 'world-model-edit-biological-type') {
+      event.preventDefault()
+      await beginWorldModelCollectionEdit('biological-type')
       return
     }
     if (action === 'world-model-delete-species') {

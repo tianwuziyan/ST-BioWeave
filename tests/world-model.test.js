@@ -3739,6 +3739,28 @@ test('World Model collection edits are species-scoped, canonical, unique, and im
   assert.deepEqual(removedSpecies.model.species, [base.species[0]])
   assert.equal(applyWorldModelCollectionEdit(base, {operation: 'add-species', name: '   '}).changed, false)
   assert.equal(applyWorldModelCollectionEdit(base, {operation: 'add-biological-type', speciesIndex: 0, name: '   '}).changed, false)
+
+  const renamedSpecies = applyWorldModelCollectionEdit(base, {operation: 'rename-species', speciesIndex: 0, name: '  高等潮汐生物  '})
+  assert.equal(renamedSpecies.changed, true)
+  assert.equal(renamedSpecies.model.species[0].name, '高等潮汐生物')
+  assert.deepEqual(renamedSpecies.model.species[0].biological_types, base.species[0].biological_types)
+  assert.deepEqual({...renamedSpecies.model.species[0], name: base.species[0].name}, base.species[0])
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'rename-species', speciesIndex: 0, name: '潮汐生物'}).changed, false)
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'rename-species', speciesIndex: 0, name: '   '}).changed, false)
+  assert.equal(applyWorldModelCollectionEdit(addSpecies.model, {operation: 'rename-species', speciesIndex: 0, name: '镜生体'}).changed, false)
+
+  const renamedType = applyWorldModelCollectionEdit(base, {operation: 'rename-biological-type', speciesIndex: 0, typeIndex: 0, name: '  高等潮汐型  '})
+  assert.equal(renamedType.changed, true)
+  assert.equal(renamedType.model.species[0].biological_types[0].name, '高等潮汐型')
+  assert.deepEqual(
+    {...renamedType.model.species[0].biological_types[0], name: base.species[0].biological_types[0].name},
+    base.species[0].biological_types[0],
+  )
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'rename-biological-type', speciesIndex: 0, typeIndex: 0, name: base.species[0].biological_types[0].name}).changed, false)
+  assert.equal(applyWorldModelCollectionEdit(base, {operation: 'rename-biological-type', speciesIndex: 0, typeIndex: 0, name: '   '}).changed, false)
+  const duplicateTypeModel = structuredClone(base)
+  duplicateTypeModel.species[0].biological_types.push({...duplicateTypeModel.species[0].biological_types[0], name: '另一个类型'})
+  assert.equal(applyWorldModelCollectionEdit(duplicateTypeModel, {operation: 'rename-biological-type', speciesIndex: 0, typeIndex: 1, name: base.species[0].biological_types[0].name}).changed, false)
 })
 
 test('World Model collection controls stay icon-only, accessible, and species-scoped', () => {
@@ -3747,6 +3769,10 @@ test('World Model collection controls stay icon-only, accessible, and species-sc
   assert.equal((html.match(/data-bioweave-action="world-model-delete-species"/g) ?? []).length, 1)
   assert.equal((html.match(/data-bioweave-action="world-model-add-biological-type"/g) ?? []).length, 1)
   assert.equal((html.match(/data-bioweave-action="world-model-delete-biological-type"/g) ?? []).length, 1)
+  assert.equal((html.match(/data-bioweave-action="world-model-edit-species"/g) ?? []).length, 1)
+  assert.equal((html.match(/data-bioweave-action="world-model-edit-biological-type"/g) ?? []).length, 1)
+  assert.match(html, /data-bioweave-action="world-model-edit-species"[^>]*title="编辑种族：潮汐生物"[^>]*aria-label="编辑种族：潮汐生物"[^>]*><i class="fa-solid fa-pen"/)
+  assert.match(html, /data-bioweave-action="world-model-edit-biological-type"[^>]*title="编辑性别 \/ 生物类型：潮汐生物型"[^>]*aria-label="编辑性别 \/ 生物类型：潮汐生物型"[^>]*><i class="fa-solid fa-pen"/)
   assert.match(html, /bioweave-world-model-section-heading["]?[^>]*>.*data-bioweave-action="world-model-add-species"/s)
   assert.match(html, /bioweave-world-model-type-picker-head["]?[^>]*>.*data-bioweave-action="world-model-add-biological-type"/s)
   assert.doesNotMatch(html, /world-model-remove-species|world-model-remove-biological-type|world-model-open-add-menu|world-model-delete-selection|world-model-add-menu/)
@@ -3754,10 +3780,12 @@ test('World Model collection controls stay icon-only, accessible, and species-sc
 
   const speciesOnlyHtml = worldPage({worldModel: modelFixture, selectedSpeciesIndex: 0})
   assert.doesNotMatch(speciesOnlyHtml, /data-bioweave-action="world-model-add-biological-type"[^>]*disabled/)
+  assert.match(speciesOnlyHtml, /data-bioweave-action="world-model-edit-biological-type"[^>]*disabled/)
   assert.match(speciesOnlyHtml, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
 
   const noSelectionHtml = worldPage({worldModel: modelFixture})
   assert.match(noSelectionHtml, /data-bioweave-action="world-model-add-biological-type"[^>]*disabled/)
+  assert.match(noSelectionHtml, /data-bioweave-action="world-model-edit-species"[^>]*disabled/)
   assert.match(noSelectionHtml, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
 })
 

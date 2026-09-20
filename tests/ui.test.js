@@ -2616,6 +2616,7 @@ test('World Model collection edits persist on the current resolver and preserve 
   let currentModel = normalizeWorldModel(baseModel)
   let currentMeta = structuredClone(meta)
   let failSave = false
+  let saveCalls = 0
   const profileStore = {
     getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
     getApiRequestSettings: () => ({}),
@@ -2630,6 +2631,7 @@ test('World Model collection edits persist on the current resolver and preserve 
     },
     resolveWorldModelAtOrBefore: async () => ({model: currentModel, meta: currentMeta}),
     saveWorldModel: async ({model, meta: nextMeta}) => {
+      saveCalls += 1
       if (failSave) {
         const error = new Error('WORLD_MODEL_SAVE_FAILED')
         error.code = 'WORLD_MODEL_SAVE_FAILED'
@@ -2646,11 +2648,11 @@ test('World Model collection edits persist on the current resolver and preserve 
     },
     subscribe: () => () => {},
   }
-  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
-  const root = app.openBioWeave()
+  let app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  let root = app.openBioWeave()
   app.go('world')
   await new Promise(resolve => setTimeout(resolve, 0))
-  const click = [...root.listeners.get('click')][0]
+  let click = [...root.listeners.get('click')][0]
   const actionTarget = (action, dataset = {}, form = null) => ({
     __root: root,
     dataset: {bioweaveAction: action, ...dataset},
@@ -2669,11 +2671,13 @@ test('World Model collection edits persist on the current resolver and preserve 
       },
     }
   }
-  const clickCollection = async (action, dataset, value) => {
+  const clickCollection = async (action, dataset, value, {mode = 'add', typeIndex = ''} = {}) => {
     const form = {
       dataset: {
         bioweaveWorldModelCollectionKind: dataset.bioweaveWorldModelCollectionKind,
+        bioweaveWorldModelCollectionMode: mode,
         bioweaveWorldSpeciesIndex: dataset.bioweaveWorldSpeciesIndex ?? '',
+        bioweaveWorldTypeIndex: typeIndex,
       },
       querySelector(selector) {
         return selector.includes('data-bioweave-world-model-collection-input') ? {value} : null
@@ -2699,6 +2703,48 @@ test('World Model collection edits persist on the current resolver and preserve 
     bioweaveWorldSpeciesIndex: '1',
   }, '类型 B')
   assert.deepEqual(currentModel.species[1].biological_types.map(item => item.name), ['类型 B'])
+  await click({target: nestedActionTarget('world-model-edit-biological-type'), preventDefault() {}})
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /value="类型 B"/)
+  await clickCollection('world-model-save-biological-type', {
+    bioweaveWorldModelCollectionKind: 'biological-type',
+    bioweaveWorldSpeciesIndex: '1',
+  }, '类型 B2', {mode: 'edit', typeIndex: '0'})
+  assert.equal(currentModel.species[1].biological_types[0].name, '类型 B2')
+  await click({target: nestedActionTarget('world-model-edit-species'), preventDefault() {}})
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /value="种族 B"/)
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '高等种族 B', {mode: 'edit'})
+  assert.equal(currentModel.species[1].name, '高等种族 B')
+  assert.equal(currentModel.species[1].biological_types[0].name, '类型 B2')
+  const renameSaveCalls = saveCalls
+  await click({target: nestedActionTarget('world-model-edit-species'), preventDefault() {}})
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '种族 A', {mode: 'edit'})
+  assert.equal(currentModel.species[1].name, '高等种族 B')
+  assert.equal(saveCalls, renameSaveCalls)
+  await click({target: nestedActionTarget('world-model-edit-species'), preventDefault() {}})
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '   ', {mode: 'edit'})
+  assert.equal(currentModel.species[1].name, '高等种族 B')
+  assert.equal(saveCalls, renameSaveCalls)
+  failSave = true
+  await click({target: nestedActionTarget('world-model-edit-biological-type'), preventDefault() {}})
+  await clickCollection('world-model-save-biological-type', {
+    bioweaveWorldModelCollectionKind: 'biological-type',
+    bioweaveWorldSpeciesIndex: '1',
+  }, '类型 B3', {mode: 'edit', typeIndex: '0'})
+  assert.equal(currentModel.species[1].biological_types[0].name, '类型 B2')
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /类型 B3/)
+  failSave = false
+
+  app.destroyBioWeave()
+  const reloadDocument = new AppFakeDocument()
+  reloadDocument.defaultView.toastr = documentRef.defaultView.toastr
+  app = createApp(runtime, {documentRef: reloadDocument, storageRef: {}, profileStore})
+  root = app.openBioWeave()
+  app.go('world')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /类型 B2/)
+  click = [...root.listeners.get('click')][0]
+
   await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '0'}), preventDefault() {}})
   assert.match(root.querySelector('.bioweave-main').innerHTML, /类型 A/)
   assert.match(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-action="world-model-delete-biological-type"[^>]*disabled/)
