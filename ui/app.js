@@ -1361,13 +1361,6 @@ export function createApp(runtime, options = {}) {
       typeof runtime.resolveCurrentBioWeaveFloor === 'function'
         ? await runtime.resolveCurrentBioWeaveFloor()
         : null
-    const boundedContext =
-      currentBioWeaveFloor && Array.isArray(context?.chat)
-        ? {
-            ...context,
-            chat: context.chat.slice(0, currentBioWeaveFloor.index + 1),
-          }
-        : context
     const externalMemoryProviders = await probeExternalMemoryProviders({
       context,
     }).catch(() => detectExternalMemoryProviders({ context }))
@@ -1376,12 +1369,13 @@ export function createApp(runtime, options = {}) {
     const input = await collectAnalysisContext({
       sources: analysisSourcesState.sources,
       selected: analysisSourcesState.selected,
-      context: boundedContext,
+      context,
       chatId,
       recentStory: analysisSourcesState.recentStory,
       globalRecentStory,
       externalMemory: analysisSourcesState.externalMemory,
       externalMemoryProviders,
+      upperBoundIndex: currentBioWeaveFloor?.index ?? null,
       includePersonaInTokenEstimate: false,
     })
     let eventInput = null

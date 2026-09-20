@@ -578,39 +578,6 @@ export function collectRecentStory({
   }
 }
 
-function recentStoryMatchesTarget(item, target = null) {
-  if (!target || !item) return false
-  const targetMessageId = safeId(target.message_id ?? target.messageId)
-  const itemMessageId = safeId(item.message_id ?? item.messageId)
-  const targetSwipeId = Number.isInteger(target.swipe_id)
-    ? target.swipe_id
-    : null
-  const itemSwipeId = Number.isInteger(item.swipe_id) ? item.swipe_id : null
-  if (targetMessageId && itemMessageId) {
-    return (
-      targetMessageId === itemMessageId &&
-      (targetSwipeId === null ||
-        itemSwipeId === null ||
-        targetSwipeId === itemSwipeId)
-    )
-  }
-  const targetFloor = numericFloor(target.floor, null)
-  return targetFloor !== null && numericFloor(item.floor, null) === targetFloor
-}
-
-function excludeRecentStoryTarget(story, target = null) {
-  if (!target || !story || !Array.isArray(story.items)) return story
-  const items = story.items.filter(
-    (item) => !recentStoryMatchesTarget(item, target),
-  )
-  return {
-    ...story,
-    floor_start: items.length ? items[0].floor : null,
-    floor_end: items.length ? items.at(-1).floor : null,
-    items,
-  }
-}
-
 function providerItems(provider) {
   if (!provider || typeof provider !== 'object') return []
   if (Array.isArray(provider.items)) return provider.items
@@ -716,7 +683,6 @@ export function buildAnalysisInput({
   recentStoryItems = null,
   externalMemory = undefined,
   externalMemoryProviders = [],
-  excludeRecentFloor = null,
   includePersonaInTokenEstimate = false,
   upperBoundIndex = null,
 } = {}) {
@@ -737,10 +703,7 @@ export function buildAnalysisInput({
     items: recentStoryItems ?? recentSettings?.items ?? null,
     upperBoundIndex,
   })
-  const recent_story = excludeRecentStoryTarget(
-    collectedRecentStory,
-    excludeRecentFloor,
-  )
+  const recent_story = collectedRecentStory
   const external_memory = buildExternalMemoryInput(
     externalMemory ?? chatSettings?.external_memory ?? {},
     externalMemoryProviders,
@@ -813,7 +776,6 @@ export async function collectAnalysisContext({
   sourceLoader = null,
   sourceLoaderOptions = {},
   externalMemoryProviderLoader = null,
-  excludeRecentFloor = null,
   includePersonaInTokenEstimate = false,
   upperBoundIndex = null,
 } = {}) {
@@ -880,7 +842,6 @@ export async function collectAnalysisContext({
     upperBoundIndex,
     externalMemory,
     externalMemoryProviders: collectedProviders ?? [],
-    excludeRecentFloor,
     includePersonaInTokenEstimate,
   })
 }

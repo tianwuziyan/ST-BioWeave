@@ -61,7 +61,7 @@ Worldbook 是世界观和生物规则的参考证据；当前剧情的明确后�
 
 ## 5. Recent Story contract
 
-Recent Story 的楼数唯一来自当前既有设置 `recent_story.floor_count`。禁止在某个 Analyzer 内另设固定的 5 楼、10 楼或其它独立默认值。Event Analysis 提供目标 Floor 之前的 causal message prefix，由共享 collector 按相同 `floor_count` 选择最近楼层。
+Recent Story 的楼数唯一来自当前既有设置 `recent_story.floor_count`。禁止在某个 Analyzer 内另设固定的 5 楼、10 楼或其它独立默认值。World/Event Analysis 都先解析 Current BioWeave Character Floor，再以该 Floor 为 inclusive upper bound，从原始 SillyTavern message 中按 `floor_count` 选择最近楼层。历史 User message 可以保留；只有 Character Floor 之后的尾部 User message 被排除。
 
 Recent Story 的处理顺序是：
 
@@ -77,7 +77,7 @@ raw message
 
 开场楼和用户楼的处理遵守现有 collector 语义。`regex_user_enabled` 为 false 时保留既定用户楼行为；为 true 时用户楼按配置规则处理。Prompt Formatter 不重新执行 regex。
 
-Event 单独发送 Target Floor，因此 collector 必须从 Recent Story 中排除同一个 authoritative target（按 message/swipe identity，必要时按 floor 兜底）。Recent Story 与 Target Floor 不得重复。World Model 没有独立 Target Floor 时继续使用其原有 Recent Story 语义。
+Event 仍单独发送 Target Floor，但 Recent Story 必须包含同一个 Current BioWeave Character Floor；重复是有意的，确保 World/Event 使用一致的 recent-story 边界。Current Floor 之后的尾部 User message 不得进入任一分析 Context。
 
 ## 6. External Memory provider contract
 

@@ -510,12 +510,17 @@ test("Character-only current Floor ignores a trailing User message and writes on
       },
     },
   });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: { chat_id: "chat-runtime" },
+    settings: { recent_story: { enabled: true, floor_count: 4 } },
+  };
   await fixture.runtime.init();
   const current = await fixture.runtime.resolveCurrentBioWeaveFloor();
   assert.equal(current.version.message_id, "char-5");
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal(input.current_floor.message_id, "char-5");
   assert.equal(input.current_floor.narrative, "角色回复");
+  assert.deepEqual(input.recent_story.items.map((item) => item.floor), [4, 5]);
   assert.equal(fixture.context.chat[1].extra.bioweave.analysis.status, "success");
   assert.equal(fixture.context.chat[0].extra?.bioweave, undefined);
   assert.equal(fixture.context.chat[2].extra?.bioweave, undefined);

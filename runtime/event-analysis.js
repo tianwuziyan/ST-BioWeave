@@ -679,9 +679,9 @@ export function createEventAnalysisCoordinator({
   function messages() {
     return messageCollection() ?? [];
   }
-  function recentStoryItemsBefore(targetIndex) {
+  function recentStoryItemsThrough(targetIndex) {
     return messages()
-      .slice(0, Math.max(0, targetIndex))
+      .slice(0, Math.max(0, targetIndex + 1))
       .map((message, index) => {
         const swipeId = store.getActiveSwipeId?.(index);
         if (swipeId === null || swipeId === undefined) return null;
@@ -1476,7 +1476,7 @@ export function createEventAnalysisCoordinator({
       // The shared collector owns floor_count and regex processing. Runtime
       // only supplies the causal prefix of the Chat so a specified target
       // Floor can never pull future narrative into its context.
-      recentStoryItems: recentStoryItemsBefore(target.index),
+      recentStoryItems: recentStoryItemsThrough(target.index),
       sourceLoader: analysisSourceLoader,
       sourceLoaderOptions: {
         ...analysisSourceLoaderOptions,
@@ -1487,11 +1487,6 @@ export function createEventAnalysisCoordinator({
         cache: analysisSourceLoaderOptions.cache ?? sourceCache,
       },
       externalMemoryProviderLoader: collectExternalMemoryProviders,
-      excludeRecentFloor: {
-        floor: target.version.floor,
-        message_id: target.version.message_id,
-        swipe_id: target.swipeId,
-      },
       includePersonaInTokenEstimate: true,
     });
     const characterContext = characterContextResolver(

@@ -154,7 +154,7 @@ test('shared context collection applies configured floor count and global/chat r
   assert.equal(userRegexEnabled.recent_story.items[0].content, 'USER_GLOBAL\nUSER_CHAT');
 });
 
-test('shared collector loads only selected source IDs and excludes the target from Recent Story', async () => {
+test('shared collector loads only selected source IDs and keeps the bounded target in Recent Story', async () => {
   const requestedSourceIds = [];
   const sources = analysisSources();
   const targetItems = [
@@ -174,17 +174,16 @@ test('shared collector loads only selected source IDs and excludes the target fr
       return sources;
     },
     recentStoryItems: targetItems,
-    excludeRecentFloor: {floor: 3, message_id: 'message_target', swipe_id: 1},
   });
 
   assert.deepEqual(requestedSourceIds, [['character_card_fixture', 'worldbook_fixture']]);
   assert.equal(input.character.description, 'CHARACTER_SELECTED');
   assert.deepEqual(input.character.greetings.map(item => item.content), ['CHARACTER_OPENING_SELECTED']);
   assert.deepEqual(input.worldbooks[0].entries.map(item => item.entry_id), ['entry_alpha']);
-  assert.deepEqual(input.recent_story.items.map(item => item.content), ['OLD_STORY']);
+  assert.deepEqual(input.recent_story.items.map(item => item.content), ['OLD_STORY', 'TARGET_FLOOR_EVENT']);
   assert.equal(JSON.stringify(input).includes('CHARACTER_NOT_SELECTED'), false);
   assert.equal(JSON.stringify(input).includes('WORLDBOOK_NOT_SELECTED'), false);
-  assert.equal(JSON.stringify(input).includes('TARGET_FLOOR_EVENT'), false);
+  assert.equal(JSON.stringify(input).includes('TARGET_FLOOR_EVENT'), true);
 });
 
 test('Recent Story upper bound stops at the current Character Floor', async () => {
@@ -202,6 +201,48 @@ test('Recent Story upper bound stops at the current Character Floor', async () =
   });
   assert.deepEqual(input.recent_story.items.map(item => item.floor), [4, 5]);
   assert.equal(input.recent_story.items.some(item => item.floor === 6), false);
+});
+
+test('Recent Story takes the configured number of raw messages through the Character upper bound', () => {
+  const message = (floor, role) => ({
+    floor,
+    role,
+    content: `${role}-${floor}`,
+  });
+  const collect = (messages, floorCount, upperBoundIndex) =>
+    collectRecentStory({
+      context: {chat: messages},
+      settings: {enabled: true, floor_count: floorCount},
+      upperBoundIndex,
+    }).items.map(item => item.floor);
+
+  const caseA = [
+    message(4, 'user'),
+    message(5, 'assistant'),
+    message(6, 'user'),
+    message(7, 'assistant'),
+    message(8, 'user'),
+  ];
+  assert.deepEqual(collect(caseA, 4, 3), [4, 5, 6, 7]);
+  assert.deepEqual(collect(caseA, 2, 3), [6, 7]);
+  assert.deepEqual(collect(caseA, 10, 3), [4, 5, 6, 7]);
+
+  const caseB = [
+    message(4, 'user'),
+    message(5, 'assistant'),
+    message(6, 'user'),
+    message(7, 'assistant'),
+  ];
+  assert.deepEqual(collect(caseB, 4, 3), [4, 5, 6, 7]);
+
+  const caseD = [
+    message(1, 'user'),
+    message(2, 'assistant'),
+    message(3, 'user'),
+    message(4, 'assistant'),
+    message(5, 'user'),
+  ];
+  assert.deepEqual(collect(caseD, 3, 3), [2, 3, 4]);
 });
 
 test('shared collector enforces Worldbook mode before Prompt formatting', async () => {
