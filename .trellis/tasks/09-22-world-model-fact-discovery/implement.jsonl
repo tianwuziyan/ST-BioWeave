@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model evidence boundaries and schema-facing prompt contracts"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check AI prompt output boundaries without changing downstream layers"}

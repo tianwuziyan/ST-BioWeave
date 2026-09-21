@@ -480,6 +480,99 @@ test('World Model prompt states canonical exceptions, unknowns, and special_rule
   assert.doesNotMatch(prompt, /"statement"\s*:\s*null/)
 })
 
+test('World Model prompt routes discovered facts without relaxing evidence thresholds', () => {
+  const fixtures = [
+    {
+      id: 'A-medical-case',
+      input: '某产妇因难产死亡。',
+      expected: {
+        medical_context: {
+          childbirth_difficulty: '存在难产导致产妇死亡的案例',
+          care_level: null,
+          evidence: '某产妇因难产死亡。',
+        },
+        exceptions: [],
+        unknowns: [],
+      },
+    },
+    {
+      id: 'B-human-without-medical-fact',
+      input: '普通人类可以自然生育，但资料没有医疗信息。',
+      expected: {
+        medical_context: {
+          childbirth_difficulty: null,
+          care_level: null,
+          evidence: null,
+        },
+        exceptions: [],
+        unknowns: [],
+      },
+    },
+    {
+      id: 'C-temporary-deviation',
+      input: '该物种通常只有女性可以孕育，但临时法术使一名男性短暂获得孕育能力。',
+      expected: {
+        exceptions: [{
+          statement: '临时法术使一名男性短暂获得孕育能力。',
+          applies_to: '该名男性',
+          evidence: '临时法术使一名男性短暂获得孕育能力。',
+        }],
+        unknowns: [],
+      },
+    },
+    {
+      id: 'D-triggered-mechanism-unknown',
+      input: '该族可以通过魔力使另一方怀孕，但资料没有说明是否存在配子结合。',
+      expected: {
+        exceptions: [],
+        unknowns: ['是否需要配子结合尚未确定。'],
+      },
+    },
+    {
+      id: 'E-untouched-mechanism',
+      input: '资料只说明该族存在妊娠现象，没有提及剖宫产。',
+      expected: {
+        exceptions: [],
+        unknowns: [],
+      },
+    },
+    {
+      id: 'F-no-exception-evidence',
+      input: '普通人类女性可以孕育。',
+      expected: {
+        exceptions: [],
+        unknowns: [],
+      },
+    },
+  ]
+  const prompt = buildWorldModelMessages({ character: { description: fixtures[0].input } })
+    .map(message => message.content)
+    .join('\n\n')
+  assert.match(prompt, /先完整发现与生物学、生殖、妊娠、分娩、生理变化、生殖相关医疗\/照护有关的有效事实/)
+  assert.match(prompt, /再判断每条事实最适合归入 species、biological_type、capabilities、reproductive_mechanisms、reproduction_rules、lifecycle、special_rules、medical_context、exceptions、unknowns 或 projection_rules/)
+  assert.match(prompt, /某条事实不适合这些主分类，不代表可以丢弃/)
+  assert.match(prompt, /个体案例只能证明“这种情况存在”，不得自动推广为整个 species、国家或世界的普遍规则/)
+  assert.match(prompt, /没有 exception evidence 时必须输出 \[\]/)
+  assert.match(prompt, /不得从 null 字段、空字段或 schema 缺口自动生成 unknown/)
+  assert.match(prompt, /未归档事实复查|Unarchived Fact Review/)
+
+  for (const fixture of fixtures) {
+    const fixturePrompt = buildWorldModelMessages({ character: { description: fixture.input } })
+      .map(message => message.content)
+      .join('\n\n')
+    assert.ok(fixturePrompt.includes(fixture.input), `${fixture.id} should remain in the prompt evidence`)
+    const response = {
+      ...modelFixture,
+      ...fixture.expected,
+      species: [],
+    }
+    const parsed = parseWorldModelResponse(JSON.stringify(response))
+    for (const [field, expected] of Object.entries(fixture.expected)) {
+      assert.deepEqual(parsed[field], expected, `${fixture.id} should preserve ${field}`)
+    }
+  }
+})
+
 test('World Model parser distinguishes JSON syntax errors from schema diagnostics', () => {
   assert.throws(
     () => parseWorldModelResponse('{ not valid json'),
