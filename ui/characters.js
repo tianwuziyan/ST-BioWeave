@@ -12,10 +12,10 @@ import { renderCharacterState } from './character-state.js'
 const capabilityLabels = {
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
-  can_be_fertilized: '可受精',
   can_fertilize: '可使对方受精',
-  can_carry_pregnancy: '可承载妊娠',
+  can_be_fertilized: '可受精',
   can_cause_pregnancy: '可导致受孕',
+  can_carry_pregnancy: '可承载妊娠',
 }
 const eventTypeLabels = {
   sexual_activity: '亲密互动',
@@ -187,7 +187,7 @@ function renderExposureEvent(event, fallbackEventId, index = 0, currentStoryTime
     '<div><dt>相关对象</dt><dd>' +
     escapeHtml(counterpart) +
     '</dd></div>' +
-    '</dl><p class="bioweave-character-exposure-source">完整事实仍来自当前 Event Registry；这里只在人物内展开查看。</p></div></details>'
+    '</dl></div></details>'
   )
 }
 function renderCapabilities(profile) {
@@ -195,7 +195,7 @@ function renderCapabilities(profile) {
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
     return '<div class="bioweave-empty bioweave-character-empty">尚无可显示的生殖能力资料。</div>'
   }
-  const keys = Object.keys(capabilities).filter(key => Object.prototype.hasOwnProperty.call(capabilityLabels, key))
+  const keys = Object.keys(capabilityLabels).filter(key => Object.prototype.hasOwnProperty.call(capabilities, key))
   if (!keys.length) return '<div class="bioweave-empty bioweave-character-empty">尚无可显示的生殖能力资料。</div>'
   return (
     '<dl class="bioweave-data-list bioweave-capabilities bioweave-character-capabilities">' +
@@ -241,23 +241,8 @@ function renderExposures(subject, activeEvents, currentStoryTime = null, storyTi
   const events = new Map(eventEntries(activeEvents).map(({ key, value }) => [key, value]))
   return (
     '<div class="bioweave-character-exposure-list" aria-label="事件追踪列表">' +
-    '<div class="bioweave-character-exposure-list-head"><span>按时间引用顺序</span><strong>' +
-    exposureIds.length +
-    ' 条记录</strong></div>' +
     exposureIds.map((eventId, index) => renderExposureEvent(events.get(eventId), eventId, index, currentStoryTime, storyTimeDifferences)).join('') +
     '</div>'
-  )
-}
-function renderCharacterSummary({ subject, profile }) {
-  const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
-  return (
-    '<section class="bioweave-card bioweave-character-summary"><header class="bioweave-character-summary-head"><b>' +
-    escapeHtml(displayValue(displayName)) +
-    '</b><span class="bioweave-character-summary-actions"><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
-    escapeHtml(characterIdOf(subject)) +
-    '">昵称</button><span class="bioweave-badge good">事件追踪</span></span></header>' +
-    renderCharacterFacts(profile) +
-    '</section>'
   )
 }
 function renderAliasEditor(aliasEditor, displayName) {
@@ -266,65 +251,66 @@ function renderAliasEditor(aliasEditor, displayName) {
   const aliases = Array.isArray(aliasEditor.draftAliases) ? aliasEditor.draftAliases : []
   return (
     '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器">' +
-    '<div class="bioweave-character-alias-editor-head"><div><h3>昵称 / 别名</h3><p>用于识别同一人物，不会改变正式名称“' +
-    escapeHtml(displayValue(displayName)) +
-    '”。</p></div><span class="bioweave-character-alias-count" aria-live="polite">' +
+    '<div class="bioweave-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="bioweave-badge good" aria-live="polite">' +
     aliases.length +
     ' 个</span></div>' +
-    '<div class="bioweave-character-alias-list">' +
+    '<div class="bioweave-character-alias-fields">' +
     (aliases.length
-      ? aliases.map((alias, index) => '<div class="bioweave-character-alias-row"><label class="bioweave-character-alias-field"><input class="bioweave-input" type="text" value="' + escapeHtml(alias) + '" data-bioweave-alias-input="' + index + '" aria-label="昵称 ' + (index + 1) + '"></label><button type="button" class="bioweave-button bioweave-character-alias-remove" data-bioweave-action="remove-character-alias" data-bioweave-alias-index="' + index + '" aria-label="删除昵称' + escapeHtml(alias) + '" title="删除"' + (aliasEditor.saving ? ' disabled' : '') + '>×</button></div>').join('')
+      ? aliases.map((alias, index) => '<label class="bioweave-character-alias-field"><span>别名</span><input class="bioweave-input" type="text" value="' + escapeHtml(alias) + '" data-bioweave-alias-input="' + index + '" aria-label="昵称 ' + (index + 1) + '"><button type="button" data-bioweave-action="remove-character-alias" data-bioweave-alias-index="' + index + '" aria-label="删除昵称' + escapeHtml(alias) + '" title="删除"' + (aliasEditor.saving ? ' disabled' : '') + '>×</button></label>').join('')
       : '<p class="bioweave-muted">暂无昵称/别名</p>') +
-    '</div><div class="bioweave-character-alias-actions"><button type="button" class="bioweave-button bioweave-character-alias-add" data-bioweave-action="add-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>＋ 添加昵称</button><span class="bioweave-spacer"></span><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-aliases"' + (aliasEditor.saving ? ' disabled' : '') + '>保存</button></div>' +
+    '</div><div class="bioweave-character-alias-actions"><button type="button" class="bioweave-button bioweave-character-alias-add" data-bioweave-action="add-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>＋ 添加昵称</button><div class="right"><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-aliases"' + (aliasEditor.saving ? ' disabled' : '') + '>保存</button></div></div>' +
     (aliasEditor.error ? '<p class="bioweave-form-error">' + escapeHtml(aliasEditor.error) + '</p>' : '') +
     '</div>'
   )
 }
 function renderExposuresSection(subject, activeEvents, currentStoryTime = null, storyTimeDifferences = {}) {
+  const exposureCount = Array.isArray(subject?.exposure_event_ids) ? new Set(subject.exposure_event_ids).size : 0
   return (
-    '<section class="bioweave-card bioweave-character-detail-section bioweave-character-exposure-section"><h3>事件追踪</h3>' +
-    '<p class="bioweave-muted">仅显示当前仍在跟进的相关记录。</p>' +
+    '<section class="bioweave-card bioweave-character-detail-section bioweave-character-exposure-section"><header class="bioweave-character-section-head"><div><h3>事件记录</h3><small>按时间顺序</small></div><strong>' +
+    exposureCount +
+    ' 条</strong></header>' +
     renderExposures(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     '</section>'
   )
 }
-function renderProjectionSection() {
+function renderOtherSection() {
   return (
-    '<section class="bioweave-card bioweave-character-detail-section"><h3>推演</h3>' +
-    '<div class="bioweave-empty bioweave-character-empty">当前没有可显示的生理推演。推演并非已发生事实。</div></section>'
-  )
-}
-function renderRelationsSection() {
-  return (
-    '<section class="bioweave-card bioweave-character-detail-section"><h3>关系</h3>' +
-    '<div class="bioweave-empty bioweave-character-empty">尚未建立已确认的亲子或其他关系。</div></section>'
-  )
-}
-function renderNotesSection() {
-  return (
-    '<section class="bioweave-card bioweave-character-detail-section"><h3>备注</h3>' +
-    '<div class="bioweave-empty bioweave-character-empty">当前没有可显示的人物备注。</div></section>'
+    '<section class="bioweave-card bioweave-character-detail-section bioweave-character-other-section"><header class="bioweave-character-section-head"><h3>其他信息</h3><small>未接入内容保持明确空状态</small></header>' +
+    '<div class="bioweave-character-other-list"><div class="bioweave-character-other-item"><strong>推演</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>关系</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>备注</strong><span>暂无</span></div></div></section>'
   )
 }
 function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, currentState, currentStateStatus }) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
   const selectedCharacterId = characterIdOf(subject)
   const characterState = currentState?.characters?.[selectedCharacterId] ?? null
+  const exposureCount = Array.isArray(subject?.exposure_event_ids) ? new Set(subject.exposure_event_ids).size : 0
+  const biologicalContext = profile?.biological_context ?? {}
+  const species = profile?.species ?? biologicalContext.species
+  const type = profile?.biological_type ?? profile?.type ?? biologicalContext.biological_type
+  const stateReady = currentStateStatus === 'ready' && characterState
   return (
     '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-enter" data-character-detail-id="' +
     escapeHtml(characterIdOf(subject)) +
-    '"><header class="bioweave-character-detail-head"><div><h2>人物详情</h2>' +
-    '<p>当前 Chat · 事件追踪</p></div></header>' +
-    renderCharacterSummary({ subject, profile }) +
+    '"><header class="bioweave-character-detail-head"><div><div class="bioweave-character-detail-title"><h2>' +
+    escapeHtml(displayValue(displayName)) +
+    '</h2><span>' +
+    escapeHtml(displayValue(species)) +
+    ' · ' +
+    escapeHtml(displayValue(type)) +
+    '</span></div><p>' +
+    exposureCount +
+    ' 条相关事件 · 当前状态' +
+    (stateReady ? '已就绪' : '待读取') +
+    '</p></div><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
+    escapeHtml(characterIdOf(subject)) +
+    '">编辑昵称</button></header>' +
     renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +
-    '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><h3>生殖能力</h3>' +
+    '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
     renderCharacterState({ characterState, currentState, currentStateStatus }) +
     renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
-    renderProjectionSection() +
-    renderRelationsSection() +
-    renderNotesSection() +
+    renderOtherSection() +
     '</div></section>'
   )
 }
@@ -344,6 +330,9 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
       const displayName = subject.display_name ?? '未命名角色'
       const exposureCount = Array.isArray(subject.exposure_event_ids) ? subject.exposure_event_ids.length : 0
       const selected = String(characterId ?? '') === key
+      const statusMarkup = subject.status && subject.status !== 'active'
+        ? '<span class="bioweave-badge ' + trackingSubjectTone(subject.status) + '">' + escapeHtml(subjectStatusLabel(subject.status)) + '</span>'
+        : ''
       return (
         '<button type="button" class="bioweave-card bioweave-character-row' +
         (selected ? ' selected' : '') +
@@ -351,13 +340,11 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
         escapeHtml(key) +
         '"><span class="bioweave-character-row-main"><b>' +
         escapeHtml(displayValue(displayName)) +
-        '</b></span><span class="bioweave-character-row-state"><span class="bioweave-badge ' +
-        trackingSubjectTone(subject.status) +
-        '">' +
-        escapeHtml(subjectStatusLabel(subject.status)) +
-        '</span><span>' +
+        '</b></span><span class="bioweave-character-row-state">' +
+        statusMarkup +
+        '<span>' +
         exposureCount +
-        ' 次相关事件</span><span class="bioweave-character-row-chevron" aria-hidden="true">›</span></span></button>'
+        ' 条事件</span><span class="bioweave-character-row-chevron" aria-hidden="true">›</span></span></button>'
       )
     })
     .join('')

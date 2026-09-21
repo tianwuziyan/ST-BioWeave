@@ -24,7 +24,17 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
 
+人物事件记录只展示用户可读的事件事实与详情，不额外显示 Event Registry 的内部说明文字。
+
+人物页未选择人物时的详情占位提示使用更高特异性的组合样式覆盖移动端详情面板的零内边距，三端统一保持参考页的 16px 内边距，文字组不会贴住详情面板边框。
+
 人物详情的人物名栏右侧提供“昵称”入口。昵称编辑器只读取并提交当前 Character Floor active Swipe 的 `character_registry.entities[character_id].aliases[]`，canonical `character_id` 与 `display_name` 始终保持不变；草稿只在编辑器本地维护，点击保存时一次性通过 Runtime Floor 写入口提交，取消不写入。该入口不创建 Chat metadata，也不回写历史 Floor、其它 Swipe 或 User Floor。
+
+人物详情与世界模型中展示生殖能力时，固定按以下顺序显示：可产生精子、可产生卵子、可使对方受精、可受精、可导致受孕、可承载妊娠。字段语义与三态值不因展示顺序改变。
+
+人物事件记录在移动端使用内容宽度的状态徽章，“已确认”等状态不会拉伸占满空白列。
+
+昵称编辑器的视觉结构与 UI 参考页保持一致：编辑器标题、别名标签、输入框和操作按钮使用紧凑层级；“别名”由实际 DOM 文本节点渲染，不使用伪元素重复生成，避免出现重影。输入框与别名行保持参考页的圆角、边框和固定高度。
 
 事件审阅页按“剧情日期 → 相对时间 → 事件类型 → 地点 · 参与者 → 追踪对象数量 → 状态”显示紧凑事件行。相对时间直接消费 Runtime `current_story_time_differences[event_id]` 与统一 formatter；不可比较时保留事件日期并省略相对时间。展开事件后保留妊娠相关性、证据、编辑和删除操作；“编辑当前有效事件”标题使用 13px 正文色，字段、输入控件和按钮使用紧凑辅助层级，Event ID 仅作为只读编辑字段。
 
@@ -38,7 +48,7 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 eligible Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。pending candidate 不在普通人物列表中，也不应被显示为 confirmed eligible。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision 的三态 `eligibility` 与 reason code 只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
-人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并在当前状态区域消费 Runtime 提供的该人物 Biological State。人物页不自行计算 State。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并在当前状态区域消费 Runtime 提供的该人物 Biological State。人物详情采用参考页的单一连续表面：身份标题栏合并姓名、物种/类型、事件数量、状态和昵称入口；能力、当前状态、事件记录和其他信息使用紧凑连续区块，不重复创建摘要卡。人物页不自行计算 State。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
 
 状态页是 BioWeave 插件级运行状态页，只显示当前对话、当前楼层、事件分析、故事时间、生物状态引擎和已有世界模型的运行/诊断信息；面向用户的标签和说明统一使用中文，不显示人物选择器，也不显示人物级 Biological State。人物选择焦点只由人物页的人物列表控制。视觉结构遵循完整参考页的“分析状态”页面：页面标题与说明、任务队列卡片、安全摘要卡片、紧凑任务行与状态徽章；生产页面仍只消费 Runtime DTO。
 

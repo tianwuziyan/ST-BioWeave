@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
@@ -149,15 +150,29 @@ test('character detail exposes a read/write nickname editor without changing the
   });
   assert.match(html, /data-bioweave-action="open-character-aliases"/);
   assert.match(html, /昵称 \/ 别名/);
-  assert.match(html, /用于识别同一人物，不会改变正式名称“柳如烟”。/);
+  assert.match(html, /仅用于识别，不改变正式名称/);
   assert.match(html, /2 个/);
+  assert.match(html, /class="bioweave-badge good"/);
   assert.match(html, /bioweave-character-alias-field/);
-  assert.match(html, /bioweave-character-alias-remove/);
+  assert.match(html, /data-bioweave-action="remove-character-alias"/);
   assert.match(html, /value="如烟"/);
   assert.match(html, /value="烟儿"/);
   assert.match(html, /data-bioweave-action="save-character-aliases"/);
   assert.match(html, /display_name|柳如烟/);
   assert.doesNotMatch(html, /character_registry/);
+});
+
+test('nickname editor uses a real alias label without the legacy ghost pseudo-element', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '柳如烟', exposure_event_ids: [], status: 'active'}],
+    characterProfiles: {char: {character_id: 'char-a', display_name: '柳如烟'}},
+    aliasEditor: {open: true, loading: false, characterId: 'char-a', draftAliases: ['如烟'], saving: false},
+  });
+  const css = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8');
+  assert.match(html, /<label class="bioweave-character-alias-field"><span>别名<\/span><input class="bioweave-input"/);
+  assert.match(css, /\.bioweave-character-alias-field::before\s*\{\s*content:\s*none\s*!important;\s*display:\s*none\s*!important;/);
+  assert.match(css, /\.bioweave-character-alias-field \.bioweave-input[\s\S]*?height:\s*28px\s*!important;/);
 });
 
 test('events page distinguishes not analyzed from analyzed with zero events', () => {
@@ -256,6 +271,16 @@ test('character event tracking renders Runtime custom-calendar difference for di
   assert.match(html, /class="bioweave-event-relative-time bioweave-character-exposure-relative"[^>]*>60天前<\/small>/);
 });
 
+test('character event tracking does not show the internal Event Registry note', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '柳如烟', exposure_event_ids: ['evt-1'], status: 'active'}],
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: '柳如烟'}},
+    activeEvents: [{...event, event_id: 'evt-1'}],
+  });
+  assert.doesNotMatch(html, /完整事实仍来自当前 Event Registry|这里只在人物内展开查看/);
+});
+
 test('event and exposure records use the same relative-time presentation formatter', () => {
   const difference = {value: 60, unit: 'day'};
   const storyTime = {display: '羲和1年3月4日 巳时中', normalized: null, day_index: null, calendar_id: null, precision: 'minute'};
@@ -291,6 +316,11 @@ test('character exposure visual divider follows the relative Story Time item', (
   const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
   assert.match(style, /\.bioweave-character-exposure-date\s*\{[^}]*border-right:\s*0\s*!important;/);
   assert.match(style, /\.bioweave-character-exposure-relative\s*\{[^}]*border-right:\s*1px solid var\(--bioweave-border-soft\)\s*!important;/);
+});
+
+test('character exposure status badge stays content-sized on mobile', () => {
+  const style = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8');
+  assert.match(style, /\.bioweave-character-exposure > summary > \.bioweave-badge \{[^}]*justify-self: end !important;[^}]*width: max-content !important;/);
 });
 
 test('event review details start two tab stops after the time group', () => {
@@ -396,8 +426,8 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.match(html, /可产生精子[\s\S]*?否/);
   assert.match(html, /data-bioweave-event-id="evt-1"/);
   assert.doesNotMatch(html, /调试信息|content_hash|message_version|chat_id|message_id/);
-  for (const section of ['当前状态', '事件追踪', '推演', '关系', '备注']) {
-    assert.match(html, new RegExp(`<h3>${section}</h3>`));
+  for (const section of ['当前状态', '事件记录', '其他信息', '推演', '关系', '备注']) {
+    assert.match(html, new RegExp(section === '其他信息' ? `<h3>${section}</h3>` : section === '推演' || section === '关系' || section === '备注' ? `<strong>${section}</strong>` : `<h3>${section}</h3>`));
   }
   assert.equal((html.match(/class="bioweave-card bioweave-character-exposure"/g) ?? []).length, 1);
   assert.match(html, /阿乙/);
@@ -408,6 +438,36 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.doesNotMatch(html, /probability|gestational age|妊娠概率|妊娠天数/);
   const characterSource = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
   assert.doesNotMatch(characterSource, /physical_effect|protection|condom|ejaculat/i);
+});
+
+test('character and world capability labels use the product order', async () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '柳如烟', exposure_event_ids: [], status: 'active'}],
+    characterProfiles: {
+      'char-a': {
+        character_id: 'char-a',
+        display_name: '柳如烟',
+        reproductive_capabilities: {
+          can_cause_pregnancy: true,
+          can_carry_pregnancy: false,
+          can_be_fertilized: false,
+          can_fertilize: true,
+          can_produce_ova: false,
+          can_produce_sperm: true,
+        },
+      },
+    },
+  });
+  const order = ['可产生精子', '可产生卵子', '可使对方受精', '可受精', '可导致受孕', '可承载妊娠'];
+  let previous = -1;
+  for (const label of order) {
+    const index = html.indexOf(label);
+    assert.ok(index > previous, `${label} should follow the requested capability order`);
+    previous = index;
+  }
+  const {CAPABILITY_LABELS} = await import('../ui/world.js');
+  assert.deepEqual(Object.values(CAPABILITY_LABELS), order);
 });
 
 test('character exposure cards render one counterpart projection per referenced Event', () => {
@@ -449,9 +509,10 @@ test('character detail keeps every section for false or unknown capabilities and
   for (const text of [
     '当前状态',
     '当前没有可显示的相关事件。',
-    '当前没有可显示的生理推演。推演并非已发生事实。',
-    '尚未建立已确认的亲子或其他关系。',
-    '当前没有可显示的人物备注。',
+    '其他信息',
+    '推演',
+    '关系',
+    '备注',
   ]) {
     assert.match(html, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
@@ -475,6 +536,31 @@ test('character detail no longer exposes tab state or bindings and keeps top-lev
   assert.doesNotMatch(styleSource, /bioweave-analysis-detail/);
   assert.match(styleSource, /bioweave-analysis-debug-popup-content/);
   assert.match(appSource, /const desktopRoutes = \['overview', 'characters', 'events', 'projection', 'genealogy', 'world', 'settings', 'state'\]/);
+});
+
+test('character page follows the reference single-surface layout contract', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: '角色甲'}},
+    currentState: {characters: {'char-a': {}}, diagnostics: []},
+    currentStateStatus: 'ready',
+  });
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.match(html, /bioweave-character-detail-title/);
+  assert.match(html, /bioweave-character-section-head/);
+  assert.match(html, /bioweave-character-state-strip/);
+  assert.match(html, /bioweave-character-other-list/);
+  assert.doesNotMatch(html, /bioweave-character-summary|<h2>人物详情<\/h2>/);
+  assert.match(style, /\.bioweave-character-workspace \{ grid-template-columns: 220px minmax\(0, 1fr\) !important; gap: 9px/);
+  assert.match(style, /\.bioweave-character-row \{[^}]*min-height: 42px/);
+  assert.match(style, /\.bioweave-character-capabilities \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(style, /\.bioweave-character-state-strip,[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)/);
+});
+
+test('character detail placeholder keeps the reference inner spacing on mobile', () => {
+  const style = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8');
+  assert.match(style, /\.bioweave-character-detail-pane\.bioweave-character-detail-placeholder \{\s*padding: 16px !important;/);
 });
 
 test('events ordinary cards keep user-readable facts and preserve operation bindings', () => {
@@ -647,11 +733,11 @@ test('character page renders the selected Character Biological State from Runtim
     currentState: state,
     currentStateStatus: 'ready',
   });
-  assert.match(htmlA, /当前 Biological State/);
-  assert.match(htmlA, /经过 Story Time 天数[\s\S]*61/);
-  assert.match(htmlA, /相关事实记录 1 条/);
+  assert.match(htmlA, /当前状态/);
+  assert.match(htmlA, /1 条已确认记录/);
+  assert.match(htmlA, /周期、产后、身体表现、医疗事实暂无记录/);
   assert.match(htmlB, /角色乙/);
-  assert.doesNotMatch(htmlB, /经过 Story Time 天数[\s\S]*61/);
+  assert.doesNotMatch(htmlB, /1 条已确认记录/);
 });
 
 test('character page keeps profile and Event data when Current State is unavailable', () => {

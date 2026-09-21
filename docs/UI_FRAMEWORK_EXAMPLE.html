@@ -487,8 +487,7 @@
         margin-top: 2px;
         font-size: 11px;
       }
-      .bw-character-detail-head,
-      .bw-character-summary-head {
+      .bw-character-detail-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -506,41 +505,6 @@
         margin-top: 2px;
         color: var(--bw-muted);
         font-size: 10px;
-      }
-      .bw-character-summary {
-        margin-top: 6px;
-        padding: 6px 10px;
-        border-left: 2px solid var(--bw-accent);
-        background: var(--bw-accent-soft);
-      }
-      .bw-character-summary-head b {
-        min-width: 0;
-        overflow: hidden;
-        font-size: 16px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .bw-character-summary-facts {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        min-width: 0;
-        gap: 6px;
-        margin-top: 3px;
-        color: var(--bw-muted);
-        font-size: 10px;
-        line-height: 1.15;
-        white-space: nowrap;
-      }
-      .bw-character-summary-facts > span {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .bw-character-summary-facts > span:nth-child(2) {
-        flex: 0 0 auto;
-        color: var(--bw-line);
       }
       .bw-character-detail-sections {
         display: grid;
@@ -747,6 +711,260 @@
         margin-top: 6px;
         color: var(--bw-muted);
         font-size: 10px;
+      }
+      /* Balanced character layout: one identity header and one continuous detail surface. */
+      .bw-character-workspace {
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 9px;
+      }
+      .bw-character-list-pane {
+        position: sticky;
+        top: 8px;
+      }
+      .bw-character-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) max-content;
+        min-height: 42px;
+        padding: 7px 9px;
+      }
+      .bw-character-row-state {
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-character-detail-pane {
+        padding: 0;
+        overflow: hidden;
+      }
+      .bw-character-detail-head {
+        align-items: center;
+        min-height: 58px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--bw-line-soft);
+      }
+      .bw-character-detail-head h2 {
+        font-size: 17px;
+      }
+      .bw-character-detail-head p {
+        color: var(--bw-text-2);
+        font-size: 11px;
+      }
+      .bw-character-detail-title {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        min-width: 0;
+      }
+      .bw-character-detail-title span {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--bw-muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-alias-editor {
+        margin: 0 12px 10px;
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--bw-accent) 65%, var(--bw-line));
+        border-radius: 7px;
+        background: var(--bw-card);
+      }
+      .bw-character-alias-head,
+      .bw-character-alias-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+      }
+      .bw-character-alias-head {
+        border-bottom: 1px solid var(--bw-line-soft);
+      }
+      .bw-character-alias-head p {
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-alias-fields {
+        padding: 8px 10px;
+      }
+      .bw-character-alias-field {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 26px;
+        align-items: center;
+        min-height: 30px;
+        overflow: hidden;
+        border: 1px solid var(--bw-line);
+        border-radius: 6px;
+        background: var(--bw-input);
+      }
+      .bw-character-alias-field > span {
+        padding-left: 8px;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-alias-field input {
+        min-width: 0;
+        height: 28px;
+        padding: 4px 8px;
+        border: 0;
+        border-left: 1px solid var(--bw-line-soft);
+        border-radius: 0;
+        background: transparent;
+      }
+      .bw-character-alias-field button {
+        height: 26px;
+        padding: 0;
+        border: 0;
+        color: var(--bw-muted);
+        background: transparent;
+      }
+      .bw-character-alias-actions {
+        padding-top: 0;
+      }
+      .bw-character-alias-actions > div {
+        display: flex;
+        gap: 6px;
+      }
+      .bw-character-detail-sections {
+        display: block;
+        margin-top: 0;
+      }
+      .bw-character-detail-section {
+        padding: 11px 12px;
+        border: 0;
+        border-bottom: 1px solid var(--bw-line-soft);
+        border-radius: 0;
+        background: transparent;
+      }
+      .bw-character-detail-section:last-child {
+        border-bottom: 0;
+      }
+      .bw-character-detail-section.exposure-section {
+        grid-column: auto;
+      }
+      .bw-character-section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .bw-character-section-head h3 {
+        color: var(--bw-text-2);
+        font-size: 13px;
+      }
+      .bw-character-section-head small {
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-character-capabilities {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0 14px;
+        margin: 0;
+      }
+      .bw-character-capabilities > div {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 29px;
+        padding: 0;
+      }
+      .bw-character-capabilities > div:nth-child(-n + 3) {
+        border-top: 0;
+      }
+      .bw-character-capabilities dt,
+      .bw-character-capabilities dd {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .bw-character-capabilities dd {
+        padding-left: 0;
+      }
+      .bw-character-state-strip,
+      .bw-character-other-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .bw-character-state-cell {
+        min-height: 56px;
+        padding: 8px 9px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 6px;
+        background: var(--bw-card);
+      }
+      .bw-character-state-cell span {
+        display: block;
+        color: var(--bw-muted);
+        font-size: 10px;
+      }
+      .bw-character-state-cell strong {
+        display: block;
+        margin-top: 4px;
+        color: var(--bw-text-2);
+        font-size: 12px;
+      }
+      .bw-character-state-empty-summary {
+        margin-top: 7px;
+        color: var(--bw-muted);
+        font-size: 11px;
+      }
+      .bw-character-exposure-list {
+        gap: 6px;
+        margin-top: 0;
+      }
+      .bw-character-exposure {
+        background: var(--bw-card);
+      }
+      .bw-character-exposure > summary {
+        grid-template-columns: max-content max-content max-content minmax(0, 1fr) max-content 12px;
+        gap: 8px;
+        min-height: 42px;
+        padding: 6px 8px;
+      }
+      .bw-character-exposure-date {
+        padding-right: 0;
+        border-right: 0;
+        font-size: 11px;
+      }
+      .bw-character-exposure-relative {
+        padding-right: 8px;
+        border-right: 1px solid var(--bw-line);
+        font-size: 11px;
+      }
+      .bw-character-exposure-type {
+        font-size: 12px;
+      }
+      .bw-character-exposure-meta {
+        max-width: none;
+        font-size: 11px;
+      }
+      .bw-character-exposure > summary > .bw-badge {
+        min-height: 20px;
+        padding: 1px 6px;
+        font-size: 10px;
+      }
+      .bw-character-exposure-detail {
+        padding: 8px;
+        color: var(--bw-text-2);
+        font-size: 11px;
+      }
+      .bw-character-other-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 34px;
+        padding: 6px 8px;
+        border: 1px solid var(--bw-line-soft);
+        border-radius: 6px;
+      }
+      .bw-character-other-item span {
+        color: var(--bw-muted);
+        font-size: 11px;
       }
       .bw-event-review-panel {
         margin-left: 10px;
@@ -1662,11 +1880,12 @@
         }
         .bw-character-list-pane {
           order: 1;
+          position: static;
         }
         .bw-character-detail-pane {
           order: 2;
           width: 100%;
-          padding: 8px;
+          padding: 0;
         }
         body[data-device='mobile'][data-view='characters'] .bw-character-toolbar,
         body[data-device='mobile'][data-view='characters'] .bw-character-workspace,
@@ -1684,14 +1903,26 @@
           font-size: 13px;
         }
         .bw-character-detail-sections {
-          grid-template-columns: 1fr;
-          gap: 5px;
+          display: block;
         }
         .bw-character-detail-section {
-          padding: 7px 8px;
+          padding: 9px;
         }
         .bw-character-detail-section.exposure-section {
           grid-column: auto;
+        }
+        .bw-character-capabilities {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .bw-character-capabilities > div:nth-child(n) {
+          border-top: 1px solid var(--bw-line-soft);
+        }
+        .bw-character-capabilities > div:nth-child(-n + 2) {
+          border-top: 0;
+        }
+        .bw-character-state-strip,
+        .bw-character-other-list {
+          grid-template-columns: 1fr;
         }
         .bw-character-exposure-fields > div {
           grid-template-columns: minmax(58px, max-content) minmax(0, 1fr);
@@ -1868,7 +2099,7 @@
             <header class="bw-page-head">
               <div class="bw-page-head-copy">
                 <h1>人物列表</h1>
-                <p>当前 Chat 中已进入事件追踪流程的角色</p>
+                <p>当前 Chat 中进入生理追踪的人物</p>
               </div>
               <div class="bw-actions"><button class="bw-button primary" type="button">重新分析当前楼层</button></div>
             </header>
@@ -1877,18 +2108,18 @@
             </div>
             <div class="bw-character-workspace">
               <section class="bw-character-list-pane">
-                <div class="bw-character-pane-head"><strong>追踪人物</strong><span>n 人</span></div>
+                <div class="bw-character-pane-head"><strong>人物</strong><span>n 人</span></div>
                 <div class="bw-character-list">
                   <button class="bw-character-row selected" type="button" data-character-id="runtime-character-id">
                     <span class="bw-character-row-main"><b>Runtime display_name</b></span
                     ><span class="bw-character-row-state"
-                      ><span class="bw-badge good">追踪中</span><span>n 次相关事件</span><span class="bw-character-row-chevron">›</span></span
+                      ><span>n 条事件</span><span class="bw-character-row-chevron">›</span></span
                     >
                   </button>
                   <button class="bw-character-row" type="button" data-character-id="runtime-character-id-2">
                     <span class="bw-character-row-main"><b>另一个 Runtime 角色</b></span
                     ><span class="bw-character-row-state"
-                      ><span class="bw-badge">未知</span><span>0 次相关事件</span><span class="bw-character-row-chevron">›</span></span
+                      ><span class="bw-badge">未知</span><span>0 条事件</span><span class="bw-character-row-chevron">›</span></span
                     >
                   </button>
                 </div>
@@ -1896,70 +2127,44 @@
               <section class="bw-section bw-character-detail-pane">
                 <header class="bw-character-detail-head">
                   <div>
-                    <h2>人物详情</h2>
-                    <p>当前 Chat · 事件追踪</p>
+                    <div class="bw-character-detail-title"><h2>Runtime display_name</h2><span>Runtime 物种 · 生理类型</span></div>
+                    <p>n 条相关事件 · 当前状态已就绪</p>
                   </div>
+                  <button class="bw-button" type="button">编辑昵称</button>
                 </header>
-                <section class="bw-character-summary">
-                  <header class="bw-character-summary-head"><b>Runtime display_name</b><span class="bw-badge good">事件追踪</span></header>
-                  <div class="bw-character-summary-facts"><span>物种</span><span>·</span><span>生理类型</span></div>
+                <section class="bw-character-alias-editor" aria-label="昵称编辑器">
+                  <div class="bw-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="bw-badge good">1 个</span></div>
+                  <div class="bw-character-alias-fields"><label class="bw-character-alias-field"><span>别名</span><input value="Runtime alias" aria-label="昵称 1" /><button type="button" aria-label="删除昵称">×</button></label></div>
+                  <div class="bw-character-alias-actions"><button class="bw-text-button" type="button">＋ 添加昵称</button><div><button class="bw-button" type="button">取消</button><button class="bw-button primary" type="button">保存</button></div></div>
                 </section>
                 <div class="bw-character-detail-sections">
                   <section class="bw-character-detail-section">
-                    <h3>生殖能力</h3>
+                    <header class="bw-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>
                     <dl class="bw-character-capabilities">
-                      <div>
-                        <dt>Runtime 能力字段</dt>
-                        <dd class="row-value good">是</dd>
-                      </div>
-                      <div>
-                        <dt>未知能力字段</dt>
-                        <dd class="character-capability-unknown">未知</dd>
-                      </div>
+                      <div><dt>可产生精子</dt><dd>否</dd></div><div><dt>可产生卵子</dt><dd class="row-value good">是</dd></div><div><dt>可受精</dt><dd class="row-value good">是</dd></div>
+                      <div><dt>可使对方受精</dt><dd>否</dd></div><div><dt>可承担妊娠</dt><dd class="row-value good">是</dd></div><div><dt>可导致受孕</dt><dd class="character-capability-unknown">未知</dd></div>
                     </dl>
                   </section>
                   <section class="bw-character-detail-section">
-                    <h3>当前状态</h3>
-                    <p>等待状态引擎计算</p>
+                    <header class="bw-character-section-head"><h3>当前状态</h3><span class="bw-badge good">已就绪</span></header>
+                    <div class="bw-character-state-strip"><div class="bw-character-state-cell"><span>生殖暴露</span><strong>n 条已确认记录</strong></div><div class="bw-character-state-cell"><span>受孕事实</span><strong>当前状态未知</strong></div><div class="bw-character-state-cell"><span>妊娠状态</span><strong>暂无记录</strong></div></div>
+                    <p class="bw-character-state-empty-summary">周期、产后、身体表现、医疗事实暂无记录</p>
                   </section>
                   <section class="bw-character-detail-section exposure-section">
-                    <h3>事件追踪</h3>
-                    <p>仅显示当前仍在跟进的相关记录。</p>
+                    <header class="bw-character-section-head"><div><h3>事件记录</h3><small>按时间顺序</small></div><strong>n 条</strong></header>
                     <div class="bw-character-exposure-list">
-                      <div class="bw-character-exposure-list-head"><span>按 Runtime 引用顺序</span><strong>n 条记录</strong></div>
-                      <details class="bw-character-exposure" open>
+                      <details class="bw-character-exposure">
                         <summary>
-                          <span class="bw-character-exposure-date"><span>Runtime story time</span></span
+                          <time class="bw-character-exposure-date">Runtime story time</time
                           ><small class="bw-character-exposure-relative">相对时间</small><b class="bw-character-exposure-type">事件类型</b><span class="bw-character-exposure-meta">Runtime 地点 · 相关对象</span
                           ><span class="bw-badge good">已确认</span><span class="bw-character-exposure-chevron">⌄</span>
                         </summary>
-                        <div class="bw-character-exposure-detail">
-                          <dl class="bw-character-exposure-fields">
-                            <div>
-                              <dt>日期</dt>
-                              <dd><span>Runtime story time</span><small class="bw-character-exposure-age-inline">相对时间</small></dd>
-                            </div>
-                            <div>
-                              <dt>地点</dt>
-                              <dd>Runtime 地点</dd>
-                            </div>
-                            <div>
-                              <dt>相关对象</dt>
-                              <dd>Runtime 对象</dd>
-                            </div>
-                          </dl>
-                          <p class="bw-character-exposure-source">完整事实仍来自当前 Event Registry。</p>
-                        </div>
                       </details>
                     </div>
                   </section>
                   <section class="bw-character-detail-section">
-                    <h3>推演</h3>
-                    <div class="bw-character-empty">当前没有可显示的生理推演。</div>
-                  </section>
-                  <section class="bw-character-detail-section">
-                    <h3>关系</h3>
-                    <div class="bw-character-empty">当前没有已确认关系。</div>
+                    <header class="bw-character-section-head"><h3>其他信息</h3><small>未接入内容保持明确空状态</small></header>
+                    <div class="bw-character-other-list"><div class="bw-character-other-item"><strong>推演</strong><span>暂无</span></div><div class="bw-character-other-item"><strong>关系</strong><span>暂无</span></div><div class="bw-character-other-item"><strong>备注</strong><span>暂无</span></div></div>
                   </section>
                 </div>
               </section>

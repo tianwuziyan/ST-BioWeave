@@ -1,8 +1,8 @@
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
-  can_be_fertilized: '可受精',
   can_fertilize: '可使对方受精',
+  can_be_fertilized: '可受精',
   can_cause_pregnancy: '可导致受孕',
   can_carry_pregnancy: '可承载妊娠',
 });

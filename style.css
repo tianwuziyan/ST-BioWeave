@@ -7105,6 +7105,8 @@
 .bioweave-character-row-chevron { color: var(--bioweave-text-muted) !important; font-size: 15px !important; line-height: 1 !important; }
 .bioweave-character-detail-pane { min-height: 0 !important; padding: 10px 11px !important; animation: bioweave-character-detail-reveal .16s ease-out !important; }
 .bioweave-character-detail-placeholder { display: grid !important; align-content: center !important; min-height: 98px !important; padding: 16px !important; color: var(--bioweave-text-muted) !important; }
+.bioweave-character-detail-placeholder > div { min-width: 0 !important; padding: 0 2px !important; }
+.bioweave-character-detail-pane.bioweave-character-detail-placeholder { padding: 16px !important; }
 .bioweave-character-detail-placeholder strong { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
 .bioweave-character-detail-placeholder p { margin-top: 2px !important; font-size: 11px !important; }
 .bioweave-character-detail-head,
@@ -7305,6 +7307,80 @@
   .bioweave-event-form-grid { grid-template-columns: 1fr !important; }
   .bioweave-event-form .full { grid-column: auto !important; }
   .bioweave-event-review-foot { align-items: flex-start !important; flex-direction: column !important; gap: 4px !important; }
+}
+
+/* Character page reference layout: one identity header and one continuous detail surface. */
+.bioweave-character-workspace { grid-template-columns: 220px minmax(0, 1fr) !important; gap: 9px !important; }
+.bioweave-character-list-pane { position: sticky !important; top: 8px !important; }
+.bioweave-character-row { display: grid !important; grid-template-columns: minmax(0, 1fr) max-content !important; min-height: 42px !important; padding: 7px 9px !important; }
+.bioweave-character-row-state { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-detail-pane { padding: 0 !important; overflow: hidden !important; }
+.bioweave-character-detail-head { align-items: center !important; min-height: 58px !important; padding: 10px 12px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-detail-head h2 { font-size: 17px !important; }
+.bioweave-character-detail-head p { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
+.bioweave-character-detail-title { display: flex !important; align-items: baseline !important; gap: 8px !important; min-width: 0 !important; }
+.bioweave-character-detail-title span { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-alias-editor { margin: 0 12px 10px !important; overflow: hidden !important; border: 1px solid color-mix(in srgb, var(--bioweave-accent) 65%, var(--bioweave-border)) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-alias-head,
+.bioweave-character-alias-actions { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 8px 10px !important; }
+.bioweave-character-alias-head { border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-alias-head h3 { margin: 0 !important; color: var(--bioweave-text) !important; font-size: 13px !important; line-height: 1.35 !important; }
+.bioweave-character-alias-head p { color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-alias-fields { padding: 8px 10px !important; }
+.bioweave-character-alias-field { position: static !important; display: grid !important; grid-template-columns: 42px minmax(0, 1fr) 26px !important; align-items: center !important; min-height: 30px !important; overflow: hidden !important; border: 1px solid var(--bioweave-border) !important; border-radius: 6px !important; background: var(--bioweave-input-bg) !important; }
+.bioweave-character-alias-field::before { content: none !important; display: none !important; }
+.bioweave-character-alias-field > span { padding-left: 8px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.35 !important; }
+.bioweave-character-alias-field input,
+.bioweave-character-alias-field .bioweave-input { box-sizing: border-box !important; min-width: 0 !important; min-height: 0 !important; height: 28px !important; padding: 4px 8px !important; border: 0 !important; border-left: 1px solid var(--bioweave-border-soft) !important; border-radius: 0 !important; background: transparent !important; color: var(--bioweave-text) !important; font-size: 14px !important; line-height: 1.5 !important; }
+.bioweave-character-alias-field button { height: 26px !important; min-height: 0 !important; padding: 0 !important; border: 0 !important; color: var(--bioweave-text-muted) !important; background: transparent !important; font-size: 14px !important; line-height: 1.35 !important; }
+.bioweave-character-alias-field button:hover,
+.bioweave-character-alias-field button:focus-visible { border: 0 !important; color: var(--bioweave-text) !important; background: transparent !important; }
+.bioweave-character-alias-actions { padding-top: 0 !important; }
+.bioweave-character-alias-actions > .right { display: flex !important; gap: 6px !important; }
+.bioweave-main .bioweave-character-alias-actions > .bioweave-button { min-height: 32px !important; padding: 5px 10px !important; font-size: 14px !important; line-height: 1.5 !important; }
+.bioweave-main .bioweave-character-alias-add { min-height: 0 !important; padding: 5px 0 !important; font-size: 14px !important; line-height: 1.5 !important; }
+.bioweave-character-detail-sections { display: block !important; margin-top: 0 !important; }
+.bioweave-character-detail-section { padding: 11px 12px !important; border: 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; border-radius: 0 !important; background: transparent !important; }
+.bioweave-character-detail-section:last-child { border-bottom: 0 !important; }
+.bioweave-character-section-head { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 12px !important; margin-bottom: 8px !important; }
+.bioweave-character-section-head h3 { color: var(--bioweave-text-secondary) !important; font-size: 13px !important; }
+.bioweave-character-section-head small { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-capabilities { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 0 14px !important; margin: 0 !important; }
+.bioweave-character-capabilities > div { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; min-height: 29px !important; padding: 0 !important; border-top: 0 !important; }
+.bioweave-character-capabilities dt,
+.bioweave-character-capabilities dd { min-width: 0 !important; overflow: hidden !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+.bioweave-character-capabilities dd { padding-left: 0 !important; }
+.bioweave-character-state-strip,
+.bioweave-character-other-list { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 7px !important; }
+.bioweave-character-state-cell { min-height: 56px !important; padding: 8px 9px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-state-cell span { display: block !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-state-cell strong { display: block !important; margin-top: 4px !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; }
+.bioweave-character-state-empty-summary { margin-top: 7px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-exposure-list { gap: 6px !important; margin-top: 0 !important; }
+.bioweave-character-exposure { background: var(--bioweave-card) !important; }
+.bioweave-character-exposure > summary { grid-template-columns: max-content max-content max-content minmax(0, 1fr) max-content 12px !important; gap: 8px !important; min-height: 42px !important; padding: 6px 8px !important; }
+.bioweave-character-exposure-date { padding-right: 0 !important; border-right: 0 !important; font-size: 11px !important; }
+.bioweave-character-exposure-relative { padding-right: 8px !important; border-right: 1px solid var(--bioweave-border) !important; font-size: 11px !important; }
+.bioweave-character-exposure-type { font-size: 12px !important; }
+.bioweave-character-exposure-meta { max-width: none !important; font-size: 11px !important; }
+.bioweave-character-exposure > summary > .bioweave-badge { justify-self: end !important; width: max-content !important; max-width: 100% !important; }
+.bioweave-character-other-item { display: flex !important; align-items: center !important; justify-content: space-between !important; min-height: 34px !important; padding: 6px 8px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; }
+.bioweave-character-other-item span { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+
+@media (max-width: 767px) {
+  .bioweave-character-list-pane { position: static !important; }
+  .bioweave-character-detail-pane { padding: 0 !important; }
+  .bioweave-character-detail-placeholder { min-height: 98px !important; padding: 16px !important; }
+  .bioweave-character-detail-head { min-height: 54px !important; padding: 9px 10px !important; }
+  .bioweave-character-detail-head h2 { font-size: 15px !important; }
+  .bioweave-character-detail-sections { display: block !important; }
+  .bioweave-character-detail-section { padding: 9px !important; }
+  .bioweave-character-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 0 10px !important; }
+  .bioweave-character-state-strip,
+  .bioweave-character-other-list { grid-template-columns: 1fr !important; gap: 5px !important; }
+  .bioweave-character-exposure > summary { grid-template-columns: max-content max-content auto 14px !important; grid-template-areas: 'date relative status chevron' 'type type type type' 'meta meta meta meta' !important; column-gap: 8px !important; row-gap: 5px !important; min-height: 55px !important; padding: 7px !important; }
+  .bioweave-character-exposure-date { padding-right: 0 !important; border-right: 0 !important; }
+  .bioweave-character-exposure-meta { padding-top: 1px !important; }
 }
 
 /* Dropdown overlay contract: the API model menu must escape the compact

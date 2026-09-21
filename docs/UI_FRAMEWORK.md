@@ -203,38 +203,42 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 ## 人物页面格式
 
-人物页面使用参考页同款的“列表 + 详情”工作区，不再通过路由把列表整体替换成详情。页面最大宽度为 `900px`；标题下的工具栏和工作区统一保留 `10px` 一级缩进。Desktop 使用 `minmax(180px, .72fr) minmax(0, 1.28fr)` 两列和 `8px` 间距，Mobile 退回单列，列表在上、详情在下。人物行必须使用按钮语义和 `data-character-id`，选中只改变边框/背景，不改变 Runtime 数组顺序：
+人物页面使用参考页同款的“列表 + 详情”工作区，不再通过路由把列表整体替换成详情。页面最大宽度为 `900px`；标题下的工具栏和工作区统一保留 `10px` 一级缩进。Desktop 使用 `220px minmax(0, 1fr)` 两列和 `9px` 间距，左侧列表在详情滚动时保持 `sticky; top: 8px`；Mobile 退回单列，列表在上、详情在下。人物行必须使用按钮语义和 `data-character-id`，选中只改变边框/背景，不改变 Runtime 数组顺序。正常追踪状态不重复显示“追踪中”徽标，只保留事件数量；未知、暂停、结束或异常状态才显示状态徽标：
 
 人物详情中的“当前 Biological State”是人物页的一个只读详情区域，直接消费 `currentState.characters[characterId]` 与 `currentStateStatus`；人物页不得重新计算 State。`ui/state.js` 只负责插件级状态，不维护第二个 Character Selector，也不因 Focus Character 改变人物 Biological State 展示。
 
-工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板内的空状态使用 `bioweave-character-empty`，颜色为 `text-muted`、字号 `10px`、行高 `1.35`、顶部间距 `5px`。能力字段的标签使用 `text-secondary`，值默认使用 `text-muted`；事件详情字段的标签使用 `text-muted`，值使用 `text-secondary`。字段列表不再继承通用 `data-list` 的额外间距：能力行使用 `4px 0`，事件详情行使用 `minmax(60px, max-content) minmax(0, 1fr)`、列间距 `12px`、内边距 `3px 0`；Mobile 使用 `minmax(58px, max-content) minmax(0, 1fr)` 和 `10px` 列间距。Mobile 人物工具栏、工作区、列表 pane、详情 pane 都必须 `width: 100%` 且取消左右外边距，避免内容被缩窄或产生页面横向滚动。
+工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板只保留一个外层 surface；人物姓名、物种/类型、事件数量、状态就绪信息和昵称入口合并到 `10px 12px` 的身份标题栏，不再额外渲染“人物详情”标题、人物摘要卡或“事件追踪”徽标。能力、当前状态、事件记录和其他信息按连续纵向区块排列，以 `border-soft` 分隔，不再层层嵌套卡片。
 
-左侧人物列表使用 `5px` 行间距；列表行不再叠加额外的相邻行外边距。Desktop 的人物内容按参考页的 `900px` 最大宽度、`8px` 工作区列间距和 `10px` 一级缩进排列，详情内两列区块使用 `6px` 间距；这些值不能被通用卡片或数据列表样式覆盖。
+能力区 Desktop 使用三列、Mobile 使用两列，每行最小高度 `29px`，标签使用 `text-secondary`、值默认使用 `text-muted`。当前状态优先展示生殖暴露、受孕事实和妊娠状态三个摘要；周期、产后、身体表现、医疗事实等相邻空状态合并成一行 `11px` 辅助文字，不为每个空模块生成完整卡片。推演、关系和备注合并到“其他信息”区，但继续保留三个明确的空状态。Mobile 人物工具栏、工作区、列表 pane、详情 pane 都必须 `width: 100%` 且取消左右外边距，避免内容被缩窄或产生页面横向滚动。
+
+左侧人物列表使用 `5px` 行间距；列表行最小高度 `42px`、内边距 `7px 9px`，不再叠加额外的相邻行外边距。Desktop 的人物内容按参考页的 `900px` 最大宽度、`9px` 工作区列间距和 `10px` 一级缩进排列；这些值不能被通用卡片或数据列表样式覆盖。
 
 ~~~html
 <div class="bioweave-character-workspace">
   <section class="bioweave-character-list-pane">
     <div class="bioweave-character-pane-head">
-      <strong>追踪人物</strong><span>n 人</span>
+      <strong>人物</strong><span>n 人</span>
     </div>
     <div class="bioweave-character-list">
       <button class="bioweave-card bioweave-character-row" type="button" data-character-id="runtime-id">
         <span class="bioweave-character-row-main"><b>Runtime display_name</b></span>
         <span class="bioweave-character-row-state">
-          <span class="bioweave-badge good">追踪中</span>
-          <span>n 次相关事件</span><span class="bioweave-character-row-chevron">›</span>
+          <span>n 条事件</span><span class="bioweave-character-row-chevron">›</span>
         </span>
       </button>
     </div>
   </section>
   <section class="bioweave-card bioweave-character-detail-pane">
-    <header class="bioweave-character-detail-head"><div><h2>人物详情</h2><p>当前 Chat · 事件追踪</p></div></header>
-    <!-- summary / capabilities / current state / exposure / projection / relations / notes -->
+    <header class="bioweave-character-detail-head">
+      <div><h2>Runtime display_name</h2><p>物种 · 生理类型 · n 条相关事件</p></div>
+      <button data-bioweave-action="open-character-aliases">编辑昵称</button>
+    </header>
+    <!-- capabilities / current state summary / event records / compact projection-relations-notes -->
   </section>
 </div>
 ~~~
 
-详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。事件追踪的 Story Time 与可选相对时间是同一日期信息组中的两个相邻 DOM 项，消费 Runtime 当前 Story Time 与共享比较 helper 的结果，只允许使用规范化结构化时间，不解析展示文案或读取系统时间。事件追踪使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`，展开内容可以继续承载原有完整事实字段，但不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态只表示能力待确认；后台 pending candidate 不在普通人物列表中，也不能被 UI 显示为 confirmed eligible。
+详情中的能力值、物种、生物类型和事件对象必须继续读取生产 DTO；不得使用原型中的固定人物、性别或能力。能力值沿用三态视觉：`true` 使用 `row-value good`，`null` 使用 `character-capability-unknown`，`false` 保持中性文字。事件记录的 Story Time 与可选相对时间是同一行中的两个相邻 DOM 项，消费 Runtime 当前 Story Time 与共享比较 helper 的结果，只允许使用规范化结构化时间，不解析展示文案或读取系统时间。事件记录使用可展开的 `<details>`，每一条只渲染一次 `data-bioweave-event-id`；日期、相对时间、类型、地点、相关对象和状态只在摘要行展示一次，展开内容只能承载摘要中没有的补充事实，不重复相同字段，也不展示来源 ID、角色枚举或调试元数据。`null` / 未知状态只表示能力待确认；后台 pending candidate 不在普通人物列表中，也不能被 UI 显示为 confirmed eligible。
 
 ## 事件页面格式
 
@@ -547,6 +551,17 @@ Desktop、iPad 和 Mobile 都使用顶部 routebar，区别只在可用宽度、
 6. 没有真实业务数据时使用明确 Empty State，不使用 demo 人物、demo 事件或假统计。
 
 ## 后续修改流程
+
+### 人物页去重原型
+
+人物详情的信息层级与空状态压缩方案记录在
+[`CHARACTERS_PAGE_DEDUP_PROTOTYPE.html`](./CHARACTERS_PAGE_DEDUP_PROTOTYPE.html)。
+这是一次性只读原型，不参与生产渲染，也不改变 Runtime DTO、事件钩子或保存行为。
+原型使用 `?variant=A|B|C` 对比平衡布局、事件优先布局和单一表面布局；默认 A
+用于验证合并人物详情头、压缩重复空状态、减少嵌套卡片和保持紧凑行高后的视觉效果。
+
+在选定方案并进入生产实现前，必须重新核对本文档、`ui-framework.config.json`、
+`UI_FRAMEWORK_EXAMPLE.html` 和 `UI_FULL_REFERENCE.html`，并按配置同步规则更新正式契约。
 
 以后任何 UI 修改都按以下顺序：
 

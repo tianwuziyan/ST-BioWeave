@@ -46,75 +46,30 @@ function episodeRows(episodes) {
   ])}</article>`).join('')
 }
 
-function renderExposure(character) {
+function recordCount(value) {
+  return Array.isArray(value) ? value.length : value && typeof value === 'object' ? Object.keys(value).length : 0
+}
+
+function stateSummary(character) {
   const exposure = character?.reproductive_exposure ?? {}
   const records = Array.isArray(exposure.records) ? exposure.records : []
-  const recordsMarkup = records.length
-    ? `<div class="bioweave-character-state-record-list">${records.map(record => `<article class="bioweave-character-state-record"><div><strong>暴露事实</strong><span class="bioweave-badge">${escapeHtml(renderStatus(record.status))}</span></div>${renderDataList([
-      ['Story Time', renderStoryTime(record.story_time)],
-      ['相关对象', renderIdList(record.counterpart_ids)],
-      ['机制', renderValue(record.reproductive_mechanism?.label ?? record.reproductive_mechanism?.kind ?? record.reproductive_mechanism?.pathway)],
-    ])}</article>`).join('')}</div>`
-    : '<div class="bioweave-empty bioweave-character-state-empty">暂无记录</div>'
-  return renderSection('生殖暴露', `${renderDataList([
-    ['最近暴露', renderValue(exposure.last_exposure_event_id)],
-    ['最近 Story Time', renderStoryTime(exposure.last_exposure_story_time)],
-    ['经过 Story Time 天数', renderValue(exposure.elapsed_story_days)],
-  ])}${recordsMarkup}<p class="bioweave-character-state-note">暴露事实不等于受孕确认。</p>`)
-}
-
-function renderConception(character) {
+  const confirmed = records.filter(record => record?.status === 'confirmed').length
   const conception = character?.conception ?? {}
-  return renderSection('受孕事实', renderDataList([
-    ['当前事实状态', renderStatus(conception.status)],
-    ['关联妊娠记录', renderIdList(conception.pregnancy_ids)],
-    ['已确认事实', renderIdList(conception.confirmed_event_ids)],
-    ['不确定证据', renderIdList(conception.uncertain_event_ids)],
-  ]))
-}
-
-function renderPregnancy(character) {
   const pregnancy = character?.pregnancy ?? {}
-  const episodes = episodeRows(pregnancy.episodes)
-  return renderSection('妊娠状态', `${renderDataList([
-    ['当前状态', renderStatus(pregnancy.current_status)],
-    ['当前妊娠记录', renderIdList(pregnancy.active_pregnancy_ids)],
-  ])}${episodes ? `<div class="bioweave-character-state-record-list">${episodes}</div>` : '<div class="bioweave-empty bioweave-character-state-empty">暂无妊娠记录</div>'}`)
-}
-
-function renderCycle(character) {
-  const cycle = character?.cycle ?? {}
-  return renderSection('周期', renderDataList([
-    ['明确周期事实', renderIdList(cycle.factual_event_ids)],
-    ['不确定周期证据', renderIdList(cycle.uncertain_event_ids)],
-  ]))
-}
-
-function renderPostpartum(character) {
-  const postpartum = character?.postpartum ?? {}
-  const episodes = Object.keys(postpartum.episodes ?? {})
-  return renderSection('产后', `${renderDataList([['明确产后事实', renderIdList(postpartum.factual_event_ids)]])}${episodes.length ? `<div class="bioweave-character-state-record-list">${episodes.map(id => `<article class="bioweave-character-state-record"><strong>妊娠记录</strong> <code>${escapeHtml(id)}</code></article>`).join('')}</div>` : '<div class="bioweave-empty bioweave-character-state-empty">暂无记录</div>'}`)
-}
-
-function renderSymptoms(character) {
-  const records = Array.isArray(character?.symptoms?.records) ? character.symptoms.records : []
-  return renderSection('身体表现', records.length ? `<div class="bioweave-character-state-record-list">${records.map(record => `<article class="bioweave-character-state-record">${renderDataList([
-    ['类型', renderValue(record.symptom?.kind)], ['描述', renderValue(record.symptom?.description)],
-    ['Story Time', renderStoryTime(record.story_time)], ['状态', renderStatus(record.status)],
-  ])}</article>`).join('')}</div>` : '<div class="bioweave-empty bioweave-character-state-empty">暂无记录</div>')
-}
-
-function renderMedical(character) {
-  const records = Array.isArray(character?.medical?.records) ? character.medical.records : []
-  return renderSection('医疗事实', records.length ? `<div class="bioweave-character-state-record-list">${records.map(record => `<article class="bioweave-character-state-record">${renderDataList([
-    ['事实类型', renderValue(record.fact?.kind)], ['描述', renderValue(record.fact?.description)],
-    ['Story Time', renderStoryTime(record.story_time)], ['状态', renderStatus(record.status)],
-  ])}</article>`).join('')}</div>` : '<div class="bioweave-empty bioweave-character-state-empty">暂无记录</div>')
-}
-
-function renderActivity(character) {
-  const ids = character?.activity_chain?.event_ids ?? []
-  return renderSection('活动链', `<p class="bioweave-character-state-note">相关事实记录 ${Array.isArray(ids) ? ids.length : 0} 条</p><details class="bioweave-character-state-debug"><summary>展开事实引用</summary><div class="bioweave-character-state-id-list">${renderIdList(ids)}</div></details>`)
+  const pregnancyCount = recordCount(pregnancy.episodes) + recordCount(pregnancy.active_pregnancy_ids)
+  const cycleCount = recordCount(character?.cycle?.factual_event_ids) + recordCount(character?.cycle?.uncertain_event_ids)
+  const postpartumCount = recordCount(character?.postpartum?.factual_event_ids) + recordCount(character?.postpartum?.episodes)
+  const symptomCount = recordCount(character?.symptoms?.records)
+  const medicalCount = recordCount(character?.medical?.records)
+  const hasOtherFacts = cycleCount || postpartumCount || symptomCount || medicalCount
+  return {
+    exposure: records.length ? `${confirmed || records.length} 条${confirmed ? '已确认' : ''}记录` : '暂无记录',
+    conception: conception.status ? `当前状态${renderStatus(conception.status)}` : '当前状态未知',
+    pregnancy: pregnancyCount ? `${pregnancyCount} 条记录` : '暂无记录',
+    other: hasOtherFacts
+      ? `周期 ${cycleCount} · 产后 ${postpartumCount} · 身体表现 ${symptomCount} · 医疗事实 ${medicalCount}`
+      : '周期、产后、身体表现、医疗事实暂无记录',
+  }
 }
 
 function renderDiagnostics(state) {
@@ -132,7 +87,8 @@ function stateMessage(status) {
 
 export function renderCharacterState({ characterState = null, currentState = null, currentStateStatus = 'NO_CHARACTER_FLOOR' } = {}) {
   const message = stateMessage(currentStateStatus)
-  if (message) return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><h3>当前状态</h3><div class="bioweave-empty bioweave-character-state-empty"><b>${message[0]}</b><p>${message[1]}</p></div></section>`
-  if (!characterState) return '<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><h3>当前状态</h3><div class="bioweave-empty bioweave-character-state-empty">该人物当前暂无 Biological State。</div></section>'
-  return `<section class="bioweave-character-state" aria-label="当前 Biological State"><header class="bioweave-character-state-head"><h3>当前 Biological State</h3><span class="bioweave-badge good">已就绪</span></header>${renderDiagnostics(currentState)}<div class="bioweave-character-state-grid">${renderExposure(characterState)}${renderConception(characterState)}${renderPregnancy(characterState)}${renderCycle(characterState)}${renderPostpartum(characterState)}${renderSymptoms(characterState)}${renderMedical(characterState)}${renderActivity(characterState)}</div></section>`
+  if (message) return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><header class="bioweave-character-section-head"><h3>当前状态</h3></header><div class="bioweave-empty bioweave-character-state-empty"><b>${message[0]}</b><p>${message[1]}</p></div></section>`
+  if (!characterState) return '<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><header class="bioweave-character-section-head"><h3>当前状态</h3></header><div class="bioweave-empty bioweave-character-state-empty">该人物当前暂无 Biological State。</div></section>'
+  const summary = stateSummary(characterState)
+  return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state" aria-label="当前 Biological State"><header class="bioweave-character-section-head"><h3>当前状态</h3><span class="bioweave-badge good">已就绪</span></header>${renderDiagnostics(currentState)}<div class="bioweave-character-state-strip"><div class="bioweave-character-state-cell"><span>生殖暴露</span><strong>${escapeHtml(summary.exposure)}</strong></div><div class="bioweave-character-state-cell"><span>受孕事实</span><strong>${escapeHtml(summary.conception)}</strong></div><div class="bioweave-character-state-cell"><span>妊娠状态</span><strong>${escapeHtml(summary.pregnancy)}</strong></div></div><p class="bioweave-character-state-empty-summary">${escapeHtml(summary.other)}</p></section>`
 }

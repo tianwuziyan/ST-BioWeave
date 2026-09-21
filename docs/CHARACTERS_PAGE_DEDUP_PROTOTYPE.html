@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BioWeave 人物页去重原型</title>
+    <!-- PROTOTYPE — 人物页三个去重变体，通过 ?variant=A|B|C 切换。 -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #11181d;
+        --panel: #182127;
+        --surface: #1d282f;
+        --surface-2: #222f37;
+        --input: #141d22;
+        --text: #e6edf1;
+        --text-2: #bbc7cd;
+        --muted: #7f9099;
+        --border: #33434c;
+        --border-soft: #28363e;
+        --accent: #77bfe8;
+        --accent-soft: #203b4a;
+        --good: #78c9a4;
+        --warn: #e6b86d;
+        --radius: 8px;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        padding: 24px;
+        color: var(--text);
+        background: #0a0f12;
+        font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      button, input { font: inherit; }
+      button { color: inherit; }
+
+      .app {
+        width: min(960px, calc(100vw - 32px));
+        min-height: 650px;
+        margin: 0 auto 88px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
+      }
+      .app-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 48px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--border-soft);
+        background: #182127;
+      }
+      .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+      .brand strong { font-size: 15px; letter-spacing: .01em; }
+      .brand i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(120, 201, 164, .1); }
+      .chat-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .top-actions { display: flex; gap: 12px; color: var(--muted); font-size: 15px; }
+      .routebar {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        height: 43px;
+        border-bottom: 1px solid var(--border-soft);
+        background: #171f25;
+      }
+      .routebar button {
+        position: relative;
+        border: 0;
+        color: var(--muted);
+        background: transparent;
+        cursor: default;
+      }
+      .routebar button.active { color: var(--text); background: rgba(119, 191, 232, .055); }
+      .routebar button.active::after {
+        content: "";
+        position: absolute;
+        right: 22%;
+        bottom: 0;
+        left: 22%;
+        height: 2px;
+        background: var(--accent);
+      }
+      .page { padding: 15px 30px 28px; }
+      .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: 22px; line-height: 1.15; }
+      h2 { font-size: 16px; line-height: 1.2; }
+      h3 { font-size: 13px; line-height: 1.2; }
+      .muted { color: var(--muted); }
+      .page-head p { margin-top: 3px; font-size: 11px; }
+      .button {
+        min-height: 28px;
+        padding: 4px 9px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        color: var(--text-2);
+        background: var(--surface);
+        cursor: pointer;
+      }
+      .button:hover { border-color: var(--accent); color: var(--text); }
+      .button.primary { border-color: #4e8caf; color: #dff3ff; background: #24465a; }
+      .button.ghost { border-color: transparent; color: var(--accent); background: transparent; }
+      .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 7px; margin-bottom: 9px; }
+      .search {
+        width: 100%;
+        min-height: 32px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        outline: none;
+        color: var(--text);
+        background: var(--input);
+      }
+      .search:focus { border-color: var(--accent); }
+      .workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 9px; align-items: start; }
+      .people-pane { position: sticky; top: 8px; }
+      .pane-head { display: flex; align-items: center; justify-content: space-between; min-height: 28px; color: var(--text-2); }
+      .pane-head span { color: var(--muted); font-size: 11px; }
+      .people-list { display: grid; gap: 5px; }
+      .person-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        min-height: 42px;
+        padding: 7px 9px;
+        border: 1px solid var(--border-soft);
+        border-radius: 7px;
+        color: var(--text-2);
+        background: var(--surface);
+        text-align: left;
+        cursor: pointer;
+      }
+      .person-row.selected { border-color: #568dac; color: var(--text); background: var(--accent-soft); }
+      .person-row small { color: var(--muted); }
+      .person-row .arrow { margin-left: 8px; color: var(--muted); font-size: 16px; }
+      .detail {
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel);
+      }
+      .identity {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 58px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .identity-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+      .identity-line h2 { font-size: 17px; }
+      .identity-line span { color: var(--muted); font-size: 11px; }
+      .identity p { margin-top: 2px; color: var(--text-2); font-size: 11px; }
+      .content-section { padding: 11px 12px; border-bottom: 1px solid var(--border-soft); }
+      .content-section:last-child { border-bottom: 0; }
+      .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+      .section-head small { color: var(--muted); }
+      .fact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+      .fact {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 29px;
+        border-top: 1px solid var(--border-soft);
+      }
+      .fact:nth-child(-n+3) { border-top: 0; }
+      .fact span { color: var(--text-2); font-size: 11px; }
+      .fact b { color: var(--muted); font-weight: 600; }
+      .fact b.yes { color: var(--good); }
+      .state-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+      .state-cell { min-height: 56px; padding: 8px 9px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--surface); }
+      .state-cell span { display: block; color: var(--muted); font-size: 10px; }
+      .state-cell strong { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
+      .empty-summary { margin-top: 7px; color: var(--muted); font-size: 11px; }
+      .event-list { display: grid; gap: 6px; }
+      .event {
+        overflow: hidden;
+        border: 1px solid var(--border-soft);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .event summary {
+        display: grid;
+        grid-template-columns: max-content max-content max-content minmax(0, 1fr) max-content 12px;
+        align-items: center;
+        gap: 8px;
+        min-height: 42px;
+        padding: 6px 8px;
+        list-style: none;
+        cursor: pointer;
+      }
+      .event summary::-webkit-details-marker { display: none; }
+      .event time, .relative, .event-meta { color: var(--muted); font-size: 11px; }
+      .relative { padding-right: 8px; border-right: 1px solid var(--border); color: var(--accent); }
+      .event-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .event-type { font-size: 12px; }
+      .badge { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 6px; border: 1px solid rgba(120, 201, 164, .35); border-radius: 99px; color: var(--good); background: rgba(120, 201, 164, .08); font-size: 10px; }
+      .event-more { padding: 8px; border-top: 1px solid var(--border-soft); color: var(--text-2); }
+      .event-more dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 4px 10px; margin: 0; }
+      .event-more dt { color: var(--muted); }
+      .event-more dd { margin: 0; }
+      .other-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+      .other-item { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: 6px; }
+      .other-item span { color: var(--muted); font-size: 11px; }
+
+      .alias-editor { display: none; margin: 0 12px 10px; overflow: hidden; border: 1px solid #4d7f9a; border-radius: 7px; background: var(--surface); }
+      .alias-editor.open { display: block; }
+      .alias-head, .alias-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
+      .alias-head { border-bottom: 1px solid var(--border-soft); }
+      .alias-head p { color: var(--muted); font-size: 10px; }
+      .alias-fields { padding: 8px 10px; }
+      .alias-field { display: grid; grid-template-columns: 42px minmax(0, 1fr) 26px; align-items: center; min-height: 30px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); }
+      .alias-field span { padding-left: 8px; color: var(--muted); font-size: 10px; }
+      .alias-field input { min-width: 0; height: 28px; border: 0; border-left: 1px solid var(--border-soft); outline: 0; color: var(--text); background: transparent; padding: 4px 8px; }
+      .alias-field button { height: 26px; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
+      .alias-actions { padding-top: 0; }
+      .alias-actions .right { display: flex; gap: 6px; }
+
+      /* Variant B — list becomes a compact rail above a timeline-first dossier. */
+      .variant-b .workspace { display: block; }
+      .variant-b .people-pane { position: static; margin-bottom: 8px; }
+      .variant-b .pane-head { display: none; }
+      .variant-b .people-list { display: flex; gap: 6px; }
+      .variant-b .person-row { min-width: 150px; min-height: 34px; flex: 0 0 auto; }
+      .variant-b .detail {
+        display: grid;
+        grid-template-areas: "identity identity" "alias alias" "event capabilities" "event state" "event other";
+        grid-template-columns: minmax(0, 1.3fr) minmax(220px, .7fr);
+      }
+      .variant-b .identity { grid-area: identity; }
+      .variant-b .alias-editor { grid-area: alias; }
+      .variant-b .event-section { grid-area: event; border-right: 1px solid var(--border-soft); }
+      .variant-b .capabilities-section { grid-area: capabilities; }
+      .variant-b .state-section { grid-area: state; }
+      .variant-b .other-section { grid-area: other; }
+      .variant-b .fact-grid { grid-template-columns: 1fr; }
+      .variant-b .fact:nth-child(n) { border-top: 1px solid var(--border-soft); }
+      .variant-b .fact:first-child { border-top: 0; }
+      .variant-b .state-strip { grid-template-columns: 1fr; }
+      .variant-b .other-list { grid-template-columns: 1fr; }
+      .variant-b .event summary { grid-template-columns: max-content max-content minmax(0, 1fr) max-content 12px; grid-template-areas: "date relative type badge arrow" "meta meta meta meta meta"; row-gap: 3px; }
+      .variant-b .event time { grid-area: date; }
+      .variant-b .event .relative { grid-area: relative; }
+      .variant-b .event-type { grid-area: type; }
+      .variant-b .event-meta { grid-area: meta; }
+      .variant-b .event .badge { grid-area: badge; }
+
+      /* Variant C — one uninterrupted surface with labels instead of nested cards. */
+      .variant-c .workspace { grid-template-columns: 180px minmax(0, 1fr); }
+      .variant-c .detail { border-color: transparent; background: transparent; }
+      .variant-c .identity { border: 1px solid var(--border); border-radius: 8px 8px 0 0; background: var(--panel); }
+      .variant-c .alias-editor { margin: 0; border-radius: 0; }
+      .variant-c .content-section { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; border: 1px solid var(--border); border-top: 0; background: var(--panel); }
+      .variant-c .content-section:last-child { border-radius: 0 0 8px 8px; }
+      .variant-c .section-head { display: block; margin: 3px 0 0; }
+      .variant-c .section-head small { display: block; margin-top: 4px; }
+      .variant-c .state-strip { grid-template-columns: repeat(3, 1fr); }
+      .variant-c .other-list { grid-template-columns: 1fr; }
+      .variant-c .other-item { min-height: 28px; padding: 3px 0; border: 0; border-top: 1px solid var(--border-soft); border-radius: 0; }
+      .variant-c .other-item:first-child { border-top: 0; }
+
+      .prototype-switcher {
+        position: fixed;
+        z-index: 20;
+        right: 50%;
+        bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        border: 1px solid #526773;
+        border-radius: 99px;
+        background: rgba(17, 24, 29, .96);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+        transform: translateX(50%);
+        backdrop-filter: blur(12px);
+      }
+      .prototype-switcher button { width: 32px; height: 32px; border: 0; border-radius: 50%; color: var(--text); background: var(--surface-2); cursor: pointer; }
+      .prototype-label { min-width: 230px; padding: 0 10px; text-align: center; }
+      .prototype-label strong { color: var(--accent); }
+      .prototype-label small { display: block; color: var(--muted); }
+
+      @media (max-width: 767px) {
+        body { padding: 0; }
+        .app { width: 100%; min-height: 100vh; margin: 0 0 80px; border: 0; border-radius: 0; }
+        .chat-name { display: none; }
+        .routebar { grid-template-columns: repeat(4, 1fr); height: auto; }
+        .routebar button { min-height: 34px; }
+        .page { padding: 12px; }
+        .page-head { align-items: center; }
+        h1 { font-size: 18px; }
+        .workspace, .variant-c .workspace { grid-template-columns: 1fr; }
+        .people-pane { position: static; }
+        .people-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .fact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .fact:nth-child(n) { border-top: 1px solid var(--border-soft); }
+        .fact:nth-child(-n+2) { border-top: 0; }
+        .state-strip { grid-template-columns: 1fr; }
+        .event summary { grid-template-columns: max-content max-content max-content 12px; grid-template-areas: "date relative badge arrow" "type type type type" "meta meta meta meta"; row-gap: 4px; }
+        .event time { grid-area: date; }
+        .event .relative { grid-area: relative; }
+        .event-type { grid-area: type; }
+        .event-meta { grid-area: meta; }
+        .event .badge { grid-area: badge; }
+        .other-list { grid-template-columns: 1fr; }
+        .variant-b .people-list { overflow-x: auto; }
+        .variant-b .detail { display: block; }
+        .variant-b .event-section { border-right: 0; }
+        .variant-c .content-section { grid-template-columns: 1fr; gap: 7px; }
+        .prototype-label { min-width: 190px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app variant-a" id="app">
+      <header class="app-top">
+        <div class="brand"><strong>BioWeave</strong><i></i><span class="chat-name">当前 Chat · 人物追踪</span></div>
+        <div class="top-actions" aria-hidden="true"><span>◐</span><span>×</span></div>
+      </header>
+      <nav class="routebar" aria-label="主导航">
+        <button>总览</button><button class="active">人物</button><button>事件</button><button>推演</button>
+        <button>家系</button><button>世界</button><button>设置</button><button>状态</button>
+      </nav>
+
+      <section class="page">
+        <header class="page-head">
+          <div><h1>人物列表</h1><p class="muted">当前 Chat 中进入生理追踪的人物</p></div>
+          <button class="button primary">重新分析当前楼层</button>
+        </header>
+        <div class="toolbar">
+          <input class="search" type="search" placeholder="搜索人物……" aria-label="搜索人物">
+          <button class="button">全部状态⌄</button>
+        </div>
+
+        <div class="workspace">
+          <aside class="people-pane">
+            <div class="pane-head"><strong>人物</strong><span>2 人</span></div>
+            <div class="people-list">
+              <button class="person-row selected"><strong>柳如烟</strong><span><small>1 条事件</small><i class="arrow">›</i></span></button>
+              <button class="person-row"><strong>祁鸢</strong><span><small>1 条事件</small><i class="arrow">›</i></span></button>
+            </div>
+          </aside>
+
+          <article class="detail">
+            <header class="identity">
+              <div>
+                <div class="identity-line"><h2>柳如烟</h2><span>人类 · 女性</span></div>
+                <p>1 条相关事件 · 当前状态已就绪</p>
+              </div>
+              <button class="button" data-alias-toggle>编辑昵称</button>
+            </header>
+
+            <section class="alias-editor" id="aliasEditor" aria-label="昵称编辑器">
+              <div class="alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="badge">1 个</span></div>
+              <div class="alias-fields"><label class="alias-field"><span>别名</span><input value="如烟" aria-label="昵称 1"><button title="删除" aria-label="删除昵称">×</button></label></div>
+              <div class="alias-actions"><button class="button ghost">＋ 添加昵称</button><div class="right"><button class="button" data-alias-close>取消</button><button class="button primary" data-alias-close>保存</button></div></div>
+            </section>
+
+            <section class="content-section capabilities-section">
+              <header class="section-head"><h3>生殖能力</h3><small>6 项</small></header>
+              <div class="fact-grid">
+                <div class="fact"><span>可产生精子</span><b>否</b></div>
+                <div class="fact"><span>可产生卵子</span><b class="yes">是</b></div>
+                <div class="fact"><span>可受精</span><b class="yes">是</b></div>
+                <div class="fact"><span>可使对方受精</span><b>否</b></div>
+                <div class="fact"><span>可承载妊娠</span><b class="yes">是</b></div>
+                <div class="fact"><span>可导致受孕</span><b>否</b></div>
+              </div>
+            </section>
+
+            <section class="content-section state-section">
+              <header class="section-head"><h3>当前状态</h3><span class="badge">已就绪</span></header>
+              <div>
+                <div class="state-strip">
+                  <div class="state-cell"><span>生殖暴露</span><strong>1 条已确认记录</strong></div>
+                  <div class="state-cell"><span>受孕事实</span><strong>当前状态未知</strong></div>
+                  <div class="state-cell"><span>妊娠状态</span><strong>暂无记录</strong></div>
+                </div>
+                <p class="empty-summary">周期、产后、身体表现、医疗事实暂无记录</p>
+              </div>
+            </section>
+
+            <section class="content-section event-section">
+              <header class="section-head"><div><h3>事件记录</h3><small>按时间顺序</small></div><strong>1 条</strong></header>
+              <div class="event-list">
+                <details class="event">
+                  <summary>
+                    <time>羲和1年3月4日</time><span class="relative">61天前</span><strong class="event-type">亲密互动</strong>
+                    <span class="event-meta">传灯院 · 孙大壮</span><span class="badge">已确认</span><span>⌄</span>
+                  </summary>
+                  <div class="event-more"><dl><dt>补充信息</dt><dd>当前没有更多需要展示的事件细节。</dd></dl></div>
+                </details>
+              </div>
+            </section>
+
+            <section class="content-section other-section">
+              <header class="section-head"><h3>其他信息</h3><small>尚未接入的内容保持明确空状态</small></header>
+              <div class="other-list">
+                <div class="other-item"><strong>推演</strong><span>暂无</span></div>
+                <div class="other-item"><strong>关系</strong><span>暂无</span></div>
+                <div class="other-item"><strong>备注</strong><span>暂无</span></div>
+              </div>
+            </section>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <aside class="prototype-switcher" aria-label="原型方案切换">
+      <button type="button" id="previousVariant" aria-label="上一个方案">←</button>
+      <div class="prototype-label"><strong id="variantName">A — 平衡布局（推荐）</strong><small>方向键也可以切换</small></div>
+      <button type="button" id="nextVariant" aria-label="下一个方案">→</button>
+    </aside>
+
+    <script>
+      const variants = [
+        { key: 'A', name: 'A — 平衡布局（推荐）', className: 'variant-a' },
+        { key: 'B', name: 'B — 事件优先布局', className: 'variant-b' },
+        { key: 'C', name: 'C — 单一表面布局', className: 'variant-c' },
+      ]
+      const app = document.querySelector('#app')
+      const name = document.querySelector('#variantName')
+      const aliasEditor = document.querySelector('#aliasEditor')
+      let currentIndex = Math.max(0, variants.findIndex(item => item.key === new URLSearchParams(location.search).get('variant')))
+
+      function renderVariant(index) {
+        currentIndex = (index + variants.length) % variants.length
+        const variant = variants[currentIndex]
+        app.classList.remove(...variants.map(item => item.className))
+        app.classList.add(variant.className)
+        name.textContent = variant.name
+        const url = new URL(location.href)
+        url.searchParams.set('variant', variant.key)
+        history.replaceState(null, '', url)
+      }
+
+      document.querySelector('#previousVariant').addEventListener('click', () => renderVariant(currentIndex - 1))
+      document.querySelector('#nextVariant').addEventListener('click', () => renderVariant(currentIndex + 1))
+      document.querySelector('[data-alias-toggle]').addEventListener('click', () => aliasEditor.classList.toggle('open'))
+      document.querySelectorAll('[data-alias-close]').forEach(button => button.addEventListener('click', () => aliasEditor.classList.remove('open')))
+      document.addEventListener('keydown', event => {
+        if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return
+        if (event.key === 'ArrowLeft') renderVariant(currentIndex - 1)
+        if (event.key === 'ArrowRight') renderVariant(currentIndex + 1)
+      })
+      renderVariant(currentIndex)
+    </script>
+  </body>
+</html>
