@@ -8,6 +8,7 @@ import {
   trackingSubjectTone,
 } from './overview.js'
 import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
+import { renderCharacterState } from './character-state.js'
 const capabilityLabels = {
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
@@ -279,11 +280,6 @@ function renderAliasEditor(aliasEditor, displayName) {
     '</div>'
   )
 }
-function renderCurrentState() {
-  return (
-    '<section class="bioweave-card bioweave-character-detail-section"><h3>当前状态</h3>' + '<p class="bioweave-muted">等待状态引擎计算</p></section>'
-  )
-}
 function renderExposuresSection(subject, activeEvents, currentStoryTime = null, storyTimeDifferences = {}) {
   return (
     '<section class="bioweave-card bioweave-character-detail-section bioweave-character-exposure-section"><h3>事件追踪</h3>' +
@@ -310,8 +306,10 @@ function renderNotesSection() {
     '<div class="bioweave-empty bioweave-character-empty">当前没有可显示的人物备注。</div></section>'
   )
 }
-function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor }) {
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, currentState, currentStateStatus }) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
+  const selectedCharacterId = characterIdOf(subject)
+  const characterState = currentState?.characters?.[selectedCharacterId] ?? null
   return (
     '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-enter" data-character-detail-id="' +
     escapeHtml(characterIdOf(subject)) +
@@ -322,7 +320,7 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><h3>生殖能力</h3>' +
     renderCapabilities(profile) +
     '</section>' +
-    renderCurrentState() +
+    renderCharacterState({ characterState, currentState, currentStateStatus }) +
     renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     renderProjectionSection() +
     renderRelationsSection() +
@@ -337,7 +335,7 @@ function unavailableDetailPage() {
     '</section>'
   )
 }
-export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {}, aliasEditor = null } = {}) {
+export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentState = null, currentStateStatus = 'NO_CHARACTER_FLOOR', currentStoryTime = null, currentStoryTimeDifferences = {}, aliasEditor = null } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
   const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events')
@@ -391,7 +389,7 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
   const selectedSubject = subjects.find(item => item.key === selectedId)?.value
   const detail = selectedId
     ? selectedSubject
-      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences, aliasEditor })
+      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences, aliasEditor, currentState, currentStateStatus })
       : unavailableDetailPage()
     : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
   if (selectedId && !subjects.length) {

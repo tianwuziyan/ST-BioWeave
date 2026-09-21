@@ -28,7 +28,7 @@
 | ui/genealogy.js | 家系页面或明确空状态 |
 | ui/world.js | 世界模型物种、类型、模块卡片和模块编辑结构 |
 | ui/settings.js | 设置分组、来源树、正则、开关、下拉框和提示词结构 |
-| ui/state.js | 分析状态页面或明确空状态 |
+| ui/state.js | 分析状态页面或明确空状态；采用参考页的任务队列与安全摘要卡片结构 |
 | style.css | 主题变量、组件样式、布局和三端媒体查询 |
 
 生产壳层固定为 `bioweave-panel > bioweave-app-header + bioweave-routebar + bioweave-main`。八个页面路由在 routebar 中平铺，导航标签统一使用两字短标签“总览 / 人物 / 事件 / 推演 / 家系 / 世界 / 设置 / 状态”；页面内部标题仍可使用完整业务名称。不再使用桌面侧栏、手机底部导航或“更多”弹出菜单。
@@ -204,6 +204,8 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 ## 人物页面格式
 
 人物页面使用参考页同款的“列表 + 详情”工作区，不再通过路由把列表整体替换成详情。页面最大宽度为 `900px`；标题下的工具栏和工作区统一保留 `10px` 一级缩进。Desktop 使用 `minmax(180px, .72fr) minmax(0, 1.28fr)` 两列和 `8px` 间距，Mobile 退回单列，列表在上、详情在下。人物行必须使用按钮语义和 `data-character-id`，选中只改变边框/背景，不改变 Runtime 数组顺序：
+
+人物详情中的“当前 Biological State”是人物页的一个只读详情区域，直接消费 `currentState.characters[characterId]` 与 `currentStateStatus`；人物页不得重新计算 State。`ui/state.js` 只负责插件级状态，不维护第二个 Character Selector，也不因 Focus Character 改变人物 Biological State 展示。
 
 工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板内的空状态使用 `bioweave-character-empty`，颜色为 `text-muted`、字号 `10px`、行高 `1.35`、顶部间距 `5px`。能力字段的标签使用 `text-secondary`，值默认使用 `text-muted`；事件详情字段的标签使用 `text-muted`，值使用 `text-secondary`。字段列表不再继承通用 `data-list` 的额外间距：能力行使用 `4px 0`，事件详情行使用 `minmax(60px, max-content) minmax(0, 1fr)`、列间距 `12px`、内边距 `3px 0`；Mobile 使用 `minmax(58px, max-content) minmax(0, 1fr)` 和 `10px` 列间距。Mobile 人物工具栏、工作区、列表 pane、详情 pane 都必须 `width: 100%` 且取消左右外边距，避免内容被缩窄或产生页面横向滚动。
 

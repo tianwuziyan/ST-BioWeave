@@ -319,10 +319,11 @@ test('capability labels remain Chinese across Character, State, and World UI', (
   const stateHtml = statePage({trackingSubjects: {char: {character_id: 'char', display_name: '角色', status: 'active'}}, currentStateStatus: 'ready', currentState: {characters: {char: {identity: {display_name: '角色'}, reproductive_capabilities: {can_fertilize: false}}}, diagnostics: []}, focusedCharacterId: 'char'});
   const characterHtml = charactersPage({characterId: 'char', trackingSubjects: {char: {character_id: 'char', display_name: '角色', exposure_event_ids: [], status: 'active'}}, characterProfiles: {char: {character_id: 'char', reproductive_capabilities: {can_fertilize: false}}}});
   const worldHtml = worldPage({worldModel: {schema_version: 1, species: [{name: '物种', capabilities: {can_fertilize: false}, biological_types: [{name: '类型', capabilities: {can_fertilize: false}}]}]}, selectedSpeciesIndex: 0, selectedTypeIndex: 0});
-  for (const html of [stateHtml, characterHtml, worldHtml]) {
+  for (const html of [characterHtml, worldHtml]) {
     assert.match(html, /可使对方受精/);
     assert.doesNotMatch(html, />can_fertilize</);
   }
+  assert.doesNotMatch(stateHtml, /可使对方受精|can_fertilize/);
 });
 
 test('overview renders business analysis status without execution diagnostics', () => {
@@ -402,7 +403,7 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.match(html, /阿乙/);
   assert.doesNotMatch(html, /阿丙/);
   assert.doesNotMatch(html, /<dt>参与者<\/dt>|事件角色/);
-  assert.match(html, /等待状态引擎计算/);
+  assert.match(html, /当前状态/);
   assert.doesNotMatch(html, /role="tablist"|role="tab"|data-character-tab|aria-selected=/);
   assert.doesNotMatch(html, /probability|gestational age|妊娠概率|妊娠天数/);
   const characterSource = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8');
@@ -591,91 +592,97 @@ test('page DTO text remains HTML-escaped', () => {
   assert.match(html, /&lt;角色&gt;&#39;&quot;/);
 });
 
-test('state page renders no Character Floor and empty Current State without fabricating facts', () => {
-  const noFloor = statePage({currentStateStatus: 'NO_CHARACTER_FLOOR'});
-  assert.match(noFloor, /暂无可分析的角色楼层/);
-  const empty = statePage({currentStateStatus: 'ready', currentState: {characters: {}, diagnostics: []}});
-  assert.match(empty, /暂无生物状态数据/);
-  assert.doesNotMatch(empty, /pregnancy|已怀孕|排卵预测/);
+test('state page is a plugin status page without Character State or selector', () => {
+  const html = statePage({
+    chatName: '测试 Chat',
+    chatId: 'chat-1',
+    currentFloor: {floor: 60, message_id: '60', swipe_id: 0, version: {content_hash: 'hash', message_version: 2}},
+    currentStoryTime: {display: '羲和元年五月初四 午时'},
+    currentStoryTimeStatus: 'ready',
+    currentStateStatus: 'ready',
+    analysisStatus: {state: 'success', busy: false, event_count: 2, tracking_subject_count: 1},
+  });
+  assert.match(html, /分析状态/);
+  assert.match(html, /任务队列/);
+  assert.match(html, /当前楼层 60/);
+  assert.match(html, /事件分析/);
+  assert.match(html, /当前故事时间/);
+  assert.match(html, /生物状态/);
+  assert.match(html, /安全摘要/);
+  assert.match(html, /世界模型/);
+  assert.doesNotMatch(html, /World Model|Event Analysis|Biological State|Secret Store|Chat Scope|Story Time/);
+  assert.doesNotMatch(html, /data-bioweave-state-character-id|当前角色|生殖能力|生殖暴露|妊娠状态|周期|身体表现|医疗事实|活动链/);
 });
 
-test('state page renders tri-state capabilities and factual exposure fields only', () => {
-  const html = statePage({
-    trackingSubjects: {subject: {character_id: 'char-1', display_name: '角色甲', status: 'active'}},
-    focusedCharacterId: 'char-1',
-    currentStateStatus: 'ready',
-    currentState: {
-      schema_version: 1,
-      diagnostics: [],
-      characters: {
-        'char-1': {
-          identity: {character_id: 'char-1', display_name: '角色甲', species: null, biological_type: 'type-a'},
-          reproductive_capabilities: {
-            can_produce_sperm: true,
-            can_produce_ova: false,
-            can_be_fertilized: null,
-            can_fertilize: true,
-            can_carry_pregnancy: null,
-            can_cause_pregnancy: false,
-          },
-          reproductive_exposure: {
-            records: [{event_id: 'evt-1', counterpart_ids: ['char-2'], status: 'confirmed', story_time: null, reproductive_mechanism: {kind: 'fixture'}}],
-            last_exposure_event_id: 'evt-1', last_exposure_story_time: null, elapsed_story_days: null,
-          },
-          conception: {status: 'unknown', pregnancy_ids: [], confirmed_event_ids: [], uncertain_event_ids: []},
-          pregnancy: {current_status: 'unknown', active_pregnancy_ids: [], episodes: {}},
-          cycle: {factual_event_ids: ['cycle-1'], uncertain_event_ids: []},
-          postpartum: {factual_event_ids: [], episodes: {}},
-          symptoms: {records: []}, medical: {records: []}, activity_chain: {event_ids: ['evt-1']},
-        },
+test('state page shows empty plugin status without fabricating Character State', () => {
+  const html = statePage({currentStateStatus: 'NO_CHARACTER_FLOOR', analysisStatus: {state: 'not_analyzed'}});
+  assert.match(html, /暂无有效当前楼层/);
+  assert.doesNotMatch(html, /生殖能力|生殖暴露|妊娠状态|妊娠记录|data-bioweave-state-character-id/);
+});
+
+test('character page renders the selected Character Biological State from Runtime DTO', () => {
+  const state = {
+    characters: {
+      'char-a': {
+        reproductive_exposure: {records: [{status: 'confirmed', counterpart_ids: ['char-b']}], elapsed_story_days: 61},
+        conception: {status: 'unknown'},
+        pregnancy: {current_status: 'unknown', active_pregnancy_ids: [], episodes: {}},
+        cycle: {}, postpartum: {}, symptoms: {}, medical: {}, activity_chain: {event_ids: ['evt-1']},
       },
+      'char-b': {reproductive_exposure: {records: []}, conception: {}, pregnancy: {}, cycle: {}, postpartum: {}, symptoms: {}, medical: {}, activity_chain: {}},
     },
+    diagnostics: [],
+  };
+  const htmlA = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: '角色甲', reproductive_capabilities: {can_fertilize: true}}},
+    currentState: state,
+    currentStateStatus: 'ready',
+  });
+  const htmlB = charactersPage({
+    characterId: 'char-b',
+    trackingSubjects: [{character_id: 'char-b', display_name: '角色乙', exposure_event_ids: []}],
+    characterProfiles: {'char-b': {character_id: 'char-b', display_name: '角色乙', reproductive_capabilities: {}}},
+    currentState: state,
+    currentStateStatus: 'ready',
+  });
+  assert.match(htmlA, /当前 Biological State/);
+  assert.match(htmlA, /经过 Story Time 天数[\s\S]*61/);
+  assert.match(htmlA, /相关事实记录 1 条/);
+  assert.match(htmlB, /角色乙/);
+  assert.doesNotMatch(htmlB, /经过 Story Time 天数[\s\S]*61/);
+});
+
+test('character page keeps profile and Event data when Current State is unavailable', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: '角色甲', reproductive_capabilities: {can_carry_pregnancy: true}}},
+    currentStateStatus: 'error',
   });
   assert.match(html, /角色甲/);
-  assert.match(html, /可产生精子[\s\S]*?是/);
-  assert.match(html, /可产生卵子[\s\S]*?否/);
-  assert.match(html, /可受精[\s\S]*?未知/);
-  assert.match(html, /经过 Story Time 天数[\s\S]*?未知/);
-  assert.match(html, /暴露事实不等于受孕确认/);
-  assert.match(html, /明确周期事实/);
-  assert.doesNotMatch(html, /下次月经|fertile window|概率/);
+  assert.match(html, /状态归约发生错误/);
+  assert.match(html, /可承载妊娠[\s\S]*是/);
 });
 
-test('state page keeps pregnancy episodes separate and surfaces diagnostics without changing facts', () => {
-  const html = statePage({
-    trackingSubjects: {subject: {character_id: 'char-1', display_name: '角色甲', status: 'active'}},
-    currentStateStatus: 'ready', focusedCharacterId: 'char-1',
-    currentState: {
-      characters: {
-        'char-1': {
-          identity: {display_name: '角色甲'}, reproductive_capabilities: {}, reproductive_exposure: {},
-          conception: {status: 'confirmed', pregnancy_ids: ['preg-a', 'preg-b'], confirmed_event_ids: ['confirm-a'], uncertain_event_ids: []},
-          pregnancy: {current_status: 'confirmed', active_pregnancy_ids: ['preg-b'], episodes: {
-            'preg-a': {status: 'ended', confirmation_event_ids: ['confirm-a'], termination_event_ids: ['loss-a'], delivery_event_ids: [], labor_event_ids: []},
-            'preg-b': {status: 'confirmed', confirmation_event_ids: ['confirm-b'], termination_event_ids: [], delivery_event_ids: [], labor_event_ids: []},
-          }},
-          cycle: {}, postpartum: {}, symptoms: {}, medical: {}, activity_chain: {},
-        },
-      },
-      diagnostics: [{code: 'pregnancy_episode_conflict', detail: 'fixture conflict'}],
-    },
-  });
-  assert.match(html, /妊娠记录 1/);
-  assert.match(html, /妊娠记录 2/);
-  assert.match(html, /已结束/);
-  assert.match(html, /已确认/);
-  assert.match(html, /部分状态存在事实冲突或信息不完整/);
-  assert.match(html, /pregnancy_episode_conflict/);
-  assert.doesNotMatch(html, /从未怀孕/);
+test('state selector event hook is removed while Character focus remains', () => {
+  const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+  const stateSource = readFileSync(new URL('../ui/state.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(appSource, /data-bioweave-state-character-id/);
+  assert.doesNotMatch(stateSource, /focusedCharacterId|trackingSubjects|currentState\.characters/);
 });
 
-test('state page focus selection is presentation-only and does not expose source as a character card', () => {
-  const html = statePage({
-    focusedCharacterId: 'char-source',
-    trackingSubjects: {subject: {character_id: 'char-subject', display_name: '承孕角色', status: 'active'}},
-    currentStateStatus: 'ready',
-    currentState: {characters: {'char-source': {identity: {display_name: '来源角色'}}}, diagnostics: []},
-  });
-  assert.match(html, /该角色当前无可用 State/);
-  assert.doesNotMatch(html, /来源角色/);
+test('state page follows the reference task queue and security summary visual contract', () => {
+  const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  const html = statePage({analysisStatus: {state: 'success'}, currentStateStatus: 'ready'});
+  assert.match(html, /class="bioweave-page bioweave-state-page"/);
+  assert.match(html, /class="bioweave-plugin-status-task-list"/);
+  assert.match(html, /任务队列/);
+  assert.match(html, /安全摘要/);
+  assert.match(html, /密钥存储/);
+  assert.match(html, /当前对话作用域/);
+  assert.match(style, /\.bioweave-state-page \{[^}]*max-width: 820px/);
+  assert.match(style, /\.bioweave-plugin-status-entity-row \{[^}]*padding: 7px 9px/);
+  assert.match(style, /\.bioweave-plugin-status-row \{[^}]*border-top: 1px solid var\(--bioweave-border-soft\)/);
 });

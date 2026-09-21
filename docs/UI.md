@@ -38,7 +38,9 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 eligible Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。pending candidate 不在普通人物列表中，也不应被显示为 confirmed eligible。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision 的三态 `eligibility` 与 reason code 只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
-人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并显示“等待状态引擎计算”。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并在当前状态区域消费 Runtime 提供的该人物 Biological State。人物页不自行计算 State。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+
+状态页是 BioWeave 插件级运行状态页，只显示当前对话、当前楼层、事件分析、故事时间、生物状态引擎和已有世界模型的运行/诊断信息；面向用户的标签和说明统一使用中文，不显示人物选择器，也不显示人物级 Biological State。人物选择焦点只由人物页的人物列表控制。视觉结构遵循完整参考页的“分析状态”页面：页面标题与说明、任务队列卡片、安全摘要卡片、紧凑任务行与状态徽章；生产页面仍只消费 Runtime DTO。
 
 ### 历史事件页
 

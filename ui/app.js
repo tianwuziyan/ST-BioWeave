@@ -568,6 +568,7 @@ export function createApp(runtime, options = {}) {
     currentState: null,
     currentStateStatus: 'NO_CHARACTER_FLOOR',
     currentStoryTime: null,
+    currentStoryTimeStatus: null,
     currentStoryTimeDifferences: {},
     lastAnalysis: null,
     analysisStatus: { state: 'not_analyzed', busy: false },
@@ -2344,6 +2345,7 @@ export function createApp(runtime, options = {}) {
             currentState: null,
             currentStateStatus: 'NO_CHARACTER_FLOOR',
             currentStoryTime: null,
+            currentStoryTimeStatus: null,
             currentStoryTimeDifferences: {},
             lastAnalysis: null,
             analysisStatus: {state: 'not_analyzed', busy: false},
@@ -2430,6 +2432,7 @@ export function createApp(runtime, options = {}) {
         currentState: collected.current_state ?? collected.currentState ?? null,
         currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
         currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
+        currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
         currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
         lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
         analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
@@ -2447,6 +2450,7 @@ export function createApp(runtime, options = {}) {
         currentState: null,
         currentStateStatus: 'STATE_ERROR',
         currentStoryTime: null,
+        currentStoryTimeStatus: 'error',
         currentStoryTimeDifferences: {},
         error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
       }
@@ -2710,7 +2714,10 @@ export function createApp(runtime, options = {}) {
       currentState: businessState.currentState,
       currentStateStatus: businessState.currentStateStatus,
       currentStoryTime: businessState.currentStoryTime,
+      currentStoryTimeStatus: businessState.currentStoryTimeStatus,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
+      chatId: businessState.chatId,
+      worldModelMeta: route === 'state' ? worldModelState.meta : null,
       aliasEditor: aliasEditorState,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
@@ -3518,6 +3525,7 @@ export function createApp(runtime, options = {}) {
         currentState: null,
         currentStateStatus: 'NO_CHARACTER_FLOOR',
         currentStoryTime: null,
+        currentStoryTimeStatus: null,
         currentStoryTimeDifferences: {},
         lastAnalysis: null,
         analysisStatus: { state: 'not_analyzed', busy: false },
@@ -3583,7 +3591,7 @@ export function createApp(runtime, options = {}) {
       if (['MESSAGE_DELETED', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
       }
-      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeDifferences: {} }
+      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
@@ -3625,7 +3633,7 @@ export function createApp(runtime, options = {}) {
     const clickedPicker = event.target.closest?.('[data-bioweave-model-picker]')
     const clickedDropdown = event.target.closest?.('[data-bioweave-model-dropdown]')
     const target = event.target.closest?.(
-      '[data-route], [data-character-id], [data-bioweave-state-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]',
+      '[data-route], [data-character-id], [data-back-to-characters], [data-bioweave-action], [data-bioweave-model-item], [data-bioweave-model-trigger]',
     )
     if (!target) {
       if (!clickedPicker || !clickedDropdown) closeModelPickers()
@@ -3930,12 +3938,6 @@ export function createApp(runtime, options = {}) {
       openCharacter(target.dataset.characterId)
       return
     }
-    if (target.dataset.bioweaveStateCharacterId) {
-      event.preventDefault()
-      focusedCharacterId = String(target.dataset.bioweaveStateCharacterId).trim()
-      render()
-      return
-    }
     if (target.dataset.backToCharacters !== undefined) {
       event.preventDefault()
       focusedCharacterId = null
@@ -4196,6 +4198,7 @@ export function createApp(runtime, options = {}) {
       currentState: null,
       currentStateStatus: 'NO_CHARACTER_FLOOR',
       currentStoryTime: null,
+      currentStoryTimeStatus: null,
       currentStoryTimeDifferences: {},
       lastAnalysis: null,
       analysisStatus: { state: 'not_analyzed', busy: false },
