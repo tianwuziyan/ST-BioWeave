@@ -16,6 +16,7 @@ import {
   isStableApiProfileId,
   sanitizeSecrets,
 } from "./schema.js";
+import {DEFAULT_FLOATING_LAUNCHER_THEME, normalizeFloatingLauncherTheme} from "../floating-launcher-theme.js";
 import {
   floorVersionFromData as floorVersionFromStoredData,
   getActiveFloorEvents as filterActiveFloorEvents,
@@ -555,6 +556,25 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
     return cloneValue(recentStoryGlobal);
   }
 
+  function getUiPreferences() {
+    const settings = read();
+    return {
+      show_floating_launcher: settings.show_floating_launcher !== false,
+      floating_launcher_theme: normalizeFloatingLauncherTheme(settings.floating_launcher_theme ?? DEFAULT_FLOATING_LAUNCHER_THEME),
+    };
+  }
+
+  async function setUiPreference(key, value) {
+    if (!['show_floating_launcher', 'floating_launcher_theme'].includes(key))
+      throw new Error('UI_PREFERENCE_UNKNOWN');
+    const settings = read();
+    const nextValue = key === 'floating_launcher_theme'
+      ? normalizeFloatingLauncherTheme(value)
+      : value === true;
+    await write({ ...settings, [key]: nextValue });
+    return getUiPreferences();
+  }
+
   return {
     getSettings,
     listProfiles,
@@ -577,6 +597,8 @@ export function createApiProfileStore(adapter, { secretStore = null } = {}) {
     saveWorldAnalysisPrompt,
     getRecentStoryGlobal,
     saveRecentStoryGlobal,
+    getUiPreferences,
+    setUiPreference,
     getAssignment(slot) {
       if (!API_ASSIGNMENTS.includes(slot)) return null;
       return read().assignments[slot] ?? null;

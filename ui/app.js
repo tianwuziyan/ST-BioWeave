@@ -17,6 +17,7 @@ import {
 } from './world.js'
 import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
 import { statePage } from './state.js'
+import { DEFAULT_FLOATING_LAUNCHER_THEME } from '../floating-launcher-theme.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
 import {
@@ -497,6 +498,7 @@ export function createApp(runtime, options = {}) {
   if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED')
   const documentRef = options.documentRef ?? globalThis.document
   const storageRef = options.storageRef ?? globalThis.localStorage
+  const onUiPreferencesChanged = options.onUiPreferencesChanged ?? (() => {})
   const profileStore = options.profileStore ?? runtime.store?.profileStore ?? createApiProfileStore(runtime.st ?? {})
   const apiClient = options.apiClient ?? defaultApiClient
   let root = null
@@ -548,6 +550,8 @@ export function createApp(runtime, options = {}) {
     busy: false,
     analysisPrompt: {},
     analysisPromptDraft: null,
+    show_floating_launcher: true,
+    floating_launcher_theme: DEFAULT_FLOATING_LAUNCHER_THEME,
   }
   let storyTimeDebugState = {
     enabled: false,
@@ -649,6 +653,8 @@ export function createApp(runtime, options = {}) {
         settings.analysis_prompt ?? settings.world_analysis_prompt ?? profileStore.getAnalysisPrompt?.() ?? profileStore.getWorldAnalysisPrompt?.(),
       ),
       analysisPromptDraft: settingsState.analysisPromptDraft,
+      show_floating_launcher: settings.show_floating_launcher !== false,
+      floating_launcher_theme: settings.floating_launcher_theme ?? DEFAULT_FLOATING_LAUNCHER_THEME,
       loaded: true,
     }
     return settings
@@ -1956,6 +1962,9 @@ export function createApp(runtime, options = {}) {
       worldModelTrace: null,
     }
     worldModelState = { ...worldModelState, busy: true, notice: null }
+    let activityResult = 'cancelled'
+    let activityError = null
+    runtime.startActivity?.('world_analysis')
     if (route === 'world') render()
     try {
       const collected = await collectCurrentAnalysisInput()
@@ -2011,6 +2020,7 @@ export function createApp(runtime, options = {}) {
         sectionDirty: false,
         notice: null,
       }
+      activityResult = 'success'
       traceApi('world-model-ui-success', {
         phase: 'world-model-ui',
         speciesCount: Array.isArray(model.species) ? model.species.length : 0,
@@ -2018,6 +2028,11 @@ export function createApp(runtime, options = {}) {
       })
       notify('世界模型分析成功并已保存。', 'success', documentRef)
     } catch (error) {
+      activityError = error
+      const activityCode = String(error?.code ?? error?.message ?? '')
+      activityResult = activityCode === 'REQUEST_ABORTED' || activityCode.startsWith('REQUEST_ABORTED_') || activityCode === 'STALE_CHAT'
+        ? 'cancelled'
+        : 'error'
       traceApi('world-model-ui-error', {
         error,
         phase: 'world-model-ui',
@@ -2034,6 +2049,7 @@ export function createApp(runtime, options = {}) {
       notify(worldModelOperationError(error), feedbackType, documentRef)
     } finally {
       if (worldModelAbortController === controller) worldModelAbortController = null
+      runtime.finishActivity?.('world_analysis', activityResult, activityError)
     }
     if (route === 'world') render()
   }
@@ -2227,8 +2243,11 @@ export function createApp(runtime, options = {}) {
     if (button) {
       const icon = button.querySelector('[data-bioweave-theme-icon]')
       if (icon) icon.className = themeIcon(nextTheme)
-      button.setAttribute('title', '主题：' + themeLabel(nextTheme) + '（点击切换）')
-      button.setAttribute('aria-label', '主题：' + themeLabel(nextTheme) + '，点击切换')
+      button.setAttribute('title', '切换皮肤：' + themeLabel(nextTheme))
+      button.setAttribute('aria-label', '切换皮肤：' + themeLabel(nextTheme))
+      button.dataset.bioweaveTooltip = '切换皮肤：' + themeLabel(nextTheme)
+      const tooltip = button.querySelector?.('[data-bioweave-header-tooltip]')
+      if (tooltip) tooltip.textContent = '切换皮肤：' + themeLabel(nextTheme)
     }
     return nextTheme
   }
@@ -3441,6 +3460,49 @@ export function createApp(runtime, options = {}) {
     }
     render()
   }
+  async function changeUiPreference(target) {
+    const themeTarget = target?.dataset?.bioweaveFloatingLauncherTheme !== undefined
+    const key = themeTarget ? 'floating_launcher_theme' : target?.dataset?.bioweaveUiPreference
+    if (!key || typeof profileStore.setUiPreference !== 'function') return
+    try {
+      const value = themeTarget ? target.value : target.checked === true
+      const preferences = await profileStore.setUiPreference(key, value)
+      settingsState = {...settingsState, ...preferences, notice: null}
+      onUiPreferencesChanged(preferences)
+      syncFloatingLauncherToggle(preferences.show_floating_launcher)
+      notify('悬浮图标设置已保存。', 'success', documentRef)
+    } catch (error) {
+      settingsState = {...settingsState, notice: null}
+      notify(settingsOperationError(error), 'error', documentRef)
+    }
+    render()
+  }
+  function floatingLauncherVisible() {
+    try {
+      return profileStore.getUiPreferences?.().show_floating_launcher !== false
+    } catch {
+      return settingsState.show_floating_launcher !== false
+    }
+  }
+  function syncFloatingLauncherToggle(visible = floatingLauncherVisible()) {
+    const button = root?.querySelector?.('[data-bioweave-floating-toggle]')
+    if (!button) return
+    const label = visible ? '关闭悬浮窗' : '打开悬浮窗'
+    button.classList.toggle('is-disabled', !visible)
+    button.setAttribute('aria-pressed', String(visible))
+    button.dataset.bioweaveTooltip = label
+    const tooltip = button.querySelector?.('[data-bioweave-header-tooltip]')
+    if (tooltip) tooltip.textContent = label
+    button.setAttribute('title', label)
+    button.setAttribute('aria-label', label)
+  }
+  async function toggleFloatingLauncher() {
+    const target = {
+      checked: !floatingLauncherVisible(),
+      dataset: {bioweaveUiPreference: 'show_floating_launcher'},
+    }
+    await changeUiPreference(target)
+  }
   function handleSettingsInput(event) {
     if (!root?.contains(event.target)) return
     const target = event.target
@@ -3955,6 +4017,11 @@ export function createApp(runtime, options = {}) {
       cycleTheme()
       return
     }
+    if (target.dataset.bioweaveAction === 'toggle-floating-launcher') {
+      event.preventDefault()
+      await toggleFloatingLauncher()
+      return
+    }
     if (target.dataset.bioweaveAction === 'close') {
       event.preventDefault()
       closeBioWeave()
@@ -3963,6 +4030,16 @@ export function createApp(runtime, options = {}) {
   }
   async function handleChange(event) {
     if (!root?.contains(event.target)) return
+    const floatingLauncherTheme = event.target.closest?.('[data-bioweave-floating-launcher-theme]')
+    if (floatingLauncherTheme) {
+      await changeUiPreference(floatingLauncherTheme)
+      return
+    }
+    const uiPreference = event.target.closest?.('[data-bioweave-ui-preference]')
+    if (uiPreference) {
+      await changeUiPreference(uiPreference)
+      return
+    }
     const assignment = assignmentControlForEvent(event.target)
     if (assignment) {
       await changeAssignment(assignment)
@@ -4102,12 +4179,14 @@ export function createApp(runtime, options = {}) {
       '<strong class="bioweave-brand">BioWeave</strong>',
       '<span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>',
       '<span class="bioweave-spacer"></span>',
-      '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换"><i class="fa-solid fa-circle-half-stroke" data-bioweave-theme-icon aria-hidden="true"></i></button>',
+      '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button data-bioweave-tooltip="切换皮肤：跟随酒馆" title="切换皮肤：跟随酒馆" aria-label="切换皮肤：跟随酒馆"><i class="fa-solid fa-circle-half-stroke" data-bioweave-theme-icon aria-hidden="true"></i><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">切换皮肤：跟随酒馆</span></button>',
+      '<button class="bioweave-floating-toggle" type="button" data-bioweave-action="toggle-floating-launcher" data-bioweave-floating-toggle data-bioweave-tooltip="关闭悬浮窗"><svg class="bioweave-floating-toggle-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="6"></circle><path d="M 10 27 A 15 15 0 0 1 30 10"></path><path d="M 38 21 A 15 15 0 0 1 18 38"></path><circle cx="34" cy="14" r="3.5"></circle><circle cx="14" cy="34" r="3.5"></circle></svg><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">关闭悬浮窗</span></button>',
       '<button class="bioweave-close" type="button" data-bioweave-action="close" aria-label="关闭 BioWeave">×</button>',
       '</header>',
       '<nav class="bioweave-routebar" aria-label="BioWeave 页面导航"><div class="bioweave-route-items"></div></nav>',
       '<main class="bioweave-main"></main>',
     ].join('')
+    syncFloatingLauncherToggle()
     panelDragController = createPanelDragController({
       root,
       handle: root.querySelector('[data-bioweave-drag-handle]'),

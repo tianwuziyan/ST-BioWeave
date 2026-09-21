@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "审计未来 UI 入口时遵守现有前端职责和验证约束"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "确认位置偏好不能进入 Floor-owned 业务事实"}

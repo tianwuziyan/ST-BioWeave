@@ -314,6 +314,20 @@
         border-radius: var(--bw-radius);
         background: var(--bw-raised);
       }
+      .bw-floating-launcher-example {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        width: 48px;
+        height: 48px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgb(244 239 230 / 32%);
+        border-radius: 50%;
+        color: rgb(244 239 230 / 96%);
+        background: rgb(47 61 100 / 68%);
+        box-shadow: 0 3px 10px rgb(0 0 0 / 18%);
+      }
       .bw-section {
         padding: 11px 12px;
       }
@@ -2528,6 +2542,13 @@
                   </div>
                 </div>
               </details>
+              <details class="bw-settings-group">
+                <summary class="bw-settings-head"><span class="bw-settings-chevron" aria-hidden="true">+</span><span class="bw-settings-title"><b>悬浮图标</b><small>页面内入口的外观偏好</small></span><span class="bw-badge">全局设置</span></summary>
+                <div class="bw-settings-body">
+                  <label class="bw-setting-field"><span>悬浮按钮主题</span><select aria-label="悬浮按钮主题"><option selected>夜幕靛</option><option>雾境紫</option><option>深海青</option></select></label>
+                  <p class="bw-note">三种主题共用中央圆、两段圆弧和两个圆点组成的内联 SVG；默认主题为夜幕靛。</p>
+                </div>
+              </details>
               <details class="bw-settings-group bw-api-source-group">
                 <summary class="bw-settings-head">
                   <span aria-hidden="true">+</span
@@ -2650,5 +2671,6 @@
         </div>
       </main>
     </div>
+    <button class="bw-floating-launcher-example" type="button" aria-label="BioWeave"><svg viewBox="0 0 48 48" width="31" height="31" aria-hidden="true"><circle cx="24" cy="24" r="6" fill="currentColor"/><path d="M 10 27 A 15 15 0 0 1 30 10" fill="none" stroke="currentColor" stroke-width="4.25" stroke-linecap="round"/><path d="M 38 21 A 15 15 0 0 1 18 38" fill="none" stroke="currentColor" stroke-width="4.25" stroke-linecap="round"/><circle cx="34" cy="14" r="3.5" fill="currentColor"/><circle cx="14" cy="34" r="3.5" fill="currentColor"/></svg></button>
   </body>
 </html>

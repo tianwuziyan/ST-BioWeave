@@ -136,7 +136,13 @@
 .bioweave-spacer { flex: 1 1 auto; min-width: 8px; }
 
 .bioweave-theme-button,
+.bioweave-floating-toggle,
 .bioweave-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   min-height: 32px;
   border: 0;
   border-radius: 6px;
@@ -146,12 +152,81 @@
   padding: 6px 8px;
 }
 
+.bioweave-theme-button,
+.bioweave-floating-toggle {
+  position: relative;
+}
+
+.bioweave-header-tooltip {
+  display: none !important;
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 20;
+  max-width: 220px;
+  padding: 4px 7px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 5px;
+  background: var(--bioweave-surface-raised);
+  color: var(--bioweave-text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+
+.bioweave-theme-button:hover .bioweave-header-tooltip,
+.bioweave-theme-button:focus-visible .bioweave-header-tooltip,
+.bioweave-floating-toggle:hover .bioweave-header-tooltip,
+.bioweave-floating-toggle:focus-visible .bioweave-header-tooltip {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: translateY(0);
+}
+
+.bioweave-theme-button + .bioweave-floating-toggle {
+  margin-left: -8px;
+}
+
 .bioweave-theme-button:hover,
+.bioweave-floating-toggle:hover,
 .bioweave-close:hover,
 .bioweave-theme-button:focus-visible,
+.bioweave-floating-toggle:focus-visible,
 .bioweave-close:focus-visible {
   background: var(--bioweave-accent-soft);
   color: var(--bioweave-text);
+}
+
+.bioweave-floating-toggle.is-disabled {
+  opacity: 0.46;
+}
+
+.bioweave-floating-toggle-icon {
+  width: 22px;
+  height: 22px;
+  color: currentColor;
+}
+
+.bioweave-theme-button {
+  font-size: 18px;
+}
+
+.bioweave-floating-toggle-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 4.25;
+  stroke-linecap: round;
+}
+
+.bioweave-floating-toggle-icon circle {
+  fill: currentColor;
 }
 
 .bioweave-close {
@@ -7453,4 +7528,157 @@
   .bioweave-settings-page .bioweave-data-management-operation .bioweave-danger-action {
     width: 100% !important;
   }
+}
+/* Floating Launcher Host Entry */
+.bioweave-floating-launcher {
+  position: fixed;
+  z-index: 4050;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--bioweave-floating-ink);
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  margin-top: max(0px, env(safe-area-inset-top));
+  margin-right: max(0px, env(safe-area-inset-right));
+  margin-bottom: max(0px, env(safe-area-inset-bottom));
+  margin-left: max(0px, env(safe-area-inset-left));
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.bioweave-floating-launcher::before {
+  position: absolute;
+  inset: 2px;
+  border: 1px solid color-mix(in srgb, var(--bioweave-floating-ink) 32%, transparent);
+  border-radius: 50%;
+  background: var(--bioweave-floating-bg);
+  box-shadow: 0 3px 10px rgb(0 0 0 / 18%);
+  content: '';
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.bioweave-floating-launcher[data-theme="midnight-indigo"] {
+  --bioweave-floating-bg: rgb(47 61 100 / 68%);
+}
+
+.bioweave-floating-launcher[data-theme="mist-violet"] {
+  --bioweave-floating-bg: rgb(76 61 104 / 64%);
+}
+
+.bioweave-floating-launcher[data-theme="deep-teal"] {
+  --bioweave-floating-bg: rgb(29 82 92 / 66%);
+}
+
+.bioweave-floating-launcher {
+  --bioweave-floating-bg: rgb(47 61 100 / 68%);
+  --bioweave-floating-ink: rgb(244 239 230 / 96%);
+}
+
+.bioweave-floating-launcher-icon {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  overflow: visible;
+  color: var(--bioweave-floating-ink);
+}
+
+.bioweave-floating-launcher-icon-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 4.25;
+  stroke-linecap: round;
+}
+
+.bioweave-floating-launcher-icon-center,
+.bioweave-floating-launcher-icon-dot {
+  fill: currentColor;
+}
+
+.bioweave-floating-launcher:hover,
+.bioweave-floating-launcher:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--bioweave-floating-ink) 62%, transparent);
+  outline-offset: 2px;
+}
+
+.bioweave-floating-launcher.is-dragging {
+  cursor: grabbing;
+  transform: scale(1.04);
+}
+
+.bioweave-floating-launcher.is-running {
+}
+
+.bioweave-floating-launcher.is-running::before {
+  border-color: color-mix(in srgb, var(--bioweave-floating-ink) 68%, transparent);
+  animation: bioweave-floating-launcher-breathe 1.6s ease-in-out infinite;
+}
+
+.bioweave-floating-launcher.is-running .bioweave-floating-launcher-icon {
+  animation: bioweave-floating-launcher-rotate 2.8s linear infinite;
+}
+
+.bioweave-floating-launcher.is-success {
+}
+
+.bioweave-floating-launcher.is-error {
+}
+
+.bioweave-floating-launcher-status {
+  position: absolute;
+  z-index: 2;
+  right: 3px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  display: grid;
+  place-items: center;
+  border: 2px solid color-mix(in srgb, var(--bioweave-floating-ink) 58%, transparent);
+  border-radius: 50%;
+  background: var(--bioweave-floating-ink);
+  color: var(--bioweave-floating-bg);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bioweave-floating-launcher.is-success .bioweave-floating-launcher-status::after { content: '✓'; }
+.bioweave-floating-launcher.is-error .bioweave-floating-launcher-status::after { content: '!'; }
+.bioweave-floating-launcher.is-running .bioweave-floating-launcher-status {
+  animation: bioweave-floating-launcher-status-pulse 1.25s ease-in-out infinite;
+}
+
+.bioweave-floating-launcher[data-state="idle"] .bioweave-floating-launcher-status {
+  display: none;
+}
+
+@keyframes bioweave-floating-launcher-breathe {
+  0%, 100% { box-shadow: 0 3px 10px rgb(0 0 0 / 18%); }
+  50% { box-shadow: 0 3px 13px rgb(0 0 0 / 24%); }
+}
+
+@keyframes bioweave-floating-launcher-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bioweave-floating-launcher-status-pulse {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bioweave-floating-launcher { transition: none; }
+  .bioweave-floating-launcher.is-running,
+  .bioweave-floating-launcher.is-running::before,
+  .bioweave-floating-launcher.is-running .bioweave-floating-launcher-icon,
+  .bioweave-floating-launcher.is-running .bioweave-floating-launcher-status { animation: none; }
 }

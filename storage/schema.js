@@ -1,4 +1,5 @@
 import { normalizeCharacterRegistry } from '../core/identity.js';
+import {DEFAULT_FLOATING_LAUNCHER_THEME, normalizeFloatingLauncherTheme} from '../floating-launcher-theme.js';
 
 export const SCHEMA_VERSION = 1;
 // World Model v1 的固定轻量结构；biological_types 是父 species 下开放的
@@ -258,6 +259,8 @@ export const DEFAULT_EXTENSION_SETTINGS = {
     system_bottom: DEFAULT_ANALYSIS_PROMPT.system_bottom,
     labels: { ...DEFAULT_ANALYSIS_PROMPT.labels },
   },
+  show_floating_launcher: true,
+  floating_launcher_theme: DEFAULT_FLOATING_LAUNCHER_THEME,
 };
 
 const WORLDBOOK_MODES = new Set(['selected_only', 'all', 'none']);
@@ -626,6 +629,7 @@ export function normalizeExtensionSettings(raw = {}) {
       : migrateLegacyWorldAnalysisPrompt(legacyWorldPrompt);
   delete safe.world_analysis_prompt;
   delete safe.analysis_prompt;
+  delete safe.floating_launcher_snap_to_edge;
   return {
     ...safe,
     api_source: normalizeApiSource(
@@ -649,6 +653,8 @@ export function normalizeExtensionSettings(raw = {}) {
       source.recent_story_global,
     ),
     analysis_prompt: canonicalPrompt,
+    show_floating_launcher: source.show_floating_launcher !== false,
+    floating_launcher_theme: normalizeFloatingLauncherTheme(source.floating_launcher_theme),
   };
 }
 

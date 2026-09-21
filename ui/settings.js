@@ -8,6 +8,7 @@ import {
   normalizeAnalysisPrompt,
   SILLYTAVERN_CURRENT_API,
 } from '../storage/schema.js';
+import {DEFAULT_FLOATING_LAUNCHER_THEME, FLOATING_LAUNCHER_THEMES, normalizeFloatingLauncherTheme} from '../floating-launcher-theme.js';
 import {
   characterOpeningSelectionState,
   isCharacterCardOpeningFieldKey,
@@ -725,6 +726,28 @@ function renderRecentStorySwitch({className = '', inputAttributes = '', checked 
   ].join('');
 }
 
+function renderFloatingLauncherSettings({show = true, theme = DEFAULT_FLOATING_LAUNCHER_THEME, open = false} = {}) {
+  const selectedTheme = normalizeFloatingLauncherTheme(theme);
+  return [
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-floating-launcher-settings" data-bioweave-settings-disclosure="floating_launcher"' + (open ? ' open' : '') + '>',
+    renderSettingsSummary('悬浮图标', '页面内 BioWeave 入口', null, {label: show ? '已启用' : '已关闭', tone: show ? 'good' : ''}),
+    '<section class="bioweave-card bioweave-floating-launcher-settings-card">',
+    renderRecentStorySwitch({
+      checked: show,
+      label: '显示悬浮图标',
+      description: '',
+      inputAttributes: 'data-bioweave-ui-preference="show_floating_launcher" aria-label="显示悬浮图标"',
+    }),
+    '<label class="bioweave-settings-field"><span>颜色主题</span><select class="bioweave-select" data-bioweave-floating-launcher-theme aria-label="悬浮图标颜色主题">',
+    '<option value="' + FLOATING_LAUNCHER_THEMES.MIDNIGHT_INDIGO + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.MIDNIGHT_INDIGO ? ' selected' : '') + '>夜幕靛</option>',
+    '<option value="' + FLOATING_LAUNCHER_THEMES.MIST_VIOLET + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.MIST_VIOLET ? ' selected' : '') + '>雾境紫</option>',
+    '<option value="' + FLOATING_LAUNCHER_THEMES.DEEP_TEAL + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.DEEP_TEAL ? ' selected' : '') + '>深海青</option>',
+    '</select></label>',
+    '</section>',
+    '</details>',
+  ].join('');
+}
+
 function renderRecentStoryRegexRow(rule, index, allRules, scope) {
   const scopeLabel = scope === 'global' ? '全局' : '当前角色卡';
   const scopeAttribute = ' data-bioweave-recent-story-regex-scope="' + scope + '"';
@@ -1154,6 +1177,8 @@ export function settingsPage({
   worldAnalysisPromptDraft = null,
   dataManagement = {},
   storyTimeDebug = {},
+  show_floating_launcher = true,
+  floating_launcher_theme = DEFAULT_FLOATING_LAUNCHER_THEME,
 } = {}) {
   const profiles = Array.isArray(rawProfiles)
     ? rawProfiles.map(profile => normalizeApiProfileForDisplay(profile))
@@ -1194,6 +1219,11 @@ export function settingsPage({
     `<div class="bioweave-assignment-grid">${assignmentsMarkup}</div>`,
     '</section>',
     '</details>',
+    renderFloatingLauncherSettings({
+      show: show_floating_launcher,
+      theme: floating_launcher_theme,
+      open: openSettingsSections.has('floating_launcher'),
+    }),
     renderStoryTimeDebugSettings(storyTimeDebug, worldbookSources.openSettingsSections),
     '</section>',
   ].join('');

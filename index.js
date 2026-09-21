@@ -1,6 +1,7 @@
 import {createRuntime} from './runtime/events.js';
 import {createApp} from './ui/app.js';
 import {registerHostEntry} from './host-entry.js';
+import {registerFloatingLauncher} from './floating-launcher.js';
 
 let instance = null;
 
@@ -13,14 +14,27 @@ export async function init({
   if (instance) return instance;
 
   const runtime = runtimeFactory();
-  const app = appFactory(runtime);
+  let floatingLauncher = null;
+  const app = appFactory(runtime, {
+    onUiPreferencesChanged: preferences => floatingLauncher?.updatePreferences?.(preferences),
+  });
   app.mountBioWeave();
   const unregisterMenu = registerHostEntry(() => app.openBioWeave(), documentRef, observerCtor);
+  const profileStore = runtime.store?.profileStore;
+  floatingLauncher = registerFloatingLauncher({
+    openBioWeave: () => app.openBioWeave(),
+    getActivityState: () => runtime.getActivityState?.() ?? {},
+    subscribeActivity: listener => runtime.subscribeActivity?.(listener) ?? (() => {}),
+    getPreferences: () => profileStore?.getUiPreferences?.() ?? {},
+    documentRef,
+  });
   const nextInstance = {
     runtime,
     app,
+    floatingLauncher,
     destroy() {
       unregisterMenu();
+      floatingLauncher?.destroy?.();
       app.destroyBioWeave();
       runtime.destroy();
       if (instance?.runtime === runtime) instance = null;
@@ -30,8 +44,12 @@ export async function init({
 
   try {
     const initialized = await runtime.init();
-    if (!initialized) console.warn('[BioWeave] Runtime initialization did not complete');
+    if (!initialized) {
+      runtime.recordActivityError?.('BIOWEAVE_RUNTIME_INIT_INCOMPLETE');
+      console.warn('[BioWeave] Runtime initialization did not complete');
+    }
   } catch (error) {
+    runtime.recordActivityError?.(error);
     console.error('[BioWeave] Runtime initialization failed', error);
   }
   return instance;

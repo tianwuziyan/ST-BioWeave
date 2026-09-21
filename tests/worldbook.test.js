@@ -962,8 +962,8 @@ test('settings categories reuse the compact disclosure shell with left arrows an
   for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '分析提示词', '数据管理', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
-  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 8);
-  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 8);
+  assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 9);
+  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 9);
   assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 0);
   assert.match(html, /bioweave-settings-summary-status">0\/3 可用/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-summary-arrow/);
@@ -1566,9 +1566,9 @@ test('recent story settings exposes ordered regex rule controls', () => {
   assert.match(html, /&lt;event&gt;/);
   assert.match(html, /<details class="bioweave-settings-disclosure(?: bioweave-settings-group)? bioweave-recent-story-disclosure"[^>]*data-bioweave-settings-disclosure="recent_story"/);
   assert.match(html, /data-bioweave-recent-story-user-regex/);
-  assert.equal((html.match(/role="switch"/g) ?? []).length, 4);
-  assert.equal((html.match(/class="bioweave-switch-track"/g) ?? []).length, 4);
-  assert.equal((html.match(/class="bioweave-switch-thumb"/g) ?? []).length, 4);
+  assert.equal((html.match(/role="switch"/g) ?? []).length, 5);
+  assert.equal((html.match(/class="bioweave-switch-track"/g) ?? []).length, 5);
+  assert.equal((html.match(/class="bioweave-switch-thumb"/g) ?? []).length, 5);
   assert.equal(html.includes('data-bioweave-recent-story-enabled'), false);
   assert.match(html, /class="bioweave-switch-input" type="checkbox"[^>]*data-bioweave-recent-story-user-regex/);
   assert.match(html, /data-bioweave-recent-story-floor-count value="20"/);

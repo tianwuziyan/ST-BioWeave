@@ -158,10 +158,18 @@ The canonical normalized global fields in `storage/schema.js` are:
 | `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3 |
 | `analysis_prompt` | `{system_top, task, input_prefix, input_suffix, system_bottom, labels{character, worldbooks, recent_story, external_memory}}` |
 | `recent_story_global` | `{regex_rules[]}` only; global rules apply before Chat-local rules |
+| `show_floating_launcher` | Boolean global UI preference; controls the page Floating Launcher only |
+| `floating_launcher_theme` | Global UI preference; one of `midnight-indigo`, `mist-violet`, or `deep-teal`; defaults to `midnight-indigo` |
 | Other normalized extension fields | Extension-global configuration retained by the normalizer; a future field requires registry classification before persistence |
 
 `world_analysis_prompt` is a legacy read compatibility source. Canonical
 saves use `analysis_prompt`; neither name becomes Chat-local data.
+
+Floating Launcher geometry is deliberately outside this registry: the device-
+local browser key `bioweave-floating-launcher-position` stores only UI position
+(`x`/`y`). It is not Chat metadata and is never copied into Floor, Snapshot,
+Current State, BiologicalEvent, Projection, World Model, or Runtime business
+data.
 
 API Profile `secret_ref` is an opaque reference only. The API key value is
 owned by the host Secret Store and is never copied into Chat metadata, a

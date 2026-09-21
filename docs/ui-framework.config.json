@@ -227,6 +227,21 @@
       }
     }
   },
+  "floatingLauncher": {
+    "domId": "bioweave-floating-launcher",
+    "themeSetting": "floating_launcher_theme",
+    "defaultTheme": "midnight-indigo",
+    "themes": {
+      "midnight-indigo": {"label": "夜幕靛", "background": "rgba(47, 61, 100, 0.68)"},
+      "mist-violet": {"label": "雾境紫", "background": "rgba(76, 61, 104, 0.64)"},
+      "deep-teal": {"label": "深海青", "background": "rgba(29, 82, 92, 0.66)"}
+    },
+    "icon": {
+      "geometry": "center circle, two equal-width arcs, two dots",
+      "ink": "rgba(244, 239, 230, 0.96)",
+      "effect": "light external shadow only"
+    }
+  },
   "components": {
     "shell": {
       "root": "bioweave-panel",

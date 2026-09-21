@@ -432,6 +432,8 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 ### 重要入口
 
 - index.js：创建 Runtime 与 App，挂载 overlay，向 SillyTavern 扩展菜单注册入口，并导出 onInstall、onUpdate、onEnable、onDisable、onActivate、onDelete。
+- floating-launcher.js：独立 Host Entry 浮标；与魔法棒入口共享 `app.openBioWeave()`，位置只保存到当前设备浏览器，不进入 Chat 或分析数据。
+- runtime/activity.js：只读 Runtime Activity seam，聚合并发 Event Analysis / World Analysis 状态，不暴露 Floor、Event、Snapshot 或 Projection DTO。
 - runtime/event-analysis.js：拥有当前/指定 Floor 分析、N-floor 自动调度、强制刷新、去重、失败保护、Floor-bound Event 提交、Event CRUD 与 Tracking Registry 重建。
 - ui/app.js：拥有页面路由、主题、overlay 生命周期和全局事件委托；只调用 Runtime Event Analysis API 并显示状态，不生产或判定 Event/Tracking 业务结果。
 - storage/schema.js / storage/store.js / storage/lifecycle.js / storage/clear.js：集中定义配置和数据保存边界、字段 ownership/domain 以及 Registry 驱动的手动/source-targeted 清除，避免 API Profile 或 Secret 进入 Chat 数据。
@@ -453,6 +455,8 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 | api_request_settings.retry_count | 可重试次数 | 默认 1，范围 0–3 |
 | recent_story_global.regex_rules | 全局最近剧情规则 | 最多 50 条，单条 pattern 最多 2000 字符 |
 | analysis_prompt | 所有 AI Analysis 共用的可编辑首尾 SYSTEM、公共补充/输入文本 | World/Event 等任务契约、JSON Contract 和 Validator Contract 仍由代码层保护；旧 `world_analysis_prompt` 仅作为迁移读取来源 |
+| show_floating_launcher | 是否显示页面内 Floating Launcher | 默认 true；false 时立即移除浮标，魔法棒入口仍保留 |
+| floating_launcher_theme | 页面内悬浮按钮颜色主题 | `midnight-indigo`（夜幕靛）、`mist-violet`（雾境紫）或 `deep-teal`（深海青）；默认 `midnight-indigo` |
 
 任务 assignments 可以指向 default、SillyTavern 当前 API 或已保存的 Profile ID。没有有效 Profile 时不会静默使用不匹配的配置。
 

@@ -35,6 +35,25 @@
 
 index.js、manifest.json、settings.html 是插件入口和生命周期文件，完整替换 UI 时保持不动。ai/、core/、runtime/、storage/、context/、story/ 不是视觉层，保持不动。
 
+### Host Entry 与 Floating Launcher
+
+BioWeave 有两个宿主可见入口：SillyTavern `#extensionsMenu` 中的魔法棒
+entry，以及页面内的 `#bioweave-floating-launcher`。两者都只调用同一个
+`app.openBioWeave()`，不得创建第二个 App、Panel 或 Runtime。Host Entry
+注册发生在 `runtime.init()` 之前；Runtime 初始化失败时入口和可打开的 UI
+shell 仍然保留。
+
+Floating Launcher 是 UI preference 和 Runtime Activity 的视图，不是业务
+状态。位置使用设备本地 key `bioweave-floating-launcher-position`，不写入
+Chat、Floor、Snapshot、Current State、BiologicalEvent、Projection 或
+World Model。它使用 Pointer Events、键盘 Enter/Space、44px 以上命中区域、
+viewport clamp，并在 disable/destroy 时清理自身 DOM、
+listener、subscription、timer 和 pointer capture。
+按钮图形使用同一份内联 SVG（中央圆、两段等粗圆弧和两个圆点），主题由全局
+`floating_launcher_theme` 选择：`midnight-indigo`（默认夜幕靛）、`mist-violet`
+（雾境紫）和 `deep-teal`（深海青）。主题只改变按钮底色变量，不改变入口行为或
+业务状态；缺失/非法值回退夜幕靛。
+
 ## 视觉基线
 
 BioWeave 使用低装饰、信息密度适中的生物观测面板。默认夜间主题保留深蓝灰基底；日间主题使用低亮度雾灰蓝，不使用刺眼的纯白大面积背景；跟随酒馆主题调用 SillyTavern 的宿主色变量，并用同一套语义色保证控件层级稳定。视觉重点是清晰的层级，而不是大面积渐变或装饰性卡片。

@@ -33,6 +33,8 @@ const GLOBAL_FIELDS = Object.freeze([
   'api_request_settings',
   'recent_story_global',
   'analysis_prompt',
+  'show_floating_launcher',
+  'floating_launcher_theme',
 ]);
 
 const GLOBAL_FIELDS_REGISTRY = Object.freeze(

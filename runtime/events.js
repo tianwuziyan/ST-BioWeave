@@ -23,6 +23,7 @@ import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
 import { createProjectionContextCoordinator } from "./projection-context.js";
+import { createRuntimeActivity } from "./activity.js";
 
 const LIFECYCLE_EVENTS = [
   "CHAT_CHANGED",
@@ -624,10 +625,12 @@ export function createRuntime({
   const store = createStore(st, chat);
   const subscriptions = new Set();
   const unbind = [];
+  const activity = createRuntimeActivity();
   let initialized = false;
   let destroyed = false;
 
   function notify(event) {
+    activity.handleRuntimeEvent(event);
     for (const listener of [...subscriptions]) {
       try {
         listener(event);
@@ -1379,6 +1382,7 @@ export function createRuntime({
     eventAnalysis.destroy();
     while (unbind.length) unbind.pop()();
     subscriptions.clear();
+    activity.destroy();
     chat.destroy();
     destroyed = true;
     initialized = false;
@@ -1390,6 +1394,11 @@ export function createRuntime({
     store,
     init,
     subscribe,
+    getActivityState: activity.getActivityState,
+    subscribeActivity: activity.subscribe,
+    startActivity: activity.startActivity,
+    finishActivity: activity.finishActivity,
+    recordActivityError: activity.recordError,
     analyzeCurrentFloor: eventAnalysis.analyzeCurrentFloor,
     resolveCurrentBioWeaveFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     analyzeFloor: eventAnalysis.analyzeFloor,
