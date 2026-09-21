@@ -73,6 +73,22 @@ test("chat boundary rejects a token after chat switch", () => {
   assert.equal(boundary.current(), "chat-b");
 });
 
+test("Runtime init survives missing or unavailable extension prompt adapters", async () => {
+  for (const adapter of [createAdapter(), (() => {
+    const value = createAdapter();
+    value.setExtensionPrompt = () => {
+      const error = new Error("prompt unavailable");
+      error.code = "ST_EXTENSION_PROMPT_UNAVAILABLE";
+      throw error;
+    };
+    return value;
+  })()]) {
+    const runtime = createRuntime({adapter});
+    assert.equal(await runtime.init(), true);
+    assert.doesNotThrow(() => runtime.destroy());
+  }
+});
+
 test("Store rejects every BioWeave write targeting a User message", async () => {
   const message = { message_id: "user-only", role: "user", content: "用户正文" };
   const adapter = {

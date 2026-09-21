@@ -21,39 +21,60 @@ export function createProjectionContextCoordinator({
   const role = injection.role ?? PROJECTION_CONTEXT_ROLE;
   let destroyed = false;
 
+  function unavailableResult(error = null) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      reason: error?.code ?? error?.reason ?? 'ST_EXTENSION_PROMPT_UNAVAILABLE',
+    };
+  }
+
   function write(prompt) {
-    if (typeof setExtensionPrompt !== 'function') return {status: 'unavailable'};
-    return setExtensionPrompt({
-      key: PROJECTION_CONTEXT_INJECTION_KEY,
-      content: prompt,
-      position,
-      depth,
-      scan: false,
-      role,
-    }) ?? {status: 'updated'};
+    if (typeof setExtensionPrompt !== 'function') return unavailableResult();
+    try {
+      const result = setExtensionPrompt({
+        key: PROJECTION_CONTEXT_INJECTION_KEY,
+        content: prompt,
+        position,
+        depth,
+        scan: false,
+        role,
+      });
+      if (result === false || result?.ok === false || result?.status === 'unavailable') {
+        return unavailableResult(result);
+      }
+      return {ok: true, status: 'available'};
+    } catch (error) {
+      return unavailableResult(error);
+    }
   }
 
   function clearProjectionContext() {
     if (destroyed) return {status: 'destroyed'};
-    return write('');
+    const result = write('');
+    return result.ok === false ? result : {ok: true, status: 'cleared'};
+  }
+
+  function clearFor(reason, extra = {}) {
+    const result = clearProjectionContext();
+    return result.ok === false
+      ? {...result, ...extra}
+      : {ok: true, status: 'cleared', reason, ...extra};
   }
 
   async function refreshProjectionContext({chatId = getChatId?.()} = {}) {
     if (destroyed) return {status: 'destroyed', dto: [], prompt: ''};
     if (chatId === null || chatId === undefined || chatId === '') {
-      clearProjectionContext();
-      return {status: 'cleared', reason: 'no_chat', dto: [], prompt: ''};
+      return clearFor('no_chat', {dto: [], prompt: ''});
     }
     let floor;
     try {
       floor = await resolveCurrentFloor();
     } catch {
-      clearProjectionContext();
-      return {status: 'cleared', reason: 'no_character_floor', dto: [], prompt: ''};
+      return clearFor('no_character_floor', {dto: [], prompt: ''});
     }
     if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) {
-      clearProjectionContext();
-      return {status: 'cleared', reason: 'invalid_floor', dto: [], prompt: ''};
+      return clearFor('invalid_floor', {dto: [], prompt: ''});
     }
     try {
       const views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
@@ -61,11 +82,11 @@ export function createProjectionContextCoordinator({
         ? await attributionResolver({chatId, floor, views})
         : {};
       const context = buildProjectionContext(views?.all ?? views, {attributionBySubject});
-      write(context.prompt);
-      return {status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt};
+      const result = write(context.prompt);
+      if (result.ok === false) return {...result, dto: context.dto, prompt: ''};
+      return {ok: true, status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt};
     } catch {
-      clearProjectionContext();
-      return {status: 'cleared', reason: 'projection_read_failed', dto: [], prompt: ''};
+      return clearFor('projection_read_failed', {dto: [], prompt: ''});
     }
   }
 

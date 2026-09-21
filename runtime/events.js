@@ -1213,7 +1213,11 @@ export function createRuntime({
     await refreshActiveOwner(currentChatId);
     storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
     await eventAnalysis.primeLifecycleSnapshot?.();
-    await projectionContext.refreshProjectionContext({chatId: currentChatId});
+    try {
+      await projectionContext.refreshProjectionContext({chatId: currentChatId});
+    } catch (error) {
+      console.error("[BioWeave] initial projection context refresh failed", error);
+    }
     bindLifecycleEvents();
     initialized = true;
     void eventAnalysis.refreshTrackingRegistry("init").catch((error) => {

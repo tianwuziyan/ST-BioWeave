@@ -116,6 +116,43 @@ test('coordinator clears for missing Character Floor and isolates chat scope', a
   assert.equal(writes.at(-1).content, '');
 });
 
+test('coordinator fails closed when extension prompt injection is unavailable', async () => {
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => { throw new Error('NO_CHARACTER_FLOOR'); },
+    getChatId: () => 'chat-a',
+  });
+  const result = await coordinator.refreshProjectionContext();
+  assert.deepEqual(result, {
+    ok: false,
+    status: 'unavailable',
+    reason: 'ST_EXTENSION_PROMPT_UNAVAILABLE',
+    dto: [],
+    prompt: '',
+  });
+  assert.doesNotThrow(() => coordinator.destroy());
+});
+
+test('coordinator converts a throwing extension prompt setter into unavailable', async () => {
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => {
+      const error = new Error('prompt unavailable');
+      error.code = 'ST_EXTENSION_PROMPT_UNAVAILABLE';
+      throw error;
+    },
+  });
+  const result = await coordinator.refreshProjectionContext();
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'ST_EXTENSION_PROMPT_UNAVAILABLE');
+  assert.deepEqual(result.dto, []);
+  assert.equal(result.prompt, '');
+  assert.doesNotThrow(() => coordinator.destroy());
+});
+
 test('Event Analysis contract treats injected Projection text as non-factual context', () => {
   assert.match(EVENT_ANALYZER_CORE_CONTRACT, /Projection Context/);
   assert.match(EVENT_ANALYZER_CORE_CONTRACT, /只有本次目标正文实际写出的内容/);

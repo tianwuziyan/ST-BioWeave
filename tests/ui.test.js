@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { registerExtensionsMenuEntry } from '../index.js'
+import { init, onActivate, onDisable } from '../index.js'
+import { registerHostEntry } from '../host-entry.js'
 import fs from 'node:fs'
 import {
   captureScrollPositions,
@@ -19,6 +20,7 @@ const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), '
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
 const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
+const HOST_ENTRY_SOURCE = fs.readFileSync(new URL('../host-entry.js', import.meta.url), 'utf8')
 const UI_SOURCE = [
   APP_SOURCE,
   fs.readFileSync(new URL('../ui/overview.js', import.meta.url), 'utf8'),
@@ -38,6 +40,11 @@ test('BioWeave overlay stays between ordinary host UI and host modal layers', ()
   assert.ok(zIndex < 9999, 'BioWeave must stay below SillyTavern Popup/backdrop')
   assert.ok(zIndex < 999999, 'BioWeave must stay below SillyTavern Toast')
   assert.doesNotMatch(STYLE_SOURCE, /(?:#shadow_popup|#dialogue_popup|#toast-container|dialog\.popup|\.popup-backdrop)\s*\{/)
+})
+
+test('Host Entry has no business-layer imports or dependencies', () => {
+  assert.doesNotMatch(HOST_ENTRY_SOURCE, /\bimport\s/)
+  assert.doesNotMatch(HOST_ENTRY_SOURCE, /from\s+['"].*(?:runtime|storage|projection|world|event-analysis|floor|snapshot|state|api|ai|tracking|swipe)/i)
 })
 
 test('Story Time debug settings are off by default and render only the supplied Runtime DTO when enabled', () => {
@@ -3115,11 +3122,9 @@ test('analysis prompt save keeps data behavior and uses a success Toast without 
 test('extensions menu entry opens synchronously without cancelling the host click', () => {
   const { documentRef, menu } = createMenuDocument()
   let openCalls = 0
-  const unregister = registerExtensionsMenuEntry(
-    {
-      openBioWeave() {
-        openCalls += 1
-      },
+  const unregister = registerHostEntry(
+    () => {
+      openCalls += 1
     },
     documentRef,
     null,
@@ -3143,10 +3148,8 @@ test('extensions menu entry opens synchronously without cancelling the host clic
 })
 test('extensions menu recreation restores one entry and destroy prevents re-registration', () => {
   const { documentRef, menu: oldMenu } = createMenuDocument()
-  const unregister = registerExtensionsMenuEntry(
-    {
-      openBioWeave() {},
-    },
+  const unregister = registerHostEntry(
+    () => {},
     documentRef,
     FakeMutationObserver,
   )
@@ -3173,21 +3176,17 @@ test('menu re-registration retires the stale handler and observer', () => {
   const { documentRef } = createMenuDocument()
   let firstCalls = 0
   let secondCalls = 0
-  const firstUnregister = registerExtensionsMenuEntry(
-    {
-      openBioWeave() {
-        firstCalls += 1
-      },
+  const firstUnregister = registerHostEntry(
+    () => {
+      firstCalls += 1
     },
     documentRef,
     FakeMutationObserver,
   )
   const firstObserver = FakeMutationObserver.latest
-  const secondUnregister = registerExtensionsMenuEntry(
-    {
-      openBioWeave() {
-        secondCalls += 1
-      },
+  const secondUnregister = registerHostEntry(
+    () => {
+      secondCalls += 1
     },
     documentRef,
     FakeMutationObserver,
@@ -3204,6 +3203,38 @@ test('menu re-registration retires the stale handler and observer', () => {
   assert.notEqual(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
   secondUnregister()
   assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null)
+})
+
+test('extension menu registration survives Runtime false and throw outcomes', async () => {
+  for (const outcome of ['false', 'throw']) {
+    onDisable()
+    const {documentRef} = createMenuDocument()
+    let destroyCalls = 0
+    const runtime = {
+      chat: {current: () => null},
+      init: async () => {
+        if (outcome === 'throw') throw new Error('RUNTIME_INIT_FAILED')
+        return false
+      },
+      destroy: () => { destroyCalls += 1 },
+    }
+    const app = {
+      mountBioWeave() {},
+      openBioWeave() {},
+      destroyBioWeave() {},
+    }
+    await init({
+      runtimeFactory: () => runtime,
+      appFactory: () => app,
+      documentRef,
+      observerCtor: null,
+    })
+    assert.notEqual(documentRef.getElementById('bioweave-extensions-menu-entry'), null, outcome)
+    assert.equal(await onActivate(), await init())
+    onDisable()
+    assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null, outcome)
+    assert.equal(destroyCalls, 1, outcome)
+  }
 })
 
 test('settings data management uses three distinct confirmations and the Runtime clear facade', async () => {

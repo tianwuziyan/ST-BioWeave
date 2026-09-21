@@ -104,6 +104,8 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 以下步骤需要在更新后的真实 SillyTavern 页面执行。BioWeave 主窗口使用独立高层级宿主；不把“先手动关闭酒馆 drawer”作为打开主 UI 的前置条件。
 
+入口生命周期边界：Host Entry 是 BioWeave 的宿主可见性边界，只依赖宿主 `document`、`#extensionsMenu`、`MutationObserver` 和 UI shell 的打开回调，不读取 Chat、Floor、Swipe、Event、World Model、State、Snapshot、Projection、Projection Context、API 或 Storage。BioWeave 先挂载 UI shell 并注册 `#extensionsMenu` 入口，再初始化 Runtime；业务 Runtime 初始化失败不得导致插件入口消失，Host Entry 不以业务数据是否可用作为注册条件。Projection Context 注入属于可选宿主能力；没有 `setExtensionPrompt` 或注入失败时只返回 `unavailable`，不阻断 Runtime 初始化，也不移除菜单入口。Runtime 初始化失败时仍保留菜单入口和 UI shell，业务页面使用现有空状态/错误状态。
+
 ### Desktop（>= 1200px）
 
 1. 点击输入区附近的魔法棒。
