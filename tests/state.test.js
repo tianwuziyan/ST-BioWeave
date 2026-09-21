@@ -100,6 +100,32 @@ function exposure({ event_id, day, floor = day, status = 'confirmed', possible_c
   return result;
 }
 
+function attribution({
+  event_id,
+  pregnancy_id = 'preg-a',
+  source_character_id = SOURCE,
+  contribution_kind = 'genetic',
+  attribution: relationshipStatus = 'confirmed',
+  status = 'confirmed',
+  day = 2,
+  floor = day,
+} = {}) {
+  return event({
+    event_id: event_id ?? `attribution-${source_character_id}-${relationshipStatus}`,
+    type: 'reproductive_source_attribution',
+    status,
+    day,
+    floor,
+    participants: [SUBJECT, source_character_id],
+    payload: {
+      pregnancy_id,
+      source_character_id,
+      contribution_kind,
+      attribution: relationshipStatus,
+    },
+  });
+}
+
 function reduce(events, options = {}) {
   return reduceState({
     events,
@@ -255,6 +281,71 @@ test('pregnancy episodes are isolated and termination preserves history', () => 
   assert.deepEqual(pregnancy.active_pregnancy_ids, ['preg-b']);
   assert.deepEqual(pregnancy.episodes['preg-a'].confirmation_event_ids, ['confirm-a']);
   assert.deepEqual(pregnancy.episodes['preg-a'].termination_event_ids, ['loss-a']);
+});
+
+test('confirmed and excluded contributor facts aggregate without a single-source assumption', () => {
+  const state = reduce([
+    event({ event_id: 'conception-a', type: 'conception', payload: { pregnancy_id: 'preg-a' }, day: 1 }),
+    attribution({ event_id: 'confirm-b', source_character_id: 'char_000002', contribution_kind: 'genetic' }),
+    attribution({ event_id: 'confirm-c', source_character_id: 'char_000003', contribution_kind: 'magical' }),
+    attribution({ event_id: 'exclude-d', source_character_id: 'char_000004', contribution_kind: 'genetic', attribution: 'excluded' }),
+  ]);
+  const contributors = state.characters[SUBJECT].pregnancy.episodes['preg-a'].contributors;
+  assert.deepEqual(contributors.confirmed.map((item) => item.source_character_id), ['char_000002', 'char_000003']);
+  assert.equal(contributors.confirmed[1].contribution_kind, 'magical');
+  assert.deepEqual(contributors.excluded.map((item) => item.source_character_id), ['char_000004']);
+  assert.deepEqual(contributors.conflicts, []);
+});
+
+test('attribution cannot create a Pregnancy Episode or a pregnancy fact', () => {
+  const state = reduce([attribution({ event_id: 'orphan-attribution', pregnancy_id: 'preg-missing' })]);
+  const character = state.characters[SUBJECT];
+  assert.deepEqual(character.pregnancy.episodes, {});
+  assert.equal(character.pregnancy.current_status, 'unknown');
+  assert.equal(character.conception.status, 'unknown');
+  assert.equal(state.diagnostics.some((item) => item.code === 'unresolved_reproductive_source_attribution'), true);
+});
+
+test('probable, ambiguous, negated, and fictional attribution never changes factual contributors', () => {
+  const state = reduce([
+    event({ event_id: 'conception-a', type: 'conception', payload: { pregnancy_id: 'preg-a' }, day: 1 }),
+    attribution({ event_id: 'probable-attribution', status: 'probable', source_character_id: 'char_000002' }),
+    attribution({ event_id: 'ambiguous-attribution', status: 'ambiguous', source_character_id: 'char_000003' }),
+    attribution({ event_id: 'negated-attribution', status: 'negated', source_character_id: 'char_000004' }),
+    attribution({ event_id: 'fictional-attribution', status: 'fictional', source_character_id: 'char_000005' }),
+  ]);
+  const contributors = state.characters[SUBJECT].pregnancy.episodes['preg-a'].contributors;
+  assert.deepEqual(contributors.confirmed, []);
+  assert.deepEqual(contributors.excluded, []);
+  assert.equal(state.diagnostics.filter((item) => item.code === 'invalid_event').length, 0);
+});
+
+test('same contributor relationship conflict is fail-closed and input order independent', () => {
+  const base = event({ event_id: 'conception-a', type: 'conception', payload: { pregnancy_id: 'preg-a' }, day: 1 });
+  const confirmed = attribution({ event_id: 'relationship-confirmed', source_character_id: 'char_000002', day: 2, floor: 2 });
+  const excluded = attribution({ event_id: 'relationship-excluded', source_character_id: 'char_000002', attribution: 'excluded', day: 3, floor: 3 });
+  const first = reduce([base, confirmed, excluded]);
+  const second = reduce([excluded, confirmed, base]);
+  const firstContributors = first.characters[SUBJECT].pregnancy.episodes['preg-a'].contributors;
+  const secondContributors = second.characters[SUBJECT].pregnancy.episodes['preg-a'].contributors;
+  assert.deepEqual(firstContributors, secondContributors);
+  assert.deepEqual(firstContributors.confirmed, []);
+  assert.deepEqual(firstContributors.excluded, []);
+  assert.equal(firstContributors.conflicts.length, 1);
+  assert.equal(first.diagnostics.some((item) => item.code === 'reproductive_source_attribution_conflict'), true);
+});
+
+test('duplicate attribution events dedupe and baseState remains immutable during replay', () => {
+  const initial = reduce([event({ event_id: 'conception-a', type: 'conception', payload: { pregnancy_id: 'preg-a' }, day: 1 })]);
+  const baseBefore = structuredClone(initial);
+  const fact = attribution({ event_id: 'confirm-c', source_character_id: 'char_000003', contribution_kind: 'magical' });
+  const fullReplay = reduce([event({ event_id: 'conception-a', type: 'conception', payload: { pregnancy_id: 'preg-a' }, day: 1 }), fact]);
+  const replayed = reduceState({ baseState: initial, events: [fact, structuredClone(fact)], characterFacts: facts(), currentStoryTime: storyTime(20) });
+  assert.deepEqual(replayed, fullReplay);
+  assert.deepEqual(initial, baseBefore);
+  const contributors = replayed.characters[SUBJECT].pregnancy.episodes['preg-a'].contributors;
+  assert.equal(contributors.confirmed.length, 1);
+  assert.deepEqual(contributors.confirmed[0].event_ids, ['confirm-c']);
 });
 
 test('abortion and delivery end only their referenced episode; labor does not deliver', () => {

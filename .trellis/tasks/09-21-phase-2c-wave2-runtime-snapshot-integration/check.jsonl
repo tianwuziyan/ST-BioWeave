@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify Snapshot candidate ownership, active Swipe, version, deletion and stale-write behavior."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify no Chat-level fallback and lifecycle invalidation coverage."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Event replay boundary does not alter Event semantics."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify storage/runtime data flow and no read-side persistence leak."}

@@ -109,6 +109,18 @@ const FLOOR_FIELDS = Object.freeze({
     kind: 'authoritative_floor_snapshot',
     clearOn: Object.freeze(['character', 'all']),
   }),
+  snapshot: Object.freeze({
+    scope: 'floor',
+    domain: LIFECYCLE_DOMAINS.FLOOR_ANALYSIS,
+    kind: 'derived_checkpoint_cache',
+    clearOn: Object.freeze(['character', 'all']),
+  }),
+  projection_timeline: Object.freeze({
+    scope: 'floor',
+    domain: LIFECYCLE_DOMAINS.CHARACTER,
+    kind: 'append_only_projection_timeline',
+    clearOn: Object.freeze(['character', 'all']),
+  }),
   world_model: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.WORLD,
@@ -127,12 +139,14 @@ const FLOOR_FIELDS = Object.freeze({
 // field is preserved until its ownership and clear semantics are explicitly
 // added here; it must never become clearable merely by existing in a Floor.
 export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
-  character: Object.freeze(['analysis', 'events', 'character_registry']),
+  character: Object.freeze(['analysis', 'events', 'character_registry', 'snapshot', 'projection_timeline']),
   world: Object.freeze(['world_model', 'world_model_meta']),
   all: Object.freeze([
     'analysis',
     'events',
     'character_registry',
+    'snapshot',
+    'projection_timeline',
     'world_model',
     'world_model_meta',
   ]),

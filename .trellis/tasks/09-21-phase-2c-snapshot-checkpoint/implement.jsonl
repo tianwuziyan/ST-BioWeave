@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Normative Character Floor, active Swipe, six-field Floor Version, provenance, deletion, and no Chat-level historical source rules."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Required lifecycle ownership, clear/invalidation, and persistence rules for the new Floor-derived cache field."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Existing Event/Story Time semantics and Floor-bound event contract that Snapshot must preserve."}

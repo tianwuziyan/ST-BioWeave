@@ -6,6 +6,26 @@ This contract applies when narrative analysis produces or consumes a
 `BiologicalEvent`, especially `sexual_activity`, and when the result updates
 the Pregnancy Tracking Subject registry.
 
+Phase 2D Projection is downstream of this factual pipeline. A Projection is a
+future-direction DTO and never a substitute for a BiologicalEvent; a later
+factual Event always takes precedence. Projection lifecycle and evidence records
+are append-only derived operations and cannot mutate Event facts or StateReducer
+state. A `reproductive_source_attribution` Event may factually confirm or exclude
+a contributor relationship; candidate sources and unresolved attribution are read
+models, not Events. Phase 2D-1.1 defines these contracts without Runtime,
+persistence, AI generation, Context Injection, Probability, or RNG integration.
+
+The StateReducer stores only confirmed/excluded attribution relationships inside
+an already existing Pregnancy Episode. It never creates an episode from an
+attribution Event, never stores Candidate values, and records orphan or
+confirmed-vs-excluded conflicts as deterministic diagnostics.
+
+Projection eligibility/evolution is a downstream pure rule layer. Its World Model
+rules may mark a future concern eligible or evaluate a later factual realization,
+contradiction, or explicit expiration, but it cannot emit or mutate a
+BiologicalEvent. Story Time eligibility and Projection lifecycle are not factual
+pregnancy conclusions.
+
 The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
@@ -85,6 +105,32 @@ understand either domain's fields.
 `authoritativeFloorVersion` contains exactly these binding fields:
 `chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
 `message_version`.
+
+## Projection generation boundary
+
+Projection generation is downstream of deterministic Eligibility and remains
+outside the factual Event pipeline. Only an `eligible` decision may be sent to
+the dedicated Projection Generation prompt. The raw AI DTO contains future
+development content only; it cannot create a BiologicalEvent, attribution,
+identity, owner, probability, or state. BioWeave assembles and validates the
+Projection candidate from the decision and current Floor Version. A stale Chat,
+Floor, Swipe, rule, or Eligibility context fails closed and produces no write.
+
+When persisted, a Projection candidate is saved only to the current Character
+Floor/active Swipe owner. Creation, evidence, and lifecycle records remain
+separate append-only records; later records never rewrite the creation Floor.
+Projection persistence is not part of the BiologicalEvent pipeline and never
+writes StateReducer, Snapshot, or Chat metadata.
+
+### Projection Context Injection
+
+Phase 2E consumes only the current Projection View from the Floor timeline. It
+filters `context_visible`, deduplicates by `projection_id`, orders by stable
+business fields, and renders a short future-direction prompt through the
+`bioweave_projection_context` `setExtensionPrompt()` slot. The prompt is not an
+Event and cannot update StateReducer; Event Analysis treats only the actual
+target Character message as direct factual evidence. Clearing or changing the
+current Chat/Floor/Swipe/Version clears or replaces the same slot.
 
 ## 3. Contracts
 

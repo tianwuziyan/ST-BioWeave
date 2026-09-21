@@ -1,0 +1,28 @@
+{
+  "id": "phase-2c-snapshot-checkpoint",
+  "name": "phase-2c-snapshot-checkpoint",
+  "title": "Phase 2C Wave 1 Snapshot Checkpoint 基础层",
+  "description": "实现 BioWeave Snapshot/Checkpoint 纯基础层：DTO、校验、Character Floor/active Swipe 存储边界、按有效 Character Floor progression 的 checkpoint 判断、以 baseState 恢复 StateReducer，以及定向测试和数据模型文档更新。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-21",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-21-phase-2c-wave2-runtime-snapshot-integration"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -134,6 +134,7 @@ const modelFixture = {
     },
   ],
   unknowns: ['是否存在其他生物类型。'],
+  projection_rules: [],
 }
 
 function structuredFixtureType(name, description, overrides = {}) {

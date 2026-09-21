@@ -15,9 +15,30 @@ current Character/assistant message + its active Swipe
   -> derived runtime state, registries, UI model, and API context
 ```
 
+Projection generation follows the same owner boundary but is transient until a
+later persistence wave: its context upper bound is the current valid Character
+Floor and active Swipe, never a latest User message. A generated result carries
+the complete Floor Version, Chat scope, rule binding and Eligibility context;
+owner changes invalidate the result before any future persistence step.
+
 The contract applies to storage, Floor/version code, analysis, Events,
 tracking, registries, character state, World Model state, API context, and any
 new disease, medication, reproduction, exposure, or other cross-Floor state.
+
+The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
+other Floor data. Its `creations`, `evidence_records`, and `lifecycle_records`
+are append-only roots under `projection_timeline`; later Floors never mutate an
+earlier creation. A read must first resolve surviving Character Floors and their
+active Swipe, verify each current six-field Floor Version, then aggregate the
+timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
+and stale versions are never fallback sources.
+
+Runtime Context Injection is downstream of this read. It consumes only the
+current `getProjectionViews()` result with `context_visible === true`, through
+the stable `bioweave_projection_context` extension slot. It does not read raw
+timeline arrays, persist a Chat-level prompt, or make the prompt part of Event
+evidence. When the current Character Floor, Chat, Swipe, or Floor Version is
+missing or changes, the slot is refreshed or explicitly cleared.
 
 ## 1. Source of Truth
 
@@ -53,7 +74,7 @@ database.
 Chat Metadata may still own independent configuration: user choices, role or
 plugin settings, current Character Card/Persona context, and other explicitly
 authoritative Chat-local values. Historical World Model state is not Chat
-configuration: `world_model` and `world_model_meta` are Floor-owned fields.
+configuration: `world_model` and `world_model_meta` are Floor-owned fields. The normalized `world_model.projection_rules[]` collection is part of that same World Model owner, not a runtime-only field or Chat-level fallback.
 Floor-derived canonical identity history is Floor-owned cumulative snapshot
 state; it is not Chat configuration.
 If a Chat-level
@@ -440,7 +461,114 @@ isolation, stale-version invalidation, deleted-owner exclusion, API
 provenance, and orphan-free derived state. If any answer is unclear, do not
 implement the feature yet.
 
-## 12. Data lifecycle pointer
+## 12. Snapshot checkpoint contract
+
+### 12.1 Scope / Trigger
+
+Snapshot is a derived/cache checkpoint of the Current State already reduced
+from valid Floor Events. It is not an authoritative fact source, Event
+replacement, Chat database, Projection, or probability result. This contract
+applies whenever a Floor-owned `snapshot` root is created, validated, cleared,
+or restored.
+
+### 12.2 Signatures
+
+- `createSnapshot({checkpoint, state, owner?, expectedChatId?, expectedFloorVersion?})`
+  returns a deep-cloned validated Snapshot or throws `SNAPSHOT_INVALID`.
+- `validateSnapshot(snapshot, {owner?, expectedChatId?, expectedFloorVersion?, currentFloorVersion?})`
+  returns `{ok, errors[]}`.
+- `shouldSnapshot({characterFloors, lastSnapshotCheckpoint?, interval?, majorEvent?})`
+  counts ordered valid Character Floor checkpoints, ignoring User messages.
+- `restoreFromSnapshot({snapshot, events, currentStoryTime?, characterFacts?, reducer?})`
+  calls `reduceState({baseState: snapshot.state, events, currentStoryTime,
+  characterFacts})`.
+
+### 12.3 Contracts
+
+The Snapshot DTO is `{schema_version: 1, checkpoint: FloorVersion, state:
+CurrentState}`. The checkpoint contains exactly the six Floor Version fields.
+The owner is `message.extra.bioweave` for a Character/assistant message without
+Swipe structure, or `message.swipe_info[swipe_id].extra.bioweave` for every
+structured Swipe including `swipe_id = 0`. Chat metadata and User messages can
+never own this field. The default checkpoint interval is three valid Character
+Floors after the previous checkpoint; it is not based on `floor % interval`.
+Missing or rejected Snapshot data leaves full replay available.
+
+### 12.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Wrong Snapshot or State schema | Return validation failure; do not restore |
+| Incomplete or extra checkpoint fields | Return validation failure |
+| Wrong Chat, Swipe, content hash, message version, or owner Floor Version | Return validation failure |
+| User/system message owner | Return `snapshot_owner_not_character_floor` |
+| Checkpoint after current endpoint | Return `snapshot_checkpoint_in_future` |
+| Missing/deleted/corrupt Snapshot | Use full replay; never alter Events |
+
+### 12.5 Good / Base / Bad Cases
+
+- Good: Character Floors A/B/C reach interval three, and Swipe 0 validates by
+  its exact `swipe_info[0]` owner.
+
+### 12.6 Projection, Contributor, and Eligibility Domain (Phase 2D-2)
+
+The pure Projection domain is separate from Snapshot and StateReducer. A
+Projection describes a possible future biological development based on valid
+Events, Current State, Story Time, World Model mechanism rules, and Character
+Facts; it cannot create or change a BiologicalEvent, factual episode, Current
+State, or Snapshot. Its identity is Chat scope + subject + projection rule +
+development concern; source Event IDs are provenance only. Later evidence and
+lifecycle changes are append-only records and never rewrite the creating Floor.
+
+Factual lifecycle actions are `realized`, `contradicted`, and `expired`. User
+`deleted` is a separate visibility dimension. A same-position factual conflict
+is reported as a conflict and does not select a status by enum precedence.
+Aggregation receives the ordered surviving Character Floor/active-Swipe timeline;
+Floor Version identity fields are validation data, not chronology. Phase 2D-1.1
+also defines pure `ReproductiveSourceCandidate` and `ContributorAttribution` read
+contracts. Candidate is derived and never becomes an attribution Event; only
+confirmed/excluded factual attribution Events may establish contributor relations.
+StateReducer consumes confirmed attribution Events only when the referenced
+Pregnancy Episode already exists, and stores multiple contributor relationships
+under that episode. Probable/ambiguous/negated/fictional attribution cannot alter
+that factual state; an orphan attribution produces a diagnostic and does not create
+an episode. A confirmed/excluded conflict is fail-closed. Phase 2D-2 adds only pure
+World Model `projection_rules[]` eligibility/evolution evaluation. It returns
+`eligible`/`not_eligible`/`unresolved` and lifecycle decisions without creating
+facts, Events, persistence, Runtime, UI, or Context output. Story Time can satisfy
+a rule trigger but cannot establish biological occurrence.
+- Base: no Snapshot exists; `reduceState({events})` remains the complete path.
+- Bad: save `snapshot` in `chatMetadata`, `message.extra` of a structured
+  Swipe, or a User message; read a different Swipe; or pass Snapshot as
+  `events` instead of `baseState`.
+
+### 12.6 Tests Required
+
+- Full replay and Snapshot-plus-later-Events produce deep-equal Current State.
+- Snapshot creation/restore do not share mutable references.
+- Invalid schema, Chat, Floor Version, hash, message version, Swipe, and User
+  owner are rejected; Swipe 0 is covered explicitly.
+- User messages do not advance Character Floor checkpoint progression.
+- Restore input contains `baseState` and never a legacy `snapshot` reducer key.
+
+### 12.7 Wrong vs Correct
+
+Wrong:
+
+```js
+reducer({ snapshot, events });
+```
+
+Correct:
+
+```js
+reduceState({ baseState: snapshot.state, events, currentStoryTime, characterFacts });
+```
+
+No Wave 1 implementation adds dependency graphs or cascades future Snapshot
+invalidation when an old intermediate Floor is deleted.
+
+## 13. Data lifecycle pointer
 
 The detailed clear, Chat-boundary, mutation, async, and persistence contract is
 maintained in [BioWeave Data Lifecycle](../../docs/bioweave-data-lifecycle.md).

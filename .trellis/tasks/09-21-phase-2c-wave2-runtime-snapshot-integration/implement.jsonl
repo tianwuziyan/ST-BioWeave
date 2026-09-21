@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Current authoritative Floor/active Swipe ownership, provenance, Snapshot contract, deletion, and Chat boundaries."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Floor cache lifecycle, stale-write guards, clear/invalidation and persistence ownership."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event source validity and unchanged biological Event/Story Time semantics."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Runtime State to Floor persistence data-flow and boundary review checklist."}

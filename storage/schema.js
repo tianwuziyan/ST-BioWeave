@@ -61,6 +61,7 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
     },
   ],
   unknowns: ['An unresolved biological rule or fact.'],
+  projection_rules: [],
 });
 
 export const DEFAULT_SETTINGS = {
@@ -674,8 +675,8 @@ export function sanitizeSecrets(value) {
   return safe;
 }
 
-// Canonical character identity history is owned by each successful Floor
-// snapshot. Runtime projections are rebuilt in memory and are never Chat data.
+// Canonical character identity history and Projection timeline records are
+// owned by their exact Floor/Swipe slots; neither is Chat metadata.
 export { normalizeCharacterRegistry };
 
 export function emptyChat(chatId) {
@@ -694,6 +695,13 @@ export function emptyFloor() {
     analysis: null,
     events: [],
     character_registry: normalizeCharacterRegistry(null),
+    snapshot: null,
+    projection_timeline: {
+      schema_version: 1,
+      creations: [],
+      evidence_records: [],
+      lifecycle_records: [],
+    },
     world_model: null,
     world_model_meta: null,
   };

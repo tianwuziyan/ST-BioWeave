@@ -4,6 +4,7 @@ import {
   mergeRecentStorySettings,
   processNarrativeFloor,
 } from "../ai/input-builder.js";
+import { normalizeStoredWorldModel } from "../ai/analyzer.js";
 import {
   clearWorldbookCache,
   createWorldbookCache,
@@ -23,6 +24,12 @@ import {
   validateEventCollection,
 } from "../core/events.js";
 import { reduceState } from "../core/state.js";
+import {
+  createSnapshot,
+  restoreFromSnapshot,
+  shouldSnapshot,
+  validateSnapshot,
+} from "../core/snapshot.js";
 import {
   hasCharacterId,
   isCompleteCharacterRegistrySnapshot,
@@ -1003,6 +1010,7 @@ export function createEventAnalysisCoordinator({
     return null;
   }
   async function saveWorldModel({ model, meta = null, selector = null } = {}) {
+    const normalizedModel = normalizeStoredWorldModel(model);
     const token = chat.token();
     const target = await resolveFloor(selector);
     chat.assert(token);
@@ -1012,12 +1020,12 @@ export function createEventAnalysisCoordinator({
     await store.saveFloor(target.index, target.swipeId, {
       ...current,
       floor_version: target.version,
-      world_model: cloneWorldValue(model),
+      world_model: cloneWorldValue(normalizedModel),
       world_model_meta: cloneWorldValue(meta),
     });
     chat.assert(token);
     return {
-      model: cloneWorldValue(model),
+      model: cloneWorldValue(normalizedModel),
       meta: cloneWorldValue(meta),
       floor_version: cloneWorldValue(target.version),
     };
@@ -1107,6 +1115,135 @@ export function createEventAnalysisCoordinator({
     }
     return differences;
   }
+
+  function persistedValidFloorState(state) {
+    return Boolean(
+      state &&
+      floorRootExists(state.index, state.swipeId) &&
+      sameFloorVersion(floorVersionFromData(state.floorData), state.version),
+    );
+  }
+
+  function snapshotOwner(state) {
+    return {
+      message: state.message,
+      activeSwipeId: state.swipeId,
+      floorVersion: state.version,
+    };
+  }
+
+  function validSnapshotForState(state, currentVersion) {
+    if (!persistedValidFloorState(state) || !state.floorData?.snapshot) return null;
+    const validation = validateSnapshot(state.floorData.snapshot, {
+      owner: snapshotOwner(state),
+      expectedChatId: currentVersion.chat_id,
+      currentFloorVersion: currentVersion,
+    });
+    return validation.ok ? state.floorData.snapshot : null;
+  }
+
+  function snapshotCandidates(states, currentFloor) {
+    return states
+      .filter(
+        (state) =>
+          state.index <= currentFloor.index &&
+          state.version.floor <= currentFloor.version.floor,
+      )
+      .sort((left, right) => right.index - left.index);
+  }
+
+  function restoreStateFromNearestSnapshot(states, currentFloor, currentStoryTime, characterFacts) {
+    const candidates = snapshotCandidates(states, currentFloor);
+    for (const candidate of candidates) {
+      const snapshot = validSnapshotForState(candidate, currentFloor.version);
+      if (!snapshot) continue;
+      const laterEvents = sortEvents(
+        states
+          .filter(
+            (state) =>
+              state.index > candidate.index &&
+              state.index <= currentFloor.index,
+          )
+          .flatMap((state) => state.events),
+      );
+      return {
+        snapshot,
+        checkpoint: candidate,
+        events: laterEvents,
+        state: restoreFromSnapshot({
+          snapshot,
+          events: laterEvents,
+          currentStoryTime,
+          characterFacts,
+        }),
+      };
+    }
+    return null;
+  }
+
+  function validFloorProgression(states, currentFloor) {
+    return states
+      .filter(
+        (state) =>
+          state.index <= currentFloor.index &&
+          state.version.floor <= currentFloor.version.floor &&
+          persistedValidFloorState(state),
+      )
+      .sort((left, right) => left.index - right.index)
+      .map((state) => ({
+        role: messageRole(state.message),
+        checkpoint: state.version,
+      }));
+  }
+
+  async function maybeCreateSnapshot(target, token) {
+    const currentFloor = await resolveCurrentBioWeaveFloor();
+    if (!sameFloorVersion(currentFloor.version, target.version)) return null;
+    chat.assert(token);
+    const currentData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
+    const existing = validSnapshotForState(
+      { ...target, floorData: currentData },
+      currentFloor.version,
+    );
+    if (existing) return existing;
+
+    const derived = await collectCurrentDerivedState(token);
+    if (derived.currentStateStatus !== "ready") return null;
+    const states = derived.states.filter((state) => !isFloorInvalidated(state));
+    const latestSnapshot = snapshotCandidates(states, currentFloor)
+      .map((state) => ({ state, snapshot: validSnapshotForState(state, currentFloor.version) }))
+      .find((entry) => entry.snapshot)?.snapshot ?? null;
+    const chatData = store.getChat(token.chatId);
+    const interval = Number(chatData.settings?.snapshot_interval ?? 3);
+    if (!shouldSnapshot({
+      characterFloors: validFloorProgression(states, currentFloor),
+      lastSnapshotCheckpoint: latestSnapshot?.checkpoint ?? null,
+      interval: Number.isInteger(interval) ? interval : 3,
+    })) return null;
+
+    const snapshot = createSnapshot({
+      checkpoint: currentFloor.version,
+      state: derived.currentState,
+      owner: snapshotOwner({ ...target, ...currentFloor }),
+      expectedChatId: token.chatId,
+      expectedFloorVersion: currentFloor.version,
+    });
+    chat.assert(token);
+    const latestTarget = await resolveFloorAtIndex({ __messageIndex: true, index: target.index });
+    if (!sameFloorVersion(latestTarget.version, target.version)) return null;
+    const latestData = store.getFloor?.(target.index, target.swipeId) ?? {};
+    const latestExisting = validSnapshotForState(
+      { ...latestTarget, floorData: latestData },
+      currentFloor.version,
+    );
+    if (latestExisting) return latestExisting;
+    await store.saveFloor(target.index, target.swipeId, {
+      ...latestData,
+      snapshot,
+    });
+    chat.assert(token);
+    return snapshot;
+  }
   function stateErrorState(error) {
     const state = reduceState({});
     state.diagnostics = [{
@@ -1157,7 +1294,15 @@ export function createEventAnalysisCoordinator({
     let currentState;
     let currentStateStatus = currentFloor ? "ready" : "NO_CHARACTER_FLOOR";
     try {
-      currentState = reduceState({
+      const restored = currentFloor
+        ? restoreStateFromNearestSnapshot(
+          validStates,
+          currentFloor,
+          currentStoryTime,
+          characterFacts,
+        )
+        : null;
+      currentState = restored?.state ?? reduceState({
         events: activeEvents,
         currentStoryTime,
         characterFacts,
@@ -1913,10 +2058,25 @@ export function createEventAnalysisCoordinator({
         analysis,
         events,
         character_registry: identityResult.character_registry,
+        snapshot: null,
       });
       execution.floorSaved = true;
       await assertExecutionTargetCurrent(execution, target, token);
       invalidatedFloors.delete(floorExecutionKey(target.version));
+      execution.stage = "snapshot_checkpoint";
+      try {
+        await maybeCreateSnapshot(target, token);
+      } catch (snapshotError) {
+        // Snapshot is a disposable cache.  A stale owner or a cache write
+        // failure must not turn an authoritative Event Analysis success into
+        // a failed analysis.
+        traceApi("runtime-snapshot-error", {
+          error: snapshotError,
+          phase: execution.stage,
+          attempt: execution.attempt,
+          staleChat: isStaleChat(snapshotError),
+        });
+      }
       execution.stage = "registry_rebuild";
       assertExecutionCurrent(execution, token);
       await refreshTrackingRegistry(execution.reason);
@@ -2253,6 +2413,7 @@ export function createEventAnalysisCoordinator({
     await store.saveFloor(target.index, target.swipeId, {
       ...target.floorData,
       events,
+      snapshot: null,
     });
     chat.assert(mutationToken);
     invalidatedFloors.delete(floorExecutionKey(target.version));
@@ -2272,6 +2433,7 @@ export function createEventAnalysisCoordinator({
     await store.saveFloor(target.index, target.swipeId, {
       ...target.floorData,
       events,
+      snapshot: null,
     });
     chat.assert(mutationToken);
     invalidatedFloors.delete(floorExecutionKey(target.version));

@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
-import { createAnalyzer } from "../ai/analyzer.js";
+import { createAnalyzer, normalizeWorldModel } from "../ai/analyzer.js";
 import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { buildProjectionRuleId } from "../core/projection-eligibility.js";
 import { floorVersion } from "../runtime/floor.js";
 import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schema.js";
 
@@ -3168,7 +3169,7 @@ test("failed World clear rebuilds Runtime and permits a subsequent World Model s
   fixture.context.saveChat = async () => undefined;
   const nextModel = { species: [{ name: "新世界" }] };
   await fixture.runtime.saveWorldModel({ model: nextModel, meta: { saved_by: "retry" } });
-  assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model, nextModel);
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model, normalizeWorldModel(nextModel));
   assert.deepEqual(fixture.context.chat[0].extra.bioweave.world_model_meta, { saved_by: "retry" });
   fixture.runtime.destroy();
 });
@@ -4360,11 +4361,23 @@ test("World Model save writes only the current Floor and preserves Event-owned f
       },
     },
   });
-  const model = { schema_version: 1, species: [{ name: "Floor World" }] };
+  const rawProjectionRule = {
+    schema_version: 1,
+    mechanism_key: "mechanism:floor",
+    development_concern_key: "concern:floor",
+    development_kind: "monitoring_signal",
+    trigger: { kind: "story_time_reached", target_story_time: { day_index: 20, calendar_id: "main" } },
+    requirements: { capabilities: [], source_compatibility: "not_required", contributor_relationships: [] },
+    realization: null,
+    contradiction: null,
+    expiration: null,
+  };
+  const model = { schema_version: 1, species: [{ name: "Floor World" }], projection_rules: [rawProjectionRule] };
   const meta = { last_saved_by: "manual" };
   await fixture.runtime.saveWorldModel({ model, meta });
   const floor = fixture.runtime.store.getFloor(0, 0);
-  assert.deepEqual(floor.world_model, model);
+  assert.deepEqual(floor.world_model, normalizeWorldModel(model));
+  assert.equal(floor.world_model.projection_rules[0].projection_rule_id, buildProjectionRuleId(rawProjectionRule));
   assert.deepEqual(floor.world_model_meta, meta);
   assert.deepEqual(floor.analysis, { status: "success", marker: "analysis" });
   assert.deepEqual(floor.events, [{ event_id: "event-1" }]);
@@ -4948,5 +4961,184 @@ test("Runtime State read preserves unknown capabilities and does not infer ident
   assert.equal(characters[0].reproductive_capabilities.can_carry_pregnancy, null);
   assert.equal(result.current_state.characters.Bob, undefined);
   assert.equal(characters[0].conception.status, "unknown");
+  fixture.runtime.destroy();
+});
+
+test("Runtime creates a Floor-owned Snapshot after three Character Floors", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "snapshot-floor-1", floor: 1, content: "一", role: "assistant" },
+      { message_id: "snapshot-user-2", floor: 2, content: "用户", role: "user" },
+      { message_id: "snapshot-floor-3", floor: 3, content: "三", role: "assistant" },
+      { message_id: "snapshot-user-4", floor: 4, content: "用户", role: "user" },
+      { message_id: "snapshot-floor-5", floor: 5, content: "五", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        return { events: [eventResultForRegistry(analysisInput.character_registry)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 2 }, { force: true });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 4 }, { force: true });
+
+  const snapshot = fixture.runtime.store.getFloor(4, 0).snapshot;
+  assert.ok(snapshot);
+  assert.equal(snapshot.checkpoint.message_id, "snapshot-floor-5");
+  assert.equal(snapshot.checkpoint.swipe_id, 0);
+  assert.equal(fixture.context.chat[1].extra?.bioweave?.snapshot, undefined);
+  assert.equal(fixture.context.chat[3].extra?.bioweave?.snapshot, undefined);
+  assert.equal(fixture.context.chatMetadata.bioweave?.snapshot, undefined);
+  assert.equal(Object.hasOwn(snapshot, "projection"), false);
+  assert.equal(Object.hasOwn(snapshot, "probability"), false);
+  assert.equal(Object.hasOwn(snapshot, "ui"), false);
+  fixture.runtime.destroy();
+});
+
+test("Runtime Snapshot restore uses a strict post-checkpoint Event boundary and falls back from corruption", async () => {
+  const messages = Array.from({ length: 3 }, (_, index) => ({
+    message_id: `snapshot-history-${index}`,
+    floor: index + 1,
+    content: `历史 ${index}`,
+    role: "assistant",
+  }));
+  let analysisCount = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analysisCount += 1;
+        return {
+          events: [eventResultForRegistry(
+            analysisInput.character_registry,
+            `snapshot-history-event-${analysisCount}`,
+          )],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  for (let index = 0; index < messages.length; index += 1)
+    await fixture.runtime.analyzeFloor({ __messageIndex: true, index }, { force: true });
+
+  fixture.context.chat.push(
+    ...Array.from({ length: 3 }, (_, offset) => {
+      const index = offset + 3;
+      return {
+        message_id: `snapshot-history-${index}`,
+        floor: index + 1,
+        content: `历史 ${index}`,
+        role: "assistant",
+      };
+    }),
+  );
+  for (let index = 3; index < 6; index += 1)
+    await fixture.runtime.analyzeFloor({ __messageIndex: true, index }, { force: true });
+
+  const latestSnapshot = structuredClone(fixture.runtime.store.getFloor(5, 0).snapshot);
+  const checkpointSnapshot = fixture.runtime.store.getFloor(2, 0).snapshot;
+  assert.ok(checkpointSnapshot);
+  assert.ok(latestSnapshot);
+  const restored = await fixture.runtime.getCurrentBiologicalState();
+  const restoredIds = restored.current_state.processed_event_ids;
+  assert.equal(new Set(restoredIds).size, restoredIds.length);
+  assert.equal(checkpointSnapshot.state.processed_event_ids.length, 3);
+  assert.equal(restoredIds.length, 6);
+
+  fixture.context.chat[5].extra.bioweave.snapshot = {
+    ...latestSnapshot,
+    state: { ...latestSnapshot.state, processed_event_ids: "corrupt" },
+  };
+  const fallback = await fixture.runtime.getCurrentBiologicalState();
+  assert.deepEqual(fallback.current_state, restored.current_state);
+
+  for (const message of fixture.context.chat)
+    if (message.extra?.bioweave) message.extra.bioweave.snapshot = null;
+  const fullReplay = await fixture.runtime.getCurrentBiologicalState();
+  assert.deepEqual(fallback.current_state, fullReplay.current_state);
+  fixture.runtime.destroy();
+});
+
+test("Runtime State reads never create or rewrite a Snapshot", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "readonly-snapshot-1", floor: 1, content: "一", role: "assistant" },
+      { message_id: "readonly-snapshot-2", floor: 2, content: "二", role: "assistant" },
+      { message_id: "readonly-snapshot-3", floor: 3, content: "三", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        return { events: [eventResultForRegistry(analysisInput.character_registry)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  for (let index = 0; index < 3; index += 1)
+    await fixture.runtime.analyzeFloor({ __messageIndex: true, index }, { force: true });
+  const writesAfterAnalysis = fixture.saveFloorCalls();
+  const snapshotBefore = structuredClone(fixture.runtime.store.getFloor(2, 0).snapshot);
+  await fixture.runtime.getCurrentBiologicalState();
+  await fixture.runtime.getCurrentBiologicalState();
+  assert.equal(fixture.saveFloorCalls(), writesAfterAnalysis);
+  assert.deepEqual(fixture.runtime.store.getFloor(2, 0).snapshot, snapshotBefore);
+  fixture.runtime.destroy();
+});
+
+test("Story Time-only advancement restores from an unchanged earlier Snapshot", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    messages: [{
+      message_id: "story-snapshot-a",
+      floor: 10,
+      content: "2026-01-01\nDay 0",
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analysisCount += 1;
+        return analysisCount === 1
+          ? {
+              events: [eventResultForRegistry(
+                analysisInput.character_registry,
+                "story-snapshot-exposure",
+                {
+                  story_time: {
+                    display: "2026-01-01",
+                    normalized: "2026-01-01",
+                    day_index: 20454,
+                    calendar_id: "main",
+                    precision: "day",
+                    confidence: 1,
+                  },
+                },
+              )],
+            }
+          : { events: [] };
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = emptyChat("chat-runtime");
+  fixture.context.chatMetadata.bioweave.settings.snapshot_interval = 1;
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  const snapshotA = structuredClone(fixture.runtime.store.getFloor(0, 0).snapshot);
+  assert.ok(snapshotA);
+
+  fixture.context.chat.push({
+    message_id: "story-snapshot-b",
+    floor: 13,
+    content: "2026-04-01\nDay 90",
+    role: "assistant",
+  });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+
+  const current = await fixture.runtime.getCurrentBiologicalState();
+  const subject = Object.values(current.current_state.characters)[0];
+  assert.equal(current.current_story_time.day_index, 20544);
+  assert.equal(subject.reproductive_exposure.elapsed_story_days, 90);
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).snapshot, snapshotA);
+  assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot.checkpoint.message_id, "story-snapshot-b");
   fixture.runtime.destroy();
 });

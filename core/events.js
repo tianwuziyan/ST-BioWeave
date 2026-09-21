@@ -15,6 +15,7 @@ export const EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
   'pregnancy_confirmation',
+  'reproductive_source_attribution',
   'pregnancy_loss',
   'abortion',
   'labor',
@@ -48,6 +49,7 @@ export const STATE_FACT_EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
   'pregnancy_confirmation',
+  'reproductive_source_attribution',
   'pregnancy_loss',
   'abortion',
   'labor',
@@ -401,6 +403,13 @@ function validateStateFactPayload(type, payload, errors, path) {
       return;
     case 'pregnancy_confirmation':
       if (!only('pregnancy_id') || !text(payload.pregnancy_id)) addError(errors, path);
+      return;
+    case 'reproductive_source_attribution':
+      if (!only('pregnancy_id', 'source_character_id', 'contribution_kind', 'attribution')
+        || !text(payload.pregnancy_id)
+        || !text(payload.source_character_id)
+        || !text(payload.contribution_kind)
+        || !['confirmed', 'excluded'].includes(payload.attribution)) addError(errors, path);
       return;
     case 'pregnancy_loss':
     case 'abortion':

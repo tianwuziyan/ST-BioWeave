@@ -18,9 +18,11 @@ import {
   createClearService,
 } from "../storage/clear.js";
 import { createEventAnalysisCoordinator } from "./event-analysis.js";
-import { hashText } from "./floor.js";
+import { floorVersion, hashText } from "./floor.js";
 import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
+import { createProjectionPersistence } from "../storage/projection.js";
+import { createProjectionContextCoordinator } from "./projection-context.js";
 
 const LIFECYCLE_EVENTS = [
   "CHAT_CHANGED",
@@ -588,6 +590,20 @@ export function createSillyTavernAdapter() {
       }
       return response;
     },
+    setExtensionPrompt({key, content, position, depth, scan = false, role} = {}) {
+      const context = getContext();
+      const setter = context?.setExtensionPrompt ?? globalThis.setExtensionPrompt;
+      if (typeof setter !== "function") throw sourceError("ST_EXTENSION_PROMPT_UNAVAILABLE");
+      const types = context?.extension_prompt_types ?? globalThis.extension_prompt_types ?? {};
+      const roles = context?.extension_prompt_roles ?? globalThis.extension_prompt_roles ?? {};
+      const resolvedPosition = position === "IN_CHAT" ? types.IN_CHAT : position;
+      const resolvedRole = role === "SYSTEM" ? roles.SYSTEM : role;
+      if (resolvedPosition === undefined || resolvedRole === undefined)
+        throw sourceError("ST_EXTENSION_PROMPT_API_INVALID");
+      return context?.setExtensionPrompt
+        ? setter.call(context, key, content, resolvedPosition, depth, scan, resolvedRole)
+        : setter(key, content, resolvedPosition, depth, scan, resolvedRole);
+    },
   };
 }
 
@@ -693,6 +709,23 @@ export function createRuntime({
     globalRecentStoryResolver: () =>
       store.profileStore?.getSettings?.()?.recent_story_global ?? {},
     notify,
+  });
+  const projectionPersistence = createProjectionPersistence({
+    store,
+    resolveCurrentFloorVersion: async ({ownerFloor}) => {
+      const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
+      if (!Number.isInteger(Number(index))) return null;
+      return (await eventAnalysis.resolveCurrentBioWeaveFloor({
+        __messageIndex: true,
+        index: Number(index),
+      })).version;
+    },
+  });
+  const projectionContext = createProjectionContextCoordinator({
+    getProjectionViews: projectionPersistence.getProjectionViews,
+    resolveCurrentFloor: () => eventAnalysis.resolveCurrentBioWeaveFloor(),
+    getChatId: () => chat.current(),
+    setExtensionPrompt: st.setExtensionPrompt,
   });
 
   const clearService = createClearService({
@@ -1124,11 +1157,13 @@ export function createRuntime({
             console.error("[BioWeave] event analysis lifecycle failed", error);
         }
         await refreshActiveOwner(chat.current());
+        await projectionContext.refreshProjectionContext({chatId: chat.current()});
         notifyLifecycleSettled(key, eventType, payload);
       },
       async () => {
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
         await refreshActiveOwner(chat.current());
+        await projectionContext.refreshProjectionContext({chatId: chat.current()});
         notifyLifecycleSettled(key, eventType, payload);
       },
     );
@@ -1178,6 +1213,7 @@ export function createRuntime({
     await refreshActiveOwner(currentChatId);
     storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
     await eventAnalysis.primeLifecycleSnapshot?.();
+    await projectionContext.refreshProjectionContext({chatId: currentChatId});
     bindLifecycleEvents();
     initialized = true;
     void eventAnalysis.refreshTrackingRegistry("init").catch((error) => {
@@ -1334,6 +1370,7 @@ export function createRuntime({
 
   function destroy() {
     if (destroyed) return;
+    projectionContext.destroy();
     storyTimeCoordinator.destroy();
     eventAnalysis.destroy();
     while (unbind.length) unbind.pop()();
@@ -1370,6 +1407,9 @@ export function createRuntime({
     getTrackingRegistry: eventAnalysis.getTrackingRegistry,
     collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,
     getCurrentBiologicalState: eventAnalysis.getCurrentBiologicalState,
+    getProjectionViews: projectionPersistence.getProjectionViews,
+    refreshProjectionContext: projectionContext.refreshProjectionContext,
+    clearProjectionContext: projectionContext.clearProjectionContext,
     refreshTrackingRegistry: eventAnalysis.refreshTrackingRegistry,
     updateEvent: eventAnalysis.updateEvent,
     deleteEvent: eventAnalysis.deleteEvent,

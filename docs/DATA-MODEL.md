@@ -28,12 +28,96 @@ Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由
 `message.extra.bioweave` 或当前结构化消息的
 `message.swipe_info[swipe_id].extra.bioweave` 同时承载不同业务域的 Floor
 字段。`world_model` / `world_model_meta` 属于 World Model owner；
-`analysis` / `events` / `character_registry` 属于 Character/Event owner。
+`analysis` / `events` / `character_registry` / `snapshot` 属于
+Character/Event owner。`snapshot` 是由 Current State 派生出的缓存检查点，
+不是新的事实来源，也不能替代或删除 `events`。
+
+Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Event、State
+和 Snapshot 分离。其持久化根为：
+
+```json
+{
+  "schema_version": 1,
+  "creations": [],
+  "evidence_records": [],
+  "lifecycle_records": []
+}
+```
+
+`creations` 保存 Projection creation DTO；`evidence_records` 和
+`lifecycle_records` 只保存后续 Floor 的 append-only 记录。Current Projection View
+只从当前 Chat 中 surviving、active Swipe 且 Floor Version 有效的 Character Floors
+聚合，不写入 Chat metadata，也不进入 Snapshot 或 StateReducer。
+
+Snapshot 的最小结构为：
+
+```json
+{
+  "schema_version": 1,
+  "checkpoint": {
+    "chat_id": "chat-id",
+    "message_id": "message-id",
+    "floor": 12,
+    "swipe_id": 0,
+    "content_hash": "sha256",
+    "message_version": "v1"
+  },
+  "state": {
+    "schema_version": 1,
+    "characters": {},
+    "processed_event_ids": [],
+    "diagnostics": []
+  }
+}
+```
+
+Snapshot 只能写在拥有该 checkpoint 的 Character/assistant Floor：无 Swipe
+结构使用 `message.extra.bioweave`，有 Swipe 结构（包括 Swipe 0）使用
+`message.swipe_info[swipe_id].extra.bioweave`。User message、Chat metadata 和
+其它 Swipe 都不是 Snapshot owner。读取时必须验证当前 Chat、active Swipe 和
+完整六字段 Floor Version；失败、损坏或不存在时回退 full replay。默认检查点
+间隔按有效 Character Floor 序列计数，不按 User message 或宿主 message floor
+数字取模。Snapshot 不保存 AI 响应、Prompt、概率、Projection、UI 状态、随机
+结果或系统时间；restore 只把 `snapshot.state` 作为 `reduceState({baseState})`
+的 base state，并继续归约后续有效 Events。
+
+### Phase 2D-2 Projection Eligibility / Evolution
+
+Projection 是基于有效 BiologicalEvent、Current State、Story Time、World Model
+mechanism 和 Character Facts 产生的未来可能生物发展方向，不是事实、Current
+State 或 Snapshot。Phase 2D-1 只定义纯 Core DTO 和 timeline reducer；尚未把
+Projection 已接入 Floor timeline read path 与只读 Runtime Context Injection；仍不进入
+StateReducer、Snapshot 或 UI 持久化。
+
+第一版 development kind 只有 `possible_biological_change`、`possible_detection`、
+`mechanism_progression`、`no_obvious_change` 和 `monitoring_signal`。Projection identity
+只由 Chat scope、subject、`projection_rule_id` 和 `development_concern_key` 组成；
+`source_event_ids` 只是 provenance。后续 source evidence 使用独立的 append-only
+evidence record，不能回写创建 Floor。
+
+后续变化由独立的 `ProjectionLifecycleRecord` 表达：`realized`、`contradicted`、
+`expired` 是 factual lifecycle，`deleted` 是独立的用户可见性维度。同一 timeline
+position 的 factual 冲突必须 fail closed，不能使用枚举优先级。生命周期聚合只读取
+canonical surviving Character Floor timeline。第一版不实现 Probability 或 RNG，Story
+Time-only 变化只负责 development eligibility。
+
+Exposure Fact、Projection、Contributor Attribution 是三个不同层次。Candidate 是由
+exposure 与 World Model compatibility 派生的 read model；只有 `confirmed` / `excluded`
+的 `reproductive_source_attribution` BiologicalEvent 才能改变 contributor attribution，
+允许多个 confirmed contributors，`unresolved` 是合法状态。
+
+`core/projection-eligibility.js` 只执行 World Model 提供的
+`projection_rules[]`。它输出三态 `eligible`、`not_eligible`、`unresolved` decision；
+Story Time 只决定 trigger eligibility，不产生 BiologicalEvent 或 pregnancy fact。
+Evolution 只有在规则定义的 confirmed factual realization/contradiction/expiration
+criteria 满足时，才输出对应生命周期决策。正文沉默、时间经过、概率和 Candidate
+选择都不能改变事实层；该模块仍不负责 AI、Persistence 或 Context Injection。
+
 Floor 是 storage container，不代表业务代码合并。World Model 保存必须
 preserve Character/Event 字段；Character/Event 保存必须 preserve World
 Model 字段；只有明确的完整 Floor lifecycle invalidation 才能跨域同时清除。
 
-World Model v1 保存在 `world_model`，只包含经过规范化的生物学世界规则。顶层固定为 `schema_version`、`species`、`medical_context`、`exceptions` 和 `unknowns`；`biological_types` 只能嵌套在对应的 `species[].biological_types[]` 中，species 不承载合并 capabilities。species 识别与 biological type 识别分开：完整 AnalysisInput 只有在明确出现普通人类，或综合上下文可靠支持普通人类作为默认生物背景且没有独立非人类/冲突生理证据时，才可以建立“人类” species；缺少 species 名称不是无条件回退，也不因识别出人类自动补齐任何 biological type。类型只来自 AnalysisInput 实际出现或规则明确描述存在的分类。固定双性分类的显示名称为“双性”，临时双性化、身体改造、个人模糊状态和种族/属性/来源别名不构成 biological type。明确的非人类证据分别建立对应 species；类型名称保持开放，可表达资料实际定义的分类，不自动生成类型组合。非人类 biological type 必须有同一 species 上下文中的直接证据或唯一、低推断的语义证据，不能用另一个 species 的男性/女性证据跨 species 授权。每个 biological type 的 `capabilities` 仍按证据或适用的人类基线逐项保存 `true`、`false` 或 `null`，不能由名称、性别、代词、称谓、外貌或身体形态触发补全；`reproduction_rules`、`lifecycle` 和 `special_rules` 也都属于具体 biological type。非人类的每个能力和规则字段都必须分别通过对应 AnalysisInput 证据；没有证据时为 `null`，不复制现实人类模板。人类基线按字段使用，优先级为明确当前个体事实 > 明确转化后/特殊体系规则 > 明确世界/世界书规则 > 可靠推断出的人类基线 > 未知；delta 只覆盖明确变化的字段，未变化的稳定基础继续保留。明确的人类等价规则也只支持明确覆盖的字段。AI 分析结果会在结构规范化后执行证据边界清理，手动编辑只执行结构规范化，因此手动修订仍可保存来源未自动识别的合法开放类型。顶层 `medical_context` 记录当前世界医疗条件、生育难易度和证据。`world_model_meta` 只保存最后分析/保存时间、保存方式和来源数量摘要。World Model 的分析输入正文只在当前页面内存中临时生成，不写入 Chat metadata。用户人物设定仍可用于通用 AnalysisInput 预览，但不作为 World Model 世界规则判断依据。
+World Model v1 保存在 `world_model`，只包含经过规范化的生物学世界规则；顶层固定为 `schema_version`、`species`、`medical_context`、`exceptions`、`unknowns` 和 `projection_rules`。`biological_types` 只能嵌套在对应的 `species[].biological_types[]` 中，species 不承载合并 capabilities。species 识别与 biological type 识别分开：完整 AnalysisInput 只有在明确出现普通人类，或综合上下文可靠支持普通人类作为默认生物背景且没有独立非人类/冲突生理证据时，才可以建立“人类” species；缺少 species 名称不是无条件回退，也不因识别出人类自动补齐任何 biological type。类型只来自 AnalysisInput 实际出现或规则明确描述存在的分类。固定双性分类的显示名称为“双性”，临时双性化、身体改造、个人模糊状态和种族/属性/来源别名不构成 biological type。明确的非人类证据分别建立对应 species；类型名称保持开放，可表达资料实际定义的分类，不自动生成类型组合。非人类 biological type 必须有同一 species 上下文中的直接证据或唯一、低推断的语义证据，不能用另一个 species 的男性/女性证据跨 species 授权。每个 biological type 的 `capabilities` 仍按证据或适用的人类基线逐项保存 `true`、`false` 或 `null`，不能由名称、性别、代词、称谓、外貌或身体形态触发补全；`reproduction_rules`、`lifecycle` 和 `special_rules` 也都属于具体 biological type。非人类的每个能力和规则字段都必须分别通过对应 AnalysisInput 证据；没有证据时为 `null`，不复制现实人类模板。人类基线按字段使用，优先级为明确当前个体事实 > 明确转化后/特殊体系规则 > 明确世界/世界书规则 > 可靠推断出的人类基线 > 未知；delta 只覆盖明确变化的字段，未变化的稳定基础继续保留。明确的人类等价规则也只支持明确覆盖的字段。AI 分析结果会在结构规范化后执行证据边界清理，手动编辑只执行结构规范化，因此手动修订仍可保存来源未自动识别的合法开放类型。顶层 `medical_context` 记录当前世界医疗条件、生育难易度和证据。`world_model_meta` 只保存最后分析/保存时间、保存方式和来源数量摘要。World Model 的分析输入正文只在当前页面内存中临时生成，不写入 Chat metadata。用户人物设定仍可用于通用 AnalysisInput 预览，但不作为 World Model 世界规则判断依据。
 
 `chat_metadata.bioweave.settings.worldbooks` 只保存当前 Chat 的世界书来源选择：`mode` 与 `selected` 中的稳定子项标识。世界书条目使用 `{source_id, entry_id, enabled}`，角色卡字段使用 `{source_id, field_key, enabled}`。来源名称、宿主 file 内容、请求头和 token estimate 不持久化；选择也不等于最终 BioWeave Context 注入。
 
@@ -67,6 +151,11 @@ AI 原始返回只在当前分析调用中存在；若启用开发调试 trace�
 分析来源的 `source_type` 至少区分 `character_card`、`worldbook` 和 `recent_story`。真正的 SillyTavern Worldbook 使用稳定 `file_id`/`source_id`，条目使用宿主稳定 `uid`/`id`/对象 key，显示名称和条目标题都不是唯一 ID。
 
 ## World Model 规则字段语义
+
+已规范化 DTO 的再次读取/编辑只能通过明确的 trusted
+`normalizeStoredWorldModel()` 路径；raw AI schema 与 normalized domain DTO 不混用。
+
+World Model v1 的顶层也正式包含 `projection_rules: []`。它是当前 Floor 所有的声明式机制规则集合，不是 Projection 实例。AI/raw rule content 不输出 `projection_rule_id`；每条 raw rule 只包含业务内容，由 BioWeave 在规范化阶段生成 ID 后形成完整 domain DTO。每条最终规则包含 `schema_version`、`projection_rule_id`、`mechanism_key`、`development_concern_key`、`development_kind`、`trigger`、`requirements`、`realization`、`contradiction` 和 `expiration`；规则必须先通过 `validateProjectionRuleContent()`、`normalizeProjectionRules()` 与 final validation，再随 `world_model` 保存。规则不得包含概率、RNG、Prompt、AI 原文、妊娠结果或可执行代码。没有可验证规则时保存空数组，Eligibility 保持无可用规则，不使用现实人类 timing fallback。`projection_rule_id` 由规范化规则材料稳定生成，source Event 证据属于 Projection provenance，不属于 World Model rule identity。
 
 World Model 规则字段使用统一三态语义：`null` 表示未知、未提及、证据不足或无法判断；`"无"` 表示已经知道机制不存在、能力不具备或规则不适用；非空字符串表示已知存在对应机制。没有资料不能写成 `"无"`。普通 Human Male/Female 已建立后可以使用现实 baseline：Male 的 `pregnancy_or_carrying`、`cycle`、`ovulation`、`gestation`、`labor` 为 `"无"`，Female 的 `cycle`、`ovulation`、`gestation`、`labor` 使用简洁的普通 Human 描述；明确世界/个体规则按 Baseline + Delta 逐字段覆盖，Human baseline 只在当前字段为 `null` 时补值，不覆盖 `true`、`false`、`"无"` 或非空描述。独立的明确结构冲突仍可由 Final Consistency Guard 修正为已知 absence。Human species 的显示 canonical name 为“人类”，仅合并明确的 Human 显示别名，不建立其它 species 的同义词 registry。schema 不因该语义扩展，仍使用现有 `string | null` 字段。
 
@@ -139,6 +228,15 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 `state_fact` 是事实契约，不是 Current State，也不是 Projection。其有效时间直接引用同一 Event 的结构化 `story_time`，不复制第二份时间字段；缺少可靠 `day_index` 时不得进行时间数学。`conception`、`pregnancy_confirmation`、终止、分娩和产后事实通过最小类型 payload 引用稳定的 Chat-local `pregnancy_id`；conception 与后续 pregnancy facts 共用该 episode identity，不另建 `conception_id`。AI 只声明 `new` / `existing` reference，Runtime 以 Floor Version、Event ordinal、subject 和 fact kind 生成确定性 ID。不得使用随机数、系统时间或 UUID。
 
 `pregnancy_suspicion` 保留 suspicion fact，不等价于 confirmed pregnancy；`possible_conception: true` 也不创建 conception fact。`confirmed`、`probable`、`ambiguous`、`negated`、`fictional` 保持独立的 Event status 维度，后两者不能改变 factual Current State。相同 `event_id` 的完全相同事实可以去重；同 ID 不同事实必须报告 conflict，禁止 last-write-wins。
+
+`reproductive_source_attribution` 是独立的 factual state fact，只表达已有 Pregnancy
+Episode 的 contributor relationship：`pregnancy_id`、`source_character_id`、
+`contribution_kind` 和 `attribution: confirmed | excluded`。StateReducer 将关系聚合到
+`pregnancy.episodes[pregnancy_id].contributors`，relationship identity 为
+`pregnancy_id + subject_id + source_character_id + contribution_kind`，允许多个
+confirmed contributors。Candidate 不进入 Current State；不存在对应 Pregnancy Episode
+时 attribution 只产生 diagnostic，不创建 pregnancy/conception。相同 relationship 同时
+confirmed 与 excluded 时 fail closed，不使用输入顺序或 last-write-wins。
 
 `event_role` 是事件语义，不是性别或生物学能力的替代品；可以使用 `potential_gestational_subject`、`potential_conception_source`、`other_participant`、`unknown` 等角色。实际 exposure recipient/source 与 `possible_conception` 必须由当前 World Model、匹配 species/type 的 reproduction rules/capabilities 和 Narrative evidence 共同决定；不能把任何现实物种、性别、解剖结构、行为位置或单一现实生殖机制硬编码成所有世界的必要条件。每个 pregnancy-related participant 的 `biological_context.species` 必须来自该人物对应的 World Model species，`biological_type` 表示该 species 下稳定的生理/生殖分类；资料不足时两个字段都填 `null`，不新增 `gender`。AI 可综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体/生理/生殖事实和多条一致上下文进行映射；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability；名称、称谓、外貌、event_role、位置、主动/被动或社会身份等单一弱线索不能单独补全 identity/capability，证据冲突或不足时保持 `null` 并进入 pending。`reproductive_capabilities_used` 必须先依据当前 World Model baseline，再结合已有 character profile 与 Character / Persona / Worldbook / 当前剧情证据判断；个体明确值可覆盖或补充 baseline，未知 capability 保持 `null`。
 
@@ -282,7 +380,7 @@ Phase 2A 的闭环为：
 Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
 
 ## Floor Level
-`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
+`message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、derived `snapshot`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
 
 ## 核心链
 `Character/assistant BioWeave Floor → Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
@@ -294,3 +392,47 @@ Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊�
 The normative clear and lifecycle rules live in [BioWeave Data Lifecycle](./bioweave-data-lifecycle.md). Read it whenever a change touches the global settings boundary, Chat metadata, message/Swipe Floor roots, derived state, Chat lifecycle events, or asynchronous persistence. It is the single detailed contract for Manual Character/World/All clear, verified Start New Chat source cleanup, mutation invalidation, provenance, rollback, and contract-test coverage.
 
 The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns only Chat-local configuration/control state; `message.extra.bioweave` owns a Character/assistant message without Swipe structure; and `message.swipe_info[*].extra.bioweave` owns every structured Character/assistant Swipe, including inactive and historical slots. User messages are not BioWeave Floors and must never receive a BioWeave payload. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.
+## Phase 2D-3 Projection Generation Contract
+
+Phase 2D-3 的生成边界是 `eligible` Eligibility Decision 到内存中的 Projection
+candidate。AI 原始 DTO 与领域 Projection DTO 分离：
+
+```json
+{
+  "development": {
+    "kind": "possible_biological_change",
+    "description": "未来可能出现的生物发展方向"
+  }
+}
+```
+
+原始 DTO 不得包含 identity、Floor/Swipe owner、evidence、probability、
+attribution、BiologicalEvent、Current State 或 Snapshot 字段。`kind` 必须与
+eligible decision 完全一致。BioWeave 使用 decision、已验证的 World Model rule、
+当前 Story Time 和当前 Character Floor Version 组装最终 Projection，并通过现有
+`createProjection()` / `validateProjection()` 生成确定性的 `projection_id`。
+
+只有 `eligibility === "eligible"` 的 decision 才能进入生成；`not_eligible` 和
+`unresolved` 不调用 AI。AI 失败、结构或语义校验失败、或 generation context 过期时，
+不创建半成品、不修改旧 Projection、Current State 或 Snapshot。此 wave 不持久化
+candidate 的持久化由 Phase 2D-4 独立负责；Phase 2E 只读取聚合 View 进行 transient
+Context Injection。
+
+## Phase 2E Projection Context Injection
+
+Runtime 只通过 `getProjectionViews()` 读取当前 Chat、surviving Character
+Floors、active Swipe 和有效 Floor Version 聚合出的 View；不直接读取 raw
+creation/evidence/lifecycle arrays。只有 `context_visible === true` 的 View
+进入 `buildProjectionContextDTO()`，每个 `projection_id` 在一次注入中最多出现
+一次，并按 subject、development concern、projection rule 的稳定字段排序。
+
+Context DTO 只保留正文需要的 subject、development kind、未来可能方向、机制背景
+以及可选的 contributor attribution 摘要，不携带 projection identity、Floor
+Version、hash、message version、生命周期记录、diagnostics 或存储字段。注入通过
+SillyTavern 的 `setExtensionPrompt()` 使用固定 key
+`bioweave_projection_context`、`IN_CHAT`、depth 4、SYSTEM role；更新覆盖同一
+slot，无有效 Projection 时写入空内容清理旧 prompt。
+
+Chat 切换、active Swipe 切换、Character edit/reroll、Floor 删除和只有 User
+message 的 endpoint 都重新 resolve；没有有效 Character Floor 或读取失败时清空
+该 slot。Event Analysis 继续只读取实际正文，Projection prompt 不属于事实证据。

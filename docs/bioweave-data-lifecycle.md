@@ -16,6 +16,14 @@ is accepted.
 The contract uses **MUST** for an invariant, **MUST NOT** for a forbidden
 state transition, and **MAY** only for an explicitly safe compatibility path.
 
+Phase 2D-3 generation is currently a transient, fail-closed domain operation. Its
+AI response is not a persistent owner or fact source: only the current Character
+Floor Version may later own a persisted Projection, and persistence is outside
+this wave. A generation request is bounded by its Chat, current Character Floor,
+active Swipe, complete Floor Version, rule binding and Eligibility fingerprint;
+results whose owner or rule has changed are discarded. No generation result is
+written to Chat metadata, Snapshot, StateReducer or BiologicalEvent storage.
+
 ## 1. Scope and audit status
 
 The lifecycle boundary covers:
@@ -85,8 +93,8 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 | --- | --- | --- | --- |
 | Extension-global settings | `SillyTavern.getContext().extensionSettings.bioweave` | API source, API Profiles, opaque Secret references, task assignments, request settings, prompts, model-list caches, and global recent-story regex | Preserved by all Chat and Start New Chat operations |
 | Chat-local metadata | `context.chatMetadata.bioweave` (also exposed as `chat_metadata.bioweave` by some host code) | Chat settings, structural scope/schema markers, and reserved lifecycle root | Preserved by Manual Clear and by source-targeted Floor cleanup |
-| Character/assistant Floor | `message.extra.bioweave` when the Character message has no Swipe structure | Analysis, Events, canonical identity snapshot, World Model, and World Model metadata for that Character Floor | Read/write only through the storage abstraction; User messages are rejected as BioWeave owners |
-| Character/assistant Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when a Character message has Swipe structure | Independent analysis and derived Floor data for that exact Swipe | Every existing Character slot is enumerated; active selection never authorizes fallback to another slot |
+| Character/assistant Floor | `message.extra.bioweave` when the Character message has no Swipe structure | Analysis, Events, canonical identity snapshot, derived State Snapshot, World Model, and World Model metadata for that Character Floor | Read/write only through the storage abstraction; User messages are rejected as BioWeave owners |
+| Character/assistant Per-Swipe Floor | `message.swipe_info[swipe_id].extra.bioweave` when a Character message has Swipe structure | Independent analysis, derived State Snapshot, and other Floor data for that exact Swipe | Every existing Character slot is enumerated; active selection never authorizes fallback to another slot |
 | User message | No BioWeave storage location | Narrative context only; never a BioWeave Floor or Floor Version | No BioWeave payload may be created, updated, or cleared on a User message |
 | Runtime transient | Runtime/UI memory: tokens, epochs, AbortControllers, in-flight maps, terminal maps, caches, refresh chains, drafts, and status DTOs | Transient work, read projections, diagnostics, and cache acceleration | Abort, invalidate, and discard on owner changes; never a persistent fact source |
 
@@ -101,6 +109,38 @@ The host message text (`mes`, `content`, or equivalent), `swipes[]` text,
 other `message.extra` keys, other `swipe_info[*]` keys, other
 `chatMetadata` keys, and all unrelated plugin data are not BioWeave clear
 targets.
+
+The Floor `snapshot` root is a derived/cache checkpoint of the structured Current
+State already reduced from valid Events. It has no independent authority and is
+never written to Chat metadata. Character and All clear operations remove it;
+World clear preserves it. Deleting its owning Character Floor or Swipe naturally
+removes it, while deleting the Snapshot itself leaves Events intact. A missing,
+invalid, stale, wrong-Chat, wrong-Swipe, wrong-content-hash, or wrong-message-
+version Snapshot is rejected and permits full replay. Wave 1 does not implement
+automatic Runtime Snapshot creation/restoration or historical dependency
+cascade invalidation.
+
+The Floor `projection_timeline` root is separate from `snapshot` and is cleared
+with the Character domain. It contains only `creations`, `evidence_records`, and
+`lifecycle_records`. Each record is owned by the exact current Character Floor,
+active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
+inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
+records; surviving records are then aggregated into a transient Projection View.
+
+The transient Projection Context is a separate Runtime read projection. It is
+built only from `getProjectionViews()` results whose `context_visible` is true;
+it never scans the raw timeline and never becomes a persistent Chat field. The
+fixed SillyTavern extension slot is `bioweave_projection_context`, injected with
+`setExtensionPrompt()` at `IN_CHAT`, depth 4, SYSTEM role. Updating the slot
+replaces its previous value, and an empty current view explicitly clears it.
+Chat changes, active Swipe changes, Floor Version changes, Floor deletion, no
+Character Floor, or a read failure all resolve again or clear the slot. The
+prompt is transient narrative guidance, not factual evidence; Event Analysis
+must use only the actual generated Character message as its direct fact source.
+Creation records are never overwritten by later evidence, lifecycle, or Delete
+records. The current implementation requires a current Floor-Version resolver
+for both reads and writes and performs one Floor save per mutation; a failed save
+leaves the previous Floor payload unchanged.
 
 ## 4. Audited schema and locations
 
@@ -201,7 +241,14 @@ world_model:
   medical_context: { childbirth_difficulty, care_level, evidence }
   exceptions[]
   unknowns[]
+  projection_rules[]
 ```
+
+`projection_rules[]` is part of the Floor-owned World Model. It is validated
+declarative rule data for Projection Eligibility, never a Projection instance
+or a Chat-level fallback. Invalid rules fail closed and are not persisted;
+historical World Model/Floor owners are never rewritten when a later Floor
+introduces a changed rule.
 
 World Model scalar capability and rule values retain the existing `null`,
 known absence, or known-text semantics. Lifecycle clearing does not alter
@@ -306,9 +353,27 @@ migrated by the production identity path.
 
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the six-field Version checks. The
-working-tree schema does not persist `history`, `snapshot`, or `projections[]`.
-Future reducers may use pure Runtime modules, but they must define a new
-Floor-owned contract before introducing persistent facts.
+working-tree schema persists the Floor-owned `snapshot` derived checkpoint and
+the separate `projection_timeline` append-only root described above; it does not
+persist a Chat-level history or projection copy.
+
+Phase 2D-1.1 defines pure Projection and reproductive-attribution domain contracts
+in `core/projection.js` and `core/reproductive-attribution.js`. Phase 2D-4 stores
+their Projection creation, evidence, and lifecycle records in the current Floor's
+`projection_timeline`; it does not create a Chat-level projection root. Projection
+is a future-direction read model, not a factual Event or State source. Projection
+identity uses rule/concern fields; source Event IDs are provenance and later
+evidence records are append-only.
+`ProjectionLifecycleRecord` uses factual actions (`realized`, `contradicted`,
+`expired`) separately from the user deletion action (`deleted`). Aggregation consumes
+an ordered surviving Character Floor timeline and reports same-position factual
+conflicts instead of applying arbitrary precedence.
+
+`ReproductiveSourceCandidate` is derived from exposure history and World Model
+compatibility. `ContributorAttribution` may contain multiple confirmed or excluded
+relationships; only a factual `reproductive_source_attribution` Event supplies those
+confirmed/excluded facts. No Candidate is persisted as an Event, and no attribution
+contract is wired to Runtime, StateReducer, Snapshot, or UI in this wave.
 
 ### 4.4 Runtime transient state
 
@@ -345,6 +410,7 @@ recursive deletion. The current domain vocabulary is:
 | `character` | Valid Floor `analysis`, `events[]` and Floor `character_registry`; Runtime tracking/profile DTOs | Character and All clear remove these authoritative facts and rebuild empty Runtime DTOs |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
+| `floor_analysis` | Floor `snapshot` | Derived Current State checkpoint cache; preserve for World clear, remove for Character/All clear, reject when its owner or six-field Version is invalid |
 | `floor_identity` | Floor `character_registry` | Floor-owned canonical identity snapshot; preserve for Character/World clear while its Floor remains valid, remove for All/source clear |
 | `lifecycle_marker` | Reserved empty Chat `data_lifecycle` root | No current clearable state; preserve for every operation |
 | `runtime_cache` | Runtime/UI maps, chains, drafts, controllers, and status DTOs | Transient; abort/invalidate/discard, never a clearable fact source |
@@ -449,8 +515,8 @@ and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 
 ### 6.2 Manual Character clear
 
-The Character operation removes `analysis`, `events[]`, and
-`character_registry` from every exact message and Swipe Floor owner. These are
+The Character operation removes `analysis`, `events[]`, `character_registry`, and
+`projection_timeline` from every exact message and Swipe Floor owner. These are
 the authoritative sources for character Events, canonical identity, tracking
 subjects/candidates, and profiles; removing only Runtime projections would
 allow reload to rebuild the old state. It preserves World Model fields,

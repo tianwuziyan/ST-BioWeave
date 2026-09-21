@@ -8,6 +8,7 @@ import {
   EVENT_TYPES,
   WORLD_MODEL_SCHEMA,
 } from './prompts.js';
+import { normalizeProjectionRules } from '../core/projection-eligibility.js';
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -1254,7 +1255,7 @@ function applyWorldModelFinalConsistencyGuard(model) {
 }
 
 // 将 AI 或手动编辑结果收敛到唯一的 World Model v1 结构。
-export function normalizeWorldModel(raw, { strict = false } = {}) {
+export function normalizeWorldModel(raw, { strict = false, allowGeneratedProjectionRuleIds = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     throw invalidWorldModel();
   if (
@@ -1289,6 +1290,18 @@ export function normalizeWorldModel(raw, { strict = false } = {}) {
   }
   if (raw.species !== undefined && !Array.isArray(raw.species))
     throw invalidWorldModel();
+  let projectionRules;
+  try {
+    projectionRules = normalizeProjectionRules(raw.projection_rules, {
+      allowGeneratedIdentity: allowGeneratedProjectionRuleIds,
+    });
+  } catch (error) {
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {
+      path: 'projection_rules',
+      diagnosticCode: 'WORLD_MODEL_PROJECTION_RULES_INVALID',
+      received: error?.message ?? 'invalid',
+    });
+  }
   const species = Array.isArray(raw.species)
     ? mergeHumanSpeciesEntries(
         raw.species.map((item, index) =>
@@ -1302,11 +1315,16 @@ export function normalizeWorldModel(raw, { strict = false } = {}) {
     medical_context: normalizeMedicalContext(raw.medical_context),
     exceptions: normalizeExceptions(raw.exceptions, { strict }),
     unknowns: stringList(raw.unknowns, localizedWorldModelText, { strict, path: 'unknowns' }),
+    projection_rules: projectionRules,
   };
 }
 
-export function validateWorldModel(raw) {
-  return normalizeWorldModel(raw, { strict: true });
+export function validateWorldModel(raw, { allowGeneratedProjectionRuleIds = false } = {}) {
+  return normalizeWorldModel(raw, { strict: true, allowGeneratedProjectionRuleIds });
+}
+
+export function normalizeStoredWorldModel(raw, { strict = false } = {}) {
+  return normalizeWorldModel(raw, { strict, allowGeneratedProjectionRuleIds: true });
 }
 
 function responseText(raw) {

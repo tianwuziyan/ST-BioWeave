@@ -798,6 +798,12 @@ test('state fact contracts validate each state-changing event type', () => {
     conception: { pregnancy_id: 'preg_existing' },
     pregnancy_suspicion: { observation: { kind: 'test', description: 'observed' } },
     pregnancy_confirmation: { pregnancy_id: 'preg_existing' },
+    reproductive_source_attribution: {
+      pregnancy_id: 'preg_existing',
+      source_character_id: 'char-source',
+      contribution_kind: 'genetic',
+      attribution: 'confirmed',
+    },
     pregnancy_loss: { pregnancy_id: 'preg_existing' },
     abortion: { pregnancy_id: 'preg_existing' },
     labor: { pregnancy_id: 'preg_existing', labor_id: 'labor_1' },
@@ -815,7 +821,7 @@ test('state fact contracts validate each state-changing event type', () => {
       validateEvent({
         event_id: `event-${index}`,
         type,
-        status: 'ambiguous',
+        status: type === 'reproductive_source_attribution' ? 'confirmed' : 'ambiguous',
         source: { chat_id: 'chat-1' },
         participants: [{ character_id: 'char-a', event_role: 'unknown' }],
         state_fact: { subject_id: 'char-a', payload: payloads[type] },

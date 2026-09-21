@@ -20,6 +20,27 @@ export const CORE_PROMPTS = {
   projection:
     'Generate non-factual future possibilities only. Never rewrite history.',
 }
+
+export const PROJECTION_GENERATION_SYSTEM_PROMPT = [
+  '你是 BioWeave 的受限 Projection 具体化器。Eligibility 已经决定了唯一允许的 development kind；你只负责把这个未来可能的生物发展方向写成简洁、结构化的可能性描述。',
+  '你不是事实分析器，不判断 eligibility，不创建 BiologicalEvent，不判断 pregnancy/conception outcome，不决定 reproductive contributor，不创建或修改 World Model rule。',
+  '必须保持给定 development kind，不得使用现实人类生殖常识替换 World Model。描述未来可能发生的方向，而不是声称事实已经发生。多个来源候选必须保持未解决，不得选择、排序或给概率。',
+].join('\\n')
+
+export const PROJECTION_GENERATION_OUTPUT_CONTRACT = [
+  '只输出可直接 JSON.parse 的对象，不能输出 Markdown、解释或额外顶层字段。唯一结构是：{"development":{"kind":"允许的 development_kind","description":"未来可能发展方向"}}。',
+  'development.kind 必须逐字复制输入中允许的 kind。description 必须是可能性语义；不得输出 projection_id、projection_rule_id、Floor/Swipe/owner/evidence identity、probability、random、pregnancy outcome、contributor attribution 或 BiologicalEvent。',
+].join('\\n')
+
+export function buildProjectionGenerationMessages(input = {}) {
+  const boundedInput = input && typeof input === 'object' ? input : {}
+  return [
+    {role: 'system', content: PROJECTION_GENERATION_SYSTEM_PROMPT},
+    {role: 'system', content: `【Projection Generation 输出契约】\\n${PROJECTION_GENERATION_OUTPUT_CONTRACT}`},
+    {role: 'user', content: `【已通过 Eligibility 的输入】\\n${JSON.stringify(boundedInput)}`},
+    {role: 'user', content: '只返回符合上述契约的 JSON 对象。'},
+  ]
+}
 export const WORLD_MODEL_SCHEMA_TEXT = JSON.stringify(
   WORLD_MODEL_SCHEMA,
   null,
@@ -36,6 +57,7 @@ export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([
 
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
+  '如果上下文中出现 BioWeave Projection Context，它只是未来可能的发展方向，不是已发生事实或 Event 证据；只有本次目标正文实际写出的内容才能进入 BiologicalEvent。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
   '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实或不同 gestational subject 的暴露压进同一个 Event，也不要在 Runtime 或 UI 合并事件。',
   '对 pregnancy-related sexual_activity，先识别当前 Floor 中所有有实际 pregnancy-relevant exposure 的 gestational subject，再按 subject 分组：同一 subject 的多个 actual exposure source 合并到同一个 Event，不同 subject 必须输出不同 Event；同一响应中同一 subject 最多出现一个 pregnancy-related Event，不能把多个 subject 填进同一个 Event。',
@@ -120,7 +142,7 @@ const WORLD_MODEL_CORE_INSTRUCTIONS = [
 // 只用普通文字描述输出字段，避免把格式围栏或大段 schema 代码发送给后端。
 const WORLD_MODEL_OUTPUT_CONTRACT = [
   '只输出一个结构化对象，不要输出解释文字、Markdown 或代码围栏；schema_version 固定为 1。JSON key 使用 schema 规定的英文，说明、规则和列表字符串使用中文。',
-  '顶层只包含 schema_version、species、medical_context、exceptions、unknowns；不得出现顶层 biological_types 或 species 级 capabilities。',
+  '顶层只包含 schema_version、species、medical_context、exceptions、unknowns、projection_rules；不得出现顶层 biological_types 或 species 级 capabilities。',
   'species[] 包含 name、description、biological_types[]；每个 biological_type 包含 name、description、capabilities、reproductive_mechanisms[]、reproduction_rules、lifecycle、special_rules。',
   'capabilities 只能位于 biological_types 下，固定包含六个 key：can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_cause_pregnancy、can_carry_pregnancy；值只能是 true、false 或 null，can_fertilize 与 can_cause_pregnancy 不互为 alias。',
   '每个 biological_type 可包含 reproductive_mechanisms[]；每项固定包含 key、label、pathway、carrying_compatibility、world_model_rule_refs[]、evidence[]。key/label/pathway 是开放值，不建立 natural/implantation/parasitic/magic 等封闭枚举。',
@@ -128,6 +150,7 @@ const WORLD_MODEL_OUTPUT_CONTRACT = [
   'medical_context 固定包含 childbirth_difficulty、care_level、evidence，均为 nullable string。',
   'exceptions 必须是 JSON 数组；每项必须是对象，固定包含 statement、applies_to、evidence，三者均为 nullable string。不得使用以实体名称为 key 的对象映射；没有例外时输出 []。',
   'unknowns 必须是 JSON 字符串数组，不得使用对象映射；没有未知项时输出 []。special_rules 必须是 JSON 字符串数组，没有特殊规则时输出 []。',
+  'projection_rules 必须是 JSON 数组；每项只输出 schema_version、mechanism_key、development_concern_key、development_kind、trigger、requirements、realization、contradiction、expiration 等业务内容，不要输出 projection_rule_id。BioWeave 会在规范化时生成 projection_rule_id。规则只能是声明式数据，不得包含 probability、rng、prompt、raw AI output、pregnancy/no-pregnancy outcome、函数或代码表达式；无法由当前证据确定的规则不要编造，输出 []。',
 ].join('\n')
 const HISTORY_MEMORY_CONTEXT = [
   '【外部历史参考信息】',

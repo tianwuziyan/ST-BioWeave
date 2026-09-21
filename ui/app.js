@@ -25,7 +25,7 @@ import {
   statusFromError as sharedStatusFromError,
   traceApi,
 } from '../ai/client.js'
-import { createAnalyzer, normalizeWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
+import { createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
   characterOpeningSelectionState,
@@ -1491,7 +1491,7 @@ export function createApp(runtime, options = {}) {
       let model = null
       let notice = null
       try {
-        model = resolved?.model ? normalizeWorldModel(resolved.model) : null
+        model = resolved?.model ? normalizeStoredWorldModel(resolved.model) : null
       } catch {
         notice = '已保存的世界模型格式无效，请重新分析。'
       }
@@ -1709,12 +1709,12 @@ export function createApp(runtime, options = {}) {
     const selection = currentWorldModelSelection()
     let model
     try {
-      const base = normalizeWorldModel(worldModelState.model)
+      const base = normalizeStoredWorldModel(worldModelState.model)
       const patched = applyWorldModelSection(base, section, worldModelState.sectionDraft, {
         selectedSpeciesIndex: selection.speciesIndex,
         selectedTypeIndex: selection.typeIndex,
       })
-      model = normalizeWorldModel(patched)
+      model = normalizeStoredWorldModel(patched)
     } catch (error) {
       worldModelState = { ...worldModelState, notice: null }
       notify(worldModelOperationError(error), 'error', documentRef)
@@ -1786,7 +1786,7 @@ export function createApp(runtime, options = {}) {
   }
   async function beginWorldModelCollectionEdit(kind) {
     if (worldModelState.busy) return
-    const base = normalizeWorldModel(worldModelState.model)
+    const base = normalizeStoredWorldModel(worldModelState.model)
     const selectedSpecies = normalizeWorldModelSpeciesSelection(base, worldModelState.selectedSpecies)
     const selectedBiologicalType = normalizeWorldModelBiologicalTypeSelection(base, worldModelState.selectedBiologicalType)
     if (kind === 'species' && selectedSpecies) {
@@ -1825,7 +1825,7 @@ export function createApp(runtime, options = {}) {
     if (worldModelState.busy) return
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
     if (!(await canDiscardWorldModelSectionDraft())) return
-    const base = normalizeWorldModel(worldModelState.model ?? {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: []})
+    const base = normalizeStoredWorldModel(worldModelState.model ?? {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: []})
     const selectedSpecies = normalizeWorldModelSpeciesSelection(base, worldModelState.selectedSpecies)
     const selectedBiologicalType = normalizeWorldModelBiologicalTypeSelection(base, worldModelState.selectedBiologicalType)
     if (operation === 'delete-species-selection') {
@@ -1867,7 +1867,7 @@ export function createApp(runtime, options = {}) {
     }
     let model
     try {
-      model = normalizeWorldModel(result.model)
+      model = normalizeStoredWorldModel(result.model)
     } catch (error) {
       notify(worldModelOperationError(error), 'error', documentRef)
       return
@@ -1977,7 +1977,7 @@ export function createApp(runtime, options = {}) {
         traceApi('world-model-analyzer-error', { error, phase: 'analyzer' })
         throw error
       }
-      const model = normalizeWorldModel(result)
+      const model = normalizeStoredWorldModel(result)
       assertAnalysisChatToken(token)
       const analyzedAt = new Date().toISOString()
       const meta = {

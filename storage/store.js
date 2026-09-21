@@ -820,6 +820,20 @@ export function createStore(adapter, boundary = null) {
     return swipeId === null ? null : getFloor(messageId, swipeId);
   }
 
+  function getFloorOwner(messageId, swipeId = 0) {
+    const message = adapter.getMessage?.(messageId);
+    if (!message) return null;
+    const targetSwipeId = validSwipeId(swipeId);
+    return {
+      owner_type: isCharacterMessage(message) ? 'character' : 'user',
+      active_swipe_id: activeSwipeId(message),
+      swipe_id: targetSwipeId,
+      floor_data: isCharacterMessage(message) && (!hasSwipeStructure(message) || hasSwipeSlot(message, targetSwipeId))
+        ? getFloor(messageId, targetSwipeId)
+        : null,
+    };
+  }
+
   function getActiveFloorEvents(messageId, version) {
     return filterActiveFloorEvents(getActiveFloor(messageId), version);
   }
@@ -994,6 +1008,7 @@ export function createStore(adapter, boundary = null) {
     getFloor,
     getActiveSwipeId: getActiveSwipe,
     getActiveFloor,
+    getFloorOwner,
     getActiveFloorEvents,
     saveFloor,
     getCurrentChatOwnerSnapshot,

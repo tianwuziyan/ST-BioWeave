@@ -20,6 +20,7 @@ test('current Chat and Floor schema roots are all classified by the lifecycle re
   assert.deepEqual(result.missing, { chat: [], floor: [] });
   assert.ok(Object.keys(CHAT_FIELD_REGISTRY).includes('data_lifecycle'));
   assert.ok(Object.keys(FLOOR_FIELD_REGISTRY).includes('floor_version'));
+  assert.ok(Object.keys(FLOOR_FIELD_REGISTRY).includes('snapshot'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('events'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('runtime_cache'));
 });
@@ -63,6 +64,8 @@ test('user Floor clear operations are explicit allowlists and never include owne
     'analysis',
     'events',
     'character_registry',
+    'snapshot',
+    'projection_timeline',
   ]);
   assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.world, [
     'world_model',

@@ -129,6 +129,11 @@ function normalizeEpisode(raw, pregnancyId) {
     postpartum_event_ids: Array.isArray(source.postpartum_event_ids)
       ? source.postpartum_event_ids.filter(Boolean)
       : [],
+    contributors: {
+      confirmed: Array.isArray(source.contributors?.confirmed) ? clone(source.contributors.confirmed) : [],
+      excluded: Array.isArray(source.contributors?.excluded) ? clone(source.contributors.excluded) : [],
+      conflicts: Array.isArray(source.contributors?.conflicts) ? clone(source.contributors.conflicts) : [],
+    },
     uncertain_event_ids: Array.isArray(source.uncertain_event_ids)
       ? source.uncertain_event_ids.filter(Boolean)
       : [],
@@ -243,13 +248,25 @@ function createState(baseState, characterFacts) {
   for (const [characterId, facts] of Object.entries(characterFacts)) {
     if (!state.characters[characterId]) {
       state.characters[characterId] = emptyCharacterState(facts, characterId);
-    } else if (isRecord(facts?.identity)) {
-      state.characters[characterId].identity = {
-        character_id: characterId,
-        display_name: nullable(facts.identity.display_name),
-        species: nullable(facts.identity.species),
-        biological_type: nullable(facts.identity.biological_type),
-      };
+    } else {
+      if (isRecord(facts?.identity)) {
+        state.characters[characterId].identity = {
+          character_id: characterId,
+          display_name: nullable(facts.identity.display_name),
+          species: nullable(facts.identity.species),
+          biological_type: nullable(facts.identity.biological_type),
+        };
+      }
+      if (isRecord(facts?.reproductive_capabilities)) {
+        state.characters[characterId].reproductive_capabilities = Object.fromEntries(
+          CAPABILITY_KEYS.map((key) => [
+            key,
+            [true, false, null].includes(facts.reproductive_capabilities[key])
+              ? facts.reproductive_capabilities[key]
+              : null,
+          ]),
+        );
+      }
     }
   }
   return state;
@@ -298,6 +315,11 @@ function episodeFor(character, pregnancyId) {
   return character.pregnancy.episodes[pregnancyId];
 }
 
+function existingEpisodeFor(character, pregnancyId) {
+  if (!pregnancyId) return null;
+  return character.pregnancy.episodes[pregnancyId] ?? null;
+}
+
 function addPregnancyId(character, pregnancyId) {
   if (pregnancyId) uniquePush(character.conception.pregnancy_ids, pregnancyId);
 }
@@ -314,6 +336,73 @@ function recordUncertainEpisode(episode, eventId) {
   uniquePush(episode.uncertain_event_ids, eventId);
 }
 
+function contributorRelationshipKey(pregnancyId, subjectId, sourceCharacterId, contributionKind) {
+  return [pregnancyId, subjectId, sourceCharacterId, contributionKind].join('|');
+}
+
+function applyContributorAttribution(state, event, character, fact) {
+  const payload = fact.payload ?? {};
+  const pregnancyId = payload.pregnancy_id;
+  const sourceCharacterId = payload.source_character_id;
+  const contributionKind = payload.contribution_kind;
+  const relationshipKey = contributorRelationshipKey(
+    pregnancyId,
+    fact.subject_id,
+    sourceCharacterId,
+    contributionKind,
+  );
+  const episode = existingEpisodeFor(character, pregnancyId);
+  if (!episode) {
+    addDiagnostic(state, {
+      code: 'unresolved_reproductive_source_attribution',
+      event_id: event.event_id,
+      subject_id: fact.subject_id,
+      pregnancy_id: pregnancyId,
+      detail: relationshipKey,
+    });
+    return;
+  }
+  if (event.status !== 'confirmed') return;
+  const attribution = payload.attribution;
+  const target = attribution === 'confirmed' ? episode.contributors.confirmed : episode.contributors.excluded;
+  const opposite = attribution === 'confirmed' ? episode.contributors.excluded : episode.contributors.confirmed;
+  const priorConflict = episode.contributors.conflicts.find((item) => item.relationship_key === relationshipKey);
+  if (priorConflict) {
+    uniquePush(priorConflict.event_ids, event.event_id);
+    return;
+  }
+  const existing = target.find((item) => item.relationship_key === relationshipKey);
+  if (existing) {
+    uniquePush(existing.event_ids, event.event_id);
+    return;
+  }
+  if (opposite.some((item) => item.relationship_key === relationshipKey)) {
+    const conflict = episode.contributors.conflicts.find((item) => item.relationship_key === relationshipKey);
+    if (conflict) uniquePush(conflict.event_ids, event.event_id);
+    else episode.contributors.conflicts.push({
+      relationship_key: relationshipKey,
+      event_ids: [event.event_id],
+    });
+    episode.contributors.confirmed = episode.contributors.confirmed.filter((item) => item.relationship_key !== relationshipKey);
+    episode.contributors.excluded = episode.contributors.excluded.filter((item) => item.relationship_key !== relationshipKey);
+    addDiagnostic(state, {
+      code: 'reproductive_source_attribution_conflict',
+      event_id: event.event_id,
+      subject_id: fact.subject_id,
+      pregnancy_id: pregnancyId,
+      detail: relationshipKey,
+    });
+    return;
+  }
+  target.push({
+    relationship_key: relationshipKey,
+    source_character_id: sourceCharacterId,
+    contribution_kind: contributionKind,
+    attribution,
+    event_ids: [event.event_id],
+  });
+}
+
 function applyStateFact(state, event, characterFacts) {
   const fact = stateFact(event);
   if (!fact || !event.event_id) return;
@@ -323,6 +412,9 @@ function applyStateFact(state, event, characterFacts) {
   const payload = fact.payload ?? {};
 
   switch (event.type) {
+    case 'reproductive_source_attribution':
+      applyContributorAttribution(state, event, character, fact);
+      return;
     case 'conception': {
       const pregnancyId = payload.pregnancy_id;
       addPregnancyId(character, pregnancyId);
@@ -632,6 +724,12 @@ function finalizeState(state) {
     for (const episode of Object.values(character.pregnancy.episodes)) {
       for (const key of Object.keys(episode)) {
         if (Array.isArray(episode[key])) episode[key] = [...new Set(episode[key])];
+      }
+      episode.contributors.confirmed.sort((left, right) => left.relationship_key.localeCompare(right.relationship_key));
+      episode.contributors.excluded.sort((left, right) => left.relationship_key.localeCompare(right.relationship_key));
+      episode.contributors.conflicts.sort((left, right) => left.relationship_key.localeCompare(right.relationship_key));
+      for (const relationship of [...episode.contributors.confirmed, ...episode.contributors.excluded, ...episode.contributors.conflicts]) {
+        if (Array.isArray(relationship.event_ids)) relationship.event_ids = [...new Set(relationship.event_ids)].sort();
       }
     }
     character.conception.pregnancy_ids = [...new Set(character.conception.pregnancy_ids)];

@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Check Snapshot ownership and provenance against the authoritative Floor/Swipe contract."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Check new Floor cache lifecycle and clear behavior."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Check unchanged Event and Story Time semantics."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check cross-layer ownership and persistence boundary impacts."}

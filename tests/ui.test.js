@@ -2472,7 +2472,7 @@ test('World Model analysis routes success and failure feedback through semantic 
       assert.equal(savedChat.world_model, previousModel)
     } else {
       assert.match(markup, /新模型/)
-      assert.deepEqual(savedChat.world_model, nextModel)
+      assert.deepEqual(savedChat.world_model, normalizeWorldModel(nextModel))
       assert.equal(refreshCalls, 1)
     }
     app.destroyBioWeave()
