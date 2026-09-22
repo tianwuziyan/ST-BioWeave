@@ -81,7 +81,7 @@ source hydration 与 selection ownership 分离：每次 source collection 都�
 
 ## 5. 排除算法
 
-默认 policy 常量为：状态、手机、NSFW、cot、玩法、超雄、思维链。
+默认 policy 常量为：状态、手机、美化、NSFW、cot、玩法、超雄、思维链。
 
 先对每个 metadata 字段执行 Unicode NFKC 规范化并 trim；中文关键词使用 includes() 直接包含匹配。
 
