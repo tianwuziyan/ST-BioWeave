@@ -57,12 +57,59 @@ mechanical scanning may use a business-neutral primitive such as
 `findPreviousValidFloor()`, but no universal resolver may understand all World,
 Event, analysis, and registry semantics.
 
+## 1.2 Automatic dependency and patch contract
+
+Automatic Character/Event analysis is downstream of a current, validated and
+normalized World Model. When the current valid Floor has no World Model,
+Runtime must complete Initial World Analysis first; an API, parse, schema,
+normalization, stale-owner, or save failure is fail-closed and must not send a
+Character/Event request or persist new Character/Event facts.
+
+When a valid prior World Model exists, Runtime reuses it by default. Automatic
+World Patch Analysis is a sparse fact extraction request for explicit
+current-Floor additions or corrections. The AI must not receive the old model
+and be asked to return a complete replacement. The program validates the
+patch, deterministically merges it into the validated old model, and validates
+the complete result before saving the new current-Floor model. An omitted field
+is always unchanged; automatic remove/invalidate is unsupported until an
+explicit contract exists. If the merged result is invalid, the update and
+downstream Character/Event analysis are both rejected and the prior model
+remains intact.
+
 ## 2. Signatures
 
 - `buildWorldModelMessages(analysisInput, promptSettings) -> ChatMessage[]`
 - `parseWorldModelResponse(raw) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModel(input) -> WorldModelV1`
 - `applyWorldModelEvidenceGuard(model, analysisInput) -> WorldModelV1`
+
+## 2.1 Reproductive mechanism and Projection Rule output contract
+
+`carrying_compatibility` is a strict tri-state canonical field:
+
+- `true`: the current `biological_type` is explicitly compatible with the
+  pregnancy/carrying side of the mechanism;
+- `false`: the current `biological_type` is explicitly incompatible;
+- `null`: the evidence is insufficient.
+
+It is never a natural-language description. Anatomy, species/type names, and
+mechanism descriptions belong in `pathway`,
+`reproduction_rules.pregnancy_or_carrying`, or `special_rules`.
+
+`reproductive_mechanisms` is an array when present; no mechanism is `[]`, and
+`null` is invalid. Its canonical item fields are `key: string|null`,
+`label: string|null`, `pathway: string|null`,
+`carrying_compatibility: boolean|null`, `world_model_rule_refs: string[]`,
+and `evidence: string[]`. Omitted item fields receive the existing canonical
+defaults; non-string list elements remain invalid.
+
+Initial World Analysis and World Patch Analysis use the same mechanism
+contract. Projection Rule prompts mirror `normalizeProjectionRules()` and
+`validateProjectionRuleContent()`: raw rules require schema version 1,
+mechanism/development keys, the production development-kind and trigger
+enums, the validated requirements/realization/contradiction/expiration
+shapes, and no forbidden executable/probability/outcome fields. Raw AI output
+must not include `projection_rule_id`; BioWeave generates it deterministically.
 
 ## 3. Contracts
 

@@ -4,6 +4,7 @@ import {
   buildEventAnalysisMessages,
   buildPrompt,
   buildWorldModelMessages,
+  buildWorldModelPatchMessages,
   EVENT_STATUS,
   EVENT_TYPES,
   WORLD_MODEL_SCHEMA,
@@ -118,12 +119,13 @@ function invalidWorldModel(message = 'WORLD_MODEL_INVALID', details = {}) {
   if (details.path) error.path = details.path;
   if (details.expected) error.expected = details.expected;
   if (details.received) error.received = details.received;
+  if (details.validator) error.validator = details.validator;
   return error;
 }
 
 function nullableText(value, path) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'string|null', received: Array.isArray(value) ? 'array' : typeof value });
+  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'string|null', received: Array.isArray(value) ? 'array' : typeof value, validator: 'nullableText' });
   const text = value.trim();
   return UNKNOWN_TEXT.has(text.toLowerCase()) ? null : text || null;
 }
@@ -151,22 +153,30 @@ function normalizeRuleText(value, path) {
 function nullableBoolean(value, path) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: Array.isArray(value) ? 'array' : typeof value });
+  if (typeof value !== 'string') throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: Array.isArray(value) ? 'array' : typeof value, validator: 'nullableBoolean' });
   const text = value.trim().toLowerCase();
   if (UNKNOWN_TEXT.has(text)) return null;
   if (['true', 'yes', '是'].includes(text)) return true;
   if (['false', 'no', '否'].includes(text)) return false;
-  throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: 'string' });
+  throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'boolean|null', received: 'string', validator: 'nullableBoolean' });
 }
 
 function stringList(value, mapText = nullableText, { strict = false, path } = {}) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     if (!strict && typeof value === 'string' && value.trim())
-      return [mapText(value)].filter(Boolean);
+      return [mapText(value, path)].filter(Boolean);
     throw invalidWorldModel('WORLD_MODEL_INVALID', { path, expected: 'array<string>', received: Array.isArray(value) ? 'array' : typeof value });
   }
-  return [...new Set(value.map((item) => mapText(item)).filter(Boolean))];
+  return [
+    ...new Set(
+      value
+        .map((item, index) =>
+          mapText(item, path ? `${path}[${index}]` : undefined),
+        )
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function objectOrEmpty(value, path) {
@@ -210,6 +220,7 @@ function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false
       path: `${path}.reproductive_mechanisms`,
       expected: 'array',
       received: typeof mechanismValues,
+      validator: 'normalizeBiologicalType',
     });
   const reproductiveMechanisms = (Array.isArray(mechanismValues) ? mechanismValues : []).map(
     (item, mechanismIndex) => normalizeReproductiveMechanism(
@@ -243,6 +254,7 @@ function normalizeReproductiveMechanism(raw, path) {
       path,
       expected: 'object',
       received: Array.isArray(raw) ? 'array' : typeof raw,
+      validator: 'normalizeReproductiveMechanism',
     });
   const ruleRefs = raw.world_model_rule_refs;
   const evidence = raw.evidence;
@@ -251,12 +263,14 @@ function normalizeReproductiveMechanism(raw, path) {
       path: `${path}.world_model_rule_refs`,
       expected: 'array',
       received: typeof ruleRefs,
+      validator: 'normalizeReproductiveMechanism',
     });
   if (evidence !== undefined && !Array.isArray(evidence))
     throw invalidWorldModel('WORLD_MODEL_INVALID', {
       path: `${path}.evidence`,
       expected: 'array',
       received: typeof evidence,
+      validator: 'normalizeReproductiveMechanism',
     });
   return {
     key: nullableText(raw.key),
@@ -1296,10 +1310,17 @@ export function normalizeWorldModel(raw, { strict = false, allowGeneratedProject
       allowGeneratedIdentity: allowGeneratedProjectionRuleIds,
     });
   } catch (error) {
+    const diagnostic = String(error?.message ?? 'invalid');
+    const firstDiagnostic = diagnostic.split(', ')[0];
+    const diagnosticPath = firstDiagnostic.match(
+      /^(projection_rules\[\d+\](?:\.[^:]+)?|projection_rules\[\d+\])/u,
+    )?.[1] ?? 'projection_rules';
     throw invalidWorldModel('WORLD_MODEL_INVALID', {
-      path: 'projection_rules',
+      path: diagnosticPath,
+      expected: 'valid projection rule content',
       diagnosticCode: 'WORLD_MODEL_PROJECTION_RULES_INVALID',
-      received: error?.message ?? 'invalid',
+      received: diagnostic,
+      validator: 'normalizeProjectionRules → validateProjectionRuleContent',
     });
   }
   const species = Array.isArray(raw.species)
@@ -2694,6 +2715,114 @@ export function parseWorldModelResponse(raw) {
   });
 }
 
+const WORLD_MODEL_PATCH_FIELDS = Object.freeze({
+  add: Object.freeze(['species', 'exceptions', 'unknowns', 'projection_rules']),
+  update: Object.freeze(['species', 'medical_context', 'projection_rules']),
+})
+
+function invalidWorldModelPatch(message = 'WORLD_MODEL_PATCH_INVALID', details = {}) {
+  const error = new Error(message)
+  error.code = 'WORLD_MODEL_PATCH_INVALID'
+  Object.assign(error, details)
+  return error
+}
+
+function clonePatchValue(value) {
+  if (value === undefined || value === null) return value
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  if (Array.isArray(value)) return value.map(clonePatchValue)
+  if (typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clonePatchValue(item)]))
+  return value
+}
+
+function patchSection(raw, section) {
+  if (raw === undefined) return {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: section })
+  const unknown = Object.keys(raw).find(key => !WORLD_MODEL_PATCH_FIELDS[section].includes(key))
+  if (unknown)
+    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: `${section}.${unknown}` })
+  return raw
+}
+
+function normalizePatchEntry(field, value, section, index) {
+  const probe = { schema_version: 1, species: [], exceptions: [], unknowns: [], projection_rules: [] }
+  if (field === 'species') probe.species = [value]
+  else if (field === 'exceptions') probe.exceptions = [value]
+  else if (field === 'unknowns') probe.unknowns = [value]
+  else if (field === 'projection_rules') probe.projection_rules = [value]
+  else if (field === 'medical_context') probe.medical_context = value
+  try {
+    const normalized = normalizeWorldModel(probe, { strict: false, allowGeneratedProjectionRuleIds: true })
+    if (field === 'species') return normalized.species[0]
+    if (field === 'exceptions') return normalized.exceptions[0]
+    if (field === 'unknowns') return normalized.unknowns[0]
+    if (field === 'projection_rules') return normalized.projection_rules[0]
+    return normalized.medical_context
+  } catch (cause) {
+    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', {
+      path: `${section}.${field}[${index}]`, cause,
+    })
+  }
+}
+
+export function validateWorldModelPatch(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModelPatch()
+  if (Number(raw.schema_version ?? 1) !== 1) throw invalidWorldModelPatch()
+  if (Object.hasOwn(raw, 'remove') || Object.hasOwn(raw, 'invalidate'))
+    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_REMOVE_UNSUPPORTED')
+  const result = { schema_version: 1, add: {}, update: {} }
+  for (const section of ['add', 'update']) {
+    const source = patchSection(raw[section], section)
+    for (const field of WORLD_MODEL_PATCH_FIELDS[section]) {
+      if (source[field] === undefined) continue
+      if (field === 'medical_context') {
+        result[section][field] = normalizePatchEntry(field, source[field], section, 0)
+        continue
+      }
+      if (!Array.isArray(source[field]))
+        throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: `${section}.${field}` })
+      result[section][field] = source[field].map((entry, index) => normalizePatchEntry(field, entry, section, index))
+    }
+  }
+  return result
+}
+
+function stablePatchIdentity(field, entry) {
+  if (field === 'species') return String(entry?.name ?? '')
+  if (field === 'projection_rules') return String(entry?.projection_rule_id ?? entry?.mechanism_key ?? '')
+  return JSON.stringify(entry)
+}
+
+function mergeNamedEntries(base, entries, field, mode) {
+  const next = Array.isArray(base) ? base.map(clonePatchValue) : []
+  for (const entry of entries ?? []) {
+    const identity = stablePatchIdentity(field, entry)
+    const index = next.findIndex(item => stablePatchIdentity(field, item) === identity)
+    if (mode === 'update') {
+      if (index < 0) throw invalidWorldModelPatch('WORLD_MODEL_PATCH_TARGET_NOT_FOUND', { field, identity })
+      next[index] = clonePatchValue(entry)
+    } else if (index < 0) next.push(clonePatchValue(entry))
+    else throw invalidWorldModelPatch('WORLD_MODEL_PATCH_DUPLICATE_ADD', { field, identity })
+  }
+  return next
+}
+
+export function mergeWorldModelPatch(existingModel, patch) {
+  const base = normalizeWorldModel(existingModel, { allowGeneratedProjectionRuleIds: true })
+  const validatedPatch = validateWorldModelPatch(patch)
+  const merged = clonePatchValue(base)
+  for (const field of ['species', 'projection_rules']) {
+    merged[field] = mergeNamedEntries(merged[field], validatedPatch.add[field], field, 'add')
+    merged[field] = mergeNamedEntries(merged[field], validatedPatch.update[field], field, 'update')
+  }
+  for (const field of ['exceptions', 'unknowns'])
+    merged[field] = mergeNamedEntries(merged[field], validatedPatch.add[field], field, 'add')
+  if (validatedPatch.update.medical_context)
+    merged.medical_context = { ...merged.medical_context, ...clonePatchValue(validatedPatch.update.medical_context) }
+  return normalizeWorldModel(merged, { strict: true, allowGeneratedProjectionRuleIds: true })
+}
+
 // 只保存来源数量、范围和状态，不保存 AnalysisInput 正文。
 export function summarizeAnalysisInput(input = {}) {
   const character = input?.character ?? {};
@@ -2814,6 +2943,24 @@ export function createAnalyzer({
     return canonicalModel;
   }
 
+  async function analyzeWorldModelPatch(input = {}) {
+    const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
+    if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED')
+    const messages = buildWorldModelPatchMessages(
+      input.analysisInput ?? input,
+      worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
+    )
+    const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
+    const text = responseText(raw).trim()
+    let parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch (cause) {
+      throw invalidWorldModelPatch('WORLD_MODEL_PATCH_JSON_INVALID', { cause })
+    }
+    return validateWorldModelPatch(parsed)
+  }
+
   async function analyzeFloor(input = {}) {
     let profile;
     try {
@@ -2828,6 +2975,22 @@ export function createAnalyzer({
       throw annotateAnalysisError(error, 'task_routing');
     }
     const analysisInput = input.analysisInput ?? input;
+    const suppliedWorldModel = input.world_model ?? analysisInput.world_model;
+    if (!suppliedWorldModel) {
+      const error = new Error('WORLD_MODEL_UNAVAILABLE')
+      error.code = 'WORLD_MODEL_UNAVAILABLE'
+      error.analysis_stage = 'world_model_preflight'
+      throw error
+    }
+    try {
+      normalizeWorldModel(suppliedWorldModel, { strict: true, allowGeneratedProjectionRuleIds: true })
+    } catch (cause) {
+      const error = new Error('WORLD_MODEL_UNAVAILABLE')
+      error.code = 'WORLD_MODEL_UNAVAILABLE'
+      error.analysis_stage = 'world_model_preflight'
+      error.cause = cause
+      throw error
+    }
     let messages;
     try {
       messages = buildEventAnalysisMessages(
@@ -2874,6 +3037,7 @@ export function createAnalyzer({
 
   return {
     analyzeWorldModel,
+    analyzeWorldModelPatch,
     analyzeWorld: analyzeWorldModel,
     analyzeFloor,
     generateProjection: (input) => run('projection', input),

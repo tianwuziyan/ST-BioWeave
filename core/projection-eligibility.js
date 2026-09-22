@@ -100,19 +100,25 @@ export function normalizeProjectionRules(value, {allowGeneratedIdentity = true} 
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new TypeError('projection_rules must be an array');
   const byId = new Map();
-  for (const item of value) {
+  for (const [index, item] of value.entries()) {
     const hasIdentity = Object.hasOwn(item ?? {}, 'projection_rule_id');
     const validation = hasIdentity && allowGeneratedIdentity
       ? validateProjectionRule(item)
       : validateProjectionRuleContent(item);
-    if (!validation.ok) throw new TypeError(validation.errors.join(', '));
+    if (!validation.ok) {
+      const errors = validation.errors.map((error) =>
+        error.replace(/^projection_rule(?=\.|:)/u, `projection_rules[${index}]`),
+      );
+      throw new TypeError(errors.join(', '));
+    }
     const normalizedContent = normalizeProjectionRule(item);
     const generatedId = buildProjectionRuleId(normalizedContent);
     if (hasIdentity && normalizedContent.projection_rule_id !== generatedId) throw new TypeError(`projection_rule_id_mismatch:${normalizedContent.projection_rule_id}`);
     const normalized = {...normalizedContent, projection_rule_id: generatedId};
     const previous = byId.get(normalized.projection_rule_id);
     if (previous && fingerprint(previous) !== fingerprint(normalized)) throw new TypeError(`projection_rule_conflict:${normalized.projection_rule_id}`);
-    if (!validateProjectionRule(normalized).ok) throw new TypeError('projection_rule_generated_identity_invalid');
+    if (!validateProjectionRule(normalized).ok)
+      throw new TypeError(`projection_rules[${index}]:generated_identity_invalid`);
     byId.set(normalized.projection_rule_id, normalized);
   }
   return [...byId.values()].sort((left, right) => left.projection_rule_id.localeCompare(right.projection_rule_id)).map(clone);

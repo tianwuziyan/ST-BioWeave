@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "species": [
+    {
+      "name": "人类",
+      "description": "镇野朝的主要稳定智慧物种，遵循常规人类生理与生殖规律。",
+      "biological_types": [
+        {
+          "name": "男性",
+          "description": "人类雄性生理个体，具备产生精子与使女性受孕的能力。",
+          "capabilities": {
+            "can_produce_sperm": true,
+            "can_produce_ova": false,
+            "can_be_fertilized": false,
+            "can_fertilize": true,
+            "can_cause_pregnancy": true,
+            "can_carry_pregnancy": false
+          },
+          "reproductive_mechanisms": [],
+          "reproduction_rules": {
+            "fertilization": "通过性交向女性体内射精完成受精",
+            "pregnancy_or_carrying": "无",
+            "cycle": "无",
+            "ovulation": "无",
+            "gestation": "无",
+            "labor": "无"
+          },
+          "lifecycle": {"maturation": null, "aging": null},
+          "special_rules": []
+        },
+        {
+          "name": "女性",
+          "description": "人类雌性生理个体，具备产生卵子、接受受精与怀胎分娩的能力。",
+          "capabilities": {
+            "can_produce_sperm": false,
+            "can_produce_ova": true,
+            "can_be_fertilized": true,
+            "can_fertilize": false,
+            "can_cause_pregnancy": false,
+            "can_carry_pregnancy": true
+          },
+          "reproductive_mechanisms": [],
+          "reproduction_rules": {
+            "fertilization": "体内接受精子结合受精",
+            "pregnancy_or_carrying": "受孕后在体内孕育胎儿并分娩",
+            "cycle": null,
+            "ovulation": null,
+            "gestation": null,
+            "labor": null
+          },
+          "lifecycle": {"maturation": null, "aging": null},
+          "special_rules": []
+        }
+      ]
+    }
+  ],
+  "medical_context": {
+    "childbirth_difficulty": "存在难产风险",
+    "care_level": null,
+    "evidence": "沈钰赫生母甄兰心因难产去世"
+  },
+  "exceptions": [],
+  "unknowns": [],
+  "projection_rules": []
+}

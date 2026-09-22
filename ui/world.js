@@ -716,7 +716,7 @@ function renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection,
     return [
       `<button type="button" class="bioweave-world-model-species-card bioweave-world-card${selected ? ' active' : ''}" data-bioweave-action="world-model-select-species" data-bioweave-world-species-index="${speciesIndex}" aria-pressed="${selected}">`,
       '<span class="bioweave-world-model-card-head">',
-      `<span class="bioweave-world-model-card-title"><i class="fa-solid fa-dna" aria-hidden="true"></i><b>${displayText(name)}</b></span>`,
+      '<span class="bioweave-world-model-card-title"><svg class="bioweave-world-model-species-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 21a8 8 0 0 0-16 0"></path><circle cx="10" cy="8" r="5"></circle><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"></path></svg><b>' + displayText(name) + '</b></span>',
       `<span class="bioweave-world-model-card-mark">${selected ? '已选' : '选择'}</span>`,
       '</span>',
       `<small class="bioweave-world-model-card-summary">${renderSpeciesCardSummary(item)}</small>`,
@@ -834,7 +834,8 @@ export function worldPage({
     ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(worldModelNotice) + '</p>'
     : '';
   const actions = [
-    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-reanalyze">' + (worldModelBusy ? '分析中…' : (model ? '重新分析' : '开始分析')) + '</button>',
+    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="重新分析当前上下文，构建完整的世界模型。" aria-label="重新分析当前上下文，构建完整的世界模型。"' + (worldModelBusy ? ' disabled' : '') + '>' + (worldModelOperation === 'full' ? '分析中…' : '开始分析') + '</button>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '" aria-label="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '"' + ((!model || worldModelBusy) ? ' disabled' : '') + '>' + (worldModelOperation === 'patch' ? '补充中…' : '补充分析') + '</button>',
   ].join('');
   const metadata = model ? [
     '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',

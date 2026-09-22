@@ -11,7 +11,7 @@ import {
   EVENT_TYPES,
 } from '../ai/prompts.js';
 import { buildEventAnalysisInput } from '../ai/input-builder.js';
-import { createAnalyzer, parseEventAnalysisResponse } from '../ai/analyzer.js';
+import { createAnalyzer, normalizeWorldModel, parseEventAnalysisResponse } from '../ai/analyzer.js';
 import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from '../core/events.js';
 import { renderAnalysisDebugPopupContent } from '../ui/settings.js';
 import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js';
@@ -857,7 +857,7 @@ test('analyzeFloor sends contract-bound Event messages and parses the response',
       floorVersion,
       currentFloor: { narrative: 'Current floor narrative.' },
       recentContext: [],
-      worldModel: { species: [] },
+      worldModel: normalizeWorldModel({ schema_version: 1, species: [] }),
       storyTime: { display: 'unknown', precision: 'unknown' },
       characterContext: { characters: [] },
     }),
@@ -907,7 +907,7 @@ test('analyzeFloor preserves processRequest content and OpenAI message content f
         floorVersion,
         currentFloor: { narrative: 'Current floor narrative.' },
         recentContext: [],
-        worldModel: { species: [] },
+        worldModel: normalizeWorldModel({ schema_version: 1, species: [] }),
         storyTime: { display: 'unknown', precision: 'unknown' },
         characterContext: { characters: [] },
       }),

@@ -172,6 +172,32 @@ previous Floor snapshot; a Chat-level registry is not a historical input.
 The input boundary is text-oriented and removes secret-like keys before prompt
 construction. The analyzer receives a fixed JSON-only output contract.
 
+Runtime must resolve and validate the World Model before constructing a
+Character/Event request. `world_model` is a hard business precondition, not a
+prompt-only suggestion: a missing or unvalidated model produces
+`WORLD_MODEL_UNAVAILABLE` and no Event/Character API request is sent. The
+Analyzer also keeps a defensive boundary guard so alternate callers cannot
+reintroduce a null World Model path.
+
+Automatic lifecycle analysis is one Floor-Version single-flight Job. The Job
+resolves or updates the World Model first, awaits its parse/validation,
+normalization, merge, stale guard, and current-Floor save, and only then sends
+the Character/Event request. `MESSAGE_RECEIVED`, `GENERATION_ENDED`, and
+duplicate mutation notifications for the same complete Floor Version may
+observe or join that Job; they must not cancel and restart it. A mutation only
+invalidates the affected Floor and downstream work when the lifecycle snapshot
+proves a change in the formal Floor-Version identity (`chat_id`, `message_id`,
+`floor`, `swipe_id`, `content_hash`, or `message_version`). Different Floor
+Versions retain independent in-flight Jobs. A manual refresh joins an existing
+Job for the same Version rather than starting a concurrent request.
+
+User-message lifecycle events update the lifecycle snapshot but never create,
+invalidate, or reanalyze a BioWeave Character Floor.
+
+World Model validation keeps `carrying_compatibility` as `boolean | null`;
+Character/Event must consume that canonical value and must not reinterpret
+natural-language anatomy or mechanism descriptions as capability values.
+
 Event Analysis character references contain only the selected Character Card
 background. `character.greetings` may remain present in the shared
 `AnalysisInput` for World Model composition, but Event Analysis must not format

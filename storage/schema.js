@@ -32,6 +32,8 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
           },
           reproductive_mechanisms: [
             {
+              // carrying_compatibility is strictly boolean|null; descriptive
+              // pathway/anatomy text belongs in pathway or rule fields.
               key: null,
               label: null,
               pathway: null,

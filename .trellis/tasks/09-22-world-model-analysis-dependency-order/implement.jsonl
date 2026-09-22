@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, provenance, stale async and no Chat-level fact source rules for World and Event persistence."}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model schema, evidence, normalization and canonical validation contract."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Character/Event input, World Model consumption, validation and persistence boundary."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent field ownership, invalidation and async save outcome requirements."}

@@ -10,6 +10,10 @@ import {
   REPRODUCTIVE_ROLES,
   STORY_TIME_PRECISIONS,
 } from '../core/events.js'
+import {
+  PROJECTION_DEVELOPMENT_KINDS,
+  PROJECTION_TRIGGER_KINDS,
+} from '../core/projection.js'
 import { normalizeEventAnalysisInput } from './input-builder.js'
 export { WORLD_MODEL_SCHEMA }
 export const CORE_PROMPTS = {
@@ -25,12 +29,12 @@ export const PROJECTION_GENERATION_SYSTEM_PROMPT = [
   '你是 BioWeave 的受限 Projection 具体化器。Eligibility 已经决定了唯一允许的 development kind；你只负责把这个未来可能的生物发展方向写成简洁、结构化的可能性描述。',
   '你不是事实分析器，不判断 eligibility，不创建 BiologicalEvent，不判断 pregnancy/conception outcome，不决定 reproductive contributor，不创建或修改 World Model rule。',
   '必须保持给定 development kind，不得使用现实人类生殖常识替换 World Model。描述未来可能发生的方向，而不是声称事实已经发生。多个来源候选必须保持未解决，不得选择、排序或给概率。',
-].join('\\n')
+].join('\n')
 
 export const PROJECTION_GENERATION_OUTPUT_CONTRACT = [
   '只输出可直接 JSON.parse 的对象，不能输出 Markdown、解释或额外顶层字段。唯一结构是：{"development":{"kind":"允许的 development_kind","description":"未来可能发展方向"}}。',
   'development.kind 必须逐字复制输入中允许的 kind。description 必须是可能性语义；不得输出 projection_id、projection_rule_id、Floor/Swipe/owner/evidence identity、probability、random、pregnancy outcome、contributor attribution 或 BiologicalEvent。',
-].join('\\n')
+].join('\n')
 
 export function buildProjectionGenerationMessages(input = {}) {
   const boundedInput = input && typeof input === 'object' ? input : {}
@@ -57,6 +61,7 @@ export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([
 
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
+  'World Model 是世界级生物规则的权威输入；本请求由 Runtime 保证只在 validated + normalized World Model 存在时发出。species、biological_type、reproductive capabilities 与 mechanism compatibility 只能基于正文证据和该 World Model，不能使用现实人类常识、Character Card 的 gender/sex 或旧默认能力补空。',
   '如果上下文中出现 BioWeave Projection Context，它只是未来可能的发展方向，不是已发生事实或 Event 证据；只有本次目标正文实际写出的内容才能进入 BiologicalEvent。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
   '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实或不同 gestational subject 的暴露压进同一个 Event，也不要在 Runtime 或 UI 合并事件。',
@@ -139,18 +144,32 @@ const WORLD_MODEL_CORE_INSTRUCTIONS = [
   '【6. Temporary / Exceptions / Unknowns】临时、可逆或条件性的性征、器官、生殖能力或身体变化不得建立新的 biological_type。稳定属于既有 biological_type 自身的规则进入 special_rules；只有在一般 biological rule 或 baseline 已成立、且 AnalysisInput 明确支持特定对象、条件、临时或可逆偏离时，才进入 exceptions；没有 exception evidence 时必须输出 []。medical_context 是 World Model 的横向背景，只记录 AnalysisInput 明确支持的妊娠、分娩、产后相关医疗事实、照护条件、分娩困难、风险或明确结果；个体案例只能证明“这种情况存在”，不得自动推广为整个 species、国家或世界的普遍规则。普通人物剧情中的 medical_event 仍属于 Event Analyzer，不要全部塞进 medical_context。unknowns 不是所有未提到的 schema 字段：只有当 AnalysisInput 已经触及某个重要生物学事实/现象，而机制、条件、边界、适用范围或冲突仍不足以确定，且该问题会影响当前 World Model 时，才记录 unknown。unknown 的答案本身可以未知，但“该问题已被输入触发”必须有证据；不得从 null 字段、空字段或 schema 缺口自动生成 unknown。',
   '【7. Final Self-check】完成 species、biological_type、capability、reproductive_mechanisms、reproduction_rules 与 lifecycle 后，执行 Unarchived Fact Review：重新检查已经发现但尚未进入任何输出字段的有效生物事实，判断其是否应进入 special_rules、medical_context、exceptions 或 unknowns，而不是直接丢弃。同步检查：个体案例是否被错误推广成 world-wide rule；普通缺失信息是否被错误生成 unknown；临时状态是否被错误建立为 permanent biological_type；没有 evidence 的 exception 是否被编造。最后按 §1 检查 species completeness，按 §2 检查 rare/minority/exception stable type，按 §3 检查 Human/Nonhuman baseline 与 continuity，按 §4 检查 capability evidence，按 §5 检查 reproduction/lifecycle，按 §6 检查横向字段；无可靠依据的字段保持 null 或空数组。',
 ].join('\n')
+const WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT = [
+  'reproductive_mechanisms 必须是 JSON array；没有机制时输出 []，不得输出 null。该字段可以省略，省略时 BioWeave canonicalize 为 []。',
+  '每个 reproductive_mechanisms item 的字段都可以省略，省略时 canonical default 为：key、label、pathway 为 null；carrying_compatibility 为 null；world_model_rule_refs、evidence 为 []。如果输出字段，类型必须严格为：key string|null、label string|null、pathway string|null、carrying_compatibility boolean|null、world_model_rule_refs string[]、evidence string[]。',
+  'carrying_compatibility 只表示当前 biological_type 在该 reproductive mechanism 下能否作为 pregnancy/carrying side：明确支持为 true，明确不支持为 false，证据不足为 null。禁止输出“无”、器官名称、物种/类型名称、机制描述或其它自然语言；这些内容应放入 pathway、reproduction_rules.pregnancy_or_carrying、special_rules 或其它合适字段。',
+].join('\n')
+
+const WORLD_MODEL_PROJECTION_RULE_CONTRACT = [
+  'projection_rules 必须是 JSON array；没有规则时输出 []。每个 raw item 必须包含 schema_version: 1、mechanism_key、development_concern_key、development_kind、trigger；不得输出 projection_rule_id，BioWeave 会按内容 deterministic 生成。',
+  `development_kind 只能是：${PROJECTION_DEVELOPMENT_KINDS.join('、')}。`,
+  `trigger 必须是 object，只允许 kind、source_event_type、reference_event_id、min_elapsed_story_days、target_story_time；kind 只能是：${PROJECTION_TRIGGER_KINDS.join('、')}。source_event_type/reference_event_id 如出现必须是非空 string；min_elapsed_story_days 如出现必须是大于等于 0 的 number。`,
+  'requirements 如出现必须是 object，只允许 capabilities、source_compatibility、contributor_relationships。capabilities 必须是 {key: string, equals: true|false|null}[]；source_compatibility 只能是 required_true、allow_null、not_required；contributor_relationships 必须是 {relationship_key: string, attribution: confirmed|excluded}[]。',
+  'realization、contradiction 如出现必须是 object，只允许 event_types、statuses、payload_equals；event_types/statuses 必须是唯一字符串数组，payload_equals 必须是 object。expiration 如出现必须是 object，并包含符合上述 trigger 结构的 trigger。',
+  '禁止 projection rule 中出现 probability、weight、rng、random、seed、prompt、raw_prompt、raw_response、raw_ai_output、code、expression、script、callback、function、eval、pregnancy_id、pregnancy_outcome、no_pregnancy、outcome 等字段。',
+].join('\n')
 // 只用普通文字描述输出字段，避免把格式围栏或大段 schema 代码发送给后端。
 const WORLD_MODEL_OUTPUT_CONTRACT = [
   '只输出一个结构化对象，不要输出解释文字、Markdown 或代码围栏；schema_version 固定为 1。JSON key 使用 schema 规定的英文，说明、规则和列表字符串使用中文。',
   '顶层只包含 schema_version、species、medical_context、exceptions、unknowns、projection_rules；不得出现顶层 biological_types 或 species 级 capabilities。',
   'species[] 包含 name、description、biological_types[]；每个 biological_type 包含 name、description、capabilities、reproductive_mechanisms[]、reproduction_rules、lifecycle、special_rules。',
   'capabilities 只能位于 biological_types 下，固定包含六个 key：can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_cause_pregnancy、can_carry_pregnancy；值只能是 true、false 或 null，can_fertilize 与 can_cause_pregnancy 不互为 alias。',
-  '每个 biological_type 可包含 reproductive_mechanisms[]；每项固定包含 key、label、pathway、carrying_compatibility、world_model_rule_refs[]、evidence[]。key/label/pathway 是开放值，不建立 natural/implantation/parasitic/magic 等封闭枚举。',
+  WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT,
   'reproduction_rules 固定包含 fertilization、pregnancy_or_carrying、cycle、ovulation、gestation、labor；lifecycle 固定包含 maturation、aging。规则字段只能使用 null、非空中文描述或 canonical absence value“无”：null 是未知/证据不足，非空描述是已知存在，“无”是已知不存在/不适用；没有提到或无法判断时不要写“无”。其它未知标量为 null，列表为数组。',
   'medical_context 固定包含 childbirth_difficulty、care_level、evidence，均为 nullable string。',
   'exceptions 必须是 JSON 数组；每项必须是对象，固定包含 statement、applies_to、evidence，三者均为 nullable string。不得使用以实体名称为 key 的对象映射；没有例外时输出 []。',
   'unknowns 必须是 JSON 字符串数组，不得使用对象映射；没有未知项时输出 []。special_rules 必须是 JSON 字符串数组，没有特殊规则时输出 []。',
-  'projection_rules 必须是 JSON 数组；每项只输出 schema_version、mechanism_key、development_concern_key、development_kind、trigger、requirements、realization、contradiction、expiration 等业务内容，不要输出 projection_rule_id。BioWeave 会在规范化时生成 projection_rule_id。规则只能是声明式数据，不得包含 probability、rng、prompt、raw AI output、pregnancy/no-pregnancy outcome、函数或代码表达式；无法由当前证据确定的规则不要编造，输出 []。',
+  WORLD_MODEL_PROJECTION_RULE_CONTRACT,
 ].join('\n')
 const HISTORY_MEMORY_CONTEXT = [
   '【外部历史参考信息】',
@@ -674,6 +693,18 @@ function inputNames(input) {
 const WORLD_MODEL_TASK_PROMPT =
   '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
 
+export const WORLD_MODEL_PATCH_TASK_PROMPT =
+  '请只提取本次目标 Floor 新增或明确修正的世界级生物事实，返回 World Model Patch。不要返回完整 World Model，不要复述已有规则；未提及的字段表示不修改，不能表示删除。'
+
+export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
+  '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次正文明确新增或修正的字段；缺少字段永远表示不修改。',
+  '允许 add 的字段：species、exceptions、unknowns、projection_rules；允许 update 的字段：species、medical_context、projection_rules。species 和 projection_rules 的 update 项必须包含稳定名称或 rule identity，并提供该项更新后的完整 canonical entry。',
+  WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT,
+  WORLD_MODEL_PROJECTION_RULE_CONTRACT,
+  '本版本不支持 remove、invalidate 或通过省略字段删除旧规则；不要输出 remove/invalidate。冲突只有在正文明确说明旧规则失效或已修正时才放入 update。',
+  'AI 只返回当前 Floor 的新增/明确修正 facts；不要把 Existing World Model 重新整理后作为完整结果返回。',
+].join('\n')
+
 export function buildWorldModelMessages(
   analysisInput = {},
   promptSettings = {},
@@ -701,6 +732,29 @@ export function buildWorldModelMessages(
     'system',
     expandPlaceholders(settings.system_bottom, names),
   )
+  return messages
+}
+
+export function buildWorldModelPatchMessages(
+  analysisInput = {},
+  promptSettings = {},
+) {
+  const settings = normalizeAnalysisPrompt(promptSettings)
+  const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
+  const names = inputNames(input)
+  const messages = []
+  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
+  addMessage(messages, 'system', joinPromptSections([
+    `【BioWeave World Model Patch 分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS}`,
+    formatCommonAnalysisPrompt(settings, names),
+    `【World Model Patch 任务】\n${WORLD_MODEL_PATCH_TASK_PROMPT}`,
+    formatAnalysisPromptTail(settings, names),
+    `【World Model Patch 输出契约】\n${WORLD_MODEL_PATCH_OUTPUT_CONTRACT}`,
+  ]))
+  addMessage(messages, 'system', formatWorldModelReferences(input, names))
+  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
+  addMessage(messages, 'user', '只根据以上资料输出本次 Floor 的 World Model Patch JSON。')
+  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }
 

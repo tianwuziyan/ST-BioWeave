@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "species": [
+    {
+      "name": "人类",
+      "description": "镇野朝的人类物种，生理机制符合常规人类标准。",
+      "biological_types": [
+        {
+          "name": "男性",
+          "description": "人类男性生理结构与角色，具备产生精子与使女性受孕的能力。",
+          "capabilities": {
+            "can_produce_sperm": true,
+            "can_produce_ova": false,
+            "can_be_fertilized": false,
+            "can_fertilize": true,
+            "can_cause_pregnancy": true,
+            "can_carry_pregnancy": false
+          },
+          "reproductive_mechanisms": [{
+            "key": "natural_conception",
+            "label": "自然受孕",
+            "pathway": "通过性交将精子排入女性体内与卵子结合",
+            "carrying_compatibility": "无",
+            "world_model_rule_refs": [],
+            "evidence": ["沈钰赫为沈宪书与甄兰心之嫡子", "沈立渊为沈宪书与柳相弗之子"]
+          }],
+          "reproduction_rules": {
+            "fertilization": "产生精子并排入女性体内实现受精",
+            "pregnancy_or_carrying": "无",
+            "cycle": "无",
+            "ovulation": "无",
+            "gestation": "无",
+            "labor": "无"
+          },
+          "lifecycle": {"maturation": "自幼年、少年成长至成年", "aging": "遵循自然衰老过程"},
+          "special_rules": []
+        },
+        {
+          "name": "女性",
+          "description": "人类女性生理结构与角色，具备产生卵子、接受受精、妊娠及分娩的能力。",
+          "capabilities": {
+            "can_produce_sperm": false,
+            "can_produce_ova": true,
+            "can_be_fertilized": true,
+            "can_fertilize": false,
+            "can_cause_pregnancy": false,
+            "can_carry_pregnancy": true
+          },
+          "reproductive_mechanisms": [{
+            "key": "natural_conception",
+            "label": "自然受孕与妊娠",
+            "pathway": "精子与卵子在体内结合，受精卵着床于子宫内发育",
+            "carrying_compatibility": "人类女性子宫",
+            "world_model_rule_refs": [],
+            "evidence": ["甄兰心因难产去世", "宋时微生育沈祁鸢"]
+          }],
+          "reproduction_rules": {
+            "fertilization": "接受精子并在体内与卵子结合",
+            "pregnancy_or_carrying": "常规子宫内妊娠与孕育",
+            "cycle": "常规月经周期",
+            "ovulation": "定期排出卵子",
+            "gestation": "约十月怀胎",
+            "labor": "自然分娩，存在难产风险"
+          },
+          "lifecycle": {"maturation": "自幼年、少年成长至成年", "aging": "遵循自然衰老过程"},
+          "special_rules": []
+        }
+      ]
+    }
+  ],
+  "medical_context": {
+    "childbirth_difficulty": "古代医疗条件下分娩存在难产风险，可能危及产妇生命。",
+    "care_level": "世家大族拥有较好的照护与医疗条件。",
+    "evidence": "沈钰赫生母甄兰心因难产去世。"
+  },
+  "exceptions": [],
+  "unknowns": [],
+  "projection_rules": []
+}

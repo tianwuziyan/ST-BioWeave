@@ -3324,10 +3324,30 @@
   min-width: 0 !important;
 }
 
-.bioweave-world-model-page .bioweave-world-model-card-title i {
+.bioweave-world-model-page .bioweave-world-model-card-title i,
+.bioweave-world-model-page .bioweave-world-model-species-icon {
   flex: 0 0 auto !important;
   color: var(--bioweave-accent) !important;
   font-size: 13px !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-icon path {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-icon circle {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
 }
 
 .bioweave-world-model-page .bioweave-world-model-card-title b {

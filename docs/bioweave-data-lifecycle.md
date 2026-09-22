@@ -110,6 +110,14 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 8. A persistence operation reports `confirmed`, `failed`, or `unknown` state.
    Only a confirmed save may be reported as success.
 
+World Model automatic analysis follows the same owner/epoch/Floor-Version
+boundary. Initial analysis may create the World Model on the current Character
+Floor. Later automatic updates persist only a deterministic merge of the
+validated surviving model and a validated sparse current-Floor patch; omitted
+patch fields never delete old rules. A failed or stale World Analysis does not
+permit Character/Event facts to be written, and deleting the newer World Model
+Floor naturally exposes the nearest surviving World Model owner.
+
 ## 3. Ownership map
 
 | Owner | Actual location | Owned meaning | Lifecycle treatment |
@@ -778,7 +786,7 @@ analysis records for scheduling and is not persisted.
 | `MESSAGE_SWIPE_DELETED` | The deleted Swipe contributes no Floor, previous state, Event, or derived reference; preserve other existing Swipe owners and rebuild the active path |
 | direct Event edit | Preserve `event_id` and authoritative `source`, validate the complete affected Event collection atomically, save through the Floor abstraction, and rebuild Runtime Tracking/projections from valid Events |
 | direct Event delete | Remove the Event from its owning Floor collection and rebuild all derived references; dangling Event IDs are removed |
-| any mutation during analysis | Abort/invalidate affected execution and require owner, epoch, and Floor Version checks before a response can commit |
+| any proven mutation during analysis | Abort/invalidate only affected and downstream executions and require owner, epoch, and Floor Version checks before a response can commit; duplicate lifecycle notifications with the same six-field Floor Version do not restart the Job |
 
 New analysis results carry dependency provenance for the active Floor-Version
 chain. A retained non-active Swipe result is reusable after switching back
@@ -799,6 +807,14 @@ host message/Swipe change
   -> rebuild Events/Tracking/Character/World-dependent Runtime projections
   -> persist the safe invalidation through the storage boundary
 ```
+
+Automatic World/Character analysis is one single-flight Job per complete
+Floor-Version identity. The World Model stage is awaited through API result,
+validation, normalization/merge, stale checks, and current-Floor persistence
+before the Character/Event API request can be sent. Manual refreshes and
+duplicate lifecycle notifications join the existing Job for that identity;
+they do not create a concurrent request. A User message only advances the
+lifecycle snapshot and cannot create or reanalyze a Character Floor.
 
 ## 10. Async ownership, abort, and late commits
 

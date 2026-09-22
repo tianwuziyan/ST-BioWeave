@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify final implementation preserves exact Floor Version ownership and stale-result rejection."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify initial model and patch merge preserve World Model evidence and schema contracts."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Character/Event never runs without validated normalized World Model and downstream Event semantics remain unchanged."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify no new persistence path bypasses lifecycle ownership or writes invalid derived facts."}
