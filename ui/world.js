@@ -1,3 +1,5 @@
+import { buildWorldModelViewModel } from '../ai/analyzer.js'
+
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '可产生精子',
   can_produce_ova: '可产生卵子',
@@ -790,6 +792,7 @@ export function renderWorldModelView(model, {
   collectionEditor = null,
   busy = false,
 } = {}) {
+  model = buildWorldModelViewModel(model).model;
   const speciesSelection = selectedSpecies
     ? normalizeWorldModelSpeciesSelection(model, selectedSpecies)
     : (selectedSpeciesIndex === null ? null : createWorldModelSpeciesSelection(model, selectedSpeciesIndex));
@@ -820,6 +823,7 @@ export function worldPage({
   worldModelMeta = null,
   worldModelBusy = false,
   worldModelOperation = null,
+  worldModelPhase = null,
   selectedSpecies = null,
   selectedBiologicalType = null,
   selectedSpeciesIndex = null,
@@ -830,12 +834,15 @@ export function worldPage({
   worldModelNotice = null,
 } = {}) {
   const model = worldModel ?? null;
+  const phaseBusy = new Set(['world_full', 'world_patch', 'world_readback', 'world_ui_ready']).has(worldModelPhase);
+  const effectiveBusy = worldModelBusy || phaseBusy;
+  const effectiveOperation = worldModelOperation ?? (worldModelPhase === 'world_patch' ? 'patch' : worldModelPhase ? 'full' : null);
   const notice = worldModelNotice
     ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(worldModelNotice) + '</p>'
     : '';
   const actions = [
-    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="重新分析当前上下文，构建完整的世界模型。" aria-label="重新分析当前上下文，构建完整的世界模型。"' + (worldModelBusy ? ' disabled' : '') + '>' + (worldModelOperation === 'full' ? '分析中…' : '开始分析') + '</button>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '" aria-label="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '"' + ((!model || worldModelBusy) ? ' disabled' : '') + '>' + (worldModelOperation === 'patch' ? '补充中…' : '补充分析') + '</button>',
+    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="重新分析当前上下文，构建完整的世界模型。" aria-label="重新分析当前上下文，构建完整的世界模型。"' + (effectiveBusy ? ' disabled' : '') + '>' + (effectiveOperation === 'full' ? '分析中…' : '开始分析') + '</button>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '" aria-label="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '"' + ((!model || effectiveBusy) ? ' disabled' : '') + '>' + (effectiveOperation === 'patch' ? '补充中…' : '补充分析') + '</button>',
   ].join('');
   const metadata = model ? [
     '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',
@@ -852,7 +859,7 @@ export function worldPage({
       editingSection,
       sectionDraft,
       collectionEditor,
-      busy: worldModelBusy,
+      busy: effectiveBusy,
     })
     : '<section class="bioweave-card bioweave-empty"><b>世界模型尚未建立</b><p>点击“开始分析”，使用当前已选择的分析来源生成 Chat 独立的生物学规则。</p></section>' + renderSpeciesSelector({species: []}, null, null, collectionEditor, worldModelBusy);
   return [

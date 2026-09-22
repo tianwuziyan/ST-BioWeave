@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"验证修复没有破坏 Floor/Swipe ownership 与 stale guard"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"验证没有引入新的历史回写或 Chat-level 事实源"}
+{"file":".trellis/spec/domain/world-model.md","reason":"验证 World Full/Patch/Reuse 和 UI resolver 行为"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验证 Event validator 与 typed payload prompt contract"}
+{"file":"AGENTS.md","reason":"最终检查必须包含测试、语法与 diff 检查"}

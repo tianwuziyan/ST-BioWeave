@@ -14,7 +14,7 @@
 - `ai/worldbook.js`：世界书枚举/选择/Token 估算。
 - `ai/analyzer.js`：World / Floor / Projection 三类 AI 任务；Phase 2A 的 Floor Event 分析必须使用固定 JSON 解析和统一 Event 校验，不能以自由文本作为成功结果。
 - `runtime/chat.js`：ChatBoundary。
-- `runtime/floor.js`：Floor Version、N-floor 分析间隔、成功版本去重、失败重试与手动刷新规则。
+- `runtime/floor.js`：Floor Version、内容签名与成功版本去重基础设施；自动调度状态由 Runtime 持有。
 - `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、生产输入构建（含 `getCurrentFloorAnalysisInput()`）、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。Prompt Preview 复用该 Runtime 输入，不在 UI 重建 Floor Version。
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
 - `storage/store.js`：两级存储统一入口。
@@ -71,7 +71,9 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 ### Floor / Swipe / Version 生命周期
 
-自动分析继续使用现有 `analysis_interval` 的 N-floor 规则。目标 Floor 先比较六字段 Floor Version：相同成功版本跳过，版本变化或失败允许请求，UI mount/open/reopen/init 不触发请求。手动刷新始终强制请求；成功替换当前 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本 Event 不能进入当前有效 Registry。
+自动分析按新的有效 Character Floor counter 运行；User、编辑、删除、普通 update/received/ended 和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 只有在真实 intent 形成新 Floor Version 后才进入 force path。完整状态机、失败欠账语义、World retry 和 Runtime state 生命周期见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。
+
+World Full/Patch 在当前 Floor read-back 与共享 World canonical view-model 未达到 `WORLD_READY` 前，不得调用 Character/Event。Runtime 发布 World/Event 阶段状态，UI 据此分别显示 World Full/Patch/read-back busy 或人物等待/分析状态；最终 terminal status 由 `ui/app.js` 统一转为 SillyTavern toastr。面板关闭不影响通知，插件关闭后忽略迟到结果。
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Runtime/Storage 必须以当前有效 Floor-bound Event 重建 Registry，不留下 dangling `event_id`。Event 删除是真删除，不新增 `user_override` priority layer。失败分析不得写入半结构化 Event。
 
@@ -99,7 +101,7 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 2. UI Foundation：魔法棒入口、documentElement-level overlay、响应式壳、主题与生命周期。
 3. API Profile、Secret 引用与测试连接。
 4. BiologicalEvent schema、normalize / validate、结构化 Story Time 与 Tracking Registry 纯逻辑。
-5. 固定 Event Analyzer、Floor-bound Event 持久化与 N-floor / Floor Version 生命周期。
+5. 固定 Event Analyzer、Floor-bound Event 持久化与 Character counter / Floor Version 生命周期。
 6. Event CRUD 和 Characters / Events / Overview 真实 DTO 接线。
 7. State Reducer。
 8. Snapshot restore、Projection 和 Genealogy。
@@ -138,4 +140,4 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
-自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、自动 N-floor 触发、相同 Floor Version 去重、UI 重复打开不重复请求、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。
+自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、Character counter、reroll/Swipe 分类、retryPaused、相同 Floor Version 去重、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

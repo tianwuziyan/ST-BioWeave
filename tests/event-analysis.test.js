@@ -178,6 +178,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /biological_type/);
   assert.match(prompt, /明确的?生理性别.*biological_type.*映射/);
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
+  assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
   assert.match(prompt, /character profile/);
   assert.match(prompt, /完整 Target Floor exhaustive scan/);
   assert.match(prompt, /临时.*candidate/);
@@ -579,6 +580,39 @@ test('Event parser accepts a non-sexual BiologicalEvent with the same fixed enve
   );
   assert.equal(parsed.events[0].type, 'physical_symptom');
   assert.deepEqual(parsed.events[0].pregnancy_relevance.counterpart_ids, []);
+});
+
+test('physical_symptom requires the canonical typed symptom payload', () => {
+  const base = event({
+    event_id: 'physical-symptom-contract',
+    type: 'physical_symptom',
+    participants: [participant('character_subject')],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: null,
+    },
+    state_fact: {
+      subject_id: 'character_subject',
+      payload: { symptom: '大腿内侧酸痛' },
+    },
+  });
+  assert.throws(
+    () => parseEventAnalysisResponse(response([base]), floorVersion),
+    error =>
+      error?.diagnostic_code === 'invalid_state_fact_payload' &&
+      error?.diagnostic_path === '$.events[0].state_fact.payload.symptom',
+  );
+
+  const canonical = structuredClone(base);
+  canonical.state_fact.payload.symptom = {
+    kind: 'observed',
+    description: '大腿内侧酸痛',
+  };
+  const parsed = parseEventAnalysisResponse(response([canonical]), floorVersion);
+  assert.deepEqual(parsed.events[0].state_fact.payload.symptom, canonical.state_fact.payload.symptom);
 });
 
 test('Event parser accepts zero, one, and multiple Events while rejecting duplicate pregnancy subjects', () => {

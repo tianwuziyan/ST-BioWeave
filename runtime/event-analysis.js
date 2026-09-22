@@ -5,6 +5,7 @@ import {
   processNarrativeFloor,
 } from "../ai/input-builder.js";
 import {
+  buildWorldModelViewModel,
   mergeWorldModelPatch,
   normalizeStoredWorldModel,
   summarizeAnalysisInput,
@@ -64,29 +65,15 @@ import {
   floorVersion,
   floorVersionFromData,
   hashText,
-  isIntervalTarget,
   sameFloorVersion,
   shouldAnalyze,
 } from "./floor.js";
-const AUTO_ANALYSIS_EVENTS = new Set([
-  "MESSAGE_RECEIVED",
-  "GENERATION_ENDED",
-  "MESSAGE_UPDATED",
-  "MESSAGE_EDITED",
-  "MESSAGE_SWIPED",
-  "MESSAGE_SWIPE_DELETED",
-]);
 const LIFECYCLE_ONLY_EVENTS = new Set([
   // Deletion only invalidates the downstream active path; it never analyzes
   // the message collection after the owner has been removed.
   "MESSAGE_DELETED",
 ]);
-const FORCED_LIFECYCLE_EVENTS = new Set([
-  "MESSAGE_UPDATED",
-  "MESSAGE_EDITED",
-  "MESSAGE_SWIPED",
-  "MESSAGE_SWIPE_DELETED",
-]);
+const SCHEDULER_DEDUPE_LIMIT = 128;
 function scalar(value) {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -99,6 +86,15 @@ function worldModelUnavailableError(cause, target = null) {
   const error = new Error("WORLD_MODEL_UNAVAILABLE");
   error.code = "WORLD_MODEL_UNAVAILABLE";
   error.analysis_stage = "world_model_preflight";
+  error.floor_version = target?.version ? { ...target.version } : null;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function worldModelUiNotReadyError(stage, cause = null, target = null) {
+  const error = new Error("WORLD_MODEL_UI_NOT_READY");
+  error.code = "WORLD_MODEL_UI_NOT_READY";
+  error.analysis_stage = stage;
   error.floor_version = target?.version ? { ...target.version } : null;
   if (cause) error.cause = cause;
   return error;
@@ -624,6 +620,186 @@ export function createEventAnalysisCoordinator({
   const sourceCache = analysisSourceCache ?? createWorldbookCache();
   const invalidatedFloors = new Map();
   let lifecycleSnapshot = null;
+  const schedulerState = {
+    counter: 0,
+    retryPaused: false,
+    countedFloorKeys: new Set(),
+    observedFloorKeys: new Set(),
+    pendingGeneration: null,
+    pendingSwipeGeneration: null,
+    completedGeneration: null,
+    completedSwipeGeneration: null,
+    lastFailure: null,
+  };
+
+  function resetSchedulerState() {
+    schedulerState.counter = 0;
+    schedulerState.retryPaused = false;
+    schedulerState.countedFloorKeys.clear();
+    schedulerState.observedFloorKeys.clear();
+    schedulerState.pendingGeneration = null;
+    schedulerState.pendingSwipeGeneration = null;
+    schedulerState.completedGeneration = null;
+    schedulerState.completedSwipeGeneration = null;
+    schedulerState.lastFailure = null;
+  }
+
+  function schedulerSettings() {
+    const settings = store.getChat(chat.current())?.settings ?? {};
+    const parsedInterval = Number(settings.analysis_interval ?? 3);
+    return {
+      interval: Number.isInteger(parsedInterval) && parsedInterval > 0
+        ? parsedInterval
+        : 3,
+      retryFailed: settings.retry_failed_analysis !== false,
+    };
+  }
+
+  function pendingGenerationMatches(pending, target) {
+    if (!pending || !target || pending.chatId !== target.chatId) return false;
+    if (pending.messageId != null &&
+        String(pending.messageId) !== String(target.version.message_id)) return false;
+    if (pending.swipeId != null &&
+        String(pending.swipeId) !== String(target.version.swipe_id)) return false;
+    if (pending.baselineVersion &&
+        sameFloorVersion(pending.baselineVersion, target.version)) return false;
+    return true;
+  }
+
+  function pendingGenerationOwnerMatches(pending, target) {
+    if (!pending || !target || pending.chatId !== target.chatId) return false;
+    if (pending.messageId != null &&
+        String(pending.messageId) !== String(target.version.message_id)) return false;
+    if (pending.swipeId != null &&
+        String(pending.swipeId) !== String(target.version.swipe_id)) return false;
+    return true;
+  }
+
+  function generationMarkerOwnerMatches(marker, target) {
+    return pendingGenerationOwnerMatches(marker, target);
+  }
+
+  function markGenerationTerminal(kind, pending, target = null) {
+    if (!pending) return;
+    const marker = {
+      ...pending,
+      floorVersion: target?.version ? { ...target.version } : null,
+    };
+    if (kind === "swipe") schedulerState.completedSwipeGeneration = marker;
+    else schedulerState.completedGeneration = marker;
+  }
+
+  function clearGenerationMarkers() {
+    schedulerState.completedGeneration = null;
+    schedulerState.completedSwipeGeneration = null;
+  }
+
+  function rememberSchedulerKey(set, key) {
+    set.delete(key);
+    set.add(key);
+    while (set.size > SCHEDULER_DEDUPE_LIMIT)
+      set.delete(set.values().next().value);
+  }
+
+  function lifecycleVersionForPayload(payload, entries = lifecycleSnapshot?.entries) {
+    const messageId = typeof payload === "object"
+      ? payload?.message_id ?? payload?.messageId
+      : null;
+    const swipeId = typeof payload === "object"
+      ? payload?.swipe_id ?? payload?.swipeId
+      : null;
+    const requestedEntry = entries?.find(item =>
+      String(item?.message_id) === String(messageId) &&
+      (swipeId == null || String(item?.swipe_id) === String(swipeId)),
+    );
+    const entry = requestedEntry ?? (messageId == null
+      ? [...(entries ?? [])].reverse().find(item =>
+          isCharacterMessage(messages()[item?.index]),
+        )
+      : null);
+    if (!entry || entry.content_hash == null || entry.message_version == null)
+      return null;
+    return {
+      chat_id: lifecycleSnapshot?.chat_id ?? chat.current(),
+      message_id: entry.message_id,
+      floor: entry.floor,
+      swipe_id: entry.swipe_id ?? 0,
+      content_hash: entry.content_hash,
+      message_version: entry.message_version,
+    };
+  }
+
+  function clearPendingGeneration(payload = null, currentEntry = null) {
+    const messageId = typeof payload === "object"
+      ? payload?.message_id ?? payload?.messageId
+      : payload;
+    const swipeId = typeof payload === "object"
+      ? payload?.swipe_id ?? payload?.swipeId
+      : null;
+    const matches = pending =>
+      pending &&
+      pending.chatId === chat.current() &&
+      (messageId == null || pending.messageId == null ||
+        String(messageId) === String(pending.messageId)) &&
+      (swipeId == null || pending.swipeId == null ||
+        String(swipeId) === String(pending.swipeId));
+    if (matches(schedulerState.pendingGeneration)) {
+      if (schedulerState.pendingGeneration.baselineVersion)
+        rememberSchedulerKey(
+          schedulerState.observedFloorKeys,
+          floorExecutionKey(schedulerState.pendingGeneration.baselineVersion),
+        );
+      if (currentEntry?.content_hash != null && currentEntry?.message_version != null)
+        rememberSchedulerKey(
+          schedulerState.observedFloorKeys,
+          floorExecutionKey({
+            chat_id: lifecycleSnapshot?.chat_id ?? chat.current(),
+            message_id: currentEntry.message_id,
+            floor: currentEntry.floor,
+            swipe_id: currentEntry.swipe_id ?? 0,
+            content_hash: currentEntry.content_hash,
+            message_version: currentEntry.message_version,
+          }),
+        );
+      schedulerState.pendingGeneration = null;
+    }
+    if (matches(schedulerState.pendingSwipeGeneration)) {
+      if (schedulerState.pendingSwipeGeneration.baselineVersion)
+        rememberSchedulerKey(
+          schedulerState.observedFloorKeys,
+          floorExecutionKey(schedulerState.pendingSwipeGeneration.baselineVersion),
+        );
+      if (currentEntry?.content_hash != null && currentEntry?.message_version != null)
+        rememberSchedulerKey(
+          schedulerState.observedFloorKeys,
+          floorExecutionKey({
+            chat_id: lifecycleSnapshot?.chat_id ?? chat.current(),
+            message_id: currentEntry.message_id,
+            floor: currentEntry.floor,
+            swipe_id: currentEntry.swipe_id ?? 0,
+            content_hash: currentEntry.content_hash,
+            message_version: currentEntry.message_version,
+          }),
+        );
+      schedulerState.pendingSwipeGeneration = null;
+    }
+  }
+
+  function recordSchedulerFailure(error, retryFailed) {
+    const { interval } = schedulerSettings();
+    schedulerState.counter = interval;
+    schedulerState.retryPaused = !retryFailed;
+    schedulerState.lastFailure = {
+      code: error?.code ?? error?.message ?? "ANALYSIS_FAILED",
+      stage: error?.analysis_stage ?? null,
+    };
+  }
+
+  function recordSchedulerSuccess() {
+    schedulerState.counter = 0;
+    schedulerState.retryPaused = false;
+    schedulerState.lastFailure = null;
+  }
 
   function isEnabled() {
     try {
@@ -1080,6 +1256,43 @@ export function createEventAnalysisCoordinator({
     };
   }
 
+  async function resolveWorldModelUiReady(target, { requireCurrentFloor = true } = {}) {
+    let resolved;
+    try {
+      if (requireCurrentFloor) {
+        const floorData = store.getFloor?.(target.index, target.swipeId) ?? null;
+        // A failed Character attempt may retain its older analysis.floor_version;
+        // the Floor owner's root floor_version is the current World slot identity.
+        const storedVersion = floorData?.floor_version ?? null;
+        resolved = floorData && sameFloorVersion(storedVersion, target.version)
+          ? {
+              model: cloneWorldValue(floorData.world_model),
+              meta: cloneWorldValue(floorData.world_model_meta),
+              floor_version: cloneWorldValue(storedVersion),
+            }
+          : null;
+      } else {
+        resolved = await resolveWorldModelAtOrBefore(target);
+      }
+    } catch (cause) {
+      throw worldModelUiNotReadyError("world_readback", cause, target);
+    }
+    if (!resolved || (requireCurrentFloor && !sameFloorVersion(resolved.floor_version, target.version)))
+      throw worldModelUiNotReadyError("world_readback", null, target);
+    try {
+      return {
+        ...resolved,
+        view_model: buildWorldModelViewModel(resolved.model),
+      };
+    } catch (cause) {
+      throw worldModelUiNotReadyError(
+        cause?.analysis_stage ?? "world_view_model",
+        cause,
+        target,
+      );
+    }
+  }
+
   async function runWorldAnalysisJob(
     target,
     token,
@@ -1088,6 +1301,7 @@ export function createEventAnalysisCoordinator({
       analysisInput,
       signal = null,
       trigger = "automatic",
+      onPhase = null,
     } = {},
   ) {
     const key = floorExecutionKey(target.version);
@@ -1104,12 +1318,22 @@ export function createEventAnalysisCoordinator({
       released: false,
       promise: null,
     };
+    const publishPhase = phase => {
+      onPhase?.(phase);
+      notify({
+        type: "WORLD_ANALYSIS_STATUS_CHANGED",
+        payload: {
+          state: "running",
+          phase,
+          mode,
+          trigger,
+          floor_version: target.version,
+        },
+        chatId: target.chatId,
+      });
+    };
     worldInFlight.set(key, job);
-    notify({
-      type: "WORLD_ANALYSIS_STATUS_CHANGED",
-      payload: { state: "running", mode, trigger, floor_version: target.version },
-      chatId: target.chatId,
-    });
+    publishPhase(mode === "patch" ? "world_patch" : "world_full");
     const work = (async () => {
       chat.assert(token);
       if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
@@ -1164,13 +1388,26 @@ export function createEventAnalysisCoordinator({
         automatic: true,
       });
       chat.assert(token);
-      return saved;
+      publishPhase("world_readback");
+      publishPhase("world_ui_ready");
+      const ready = await resolveWorldModelUiReady(target);
+      return {
+        ...saved,
+        model: ready.view_model.model,
+        view_model: ready.view_model,
+      };
     })();
     job.promise = work.then(
       result => {
         notify({
           type: "WORLD_ANALYSIS_STATUS_CHANGED",
-          payload: { state: "success", mode, trigger, floor_version: target.version },
+          payload: {
+            state: "success",
+            mode,
+            trigger,
+            world_ready: true,
+            floor_version: target.version,
+          },
           chatId: target.chatId,
         });
         return result;
@@ -1178,7 +1415,15 @@ export function createEventAnalysisCoordinator({
       error => {
         notify({
           type: "WORLD_ANALYSIS_STATUS_CHANGED",
-          payload: { state: "failed", mode, trigger, floor_version: target.version, error_code: error?.code ?? error?.message ?? null },
+          payload: {
+            state: "failed",
+            mode,
+            trigger,
+            floor_version: target.version,
+            error_code: error?.code ?? error?.message ?? null,
+            error_stage: error?.analysis_stage ?? null,
+            diagnostic_code: error?.diagnostic_code ?? null,
+          },
           chatId: target.chatId,
         });
         throw error;
@@ -1226,8 +1471,10 @@ export function createEventAnalysisCoordinator({
     let resolved = await resolveWorldModelAtOrBefore(target);
     if (resolved && !force && !hasWorldModelUpdateSignal(target)) {
       try {
-        return normalizeStoredWorldModel(resolved.model);
+        execution.phase = "event_analysis";
+        return (await resolveWorldModelUiReady(target, { requireCurrentFloor: false })).view_model.model;
       } catch (cause) {
+        if (cause?.code === "WORLD_MODEL_UI_NOT_READY") throw cause;
         throw worldModelUnavailableError(cause, target);
       }
     }
@@ -1241,12 +1488,17 @@ export function createEventAnalysisCoordinator({
         analysisInput,
         signal: execution.controller.signal,
         trigger: resolved ? "auto-patch" : "auto-full",
+        onPhase: phase => {
+          execution.phase = phase;
+        },
       });
       await assertExecutionTargetCurrent(execution, target, token);
       invalidatedFloors.delete(floorExecutionKey(target.version));
-      return normalizeStoredWorldModel(result.model);
+      execution.phase = "event_analysis";
+      return buildWorldModelViewModel(result.model).model;
     } catch (cause) {
       if (cause?.code === "BIOWEAVE_DISABLED") throw cause;
+      if (cause?.code === "WORLD_MODEL_UI_NOT_READY") throw cause;
       if (isRequestAborted(cause) || cause?.code === "REQUEST_ABORTED") throw cause;
       throw worldModelUnavailableError(cause, target);
     }
@@ -1289,25 +1541,6 @@ export function createEventAnalysisCoordinator({
   async function collectActiveEvents(token = chat.token()) {
     const states = await collectCurrentFloorStates(token);
     return sortEvents(states.flatMap((state) => state.events));
-  }
-  function lastProcessedFloorFromStates(states) {
-    let lastFloor = null;
-    for (const state of states) {
-      const analysis = state.floorData?.analysis;
-      if (
-        analysis?.status !== "success" ||
-        !sameFloorVersion(floorVersionFromData(state.floorData), state.version)
-      )
-        continue;
-      lastFloor =
-        lastFloor === null
-          ? state.version.floor
-          : Math.max(lastFloor, state.version.floor);
-    }
-    return lastFloor;
-  }
-  async function recomputeLastProcessedFloor(token = chat.token()) {
-    return lastProcessedFloorFromStates(await collectCurrentFloorStates(token));
   }
   function currentStoryTimeDifferences(activeEvents, currentStoryTime) {
     const differences = {};
@@ -1546,7 +1779,6 @@ export function createEventAnalysisCoordinator({
       currentState,
       currentStateStatus,
       chatData: currentChat,
-      lastProcessedFloor: lastProcessedFloorFromStates(validStates),
     };
   }
   function refreshTrackingRegistry(reason = "runtime") {
@@ -1615,7 +1847,12 @@ export function createEventAnalysisCoordinator({
       activeAttempt && !activeAttempt.cancelRequested
         ? "running"
         : (terminal?.state ?? persistedState);
-    const busy = Boolean(activeAttempt && !activeAttempt.cancelRequested);
+    const activePhase = activeAttempt?.phase ?? null;
+    const busy = Boolean(
+      activeAttempt &&
+      !activeAttempt.cancelRequested &&
+      activePhase === "event_analysis",
+    );
     const currentFloorEvents =
       store.getActiveFloorEvents?.(target.index, target.version) ?? [];
     const diagnostic =
@@ -1709,6 +1946,7 @@ export function createEventAnalysisCoordinator({
         currentAnalysis?.last_attempt?.http_status ??
         null,
       phase:
+        activePhase ??
         diagnostic?.phase ??
         currentAnalysis?.phase ??
         currentAnalysis?.last_attempt?.phase ??
@@ -1928,6 +2166,8 @@ export function createEventAnalysisCoordinator({
     const terminal = {
       state,
       attempt: execution.attempt,
+      reason: execution.reason,
+      world_resolution: execution.world_resolution,
       started_at: execution.started_at,
       finished_at: execution.finished_at,
       floor_version: execution.version,
@@ -1944,6 +2184,8 @@ export function createEventAnalysisCoordinator({
         started_at: execution.started_at,
         finished_at: execution.finished_at,
         floor_version: execution.version,
+        reason: execution.reason,
+        world_resolution: execution.world_resolution,
         ...(diagnostic ?? {}),
       },
       chatId: execution.version.chat_id,
@@ -2220,9 +2462,25 @@ export function createEventAnalysisCoordinator({
         preWorldInput,
         { force: execution.reason === "manual-refresh" },
       );
+      execution.world_resolution = execution.stage === "world_analysis"
+        ? "full"
+        : execution.stage === "world_patch_analysis"
+          ? "patch"
+          : "reuse";
       await assertExecutionTargetCurrent(execution, target, token);
       const analysisInput = await buildFloorAnalysisInput(target, token);
       analysisInput.world_model = cloneWorldValue(finalWorldModel);
+      notify({
+        type: "EVENT_ANALYSIS_STATUS_CHANGED",
+        payload: {
+          state: "running",
+          phase: "event_analysis",
+          attempt: execution.attempt,
+          started_at: execution.started_at,
+          floor_version: execution.version,
+        },
+        chatId: execution.version.chat_id,
+      });
       execution.dependency_hash = await dependencyHashForTarget(target, token);
       await assertExecutionTargetCurrent(execution, target, token);
       if (typeof analyzer?.analyzeFloor !== "function")
@@ -2464,6 +2722,7 @@ export function createEventAnalysisCoordinator({
       floorSaveStarted: false,
       source_provenance: null,
       dependency_hash: null,
+      phase: reason === "manual-refresh" ? "event_analysis" : null,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -2475,16 +2734,61 @@ export function createEventAnalysisCoordinator({
         attempt,
         started_at: execution.started_at,
         floor_version: target.version,
+        ...(reason === "manual-refresh" ? { phase: "event_analysis" } : {}),
       },
       chatId: target.chatId,
     });
     return execution.promise;
   }
+  async function runScheduledAnalysis(target, { force, reason }) {
+    const settings = schedulerSettings();
+    try {
+      const result = await analyzeFloor(
+        { __messageIndex: true, index: target.index },
+        { force, reason },
+      );
+      if (result?.status === "success") recordSchedulerSuccess();
+      return result;
+    } catch (error) {
+      recordSchedulerFailure(error, settings.retryFailed);
+      throw error;
+    }
+  }
   function analyzeCurrentFloor(options = {}) {
-    return analyzeFloor(null, options);
+    const result = analyzeFloor(null, options);
+    if (options.force !== true) return result;
+    const settings = schedulerSettings();
+    return result.then((value) => {
+      if (value?.status === "success") recordSchedulerSuccess();
+      return value;
+    }).catch((error) => {
+      recordSchedulerFailure(error, settings.retryFailed);
+      throw error;
+    });
   }
   function refreshCurrentFloorAnalysis() {
     return analyzeCurrentFloor({ force: true, reason: "manual-refresh" });
+  }
+  async function scheduleRenderedCharacter(target, { force = false, reason = "automatic" } = {}) {
+    const key = floorExecutionKey(target.version);
+    if (schedulerState.observedFloorKeys.has(key) && !force)
+      return { skipped: true, reason: "floor-already-observed" };
+    rememberSchedulerKey(schedulerState.observedFloorKeys, key);
+    if (force)
+      return runScheduledAnalysis(target, { force: true, reason });
+
+    const { interval } = schedulerSettings();
+    if (schedulerState.retryPaused)
+      return { skipped: true, reason: "retry-paused" };
+    schedulerState.counter = Math.min(interval, schedulerState.counter + 1);
+    rememberSchedulerKey(schedulerState.countedFloorKeys, key);
+    if (schedulerState.counter < interval)
+      return {
+        skipped: true,
+        reason: "character-interval",
+        counter: schedulerState.counter,
+      };
+    return runScheduledAnalysis(target, { force: false, reason });
   }
   async function getCurrentFloorAnalysisInput() {
     const target = await resolveFloor();
@@ -2535,11 +2839,52 @@ export function createEventAnalysisCoordinator({
       }
       if (type === "CHAT_CREATED")
         return { skipped: true, reason: "unsupported-event" };
-      if (
-        !AUTO_ANALYSIS_EVENTS.has(type) &&
-        !LIFECYCLE_ONLY_EVENTS.has(type)
-      )
+      const supported = new Set([
+        "CHARACTER_MESSAGE_RENDERED",
+        "GENERATION_STARTED",
+        "MESSAGE_RECEIVED",
+        "GENERATION_ENDED",
+        "GENERATION_STOPPED",
+        "GENERATION_CANCELLED",
+        "MESSAGE_UPDATED",
+        "MESSAGE_EDITED",
+        "MESSAGE_DELETED",
+        "MESSAGE_SWIPED",
+        "MESSAGE_SWIPE_DELETED",
+      ]);
+      if (!supported.has(type))
         return { skipped: true, reason: "unsupported-event" };
+      if (type === "GENERATION_STARTED") {
+        const payload = event?.payload;
+        const generationType = typeof payload === "object"
+          ? payload?.genType ?? payload?.generation_type ?? payload?.type
+          : payload;
+        const normalizedGenerationType = String(generationType ?? "").toLowerCase();
+        const isReroll = payload?.reroll === true
+          || payload?.regenerate === true
+          || normalizedGenerationType === "regenerate";
+        const isSwipeGeneration = normalizedGenerationType === "swipe";
+        if (!isReroll && !isSwipeGeneration)
+          return { skipped: true, reason: "generation-not-reroll" };
+        clearGenerationMarkers();
+        const pending = {
+          chatId: chat.current(),
+          messageId: typeof payload === "object"
+            ? payload?.message_id ?? payload?.messageId
+            : null,
+          swipeId: typeof payload === "object"
+            ? payload?.swipe_id ?? payload?.swipeId
+            : null,
+          baselineVersion: lifecycleVersionForPayload(payload),
+          ended: false,
+        };
+        if (isSwipeGeneration) {
+          schedulerState.pendingSwipeGeneration = pending;
+        } else {
+          schedulerState.pendingGeneration = pending;
+        }
+        return { skipped: true, reason: "generation-pending" };
+      }
 
       let currentSnapshot;
       try {
@@ -2548,6 +2893,10 @@ export function createEventAnalysisCoordinator({
         currentSnapshot = { entries: [] };
       }
       const targetIndex = lifecycleMutationIndex(event, currentSnapshot);
+      const previousLifecycleEntry =
+        targetIndex !== null && targetIndex !== undefined
+          ? lifecycleSnapshot?.entries?.[targetIndex] ?? null
+          : null;
       const prefersPreviousMutationEntry =
         type === "MESSAGE_DELETED" || type === "MESSAGE_SWIPE_DELETED";
       const mutationEntry =
@@ -2591,33 +2940,131 @@ export function createEventAnalysisCoordinator({
         await refreshTrackingRegistry(type);
         return { skipped: true, reason: type };
       }
+      if (type === "GENERATION_STOPPED" || type === "GENERATION_CANCELLED") {
+        markGenerationTerminal(
+          schedulerState.pendingSwipeGeneration ? "swipe" : "generation",
+          schedulerState.pendingSwipeGeneration ?? schedulerState.pendingGeneration,
+        );
+        clearPendingGeneration(
+          event?.payload ?? null,
+          currentSnapshot.entries[targetIndex] ?? null,
+        );
+        return { skipped: true, reason: "generation-not-rendered" };
+      }
+      if (type === "GENERATION_ENDED") {
+        if (schedulerState.pendingGeneration)
+          schedulerState.pendingGeneration.ended = true;
+        if (schedulerState.pendingSwipeGeneration)
+          schedulerState.pendingSwipeGeneration.ended = true;
+        return { skipped: true, reason: "generation-ended-awaiting-render" };
+      }
+      if (type === "MESSAGE_UPDATED" || type === "MESSAGE_EDITED" ||
+          type === "MESSAGE_RECEIVED") {
+        return { skipped: true, reason: "lifecycle-baseline-only" };
+      }
+      if (type === "MESSAGE_SWIPED") {
+        const payload = event?.payload;
+        const pendingGeneration = typeof payload === "object" && (
+          payload?.pendingGeneration === true ||
+          payload?.pending_generation === true ||
+          payload?.isNewSwipe === true ||
+          payload?.new_swipe === true
+        );
+        if (!pendingGeneration) {
+          try {
+            const existing = await resolveFloor(event?.payload ?? null);
+            rememberSchedulerKey(
+              schedulerState.observedFloorKeys,
+              floorExecutionKey(existing.version),
+            );
+            if (currentFloorDataIsReusable(existing.index, existing.swipeId, existing.version))
+              return { skipped: true, reason: "existing-swipe-reused" };
+            return { skipped: true, reason: "existing-swipe-unavailable" };
+          } catch (error) {
+            if (error?.message === "SWIPE_NOT_FOUND")
+              return { skipped: true, reason: "swipe-not-found" };
+          }
+          return { skipped: true, reason: "existing-swipe-eligibility" };
+        }
+        schedulerState.pendingSwipeGeneration = {
+          chatId: chat.current(),
+          messageId: typeof payload === "object"
+            ? payload?.message_id ?? payload?.messageId
+            : payload,
+          swipeId: typeof payload === "object"
+            ? payload?.swipe_id ?? payload?.swipeId
+            : null,
+          baselineVersion: previousLifecycleEntry
+            ? {
+                chat_id: lifecycleSnapshot?.chat_id ?? chat.current(),
+                message_id: previousLifecycleEntry.message_id,
+                floor: previousLifecycleEntry.floor,
+                swipe_id: previousLifecycleEntry.swipe_id ?? 0,
+                content_hash: previousLifecycleEntry.content_hash,
+                message_version: previousLifecycleEntry.message_version,
+              }
+            : null,
+        };
+        return { skipped: true, reason: "swipe-generation-pending" };
+      }
       let target;
       try {
-        target = resolveMessage(event?.payload ?? null);
+        const resolved = resolveMessage(event?.payload ?? null);
+        target = await resolveFloorAtIndex({ __messageIndex: true, index: resolved.index });
       } catch (error) {
         if (isSwipeBoundaryEvent && error?.message === "MESSAGE_NOT_FOUND")
           return { skipped: true, reason: "swipe-not-found" };
         throw error;
       }
-      const floor = messageFloor(target.message, target.index);
-      const chatData = store.getChat(chat.current());
-      const interval = Number(chatData.settings?.analysis_interval ?? 3);
-      const lastProcessedFloor = FORCED_LIFECYCLE_EVENTS.has(type)
-        ? null
-        : await recomputeLastProcessedFloor(chat.token());
-      if (
-        !FORCED_LIFECYCLE_EVENTS.has(type) &&
-        !isIntervalTarget(floor, lastProcessedFloor, interval)
-      ) {
-        return { skipped: true, reason: "interval" };
+      if (type !== "CHARACTER_MESSAGE_RENDERED")
+        return { skipped: true, reason: "not-a-character-render" };
+      const pendingGeneration = [
+        schedulerState.pendingGeneration,
+        schedulerState.pendingSwipeGeneration,
+      ].find(pending => pendingGenerationOwnerMatches(pending, target));
+      const completedGeneration = [
+        schedulerState.completedGeneration,
+        schedulerState.completedSwipeGeneration,
+      ].find(marker => generationMarkerOwnerMatches(marker, target));
+      if (completedGeneration) {
+        rememberSchedulerKey(
+          schedulerState.observedFloorKeys,
+          floorExecutionKey(target.version),
+        );
+        return { skipped: true, reason: "generation-already-consumed" };
+      }
+      const pendingForce =
+        pendingGenerationMatches(schedulerState.pendingGeneration, target) ||
+        pendingGenerationMatches(schedulerState.pendingSwipeGeneration, target);
+      if (pendingGeneration) {
+        const kind = pendingGeneration === schedulerState.pendingSwipeGeneration
+          ? "swipe"
+          : "generation";
+        if (pendingForce) {
+          schedulerState.pendingGeneration = null;
+          schedulerState.pendingSwipeGeneration = null;
+          markGenerationTerminal(kind, pendingGeneration, target);
+          return await scheduleRenderedCharacter(target, {
+            force: true,
+            reason: "reroll",
+          });
+        }
+        if (pendingGeneration.ended) {
+          schedulerState.pendingGeneration = null;
+          schedulerState.pendingSwipeGeneration = null;
+          markGenerationTerminal(kind, pendingGeneration);
+          rememberSchedulerKey(
+            schedulerState.observedFloorKeys,
+            floorExecutionKey(target.version),
+          );
+          return { skipped: true, reason: "generation-without-new-floor" };
+        }
+        return { skipped: true, reason: "generation-awaiting-new-floor" };
       }
       try {
-        return await analyzeFloor(
-          { __messageIndex: true, index: target.index },
-          { force: false, reason: type },
-        );
+        return await scheduleRenderedCharacter(target, { reason: type });
       } catch (error) {
-        if (isSwipeBoundaryEvent && error?.message === "SWIPE_NOT_FOUND")
+        if (error?.message === "SWIPE_NOT_FOUND")
           return { skipped: true, reason: "swipe-not-found" };
         throw error;
       }
@@ -2770,6 +3217,7 @@ export function createEventAnalysisCoordinator({
       lastTerminal.clear();
       invalidatedFloors.clear();
       lifecycleSnapshot = null;
+      resetSchedulerState();
     }
   }
   function destroy() {
@@ -2785,6 +3233,7 @@ export function createEventAnalysisCoordinator({
     }
     inFlight.clear();
     worldInFlight.clear();
+    resetSchedulerState();
   }
   if (typeof chat.subscribe === "function")
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
@@ -2798,6 +3247,27 @@ export function createEventAnalysisCoordinator({
     getCurrentFloorAnalysisInput,
     requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
+    getAutoAnalysisSchedulerState: () => ({
+      counter: schedulerState.counter,
+      retryPaused: schedulerState.retryPaused,
+      countedFloorKeys: [...schedulerState.countedFloorKeys],
+      observedFloorKeys: [...schedulerState.observedFloorKeys],
+      pendingGeneration: schedulerState.pendingGeneration
+        ? { ...schedulerState.pendingGeneration }
+        : null,
+      pendingSwipeGeneration: schedulerState.pendingSwipeGeneration
+        ? { ...schedulerState.pendingSwipeGeneration }
+        : null,
+      completedGeneration: schedulerState.completedGeneration
+        ? { ...schedulerState.completedGeneration }
+        : null,
+      completedSwipeGeneration: schedulerState.completedSwipeGeneration
+        ? { ...schedulerState.completedSwipeGeneration }
+        : null,
+      lastFailure: schedulerState.lastFailure
+        ? { ...schedulerState.lastFailure }
+        : null,
+    }),
     getCurrentFloorEvents: async () =>
       (await statusForCurrentFloor()).current_floor_events,
     resolveWorldModelAtOrBefore,

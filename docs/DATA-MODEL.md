@@ -279,7 +279,7 @@ Event 的 `source` 必须由当前分析目标的 authoritative Floor Version �
 自动迁移或语义合并；本轮保证新 AI response 在保存边界前满足 0/1/N，并通过
 subject-local consistency validation。
 
-自动分析沿用 `analysis_interval` 的 N-floor 规则与六字段 Floor Version：同一成功版本跳过，版本变化允许重新分析；失败可重试；UI mount/open/reopen/init 不触发新的 AI 请求。手动刷新始终强制请求，成功后替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本 Event 不能进入当前有效 Registry。Event 编辑直接修改当前有效事实，保存时保留 `event_id` 与 authoritative `source`；Event 删除是真删除，不产生 `user_override` 层。
+自动分析的 Character Floor counter、Floor Version 去重、reroll/Swipe 分类和 retryPaused 规则见唯一权威文档 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。本数据模型只保留 Floor/Swipe owner、版本和事实持久化规则；User、编辑、删除和 lifecycle update 不创建新的 Floor 事实。
 
 ### Story Time
 

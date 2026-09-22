@@ -778,9 +778,11 @@ When no candidate passes, the API receives the exact empty previous shape:
 ```
 
 The target's old analysis, a stale Runtime DTO, a deleted registry entry,
-another Swipe, and a Runtime cache are never previous state. The
-`last_processed_floor` value is recomputed from successful valid Floor
-analysis records for scheduling and is not persisted.
+another Swipe, and a Runtime cache are never previous state. The automatic
+analysis counter and `retryPaused` flag are disposable Runtime state keyed by
+complete Character Floor Versions; they are not Floor fields, historical
+state, or persisted scheduling checkpoints. The complete scheduler state
+machine and rationale are defined in [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md).
 
 ### 9.2 Mutation invalidation matrix
 

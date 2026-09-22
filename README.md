@@ -352,9 +352,9 @@ flowchart TD
 
 Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、当前楼层叙事、必要的最近剧情上下文、World Model、结构化 Story Time 和必要的角色设定上下文。成功响应只能是固定 JSON 对象 `{schema_version, events[]}`，解析后的 Event 通过统一 normalize / validate 后才可写入 Floor；自然语言自由输出或半结构化结果不得写入。Event Analysis 的执行、取消、失败保留和诊断由 Runtime coordinator 负责，使用与 World Model 相同的 SillyTavern API transport；UI 只显示 `not_analyzed/running/success/failed/cancelled` 与脱敏的 stage/error code。
 
-自动分析继续使用当前 Chat 的 `analysis_interval`（N-floor）和六字段 Floor Version 去重：同一成功版本不会因为 UI 初始化、打开或重新打开而重复请求；版本变化和失败允许重试；`manual: true` 的手动刷新强制请求。手动刷新成功替换该 Floor Version 的旧成功 Event，失败保留旧成功结果，但旧版本事实不能进入当前有效 Registry。Floor 删除、Swipe 切换、Event 编辑/删除后，当前有效 Event 集合和 Registry 必须重新筛选或重建。
+自动分析按有效 Character Floor counter 和六字段 Floor Version 去重；User、普通编辑、生命周期更新、删除和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 只有形成新 Floor Version 才 force。完整 scheduler 状态机与设计理由见 [Auto Analysis Scheduler Architecture](docs/AUTO-ANALYSIS-SCHEDULER.md)。
 
-当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 N-floor 触发、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time；Node 检查不能替代这些验收。
+当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 Character counter、reroll/Swipe 分类、retryPaused、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time；Node 检查不能替代这些验收。
 
 ### 外部记忆边界
 
@@ -434,7 +434,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 - index.js：创建 Runtime 与 App，挂载 overlay，向 SillyTavern 扩展菜单注册入口，并导出 onInstall、onUpdate、onEnable、onDisable、onActivate、onDelete。
 - floating-launcher.js：独立 Host Entry 浮标；与魔法棒入口共享 `app.openBioWeave()`，位置只保存到当前设备浏览器，不进入 Chat 或分析数据。
 - runtime/activity.js：只读 Runtime Activity seam，聚合并发 Event Analysis / World Analysis 状态，不暴露 Floor、Event、Snapshot 或 Projection DTO。
-- runtime/event-analysis.js：拥有当前/指定 Floor 分析、N-floor 自动调度、强制刷新、去重、失败保护、Floor-bound Event 提交、Event CRUD 与 Tracking Registry 重建。
+- runtime/event-analysis.js：拥有当前/指定 Floor 分析、Character counter 自动调度、generation/Swipe 分类、强制刷新、去重、失败保护、Floor-bound Event 提交、Event CRUD 与 Tracking Registry 重建。
 - ui/app.js：拥有页面路由、主题、overlay 生命周期和全局事件委托；只调用 Runtime Event Analysis API 并显示状态，不生产或判定 Event/Tracking 业务结果。
 - storage/schema.js / storage/store.js / storage/lifecycle.js / storage/clear.js：集中定义配置和数据保存边界、字段 ownership/domain 以及 Registry 驱动的手动/source-targeted 清除，避免 API Profile 或 Secret 进入 Chat 数据。
 - ai/analyzer.js：把模型输出解析为固定 World Model，并执行分析专用的证据边界与一致性校验。
@@ -518,7 +518,7 @@ Chat-local settings 主要包括：
 - Worldbook 列表、正文、并发加载和 generation cache 分开管理；只有展开或选中的来源才延迟读取正文。
 - 输入构建保留来源分组和 token estimate，方便在发送 AI 请求前控制资料规模。
 - Floor Version 对文本计算 SHA-256；相同楼层的成功分析不会自动重复执行，编辑内容、swipe 或版本改变才会重新分析，失败和手动刷新遵守各自的替换/保留规则。
-- 自动分析继续按 N-floor 间隔触发，UI mount/open/reopen/init 不触发 AI；真实 SillyTavern 的宿主事件、Swipe 形状和实际 AI 请求仍需人工验收。
+- 自动分析继续按有效 Character Floor counter 触发，UI mount/open/reopen/init 不触发 AI；真实 SillyTavern 的宿主事件、Swipe 形状和实际 AI 请求仍需人工验收。
 - 请求超时、主动取消和网络/5xx 重试分类明确；失败不会无界重试。
 - Chat boundary token/epoch 会拒绝过期异步读写；UI overlay、路由和主题状态由单一 App owner 管理，避免重复挂载。
 - 领域 Core 尽量使用纯函数，便于独立测试，也避免把宿主 DOM 或请求逻辑带进 reducer。
@@ -550,7 +550,7 @@ BioWeave 不提供独立用户认证、权限系统或服务端隔离能力；�
 ### Phase 2A 与后续建设
 
 - 完成 Phase 2A 的固定 Event JSON 分析、Floor/Swipe 持久化、Tracking Registry 重建以及人物/事件/总览真实 DTO 接线。
-- 在真实 SillyTavern 中验证自动 N-floor、Floor Version 去重、失败可重试、手动刷新成功替换/失败保留和宿主删除/切换语义。
+- 在真实 SillyTavern 中验证 Character counter、Floor Version 去重、失败重试/retryPaused、reroll/Swipe 分类、手动刷新成功替换/失败保留和宿主删除/切换语义。
 - 后续再完成 Event 之外的完整 State Reducer、时间/周期/妊娠确定性计算、Snapshot 恢复、Projection 管理、Genealogy 推导和 Context 注入链路。
 - 用真实 Chat 数据替换人物、事件和总览页面中的空状态；Projection/Genealogy 继续保持空状态直到各自阶段。
 - 补充真实 SillyTavern 环境下的 Desktop、Tablet、Mobile 手动验收截图。

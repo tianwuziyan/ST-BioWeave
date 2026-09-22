@@ -35,6 +35,10 @@ const LIFECYCLE_EVENTS = [
   "MESSAGE_SWIPE_DELETED",
   "MESSAGE_RECEIVED",
   "GENERATION_ENDED",
+  "GENERATION_STOPPED",
+  "GENERATION_CANCELLED",
+  "GENERATION_STARTED",
+  "CHARACTER_MESSAGE_RENDERED",
 ];
 
 const SOURCE_OWNER_LATEST_MERGE = true;
@@ -1458,6 +1462,7 @@ export function createRuntime({
     assertBioWeaveEnabled,
     setBioWeaveEnabled,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
+    getAutoAnalysisSchedulerState: eventAnalysis.getAutoAnalysisSchedulerState,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
     getCurrentCharacterIdentity: eventAnalysis.getCurrentCharacterIdentity,

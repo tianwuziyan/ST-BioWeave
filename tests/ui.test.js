@@ -2103,24 +2103,24 @@ test('World Model analysis routes success and failure feedback through semantic 
     {
       code: null,
       type: 'success',
-      message: '世界模型分析成功并已保存。',
+      message: 'BioWeave：世界分析完成',
     },
     {
       code: 'REQUEST_TIMEOUT',
       type: 'error',
-      message: '世界模型分析请求超时，上一份模型已保留。',
+      message: 'BioWeave：世界模型分析请求超时，上一份模型已保留。',
     },
     {
       code: 'REQUEST_TIMEOUT',
       diagnosticCode: 'server',
       status: 503,
       type: 'error',
-      message: '服务暂时不可用（HTTP 503），请稍后重试。 上一份模型已保留。',
+      message: 'BioWeave：服务暂时不可用（HTTP 503），请稍后重试。 上一份模型已保留。',
     },
     {
       code: 'API_PROFILE_INVALID',
       type: 'error',
-      message: '世界分析 API 配置无效，请检查 URL 和模型。',
+      message: 'BioWeave：世界分析 API 配置无效，请检查 URL 和模型。',
     },
   ]
   for (const scenario of scenarios) {
@@ -3228,6 +3228,9 @@ test('extension menu registration survives Runtime false and throw outcomes', as
   for (const outcome of ['false', 'throw']) {
     onDisable()
     const {documentRef} = createMenuDocument()
+    const toasts = []
+    documentRef.defaultView ??= {}
+    documentRef.defaultView.toastr = {error: message => toasts.push(message)}
     let destroyCalls = 0
     const runtime = {
       chat: {current: () => null},
@@ -3249,6 +3252,7 @@ test('extension menu registration survives Runtime false and throw outcomes', as
       observerCtor: null,
     })
     assert.notEqual(documentRef.getElementById('bioweave-extensions-menu-entry'), null, outcome)
+    assert.deepEqual(toasts, ['BioWeave 初始化失败，请重新加载。'], outcome)
     assert.equal(await onActivate(), await init())
     onDisable()
     assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null, outcome)

@@ -94,7 +94,9 @@ Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶�
 
 ### 生命周期与刷新
 
-页面 mount、open 和 reopen 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。Runtime 在 extension init 时绑定 SillyTavern lifecycle；即使 overlay 从未打开，`MESSAGE_RECEIVED`、`GENERATION_ENDED` 及编辑/Swipe 事件仍按 N-floor 和六字段 Floor Version 调度。相同成功版本跳过，失败可重试，手动刷新强制请求。手动刷新成功替换当前 Floor Version 的 Event，失败保留旧成功结果，但旧版本 Event 不得进入当前有效 Registry。所有 terminal branch 都必须退出 running；取消或 stale Chat 后的迟到响应只能被忽略，不能覆盖新执行或重建 Registry。
+页面 mount、open 和 reopen 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。Runtime 的 scheduler 规则、生命周期分类、retryPaused 和 force 条件统一见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)；UI 只消费状态，不自行解释 ST event 或推进 counter。
+
+自动分析的 World Full/Patch/read-back/UI-ready/Event 阶段由 Runtime business status 驱动对应页面 busy/waiting 状态；最终成功/失败经 `ui/app.js` 的共享 `notify()` bridge 转为 SillyTavern 顶部 toastr。World 页面打开与否不影响通知，World 显示仍读取同一份 Floor-owned canonical model。
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Characters、Events、Overview 都必须重新读取当前有效 Event 和 Registry；不存在事件的 Swipe 不得显示旧 Swipe 的人物或事件。
 

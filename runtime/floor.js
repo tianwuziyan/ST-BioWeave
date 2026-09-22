@@ -272,8 +272,3 @@ export function commitAnalysis(previous, attempt, version) {
     safe_error_summary: attempt?.safe_error_summary ?? null,
   };
 }
-
-export function isIntervalTarget(floor, lastFloor, interval = 3) {
-  if (interval < 1) return false;
-  return lastFloor == null ? floor >= interval : floor - lastFloor >= interval;
-}

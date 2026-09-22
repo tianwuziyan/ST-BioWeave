@@ -167,7 +167,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, onRefresh = null, contextOverrides = {}} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, contextOverrides = {}, worldModel = null} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -209,6 +209,8 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let currentBusy = analysisBusy;
   let updateCalls = 0;
   let deleteCalls = 0;
+  let worldResolveCalls = 0;
+  let enabled = true;
   const context = {chatId: 'chat-app', chat: [message], characters: [], ...contextOverrides};
   const businessData = () => ({
     tracking_subjects: trackingSubjects,
@@ -219,6 +221,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     analysis_status: {
       state: currentBusy ? 'running' : analysisState,
       busy: currentBusy,
+      phase: analysisPhase,
       current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
       floor_version: version,
       last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
@@ -243,6 +246,12 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     },
     st: {getContext: () => context, getChat: () => context.chat},
     store: {getChat: () => chat},
+    getBioWeaveEnabled: () => enabled,
+    setEnabled(value) { enabled = value !== false; },
+    async resolveWorldModelAtOrBefore() {
+      worldResolveCalls += 1;
+      return worldModel ? {model: structuredClone(worldModel), meta: {}} : null;
+    },
     collectActiveBusinessData: async () => structuredClone(businessData()),
     async refreshCurrentFloorAnalysis() {
       refreshCalls += 1;
@@ -303,6 +312,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     emit: event => runtimeListener?.(event),
     toasts: () => [...toastCalls],
     calls: () => ({refresh: refreshCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
+    worldResolveCalls: () => worldResolveCalls,
   };
 }
 
@@ -349,7 +359,7 @@ test('manual analyze action delegates to Runtime instead of the UI analyzer', as
     preventDefault() {},
   });
   assert.equal(fixture.calls().refresh, 1);
-  assert.deepEqual(fixture.toasts(), [['success', '当前楼层事件分析成功并已保存。']]);
+  assert.deepEqual(fixture.toasts(), [['success', 'BioWeave：人物分析完成']]);
   fixture.app.destroyBioWeave();
 });
 
@@ -373,7 +383,7 @@ test('manual Event Analysis shows one diagnostic error Toast and does not reject
     }),
   );
   assert.deepEqual(fixture.toasts(), [
-    ['error', '事件分析失败（请求超时：等待 3 秒后已在本地终止。本次未自动重试。），上一份有效事件已保留。'],
+    ['error', 'BioWeave：事件分析失败（请求超时：等待 3 秒后已在本地终止。本次未自动重试。），上一份有效事件已保留。'],
   ]);
   fixture.app.destroyBioWeave();
 });
@@ -381,10 +391,10 @@ test('manual Event Analysis shows one diagnostic error Toast and does not reject
 test('manual Event Analysis keeps the Runtime error object in its helper contract', () => {
   const source = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
   const helper = source.slice(source.indexOf('async function manualRefreshEventAnalysis()'), source.indexOf('async function requestAbortEventAnalysis()'));
-  assert.match(helper, /catch \(error\) \{\s*notify\(eventAnalysisError\(error\), 'error', documentRef\)\s*throw error\s*\}/);
+  assert.match(helper, /catch \(error\) \{[\s\S]*eventAnalysisError\(error\)[\s\S]*throw error\s*\}/);
 });
 
-test('background Event Analysis failures update UI state without a top error Toast', async () => {
+test('background Event Analysis failures update UI state with one top error Toast', async () => {
   const fixture = await createFixture({analysisState: 'not_analyzed'});
   fixture.emit({
     type: 'EVENT_ANALYSIS_STATUS_CHANGED',
@@ -396,6 +406,208 @@ test('background Event Analysis failures update UI state without a top error Toa
     },
   });
   await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(fixture.toasts(), [['error', 'BioWeave：分析失败：请求超时。']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('automatic World Full phase owns World busy state before Event Analysis', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'world_full'});
+  fixture.app.go('world');
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'world_full', mode: 'full', trigger: 'auto-full'},
+  });
+  const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(worldMarkup, /disabled[^>]*>分析中…</);
+  fixture.app.go('characters');
+  const charactersMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(charactersMarkup, /等待世界分析完成…/);
+  assert.doesNotMatch(charactersMarkup, /当前楼层正在分析中/);
+  fixture.app.destroyBioWeave();
+});
+
+test('WORLD_READY transition clears World busy and starts Event busy', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'world_full'});
+  fixture.app.go('world');
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'world_ui_ready', mode: 'full', trigger: 'auto-full'},
+  });
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'success', mode: 'full', trigger: 'auto-full'},
+  });
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'event_analysis', attempt: 1},
+  });
+  const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(worldMarkup, />开始分析</);
+  assert.doesNotMatch(worldMarkup, /分析中…/);
+  fixture.app.go('characters');
+  const charactersMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(charactersMarkup, /当前楼层正在分析中/);
+  assert.match(charactersMarkup, /分析中…/);
+  fixture.app.destroyBioWeave();
+});
+
+test('automatic World Patch phase uses the patch button and keeps Characters waiting', async () => {
+  const worldModel = {schema_version: 1, species: [{name: '人类', biological_types: []}], exceptions: [], unknowns: []};
+  const fixture = await createFixture({worldModel, analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'world_patch'});
+  fixture.app.go('world');
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'world_patch', mode: 'patch', trigger: 'auto-patch'},
+  });
+  const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.match(worldMarkup, /disabled[^>]*>补充中…</);
+  assert.doesNotMatch(worldMarkup, /disabled[^>]*>分析中…</);
+  fixture.app.go('characters');
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /等待世界分析完成…/);
+  fixture.app.destroyBioWeave();
+});
+
+test('World Reuse skips World busy and enters Event phase directly', async () => {
+  const worldModel = {schema_version: 1, species: [{name: '人类', biological_types: []}], exceptions: [], unknowns: []};
+  const fixture = await createFixture({worldModel, analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'event_analysis'});
+  fixture.app.go('world');
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'event_analysis', attempt: 1, reason: 'automatic'},
+  });
+  const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.doesNotMatch(worldMarkup, /分析中…|补充中…/);
+  fixture.app.go('characters');
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /当前楼层正在分析中/);
+  fixture.app.destroyBioWeave();
+});
+
+test('World failure never changes Characters into Event busy state', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'world_full'});
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'world_full', mode: 'full', trigger: 'auto-full'},
+  });
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'failed', mode: 'full', trigger: 'auto-full', error_code: 'WORLD_FAILED'},
+  });
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'failed', phase: 'world_full', error_code: 'WORLD_MODEL_UNAVAILABLE'},
+  });
+  fixture.app.go('characters');
+  const charactersMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.doesNotMatch(charactersMarkup, /当前楼层正在分析中/);
+  fixture.app.destroyBioWeave();
+});
+
+test('duplicate World phase events do not change the mapped busy state', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed', analysisPhase: 'world_readback'});
+  fixture.app.go('world');
+  const phase = {
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {state: 'running', phase: 'world_readback', mode: 'full', trigger: 'auto-full'},
+  };
+  fixture.emit(phase);
+  const first = fixture.root.querySelector('.bioweave-main').innerHTML;
+  fixture.emit(phase);
+  const second = fixture.root.querySelector('.bioweave-main').innerHTML;
+  assert.equal(second, first);
+  fixture.app.destroyBioWeave();
+});
+
+test('automatic analysis terminal status shows one success Toast even when repeated', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
+  const terminal = {
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {
+      state: 'success',
+      attempt: 4,
+      reason: 'CHARACTER_MESSAGE_RENDERED',
+      world_resolution: 'full',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'hash', message_version: 'v1:hash'},
+    },
+  };
+  fixture.emit(terminal);
+  fixture.emit(terminal);
+  assert.deepEqual(fixture.toasts(), [['success', 'BioWeave：世界与人物分析完成']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('automatic World UI-ready failure shows one hard-gate Toast and no Event success', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
+  const event = {
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {
+      state: 'failed',
+      trigger: 'auto-full',
+      error_code: 'WORLD_MODEL_UI_NOT_READY',
+      error_stage: 'world_view_model',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'world-fail', message_version: 'v1:world-fail'},
+    },
+  };
+  fixture.emit(event);
+  fixture.emit(event);
+  assert.deepEqual(fixture.toasts(), [['error', 'BioWeave：世界数据未能正常显示，已停止人物分析']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('World status refreshes the open World page and closed panels do not suppress Toasts', async () => {
+  const worldModel = {schema_version: 1, species: [{name: '人类', biological_types: []}], exceptions: [], unknowns: []};
+  const fixture = await createFixture({worldModel});
+  fixture.app.go('world');
+  const before = fixture.worldResolveCalls();
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {
+      state: 'success',
+      trigger: 'auto-full',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'world', message_version: 'v1:world'},
+    },
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(fixture.worldResolveCalls() > before);
+  fixture.app.closeBioWeave();
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {
+      state: 'success',
+      attempt: 1,
+      reason: 'CHARACTER_MESSAGE_RENDERED',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'closed', message_version: 'v1:closed'},
+    },
+  });
+  assert.deepEqual(fixture.toasts(), [['success', 'BioWeave：分析完成']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('disabled BioWeave ignores late terminal status Toasts', async () => {
+  const fixture = await createFixture({analysisState: 'not_analyzed'});
+  fixture.runtime.setEnabled(false);
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    payload: {
+      state: 'success',
+      attempt: 1,
+      reason: 'CHARACTER_MESSAGE_RENDERED',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'late', message_version: 'v1:late'},
+    },
+  });
   assert.deepEqual(fixture.toasts(), []);
   fixture.app.destroyBioWeave();
 });

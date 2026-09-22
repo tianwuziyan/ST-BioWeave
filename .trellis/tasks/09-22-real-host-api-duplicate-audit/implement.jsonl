@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor Version、active Swipe、immutable historical Floor、前向持久化与 stale ownership 约束"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"World/Analysis/Floor 派生数据的生命周期、清理与异步失效规则"}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Full/Patch/Reuse、验证、持久化与 UI 读取边界"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event typed payload、canonical validation、identity 与 persistence 边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨 runtime、AI、storage、UI 调用链审计方法"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有 resolver、single-flight、storage abstraction，避免旁路实现"}
+{"file":"AGENTS.md","reason":"仓库授权、文件编辑、生命周期与文档同步规则"}

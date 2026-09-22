@@ -474,6 +474,8 @@ test("runtime uses official eventTypes and removes listeners on destroy", async 
     MESSAGE_SWIPE_DELETED: "swipe-deleted",
     MESSAGE_RECEIVED: "received",
     GENERATION_ENDED: "ended",
+    GENERATION_STARTED: "started",
+    CHARACTER_MESSAGE_RENDERED: "rendered",
   };
   const adapter = {
     getChatId: () => "chat-a",
@@ -483,7 +485,7 @@ test("runtime uses official eventTypes and removes listeners on destroy", async 
   const events = [];
   runtime.subscribe((event) => events.push(event));
   assert.equal(await runtime.init(), true);
-  assert.equal(registered.size, 8);
+  assert.equal(registered.size, 10);
   registered.get("edited")({ message_id: 0 });
   assert.equal(events.at(-1).type, "MESSAGE_EDITED");
   runtime.destroy();

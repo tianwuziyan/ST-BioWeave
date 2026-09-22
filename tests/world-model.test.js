@@ -487,6 +487,26 @@ test('World Model Patch prompt requires sparse add/update output and forbids imp
   assert.match(prompt, /不支持 remove、invalidate/)
 })
 
+test('World Model Patch analyzer accepts fenced JSON without relaxing the patch schema', async () => {
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      generateRaw: () => '```json\n{"schema_version":1,"add":{},"update":{}}\n```',
+    }),
+  })
+  const patch = await analyzer.analyzeWorldModelPatch({ analysisInput: {} })
+  assert.deepEqual(patch, { schema_version: 1, add: {}, update: {} })
+  await assert.rejects(
+    createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({
+        generateRaw: () => '```json\n{"schema_version":1,"add":{},"update":{},"remove":{}}\n```',
+      }),
+    }).analyzeWorldModelPatch({ analysisInput: {} }),
+    error => error?.code === 'WORLD_MODEL_PATCH_INVALID',
+  )
+})
+
 test('World Model strict parser enforces canonical list shapes with diagnostics', () => {
   const canonical = parseWorldModelResponse(JSON.stringify(modelFixture))
   assert.deepEqual(canonical.exceptions, modelFixture.exceptions)

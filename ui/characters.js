@@ -41,6 +41,7 @@ const eventStatusLabels = {
   negated: '已否定',
   fictional: '虚构',
 }
+const WORLD_ANALYSIS_PHASES = new Set(['world_full', 'world_patch', 'world_readback', 'world_ui_ready'])
 function escapeHtml(value) {
   return String(value ?? '').replace(
     /[&<>"']/g,
@@ -351,6 +352,9 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
   const emptyState =
     status.state === 'not_analyzed'
       ? '<div class="bioweave-card bioweave-empty"><b>尚未完成事件分析。</b>' + '<p>完成当前楼层分析后，符合追踪条件的角色会显示在这里。</p></div>'
+      : status.state === 'running' && WORLD_ANALYSIS_PHASES.has(status.phase)
+        ? '<div class="bioweave-card bioweave-empty"><b>等待世界分析完成…</b>' +
+          '<p>世界模型就绪后才会开始人物与事件分析。</p></div>'
       : status.state === 'running'
         ? '<div class="bioweave-card bioweave-empty"><b>当前楼层正在分析中。</b>' +
           '<p>分析完成后将更新 BiologicalEvent 与 Tracking Subject。</p></div>'

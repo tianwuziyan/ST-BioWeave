@@ -1,0 +1,7 @@
+{"file":"AGENTS.md","reason":"最终检查必须验证项目级数据所有权、文档同步、禁止兼容路径和测试授权"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查所有 API/事实仍来自当前有效 Floor/Swipe，counter 不成为第二事实源"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查生命周期失效、删除、Swipe、Chat switch、stale persistence 与 Runtime transient 语义"}
+{"file":".trellis/spec/domain/world-model.md","reason":"检查 World hard dependency、Full/Patch/Reuse、失败不污染历史 World"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"检查 Character/Event validation、persistence、single-flight 与 provenance"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"质量检查跨事件、调度、Floor、AI、持久化和测试的契约一致性"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"质量检查 dead-code cleanup 未误删仍需保留的基础设施"}

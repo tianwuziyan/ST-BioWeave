@@ -1,0 +1,7 @@
+{"file":"AGENTS.md","reason":"项目级授权、Floor ownership、生命周期、UI/文档同步和安全边界"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Character Floor only、六字段 Floor Version、active Swipe、previous、stale、last_processed_floor hint 与测试契约"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Runtime transient state、World/analysis persistence、mutation invalidation 与 async owner/epoch 约束"}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Full/Patch/Reuse、World Model 与 Character/Event 的业务边界和 fail-closed 要求"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Character/Event analysis input、World hard prerequisite、single-flight 与 Event persistence 约束"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨 Host lifecycle、Runtime scheduler、Floor storage、AI chain、tests、docs，需要跨层审计"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"删除旧 scheduler helper 前确认 Floor/Version/single-flight 基础设施仍有合法用途"}

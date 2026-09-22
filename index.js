@@ -1,5 +1,5 @@
 import {createRuntime} from './runtime/events.js';
-import {createApp} from './ui/app.js';
+import {createApp, notify} from './ui/app.js';
 import {registerHostEntry} from './host-entry.js';
 import {registerFloatingLauncher} from './floating-launcher.js';
 
@@ -47,10 +47,12 @@ export async function init({
     if (!initialized) {
       runtime.recordActivityError?.('BIOWEAVE_RUNTIME_INIT_INCOMPLETE');
       console.warn('[BioWeave] Runtime initialization did not complete');
+      notify('BioWeave 初始化失败，请重新加载。', 'error', documentRef);
     }
   } catch (error) {
     runtime.recordActivityError?.(error);
     console.error('[BioWeave] Runtime initialization failed', error);
+    notify('BioWeave 初始化失败，请重新加载。', 'error', documentRef);
   }
   return instance;
 }

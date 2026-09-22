@@ -1348,6 +1348,29 @@ export function normalizeStoredWorldModel(raw, { strict = false } = {}) {
   return normalizeWorldModel(raw, { strict, allowGeneratedProjectionRuleIds: true });
 }
 
+// The World page and the Runtime hard gate share this canonical read model.
+// A structurally valid but empty model is not ready for Character/Event use.
+export function buildWorldModelViewModel(raw) {
+  let model;
+  try {
+    model = normalizeStoredWorldModel(raw);
+  } catch (cause) {
+    const error = new Error('WORLD_MODEL_UI_NOT_READY');
+    error.code = 'WORLD_MODEL_UI_NOT_READY';
+    error.analysis_stage = 'world_view_model';
+    error.cause = cause;
+    throw error;
+  }
+  if (!Array.isArray(model.species) || model.species.length === 0) {
+    const error = new Error('WORLD_MODEL_UI_NOT_READY');
+    error.code = 'WORLD_MODEL_UI_NOT_READY';
+    error.analysis_stage = 'world_ui_ready';
+    error.diagnostic_code = 'WORLD_MODEL_EMPTY_SPECIES';
+    throw error;
+  }
+  return {model};
+}
+
 function responseText(raw) {
   if (typeof raw === 'string') return raw;
   if (!raw || typeof raw !== 'object') return '';
@@ -2951,12 +2974,20 @@ export function createAnalyzer({
       worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
     )
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
-    const text = responseText(raw).trim()
-    let parsed
-    try {
-      parsed = JSON.parse(text)
-    } catch (cause) {
-      throw invalidWorldModelPatch('WORLD_MODEL_PATCH_JSON_INVALID', { cause })
+    let parsed = null
+    let lastParseError = null
+    for (const candidate of jsonCandidates(responseText(raw))) {
+      try {
+        parsed = JSON.parse(candidate)
+        break
+      } catch (cause) {
+        lastParseError = cause
+      }
+    }
+    if (!parsed) {
+      throw invalidWorldModelPatch('WORLD_MODEL_PATCH_JSON_INVALID', {
+        cause: lastParseError ?? new Error('invalid JSON'),
+      })
     }
     return validateWorldModelPatch(parsed)
   }

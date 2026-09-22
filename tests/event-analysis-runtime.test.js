@@ -82,6 +82,7 @@ function createFixture({
   saveChatMetadataErrorAt = 0,
   saveChatResponse = undefined,
   saveChatError = null,
+  notify = null,
 } = {}) {
   const listeners = new Map();
   const context = {
@@ -105,6 +106,10 @@ function createFixture({
       MESSAGE_SWIPE_DELETED: "message-swipe-deleted",
       MESSAGE_RECEIVED: "message-received",
       GENERATION_ENDED: "generation-ended",
+      GENERATION_STOPPED: "generation-stopped",
+      GENERATION_CANCELLED: "generation-cancelled",
+      GENERATION_STARTED: "generation-started",
+      CHARACTER_MESSAGE_RENDERED: "character-message-rendered",
     },
     eventSource: {
       on(type, listener) {
@@ -201,9 +206,9 @@ function createFixture({
     analyzeWorldModel:
       analyzer?.analyzeWorldModel ??
       (rawApiResponse !== null
-        ? async () => normalizeWorldModel({ schema_version: 1, species: [] })
+        ? async () => normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] })
         : configuredAnalyzer.analyzeWorldModel ??
-          (async () => normalizeWorldModel({ schema_version: 1, species: [] }))),
+          (async () => normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] }))),
     analyzeWorldModelPatch:
       analyzer?.analyzeWorldModelPatch ??
       (rawApiResponse !== null
@@ -217,6 +222,7 @@ function createFixture({
       ? { characterContextResolver }
       : {}),
     analyzer: runtimeAnalyzer,
+    notify: notify ?? (() => {}),
     storyTimeDebug,
     storyTimeTrace,
   });
@@ -1601,6 +1607,27 @@ test("analysis status exposes running state and attempt while the analyzer is bu
   fixture.runtime.destroy();
 });
 
+test("World-first analysis publishes explicit World and Event UI phases", async () => {
+  const statuses = [];
+  const fixture = createFixture();
+  fixture.runtime.subscribe(event => statuses.push(event));
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true, reason: "automatic"});
+  const worldPhases = statuses
+    .filter(event => event.type === "WORLD_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "running")
+    .map(event => event.payload.phase);
+  const eventPhases = statuses
+    .filter(event => event.type === "EVENT_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "running")
+    .map(event => event.payload.phase ?? null);
+  assert.deepEqual(worldPhases, ["world_full", "world_readback", "world_ui_ready"]);
+  assert.deepEqual(eventPhases, [null, "event_analysis"]);
+  assert.equal(
+    statuses.filter(event => event.type === "EVENT_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "success").length,
+    1,
+  );
+  fixture.runtime.destroy();
+});
+
 test("successful Floor skips non-force analysis and force success replaces Events", async () => {
   const fixture = createFixture();
   await fixture.runtime.init();
@@ -2938,16 +2965,584 @@ test("stale Floor Version does not expose old analysis status metadata", async (
   fixture.runtime.destroy();
 });
 
-test("Runtime lifecycle performs interval analysis without any UI subscriber", async () => {
+test("Runtime lifecycle counts only rendered Character Floors", async () => {
   const fixture = createFixture({ floor: 3 });
   await fixture.runtime.init();
-  fixture.emit("message-received", { message_id: "message-stable" });
+  fixture.context.chat[0].content = "角色回复 1";
+  fixture.emit("character-message-rendered", { message_id: "message-stable" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  fixture.context.chat.push({ message_id: "message-next", floor: 4, content: "角色回复 2", role: "assistant" });
+  fixture.emit("character-message-rendered", { message_id: "message-next" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  fixture.context.chat.push({ message_id: "message-third", floor: 5, content: "角色回复 3", role: "assistant" });
+  fixture.emit("character-message-rendered", { message_id: "message-third" });
   await settle();
   assert.equal(fixture.calls(), 1);
-  fixture.emit("generation-ended", { message_id: "message-stable" });
+  fixture.emit("message-received", { message_id: "message-next" });
+  fixture.emit("generation-ended", { message_id: "message-next" });
   await settle();
   assert.equal(fixture.calls(), 1);
   fixture.runtime.destroy();
+});
+
+function configureScheduler(fixture, { interval = 2, retry = true } = {}) {
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: { chat_id: "chat-runtime" },
+    settings: {
+      analysis_interval: interval,
+      retry_failed_analysis: retry,
+    },
+  };
+}
+
+function appendCharacter(fixture, messageId, floor, content = messageId) {
+  fixture.context.chat.push({
+    message_id: messageId,
+    floor,
+    content,
+    role: "assistant",
+  });
+  fixture.emit("character-message-rendered", { message_id: messageId });
+}
+
+test("Character counter ignores User Floors and ordinary edits", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "character-1", floor: 2, content: "一", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 2 });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "character-1" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  const before = fixture.runtime.getAutoAnalysisSchedulerState();
+  fixture.context.chat.push({ message_id: "user-1", floor: 3, content: "用户", role: "user" });
+  fixture.emit("message-received", { message_id: "user-1" });
+  fixture.context.chat[0].content = "一（编辑）";
+  fixture.emit("message-edited", { message_id: "character-1" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, before.counter);
+  fixture.runtime.destroy();
+});
+
+test("ordinary MESSAGE_UPDATED never forces analysis", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "updated-character", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  fixture.context.chat[0].content = "更新正文";
+  fixture.emit("message-updated", { message_id: "updated-character" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("normal generation uses Character counter, while regenerate forces once", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "generation-character", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 2 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", "normal");
+  fixture.context.chat[0].content = "普通生成正文";
+  fixture.emit("character-message-rendered", { message_id: "generation-character" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "generation-character" });
+  fixture.emit("character-message-rendered", { message_id: "generation-character" });
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "generation-character" });
+  fixture.context.chat[0].content = "重新生成正文";
+  fixture.emit("character-message-rendered", { message_id: "generation-character" });
+  await settle();
+  assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("real ST reroll order uses positional generation type and renders after GENERATION_ENDED", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "real-reroll", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 99 });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", "regenerate");
+  fixture.emit("generation-ended", 1);
+  fixture.context.chat[0].content = "真实重新生成后的正文";
+  fixture.emit("character-message-rendered", 0, "regenerate");
+  await settle();
+
+  assert.equal(fixture.calls(), 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+  fixture.runtime.destroy();
+});
+
+test("one reroll lifecycle consumes later duplicate CMRs even when streaming changes the Floor Version", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "streaming-reroll", floor: 1, content: "原文", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1, retry: true });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", "regenerate");
+  fixture.context.chat[0].content = "重新生成中的正文";
+  fixture.emit("generation-ended", 1);
+  fixture.emit("character-message-rendered", 0, "regenerate");
+  await settle();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 1);
+
+  fixture.context.chat[0].content = "重新生成最终正文";
+  fixture.emit("character-message-rendered", 0, "regenerate");
+  await settle();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().completedGeneration !== null, true);
+  fixture.runtime.destroy();
+});
+
+test("real ST swipe generation waits for the new Swipe Floor Version", async () => {
+  const message = {
+    message_id: "real-swipe",
+    floor: 1,
+    swipe_id: 0,
+    swipes: ["原 Swipe"],
+    swipe_info: [{}],
+    role: "assistant",
+  };
+  const fixture = createFixture({ messages: [message] });
+  configureScheduler(fixture, { interval: 99 });
+  await fixture.runtime.init();
+
+  message.swipe_id = 1;
+  message.swipes.push("...");
+  message.swipe_info.push({});
+  fixture.emit("message-swiped", 0);
+  await settle();
+  fixture.emit("generation-started", "swipe");
+  await settle();
+  assert.ok(fixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration);
+  fixture.emit("generation-ended", 1);
+  await settle();
+  message.swipes[1] = "新 Swipe 正文";
+  fixture.emit("character-message-rendered", 0);
+  await settle();
+
+  assert.equal(fixture.calls(), 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration, null);
+  fixture.runtime.destroy();
+});
+
+test("generation intent without a new Floor Version is consumed without analysis", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "unchanged-reroll", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 99 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", "regenerate");
+  fixture.emit("generation-ended", 1);
+  fixture.emit("character-message-rendered", 0);
+  await settle();
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+  fixture.runtime.destroy();
+});
+
+test("existing Swipe reuse makes no API call, pending Swipe generation analyzes once", async () => {
+  const message = {
+    message_id: "swipe-scheduler",
+    floor: 1,
+    swipe_id: 0,
+    swipes: ["已分析", "新生成"],
+    swipe_info: [{}, {}],
+    role: "assistant",
+  };
+  const fixture = createFixture({ messages: [message] });
+  configureScheduler(fixture, { interval: 2 });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const callsBeforeSwitch = fixture.calls();
+  message.swipe_id = 0;
+  fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 0 });
+  await settle();
+  assert.equal(fixture.calls(), callsBeforeSwitch);
+  message.swipe_id = 1;
+  fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1 });
+  await settle();
+  assert.equal(fixture.calls(), callsBeforeSwitch);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true });
+  fixture.context.chat[0].swipes[1] = "新生成定型";
+  fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
+  await settle();
+  assert.equal(fixture.calls(), callsBeforeSwitch + 1);
+  fixture.runtime.destroy();
+});
+
+test("stopped or cancelled generation clears an unrendered reroll intent", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "cancelled-reroll", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  for (const terminalType of ["generation-stopped", "generation-cancelled"]) {
+    fixture.emit("generation-started", {
+      genType: "regenerate",
+      message_id: "cancelled-reroll",
+    });
+    await settle();
+    assert.ok(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration);
+    fixture.emit(terminalType, { message_id: "cancelled-reroll" });
+    await settle();
+    assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+    fixture.emit("character-message-rendered", { message_id: "cancelled-reroll" });
+    await settle();
+    assert.equal(fixture.calls(), 0);
+  }
+  fixture.runtime.destroy();
+
+  const swipeMessage = {
+    message_id: "cancelled-swipe",
+    floor: 1,
+    swipe_id: 0,
+    swipes: ["已有 Swipe", "未定型 Swipe"],
+    swipe_info: [{}, {}],
+    role: "assistant",
+  };
+  const swipeFixture = createFixture({ messages: [swipeMessage] });
+  configureScheduler(swipeFixture, { interval: 1 });
+  await swipeFixture.runtime.init();
+  swipeMessage.swipe_id = 1;
+  swipeFixture.emit("message-swiped", {
+    message_id: "cancelled-swipe",
+    swipe_id: 1,
+    pendingGeneration: true,
+  });
+  await settle();
+  assert.ok(swipeFixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration);
+  swipeFixture.emit("generation-cancelled", { message_id: "cancelled-swipe", swipe_id: 1 });
+  await settle();
+  assert.equal(swipeFixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration, null);
+  swipeFixture.emit("character-message-rendered", { message_id: "cancelled-swipe", swipe_id: 1 });
+  await settle();
+  assert.equal(swipeFixture.calls(), 0);
+  swipeFixture.runtime.destroy();
+});
+
+test("retry=true keeps counter full and retries on the next Character Floor", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        calls += 1;
+        if (calls === 1) throw new Error("AUTO_FAILED");
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "retry-1", floor: 1, content: "一", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: true });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "retry-1" });
+  await settle();
+  assert.equal(calls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, false);
+  appendCharacter(fixture, "retry-2", 2);
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  fixture.runtime.destroy();
+});
+
+test("retry=false pauses automatic retry until Manual Refresh succeeds", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        calls += 1;
+        if (calls < 3) throw new Error("AUTO_FAILED");
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "paused-1", floor: 1, content: "一", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: false });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "paused-1" });
+  await settle();
+  assert.equal(calls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
+  fixture.context.chat[0].content = "普通编辑";
+  fixture.emit("message-edited", { message_id: "paused-1" });
+  appendCharacter(fixture, "paused-2", 2);
+  await settle();
+  assert.equal(calls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /AUTO_FAILED/u);
+  assert.equal(calls, 2);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(calls, 3);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, false);
+  fixture.runtime.destroy();
+});
+
+test("paused reroll success clears the due state", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        calls += 1;
+        if (calls === 1) throw new Error("AUTO_FAILED");
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "paused-reroll", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: false });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "paused-reroll" });
+  await settle();
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "paused-reroll" });
+  fixture.context.chat[0].content = "重新生成";
+  fixture.emit("character-message-rendered", { message_id: "paused-reroll" });
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, false);
+  fixture.runtime.destroy();
+});
+
+test("paused reroll failure remains paused", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: { async analyzeFloor() { calls += 1; throw new Error("REROLL_FAILED"); } },
+    messages: [{ message_id: "paused-reroll-failed", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: false });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "paused-reroll-failed" });
+  await settle();
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "paused-reroll-failed" });
+  fixture.context.chat[0].content = "重新生成失败";
+  fixture.emit("character-message-rendered", { message_id: "paused-reroll-failed" });
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
+  fixture.runtime.destroy();
+});
+
+test("retryPaused ignores User, edit, update, and delete lifecycle signals", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    analyzer: { async analyzeFloor() { calls += 1; throw new Error("PAUSED_FAILED"); } },
+    messages: [{ message_id: "paused-signals", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: false });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "paused-signals" });
+  await settle();
+  fixture.context.chat[0].content = "编辑正文";
+  fixture.emit("message-edited", { message_id: "paused-signals" });
+  fixture.emit("message-updated", { message_id: "paused-signals" });
+  fixture.context.chat.push({ message_id: "paused-user", floor: 2, content: "用户", role: "user" });
+  fixture.emit("message-received", { message_id: "paused-user" });
+  fixture.emit("message-deleted", { message_id: "paused-user" });
+  await settle();
+  assert.equal(calls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
+  fixture.runtime.destroy();
+});
+
+test("World failure makes zero Character/Event API calls and retries the full World chain", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        if (worldCalls === 1) throw new Error("WORLD_FAILED");
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "world-retry-1", floor: 1, content: "一", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: true });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "world-retry-1" });
+  await settle();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
+  appendCharacter(fixture, "world-retry-2", 2);
+  await settle();
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 1);
+  fixture.runtime.destroy();
+});
+
+test("World persistence without a renderable UI model blocks Character/Event analysis", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "world-ui-not-ready", floor: 1, content: "空世界", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: false });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
+    error => error?.code === "WORLD_MODEL_UI_NOT_READY",
+  );
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.runtime.store.getFloor(0).world_model.species.length, 0);
+  fixture.runtime.destroy();
+});
+
+test("Character/Event failure preserves the prior World and retries with World reuse", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "World A" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        if (eventCalls === 1) throw new Error("EVENT_FAILED");
+        return { events: [] };
+      },
+    },
+    messages: [{ message_id: "event-retry-1", floor: 1, content: "一", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1, retry: true });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "event-retry-1" });
+  await settle();
+  const firstWorld = fixture.runtime.store.getFloor(0).world_model;
+  appendCharacter(fixture, "event-retry-2", 2);
+  await settle();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, firstWorld);
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({ __messageIndex: true, index: 1 })).model,
+    firstWorld,
+  );
+  fixture.runtime.destroy();
+});
+
+test("World Patch failure retries Patch resolution on the next Character Floor", async () => {
+  let patchCalls = 0;
+  let eventCalls = 0;
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "World A" }] });
+  const fixture = createFixture({
+    messages: [
+      { message_id: "patch-owner", floor: 1, content: "已有世界", role: "assistant" },
+      { message_id: "patch-failed", floor: 2, content: "新增世界规则：失败一次", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        if (patchCalls === 1) throw new Error("PATCH_FAILED");
+        return { schema_version: 1, add: {}, update: {} };
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1, retry: true });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({
+      chatId: "chat-runtime",
+      messageId: "patch-owner",
+      floor: 1,
+      text: "已有世界",
+    }),
+    world_model: worldA,
+  });
+  fixture.emit("character-message-rendered", { message_id: "patch-failed" });
+  await settle();
+  assert.equal(patchCalls, 1);
+  assert.equal(eventCalls, 0);
+  appendCharacter(fixture, "patch-retry", 3, "新增世界规则：再次尝试");
+  await settle();
+  assert.equal(patchCalls, 2);
+  assert.equal(eventCalls, 1);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
+  fixture.runtime.destroy();
+});
+
+test("scheduler dedupe state stays bounded and resets at Chat/destroy boundaries", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "bounded-scheduler-0", floor: 0, content: "零", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1000 });
+  await fixture.runtime.init();
+  let state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 0);
+  assert.equal(state.countedFloorKeys.length, 0);
+  assert.equal(state.observedFloorKeys.length, 0);
+  fixture.emit("character-message-rendered", { message_id: "bounded-scheduler-0" });
+  for (let index = 1; index <= 200; index += 1)
+    appendCharacter(fixture, `bounded-scheduler-${index}`, index, `内容${index}`);
+  await settle();
+  state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(fixture.calls(), 0);
+  assert.ok(state.countedFloorKeys.length <= 128);
+  assert.ok(state.observedFloorKeys.length <= 128);
+  fixture.context.chatId = "chat-runtime-b";
+  fixture.context.chat = [{ message_id: "chat-b-floor", floor: 1, content: "B", role: "assistant" }];
+  fixture.emit("chat-changed", { chatId: "chat-runtime-b" });
+  await settle();
+  state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 0);
+  assert.equal(state.countedFloorKeys.length, 0);
+  assert.equal(state.observedFloorKeys.length, 0);
+  fixture.runtime.destroy();
+  state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 0);
+  assert.equal(state.countedFloorKeys.length, 0);
+  assert.equal(state.observedFloorKeys.length, 0);
 });
 
 test("repeated lifecycle notifications share one World-first analysis Job", async () => {
@@ -2962,7 +3557,7 @@ test("repeated lifecycle notifications share one World-first analysis Job", asyn
   });
   let worldCalls = 0;
   let eventCalls = 0;
-  const worldModel = normalizeWorldModel({ schema_version: 1, species: [] });
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
   const fixture = createFixture({
     analyzer: {
       async analyzeWorldModel() {
@@ -2983,7 +3578,9 @@ test("repeated lifecycle notifications share one World-first analysis Job", asyn
   });
   await fixture.runtime.init();
 
-  fixture.emit("message-received", { message_id: "message-stable" });
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "message-stable" });
+  fixture.context.chat[0].content = "重新生成后的正文";
+  fixture.emit("character-message-rendered", { message_id: "message-stable" });
   await worldStarted;
   fixture.emit("generation-ended", { message_id: "message-stable" });
   fixture.emit("message-updated", { message_id: "message-stable" });
@@ -3032,11 +3629,13 @@ test("active Swipe switching selects isolated authoritative Floor Versions", asy
   };
   const fixture = createFixture({ messages: [message] });
   await fixture.runtime.init();
-  fixture.emit("message-received", { message_id: "message-swipe" });
+  await fixture.runtime.refreshCurrentFloorAnalysis();
   await settle();
   const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
   message.swipe_id = 1;
-  fixture.emit("message-swiped", { message_id: "message-swipe" });
+  fixture.emit("generation-started", { message_id: "message-swipe", swipe_id: 1 });
+  fixture.emit("message-swiped", { message_id: "message-swipe", swipe_id: 1, pendingGeneration: true });
+  fixture.emit("character-message-rendered", { message_id: "message-swipe", swipe_id: 1 });
   await settle();
   const events = await fixture.runtime.getCurrentFloorEvents();
   assert.equal(events.length, 1);
@@ -3427,7 +4026,9 @@ test("previous API state follows the active Swipe owner after switching", async 
         fixture.runtime.store.getActiveFloor(0).events[0].event_id;
 
       message.swipe_id = 1;
-      fixture.emit("message-swiped", { message_id: message.message_id });
+      fixture.emit("generation-started", { message_id: message.message_id, swipe_id: 1 });
+      fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true });
+      fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
       await settle();
       const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
       assert.equal(swipeBEvents.length, 1);
@@ -3562,7 +4163,7 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
     adapter: fixture.runtime.st,
     analyzer: {
       async analyzeWorldModel() {
-        return normalizeWorldModel({ schema_version: 1, species: [] });
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
       },
       async analyzeWorldModelPatch() {
         return { schema_version: 1, add: {}, update: {} };
@@ -3703,7 +4304,9 @@ test("stable lifecycle message IDs are not confused with array indexes", async (
     ],
   });
   await fixture.runtime.init();
-  fixture.emit("message-received", { message_id: "0" });
+  configureScheduler(fixture, { interval: 1 });
+  fixture.emit("generation-started", { message_id: "0" });
+  fixture.emit("character-message-rendered", { message_id: "0" });
   await settle();
   assert.equal(
     fixture.runtime.store.getFloor(0).analysis.floor_version.message_id,
@@ -4068,43 +4671,20 @@ test("chat invalidation aborts in-flight Event analysis before a stale request c
   fixture.runtime.destroy();
 });
 
-test("automatic interval scheduling recomputes a stale last_processed_floor hint", async () => {
+test("automatic scheduling uses the Runtime Character counter instead of physical Floor hints", async () => {
   const fixture = createFixture({
     messages: [
-      {
-        message_id: "message-3",
-        floor: 3,
-        content: "已有分析楼层",
-        role: "assistant",
-      },
-      {
-        message_id: "message-6",
-        floor: 6,
-        content: "需要分析楼层",
-        role: "assistant",
-      },
+      { message_id: "message-3", floor: 3, content: "角色一", role: "assistant" },
+      { message_id: "message-4", floor: 4, content: "角色二", role: "assistant" },
+      { message_id: "message-6", floor: 6, content: "角色三", role: "assistant" },
     ],
   });
   await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "message-3" });
   await settle();
-  const ownerVersion = await floorVersion({
-    chatId: "chat-runtime",
-    messageId: "message-3",
-    floor: 3,
-    swipeId: 0,
-    text: "已有分析楼层",
-  });
-  await fixture.runtime.store.saveFloor(0, 0, {
-    analysis: { status: "success", floor_version: ownerVersion },
-    events: [],
-  });
-  const chat = fixture.runtime.store.getChat("chat-runtime");
-  await fixture.runtime.store.saveChat("chat-runtime", {
-    ...chat,
-    index: { ...(chat.index ?? {}), last_processed_floor: 999 },
-  });
-
-  fixture.emit("message-received", { message_id: "message-6" });
+  fixture.emit("character-message-rendered", { message_id: "message-4" });
+  await settle();
+  fixture.emit("character-message-rendered", { message_id: "message-6" });
   await settle();
   assert.equal(fixture.calls(), 1);
   fixture.runtime.destroy();
@@ -4980,7 +5560,9 @@ test("active Swipe Story Time is resolved from the active Character Floor only",
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal((await fixture.runtime.getCurrentBiologicalState()).current_story_time.day_index, null);
   message.swipe_id = 1;
-  fixture.emit("message-swiped", {message_id: message.message_id});
+  fixture.emit("generation-started", {message_id: message.message_id, swipe_id: 1});
+  fixture.emit("message-swiped", {message_id: message.message_id, swipe_id: 1, pendingGeneration: true});
+  fixture.emit("character-message-rendered", {message_id: message.message_id, swipe_id: 1});
   await settle();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal((await fixture.runtime.getCurrentBiologicalState()).current_story_time.day_index, null);
@@ -5012,8 +5594,7 @@ test("Runtime State read follows the active Swipe and never persists Current Sta
   assert.equal(stateA.current_state.processed_event_ids.length, 1);
 
   message.swipe_id = 1;
-  fixture.emit("message-swiped", { message_id: message.message_id });
-  await settle();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
   const stateB = await fixture.runtime.getCurrentBiologicalState();
   assert.equal(stateB.current_state.processed_event_ids.length, 1);
   assert.notDeepEqual(
@@ -5446,7 +6027,7 @@ test("disabling an in-flight analysis prevents its late response from committing
   const fixture = createFixture({
     analyzer: {
       async analyzeWorldModel() {
-        return normalizeWorldModel({schema_version: 1, species: []});
+        return normalizeWorldModel({schema_version: 1, species: [{ name: "人类", biological_types: [] }]});
       },
       async analyzeFloor() {
         await started;

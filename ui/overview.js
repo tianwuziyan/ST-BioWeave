@@ -67,10 +67,12 @@ function recordValue(value) {
 export function normalizeAnalysisStatus(value = null) {
   const source = recordValue(value)
   const state = ANALYSIS_STATES.has(source.state) ? source.state : 'not_analyzed'
+  const phase = String(source.phase ?? '').trim()
   return {
     ...source,
     state,
-    busy: source.busy === true || state === 'running',
+    phase: phase || null,
+    busy: source.busy === true && (!phase || phase === 'event_analysis'),
   }
 }
 

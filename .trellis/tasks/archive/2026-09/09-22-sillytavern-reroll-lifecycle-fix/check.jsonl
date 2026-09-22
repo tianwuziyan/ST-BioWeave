@@ -1,0 +1,6 @@
+{"file": "runtime/event-analysis.js", "reason": "verify no scheduler semantic regressions"}
+{"file": "tests/event-analysis-runtime.test.js", "reason": "verify focused and full test coverage"}
+{"step":"npm test","status":"passed","result":"846 passed, 0 failed, 0 skipped"}
+{"step":"npm run check","status":"passed","result":"846 passed, 0 failed, 0 skipped"}
+{"step":"node --check","status":"passed","result":"runtime/event-analysis.js, runtime/events.js, tests/event-analysis-runtime.test.js"}
+{"step":"git diff --check","status":"passed","result":"clean"}

@@ -26,7 +26,7 @@ import {
   statusFromError as sharedStatusFromError,
   traceApi,
 } from '../ai/client.js'
-import { createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
+import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
   characterOpeningSelectionState,
@@ -78,8 +78,6 @@ const WORLD_MODEL_OWNER_MUTATIONS = new Set([
   'MESSAGE_SWIPE_DELETED',
   'MESSAGE_EDITED',
   'MESSAGE_UPDATED',
-  'MESSAGE_RECEIVED',
-  'GENERATION_ENDED',
 ])
 const THEME_KEY = 'bioweave_ui_theme'
 const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown'
@@ -89,6 +87,7 @@ const THEME_VALUES = new Set(['tavern', 'light', 'dark'])
 const ANALYSIS_SELECTION_SEPARATOR = '\u0000'
 const analysisParentDisclosureStates = new WeakMap()
 const RENDER_SCROLL_SELECTORS = Object.freeze(['.bioweave-main', '[data-bioweave-analysis-source-list]'])
+const RUNTIME_NOTIFICATION_LIMIT = 128
 export function notify(message, type = 'info', documentRef = globalThis.document) {
   const text = String(message ?? '').trim()
   if (!text) return
@@ -293,6 +292,7 @@ function createWorldModelState() {
     collectionEditor: null,
     notice: null,
     operation: null,
+    phase: null,
   }
 }
 function createDataManagementState() {
@@ -509,6 +509,7 @@ export function createApp(runtime, options = {}) {
   let route = 'overview'
   let focusedCharacterId = null
   let unsubscribeRuntime = null
+  const runtimeNotificationKeys = new Set()
   let modelRefreshSequence = 0
   let analysisSourceRequestSequence = 0
   let analysisSourceSaveSequence = 0
@@ -605,6 +606,53 @@ export function createApp(runtime, options = {}) {
       worldModelTrace: { rawResponse, canonicalModel },
     }
     if (route === 'settings') render()
+  }
+  function rememberRuntimeNotification(key) {
+    if (runtimeNotificationKeys.has(key)) return false
+    runtimeNotificationKeys.add(key)
+    while (runtimeNotificationKeys.size > RUNTIME_NOTIFICATION_LIMIT)
+      runtimeNotificationKeys.delete(runtimeNotificationKeys.values().next().value)
+    return true
+  }
+  function runtimeFloorIdentity(event, domain) {
+    const version = event?.payload?.floor_version ?? {}
+    const parts = [
+      event?.chatId ?? version.chat_id ?? runtime.chat.current(),
+      version.message_id,
+      version.swipe_id,
+      version.content_hash,
+      version.message_version,
+      event?.payload?.attempt ?? event?.payload?.trigger ?? 'na',
+      domain,
+    ]
+    return parts.map(value => String(value ?? '')).join('|')
+  }
+  function runtimeNotificationsEnabled() {
+    try {
+      return typeof runtime.getBioWeaveEnabled !== 'function' || runtime.getBioWeaveEnabled() !== false
+    } catch {
+      return false
+    }
+  }
+  function isAutomaticRuntimeResult(payload = {}) {
+    const value = String(payload.reason ?? payload.trigger ?? '').toLowerCase()
+    return value !== 'manual-refresh' && value !== 'manual-full' && value !== 'manual-patch'
+  }
+  function runtimeAnalysisFailureMessage(payload = {}, domain = 'analysis') {
+    const code = String(payload.error_code ?? payload.code ?? '').toUpperCase()
+    if (code === 'WORLD_MODEL_UI_NOT_READY')
+      return domain === 'world' ? '世界数据未能正常显示，已停止人物分析' : '世界数据未能正常显示，已停止人物分析'
+    if (domain === 'world') return '世界分析失败，已停止人物分析'
+    if (code === 'REQUEST_TIMEOUT' || code.startsWith('REQUEST_TIMEOUT_')) return '分析失败：请求超时。'
+    if (code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')) return '分析已取消。'
+    if (code === 'WORLD_MODEL_INVALID' || code === 'EVENT_ANALYSIS_INVALID') return '分析失败：AI 返回结果无法通过校验。'
+    return '分析失败：请检查分析结果与 API 配置。'
+  }
+  function notifyRuntimeTerminal(event, domain, message, type) {
+    if (!runtimeNotificationsEnabled()) return
+    const key = runtimeFloorIdentity(event, domain)
+    if (!rememberRuntimeNotification(key)) return
+    notify(message, type, documentRef)
   }
   function resolveAnalysisProfile(task = 'world_analysis') {
     const settings = profileStore.getSettings?.() ?? {}
@@ -711,6 +759,7 @@ export function createApp(runtime, options = {}) {
     if (analysisSourcesState.chatId !== null && analysisSourcesState.chatId !== chatId) {
       analysisSourceRequestSequence += 1
       analysisSourceSaveSequence += 1
+      runtimeNotificationKeys.clear()
       abortUiWorldModelRequest()
       worldbookCache = clearWorldbookCache(worldbookCache)
       analysisSourcesState = createAnalysisSourcesState()
@@ -1562,7 +1611,7 @@ export function createApp(runtime, options = {}) {
       let model = null
       let notice = null
       try {
-        model = resolved?.model ? normalizeStoredWorldModel(resolved.model) : null
+        model = resolved?.model ? buildWorldModelViewModel(resolved.model).model : null
       } catch {
         notice = '已保存的世界模型格式无效，请重新分析。'
       }
@@ -1625,6 +1674,7 @@ export function createApp(runtime, options = {}) {
       WORLD_ANALYZER_UNAVAILABLE: '世界分析功能暂不可用，请重新加载 BioWeave。',
       WORLD_RUNTIME_ANALYZER_UNAVAILABLE: '世界分析 Runtime 暂不可用，请重新加载 BioWeave。',
       WORLD_MODEL_REQUIRED_FOR_PATCH: '需要先建立世界模型后才能进行补充分析。',
+      WORLD_MODEL_UI_NOT_READY: '世界数据未能正常显示，已停止人物分析。',
       WORLD_MODEL_INVALID: 'AI 返回的世界模型格式不符合要求，上一份模型已保留。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
       STALE_CHAT: 'Chat 已切换，本次世界模型结果未保存。',
@@ -2105,7 +2155,7 @@ export function createApp(runtime, options = {}) {
         speciesCount: Array.isArray(model.species) ? model.species.length : 0,
         modelSaved: true,
       })
-      notify('世界模型分析成功并已保存。', 'success', documentRef)
+      notify(operation === 'patch' ? 'BioWeave：世界补充完成' : 'BioWeave：世界分析完成', 'success', documentRef)
     } catch (error) {
       activityError = error
       const activityCode = String(error?.code ?? error?.message ?? '')
@@ -2117,6 +2167,7 @@ export function createApp(runtime, options = {}) {
         phase: 'world-model-ui',
         state: 'error',
       })
+      if (activityCode === 'BIOWEAVE_DISABLED') return
       try {
         assertAnalysisChatToken(token)
       } catch {
@@ -2125,7 +2176,7 @@ export function createApp(runtime, options = {}) {
       const code = String(error?.code ?? error?.message ?? '')
       const feedbackType = code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_') ? 'info' : 'error'
       worldModelState = { ...worldModelState, busy: false, operation: null, notice: null }
-      notify(worldModelOperationError(error), feedbackType, documentRef)
+      notify(`BioWeave：${worldModelOperationError(error)}`, feedbackType, documentRef)
     } finally {
       if (worldModelAbortController === controller) worldModelAbortController = null
       runtime.finishActivity?.('world_analysis', activityResult, activityError)
@@ -2800,10 +2851,12 @@ export function createApp(runtime, options = {}) {
       }
       render()
       const result = await runtime.refreshCurrentFloorAnalysis()
-      notify('当前楼层事件分析成功并已保存。', 'success', documentRef)
+      notify('BioWeave：人物分析完成', 'success', documentRef)
       return result
     } catch (error) {
-      notify(eventAnalysisError(error), 'error', documentRef)
+      const worldGateFailure = error?.code === 'WORLD_MODEL_UI_NOT_READY' || error?.code === 'WORLD_MODEL_UNAVAILABLE'
+      if (error?.code !== 'BIOWEAVE_DISABLED' && !worldGateFailure)
+        notify(`BioWeave：${eventAnalysisError(error)}`, 'error', documentRef)
       throw error
     } finally {
       await refreshBusinessState({ reason: 'manual-analysis', force: true })
@@ -2882,6 +2935,7 @@ export function createApp(runtime, options = {}) {
             worldModelMeta: worldModelState.meta,
             worldModelBusy: worldModelState.busy,
             worldModelOperation: worldModelState.operation,
+            worldModelPhase: worldModelState.phase,
             selectedSpecies: worldModelState.selectedSpecies,
             selectedBiologicalType: worldModelState.selectedBiologicalType,
             editingSection: worldModelState.editingSection,
@@ -3741,6 +3795,7 @@ export function createApp(runtime, options = {}) {
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED') {
       const payload = event.payload ?? {}
       const terminal = payload.state !== 'running'
+      const eventAnalysisBusy = payload.state === 'running' && payload.phase === 'event_analysis'
       businessState = {
         ...businessState,
         loaded: false,
@@ -3749,7 +3804,7 @@ export function createApp(runtime, options = {}) {
           ...businessState.analysisStatus,
           ...payload,
           state: payload.state ?? businessState.analysisStatus?.state ?? 'not_analyzed',
-          busy: !terminal,
+          busy: eventAnalysisBusy,
           error_stage:
             payload.stage ?? payload.error_stage ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.error_stage ?? null)),
           error_code: payload.error_code ?? (payload.state === 'success' ? null : (businessState.analysisStatus?.error_code ?? null)),
@@ -3763,11 +3818,25 @@ export function createApp(runtime, options = {}) {
     }
     if (event?.type === 'WORLD_ANALYSIS_STATUS_CHANGED') {
       const payload = event.payload ?? {}
-      if (payload.state === 'running' && !worldModelState.busy) {
-        worldModelState = { ...worldModelState, busy: true, operation: 'auto' }
-      } else if (payload.state !== 'running' && worldModelState.operation === 'auto') {
-        worldModelState = { ...worldModelState, busy: false, operation: null }
-        reloadWorldModelFromRuntime()
+      const automatic = isAutomaticRuntimeResult(payload)
+      if (payload.state === 'running' && automatic) {
+        worldModelState = {
+          ...worldModelState,
+          busy: true,
+          operation: payload.mode === 'patch' ? 'patch' : 'full',
+          phase: payload.phase ?? null,
+        }
+      } else if (payload.state !== 'running' && worldModelState.operation && automatic) {
+        worldModelState = { ...worldModelState, busy: false, operation: null, phase: null }
+      }
+      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime()
+      if (payload.state === 'failed' && isAutomaticRuntimeResult(payload)) {
+        notifyRuntimeTerminal(
+          event,
+          'world',
+          `BioWeave：${runtimeAnalysisFailureMessage(payload, 'world')}`,
+          payload.error_code === 'REQUEST_ABORTED' ? 'info' : 'error',
+        )
       }
       if (route === 'world') render()
     }
@@ -3776,21 +3845,37 @@ export function createApp(runtime, options = {}) {
       event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' ||
       event?.type === 'EVENT_ANALYSIS_COMMITTED' ||
       event?.type === 'MESSAGE_DELETED' ||
-      event?.type === 'MESSAGE_RECEIVED' ||
-      event?.type === 'GENERATION_ENDED' ||
       event?.type === 'MESSAGE_UPDATED' ||
       event?.type === 'MESSAGE_EDITED' ||
       event?.type === 'MESSAGE_SWIPED' ||
       event?.type === 'MESSAGE_SWIPE_DELETED'
     ) {
-      if (['MESSAGE_DELETED', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
+      if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
       }
       businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
-      notify('本次事件分析已取消。', 'info', documentRef)
+      notifyRuntimeTerminal(event, 'analysis', 'BioWeave：本次事件分析已取消。', 'info')
+    }
+    if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' &&
+        event.payload?.state === 'success' &&
+        isAutomaticRuntimeResult(event.payload)) {
+      const suffix = event.payload.world_resolution === 'full' || event.payload.world_resolution === 'patch'
+        ? '世界与人物分析完成'
+        : '分析完成'
+      notifyRuntimeTerminal(event, 'analysis', `BioWeave：${suffix}`, 'success')
+    }
+    if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' &&
+        event.payload?.state === 'failed' &&
+        isAutomaticRuntimeResult(event.payload)) {
+      notifyRuntimeTerminal(
+        event,
+        'analysis',
+        `BioWeave：${runtimeAnalysisFailureMessage(event.payload, 'analysis')}`,
+        event.payload.error_code === 'REQUEST_ABORTED' ? 'info' : 'error',
+      )
     }
     if (root?.dataset.open === 'true') render()
   }

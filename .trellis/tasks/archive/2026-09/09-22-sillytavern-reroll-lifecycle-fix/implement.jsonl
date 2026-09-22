@@ -1,0 +1,3 @@
+{"file": "runtime/event-analysis.js", "reason": "generation intent matching and lifecycle scheduler implementation"}
+{"file": "runtime/events.js", "reason": "SillyTavern event binding adapter"}
+{"file": "tests/event-analysis-runtime.test.js", "reason": "real host event order regression tests"}
