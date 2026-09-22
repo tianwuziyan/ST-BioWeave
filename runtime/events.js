@@ -1469,6 +1469,8 @@ export function createRuntime({
     resolveWorldModelAtOrBefore: eventAnalysis.resolveWorldModelAtOrBefore,
     resolveWorldModelStrictlyBefore: eventAnalysis.resolveWorldModelStrictlyBefore,
     saveWorldModel: eventAnalysis.saveWorldModel,
+    analyzeCurrentWorldModelFull: eventAnalysis.analyzeCurrentWorldModelFull,
+    analyzeCurrentWorldModelPatch: eventAnalysis.analyzeCurrentWorldModelPatch,
     getTrackingRegistry: eventAnalysis.getTrackingRegistry,
     collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,
     getCurrentBiologicalState: eventAnalysis.getCurrentBiologicalState,

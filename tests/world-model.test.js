@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildWorldModelMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA } from '../ai/prompts.js'
+import { buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { createAnalyzer, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput } from '../ai/analyzer.js'
+import { createAnalyzer, mergeWorldModelPatch, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch } from '../ai/analyzer.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -16,6 +16,8 @@ import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js
 import { applyWorldModelCollectionEdit, applyWorldModelSection, createWorldModelBiologicalTypeSelection, createWorldModelSelection, createWorldModelSpeciesSelection, normalizeWorldModelBiologicalTypeSelection, normalizeWorldModelSelection, normalizeWorldModelSpeciesSelection, resolveWorldModelSelection, WORLD_MODEL_SECTION_KEYS, worldPage } from '../ui/world.js'
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+const failedWorldResponseFixture = JSON.parse(readFileSync(new URL('./fixtures/world-model/failed-response.json', import.meta.url), 'utf8'))
+const successfulWorldResponseFixture = JSON.parse(readFileSync(new URL('./fixtures/world-model/successful-response.json', import.meta.url), 'utf8'))
 
 function decodeHtml(value) {
   return String(value ?? '')
@@ -444,6 +446,47 @@ test('World Model response parser accepts JSON object content and rejects invali
   )
 })
 
+test('World Model Patch is a separate sparse DTO and never treats omission as deletion', () => {
+  const patch = validateWorldModelPatch({
+    schema_version: 1,
+    add: { unknowns: ['新增规则尚未明确。'] },
+    update: {},
+  })
+  const merged = mergeWorldModelPatch(modelFixture, patch)
+  assert.equal(merged.species.length, modelFixture.species.length)
+  assert.deepEqual(merged.species, modelFixture.species)
+  assert.deepEqual(merged.exceptions, modelFixture.exceptions)
+  assert.deepEqual(merged.unknowns, [...modelFixture.unknowns, '新增规则尚未明确。'])
+  assert.throws(
+    () => validateWorldModelPatch({ schema_version: 1, remove: { species: ['潮汐生物'] } }),
+    error => error?.code === 'WORLD_MODEL_PATCH_INVALID' && error.message === 'WORLD_MODEL_PATCH_REMOVE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch updates only the named species and preserves unrelated rules', () => {
+  const updatedSpecies = {
+    ...modelFixture.species[0],
+    description: '当前 Floor 明确修正后的描述。',
+  }
+  const merged = mergeWorldModelPatch(modelFixture, {
+    schema_version: 1,
+    add: {},
+    update: { species: [updatedSpecies] },
+  })
+  assert.equal(merged.species[0].description, updatedSpecies.description)
+  assert.deepEqual(merged.species[0].biological_types, modelFixture.species[0].biological_types)
+  assert.deepEqual(merged.medical_context, modelFixture.medical_context)
+  assert.deepEqual(merged.exceptions, modelFixture.exceptions)
+})
+
+test('World Model Patch prompt requires sparse add/update output and forbids implicit deletion', () => {
+  const prompt = buildWorldModelPatchMessages({ character: { description: '当前楼层明确新增规则。' } })
+    .map(message => message.content).join('\n')
+  assert.match(prompt, /不要返回完整 World Model/)
+  assert.match(prompt, /缺少字段永远表示不修改/)
+  assert.match(prompt, /不支持 remove、invalidate/)
+})
+
 test('World Model strict parser enforces canonical list shapes with diagnostics', () => {
   const canonical = parseWorldModelResponse(JSON.stringify(modelFixture))
   assert.deepEqual(canonical.exceptions, modelFixture.exceptions)
@@ -590,6 +633,139 @@ test('World Model parser distinguishes JSON syntax errors from schema diagnostic
       error.expected === 'array' &&
       error.received === 'object',
   )
+})
+
+test('World Model reproductive mechanism carrying compatibility keeps the strict tri-state contract', () => {
+  for (const value of [true, false, null]) {
+    const model = structuredClone(modelFixture)
+    model.species[0].biological_types[0].reproductive_mechanisms = [{
+      key: 'natural_conception',
+      label: '自然受孕',
+      pathway: '明确的生殖路径',
+      carrying_compatibility: value,
+      world_model_rule_refs: [],
+      evidence: [],
+    }]
+    assert.equal(
+      parseWorldModelResponse(JSON.stringify(model)).species[0].biological_types[0].reproductive_mechanisms[0].carrying_compatibility,
+      value,
+    )
+  }
+  for (const value of ['无', '人类女性子宫']) {
+    const model = structuredClone(modelFixture)
+    model.species[0].biological_types[0].reproductive_mechanisms = [{ carrying_compatibility: value }]
+    assert.throws(
+      () => parseWorldModelResponse(JSON.stringify(model)),
+      error => error?.path === 'species[0].biological_types[0].reproductive_mechanisms[0].carrying_compatibility'
+        && error?.expected === 'boolean|null'
+        && error?.received === 'string'
+        && error?.validator === 'nullableBoolean',
+    )
+  }
+})
+
+test('World Model reproductive mechanisms use array defaults and complete element diagnostics', () => {
+  const omitted = structuredClone(modelFixture)
+  delete omitted.species[0].biological_types[0].reproductive_mechanisms
+  assert.deepEqual(
+    parseWorldModelResponse(JSON.stringify(omitted)).species[0].biological_types[0].reproductive_mechanisms,
+    [],
+  )
+
+  const nullValue = structuredClone(modelFixture)
+  nullValue.species[0].biological_types[0].reproductive_mechanisms = null
+  assert.throws(
+    () => parseWorldModelResponse(JSON.stringify(nullValue)),
+    error => error?.path === 'species[0].biological_types[0].reproductive_mechanisms'
+      && error?.expected === 'array'
+      && error?.received === 'object'
+      && error?.validator === 'normalizeBiologicalType',
+  )
+
+  for (const field of ['world_model_rule_refs', 'evidence']) {
+    const model = structuredClone(modelFixture)
+    model.species[0].biological_types[0].reproductive_mechanisms = [{ [field]: [{ invalid: true }] }]
+    assert.throws(
+      () => parseWorldModelResponse(JSON.stringify(model)),
+      error => error?.path === `species[0].biological_types[0].reproductive_mechanisms[0].${field}[0]`
+        && error?.expected === 'string|null'
+        && error?.received === 'object'
+        && error?.validator === 'nullableText',
+    )
+  }
+})
+
+test('Real World Model response fixtures preserve the production acceptance boundary', () => {
+  assert.throws(
+    () => parseWorldModelResponse(JSON.stringify(failedWorldResponseFixture)),
+    error => error?.path === 'species[0].biological_types[0].reproductive_mechanisms[0].carrying_compatibility'
+      && error?.expected === 'boolean|null'
+      && error?.received === 'string',
+  )
+  assert.deepEqual(
+    parseWorldModelResponse(JSON.stringify(successfulWorldResponseFixture)),
+    successfulWorldResponseFixture,
+  )
+})
+
+test('World Model projection rules use the production raw schema and diagnostics', () => {
+  const validRule = {
+    schema_version: 1,
+    mechanism_key: 'natural_conception',
+    development_concern_key: 'pregnancy_confirmation',
+    development_kind: 'possible_biological_change',
+    trigger: { kind: 'story_time_reached', target_story_time: { day_index: 10 } },
+    requirements: {
+      capabilities: [{ key: 'can_carry_pregnancy', equals: true }],
+      source_compatibility: 'not_required',
+      contributor_relationships: [{ relationship_key: 'spouse', attribution: 'confirmed' }],
+    },
+    realization: { event_types: ['pregnancy_confirmation'], statuses: ['confirmed'], payload_equals: {} },
+    contradiction: { event_types: [], statuses: [], payload_equals: {} },
+    expiration: { trigger: { kind: 'story_time_reached', target_story_time: { day_index: 30 } } },
+  }
+  const model = structuredClone(modelFixture)
+  model.projection_rules = [validRule]
+  const normalized = parseWorldModelResponse(JSON.stringify(model))
+  assert.match(normalized.projection_rules[0].projection_rule_id, /^projection_rule_/)
+  assert.equal(normalized.projection_rules[0].development_kind, validRule.development_kind)
+
+  for (const [field, value, expectedPath] of [
+    ['development_kind', 'invalid_kind', 'projection_rules[0].development_kind'],
+    ['trigger', { kind: 'invalid_trigger' }, 'projection_rules[0].trigger.kind'],
+    ['requirements', { capabilities: [{ key: 'can_carry_pregnancy', equals: 'yes' }] }, 'projection_rules[0].requirements.capabilities[0]'],
+  ]) {
+    const invalid = structuredClone(model)
+    invalid.projection_rules[0][field] = value
+    assert.throws(
+      () => parseWorldModelResponse(JSON.stringify(invalid)),
+      error => error?.path === expectedPath
+        && error?.diagnosticCode === 'WORLD_MODEL_PROJECTION_RULES_INVALID'
+        && error?.validator === 'normalizeProjectionRules → validateProjectionRuleContent',
+    )
+  }
+})
+
+test('World Model Initial and Patch prompts expose the same strict mechanism and projection contracts', () => {
+  const initialPrompt = buildWorldModelMessages().map(message => message.content).join('\n')
+  const patchPrompt = buildWorldModelPatchMessages().map(message => message.content).join('\n')
+  for (const prompt of [initialPrompt, patchPrompt]) {
+    assert.match(prompt, /reproductive_mechanisms 必须是 JSON array/)
+    assert.match(prompt, /不得输出 null/)
+    assert.match(prompt, /carrying_compatibility boolean\|null/)
+    assert.match(prompt, /明确支持为 true，明确不支持为 false，证据不足为 null/)
+    assert.match(prompt, /world_model_rule_refs string\[\]/)
+    assert.match(prompt, /evidence string\[\]/)
+    assert.match(prompt, /projection_rule_id/)
+    assert.match(prompt, /possible_biological_change/)
+    assert.match(prompt, /immediate_after_event/)
+    assert.match(prompt, /禁止 projection rule 中出现 probability/)
+  }
+  const schema = JSON.parse(WORLD_MODEL_SCHEMA_TEXT)
+  const mechanism = schema.species[0].biological_types[0].reproductive_mechanisms[0]
+  assert.equal(mechanism.carrying_compatibility, null)
+  assert.deepEqual(mechanism.world_model_rule_refs, [])
+  assert.deepEqual(mechanism.evidence, [])
 })
 
 test('World Model analyzer preserves processRequest content and OpenAI message content', async () => {
@@ -3805,6 +3981,10 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
     },
   })
   assert.match(html, /世界模型/)
+  assert.match(html, /data-bioweave-action="world-model-full"[^>]*>开始分析<\/button>/)
+  assert.match(html, /data-bioweave-action="world-model-patch"[^>]*>补充分析<\/button>/)
+  assert.match(html, /title="重新分析当前上下文，构建完整的世界模型。"/)
+  assert.match(html, /title="基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。"/)
   assert.match(html, /bioweave-world-model-top/)
   assert.match(html, /最后分析：<\/strong>\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/)
   assert.match(html, /来源：<\/strong>角色卡 · 1 本世界书/)
@@ -3869,6 +4049,19 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   for (const typeName of ['潮汐生物型', '甲型', '穗核型', 'Alpha', 'Beta', 'Omega']) {
     assert.match(visibleTypesHtml, new RegExp(`<b>${typeName}</b>`))
   }
+})
+
+test('World Model page keeps Patch visible but disabled before the first World Model', () => {
+  const html = worldPage()
+  assert.match(html, /data-bioweave-action="world-model-full"[^>]*>开始分析<\/button>/)
+  assert.match(html, /data-bioweave-action="world-model-patch"[^>]*disabled[^>]*>补充分析<\/button>/)
+  assert.match(html, /title="需要先建立世界模型后才能进行补充分析。"/)
+})
+
+test('World Model page disables both actions while one World operation is running', () => {
+  const html = worldPage({ worldModel: modelFixture, worldModelBusy: true, worldModelOperation: 'full' })
+  assert.match(html, /data-bioweave-action="world-model-full"[^>]*disabled[^>]*>分析中…<\/button>/)
+  assert.match(html, /data-bioweave-action="world-model-patch"[^>]*disabled[^>]*>补充分析<\/button>/)
 })
 
 test('World Model collection edits are species-scoped, canonical, unique, and immutable', () => {

@@ -4,7 +4,11 @@ import {
   mergeRecentStorySettings,
   processNarrativeFloor,
 } from "../ai/input-builder.js";
-import { normalizeStoredWorldModel } from "../ai/analyzer.js";
+import {
+  mergeWorldModelPatch,
+  normalizeStoredWorldModel,
+  summarizeAnalysisInput,
+} from "../ai/analyzer.js";
 import {
   clearWorldbookCache,
   createWorldbookCache,
@@ -87,6 +91,21 @@ function scalar(value) {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   return null;
+}
+
+const WORLD_MODEL_UPDATE_SIGNAL = /(?:世界规则|世界设定|物种规则|生物类型|biological[_\s-]*type|species\s*(?:rule|type)|生殖机制|受精机制|妊娠规则|怀孕规则|生殖能力|受孕能力|投影规则|projection[_\s-]*rule|can_(?:produce|be_fertilized|fertilize|cause_pregnancy|carry_pregnancy))/iu;
+
+function worldModelUnavailableError(cause, target = null) {
+  const error = new Error("WORLD_MODEL_UNAVAILABLE");
+  error.code = "WORLD_MODEL_UNAVAILABLE";
+  error.analysis_stage = "world_model_preflight";
+  error.floor_version = target?.version ? { ...target.version } : null;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function hasWorldModelUpdateSignal(target) {
+  return WORLD_MODEL_UPDATE_SIGNAL.test(messageText(target?.message, target?.swipeId));
 }
 function messagePartText(value) {
   if (typeof value === "string" || typeof value === "number")
@@ -592,6 +611,10 @@ export function createEventAnalysisCoordinator({
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
   const inFlight = new Map();
+  // World jobs share one registry across Manual and Auto callers. The Event
+  // analysis registry above cannot be used as a second, independent World
+  // lock because the two entry points must still deduplicate the API request.
+  const worldInFlight = new Map();
   const lastTerminal = new Map();
   let attemptSequence = 0;
   let registryRefreshChain = Promise.resolve();
@@ -682,6 +705,14 @@ export function createEventAnalysisCoordinator({
     ].every((field) => left?.[field] === right?.[field]);
   }
 
+  function lifecycleSnapshotChanged(previous, current) {
+    if (!previous || !current) return true;
+    if (previous.entries.length !== current.entries.length) return true;
+    return previous.entries.some(
+      (entry, index) => !lifecycleEntryEqual(entry, current.entries[index]),
+    );
+  }
+
   function lifecycleMutationIndex(event, currentSnapshot) {
     const payload = event?.payload;
     const requestedIndex = Number(
@@ -740,7 +771,7 @@ export function createEventAnalysisCoordinator({
   ) {
     if (typeof chat.invalidate === "function")
       chat.invalidate(`mutation:${event?.type ?? "unknown"}`, { checkCurrent: false });
-    invalidateInFlightExecutions();
+    invalidateInFlightExecutions({ fromIndex: targetIndex });
     lastTerminal.clear();
     invalidatedFloors.clear();
     clearWorldbookCache(sourceCache);
@@ -1047,6 +1078,178 @@ export function createEventAnalysisCoordinator({
       meta: cloneWorldValue(meta),
       floor_version: cloneWorldValue(target.version),
     };
+  }
+
+  async function runWorldAnalysisJob(
+    target,
+    token,
+    {
+      mode,
+      analysisInput,
+      signal = null,
+      trigger = "automatic",
+    } = {},
+  ) {
+    const key = floorExecutionKey(target.version);
+    const existing = worldInFlight.get(key);
+    if (existing) return existing.promise;
+    if (mode !== "full" && mode !== "patch")
+      throw new Error("WORLD_ANALYSIS_MODE_INVALID");
+    const job = {
+      key,
+      target,
+      mode,
+      trigger,
+      signal,
+      released: false,
+      promise: null,
+    };
+    worldInFlight.set(key, job);
+    notify({
+      type: "WORLD_ANALYSIS_STATUS_CHANGED",
+      payload: { state: "running", mode, trigger, floor_version: target.version },
+      chatId: target.chatId,
+    });
+    const work = (async () => {
+      chat.assert(token);
+      if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
+      let model;
+      let meta = null;
+      if (mode === "full") {
+        if (typeof analyzer?.analyzeWorldModel !== "function")
+          throw worldModelUnavailableError(new Error("WORLD_ANALYZER_UNAVAILABLE"), target);
+        const result = await analyzer.analyzeWorldModel({
+          analysisInput,
+          floor_version: target.version,
+          authoritative_floor_version: target.version,
+          signal,
+        });
+        model = normalizeStoredWorldModel(result);
+        meta = { source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput) };
+      } else {
+        const resolved = await resolveWorldModelAtOrBefore(target);
+        if (!resolved)
+          throw worldModelUnavailableError(new Error("WORLD_MODEL_REQUIRED_FOR_PATCH"), target);
+        if (typeof analyzer?.analyzeWorldModelPatch !== "function")
+          throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
+        const patch = await analyzer.analyzeWorldModelPatch({
+          analysisInput: {
+            ...(analysisInput ?? {}),
+            world_model: cloneWorldValue(resolved.model),
+          },
+          floor_version: target.version,
+          authoritative_floor_version: target.version,
+          signal,
+        });
+        model = mergeWorldModelPatch(resolved.model, patch);
+        meta = {
+          ...cloneWorldValue(resolved.meta ?? {}),
+          source: "world-patch-analysis",
+          source_summary: summarizeAnalysisInput(analysisInput),
+        };
+      }
+      chat.assert(token);
+      if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
+      const analyzedAt = new Date().toISOString();
+      const saved = await saveWorldModel({
+        model,
+        meta: {
+          ...meta,
+          last_analyzed_at: analyzedAt,
+          last_saved_at: analyzedAt,
+          last_saved_by: "ai",
+          floor_version: { ...target.version },
+        },
+        selector: target,
+        automatic: true,
+      });
+      chat.assert(token);
+      return saved;
+    })();
+    job.promise = work.then(
+      result => {
+        notify({
+          type: "WORLD_ANALYSIS_STATUS_CHANGED",
+          payload: { state: "success", mode, trigger, floor_version: target.version },
+          chatId: target.chatId,
+        });
+        return result;
+      },
+      error => {
+        notify({
+          type: "WORLD_ANALYSIS_STATUS_CHANGED",
+          payload: { state: "failed", mode, trigger, floor_version: target.version, error_code: error?.code ?? error?.message ?? null },
+          chatId: target.chatId,
+        });
+        throw error;
+      },
+    ).finally(() => {
+      job.released = true;
+      if (worldInFlight.get(key) === job) worldInFlight.delete(key);
+    });
+    return job.promise;
+  }
+
+  async function analyzeCurrentWorldModelFull({ analysisInput = {}, signal, trigger = "manual-full" } = {}) {
+    if (!isEnabled()) throw disabledError();
+    const token = chat.token();
+    const target = await resolveCurrentBioWeaveFloor();
+    chat.assert(token);
+    return runWorldAnalysisJob(target, token, {
+      mode: "full",
+      analysisInput,
+      signal,
+      trigger,
+    });
+  }
+
+  async function analyzeCurrentWorldModelPatch({ analysisInput = {}, signal, trigger = "manual-patch" } = {}) {
+    if (!isEnabled()) throw disabledError();
+    const token = chat.token();
+    const target = await resolveCurrentBioWeaveFloor();
+    chat.assert(token);
+    const resolved = await resolveWorldModelAtOrBefore(target);
+    if (!resolved) {
+      const error = new Error("WORLD_MODEL_REQUIRED_FOR_PATCH");
+      error.code = "WORLD_MODEL_REQUIRED_FOR_PATCH";
+      throw error;
+    }
+    return runWorldAnalysisJob(target, token, {
+      mode: "patch",
+      analysisInput,
+      signal,
+      trigger,
+    });
+  }
+
+  async function resolveFinalWorldModelForAnalysis(target, token, execution, analysisInput, { force = false } = {}) {
+    let resolved = await resolveWorldModelAtOrBefore(target);
+    if (resolved && !force && !hasWorldModelUpdateSignal(target)) {
+      try {
+        return normalizeStoredWorldModel(resolved.model);
+      } catch (cause) {
+        throw worldModelUnavailableError(cause, target);
+      }
+    }
+    try {
+      assertExecutionCurrent(execution, token);
+      if (!resolved) execution.stage = "world_analysis";
+      else if (force || hasWorldModelUpdateSignal(target)) execution.stage = "world_patch_analysis";
+      else return normalizeStoredWorldModel(resolved.model);
+      const result = await runWorldAnalysisJob(target, token, {
+        mode: resolved ? "patch" : "full",
+        analysisInput,
+        signal: execution.controller.signal,
+        trigger: resolved ? "auto-patch" : "auto-full",
+      });
+      await assertExecutionTargetCurrent(execution, target, token);
+      invalidatedFloors.delete(floorExecutionKey(target.version));
+      return normalizeStoredWorldModel(result.model);
+    } catch (cause) {
+      if (cause?.code === "BIOWEAVE_DISABLED") throw cause;
+      if (isRequestAborted(cause) || cause?.code === "REQUEST_ABORTED") throw cause;
+      throw worldModelUnavailableError(cause, target);
+    }
   }
   async function collectCurrentFloorStates(token = chat.token()) {
     const states = [];
@@ -1768,9 +1971,17 @@ export function createEventAnalysisCoordinator({
     execution.diagnostic = executionError(error, "cancelled");
     finalizeExecution(execution, "cancelled", error);
   }
-  function invalidateInFlightExecutions() {
-    for (const execution of [...inFlight.values()])
+  function invalidateInFlightExecutions({ fromIndex = null } = {}) {
+    for (const execution of [...inFlight.values()]) {
+      if (
+        Number.isInteger(fromIndex) &&
+        Number.isInteger(execution.index) &&
+        execution.index < fromIndex
+      ) {
+        continue;
+      }
       invalidateExecution(execution);
+    }
   }
   function pause() {
     invalidateInFlightExecutions();
@@ -1998,8 +2209,20 @@ export function createEventAnalysisCoordinator({
     try {
       token = chat.token();
       execution.stage = "request_build";
-      const analysisInput = await buildFloorAnalysisInput(target, token);
       execution.source_provenance = { ...target.version };
+      await assertExecutionTargetCurrent(execution, target, token);
+      const preWorldInput = await buildFloorAnalysisInput(target, token);
+      await assertExecutionTargetCurrent(execution, target, token);
+      const finalWorldModel = await resolveFinalWorldModelForAnalysis(
+        target,
+        token,
+        execution,
+        preWorldInput,
+        { force: execution.reason === "manual-refresh" },
+      );
+      await assertExecutionTargetCurrent(execution, target, token);
+      const analysisInput = await buildFloorAnalysisInput(target, token);
+      analysisInput.world_model = cloneWorldValue(finalWorldModel);
       execution.dependency_hash = await dependencyHashForTarget(target, token);
       await assertExecutionTargetCurrent(execution, target, token);
       if (typeof analyzer?.analyzeFloor !== "function")
@@ -2007,6 +2230,7 @@ export function createEventAnalysisCoordinator({
       execution.stage = "api_request";
       const result = await analyzer.analyzeFloor({
         analysisInput,
+        world_model: finalWorldModel,
         floor_version: target.version,
         authoritative_floor_version: target.version,
         signal: execution.controller.signal,
@@ -2080,8 +2304,9 @@ export function createEventAnalysisCoordinator({
       execution.stage = "floor_save";
       await assertExecutionTargetCurrent(execution, target, token);
       execution.floorSaveStarted = true;
+      const currentFloorData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData;
       await store.saveFloor(target.index, target.swipeId, {
-        ...target.floorData,
+        ...currentFloorData,
         analysis,
         events,
         character_registry: identityResult.character_registry,
@@ -2176,7 +2401,12 @@ export function createEventAnalysisCoordinator({
       error.safe_error_summary ??= execution.diagnostic.safe_error_summary;
       // Chat epoch 变化后的结果不属于当前作用域；释放执行即可，不能把旧
       // Floor 的失败元数据写回当前 Chat/Swipe。
-      if (!execution.released && !isStaleChat(error) && !execution.floorSaved) {
+      if (
+        !execution.released &&
+        !isStaleChat(error) &&
+        !execution.floorSaved &&
+        error?.code !== "WORLD_MODEL_UNAVAILABLE"
+      ) {
         try {
           await persistTerminalAttempt(
             execution,
@@ -2221,6 +2451,7 @@ export function createEventAnalysisCoordinator({
     const controller = new AbortController();
     const execution = {
       key: requestKey,
+      index: target.index,
       version: target.version,
       attempt,
       reason,
@@ -2332,6 +2563,7 @@ export function createEventAnalysisCoordinator({
         (mutationEntry && mutationEntry.role === "user") ||
         (!mutationEntry && latestMessage && !isCharacterMessage(latestMessage));
       if (mutationIsUserOnly) {
+        lifecycleSnapshot = currentSnapshot;
         return { skipped: true, reason: "user-message-not-a-bioweave-floor" };
       }
       const isSwipeBoundaryEvent =
@@ -2343,10 +2575,16 @@ export function createEventAnalysisCoordinator({
         "MESSAGE_SWIPED",
         "MESSAGE_SWIPE_DELETED",
       ].includes(type);
-      await invalidateMutation(event, targetIndex, {
-        preserveTarget: isSwipeBoundaryEvent,
-        clearRoots: isSourceMutation,
-      });
+      const mutationChanged = lifecycleSnapshotChanged(
+        lifecycleSnapshot,
+        currentSnapshot,
+      );
+      if (isSourceMutation && mutationChanged) {
+        await invalidateMutation(event, targetIndex, {
+          preserveTarget: isSwipeBoundaryEvent,
+          clearRoots: true,
+        });
+      }
       lifecycleSnapshot = await primeLifecycleSnapshot();
       if (isSwipeBoundaryEvent) await refreshTrackingRegistry(type);
       if (LIFECYCLE_ONLY_EVENTS.has(type)) {
@@ -2546,6 +2784,7 @@ export function createEventAnalysisCoordinator({
       execution.controller = null;
     }
     inFlight.clear();
+    worldInFlight.clear();
   }
   if (typeof chat.subscribe === "function")
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
@@ -2565,6 +2804,8 @@ export function createEventAnalysisCoordinator({
     resolveWorldModelStrictlyBefore: (selector) =>
       resolveWorldModelAtOrBefore(selector, { strictBefore: true }),
     saveWorldModel,
+    analyzeCurrentWorldModelFull,
+    analyzeCurrentWorldModelPatch,
     getTrackingRegistry: async () => {
       const token = chat.token();
       const chatData = store.getChat(token.chatId);

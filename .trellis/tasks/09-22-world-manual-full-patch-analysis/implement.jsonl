@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership, active Swipe, historical immutability, provenance, stale guard, and storage boundary for World persistence."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Canonical World Model validation, normalization, evidence and Patch-compatible model boundaries."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Existing DOM page, action delegation, tooltip and UI component conventions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend verification and host integration constraints."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Lifecycle ownership and persistence invalidation requirements."}

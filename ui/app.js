@@ -291,6 +291,7 @@ function createWorldModelState() {
     sectionDirty: false,
     collectionEditor: null,
     notice: null,
+    operation: null,
   }
 }
 function createDataManagementState() {
@@ -1558,6 +1559,8 @@ export function createApp(runtime, options = {}) {
       ST_CURRENT_API_UNAVAILABLE: 'SillyTavern 当前 API 不可用。',
       ST_CHAT_COMPLETION_UNAVAILABLE: '独立 API 服务不可用，请检查 API 来源设置。',
       WORLD_ANALYZER_UNAVAILABLE: '世界分析功能暂不可用，请重新加载 BioWeave。',
+      WORLD_RUNTIME_ANALYZER_UNAVAILABLE: '世界分析 Runtime 暂不可用，请重新加载 BioWeave。',
+      WORLD_MODEL_REQUIRED_FOR_PATCH: '需要先建立世界模型后才能进行补充分析。',
       WORLD_MODEL_INVALID: 'AI 返回的世界模型格式不符合要求，上一份模型已保留。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
       STALE_CHAT: 'Chat 已切换，本次世界模型结果未保存。',
@@ -1946,8 +1949,9 @@ export function createApp(runtime, options = {}) {
     if (kind === 'biological-type') return saveWorldModelCollectionEdit(mode === 'edit' ? 'rename-biological-type-selection' : 'add-biological-type', {speciesIndex, name})
     return undefined
   }
-  async function analyzeWorldModel() {
+  async function analyzeWorldModel(mode = 'full') {
     if (worldModelState.busy) return
+    const operation = mode === 'patch' ? 'patch' : 'full'
     try {
       runtime.assertBioWeaveEnabled?.()
     } catch (error) {
@@ -1970,7 +1974,7 @@ export function createApp(runtime, options = {}) {
       error: null,
       worldModelTrace: null,
     }
-    worldModelState = { ...worldModelState, busy: true, notice: null }
+    worldModelState = { ...worldModelState, busy: true, operation, notice: null }
     let activityResult = 'cancelled'
     let activityError = null
     runtime.startActivity?.('world_analysis')
@@ -1979,13 +1983,16 @@ export function createApp(runtime, options = {}) {
       const collected = await collectCurrentAnalysisInput()
       assertAnalysisChatToken(token)
       runtime.assertBioWeaveEnabled?.()
-      const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld
-      if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE')
+      const analyze = operation === 'patch'
+        ? runtime.analyzeCurrentWorldModelPatch
+        : runtime.analyzeCurrentWorldModelFull
+      if (typeof analyze !== 'function') throw new Error('WORLD_RUNTIME_ANALYZER_UNAVAILABLE')
       let result
       try {
         result = await analyze({
           analysisInput: collected.input,
           signal: controller.signal,
+          trigger: operation === 'patch' ? 'manual-patch' : 'manual-full',
         })
         traceApi('world-model-analyzer-success', {
           phase: 'analyzer',
@@ -1996,20 +2003,16 @@ export function createApp(runtime, options = {}) {
         traceApi('world-model-analyzer-error', { error, phase: 'analyzer' })
         throw error
       }
-      const model = normalizeStoredWorldModel(result)
+      const model = normalizeStoredWorldModel(result?.model ?? result)
       assertAnalysisChatToken(token)
       runtime.assertBioWeaveEnabled?.()
-      const analyzedAt = new Date().toISOString()
-      const meta = {
-        last_analyzed_at: analyzedAt,
-        last_saved_at: analyzedAt,
+      assertAnalysisChatToken(token)
+      const meta = result?.meta ?? {
+        last_analyzed_at: new Date().toISOString(),
+        last_saved_at: new Date().toISOString(),
         last_saved_by: 'ai',
         source_summary: summarizeAnalysisInput(collected.input),
       }
-      if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
-      await runtime.saveWorldModel({ model, meta, automatic: true })
-      assertAnalysisChatToken(token)
-      await refreshTrackingAfterWorldModelSave('world-model-ai-save')
       analysisPreviewState = {
         ...analysisPreviewState,
         busy: false,
@@ -2021,6 +2024,7 @@ export function createApp(runtime, options = {}) {
         ...worldModelState,
         loaded: true,
         busy: false,
+        operation: null,
         model,
         meta,
         chatId,
@@ -2056,7 +2060,7 @@ export function createApp(runtime, options = {}) {
       }
       const code = String(error?.code ?? error?.message ?? '')
       const feedbackType = code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_') ? 'info' : 'error'
-      worldModelState = { ...worldModelState, busy: false, notice: null }
+      worldModelState = { ...worldModelState, busy: false, operation: null, notice: null }
       notify(worldModelOperationError(error), feedbackType, documentRef)
     } finally {
       if (worldModelAbortController === controller) worldModelAbortController = null
@@ -2813,6 +2817,7 @@ export function createApp(runtime, options = {}) {
             worldModel: worldModelState.model,
             worldModelMeta: worldModelState.meta,
             worldModelBusy: worldModelState.busy,
+            worldModelOperation: worldModelState.operation,
             selectedSpecies: worldModelState.selectedSpecies,
             selectedBiologicalType: worldModelState.selectedBiologicalType,
             editingSection: worldModelState.editingSection,
@@ -3692,6 +3697,16 @@ export function createApp(runtime, options = {}) {
         },
       }
     }
+    if (event?.type === 'WORLD_ANALYSIS_STATUS_CHANGED') {
+      const payload = event.payload ?? {}
+      if (payload.state === 'running' && !worldModelState.busy) {
+        worldModelState = { ...worldModelState, busy: true, operation: 'auto' }
+      } else if (payload.state !== 'running' && worldModelState.operation === 'auto') {
+        worldModelState = { ...worldModelState, busy: false, operation: null }
+        reloadWorldModelFromRuntime()
+      }
+      if (route === 'world') render()
+    }
     if (
       event?.type === 'TRACKING_REGISTRY_REFRESHED' ||
       event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' ||
@@ -3926,10 +3941,9 @@ export function createApp(runtime, options = {}) {
       }
       return
     }
-    if (action === 'world-model-reanalyze') {
+    if (action === 'world-model-full' || action === 'world-model-patch') {
       event.preventDefault()
-      if (worldModelState.busy) await requestAbortWorldModelAnalysis()
-      else await analyzeWorldModel()
+      if (!worldModelState.busy) await analyzeWorldModel(action === 'world-model-patch' ? 'patch' : 'full')
       return
     }
     if (action === 'world-model-add-species') {

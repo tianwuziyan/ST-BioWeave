@@ -180,24 +180,43 @@ function createFixture({
     };
   }
   let calls = 0;
+  const configuredAnalyzer =
+    analyzer ??
+    (rawApiResponse !== null
+      ? createAnalyzer({
+          profileResolver: () => SILLYTAVERN_CURRENT_API,
+          contextResolver: () => context,
+        })
+      : {
+          async analyzeFloor() {
+            calls += 1;
+            return { events: [eventResult(`evt-${calls}`)] };
+          },
+        });
+  const runtimeAnalyzer = {
+    ...configuredAnalyzer,
+    // Existing Runtime fixtures focus on Character/Event behavior. Their
+    // default World result is an explicit empty, validated model so those
+    // tests can remain independent from an external World API response.
+    analyzeWorldModel:
+      analyzer?.analyzeWorldModel ??
+      (rawApiResponse !== null
+        ? async () => normalizeWorldModel({ schema_version: 1, species: [] })
+        : configuredAnalyzer.analyzeWorldModel ??
+          (async () => normalizeWorldModel({ schema_version: 1, species: [] }))),
+    analyzeWorldModelPatch:
+      analyzer?.analyzeWorldModelPatch ??
+      (rawApiResponse !== null
+        ? async () => ({ schema_version: 1, add: {}, update: {} })
+        : configuredAnalyzer.analyzeWorldModelPatch ??
+          (async () => ({ schema_version: 1, add: {}, update: {} }))),
+  };
   const runtime = createRuntime({
     adapter,
     ...(typeof characterContextResolver === "function"
       ? { characterContextResolver }
       : {}),
-    analyzer:
-      analyzer ??
-      (rawApiResponse !== null
-        ? createAnalyzer({
-            profileResolver: () => SILLYTAVERN_CURRENT_API,
-            contextResolver: () => context,
-          })
-        : {
-            async analyzeFloor() {
-              calls += 1;
-              return { events: [eventResult(`evt-${calls}`)] };
-            },
-        }),
+    analyzer: runtimeAnalyzer,
     storyTimeDebug,
     storyTimeTrace,
   });
@@ -1060,10 +1079,11 @@ test(
 
     assert.deepEqual(
       saveOrder.map(({ kind }) => kind),
-      ["floor"],
+      ["floor", "floor"],
     );
-    assert.equal(saveOrder[0].value.analysis.status, "success");
-    assert.equal(saveOrder[0].value.events.length, 1);
+    const eventSave = saveOrder.at(-1).value;
+    assert.equal(eventSave.analysis.status, "success");
+    assert.equal(eventSave.events.length, 1);
     assert.equal(Object.hasOwn(fixture.context.chatMetadata.bioweave ?? {}, "character_registry"), false);
     fixture.runtime.destroy();
   },
@@ -2930,6 +2950,77 @@ test("Runtime lifecycle performs interval analysis without any UI subscriber", a
   fixture.runtime.destroy();
 });
 
+test("repeated lifecycle notifications share one World-first analysis Job", async () => {
+  const order = [];
+  let releaseWorld;
+  let worldStartedResolve;
+  const worldStarted = new Promise(resolve => {
+    worldStartedResolve = resolve;
+  });
+  const worldDone = new Promise(resolve => {
+    releaseWorld = resolve;
+  });
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [] });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        order.push("world-start");
+        worldStartedResolve();
+        await worldDone;
+        order.push("world-resolved");
+        return worldModel;
+      },
+      async analyzeFloor({ world_model }) {
+        eventCalls += 1;
+        order.push("character-start");
+        assert.deepEqual(world_model, worldModel);
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+
+  fixture.emit("message-received", { message_id: "message-stable" });
+  await worldStarted;
+  fixture.emit("generation-ended", { message_id: "message-stable" });
+  fixture.emit("message-updated", { message_id: "message-stable" });
+  releaseWorld();
+  await settle();
+
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 1);
+  assert.deepEqual(order, ["world-start", "world-resolved", "character-start"]);
+  fixture.runtime.destroy();
+});
+
+test("a User message lifecycle does not re-analyze the previous Character Floor", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "character-floor", floor: 5, content: "角色楼层", role: "assistant" },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  const callsBeforeUserMessage = fixture.calls();
+  const worldBeforeUserMessage = fixture.apiRequests.length;
+
+  fixture.context.chat.push({
+    message_id: "user-message",
+    floor: 6,
+    content: "用户消息",
+    role: "user",
+  });
+  fixture.emit("message-received", { message_id: "user-message" });
+  await settle();
+
+  assert.equal(fixture.calls(), callsBeforeUserMessage);
+  assert.equal(fixture.apiRequests.length, worldBeforeUserMessage);
+  fixture.runtime.destroy();
+});
+
 test("active Swipe switching selects isolated authoritative Floor Versions", async () => {
   const message = {
     message_id: "message-swipe",
@@ -3470,6 +3561,12 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
   const reloaded = createRuntime({
     adapter: fixture.runtime.st,
     analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [] });
+      },
+      async analyzeWorldModelPatch() {
+        return { schema_version: 1, add: {}, update: {} };
+      },
       async analyzeFloor(request) {
         input = request.analysisInput;
         return { events: [] };
@@ -3844,7 +3941,7 @@ test("Floor save rechecks the current target Version before committing an old re
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /REQUEST_ABORTED/u,
   );
-  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.equal(fixture.saveFloorCalls(), 1);
   assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
   fixture.runtime.destroy();
 });
@@ -4204,13 +4301,13 @@ test("Floor save failure exits running even when failure metadata cannot be save
   await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
-    /ST_FLOOR_STORAGE_UNAVAILABLE/,
+    error => error?.code === "WORLD_MODEL_UNAVAILABLE" && error?.cause?.message === "ST_FLOOR_STORAGE_UNAVAILABLE",
   );
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(status.busy, false);
   assert.equal(status.state, "failed");
-  assert.equal(status.error_stage, "floor_save");
-  assert.equal(status.error_code, "ST_FLOOR_STORAGE_UNAVAILABLE");
+  assert.equal(status.error_stage, "world_model_preflight");
+  assert.equal(status.error_code, "WORLD_MODEL_UNAVAILABLE");
   fixture.runtime.destroy();
 });
 
@@ -4484,7 +4581,7 @@ test("World Model resolver isolates Swipe owners and ignores a deleted Swipe", a
   fixture.runtime.destroy();
 });
 
-test("Event Analysis consumes only the strictly previous Floor World Model and never Chat legacy state", async () => {
+test("Event Analysis consumes the current valid Floor World Model and never Chat legacy state", async () => {
   const inputs = [];
   const messages = [
     { message_id: "m10", floor: 10, content: "F10", role: "assistant" },
@@ -4520,9 +4617,9 @@ test("Event Analysis consumes only the strictly previous Floor World Model and n
     });
   }
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 2 }, { force: true });
-  assert.equal(inputs.at(-1).world_model.species[0].name, "W20");
+  assert.equal(inputs.at(-1).world_model.species[0].name, "W30");
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
-  assert.equal(inputs.at(-1).world_model, null);
+  assert.equal(inputs.at(-1).world_model.species[0].name, "W10");
   fixture.runtime.destroy();
 });
 
@@ -5142,6 +5239,182 @@ test("Story Time-only advancement restores from an unchanged earlier Snapshot", 
   assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot.checkpoint.message_id, "story-snapshot-b");
   fixture.runtime.destroy();
 });
+
+test("automatic analysis runs Initial World Analysis before Character/Event Analysis", async () => {
+  const order = [];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "世界 A" }] });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        order.push("world");
+        return worldModel;
+      },
+      async analyzeFloor({ world_model }) {
+        order.push("event");
+        assert.deepEqual(world_model, worldModel);
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  assert.deepEqual(order, ["world", "event"]);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldModel);
+  fixture.runtime.destroy();
+});
+
+test("World Analysis failure is fail-closed and does not run Character/Event Analysis", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_API_FAILED");
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
+    error => error?.code === "WORLD_MODEL_UNAVAILABLE",
+  );
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  assert.equal(fixture.runtime.store.getFloor(0).events.length, 0);
+  fixture.runtime.destroy();
+});
+
+test("existing World Model is reused without an extra World AI request", async () => {
+  const messages = [
+    { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },
+    { message_id: "event-floor", floor: 6, content: "普通剧情", role: "assistant" },
+  ];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "世界 A" }] });
+  let worldCalls = 0;
+  let receivedWorld = null;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() { worldCalls += 1; return worldModel; },
+      async analyzeFloor({ world_model }) { receivedWorld = world_model; return { events: [] }; },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-a-floor", floor: 3, text: "A" }),
+    world_model: worldModel,
+  });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: false });
+  assert.equal(worldCalls, 0);
+  assert.deepEqual(receivedWorld, worldModel);
+  fixture.runtime.destroy();
+});
+
+test("World Patch Analysis merges deterministically and saves only the current Floor", async () => {
+  const messages = [
+    { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },
+    { message_id: "world-b-floor", floor: 6, content: "新增世界规则：出现新物种。", role: "assistant" },
+  ];
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "世界 A" }] });
+  const worldBSpecies = { name: "世界 B", description: "新增物种" };
+  let patchCalls = 0;
+  let receivedWorld = null;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        return { schema_version: 1, add: { species: [worldBSpecies] }, update: {} };
+      },
+      async analyzeFloor({ world_model }) { receivedWorld = world_model; return { events: [] }; },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-a-floor", floor: 3, text: "A" }),
+    world_model: worldA,
+  });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+  assert.equal(patchCalls, 1);
+  assert.deepEqual(receivedWorld.species.map(item => item.name), ["世界 A", "世界 B"]);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, receivedWorld);
+  fixture.runtime.destroy();
+});
+
+test("invalid World Patch fails closed without replacing the existing World Model", async () => {
+  const messages = [
+    { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },
+    { message_id: "world-b-floor", floor: 6, content: "新增世界规则：出现新物种。", role: "assistant" },
+  ];
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "世界 A" }] });
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        return {
+          schema_version: 1,
+          add: {},
+          update: { species: [{ name: "不存在的旧物种", description: "不能静默替换" }] },
+        };
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-a-floor", floor: 3, text: "A" }),
+    world_model: worldA,
+  });
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true }),
+    error => error?.code === "WORLD_MODEL_UNAVAILABLE",
+  );
+  assert.equal(eventCalls, 0);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
+  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  fixture.runtime.destroy();
+});
+
+test("stale World Analysis completion is discarded before Character/Event Analysis", async () => {
+  let release;
+  let eventCalls = 0;
+  const started = new Promise(resolve => {
+    release = resolve;
+  });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        await started;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "STALE" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  fixture.runtime.chat.invalidate("stale-world");
+  release();
+  await assert.rejects(pending, /REQUEST_ABORTED|STALE_CHAT/);
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.runtime.store.getFloor(0).world_model, null);
+  fixture.runtime.destroy();
+});
+
 test("Chat-local enabled defaults true, pauses automatic analysis, preserves history, and resumes without backlog", async () => {
   const fixture = createFixture();
   await fixture.runtime.init();
@@ -5190,5 +5463,183 @@ test("disabling an in-flight analysis prevents its late response from committing
   assert.equal(result.status, "disabled");
   assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
   assert.deepEqual(fixture.runtime.store.getFloor(0).events, []);
+  fixture.runtime.destroy();
+});
+
+function deferredWorldRequest() {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  return { pending, release };
+}
+
+function worldFloorMessages() {
+  return [
+    { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+    { message_id: "current-floor", floor: 6, content: "当前楼层新增世界规则", role: "assistant" },
+  ];
+}
+
+async function seedWorldOwner(fixture, worldModel) {
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({
+      chatId: "chat-runtime",
+      messageId: "world-owner",
+      floor: 3,
+      text: "已有世界规则",
+    }),
+    world_model: worldModel,
+  });
+}
+
+test("World single-flight deduplicates Auto World and Manual Full API requests", async () => {
+  const gate = deferredWorldRequest();
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "完整世界" }] });
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "current-floor", floor: 6, content: "当前剧情", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        await gate.pending;
+        return worldModel;
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const manual = fixture.runtime.analyzeCurrentWorldModelFull({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const automatic = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(worldCalls, 1);
+  gate.release();
+  await Promise.all([manual, automatic]);
+  assert.equal(eventCalls, 1);
+  fixture.runtime.destroy();
+});
+
+test("World single-flight deduplicates Auto World and Manual Patch API requests", async () => {
+  const gate = deferredWorldRequest();
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "已有世界" }] });
+  let patchCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: worldFloorMessages(),
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        await gate.pending;
+        return { schema_version: 1, add: {}, update: {} };
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await seedWorldOwner(fixture, worldA);
+  const manual = fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const automatic = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(patchCalls, 1);
+  gate.release();
+  await Promise.all([manual, automatic]);
+  assert.equal(eventCalls, 1);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
+  fixture.runtime.destroy();
+});
+
+test("Auto Analysis reuses an in-flight Manual Full request without a second World API call", async () => {
+  const gate = deferredWorldRequest();
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "手动完整世界" }] });
+  let worldCalls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "current-floor", floor: 6, content: "当前剧情", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        await gate.pending;
+        return worldModel;
+      },
+      async analyzeFloor() { return { events: [] }; },
+    },
+  });
+  await fixture.runtime.init();
+  const manual = fixture.runtime.analyzeCurrentWorldModelFull({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const automatic = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(worldCalls, 1);
+  gate.release();
+  await Promise.all([manual, automatic]);
+  fixture.runtime.destroy();
+});
+
+test("Auto Analysis reuses an in-flight Manual Patch request without a second World API call", async () => {
+  const gate = deferredWorldRequest();
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "已有世界" }] });
+  let patchCalls = 0;
+  const fixture = createFixture({
+    messages: worldFloorMessages(),
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        await gate.pending;
+        return { schema_version: 1, add: {}, update: {} };
+      },
+      async analyzeFloor() { return { events: [] }; },
+    },
+  });
+  await seedWorldOwner(fixture, worldA);
+  const manual = fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const automatic = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(patchCalls, 1);
+  gate.release();
+  await Promise.all([manual, automatic]);
+  fixture.runtime.destroy();
+});
+
+test("Manual Full and Manual Patch share one World persistence job", async () => {
+  const gate = deferredWorldRequest();
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "已有世界" }] });
+  const worldB = normalizeWorldModel({ schema_version: 1, species: [{ name: "完整新世界" }] });
+  let fullCalls = 0;
+  let patchCalls = 0;
+  const fixture = createFixture({
+    messages: worldFloorMessages(),
+    analyzer: {
+      async analyzeWorldModel() {
+        fullCalls += 1;
+        await gate.pending;
+        return worldB;
+      },
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        await gate.pending;
+        return { schema_version: 1, add: {}, update: {} };
+      },
+    },
+  });
+  await seedWorldOwner(fixture, worldA);
+  const full = fixture.runtime.analyzeCurrentWorldModelFull({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const patch = fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fullCalls, 1);
+  assert.equal(patchCalls, 0);
+  gate.release();
+  await Promise.all([full, patch]);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, worldB);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
+  assert.equal(fixture.saveFloorCalls(), 2);
   fixture.runtime.destroy();
 });

@@ -75,6 +75,12 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 删除 Floor、切换 Swipe、Event 编辑/删除或 Chat 切换后，Runtime/Storage 必须以当前有效 Floor-bound Event 重建 Registry，不留下 dangling `event_id`。Event 删除是真删除，不新增 `user_override` priority layer。失败分析不得写入半结构化 Event。
 
+### World Analysis Runtime 能力边界
+
+World Analysis 只有两套底层能力：Full World Analysis 与 World Patch Analysis。Initial Full、Manual“开始分析”和 Auto 在没有有效 World 时都调用同一个 Full 能力；Manual“补充分析”和 Auto 在存在 world-relevant 新证据时都调用同一个 Patch 能力。已有 World 但当前 Floor 没有 world-relevant 新证据时，Auto 不调用 World AI，直接 Reuse 已验证的 World 后再进行 Character/Event Analysis。
+
+世界页的“开始分析”始终强制 Full，“补充分析”始终强制 Patch；两种手动操作只保存 World，不继续 Character/Event。Manual/Auto Full/Patch 共享 Runtime World-specific Floor-Version single-flight，避免同一 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version` 发出第二个 World API 请求或产生并发 World persistence。所有结果仍只能 forward-only 写入当前有效 Character Floor，经过 canonical validation 与 stale guard；历史 Floor、User message 和 Chat-level World fallback 不可修改或持有事实。
+
 ### Event Analysis Runtime API
 
 `createRuntime()` 对 UI 暴露 `analyzeCurrentFloor({force})`、`analyzeFloor(target, {force})`、`refreshCurrentFloorAnalysis()`、`requestAbortCurrentFloorAnalysis()`、`getCurrentFloorAnalysisStatus()`、`getCurrentFloorEvents()`、`getTrackingRegistry()`、`collectActiveBusinessData()`、`updateEvent()` 与 `deleteEvent()`。当前楼层始终是当前 Chat 最后一条消息的 active Swipe；指定消息优先按稳定 `message_id` 匹配，不能直接假定 lifecycle payload 的 `message_id` 是数组下标。

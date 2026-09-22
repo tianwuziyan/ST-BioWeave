@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Review World single-flight, stale and forward-only persistence against the Floor contract."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Review Full/Patch validation and canonical model behavior."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review UI and verification requirements."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Review lifecycle and persistence outcomes."}

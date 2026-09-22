@@ -819,6 +819,7 @@ export function worldPage({
   worldModel = null,
   worldModelMeta = null,
   worldModelBusy = false,
+  worldModelOperation = null,
   selectedSpecies = null,
   selectedBiologicalType = null,
   selectedSpeciesIndex = null,
