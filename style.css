@@ -2309,6 +2309,36 @@
   font-size: 11px;
 }
 
+.bioweave-floating-launcher-settings-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bioweave-floating-launcher-visibility {
+  flex: 0 1 auto;
+}
+
+.bioweave-settings-page .bioweave-floating-launcher-theme-field {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bioweave-settings-page .bioweave-floating-launcher-theme-field > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.bioweave-settings-page .bioweave-floating-launcher-theme-field .bioweave-select {
+  min-width: 0;
+  width: auto !important;
+}
+
 .bioweave-recent-story-count {
   display: grid;
   grid-template-columns: auto minmax(64px, 76px) auto;

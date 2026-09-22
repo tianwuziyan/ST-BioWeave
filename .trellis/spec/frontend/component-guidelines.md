@@ -477,14 +477,14 @@ existing analysis request is still running.
 
 ## Chat-local Runtime switch UI
 
-The app header and Settings page expose the same current-Chat
-`settings.enabled` value through Runtime operations; they must not maintain
-separate UI state. The control is a native `.bioweave-checkbox` inside the
-shared header-control label, with visible labels `已开启` and `已暂停` and an
-accessible label/tooltip of `暂停 BioWeave` or `启用 BioWeave`. Mobile may use
-the same compact control sizing, but status must remain available as text or
-an accessible label and the touch target remains at least 44px where the host
-layout allows.
+The app header exposes the current-Chat `settings.enabled` value through
+Runtime operations; Settings must not render a duplicate master switch or
+maintain a second UI state. The control is a native `.bioweave-checkbox`
+inside the shared header-control label, with visible labels `已开启` and
+`已暂停` and an accessible label/tooltip of `暂停 BioWeave` or `启用 BioWeave`.
+Mobile may use the same compact control sizing, but status must remain
+available as text or an accessible label and the touch target remains at least
+44px where the host layout allows.
 
 The pause action reuses `confirmWithPopup()` and the existing event delegation.
 The UI may disable or warn on manual refresh, but Runtime guards remain

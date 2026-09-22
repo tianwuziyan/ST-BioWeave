@@ -331,6 +331,10 @@ test('Floating Launcher preferences are global settings and render as UI control
   });
   assert.match(markup, /data-bioweave-ui-preference="show_floating_launcher"/);
   assert.match(markup, /data-bioweave-floating-launcher-theme/);
+  assert.match(markup, /bioweave-floating-launcher-settings-controls/);
+  assert.match(markup, /bioweave-floating-launcher-visibility/);
+  assert.match(markup, /bioweave-floating-launcher-theme-field/);
+  assert.ok(markup.indexOf('bioweave-floating-launcher-theme-field') < markup.indexOf('bioweave-floating-launcher-visibility'));
   assert.match(markup, /value="mist-violet" selected/);
   assert.match(markup, /悬浮图标/);
   assert.doesNotMatch(markup, /Floating Launcher|Edge Snap|Launcher|Snap|Show Floating Launcher/);
@@ -353,6 +357,9 @@ test('Floating Launcher top-bar toggle and reduced-motion contract are present',
   assert.match(appSource, /data-bioweave-tooltip/);
   assert.match(appSource, /data-bioweave-header-tooltip/);
   assert.match(styleSource, /\.bioweave-theme-button:hover \.bioweave-header-tooltip/);
+  assert.match(styleSource, /\.bioweave-floating-launcher-settings-controls\s*\{[\s\S]*?display:\s*flex;[\s\S]*?align-items:\s*center;/);
+  assert.match(styleSource, /\.bioweave-settings-page \.bioweave-floating-launcher-theme-field\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*row;/);
+  assert.match(styleSource, /\.bioweave-settings-page \.bioweave-floating-launcher-theme-field \.bioweave-select\s*\{[\s\S]*?width:\s*auto\s*!important;/);
   assert.match(styleSource, /display: none !important;[\s\S]*?visibility: hidden !important;/);
   assert.match(styleSource, /display: block !important;[\s\S]*?visibility: visible !important;/);
   assert.match(styleSource, /visibility: hidden !important;[\s\S]*?opacity: 0 !important/);

@@ -230,6 +230,7 @@
   "floatingLauncher": {
     "domId": "bioweave-floating-launcher",
     "themeSetting": "floating_launcher_theme",
+    "settingsLayout": "inline visibility switch and theme select",
     "defaultTheme": "midnight-indigo",
     "themes": {
       "midnight-indigo": {"label": "夜幕靛", "background": "rgba(47, 61, 100, 0.68)"},

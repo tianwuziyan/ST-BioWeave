@@ -56,9 +56,8 @@ second source of truth.
   call `window.confirm()` or create a custom modal.
 - Disable the existing refresh action or show a pause Toast before calling the
   Runtime operation; also keep the Runtime guard authoritative.
-- Add a Settings page control only if the existing Settings rendering/handler
-  can bind it to the same current-Chat setting without introducing a second
-  state container.
+- Do not render a duplicate Settings page control; the top header is the sole
+  visible master-switch entry point.
 
 ## Persistence and lifecycle
 

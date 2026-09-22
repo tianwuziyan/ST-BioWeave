@@ -189,6 +189,11 @@
         padding: 0 !important;
         font-size: 16px;
       }
+      .bw-floating-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
       .bw-enabled-control {
         display: inline-flex !important;
         align-items: center;
@@ -2558,7 +2563,10 @@
               <details class="bw-settings-group">
                 <summary class="bw-settings-head"><span class="bw-settings-chevron" aria-hidden="true">+</span><span class="bw-settings-title"><b>悬浮图标</b><small>页面内入口的外观偏好</small></span><span class="bw-badge">全局设置</span></summary>
                 <div class="bw-settings-body">
-                  <label class="bw-setting-field"><span>悬浮按钮主题</span><select aria-label="悬浮按钮主题"><option selected>夜幕靛</option><option>雾境紫</option><option>深海青</option></select></label>
+                  <div class="bw-floating-controls">
+                    <label class="bw-setting-field"><span>悬浮按钮主题</span><select aria-label="悬浮按钮主题"><option selected>夜幕靛</option><option>雾境紫</option><option>深海青</option></select></label>
+                    <label class="bw-switch"><input type="checkbox" checked /><span aria-hidden="true"></span>显示悬浮图标</label>
+                  </div>
                   <p class="bw-note">三种主题共用中央圆、两段圆弧和两个圆点组成的内联 SVG；默认主题为夜幕靛。</p>
                 </div>
               </details>

@@ -15,16 +15,10 @@ test('missing Chat enabled values normalize to true and explicit false survives'
   assert.equal(normalizeChatSettings({enabled: 'false'}).enabled, true);
 });
 
-test('settings page exposes the same Chat-local checkbox control', () => {
-  const enabled = settingsPage({enabled: true});
-  const disabled = settingsPage({enabled: false});
-  assert.match(enabled, /data-bioweave-action="toggle-bioweave-enabled"/);
-  assert.match(enabled, /class="bioweave-checkbox" type="checkbox"[^>]* checked/);
-  assert.match(enabled, />已开启<\/span>/);
-  assert.match(enabled, /aria-label="暂停 BioWeave"/);
-  assert.match(disabled, /class="bioweave-checkbox" type="checkbox"[^>]*aria-label="启用 BioWeave"(?![^>]* checked)/);
-  assert.match(disabled, />已暂停<\/span>/);
-  assert.match(disabled, /aria-label="启用 BioWeave"/);
+test('settings page keeps the master switch only in the top header', () => {
+  const settings = settingsPage({});
+  assert.doesNotMatch(settings, /data-bioweave-action="toggle-bioweave-enabled"/);
+  assert.doesNotMatch(settings, /BioWeave 总开关/);
 });
 
 test('enabled header control reuses the native checkbox and delegated Runtime action', () => {

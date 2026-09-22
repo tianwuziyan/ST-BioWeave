@@ -78,12 +78,6 @@ function field(label, name, value, type = 'text', extra = '') {
   return `<label class="bioweave-settings-field"><span>${label}</span><input class="bioweave-input" name="${name}" type="${type}" value="${escapeHtml(value)}"${extra}></label>`;
 }
 
-function renderEnabledControl(enabled) {
-  const active = enabled !== false;
-  const tooltip = active ? '暂停 BioWeave' : '启用 BioWeave';
-  return '<label class="bioweave-theme-button bioweave-enabled-control" data-bioweave-action="toggle-bioweave-enabled" data-bioweave-enabled-toggle data-bioweave-tooltip="' + tooltip + '" title="' + tooltip + '" aria-label="' + tooltip + '"><input class="bioweave-checkbox" type="checkbox" data-bioweave-enabled-input aria-label="' + tooltip + '"' + (active ? ' checked' : '') + '><span data-bioweave-enabled-label>' + (active ? '已开启' : '已暂停') + '</span><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">' + tooltip + '</span></label>';
-}
-
 function modelDraftKey(profileId) {
   const id = String(profileId ?? '').trim();
   return id || '__new__';
@@ -738,17 +732,20 @@ function renderFloatingLauncherSettings({show = true, theme = DEFAULT_FLOATING_L
     '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-floating-launcher-settings" data-bioweave-settings-disclosure="floating_launcher"' + (open ? ' open' : '') + '>',
     renderSettingsSummary('悬浮图标', '页面内 BioWeave 入口', null, {label: show ? '已启用' : '已关闭', tone: show ? 'good' : ''}),
     '<section class="bioweave-card bioweave-floating-launcher-settings-card">',
-    renderRecentStorySwitch({
-      checked: show,
-      label: '显示悬浮图标',
-      description: '',
-      inputAttributes: 'data-bioweave-ui-preference="show_floating_launcher" aria-label="显示悬浮图标"',
-    }),
-    '<label class="bioweave-settings-field"><span>颜色主题</span><select class="bioweave-select" data-bioweave-floating-launcher-theme aria-label="悬浮图标颜色主题">',
+    '<div class="bioweave-floating-launcher-settings-controls">',
+    '<label class="bioweave-settings-field bioweave-floating-launcher-theme-field"><span>颜色主题</span><select class="bioweave-select" data-bioweave-floating-launcher-theme aria-label="悬浮图标颜色主题">',
     '<option value="' + FLOATING_LAUNCHER_THEMES.MIDNIGHT_INDIGO + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.MIDNIGHT_INDIGO ? ' selected' : '') + '>夜幕靛</option>',
     '<option value="' + FLOATING_LAUNCHER_THEMES.MIST_VIOLET + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.MIST_VIOLET ? ' selected' : '') + '>雾境紫</option>',
     '<option value="' + FLOATING_LAUNCHER_THEMES.DEEP_TEAL + '"' + (selectedTheme === FLOATING_LAUNCHER_THEMES.DEEP_TEAL ? ' selected' : '') + '>深海青</option>',
     '</select></label>',
+    renderRecentStorySwitch({
+      checked: show,
+      className: 'bioweave-floating-launcher-visibility',
+      label: '显示悬浮图标',
+      description: '',
+      inputAttributes: 'data-bioweave-ui-preference="show_floating_launcher" aria-label="显示悬浮图标"',
+    }),
+    '</div>',
     '</section>',
     '</details>',
   ].join('');
@@ -1161,7 +1158,6 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
 }
 
 export function settingsPage({
-  enabled = true,
   profiles: rawProfiles = {},
   assignments = {},
   apiSource = SILLYTAVERN_CURRENT_API,
@@ -1196,7 +1192,6 @@ export function settingsPage({
   return [
     '<section class="bioweave-page bioweave-settings-page" data-bioweave-page="settings" data-bioweave-settings>',
     '<div class="bioweave-page-title bioweave-page-head"><div><h2>设置</h2><p class="bioweave-muted">连接参数是全局配置；任务数据仍属于当前 Chat。</p></div></div>',
-    '<section class="bioweave-settings-disclosure bioweave-settings-group bioweave-runtime-switch-settings" data-bioweave-runtime-switch-settings><div class="bioweave-settings-summary"><span class="bioweave-settings-summary-copy"><strong>BioWeave 总开关</strong><small>仅控制当前 Chat 的自动分析、追踪和上下文注入，已有数据仍会保留。</small></span>' + renderEnabledControl(enabled) + '</div></section>',
     renderWorldbookSources(worldbookSources),
     renderRecentStorySettings(worldbookSources.recentStory, worldbookSources.openSettingsSections, worldbookSources.globalRecentStory),
     renderExternalMemorySettings(worldbookSources.externalMemory, worldbookSources.externalMemoryProviders, worldbookSources.openSettingsSections),

@@ -36,7 +36,7 @@
 - 顶栏右上角提供可访问总开关，Desktop/Tablet 显示原生 checkbox 与“已开启”/“已暂停”文字，Mobile 可紧凑化但必须保留文字或可访问标签。
 - Tooltip/aria-label 分别为“启用 BioWeave”与“暂停 BioWeave”；刷新分析在 disabled 时禁用或提示暂停，不能绕过 Runtime guard。
 - 关闭可复用现有 host Popup confirm：标题“暂停 BioWeave？”，说明明确停止自动分析、追踪和上下文注入且不产生新分析 API 请求、已有数据保留；按钮语义为取消/暂停。开启不确认。
-- 若 Settings 页面补齐“启用 BioWeave” toggle，必须与顶栏绑定同一个 Chat-local `settings.enabled`，任一位置切换后立即同步，不存在第二状态源。
+- `settings.enabled` 只在顶栏提供可见控件；Settings 页面不重复渲染总开关，避免产生第二个入口或状态源。
 
 ## Acceptance Criteria
 

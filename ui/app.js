@@ -2916,7 +2916,6 @@ export function createApp(runtime, options = {}) {
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
-      ...(route === 'settings' ? {enabled: currentBioWeaveEnabled()} : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'

@@ -52,7 +52,8 @@ listener、subscription、timer 和 pointer capture。
 按钮图形使用同一份内联 SVG（中央圆、两段等粗圆弧和两个圆点），主题由全局
 `floating_launcher_theme` 选择：`midnight-indigo`（默认夜幕靛）、`mist-violet`
 （雾境紫）和 `deep-teal`（深海青）。主题只改变按钮底色变量，不改变入口行为或
-业务状态；缺失/非法值回退夜幕靛。
+业务状态；缺失/非法值回退夜幕靛。设置中的“显示悬浮图标”开关与颜色主题
+选择器保持同一行，继续使用现有 switch/select 控件，不改变全局设置存储。
 
 ## 视觉基线
 
