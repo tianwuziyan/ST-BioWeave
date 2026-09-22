@@ -103,6 +103,27 @@ test('coordinator updates one injection slot and clears when no visible projecti
   assert.equal(writes.at(-1).content, '');
 });
 
+test('disabled coordinator clears immediately and never reinjects on refresh', async () => {
+  const writes = [];
+  let enabled = true;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    enabledResolver: () => enabled,
+    setExtensionPrompt: payload => writes.push(payload),
+  });
+  assert.equal((await coordinator.refreshProjectionContext()).status, 'updated');
+  enabled = false;
+  assert.equal(coordinator.clearProjectionContext().status, 'cleared');
+  assert.equal(writes.at(-1).content, '');
+  const refreshed = await coordinator.refreshProjectionContext();
+  assert.equal(refreshed.status, 'cleared');
+  assert.equal(writes.at(-1).content, '');
+  enabled = true;
+  assert.equal((await coordinator.refreshProjectionContext()).status, 'updated');
+});
+
 test('coordinator clears for missing Character Floor and isolates chat scope', async () => {
   const writes = [];
   const coordinator = createProjectionContextCoordinator({

@@ -87,6 +87,16 @@ export const DEFAULT_SETTINGS = {
   prompts: { prefix: '', suffix: '', task: {} },
 };
 
+// Chat-local runtime control. Missing legacy values are enabled by default;
+// only an explicit false pauses BioWeave.
+export function normalizeChatSettings(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    ...source,
+    enabled: source.enabled !== false,
+  };
+}
+
 // Reserved Chat-local lifecycle/control state. Current Data Management clear
 // operations remove authoritative Floor facts directly and need no marker.
 export const DEFAULT_DATA_LIFECYCLE = Object.freeze({});
@@ -689,7 +699,7 @@ export function emptyChat(chatId) {
   return {
     schema_version: SCHEMA_VERSION,
     chat_scope: { chat_id: chatId },
-    settings: cloneValue(DEFAULT_SETTINGS),
+    settings: normalizeChatSettings(cloneValue(DEFAULT_SETTINGS)),
     data_lifecycle: cloneValue(DEFAULT_DATA_LIFECYCLE),
   };
 }

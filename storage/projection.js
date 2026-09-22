@@ -37,9 +37,14 @@ function assertCharacterOwner(store, owner, version) {
   return {selector, swipeId, floorData, metadata}
 }
 
-export function createProjectionPersistence({store, resolveCurrentFloorVersion = null} = {}) {
+export function createProjectionPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true} = {}) {
   if (!store || typeof store.getFloor !== 'function' || typeof store.saveFloor !== 'function') throw new TypeError('PROJECTION_STORE_REQUIRED')
   const resolveVersion = resolveCurrentFloorVersion ?? store.getCurrentFloorVersion
+
+  function assertEnabled() {
+    if (enabledResolver() !== false) return
+    throw error('BIOWEAVE_DISABLED')
+  }
 
   async function resolveOwner(input) {
     const chatId = input.chatId ?? input.chat_id
@@ -55,6 +60,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
   }
 
   async function mutateFloor(input, mutate) {
+    assertEnabled()
     const resolved = await resolveOwner(input)
     const existingRoot = resolved.floorData.projection_timeline
     for (const collection of ['creations', 'evidence_records', 'lifecycle_records']) {
@@ -69,6 +75,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     if (result.status === 'deduped') return {status: result.status, timeline: currentTimeline}
     const nextFloor = cloneValue(resolved.floorData)
     nextFloor.projection_timeline = result.timeline
+    assertEnabled()
     await store.saveFloor(resolved.selector, resolved.swipeId, nextFloor)
     return {status: result.status, timeline: result.timeline}
   }

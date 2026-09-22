@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Chat/Floor ownership and provenance guard required for the enabled scope and async commit checks."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Defines scheduler, analysis, Tracking, manual refresh, and Projection pipeline contracts."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Defines World Model analysis dependency and persistence boundaries."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Defines Chat metadata lifecycle, preservation, invalidation, and persistence outcomes."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines app shell, host Popup/Toast, accessible DOM, and responsive UI conventions."}
+{"file":"docs/ui-framework.config.json","reason":"Fixed UI variables, responsive breakpoints, and component contract required for header control."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Production UI structure, header, controls, accessibility, and mobile sizing contract."}

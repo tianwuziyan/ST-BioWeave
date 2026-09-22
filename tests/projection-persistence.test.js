@@ -32,11 +32,11 @@ function fakeStore({messages, floors, activeSwipes = {}, chatId = 'chat-a', save
   }
 }
 
-function setup({chatId = 'chat-a', ownerRole = 'assistant', swipe = 0, floors = {}, saveError = null} = {}) {
+function setup({chatId = 'chat-a', ownerRole = 'assistant', swipe = 0, floors = {}, saveError = null, enabledResolver = undefined} = {}) {
   const messages = [{message_id: 'message-10', role: ownerRole}, {message_id: 'message-13', role: 'assistant'}]
   const activeSwipes = {0: swipe, 1: 0}
   const store = fakeStore({messages, floors, activeSwipes, chatId, saveError})
-  return {store, persistence: createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion})}
+  return {store, persistence: createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion, ...(enabledResolver ? {enabledResolver} : {})})}
 }
 
 test('Projection timeline separates creation, evidence, and lifecycle records', () => {
@@ -59,6 +59,15 @@ test('Character Floor creation persists only in its active Swipe, including Swip
   const result = await setupState.persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), projectionCandidate: created})
   assert.equal(result.status, 'appended')
   assert.equal(setupState.store.state.floors['0:0'].projection_timeline.creations.length, 1)
+})
+
+test('disabled Projection persistence skips generation/evidence/lifecycle writes', async () => {
+  const created = projection()
+  const setupState = setup({enabledResolver: () => false, floors: {'0:0': {floor_version: version(10), projection_timeline: emptyProjectionTimeline()}}})
+  await assert.rejects(() => setupState.persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), projectionCandidate: created}), /BIOWEAVE_DISABLED/)
+  await assert.rejects(() => setupState.persistence.saveProjectionEvidence({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), evidenceRecord: {projection_id: created.projection_id, source_event_ids: ['event-1'], created_at_floor_version: version(10)}}), /BIOWEAVE_DISABLED/)
+  await assert.rejects(() => setupState.persistence.saveProjectionLifecycle({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), lifecycleRecord: {projection_id: created.projection_id, action: 'realized', created_at_floor_version: version(10)}}), /BIOWEAVE_DISABLED/)
+  assert.deepEqual(setupState.store.state.floors['0:0'].projection_timeline, emptyProjectionTimeline())
 })
 
 test('User Floor ownership is rejected and cannot create an empty payload', async () => {

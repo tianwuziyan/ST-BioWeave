@@ -11,6 +11,7 @@ export function createProjectionContextCoordinator({
   resolveCurrentFloor,
   getChatId,
   setExtensionPrompt,
+  enabledResolver = () => true,
   attributionResolver = null,
   injection = {},
 } = {}) {
@@ -20,6 +21,14 @@ export function createProjectionContextCoordinator({
   const depth = injection.depth ?? PROJECTION_CONTEXT_DEPTH;
   const role = injection.role ?? PROJECTION_CONTEXT_ROLE;
   let destroyed = false;
+
+  function isEnabled() {
+    try {
+      return enabledResolver() !== false;
+    } catch {
+      return false;
+    }
+  }
 
   function unavailableResult(error = null) {
     return {
@@ -64,6 +73,8 @@ export function createProjectionContextCoordinator({
 
   async function refreshProjectionContext({chatId = getChatId?.()} = {}) {
     if (destroyed) return {status: 'destroyed', dto: [], prompt: ''};
+    if (!isEnabled())
+      return clearFor('disabled', {dto: [], prompt: ''});
     if (chatId === null || chatId === undefined || chatId === '') {
       return clearFor('no_chat', {dto: [], prompt: ''});
     }

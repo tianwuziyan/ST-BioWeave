@@ -11,6 +11,7 @@ import {
   normalizeAnalysisPrompt,
   normalizeCharacterRegistry,
   normalizeExtensionSettings,
+  normalizeChatSettings,
   normalizeModelListCache,
   normalizeRecentStoryGlobalSettings,
   isStableApiProfileId,
@@ -798,7 +799,9 @@ export function createStore(adapter, boundary = null) {
     const metadata = adapter.getChatMetadata?.();
     const stored = metadata?.bioweave;
     if (stored?.chat_scope?.chat_id !== chatId) return emptyChat(chatId);
-    return cloneForStorage(stored);
+    const chat = cloneForStorage(stored);
+    chat.settings = normalizeChatSettings(chat.settings);
+    return chat;
   }
 
   async function saveChat(chatId, data) {

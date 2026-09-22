@@ -16,6 +16,29 @@ is accepted.
 The contract uses **MUST** for an invariant, **MUST NOT** for a forbidden
 state transition, and **MAY** only for an explicitly safe compatibility path.
 
+## Chat-local BioWeave Runtime master switch
+
+The existing `bioweave.settings.enabled` field is the sole BioWeave master
+switch for the current Chat. It defaults to `true`, and a missing value in an
+old Chat is read as `true`. Explicit `false` remains in that Chat's metadata
+after reload, while a new Chat naturally receives the default again. The value
+is not written to the Character Card and does not use a character name or card
+as a persistence key.
+
+Pausing is a non-destructive `DISABLED`/`PAUSED` state. It preserves all
+existing Floor-owned World Model, Event, identity, Snapshot, Projection,
+Genealogy, analysis history, derived reads, and user edits. Runtime guards stop
+future automatic analysis, Tracking/Profile refresh, Snapshot and Projection
+side effects, AI/API requests, and Projection Context injection. Disabled
+skips do not become failed attempts or retry work.
+
+The transition to disabled clears the `bioweave_projection_context` prompt
+slot immediately and aborts cancellable work. Late responses are rejected by
+the existing owner/epoch/Floor-Version checks plus a current enabled check
+before every commit. Disabled lifecycle refreshes clear/fail closed rather than
+reinjecting context. Re-enabling restores future normal triggers and reads but
+does not replay disabled-period Floors or create backlog API calls.
+
 Phase 2D-3 generation is currently a transient, fail-closed domain operation. Its
 AI response is not a persistent owner or fact source: only the current Character
 Floor Version may later own a persisted Projection, and persistence is outside

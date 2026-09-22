@@ -184,7 +184,7 @@ font: 14px/1.5 system-ui, -apple-system, "PingFang SC",
 </section>
 ~~~
 
-顶端 bioweave-app-header 同时是面板的拖动手柄。生产 UI 使用 Pointer Events 支持鼠标、触控笔和触摸按住移动，位移限制在 overlay 范围内，仅在当前面板会话中生效，不写入 Runtime 或存储。主题、关闭等按钮以及其他表单/链接控件不参与拖动，必须保留各自的点击语义；手柄使用 touch-action: none，避免移动端按住时被页面滚动接管。
+顶端 bioweave-app-header 同时是面板的拖动手柄。生产 UI 使用 Pointer Events 支持鼠标、触控笔和触摸按住移动，位移限制在 overlay 范围内，仅在当前面板会话中生效，不写入 Runtime 或存储。主题、悬浮、关闭等按钮以及其他表单/链接控件不参与拖动，必须保留各自的点击语义；手柄使用 touch-action: none，避免移动端按住时被页面滚动接管。顶栏 enabled 控件使用 `bioweave-theme-button bioweave-enabled-control` 的同组结构，内部复用原生 `bioweave-checkbox` 与状态文字 `已开启` / `已暂停`，读取并操作当前 Chat 的 `settings.enabled`，不另建 UI 状态源。
 
 Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小 72px 宽度并完整平铺，字号 14px；Mobile 切换为四列网格，八个两字路由分两行显示，字号 13px。路由栏本身不能再套用“父级八列 Grid + 子级八列 Grid”的双重网格写法，否则按钮会被压在同一列发生叠加。
 

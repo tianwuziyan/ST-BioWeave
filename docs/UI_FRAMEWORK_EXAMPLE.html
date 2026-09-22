@@ -189,6 +189,15 @@
         padding: 0 !important;
         font-size: 16px;
       }
+      .bw-enabled-control {
+        display: inline-flex !important;
+        align-items: center;
+        width: auto !important;
+        gap: 4px;
+        padding: 4px 6px !important;
+        font-size: 12px;
+        white-space: nowrap;
+      }
       .bw-theme-icon {
         display: block;
         line-height: 1;
@@ -2081,6 +2090,10 @@
         <strong class="bw-brand">BioWeave</strong>
         <span class="bw-scope">当前 Chat</span>
         <span class="bw-header-spacer"></span>
+        <label class="bw-theme-button bw-enabled-control" title="暂停 BioWeave" aria-label="暂停 BioWeave">
+          <input class="bw-checkbox" type="checkbox" checked aria-label="暂停 BioWeave" />
+          <span>已开启</span>
+        </label>
         <button class="bw-theme-button" type="button" title="主题：跟随酒馆（点击切换）" aria-label="主题：跟随酒馆，点击切换">
           <i class="fa-solid fa-circle-half-stroke bw-theme-icon" data-bw-theme-icon aria-hidden="true"></i>
         </button>

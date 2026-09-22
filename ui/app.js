@@ -1948,6 +1948,15 @@ export function createApp(runtime, options = {}) {
   }
   async function analyzeWorldModel() {
     if (worldModelState.busy) return
+    try {
+      runtime.assertBioWeaveEnabled?.()
+    } catch (error) {
+      if (error?.code === 'BIOWEAVE_DISABLED') {
+        notify('BioWeave 当前已暂停，请先启用。', 'info', documentRef)
+        return
+      }
+      throw error
+    }
     if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
     if (!(await canDiscardWorldModelSectionDraft())) return
     if (worldModelState.editingSection) clearWorldModelSectionDraft()
@@ -1969,6 +1978,7 @@ export function createApp(runtime, options = {}) {
     try {
       const collected = await collectCurrentAnalysisInput()
       assertAnalysisChatToken(token)
+      runtime.assertBioWeaveEnabled?.()
       const analyze = analyzer?.analyzeWorldModel ?? analyzer?.analyzeWorld
       if (typeof analyze !== 'function') throw new Error('WORLD_ANALYZER_UNAVAILABLE')
       let result
@@ -1988,6 +1998,7 @@ export function createApp(runtime, options = {}) {
       }
       const model = normalizeStoredWorldModel(result)
       assertAnalysisChatToken(token)
+      runtime.assertBioWeaveEnabled?.()
       const analyzedAt = new Date().toISOString()
       const meta = {
         last_analyzed_at: analyzedAt,
@@ -1996,7 +2007,7 @@ export function createApp(runtime, options = {}) {
         source_summary: summarizeAnalysisInput(collected.input),
       }
       if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
-      await runtime.saveWorldModel({ model, meta })
+      await runtime.saveWorldModel({ model, meta, automatic: true })
       assertAnalysisChatToken(token)
       await refreshTrackingAfterWorldModelSave('world-model-ai-save')
       analysisPreviewState = {
@@ -2263,6 +2274,46 @@ export function createApp(runtime, options = {}) {
     } catch {
       return '当前 Chat'
     }
+  }
+  function currentBioWeaveEnabled() {
+    try {
+      return runtime.getBioWeaveEnabled?.() !== false
+    } catch {
+      return true
+    }
+  }
+  function syncBioWeaveEnabledControl(enabled = currentBioWeaveEnabled()) {
+    const active = enabled !== false
+    const label = active ? '暂停 BioWeave' : '启用 BioWeave'
+    const controls = root?.querySelectorAll?.('[data-bioweave-enabled-toggle]') ?? []
+    controls.forEach(control => {
+      const input = control.querySelector?.('input[type="checkbox"]')
+      const text = control.querySelector?.('[data-bioweave-enabled-label]')
+      if (!input || !text) return
+      input.checked = active
+      input.setAttribute('aria-label', label)
+      text.textContent = active ? '已开启' : '已暂停'
+      control.setAttribute('aria-label', label)
+      control.setAttribute('title', label)
+      control.dataset.bioweaveTooltip = label
+      const tooltip = control.querySelector?.('[data-bioweave-header-tooltip]')
+      if (tooltip) tooltip.textContent = label
+    })
+  }
+  async function toggleBioWeaveEnabled() {
+    const current = currentBioWeaveEnabled()
+    if (current && !(await confirmWithPopup('暂停 BioWeave？', '当前聊天将停止 BioWeave 自动分析、追踪和上下文注入。已有数据仍会保留。'))) return
+    if (typeof runtime.setBioWeaveEnabled !== 'function') {
+      notify('当前 Runtime 不支持 BioWeave 总开关。', 'error', documentRef)
+      return
+    }
+    try {
+      await runtime.setBioWeaveEnabled(!current)
+      notify(current ? 'BioWeave 已暂停。' : 'BioWeave 已启用。', 'info', documentRef)
+    } catch (error) {
+      notify(error?.message === 'STALE_CHAT' ? '当前 Chat 已变化，请重新操作。' : 'BioWeave 总开关保存失败。', 'error', documentRef)
+    }
+    render()
   }
   function abortUiWorldModelRequest() {
     const controller = worldModelAbortController
@@ -2675,6 +2726,7 @@ export function createApp(runtime, options = {}) {
   }
   async function manualRefreshEventAnalysis() {
     try {
+      runtime.assertBioWeaveEnabled?.()
       if (typeof runtime.refreshCurrentFloorAnalysis !== 'function') {
         throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
@@ -2743,6 +2795,7 @@ export function createApp(runtime, options = {}) {
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
+      ...(route === 'settings' ? {enabled: currentBioWeaveEnabled()} : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
@@ -2771,6 +2824,7 @@ export function createApp(runtime, options = {}) {
     })
     restoreScrollPositions(root, scrollPositions)
     syncWorldModelCapabilityInputs(root)
+    syncBioWeaveEnabledControl()
     root.querySelectorAll('.bioweave-chat-scope').forEach(node => {
       node.textContent = currentChatLabel()
     })
@@ -3713,6 +3767,11 @@ export function createApp(runtime, options = {}) {
       return
     }
     const action = target.dataset.bioweaveAction
+    if (action === 'toggle-bioweave-enabled') {
+      event.preventDefault()
+      await toggleBioWeaveEnabled()
+      return
+    }
     if (action === 'toggle-story-time-debug') {
       event.preventDefault()
       storyTimeDebugState = {
@@ -4179,6 +4238,7 @@ export function createApp(runtime, options = {}) {
       '<strong class="bioweave-brand">BioWeave</strong>',
       '<span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>',
       '<span class="bioweave-spacer"></span>',
+      '<label class="bioweave-theme-button bioweave-enabled-control" data-bioweave-action="toggle-bioweave-enabled" data-bioweave-enabled-toggle data-bioweave-tooltip="暂停 BioWeave" title="暂停 BioWeave" aria-label="暂停 BioWeave"><input class="bioweave-checkbox" type="checkbox" data-bioweave-enabled-input checked aria-label="暂停 BioWeave"><span data-bioweave-enabled-label>已开启</span><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">暂停 BioWeave</span></label>',
       '<button class="bioweave-theme-button" type="button" data-bioweave-action="cycle-theme" data-bioweave-theme-button data-bioweave-tooltip="切换皮肤：跟随酒馆" title="切换皮肤：跟随酒馆" aria-label="切换皮肤：跟随酒馆"><i class="fa-solid fa-circle-half-stroke" data-bioweave-theme-icon aria-hidden="true"></i><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">切换皮肤：跟随酒馆</span></button>',
       '<button class="bioweave-floating-toggle" type="button" data-bioweave-action="toggle-floating-launcher" data-bioweave-floating-toggle data-bioweave-tooltip="关闭悬浮窗"><svg class="bioweave-floating-toggle-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="6"></circle><path d="M 10 27 A 15 15 0 0 1 30 10"></path><path d="M 38 21 A 15 15 0 0 1 18 38"></path><circle cx="34" cy="14" r="3.5"></circle><circle cx="14" cy="34" r="3.5"></circle></svg><span class="bioweave-header-tooltip" data-bioweave-header-tooltip role="tooltip">关闭悬浮窗</span></button>',
       '<button class="bioweave-close" type="button" data-bioweave-action="close" aria-label="关闭 BioWeave">×</button>',

@@ -586,6 +586,7 @@ export function createEventAnalysisCoordinator({
   externalMemoryProviderLoader = null,
   globalRecentStoryResolver = () => ({}),
   analysisSourceCache = null,
+  enabledResolver = () => true,
   notify = () => {},
 } = {}) {
   if (!st || !chat || !store)
@@ -600,6 +601,21 @@ export function createEventAnalysisCoordinator({
   const sourceCache = analysisSourceCache ?? createWorldbookCache();
   const invalidatedFloors = new Map();
   let lifecycleSnapshot = null;
+
+  function isEnabled() {
+    try {
+      return enabledResolver() !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  function disabledError() {
+    const error = new Error("BIOWEAVE_DISABLED");
+    error.code = "BIOWEAVE_DISABLED";
+    error.status = "disabled";
+    return error;
+  }
 
   function floorRootExists(index, swipeId) {
     const message = messages()[index];
@@ -1009,7 +1025,8 @@ export function createEventAnalysisCoordinator({
     }
     return null;
   }
-  async function saveWorldModel({ model, meta = null, selector = null } = {}) {
+  async function saveWorldModel({ model, meta = null, selector = null, automatic = false } = {}) {
+    if (automatic && !isEnabled()) throw disabledError();
     const normalizedModel = normalizeStoredWorldModel(model);
     const token = chat.token();
     const target = await resolveFloor(selector);
@@ -1017,6 +1034,7 @@ export function createEventAnalysisCoordinator({
     const current = store.getFloor?.(target.index, target.swipeId) ?? emptyFloor();
     const currentTarget = await resolveFloorAtIndex({ __messageIndex: true, index: target.index });
     if (!sameFloorVersion(currentTarget.version, target.version)) throw requestAbortedError();
+    if (automatic && !isEnabled()) throw disabledError();
     await store.saveFloor(target.index, target.swipeId, {
       ...current,
       floor_version: target.version,
@@ -1330,6 +1348,7 @@ export function createEventAnalysisCoordinator({
   }
   function refreshTrackingRegistry(reason = "runtime") {
     const refresh = async () => {
+      if (!isEnabled()) return { skipped: true, status: "disabled", reason };
       if (!messageCollection()) return null;
       const token = chat.token();
       const derived = await collectCurrentDerivedState(token);
@@ -1687,6 +1706,10 @@ export function createEventAnalysisCoordinator({
     );
   }
   function assertExecutionCurrent(execution, token) {
+    if (!isEnabled()) {
+      execution.disabled = true;
+      throw disabledError();
+    }
     if (!executionIsCurrent(execution)) throw requestAbortedError();
     chat.assert(token);
   }
@@ -1748,6 +1771,10 @@ export function createEventAnalysisCoordinator({
   function invalidateInFlightExecutions() {
     for (const execution of [...inFlight.values()])
       invalidateExecution(execution);
+  }
+  function pause() {
+    invalidateInFlightExecutions();
+    return {status: "disabled"};
   }
   async function persistTerminalAttempt(
     execution,
@@ -2099,6 +2126,16 @@ export function createEventAnalysisCoordinator({
         attempt: execution.attempt,
       };
     } catch (error) {
+      if (error?.code === "BIOWEAVE_DISABLED") {
+        terminalState = "disabled";
+        terminalError = null;
+        return {
+          skipped: true,
+          status: "disabled",
+          version: target.version,
+          attempt: execution.attempt,
+        };
+      }
       const cancelled =
         execution.cancelRequested ||
         isRequestAborted(error) ||
@@ -2167,6 +2204,8 @@ export function createEventAnalysisCoordinator({
     selector = null,
     { force = false, reason = "automatic" } = {},
   ) {
+    if (!isEnabled())
+      return { skipped: true, status: "disabled", reason: "disabled" };
     const target = await resolveFloor(selector);
     const requestKey = floorExecutionKey(target.version);
     if (inFlight.has(requestKey)) return inFlight.get(requestKey).promise;
@@ -2255,6 +2294,8 @@ export function createEventAnalysisCoordinator({
   }
   async function handleLifecycleEvent(event) {
     const work = async () => {
+      if (!isEnabled())
+        return { skipped: true, status: "disabled", reason: event?.type };
       const type = event?.type;
       if (type === "CHAT_CHANGED") {
         await primeLifecycleSnapshot();
@@ -2552,6 +2593,7 @@ export function createEventAnalysisCoordinator({
     invalidateForClear,
     completeClear,
     refreshTrackingRegistry,
+    pause,
     updateEvent,
     deleteEvent,
     destroy,

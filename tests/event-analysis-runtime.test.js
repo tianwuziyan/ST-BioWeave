@@ -5142,3 +5142,53 @@ test("Story Time-only advancement restores from an unchanged earlier Snapshot", 
   assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot.checkpoint.message_id, "story-snapshot-b");
   fixture.runtime.destroy();
 });
+test("Chat-local enabled defaults true, pauses automatic analysis, preserves history, and resumes without backlog", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  assert.equal(fixture.runtime.getBioWeaveEnabled(), true);
+
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const beforePause = structuredClone(fixture.runtime.store.getFloor(0));
+  const callsBeforePause = fixture.calls();
+
+  await fixture.runtime.setBioWeaveEnabled(false);
+  assert.equal(fixture.runtime.getBioWeaveEnabled(), false);
+  assert.deepEqual(fixture.runtime.store.getFloor(0), beforePause);
+  const skipped = await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(skipped.status, "disabled");
+  assert.equal(fixture.calls(), callsBeforePause);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis.status, "success");
+
+  await fixture.runtime.setBioWeaveEnabled(true);
+  assert.equal(fixture.runtime.getBioWeaveEnabled(), true);
+  assert.equal(fixture.calls(), callsBeforePause);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  assert.ok(fixture.calls() > callsBeforePause);
+  fixture.runtime.destroy();
+});
+
+test("disabling an in-flight analysis prevents its late response from committing", async () => {
+  let release;
+  const started = new Promise(resolve => { release = resolve; });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({schema_version: 1, species: []});
+      },
+      async analyzeFloor() {
+        await started;
+        return {events: [eventResult("late-event")]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const pending = fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await fixture.runtime.setBioWeaveEnabled(false);
+  release();
+  const result = await pending;
+  assert.equal(result.status, "disabled");
+  assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).events, []);
+  fixture.runtime.destroy();
+});

@@ -218,6 +218,15 @@
   font-size: 18px;
 }
 
+.bioweave-enabled-control {
+  width: auto;
+  min-width: 0;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .bioweave-floating-toggle-icon path {
   fill: none;
   stroke: currentColor;
@@ -7085,6 +7094,18 @@
 .bioweave-theme-button [data-bioweave-theme-icon] {
   display: block !important;
   line-height: 1 !important;
+}
+
+.bioweave-panel .bioweave-enabled-control {
+  display: inline-flex !important;
+  width: auto !important;
+  min-width: 0 !important;
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+}
+
+.bioweave-panel .bioweave-enabled-control .bioweave-checkbox {
+  flex: 0 0 auto !important;
 }
 
 .bioweave-analysis-debug-popup-content[data-theme="dark"] {

@@ -248,6 +248,16 @@
       "header": "bioweave-app-header",
       "routebar": "bioweave-routebar",
       "content": "bioweave-main",
+      "headerControls": {
+        "enabled": {
+          "class": "bioweave-theme-button bioweave-enabled-control",
+          "inputClass": "bioweave-checkbox",
+          "labels": ["已开启", "已暂停"],
+          "source": "current Chat settings.enabled"
+        },
+        "theme": "bioweave-theme-button",
+        "floating": "bioweave-floating-toggle"
+      },
       "panelWidth": "960px",
       "panelHeight": "760px",
       "dragHandle": {

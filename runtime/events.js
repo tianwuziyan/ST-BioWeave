@@ -629,6 +629,18 @@ export function createRuntime({
   let initialized = false;
   let destroyed = false;
 
+  function isBioWeaveEnabled() {
+    return store.getChat(chat.current()).settings?.enabled !== false;
+  }
+
+  function assertBioWeaveEnabled() {
+    if (isBioWeaveEnabled()) return true;
+    const error = new Error("BIOWEAVE_DISABLED");
+    error.code = "BIOWEAVE_DISABLED";
+    error.status = "disabled";
+    throw error;
+  }
+
   function notify(event) {
     activity.handleRuntimeEvent(event);
     for (const listener of [...subscriptions]) {
@@ -711,10 +723,12 @@ export function createRuntime({
     ...(analysisSourceCache ? { analysisSourceCache } : {}),
     globalRecentStoryResolver: () =>
       store.profileStore?.getSettings?.()?.recent_story_global ?? {},
+    enabledResolver: isBioWeaveEnabled,
     notify,
   });
   const projectionPersistence = createProjectionPersistence({
     store,
+    enabledResolver: isBioWeaveEnabled,
     resolveCurrentFloorVersion: async ({ownerFloor}) => {
       const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
       if (!Number.isInteger(Number(index))) return null;
@@ -729,7 +743,42 @@ export function createRuntime({
     resolveCurrentFloor: () => eventAnalysis.resolveCurrentBioWeaveFloor(),
     getChatId: () => chat.current(),
     setExtensionPrompt: st.setExtensionPrompt,
+    enabledResolver: isBioWeaveEnabled,
   });
+
+  async function setBioWeaveEnabled(enabled) {
+    const chatId = chat.current();
+    const current = store.getChat(chatId);
+    const next = enabled !== false;
+    if (current.settings?.enabled === next) {
+      if (!next) {
+        eventAnalysis.pause?.();
+        projectionContext.clearProjectionContext();
+      }
+      return next;
+    }
+    if (!next) {
+      eventAnalysis.pause?.();
+      projectionContext.clearProjectionContext();
+    }
+    await store.saveChat(chatId, {
+      ...current,
+      settings: {...(current.settings ?? {}), enabled: next},
+    });
+    if (next) {
+      // Rebase the lifecycle hint at re-enable time so disabled-period Floors
+      // are not interpreted as an automatic backlog.
+      await eventAnalysis.primeLifecycleSnapshot?.();
+      await projectionContext.refreshProjectionContext({chatId});
+    }
+    notify({
+      type: "BIOWEAVE_ENABLED_CHANGED",
+      payload: {enabled: next},
+      chatId,
+      epoch: chat.getEpoch(),
+    });
+    return next;
+  }
 
   const clearService = createClearService({
     adapter: st,
@@ -1405,6 +1454,9 @@ export function createRuntime({
     refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
     requestAbortCurrentFloorAnalysis:
       eventAnalysis.requestAbortCurrentFloorAnalysis,
+    getBioWeaveEnabled: isBioWeaveEnabled,
+    assertBioWeaveEnabled,
+    setBioWeaveEnabled,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,

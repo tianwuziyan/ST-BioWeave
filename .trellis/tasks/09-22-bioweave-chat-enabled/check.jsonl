@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Review guard placement against authoritative Floor/Swipe and Chat ownership rules."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Review automatic analysis, Tracking, scheduler, manual refresh, and no-failure semantics."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Review preservation, Chat isolation, stale result, and clear/invalidation behavior."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review host Popup/Toast, app header, accessibility, and responsive behavior."}

@@ -35,6 +35,31 @@ provenance are defined by [Floor State Ownership](./floor-state.md). This
 document owns the BiologicalEvent contract and only points to that shared
 boundary.
 
+## 1.2 Chat-local Runtime master switch
+
+`settings.enabled` is the single Chat-local BioWeave Runtime master switch.
+Its default is `true`; a missing value is normalized to `true`. It is stored
+under the current Chat's `bioweave.settings`, never in a Character Card and
+never in a cross-Chat or character-card registry.
+
+When it is explicitly `false`, lifecycle analysis, interval scheduling,
+manual/programmatic analysis, automatic Tracking rebuilds, Snapshot creation,
+World Model/Character/Event AI requests, and all automatic Projection side
+effects are skipped with a disabled/skipped-disabled result. A disabled skip
+is not a failed analysis and must not create failure retry metadata. Existing
+Floor facts and user edits remain readable and are not cleared.
+
+The Runtime/coordinator and side-effect boundaries own this guard; pure Event,
+StateReducer, normalizer, validator, and Projection eligibility functions do
+not read it. Any asynchronous result must re-check the current Chat setting
+alongside Chat epoch, active Swipe, owner, and complete Floor Version before
+committing.
+
+Disabling immediately clears the `bioweave_projection_context` extension
+prompt slot and aborts cancellable work. Projection Context refreshes fail
+closed while disabled. Re-enabling resumes future interval-eligible work and
+normal reads without scanning or replaying disabled-period Floors.
+
 ## 1.1 Business boundary with World Model
 
 Event Analysis and Character are independent from the World Model domain. They
