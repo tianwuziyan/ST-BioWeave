@@ -2709,6 +2709,7 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
     getRecentStoryGlobal: () => ({ regex_rules: [] }),
   }
   let savedChat = { settings: {} }
+  let saveCalls = 0
   let releaseSave
   let markSaveStarted
   const saveStarted = new Promise(resolve => {
@@ -2724,10 +2725,10 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
       getChat: () => savedChat,
       saveChat: async (chatId, nextChat) => {
         savedChat = nextChat
+        saveCalls += 1
+        if (saveCalls === 1) return
         markSaveStarted()
-        await new Promise(resolve => {
-          releaseSave = resolve
-        })
+        await new Promise(resolve => { releaseSave = resolve })
       },
     },
     st: {
@@ -2785,6 +2786,277 @@ test('worldbook source checkbox updates immediately and saves with a success Toa
     },
   ])
   assert.deepEqual(toastCalls, ['分析来源与最近剧情设置已保存到当前 Chat。'])
+  app.destroyBioWeave()
+})
+test('first source load snapshots current Character-owned defaults once and preserves explicit empty selections', async () => {
+  const documentRef = new AppFakeDocument()
+  let activeChatId = 'chat-initial'
+  let savedChat = {settings: {}}
+  let saveCalls = 0
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const runtime = {
+    chat: {
+      current: () => activeChatId,
+      token: () => ({chatId: activeChatId, epoch: 0}),
+      assert: token => { if (token.chatId !== activeChatId) throw new Error('STALE_CHAT') },
+    },
+    store: {
+      getChat: () => savedChat,
+      saveChat: async (_chatId, nextChat) => { saveCalls += 1; savedChat = nextChat },
+    },
+    st: {
+      getContext: () => ({
+        chatId: activeChatId,
+        characterId: 0,
+        characters: [{avatar: 'alice.png', data: {
+          name: '爱丽丝', first_mes: '主开场白', alternate_greetings: ['备用开场白'],
+          character_book: {entries: [
+            {uid: 'keep-entry', comment: '普通规则', content: '保留'},
+            {uid: 'excluded-entry', comment: '状态规则', content: '不默认'},
+          ]},
+        }}],
+        chat: [{name: '爱丽丝', is_user: false, is_system: false, swipe_id: 1, swipes: ['主开场白', '备用开场白']}],
+      }),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  let app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  let root = app.openBioWeave()
+  app.go('settings')
+  for (let attempt = 0; attempt < 20 && !root.querySelector('.bioweave-analysis-source-list')?.innerHTML.includes('keep-entry'); attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  assert.equal(saveCalls, 1)
+  assert.deepEqual(savedChat.settings.worldbooks, {
+    mode: 'selected_only',
+    selected: [
+      {source_id: 'st-character-card:alice.png', field_key: 'opening:alternate:0', enabled: true},
+      {source_id: 'st-character-card:alice.png:embedded-worldbook', entry_id: 'keep-entry', enabled: true},
+    ],
+    selection_initialized: true,
+  })
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-analysis-field="opening:alternate:0"[^>]*checked/)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-analysis-field="opening:main"[^>]*checked/)
+  savedChat = {...savedChat, settings: {...savedChat.settings, worldbooks: {...savedChat.settings.worldbooks, selected: []}}}
+  app.destroyBioWeave()
+  app = createApp(runtime, {documentRef: new AppFakeDocument(), storageRef: {}, profileStore})
+  root = app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(saveCalls, 1)
+  savedChat = {...savedChat, settings: {...savedChat.settings, worldbooks: {...savedChat.settings.worldbooks,
+    selected: [{source_id: 'st-worldbook:additional-book', entry_id: 'user-selected', enabled: true}],
+  }}}
+  app.destroyBioWeave()
+  app = createApp(runtime, {documentRef: new AppFakeDocument(), storageRef: {}, profileStore})
+  app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(saveCalls, 1)
+  assert.deepEqual(savedChat.settings.worldbooks.selected, [
+    {source_id: 'st-worldbook:additional-book', entry_id: 'user-selected', enabled: true},
+  ])
+  app.destroyBioWeave()
+})
+test('first initialization waits for external character_card hydration but not additional lorebooks', async () => {
+  const documentRef = new AppFakeDocument()
+  let savedChat = {settings: {}}
+  let saveCalls = 0
+  const loadedNames = []
+  const runtime = {
+    chat: {
+      current: () => 'chat-primary-completeness',
+      token: () => ({chatId: 'chat-primary-completeness', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => savedChat,
+      saveChat: async (_chatId, nextChat) => { saveCalls += 1; savedChat = nextChat },
+    },
+    st: {
+      getContext: () => ({
+        chatId: 'chat-primary-completeness',
+        characterId: 0,
+        characters: [{avatar: 'primary-completeness.png', data: {
+          name: '角色',
+          first_mes: '主开场白',
+          extensions: {world: 'primary-book', additional_worldbooks: ['additional-book']},
+        }}],
+        chat: [{name: '角色', is_user: false, is_system: false, swipe_id: 0, swipes: ['主开场白']}],
+        async loadWorldInfo(name) {
+          loadedNames.push(name)
+          if (name === 'additional-book') throw new Error('additional should remain deferred')
+          return {entries: [{uid: 'primary-entry', comment: '主书规则', content: '主书内容'}]}
+        },
+      }),
+      fetch: async url => url === '/api/worldinfo/list'
+        ? {ok: true, json: async () => [
+          {file_id: 'primary-book', name: '角色卡自身世界书'},
+          {file_id: 'additional-book', name: '角色附加世界书'},
+        ]}
+        : {ok: true, json: async () => ({entries: []})},
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('settings')
+  for (let attempt = 0; attempt < 20 && saveCalls === 0; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  assert.deepEqual(loadedNames, ['primary-book'])
+  assert.equal(saveCalls, 1)
+  assert.equal(savedChat.settings.worldbooks.selection_initialized, true)
+  assert.deepEqual(savedChat.settings.worldbooks.selected, [
+    {source_id: 'st-worldbook:primary-book', entry_id: 'primary-entry', enabled: true},
+    {source_id: 'st-character-card:primary-completeness.png', field_key: 'opening:main', enabled: true},
+  ])
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /主书规则/)
+  app.destroyBioWeave()
+})
+test('initialized selected-only settings show external character_card entries without selecting them', async () => {
+  const documentRef = new AppFakeDocument()
+  const savedChat = {
+    settings: {
+      worldbooks: {
+        mode: 'selected_only',
+        selected: [],
+        selection_initialized: true,
+      },
+    },
+  }
+  const loadedNames = []
+  const runtime = {
+    chat: {
+      current: () => 'chat-external-primary',
+      token: () => ({chatId: 'chat-external-primary', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => savedChat,
+      saveChat: async () => { throw new Error('selection should already be initialized') },
+    },
+    st: {
+      getContext: () => ({
+        chatId: 'chat-external-primary',
+        characterId: 0,
+        characters: [{avatar: 'external-primary.png', data: {
+          name: '角色',
+          description: '角色描述',
+          extensions: {world: 'primary-book', additional_worldbooks: ['additional-book']},
+        }}],
+        async loadWorldInfo(name) {
+          loadedNames.push(name)
+          return {entries: [{uid: 'primary-entry', comment: '主书条目', content: '主书内容'}]}
+        },
+      }),
+      fetch: async url => url === '/api/worldinfo/list'
+        ? {ok: true, json: async () => [
+          {file_id: 'primary-book', name: '角色卡自身世界书'},
+          {file_id: 'additional-book', name: '角色附加世界书'},
+        ]}
+        : {ok: true, json: async () => ({entries: []})},
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('settings')
+  for (let attempt = 0; attempt < 20 && !root.querySelector('.bioweave-analysis-source-list')?.innerHTML.includes('主书条目'); attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  const html = root.querySelector('.bioweave-main').innerHTML
+  assert.deepEqual(loadedNames, ['primary-book'])
+  assert.match(html, /主书条目/)
+  const primarySection = html.split('data-bioweave-analysis-source-row="st-worldbook:primary-book"')[1]?.split('data-bioweave-analysis-source-row="st-worldbook:additional-book"')[0] ?? ''
+  assert.doesNotMatch(primarySection, /展开后读取这本世界书的条目/)
+  const additionalSection = html.split('data-bioweave-analysis-source-row="st-worldbook:additional-book"')[1] ?? ''
+  assert.match(additionalSection, /展开后读取这本世界书的条目/)
+  assert.deepEqual(savedChat.settings.worldbooks.selected, [])
+  app.destroyBioWeave()
+})
+test('failed first default selection save leaves Chat selection uninitialized and does not show defaults', async () => {
+  const documentRef = new AppFakeDocument()
+  let savedChat = {settings: {}}
+  const runtime = {
+    chat: {current: () => 'chat-save-failure', token: () => ({chatId: 'chat-save-failure'}), assert: () => {}},
+    store: {
+      getChat: () => savedChat,
+      saveChat: async () => { throw new Error('SAVE_FAILED') },
+    },
+    st: {
+      getContext: () => ({chatId: 'chat-save-failure', characterId: 0, characters: [{avatar: 'alice.png', data: {first_mes: '主'}}], chat: [{is_user: false, is_system: false, swipe_id: 0}]}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {getSettings: () => ({api_source: 'sillytavern', assignments: {}}), getApiRequestSettings: () => ({}), getWorldAnalysisPrompt: () => ({}), getRecentStoryGlobal: () => ({regex_rules: []})}
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(savedChat.settings, {})
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /data-bioweave-analysis-field="opening:main"[^>]*checked/)
+  app.destroyBioWeave()
+})
+test('stale Character source load cannot initialize a different Chat', async () => {
+  const documentRef = new AppFakeDocument()
+  let activeChatId = 'chat-a'
+  let runtimeListener = null
+  let resolveList
+  let saveCalls = 0
+  const savedByChat = { 'chat-a': {settings: {}}, 'chat-b': {settings: {}} }
+  const runtime = {
+    chat: {
+      current: () => activeChatId,
+      token: () => ({chatId: activeChatId, epoch: 0}),
+      assert: token => { if (token.chatId !== activeChatId) throw new Error('STALE_CHAT') },
+    },
+    store: {
+      getChat: chatId => savedByChat[chatId],
+      saveChat: async (chatId, nextChat) => { saveCalls += 1; savedByChat[chatId] = nextChat },
+    },
+    st: {
+      getContext: () => ({chatId: activeChatId, characterId: 0, characters: [{avatar: 'alice.png', data: {first_mes: '主'}}]}),
+      fetch: async () => new Promise(resolve => { resolveList = resolve }),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: listener => { runtimeListener = listener; return () => { runtimeListener = null } },
+  }
+  const profileStore = {getSettings: () => ({api_source: 'sillytavern', assignments: {}}), getApiRequestSettings: () => ({}), getWorldAnalysisPrompt: () => ({}), getRecentStoryGlobal: () => ({regex_rules: []})}
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  app.openBioWeave()
+  app.go('settings')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  activeChatId = 'chat-b'
+  runtimeListener?.({type: 'CHAT_CHANGED', chatChanged: true})
+  resolveList?.({ok: true, json: async () => []})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(saveCalls, 0)
+  assert.deepEqual(savedByChat['chat-a'].settings, {})
+  assert.deepEqual(savedByChat['chat-b'].settings, {})
   app.destroyBioWeave()
 })
 test('analysis prompt save keeps data behavior and uses a success Toast without a page notice', async () => {

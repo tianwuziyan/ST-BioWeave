@@ -74,7 +74,7 @@ export const DEFAULT_SETTINGS = {
   projection_enabled: true,
   retry_failed_analysis: true,
   context_injection: { enabled: true, max_tokens: 1600 },
-  worldbooks: { mode: 'selected_only', selected: [] },
+  worldbooks: { mode: 'selected_only', selected: [], selection_initialized: false },
   recent_story: {
     enabled: true,
     floor_count: 4,
@@ -315,7 +315,11 @@ export function normalizeWorldbookSettings(raw = {}) {
     selected.push(normalized);
   }
   const mode = WORLDBOOK_MODES.has(source.mode) ? source.mode : 'selected_only';
-  return { mode, selected };
+  return {
+    mode,
+    selected,
+    selection_initialized: source.selection_initialized === true,
+  };
 }
 
 export function normalizeRecentStorySettings(raw = {}) {

@@ -30,6 +30,15 @@ const CARD_FIELD_LABELS = Object.freeze({
   description: '角色描述',
 });
 const CHARACTER_CARD_OPENING_PREFIX = 'opening:';
+export const DEFAULT_WORLD_BOOK_SELECTION_EXCLUSIONS = Object.freeze([
+  '状态',
+  '手机',
+  'NSFW',
+  'cot',
+  '玩法',
+  '超雄',
+  '思维链',
+]);
 
 const defaultWorldbookCaches = new WeakMap();
 const fallbackWorldbookCache = {
@@ -311,6 +320,41 @@ function entryLabelFrom(value, entryId, index) {
   return keyLabel || `条目 ${entryId || index + 1}`;
 }
 
+function metadataString(value) {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value).normalize('NFKC').trim()
+    : '';
+}
+
+function metadataStringArray(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(metadataString)
+    .filter(Boolean);
+}
+
+function entryMetadataFrom(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const nested = source.metadata && typeof source.metadata === 'object'
+    ? source.metadata
+    : {};
+  return {
+    comment: metadataString(
+      source.comment
+        ?? nested.comment,
+    ),
+    keys: metadataStringArray(
+      source.keys
+        ?? source.key
+        ?? nested.keys,
+    ),
+    secondary_keys: metadataStringArray(
+      source.secondary_keys
+        ?? source.keysecondary
+        ?? nested.secondary_keys,
+    ),
+  };
+}
+
 export function normalizeWorldbookEntries(rawEntries) {
   const seen = new Set();
   return entryCandidates(rawEntries).map(({value, hostKey, index}) => {
@@ -327,6 +371,7 @@ export function normalizeWorldbookEntries(rawEntries) {
       content: contentText,
       token_estimate: tokenEstimate(contentText),
       available: true,
+      metadata: entryMetadataFrom(value),
     };
   }).filter(Boolean);
 }
@@ -750,6 +795,59 @@ export function setCharacterCardOpeningsSelection(selected = [], source = {}, en
   return next;
 }
 
+function defaultSelectionKeywordMatches(text, keyword) {
+  const normalizedText = metadataString(text);
+  const normalizedKeyword = metadataString(keyword);
+  if (!normalizedText || !normalizedKeyword) return false;
+  if (/^[A-Za-z]+$/u.test(normalizedKeyword)) {
+    const escaped = normalizedKeyword.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+    const pattern = '(?:^|[^A-Za-z0-9_])' + escaped + '(?=$|[^A-Za-z0-9_])';
+    return new RegExp(pattern, 'iu').test(normalizedText);
+  }
+  return normalizedText.includes(normalizedKeyword);
+}
+
+export function isDefaultWorldbookEntryExcluded(entry = {}, exclusions = DEFAULT_WORLD_BOOK_SELECTION_EXCLUSIONS) {
+  const metadata = entry?.metadata && typeof entry.metadata === 'object'
+    ? entry.metadata
+    : entryMetadataFrom(entry);
+  const values = [
+    metadata.comment,
+    ...(Array.isArray(metadata.keys) ? metadata.keys : []),
+    ...(Array.isArray(metadata.secondary_keys) ? metadata.secondary_keys : []),
+  ];
+  return values.some(value =>
+    (Array.isArray(exclusions) ? exclusions : DEFAULT_WORLD_BOOK_SELECTION_EXCLUSIONS)
+      .some(keyword => defaultSelectionKeywordMatches(value, keyword)),
+  );
+}
+
+export function buildInitialWorldbookSelection(sources = []) {
+  const selected = [];
+  for (const source of Array.isArray(sources) ? sources : []) {
+    const sourceId = textValue(source?.source_id);
+    if (!sourceId || source.available === false) continue;
+    if (source.source_type === ANALYSIS_SOURCE_TYPES.CHARACTER_CARD) {
+      for (const field of Array.isArray(source.fields) ? source.fields : []) {
+        if (isCharacterCardOpeningFieldKey(field?.field_key) && field?.is_current === true && field.available !== false) {
+          selected.push({source_id: sourceId, field_key: textValue(field.field_key), enabled: true});
+        }
+      }
+      continue;
+    }
+    if (
+      source.source_type !== ANALYSIS_SOURCE_TYPES.WORLDBOOK
+      || source.worldbook_group !== WORLD_BOOK_RUNTIME_GROUPS.CHARACTER_CARD
+    ) continue;
+    for (const entry of Array.isArray(source.entries) ? source.entries : []) {
+      const entryId = textValue(entry?.entry_id);
+      if (!entryId || entry.available === false || isDefaultWorldbookEntryExcluded(entry)) continue;
+      selected.push({source_id: sourceId, entry_id: entryId, enabled: true});
+    }
+  }
+  return normalizedSelections(selected);
+}
+
 export function selectedSourceIds(selected = []) {
   return [...new Set(normalizedSelections(selected).map(item => item.source_id).filter(Boolean))];
 }
@@ -915,6 +1013,11 @@ async function loadWorldbookContentUncached(source, options) {
 function worldbookSourceMatches(source, sourceIds) {
   const ids = sourceIds instanceof Set ? sourceIds : new Set(Array.isArray(sourceIds) ? sourceIds : []);
   return ids.has(source.source_id) || ids.has(source.host_key);
+}
+
+export function shouldEagerLoadWorldbookSource(source = {}) {
+  return source?.source_type === ANALYSIS_SOURCE_TYPES.WORLDBOOK
+    && source?.worldbook_group === WORLD_BOOK_RUNTIME_GROUPS.CHARACTER_CARD;
 }
 
 function sourceRuntimeStableKeys(source) {
@@ -1285,15 +1388,13 @@ async function readGlobalWorldbooks(options) {
   const runtimeReferences = options.runtimeWorldbookReferences ?? {};
   const scopedSources = catalog.sources.map(source => classifyWorldbookSource(source, runtimeReferences, nameCounts));
   const selectedIds = new Set(options.loadContentForSourceIds ?? []);
-  const loadedSources = options.deferWorldbookContent !== true || selectedIds.size > 0
-    ? await Promise.all(scopedSources.map(source => source.worldbook_group === WORLD_BOOK_RUNTIME_GROUPS.CHAT
-      ? withoutWorldbookContent(source)
-      : options.deferWorldbookContent !== true || worldbookSourceMatches(source, selectedIds)
-        ? loadWorldbookSource(source, options)
-        : source))
-    : scopedSources.map(source => source.worldbook_group === WORLD_BOOK_RUNTIME_GROUPS.CHAT
-      ? withoutWorldbookContent(source)
-      : source);
+  const loadedSources = await Promise.all(scopedSources.map(source => source.worldbook_group === WORLD_BOOK_RUNTIME_GROUPS.CHAT
+    ? withoutWorldbookContent(source)
+    : shouldEagerLoadWorldbookSource(source)
+      || options.deferWorldbookContent !== true
+      || worldbookSourceMatches(source, selectedIds)
+      ? loadWorldbookSource(source, options)
+      : source));
   return {sources: loadedSources, warning: catalog.warning};
 }
 
@@ -1433,7 +1534,9 @@ export async function loadAnalysisSources(options = {}) {
     primary: runtimeReferences.character_primary,
     additional: runtimeReferences.character_additional,
   })
-    .map(source => options.deferWorldbookContent !== true || worldbookSourceMatches(source, selectedIds)
+    .map(source => shouldEagerLoadWorldbookSource(source)
+      || options.deferWorldbookContent !== true
+      || worldbookSourceMatches(source, selectedIds)
       ? loadWorldbookSource(source, sourceOptions)
       : source));
   const mergeStartedAt = timingNow();

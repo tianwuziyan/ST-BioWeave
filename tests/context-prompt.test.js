@@ -42,7 +42,7 @@ function analysisSources() {
       source_type: 'worldbook',
       label: '内部来源标签',
       entries: [
-        {entry_id: 'entry_alpha', label: '条目 Alpha', content: 'WORLDBOOK_SELECTED'},
+        {entry_id: 'entry_alpha', label: '条目 Alpha', content: 'WORLDBOOK_SELECTED', metadata: {comment: '普通规则', keys: ['alpha']}},
         {entry_id: 'entry_beta', label: '条目 Beta', content: 'WORLDBOOK_NOT_SELECTED'},
       ],
     },
@@ -183,6 +183,62 @@ test('shared collector loads only selected source IDs and keeps the bounded targ
   assert.equal(JSON.stringify(input).includes('CHARACTER_NOT_SELECTED'), false);
   assert.equal(JSON.stringify(input).includes('WORLDBOOK_NOT_SELECTED'), false);
   assert.equal(JSON.stringify(input).includes('TARGET_FLOOR_EVENT'), true);
+});
+
+test('selected-only prompt input excludes default-filtered entries until the user re-enables them', async () => {
+  const sources = analysisSources().map(source => source.source_type === 'worldbook'
+    ? {...source, entries: [
+      {...source.entries[0], metadata: {comment: '状态规则'}},
+      {...source.entries[1], metadata: {comment: '普通规则'}},
+    ]}
+    : source);
+  const excludedByDefault = await collectAnalysisContext({
+    sources,
+    context: fixtureContext(),
+    chatId: 'chat_fixture',
+    selected: [{source_id: 'worldbook_fixture', entry_id: 'entry_beta', enabled: true}],
+    chatSettings: {worldbooks: {mode: 'selected_only', selected: [{source_id: 'worldbook_fixture', entry_id: 'entry_beta', enabled: true}]}},
+  });
+  assert.deepEqual(excludedByDefault.worldbooks[0].entries.map(item => item.entry_id), ['entry_beta']);
+  assert.doesNotMatch(JSON.stringify(excludedByDefault), /comment|metadata|状态规则/u);
+  const manuallyReenabled = await collectAnalysisContext({
+    sources,
+    context: fixtureContext(),
+    chatId: 'chat_fixture',
+    selected: [{source_id: 'worldbook_fixture', entry_id: 'entry_alpha', enabled: true}],
+    chatSettings: {worldbooks: {mode: 'selected_only', selected: [{source_id: 'worldbook_fixture', entry_id: 'entry_alpha', enabled: true}]}},
+  });
+  assert.deepEqual(manuallyReenabled.worldbooks[0].entries.map(item => item.entry_id), ['entry_alpha']);
+  assert.equal(manuallyReenabled.worldbooks[0].entries[0].content, 'WORLDBOOK_SELECTED');
+  assert.doesNotMatch(JSON.stringify(manuallyReenabled), /"metadata"|"comment"/u);
+});
+
+test('eagerly loaded character_card entries stay out of selected-only input until selected', async () => {
+  const primarySource = {
+    source_id: 'st-worldbook:primary-book',
+    source_type: 'worldbook',
+    worldbook_group: 'character_card',
+    content_loaded: true,
+    entries: [{entry_id: 'primary-entry', label: '主书条目', content: 'PRIMARY_CONTENT'}],
+  };
+  const unselected = await collectAnalysisContext({
+    sources: [primarySource],
+    context: fixtureContext(),
+    chatId: 'chat_fixture',
+    selected: [],
+    chatSettings: {worldbooks: {mode: 'selected_only', selected: []}},
+  });
+  assert.deepEqual(unselected.worldbooks, []);
+
+  const selected = await collectAnalysisContext({
+    sources: [primarySource],
+    context: fixtureContext(),
+    chatId: 'chat_fixture',
+    selected: [{source_id: 'st-worldbook:primary-book', entry_id: 'primary-entry', enabled: true}],
+    chatSettings: {worldbooks: {mode: 'selected_only', selected: [{source_id: 'st-worldbook:primary-book', entry_id: 'primary-entry', enabled: true}]}},
+  });
+  assert.deepEqual(selected.worldbooks[0].entries.map(entry => entry.entry_id), ['primary-entry']);
+  assert.equal(selected.worldbooks[0].entries[0].content, 'PRIMARY_CONTENT');
 });
 
 test('Recent Story upper bound stops at the current Character Floor', async () => {

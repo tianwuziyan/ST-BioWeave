@@ -37,6 +37,7 @@ import {
   searchAnalysisSources,
   loadAnalysisSources,
   loadWorldbookSource,
+  buildInitialWorldbookSelection,
   setCharacterCardOpeningsSelection,
   setWorldbookEntriesSelection,
   sourceSelectionStats,
@@ -835,6 +836,52 @@ export function createApp(runtime, options = {}) {
     })
     return true
   }
+  function characterOwnedSourcesComplete(sources) {
+    return sources
+      .filter(source =>
+        source?.source_type === 'worldbook'
+        && source.worldbook_group === 'character_card',
+      )
+      .every(source => source.available !== false && source.content_loaded === true)
+  }
+  async function persistInitialAnalysisSelection({ chatId, token, selected }) {
+    const normalizedSelected = analysisSourceSelectedItems(selected)
+    const normalizedWorldbooks = normalizeWorldbookSettings({
+      ...(runtime.store?.getChat?.(chatId)?.settings?.worldbooks ?? {}),
+      mode: 'selected_only',
+      selected: normalizedSelected,
+      selection_initialized: true,
+    })
+    const requestId = ++analysisSourceSaveSequence
+    let saved = false
+    analysisSourceSaveChain = analysisSourceSaveChain
+      .catch(() => {})
+      .then(async () => {
+        assertAnalysisChatToken(token)
+        const chat = runtime.store?.getChat?.(chatId)
+        if (!chat || typeof runtime.store?.saveChat !== 'function') throw new Error('ST_METADATA_STORAGE_UNAVAILABLE')
+        await runtime.store.saveChat(chatId, {
+          ...chat,
+          settings: {
+            ...(chat.settings ?? {}),
+            worldbooks: normalizedWorldbooks,
+          },
+        })
+        assertAnalysisChatToken(token)
+        saved = true
+      })
+      .catch(error => {
+        void error
+      })
+    await analysisSourceSaveChain
+    if (!saved || requestId !== analysisSourceSaveSequence) return false
+    try {
+      assertAnalysisChatToken(token)
+    } catch {
+      return false
+    }
+    return true
+  }
   async function loadAnalysisSourcesState({ forceRefresh = false } = {}) {
     if (analysisSourcesState.loading) return
     captureAnalysisSourceDisclosure()
@@ -884,7 +931,9 @@ export function createApp(runtime, options = {}) {
         getRequestHeaders: runtime.st?.getRequestHeaders,
         cache: worldbookCache,
         forceRefresh,
-        deferWorldbookContent: chatSettings.worldbooks.mode !== 'all',
+        deferWorldbookContent: chatSettings.worldbooks.selection_initialized
+          ? chatSettings.worldbooks.mode !== 'all'
+          : true,
         loadContentForSourceIds: [...analysisSourcesState.openWorldbooks, ...selected.map(item => item.source_id)],
       })
       assertAnalysisChatToken(token)
@@ -900,12 +949,27 @@ export function createApp(runtime, options = {}) {
       } else if (forceRefresh) {
         notify('分析来源已刷新。', 'info', documentRef)
       }
+      let resolvedSelected = selected
+      let selectionInitialized = chatSettings.worldbooks.selection_initialized === true
+      if (!selectionInitialized && !keepExistingSources && !sourceWarning && characterOwnedSourcesComplete(safeSources)) {
+        const initialSelected = buildInitialWorldbookSelection(safeSources)
+        const initialized = await persistInitialAnalysisSelection({
+          chatId,
+          token,
+          selected: initialSelected,
+        })
+        if (initialized) {
+          resolvedSelected = initialSelected
+          selectionInitialized = true
+        }
+      }
       analysisSourcesState = syncAnalysisSourcesState({
         loaded: true,
         loading: false,
         refreshBusy: false,
         sources: safeSources,
-        selected,
+        selected: resolvedSelected,
+        selectionInitialized,
         chatId,
         notice: null,
       })

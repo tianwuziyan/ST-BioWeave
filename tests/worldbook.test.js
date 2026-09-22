@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
+  buildInitialWorldbookSelection,
   createWorldbookCache,
   loadAnalysisSources,
   loadWorldbookSource,
@@ -12,6 +13,7 @@ import {
   normalizeWorldbookEntries,
   normalizeWorldbookList,
   searchAnalysisSources,
+  shouldEagerLoadWorldbookSource,
   selectAllSources,
   selectNoneSources,
   sourceSelectionStats,
@@ -20,6 +22,7 @@ import {
   setWorldbookEntriesSelection,
   updateSourceSelection,
   worldbookSelectionState,
+  isDefaultWorldbookEntryExcluded,
 } from '../ai/worldbook.js';
 import {
   normalizeExternalMemorySettings,
@@ -139,6 +142,11 @@ test('analysis sources expose character fields and worldbook entries only', asyn
   assert.deepEqual(new Set(worldbook.scopes), new Set(['global_worldbook', 'worldbook', 'character_card_worldbook']));
   assert.equal(worldbook.content_available, true);
   assert.deepEqual(worldbook.entries.map(entry => entry.entry_id), ['entry-a', 'entry-b']);
+  assert.deepEqual(worldbook.entries[0].metadata, {
+    comment: '条目 A',
+    keys: [],
+    secondary_keys: [],
+  });
   const card = sources.find(source => source.source_type === 'character_card');
   assert.deepEqual(card.fields.map(field => field.field_key), ['description', 'opening:main', 'opening:alternate:0', 'opening:alternate:1']);
   assert.deepEqual(card.fields.map(field => field.label), ['角色描述', '主开场白', '其他开场白 1', '其他开场白 2']);
@@ -273,6 +281,99 @@ test('runtime grouping does not use private world_info fallbacks', async () => {
   const worldbooks = result.sources.filter(source => source.source_type === 'worldbook');
   assert.equal(worldbooks.find(source => source.source_id === 'st-worldbook:private-global').worldbook_group, 'other');
   assert.equal(worldbooks.find(source => source.source_id === 'st-worldbook:private-character').worldbook_group, 'other');
+});
+
+test('character_card primary worldbook hydrates eagerly while other worldbooks remain deferred', async () => {
+  const cache = createWorldbookCache();
+  const loadedNames = [];
+  let contentVersion = 1;
+  const context = {
+    characterId: 0,
+    characters: [{avatar: 'external-primary-card.png', data: {description: '描述'}}],
+    async loadWorldInfo(name) {
+      loadedNames.push(name);
+      return {entries: [{uid: `${name}-entry`, comment: name, content: `${name} 内容 v${contentVersion}`}]};
+    },
+  };
+  const globalRef = {
+    TavernHelper: {
+      getCharLorebooks() {
+        return {
+          primary: {host_key: 'primary-book'},
+          additional: [{file_id: 'additional-book'}],
+        };
+      },
+      getLorebookSettings() {
+        return {selected_global_lorebooks: [{source_id: 'global-book'}]};
+      },
+    },
+  };
+  const fetchRef = async url => url === '/api/worldinfo/list'
+    ? jsonResponse([
+      {file_id: 'primary-book', name: '角色主世界书'},
+      {file_id: 'additional-book', name: '角色附加世界书'},
+      {file_id: 'global-book', name: '全局世界书'},
+      {file_id: 'other-book', name: '其它世界书'},
+    ])
+    : jsonResponse({entries: []});
+
+  assert.equal(shouldEagerLoadWorldbookSource({source_type: 'worldbook', worldbook_group: 'character_card'}), true);
+  assert.equal(shouldEagerLoadWorldbookSource({source_type: 'worldbook', worldbook_group: 'character'}), false);
+
+  const first = await loadAnalysisSources({
+    context,
+    globalRef,
+    fetchRef,
+    cache,
+    deferWorldbookContent: true,
+    loadContentForSourceIds: [],
+  });
+  const byId = id => first.sources.find(source => source.source_id === id);
+  assert.equal(byId('st-worldbook:primary-book').worldbook_group, 'character_card');
+  assert.equal(byId('st-worldbook:primary-book').content_loaded, true);
+  assert.equal(byId('st-worldbook:primary-book').entries.length, 1);
+  assert.equal(byId('st-worldbook:additional-book').worldbook_group, 'character');
+  assert.equal(byId('st-worldbook:additional-book').content_loaded, false);
+  assert.equal(byId('st-worldbook:global-book').worldbook_group, 'selected_global');
+  assert.equal(byId('st-worldbook:global-book').content_loaded, false);
+  assert.equal(byId('st-worldbook:other-book').worldbook_group, 'other');
+  assert.equal(byId('st-worldbook:other-book').content_loaded, false);
+  assert.deepEqual(loadedNames, ['primary-book']);
+
+  const cached = await loadAnalysisSources({
+    context,
+    globalRef,
+    fetchRef,
+    cache,
+    deferWorldbookContent: true,
+    loadContentForSourceIds: [],
+  });
+  assert.equal(cached.sources.find(source => source.source_id === 'st-worldbook:primary-book').entries[0].content, 'primary-book 内容 v1');
+  assert.deepEqual(loadedNames, ['primary-book']);
+
+  contentVersion = 2;
+  const refreshed = await loadAnalysisSources({
+    context,
+    globalRef,
+    fetchRef,
+    cache,
+    forceRefresh: true,
+    deferWorldbookContent: true,
+    loadContentForSourceIds: [],
+  });
+  assert.equal(refreshed.sources.find(source => source.source_id === 'st-worldbook:primary-book').entries[0].content, 'primary-book 内容 v2');
+  assert.deepEqual(loadedNames, ['primary-book', 'primary-book']);
+});
+
+test('missing character_card primary is a complete deferred source state', async () => {
+  const result = await loadAnalysisSources({
+    context: {characterId: 0, characters: [{avatar: 'no-primary-card.png', data: {description: '描述'}}]},
+    fetchRef: async () => jsonResponse([{file_id: 'other-book', name: '其它世界书'}]),
+    deferWorldbookContent: true,
+    loadContentForSourceIds: [],
+  });
+  assert.equal(result.sources.some(source => source.worldbook_group === 'character_card'), false);
+  assert.equal(result.sources.find(source => source.source_id === 'st-worldbook:other-book').content_loaded, false);
 });
 
 test('worldbook cache survives time advancing and force refresh fetches new data', async () => {
@@ -501,6 +602,101 @@ test('entry and character field selection keep stable IDs and estimate selected 
   ]);
 });
 
+test('initial worldbook selection uses current greeting, character-owned books, and normalized metadata policy', () => {
+  const sources = [
+    {
+      source_id: 'st-character-card:alice',
+      source_type: 'character_card',
+      fields: [
+        {field_key: 'opening:main', is_current: false, available: true},
+        {field_key: 'opening:alternate:0', is_current: true, available: true},
+        {field_key: 'opening:alternate:1', is_current: false, available: true},
+      ],
+    },
+    {
+      source_id: 'st-worldbook:card-book',
+      source_type: 'worldbook',
+      worldbook_group: 'character_card',
+      content_loaded: true,
+      entries: [
+        {entry_id: 'keep-card', metadata: {comment: '普通规则', keys: ['森林']}},
+        {entry_id: 'exclude-card', metadata: {comment: '状态规则'}},
+      ],
+    },
+    {
+      source_id: 'st-worldbook:character-book',
+      source_type: 'worldbook',
+      worldbook_group: 'character',
+      content_loaded: true,
+      entries: [{entry_id: 'keep-character', metadata: {secondary_keys: ['剧情']}}],
+    },
+    {
+      source_id: 'st-worldbook:global',
+      source_type: 'worldbook',
+      worldbook_group: 'selected_global',
+      content_loaded: true,
+      entries: [{entry_id: 'global-entry'}],
+    },
+    {
+      source_id: 'st-worldbook:persona',
+      source_type: 'worldbook',
+      worldbook_group: 'other',
+      content_loaded: true,
+      entries: [{entry_id: 'persona-entry'}],
+    },
+  ];
+  assert.deepEqual(buildInitialWorldbookSelection(sources), [
+    {source_id: 'st-character-card:alice', field_key: 'opening:alternate:0', enabled: true},
+    {source_id: 'st-worldbook:card-book', entry_id: 'keep-card', enabled: true},
+  ]);
+  assert.deepEqual(
+    setWorldbookEntriesSelection([], sources[2], true),
+    [{source_id: 'st-worldbook:character-book', entry_id: 'keep-character', enabled: true}],
+  );
+});
+
+test('initial greeting selection has no main fallback when current greeting is unknown', () => {
+  const selected = buildInitialWorldbookSelection([
+    {
+      source_id: 'st-character-card:alice',
+      source_type: 'character_card',
+      fields: [{field_key: 'opening:main'}, {field_key: 'opening:alternate:0'}],
+    },
+    {
+      source_id: 'st-worldbook:card-book',
+      source_type: 'worldbook',
+      worldbook_group: 'character_card',
+      content_loaded: true,
+      entries: [{entry_id: 'entry-1'}],
+    },
+  ]);
+  assert.deepEqual(selected, [{source_id: 'st-worldbook:card-book', entry_id: 'entry-1', enabled: true}]);
+});
+
+test('default exclusion matches metadata only and keeps cot word boundaries', () => {
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: '状态记录'}}), true);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {keys: ['NSfw']}}), true);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {secondary_keys: ['思维链']}}), true);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: 'cot'}}), true);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: 'Cot status'}}), true);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: 'cotton'}}), false);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: 'scot-free'}}), false);
+  assert.equal(isDefaultWorldbookEntryExcluded({metadata: {comment: '普通条目'}, content: '这里有 NSFW 状态 cot'}), false);
+});
+
+test('selection identity remains source_id plus entry_id across reorder, rename, and content changes', () => {
+  const selected = [{source_id: 'st-worldbook:book', entry_id: 'uid-2', enabled: true}];
+  const reordered = [
+    {source_id: 'st-worldbook:book', entries: [
+      {entry_id: 'uid-1', label: '重复名称', content: '新正文'},
+      {entry_id: 'uid-2', label: '重命名后', content: '更新正文'},
+    ]},
+  ];
+  const state = worldbookSelectionState(reordered[0], selected);
+  assert.deepEqual(state, {total_count: 2, selected_count: 1, checked: false, indeterminate: true});
+  assert.deepEqual(selected, [{source_id: 'st-worldbook:book', entry_id: 'uid-2', enabled: true}]);
+});
+
 test('worldbook parent selection derives checked and indeterminate state from entries', () => {
   const source = {
     source_id: 'st-worldbook:alpha',
@@ -625,6 +821,7 @@ test('worldbook selection is normalized and remains Chat-local', async () => {
   }), {
     mode: 'selected_only',
     selected: [{source_id: 'book-a', enabled: true}],
+    selection_initialized: false,
   });
 
   let chatId = 'chat-a';

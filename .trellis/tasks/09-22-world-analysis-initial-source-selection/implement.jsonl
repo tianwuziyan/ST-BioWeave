@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 Chat-local selection 与 Floor-owned facts 的边界、Chat/Swipe owner 和 stale guard 不混淆。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"登记 selection_initialized 的 Chat-local ownership、reload、Chat switch、clear 和 persistence failure 语义。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵循现有 UI state、事件委托和 host integration 模式。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行 UI、宿主兼容性和测试验证要求。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"确认新增 selection metadata 不改变 World Model DTO、Prompt 和证据边界。"}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"复核 Chat-local selection 不进入 Floor ownership，异步 source load 不跨 Chat 写入。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"复核 initialized flag 的 lifecycle、失败回滚和手动清除边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核 UI state、source refresh、宿主反馈和自动化/真实宿主验收要求。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"复核 Full/Patch 仍只消费 selected AnalysisInput，不泄漏 metadata。"}

@@ -234,7 +234,7 @@ snapshot_interval
 projection_enabled
 retry_failed_analysis
 context_injection: { enabled, max_tokens }
-worldbooks: { mode, selected[] }
+worldbooks: { mode, selected[], selection_initialized }
 recent_story: { enabled, floor_count, regex_rules[], regex_user_enabled }
 external_memory: { anima, baobaoshu, database_memory }
 prompts: { prefix, suffix, task }
@@ -245,6 +245,12 @@ dates use BioWeave's built-in standard-month elapsed-time convention; the era
 label remains part of the parsed Story Time semantics and different eras are
 not compared without an explicit conversion rule.
 
+`worldbooks.selection_initialized` is Chat-local configuration state and is set
+only together with the first successful default `selected[]` snapshot after the
+complete Character-owned source load. The default snapshot includes only the
+`character_card` Character Lorebook; `character` additional Lorebooks remain
+manual sources. It remains true when the user later clears all selections, and
+is unrelated to World Model existence or analysis success.
 `worldbooks.selected[]` contains stable source and child identifiers. A
 Worldbook child is `{source_id, entry_id, enabled}`; a Character Card field is
 `{source_id, field_key, enabled}`. Source content, labels, request headers,
