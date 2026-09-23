@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "设置页属于 frontend 层，确认 UI 修改遵循项目前端规范。"}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "确认设置折叠栏沿用 BioWeave UI 框架组件和交互契约。"}

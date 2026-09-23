@@ -1,0 +1,2 @@
+{"file": "tests/ui.test.js", "reason": "核对设置页折叠栏顺序、Story Time 独立折叠栏删除和高级调试内容保留。"}
+{"file": "tests/worldbook.test.js", "reason": "核对设置分组计数和折叠栏结构回归。"}

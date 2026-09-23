@@ -18,7 +18,7 @@ import {
   createClearService,
 } from "../storage/clear.js";
 import { createEventAnalysisCoordinator } from "./event-analysis.js";
-import { floorVersion, hashText } from "./floor.js";
+import { floorVersion, hashText, sameFloorVersion } from "./floor.js";
 import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
@@ -148,6 +148,58 @@ export function createSillyTavernAdapter() {
   const getContext = () => globalThis.SillyTavern?.getContext?.() ?? null;
   let chatIndexCache = null;
   let chatIndexOwnerKey = null;
+  let persistenceTraceSink = null;
+
+  function emitPersistenceTrace(payload = {}) {
+    try {
+      const allowed = new Set([
+      "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash",
+        "message_version", "attempt", "trigger", "stage", "path", "reason",
+        "generation_id", "generation_type", "generation_source", "execution_active",
+        "cancel_stage", "cancel_reason", "cancel_code",
+        "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
+        "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
+        "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
+        "swipe_id_match", "content_hash_match", "message_version_match", "generation_identity_match",
+      "result", "present", "world_model_present", "species_count",
+        "biological_type_count", "floor_version_match", "swipe_match", "commitState",
+        "revision", "current_floor_present", "expected", "actual", "authoritative",
+        "response_shape", "messages_present", "messages_count", "owner_found",
+        "owner_message_id", "owner_message_found", "swipe_found", "swipe_structure", "active_swipe_id",
+        "swipes_present", "swipes_count", "swipe_info_present", "swipe_info_count",
+        "target_swipe_info_found", "target_extra_present", "target_bioweave_present",
+        "failure_stage", "error_name", "error_code", "error_message", "diagnostic_code",
+        "status", "phase",
+      ]);
+      const safe = Object.fromEntries(
+        Object.entries(payload).filter(([key]) => allowed.has(key)),
+      );
+      persistenceTraceSink?.(safe);
+    } catch {
+      // Diagnostics must never change the persistence result.
+    }
+  }
+
+  function persistenceTraceError(error, failureStage) {
+    const code = String(
+      error?.code ?? error?.error_code ?? error?.diagnostic_code ?? error?.name ?? "ERROR",
+    ).slice(0, 160);
+    const rawMessage = String(
+      error?.safe_error_summary ?? error?.message ?? code,
+    );
+    const message = rawMessage
+      .replace(/authorization\s*[:=]\s*\S+/giu, "authorization:[redacted]")
+      .replace(/api[_-]?key\s*[:=]\s*\S+/giu, "api_key:[redacted]")
+      .slice(0, 240);
+    return {
+      failure_stage: failureStage,
+      error_name: String(error?.name ?? "Error").slice(0, 80),
+      error_code: code,
+      error_message: message,
+      diagnostic_code: String(error?.diagnostic_code ?? error?.diagnosticCode ?? code).slice(0, 160),
+      ...(error?.status !== undefined ? {status: Number(error.status) || String(error.status)} : {}),
+    };
+  }
 
   function ownerKey(context, owner = {}) {
     const identity = ownerIdentityFromContext(context);
@@ -271,6 +323,7 @@ export function createSillyTavernAdapter() {
       metadata: cloneOwnerValue(metadata),
       messages: cloneOwnerValue(data.slice(data.length > 0 ? 1 : 0)),
       chat: cloneOwnerValue(data.slice(data.length > 0 ? 1 : 0)),
+      response_shape: "json_array_jsonl",
     };
   }
 
@@ -335,6 +388,334 @@ export function createSillyTavernAdapter() {
       baseRevision: latest.revision,
       baseState: cloneOwnerValue(latest),
       plan,
+    };
+  }
+
+  function messageTextForFloor(message, swipeId) {
+    if (hasSwipeStructure(message)) {
+      const active = Number.isInteger(message?.swipe_id) ? message.swipe_id : 0;
+      return message?.swipes?.[swipeId]
+        ?? message?.swipe_info?.[swipeId]?.mes
+        ?? (Number(swipeId) === active ? message?.mes ?? message?.content ?? "" : "");
+    }
+    return message?.mes ?? message?.content ?? "";
+  }
+
+  function messageIdForFloor(message, fallback) {
+    return message?.message_id ?? message?.messageId ?? message?.id ?? fallback;
+  }
+
+  function writeFloorSlot(message, swipeId, value) {
+    if (hasSwipeStructure(message)) {
+      const canCreateInitialSwipe = Number(swipeId) === 0
+        && (Number.isInteger(message?.swipe_id) ? message.swipe_id : 0) === 0
+        && Boolean(
+          message?.swipes?.[0] ??
+          message?.mes ??
+          message?.content ??
+          message?.swipe_info?.[0]?.mes,
+        );
+      if (!hasSwipeSlot(message, swipeId) && !canCreateInitialSwipe)
+        throw sourceError("SWIPE_NOT_FOUND");
+      message.swipe_info ??= [];
+      message.swipe_info[swipeId] ??= {};
+      message.swipe_info[swipeId].extra ??= {};
+      message.swipe_info[swipeId].extra.bioweave = cloneOwnerValue(value);
+      return;
+    }
+    message.extra ??= {};
+    message.extra.bioweave = cloneOwnerValue(value);
+  }
+
+  function readFloorSlot(message, swipeId) {
+    if (hasSwipeStructure(message))
+      return message?.swipe_info?.[swipeId]?.extra?.bioweave;
+    return message?.extra?.bioweave;
+  }
+
+  async function saveOfficialFloorBioWeave(
+    messageIndex,
+    swipeId,
+    value,
+    expectedChatId,
+    expectedVersion,
+    traceContext = null,
+  ) {
+    const traceStage = (worldStage, eventStage = worldStage) =>
+      traceContext?.domain === "event" ? eventStage : worldStage;
+    const trace = (stage, details = {}) => emitPersistenceTrace({
+      ...traceContext,
+      stage,
+      ...details,
+    });
+    if (typeof globalThis.fetch !== "function") {
+      trace(traceStage("WORLD_SAVE_PATH_SELECTED", "EVENT_SAVE_PATH_SELECTED"), {
+        path: "context_fallback",
+        reason: "fetch unavailable",
+      });
+      return null;
+    }
+    const context = getContext();
+    let descriptor;
+    try {
+      descriptor = sourceDescriptor(context, { chatId: expectedChatId });
+    } catch (error) {
+      if ([
+        "SOURCE_OWNER_CHARACTER_UNAVAILABLE",
+        "SOURCE_OWNER_IDENTITY_MISMATCH",
+        "SOURCE_OWNER_GROUP_UNSUPPORTED",
+      ].includes(error?.code)) {
+        trace(traceStage("WORLD_SAVE_PATH_SELECTED", "EVENT_SAVE_PATH_SELECTED"), {
+          path: "context_fallback",
+          reason:
+            error?.code === "SOURCE_OWNER_CHARACTER_UNAVAILABLE"
+              ? "sourceDescriptor unavailable"
+              : error?.code === "SOURCE_OWNER_GROUP_UNSUPPORTED"
+                ? "unsupported chat source"
+                : "owner unresolved",
+        });
+        return null;
+      }
+      throw error;
+    }
+    trace(traceStage("WORLD_SAVE_PATH_SELECTED", "EVENT_SAVE_PATH_SELECTED"), {path: "official"});
+    const liveMessage = context?.chat?.[messageIndex];
+    if (expectedVersion && liveMessage) {
+      const liveSwipeId = hasSwipeStructure(liveMessage)
+        ? Number.isInteger(liveMessage.swipe_id) ? liveMessage.swipe_id : swipeId
+        : swipeId;
+      const liveVersion = await floorVersion({
+        chatId: expectedChatId,
+        messageId: messageIdForFloor(liveMessage, messageIndex),
+        floor: liveMessage.floor ?? messageIndex,
+        swipeId: liveSwipeId,
+        text: messageTextForFloor(liveMessage, liveSwipeId),
+        messageVersion: liveMessage.message_version ?? liveMessage.messageVersion,
+      });
+      const liveMatches = sameFloorVersion(liveVersion, expectedVersion);
+      trace(traceStage("WORLD_OWNER_VERSION_CHECK", "EVENT_OWNER_VERSION_CHECK"), {
+        result: liveMatches ? "match" : "mismatch",
+        expected: expectedVersion,
+        actual: liveVersion,
+      });
+      if (!liveMatches)
+        throw sourceError("STALE_FLOOR_VERSION");
+    }
+    trace("OFFICIAL_GET_BEFORE_SAVE_BEGIN");
+    const latest = await readOfficialChatOwner({
+      chatId: expectedChatId,
+      characterId: descriptor.characterId,
+    });
+    trace("OFFICIAL_GET_BEFORE_SAVE_END", {revision: latest.revision});
+    let target;
+    let targetIndex;
+    let targetSwipeId;
+    let expectedMessageId;
+    let failureStage = "official_owner_resolution";
+    let prewriteContext = {
+      owner_message_found: false,
+      swipe_id: Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0,
+      swipes_present: false,
+      swipes_count: 0,
+      swipe_info_present: false,
+      swipe_info_count: 0,
+      swipe_found: false,
+      target_swipe_info_found: false,
+      target_extra_present: false,
+      target_bioweave_present: false,
+    };
+    try {
+      trace("OFFICIAL_RESPONSE_SHAPE_RESOLVED", {
+        response_shape: latest.response_shape ?? "json_array_jsonl",
+        messages_present: Array.isArray(latest.messages),
+        messages_count: Array.isArray(latest.messages) ? latest.messages.length : 0,
+      });
+      if (!Array.isArray(latest.messages))
+        throw sourceError("SOURCE_OWNER_MESSAGES_INVALID");
+      trace("OFFICIAL_MESSAGES_RESOLVED", {
+        messages_present: true,
+        messages_count: latest.messages.length,
+      });
+      expectedMessageId = expectedVersion?.message_id ??
+        messageIdForFloor(context?.chat?.[messageIndex], messageIndex);
+      targetIndex = latest.messages.findIndex((message, index) =>
+        String(messageIdForFloor(message, index)) === String(expectedMessageId));
+      trace("OFFICIAL_OWNER_MESSAGE_RESOLVED", {
+        owner_found: targetIndex >= 0,
+        owner_message_id: targetIndex >= 0
+          ? messageIdForFloor(latest.messages[targetIndex], targetIndex)
+          : expectedMessageId,
+      });
+      if (targetIndex < 0) throw sourceError("STALE_FLOOR_VERSION");
+      target = latest.messages[targetIndex];
+      prewriteContext = {
+        ...prewriteContext,
+        owner_message_found: true,
+        swipes_present: Array.isArray(target?.swipes),
+        swipes_count: Array.isArray(target?.swipes) ? target.swipes.length : 0,
+        swipe_info_present: Boolean(target?.swipe_info && typeof target.swipe_info === "object"),
+        swipe_info_count: Array.isArray(target?.swipe_info)
+          ? target.swipe_info.length
+          : target?.swipe_info && typeof target.swipe_info === "object"
+            ? Object.keys(target.swipe_info).length
+            : 0,
+      };
+      if (!isCharacterMessage(target)) {
+        trace("OFFICIAL_OWNER_MESSAGE_RESOLVED", {
+          owner_found: false,
+          owner_message_id: messageIdForFloor(target, targetIndex),
+        });
+        throw sourceError("BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN");
+      }
+      failureStage = "official_owner_swipe_resolution";
+      targetSwipeId = Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
+      const targetSwipeInfo = target?.swipe_info?.[targetSwipeId];
+      const canCreateInitialSwipe = targetSwipeId === 0
+        && (Number.isInteger(target?.swipe_id) ? target.swipe_id : 0) === 0
+        && Boolean(
+          target?.swipes?.[0] ??
+          target?.mes ??
+          target?.content ??
+          target?.swipe_info?.[0]?.mes,
+        );
+      const swipeFound = !hasSwipeStructure(target) || hasSwipeSlot(target, targetSwipeId) || canCreateInitialSwipe;
+      prewriteContext = {
+        ...prewriteContext,
+        swipe_id: targetSwipeId,
+        swipe_found: swipeFound,
+        target_swipe_info_found: targetSwipeInfo !== undefined && targetSwipeInfo !== null,
+        target_extra_present: Boolean(targetSwipeInfo?.extra && typeof targetSwipeInfo.extra === "object"),
+        target_bioweave_present: targetSwipeInfo?.extra?.bioweave !== undefined,
+      };
+      trace("OFFICIAL_OWNER_SWIPE_RESOLVED", {
+        swipe_found: swipeFound,
+        swipe_structure: hasSwipeStructure(target),
+        active_swipe_id: Number.isInteger(target.swipe_id) ? target.swipe_id : targetSwipeId,
+        swipe_id: targetSwipeId,
+        swipes_present: Array.isArray(target?.swipes),
+        swipes_count: Array.isArray(target?.swipes) ? target.swipes.length : 0,
+        swipe_info_present: Boolean(target?.swipe_info && typeof target.swipe_info === "object"),
+        swipe_info_count: Array.isArray(target?.swipe_info)
+          ? target.swipe_info.length
+          : target?.swipe_info && typeof target.swipe_info === "object"
+            ? Object.keys(target.swipe_info).length
+            : 0,
+        target_swipe_info_found: targetSwipeInfo !== undefined && targetSwipeInfo !== null,
+        target_extra_present: Boolean(targetSwipeInfo?.extra && typeof targetSwipeInfo.extra === "object"),
+        target_bioweave_present: targetSwipeInfo?.extra?.bioweave !== undefined,
+      });
+      if (!swipeFound || (hasSwipeStructure(target) &&
+        Number.isInteger(target.swipe_id) && target.swipe_id !== targetSwipeId))
+        throw sourceError("STALE_FLOOR_VERSION");
+      if (expectedVersion) {
+        failureStage = "official_owner_floor_version_check";
+        const authoritativeVersion = await floorVersion({
+          chatId: expectedChatId,
+          messageId: messageIdForFloor(target, targetIndex),
+          floor: target.floor ?? targetIndex,
+          swipeId: targetSwipeId,
+          text: messageTextForFloor(target, targetSwipeId),
+          messageVersion: target.message_version ?? target.messageVersion,
+        });
+        const versionMatches = sameFloorVersion(authoritativeVersion, expectedVersion);
+        trace(traceStage("WORLD_OWNER_VERSION_CHECK", "EVENT_OWNER_VERSION_CHECK"), {
+          result: versionMatches ? "match" : "mismatch",
+          expected: expectedVersion,
+          actual: authoritativeVersion,
+        });
+        if (!versionMatches)
+          throw sourceError("STALE_FLOOR_VERSION");
+      }
+      if (expectedVersion && context?.chat?.[messageIndex]) {
+        failureStage = "official_owner_live_version_check";
+        const current = context.chat[messageIndex];
+        const currentSwipeId = hasSwipeStructure(current)
+          ? Number.isInteger(current.swipe_id) ? current.swipe_id : swipeId
+          : swipeId;
+        const currentVersion = await floorVersion({
+          chatId: expectedChatId,
+          messageId: messageIdForFloor(current, messageIndex),
+          floor: current.floor ?? messageIndex,
+          swipeId: currentSwipeId,
+          text: messageTextForFloor(current, currentSwipeId),
+          messageVersion: current.message_version ?? current.messageVersion,
+        });
+        const currentMatches = sameFloorVersion(currentVersion, expectedVersion);
+        if (!currentMatches) {
+          trace(traceStage("WORLD_OWNER_VERSION_CHECK", "EVENT_OWNER_VERSION_CHECK"), {
+            result: "mismatch",
+            expected: expectedVersion,
+            actual: currentVersion,
+          });
+          throw sourceError("STALE_FLOOR_VERSION");
+        }
+      }
+      // The slot marker is deliberately emitted only after all owner and
+      // Floor Version guards pass.
+    } catch (error) {
+      trace("OFFICIAL_PREWRITE_FAILED", {
+        ...persistenceTraceError(error, failureStage),
+        ...prewriteContext,
+      });
+      throw error;
+    }
+    trace(traceStage("WORLD_SLOT_BEFORE_WRITE", "EVENT_SLOT_BEFORE_WRITE"), {
+      present: readFloorSlot(target, targetSwipeId) !== undefined,
+    });
+    if (traceContext?.domain === "event") {
+      const existing = readFloorSlot(target, targetSwipeId);
+      trace("EVENT_SOURCE_WORLD_PRESENT", {
+        present: existing?.world_model !== undefined && existing?.world_model !== null,
+      });
+    }
+    writeFloorSlot(target, targetSwipeId, value);
+    trace(traceStage("WORLD_SLOT_AFTER_MERGE", "EVENT_SLOT_AFTER_MERGE"), {
+      present: readFloorSlot(target, targetSwipeId) !== undefined,
+    });
+    const header = {
+      ...(latest.header && typeof latest.header === "object" ? cloneOwnerValue(latest.header) : {}),
+      chat_metadata: cloneOwnerValue(latest.chatMetadata),
+      user_name: latest.header?.user_name ?? "unused",
+      character_name: latest.header?.character_name ?? "unused",
+    };
+    trace(traceStage("OFFICIAL_SAVE_BEGIN", "EVENT_SAVE_BEGIN"));
+    await requestJson(
+      "/api/chats/save",
+      {
+        ch_name: descriptor.ch_name,
+        file_name: descriptor.apiFileName,
+        chat: [header, ...cloneOwnerValue(latest.messages)],
+        avatar_url: descriptor.avatar_url,
+        force: false,
+      },
+      { write: true },
+    );
+    trace(traceStage("OFFICIAL_SAVE_END", "EVENT_SAVE_END"));
+    trace("OFFICIAL_GET_AFTER_SAVE_BEGIN");
+    const committed = await readOfficialChatOwner({
+      chatId: expectedChatId,
+      characterId: descriptor.characterId,
+    });
+    trace("OFFICIAL_GET_AFTER_SAVE_END", {revision: committed.revision});
+    const committedMessage = committed.messages.find((message, index) =>
+      String(messageIdForFloor(message, index)) === String(expectedMessageId));
+    const readbackPresent = Boolean(committedMessage && readFloorSlot(committedMessage, targetSwipeId) !== undefined);
+    trace(traceStage("WORLD_SLOT_AFTER_READBACK", "EVENT_SLOT_AFTER_READBACK"), {
+      present: readbackPresent,
+      floor_version_match: Boolean(committedMessage),
+      swipe_match: Boolean(committedMessage && (!hasSwipeStructure(committedMessage) || committedMessage.swipe_id === targetSwipeId)),
+    });
+    if (!committedMessage || JSON.stringify(readFloorSlot(committedMessage, targetSwipeId)) !== JSON.stringify(value))
+      throw sourceError("FLOOR_PERSISTENCE_READBACK_FAILED");
+    if (String(getContext()?.chatId) !== String(expectedChatId))
+      throw sourceError("STALE_CHAT");
+    const committedLiveMessage = getContext()?.chat?.[messageIndex];
+    if (committedLiveMessage && String(messageIdForFloor(committedLiveMessage, messageIndex)) === String(expectedMessageId))
+      writeFloorSlot(committedLiveMessage, targetSwipeId, value);
+    return {
+      commitState: "confirmed",
+      mergeMode: "latest-source-floor-slot",
+      authoritativeReadback: true,
     };
   }
 
@@ -564,7 +945,7 @@ export function createSillyTavernAdapter() {
       }
       return response ?? { commitState: "confirmed" };
     },
-    async saveFloorBioWeave(messageIndex, swipeId, value, expectedChatId) {
+    async saveFloorBioWeave(messageIndex, swipeId, value, expectedChatId, expectedVersion, traceContext = null) {
       const context = getContext();
       if (expectedChatId !== undefined && context?.chatId !== expectedChatId) {
         throw new Error("STALE_CHAT");
@@ -575,6 +956,23 @@ export function createSillyTavernAdapter() {
         throw new Error("BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN");
       const targetSwipeId =
         Number.isInteger(swipeId) && swipeId >= 0 ? swipeId : 0;
+      const authoritative = await saveOfficialFloorBioWeave(
+        messageIndex,
+        targetSwipeId,
+        value,
+        expectedChatId,
+        expectedVersion,
+        traceContext,
+      );
+      if (authoritative) return authoritative;
+      const trace = (stage, details = {}) => emitPersistenceTrace({
+        ...traceContext,
+        stage,
+        ...details,
+      });
+      traceContext?.domain === "world"
+        ? trace("WORLD_SLOT_BEFORE_WRITE", {present: Boolean(message?.extra?.bioweave || message?.swipe_info?.[targetSwipeId]?.extra?.bioweave)})
+        : trace("EVENT_SOURCE_WORLD_PRESENT", {present: Boolean(message?.extra?.bioweave?.world_model || message?.swipe_info?.[targetSwipeId]?.extra?.bioweave?.world_model)});
       if (hasSwipeStructure(message)) {
         if (!hasSwipeSlot(message, targetSwipeId))
           throw new Error("SWIPE_NOT_FOUND");
@@ -586,7 +984,18 @@ export function createSillyTavernAdapter() {
         message.extra ??= {};
         message.extra.bioweave = value;
       }
+      trace(traceContext?.domain === "world" ? "WORLD_SLOT_AFTER_MERGE" : "EVENT_SLOT_AFTER_MERGE", {
+        present: true,
+      });
+      if (traceContext?.domain === "event") trace("EVENT_SAVE_BEGIN");
       const response = await this.saveChat({ expectedChatId });
+      trace(traceContext?.domain === "world" ? "WORLD_SLOT_AFTER_READBACK" : "EVENT_SLOT_AFTER_READBACK", {
+        present: true,
+        authoritative: false,
+      });
+      trace(traceContext?.domain === "world" ? "WORLD_PERSISTENCE_CONFIRMED" : "EVENT_SAVE_END", {
+        commitState: response?.commitState ?? "confirmed",
+      });
       if (
         expectedChatId !== undefined &&
         getContext()?.chatId !== expectedChatId
@@ -594,6 +1003,9 @@ export function createSillyTavernAdapter() {
         throw new Error("STALE_CHAT");
       }
       return response;
+    },
+    setPersistenceTraceSink(sink) {
+      persistenceTraceSink = typeof sink === "function" ? sink : null;
     },
     setExtensionPrompt({key, content, position, depth, scan = false, role} = {}) {
       const context = getContext();
@@ -630,6 +1042,9 @@ export function createRuntime({
   const subscriptions = new Set();
   const unbind = [];
   const activity = createRuntimeActivity();
+  const recentLifecycleTrace = [];
+  let persistenceTrace = null;
+  let traceSequence = 0;
   let initialized = false;
   let destroyed = false;
 
@@ -646,6 +1061,56 @@ export function createRuntime({
   }
 
   function notify(event) {
+    if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") {
+      const payload = event.payload ?? {};
+      if (payload.stage === "AUTO_ANALYSIS_TRIGGERED") {
+        persistenceTrace = {
+          execution: {
+            chat_id: payload.chat_id ?? chat.current(),
+            message_id: payload.message_id ?? null,
+            floor: payload.floor ?? null,
+            swipe_id: payload.swipe_id ?? 0,
+            content_hash: payload.content_hash ?? null,
+            message_version: payload.message_version ?? null,
+            attempt: payload.attempt ?? null,
+            trigger: payload.trigger ?? null,
+          },
+          sequence: recentLifecycleTrace.slice(-32),
+          terminal: null,
+          host_post_save_hook: "NO_PUBLIC_POST_SAVE_HOOK",
+        };
+      }
+      if (!persistenceTrace) {
+        persistenceTrace = {
+          execution: null,
+          sequence: [],
+          terminal: null,
+        };
+      }
+      persistenceTrace.sequence.push({
+        seq: ++traceSequence,
+        stage: payload.stage ?? "UNKNOWN",
+        ...sanitizePersistenceTracePayload(payload),
+      });
+    }
+    if (event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" && persistenceTrace && event.payload?.state !== "running") {
+      persistenceTrace.terminal = event.payload?.state ?? null;
+      const diagnostic = event.payload?.diagnostic ?? event.payload ?? {};
+      const terminalStage = event.payload?.state === "failed"
+        ? "ANALYSIS_FAILED"
+        : `ANALYSIS_${String(event.payload?.state ?? "unknown").toUpperCase()}`;
+      persistenceTrace.sequence.push({
+        seq: ++traceSequence,
+        ...sanitizePersistenceTracePayload(event.payload),
+        stage: terminalStage,
+        trigger: event.payload?.reason ?? persistenceTrace.execution?.trigger ?? null,
+        failure_stage: event.payload?.state === "failed" ? diagnostic.stage ?? event.payload?.analysis_stage ?? null : undefined,
+        error_name: event.payload?.state === "failed" ? diagnostic.error_name ?? null : undefined,
+        error_code: event.payload?.state === "failed" ? diagnostic.error_code ?? event.payload?.error_code ?? null : undefined,
+        error_message: event.payload?.state === "failed" ? diagnostic.error_message ?? diagnostic.safe_error_summary ?? null : undefined,
+        diagnostic_code: event.payload?.state === "failed" ? diagnostic.diagnostic_code ?? event.payload?.diagnostic_code ?? null : undefined,
+      });
+    }
     activity.handleRuntimeEvent(event);
     for (const listener of [...subscriptions]) {
       try {
@@ -654,6 +1119,67 @@ export function createRuntime({
         console.error("[BioWeave] runtime subscriber failed", error);
       }
     }
+  }
+
+  function sanitizePersistenceTracePayload(payload = {}) {
+    const allowed = [
+      "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash",
+      "message_version", "attempt", "trigger", "domain", "state", "path",
+      "generation_id", "generation_type", "generation_source", "execution_active",
+      "cancel_stage", "cancel_reason", "cancel_code",
+      "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
+      "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
+      "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
+      "swipe_id_match", "content_hash_match", "message_version_match", "generation_identity_match",
+      "reason", "result", "present", "world_model_present", "species_count",
+      "biological_type_count", "floor_version_match", "swipe_match", "commitState",
+      "revision", "current_floor_present",
+    ];
+    return Object.fromEntries(
+      allowed
+        .filter(key => payload[key] !== undefined)
+        .map(key => [key, cloneSafeTraceValue(payload[key])]),
+    );
+  }
+
+  function cloneSafeTraceValue(value) {
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) return value.map(cloneSafeTraceValue);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneSafeTraceValue(item)]));
+  }
+
+  function recordLifecycleTrace(stage, payload, chatId) {
+    const generationType = typeof payload === "object"
+      ? payload?.genType ?? payload?.generation_type ?? payload?.type ?? null
+      : payload;
+    const generationSource = typeof payload === "object"
+      ? payload?.source ?? payload?.generation_source ?? payload?.reason ?? null
+      : null;
+    const entry = {
+      seq: ++traceSequence,
+      stage,
+      chat_id: chatId ?? chat.current(),
+    };
+    const safe = sanitizePersistenceTracePayload({
+      ...(payload && typeof payload === "object" ? payload : {}),
+      ...(generationType != null ? {generation_type: String(generationType).slice(0, 40)} : {}),
+      ...(generationSource != null ? {generation_source: String(generationSource).slice(0, 80)} : {}),
+    });
+    recentLifecycleTrace.push({...entry, ...safe});
+    while (recentLifecycleTrace.length > 64) recentLifecycleTrace.shift();
+    if (persistenceTrace) persistenceTrace.sequence.push({...entry, ...safe});
+  }
+
+  function getPersistenceTrace() {
+    return cloneSafeTraceValue(persistenceTrace);
+  }
+
+  function recordPersistenceTrace(payload = {}) {
+    notify({
+      type: "BIOWEAVE_PERSISTENCE_TRACE",
+      payload,
+      chatId: payload?.chat_id ?? chat.current(),
+    });
   }
 
   function notifyLifecycleSettled(key, eventType, payload) {
@@ -666,6 +1192,12 @@ export function createRuntime({
       epoch: chat.getEpoch(),
     });
   }
+
+  st.setPersistenceTraceSink?.((payload) => notify({
+    type: "BIOWEAVE_PERSISTENCE_TRACE",
+    payload,
+    chatId: payload?.chat_id ?? chat.current(),
+  }));
 
   function resolveEventAnalysisProfile() {
     const settings = store.profileStore?.getSettings?.() ?? {};
@@ -1168,6 +1700,15 @@ export function createRuntime({
     const epochBefore = chat.getEpoch();
     const previousOwner = activeOwner;
     const chatId = chat.current();
+    const lifecycleTraceStage = {
+      GENERATION_STARTED: "GENERATION_STARTED",
+      GENERATION_ENDED: "GENERATION_ENDED",
+      GENERATION_STOPPED: "GENERATION_STOPPED",
+      GENERATION_CANCELLED: "GENERATION_CANCELLED",
+      MESSAGE_RECEIVED: "MESSAGE_RECEIVED",
+      CHARACTER_MESSAGE_RENDERED: "CHARACTER_MESSAGE_RENDERED",
+    }[key];
+    if (lifecycleTraceStage) recordLifecycleTrace(lifecycleTraceStage, payload, chatId);
     const chatChanged = chat.getEpoch() !== epochBefore;
     let sourceTransition = null;
     if (key === "CHAT_CHANGED" && chatChanged) {
@@ -1463,6 +2004,8 @@ export function createRuntime({
     setBioWeaveEnabled,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getAutoAnalysisSchedulerState: eventAnalysis.getAutoAnalysisSchedulerState,
+    getPersistenceTrace,
+    recordPersistenceTrace,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
     getCurrentCharacterIdentity: eventAnalysis.getCurrentCharacterIdentity,

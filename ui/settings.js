@@ -918,7 +918,6 @@ function renderAnalysisPromptSettings(prompt = {}, openSettingsSections = []) {
     textArea('尾部 SYSTEM', 'system_bottom', settings.system_bottom),
     '<div class="bioweave-settings-actions">',
     '<button type="button" class="bioweave-primary-action" data-bioweave-action="save-analysis-prompt">保存提示词设置</button>',
-    '<button type="button" class="bioweave-secondary-action bioweave-analysis-debug-trigger" data-bioweave-action="open-analysis-debug" aria-label="打开分析提示词高级调试">高级 / 调试</button>',
     '</div>',
     '</section>',
     '</details>',
@@ -1061,8 +1060,23 @@ export function renderAnalysisInputPreview(preview = {}) {
   ].join('');
 }
 
+function renderPersistenceTrace(trace = null) {
+  if (!trace || typeof trace !== 'object') {
+    return '<section class="bioweave-card bioweave-persistence-trace" data-bioweave-persistence-trace><h4>最近一次分析诊断</h4><p class="bioweave-muted">尚未收到自动分析 persistence trace。</p></section>';
+  }
+  return [
+    '<section class="bioweave-card bioweave-persistence-trace" data-bioweave-persistence-trace>',
+    '<header><div><h4>最近一次分析诊断</h4><p class="bioweave-muted">仅显示 Floor 身份、宿主保存路径、读回结果与阶段顺序；不包含完整输入或凭据。</p></div>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-persistence-trace">复制最近一次分析诊断</button></header>',
+    '<pre data-bioweave-persistence-trace-content>' + escapeHtml(traceValueText(trace)) + '</pre>',
+    '</section>',
+  ].join('');
+}
+
 export function renderAnalysisDebugPopupContent({
   analysisPreview = {},
+  persistenceTrace = null,
+  storyTimeDebug = {},
   analysisPrompt = null,
   analysisPromptDraft = null,
   worldAnalysisPrompt = null,
@@ -1090,6 +1104,9 @@ export function renderAnalysisDebugPopupContent({
       promptSettings,
       openSettingsSections,
     }),
+    '<section class="bioweave-analysis-debug-section bioweave-analysis-diagnostic-section">',
+    renderPersistenceTrace(persistenceTrace),
+    '</section>',
   ].join('');
 
   if (typeof documentRef?.createElement !== 'function') return markup;
@@ -1108,7 +1125,7 @@ function renderStoryTimeDebugRow(label, value, fallback = '—') {
   return '<div><dt>' + escapeHtml(label) + '</dt><dd>' + storyTimeDebugValue(value, fallback) + '</dd></div>';
 }
 
-function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections = []) {
+function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections = [], standalone = false) {
   const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('story_time_debug');
   const enabled = storyTimeDebug.enabled === true;
   const loading = storyTimeDebug.loading === true;
@@ -1151,10 +1168,25 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
         renderStoryTimeDebugRow('Difference', difference ? `${difference.value} ${difference.unit}` : null), renderStoryTimeDebugRow('Failure Reason', info.failure_reason),
       ].join('') + '</dl></section>' : '',
     ].join('');
+  const card = '<section class="bioweave-card bioweave-story-time-debug-settings"><div class="bioweave-settings-card-header"><div><h3>Story Time 调试</h3><p class="bioweave-muted">不调用 Event Analyzer，不读取完整剧情正文。</p></div><label class="bioweave-checkbox-label"><input type="checkbox" class="bioweave-checkbox" data-bioweave-action="toggle-story-time-debug"' + (enabled ? ' checked' : '') + '>开启 Story Time 调试</label></div>' +
+    '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-story-time-debug"' + (!enabled || loading ? ' disabled' : '') + '>' + (loading ? '读取中…' : '刷新') + '</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-story-time-debug"' + (!enabled || !info ? ' disabled' : '') + '>复制调试信息</button></div>' + body + '</section>';
+  if (standalone) return card;
   return '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-story-time-debug-disclosure" data-bioweave-settings-disclosure="story_time_debug"' + (open ? ' open' : '') + '>' +
     renderSettingsSummary('Story Time 调试', '只读检查当前 Character Floor 的 Story Time 解析链', null, {label: enabled ? '已开启' : '已关闭', tone: enabled ? 'good' : ''}) +
-    '<section class="bioweave-card bioweave-story-time-debug-settings"><div class="bioweave-settings-card-header"><div><h3>Story Time</h3><p class="bioweave-muted">不调用 Event Analyzer，不读取完整剧情正文。</p></div><label class="bioweave-checkbox-label"><input type="checkbox" class="bioweave-checkbox" data-bioweave-action="toggle-story-time-debug"' + (enabled ? ' checked' : '') + '>开启 Story Time 调试</label></div>' +
-    '<div class="bioweave-page-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-story-time-debug"' + (!enabled || loading ? ' disabled' : '') + '>' + (loading ? '读取中…' : '刷新') + '</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-story-time-debug"' + (!enabled || !info ? ' disabled' : '') + '>复制调试信息</button></div>' + body + '</section></details>';
+    card + '</details>';
+}
+
+function renderAnalysisDebugSettings({analysisPreview = {}, persistenceTrace = null, storyTimeDebug = {}, analysisPrompt = {}, openSettingsSections = [], theme = 'tavern', documentRef = globalThis.document} = {}) {
+  const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('analysis_debug');
+  return [
+    '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-analysis-debug-disclosure" data-bioweave-settings-disclosure="analysis_debug"' + (open ? ' open' : '') + '>',
+    renderSettingsSummary('高级 / 调试', '分析输入、执行诊断与 Story Time 调试'),
+    renderAnalysisInputPreview({...analysisPreview, standalone: true, messagePreview: true, promptSettings: analysisPrompt, openSettingsSections}),
+    '<section class="bioweave-card bioweave-analysis-debug-actions"><div class="bioweave-settings-actions"><button type="button" class="bioweave-secondary-action bioweave-analysis-debug-trigger" data-bioweave-action="open-analysis-debug" aria-label="打开高级调试 Popup">打开高级调试 Popup</button></div></section>',
+    renderPersistenceTrace(persistenceTrace),
+    renderStoryTimeDebugSettings(storyTimeDebug, openSettingsSections, true),
+    '</details>',
+  ].join('');
 }
 
 export function settingsPage({
@@ -1180,6 +1212,10 @@ export function settingsPage({
   worldAnalysisPromptDraft = null,
   dataManagement = {},
   storyTimeDebug = {},
+  analysisPreview = {},
+  persistenceTrace = null,
+  theme = 'tavern',
+  documentRef = globalThis.document,
   show_floating_launcher = true,
   floating_launcher_theme = DEFAULT_FLOATING_LAUNCHER_THEME,
 } = {}) {
@@ -1227,7 +1263,15 @@ export function settingsPage({
       theme: floating_launcher_theme,
       open: openSettingsSections.has('floating_launcher'),
     }),
-    renderStoryTimeDebugSettings(storyTimeDebug, worldbookSources.openSettingsSections),
+    renderAnalysisDebugSettings({
+      analysisPreview,
+      persistenceTrace,
+      storyTimeDebug,
+      analysisPrompt: analysisPromptDraft ?? analysisPrompt ?? worldAnalysisPromptDraft ?? worldAnalysisPrompt ?? {},
+      openSettingsSections: worldbookSources.openSettingsSections,
+      theme,
+      documentRef,
+    }),
     '</section>',
   ].join('');
 }

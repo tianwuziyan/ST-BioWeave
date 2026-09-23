@@ -1148,10 +1148,10 @@ test('settings source operations do not render a page notice, while preview erro
 test('settings categories reuse the compact disclosure shell with left arrows and right status badges', () => {
   const html = settingsPage({
     worldbookSources: {
-      openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_preview', 'analysis_prompt', 'data_management', 'api', 'assignments'],
+      openSettingsSections: ['worldbook', 'recent_story', 'external_memory', 'analysis_debug', 'analysis_prompt', 'data_management', 'api', 'assignments'],
     },
   });
-  for (const key of ['worldbook', 'recent_story', 'external_memory', 'analysis_prompt', 'data_management', 'api', 'assignments']) {
+  for (const key of ['worldbook', 'recent_story', 'external_memory', 'analysis_debug', 'analysis_prompt', 'data_management', 'api', 'assignments']) {
     assert.match(html, new RegExp('data-bioweave-settings-disclosure="' + key + '"[^>]* open'));
   }
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
@@ -1160,7 +1160,7 @@ test('settings categories reuse the compact disclosure shell with left arrows an
     assert.match(html, new RegExp(label));
   }
   assert.equal((html.match(/class="bioweave-settings-summary-arrow"/g) ?? []).length, 9);
-  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 9);
+  assert.equal((html.match(/bioweave-settings-summary-status/g) ?? []).length, 8);
   assert.equal((html.match(/class="bioweave-recent-story-summary-arrow"/g) ?? []).length, 0);
   assert.match(html, /bioweave-settings-summary-status">0\/3 可用/);
   assert.match(STYLE_SOURCE, /\.bioweave-settings-summary-arrow/);

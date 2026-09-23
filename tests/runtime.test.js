@@ -557,6 +557,331 @@ test("SillyTavern adapter rejects a deleted Swipe instead of recreating its slot
   }
 });
 
+test("SillyTavern Floor writes merge the latest authoritative Chat and verify read-back", async () => {
+  const context = {
+    chatId: "chat-authoritative-floor",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{ message_id: "message-authoritative-floor", floor: 6, role: "assistant", content: "最新正文" }],
+  };
+  let authoritative = [
+    { chat_metadata: { marker: "latest" } },
+    { message_id: "message-authoritative-floor", floor: 6, role: "assistant", content: "最新正文", extra: { host_field: true } },
+  ];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const version = await floorVersion({
+      chatId: context.chatId,
+      messageId: context.chat[0].message_id,
+      floor: 6,
+      swipeId: 0,
+      text: context.chat[0].content,
+    });
+    const value = {floor_version: version, world_model: {species: [{name: "人类"}]}};
+    const result = await adapter.saveFloorBioWeave(0, 0, value, context.chatId, version);
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(result.authoritativeReadback, true);
+    assert.equal(authoritative[1].extra.host_field, true);
+    assert.deepEqual(authoritative[1].extra.bioweave, value);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("SillyTavern Floor persistence trace records official path, read-back, and Swipe 0", async () => {
+  const context = {
+    chatId: "chat-trace-official",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{ message_id: "trace-floor", floor: 6, role: "assistant", content: "最新正文" }],
+  };
+  let authoritative = [
+    { chat_metadata: {} },
+    { message_id: "trace-floor", floor: 6, role: "assistant", content: "最新正文" },
+  ];
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink((entry) => trace.push(entry));
+    const version = await floorVersion({
+      chatId: context.chatId,
+      messageId: "trace-floor",
+      floor: 6,
+      swipeId: 0,
+      text: "最新正文",
+    });
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {floor_version: version, world_model: {species: [{name: "人类"}]}},
+      context.chatId,
+      version,
+      {domain: "world", chat_id: context.chatId, message_id: "trace-floor", swipe_id: 0, attempt: 1, trigger: "auto-full"},
+    );
+    assert.equal(trace.find(entry => entry.stage === "WORLD_SAVE_PATH_SELECTED")?.path, "official");
+    assert.ok(trace.some(entry => entry.stage === "OFFICIAL_GET_BEFORE_SAVE_BEGIN"));
+    assert.ok(trace.some(entry => entry.stage === "OFFICIAL_SAVE_BEGIN"));
+    assert.equal(trace.find(entry => entry.stage === "WORLD_SLOT_AFTER_READBACK")?.present, true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("SillyTavern official JSONL response resolves an index-owned Character Floor and Swipe 0", async () => {
+  const context = {
+    chatId: "chat-official-index-owner",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{floor: 6, role: "assistant", swipes: ["最新正文"], swipe_info: [{}], swipe_id: 0}],
+  };
+  let authoritative = [
+    {chat_metadata: {}},
+    {floor: 6, role: "assistant", swipes: ["最新正文"], swipe_info: [{}], swipe_id: 0},
+  ];
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({ok: true})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const version = await floorVersion({
+      chatId: context.chatId,
+      messageId: 0,
+      floor: 6,
+      swipeId: 0,
+      text: "最新正文",
+    });
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {floor_version: version, world_model: {species: [{name: "人类"}]}},
+      context.chatId,
+      version,
+      {domain: "world", chat_id: context.chatId, message_id: 0, swipe_id: 0, attempt: 1, trigger: "auto-full"},
+    );
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_RESPONSE_SHAPE_RESOLVED")?.response_shape, "json_array_jsonl");
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_MESSAGES_RESOLVED")?.messages_count, 1);
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_OWNER_MESSAGE_RESOLVED")?.owner_found, true);
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_OWNER_SWIPE_RESOLVED")?.swipe_found, true);
+    assert.equal(trace.some(entry => entry.stage === "OFFICIAL_SAVE_BEGIN"), true);
+    assert.equal(trace.find(entry => entry.stage === "WORLD_SLOT_AFTER_READBACK")?.present, true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("official Swipe 0 creates missing swipe metadata when the Character body owns the active text", async () => {
+  const context = {
+    chatId: "chat-official-swipe-zero-metadata",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{floor: 6, role: "assistant", mes: "最新正文", swipes: ["最新正文"], swipe_id: 0}],
+  };
+  let authoritative = [
+    {chat_metadata: {}},
+    {floor: 6, role: "assistant", mes: "最新正文", swipes: ["最新正文"], swipe_id: 0},
+  ];
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({ok: true})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const version = await floorVersion({chatId: context.chatId, messageId: 0, floor: 6, swipeId: 0, text: "最新正文"});
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {floor_version: version, world_model: {species: [{name: "人类"}]}},
+      context.chatId,
+      version,
+      {domain: "world", chat_id: context.chatId, message_id: 0, swipe_id: 0, attempt: 1, trigger: "reroll"},
+    );
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_OWNER_SWIPE_RESOLVED")?.swipe_found, true);
+    assert.equal(trace.find(entry => entry.stage === "OFFICIAL_OWNER_SWIPE_RESOLVED")?.target_swipe_info_found, false);
+    assert.equal(trace.some(entry => entry.stage === "OFFICIAL_SAVE_BEGIN"), true);
+    assert.deepEqual(authoritative[1].swipe_info[0].extra.bioweave.world_model.species, [{name: "人类"}]);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("official GET to merge failure records the concrete pre-write diagnostic", async () => {
+  const context = {
+    chatId: "chat-official-prewrite-failure",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{floor: 6, role: "assistant", content: "正文"}],
+  };
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) throw new Error("SAVE_MUST_NOT_START");
+    return {ok: true, json: async () => [{chat_metadata: {}}, {floor: 6, role: "assistant", content: "不同正文"}]};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const expected = await floorVersion({chatId: context.chatId, messageId: 0, floor: 6, swipeId: 0, text: "正文"});
+    await assert.rejects(
+      adapter.saveFloorBioWeave(0, 0, {floor_version: expected, world_model: {}}, context.chatId, expected, {
+        domain: "world", chat_id: context.chatId, message_id: 0, swipe_id: 0, attempt: 1, trigger: "auto-full",
+      }),
+      /STALE_FLOOR_VERSION/,
+    );
+    const failure = trace.find(entry => entry.stage === "OFFICIAL_PREWRITE_FAILED");
+    assert.equal(failure?.failure_stage, "official_owner_floor_version_check");
+    assert.equal(failure?.error_code, "STALE_FLOOR_VERSION");
+    assert.equal(failure?.owner_message_found, true);
+    assert.equal(failure?.swipe_id, 0);
+    assert.equal(failure?.swipe_found, true);
+    assert.equal(trace.some(entry => entry.stage === "OFFICIAL_SAVE_BEGIN"), false);
+    assert.equal(trace.some(entry => entry.stage === "WORLD_PERSISTENCE_CONFIRMED"), false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("SillyTavern Floor persistence trace records fallback reason without secrets", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  delete globalThis.fetch;
+  const context = {
+    chatId: "chat-trace-fallback",
+    chat: [{message_id: "trace-fallback", floor: 1, role: "assistant", content: "正文"}],
+    async saveChat() {},
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  const trace = [];
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink((entry) => trace.push(entry));
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {floor_version: {chat_id: context.chatId, message_id: "trace-fallback", swipe_id: 0}, world_model: {species: []}},
+      context.chatId,
+      null,
+      {domain: "world", chat_id: context.chatId, message_id: "trace-fallback", swipe_id: 0, attempt: 2, trigger: "auto-full", api_key: "must-not-enter"},
+    );
+    assert.equal(trace.find(entry => entry.stage === "WORLD_SAVE_PATH_SELECTED")?.path, "context_fallback");
+    assert.equal(trace.find(entry => entry.stage === "WORLD_SAVE_PATH_SELECTED")?.reason, "fetch unavailable");
+    assert.doesNotMatch(JSON.stringify(trace), /must-not-enter|api_key|authorization/i);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("SillyTavern Floor persistence trace records a Floor Version mismatch before write", async () => {
+  const context = {
+    chatId: "chat-trace-mismatch",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "trace-mismatch", floor: 1, role: "assistant", content: "正文"}],
+  };
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) return {ok: true, json: async () => ({})};
+    return {ok: true, json: async () => [
+      {chat_metadata: {}},
+      {message_id: "trace-mismatch", floor: 1, role: "assistant", content: "宿主里的另一版正文"},
+    ]};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink((entry) => trace.push(entry));
+    const expected = await floorVersion({
+      chatId: context.chatId,
+      messageId: "trace-mismatch",
+      floor: 1,
+      swipeId: 0,
+      text: "正文",
+    });
+    await assert.rejects(
+      adapter.saveFloorBioWeave(0, 0, {floor_version: expected, world_model: {}}, context.chatId, expected, {
+        domain: "world", chat_id: context.chatId, message_id: "trace-mismatch", swipe_id: 0, attempt: 3, trigger: "auto-full",
+      }),
+      /STALE_FLOOR_VERSION/,
+    );
+    assert.equal(trace.some(entry => entry.stage === "WORLD_OWNER_VERSION_CHECK" && entry.result === "mismatch"), true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
 test("SillyTavern adapter persists Chat settings through host metadata for another endpoint", async () => {
   let metadataSaveCount = 0;
   const context = {

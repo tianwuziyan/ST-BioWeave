@@ -14,7 +14,7 @@ import {
   restoreScrollPositions,
 } from '../ui/app.js'
 import { createApiProfileStore } from '../storage/store.js'
-import { settingsPage } from '../ui/settings.js'
+import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
@@ -47,7 +47,7 @@ test('Host Entry has no business-layer imports or dependencies', () => {
   assert.doesNotMatch(HOST_ENTRY_SOURCE, /from\s+['"].*(?:runtime|storage|projection|world|event-analysis|floor|snapshot|state|api|ai|tracking|swipe)/i)
 })
 
-test('Story Time debug settings are off by default and render only the supplied Runtime DTO when enabled', () => {
+test('Story Time debug settings stay inside Advanced / Debug and render only the supplied Runtime DTO when enabled', () => {
   const closed = settingsPage({});
   assert.match(closed, /Story Time 调试/);
   assert.match(closed, /默认关闭/);
@@ -73,8 +73,11 @@ test('Story Time debug settings are off by default and render only the supplied 
   assert.match(open, /data-bioweave-action="copy-story-time-debug"/);
   assert.doesNotMatch(open, /她回忆/);
   const disclosureNames = [...open.matchAll(/data-bioweave-settings-disclosure="([^"]+)"/g)].map(match => match[1]);
-  assert.equal(disclosureNames.at(-1), 'story_time_debug');
-  assert.ok(open.indexOf('data-bioweave-settings-disclosure="story_time_debug"') > open.indexOf('data-bioweave-settings-disclosure="assignments"'));
+  assert.ok(disclosureNames.includes('analysis_debug'));
+  assert.doesNotMatch(open, /data-bioweave-settings-disclosure="story_time_debug"/);
+  assert.equal(disclosureNames.at(-1), 'analysis_debug');
+  const advancedStart = open.indexOf('data-bioweave-settings-disclosure="analysis_debug"');
+  assert.ok(advancedStart >= 0);
 });
 test('top app header drag moves only the panel and ignores header controls', () => {
   const createPointerTarget = rect => {
@@ -441,6 +444,7 @@ class FakeDocument {
     this.body.click = () => {
       this.body.clickCount += 1
     }
+    this.listeners = new Map()
   }
   createElement(tagName) {
     return new FakeElement(this, tagName)
@@ -453,6 +457,14 @@ class FakeDocument {
   }
   getElementById(id) {
     return this.querySelector('#' + id)
+  }
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) ?? new Set()
+    listeners.add(listener)
+    this.listeners.set(type, listeners)
+  }
+  removeEventListener(type, listener) {
+    this.listeners.get(type)?.delete(listener)
   }
 }
 class AppFakeElement extends FakeElement {
@@ -1608,6 +1620,21 @@ test('cache migration failure keeps the saved profile editor open without a fals
   assert.deepEqual(warnings, ['设置操作失败，请检查 SillyTavern 状态后重试。'])
   app.destroyBioWeave()
 })
+test('analysis debug Popup exposes a safe persistence trace copy entry', () => {
+  const markup = renderAnalysisDebugPopupContent({
+    persistenceTrace: {
+      execution: {chat_id: 'chat-trace', message_id: 'message-1', swipe_id: 0, attempt: 1, trigger: 'auto-full'},
+      host_post_save_hook: 'NO_PUBLIC_POST_SAVE_HOOK',
+      sequence: [{seq: 1, stage: 'WORLD_SAVE_PATH_SELECTED', path: 'official'}],
+    },
+  })
+  const html = typeof markup === 'string' ? markup : markup.innerHTML
+  assert.match(html, /复制最近一次分析诊断/)
+  assert.match(html, /NO_PUBLIC_POST_SAVE_HOOK/)
+  assert.doesNotMatch(html, /should-not-enter|api_key|authorization/i)
+  assert.match(STYLE_SOURCE, /bioweave-persistence-trace[\s\S]*text-align:\s*left\s*!important/)
+})
+
 test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview actions local', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []
@@ -1643,6 +1670,10 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
       getChat: () => ({ settings: {} }),
       saveChat: async () => {},
     },
+    getPersistenceTrace: () => ({
+      execution: {chat_id: 'chat-debug', message_id: 'message-1', swipe_id: 0},
+      sequence: [{seq: 1, stage: 'WORLD_PERSISTENCE_CONFIRMED'}],
+    }),
     st: {
       getContext: () => ({
         chatId: 'chat-debug',
@@ -1675,6 +1706,10 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
       stopPropagation() {},
     })
   }
+  const directCopied = []
+  documentRef.defaultView.navigator = {clipboard: {writeText: async text => directCopied.push(text)}}
+  await clickAction('copy-persistence-trace')
+  assert.equal(directCopied.length, 1)
   const openPromise = clickAction('open-analysis-debug')
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(popupCalls.length, 1)
@@ -1709,9 +1744,30 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
     preventDefault() {},
   })
   assert.match(popupContent.innerHTML, /bioweave-analysis-preview-raw/)
+  assert.equal(popupContent.listeners.get('click').size, 1)
+  const copied = []
+  documentRef.defaultView.navigator = {clipboard: {writeText: async text => copied.push(text)}}
+  const clonedCopyTarget = {
+    dataset: {bioweaveAction: 'copy-persistence-trace'},
+    closest(selector) {
+      return selector.includes('data-bioweave-action') || selector.includes('copy-persistence-trace') ? this : null
+    },
+  }
+  const documentClick = [...documentRef.listeners.get('click')][0]
+  await documentClick({target: clonedCopyTarget, preventDefault() {}})
+  assert.equal(copied.length, 1)
+  documentRef.defaultView.navigator = {clipboard: {writeText: async () => { throw new Error('CLIPBOARD_PERMISSION_DENIED') }}}
+  documentRef.execCommand = command => command === 'copy'
+  await documentClick({target: clonedCopyTarget, preventDefault() {}})
   resolvePopup()
   await openPromise
   assert.equal(root.dataset.open, 'true')
+  const secondOpenPromise = clickAction('open-analysis-debug')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(popupCalls.length, 2)
+  assert.equal(popupCalls[1].content.listeners.get('click').size, 1)
+  resolvePopup()
+  await secondOpenPromise
   const keydown = [...root.listeners.get('keydown')][0]
   keydown({ key: 'Escape', preventDefault() {} })
   assert.equal(root.dataset.open, 'false')

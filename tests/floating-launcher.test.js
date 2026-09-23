@@ -340,7 +340,8 @@ test('Floating Launcher preferences are global settings and render as UI control
   assert.doesNotMatch(markup, /Floating Launcher|Edge Snap|Launcher|Snap|Show Floating Launcher/);
   const disclosureNames = [...markup.matchAll(/data-bioweave-settings-disclosure="([^"]+)"/g)].map(match => match[1]);
   assert.equal(disclosureNames.at(-2), 'floating_launcher');
-  assert.equal(disclosureNames.at(-1), 'story_time_debug');
+  assert.equal(disclosureNames.at(-1), 'analysis_debug');
+  assert.doesNotMatch(markup, /data-bioweave-settings-disclosure="story_time_debug"/);
 });
 
 test('Floating Launcher top-bar toggle and reduced-motion contract are present', async () => {

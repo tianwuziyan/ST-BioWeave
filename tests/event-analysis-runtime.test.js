@@ -1628,6 +1628,36 @@ test("World-first analysis publishes explicit World and Event UI phases", async 
   fixture.runtime.destroy();
 });
 
+test("World-first runtime execution is independent of UI subscriber presence", async () => {
+  async function runWithUiSubscriber(uiMounted) {
+    const statuses = [];
+    const fixture = createFixture();
+    if (uiMounted) fixture.runtime.subscribe(event => statuses.push(event));
+    await fixture.runtime.init();
+    await fixture.runtime.analyzeFloor(
+      {__messageIndex: true, index: 0},
+      {force: true, reason: "automatic"},
+    );
+    const floor = fixture.runtime.store.getFloor(0, 0);
+    fixture.runtime.destroy();
+    return {floor, statuses};
+  }
+
+  const closed = await runWithUiSubscriber(false);
+  const open = await runWithUiSubscriber(true);
+  assert.equal(closed.floor.world_model?.schema_version, 1);
+  assert.equal(open.floor.world_model?.schema_version, 1);
+  assert.equal(closed.floor.analysis?.status, "success");
+  assert.equal(open.floor.analysis?.status, "success");
+  assert.deepEqual(
+    closed.statuses.filter(event => event.type === "WORLD_ANALYSIS_STATUS_CHANGED").length,
+    0,
+  );
+  assert.ok(
+    open.statuses.some(event => event.type === "WORLD_ANALYSIS_STATUS_CHANGED"),
+  );
+});
+
 test("successful Floor skips non-force analysis and force success replaces Events", async () => {
   const fixture = createFixture();
   await fixture.runtime.init();
@@ -3081,6 +3111,47 @@ test("real ST reroll order uses positional generation type and renders after GEN
   fixture.runtime.destroy();
 });
 
+test("automatic analysis trace preserves real lifecycle order and one execution trigger", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "trace-reroll", floor: 1, content: "原文", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 99 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", "regenerate");
+  fixture.emit("generation-ended", 1);
+  fixture.context.chat[0].content = "新正文";
+  fixture.emit("character-message-rendered", { message_id: "trace-reroll" });
+  fixture.emit("character-message-rendered", { message_id: "trace-reroll" });
+  await settle();
+  const trace = fixture.runtime.getPersistenceTrace();
+  assert.ok(trace);
+  const stages = trace.sequence.map(entry => entry.stage);
+  assert.ok(stages.indexOf("GENERATION_STARTED") >= 0);
+  assert.ok(stages.indexOf("GENERATION_ENDED") >= 0);
+  assert.ok(stages.indexOf("CHARACTER_MESSAGE_RENDERED") >= 0);
+  assert.equal(stages.filter(stage => stage === "AUTO_ANALYSIS_TRIGGERED").length, 1);
+  assert.equal(stages.filter(stage => stage === "WORLD_ACCEPTED").length, 1);
+  assert.ok(trace.sequence.every((entry, index, all) => index === 0 || entry.seq > all[index - 1].seq));
+  fixture.runtime.destroy();
+});
+
+test("automatic failure trace separates reroll trigger from the actual failure", async () => {
+  const fixture = createFixture({saveFloorError: "ST_FLOOR_STORAGE_UNAVAILABLE"});
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", {message_id: "message-stable"});
+  await settle();
+  const trace = fixture.runtime.getPersistenceTrace();
+  const failure = trace?.sequence.find(entry => entry.stage === "ANALYSIS_FAILED");
+  assert.ok(failure);
+  assert.equal(failure.trigger, "CHARACTER_MESSAGE_RENDERED");
+  assert.ok(failure.failure_stage);
+  assert.ok(failure.error_code);
+  assert.ok(failure.error_message);
+  assert.ok(failure.diagnostic_code);
+  fixture.runtime.destroy();
+});
+
 test("one reroll lifecycle consumes later duplicate CMRs even when streaming changes the Floor Version", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
@@ -3590,6 +3661,78 @@ test("repeated lifecycle notifications share one World-first analysis Job", asyn
   assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 1);
   assert.deepEqual(order, ["world-start", "world-resolved", "character-start"]);
+  fixture.runtime.destroy();
+});
+
+test("unrelated GENERATION_STARTED does not cancel the bound Floor execution", async () => {
+  let releaseWorld;
+  let worldStartedResolve;
+  const worldStarted = new Promise(resolve => { worldStartedResolve = resolve; });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldStartedResolve();
+        return new Promise(resolve => { releaseWorld = resolve; });
+      },
+      async analyzeFloor() { return { events: [] }; },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", {message_id: "message-stable"});
+  await worldStarted;
+
+  fixture.emit("generation-started", {
+    genType: "regenerate",
+    message_id: "unrelated-generation",
+    generation_id: "generation-unrelated",
+  });
+  await settle();
+  releaseWorld(normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "人类", biological_types: [] }],
+  }));
+  await settle();
+
+  const trace = fixture.runtime.getPersistenceTrace();
+  assert.equal(trace.sequence.some(entry => entry.stage === "ANALYSIS_CANCELLED"), false);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration?.generation_id,
+    "generation-unrelated");
+  fixture.runtime.destroy();
+});
+
+test("Floor Version mutation cancels with bounded cancellation diagnostics", async () => {
+  let releaseWorld;
+  let worldStartedResolve;
+  const worldStarted = new Promise(resolve => { worldStartedResolve = resolve; });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldStartedResolve();
+        return new Promise(resolve => { releaseWorld = resolve; });
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", {message_id: "message-stable"});
+  await worldStarted;
+  fixture.context.chat[0].content = "版本已变化";
+  fixture.emit("message-updated", { message_id: "message-stable" });
+  await settle();
+  releaseWorld(normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "人类", biological_types: [] }],
+  }));
+  await settle();
+
+  const cancelled = fixture.runtime.getPersistenceTrace()?.sequence
+    .find(entry => entry.stage === "ANALYSIS_CANCELLED");
+  assert.equal(cancelled.cancel_stage, "world_post_accept_floor_version_guard");
+  assert.equal(cancelled.cancel_reason, "floor-version-changed-after-world-accepted");
+  assert.equal(cancelled.cancel_code, "STALE_FLOOR_VERSION");
+  assert.equal(cancelled.floor_version_match, false);
+  assert.equal(cancelled.execution_active, false);
   fixture.runtime.destroy();
 });
 

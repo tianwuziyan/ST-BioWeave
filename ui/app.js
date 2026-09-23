@@ -785,6 +785,7 @@ export function createApp(runtime, options = {}) {
   function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
+      persistenceTrace: runtime.getPersistenceTrace?.() ?? null,
       analysisPrompt: promptSettings,
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
@@ -794,6 +795,46 @@ export function createApp(runtime, options = {}) {
       content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '')
     }
     return nextContent
+  }
+  async function copyPersistenceTrace() {
+    const trace = runtime.getPersistenceTrace?.()
+    if (!trace) {
+      notify('暂无最近一次分析诊断。', 'warning', documentRef)
+      return false
+    }
+    const text = JSON.stringify(trace, null, 2)
+    const clipboard = documentRef?.defaultView?.navigator?.clipboard ?? globalThis.navigator?.clipboard
+    let textarea = null
+    let copied = false
+    try {
+      if (typeof clipboard?.writeText === 'function') {
+        try {
+          await clipboard.writeText(text)
+          copied = true
+        } catch {
+          // Fall through to the host document fallback when clipboard permission
+          // is unavailable in the Popup context.
+        }
+      }
+      if (!copied) {
+        textarea = documentRef?.createElement?.('textarea')
+        if (!textarea || typeof documentRef?.execCommand !== 'function') throw new Error('CLIPBOARD_UNAVAILABLE')
+        textarea.value = text
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        documentRef.body?.append?.(textarea)
+        textarea.select?.()
+        if (!documentRef.execCommand('copy')) throw new Error('CLIPBOARD_COPY_FAILED')
+      }
+      if (textarea) textarea.remove?.()
+      notify('最近一次分析诊断已复制。', 'success', documentRef)
+      return true
+    } catch {
+      textarea?.remove?.()
+      notify('无法复制最近一次分析诊断。', 'error', documentRef)
+      return false
+    }
   }
   function readStoredAnalysisPrompt() {
     try {
@@ -839,9 +880,25 @@ export function createApp(runtime, options = {}) {
         event.preventDefault?.()
         setAnalysisPreviewType(target.dataset.bioweavePreviewType)
         renderDebugPopupContent(localContent, promptSettings)
+        return
+      }
+      if (action === 'copy-persistence-trace') {
+        event.preventDefault?.()
+        event.__bioweavePersistenceTraceHandled = true
+        await copyPersistenceTrace()
+        return
       }
     }
     if (localContent) localContent.addEventListener('click', handlePopupClick)
+    const handlePopupDocumentClick = async event => {
+      const target = event?.target?.closest?.('[data-bioweave-action]')
+      if (!target || localContent?.contains?.(target)) return
+      const action = target.dataset?.bioweaveAction
+      if (action !== 'copy-persistence-trace') return
+      event.preventDefault?.()
+      await copyPersistenceTrace()
+    }
+    documentRef?.addEventListener?.('click', handlePopupDocumentClick, true)
     try {
       const popup = new Popup(content, popupType, '', {
         wide: true,
@@ -854,6 +911,7 @@ export function createApp(runtime, options = {}) {
       return false
     } finally {
       localContent?.removeEventListener?.('click', handlePopupClick)
+      documentRef?.removeEventListener?.('click', handlePopupDocumentClick, true)
     }
   }
   // 预览需要等待同一 Chat 的来源初次加载完成，不另起一套请求或固定超时。
@@ -2917,6 +2975,7 @@ export function createApp(runtime, options = {}) {
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
+      ...(route === 'settings' ? {analysisPreview: analysisPreviewState, persistenceTrace: runtime.getPersistenceTrace?.() ?? null, theme: root?.dataset?.theme ?? 'tavern', documentRef} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
         ? {
@@ -3985,6 +4044,11 @@ export function createApp(runtime, options = {}) {
     if (action === 'open-analysis-debug') {
       event.preventDefault()
       await openAnalysisDebugPopup()
+      return
+    }
+    if (action === 'copy-persistence-trace') {
+      event.preventDefault()
+      await copyPersistenceTrace()
       return
     }
     if (action === 'new-profile') {

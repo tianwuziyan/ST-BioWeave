@@ -91,6 +91,22 @@ function worldModelUnavailableError(cause, target = null) {
   return error;
 }
 
+function worldModelPersistenceError(cause, target = null) {
+  const code = String(cause?.code ?? cause?.message ?? "");
+  const error = new Error(
+    code === "FLOOR_PERSISTENCE_READBACK_FAILED"
+      ? "WORLD_MODEL_PERSISTENCE_READBACK_FAILED"
+      : "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED",
+  );
+  error.code = error.message;
+  error.analysis_stage = code === "FLOOR_PERSISTENCE_READBACK_FAILED"
+    ? "world_persistence_readback"
+    : "world_persistence_prewrite";
+  error.floor_version = target?.version ? { ...target.version } : null;
+  error.cause = cause;
+  return error;
+}
+
 function worldModelUiNotReadyError(stage, cause = null, target = null) {
   const error = new Error("WORLD_MODEL_UI_NOT_READY");
   error.code = "WORLD_MODEL_UI_NOT_READY";
@@ -227,6 +243,26 @@ function requestAbortedError() {
   error.code = "REQUEST_ABORTED";
   error.analysis_stage = "cancelled";
   return error;
+}
+function floorVersionComparison(expected, actual) {
+  const fields = [
+    ["chat_id", "original_chat_id", "current_chat_id"],
+    ["message_id", "original_message_id", "current_owner_message_id"],
+    ["swipe_id", "original_swipe_id", "current_swipe_id"],
+    ["content_hash", "original_content_hash", "current_content_hash"],
+    ["message_version", "original_message_version", "current_message_version"],
+  ];
+  const result = {};
+  for (const [field, originalKey, currentKey] of fields) {
+    result[originalKey] = expected?.[field] ?? null;
+    result[currentKey] = actual?.[field] ?? null;
+    result[`${field}_match`] = String(expected?.[field] ?? "") === String(actual?.[field] ?? "");
+  }
+  result.floor_version_match = fields.every(([, originalKey, currentKey]) =>
+    result[`${originalKey.replace("original_", "")}_match`] !== false &&
+    String(result[originalKey] ?? "") === String(result[currentKey] ?? ""),
+  );
+  return result;
 }
 function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
@@ -448,8 +484,10 @@ function executionError(error, stage = null) {
     error_path: path,
     diagnostic_path: path,
     safe_error_summary: safeDiagnosticSummary(error, resolvedStage),
+    error_name: String(error?.name ?? "Error").slice(0, 80),
+    error_message: safeDiagnosticSummary(error, resolvedStage),
   };
-  if (diagnostic) result.diagnostic_code = diagnostic;
+  result.diagnostic_code = diagnostic || code;
   if (status !== null) result.http_status = status;
   if (error?.phase) result.phase = String(error.phase);
   if (error?.retryable !== undefined)
@@ -631,6 +669,41 @@ export function createEventAnalysisCoordinator({
     completedSwipeGeneration: null,
     lastFailure: null,
   };
+
+  function persistenceTraceContext(execution, target, domain) {
+    return {
+      domain,
+      chat_id: target?.version?.chat_id ?? target?.chatId ?? chat.current(),
+      active_chat_id: chat.current(),
+      active_character_floor_message_id: target?.version?.message_id ?? null,
+      active_swipe_id: target?.version?.swipe_id ?? target?.swipeId ?? 0,
+      message_id: target?.version?.message_id ?? null,
+      floor: target?.version?.floor ?? null,
+      swipe_id: target?.version?.swipe_id ?? target?.swipeId ?? 0,
+      content_hash: target?.version?.content_hash ?? null,
+      message_version: target?.version?.message_version ?? null,
+      attempt: execution?.attempt ?? null,
+      trigger: execution?.reason ?? null,
+      generation_id: execution?.generation_id ?? null,
+      generation_type: execution?.generation_type ?? null,
+      execution_active: execution ? !execution.released && !execution.cancelRequested : null,
+      cancel_stage: execution?.cancel_stage ?? null,
+      cancel_reason: execution?.cancel_reason ?? null,
+      cancel_code: execution?.cancel_code ?? null,
+    };
+  }
+
+  function emitPersistenceTrace(stage, execution, target, details = {}, domain = "analysis") {
+    notify({
+      type: "BIOWEAVE_PERSISTENCE_TRACE",
+      payload: {
+        ...persistenceTraceContext(execution, target, domain),
+        stage,
+        ...details,
+      },
+      chatId: target?.version?.chat_id ?? target?.chatId ?? chat.current(),
+    });
+  }
 
   function resetSchedulerState() {
     schedulerState.counter = 0;
@@ -943,11 +1016,15 @@ export function createEventAnalysisCoordinator({
   async function invalidateMutation(
     event,
     targetIndex,
-    { preserveTarget = false, clearRoots = true } = {},
+    { preserveTarget = false, clearRoots = true, currentSnapshot = null } = {},
   ) {
-    if (typeof chat.invalidate === "function")
+    const affectedExecutions = invalidateInFlightExecutions({
+      fromIndex: targetIndex,
+      currentSnapshot,
+      reason: `mutation:${event?.type ?? "unknown"}`,
+    });
+    if (affectedExecutions > 0 && typeof chat.invalidate === "function")
       chat.invalidate(`mutation:${event?.type ?? "unknown"}`, { checkCurrent: false });
-    invalidateInFlightExecutions({ fromIndex: targetIndex });
     lastTerminal.clear();
     invalidatedFloors.clear();
     clearWorldbookCache(sourceCache);
@@ -1232,21 +1309,27 @@ export function createEventAnalysisCoordinator({
     }
     return null;
   }
-  async function saveWorldModel({ model, meta = null, selector = null, automatic = false } = {}) {
+  async function saveWorldModel({ model, meta = null, selector = null, automatic = false, traceExecution = null } = {}) {
     if (automatic && !isEnabled()) throw disabledError();
     const normalizedModel = normalizeStoredWorldModel(model);
     const token = chat.token();
     const target = await resolveFloor(selector);
+    emitPersistenceTrace("WORLD_SAVE_BEGIN", traceExecution, target, {}, "world");
     chat.assert(token);
     const current = store.getFloor?.(target.index, target.swipeId) ?? emptyFloor();
     const currentTarget = await resolveFloorAtIndex({ __messageIndex: true, index: target.index });
     if (!sameFloorVersion(currentTarget.version, target.version)) throw requestAbortedError();
+    emitPersistenceTrace("WORLD_SAVE_SOURCE_RESOLVED", traceExecution, target, {
+      current_floor_present: Boolean(current && Object.keys(current).length),
+    }, "world");
     if (automatic && !isEnabled()) throw disabledError();
     await store.saveFloor(target.index, target.swipeId, {
       ...current,
       floor_version: target.version,
       world_model: cloneWorldValue(normalizedModel),
       world_model_meta: cloneWorldValue(meta),
+    }, {
+      ...persistenceTraceContext(traceExecution, target, "world"),
     });
     chat.assert(token);
     return {
@@ -1302,6 +1385,7 @@ export function createEventAnalysisCoordinator({
       signal = null,
       trigger = "automatic",
       onPhase = null,
+      execution = null,
     } = {},
   ) {
     const key = floorExecutionKey(target.version);
@@ -1349,6 +1433,13 @@ export function createEventAnalysisCoordinator({
           signal,
         });
         model = normalizeStoredWorldModel(result);
+        emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
+          world_model_present: true,
+          species_count: Array.isArray(model?.species) ? model.species.length : 0,
+          biological_type_count: Array.isArray(model?.species)
+            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
+            : 0,
+        }, "world");
         meta = { source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput) };
       } else {
         const resolved = await resolveWorldModelAtOrBefore(target);
@@ -1366,6 +1457,13 @@ export function createEventAnalysisCoordinator({
           signal,
         });
         model = mergeWorldModelPatch(resolved.model, patch);
+        emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
+          world_model_present: true,
+          species_count: Array.isArray(model?.species) ? model.species.length : 0,
+          biological_type_count: Array.isArray(model?.species)
+            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
+            : 0,
+        }, "world");
         meta = {
           ...cloneWorldValue(resolved.meta ?? {}),
           source: "world-patch-analysis",
@@ -1373,7 +1471,57 @@ export function createEventAnalysisCoordinator({
         };
       }
       chat.assert(token);
-      if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
+      if (execution && !executionIsCurrent(execution)) {
+        const error = requestAbortedError();
+        error.analysis_stage = "world_post_accept_execution_guard";
+        execution.cancel_stage = "world_post_accept_execution_guard";
+        execution.cancel_reason = execution.cancel_reason ?? "execution-invalidated";
+        execution.cancel_code = execution.cancel_code ?? "REQUEST_ABORTED";
+        execution.diagnostic = {
+          ...executionError(error, error.analysis_stage),
+          cancel_stage: execution.cancel_stage,
+          cancel_reason: execution.cancel_reason,
+          cancel_code: execution.cancel_code,
+          execution_active: false,
+          ...floorVersionComparison(execution.version, null),
+          generation_id: execution.generation_id ?? null,
+          generation_type: execution.generation_type ?? null,
+          generation_identity_match: null,
+        };
+        throw error;
+      }
+      let currentAfterWorld;
+      try {
+        currentAfterWorld = await resolveFloorAtIndex({
+          __messageIndex: true,
+          index: target.index,
+        });
+      } catch (cause) {
+        if (!execution) throw cause;
+        const error = requestAbortedError();
+        error.analysis_stage = "world_post_accept_owner_guard";
+        execution.cancel_stage = "world_post_accept_owner_guard";
+        execution.cancel_reason = "floor-owner-unavailable";
+        execution.cancel_code = cause?.code ?? cause?.message ?? "REQUEST_ABORTED";
+        execution.diagnostic = {
+          ...executionError(error, error.analysis_stage),
+          cancel_stage: execution.cancel_stage,
+          cancel_reason: execution.cancel_reason,
+          cancel_code: execution.cancel_code,
+          execution_active: executionIsCurrent(execution),
+          ...floorVersionComparison(execution.version, null),
+        };
+        throw error;
+      }
+      if (!sameFloorVersion(currentAfterWorld.version, target.version)) {
+        invalidateExecution(execution, {
+          stage: "world_post_accept_floor_version_guard",
+          reason: "floor-version-changed-after-world-accepted",
+          code: "STALE_FLOOR_VERSION",
+          currentVersion: currentAfterWorld.version,
+        });
+        throw requestAbortedError();
+      }
       const analyzedAt = new Date().toISOString();
       const saved = await saveWorldModel({
         model,
@@ -1386,11 +1534,25 @@ export function createEventAnalysisCoordinator({
         },
         selector: target,
         automatic: true,
+        traceExecution: execution,
       });
       chat.assert(token);
+      emitPersistenceTrace("WORLD_READBACK_BEGIN", execution, target, {}, "world");
       publishPhase("world_readback");
       publishPhase("world_ui_ready");
       const ready = await resolveWorldModelUiReady(target);
+      emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
+      emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {
+        floor_version_match: true,
+        world_model_present: Boolean(ready?.model),
+      }, "world");
+      emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {
+        world_model_present: Boolean(ready?.model),
+      }, "world");
+      emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
+        world_model_present: Boolean(ready?.model),
+        species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
+      }, "world");
       return {
         ...saved,
         model: ready.view_model.model,
@@ -1488,6 +1650,7 @@ export function createEventAnalysisCoordinator({
         analysisInput,
         signal: execution.controller.signal,
         trigger: resolved ? "auto-patch" : "auto-full",
+        execution,
         onPhase: phase => {
           execution.phase = phase;
         },
@@ -1499,7 +1662,10 @@ export function createEventAnalysisCoordinator({
     } catch (cause) {
       if (cause?.code === "BIOWEAVE_DISABLED") throw cause;
       if (cause?.code === "WORLD_MODEL_UI_NOT_READY") throw cause;
+      if (cause?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" || cause?.code === "WORLD_MODEL_PERSISTENCE_READBACK_FAILED") throw cause;
       if (isRequestAborted(cause) || cause?.code === "REQUEST_ABORTED") throw cause;
+      if (cause?.code === "SWIPE_NOT_FOUND" || cause?.code === "STALE_FLOOR_VERSION" || cause?.code === "BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN" || cause?.code === "FLOOR_PERSISTENCE_READBACK_FAILED")
+        throw worldModelPersistenceError(cause, target);
       throw worldModelUnavailableError(cause, target);
     }
   }
@@ -2139,6 +2305,7 @@ export function createEventAnalysisCoordinator({
   }
   function executionIsCurrent(execution) {
     return (
+      Boolean(execution) &&
       !destroyed &&
       !execution.cancelRequested &&
       !execution.released &&
@@ -2161,7 +2328,10 @@ export function createEventAnalysisCoordinator({
     execution.released = true;
     execution.finished_at = new Date().toISOString();
     const diagnostic = error
-      ? executionError(error, execution.stage)
+      ? {
+          ...executionError(error, execution.stage),
+          ...(execution.diagnostic ?? {}),
+        }
       : (execution.diagnostic ?? null);
     const terminal = {
       state,
@@ -2204,16 +2374,51 @@ export function createEventAnalysisCoordinator({
     }
     return terminal;
   }
-  function invalidateExecution(execution) {
+  function invalidateExecution(
+    execution,
+    {
+      stage = "cancelled",
+      reason = "stale-floor-version",
+      code = "REQUEST_ABORTED",
+      currentVersion = null,
+      generation = null,
+    } = {},
+  ) {
     if (execution.released) return;
     execution.cancelRequested = true;
     execution.invalidated = true;
     execution.controller?.abort?.();
     const error = requestAbortedError();
-    execution.diagnostic = executionError(error, "cancelled");
+    error.code = code;
+    error.analysis_stage = stage;
+    execution.cancel_stage = stage;
+    execution.cancel_reason = reason;
+    execution.cancel_code = code;
+    execution.diagnostic = {
+      ...executionError(error, stage),
+      cancel_stage: stage,
+      cancel_reason: reason,
+      cancel_code: code,
+      floor_version_match: currentVersion
+        ? sameFloorVersion(execution.version, currentVersion)
+        : null,
+      generation_id: generation?.generation_id ?? execution.generation_id ?? null,
+      generation_type: generation?.generation_type ?? execution.generation_type ?? null,
+      execution_active: false,
+      ...floorVersionComparison(execution.version, currentVersion),
+      generation_identity_match: generation
+        ? String(generation.generation_id ?? "") === String(execution.generation_id ?? "") &&
+          String(generation.generation_type ?? "") === String(execution.generation_type ?? "")
+        : execution.generation_id == null ? null : true,
+    };
     finalizeExecution(execution, "cancelled", error);
   }
-  function invalidateInFlightExecutions({ fromIndex = null } = {}) {
+  function invalidateInFlightExecutions({
+    fromIndex = null,
+    currentSnapshot = null,
+    reason = "stale-floor-version",
+  } = {}) {
+    let affected = 0;
     for (const execution of [...inFlight.values()]) {
       if (
         Number.isInteger(fromIndex) &&
@@ -2222,8 +2427,35 @@ export function createEventAnalysisCoordinator({
       ) {
         continue;
       }
-      invalidateExecution(execution);
+      const entry = currentSnapshot?.entries?.find(
+        item => Number(item?.index) === Number(execution.index),
+      );
+      const currentVersion = entry && entry.content_hash != null && entry.message_version != null
+        ? {
+            chat_id: currentSnapshot.chat_id ?? chat.current(),
+            message_id: entry.message_id,
+            floor: entry.floor,
+            swipe_id: entry.swipe_id ?? 0,
+            content_hash: entry.content_hash,
+            message_version: entry.message_version,
+          }
+        : null;
+      if (
+        Number.isInteger(fromIndex) &&
+        execution.index === fromIndex &&
+        currentVersion &&
+        sameFloorVersion(execution.version, currentVersion)
+      ) continue;
+      affected += 1;
+      invalidateExecution(execution, {
+        reason,
+        code: currentVersion && !sameFloorVersion(execution.version, currentVersion)
+          ? "STALE_FLOOR_VERSION"
+          : "REQUEST_ABORTED",
+        currentVersion,
+      });
     }
+    return affected;
   }
   function pause() {
     invalidateInFlightExecutions();
@@ -2317,14 +2549,22 @@ export function createEventAnalysisCoordinator({
       throw error;
     }
     if (!sameFloorVersion(current.version, target.version)) {
-      invalidateExecution(execution);
+      invalidateExecution(execution, {
+        reason: "floor-version-changed",
+        code: "STALE_FLOOR_VERSION",
+        currentVersion: current.version,
+      });
       throw requestAbortedError();
     }
     if (
       execution.source_provenance &&
       !sameFloorVersion(execution.source_provenance, current.version)
     ) {
-      invalidateExecution(execution);
+      invalidateExecution(execution, {
+        reason: "source-provenance-changed",
+        code: "STALE_FLOOR_VERSION",
+        currentVersion: current.version,
+      });
       throw requestAbortedError();
     }
     return current;
@@ -2450,6 +2690,8 @@ export function createEventAnalysisCoordinator({
     let terminalError = null;
     try {
       token = chat.token();
+      if (execution.reason !== "manual-refresh")
+        emitPersistenceTrace("AUTO_ANALYSIS_TRIGGERED", execution, target, {}, "analysis");
       execution.stage = "request_build";
       execution.source_provenance = { ...target.version };
       await assertExecutionTargetCurrent(execution, target, token);
@@ -2569,8 +2811,14 @@ export function createEventAnalysisCoordinator({
         events,
         character_registry: identityResult.character_registry,
         snapshot: null,
-      });
+      }, persistenceTraceContext(execution, target, "event"));
       execution.floorSaved = true;
+      const finalFloor = store.getFloor?.(target.index, target.swipeId) ?? null;
+      emitPersistenceTrace("FINAL_BIOWEAVE_SLOT_SUMMARY", execution, target, {
+        world_model_present: Boolean(finalFloor?.world_model),
+        event_analysis_present: Boolean(finalFloor?.analysis),
+        event_slot_present: Array.isArray(finalFloor?.events),
+      }, "event");
       await assertExecutionTargetCurrent(execution, target, token);
       invalidatedFloors.delete(floorExecutionKey(target.version));
       execution.stage = "snapshot_checkpoint";
@@ -2690,7 +2938,7 @@ export function createEventAnalysisCoordinator({
   }
   async function analyzeFloor(
     selector = null,
-    { force = false, reason = "automatic" } = {},
+    { force = false, reason = "automatic", generation = null } = {},
   ) {
     if (!isEnabled())
       return { skipped: true, status: "disabled", reason: "disabled" };
@@ -2723,6 +2971,8 @@ export function createEventAnalysisCoordinator({
       source_provenance: null,
       dependency_hash: null,
       phase: reason === "manual-refresh" ? "event_analysis" : null,
+      generation_id: generation?.generation_id ?? null,
+      generation_type: generation?.generation_type ?? null,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -2740,12 +2990,12 @@ export function createEventAnalysisCoordinator({
     });
     return execution.promise;
   }
-  async function runScheduledAnalysis(target, { force, reason }) {
+  async function runScheduledAnalysis(target, { force, reason, generation = null }) {
     const settings = schedulerSettings();
     try {
       const result = await analyzeFloor(
         { __messageIndex: true, index: target.index },
-        { force, reason },
+        { force, reason, generation },
       );
       if (result?.status === "success") recordSchedulerSuccess();
       return result;
@@ -2769,13 +3019,16 @@ export function createEventAnalysisCoordinator({
   function refreshCurrentFloorAnalysis() {
     return analyzeCurrentFloor({ force: true, reason: "manual-refresh" });
   }
-  async function scheduleRenderedCharacter(target, { force = false, reason = "automatic" } = {}) {
+  async function scheduleRenderedCharacter(
+    target,
+    { force = false, reason = "automatic", generation = null } = {},
+  ) {
     const key = floorExecutionKey(target.version);
     if (schedulerState.observedFloorKeys.has(key) && !force)
       return { skipped: true, reason: "floor-already-observed" };
     rememberSchedulerKey(schedulerState.observedFloorKeys, key);
     if (force)
-      return runScheduledAnalysis(target, { force: true, reason });
+      return runScheduledAnalysis(target, { force: true, reason, generation });
 
     const { interval } = schedulerSettings();
     if (schedulerState.retryPaused)
@@ -2788,7 +3041,7 @@ export function createEventAnalysisCoordinator({
         reason: "character-interval",
         counter: schedulerState.counter,
       };
-    return runScheduledAnalysis(target, { force: false, reason });
+    return runScheduledAnalysis(target, { force: false, reason, generation });
   }
   async function getCurrentFloorAnalysisInput() {
     const target = await resolveFloor();
@@ -2807,12 +3060,11 @@ export function createEventAnalysisCoordinator({
     const execution = inFlight.get(floorExecutionKey(target.version));
     if (!execution || execution.cancelRequested || execution.released)
       return false;
-    execution.cancelRequested = true;
-    const controller = execution.controller;
-    controller?.abort?.();
-    const terminalError = requestAbortedError();
-    execution.diagnostic = executionError(terminalError, "cancelled");
-    finalizeExecution(execution, "cancelled", terminalError);
+    invalidateExecution(execution, {
+      stage: "cancelled",
+      reason: "manual-abort",
+      code: "REQUEST_ABORTED",
+    });
     try {
       await persistTerminalAttempt(
         execution,
@@ -2876,6 +3128,10 @@ export function createEventAnalysisCoordinator({
             ? payload?.swipe_id ?? payload?.swipeId
             : null,
           baselineVersion: lifecycleVersionForPayload(payload),
+          generation_id: typeof payload === "object"
+            ? payload?.generation_id ?? payload?.generationId ?? payload?.request_id ?? null
+            : null,
+          generation_type: isSwipeGeneration ? "swipe" : "regenerate",
           ended: false,
         };
         if (isSwipeGeneration) {
@@ -2932,6 +3188,7 @@ export function createEventAnalysisCoordinator({
         await invalidateMutation(event, targetIndex, {
           preserveTarget: isSwipeBoundaryEvent,
           clearRoots: true,
+          currentSnapshot,
         });
       }
       lifecycleSnapshot = await primeLifecycleSnapshot();
@@ -3047,6 +3304,7 @@ export function createEventAnalysisCoordinator({
           return await scheduleRenderedCharacter(target, {
             force: true,
             reason: "reroll",
+            generation: pendingGeneration,
           });
         }
         if (pendingGeneration.ended) {

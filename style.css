@@ -7753,3 +7753,10 @@
   .bioweave-floating-launcher.is-running .bioweave-floating-launcher-icon,
   .bioweave-floating-launcher.is-running .bioweave-floating-launcher-status { animation: none; }
 }
+
+.bioweave-analysis-debug-popup-content .bioweave-persistence-trace,
+.bioweave-analysis-debug-popup-content .bioweave-persistence-trace h4,
+.bioweave-analysis-debug-popup-content .bioweave-persistence-trace p,
+.bioweave-analysis-debug-popup-content .bioweave-persistence-trace pre {
+  text-align: left !important;
+}

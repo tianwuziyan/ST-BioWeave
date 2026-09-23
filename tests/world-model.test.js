@@ -3690,14 +3690,15 @@ test('World Model prompt requires Chinese string values and human type names', (
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|Homo sapiens|极少女剑灵/)
 })
 
-test('settings keeps debug in the analysis prompt body and leaves no standalone preview disclosure', () => {
+test('settings exposes one Advanced / Debug disclosure with the analysis preview entry', () => {
   const html = settingsPage({})
   assert.match(html, /data-bioweave-action="open-analysis-debug"/)
   assert.match(
     html,
-    /data-bioweave-settings-disclosure="analysis_prompt"[\s\S]*?<strong>分析提示词<\/strong>[\s\S]*?<section class="bioweave-card bioweave-analysis-prompt-settings"[\s\S]*?data-bioweave-action="open-analysis-debug"/,
+    /data-bioweave-settings-disclosure="analysis_debug"[\s\S]*?高级 \/ 调试[\s\S]*?data-bioweave-action="open-analysis-debug"[\s\S]*?data-bioweave-action="toggle-story-time-debug"/,
   )
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/)
+  assert.doesNotMatch(html, /data-bioweave-settings-disclosure="story_time_debug"/)
 })
 
 test('debug Popup content is standalone, uses the real message builder, and has no modal shell', () => {
