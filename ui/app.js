@@ -520,6 +520,9 @@ export function createApp(runtime, options = {}) {
   let analysisPreviewState = createAnalysisPreviewState()
   let worldModelState = createWorldModelState()
   let worldModelLoadGeneration = 0
+  let lastWorldUiRenderedGeneration = 0
+  let worldModelRefreshInFlight = null
+  let worldModelLastRefreshKey = null
   let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
   let worldModelAbortConfirmOpen = false
@@ -646,6 +649,8 @@ export function createApp(runtime, options = {}) {
     if (code === 'REQUEST_TIMEOUT' || code.startsWith('REQUEST_TIMEOUT_')) return '分析失败：请求超时。'
     if (code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')) return '分析已取消。'
     if (code === 'WORLD_MODEL_INVALID' || code === 'EVENT_ANALYSIS_INVALID') return '分析失败：AI 返回结果无法通过校验。'
+    if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED' || code === 'SWIPE_NOT_FOUND' || code === 'STALE_FLOOR_VERSION') return '世界数据保存失败，已停止人物分析'
+    if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED') return '世界数据保存后校验失败，已停止人物分析'
     return '分析失败：请检查分析结果与 API 配置。'
   }
   function notifyRuntimeTerminal(event, domain, message, type) {
@@ -1633,6 +1638,7 @@ export function createApp(runtime, options = {}) {
   }
   function invalidateWorldModelView({ deferReload = true, renderView = true } = {}) {
     worldModelLoadGeneration += 1
+    worldModelLastRefreshKey = null
     worldModelState = {
       ...createWorldModelState(),
       chatId: runtime.chat.current(),
@@ -1640,10 +1646,29 @@ export function createApp(runtime, options = {}) {
     }
     if (renderView && route === 'world') render()
   }
-  function reloadWorldModelFromRuntime() {
+  function worldModelRefreshKey(payload = {}) {
+    const version = payload?.floor_version ?? payload?.floorVersion
+    if (!version || typeof version !== 'object') return null
+    return [
+      version.chat_id,
+      version.message_id,
+      version.swipe_id,
+      version.content_hash,
+      version.message_version,
+    ].map(value => String(value ?? '')).join('|')
+  }
+  function reloadWorldModelFromRuntime({key = null} = {}) {
     const chatId = runtime.chat.current()
+    if (key && worldModelLastRefreshKey === key) return false
+    if (worldModelRefreshInFlight?.chatId === chatId) {
+      if (key) worldModelLastRefreshKey = key
+      return false
+    }
+    if (worldModelState.loading && worldModelState.chatId === chatId) return false
     const token = runtime.chat.token?.()
     const generation = ++worldModelLoadGeneration
+    if (key) worldModelLastRefreshKey = key
+    runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_REFRESH_REQUESTED', chat_id: chatId})
     const resolver = runtime.resolveWorldModelAtOrBefore
     worldModelState = {
       ...createWorldModelState(),
@@ -1658,7 +1683,15 @@ export function createApp(runtime, options = {}) {
       }
       return
     }
-    void resolver().then((resolved) => {
+    let request
+    try {
+      request = Promise.resolve(resolver())
+    } catch (error) {
+      request = Promise.reject(error)
+    }
+    const requestState = {chatId, request}
+    worldModelRefreshInFlight = requestState
+    void request.then((resolved) => {
       if (generation !== worldModelLoadGeneration) return
       if (runtime.chat.current() !== chatId) return
       try {
@@ -1681,6 +1714,7 @@ export function createApp(runtime, options = {}) {
         meta: resolved?.meta ?? null,
         notice,
       }
+      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(model)})
       if (route === 'world') render()
     }).catch(() => {
       if (generation !== worldModelLoadGeneration) return
@@ -1696,8 +1730,12 @@ export function createApp(runtime, options = {}) {
         chatId,
         notice: '世界模型读取失败，请重试。',
       }
+      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: false})
       if (route === 'world') render()
+    }).finally(() => {
+      if (worldModelRefreshInFlight === requestState) worldModelRefreshInFlight = null
     })
+    return true
   }
   function loadWorldModelState() {
     const chatId = runtime.chat.current()
@@ -1733,6 +1771,11 @@ export function createApp(runtime, options = {}) {
       WORLD_RUNTIME_ANALYZER_UNAVAILABLE: '世界分析 Runtime 暂不可用，请重新加载 BioWeave。',
       WORLD_MODEL_REQUIRED_FOR_PATCH: '需要先建立世界模型后才能进行补充分析。',
       WORLD_MODEL_UI_NOT_READY: '世界数据未能正常显示，已停止人物分析。',
+      WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED: '世界数据保存失败，已停止人物分析。',
+      WORLD_MODEL_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
+      SWIPE_NOT_FOUND: '世界数据保存失败，已停止人物分析。',
+      STALE_FLOOR_VERSION: '世界数据保存失败，已停止人物分析。',
+      FLOOR_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
       WORLD_MODEL_INVALID: 'AI 返回的世界模型格式不符合要求，上一份模型已保留。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
       STALE_CHAT: 'Chat 已切换，本次世界模型结果未保存。',
@@ -3003,6 +3046,10 @@ export function createApp(runtime, options = {}) {
           }
         : {}),
     })
+    if (route === 'world' && worldModelLoadGeneration > 0 && lastWorldUiRenderedGeneration !== worldModelLoadGeneration) {
+      lastWorldUiRenderedGeneration = worldModelLoadGeneration
+      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_RENDERED', chat_id: runtime.chat.current(), world_model_present: Boolean(worldModelState.model)})
+    }
     restoreScrollPositions(root, scrollPositions)
     syncWorldModelCapabilityInputs(root)
     syncBioWeaveEnabledControl()
@@ -3844,7 +3891,7 @@ export function createApp(runtime, options = {}) {
         : event?.type
     if (WORLD_MODEL_OWNER_MUTATIONS.has(lifecycleMutationType)) {
       if (event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED') {
-        if (route === 'world') reloadWorldModelFromRuntime()
+        if (route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload)})
         else worldModelState = { ...worldModelState, reloadPending: false }
       } else if (event?.type !== 'CHAT_CHANGED') {
         invalidateWorldModelView()
@@ -3887,7 +3934,7 @@ export function createApp(runtime, options = {}) {
       } else if (payload.state !== 'running' && worldModelState.operation && automatic) {
         worldModelState = { ...worldModelState, busy: false, operation: null, phase: null }
       }
-      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime()
+      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(payload)})
       if (payload.state === 'failed' && isAutomaticRuntimeResult(payload)) {
         notifyRuntimeTerminal(
           event,
@@ -4547,6 +4594,8 @@ export function createApp(runtime, options = {}) {
     root = null
     overlay = null
     unsubscribeRuntime = null
+    worldModelRefreshInFlight = null
+    worldModelLastRefreshKey = null
     route = 'overview'
     focusedCharacterId = null
     analysisSourcesState = createAnalysisSourcesState()

@@ -255,3 +255,15 @@ Runtime 是阶段真相源；ST lifecycle event 不能由 UI 自己推断当前 
 未来维护者不得以“简化生命周期处理”为理由恢复这些路径。事件名称只能作为
 观察输入，业务动作必须经过当前 Floor Version、owner、generation intent 和
 scheduler state 的组合判断。
+
+## 9. Activity 与宿主持久化边界
+
+一次 Analysis execution 只有一个 Activity identity：`chat_id + Floor Version +
+attempt + domain`。World/Event phase 只是该 execution 的状态更新，不能再次
+`startActivity`；`success`、`failed`、`cancelled` 或 `disabled` 只允许完成一次
+对应 identity。这样悬浮窗反映的是执行数量，而不是状态事件数量。
+
+自动分析成功还必须通过 Floor 的 authoritative latest-source merge 与 read-back；
+不能把当前内存可读或一次 `saveChat()` 调用当作宿主已提交。SillyTavern 生成消息的
+生命周期事件是观察信号，最终 Floor 写入继续遵守
+[`docs/bioweave-data-lifecycle.md`](./bioweave-data-lifecycle.md) 的 commit contract。

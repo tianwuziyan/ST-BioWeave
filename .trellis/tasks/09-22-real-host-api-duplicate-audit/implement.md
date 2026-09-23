@@ -1,12 +1,62 @@
-# 实施计划
+# Real host activity and Floor persistence follow-up
 
-1. 读取任务上下文与 Floor/Data Lifecycle 约束；检查当前 scheduler、World resolver/UI、parser/prompt 和 ST event adapter。
-2. 用附件建立可重复的证据检查：请求分类、输出 JSON/validator 结果、重复输入指纹与目标 Floor 元数据。
-3. 先增加失败回归测试：真实 `GENERATION_ENDED -> CHARACTER_MESSAGE_RENDERED`、重复 CMR、同 Floor 失败不自旋、World Full 成功后 Event 失败再 Reuse、World UI resolver、typed symptom object。
-4. 修复 Floor-Version terminal/dedupe/failed 状态，使同一个宿主周期不产生第二个实际 Analysis Job；不改变 interval、retryPaused、World hard dependency 等已确认语义。
-5. 修复 Event prompt contract，使 typed payload 与既有 validator 完全一致，不放宽 validator。
-6. 若测试证明 UI 空白来自 runtime resolver/refresh，做最小的 Floor-owned 读取或状态刷新修复；纯 `GENERATION_ENDED` / `MESSAGE_RECEIVED` 信号不得清空 World UI；不引入 Chat metadata 旁路。
-7. 运行 `npm test`、`npm run check`、`node --check`、`git diff --check`，并审查旧 scheduler 残留与任务范围外 diff。
-8. 增加 World UI-ready hard gate：共享 canonical view-model、当前 Floor root version read-back、失败 diagnostic 与 Event API zero-call 回归。
-9. 增加 Runtime 状态到 `ui/app.js` toastr bridge，区分自动/手动结果、面板关闭/插件关闭，并验证 terminal 去重与初始化 fatal notification。
-10. 增加 World Full/Patch/read-back/UI-ready/Event 的 Runtime phase status；由 `ui/app.js`、World page 和 Characters page 统一映射阶段级 busy/waiting 状态，不改变 World→Event 业务顺序。
+## Scope
+
+- [x] Make Runtime Activity execution-identity based. Repeated phase status
+  events do not increment activity; one terminal status releases one execution.
+- [x] Pass the target Floor Version through the Store-to-adapter write boundary.
+- [x] Use the existing SillyTavern official Chat owner reader/writer for a
+  latest-source exact Floor-slot merge and authoritative read-back when the host
+  capability is available.
+- [x] Reject stale message/Swipe/content ownership before attaching a result.
+- [x] Preserve World and Character/Event fields through independent latest-source
+  merges; do not create Chat metadata or memory-only fact sources.
+- [x] Add regression coverage for activity balance and official Floor commit.
+- [ ] Real SillyTavern refresh acceptance remains a host-environment handoff.
+
+## Verification
+
+Focused tests cover duplicate phase events, all terminal activity states, and
+latest-source Floor-slot persistence/read-back. Full `npm test`, `npm run check`,
+syntax checks, and diff checks are required before handoff.
+
+## Real-host persistence trace follow-up
+
+- [x] Keep persistence behavior unchanged while recording the automatic
+  execution identity, lifecycle order, official/fallback save path, Floor
+  Version checks, slot merge, host save and authoritative read-back stages.
+- [x] Expose the most recent safe trace through the existing Advanced / Debug
+  Popup so host acceptance does not depend on the browser Console.
+- [x] Record `NO_PUBLIC_POST_SAVE_HOOK` when the host exposes no completion
+  callback after `saveChatConditional()`; do not infer order with a timer and do
+  not repair a missing Floor slot automatically.
+- [x] Verify official and fallback traces, bounded safe fields, lifecycle
+  ordering, duplicate CMR behavior, and Swipe 0 handling.
+- [x] Keep the persistence trace copy action delegated through the host
+  document and left-align its diagnostic output in the Display Popup.
+- [x] Diagnose official JSONL owner lookup after `/api/chats/get`, preserve
+  index fallback for host messages without `message_id`, and separate failure
+  diagnostics from the analysis trigger in exported traces.
+- [x] Accept a valid active Swipe 0 whose host text exists but whose
+  `swipe_info[0]` metadata container is not initialized; keep per-Swipe
+  ownership and fail closed for missing non-active Swipe slots.
+- [x] Make World UI refresh requests idempotent for one in-flight read and one
+  Floor Version, preventing repeated terminal lifecycle events from starting
+  a refresh loop.
+
+## Debug Popup UI organization
+
+- [x] Give 高级 / 调试 its own settings disclosure and place Story Time 调试
+  inside it without changing Story Time behavior.
+
+## Automatic World post-accept lifecycle audit
+
+- [x] Bind the automatic post-World save guard to the current Floor Version,
+  preserving cancellation for real owner/version changes.
+- [x] Record cancellation stage, reason, code, safe Floor Version comparisons,
+  generation identity, and execution activity instead of reporting only the
+  reroll trigger.
+- [x] Keep unrelated generation lifecycle signals from cancelling an active
+  execution when the bound Floor Version remains unchanged.
+- [x] Verify the World persistence/view-model path is Runtime-owned and does
+  not depend on a mounted panel, active tab, DOM, or UI subscriber.

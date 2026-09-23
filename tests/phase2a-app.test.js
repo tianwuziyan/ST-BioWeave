@@ -580,7 +580,21 @@ test('World status refreshes the open World page and closed panels do not suppre
     },
   });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(fixture.worldResolveCalls() > before);
+  // The initial World read is still the authoritative refresh for this
+  // terminal event; a duplicate status notification must not start another
+  // resolver call while that read is in flight.
+  assert.equal(fixture.worldResolveCalls(), before);
+  fixture.emit({
+    type: 'WORLD_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-app',
+    payload: {
+      state: 'success',
+      trigger: 'auto-full',
+      floor_version: {chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0, content_hash: 'world', message_version: 'v1:world'},
+    },
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.worldResolveCalls(), before);
   fixture.app.closeBioWeave();
   fixture.emit({
     type: 'EVENT_ANALYSIS_STATUS_CHANGED',

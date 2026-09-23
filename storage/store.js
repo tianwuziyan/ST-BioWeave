@@ -863,7 +863,7 @@ export function createStore(adapter, boundary = null) {
     return filterActiveFloorEvents(getActiveFloor(messageId), version);
   }
 
-  async function saveFloor(messageId, swipeId, data) {
+  async function saveFloor(messageId, swipeId, data, traceContext = null) {
     const targetSwipeId = validSwipeId(swipeId);
     const message = adapter.getMessage?.(messageId);
     if (!message || !isCharacterMessage(message))
@@ -886,6 +886,8 @@ export function createStore(adapter, boundary = null) {
       targetSwipeId,
       safeData,
       token.chatId,
+      version,
+      traceContext,
     );
     assertToken(adapter, boundary, token);
   }

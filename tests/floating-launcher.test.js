@@ -152,6 +152,46 @@ test('Runtime Activity supports concurrent tasks and ignores cancellation as err
   assert.equal(activity.getActivityState().last_result, 'success');
 });
 
+test('one execution starts and finishes activity once across phase updates', () => {
+  const activity = createRuntimeActivity();
+  const floor_version = {
+    chat_id: 'chat-activity', message_id: 'message-activity', floor: 6,
+    swipe_id: 0, content_hash: 'hash-activity', message_version: 'v1:hash-activity',
+  };
+  const send = (state, phase) => activity.handleRuntimeEvent({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-activity',
+    payload: {state, phase, attempt: 3, floor_version},
+  });
+  assert.equal(send('running'), true);
+  assert.equal(activity.getActivityState().active_tasks.length, 1);
+  assert.equal(send('running', 'world_full'), false);
+  assert.equal(send('running', 'event_analysis'), false);
+  assert.equal(activity.getActivityState().active_tasks.length, 1);
+  assert.equal(send('success'), true);
+  assert.equal(activity.getActivityState().busy, false);
+  activity.destroy();
+});
+
+test('failed, cancelled, and disabled terminals release their execution identity', () => {
+  const activity = createRuntimeActivity();
+  const floor_version = {
+    chat_id: 'chat-terminal', message_id: 'message-terminal', floor: 1,
+    swipe_id: 0, content_hash: 'hash-terminal', message_version: 'v1:hash-terminal',
+  };
+  for (const state of ['failed', 'cancelled', 'disabled']) {
+    const identity = {
+      type: 'EVENT_ANALYSIS_STATUS_CHANGED', chatId: 'chat-terminal',
+      payload: {state: 'running', attempt: 1, floor_version},
+    };
+    activity.handleRuntimeEvent(identity);
+    assert.equal(activity.getActivityState().busy, true);
+    activity.handleRuntimeEvent({...identity, payload: {...identity.payload, state}});
+    assert.equal(activity.getActivityState().busy, false);
+  }
+  activity.destroy();
+});
+
 test('Floating Launcher opens only on click or keyboard activation', () => {
   const documentRef = createLauncherDocument();
   let opens = 0;

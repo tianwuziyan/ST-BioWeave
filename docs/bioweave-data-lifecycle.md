@@ -558,6 +558,31 @@ Failure results retain the same shape with `ok: false`, a stable error code,
 and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 `ok: true` with confirmed persistence.
 
+### 5.4 Floor write commit and authoritative read-back
+
+Every Floor write is a merge of one exact Character message/active Swipe slot.
+When the SillyTavern source-owner capability is available, the adapter reads the
+latest authoritative Chat owner first, verifies the target `Floor Version` and
+active Swipe, merges only `message.extra.bioweave` or the exact
+`swipe_info[swipe_id].extra.bioweave` slot, saves that latest source, and reads
+the source back to verify the same payload. It never saves a stale pre-generation
+whole-Chat snapshot.
+
+This boundary matters because SillyTavern emits `MESSAGE_RECEIVED` and
+`CHARACTER_MESSAGE_RENDERED` while the generated message is being finalized;
+the generation path may perform its own final `saveChat` afterward. A runtime
+memory read or a single mutable-context `saveChat()` call therefore is not enough
+to prove a Floor result survived the host writer. The authoritative merge/read-back
+is the persistence contract used by automatic and manual Floor writes.
+
+World and Character/Event writes remain separate forward-only Floor-slot merges.
+Each merge starts from the latest source, so a later Event write retains the
+already persisted World fields and a later World write retains Event-owned fields.
+If the target message, active Swipe, content hash, or message version changed
+before the commit, the write is stale and is rejected; no result is attached to
+the new owner. Runtime memory is updated only after the authoritative read-back
+is confirmed.
+
 ### 6.2 Manual Character clear
 
 The Character operation removes `analysis`, `events[]`, `character_registry`, and
