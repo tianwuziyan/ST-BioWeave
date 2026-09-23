@@ -46,7 +46,12 @@ import {
   explainTrackingDecision,
   rebuildTrackingRegistry,
 } from "../core/tracking.js";
-import { cloneValue, emptyFloor } from "../storage/schema.js";
+import {
+  cloneValue,
+  emptyFloor,
+  DEFAULT_API_REQUEST_SETTINGS,
+} from "../storage/schema.js";
+import { createFloorPersistenceCoordinator } from "./floor-persistence.js";
 import {
   hasSwipeSlot,
   hasSwipeStructure,
@@ -104,6 +109,10 @@ function worldModelPersistenceError(cause, target = null) {
     : "world_persistence_prewrite";
   error.floor_version = target?.version ? { ...target.version } : null;
   error.cause = cause;
+  if (cause?.version_check_source) error.version_check_source = cause.version_check_source;
+  if (cause?.version_audit) error.version_audit = cause.version_audit;
+  if (cause?.retry_classification) error.retry_classification = cause.retry_classification;
+  if (cause?.retryable !== undefined) error.retryable = cause.retryable;
   return error;
 }
 
@@ -235,6 +244,27 @@ function isRequestAborted(error) {
     code === "ERR_CANCELLED"
   );
 }
+function isTimeoutFailure(error) {
+  const candidates = [error, error?.cause];
+  return candidates.some((candidate) => {
+    const code = String(candidate?.code ?? candidate?.error_code ?? "")
+      .trim()
+      .toUpperCase();
+    const diagnosticCode = String(
+      candidate?.diagnosticCode ?? candidate?.diagnostic_code ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    return (
+      code === "REQUEST_TIMEOUT" ||
+      diagnosticCode === "timeout" ||
+      diagnosticCode === "upstream-timeout" ||
+      candidate?.timedOut === true ||
+      candidate?.bioweaveTimeout === true ||
+      candidate?.localTimeout === true
+    );
+  });
+}
 function isStaleChat(error) {
   return error?.message === "STALE_CHAT" || error?.code === "STALE_CHAT";
 }
@@ -248,6 +278,7 @@ function floorVersionComparison(expected, actual) {
   const fields = [
     ["chat_id", "original_chat_id", "current_chat_id"],
     ["message_id", "original_message_id", "current_owner_message_id"],
+    ["floor", "original_floor", "current_floor"],
     ["swipe_id", "original_swipe_id", "current_swipe_id"],
     ["content_hash", "original_content_hash", "current_content_hash"],
     ["message_version", "original_message_version", "current_message_version"],
@@ -263,6 +294,17 @@ function floorVersionComparison(expected, actual) {
     String(result[originalKey] ?? "") === String(result[currentKey] ?? ""),
   );
   return result;
+}
+
+function versionMismatchFields(expected, actual) {
+  return [
+    "chat_id",
+    "message_id",
+    "floor",
+    "swipe_id",
+    "content_hash",
+    "message_version",
+  ].filter(field => String(expected?.[field] ?? "") !== String(actual?.[field] ?? ""));
 }
 function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
@@ -346,6 +388,39 @@ function diagnosticCode(error) {
 }
 function safeDiagnosticSummary(error, stage = null) {
   const code = diagnosticCode(error);
+  const timeoutCode = code === "REQUEST_TIMEOUT" || code === "timeout" ||
+    error?.code === "REQUEST_TIMEOUT";
+  const httpStatus = Number(error?.status ?? error?.http_status);
+  const hasNonSuccessHttpStatus = Number.isFinite(httpStatus) &&
+    (httpStatus < 200 || httpStatus >= 300);
+  if (timeoutCode && error?.stage_retry_exhausted === true && !hasNonSuccessHttpStatus) {
+    const seconds = Number(error?.timeoutSec ?? error?.timeout_ms / 1000);
+    const wait = Number.isFinite(seconds) && seconds > 0
+      ? `等待 ${Math.max(1, Math.min(600, Math.round(seconds)))} 秒后`
+      : "等待超时后";
+    return `请求超时：${wait}已在本地终止，已耗尽本阶段重试次数。`;
+  }
+  const retryClassification = String(
+    error?.retry_classification ?? error?.cause?.retry_classification ?? "",
+  ).toLowerCase();
+  if (retryClassification === "temporary_server_convergence")
+    return "当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。";
+  if (retryClassification === "true_owner_change")
+    return "当前楼层状态发生变化，本次世界分析结果未写入。";
+  if (error?.analysis_stage === "floor_owner_convergence" ||
+      code === "AUTO_ANALYSIS_FLOOR_PREREQUISITE_UNAVAILABLE" ||
+      code === "HOST_CONVERGENCE_FAILED" ||
+      code === "HOST_CONVERGENCE_UNAVAILABLE") {
+    if (code === "HOST_CONVERGENCE_FAILED" || error?.version_check_source === "host_authoritative_save")
+      return "宿主聊天保存失败，自动分析未开始。";
+    if (retryClassification === "true_owner_change")
+      return "当前楼层状态已变化，本次分析已取消。";
+    return "当前楼层尚未完成宿主保存，自动分析未开始。";
+  }
+  if (code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED")
+    return "世界数据保存失败，已停止人物分析。";
+  if (code === "WORLD_MODEL_PERSISTENCE_READBACK_FAILED" || code === "FLOOR_PERSISTENCE_READBACK_FAILED")
+    return "世界数据保存后校验失败，已停止人物分析。";
   if (code === "REQUEST_ABORTED") return "用户取消";
   if (code === "API_PROFILE_NOT_CONFIGURED")
     return "事件分析任务没有解析到可用 API 配置";
@@ -495,6 +570,19 @@ function executionError(error, stage = null) {
   result.validator_params = error?.params && typeof error.params === "object" ? error.params : null;
   if (status !== null) result.http_status = status;
   if (error?.phase) result.phase = String(error.phase);
+  const versionAudit = error?.version_audit ?? error?.cause?.version_audit;
+  if (versionAudit && typeof versionAudit === "object") {
+    result.version_check_source = error?.version_check_source
+      ?? error?.cause?.version_check_source
+      ?? null;
+    result.mismatch_fields = Array.isArray(versionAudit.mismatch_fields)
+      ? [...versionAudit.mismatch_fields]
+      : [];
+    result.expected_floor_version = versionAudit.expected ?? null;
+    result.actual_floor_version = versionAudit.actual ?? null;
+  }
+  if (error?.retry_classification || error?.cause?.retry_classification)
+    result.retry_classification = error.retry_classification ?? error.cause.retry_classification;
   if (error?.retryable !== undefined)
     result.retryable = error.retryable === true;
   if (Number.isInteger(error?.attempt) && error.attempt > 0)
@@ -651,6 +739,7 @@ export function createEventAnalysisCoordinator({
   analysisSourceCache = null,
   enabledResolver = () => true,
   notify = () => {},
+  floorPersistence = null,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -664,8 +753,14 @@ export function createEventAnalysisCoordinator({
   let registryRefreshChain = Promise.resolve();
   let lifecycleMutationChain = Promise.resolve();
   let destroyed = false;
+  let generationIntentSequence = 0;
   let removeChatBoundaryListener = null;
   const sourceCache = analysisSourceCache ?? createWorldbookCache();
+  const persistence = floorPersistence ?? createFloorPersistenceCoordinator({
+    store,
+    enabledResolver,
+    emit: payload => notify(payload),
+  });
   const invalidatedFloors = new Map();
   let lifecycleSnapshot = null;
   const schedulerState = {
@@ -693,14 +788,50 @@ export function createEventAnalysisCoordinator({
       content_hash: target?.version?.content_hash ?? null,
       message_version: target?.version?.message_version ?? null,
       attempt: execution?.attempt ?? null,
+      execution_attempt: execution?.attempt ?? null,
+      stage_attempt: execution?.stage_attempt ?? null,
+      retry_index: execution?.retry_index ?? null,
+      persistence_invocation_id: execution?.persistence_invocation_id ?? null,
       trigger: execution?.reason ?? null,
       generation_id: execution?.generation_id ?? null,
       generation_type: execution?.generation_type ?? null,
+      generation_settled: execution?.generation_settled ?? null,
       execution_active: execution ? !execution.released && !execution.cancelRequested : null,
       cancel_stage: execution?.cancel_stage ?? null,
       cancel_reason: execution?.cancel_reason ?? null,
       cancel_code: execution?.cancel_code ?? null,
     };
+  }
+
+  function commitFloorPatch(target, owner, patch, input = {}) {
+    const traceContext = input.traceContext ?? {};
+    const callerGuard = input.assertCurrent;
+    const assertCurrent = async () => {
+      if (typeof callerGuard === "function") await callerGuard();
+      const current = await resolveFloorAtIndex({
+        __messageIndex: true,
+        index: target?.index,
+      });
+      return sameFloorVersion(current.version, target.version);
+    };
+    return persistence.commitFloorPatch({
+      owner,
+      chatId: target?.version?.chat_id ?? target?.chatId ?? chat.current(),
+      ownerFloor: {
+        message_index: target?.index,
+        message_id: target?.version?.message_id,
+      },
+      swipeId: target?.swipeId ?? target?.version?.swipe_id ?? 0,
+      floorVersion: target?.version,
+      patch,
+      operation_type: input.operation_type ?? `${owner}-patch`,
+      execution: input.execution,
+      execution_attempt: input.execution_attempt,
+      stage_attempt: input.stage_attempt,
+      retry_index: input.retry_index,
+      traceContext,
+      assertCurrent,
+    });
   }
 
   function emitPersistenceTrace(stage, execution, target, details = {}, domain = "analysis") {
@@ -738,6 +869,333 @@ export function createEventAnalysisCoordinator({
     };
   }
 
+  function analysisRetryConfig() {
+    const globalSettings = store.getSettings?.() ?? {};
+    const globalRequestSettings = globalSettings?.api_request_settings;
+    const profileRequestSettings = store.profileStore?.getApiRequestSettings?.()
+      ?? store.getApiRequestSettings?.()
+      ?? {};
+    const hasGlobalRetryCount = globalRequestSettings &&
+      Object.prototype.hasOwnProperty.call(globalRequestSettings, "retry_count");
+    const configuredRetryCount = hasGlobalRetryCount
+      ? globalRequestSettings.retry_count
+      : profileRequestSettings.retry_count;
+    const hasConfiguredValue = configuredRetryCount !== null &&
+      configuredRetryCount !== undefined &&
+      String(configuredRetryCount).trim() !== "";
+    const parsed = hasConfiguredValue ? Number(configuredRetryCount) : Number.NaN;
+    const normalized = Number.isInteger(parsed) && parsed >= 0
+      ? Math.min(parsed, 3)
+      : DEFAULT_API_REQUEST_SETTINGS.retry_count;
+    return {
+      configured_retry_count: configuredRetryCount ?? null,
+      normalized_retry_count: normalized,
+      source: hasGlobalRetryCount
+        ? "extensionSettings.bioweave.api_request_settings"
+        : "profileStore.getApiRequestSettings",
+      world_max_retries: normalized,
+      event_max_retries: normalized,
+    };
+  }
+
+  async function classifyFloorVersionFailure(error, { domain, target, execution, token } = {}) {
+    const source = error?.version_check_source
+      ?? error?.cause?.version_check_source
+      ?? null;
+    const audit = error?.version_audit ?? error?.cause?.version_audit ?? null;
+    const executionActive = execution ? executionIsCurrent(execution) : !destroyed;
+    let currentVersion = null;
+    let hostMatches = false;
+    let activeChatMatch = false;
+    try {
+      chat.assert(token);
+      activeChatMatch = String(chat.current()) === String(target?.version?.chat_id);
+      if (target) {
+        currentVersion = (await resolveFloorAtIndex({
+          __messageIndex: true,
+          index: target.index,
+        }))?.version ?? null;
+        hostMatches = sameFloorVersion(currentVersion, target.version);
+      }
+    } catch {
+      activeChatMatch = false;
+      hostMatches = false;
+    }
+    const officialOwnerIsUnknown = audit &&
+      ["chat_id", "message_id", "floor", "swipe_id", "content_hash", "message_version"]
+        .every(field => audit.actual?.[field] == null);
+    const temporaryConvergence = executionActive && activeChatMatch &&
+      hostMatches && source === "official_owner" &&
+      (officialOwnerIsUnknown || Boolean(audit));
+    const trueOwnerChange = !temporaryConvergence;
+    const classification = trueOwnerChange
+      ? "true_owner_change"
+      : "temporary_server_convergence";
+    const retryable = !trueOwnerChange;
+    const currentComparison = floorVersionComparison(target?.version, currentVersion);
+    error.retry_classification = classification;
+    error.retryable = retryable;
+    emitPersistenceTrace(
+      domain === "world" ? "WORLD_VERSION_MISMATCH_CLASSIFIED" : "EVENT_VERSION_MISMATCH_CLASSIFIED",
+      execution,
+      target,
+      {
+        classification,
+        version_check_source: source,
+        expected_floor_version: target?.version ?? audit?.expected ?? null,
+        actual_floor_version: audit?.actual ?? null,
+        expected_content_hash: target?.version?.content_hash ?? audit?.expected?.content_hash ?? null,
+        actual_content_hash: audit?.actual?.content_hash ?? null,
+        mismatch_fields: Array.isArray(audit?.mismatch_fields)
+          ? [...audit.mismatch_fields]
+          : versionMismatchFields(audit?.expected, audit?.actual),
+        active_chat_match: activeChatMatch,
+        message_owner_match: currentComparison.message_id_match,
+        floor_match: currentComparison.floor_match,
+        swipe_match: currentComparison.swipe_id_match,
+        host_content_hash_match: currentComparison.content_hash_match,
+        host_floor_version_match: currentComparison.floor_version_match,
+        official_content_hash_match: audit?.content_hash_match ?? null,
+        official_floor_version_match: audit
+          ? ["chat_id", "message_id", "floor", "swipe_id", "content_hash", "message_version"]
+              .every(field => audit[`${field}_match`] === true)
+          : null,
+        execution_active: executionActive,
+        execution_superseded: Boolean(execution?.superseded),
+        retryable,
+      },
+      domain === "world" ? "world" : "analysis",
+    );
+    return retryable;
+  }
+
+  async function retryableStageFailure(error, { domain, target, execution, token } = {}) {
+    const code = String(error?.code ?? error?.error_code ?? "").toUpperCase();
+    const causeCode = String(error?.cause?.code ?? error?.cause?.error_code ?? "").toUpperCase();
+    const stage = String(error?.analysis_stage ?? "").toLowerCase();
+    if (code === "STALE_FLOOR_VERSION" || causeCode === "STALE_FLOOR_VERSION") {
+      const versionError = code === "STALE_FLOOR_VERSION" ? error : error.cause;
+      const retryable = await classifyFloorVersionFailure(
+        versionError,
+        { domain, target, execution, token },
+      );
+      error.retry_classification = versionError.retry_classification;
+      error.retryable = retryable;
+      error.version_check_source = versionError.version_check_source;
+      error.version_audit = versionError.version_audit;
+      return retryable;
+    }
+    // A caller cancellation invalidates the execution even when the transport
+    // reports the cancellation as AbortError. A timeout controller is a
+    // transport boundary, however, and remains a recoverable Stage failure.
+    if (execution?.cancelRequested || execution?.invalidated) return false;
+    const timeoutFailure = isTimeoutFailure(error);
+    if (timeoutFailure) {
+      try {
+        chat.assert(token);
+        return Boolean(target && await targetVersionIsCurrent(target));
+      } catch {
+        return false;
+      }
+    }
+    if (
+      isRequestAborted(error) ||
+      code === "BIOWEAVE_DISABLED" ||
+      code === "STALE_CHAT" ||
+      code === "STALE_SWIPE" ||
+      code === "SWIPE_NOT_FOUND" ||
+      code === "BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN"
+    ) return false;
+    if (
+      code === "WORLD_ANALYZER_UNAVAILABLE" ||
+      code === "WORLD_PATCH_ANALYZER_UNAVAILABLE" ||
+      code === "EVENT_ANALYZER_UNAVAILABLE" ||
+      code === "WORLD_MODEL_REQUIRED_FOR_PATCH" ||
+      causeCode === "WORLD_ANALYZER_UNAVAILABLE" ||
+      causeCode === "WORLD_PATCH_ANALYZER_UNAVAILABLE" ||
+      causeCode === "EVENT_ANALYZER_UNAVAILABLE" ||
+      causeCode === "WORLD_MODEL_REQUIRED_FOR_PATCH" ||
+      code === "WORLD_STAGE_PERSISTENCE_OWNER_INVALID" ||
+      code === "WORLD_STAGE_PERSISTENCE_DUPLICATE" ||
+      causeCode === "WORLD_STAGE_PERSISTENCE_OWNER_INVALID" ||
+      causeCode === "WORLD_STAGE_PERSISTENCE_DUPLICATE" ||
+      code === "CHAT_SCOPE_MISMATCH"
+    ) return false;
+    const isStageCompletionFailure =
+      code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" ||
+      code === "WORLD_MODEL_PERSISTENCE_READBACK_FAILED" ||
+      code === "FLOOR_PERSISTENCE_READBACK_FAILED" ||
+      code === "WORLD_MODEL_UI_NOT_READY" ||
+      code === "CHARACTER_CANONICAL_NOT_READY" ||
+      code === "CHARACTER_UI_NOT_READY" ||
+      stage.includes("persistence") ||
+      stage.includes("floor_save") ||
+      stage.includes("readback") ||
+      stage.includes("ui_ready") ||
+      stage.includes("canonical");
+    if (isStageCompletionFailure) {
+      if (execution ? !executionIsCurrent(execution) : false) return false;
+      try {
+        chat.assert(token);
+        return Boolean(target && await targetVersionIsCurrent(target));
+      } catch {
+        return false;
+      }
+    }
+    // Transport-level `retryable` is not the business Stage decision. Once
+    // ownership is still valid, all other Stage failures remain eligible for
+    // the configured complete-Stage retry budget.
+    if (execution && !executionIsCurrent(execution)) return false;
+    try {
+      chat.assert(token);
+      return Boolean(target && await targetVersionIsCurrent(target));
+    } catch {
+      return false;
+    }
+  }
+
+  async function runAnalysisStageWithRetry({
+    domain,
+    target,
+    token,
+    execution = null,
+    signal = null,
+    trigger = "automatic",
+    invoke,
+    complete = null,
+  }) {
+    const retryConfig = analysisRetryConfig();
+    const maxRetries = retryConfig.normalized_retry_count;
+    if (!execution || !execution.retryConfigEmitted) {
+      emitPersistenceTrace("ANALYSIS_RETRY_CONFIG_RESOLVED", execution, target, {
+        configured_retry_count: retryConfig.configured_retry_count,
+        normalized_retry_count: retryConfig.normalized_retry_count,
+        source: retryConfig.source,
+        world_max_retries: retryConfig.world_max_retries,
+        event_max_retries: retryConfig.event_max_retries,
+      }, domain === "world" ? "world" : "analysis");
+      if (execution) execution.retryConfigEmitted = true;
+    }
+    for (let retryIndex = 0; ; retryIndex += 1) {
+      const attempt = retryIndex + 1;
+      if (execution) {
+        execution.stage_attempt = attempt;
+        execution.retry_index = retryIndex;
+      }
+      if (signal?.aborted) throw requestAbortedError();
+      if (execution) {
+        assertExecutionCurrent(execution, token);
+      } else {
+        chat.assert(token);
+        if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
+      }
+      emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_BEGIN`, execution, target, {
+        domain,
+        attempt,
+        retry_index: retryIndex,
+        max_retries: maxRetries,
+        trigger,
+      }, domain === "world" ? "world" : "analysis");
+      let aiSucceeded = false;
+      try {
+        emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_BEGIN`, execution, target, {
+          domain,
+          attempt,
+          retry_index: retryIndex,
+          max_retries: maxRetries,
+          trigger,
+        }, domain === "world" ? "world" : "analysis");
+        const result = await invoke({ attempt, retryIndex });
+        emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_SUCCEEDED`, execution, target, {
+          domain,
+          attempt,
+          retry_index: retryIndex,
+          max_retries: maxRetries,
+          trigger,
+        }, domain === "world" ? "world" : "analysis");
+        aiSucceeded = true;
+        const completed = complete ? await complete(result, { attempt, retryIndex }) : result;
+        emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_SUCCEEDED`, execution, target, {
+          domain,
+          attempt,
+          retry_index: retryIndex,
+          max_retries: maxRetries,
+          world_persisted: domain === "world" ? true : undefined,
+          event_persisted: domain === "event" ? true : undefined,
+          readback_valid: true,
+          floor_version_match: true,
+          canonical_world_present: domain === "world" ? true : undefined,
+          canonical_character_present: domain === "event" ? true : undefined,
+          ui_ready: true,
+        }, domain === "world" ? "world" : "analysis");
+        return completed;
+      } catch (error) {
+        if (!aiSucceeded) {
+          emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_FAILED`, execution, target, {
+            domain,
+            attempt,
+            retry_index: retryIndex,
+            max_retries: maxRetries,
+            failure_stage: error?.analysis_stage ?? domain,
+            failure_code: error?.code ?? error?.error_code ?? error?.message ?? "ANALYSIS_FAILED",
+          }, domain === "world" ? "world" : "analysis");
+        }
+        const retryable = await retryableStageFailure(error, { domain, target, execution, token });
+        const canRetry = retryable && retryIndex < maxRetries;
+        const failureStage = error?.analysis_stage ?? domain;
+        const failureCode = error?.code ?? error?.error_code ?? error?.message ?? "ANALYSIS_FAILED";
+        emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_FAILED`, execution, target, {
+          domain,
+          attempt,
+          retry_index: retryIndex,
+          max_retries: maxRetries,
+          failure_stage: failureStage,
+          failure_code: failureCode,
+          retryable,
+          retries_remaining: Math.max(0, maxRetries - retryIndex),
+          retry_decision: canRetry ? "retry" : "stop",
+          retry_reason: retryable ? (canRetry ? "retry-limit-available" : "retry-limit-exhausted") : "non-retryable-failure",
+        }, domain === "world" ? "world" : "analysis");
+        if (!canRetry) {
+          if (retryable && retryIndex >= maxRetries) {
+            try {
+              error.stage_retry_exhausted = true;
+              error.stage_retry_index = retryIndex;
+              error.stage_max_retries = maxRetries;
+            } catch {
+              // Frozen provider errors still retain the terminal trace below.
+            }
+            emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_RETRY_EXHAUSTED`, execution, target, {
+              domain,
+              attempt,
+              retry_index: retryIndex,
+              max_retries: maxRetries,
+              failure_stage: failureStage,
+              failure_code: failureCode,
+              retryable,
+              retries_remaining: 0,
+              retry_decision: "stop",
+              retry_reason: "retry-limit-exhausted",
+            }, domain === "world" ? "world" : "analysis");
+          }
+          throw error;
+        }
+        emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_RETRY_SCHEDULED`, execution, target, {
+          from_retry_index: retryIndex,
+          next_retry_index: retryIndex + 1,
+          domain,
+          attempt: attempt + 1,
+          retry_index: retryIndex + 1,
+          max_retries: maxRetries,
+          failure_stage: failureStage,
+          failure_code: failureCode,
+          retry_decision: "retry",
+          retry_reason: "retry-limit-available",
+        }, domain === "world" ? "world" : "analysis");
+      }
+    }
+  }
+
   function pendingGenerationMatches(pending, target) {
     if (!pending || !target || pending.chatId !== target.chatId) return false;
     if (pending.messageId != null &&
@@ -747,6 +1205,59 @@ export function createEventAnalysisCoordinator({
     if (pending.baselineVersion &&
         sameFloorVersion(pending.baselineVersion, target.version)) return false;
     return true;
+  }
+
+  function generationTrace(stage, pending, target = null, details = {}) {
+    emitPersistenceTrace(stage, null, target, {
+      generation_id: pending?.generation_id ?? null,
+      generation_type: pending?.generation_type ?? null,
+      generation_intent_id: pending?.intent_id ?? null,
+      generation_final_floor_seen: pending?.finalFloorSeen === true,
+      generation_ended: pending?.ended === true,
+      generation_settled: pending?.settled === true,
+      ...details,
+    }, "scheduler");
+  }
+
+  function generationKind(pending) {
+    return pending === schedulerState.pendingSwipeGeneration ? "swipe" : "generation";
+  }
+
+  async function settleGenerationForTarget(pending, target) {
+    if (!pending || !target) return { skipped: true, reason: "generation-awaiting-target" };
+    const kind = generationKind(pending);
+    if (!pending.finalFloorSeen) {
+      pending.finalFloorSeen = true;
+      pending.finalFloorVersion = { ...target.version };
+      pending.finalFloorIndex = target.index;
+      generationTrace("GENERATION_FINAL_FLOOR_SEEN", pending, target);
+    }
+    if (!pending.ended) {
+      generationTrace("GENERATION_SETTLE_WAITING", pending, target, {
+        waiting_for: "generation-ended",
+      });
+      return { skipped: true, reason: "generation-awaiting-end" };
+    }
+    if (pending.settled) return { skipped: true, reason: "generation-already-settled" };
+    pending.settled = true;
+    generationTrace("GENERATION_SETTLED", pending, target);
+    const pendingForce = pending.force === true;
+    const pendingOwnerMatches = pendingGenerationMatches(pending, target);
+    schedulerState.pendingGeneration = null;
+    schedulerState.pendingSwipeGeneration = null;
+    markGenerationTerminal(kind, pending, target);
+    if (pending.force === true && !pendingOwnerMatches) {
+      rememberSchedulerKey(
+        schedulerState.observedFloorKeys,
+        floorExecutionKey(target.version),
+      );
+      return { skipped: true, reason: "generation-without-new-floor" };
+    }
+    return scheduleRenderedCharacter(target, {
+      force: pendingForce,
+      reason: pending.force === true ? "reroll" : "automatic",
+      generation: pending,
+    });
   }
 
   function pendingGenerationOwnerMatches(pending, target) {
@@ -1062,7 +1573,13 @@ export function createEventAnalysisCoordinator({
       }
       invalidatedFloors.set(key, true);
       if (floorRootExists(index, swipeId)) {
-        await store.saveFloor(index, swipeId, emptyFloor());
+        await persistence.clearFloorSlot({
+          messageIndex: index,
+          swipeId,
+          chatId: token.chatId,
+          assertCurrent: () => chat.assert(token),
+          reason: `mutation:${event?.type ?? "unknown"}`,
+        });
         chat.assert(token);
       }
     }
@@ -1239,20 +1756,21 @@ export function createEventAnalysisCoordinator({
       error.conflicting_character_ids = validation.conflicting_character_ids ?? [];
       throw error;
     }
-    const nextFloor = cloneValue(current);
-    nextFloor.character_registry = cloneValue(registry);
-    nextFloor.character_registry.entities[String(characterId).trim()].aliases = validation.aliases;
+    const nextRegistry = cloneValue(registry);
+    nextRegistry.entities[String(characterId).trim()].aliases = validation.aliases;
 
     const latest = await resolveCurrentBioWeaveFloor();
     if (!sameFloorVersion(latest.version, target.version))
       throw new Error("FLOOR_VERSION_STALE");
     chat.assert(token);
-    await store.saveFloor(target.index, target.swipeId, nextFloor);
+    await commitFloorPatch(target, "event", {
+      character_registry: nextRegistry,
+    }, {operation_type: "character-alias-patch", assertCurrent: () => chat.assert(token)});
     chat.assert(token);
     await refreshTrackingRegistry("character-alias-update");
     return {
       ok: true,
-      character: cloneValue(nextFloor.character_registry.entities[String(characterId).trim()]),
+      character: cloneValue(nextRegistry.entities[String(characterId).trim()]),
     };
   }
   async function findPreviousSuccessfulBioWeave(target) {
@@ -1319,11 +1837,22 @@ export function createEventAnalysisCoordinator({
     }
     return null;
   }
-  async function saveWorldModel({ model, meta = null, selector = null, automatic = false, traceExecution = null } = {}) {
+  async function saveWorldModel({ model, meta = null, selector = null, automatic = false, traceExecution = null, persistenceOwner = null } = {}) {
     if (automatic && !isEnabled()) throw disabledError();
     const normalizedModel = normalizeStoredWorldModel(model);
     const token = chat.token();
     const target = await resolveFloor(selector);
+    if (automatic && (!persistenceOwner || persistenceOwner.claimed !== false)) {
+      const error = new Error("WORLD_STAGE_PERSISTENCE_OWNER_INVALID");
+      error.code = "WORLD_STAGE_PERSISTENCE_OWNER_INVALID";
+      error.analysis_stage = "world_persistence_owner";
+      error.retryable = false;
+      throw error;
+    }
+    if (automatic) persistenceOwner.claimed = true;
+    if (traceExecution) {
+      traceExecution.persistence_invocation_id ??= `world-${Date.now()}-${++attemptSequence}`;
+    }
     emitPersistenceTrace("WORLD_SAVE_BEGIN", traceExecution, target, {}, "world");
     chat.assert(token);
     const current = store.getFloor?.(target.index, target.swipeId) ?? emptyFloor();
@@ -1333,14 +1862,28 @@ export function createEventAnalysisCoordinator({
       current_floor_present: Boolean(current && Object.keys(current).length),
     }, "world");
     if (automatic && !isEnabled()) throw disabledError();
-    await store.saveFloor(target.index, target.swipeId, {
-      ...current,
-      floor_version: target.version,
-      world_model: cloneWorldValue(normalizedModel),
-      world_model_meta: cloneWorldValue(meta),
-    }, {
-      ...persistenceTraceContext(traceExecution, target, "world"),
-    });
+    try {
+      await commitFloorPatch(target, "world", {
+        world_model: cloneWorldValue(normalizedModel),
+        world_model_meta: cloneWorldValue(meta),
+      }, {
+        operation_type: automatic ? "world-auto-patch" : "world-manual-patch",
+        execution: traceExecution,
+        traceContext: persistenceTraceContext(traceExecution, target, "world"),
+        assertCurrent: () => chat.assert(token),
+      });
+    } catch (cause) {
+      // Keep World persistence/readback failures in the stage domain so the
+      // stage retry policy can retry the complete World attempt and the UI can
+      // classify the failure as persistence, not API transport.
+      if (cause?.code === "BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN" ||
+          cause?.code === "SWIPE_NOT_FOUND" ||
+          cause?.code === "STALE_FLOOR_VERSION" ||
+          cause?.code === "STALE_SWIPE") throw cause;
+      if (cause?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" ||
+          cause?.code === "WORLD_MODEL_PERSISTENCE_READBACK_FAILED") throw cause;
+      throw worldModelPersistenceError(cause, target);
+    }
     chat.assert(token);
     return {
       model: cloneWorldValue(normalizedModel),
@@ -1412,6 +1955,13 @@ export function createEventAnalysisCoordinator({
       released: false,
       promise: null,
     };
+    const persistenceOwner = {
+      key,
+      domain: "world",
+      attempt: null,
+      retryIndex: null,
+      claimed: false,
+    };
     const publishPhase = phase => {
       onPhase?.(phase);
       notify({
@@ -1431,143 +1981,166 @@ export function createEventAnalysisCoordinator({
     const work = (async () => {
       chat.assert(token);
       if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
-      let model;
-      let meta = null;
-      if (mode === "full") {
-        if (typeof analyzer?.analyzeWorldModel !== "function")
-          throw worldModelUnavailableError(new Error("WORLD_ANALYZER_UNAVAILABLE"), target);
-        const result = await analyzer.analyzeWorldModel({
-          analysisInput,
-          floor_version: target.version,
-          authoritative_floor_version: target.version,
-          signal,
-        });
-        model = normalizeStoredWorldModel(result);
-        emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
-          world_model_present: true,
-          species_count: Array.isArray(model?.species) ? model.species.length : 0,
-          biological_type_count: Array.isArray(model?.species)
-            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
-            : 0,
-        }, "world");
-        meta = { source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput) };
-      } else {
-        const resolved = await resolveWorldModelAtOrBefore(target);
-        if (!resolved)
-          throw worldModelUnavailableError(new Error("WORLD_MODEL_REQUIRED_FOR_PATCH"), target);
-        if (typeof analyzer?.analyzeWorldModelPatch !== "function")
-          throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
-        const patch = await analyzer.analyzeWorldModelPatch({
-          analysisInput: {
-            ...(analysisInput ?? {}),
-            world_model: cloneWorldValue(resolved.model),
-          },
-          floor_version: target.version,
-          authoritative_floor_version: target.version,
-          signal,
-        });
-        model = mergeWorldModelPatch(resolved.model, patch);
-        emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
-          world_model_present: true,
-          species_count: Array.isArray(model?.species) ? model.species.length : 0,
-          biological_type_count: Array.isArray(model?.species)
-            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
-            : 0,
-        }, "world");
-        meta = {
-          ...cloneWorldValue(resolved.meta ?? {}),
-          source: "world-patch-analysis",
-          source_summary: summarizeAnalysisInput(analysisInput),
-        };
-      }
-      chat.assert(token);
-      if (execution && !executionIsCurrent(execution)) {
-        const error = requestAbortedError();
-        error.analysis_stage = "world_post_accept_execution_guard";
-        execution.cancel_stage = "world_post_accept_execution_guard";
-        execution.cancel_reason = execution.cancel_reason ?? "execution-invalidated";
-        execution.cancel_code = execution.cancel_code ?? "REQUEST_ABORTED";
-        execution.diagnostic = {
-          ...executionError(error, error.analysis_stage),
-          cancel_stage: execution.cancel_stage,
-          cancel_reason: execution.cancel_reason,
-          cancel_code: execution.cancel_code,
-          execution_active: false,
-          ...floorVersionComparison(execution.version, null),
-          generation_id: execution.generation_id ?? null,
-          generation_type: execution.generation_type ?? null,
-          generation_identity_match: null,
-        };
-        throw error;
-      }
-      let currentAfterWorld;
-      try {
-        currentAfterWorld = await resolveFloorAtIndex({
-          __messageIndex: true,
-          index: target.index,
-        });
-      } catch (cause) {
-        if (!execution) throw cause;
-        const error = requestAbortedError();
-        error.analysis_stage = "world_post_accept_owner_guard";
-        execution.cancel_stage = "world_post_accept_owner_guard";
-        execution.cancel_reason = "floor-owner-unavailable";
-        execution.cancel_code = cause?.code ?? cause?.message ?? "REQUEST_ABORTED";
-        execution.diagnostic = {
-          ...executionError(error, error.analysis_stage),
-          cancel_stage: execution.cancel_stage,
-          cancel_reason: execution.cancel_reason,
-          cancel_code: execution.cancel_code,
-          execution_active: executionIsCurrent(execution),
-          ...floorVersionComparison(execution.version, null),
-        };
-        throw error;
-      }
-      if (!sameFloorVersion(currentAfterWorld.version, target.version)) {
-        invalidateExecution(execution, {
-          stage: "world_post_accept_floor_version_guard",
-          reason: "floor-version-changed-after-world-accepted",
-          code: "STALE_FLOOR_VERSION",
-          currentVersion: currentAfterWorld.version,
-        });
-        throw requestAbortedError();
-      }
-      const analyzedAt = new Date().toISOString();
-      const saved = await saveWorldModel({
-        model,
-        meta: {
-          ...meta,
-          last_analyzed_at: analyzedAt,
-          last_saved_at: analyzedAt,
-          last_saved_by: "ai",
-          floor_version: { ...target.version },
+      if (mode === "full" && typeof analyzer?.analyzeWorldModel !== "function")
+        throw worldModelUnavailableError(new Error("WORLD_ANALYZER_UNAVAILABLE"), target);
+      if (mode === "patch" && typeof analyzer?.analyzeWorldModelPatch !== "function")
+        throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
+      const result = await runAnalysisStageWithRetry({
+        domain: "world",
+        target,
+        token,
+        execution,
+        signal,
+        trigger,
+        invoke: async () => {
+          let meta;
+          let model;
+          if (mode === "full") {
+            model = normalizeStoredWorldModel(await analyzer.analyzeWorldModel({
+              analysisInput,
+              floor_version: target.version,
+              authoritative_floor_version: target.version,
+              signal,
+            }));
+            meta = { source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput) };
+          } else {
+            const resolved = await resolveWorldModelAtOrBefore(target);
+            if (!resolved) {
+              const error = new Error("WORLD_MODEL_REQUIRED_FOR_PATCH");
+              error.code = "WORLD_MODEL_REQUIRED_FOR_PATCH";
+              error.analysis_stage = "world_preflight";
+              throw error;
+            }
+            model = mergeWorldModelPatch(resolved.model, await analyzer.analyzeWorldModelPatch({
+              analysisInput: {
+                ...(analysisInput ?? {}),
+                world_model: cloneWorldValue(resolved.model),
+              },
+              floor_version: target.version,
+              authoritative_floor_version: target.version,
+              signal,
+            }));
+            meta = {
+              ...cloneWorldValue(resolved.meta ?? {}),
+              source: "world-patch-analysis",
+              source_summary: summarizeAnalysisInput(analysisInput),
+            };
+          }
+          return { model, meta };
         },
-        selector: target,
-        automatic: true,
-        traceExecution: execution,
+        complete: async ({ model, meta }, { attempt, retryIndex }) => {
+          const ownerKey = `${key}:${attempt}:${retryIndex}`;
+          if (persistenceOwner.attempt !== ownerKey) {
+            persistenceOwner.attempt = ownerKey;
+            persistenceOwner.retryIndex = retryIndex;
+            persistenceOwner.claimed = false;
+          }
+          if (persistenceOwner.claimed) {
+            const error = new Error("WORLD_STAGE_PERSISTENCE_DUPLICATE");
+            error.code = "WORLD_STAGE_PERSISTENCE_DUPLICATE";
+            error.analysis_stage = "world_persistence_owner";
+            error.retryable = false;
+            throw error;
+          }
+          emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
+            world_model_present: true,
+            species_count: Array.isArray(model?.species) ? model.species.length : 0,
+            biological_type_count: Array.isArray(model?.species)
+              ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
+              : 0,
+          }, "world");
+          chat.assert(token);
+          if (execution && !executionIsCurrent(execution)) {
+            const error = requestAbortedError();
+            error.analysis_stage = "world_post_accept_execution_guard";
+            execution.cancel_stage = "world_post_accept_execution_guard";
+            execution.cancel_reason = execution.cancel_reason ?? "execution-invalidated";
+            execution.cancel_code = execution.cancel_code ?? "REQUEST_ABORTED";
+            execution.diagnostic = {
+              ...executionError(error, error.analysis_stage),
+              cancel_stage: execution.cancel_stage,
+              cancel_reason: execution.cancel_reason,
+              cancel_code: execution.cancel_code,
+              execution_active: false,
+              ...floorVersionComparison(execution.version, null),
+              generation_id: execution.generation_id ?? null,
+              generation_type: execution.generation_type ?? null,
+              generation_identity_match: null,
+            };
+            throw error;
+          }
+          let currentAfterWorld;
+          try {
+            currentAfterWorld = await resolveFloorAtIndex({
+              __messageIndex: true,
+              index: target.index,
+            });
+          } catch (cause) {
+            if (!execution) throw cause;
+            const error = requestAbortedError();
+            error.analysis_stage = "world_post_accept_owner_guard";
+            execution.cancel_stage = "world_post_accept_owner_guard";
+            execution.cancel_reason = "floor-owner-unavailable";
+            execution.cancel_code = cause?.code ?? cause?.message ?? "REQUEST_ABORTED";
+            execution.diagnostic = {
+              ...executionError(error, error.analysis_stage),
+              cancel_stage: execution.cancel_stage,
+              cancel_reason: execution.cancel_reason,
+              cancel_code: execution.cancel_code,
+              execution_active: executionIsCurrent(execution),
+              ...floorVersionComparison(execution.version, null),
+            };
+            throw error;
+          }
+          if (!sameFloorVersion(currentAfterWorld.version, target.version)) {
+            invalidateExecution(execution, {
+              stage: "world_post_accept_floor_version_guard",
+              reason: "floor-version-changed-after-world-accepted",
+              code: "STALE_FLOOR_VERSION",
+              currentVersion: currentAfterWorld.version,
+            });
+            throw requestAbortedError();
+          }
+          const analyzedAt = new Date().toISOString();
+          const saved = await saveWorldModel({
+            model,
+            meta: {
+              ...meta,
+              last_analyzed_at: analyzedAt,
+              last_saved_at: analyzedAt,
+              last_saved_by: "ai",
+              floor_version: { ...target.version },
+            },
+            selector: target,
+            automatic: true,
+            traceExecution: execution,
+            persistenceOwner,
+          });
+          chat.assert(token);
+          emitPersistenceTrace("WORLD_READBACK_BEGIN", execution, target, {}, "world");
+          publishPhase("world_readback");
+          publishPhase("world_ui_ready");
+          const ready = await resolveWorldModelUiReady(target);
+          emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
+          emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {
+            floor_version_match: true,
+            world_model_present: Boolean(ready?.model),
+          }, "world");
+          emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {
+            world_model_present: Boolean(ready?.model),
+          }, "world");
+          emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
+            world_model_present: Boolean(ready?.model),
+            species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
+          }, "world");
+          return {
+            ...saved,
+            model: ready.view_model.model,
+            view_model: ready.view_model,
+          };
+        },
       });
-      chat.assert(token);
-      emitPersistenceTrace("WORLD_READBACK_BEGIN", execution, target, {}, "world");
-      publishPhase("world_readback");
-      publishPhase("world_ui_ready");
-      const ready = await resolveWorldModelUiReady(target);
-      emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
-      emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {
-        floor_version_match: true,
-        world_model_present: Boolean(ready?.model),
-      }, "world");
-      emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {
-        world_model_present: Boolean(ready?.model),
-      }, "world");
-      emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
-        world_model_present: Boolean(ready?.model),
-        species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
-      }, "world");
-      return {
-        ...saved,
-        model: ready.view_model.model,
-        view_model: ready.view_model,
-      };
+      return result;
     })();
     job.promise = work.then(
       result => {
@@ -1867,10 +2440,9 @@ export function createEventAnalysisCoordinator({
       currentFloor.version,
     );
     if (latestExisting) return latestExisting;
-    await store.saveFloor(target.index, target.swipeId, {
-      ...latestData,
+    await commitFloorPatch(target, "projection", {
       snapshot,
-    });
+    }, {operation_type: "snapshot-patch", assertCurrent: () => chat.assert(token)});
     chat.assert(token);
     return snapshot;
   }
@@ -2219,6 +2791,161 @@ export function createEventAnalysisCoordinator({
       },
     );
   }
+
+  async function verifyCharacterCanonicalReady(
+    target,
+    execution,
+    token,
+    expectedEvents,
+  ) {
+    emitPersistenceTrace("CHARACTER_CANONICAL_READ_BEGIN", execution, target, {
+      domain: "event",
+    }, "event");
+    let currentTarget;
+    let floorData;
+    try {
+      currentTarget = await resolveFloorAtIndex({
+        __messageIndex: true,
+        index: target.index,
+      });
+      floorData = store.getFloor?.(target.index, target.swipeId) ?? null;
+    } catch (cause) {
+      const error = new Error("CHARACTER_CANONICAL_NOT_READY");
+      error.code = "CHARACTER_CANONICAL_NOT_READY";
+      error.analysis_stage = "character_canonical_read";
+      error.cause = cause;
+      throw error;
+    }
+    const actualVersion = currentTarget?.version ?? floorVersionFromData(floorData);
+    const floorVersionMatch = Boolean(
+      actualVersion && sameFloorVersion(actualVersion, target.version),
+    );
+    const slotAudit = {
+      analysis_present: Boolean(floorData?.analysis),
+      events_present: Array.isArray(floorData?.events),
+      event_count: Array.isArray(floorData?.events) ? floorData.events.length : 0,
+      character_registry_present: Boolean(floorData?.character_registry),
+      character_count: floorData?.character_registry?.entities
+        ? Object.keys(floorData.character_registry.entities).length
+        : 0,
+      snapshot_present: Boolean(floorData?.snapshot),
+      projection_timeline_present: Boolean(floorData?.projection_timeline),
+      world_model_present: Boolean(floorData?.world_model),
+    };
+    const expectedEventCount = Array.isArray(expectedEvents)
+      ? expectedEvents.length
+      : null;
+    const actualFloorEvents = Array.isArray(floorData?.events)
+      ? floorData.events
+      : [];
+    const expectedEventIds = new Set(
+      (Array.isArray(expectedEvents) ? expectedEvents : [])
+        .map(event => event?.event_id)
+        .filter(Boolean),
+    );
+    emitPersistenceTrace("CHARACTER_FLOOR_SOURCE_RESOLVED", execution, target, {
+      chat_id: target.version.chat_id,
+      message_id: target.version.message_id,
+      floor: target.version.floor,
+      active_swipe_id: currentTarget?.swipeId ?? target.swipeId,
+      expected_swipe_id: target.swipeId,
+      expected_floor_version: target.version,
+      actual_floor_version: actualVersion,
+      floor_version_match: floorVersionMatch,
+      bioweave_present: Boolean(floorData),
+    }, "event");
+    emitPersistenceTrace("CHARACTER_SLOT_AUDIT", execution, target, slotAudit, "event");
+    if (!floorVersionMatch || !slotAudit.analysis_present || !slotAudit.events_present || !slotAudit.character_registry_present) {
+      const error = new Error("CHARACTER_CANONICAL_NOT_READY");
+      error.code = "CHARACTER_CANONICAL_NOT_READY";
+      error.analysis_stage = "character_canonical_read";
+      error.floor_version_match = floorVersionMatch;
+      throw error;
+    }
+    chat.assert(token);
+    let business = null;
+    let currentFloorIncluded = false;
+    try {
+      const current = await resolveCurrentBioWeaveFloor();
+      if (current?.version && sameFloorVersion(current.version, target.version)) {
+        business = await collectActiveBusinessData();
+        currentFloorIncluded = Boolean(
+          business?.current_floor?.version &&
+          sameFloorVersion(business.current_floor.version, target.version),
+        );
+      } else {
+        // A targeted/manual analysis may intentionally address a historical
+        // Character Floor. In that case the canonical source is still the
+        // target Floor slot; the current-page projection must not make a
+        // valid historical attempt look unready.
+        const states = await collectCurrentFloorStates(token);
+        currentFloorIncluded = states.some(
+          state => state.index === target.index && sameFloorVersion(state.version, target.version),
+        );
+      }
+    } catch (cause) {
+      const error = new Error("CHARACTER_CANONICAL_NOT_READY");
+      error.code = "CHARACTER_CANONICAL_NOT_READY";
+      error.analysis_stage = "character_canonical_rebuild";
+      error.cause = cause;
+      throw error;
+    }
+    const eventCount = Array.isArray(business?.active_events)
+      ? business.active_events.length
+      : slotAudit.event_count;
+    const characterCount = Object.keys(business?.tracking_subjects ?? {}).length;
+    const canonicalEventCountMatches = expectedEventCount === null
+      ? true
+      : actualFloorEvents.length === expectedEventCount;
+    const actualEventIds = new Set(
+      actualFloorEvents.map(event => event?.event_id).filter(Boolean),
+    );
+    const canonicalEventIdsMatch = expectedEventCount === null
+      ? true
+      : expectedEventIds.size === actualEventIds.size &&
+        [...expectedEventIds].every(id => actualEventIds.has(id));
+    const validEmptyEventResult = expectedEventCount === 0 && actualFloorEvents.length === 0;
+    emitPersistenceTrace("CHARACTER_CANONICAL_ACTUAL", execution, target, {
+      actual_event_count: actualFloorEvents.length,
+      actual_character_count: characterCount,
+      actual_registry_character_count: slotAudit.character_count,
+    }, "event");
+    emitPersistenceTrace("EVENT_EMPTY_RESULT_CLASSIFIED", execution, target, {
+      valid_empty: validEmptyEventResult,
+      reason: validEmptyEventResult
+        ? "persisted_current_floor_events_empty"
+        : expectedEventCount === 0
+          ? "persisted_current_floor_events_unexpected"
+          : "nonempty_result_requires_canonical_events",
+    }, "event");
+    emitPersistenceTrace("CHARACTER_CANONICAL_STATE_BUILT", execution, target, {
+      character_count: characterCount,
+      event_count: eventCount,
+      current_floor_included: currentFloorIncluded,
+      source: "authoritative_floor",
+    }, "event");
+    const ready = currentFloorIncluded &&
+      business?.current_state_status !== "STATE_ERROR" &&
+      canonicalEventCountMatches &&
+      canonicalEventIdsMatch;
+    emitPersistenceTrace("CHARACTER_UI_READY", execution, target, {
+      ready,
+      reason: ready
+        ? validEmptyEventResult
+          ? "valid_empty_event_result"
+          : "canonical_business_state_ready"
+        : !canonicalEventCountMatches || !canonicalEventIdsMatch
+          ? "canonical_event_state_missing"
+          : "canonical_business_state_invalid",
+    }, "event");
+    if (!ready) {
+      const error = new Error("CHARACTER_CANONICAL_NOT_READY");
+      error.code = "CHARACTER_CANONICAL_NOT_READY";
+      error.analysis_stage = "character_ui_ready";
+      throw error;
+    }
+    return { business, slotAudit, expectedEvents };
+  }
   async function getCurrentBiologicalState() {
     const token = chat.token();
     try {
@@ -2484,14 +3211,10 @@ export function createEventAnalysisCoordinator({
     diagnostic = null,
   ) {
     if (!(await targetVersionIsCurrent(target))) return null;
+    execution.persistence_invocation_id = `terminal-${Date.now()}-${++attemptSequence}`;
     const currentFloorData =
       store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
     const previousAnalysis = currentFloorData.analysis ?? savedAnalysis;
-    const events = Array.isArray(currentFloorData.events)
-      ? currentFloorData.events
-      : Array.isArray(target.floorData?.events)
-        ? target.floorData.events
-        : [];
     const finishedAt = new Date().toISOString();
     const attemptRecord = {
       status,
@@ -2510,10 +3233,12 @@ export function createEventAnalysisCoordinator({
       attemptRecord,
       target.version,
     );
-    await store.saveFloor(target.index, target.swipeId, {
-      ...currentFloorData,
+    await commitFloorPatch(target, "terminal", {
       analysis,
-      events,
+    }, {
+      operation_type: "terminal-analysis-patch",
+      execution,
+      traceContext: persistenceTraceContext(execution, target, "analysis"),
     });
     return analysis;
   }
@@ -2538,7 +3263,11 @@ export function createEventAnalysisCoordinator({
     )
       return;
     try {
-      await store.saveFloor(target.index, target.swipeId, target.floorData);
+      await commitFloorPatch(target, "event", {
+        analysis: target.floorData?.analysis,
+        events: target.floorData?.events,
+        character_registry: target.floorData?.character_registry,
+      }, {operation_type: "late-analysis-rollback"});
     } catch {
       // The terminal cancellation state is still authoritative in memory; a
       // newer execution is protected by the attempt guard above.
@@ -2705,13 +3434,21 @@ export function createEventAnalysisCoordinator({
     let terminalError = null;
     try {
       token = chat.token();
-      if (execution.reason !== "manual-refresh")
-        emitPersistenceTrace("AUTO_ANALYSIS_TRIGGERED", execution, target, {}, "analysis");
       execution.stage = "request_build";
       execution.source_provenance = { ...target.version };
       await assertExecutionTargetCurrent(execution, target, token);
       const preWorldInput = await buildFloorAnalysisInput(target, token);
       await assertExecutionTargetCurrent(execution, target, token);
+      if (execution.reason !== "manual-refresh") {
+        emitPersistenceTrace("ANALYSIS_INPUT_READY", execution, target, {
+          generation_settled: execution.generation_settled,
+          host_floor_version_match: true,
+          active_swipe_match: true,
+        }, "analysis");
+        emitPersistenceTrace("AUTO_ANALYSIS_TRIGGERED", execution, target, {
+          prerequisite: "analysis_input_ready",
+        }, "analysis");
+      }
       const finalWorldModel = await resolveFinalWorldModelForAnalysis(
         target,
         token,
@@ -2742,128 +3479,226 @@ export function createEventAnalysisCoordinator({
       await assertExecutionTargetCurrent(execution, target, token);
       if (typeof analyzer?.analyzeFloor !== "function")
         throw new Error("EVENT_ANALYZER_UNAVAILABLE");
-      execution.stage = "api_request";
-      const result = await analyzer.analyzeFloor({
-        analysisInput,
-        world_model: finalWorldModel,
-        floor_version: target.version,
-        authoritative_floor_version: target.version,
+      const eventStage = await runAnalysisStageWithRetry({
+        domain: "event",
+        target,
+        token,
+        execution,
         signal: execution.controller.signal,
-      });
-      assertExecutionCurrent(execution, token);
-      execution.stage = "identity_resolution";
-      const identityResult = resolveEventAnalysisIdentities(result, {
-        registry: normalizeCharacterRegistry(analysisInput.character_registry),
-        persistAliases: true,
-        narrative: analysisNarrative(analysisInput),
-      });
-      if (!identityResult.ok) throw identityResolutionError(identityResult);
-      execution.stage = "normalization";
-      const enrichedEvents = await Promise.all(
-        (Array.isArray(identityResult.events) ? identityResult.events : []).map(
-          async (event, ordinal) => {
-            const facts =
-              event && typeof event === "object" && !Array.isArray(event)
-                ? Object.fromEntries(
-                    Object.entries(event).filter(
-                      ([key]) => key !== "event_id" && key !== "source",
-                    ),
-                  )
-                : event;
-            if (!facts || typeof facts !== "object" || Array.isArray(facts))
-              return facts;
-            const enriched = {
-              ...facts,
-              event_id: await deterministicEventId(target.version, ordinal),
-              source: target.version,
-            };
-            return materializeStateFact(enriched, target.version, ordinal);
-          },
-        ),
-      );
-      execution.stage = "schema_validation";
-      const collectionValidation = validateEventCollection(enrichedEvents, {
-        strictCanonicalParticipants: true,
-      });
-      if (!collectionValidation.ok) {
-        throw domainValidationError(
-          collectionValidation,
-          "EVENT_DOMAIN_VALIDATION_FAILED",
-          enrichedEvents,
-        );
-      }
-      const events = dedupeEvents(enrichedEvents).map((event) => normalizeEvent(event));
-      const analyzedAt = new Date().toISOString();
-      const analysis = commitAnalysis(
-        savedAnalysis,
-        {
-          status: "success",
-          analyzed_at: analyzedAt,
-          last_analyzed_at: analyzedAt,
-          started_at: execution.started_at,
-          finished_at: analyzedAt,
-          event_count: events.length,
-          reason: execution.reason,
-          attempt: execution.attempt,
+        trigger: execution.reason,
+        invoke: async () => {
+          execution.stage = "api_request";
+          const result = await analyzer.analyzeFloor({
+            analysisInput,
+            world_model: finalWorldModel,
+            floor_version: target.version,
+            authoritative_floor_version: target.version,
+            signal: execution.controller.signal,
+            onEventAnalysisTrace: details => emitPersistenceTrace(
+              details?.stage ?? "EVENT_ANALYSIS_DIAGNOSTIC",
+              execution,
+              target,
+              details,
+              "event",
+            ),
+          });
+          emitPersistenceTrace("EVENT_VALIDATION_RESULT", execution, target, {
+            schema_valid: true,
+            domain_valid: null,
+          }, "event");
+          assertExecutionCurrent(execution, token);
+          execution.stage = "identity_resolution";
+          const identityResult = resolveEventAnalysisIdentities(result, {
+            registry: normalizeCharacterRegistry(analysisInput.character_registry),
+            persistAliases: true,
+            narrative: analysisNarrative(analysisInput),
+          });
+          if (!identityResult.ok) throw identityResolutionError(identityResult);
+          execution.stage = "normalization";
+          const enrichedEvents = await Promise.all(
+            (Array.isArray(identityResult.events) ? identityResult.events : []).map(
+              async (event, ordinal) => {
+                const facts =
+                  event && typeof event === "object" && !Array.isArray(event)
+                    ? Object.fromEntries(
+                        Object.entries(event).filter(
+                          ([key]) => key !== "event_id" && key !== "source",
+                        ),
+                      )
+                    : event;
+                if (!facts || typeof facts !== "object" || Array.isArray(facts))
+                  return facts;
+                const enriched = {
+                  ...facts,
+                  event_id: await deterministicEventId(target.version, ordinal),
+                  source: target.version,
+                };
+                return materializeStateFact(enriched, target.version, ordinal);
+              },
+            ),
+          );
+          emitPersistenceTrace("EVENT_NORMALIZATION_RESULT", execution, target, {
+            event_count: enrichedEvents.length,
+          }, "event");
+          emitPersistenceTrace("EVENT_EMPTY_RESULT_CLASSIFIED", execution, target, {
+            valid_empty: enrichedEvents.length === 0,
+            reason: enrichedEvents.length === 0
+              ? "normalized_event_array_empty"
+              : "normalized_event_array_nonempty",
+          }, "event");
+          const expectedCharacterIds = [...new Set(
+            enrichedEvents.flatMap(event => [
+              ...(event?.participants ?? [])
+                .map(participant => participant?.character_id)
+                .filter(Boolean),
+              ...(event?.pregnancy_relevance?.gestational_subject_ids ?? []),
+              ...(event?.pregnancy_relevance?.counterpart_ids ?? []),
+              event?.state_fact?.subject_id,
+            ].filter(Boolean)),
+          )];
+          emitPersistenceTrace("CHARACTER_CANONICAL_EXPECTATION", execution, target, {
+            expected_event_count: enrichedEvents.length,
+            expected_character_count: expectedCharacterIds.length,
+            expected_character_ids: expectedCharacterIds,
+          }, "event");
+          execution.stage = "schema_validation";
+          const collectionValidation = validateEventCollection(enrichedEvents, {
+            strictCanonicalParticipants: true,
+          });
+          if (!collectionValidation.ok) {
+            emitPersistenceTrace("EVENT_VALIDATION_RESULT", execution, target, {
+              schema_valid: true,
+              domain_valid: false,
+              validation_error_path: collectionValidation.errors?.[0] ?? "events",
+            }, "event");
+            throw domainValidationError(
+              collectionValidation,
+              "EVENT_DOMAIN_VALIDATION_FAILED",
+              enrichedEvents,
+            );
+          }
+          emitPersistenceTrace("EVENT_VALIDATION_RESULT", execution, target, {
+            schema_valid: true,
+            domain_valid: true,
+          }, "event");
+          return {
+            identityResult,
+            events: dedupeEvents(enrichedEvents).map((event) => normalizeEvent(event)),
+          };
         },
-        target.version,
-      );
-      analysis.dependency_hash = execution.dependency_hash;
-      analysis.source_provenance = { ...target.version };
-      await assertExecutionTargetCurrent(execution, target, token);
-      const currentDependencyHash = await dependencyHashForTarget(target, token);
-      if (currentDependencyHash !== execution.dependency_hash) {
-        invalidateExecution(execution);
-        throw requestAbortedError();
-      }
-      execution.stage = "floor_save";
-      await assertExecutionTargetCurrent(execution, target, token);
-      execution.floorSaveStarted = true;
-      const currentFloorData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData;
-      await store.saveFloor(target.index, target.swipeId, {
-        ...currentFloorData,
-        analysis,
-        events,
-        character_registry: identityResult.character_registry,
-        snapshot: null,
-      }, persistenceTraceContext(execution, target, "event"));
-      execution.floorSaved = true;
-      const finalFloor = store.getFloor?.(target.index, target.swipeId) ?? null;
-      emitPersistenceTrace("FINAL_BIOWEAVE_SLOT_SUMMARY", execution, target, {
-        world_model_present: Boolean(finalFloor?.world_model),
-        event_analysis_present: Boolean(finalFloor?.analysis),
-        event_slot_present: Array.isArray(finalFloor?.events),
-      }, "event");
-      await assertExecutionTargetCurrent(execution, target, token);
-      invalidatedFloors.delete(floorExecutionKey(target.version));
-      execution.stage = "snapshot_checkpoint";
-      try {
-        await maybeCreateSnapshot(target, token);
-      } catch (snapshotError) {
-        // Snapshot is a disposable cache.  A stale owner or a cache write
-        // failure must not turn an authoritative Event Analysis success into
-        // a failed analysis.
-        traceApi("runtime-snapshot-error", {
-          error: snapshotError,
-          phase: execution.stage,
-          attempt: execution.attempt,
-          staleChat: isStaleChat(snapshotError),
-        });
-      }
-      execution.stage = "registry_rebuild";
-      assertExecutionCurrent(execution, token);
-      await refreshTrackingRegistry(execution.reason);
-      assertExecutionCurrent(execution, token);
-      execution.event_count = events.length;
-      traceApi("runtime-success", {
-        state: "success",
-        phase: execution.stage,
-        attempt: execution.attempt,
-        eventCount: events.length,
-        floorSaved: execution.floorSaved === true,
-        persistenceComplete: true,
-        registryComplete: true,
+        complete: async ({ identityResult, events }) => {
+          const analyzedAt = new Date().toISOString();
+          const analysis = commitAnalysis(
+            savedAnalysis,
+            {
+              status: "success",
+              analyzed_at: analyzedAt,
+              last_analyzed_at: analyzedAt,
+              started_at: execution.started_at,
+              finished_at: analyzedAt,
+              event_count: events.length,
+              reason: execution.reason,
+              attempt: execution.attempt,
+            },
+            target.version,
+          );
+          analysis.dependency_hash = execution.dependency_hash;
+          analysis.source_provenance = { ...target.version };
+          await assertExecutionTargetCurrent(execution, target, token);
+          const currentDependencyHash = await dependencyHashForTarget(target, token);
+          if (currentDependencyHash !== execution.dependency_hash) {
+            invalidateExecution(execution);
+            throw requestAbortedError();
+          }
+          execution.stage = "floor_save";
+          await assertExecutionTargetCurrent(execution, target, token);
+          execution.floorSaveStarted = true;
+          execution.persistence_invocation_id = `event-${Date.now()}-${++attemptSequence}`;
+          try {
+            await commitFloorPatch(target, "event", {
+              analysis,
+              events,
+              character_registry: identityResult.character_registry,
+            }, {
+              operation_type: "event-analysis-patch",
+              execution,
+              traceContext: persistenceTraceContext(execution, target, "event"),
+              assertCurrent: () => assertExecutionTargetCurrent(execution, target, token),
+            });
+          } catch (cause) {
+            // The coordinator reports an authoritative readback mismatch. Keep
+            // the existing Event-stage canonical readiness/retry contract as
+            // the product-facing classification for a host that altered the
+            // saved Event collection during the write.
+            if (cause?.code !== "FLOOR_TX_READBACK_FAILED") throw cause;
+            try {
+              await verifyCharacterCanonicalReady(target, execution, token, events);
+            } catch (canonical) {
+              throw canonical;
+            }
+            const canonical = new Error("CHARACTER_CANONICAL_NOT_READY");
+            canonical.code = "CHARACTER_CANONICAL_NOT_READY";
+            canonical.analysis_stage = "character_canonical_read";
+            canonical.cause = cause;
+            throw canonical;
+          }
+          execution.floorSaved = true;
+          const finalFloor = store.getFloor?.(target.index, target.swipeId) ?? null;
+          if (
+            !finalFloor ||
+            !sameFloorVersion(floorVersionFromData(finalFloor), target.version) ||
+            !finalFloor.analysis ||
+            !Array.isArray(finalFloor.events) ||
+            !finalFloor.character_registry
+          ) {
+            const error = new Error("FLOOR_PERSISTENCE_READBACK_FAILED");
+            error.code = "FLOOR_PERSISTENCE_READBACK_FAILED";
+            error.analysis_stage = "event_persistence_readback";
+            throw error;
+          }
+          emitPersistenceTrace("FINAL_BIOWEAVE_SLOT_SUMMARY", execution, target, {
+            world_model_present: Boolean(finalFloor?.world_model),
+            event_analysis_present: Boolean(finalFloor?.analysis),
+            event_slot_present: Array.isArray(finalFloor?.events),
+          }, "event");
+          await assertExecutionTargetCurrent(execution, target, token);
+          invalidatedFloors.delete(floorExecutionKey(target.version));
+          execution.stage = "snapshot_checkpoint";
+          try {
+            await maybeCreateSnapshot(target, token);
+          } catch (snapshotError) {
+            traceApi("runtime-snapshot-error", {
+              error: snapshotError,
+              phase: execution.stage,
+              attempt: execution.attempt,
+              staleChat: isStaleChat(snapshotError),
+            });
+          }
+          execution.stage = "registry_rebuild";
+          assertExecutionCurrent(execution, token);
+          const rebuiltRegistry = await refreshTrackingRegistry(execution.reason);
+          assertExecutionCurrent(execution, token);
+          if (!rebuiltRegistry || typeof rebuiltRegistry !== "object") {
+            const error = new Error("CHARACTER_UI_NOT_READY");
+            error.code = "CHARACTER_UI_NOT_READY";
+            error.analysis_stage = "character_ui_ready";
+            throw error;
+          }
+          await verifyCharacterCanonicalReady(target, execution, token, events);
+          execution.event_count = events.length;
+          traceApi("runtime-success", {
+            state: "success",
+            phase: execution.stage,
+            attempt: execution.attempt,
+            eventCount: events.length,
+            floorSaved: execution.floorSaved === true,
+            persistenceComplete: true,
+            registryComplete: true,
+          });
+          return { identityResult, events, analysis };
+        },
       });
+      const { identityResult, events } = eventStage;
       terminalState = "success";
       return {
         events,
@@ -2926,7 +3761,10 @@ export function createEventAnalysisCoordinator({
         !execution.released &&
         !isStaleChat(error) &&
         !execution.floorSaved &&
-        error?.code !== "WORLD_MODEL_UNAVAILABLE"
+        !error?.prerequisite_failed &&
+        error?.analysis_stage !== "floor_owner_convergence" &&
+        error?.code !== "WORLD_MODEL_UNAVAILABLE" &&
+        error?.code !== "AUTO_ANALYSIS_FLOOR_PREREQUISITE_UNAVAILABLE"
       ) {
         try {
           await persistTerminalAttempt(
@@ -2988,6 +3826,7 @@ export function createEventAnalysisCoordinator({
       phase: reason === "manual-refresh" ? "event_analysis" : null,
       generation_id: generation?.generation_id ?? null,
       generation_type: generation?.generation_type ?? null,
+      generation_settled: generation ? generation.settled === true : null,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -3123,6 +3962,14 @@ export function createEventAnalysisCoordinator({
         return { skipped: true, reason: "unsupported-event" };
       if (type === "GENERATION_STARTED") {
         const payload = event?.payload;
+        const hasGenerationSignal = typeof payload === "string" ||
+          (payload && typeof payload === "object" &&
+            (payload.genType != null || payload.generation_type != null ||
+              payload.type != null || payload.reroll === true ||
+              payload.regenerate === true || payload.new_swipe === true ||
+              payload.isNewSwipe === true));
+        if (!hasGenerationSignal)
+          return { skipped: true, reason: "generation-type-unavailable" };
         const generationType = typeof payload === "object"
           ? payload?.genType ?? payload?.generation_type ?? payload?.type
           : payload;
@@ -3131,8 +3978,57 @@ export function createEventAnalysisCoordinator({
           || payload?.regenerate === true
           || normalizedGenerationType === "regenerate";
         const isSwipeGeneration = normalizedGenerationType === "swipe";
-        if (!isReroll && !isSwipeGeneration)
-          return { skipped: true, reason: "generation-not-reroll" };
+        const generationKindName = isSwipeGeneration
+          ? "swipe"
+          : isReroll
+            ? "regenerate"
+            : "normal";
+        const previousPending = schedulerState.pendingSwipeGeneration
+          ?? schedulerState.pendingGeneration;
+        const currentExecution = [...inFlight.values()].find(execution =>
+          execution?.version?.chat_id === chat.current() && !execution.released);
+        const payloadMessageId = typeof payload === "object"
+          ? payload?.message_id ?? payload?.messageId ?? null
+          : null;
+        const payloadSwipeId = typeof payload === "object"
+          ? payload?.swipe_id ?? payload?.swipeId ?? null
+          : null;
+        const ownerChanged = previousPending
+          ? (payloadMessageId != null && previousPending.messageId != null
+              ? String(payloadMessageId) !== String(previousPending.messageId)
+              : payloadSwipeId != null && previousPending.swipeId != null
+                ? String(payloadSwipeId) !== String(previousPending.swipeId)
+                : null)
+          : null;
+        generationTrace("GENERATION_SOURCE_OBSERVED", previousPending, null, {
+          generation_id: typeof payload === "object"
+            ? payload?.generation_id ?? payload?.generationId ?? payload?.request_id ?? null
+            : null,
+          generation_type: generationKindName,
+          generation_source: typeof payload === "object"
+            ? payload?.source ?? payload?.generation_source ?? payload?.reason ?? "unknown"
+            : "unknown",
+          current_execution_id: currentExecution?.attempt ?? null,
+          target_message_id: payloadMessageId,
+          target_swipe_id: payloadSwipeId,
+          owner_changed: ownerChanged,
+          supersede_decision: previousPending ? "pending_intent_reviewed" : "none",
+          supersede_reason: previousPending
+            ? ownerChanged === true ? "target_owner_changed" : "target_owner_not_proven_changed"
+            : "no_pending_intent",
+        });
+        if (!isReroll && !isSwipeGeneration &&
+            (schedulerState.pendingGeneration || schedulerState.pendingSwipeGeneration))
+          return { skipped: true, reason: "generation-intent-already-pending" };
+        const kind = isSwipeGeneration ? "swipe" : "generation";
+        if (previousPending) {
+          previousPending.superseded = true;
+          generationTrace("GENERATION_INTENT_SUPERSEDED", previousPending, null, {
+            superseded_by_generation_type: kind,
+          });
+        }
+        schedulerState.pendingGeneration = null;
+        schedulerState.pendingSwipeGeneration = null;
         clearGenerationMarkers();
         const pending = {
           chatId: chat.current(),
@@ -3146,14 +4042,19 @@ export function createEventAnalysisCoordinator({
           generation_id: typeof payload === "object"
             ? payload?.generation_id ?? payload?.generationId ?? payload?.request_id ?? null
             : null,
-          generation_type: isSwipeGeneration ? "swipe" : "regenerate",
+          generation_type: generationKindName,
+          force: isReroll || isSwipeGeneration,
           ended: false,
+          finalFloorSeen: false,
+          settled: false,
+          intent_id: `generation-${++generationIntentSequence}`,
         };
         if (isSwipeGeneration) {
           schedulerState.pendingSwipeGeneration = pending;
         } else {
           schedulerState.pendingGeneration = pending;
         }
+        generationTrace("GENERATION_INTENT_CREATED", pending);
         return { skipped: true, reason: "generation-pending" };
       }
 
@@ -3213,10 +4114,8 @@ export function createEventAnalysisCoordinator({
         return { skipped: true, reason: type };
       }
       if (type === "GENERATION_STOPPED" || type === "GENERATION_CANCELLED") {
-        markGenerationTerminal(
-          schedulerState.pendingSwipeGeneration ? "swipe" : "generation",
-          schedulerState.pendingSwipeGeneration ?? schedulerState.pendingGeneration,
-        );
+        const pending = schedulerState.pendingSwipeGeneration ?? schedulerState.pendingGeneration;
+        markGenerationTerminal(pending ? generationKind(pending) : "generation", pending);
         clearPendingGeneration(
           event?.payload ?? null,
           currentSnapshot.entries[targetIndex] ?? null,
@@ -3224,10 +4123,23 @@ export function createEventAnalysisCoordinator({
         return { skipped: true, reason: "generation-not-rendered" };
       }
       if (type === "GENERATION_ENDED") {
-        if (schedulerState.pendingGeneration)
-          schedulerState.pendingGeneration.ended = true;
-        if (schedulerState.pendingSwipeGeneration)
-          schedulerState.pendingSwipeGeneration.ended = true;
+        const pending = schedulerState.pendingSwipeGeneration ?? schedulerState.pendingGeneration;
+        if (!pending) return { skipped: true, reason: "generation-ended-without-intent" };
+        if (!pending.ended) {
+          pending.ended = true;
+          generationTrace("GENERATION_END_SEEN", pending);
+        }
+        if (pending.finalFloorSeen && Number.isInteger(pending.finalFloorIndex)) {
+          try {
+            const endedTarget = await resolveFloorAtIndex({
+              __messageIndex: true,
+              index: pending.finalFloorIndex,
+            });
+            return settleGenerationForTarget(pending, endedTarget);
+          } catch {
+            // The next Character render will resolve the owner again and fail closed.
+          }
+        }
         return { skipped: true, reason: "generation-ended-awaiting-render" };
       }
       if (type === "MESSAGE_UPDATED" || type === "MESSAGE_EDITED" ||
@@ -3258,6 +4170,11 @@ export function createEventAnalysisCoordinator({
           }
           return { skipped: true, reason: "existing-swipe-eligibility" };
         }
+        const previousPending = schedulerState.pendingSwipeGeneration;
+        if (previousPending) {
+          previousPending.superseded = true;
+          generationTrace("GENERATION_INTENT_SUPERSEDED", previousPending);
+        }
         schedulerState.pendingSwipeGeneration = {
           chatId: chat.current(),
           messageId: typeof payload === "object"
@@ -3276,7 +4193,14 @@ export function createEventAnalysisCoordinator({
                 message_version: previousLifecycleEntry.message_version,
               }
             : null,
+          ended: false,
+          finalFloorSeen: false,
+          settled: false,
+          force: true,
+          generation_type: "swipe",
+          intent_id: `generation-${++generationIntentSequence}`,
         };
+        generationTrace("GENERATION_INTENT_CREATED", schedulerState.pendingSwipeGeneration);
         return { skipped: true, reason: "swipe-generation-pending" };
       }
       let target;
@@ -3305,34 +4229,8 @@ export function createEventAnalysisCoordinator({
         );
         return { skipped: true, reason: "generation-already-consumed" };
       }
-      const pendingForce =
-        pendingGenerationMatches(schedulerState.pendingGeneration, target) ||
-        pendingGenerationMatches(schedulerState.pendingSwipeGeneration, target);
       if (pendingGeneration) {
-        const kind = pendingGeneration === schedulerState.pendingSwipeGeneration
-          ? "swipe"
-          : "generation";
-        if (pendingForce) {
-          schedulerState.pendingGeneration = null;
-          schedulerState.pendingSwipeGeneration = null;
-          markGenerationTerminal(kind, pendingGeneration, target);
-          return await scheduleRenderedCharacter(target, {
-            force: true,
-            reason: "reroll",
-            generation: pendingGeneration,
-          });
-        }
-        if (pendingGeneration.ended) {
-          schedulerState.pendingGeneration = null;
-          schedulerState.pendingSwipeGeneration = null;
-          markGenerationTerminal(kind, pendingGeneration);
-          rememberSchedulerKey(
-            schedulerState.observedFloorKeys,
-            floorExecutionKey(target.version),
-          );
-          return { skipped: true, reason: "generation-without-new-floor" };
-        }
-        return { skipped: true, reason: "generation-awaiting-new-floor" };
+        return settleGenerationForTarget(pendingGeneration, target);
       }
       try {
         return await scheduleRenderedCharacter(target, { reason: type });
@@ -3409,10 +4307,9 @@ export function createEventAnalysisCoordinator({
       target.index,
       { preserveTarget: true },
     );
-    await store.saveFloor(target.index, target.swipeId, {
-      ...target.floorData,
-      events,
-      snapshot: null,
+    await commitFloorPatch(target, "event", {events}, {
+      operation_type: "event-edit-patch",
+      assertCurrent: () => chat.assert(mutationToken),
     });
     chat.assert(mutationToken);
     invalidatedFloors.delete(floorExecutionKey(target.version));
@@ -3429,10 +4326,9 @@ export function createEventAnalysisCoordinator({
       target.index,
       { preserveTarget: true },
     );
-    await store.saveFloor(target.index, target.swipeId, {
-      ...target.floorData,
-      events,
-      snapshot: null,
+    await commitFloorPatch(target, "event", {events}, {
+      operation_type: "event-delete-patch",
+      assertCurrent: () => chat.assert(mutationToken),
     });
     chat.assert(mutationToken);
     invalidatedFloors.delete(floorExecutionKey(target.version));

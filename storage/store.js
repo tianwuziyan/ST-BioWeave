@@ -878,10 +878,11 @@ export function createStore(adapter, boundary = null) {
     if (version?.chat_id && version.chat_id !== token.chatId)
       throw new Error("CHAT_SCOPE_MISMATCH");
     const safeData = cloneForStorage(normalizeFloorData(data));
-    if (typeof adapter.saveFloorBioWeave !== "function") {
+    const floorWriter = adapter.saveFloorSlot ?? adapter.saveFloorBioWeave;
+    if (typeof floorWriter !== "function") {
       throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
     }
-    await adapter.saveFloorBioWeave(
+    const persistenceResult = await floorWriter.call(adapter,
       messageId,
       targetSwipeId,
       safeData,
@@ -890,6 +891,24 @@ export function createStore(adapter, boundary = null) {
       traceContext,
     );
     assertToken(adapter, boundary, token);
+    return persistenceResult;
+  }
+
+  async function readAuthoritativeFloor(messageId, swipeId = 0, expectedVersion = null) {
+    const targetSwipeId = validSwipeId(swipeId);
+    const reader = adapter.readAuthoritativeFloor ?? adapter.readOfficialFloorSlot;
+    if (typeof reader !== "function") return getFloor(messageId, targetSwipeId);
+    const token = captureToken(adapter, boundary);
+    const result = await reader.call(adapter, {
+      messageIndex: messageId,
+      message_id: expectedVersion?.message_id,
+      swipeId: targetSwipeId,
+      swipe_id: targetSwipeId,
+      expectedChatId: token.chatId,
+      expectedVersion,
+    });
+    assertToken(adapter, boundary, token);
+    return cloneForStorage(result?.floor ?? result ?? emptyFloor());
   }
 
   function getCurrentChatOwnerSnapshot(chatId = currentChatId(adapter, boundary)) {
@@ -1038,6 +1057,7 @@ export function createStore(adapter, boundary = null) {
     getFloorOwner,
     getActiveFloorEvents,
     saveFloor,
+    readAuthoritativeFloor,
     getCurrentChatOwnerSnapshot,
     readChatOwnerSnapshot,
     applyBioWeavePlanToCurrent,

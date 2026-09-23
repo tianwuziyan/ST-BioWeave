@@ -512,6 +512,18 @@ test("SillyTavern adapter writes per-swipe data to the host message", async () =
   }
 });
 
+test("undefined host save result is not reported as confirmed", async () => {
+  const context = {chatId: "chat-save-state", saveChat: async () => undefined};
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const result = await createSillyTavernAdapter().saveChat({expectedChatId: context.chatId});
+    assert.equal(result.commitState, "unknown");
+    assert.equal(result.status, "unknown");
+  } finally {
+    delete globalThis.SillyTavern;
+  }
+});
+
 test("SillyTavern adapter preserves object-indexed swipe_info storage", async () => {
   const context = {
     chatId: "chat-a",
@@ -874,6 +886,206 @@ test("SillyTavern Floor persistence trace records a Floor Version mismatch befor
       /STALE_FLOOR_VERSION/,
     );
     assert.equal(trace.some(entry => entry.stage === "WORLD_OWNER_VERSION_CHECK" && entry.result === "mismatch"), true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("official owner convergence saves the current host chat before the Floor write", async () => {
+  const context = {
+    chatId: "chat-prewrite-convergence",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "convergence-floor",
+      floor: 6,
+      role: "assistant",
+      content: "新正文",
+    }],
+  };
+  let authoritative = [
+    {chat_metadata: {}},
+    {...structuredClone(context.chat[0]), content: "旧正文"},
+  ];
+  let hostSaveCalls = 0;
+  context.saveChat = async () => {
+    hostSaveCalls += 1;
+    authoritative = [{chat_metadata: {}}, ...structuredClone(context.chat)];
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const trace = [];
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const version = await floorVersion({
+      chatId: context.chatId,
+      messageId: "convergence-floor",
+      floor: 6,
+      swipeId: 0,
+      text: "新正文",
+    });
+    const value = {
+      floor_version: version,
+      world_model: {species: [{name: "人类"}]},
+    };
+    await adapter.saveFloorBioWeave(0, 0, value, context.chatId, version, {
+      domain: "world",
+      chat_id: context.chatId,
+      message_id: "convergence-floor",
+      swipe_id: 0,
+      trigger: "reroll",
+      generation_settled: true,
+    });
+    assert.equal(hostSaveCalls, 0);
+    assert.equal(trace.filter(entry => entry.stage === "HOST_AUTHORITATIVE_SAVE_BEGIN").length, 0);
+    assert.equal(trace.filter(entry => entry.stage === "OFFICIAL_SAVE_BEGIN").length, 1);
+    assert.equal(authoritative[1].extra.bioweave.world_model.species[0].name, "人类");
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("official Floor writes do not use saveChatConditional as convergence proof", async () => {
+  const context = {
+    chatId: "chat-host-convergence",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "host-convergence-floor", floor: 6, role: "assistant", mes: "最终正文", swipes: ["最终正文"], swipe_id: 0, swipe_info: [{}]}],
+    async saveChat() { throw new Error("HOST_SAVE_MUST_NOT_BE_USED"); },
+  };
+  let authoritative = [{chat_metadata: {}}, structuredClone(context.chat[0])];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const version = await floorVersion({chatId: context.chatId, messageId: "host-convergence-floor", floor: 6, swipeId: 0, text: "最终正文"});
+    await adapter.saveFloorBioWeave(0, 0, {floor_version: version, world_model: {species: [{name: "人类"}]}}, context.chatId, version, {
+      domain: "world", chat_id: context.chatId, message_id: "host-convergence-floor", swipe_id: 0, generation_settled: true,
+    });
+    assert.equal(authoritative[1].swipe_info[0].extra.bioweave.world_model.species[0].name, "人类");
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("World and Event official writes preserve sibling fields in host and server Swipe 0 slots", async () => {
+  const context = {
+    chatId: "chat-sibling-preservation",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "sibling-floor",
+      floor: 6,
+      role: "assistant",
+      mes: "正文",
+      swipes: ["正文"],
+      swipe_id: 0,
+      swipe_info: [{extra: {
+        bioweave: {
+          analysis: {status: "success"},
+          events: [{id: "event-1"}],
+        },
+      }}],
+    }],
+    async saveChat() {
+      authoritative = [{chat_metadata: {}}, ...structuredClone(context.chat)];
+    },
+  };
+  let authoritative = [
+    {chat_metadata: {}},
+    {
+      ...structuredClone(context.chat[0]),
+      swipe_info: [{extra: {
+        floor_version: null,
+        bioweave: {
+          floor_version: null,
+          analysis: {status: "success"},
+          events: [{id: "event-1"}],
+        },
+      }}],
+    },
+  ];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.chat) {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const trace = [];
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const version = await floorVersion({
+      chatId: context.chatId,
+      messageId: "sibling-floor",
+      floor: 6,
+      swipeId: 0,
+      text: "正文",
+    });
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {floor_version: version, world_model: {species: [{name: "人类"}]}, world_model_meta: {source: "world"}},
+      context.chatId,
+      version,
+      {domain: "world", chat_id: context.chatId, message_id: "sibling-floor", swipe_id: 0},
+    );
+    const worldSlot = context.chat[0].swipe_info[0].extra.bioweave;
+    assert.equal(worldSlot.analysis.status, "success");
+    await adapter.saveFloorBioWeave(
+      0,
+      0,
+      {
+        floor_version: version,
+        analysis: {status: "success", source: "event"},
+        events: [{id: "event-2"}],
+        character_registry: {schema_version: 1, entities: {}},
+      },
+      context.chatId,
+      version,
+      {domain: "event", chat_id: context.chatId, message_id: "sibling-floor", swipe_id: 0},
+    );
+    const slot = authoritative[1].swipe_info[0].extra.bioweave;
+    assert.deepEqual(slot.world_model, {species: [{name: "人类"}]});
+    assert.deepEqual(slot.events, [{id: "event-2"}]);
+    assert.deepEqual(context.chat[0].swipe_info[0].extra.bioweave.world_model, slot.world_model);
+    assert.deepEqual(context.chat[0].swipe_info[0].extra.bioweave.events, slot.events);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;

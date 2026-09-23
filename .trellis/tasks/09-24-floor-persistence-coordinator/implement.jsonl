@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe ownership, version and stale-write contract"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Persistent-field ownership and lifecycle invalidation contract"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Event/Character persistence and derived-state contract"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World persistence and readiness boundaries"}

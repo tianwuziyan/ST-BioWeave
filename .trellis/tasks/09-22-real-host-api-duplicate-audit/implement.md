@@ -77,3 +77,69 @@ syntax checks, and diff checks are required before handoff.
   Event failure status and traces without recording raw body or credentials.
 - [ ] Real-host validation remains pending for UI speed, persisted World
   display, and successful Event persistence after the strict contract fix.
+
+## Event empty-result audit（2026-09-23）
+
+- [x] Confirmed that the attached `<think>...</think>` plus trailing JSON is
+  not accepted by the strict Event parser as a whole; the parser accepts the
+  JSON-only payload `{"schema_version":1,"events":[]}` and has no parse-error
+  fallback to `events=[]`.
+- [x] Added safe raw-shape, parse, validation, normalization, empty-result,
+  canonical expectation/actual, and UI-ready diagnostics without recording
+  raw narrative or reasoning text.
+- [x] Made canonical Character readiness compare the expected normalized Event
+  count/IDs with the persisted current Floor, so a non-empty result that reads
+  back as empty fails the Event Stage and uses its retry budget.
+- [x] Kept a valid empty Event result ready and made the Character page show an
+  explicit successful empty state instead of looking unanalyzed.
+- [x] Clarified the existing Event contract so current-floor physical symptoms
+  remain eligible even when their cause is described in Recent Story; this does
+  not turn every empty Event result into a retry.
+
+## Host convergence and retry configuration（2026-09-23）
+
+- [x] Confirmed from the current SillyTavern release source that
+  `CHARACTER_MESSAGE_RENDERED` can precede the host's awaited
+  `saveChatConditional()` boundary.
+- [x] When the live host Floor Version still matches but the official owner is
+  an older version, invoke the current host `saveChat()` boundary once and
+  re-read the official owner before writing the BioWeave Floor slot. No delay,
+  polling, forced overwrite, or stale-guard bypass is used.
+- [x] Keep the already validated World result within the same Stage attempt
+  after successful host convergence; a new World AI request is only used when
+  the normal Stage retry policy is actually reached.
+- [x] Resolve `retry_count` from the persisted global
+  `api_request_settings` source for World, Event, and manual World runs;
+  preserve `0` as a valid value and expose the resolved configuration in the
+  safe persistence trace.
+- [x] Distinguish execution, Stage/retry, and persistence invocation identity
+  in diagnostics.
+- [ ] Real SillyTavern acceptance remains pending for host convergence and
+  post-generation persistence behavior.
+
+## Automatic pre-World host convergence prerequisite（2026-09-23）
+
+- [x] Automatic Character/Event analysis now verifies the authoritative Floor
+  owner before any World AI request; an older official owner may converge once
+  through the live host `saveChat()` boundary and official read-back.
+- [x] Owner/version changes and host-save/read-back failures fail closed before
+  World AI and do not consume the World/Event Stage retry budget.
+- [x] Manual World entry points and existing persistence-layer convergence
+  fallback remain unchanged; focused regression coverage is required for
+  official-old, host-converged, owner-changed, save-failed, and successful
+  automatic paths.
+
+## Automatic generation settle barrier（2026-09-23）
+
+- [x] Automatic reroll and new-Swipe intents require both the final Character
+  Floor render and `GENERATION_ENDED`, regardless of event order.
+- [x] Duplicate lifecycle events are consumed once; a newer intent supersedes
+  the previous intent and existing-Swipe switches do not create a wait.
+- [x] Added safe intent lifecycle traces for creation, final-Floor observation,
+  end observation, waiting, settlement, and supersession.
+- [x] Pre-settlement paths cannot enter the automatic prerequisite, World
+  stage, AI, or terminal-attempt persistence path.
+- [x] Official-owner all-null diagnostics during an explicitly unsettled
+  generation are not classified as a true stale-owner change.
+- [ ] Real-host acceptance remains required for both lifecycle orderings and
+  host-specific event payloads.

@@ -186,7 +186,7 @@ The canonical normalized global fields in `storage/schema.js` are:
 | `api_profiles` | Map of Profile IDs to `{profile_id, name, provider, api_url, model, context_size, max_output_tokens, temperature, secret_ref}` |
 | `api_model_caches` | Map of existing Profile IDs to `{profile_id, models[], refreshed_at}`; global model-list cache |
 | `assignments` | `{world_analysis, event_analysis, projection, history_scan}`; each value is `default`, `sillytavern`, a stable Profile ID, or `null` |
-| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3 |
+| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional complete World/Event stage attempts after the initial attempt; it is independent from `retry_failed_analysis`. |
 | `analysis_prompt` | `{system_top, task, input_prefix, input_suffix, system_bottom, labels{character, worldbooks, recent_story, external_memory}}` |
 | `recent_story_global` | `{regex_rules[]}` only; global rules apply before Chat-local rules |
 | `show_floating_launcher` | Boolean global UI preference; controls the page Floating Launcher only |
@@ -561,6 +561,27 @@ and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 ### 5.4 Floor write commit and authoritative read-back
 
 Every Floor write is a merge of one exact Character message/active Swipe slot.
+Ordinary World, Event/Character, Projection, Manual, and explicitly approved
+terminal writes are submitted through `FloorPersistenceCoordinator` as an
+owner-scoped patch. Its transaction key is the complete six-field Floor
+Version plus Chat scope, and transactions for the same owner slot are
+serialized. Before dispatch it reacquires the live owner, active Swipe, and
+current Floor Version; a changed owner, Chat, Swipe, Version, execution, or
+cancellation fails closed without a write. The coordinator reads the latest
+authoritative slot, applies only the owner's allowlist, and records safe
+`FLOOR_TX_*` diagnostics. These diagnostics are runtime traces, not business
+events and do not trigger UI rendering.
+
+The owner allowlists are World (`world_model`, `world_model_meta`),
+Event/Character (`analysis`, `events`, `character_registry`), and Projection
+(`snapshot`, `projection_timeline`). Clear, restore, migration, and lifecycle
+root invalidation remain explicit low-level operations with their own guards;
+they are not a second ordinary patch path. A successful `saveFloor()` Promise
+does not by itself claim durable success: the coordinator requires read-back of
+the expected owner patch, preservation of every pre-existing sibling root, and
+a matching current Floor Version before returning `commitState: "confirmed"`.
+Real SillyTavern late-writer/F5 durability still requires host acceptance.
+
 When the SillyTavern source-owner capability is available, the adapter reads the
 latest authoritative Chat owner first, verifies the target `Floor Version` and
 active Swipe, merges only `message.extra.bioweave` or the exact

@@ -363,6 +363,9 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
             '<p>现有 Tracking Subject 与历史事件仍然保留，可重新分析当前楼层。</p></div>'
           : status.state === 'failed'
             ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>' + '<p>请稍后重试。如有旧的成功事件，它们仍然有效。</p></div>'
+            : status.state === 'success' && Number(status.event_count) === 0
+              ? '<div class="bioweave-card bioweave-empty"><b>本楼分析完成，未发现 Biological Event。</b>' +
+                '<p>这是当前楼层的有效空结果；已有的历史人物资料仍按当前有效 Floor 数据显示。</p></div>'
             : '<div class="bioweave-card bioweave-empty"><b>当前没有需要事件追踪的角色。</b>' +
               '<p>当前没有进入 Tracking Subject Registry 的角色。</p>' +
               '<dl class="bioweave-data-list bioweave-tracking-counts">' +

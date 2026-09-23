@@ -312,6 +312,24 @@ and the ordinary-message/per-Swipe slot distinction. Callers do not
 double-write host fields, directly mutate `message.extra` or
 `message.swipe_info[swipe_id].extra`, or write a Chat-level Floor history map.
 
+Ordinary writes are submitted to the single `FloorPersistenceCoordinator` as
+owner-scoped patches. World may patch only `world_model` and
+`world_model_meta`; Event/Character may patch only `analysis`, `events`, and
+`character_registry`; Projection may patch only `snapshot` and
+`projection_timeline`. The coordinator serializes the same Chat/message/Floor/
+Swipe/Version key, reacquires the live owner immediately before dispatch,
+merges the latest authoritative slot, and confirms only after official
+readback plus sibling audit. `FLOOR_TX_*` traces are diagnostics, not business
+events. Clear, restore, migration, and explicit lifecycle invalidation remain
+special low-level operations with separate guards.
+
+Terminal failure/cancellation patches are checked again at dispatch time and
+cannot overwrite an already confirmed Event `analysis.status=success` from
+the same or a later attempt on the same Floor Version. A newer terminal
+failure may still record the outcome of a later formal reanalysis, and a later
+valid Event success may replace an earlier terminal failure through the normal
+latest-slot merge.
+
 Successful analysis replaces the existing owner slot with the complete
 current-version result. Failed, cancelled, stale-Chat, or invalid responses
 must not commit new Events or derived facts. Preserving a prior successful

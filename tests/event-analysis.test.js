@@ -172,6 +172,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /即时症状/);
   assert.match(prompt, /普通送汤、食物、补品/);
   assert.match(prompt, /静态人物描写/);
+  assert.match(prompt, /诱因发生在 Recent Story/);
   assert.match(prompt, /症状/);
   assert.match(prompt, /actual reproductive exposure/);
   assert.match(prompt, /biological_context/);
@@ -756,6 +757,19 @@ test('Event parser accepts zero, one, and multiple Events while rejecting duplic
       error?.error_path ===
         '$.events[1].pregnancy_relevance.gestational_subject_ids' &&
       error?.message === 'EVENT_SCHEMA_DUPLICATE_GESTATIONAL_SUBJECT_EVENT',
+  );
+});
+
+test('Event parser never converts a rejected think-plus-JSON response into events=[]', () => {
+  const raw = '<think>private reasoning</think>\n{"schema_version":1,"events":[]}';
+  assert.throws(
+    () => parseEventAnalysisResponse(raw),
+    error => error?.message === 'EVENT_RESPONSE_JSON_INVALID' &&
+      error?.analysis_stage === 'response_parse',
+  );
+  assert.deepEqual(
+    parseEventAnalysisResponse('{"schema_version":1,"events":[]}'),
+    {schema_version: 1, events: []},
   );
 });
 

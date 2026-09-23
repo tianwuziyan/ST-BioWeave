@@ -429,7 +429,8 @@ test('automatic World Full phase owns World busy state before Event Analysis', a
     payload: {state: 'running', phase: 'world_full', mode: 'full', trigger: 'auto-full'},
   });
   const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
-  assert.match(worldMarkup, /disabled[^>]*>分析中…</);
+  assert.match(worldMarkup, /data-bioweave-action="world-model-full"[^>]*>分析中…</);
+  assert.doesNotMatch(worldMarkup, /data-bioweave-action="world-model-full"[^>]*disabled/);
   fixture.app.go('characters');
   const charactersMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
   assert.match(charactersMarkup, /等待世界分析完成…/);

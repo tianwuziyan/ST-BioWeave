@@ -82,6 +82,8 @@ function createFixture({
   saveChatMetadataErrorAt = 0,
   saveChatResponse = undefined,
   saveChatError = null,
+  convergeFloorOwner = async () => ({converged: false, source: "fixture-authoritative-owner"}),
+  retryCount = 0,
   notify = null,
 } = {}) {
   const listeners = new Map();
@@ -96,7 +98,7 @@ function createFixture({
       },
     ],
     chatMetadata: {},
-    extensionSettings: { bioweave: {} },
+    extensionSettings: { bioweave: { api_request_settings: { retry_count: retryCount } } },
     eventTypes: {
       CHAT_CHANGED: "chat-changed",
       MESSAGE_UPDATED: "message-updated",
@@ -127,6 +129,7 @@ function createFixture({
   };
   let saveChatMetadataCalls = 0;
   let saveFloorCalls = 0;
+  let convergeFloorOwnerCalls = 0;
   const apiRequests = [];
   const adapter = {
     getContext: () => context,
@@ -168,6 +171,14 @@ function createFixture({
         message.extra.bioweave = structuredClone(value);
       }
     },
+    ...(typeof convergeFloorOwner === "function"
+      ? {
+          async convergeFloorOwner(options) {
+            convergeFloorOwnerCalls += 1;
+            return convergeFloorOwner(options, convergeFloorOwnerCalls);
+          },
+        }
+      : {}),
   };
   if (rawApiResponse !== null) {
     context.chatCompletionSettings = {
@@ -226,6 +237,9 @@ function createFixture({
     storyTimeDebug,
     storyTimeTrace,
   });
+  runtime.store.profileStore.getApiRequestSettings = () => ({
+    retry_count: retryCount,
+  });
   return {
     runtime,
     adapter,
@@ -235,6 +249,7 @@ function createFixture({
     calls: () => calls,
     saveChatMetadataCalls: () => saveChatMetadataCalls,
     saveFloorCalls: () => saveFloorCalls,
+    convergeFloorOwnerCalls: () => convergeFloorOwnerCalls,
     emit(type, payload) {
       listeners.get(type)?.(payload);
     },
@@ -2886,6 +2901,7 @@ test("reanalyzing an edited Floor never uses its stale own result as previous st
 test("failed force refresh preserves the previous successful Events and records failure", async () => {
   let calls = 0;
   const fixture = createFixture({
+    retryCount: 0,
     analyzer: {
       async analyzeFloor() {
         calls += 1;
@@ -3037,6 +3053,132 @@ function appendCharacter(fixture, messageId, floor, content = messageId) {
   fixture.emit("character-message-rendered", { message_id: messageId });
 }
 
+test("World stage retries AI failure within one execution and then permits Event", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 2,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        if (worldCalls === 1) throw Object.assign(new Error("WORLD_SCHEMA"), {
+          code: "WORLD_SCHEMA_INVALID",
+          analysis_stage: "schema_validation",
+        });
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 1);
+  const traces = fixture.runtime.getPersistenceTrace().sequence;
+  assert.deepEqual(
+    traces.filter(item => item.domain === "world" && item.stage === "WORLD_STAGE_ATTEMPT_BEGIN")
+      .map(item => [item.attempt, item.retry_index, item.max_retries]),
+    [[1, 0, 2], [2, 1, 2]],
+  );
+  fixture.runtime.destroy();
+});
+
+test("Event domain validation failure retries the Event stage without repeating World", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 2,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        if (eventCalls === 1) {
+          const error = new Error("EVENT_DOMAIN_VALIDATION_FAILED");
+          error.code = "EVENT_DOMAIN_VALIDATION_FAILED";
+          error.analysis_stage = "schema_validation";
+          throw error;
+        }
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  fixture.runtime.destroy();
+});
+
+test("retry_count is an additional retry limit and exhaustion blocks Event", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 2,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        throw Object.assign(new Error("WORLD_REQUEST_FAILED"), {
+          code: "REQUEST_TIMEOUT",
+          analysis_stage: "api_request",
+        });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
+    /WORLD_MODEL_UNAVAILABLE/u,
+  );
+  assert.equal(worldCalls, 3);
+  assert.equal(eventCalls, 0);
+  fixture.runtime.destroy();
+});
+
+test("manual World Patch uses the same additional retry policy", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    messages: [
+      { message_id: "patch-owner-manual", floor: 1, content: "已有世界", role: "assistant" },
+      { message_id: "patch-target-manual", floor: 2, content: "补充世界规则", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatch() {
+        patchCalls += 1;
+        if (patchCalls === 1) throw Object.assign(new Error("PATCH_SCHEMA"), {
+          code: "WORLD_PATCH_SCHEMA_INVALID",
+          analysis_stage: "schema_validation",
+        });
+        return {schema_version: 1, add: {}, update: {}};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({
+      chatId: "chat-runtime",
+      messageId: "patch-owner-manual",
+      floor: 1,
+      text: "已有世界",
+    }),
+    world_model: normalizeWorldModel({schema_version: 1, species: [{name: "已有世界"}]}),
+  });
+  await fixture.runtime.analyzeCurrentWorldModelPatch({analysisInput: {}, trigger: "manual-patch"});
+  assert.equal(patchCalls, 2);
+  fixture.runtime.destroy();
+});
+
 test("Character counter ignores User Floors and ordinary edits", async () => {
   const fixture = createFixture({
     messages: [{ message_id: "character-1", floor: 2, content: "一", role: "assistant" }],
@@ -3082,14 +3224,43 @@ test("normal generation uses Character counter, while regenerate forces once", a
   await settle();
   assert.equal(fixture.calls(), 0);
   fixture.emit("generation-started", { genType: "regenerate", message_id: "generation-character" });
+  fixture.emit("generation-ended", { message_id: "generation-character" });
   fixture.emit("character-message-rendered", { message_id: "generation-character" });
   await settle();
   assert.equal(fixture.calls(), 0);
   fixture.emit("generation-started", { genType: "regenerate", message_id: "generation-character" });
   fixture.context.chat[0].content = "重新生成正文";
+  fixture.emit("generation-ended", { message_id: "generation-character" });
   fixture.emit("character-message-rendered", { message_id: "generation-character" });
   await settle();
   assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("normal generation also waits for the settle barrier", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "normal-barrier", floor: 1, content: "原文", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel() {
+        calls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", "normal");
+  fixture.context.chat[0].content = "普通生成最终正文";
+  fixture.emit("character-message-rendered", { message_id: "normal-barrier" });
+  await settle();
+  assert.equal(calls, 0);
+  fixture.emit("generation-ended", { message_id: "normal-barrier" });
+  await settle();
+  assert.equal(calls, 1);
   fixture.runtime.destroy();
 });
 
@@ -3102,12 +3273,84 @@ test("real ST reroll order uses positional generation type and renders after GEN
 
   fixture.emit("generation-started", "regenerate");
   fixture.emit("generation-ended", 1);
+  await settle();
+  assert.equal(fixture.calls(), 0);
   fixture.context.chat[0].content = "真实重新生成后的正文";
   fixture.emit("character-message-rendered", 0, "regenerate");
   await settle();
 
   assert.equal(fixture.calls(), 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+  fixture.runtime.destroy();
+});
+
+test("generation settle barrier supports CMR before ENDED without World AI or terminal persistence", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "barrier-cmr-first", floor: 1, content: "原文", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "barrier-cmr-first" });
+  fixture.context.chat[0].content = "最终正文";
+  fixture.emit("character-message-rendered", { message_id: "barrier-cmr-first" });
+  await settle();
+  assert.equal(worldCalls, 0);
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration.finalFloorSeen, true);
+  fixture.emit("generation-ended", { message_id: "barrier-cmr-first" });
+  await settle();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 1);
+  const stages = fixture.runtime.getPersistenceTrace().sequence.map(entry => entry.stage);
+  for (const stage of [
+    "GENERATION_INTENT_CREATED",
+    "GENERATION_FINAL_FLOOR_SEEN",
+    "GENERATION_SETTLE_WAITING",
+    "GENERATION_END_SEEN",
+    "GENERATION_SETTLED",
+  ]) assert.ok(stages.includes(stage), stage);
+  fixture.runtime.destroy();
+});
+
+test("settled generation consumes duplicate lifecycle events once and supersedes an older intent", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    messages: [{ message_id: "barrier-supersede", floor: 1, content: "原文", role: "assistant" }],
+    analyzer: {
+      async analyzeFloor() {
+        calls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "barrier-supersede", generation_id: "old" });
+  fixture.emit("generation-started", { genType: "regenerate", message_id: "barrier-supersede", generation_id: "new" });
+  fixture.context.chat[0].content = "新正文";
+  fixture.emit("generation-ended", { message_id: "barrier-supersede", generation_id: "new" });
+  fixture.emit("character-message-rendered", { message_id: "barrier-supersede" });
+  await settle();
+  fixture.emit("generation-ended", { message_id: "barrier-supersede", generation_id: "new" });
+  fixture.emit("character-message-rendered", { message_id: "barrier-supersede" });
+  await settle();
+  assert.equal(calls, 1);
+  const stages = fixture.runtime.getPersistenceTrace().sequence.map(entry => entry.stage);
+  assert.equal(stages.filter(stage => stage === "GENERATION_SETTLED").length, 1);
+  assert.ok(stages.includes("GENERATION_INTENT_SUPERSEDED"));
   fixture.runtime.destroy();
 });
 
@@ -3261,6 +3504,7 @@ test("existing Swipe reuse makes no API call, pending Swipe generation analyzes 
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
   fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true });
   fixture.context.chat[0].swipes[1] = "新生成定型";
+  fixture.emit("generation-ended", { message_id: message.message_id, swipe_id: 1 });
   fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
   await settle();
   assert.equal(fixture.calls(), callsBeforeSwitch + 1);
@@ -3394,6 +3638,7 @@ test("paused reroll success clears the due state", async () => {
   fixture.emit("character-message-rendered", { message_id: "paused-reroll" });
   await settle();
   fixture.emit("generation-started", { genType: "regenerate", message_id: "paused-reroll" });
+  fixture.emit("generation-ended", { message_id: "paused-reroll" });
   fixture.context.chat[0].content = "重新生成";
   fixture.emit("character-message-rendered", { message_id: "paused-reroll" });
   await settle();
@@ -3414,6 +3659,7 @@ test("paused reroll failure remains paused", async () => {
   fixture.emit("character-message-rendered", { message_id: "paused-reroll-failed" });
   await settle();
   fixture.emit("generation-started", { genType: "regenerate", message_id: "paused-reroll-failed" });
+  fixture.emit("generation-ended", { message_id: "paused-reroll-failed" });
   fixture.context.chat[0].content = "重新生成失败";
   fixture.emit("character-message-rendered", { message_id: "paused-reroll-failed" });
   await settle();
@@ -3501,6 +3747,554 @@ test("World persistence without a renderable UI model blocks Character/Event ana
   assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 0);
   assert.equal(fixture.runtime.store.getFloor(0).world_model.species.length, 0);
+  fixture.runtime.destroy();
+});
+
+test("World canonical UI readiness failure retries the complete World stage", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: worldCalls === 1 ? [] : [{ name: "可显示世界" }],
+        });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 1);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_FAILED" &&
+    ["world_readback", "world_view_model", "world_ui_ready"].includes(item.failure_stage)));
+  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
+  fixture.runtime.destroy();
+});
+
+test("World stage retry repeats the complete AI-to-ready chain after persistence failure", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let saveCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook: async () => {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: `世界-${worldCalls}` }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 1);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.deepEqual(
+    trace.filter(item => item.stage === "WORLD_STAGE_ATTEMPT_BEGIN")
+      .map(item => [item.retry_index, item.max_retries]),
+    [[0, 1], [1, 1]],
+  );
+  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_RETRY_SCHEDULED"));
+  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
+  fixture.runtime.destroy();
+});
+
+test("official version convergence mismatch retries the complete World stage", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let saveCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook: async ({ value }) => {
+      saveCalls += 1;
+      if (saveCalls !== 1) return;
+      const actual = { ...value.floor_version, content_hash: "server-not-yet-converged" };
+      const error = new Error("STALE_FLOOR_VERSION");
+      error.code = "STALE_FLOOR_VERSION";
+      error.version_check_source = "official_owner";
+      error.version_audit = {
+        expected: value.floor_version,
+        actual,
+        content_hash_match: false,
+        mismatch_fields: ["content_hash"],
+      };
+      throw error;
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: `世界-${worldCalls}` }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 1);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(sequence.some(item => item.stage === "WORLD_VERSION_MISMATCH_CLASSIFIED" &&
+    item.classification === "temporary_server_convergence" && item.retryable === true));
+  assert.deepEqual(
+    sequence.filter(item => item.stage === "WORLD_AI_ATTEMPT_BEGIN").map(item => item.retry_index),
+    [0, 1],
+  );
+  fixture.runtime.destroy();
+});
+
+test("automatic analysis does not use saveChat convergence before World AI", async () => {
+  const order = [];
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    convergeFloorOwner: async () => {
+      order.push("converge");
+      return {converged: true};
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        order.push("world");
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        order.push("event");
+        eventCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    {__messageIndex: true, index: 0},
+    {force: true, reason: "automatic"},
+  );
+  assert.deepEqual(order, ["world", "event"]);
+  assert.equal(fixture.convergeFloorOwnerCalls(), 0);
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 1);
+  fixture.runtime.destroy();
+});
+
+test("automatic analysis input readiness does not consume a Stage retry for official lag", async () => {
+  let worldCalls = 0;
+  const fixture = createFixture({
+    retryCount: 3,
+    convergeFloorOwner: async () => {
+      throw new Error("OLD_CONVERGENCE_PATH_MUST_NOT_RUN");
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "不应请求" }] });
+      },
+      async analyzeFloor() { return {events: []}; },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor(
+    {__messageIndex: true, index: 0},
+    {force: true, reason: "automatic"},
+  );
+  assert.equal(worldCalls, 1);
+  assert.equal(fixture.convergeFloorOwnerCalls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("true owner change after an official version mismatch stops without another World persistence path", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let saveCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook: async ({ value }) => {
+      saveCalls += 1;
+      if (saveCalls !== 1) return;
+      fixture.context.chat[0].content = "正文已真正变化";
+      const error = new Error("STALE_FLOOR_VERSION");
+      error.code = "STALE_FLOOR_VERSION";
+      error.version_check_source = "official_owner";
+      error.version_audit = {
+        expected: value.floor_version,
+        actual: { ...value.floor_version, content_hash: "old-server-version" },
+        content_hash_match: false,
+        mismatch_fields: ["content_hash"],
+      };
+      throw error;
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    error => error?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" &&
+      error?.cause?.code === "STALE_FLOOR_VERSION",
+  );
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
+  assert.equal(saveCalls, 1);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(sequence.some(item => item.stage === "WORLD_VERSION_MISMATCH_CLASSIFIED" &&
+    item.classification === "true_owner_change" && item.retryable === false));
+  assert.deepEqual(
+    sequence.filter(item => item.stage === "WORLD_STAGE_ATTEMPT_BEGIN").map(item => item.retry_index),
+    [0],
+  );
+  fixture.runtime.destroy();
+});
+
+test("World stage retry exhaustion never starts Character/Event", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorError: "ST_FLOOR_STORAGE_UNAVAILABLE",
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), error =>
+    error?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED");
+  assert.equal(worldCalls, 2);
+  assert.equal(eventCalls, 0);
+  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(
+    item => item.stage === "WORLD_STAGE_RETRY_EXHAUSTED" && item.retry_index === 1,
+  ));
+  fixture.runtime.destroy();
+});
+
+test("Event stage retry repeats Event only after World is ready", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let eventSaveFailed = false;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook: async ({ value }) => {
+      if (value?.analysis && !eventSaveFailed) {
+        eventSaveFailed = true;
+        throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
+      }
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(
+    item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED",
+  ));
+  fixture.runtime.destroy();
+});
+
+test("Event REQUEST_TIMEOUT retries the complete Event stage without rerunning World", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        if (eventCalls === 1) {
+          throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+            code: "REQUEST_TIMEOUT",
+            diagnosticCode: "timeout",
+            retryable: false,
+            analysis_stage: "api_request",
+          });
+        }
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED" &&
+    item.retry_index === 0 && item.failure_code === "REQUEST_TIMEOUT" &&
+    item.retryable === true && item.retry_decision === "retry"));
+  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED" &&
+    item.next_retry_index === 1));
+  assert.ok(trace.some(item => item.stage === "EVENT_AI_ATTEMPT_BEGIN" &&
+    item.retry_index === 1));
+  assert.equal(trace.filter(item => item.stage === "WORLD_SAVE_BEGIN").length, 1);
+  fixture.runtime.destroy();
+});
+
+test("Event timeout retry exhausts at the configured additional retry limit", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+          code: "REQUEST_TIMEOUT",
+          diagnosticCode: "timeout",
+          retryable: false,
+          analysis_stage: "api_request",
+        });
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_TIMEOUT/u);
+  assert.equal(eventCalls, 2);
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.match(status.safe_error_summary, /已耗尽本阶段重试次数/u);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_EXHAUSTED" &&
+    item.retry_index === 1));
+  const exhausted = trace.find(item => item.stage === "EVENT_STAGE_RETRY_EXHAUSTED");
+  assert.equal(trace.filter(item => item.seq > exhausted.seq && item.stage === "WORLD_SAVE_BEGIN").length, 0);
+  fixture.runtime.destroy();
+});
+
+test("retry_count zero does not retry an Event timeout", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 0,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+          code: "REQUEST_TIMEOUT",
+          diagnosticCode: "timeout",
+          retryable: false,
+          analysis_stage: "api_request",
+        });
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_TIMEOUT/u);
+  assert.equal(eventCalls, 1);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence
+      .filter(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED").length,
+    0,
+  );
+  fixture.runtime.destroy();
+});
+
+test("retry_count three permits four complete Event stage attempts", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 3,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        if (eventCalls <= 3) {
+          throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+            code: "REQUEST_TIMEOUT",
+            diagnosticCode: "timeout",
+            retryable: false,
+            analysis_stage: "api_request",
+          });
+        }
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(eventCalls, 4);
+  assert.deepEqual(
+    fixture.runtime.getPersistenceTrace().sequence
+      .filter(item => item.stage === "EVENT_STAGE_ATTEMPT_BEGIN")
+      .map(item => item.retry_index),
+    [0, 1, 2, 3],
+  );
+  fixture.runtime.destroy();
+});
+
+test("stage retry config prefers the current persisted global setting over a stale profile snapshot", async () => {
+  let worldCalls = 0;
+  const fixture = createFixture({
+    retryCount: 3,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+          code: "REQUEST_TIMEOUT",
+          analysis_stage: "api_request",
+        });
+      },
+      async analyzeFloor() {
+        return {events: []};
+      },
+    },
+  });
+  fixture.runtime.store.profileStore.getApiRequestSettings = () => ({retry_count: 1});
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /REQUEST_TIMEOUT|WORLD_MODEL_UNAVAILABLE/u,
+  );
+  assert.equal(worldCalls, 4);
+  const config = fixture.runtime.getPersistenceTrace().sequence.find(
+    item => item.stage === "ANALYSIS_RETRY_CONFIG_RESOLVED",
+  );
+  assert.deepEqual(
+    {
+      configured_retry_count: config.configured_retry_count,
+      normalized_retry_count: config.normalized_retry_count,
+      world_max_retries: config.world_max_retries,
+      event_max_retries: config.event_max_retries,
+    },
+    {
+      configured_retry_count: 3,
+      normalized_retry_count: 3,
+      world_max_retries: 3,
+      event_max_retries: 3,
+    },
+  );
+  fixture.runtime.destroy();
+});
+
+test("AbortError marked by the timeout controller retries, while explicit cancellation remains terminal", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        if (eventCalls === 1) {
+          throw Object.assign(new Error("aborted by timeout controller"), {
+            name: "AbortError",
+            timedOut: true,
+            analysis_stage: "api_request",
+          });
+        }
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(eventCalls, 2);
+  fixture.runtime.destroy();
+
+  let release;
+  let startedResolve;
+  const started = new Promise(resolve => { startedResolve = resolve; });
+  const cancelledFixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      analyzeFloor() {
+        startedResolve();
+        return new Promise(resolve => { release = resolve; });
+      },
+    },
+  });
+  await cancelledFixture.runtime.init();
+  const pending = cancelledFixture.runtime.refreshCurrentFloorAnalysis();
+  await started;
+  assert.equal(await cancelledFixture.runtime.requestAbortCurrentFloorAnalysis(), true);
+  release({ events: [] });
+  await assert.rejects(pending, /REQUEST_ABORTED/u);
+  assert.equal(cancelledFixture.runtime.getPersistenceTrace().sequence
+    .filter(item => item.stage === "EVENT_AI_ATTEMPT_BEGIN").length, 1);
+  cancelledFixture.runtime.destroy();
+});
+
+test("Event stage persistence/readback failure retries Event without rerunning World", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let corruptFirstEventSlot = true;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook: async ({ value }) => {
+      if (value?.analysis && corruptFirstEventSlot) {
+        corruptFirstEventSlot = false;
+        delete value.character_registry;
+      }
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED"));
+  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
   fixture.runtime.destroy();
 });
 
@@ -3652,8 +4446,8 @@ test("repeated lifecycle notifications share one World-first analysis Job", asyn
   fixture.emit("generation-started", { genType: "regenerate", message_id: "message-stable" });
   fixture.context.chat[0].content = "重新生成后的正文";
   fixture.emit("character-message-rendered", { message_id: "message-stable" });
-  await worldStarted;
   fixture.emit("generation-ended", { message_id: "message-stable" });
+  await worldStarted;
   fixture.emit("message-updated", { message_id: "message-stable" });
   releaseWorld();
   await settle();
@@ -3778,6 +4572,7 @@ test("active Swipe switching selects isolated authoritative Floor Versions", asy
   message.swipe_id = 1;
   fixture.emit("generation-started", { message_id: "message-swipe", swipe_id: 1 });
   fixture.emit("message-swiped", { message_id: "message-swipe", swipe_id: 1, pendingGeneration: true });
+  fixture.emit("generation-ended", { message_id: "message-swipe", swipe_id: 1 });
   fixture.emit("character-message-rendered", { message_id: "message-swipe", swipe_id: 1 });
   await settle();
   const events = await fixture.runtime.getCurrentFloorEvents();
@@ -4044,7 +4839,7 @@ test("unknown World clear recovers Runtime without treating the commit as succes
   fixture.runtime.destroy();
 });
 
-test("SillyTavern adapter treats a normal void saveChat as a confirmed commit", async () => {
+test("SillyTavern adapter does not treat a normal void saveChat as confirmed", async () => {
   const context = {
     chatId: "chat-sillytavern-adapter",
     chat: [{ message_id: "message-adapter", extra: {} }],
@@ -4056,7 +4851,7 @@ test("SillyTavern adapter treats a normal void saveChat as a confirmed commit", 
     const adapter = createSillyTavernAdapter();
     assert.deepEqual(
       await adapter.saveChat({ expectedChatId: context.chatId }),
-      { commitState: "confirmed" },
+      { commitState: "unknown", status: "unknown" },
     );
     const result = await adapter.saveFloorBioWeave(
       0,
@@ -4064,7 +4859,7 @@ test("SillyTavern adapter treats a normal void saveChat as a confirmed commit", 
       { ...emptyFloor(), future_field: { must_survive: true } },
       context.chatId,
     );
-    assert.deepEqual(result, { commitState: "confirmed" });
+    assert.deepEqual(result, {commitState: "unknown", status: "unknown"});
     assert.deepEqual(context.chat[0].extra.bioweave.future_field, { must_survive: true });
   } finally {
     if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
@@ -4171,6 +4966,7 @@ test("previous API state follows the active Swipe owner after switching", async 
       message.swipe_id = 1;
       fixture.emit("generation-started", { message_id: message.message_id, swipe_id: 1 });
       fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true });
+      fixture.emit("generation-ended", { message_id: message.message_id, swipe_id: 1 });
       fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
       await settle();
       const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
@@ -4791,6 +5587,7 @@ test("chat invalidation aborts in-flight Event analysis before a stale request c
   });
   let calls = 0;
   const fixture = createFixture({
+    retryCount: 2,
     analyzer: {
       analyzeFloor(request) {
         calls += 1;
@@ -4928,6 +5725,65 @@ test("Domain validation failure keeps a specific diagnostic code and path", asyn
   fixture.runtime.destroy();
 });
 
+test("valid empty Event result completes without retry and records an explicit empty classification", async () => {
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeFloor() {
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
+  assert.equal(status.state, "success");
+  assert.equal(status.event_count, 0);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(trace.filter(item => item.stage === "EVENT_AI_ATTEMPT_BEGIN").length, 1);
+  assert.ok(trace.some(item =>
+    item.stage === "EVENT_EMPTY_RESULT_CLASSIFIED" &&
+    item.valid_empty === true &&
+    item.reason === "persisted_current_floor_events_empty",
+  ));
+  assert.ok(trace.some(item =>
+    item.stage === "CHARACTER_UI_READY" &&
+    item.ready === true &&
+    item.reason === "valid_empty_event_result",
+  ));
+  fixture.runtime.destroy();
+});
+
+test("non-empty normalized Event result missing from canonical Floor state retries the Event stage", async () => {
+  let analyzeCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    saveFloorHook({ value }) {
+      if (value?.analysis && Array.isArray(value.events)) value.events = [];
+    },
+    analyzer: {
+      async analyzeFloor() {
+        analyzeCalls += 1;
+        return { events: [eventResult(`canonical-missing-${analyzeCalls}`)] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    fixture.runtime.refreshCurrentFloorAnalysis(),
+    /CHARACTER_CANONICAL_NOT_READY/,
+  );
+  assert.equal(analyzeCalls, 2);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  assert.ok(trace.some(item =>
+    item.stage === "CHARACTER_UI_READY" &&
+    item.ready === false &&
+    item.reason === "canonical_event_state_missing",
+  ));
+  assert.equal(trace.filter(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED").length, 1);
+  fixture.runtime.destroy();
+});
+
 test("Domain collection duplicate subject keeps its stable diagnostic code and path", async () => {
   const fixture = createFixture({
     analyzer: {
@@ -5024,13 +5880,13 @@ test("Floor save failure exits running even when failure metadata cannot be save
   await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.refreshCurrentFloorAnalysis(),
-    error => error?.code === "WORLD_MODEL_UNAVAILABLE" && error?.cause?.message === "ST_FLOOR_STORAGE_UNAVAILABLE",
+    error => error?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" && error?.cause?.message === "ST_FLOOR_STORAGE_UNAVAILABLE",
   );
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(status.busy, false);
   assert.equal(status.state, "failed");
-  assert.equal(status.error_stage, "world_model_preflight");
-  assert.equal(status.error_code, "WORLD_MODEL_UNAVAILABLE");
+  assert.equal(status.error_stage, "world_persistence_prewrite");
+  assert.equal(status.error_code, "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED");
   fixture.runtime.destroy();
 });
 

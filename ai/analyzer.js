@@ -1394,6 +1394,35 @@ function responseText(raw) {
   return '';
 }
 
+function eventResponseShape(raw) {
+  if (typeof raw === 'string') return 'string';
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return Array.isArray(raw) ? 'array' : raw === null ? 'null' : typeof raw;
+  if (typeof raw.content === 'string') return 'content';
+  if (Array.isArray(raw.content)) return 'content_array';
+  if (Array.isArray(raw.choices)) {
+    const content = raw.choices[0]?.message?.content;
+    if (typeof content === 'string') return 'choices.message.content';
+    if (Array.isArray(content)) return 'choices.message.content_array';
+    if (typeof raw.choices[0]?.text === 'string') return 'choices.text';
+    return 'choices';
+  }
+  if (raw.data && typeof raw.data === 'object') return 'data';
+  if (raw.schema_version !== undefined || raw.events !== undefined)
+    return 'event_payload';
+  return 'object';
+}
+
+function eventExtractionMode(text) {
+  const value = String(text ?? '').trim();
+  if (!value) return 'empty';
+  if (/^\s*\{[\s\S]*\}\s*$/u.test(value)) return 'direct_json';
+  if (/^\s*<think>[\s\S]*<\/think>\s*\{[\s\S]*\}\s*$/iu.test(value))
+    return 'think_plus_json_rejected_by_event_parser';
+  if (/```/u.test(value)) return 'fenced_json_rejected_by_event_parser';
+  return 'non_json_text';
+}
+
 function traceAnalyzerReceived(raw) {
   if (globalThis?.__BIOWEAVE_API_TRACE__ !== true) return 0;
   let text = '';
@@ -2903,6 +2932,7 @@ export function createAnalyzer({
   analysisPromptResolver,
   worldModelPromptResolver,
   onWorldModelTrace,
+  onEventAnalysisTrace,
 } = {}) {
   function emitWorldModelTrace(raw, normalizedModel, canonicalModel) {
     if (typeof onWorldModelTrace !== 'function') return;
@@ -2923,6 +2953,15 @@ export function createAnalyzer({
       context: contextResolver?.(),
       requestSettings: requestSettingsResolver?.(),
     };
+  }
+
+  function emitEventAnalysisTrace(input, payload) {
+    if (typeof input?.onEventAnalysisTrace !== 'function') return;
+    try {
+      input.onEventAnalysisTrace(payload);
+    } catch {
+      // Diagnostics must never change the parser or analysis result.
+    }
   }
 
   async function run(task, input = {}) {
@@ -3053,11 +3092,31 @@ export function createAnalyzer({
       throw annotateAnalysisError(error, 'api_request');
     }
     const responseTextLength = traceAnalyzerReceived(raw);
+    const response = responseText(raw);
+    emitEventAnalysisTrace(
+      { onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace },
+      {
+        stage: 'EVENT_RAW_RESPONSE_SHAPE',
+        response_shape: eventResponseShape(raw),
+        extraction_mode: eventExtractionMode(response),
+        response_text_length: response.length,
+      },
+    );
     traceApi('parser-start', { parser: 'event', responseTextLength });
     try {
       const parsed = parseEventAnalysisResponse(raw, {
         deferIdentityValidation: true,
       });
+      emitEventAnalysisTrace(
+        { onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace },
+        {
+          stage: 'EVENT_PARSE_RESULT',
+          parsed: true,
+          extraction_mode: eventExtractionMode(response),
+          events_present: Array.isArray(parsed.events),
+          event_count: parsed.events.length,
+        },
+      );
       traceApi('parser-success', {
         parser: 'event',
         responseTextLength,
@@ -3065,6 +3124,29 @@ export function createAnalyzer({
       });
       return parsed;
     } catch (error) {
+      emitEventAnalysisTrace(
+        { onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace },
+        {
+          stage: 'EVENT_PARSE_RESULT',
+          parsed: false,
+          extraction_mode: eventExtractionMode(response),
+          events_present: false,
+          event_count: 0,
+        },
+      );
+      emitEventAnalysisTrace(
+        { onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace },
+        {
+          stage: 'EVENT_VALIDATION_RESULT',
+          schema_valid: error?.analysis_stage === 'response_parse' ? null : false,
+          domain_valid: false,
+          validator: error?.validator ?? 'event_contract',
+          keyword: error?.keyword ?? error?.diagnostic_code ?? error?.code,
+          instance_path: error?.instancePath ?? error?.error_path ?? error?.diagnostic_path,
+          schema_path: error?.schemaPath,
+          validator_params: error?.params,
+        },
+      );
       traceApi('parser-error', {
         parser: 'event',
         responseTextLength,

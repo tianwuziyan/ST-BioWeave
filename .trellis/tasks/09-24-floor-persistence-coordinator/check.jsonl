@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check Floor ownership and sibling preservation"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Check lifecycle and failure semantics"}

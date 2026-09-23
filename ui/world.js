@@ -841,8 +841,8 @@ export function worldPage({
     ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(worldModelNotice) + '</p>'
     : '';
   const actions = [
-    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="重新分析当前上下文，构建完整的世界模型。" aria-label="重新分析当前上下文，构建完整的世界模型。"' + (effectiveBusy ? ' disabled' : '') + '>' + (effectiveOperation === 'full' ? '分析中…' : '开始分析') + '</button>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '" aria-label="' + (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。') + '"' + ((!model || effectiveBusy) ? ' disabled' : '') + '>' + (effectiveOperation === 'patch' ? '补充中…' : '补充分析') + '</button>',
+    '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="' + (effectiveOperation === 'full' ? '再次点击终止当前完整世界分析。' : '重新分析当前上下文，构建完整的世界模型。') + '" aria-label="' + (effectiveOperation === 'full' ? '再次点击终止当前完整世界分析。' : '重新分析当前上下文，构建完整的世界模型。') + '"' + (effectiveBusy && effectiveOperation !== 'full' ? ' disabled' : '') + '>' + (effectiveOperation === 'full' ? '分析中…' : '开始分析') + '</button>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' + (effectiveOperation === 'patch' ? '再次点击终止当前补充分析。' : (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。')) + '" aria-label="' + (effectiveOperation === 'patch' ? '再次点击终止当前补充分析。' : (model ? '基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。' : '需要先建立世界模型后才能进行补充分析。')) + '"' + ((!model || (effectiveBusy && effectiveOperation !== 'patch')) ? ' disabled' : '') + '>' + (effectiveOperation === 'patch' ? '补充中…' : '补充分析') + '</button>',
   ].join('');
   const metadata = model ? [
     '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',

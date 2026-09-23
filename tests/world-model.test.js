@@ -4079,9 +4079,10 @@ test('World Model page keeps Patch visible but disabled before the first World M
   assert.match(html, /title="需要先建立世界模型后才能进行补充分析。"/)
 })
 
-test('World Model page disables both actions while one World operation is running', () => {
+test('World Model page keeps the running action clickable for cancellation', () => {
   const html = worldPage({ worldModel: modelFixture, worldModelBusy: true, worldModelOperation: 'full' })
-  assert.match(html, /data-bioweave-action="world-model-full"[^>]*disabled[^>]*>分析中…<\/button>/)
+  assert.match(html, /data-bioweave-action="world-model-full"[^>]*>分析中…<\/button>/)
+  assert.doesNotMatch(html, /data-bioweave-action="world-model-full"[^>]*disabled/)
   assert.match(html, /data-bioweave-action="world-model-patch"[^>]*disabled[^>]*>补充分析<\/button>/)
 })
 

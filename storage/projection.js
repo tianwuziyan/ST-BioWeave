@@ -14,6 +14,7 @@ import {
   validateProjection,
 } from '../core/projection.js'
 import {cloneValue, emptyFloor} from './schema.js'
+import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js'
 
 function error(code) { const result = new Error(code); result.code = code; return result }
 function ownerSelector(owner = {}) { return owner.message_id ?? owner.messageId ?? owner.message_index ?? owner.messageIndex ?? owner.index }
@@ -37,9 +38,10 @@ function assertCharacterOwner(store, owner, version) {
   return {selector, swipeId, floorData, metadata}
 }
 
-export function createProjectionPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true} = {}) {
+export function createProjectionPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true, floorPersistence = null, emit = null} = {}) {
   if (!store || typeof store.getFloor !== 'function' || typeof store.saveFloor !== 'function') throw new TypeError('PROJECTION_STORE_REQUIRED')
   const resolveVersion = resolveCurrentFloorVersion ?? store.getCurrentFloorVersion
+  const persistence = floorPersistence ?? createFloorPersistenceCoordinator({store, enabledResolver, emit})
 
   function assertEnabled() {
     if (enabledResolver() !== false) return
@@ -73,10 +75,21 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     const result = mutate(currentTimeline, resolved)
     if (result.status === 'rejected' || result.status === 'conflict') throw error(result.code)
     if (result.status === 'deduped') return {status: result.status, timeline: currentTimeline}
-    const nextFloor = cloneValue(resolved.floorData)
-    nextFloor.projection_timeline = result.timeline
     assertEnabled()
-    await store.saveFloor(resolved.selector, resolved.swipeId, nextFloor)
+    await persistence.commitFloorPatch({
+      owner: 'projection',
+      chatId: resolved.chatId,
+      ownerFloor: {
+        message_index: resolved.selector,
+        message_id: resolved.version.message_id,
+      },
+      swipeId: resolved.swipeId,
+      floorVersion: resolved.version,
+      patch: {
+        projection_timeline: result.timeline,
+      },
+      operation_type: 'projection-timeline-patch',
+    })
     return {status: result.status, timeline: result.timeline}
   }
 

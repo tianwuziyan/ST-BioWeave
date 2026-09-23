@@ -16,6 +16,7 @@ import {
 import { createApiProfileStore } from '../storage/store.js'
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
+import { charactersPage } from '../ui/characters.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
@@ -32,6 +33,21 @@ const UI_SOURCE = [
 ].join('\n')
 const CUSTOM_ABORT_UI_PATTERN =
   /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i
+
+test('Character UI distinguishes a successful empty Event result from an unanalyzed state', () => {
+  const html = charactersPage({
+    trackingSubjects: {},
+    activeEvents: [],
+    analysisStatus: {
+      state: 'success',
+      event_count: 0,
+      active_event_count: 0,
+      tracking_subject_count: 0,
+    },
+  })
+  assert.match(html, /本楼分析完成，未发现 Biological Event/u)
+  assert.doesNotMatch(html, /尚未完成事件分析/u)
+})
 test('BioWeave overlay stays between ordinary host UI and host modal layers', () => {
   const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/)
   assert.ok(match, 'expected the BioWeave overlay to declare a numeric z-index')
@@ -2287,6 +2303,89 @@ test('World Model analysis routes success and failure feedback through semantic 
     }
     app.destroyBioWeave()
   }
+})
+test('clicking the running World Full action cancels it instead of starting another request', async () => {
+  const documentRef = new AppFakeDocument()
+  let abortObserved = false
+  let confirmCalls = 0
+  const hostContext = {
+    chatId: 'chat-world-cancel',
+    characters: [],
+    POPUP_RESULT: {AFFIRMATIVE: 'affirmative'},
+    Popup: {
+      show: {
+        async confirm() {
+          confirmCalls += 1
+          return 'affirmative'
+        },
+      },
+    },
+  }
+  const profileStore = {
+    getSettings: () => ({
+      api_source: 'sillytavern',
+      default_profile_id: null,
+      api_profiles: {},
+      assignments: {},
+    }),
+    getApiRequestSettings: () => ({retry_count: 0}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-cancel',
+      token: () => ({chatId: 'chat-world-cancel', epoch: 0}),
+      assert: () => {},
+    },
+    store: {
+      getChat: () => ({settings: {}}),
+    },
+    resolveWorldModelAtOrBefore: async () => null,
+    analyzeCurrentWorldModelFull: ({signal}) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        abortObserved = true
+        const error = new Error('REQUEST_ABORTED')
+        error.code = 'REQUEST_ABORTED'
+        reject(error)
+      }, {once: true})
+    }),
+    startActivity: () => {},
+    finishActivity: () => {},
+    assertBioWeaveEnabled: () => {},
+    subscribe: () => () => {},
+    st: {
+      getContext: () => hostContext,
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+  }
+  const app = createApp(runtime, {
+    documentRef,
+    storageRef: {},
+    profileStore,
+  })
+  const root = app.openBioWeave()
+  app.go('world')
+  await Promise.resolve()
+  const click = [...root.listeners.get('click')][0]
+  const target = {
+    __root: root,
+    dataset: {bioweaveAction: 'world-model-full'},
+    closest(selector) {
+      return selector.includes('[data-bioweave-action]') ? this : null
+    },
+  }
+  const firstClick = click({target, preventDefault() {}})
+  for (let index = 0; index < 20; index += 1) {
+    await new Promise(resolve => setImmediate(resolve))
+    if (root.querySelector('.bioweave-main').innerHTML.includes('分析中…')) break
+  }
+  await click({target, preventDefault() {}})
+  await firstClick
+  assert.equal(confirmCalls, 1)
+  assert.equal(abortObserved, true)
+  app.destroyBioWeave()
 })
 test('World Model section save routes success and failure feedback through Toasts', async () => {
   const baseModel = {

@@ -595,6 +595,8 @@ export function createApp(runtime, options = {}) {
     error: null,
   }
   let businessRefreshSequence = 0
+  let businessRefreshInFlight = null
+  let businessRefreshQueued = null
   let eventEditingId = null
   function receiveWorldModelTrace(trace) {
     if (!trace || typeof trace !== 'object') return
@@ -644,8 +646,19 @@ export function createApp(runtime, options = {}) {
   }
   function runtimeAnalysisFailureMessage(payload = {}, domain = 'analysis') {
     const code = String(payload.error_code ?? payload.code ?? '').toUpperCase()
+    const retryClassification = String(payload.retry_classification ?? payload.classification ?? '').toLowerCase()
     if (code === 'WORLD_MODEL_UI_NOT_READY')
       return domain === 'world' ? '世界数据未能正常显示，已停止人物分析' : '世界数据未能正常显示，已停止人物分析'
+    if (retryClassification === 'temporary_server_convergence')
+      return '当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。'
+    if (retryClassification === 'true_owner_change')
+      return '当前楼层状态发生变化，本次世界分析结果未写入。'
+    if (code === 'STALE_FLOOR_VERSION')
+      return '当前楼层状态发生变化，本次世界分析结果未写入。'
+    if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED')
+      return '世界数据保存后校验失败，已停止人物分析'
+    if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED')
+      return '世界数据保存失败，已停止人物分析'
     if (domain === 'world') return '世界分析失败，已停止人物分析'
     if (code === 'REQUEST_TIMEOUT' || code.startsWith('REQUEST_TIMEOUT_')) return '分析失败：请求超时。'
     if (code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')) return '分析已取消。'
@@ -1872,8 +1885,17 @@ export function createApp(runtime, options = {}) {
         diagnostic === 'aborted' ||
         diagnostic === 'request_timeout' ||
         diagnostic === 'request_aborted')
-    const transportMessage = preservesLegacyTransportCopy ? '' : sharedTransportErrorMessage(error)
+    const retryClassification = String(error?.retry_classification ?? error?.cause?.retry_classification ?? '').toLowerCase()
+    const persistenceFailure =
+      retryClassification === 'temporary_server_convergence' ||
+      retryClassification === 'true_owner_change' ||
+      ['WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED', 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED', 'FLOOR_PERSISTENCE_READBACK_FAILED', 'STALE_FLOOR_VERSION'].includes(code)
+    const transportMessage = preservesLegacyTransportCopy || persistenceFailure ? '' : sharedTransportErrorMessage(error)
     if (transportMessage) return `${transportMessage} 上一份模型已保留。`
+    if (retryClassification === 'temporary_server_convergence')
+      return '当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。'
+    if (retryClassification === 'true_owner_change')
+      return '当前楼层状态发生变化，本次世界分析结果未写入。'
     const messages = {
       API_PROFILE_NOT_CONFIGURED: '世界分析尚未配置 API，请在设置的任务分配中选择可用配置。',
       API_PROFILE_INVALID: '世界分析 API 配置无效，请检查 URL 和模型。',
@@ -1885,6 +1907,7 @@ export function createApp(runtime, options = {}) {
       WORLD_MODEL_UI_NOT_READY: '世界数据未能正常显示，已停止人物分析。',
       WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED: '世界数据保存失败，已停止人物分析。',
       WORLD_MODEL_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
+      WORLD_STAGE_PERSISTENCE_OWNER_INVALID: '世界分析阶段状态无效，本次世界分析未完成。',
       SWIPE_NOT_FOUND: '世界数据保存失败，已停止人物分析。',
       STALE_FLOOR_VERSION: '世界数据保存失败，已停止人物分析。',
       FLOOR_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
@@ -2812,52 +2835,138 @@ export function createApp(runtime, options = {}) {
       if (root?.dataset.open === 'true') render()
     }
   }
-  async function refreshBusinessState({ reason = 'ui-read', force = false } = {}) {
-    if (businessState.loading && !force) return
-    const requestId = ++businessRefreshSequence
-    const chatId = runtime.chat.current()
-    businessState = { ...businessState, loading: true, chatId, error: null }
-    try {
-      if (typeof runtime.collectActiveBusinessData !== 'function') {
-        throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
-      }
-      const collected = await runtime.collectActiveBusinessData({ reason })
-      if (requestId !== businessRefreshSequence) return
-      businessState = {
-        loaded: true,
-        loading: false,
-        chatId,
-        trackingSubjects: collected.tracking_subjects ?? collected.trackingSubjects ?? {},
-        characterProfiles: collected.character_profiles ?? collected.characterProfiles ?? {},
-        activeEvents: collected.active_events ?? collected.activeEvents ?? [],
-        currentFloor: collected.current_floor ?? collected.currentFloor ?? null,
-        currentState: collected.current_state ?? collected.currentState ?? null,
-        currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
-        currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
-        currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
-        currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
-        lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
-        analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
-        error: null,
-      }
-      if (root?.dataset.open === 'true') render()
-      if (storyTimeDebugState.enabled) void refreshStoryTimeDebug({renderAfter: true})
-    } catch (error) {
-      if (requestId !== businessRefreshSequence) return
-      businessState = {
-        ...businessState,
-        loaded: true,
-        loading: false,
-        chatId,
-        currentState: null,
-        currentStateStatus: 'STATE_ERROR',
-        currentStoryTime: null,
-        currentStoryTimeStatus: 'error',
-        currentStoryTimeDifferences: {},
-        error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
-      }
-      if (root?.dataset.open === 'true') render()
+  function recordCharacterRefreshTrace(stage, payload = {}) {
+    runtime.recordPersistenceTrace?.({
+      stage,
+      chat_id: runtime.chat.current(),
+      active_swipe_id: businessState.currentFloor?.version?.swipe_id ?? null,
+      ...payload,
+    })
+  }
+  function refreshBusinessState({ reason = 'ui-read', force = false } = {}) {
+    recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_REQUESTED', {
+      request_source: reason,
+      panel_open: root?.dataset.open === 'true',
+      active_tab: route,
+      refresh_cycle_in_flight: Boolean(businessRefreshInFlight),
+      queued_refresh: Boolean(businessRefreshQueued),
+    })
+    if (businessRefreshInFlight) {
+      businessRefreshQueued = { reason, force }
+      recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
+        reason: 'refresh-in-flight',
+        refresh_cycle_in_flight: true,
+        queued_refresh: true,
+      })
+      return businessRefreshInFlight
     }
+    const work = (async () => {
+      const requestId = ++businessRefreshSequence
+      const cycleId = requestId
+      const chatId = runtime.chat.current()
+      recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_BEGIN', {
+        business_refresh_sequence: cycleId,
+        request_source: reason,
+      })
+      businessState = { ...businessState, loading: true, chatId, error: null }
+      try {
+        if (typeof runtime.collectActiveBusinessData !== 'function') {
+          throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
+        }
+        const collected = await runtime.collectActiveBusinessData({ reason })
+        if (requestId !== businessRefreshSequence) {
+          recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
+            business_refresh_sequence: cycleId,
+            reason: 'newer-chat-or-refresh-sequence',
+          })
+          return
+        }
+        const currentFloor = collected.current_floor ?? collected.currentFloor ?? null
+        const activeEvents = collected.active_events ?? collected.activeEvents ?? []
+        const trackingSubjects = collected.tracking_subjects ?? collected.trackingSubjects ?? {}
+        recordCharacterRefreshTrace('CHARACTER_FLOOR_SOURCE_RESOLVED', {
+          business_refresh_sequence: cycleId,
+          floor_version_match: Boolean(currentFloor?.version),
+          bioweave_present: Boolean(currentFloor),
+          event_count: Array.isArray(activeEvents) ? activeEvents.length : 0,
+          character_count: Object.keys(trackingSubjects ?? {}).length,
+          resolution_reason: currentFloor ? 'resolved' : 'no_character_floor',
+        })
+        recordCharacterRefreshTrace('CHARACTER_CANONICAL_STATE_BUILT', {
+          business_refresh_sequence: cycleId,
+          character_count: Object.keys(trackingSubjects ?? {}).length,
+          event_count: Array.isArray(activeEvents) ? activeEvents.length : 0,
+          current_floor_included: Boolean(currentFloor),
+          source: 'authoritative_floor',
+        })
+        businessState = {
+          loaded: true,
+          loading: false,
+          chatId,
+          trackingSubjects,
+          characterProfiles: collected.character_profiles ?? collected.characterProfiles ?? {},
+          activeEvents,
+          currentFloor,
+          currentState: collected.current_state ?? collected.currentState ?? null,
+          currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
+          currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
+          currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
+          currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
+          lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
+          analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
+          error: null,
+        }
+        recordCharacterRefreshTrace('CHARACTER_UI_STATE_COMMITTED', {
+          business_refresh_sequence: cycleId,
+        })
+        if (root?.dataset.open === 'true') {
+          render()
+          recordCharacterRefreshTrace('CHARACTER_UI_RENDERED', {
+            business_refresh_sequence: cycleId,
+          })
+        }
+        if (storyTimeDebugState.enabled) void refreshStoryTimeDebug({renderAfter: true})
+      } catch (error) {
+        if (requestId !== businessRefreshSequence) {
+          recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
+            business_refresh_sequence: cycleId,
+            reason: 'error-after-newer-sequence',
+          })
+          return
+        }
+        businessState = {
+          ...businessState,
+          loaded: true,
+          loading: false,
+          chatId,
+          currentState: null,
+          currentStateStatus: 'STATE_ERROR',
+          currentStoryTime: null,
+          currentStoryTimeStatus: 'error',
+          currentStoryTimeDifferences: {},
+          error: error?.message ?? 'BUSINESS_DATA_REFRESH_FAILED',
+        }
+        recordCharacterRefreshTrace('CHARACTER_UI_STATE_COMMITTED', {
+          business_refresh_sequence: cycleId,
+          reason: 'error',
+        })
+        if (root?.dataset.open === 'true') {
+          render()
+          recordCharacterRefreshTrace('CHARACTER_UI_RENDERED', {
+            business_refresh_sequence: cycleId,
+          })
+        }
+      }
+    })()
+    const settled = work.finally(() => {
+      if (businessRefreshInFlight !== settled) return
+      businessRefreshInFlight = null
+      const queued = businessRefreshQueued
+      businessRefreshQueued = null
+      if (queued) void refreshBusinessState(queued)
+    })
+    businessRefreshInFlight = settled
+    return settled
   }
   function aliasErrorMessage(error) {
     const code = String(error?.code ?? error?.message ?? '').toLowerCase()
@@ -3969,6 +4078,7 @@ export function createApp(runtime, options = {}) {
       route = 'overview'
       focusedCharacterId = null
       businessRefreshSequence += 1
+      businessRefreshQueued = null
       businessState = {
         ...businessState,
         loaded: false,
@@ -4315,7 +4425,12 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'world-model-full' || action === 'world-model-patch') {
       event.preventDefault()
-      if (!worldModelState.busy) await analyzeWorldModel(action === 'world-model-patch' ? 'patch' : 'full')
+      const operation = action === 'world-model-patch' ? 'patch' : 'full'
+      if (worldModelState.busy) {
+        if (worldModelState.operation === operation) await requestAbortWorldModelAnalysis()
+      } else {
+        await analyzeWorldModel(operation)
+      }
       return
     }
     if (action === 'world-model-add-species') {
@@ -4701,12 +4816,15 @@ export function createApp(runtime, options = {}) {
     analysisSourceRequestSequence += 1
     analysisSourceSaveSequence += 1
     businessRefreshSequence += 1
+    businessRefreshQueued = null
     worldbookCache = createWorldbookCache()
     worldModelTraceChatId = null
     lifecycle.destroy()
     root = null
     overlay = null
     unsubscribeRuntime = null
+    businessRefreshInFlight = null
+    businessRefreshQueued = null
     worldModelRefreshInFlight = null
     worldModelLastRefreshKey = null
     route = 'overview'

@@ -168,7 +168,7 @@ export function sameFloorVersion(left, right) {
 
 export function floorVersionFromData(data) {
   if (!data || typeof data !== 'object') return null;
-  return data?.analysis?.floor_version ?? data?.floor_version ?? null;
+  return data?.floor_version ?? data?.analysis?.floor_version ?? null;
 }
 
 export function eventSourceMatchesFloorVersion(eventOrSource, version) {
