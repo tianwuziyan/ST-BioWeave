@@ -60,3 +60,20 @@ syntax checks, and diff checks are required before handoff.
   execution when the bound Floor Version remains unchanged.
 - [x] Verify the World persistence/view-model path is Runtime-owned and does
   not depend on a mounted panel, active tab, DOM, or UI subscriber.
+
+## Current-baseline minimal repair
+
+- [x] Establish the World refresh guard before the synchronous
+  `WORLD_UI_REFRESH_REQUESTED` diagnostic notification.
+- [x] Keep persistence diagnostics outside the business render path and add
+  bounded cycle-level UI trace stages.
+- [x] Add `floor` to the World UI refresh identity without changing the
+  six-field Floor Version or Scheduler semantics.
+- [x] Add the current real Event response as a regression fixture. It fails
+  closed at the existing strict top-level pregnancy exposure evidence
+  contract; the prompt explicitly states that nested mechanism evidence
+  cannot substitute for top-level `source_evidence`.
+- [x] Expose safe validator, instance-path, and schema-path diagnostics in
+  Event failure status and traces without recording raw body or credentials.
+- [ ] Real-host validation remains pending for UI speed, persisted World
+  display, and successful Event persistence after the strict contract fix.

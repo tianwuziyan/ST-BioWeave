@@ -1134,6 +1134,8 @@ export function createRuntime({
       "reason", "result", "present", "world_model_present", "species_count",
       "biological_type_count", "floor_version_match", "swipe_match", "commitState",
       "revision", "current_floor_present",
+      "validator", "keyword", "instance_path", "schema_path", "validator_params",
+      "event_index", "event_type",
     ];
     return Object.fromEntries(
       allowed

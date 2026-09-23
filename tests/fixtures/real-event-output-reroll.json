@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "events": [
+    {
+      "type": "sexual_activity",
+      "status": "confirmed",
+      "story_time": {
+        "display": "天河四十二年夏 六月初十 寅时末",
+        "normalized": "2026-06-10T04:30:00",
+        "calendar_id": "cn-42",
+        "day_index": null,
+        "precision": "hour",
+        "confidence": 1
+      },
+      "location": "太尉府客房",
+      "participants": [
+        {
+          "identity_status": "new",
+          "character_id": null,
+          "mention_id": "mention_1",
+          "display_name": "沈祁鸢",
+          "event_role": "potential_gestational_subject",
+          "biological_context": {
+            "species": "人类",
+            "biological_type": "女性"
+          },
+          "reproductive_capabilities_used": {
+            "can_produce_sperm": false,
+            "can_produce_ova": true,
+            "can_be_fertilized": true,
+            "can_fertilize": false,
+            "can_cause_pregnancy": false,
+            "can_carry_pregnancy": true
+          },
+          "evidence": [
+            {
+              "kind": "biological_fact",
+              "text": "纤细而富有曲线感，阴道紧致而湿润，易孕体质。"
+            }
+          ]
+        },
+        {
+          "identity_status": "new",
+          "character_id": null,
+          "mention_id": "mention_2",
+          "display_name": "裴云霁",
+          "event_role": "potential_conception_source",
+          "biological_context": {
+            "species": "人类",
+            "biological_type": "男性"
+          },
+          "reproductive_capabilities_used": {
+            "can_produce_sperm": true,
+            "can_produce_ova": false,
+            "can_be_fertilized": false,
+            "can_fertilize": true,
+            "can_cause_pregnancy": true,
+            "can_carry_pregnancy": false
+          },
+          "evidence": [
+            {
+              "kind": "biological_fact",
+              "text": "结实的小臂肌肉，充满少年人的荷尔蒙与活力，勃起后约19cm。"
+            }
+          ]
+        }
+      ],
+      "pregnancy_relevance": {
+        "relevant": true,
+        "possible_conception": true,
+        "gestational_subject_ids": [
+          "mention_1"
+        ],
+        "counterpart_ids": [
+          "mention_2"
+        ],
+        "reproductive_mechanism": {
+          "kind": "natural_conception",
+          "label": "自然受孕",
+          "pathway": "阴道性交及体内射精",
+          "world_model_rule_refs": [],
+          "evidence": [
+            {
+              "kind": "pregnancy_relevant_exposure",
+              "text": "将那硕大的前端死死抵在最深处的那个酸胀点上，滚烫的白浊毫无保留地喷射在那被撑得极薄的内壁上。"
+            }
+          ]
+        },
+        "confidence": 1
+      },
+      "physical_effect": {
+        "gestational_substance_intake": true
+      },
+      "source_evidence": [
+        {
+          "kind": "narrative",
+          "text": "裴云霁在太尉府客房内，趁沈从姝在隔壁休息时，与沈祁鸢在红木桌案上发生无保护性行为并内射。"
+        }
+      ]
+    },
+    {
+      "type": "physical_symptom",
+      "status": "confirmed",
+      "story_time": {
+        "display": "天河四十二年夏 六月初十 卯时末至辰时中",
+        "normalized": "2026-06-10T07:30:00",
+        "calendar_id": "cn-42",
+        "day_index": null,
+        "precision": "hour",
+        "confidence": 1
+      },
+      "location": "太尉府",
+      "participants": [
+        {
+          "identity_status": "new",
+          "character_id": null,
+          "mention_id": "mention_1",
+          "display_name": "沈祁鸢",
+          "event_role": "other_participant",
+          "reproductive_capabilities_used": {
+            "can_produce_sperm": null,
+            "can_produce_ova": null,
+            "can_be_fertilized": null,
+            "can_fertilize": null,
+            "can_cause_pregnancy": null,
+            "can_carry_pregnancy": null
+          },
+          "evidence": []
+        }
+      ],
+      "pregnancy_relevance": {
+        "relevant": false,
+        "possible_conception": false,
+        "gestational_subject_ids": [],
+        "counterpart_ids": [],
+        "confidence": 1
+      },
+      "state_fact": {
+        "subject_id": "mention_1",
+        "payload": {
+          "symptom": {
+            "kind": "physical_soreness",
+            "description": "大腿内侧酸痛，阴道入口发肿，膝盖发软，行走与跪拜困难。"
+          }
+        }
+      },
+      "source_evidence": [
+        {
+          "kind": "narrative",
+          "text": "敬茶时因腿部酸痛重心不稳，大腿内侧软肉摩擦带起钝痛。"
+        }
+      ]
+    },
+    {
+      "type": "other_biological",
+      "status": "confirmed",
+      "story_time": {
+        "display": "天河四十二年夏 六月初十 辰时中",
+        "normalized": "2026-06-10T08:30:00",
+        "calendar_id": "cn-42",
+        "day_index": null,
+        "precision": "hour",
+        "confidence": 1
+      },
+      "location": "太尉府花园",
+      "participants": [
+        {
+          "identity_status": "new",
+          "character_id": null,
+          "mention_id": "mention_1",
+          "display_name": "沈祁鸢",
+          "event_role": "other_participant",
+          "reproductive_capabilities_used": {
+            "can_produce_sperm": null,
+            "can_produce_ova": null,
+            "can_be_fertilized": null,
+            "can_fertilize": null,
+            "can_cause_pregnancy": null,
+            "can_carry_pregnancy": null
+          },
+          "evidence": []
+        }
+      ],
+      "pregnancy_relevance": {
+        "relevant": false,
+        "possible_conception": false,
+        "gestational_subject_ids": [],
+        "counterpart_ids": [],
+        "confidence": 1
+      },
+      "state_fact": {
+        "subject_id": "mention_1",
+        "payload": {
+          "fact": {
+            "kind": "medical_supply_receipt",
+            "description": "收到沈钰赫派人送来的伤药与驱蚊香露。"
+          }
+        }
+      },
+      "source_evidence": [
+        {
+          "kind": "narrative",
+          "text": "春禾递交相爷派人从家里送来的伤药。"
+        }
+      ]
+    }
+  ]
+}

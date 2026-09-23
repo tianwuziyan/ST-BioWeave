@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {
   buildEventAnalysisMessages,
   buildWorldModelMessages,
@@ -613,6 +614,47 @@ test('physical_symptom requires the canonical typed symptom payload', () => {
   };
   const parsed = parseEventAnalysisResponse(response([canonical]), floorVersion);
   assert.deepEqual(parsed.events[0].state_fact.payload.symptom, canonical.state_fact.payload.symptom);
+});
+
+test('real reroll Event output fails at the strict top-level exposure evidence contract', () => {
+  const raw = JSON.parse(readFileSync(new URL('./fixtures/real-event-output-reroll.json', import.meta.url), 'utf8'));
+  const mentionToCharacterId = new Map([
+    ['mention_1', 'character_subject'],
+    ['mention_2', 'character_source'],
+  ]);
+  const canonical = structuredClone(raw);
+  canonical.events = canonical.events.map((item) => {
+    const event = structuredClone(item);
+    event.participants = event.participants.map((participant) => ({
+      ...participant,
+      identity_status: 'existing',
+      character_id: mentionToCharacterId.get(participant.mention_id),
+      mention_id: null,
+    }));
+    for (const field of ['gestational_subject_ids', 'counterpart_ids']) {
+      event.pregnancy_relevance[field] = event.pregnancy_relevance[field].map(
+        (id) => mentionToCharacterId.get(id) ?? id,
+      );
+    }
+    if (event.state_fact?.subject_id) {
+      event.state_fact.subject_id = mentionToCharacterId.get(event.state_fact.subject_id) ?? event.state_fact.subject_id;
+    }
+    return event;
+  });
+  assert.throws(
+    () => parseEventAnalysisResponse(canonical),
+    (error) =>
+      error?.diagnostic_code === 'missing_pregnancy_relevant_exposure_evidence' &&
+      error?.diagnostic_path === '$.events[0].source_evidence' &&
+      error?.validator === 'event_contract' &&
+      error?.instancePath === '$.events[0].source_evidence',
+  );
+  const repaired = structuredClone(canonical);
+  repaired.events[0].source_evidence.push({
+    kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+    text: '顶层结构化暴露证据',
+  });
+  assert.equal(parseEventAnalysisResponse(repaired).events.length, 3);
 });
 
 test('Event parser accepts zero, one, and multiple Events while rejecting duplicate pregnancy subjects', () => {

@@ -488,6 +488,11 @@ function executionError(error, stage = null) {
     error_message: safeDiagnosticSummary(error, resolvedStage),
   };
   result.diagnostic_code = diagnostic || code;
+  result.validator = typeof error?.validator === "string" ? error.validator : null;
+  result.keyword = typeof error?.keyword === "string" ? error.keyword : null;
+  result.instance_path = typeof error?.instancePath === "string" ? error.instancePath : path;
+  result.schema_path = typeof error?.schemaPath === "string" ? error.schemaPath : null;
+  result.validator_params = error?.params && typeof error.params === "object" ? error.params : null;
   if (status !== null) result.http_status = status;
   if (error?.phase) result.phase = String(error.phase);
   if (error?.retryable !== undefined)
@@ -551,6 +556,11 @@ function domainValidationError(
   const diagnosticPath = duplicateSubjectError ?? firstError ?? "events";
   const error = new Error(message);
   error.code = message;
+  error.validator = "core/events.validateEventCollection";
+  error.keyword = diagnosticCode;
+  error.instancePath = `$.${diagnosticPath}`;
+  error.schemaPath = null;
+  error.params = {};
   error.diagnostic_code = diagnosticCode;
   error.error_code = diagnosticCode;
   error.diagnostic_path = `$.${diagnosticPath}`;
@@ -2106,6 +2116,11 @@ export function createEventAnalysisCoordinator({
         currentAnalysis?.diagnostic_code ??
         currentAnalysis?.last_attempt?.diagnostic_code ??
         null,
+      validator: diagnostic?.validator ?? currentAnalysis?.validator ?? null,
+      keyword: diagnostic?.keyword ?? currentAnalysis?.keyword ?? null,
+      instance_path: diagnostic?.instance_path ?? currentAnalysis?.instance_path ?? null,
+      schema_path: diagnostic?.schema_path ?? currentAnalysis?.schema_path ?? null,
+      validator_params: diagnostic?.validator_params ?? currentAnalysis?.validator_params ?? null,
       http_status:
         diagnostic?.http_status ??
         currentAnalysis?.http_status ??

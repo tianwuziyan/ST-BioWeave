@@ -523,6 +523,7 @@ export function createApp(runtime, options = {}) {
   let lastWorldUiRenderedGeneration = 0
   let worldModelRefreshInFlight = null
   let worldModelLastRefreshKey = null
+  let uiRefreshCycleSequence = 0
   let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
   let worldModelAbortConfirmOpen = false
@@ -1652,35 +1653,92 @@ export function createApp(runtime, options = {}) {
     return [
       version.chat_id,
       version.message_id,
+      version.floor,
       version.swipe_id,
       version.content_hash,
       version.message_version,
     ].map(value => String(value ?? '')).join('|')
   }
-  function reloadWorldModelFromRuntime({key = null} = {}) {
+  function recordUiRefreshTrace(stage, details = {}) {
+    runtime.recordPersistenceTrace?.({
+      stage,
+      chat_id: runtime.chat.current(),
+      panel_open: root?.dataset?.open === 'true',
+      active_tab: route,
+      ...details,
+    })
+  }
+  function reloadWorldModelFromRuntime({key = null, requestSource = 'world-state'} = {}) {
     const chatId = runtime.chat.current()
-    if (key && worldModelLastRefreshKey === key) return false
-    if (worldModelRefreshInFlight?.chatId === chatId) {
-      if (key) worldModelLastRefreshKey = key
+    if (key && worldModelLastRefreshKey === key) {
+      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
+        request_source: requestSource,
+        reason: 'same_refresh_key',
+        refresh_cycle_in_flight: Boolean(worldModelRefreshInFlight),
+        same_refresh_key: true,
+      })
       return false
     }
-    if (worldModelState.loading && worldModelState.chatId === chatId) return false
+    if (worldModelRefreshInFlight?.chatId === chatId) {
+      if (key) worldModelLastRefreshKey = key
+      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
+        request_source: requestSource,
+        reason: 'refresh_cycle_in_flight',
+        refresh_cycle_in_flight: true,
+        same_refresh_key: false,
+      })
+      return false
+    }
+    if (worldModelState.loading && worldModelState.chatId === chatId) {
+      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
+        request_source: requestSource,
+        reason: 'world_state_loading',
+        refresh_cycle_in_flight: Boolean(worldModelRefreshInFlight),
+        same_refresh_key: false,
+      })
+      return false
+    }
     const token = runtime.chat.token?.()
     const generation = ++worldModelLoadGeneration
     if (key) worldModelLastRefreshKey = key
-    runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_REFRESH_REQUESTED', chat_id: chatId})
-    const resolver = runtime.resolveWorldModelAtOrBefore
+    const cycleId = ++uiRefreshCycleSequence
+    const requestState = {chatId, cycleId, request: null, key, requestSource}
+    worldModelRefreshInFlight = requestState
     worldModelState = {
       ...createWorldModelState(),
       loading: true,
       chatId,
     }
+    recordUiRefreshTrace('UI_REFRESH_REQUEST_RECEIVED', {
+      request_source: requestSource,
+      ui_refresh_cycle_id: cycleId,
+      refresh_cycle_in_flight: true,
+      queued_refresh: false,
+      same_refresh_key: false,
+    })
+    runtime.recordPersistenceTrace?.({
+      stage: 'WORLD_UI_REFRESH_REQUESTED',
+      chat_id: chatId,
+      request_source: requestSource,
+      ui_refresh_cycle_id: cycleId,
+    })
+    recordUiRefreshTrace('UI_REFRESH_CYCLE_BEGIN', {
+      ui_refresh_cycle_id: cycleId,
+      request_source: requestSource,
+    })
+    const resolver = runtime.resolveWorldModelAtOrBefore
     if (typeof resolver !== 'function') {
       worldModelState = {
         ...worldModelState,
         loaded: true,
         loading: false,
       }
+      worldModelRefreshInFlight = null
+      recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
+        ui_refresh_cycle_id: cycleId,
+        request_source: requestSource,
+        result: 'resolver_unavailable',
+      })
       return
     }
     let request
@@ -1689,8 +1747,7 @@ export function createApp(runtime, options = {}) {
     } catch (error) {
       request = Promise.reject(error)
     }
-    const requestState = {chatId, request}
-    worldModelRefreshInFlight = requestState
+    requestState.request = request
     void request.then((resolved) => {
       if (generation !== worldModelLoadGeneration) return
       if (runtime.chat.current() !== chatId) return
@@ -1714,8 +1771,29 @@ export function createApp(runtime, options = {}) {
         meta: resolved?.meta ?? null,
         notice,
       }
+      recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
+        ui_refresh_cycle_id: cycleId,
+        floor_version_match: Boolean(resolved?.floor_version),
+        bioweave_present: Boolean(resolved?.model),
+        world_present: Boolean(model),
+        resolution_reason: model ? 'resolved' : 'world_missing',
+      })
+      recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
+        ui_refresh_cycle_id: cycleId,
+        world_present: Boolean(resolved?.model),
+        canonical_view_model_present: Boolean(model),
+      })
+      recordUiRefreshTrace('UI_STATE_COMMIT_BEGIN', {ui_refresh_cycle_id: cycleId})
+      recordUiRefreshTrace('UI_STATE_COMMIT_END', {
+        ui_refresh_cycle_id: cycleId,
+        world_present: Boolean(model),
+      })
       runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(model)})
-      if (route === 'world') render()
+      if (route === 'world') {
+        recordUiRefreshTrace('UI_RENDER_BEGIN', {ui_refresh_cycle_id: cycleId})
+        render()
+        recordUiRefreshTrace('UI_RENDER_END', {ui_refresh_cycle_id: cycleId})
+      }
     }).catch(() => {
       if (generation !== worldModelLoadGeneration) return
       if (runtime.chat.current() !== chatId) return
@@ -1730,17 +1808,51 @@ export function createApp(runtime, options = {}) {
         chatId,
         notice: '世界模型读取失败，请重试。',
       }
+      recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
+        ui_refresh_cycle_id: cycleId,
+        floor_version_match: false,
+        bioweave_present: false,
+        world_present: false,
+        resolution_reason: 'resolver_failed',
+      })
+      recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
+        ui_refresh_cycle_id: cycleId,
+        world_present: false,
+        canonical_view_model_present: false,
+      })
+      recordUiRefreshTrace('UI_STATE_COMMIT_BEGIN', {ui_refresh_cycle_id: cycleId})
+      recordUiRefreshTrace('UI_STATE_COMMIT_END', {
+        ui_refresh_cycle_id: cycleId,
+        world_present: false,
+      })
       runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: false})
-      if (route === 'world') render()
+      if (route === 'world') {
+        recordUiRefreshTrace('UI_RENDER_BEGIN', {ui_refresh_cycle_id: cycleId})
+        render()
+        recordUiRefreshTrace('UI_RENDER_END', {ui_refresh_cycle_id: cycleId})
+      }
     }).finally(() => {
       if (worldModelRefreshInFlight === requestState) worldModelRefreshInFlight = null
+      recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
+        ui_refresh_cycle_id: cycleId,
+        request_source: requestSource,
+        result: worldModelState.notice ? 'failed' : 'success',
+      })
     })
     return true
   }
   function loadWorldModelState() {
     const chatId = runtime.chat.current()
     if (worldModelState.reloadPending) return
-    if (worldModelState.loading && worldModelState.chatId === chatId) return
+    if (worldModelState.loading && worldModelState.chatId === chatId) {
+      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
+        request_source: 'world-route-load',
+        reason: 'world_state_loading',
+        refresh_cycle_in_flight: Boolean(worldModelRefreshInFlight),
+        same_refresh_key: false,
+      })
+      return
+    }
     if (worldModelState.loaded && worldModelState.chatId === chatId) return
     reloadWorldModelFromRuntime()
   }
@@ -3891,7 +4003,7 @@ export function createApp(runtime, options = {}) {
         : event?.type
     if (WORLD_MODEL_OWNER_MUTATIONS.has(lifecycleMutationType)) {
       if (event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED') {
-        if (route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload)})
+        if (route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload), requestSource: event.type})
         else worldModelState = { ...worldModelState, reloadPending: false }
       } else if (event?.type !== 'CHAT_CHANGED') {
         invalidateWorldModelView()
@@ -3934,7 +4046,7 @@ export function createApp(runtime, options = {}) {
       } else if (payload.state !== 'running' && worldModelState.operation && automatic) {
         worldModelState = { ...worldModelState, busy: false, operation: null, phase: null }
       }
-      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(payload)})
+      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(payload), requestSource: event.type})
       if (payload.state === 'failed' && isAutomaticRuntimeResult(payload)) {
         notifyRuntimeTerminal(
           event,
@@ -3982,7 +4094,8 @@ export function createApp(runtime, options = {}) {
         event.payload.error_code === 'REQUEST_ABORTED' ? 'info' : 'error',
       )
     }
-    if (root?.dataset.open === 'true') render()
+    const diagnosticEvent = event?.type === 'BIOWEAVE_PERSISTENCE_TRACE'
+    if (root?.dataset.open === 'true' && !diagnosticEvent) render()
   }
   async function handleClick(event) {
     if (!root?.contains(event.target)) return

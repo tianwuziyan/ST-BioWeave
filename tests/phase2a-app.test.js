@@ -167,7 +167,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, contextOverrides = {}, worldModel = null} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, contextOverrides = {}, worldModel = null, reemitPersistenceTrace = false} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -210,6 +210,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let updateCalls = 0;
   let deleteCalls = 0;
   let worldResolveCalls = 0;
+  const persistenceTrace = [];
   let enabled = true;
   const context = {chatId: 'chat-app', chat: [message], characters: [], ...contextOverrides};
   const businessData = () => ({
@@ -251,6 +252,14 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     async resolveWorldModelAtOrBefore() {
       worldResolveCalls += 1;
       return worldModel ? {model: structuredClone(worldModel), meta: {}} : null;
+    },
+    recordPersistenceTrace(entry) {
+      persistenceTrace.push(structuredClone(entry));
+      if (reemitPersistenceTrace) runtimeListener?.({
+        type: 'BIOWEAVE_PERSISTENCE_TRACE',
+        chatId: context.chatId,
+        payload: structuredClone(entry),
+      });
     },
     collectActiveBusinessData: async () => structuredClone(businessData()),
     async refreshCurrentFloorAnalysis() {
@@ -313,6 +322,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     toasts: () => [...toastCalls],
     calls: () => ({refresh: refreshCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
     worldResolveCalls: () => worldResolveCalls,
+    persistenceTrace: () => [...persistenceTrace],
   };
 }
 
@@ -607,6 +617,34 @@ test('World status refreshes the open World page and closed panels do not suppre
     },
   });
   assert.deepEqual(fixture.toasts(), [['success', 'BioWeave：分析完成']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('World refresh guard exists before synchronous persistence trace reentry', async () => {
+  const worldModel = {schema_version: 1, species: [{name: '人类', biological_types: []}], exceptions: [], unknowns: []};
+  const fixture = await createFixture({worldModel, reemitPersistenceTrace: true});
+  fixture.app.go('world');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.worldResolveCalls(), 1);
+  assert.equal(fixture.persistenceTrace().filter(entry => entry.stage === 'WORLD_UI_REFRESH_REQUESTED').length, 1);
+  assert.ok(fixture.persistenceTrace().some(entry => entry.stage === 'UI_REFRESH_CYCLE_BEGIN'));
+  assert.ok(fixture.persistenceTrace().some(entry => entry.stage === 'UI_REFRESH_CYCLE_END'));
+  fixture.app.destroyBioWeave();
+});
+
+test('Persistence trace notifications do not trigger business render or World refresh', async () => {
+  const worldModel = {schema_version: 1, species: [{name: '人类', biological_types: []}], exceptions: [], unknowns: []};
+  const fixture = await createFixture({worldModel});
+  fixture.app.go('world');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const before = fixture.worldResolveCalls();
+  fixture.emit({
+    type: 'BIOWEAVE_PERSISTENCE_TRACE',
+    chatId: 'chat-app',
+    payload: {stage: 'WORLD_UI_REFRESH_REQUESTED'},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.worldResolveCalls(), before);
   fixture.app.destroyBioWeave();
 });
 

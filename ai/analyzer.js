@@ -1443,6 +1443,11 @@ function traceParserError(error) {
     path: typeof error?.path === 'string' ? error.path : null,
     expected: typeof error?.expected === 'string' ? error.expected : null,
     received: typeof error?.received === 'string' ? error.received : null,
+    validator: typeof error?.validator === 'string' ? error.validator : null,
+    keyword: typeof error?.keyword === 'string' ? error.keyword : null,
+    instancePath: typeof error?.instancePath === 'string' ? error.instancePath : null,
+    schemaPath: typeof error?.schemaPath === 'string' ? error.schemaPath : null,
+    params: error?.params && typeof error.params === 'object' ? error.params : null,
   };
 }
 
@@ -1509,10 +1514,16 @@ function invalidEventAnalysis(
 }
 
 function eventDiagnostic(code, path, message) {
-  return invalidEventAnalysis(message, 'schema_validation', {
+  const error = invalidEventAnalysis(message, 'schema_validation', {
     diagnosticCode: code,
     diagnosticPath: path,
   });
+  error.validator = 'event_contract';
+  error.keyword = code;
+  error.instancePath = path;
+  error.schemaPath = `#/events${String(path ?? '').replace(/^\$\.events/iu, '')}`;
+  error.params = {};
+  return error;
 }
 
 function eventPath(index, suffix = '') {
