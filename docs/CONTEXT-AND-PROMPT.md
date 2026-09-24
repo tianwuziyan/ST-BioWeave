@@ -22,7 +22,7 @@ Raw SillyTavern Context
 
 ## 2. Shared context collection
 
-共享 normalized context 至少可以包含以下 DTO：
+共享 collector 的 wide normalized context 至少可以包含以下 DTO；这些字段仍供 World Analyzer 和 Runtime orchestration 使用：
 
 - `character`：已选择的 Character Card 字段；
 - `persona`：仅由允许该任务读取的 User Persona 资料组成；
@@ -31,7 +31,7 @@ Raw SillyTavern Context
 - `external_memory`：已启用且确实可读的 provider 正文；
 - `meta`：不含 Secret 的显示和统计元数据。
 
-Event Analysis 可以在共享 DTO 之外组合任务所需的 `world_model`、`existing_bioweave`、`story_time`、`current_floor` 和 authoritative Floor boundary。它们也必须经过对应的安全归一化。
+Event Analysis 在共享 wide DTO 之外建立独立的 semantic projection，组合 `world_model`、`existing_events`、`story_time`、`current_floor`、`recent_story`、identity projection、individual evidence 和 authoritative Floor boundary。完整 `existing_bioweave`、`character_registry` 以及 raw Character Card、Persona、Worldbook、External Memory 可以继续存在于 Runtime wide DTO，但不能由 Event prompt formatter 消费。
 
 Prompt Formatter 只能消费 normalized DTO，不能从 `context.chat`、原始 Character Card、原始 Worldbook、原始 Persona 或外部 provider response 补回内容。
 
@@ -98,15 +98,9 @@ User Persona 是否进入 Context 由任务策略决定，而不是由 Formatter
 | Task | common `analysis_prompt` | User Persona evidence |
 | --- | --- | --- |
 | World Analysis | yes | no |
-| Event Analysis | yes | yes |
+| Event Analysis | yes | no；只保留必要的 `user_name` / `character_name` 等窄命名 metadata |
 
-Event Persona 必须先经过 sanitization 和 Secret redaction，再使用中文自然语言格式：
-
-```text
-【{{user}} 的人物设定】
-```
-
-Persona name 只用于显示，不作为稳定 `character_id`，也不是 participant whitelist 或扫描优先级。Persona 中出现性别、外貌或身份文字时，不能单独变成 reproductive capability；明确生理性别事实可以作为 `biological_type` 映射证据之一，但不能单独授权 capability。Persona 可以与 Character Card、Worldbook、Narrative、Existing profile、稳定设定和其它一致生理/生殖事实一起作为上下文证据。证据不足时 `unknown` 仍然是 unknown，并由 Runtime 保留 pending candidate。
+Event prompt 不再包含 raw Persona，也不提供 `【{{user}} 的人物设定】` section。Event 只保留必要的窄命名 metadata；Persona 中的生物学描述不得成为 Event evidence。World Analysis 仍按既有共享 collector 规则处理宿主来源。
 
 ## 8. Message role contract
 
@@ -124,7 +118,7 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 
 1. 可选 `SYSTEM`：用户设置的“第一个 SYSTEM”（绝对第一条 SYSTEM）；
 2. `SYSTEM`：BioWeave Event Analysis Rules，合并 Protected Core、公共 `analysis_prompt`、Event Task、必要边界说明、输入后补充和 Protected Output Contract；
-3. 可选 `SYSTEM`：Reference Context，合并已选 Character Card、Event Persona、已选 Worldbook、External Memory、Current World Model、Existing BioWeave 和必要的结构化角色资料；
+3. 可选 `SYSTEM`：Reference Context，合并 persisted Current World Model、canonical identity projection、必要的 canonical/derived individual evidence 和 existing Events；raw Character Card、Persona、Worldbook、External Memory 不进入 Event prompt；
 4. `ASSISTANT`：唯一的 Narrative Context，按剧情顺序包含每层已处理的 Recent Story 和明确标记的 Target Floor；
 5. `USER`：最终执行指令；
 6. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（整个 `messages[]` 的绝对最后一项）。
@@ -147,7 +141,7 @@ source、在场人物或无 actual exposure 的参与者。同一 subject 在同
 subject/source 闭包由 parser/domain validator 拒绝，Runtime 不自动合并。
 
 收集完成后再逐 recipient 进行 identity、World Model species/type mapping、capability
-和 eligibility resolution；不得因 current user/Persona/current Character、已有 profile、
+和 eligibility resolution；不得因 current user、已有 individual evidence、
 首个 eligible 或某个 false/unknown recipient 提前结束。允许多条一致上下文支持
 biological identity；姓名、称谓、外貌、event_role、位置、主动/被动、社会身份、穿着或
 气质等单一弱线索不能独立决定 identity/capability，冲突或不足时保留 null/pending。
@@ -161,8 +155,8 @@ BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外
 `biological_context: {species, biological_type}`；两个字段值只能是字符串或
 `null`，资料不足时不得单一线索猜测。`species` 取当前 World Model 对应人物的 species，
 `biological_type` 取该 species 下稳定的生理/生殖分类。`reproductive_capabilities_used`
-必须先使用匹配 World Model species/type 的 baseline，再综合已有 character profile、
-Character / Persona / Worldbook 与当前剧情证据逐项填写；个体明确证据可覆盖或补充，
+必须先使用匹配 World Model species/type 的 baseline，再综合 canonical/derived individual
+evidence 与当前剧情证据逐项填写；个体明确证据可覆盖或补充，
 未知保持 `null`。exposure recipient/source 和 `possible_conception` 由 World Model、
 species/type reproduction rules/capabilities 与 Narrative evidence 共同决定，不将任一
 现实物种、性别、解剖结构或单一现实生殖机制硬编码为通用要求。非 pregnancy Event
@@ -172,14 +166,17 @@ species/type reproduction rules/capabilities 与 Narrative evidence 共同决定
 
 主要来源 block 必须让模型清楚资料用途和边界，至少使用以下 presentation labels：
 
-- `【角色卡：{{char}} 的背景资料】`；
-- `【{{user}} 的人物设定】`；
-- `【世界书参考资料】`；
-- `【外部历史参考信息】`；
+- `【角色卡：{{char}} 的背景资料】`（World Analysis only）；
+- `【{{user}} 的人物设定】`（World/legacy context only；不属于 Event prompt）；
+- `【世界书参考资料】`（World Analysis only）；
+- `【外部历史参考信息】`（World Analysis only）；
 - `【近期剧情参考】`；
 - `【本次目标楼层】`；
 - `【当前 World Model 参考】`；
 - `【现有 BioWeave 事实参考】`。
+
+Event 的参考 section 使用 canonical identity projection、individual evidence、persisted
+World Model 和 existing Events；不使用上述 raw host source sections。
 
 内部 DTO/schema key 继续使用英文；中文只属于 Prompt presentation，不改变 Domain contract。
 

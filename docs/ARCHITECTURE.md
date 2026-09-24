@@ -200,7 +200,7 @@ Owner whitelist：
 
 ### 当前实现与目标契约
 
-当前代码已实现 Manual Character 的独立分析边界：它通过 `analyzeCurrentCharacterEvents()` 读取现有 at-or-before canonical World，不进入 `resolveFinalWorldModelForAnalysis()`，因此不会触发 World AI。缺少可用 World 时以 `WORLD_MODEL_REQUIRED` fail closed，且不写 Event 或 terminal failure。Event input 仍由共享 input builder 组装多个宿主来源；这是下一独立的 Event Input Boundary Fix，尚未修复。
+当前代码已实现 Manual Character 的独立分析边界：它通过 `analyzeCurrentCharacterEvents()` 读取现有 at-or-before canonical World，不进入 `resolveFinalWorldModelForAnalysis()`，因此不会触发 World AI。缺少可用 World 时以 `WORLD_MODEL_REQUIRED` fail closed，且不写 Event 或 terminal failure。Event prompt 现在通过 input builder 的 narrow semantic projection 消费 persisted World Model、Target Floor、Recent Story、canonical identity projection、canonical/derived individual evidence、existing Events 和 Story Time；raw Character Card、Persona、Worldbook、External Memory 不直接进入 Event prompt。
 
 目标契约为：
 
@@ -212,9 +212,9 @@ MANUAL CHARACTER: existing persisted valid World → Event only
                   no valid World → fail closed
 ```
 
-后续任务为 **Event Input Boundary Fix**；不要把它与已实现的 Analysis Boundary Fix 混为一谈。
+Analysis Boundary Fix 与 Event Input Boundary Fix 均已实现；Event Input Boundary 不改变 World Analyzer 对 raw Character Card、Persona、Worldbook 和 External Memory 的既有输入。
 
-World feature 以宿主可选来源构建 World Model；Character/Event feature 应以已持久化 `world_model`、target Floor narrative、必要 recent narrative、existing Event 和 identity state 产生 `events`、`character_registry` 与 `analysis`。具体输入边界仍以当前代码和后续专门任务为准。
+World feature 以宿主可选来源构建 World Model；Character/Event feature 以已持久化 `world_model`、target Floor narrative、必要 recent narrative、existing Event、identity projection 和 canonical/derived individual evidence 产生 `events`、`character_registry` 与 `analysis`。Runtime wide DTO 可以保留 raw sources 供 World/legacy orchestration，但 Event prompt 不消费这些 raw sources。
 
 ## Character Registry 与 Tracking Subjects
 

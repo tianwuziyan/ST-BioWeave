@@ -127,11 +127,8 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.deepEqual(input.chat_scope, { chat_id: 'chat-authoritative' });
   assert.deepEqual(input.floor_version, floorVersion);
   assert.equal(input.current_floor.narrative, 'Current floor narrative.');
-  assert.equal(input.recent_context[0].content, 'Recent narrative context.');
-  assert.deepEqual(input.character_registry, {
-    schema_version: 1,
-    entities: {},
-  });
+  assert.equal(input.recent_story.items[0].content, 'Recent narrative context.');
+  assert.deepEqual(input.identity_context, {canonical_candidates: []});
   assert.deepEqual(input.story_time, {
     display: 'an unspecified story day',
     normalized: null,
@@ -183,13 +180,10 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /明确的?生理性别.*biological_type.*映射/);
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
-  assert.match(prompt, /character profile/);
+  assert.match(prompt, /individual evidence/);
   assert.match(prompt, /完整 Target Floor exhaustive scan/);
   assert.match(prompt, /临时.*candidate/);
-  assert.match(
-    prompt,
-    /character_context.*whitelist|whitelist.*character_context/,
-  );
+  assert.match(prompt, /canonical.*derived.*individual evidence|individual evidence.*canonical.*derived/);
   assert.match(prompt, /现实.*生殖机制/);
   assert.match(prompt, new RegExp(PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND));
   assert.doesNotMatch(prompt, /全部实际参与者/);
@@ -1378,8 +1372,6 @@ test('Event messages use deterministic ordered text blocks instead of serialized
   const content = messages.map((message) => message.content).join('\n');
   assert.equal(content.includes(JSON.stringify(input, null, 2)), false);
   for (const marker of [
-    '【角色卡：角色 的背景资料】',
-    '【用户 的人物设定】',
     '【当前 World Model 参考】',
     '【剧情上下文】',
     '【本次分析内容】',
@@ -1391,11 +1383,10 @@ test('Event messages use deterministic ordered text blocks instead of serialized
       new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
     );
   const prompt = messages.map((message) => message.content).join('\n');
+  assert.doesNotMatch(prompt, /CHARACTER_CONTEXT_MARKER|PERSONA_CONTEXT_MARKER/u);
   const order = [
     '【本次分析边界】',
     '【Event 输出契约】',
-    '【角色卡：角色 的背景资料】',
-    '【用户 的人物设定】',
     '【当前 World Model 参考】',
     '【剧情上下文】',
     '【本次分析内容】',
@@ -1407,7 +1398,7 @@ test('Event messages use deterministic ordered text blocks instead of serialized
   assert.match(content, /COMMON_ANALYSIS_MARKER/);
   assert.match(content, /TARGET_FLOOR_MARKER/);
   assert.match(content, /RECENT_STORY_MARKER/);
-  assert.match(content, /PERSONA_CONTEXT_MARKER/);
+  assert.doesNotMatch(content, /PERSONA_CONTEXT_MARKER|CHARACTER_CONTEXT_MARKER/);
   assert.ok(
     content.indexOf('【Event 输出契约】') < content.indexOf('【剧情上下文】'),
   );
@@ -1633,9 +1624,9 @@ test('common analysis prompt reaches Event and World builders while Persona stay
   );
 
   assert.match(JSON.stringify(eventMessages), /COMMON_ANALYSIS_MARKER/);
-  assert.match(JSON.stringify(eventMessages), /persona-display/);
+  assert.doesNotMatch(JSON.stringify(eventMessages), /persona-display/);
   assert.doesNotMatch(JSON.stringify(eventMessages), /DO-NOT-SEND/);
-  assert.match(JSON.stringify(input.persona), /\[redacted\]/i);
+  assert.doesNotMatch(JSON.stringify(input), /PERSONA_CONTEXT_MARKER|DO-NOT-SEND/);
   assert.match(JSON.stringify(worldMessages), /COMMON_ANALYSIS_MARKER/);
   assert.doesNotMatch(
     JSON.stringify(worldMessages),

@@ -893,11 +893,6 @@ export function normalizeEventAnalysisInput(options = {}) {
         nested.content,
       role: source.role ?? nested.role,
     }
-  const recentContext =
-    source.recent_context ??
-    nested.recent_context ??
-    source.recentContext ??
-    nested.recentContext
   const worldModel =
     source.world_model ??
     nested.world_model ??
@@ -923,43 +918,114 @@ export function normalizeEventAnalysisInput(options = {}) {
     source.existingBioWeave ??
     nested.existingBioWeave ??
     null
-  const persona = source.persona ?? nested.persona ?? null
   const characterRegistry =
     source.character_registry ??
     nested.character_registry ??
     source.characterRegistry ??
     nested.characterRegistry ??
     null
-  const character = source.character ?? nested.character ?? null
-  const worldbooks = source.worldbooks ?? nested.worldbooks ?? []
-  const recentStory = source.recent_story ?? nested.recent_story ?? null
-  const externalMemory = source.external_memory ?? nested.external_memory ?? []
+  const recentStory =
+    source.recent_story ??
+    nested.recent_story ??
+    source.recent_context ??
+    source.recentContext ??
+    nested.recentContext ??
+    null
   const meta = source.meta ?? nested.meta ?? {}
   const tokenEstimate = Number(source.token_estimate ?? nested.token_estimate)
+  const identityContext =
+    source.identity_context ??
+    nested.identity_context ??
+    projectEventIdentityContext(characterRegistry)
+  const individualEvidence =
+    source.individual_evidence ??
+    nested.individual_evidence ??
+    projectEventIndividualEvidence(characterContext)
+  const existingEvents =
+    source.existing_events ??
+    nested.existing_events ??
+    projectEventExistingEvents(existingBioWeave, source, nested)
+  const recentStoryItems = normalizeEventRecentContext(recentStory, nested.recent_story)
+  const normalizedRecentStory = {
+    ...(recentStory && typeof recentStory === 'object' && !Array.isArray(recentStory)
+      ? safeStructuredValue(recentStory)
+      : {}),
+    items: recentStoryItems,
+  }
 
   return {
     chat_scope: { chat_id },
     floor_version,
     current_floor: normalizeEventCurrentFloor(currentFloor, floor_version),
-    recent_context: normalizeEventRecentContext(
-      recentContext,
-      nested.recent_story,
-    ),
-    recent_story: safeStructuredValue(recentStory),
-    character: safeStructuredValue(character),
-    worldbooks: safeStructuredValue(worldbooks),
-    external_memory: safeStructuredValue(externalMemory),
+    recent_story: normalizedRecentStory,
     meta: safeStructuredValue(meta),
     token_estimate: Number.isFinite(tokenEstimate) ? tokenEstimate : 0,
     world_model: safeStructuredValue(worldModel),
     story_time: safeStructuredValue(normalizeStoryTime(storyTime)),
-    character_context: safeStructuredValue(characterContext),
-    character_registry: safeStructuredValue(
-      characterRegistry ?? { schema_version: 1, entities: {} },
-    ),
-    existing_bioweave: safeStructuredValue(existingBioWeave),
-    persona: safeStructuredValue(persona),
+    identity_context: safeStructuredValue(identityContext),
+    individual_evidence: safeStructuredValue(individualEvidence),
+    existing_events: safeStructuredValue(existingEvents),
   }
+}
+
+function projectEventIdentityContext(registry) {
+  const entities = registry && typeof registry === 'object' && !Array.isArray(registry)
+    ? registry.entities
+    : null
+  const canonicalCandidates = Object.entries(
+    entities && typeof entities === 'object' && !Array.isArray(entities) ? entities : {},
+  )
+    .map(([fallbackId, rawEntity]) => {
+      const entity = rawEntity && typeof rawEntity === 'object' && !Array.isArray(rawEntity)
+        ? rawEntity
+        : {}
+      const characterId = safeText(entity.character_id ?? fallbackId).trim()
+      if (!characterId) return null
+      return {
+        character_id: characterId,
+        display_name: safeText(entity.display_name).trim() || null,
+        aliases: Array.isArray(entity.aliases)
+          ? entity.aliases.map(alias => safeText(alias).trim()).filter(Boolean)
+          : [],
+      }
+    })
+    .filter(Boolean)
+  return {canonical_candidates: canonicalCandidates}
+}
+
+function projectEventIndividualEvidence(characterContext) {
+  const value = characterContext && typeof characterContext === 'object' && !Array.isArray(characterContext)
+    ? characterContext
+    : {}
+  const profiles = value.profiles && typeof value.profiles === 'object' && !Array.isArray(value.profiles)
+    ? value.profiles
+    : {}
+  return Object.entries(profiles)
+    .map(([fallbackId, rawProfile]) => {
+      const profile = rawProfile && typeof rawProfile === 'object' && !Array.isArray(rawProfile)
+        ? rawProfile
+        : {}
+      const characterId = safeText(profile.character_id ?? fallbackId).trim()
+      if (!characterId) return null
+      const capabilities = profile.reproductive_capabilities ?? profile.reproductive_capabilities_used
+      return {
+        character_id: characterId,
+        display_name: safeText(profile.display_name).trim() || null,
+        species: safeText(profile.species).trim() || null,
+        biological_type: safeText(profile.biological_type).trim() || null,
+        capabilities: capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities)
+          ? safeStructuredValue(capabilities)
+          : {},
+        evidence: Array.isArray(profile.evidence) ? safeStructuredValue(profile.evidence) : [],
+      }
+    })
+    .filter(Boolean)
+}
+
+function projectEventExistingEvents(existingBioWeave, source, nested) {
+  const explicit = source.existing_events ?? nested.existing_events
+  const events = explicit ?? existingBioWeave?.events
+  return Array.isArray(events) ? safeStructuredValue(events) : []
 }
 
 // Collection-facing Event input builder. Prompt builders only call the pure
@@ -984,26 +1050,74 @@ export function buildEventAnalysisInput(options = {}) {
           source.includePersonaInTokenEstimate ?? true,
       })
     : null
-  return normalizeEventAnalysisInput({
+  const normalized = normalizeEventAnalysisInput({
     ...(shared ?? {}),
     ...source,
-    persona:
-      source.persona ??
-      nested.persona ??
-      shared?.persona ??
-      (source.context ? buildUserPersonaInput(source.context) : null),
-    character: source.character ?? nested.character ?? shared?.character,
-    worldbooks: source.worldbooks ?? nested.worldbooks ?? shared?.worldbooks,
     recent_story:
-      source.recent_story ?? nested.recent_story ?? shared?.recent_story,
-    external_memory:
-      source.external_memory ??
-      nested.external_memory ??
-      shared?.external_memory,
+      source.recent_story ??
+      nested.recent_story ??
+      source.recent_context ??
+      source.recentContext ??
+      nested.recentContext ??
+      shared?.recent_story,
     meta: source.meta ?? nested.meta ?? shared?.meta,
     token_estimate:
       source.token_estimate ?? nested.token_estimate ?? shared?.token_estimate,
   })
+  // Runtime keeps this wide DTO for deterministic identity resolution and
+  // derived-state orchestration. Prompt builders immediately normalize it to
+  // the narrow Event semantic projection above, so these host/raw fields are
+  // never serialized into Event messages.
+  return {
+    ...normalized,
+    recent_context: normalizeEventRecentContext(
+      source.recent_context ??
+        nested.recent_context ??
+        source.recentContext ??
+        nested.recentContext,
+      nested.recent_story,
+    ),
+    character: safeStructuredValue(
+      source.character ?? nested.character ?? shared?.character,
+    ),
+    persona: safeStructuredValue(
+      source.persona ??
+        nested.persona ??
+        shared?.persona ??
+        (source.context ? buildUserPersonaInput(source.context) : null),
+    ),
+    worldbooks: safeStructuredValue(
+      source.worldbooks ?? nested.worldbooks ?? shared?.worldbooks ?? [],
+    ),
+    external_memory: safeStructuredValue(
+      source.external_memory ??
+        nested.external_memory ??
+        shared?.external_memory ??
+        [],
+    ),
+    character_context: safeStructuredValue(
+      source.character_context ??
+        nested.character_context ??
+        source.characterContext ??
+        nested.characterContext ??
+        nested.character ??
+        null,
+    ),
+    character_registry: safeStructuredValue(
+      source.character_registry ??
+        nested.character_registry ??
+        source.characterRegistry ??
+        nested.characterRegistry ??
+        {schema_version: 1, entities: {}},
+    ),
+    existing_bioweave: safeStructuredValue(
+      source.existing_bioweave ??
+        nested.existing_bioweave ??
+        source.existingBioWeave ??
+        nested.existingBioWeave ??
+        null,
+    ),
+  }
 }
 
 export const createAnalysisInput = buildAnalysisInput

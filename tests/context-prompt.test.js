@@ -591,16 +591,12 @@ test('selected context, readable external memory, and token estimate are shared 
   const eventPrompt = eventMessages.map(message => message.content).join('\n');
   const worldPrompt = worldMessages.map(message => message.content).join('\n');
 
-  assert.match(eventPrompt, /【角色卡：character_display 的背景资料】/);
-  assert.match(eventPrompt, /【persona_display 的人物设定】/);
-  assert.match(eventPrompt, /【世界书参考资料】/);
-  assert.match(eventPrompt, /【外部历史参考信息】/);
+  assert.doesNotMatch(eventPrompt, /【角色卡：|【persona_display 的人物设定】|【世界书参考资料】|【外部历史参考信息】/);
   assert.match(eventPrompt, /【当前 World Model 参考】/);
-  assert.match(eventPrompt, /【现有 BioWeave 事实参考】/);
+  assert.doesNotMatch(eventPrompt, /【现有 BioWeave 事实参考】/);
   assert.match(eventPrompt, /【剧情上下文】/);
   assert.match(eventPrompt, /【本次目标楼层】/);
-  assert.match(eventPrompt, /CHARACTER_SELECTED|WORLDBOOK_SELECTED|EXTERNAL_ENABLED/);
-  assert.doesNotMatch(eventPrompt, /CHARACTER_NOT_SELECTED|WORLDBOOK_NOT_SELECTED|EXTERNAL_DISABLED|EXTERNAL_ERROR_RESPONSE/);
+  assert.doesNotMatch(eventPrompt, /CHARACTER_SELECTED|WORLDBOOK_SELECTED|EXTERNAL_ENABLED|CHARACTER_NOT_SELECTED|WORLDBOOK_NOT_SELECTED|EXTERNAL_DISABLED|EXTERNAL_ERROR_RESPONSE/);
   assert.doesNotMatch(eventPrompt, /CHARACTER_OPENING_SELECTED|【开场白】/);
   assert.doesNotMatch(eventPrompt, /(?:^|\n)(?:persona|description|persona_description|user_persona)\s*:/iu);
   assert.doesNotMatch(eventPrompt, /"(?:character|persona|worldbooks|external_memory)"\s*:/u);
@@ -616,6 +612,81 @@ test('selected context, readable external memory, and token estimate are shared 
   assert.match(worldReferenceMessage.content, /【开场白】\nCHARACTER_OPENING_SELECTED/);
   assert.equal(worldReferenceMessage.content.trimEnd().endsWith('CHARACTER_OPENING_SELECTED'), true);
   assert.doesNotMatch(worldPrompt, /PERSONA_SELECTED|【persona_display 的人物设定】/);
+});
+
+test('Event prompt removes raw world sources while World prompt retains them', () => {
+  const rawInput = {
+    chatId: 'chat_fixture',
+    floorVersion: {
+      chat_id: 'chat_fixture',
+      message_id: 'message_target',
+      floor: 3,
+      swipe_id: 1,
+      content_hash: 'hash_fixture',
+      message_version: 'v1:hash_fixture',
+    },
+    currentFloor: {floor: 3, message_id: 'message_target', narrative: 'TARGET_FLOOR_SENTINEL'},
+    recentContext: [{floor: 2, role: 'assistant', content: 'RECENT_STORY_SENTINEL'}],
+    storyTime: {display: 'Story Time Sentinel'},
+    worldModel: {species: [{name: 'WORLD_MODEL_SENTINEL'}]},
+    character: {description: 'CHARACTER_RAW_SENTINEL'},
+    persona: {description: 'PERSONA_RAW_SENTINEL'},
+    worldbooks: [{entries: [{label: 'raw', content: 'WORLDBOOK_RAW_SENTINEL'}]}],
+    external_memory: [{
+      enabled: true,
+      available: true,
+      content_available: true,
+      read_status: 'ok',
+      items: [{label: 'memory', content: 'EXTERNAL_MEMORY_RAW_SENTINEL'}],
+    }],
+  };
+  const eventPrompt = buildEventAnalysisMessages(buildEventAnalysisInput(rawInput))
+    .map(message => message.content)
+    .join('\n');
+  for (const marker of [
+    'CHARACTER_RAW_SENTINEL',
+    'PERSONA_RAW_SENTINEL',
+    'WORLDBOOK_RAW_SENTINEL',
+    'EXTERNAL_MEMORY_RAW_SENTINEL',
+  ]) {
+    assert.doesNotMatch(eventPrompt, new RegExp(marker));
+  }
+  assert.match(eventPrompt, /WORLD_MODEL_SENTINEL|TARGET_FLOOR_SENTINEL|RECENT_STORY_SENTINEL/u);
+
+  const worldInput = buildAnalysisInput({
+    context: {...fixtureContext(), powerUserSettings: {
+      ...fixtureContext().powerUserSettings,
+      persona_description: 'PERSONA_RAW_SENTINEL',
+    }},
+    chatId: 'chat_fixture',
+    selected: [
+      {source_id: 'character_card', field_key: 'description', enabled: true},
+      {source_id: 'worldbook', entry_id: 'entry', enabled: true},
+    ],
+    sources: [
+      {source_id: 'character_card', source_type: 'character_card', fields: [
+        {field_key: 'description', label: 'description', content: 'CHARACTER_RAW_SENTINEL'},
+      ]},
+      {source_id: 'worldbook', source_type: 'worldbook', entries: [
+        {entry_id: 'entry', label: 'entry', content: 'WORLDBOOK_RAW_SENTINEL'},
+      ]},
+    ],
+    externalMemory: {anima: true},
+    externalMemoryProviders: [{
+      key: 'anima',
+      available: true,
+      content_available: true,
+      status: 'ok',
+      items: [{label: 'memory', content: 'EXTERNAL_MEMORY_RAW_SENTINEL'}],
+    }],
+  });
+  const worldPrompt = buildWorldModelMessages(worldInput)
+    .map(message => message.content)
+    .join('\n');
+  assert.match(worldPrompt, /CHARACTER_RAW_SENTINEL/u);
+  assert.match(worldPrompt, /WORLDBOOK_RAW_SENTINEL/u);
+  assert.match(worldPrompt, /EXTERNAL_MEMORY_RAW_SENTINEL/u);
+  assert.equal(worldInput.persona.description, 'PERSONA_RAW_SENTINEL');
 });
 
 test('empty character greetings do not create a greeting section or message', () => {
@@ -662,6 +733,7 @@ test('Event formats normalized character profiles as a bounded reference block',
   assert.match(prompt, /可承载妊娠：是/);
   assert.match(prompt, /PROFILE_CAPABILITY_EVIDENCE/);
   assert.doesNotMatch(prompt, /(?:^|\n)character_context\s*:/u);
+  assert.doesNotMatch(prompt, /character_card|CHARACTER_RAW|PERSONA_RAW|WORLDBOOK_RAW|EXTERNAL_MEMORY_RAW/u);
 });
 
 test('Event message roles and ordered blocks are stable, with narrative only in ASSISTANT', async () => {
@@ -703,12 +775,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     '【Event Analysis 任务】',
     '【本次分析边界】',
     '【Event 输出契约】',
-    '【角色卡：character_display 的背景资料】',
-    '【persona_display 的人物设定】',
-    '【世界书参考资料】',
-    '【外部历史参考信息】',
     '【当前 World Model 参考】',
-    '【现有 BioWeave 事实参考】',
     '【剧情上下文】',
     '【本次分析内容】',
     '请根据以上资料分析本次目标楼层',
@@ -721,8 +788,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     previous = index;
   }
   assert.equal(messages.slice(0, 3).every(message => message.role === 'system'), true);
-  assert.equal(messages[2].content.includes('【角色卡：character_display 的背景资料】'), true);
-  assert.equal(messages[2].content.includes('【世界书参考资料】'), true);
+  assert.doesNotMatch(messages[2].content, /角色卡|世界书|外部历史|人物设定/u);
   assert.equal(messages.at(-3).role, 'assistant');
   assert.doesNotMatch(messages.at(-3).content, /【楼层|正文：|role=|message_id|swipe_id|content_hash|message_version/u);
   assert.doesNotMatch(messages.map(message => message.content).join('\n'), /JSON\.stringify\(analysisInput\)|"recent_story"\s*:/u);
@@ -759,11 +825,10 @@ test('Event and World Model keep configured SYSTEM boundaries absolute and aggre
 
   const eventMessages = buildEventAnalysisMessages(input, settings);
   const referenceMessages = eventMessages.filter(message => (
-    message.role === 'system' && message.content.includes('【角色卡：')
+    message.role === 'system' && message.content.includes('【当前 World Model 参考】')
   ));
   assert.equal(referenceMessages.length, 1);
-  assert.match(referenceMessages[0].content, /【世界书参考资料】/);
-  assert.match(referenceMessages[0].content, /【persona_display 的人物设定】/);
+  assert.doesNotMatch(referenceMessages[0].content, /角色卡|世界书|人物设定/u);
   assert.match(eventMessages.find(message => message.role === 'assistant').content, /REFERENCE_FLOOR/);
   assert.match(eventMessages.find(message => message.role === 'assistant').content, /【本次分析内容】/);
 });

@@ -61,13 +61,13 @@ export const EVENT_STORY_TIME_PRECISIONS = Object.freeze([
 
 export const EVENT_ANALYZER_CORE_CONTRACT = [
   '你是 BioWeave 的 BiologicalEvent 事实提取器。只提取当前 Floor Version 与输入证据明确支持的事件，不输出分析过程或自然语言解释。',
-  'World Model 是世界级生物规则的权威输入；本请求由 Runtime 保证只在 validated + normalized World Model 存在时发出。species/type mapping 可以综合 Character Card、Persona、Worldbook、Existing profile、稳定生理事实与当前 narrative；明确生理性别事实可以用于映射到当前 World Model 已存在的 biological_type，但不能单独创建 type 或授权 capability。reproductive capabilities 与 mechanism compatibility 只能来自匹配的 World Model baseline 或明确的个体生理/生殖证据；不得使用现实人类常识或旧默认能力补空。',
+  'World Model 是世界级生物规则的权威输入；本请求由 Runtime 保证只在 validated + normalized World Model 存在时发出。species/type mapping 只能综合当前 World Model 与 Runtime 提供的 canonical/derived individual evidence；明确生理性别事实可以用于映射到当前 World Model 已存在的 biological_type，但不能单独创建 type 或授权 capability。reproductive capabilities 与 mechanism compatibility 只能来自匹配的 World Model baseline 或明确的个体生理/生殖证据；不得使用现实人类常识或旧默认能力补空。',
   '如果上下文中出现 BioWeave Projection Context，它只是未来可能的发展方向，不是已发生事实或 Event 证据；只有本次目标正文实际写出的内容才能进入 BiologicalEvent。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
   '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实或不同 gestational subject 的暴露压进同一个 Event，也不要在 Runtime 或 UI 合并事件。',
   '对 pregnancy-related sexual_activity，先识别当前 Floor 中所有有实际 pregnancy-relevant exposure 的 gestational subject，再按 subject 分组：同一 subject 的多个 actual exposure source 合并到同一个 Event，不同 subject 必须输出不同 Event；同一响应中同一 subject 最多出现一个 pregnancy-related Event，不能把多个 subject 填进同一个 Event。',
-  'recipient discovery 必须 exhaustive：先完整扫描整个 Target Floor，建立临时 exposure candidate 集合，收集全部 actual pregnancy-relevant exposure recipients，再对集合中的每个 recipient 依次执行 identity resolution、World Model mapping、capability resolution 与 eligibility decision。不得因 Persona、current user、current Character Card、existing profile、首个 eligible recipient，或某个 recipient 为 false/unknown 而提前 return、break、跳过后续扫描；character_context 只提供上下文，不是 participant whitelist，也不赋予任何扫描优先级；首次在当前 narrative 出现的对象也可以进入分析，但不得由模型自行创造永久 character_id。',
-  'character_id 是 Runtime/Plugin 管理的 canonical entity identifier，不是姓名、拼音、romanization、lowercase、snake_case、slug、翻译、hash 或缩写的格式化结果。raw AI response 中的 new/unresolved 只能使用 character_id:null；只有 Runtime 完成 identity resolution 后，canonical Event 才会拥有正式 character_id。existing participant 只能原样引用输入 character_registry 中的 canonical character_id；new/unresolved 必须使用当前完整 response 内唯一、无业务语义的 response-local mention_id（如 mention_1），existing 的 mention_id 必须为 null。模型只判断 mention 指向谁，Runtime 才创建、校验和持久化实体 ID；不确定同名、同音、同 alias 或别名归属时必须返回 unresolved。',
+  'recipient discovery 必须 exhaustive：先完整扫描整个 Target Floor，建立临时 exposure candidate 集合，收集全部 actual pregnancy-relevant exposure recipients，再对集合中的每个 recipient 依次执行 identity resolution、World Model mapping、capability resolution 与 eligibility decision。不得因 current user、existing individual evidence、首个 eligible recipient，或某个 recipient 为 false/unknown 而提前 return、break、跳过后续扫描；canonical/derived individual evidence 只提供上下文，不是 participant whitelist，也不赋予任何扫描优先级；首次在当前 narrative 出现的对象也可以进入分析，但不得由模型自行创造永久 character_id。',
+  'character_id 是 Runtime/Plugin 管理的 canonical entity identifier，不是姓名、拼音、romanization、lowercase、snake_case、slug、翻译、hash 或缩写的格式化结果。raw AI response 中的 new/unresolved 只能使用 character_id:null；只有 Runtime 完成 identity resolution 后，canonical Event 才会拥有正式 character_id。existing participant 只能原样引用输入 identity projection 中的 canonical character_id；new/unresolved 必须使用当前完整 response 内唯一、无业务语义的 response-local mention_id（如 mention_1），existing 的 mention_id 必须为 null。模型只判断 mention 指向谁，Runtime 才创建、校验和持久化实体 ID；不确定同名、同音、同 alias 或别名归属时必须返回 unresolved。',
   '正式 character_id 只由 Runtime 创建和验证；模型不需要知道、预测或自行生成正式 ID。existing 必须复制输入 Registry 实际提供的 canonical character_id，new 必须返回 character_id:null，绝不能自行生成永久 ID。',
   'identity_status=new 表示 narrative 明确出现了此前未登记的实体；如果 display_name 或 alias 命中已有 registry candidate，不能仅凭名称复用或创建，除非 narrative 明确说明这是另一个人物，并在 identity_evidence 使用 explicit_new_entity 等证据类型，否则返回 unresolved。',
   '如果 narrative 明确揭示真名、化名、改名或“此前称呼”与当前人物是同一人，existing mention 必须继续引用原有 canonical character_id，并通过 identity_evidence 表达明确的 name revelation；不得因为 display_name 改变而创建新的 character_id。',
@@ -76,11 +76,11 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   '如果目标楼层正文直接描述当前仍存在或正在发生的疼痛、酸胀、肿胀、瘀痕、活动受限或其它身体症状，即使其诱因发生在 Recent Story，也应按当前楼层的直接事实评估 physical_symptom；不得仅因症状起因在前一楼层就排除。只有目标楼层没有当前状态描述、仅泛泛回顾过去症状时，才不输出该 Event。',
   '只有明确的医疗检查、诊断、治疗、给药、干预或医学监测才允许唯一的 medical_event；普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event。外貌、体质、长期设定和静态人物描写没有本楼新变化时不产生 physical_symptom。',
   '对 sexual_activity 只提取实际 pregnancy-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用已由 Runtime 提供或后续分配的 canonical character_id，姓名只作为 display_name。',
-  '仅对 pregnancy_relevance.relevant === true 的 pregnancy-related Event 强制要求 participant biological_context：该 Event 的每个 participant 都必须包含 biological_context 对象，且必须有 species 与 biological_type 两个字段；两个值只能是非空字符串或 null，资料不足时填 null。species 来自当前 World Model；biological_type 是该 species 下稳定的生理/生殖分类。允许综合 Character Card、Persona、Worldbook、Narrative、Existing profile、稳定设定、身体结构/生理/生殖事实与多条一致上下文，把对象映射到当前 World Model 的 species/type；明确 identity、高度一致的稳定生理证据或明确的生理性别事实，都可以作为 biological_type 映射证据之一。生理性别只参与 identity/type 映射，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌只能作为综合上下文，任一单一弱线索不能独立决定 species、biological_type 或 capability；证据不足或冲突时保留 null 并让候选进入 pending，不得让候选消失。',
+  '仅对 pregnancy_relevance.relevant === true 的 pregnancy-related Event 强制要求 participant biological_context：该 Event 的每个 participant 都必须包含 biological_context 对象，且必须有 species 与 biological_type 两个字段；两个值只能是非空字符串或 null，资料不足时填 null。species 来自当前 World Model；biological_type 是该 species 下稳定的生理/生殖分类。允许综合当前 World Model、Runtime 提供的 canonical/derived individual evidence 与当前 Narrative，把对象映射到当前 World Model 的 species/type；明确 identity、高度一致的稳定生理证据或明确的生理性别事实，都可以作为 biological_type 映射证据之一。生理性别只参与 identity/type 映射，不能单独授权 capability。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌只能作为综合上下文，任一单一弱线索不能独立决定 species、biological_type 或 capability；证据不足或冲突时保留 null 并让候选进入 pending，不得让候选消失。',
   'exposure recipient、exposure source 与是否构成 actual pregnancy-relevant exposure，必须由当前 World Model、匹配 species/type 的 reproduction_rules/capabilities 与 Narrative evidence 共同决定；不要把任何一种现实物种、性别、解剖结构、行为位置、接触方式或其它单一现实生殖机制硬编码成所有世界的必要条件。只有当前世界规则与目标楼层证据共同支持有效生殖路径时，才提取对应 recipient 与直接 source；possible_conception 只表示本次暴露具有潜在受孕相关性，不表示 actual conception 或 pregnancy。',
   '对其它 BiologicalEvent 类型，participants 只保留对该生物事实有直接作用的对象；在场、说话、被提及或普通递送行为不能自动成为参与者。',
-  '同时阅读 World Model baseline 与当前 Floor / recent_context 的 narrative evidence。World Model baseline 只提供已知生物学能力背景，narrative evidence 只记录本次剧情事实；二者不能互相臆造或跨角色借证。',
-  'participant capability 判断顺序固定为：先参考 current World Model 的匹配 species/type baseline，再参考 existing character profile，然后综合 Character、Persona、Worldbook、稳定设定、身体/生理/生殖事实与 current narrative evidence；个体明确证据可以覆盖或补充 baseline，未知字段保持 null。明确的生理性别事实只能作为 biological_type 映射的上下文证据，不能单独授权或补齐 capability。biological_context 只记录本次 capability 判断所采用的生物身份背景；不能根据角色、位置、主动/被动、姓名、外貌或性别补齐完整 capability 套装。',
+  '同时阅读 persisted World Model baseline、canonical/derived individual evidence 与当前 Target Floor / Recent Story narrative evidence。World Model baseline 只提供已知生物学能力背景，individual evidence 只提供已建立的个体资料，narrative evidence 只记录本次剧情事实；三者不能互相臆造或跨角色借证。',
+  'participant capability 判断顺序固定为：先参考 current World Model 的匹配 species/type baseline，再参考 Runtime 提供的 canonical/derived individual evidence，最后综合 current narrative evidence；个体明确证据可以覆盖或补充 baseline，未知字段保持 null。明确的生理性别事实只能作为 biological_type 映射的上下文证据，不能单独授权或补齐 capability。biological_context 只记录本次 capability 判断所采用的生物身份背景；不能根据角色、位置、主动/被动、姓名、外貌或性别补齐完整 capability 套装。',
   'event_role 与 gender/生理性别/biological_type 是不同字段。明确生理性别可以参与 identity/type 映射，但不能单独授权 capability；只能依据 current World Model baseline、个体 capability 证据与本次事件证据填写 reproductive role。不得从 gender、性别词、攻受、姓名、外貌或社会角色单独推导 can_carry_pregnancy、can_cause_pregnancy 或其它 capability。不要添加 gender eligibility 分支。',
   'reproductive_capabilities_used 固定包含 can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_cause_pregnancy、can_carry_pregnancy；每个值只能是 true、false 或 null。can_fertilize 与 can_cause_pregnancy 是独立事实，禁止 alias、fallback 或由前者推出后者。null 表示未知/没有证据，禁止把 unknown、缺失、模糊描述或模型常识自动变成 true。',
   'pregnancy_relevance.gestational_subject_ids[] 与 counterpart_ids[] 在最终 Event 中永远是 Runtime 已验证的 canonical character_id 数组；raw response 可以用 participant mention_id 引用尚未注册的新人物，不能输出姓名、逗号拼接字符串或模型伪造的永久 ID。',
@@ -94,7 +94,7 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
 
 export const EVENT_ANALYZER_TASK_CONTRACT = [
   '任务：只分析【本次目标楼层】中实际发生或有可靠证据支持的 BiologicalEvent，并返回完整 events 数组；events[] 允许为空、包含一个或包含多个彼此独立的 Event。明确生理性别事实可以映射到当前 World Model 已存在的 biological_type；只有映射到匹配 species/type 后，才可读取该 World Model baseline 的 capability，gender/sex 不能直接推出 capability、创建 type 或替代 World Model。',
-  '开始生成 pregnancy-related sexual_activity Event 前，必须先扫描完整目标楼层的全部 narrative evidence，临时收集所有 actual pregnancy-relevant exposure recipients；随后对每个 candidate 独立完成 exposure、identity、World Model mapping、capability 与 eligibility 判断。明确生理性别可作为 biological_type 映射证据之一，但不能单独授权 capability；能力仍须由匹配的 World Model baseline 或明确的个体生理/生殖能力证据支持。不得因 user/Persona/current Character、已有 profile、首个 eligible，或任何 false/unknown candidate 中途停止；character_context 不是 whitelist，首次出现的 narrative character 也不能被漏掉。',
+  '开始生成 pregnancy-related sexual_activity Event 前，必须先扫描完整目标楼层的全部 narrative evidence，临时收集所有 actual pregnancy-relevant exposure recipients；随后对每个 candidate 独立完成 exposure、identity、World Model mapping、capability 与 eligibility 判断。明确生理性别可作为 biological_type 映射证据之一，但不能单独授权 capability；能力仍须由匹配的 World Model baseline 或明确的个体生理/生殖能力证据支持。不得因 current user、已有 individual evidence、首个 eligible，或任何 false/unknown candidate 中途停止；individual_evidence 不是 whitelist，首次出现的 narrative character 也不能被漏掉。',
   '对 pregnancy-related sexual_activity，按唯一 gestational subject 分组；同一 subject 的多个 actual exposure source 必须合并成一个 subject-local Event，不同 subject 必须拆成不同 Event；输出前不得让同一 subject 重复出现，必须将该 subject 的 actual sources 合并到一个 Event。',
   '每个 pregnancy-related Event 只能有一个 gestational subject、至少一个 counterpart source，participants[] 只能是该 subject 与该 Event 实际 exposure sources，不能加入另一 subject、另一 Event 的 source、在场者或无 actual exposure 的 participant。',
   '同一 subject Event 内合并直接相关的即时症状、physical effects 和证据；独立的新 physical symptom、明确医疗检查/诊断/治疗/给药/干预/医学监测或其它独立 BiologicalEvent 可在同一 Floor 单独输出。普通补品、食物、饮料、送汤、照顾、休息建议、外貌、体质或静态人物设定都不单独形成 Event。',
@@ -105,7 +105,7 @@ export const EVENT_ANALYZER_TASK_CONTRACT = [
 export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   '只输出一个完整、可直接 JSON.parse 的 JSON 对象，不要 Markdown、代码围栏、前后解释或半结构化文本。顶层固定为 {"schema_version":1,"events":[]}；唯一允许的旧兼容顶层字段是会被忽略的 source，任何其它未知顶层字段都必须拒绝。',
   '一个 Target Floor Version 的 events[] 允许是 []、[一个 Event] 或包含多个 Event；每个数组成员是一个独立生物事实，不要使用 type 数组或拼接 type 表达多个事实。',
-  '输出前必须完成完整 Target Floor exhaustive scan：先把全部 actual pregnancy-relevant exposure recipients 放入临时 candidate 集合，再逐 recipient 解析 identity、World Model species/type、capability 与三态 eligibility；不得因 user/Persona/current Character、character_context、已有 profile、首个 eligible 或某个 false/unknown recipient 而提前结束。character_context 不是 whitelist，首次出现的 narrative character 也必须按同一规则处理。',
+  '输出前必须完成完整 Target Floor exhaustive scan：先把全部 actual pregnancy-relevant exposure recipients 放入临时 candidate 集合，再逐 recipient 解析 identity、World Model species/type、capability 与三态 eligibility；不得因 current user、已有 individual evidence、首个 eligible 或某个 false/unknown recipient 而提前结束。individual evidence 不是 whitelist，首次出现的 narrative character 也必须按同一规则处理。',
   'pregnancy-related sexual_activity 必须按唯一 gestational subject 分组：同一 subject 的多个 actual exposure sources 合并为一个 Event，不同 subject 输出不同 Event；同一响应/Floor 中同一 subject 只能出现一次，不能由 Runtime 自动合并重复 subject Event。',
   '每个 pregnancy-related sexual_activity Event 的 subject-local 结构必须满足：gestational_subject_ids.length===1；counterpart_ids.length>=1；唯一 subject 与 counterpart_ids[] 中每个 source 都在 participants[]；participants[] 的 ID 集合严格等于 subject 与 counterpart_ids[] 的并集；所有 ID 不重复，subject 不得出现在 counterpart_ids[]。counterpart_ids[] 只记录对该 subject 造成 actual pregnancy-relevant exposure 的 source，不记录另一 subject、另一 Event 的 source、在场者、普通 sexual participant 或无有效路径对象。',
   '同一 subject Event 合并直接相关的即时症状、physical effect、直接身体反应和证据；独立的 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。实际 pregnancy-relevant sexual exposure 使用 sexual_activity；普通补品、食物、饮料、照顾、休息建议、外貌、体质和静态人物描写不单独输出 Event。',
@@ -113,9 +113,9 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
   `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
   'story_time.day_index 只有在证据提供真实、连续且可排序的 canonical index 时才能填写 number；否则必须是 null。不要把月内第几日或 display 文本解析成 day_index，时间计算不读取 display。',
-  'location 固定为 string | null；已知地点必须保留 narrative、Target Floor、Recent Context 或 Worldbook 中出现的原始文字和原始语言，例如“传灯院”仍输出“传灯院”；不得拼音化、romanize、翻译、snake_case、slugify 或 ASCII 化。无法可靠确定时使用 {"location": null}；禁止地点对象或数组。',
-  `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 identity_status、character_id、mention_id、display_name、event_role、reproductive_capabilities_used 和 evidence；identity_status 只能是 existing、new 或 unresolved。existing 只能原样引用 character_registry 中的 ID，且 mention_id 必须为 null；new/unresolved 的 character_id 必须为 null，并使用当前完整 raw response 内唯一、无语义的 mention_N（如 mention_1）供内部引用。只有 Runtime 完成 identity resolution 后，最终 Event 才能保存 canonical character_id。仅对 pregnancy_relevance.relevant === true 的 pregnancy-related Event，每个 participant 还必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null。identity 可以由明确标签、多条一致的稳定生理/生殖上下文或明确生理性别事实映射到当前 World Model 已存在的 species/type；生理性别只能作为 biological_type 映射证据之一，不能单独创建 type 或授权 capability。不得把其它 species 的同名 type 套用 Human baseline；映射冲突或不足时保持 null 并进入 pending。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
-  `capability 判断顺序固定为：current World Model 的匹配 species/type baseline → existing character profile → Character / Persona / Worldbook / current narrative evidence；明确生理性别只能参与 biological_type 映射，不能单独授权或补齐 capability；个体明确证据可覆盖或补充 baseline，未知 capability 保持 null。reproductive_capabilities_used 固定包含 ${EVENT_CAPABILITY_KEYS.join('、')}；每个值只能是 true、false 或 null。`,
+  'location 固定为 string | null；已知地点必须保留 Target Floor、Recent Story 或 canonical evidence 中出现的原始文字和原始语言，例如“传灯院”仍输出“传灯院”；不得拼音化、romanize、翻译、snake_case、slugify 或 ASCII 化。无法可靠确定时使用 {"location": null}；禁止地点对象或数组。',
+  `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 identity_status、character_id、mention_id、display_name、event_role、reproductive_capabilities_used 和 evidence；identity_status 只能是 existing、new 或 unresolved。existing 只能原样引用 identity projection 中的 canonical character_id，且 mention_id 必须为 null；new/unresolved 的 character_id 必须为 null，并使用当前完整 raw response 内唯一、无语义的 mention_N（如 mention_1）供内部引用。只有 Runtime 完成 identity resolution 后，最终 Event 才能保存 canonical character_id。仅对 pregnancy_relevance.relevant === true 的 pregnancy-related Event，每个 participant 还必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null。identity 可以由明确 narrative 标签、canonical/derived individual evidence 或明确生理性别事实映射到当前 World Model 已存在的 species/type；生理性别只能作为 biological_type 映射证据之一，不能单独创建 type 或授权 capability。不得把其它 species 的同名 type 套用 Human baseline；映射冲突或不足时保持 null 并进入 pending。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
+  `capability 判断顺序固定为：persisted current World Model 的匹配 species/type baseline → canonical/derived individual evidence → current Target Floor / Recent Story evidence；明确生理性别只能参与 biological_type 映射，不能单独授权或补齐 capability；个体明确证据可覆盖或补充 baseline，未知 capability 保持 null。reproductive_capabilities_used 固定包含 ${EVENT_CAPABILITY_KEYS.join('、')}；每个值只能是 true、false 或 null。`,
   'participant.evidence 与 source_evidence 都必须是数组；每项必须是 {"kind":"...","text":"..."} 对象，kind 和 text 都是非空字符串。不得输出裸字符串、content 替代 text 或其它 evidence 形状。',
   `每个 event 必须包含 type、status、story_time、location、participants、pregnancy_relevance、source_evidence；physical_effect 是可选对象，其中 gestational_substance_intake 只能是 true、false 或 null。`,
   'pregnancy_relevance 必须包含 relevant、possible_conception、gestational_subject_ids[]、counterpart_ids[]、reproductive_mechanism、confidence；relevant 与 possible_conception 都只能是 boolean，不能是 null、字符串或 probable/possible/unknown。两个 ID 字段始终是数组，可为空、单个或多个；不能是字符串。reproductive_mechanism 是结构化对象，包含开放的 kind/label/pathway、world_model_rule_refs[] 与 evidence[]，不得使用固定机制 enum。relevant === true 时必须有潜在 gestational subject、至少一个 source/counterpart、机制/事实证据和 participant closure；不得把 sexual_activity 或 possible_conception 当作唯一 gate。',
@@ -463,31 +463,17 @@ function formatEventCharacterReference(input, names) {
   return formatCharacterReference({ character: input?.character }, names)
 }
 
-function formatEventCharacterRegistry(registry, names) {
-  const value =
-    registry && typeof registry === 'object' && !Array.isArray(registry)
-      ? registry
-      : {}
-  const entities =
-    value.entities &&
-    typeof value.entities === 'object' &&
-    !Array.isArray(value.entities)
-      ? value.entities
-      : {}
-  const blocks = Object.entries(entities)
-    .map(([fallbackId, rawEntity]) => {
-      const entity =
-        rawEntity && typeof rawEntity === 'object' && !Array.isArray(rawEntity)
-          ? rawEntity
-          : {}
-      const characterId = expandPlaceholders(
-        entity.character_id ?? fallbackId,
-        names,
-      )
+function formatEventCharacterRegistry(identityContext, names) {
+  const candidates = Array.isArray(identityContext?.canonical_candidates)
+    ? identityContext.canonical_candidates
+    : []
+  const blocks = candidates
+    .map((candidate) => {
+      const characterId = expandPlaceholders(candidate?.character_id, names)
       if (!characterId) return ''
-      const displayName = expandPlaceholders(entity.display_name, names)
-      const aliases = Array.isArray(entity.aliases)
-        ? entity.aliases
+      const displayName = expandPlaceholders(candidate?.display_name, names)
+      const aliases = Array.isArray(candidate?.aliases)
+        ? candidate.aliases
             .map((alias) => expandPlaceholders(alias, names))
             .filter(Boolean)
         : []
@@ -518,43 +504,22 @@ const EVENT_CHARACTER_CAPABILITY_LABELS = Object.freeze({
   can_carry_pregnancy: '可承载妊娠',
 })
 
-function formatEventCharacterContext(characterContext, names) {
-  const value =
-    characterContext &&
-    typeof characterContext === 'object' &&
-    !Array.isArray(characterContext)
-      ? characterContext
-      : {}
-  const profiles =
-    value.profiles &&
-    typeof value.profiles === 'object' &&
-    !Array.isArray(value.profiles)
-      ? value.profiles
-      : {}
-  const profileBlocks = Object.entries(profiles)
-    .map(([fallbackId, rawProfile]) => {
-      const profile =
-        rawProfile &&
-        typeof rawProfile === 'object' &&
-        !Array.isArray(rawProfile)
-          ? rawProfile
-          : {}
-      const characterId = expandPlaceholders(
-        profile.character_id ?? fallbackId,
-        names,
-      )
+function formatEventIndividualEvidence(individualEvidence, names) {
+  const profiles = Array.isArray(individualEvidence) ? individualEvidence : []
+  const profileBlocks = profiles
+    .map((profile) => {
+      const characterId = expandPlaceholders(profile?.character_id, names)
       if (!characterId) return ''
       const lines = [`角色标识：${characterId}`]
-      const displayName = expandPlaceholders(profile.display_name, names)
-      const species = expandPlaceholders(profile.species, names)
-      const biologicalType = expandPlaceholders(profile.biological_type, names)
+      const displayName = expandPlaceholders(profile?.display_name, names)
+      const species = expandPlaceholders(profile?.species, names)
+      const biologicalType = expandPlaceholders(profile?.biological_type, names)
       if (displayName) lines.push(`显示名称：${displayName}`)
       if (species) lines.push(`物种：${species}`)
       if (biologicalType) lines.push(`生物类型：${biologicalType}`)
 
       const capabilities =
-        profile.reproductive_capabilities ??
-        profile.reproductive_capabilities_used
+        profile?.capabilities
       if (
         capabilities &&
         typeof capabilities === 'object' &&
@@ -574,7 +539,7 @@ function formatEventCharacterContext(characterContext, names) {
         }
       }
 
-      const evidence = Array.isArray(profile.evidence)
+      const evidence = Array.isArray(profile?.evidence)
         ? profile.evidence
             .map((item) => {
               if (item && typeof item === 'object' && !Array.isArray(item)) {
@@ -596,19 +561,23 @@ function formatEventCharacterContext(characterContext, names) {
       return lines.join('\n')
     })
     .filter(Boolean)
-  const currentCharacter = expandPlaceholders(
-    value.current_character ?? value.currentCharacter,
-    names,
-  )
-  if (!currentCharacter && !profileBlocks.length) return ''
+  if (!profileBlocks.length) return ''
   return [
     '【事件相关角色参考】',
-    '以下 character_context 内容来自 BioWeave 已建立的角色资料，仅作为角色身份和已知能力的语义背景证据参考；它不代表本次目标楼层已经发生了任何事件，也不是 canonical identity candidates 的白名单，不能替代上面的 Runtime Character Registry。',
-    currentCharacter ? `当前角色显示名：${currentCharacter}` : '',
+    '以下 individual_evidence 内容来自 BioWeave 已建立的 canonical/derived 角色资料，仅作为角色身份和已知能力的语义背景证据参考；它不代表本次目标楼层已经发生了任何事件，也不是 canonical identity candidates 的白名单，不能替代上面的 Runtime Character Registry。',
     profileBlocks.join('\n\n'),
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function formatEventExistingEvents(events) {
+  if (!Array.isArray(events) || !events.length) return ''
+  return [
+    '【现有 BiologicalEvent 事实参考】',
+    '以下是当前 Chat 已保存的既有 Event，用于避免重复或理解历史；不要把它改写成当前目标楼层的新事实。',
+    formatPromptValue(events),
+  ].join('\n')
 }
 
 function formatEventFloorMetadata(input) {
@@ -666,14 +635,10 @@ function formatEventAnalysisRules(input, settings, names) {
 
 function formatEventAnalysisReferences(input, names) {
   return joinPromptSections([
-    formatEventCharacterRegistry(input.character_registry, names),
-    formatEventCharacterReference(input, names),
-    formatPersonaReference(input.persona, names),
-    formatEventCharacterContext(input.character_context, names),
-    formatWorldbookReference(input.worldbooks, names),
-    formatExternalMemoryReference(input.external_memory, names),
+    formatEventCharacterRegistry(input.identity_context, names),
+    formatEventIndividualEvidence(input.individual_evidence, names),
     formatWorldModelReference(input.world_model),
-    formatExistingBioWeaveReference(input.existing_bioweave),
+    formatEventExistingEvents(input.existing_events),
   ])
 }
 
