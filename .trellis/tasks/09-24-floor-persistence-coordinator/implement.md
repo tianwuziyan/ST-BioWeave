@@ -44,6 +44,7 @@ Inventory classification:
 - [x] Stop treating undefined/void `saveChatConditional()` results as confirmed persistence.
 - [x] Add regression coverage for host-ahead bootstrap, true-stale rejection, and save/readback confirmation semantics.
 - [x] Add generation-source correlation diagnostics without changing settle-barrier or supersede semantics.
+- [x] Freeze the known-good persistence boundary in existing lifecycle/development/Floor specs and add static bypass protection without changing production persistence.
 
 ## Validation and review gates
 

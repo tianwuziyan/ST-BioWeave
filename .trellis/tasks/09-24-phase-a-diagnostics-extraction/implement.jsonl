@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor provenance and storage ownership must remain unchanged while extracting diagnostics."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Runtime diagnostic DTO and UI debug popup consumption must retain the existing state contract."}

@@ -1,0 +1,28 @@
+{
+  "id": "phase-e-character-event-analysis-extraction-planning",
+  "name": "phase-e-character-event-analysis-extraction-planning",
+  "title": "Phase E Character Event Analysis Extraction Planning",
+  "description": "Audit the current worktree and plan a pure Character/Event Analysis orchestration extraction.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-24",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-24-phase-f-runtime-composition-cleanup-planning"
+  ],
+  "parent": "09-24-phase-d-world-analysis-extraction-planning",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

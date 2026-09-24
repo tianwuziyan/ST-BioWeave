@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Check that no extracted diagnostic path becomes a Floor fact or persistence owner."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check that UI receives the same diagnostic DTO and settings/debug state boundaries."}

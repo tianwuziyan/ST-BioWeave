@@ -4,7 +4,9 @@ import {readFileSync} from 'node:fs';
 import {
   buildEventAnalysisMessages,
   buildWorldModelMessages,
+  EVENT_ANALYZER_CORE_CONTRACT,
   EVENT_ANALYZER_OUTPUT_CONTRACT,
+  EVENT_ANALYZER_TASK_CONTRACT,
   EVENT_CAPABILITY_KEYS,
   EVENT_REPRODUCTIVE_ROLES,
   EVENT_STATUS,
@@ -195,6 +197,39 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /Event source 由 Runtime 绑定/);
   assert.doesNotMatch(prompt, /Chat ID:/);
   assert.equal(JSON.stringify(messages).includes('DO-NOT-SEND'), false);
+});
+
+test('Event prompt regression keeps gender as World Model type evidence only', () => {
+  const contracts = [
+    EVENT_ANALYZER_CORE_CONTRACT,
+    EVENT_ANALYZER_TASK_CONTRACT,
+    EVENT_ANALYZER_OUTPUT_CONTRACT,
+  ].join('\n');
+  const prompt = buildEventAnalysisMessages({
+    current_floor: { narrative: 'Character Card gender: 女性。当前楼层存在 pregnancy-relevant exposure。' },
+    world_model: {
+      species: [{
+        name: '人类',
+        biological_types: [
+          { name: '男性', capabilities: {} },
+          { name: '女性', capabilities: { can_carry_pregnancy: true, can_be_fertilized: true } },
+        ],
+      }],
+    },
+  }).map((message) => message.content).join('\n');
+
+  for (const text of [contracts, prompt]) {
+    assert.match(text, /明确生理性别事实.*映射到当前 World Model 已存在的 biological_type/);
+    assert.match(text, /匹配.*World Model baseline.*capability|World Model baseline.*capability/);
+    assert.match(text, /不能单独.*创建 type.*授权 capability|不能单独创建 type 或授权 capability/);
+    assert.match(text, /不能单独授权.*capability/);
+  }
+  assert.match(contracts, /不得把其它 species 的同名 type 套用 Human baseline/);
+  assert.match(contracts, /映射冲突或不足时保持 null/);
+  assert.doesNotMatch(
+    contracts,
+    /不能使用现实人类常识、Character Card 的 gender\/sex 或旧默认能力补空/,
+  );
 });
 
 test('Event input renders a separate canonical registry candidate block', () => {

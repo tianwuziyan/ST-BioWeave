@@ -267,6 +267,15 @@ test("explicit exposure carrying evidence resolves when the World Model mechanis
     } },
   );
   assert.deepEqual(rebuildTrackingRegistry([exposure]).tracking_candidates, {});
+  const resolution = resolveCarryingCapability({
+    characterFacts: {
+      explicitCapabilities: { can_carry_pregnancy: true },
+      type: { reproductive_mechanisms: [] },
+    },
+    exposureEvent: exposure,
+  });
+  assert.equal(resolution.value, true);
+  assert.equal(resolution.reason, "EXPOSURE_CARRYING_CAPABILITY");
 });
 
 test("gender-like labels and event roles do not create a subject when capability is unknown", () => {

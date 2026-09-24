@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Quality check for stale Floor, Swipe ownership, canonical registry source, and derived-state invalidation boundaries."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Quality check for Runtime/UI DTO compatibility and avoiding business logic duplication in Characters UI."}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check Floor ownership invariants before any future extraction"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Check lifecycle invariants before any future extraction"}

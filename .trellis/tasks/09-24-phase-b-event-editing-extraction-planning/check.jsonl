@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify no Floor ownership, stale guard, Swipe or derived-state contract changes."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify Event normalization, validation and tracking behavior remains unchanged."}

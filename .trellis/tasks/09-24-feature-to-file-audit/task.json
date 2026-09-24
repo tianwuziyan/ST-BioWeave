@@ -1,0 +1,29 @@
+{
+  "id": "feature-to-file-audit",
+  "name": "feature-to-file-audit",
+  "title": "BioWeave Feature-to-File 代码拆分审计",
+  "description": "只读审计当前 HEAD 的功能归属、runtime/events.js 混合职责与渐进式文件拆分方案",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-24-phase-a-diagnostics-extraction",
+    "09-24-phase-b-event-editing-extraction-planning"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

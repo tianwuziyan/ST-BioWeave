@@ -25,6 +25,8 @@ import { createProjectionPersistence } from "../storage/projection.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
 import { createProjectionContextCoordinator } from "./projection-context.js";
 import { createRuntimeActivity } from "./activity.js";
+import { createRuntimeDiagnostics } from "./diagnostics.js";
+import { createSillyTavernAdapter as createSillyTavernIoAdapter } from "./sillytavern-adapter.js";
 
 const LIFECYCLE_EVENTS = [
   "CHAT_CHANGED",
@@ -174,7 +176,8 @@ function floorVersionAudit(expected, actual) {
 }
 
 export function createSillyTavernAdapter() {
-  const getContext = () => globalThis.SillyTavern?.getContext?.() ?? null;
+  const io = createSillyTavernIoAdapter();
+  const getContext = io.getContext;
   let chatIndexCache = null;
   let chatIndexOwnerKey = null;
   let persistenceTraceSink = null;
@@ -270,144 +273,11 @@ export function createSillyTavernAdapter() {
   }
 
   function sourceDescriptor(context, owner = {}) {
-    const chatId = ownerId(owner);
-    if (!chatId) throw sourceError("SOURCE_OWNER_REQUIRED");
-    const identity = ownerIdentityFromContext(context);
-    const groupId = owner?.groupId ?? owner?.group_id ?? identity.groupId;
-    const characterId = owner?.characterId ?? owner?.character_id;
-    if (
-      characterId != null &&
-      identity.characterId != null &&
-      String(characterId) !== String(identity.characterId)
-    ) {
-      throw sourceError("SOURCE_OWNER_IDENTITY_MISMATCH");
-    }
-    if (
-      groupId != null &&
-      identity.groupId != null &&
-      String(groupId) !== String(identity.groupId)
-    ) {
-      throw sourceError("SOURCE_OWNER_IDENTITY_MISMATCH");
-    }
-    if (groupId != null && String(groupId).trim()) {
-      throw sourceError("SOURCE_OWNER_GROUP_UNSUPPORTED");
-    }
-    const character = characterForOwner(context, owner);
-    if (!character)
-      throw sourceError("SOURCE_OWNER_CHARACTER_UNAVAILABLE");
-    return {
-      chatId,
-      apiFileName: String(chatId).replace(/\.jsonl$/iu, ""),
-      characterId: character.characterId,
-      groupId: null,
-      ch_name: character.ch_name,
-      avatar_url: character.avatar_url,
-    };
-  }
-
-  async function requestJson(endpoint, body, { signal = undefined, write = false } = {}) {
-    const context = getContext();
-    const fetchRef = globalThis.fetch;
-    if (typeof fetchRef !== "function")
-      throw sourceError("SOURCE_OWNER_HTTP_UNAVAILABLE");
-    let response;
-    try {
-      response = await fetchRef(endpoint, {
-        method: "POST",
-        headers: sourceRequestHeaders(context),
-        body: JSON.stringify(body),
-        cache: "no-cache",
-        ...(signal ? { signal } : {}),
-      });
-    } catch (error) {
-      const wrapped = sourceError(
-        write ? "SOURCE_OWNER_SAVE_UNKNOWN" : "SOURCE_OWNER_READ_FAILED",
-        { cause: error },
-      );
-      if (write) wrapped.commitState = "unknown";
-      throw wrapped;
-    }
-    if (!response?.ok) {
-      const status = Number(response?.status) || 0;
-      const error = sourceError(
-        write && status >= 500
-          ? "SOURCE_OWNER_SAVE_UNKNOWN"
-          : write
-            ? "SOURCE_OWNER_SAVE_FAILED"
-            : "SOURCE_OWNER_READ_FAILED",
-        { status, statusText: response?.statusText },
-      );
-      if (write && status >= 500) error.commitState = "unknown";
-      throw error;
-    }
-    if (write) return response;
-    try {
-      return await response.json();
-    } catch (error) {
-      throw sourceError("SOURCE_OWNER_READ_INVALID_RESPONSE", { cause: error });
-    }
-  }
-
-  async function sourceRevision(state) {
-    return hashText(
-      JSON.stringify(
-        stableOwnerValue({
-          chatId: state.chatId,
-          characterId: state.characterId,
-          groupId: state.groupId,
-          header: state.header,
-          chatMetadata: state.chatMetadata,
-          messages: state.messages,
-        }),
-      ),
-    );
-  }
-
-  function parseSourceResponse(data, descriptor) {
-    if (!Array.isArray(data))
-      throw sourceError("SOURCE_OWNER_READ_INVALID_RESPONSE");
-    const header = data.length > 0 && data[0] && typeof data[0] === "object"
-      ? data[0]
-      : {};
-    const metadata = header.chat_metadata ?? {};
-    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
-      throw sourceError("SOURCE_OWNER_METADATA_INVALID");
-    return {
-      chatId: descriptor.chatId,
-      chat_id: descriptor.chatId,
-      characterId: descriptor.characterId,
-      groupId: descriptor.groupId,
-      header: cloneOwnerValue(header),
-      chatMetadata: cloneOwnerValue(metadata),
-      metadata: cloneOwnerValue(metadata),
-      messages: cloneOwnerValue(data.slice(data.length > 0 ? 1 : 0)),
-      chat: cloneOwnerValue(data.slice(data.length > 0 ? 1 : 0)),
-      response_shape: "json_array_jsonl",
-    };
+    return io.getOwnerDescriptor(owner);
   }
 
   async function readOfficialChatOwner(owner) {
-    const context = getContext();
-    const descriptor = sourceDescriptor(context, owner);
-    const data = await requestJson(
-      "/api/chats/get",
-      {
-        ch_name: descriptor.ch_name,
-        file_name: descriptor.apiFileName,
-        avatar_url: descriptor.avatar_url,
-      },
-      { signal: owner?.signal },
-    );
-    const state = parseSourceResponse(data, descriptor);
-    state.revision = await sourceRevision(state);
-    state.sourceRevision = state.revision;
-    state.owner = {
-      chatId: descriptor.chatId,
-      characterId: descriptor.characterId,
-      groupId: descriptor.groupId,
-      revision: state.revision,
-    };
-    return state;
+    return io.readOfficialChatOwner(owner);
   }
 
   async function readOfficialFloorSlot({messageIndex, message_id, swipeId = 0, expectedChatId, expectedVersion} = {}) {
@@ -534,13 +404,10 @@ export function createSillyTavernAdapter() {
       user_name: state.header?.user_name ?? "unused",
       character_name: state.header?.character_name ?? "unused",
     };
-    await requestJson("/api/chats/save", {
-      ch_name: descriptor.ch_name,
-      file_name: descriptor.apiFileName,
+    await io.requestOfficialChatSave({
+      descriptor,
       chat: [header, ...next],
-      avatar_url: descriptor.avatar_url,
-      force: false,
-    }, {write: true});
+    });
     const readback = await inspectOfficialFloorOwner({
       messageIndex: targetIndex,
       swipeId: activeSwipe,
@@ -663,17 +530,11 @@ export function createSillyTavernAdapter() {
       user_name: next.header?.user_name ?? "unused",
       character_name: next.header?.character_name ?? "unused",
     };
-    await requestJson(
-      "/api/chats/save",
-      {
-        ch_name: descriptor.ch_name,
-        file_name: descriptor.apiFileName,
-        chat: [header, ...cloneOwnerValue(next.messages)],
-        avatar_url: descriptor.avatar_url,
-        force: false,
-      },
-      { signal: payload?.signal, write: true },
-    );
+    await io.requestOfficialChatSave({
+      descriptor,
+      chat: [header, ...cloneOwnerValue(next.messages)],
+      signal: payload?.signal,
+    });
     return {
       commitState: "confirmed",
       mergeMode: "latest-source",
@@ -808,7 +669,11 @@ export function createSillyTavernAdapter() {
       if (!sameFloorVersion(currentVersion, expectedVersion))
         throw sourceError("STALE_FLOOR_VERSION");
     }
-    const before = readFloorSlot(message, swipeId);
+    const beforeResult = io.readHostFloorSlot({
+      messageIndex,
+      swipeIndex: swipeId,
+    });
+    const before = beforeResult.slot;
     trace(beforeStage, {
       message_index: messageIndex,
       swipe_id: swipeId,
@@ -816,8 +681,12 @@ export function createSillyTavernAdapter() {
       host_memory_slot_present: before !== undefined,
       ...slotPresence(before),
     });
-    writeFloorSlot(message, swipeId, value);
-    const after = readFloorSlot(message, swipeId);
+    const afterResult = io.writeHostFloorSlot({
+      messageIndex,
+      swipeIndex: swipeId,
+      bioweave: value,
+    });
+    const after = afterResult.slot;
     trace(afterStage, {
       message_index: messageIndex,
       swipe_id: swipeId,
@@ -1188,17 +1057,10 @@ export function createSillyTavernAdapter() {
       commit_state: "dispatched",
     });
     try {
-      await requestJson(
-        "/api/chats/save",
-        {
-          ch_name: descriptor.ch_name,
-          file_name: descriptor.apiFileName,
-          chat: [header, ...cloneOwnerValue(latest.messages)],
-          avatar_url: descriptor.avatar_url,
-          force: false,
-        },
-        { write: true },
-      );
+      await io.requestOfficialChatSave({
+        descriptor,
+        chat: [header, ...cloneOwnerValue(latest.messages)],
+      });
       trace("BIOWEAVE_FULL_CHAT_SAVE_RESOLVED", {
         source: "official_clone",
         persistence_transaction_id: persistenceTransactionId,
@@ -1299,26 +1161,7 @@ export function createSillyTavernAdapter() {
   }
 
   async function refreshOfficialChatIndex() {
-    const context = getContext();
-    const descriptor = sourceDescriptor(context, {
-      chatId: context?.chatId,
-      characterId: ownerIdentityFromContext(context).characterId,
-    });
-    const data = await requestJson(
-      "/api/characters/chats",
-      { avatar_url: descriptor.avatar_url },
-    );
-    if (!data || typeof data !== "object" || Array.isArray(data) || data.error === true)
-      throw sourceError("CHAT_INDEX_INVALID");
-    const ids = new Set();
-    for (const entry of Object.values(data)) {
-      const id = ownerId(entry?.file_name ?? entry?.chatId ?? entry?.chat_id ?? entry);
-      if (id) ids.add(chatIdKey(id));
-    }
-    ids.add(chatIdKey(descriptor.chatId));
-    chatIndexCache = ids;
-    chatIndexOwnerKey = ownerKey(context, descriptor);
-    return new Set(ids);
+    return io.refreshChatIndex();
   }
 
   return {
@@ -1620,6 +1463,7 @@ export function createSillyTavernAdapter() {
         ? setter.call(context, key, content, resolvedPosition, depth, scan, resolvedRole)
         : setter(key, content, resolvedPosition, depth, scan, resolvedRole);
     },
+    ...io,
   };
 }
 
@@ -1638,12 +1482,12 @@ export function createRuntime({
   const st = adapter;
   const chat = createChatBoundary(st);
   const store = createStore(st, chat);
+  const diagnostics = createRuntimeDiagnostics({
+    getChatId: () => chat.current(),
+  });
   const subscriptions = new Set();
   const unbind = [];
   const activity = createRuntimeActivity();
-  const recentLifecycleTrace = [];
-  let persistenceTrace = null;
-  let traceSequence = 0;
   let initialized = false;
   let destroyed = false;
 
@@ -1660,61 +1504,7 @@ export function createRuntime({
   }
 
   function notify(event) {
-    if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") {
-      const payload = event.payload ?? {};
-      if (payload.stage === "AUTO_ANALYSIS_TRIGGERED") {
-        const priorSequence = persistenceTrace?.sequence ?? [];
-        const mergedSequence = [...recentLifecycleTrace, ...priorSequence]
-          .filter((entry, index, all) =>
-            all.findIndex(candidate => candidate?.seq === entry?.seq) === index)
-          .sort((left, right) => Number(left?.seq ?? 0) - Number(right?.seq ?? 0));
-        persistenceTrace = {
-          execution: {
-            chat_id: payload.chat_id ?? chat.current(),
-            message_id: payload.message_id ?? null,
-            floor: payload.floor ?? null,
-            swipe_id: payload.swipe_id ?? 0,
-            content_hash: payload.content_hash ?? null,
-            message_version: payload.message_version ?? null,
-            attempt: payload.attempt ?? null,
-            trigger: payload.trigger ?? null,
-          },
-          sequence: mergedSequence.slice(-64),
-          terminal: null,
-          host_post_save_hook: "NO_PUBLIC_POST_SAVE_HOOK",
-        };
-      }
-      if (!persistenceTrace) {
-        persistenceTrace = {
-          execution: null,
-          sequence: [],
-          terminal: null,
-        };
-      }
-      persistenceTrace.sequence.push({
-        seq: ++traceSequence,
-        stage: payload.stage ?? "UNKNOWN",
-        ...sanitizePersistenceTracePayload(payload),
-      });
-    }
-    if (event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" && persistenceTrace && event.payload?.state !== "running") {
-      persistenceTrace.terminal = event.payload?.state ?? null;
-      const diagnostic = event.payload?.diagnostic ?? event.payload ?? {};
-      const terminalStage = event.payload?.state === "failed"
-        ? "ANALYSIS_FAILED"
-        : `ANALYSIS_${String(event.payload?.state ?? "unknown").toUpperCase()}`;
-      persistenceTrace.sequence.push({
-        seq: ++traceSequence,
-        ...sanitizePersistenceTracePayload(event.payload),
-        stage: terminalStage,
-        trigger: event.payload?.reason ?? persistenceTrace.execution?.trigger ?? null,
-        failure_stage: event.payload?.state === "failed" ? diagnostic.stage ?? event.payload?.analysis_stage ?? null : undefined,
-        error_name: event.payload?.state === "failed" ? diagnostic.error_name ?? null : undefined,
-        error_code: event.payload?.state === "failed" ? diagnostic.error_code ?? event.payload?.error_code ?? null : undefined,
-        error_message: event.payload?.state === "failed" ? diagnostic.error_message ?? diagnostic.safe_error_summary ?? null : undefined,
-        diagnostic_code: event.payload?.state === "failed" ? diagnostic.diagnostic_code ?? event.payload?.diagnostic_code ?? null : undefined,
-      });
-    }
+    diagnostics.observe(event);
     activity.handleRuntimeEvent(event);
     for (const listener of [...subscriptions]) {
       try {
@@ -1723,90 +1513,6 @@ export function createRuntime({
         console.error("[BioWeave] runtime subscriber failed", error);
       }
     }
-  }
-
-  function sanitizePersistenceTracePayload(payload = {}) {
-    const allowed = [
-      "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash",
-      "message_version", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "domain", "state", "path",
-      "retry_index", "max_retries", "failure_stage", "failure_code",
-      "retry_decision", "retry_reason",
-      "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason",
-      "cancel_stage", "cancel_reason", "cancel_code",
-      "classification", "retry_classification", "retryable", "version_check_source",
-      "expected_floor_version", "actual_floor_version", "expected_content_hash", "actual_content_hash",
-      "mismatch_fields", "active_chat_match", "message_owner_match", "floor_match",
-      "host_content_hash_match", "host_floor_version_match", "official_content_hash_match",
-      "official_floor_version_match", "execution_superseded",
-        "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
-        "original_floor", "current_floor", "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
-        "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
-      "swipe_id_match", "content_hash_match", "message_version_match", "generation_identity_match",
-      "retries_remaining", "from_retry_index", "next_retry_index", "configured_retry_count", "normalized_retry_count", "world_max_retries", "event_max_retries",
-      "reason", "result", "present", "slot_present", "world_model_present", "species_count",
-      "biological_type_count", "floor_version_match", "swipe_match", "commitState",
-      "revision", "current_floor_present",
-      "validator", "keyword", "instance_path", "schema_path", "validator_params",
-      "event_index", "event_type",
-      "expected_swipe_id", "expected_floor_version", "actual_floor_version",
-      "bioweave_present", "event_count", "character_count", "current_floor_included",
-      "source", "ready",
-      "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state",
-      "resolution_reason", "request_source", "panel_open", "active_tab",
-      "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
-      "error_name", "error_message", "diagnostic_code",
-      "response_shape", "extraction_mode", "parsed", "events_present",
-      "schema_valid", "domain_valid", "validation_error_path",
-      "valid_empty", "empty_reason", "expected_event_count",
-      "expected_character_count", "expected_character_ids", "actual_event_count",
-      "actual_character_count", "actual_registry_character_count",
-    ];
-    return Object.fromEntries(
-      allowed
-        .filter(key => payload[key] !== undefined)
-        .map(key => [key, cloneSafeTraceValue(payload[key])]),
-    );
-  }
-
-  function cloneSafeTraceValue(value) {
-    if (value === null || typeof value !== "object") return value;
-    if (Array.isArray(value)) return value.map(cloneSafeTraceValue);
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneSafeTraceValue(item)]));
-  }
-
-  function recordLifecycleTrace(stage, payload, chatId) {
-    const generationType = typeof payload === "object"
-      ? payload?.genType ?? payload?.generation_type ?? payload?.type ?? null
-      : payload;
-    const generationSource = typeof payload === "object"
-      ? payload?.source ?? payload?.generation_source ?? payload?.reason ?? null
-      : null;
-    const entry = {
-      seq: ++traceSequence,
-      stage,
-      chat_id: chatId ?? chat.current(),
-    };
-    const safe = sanitizePersistenceTracePayload({
-      ...(payload && typeof payload === "object" ? payload : {}),
-      ...(generationType != null ? {generation_type: String(generationType).slice(0, 40)} : {}),
-      ...(generationSource != null ? {generation_source: String(generationSource).slice(0, 80)} : {}),
-    });
-    recentLifecycleTrace.push({...entry, ...safe});
-    while (recentLifecycleTrace.length > 64) recentLifecycleTrace.shift();
-    if (persistenceTrace) persistenceTrace.sequence.push({...entry, ...safe});
-  }
-
-  function getPersistenceTrace() {
-    if (!persistenceTrace) return null;
-    const bySequence = new Map();
-    for (const entry of persistenceTrace.sequence ?? []) {
-      if (!Number.isFinite(Number(entry?.seq))) continue;
-      bySequence.set(entry.seq, entry);
-    }
-    return cloneSafeTraceValue({
-      ...persistenceTrace,
-      sequence: [...bySequence.values()].sort((left, right) => left.seq - right.seq),
-    });
   }
 
   function recordPersistenceTrace(payload = {}) {
@@ -1824,32 +1530,18 @@ export function createRuntime({
       const floorData = target
         ? store.getFloor?.(target.index, target.swipeId) ?? null
         : null;
-      recordPersistenceTrace({
-        stage: "RELOAD_FLOOR_SLOT_AUDIT",
+      recordPersistenceTrace(diagnostics.buildReloadFloorSlotAudit({
         reason,
-        chat_id: chatId,
-        message_id: target?.version?.message_id ?? null,
-        floor: target?.version?.floor ?? null,
-        swipe_id: target?.swipeId ?? null,
-        content_hash: target?.version?.content_hash ?? null,
-        message_version: target?.version?.message_version ?? null,
-        bioweave_present: Boolean(floorData),
-        world_model_present: Boolean(floorData?.world_model),
-        analysis_present: Boolean(floorData?.analysis),
-        events_present: Array.isArray(floorData?.events),
-        character_registry_present: Boolean(floorData?.character_registry),
-        snapshot_present: Boolean(floorData?.snapshot),
-        projection_timeline_present: Boolean(floorData?.projection_timeline),
-        resolution_reason: floorData ? "resolved" : "slot_missing",
-      });
+        chatId,
+        target,
+        floorData,
+      }));
     } catch (error) {
-      recordPersistenceTrace({
-        stage: "RELOAD_FLOOR_SLOT_AUDIT",
+      recordPersistenceTrace(diagnostics.buildReloadFloorSlotAudit({
         reason,
-        chat_id: chatId,
-        bioweave_present: false,
-        resolution_reason: error?.code ?? error?.message ?? "resolver_failed",
-      });
+        chatId,
+        error,
+      }));
     }
   }
 
@@ -2414,7 +2106,7 @@ export function createRuntime({
       MESSAGE_RECEIVED: "MESSAGE_RECEIVED",
       CHARACTER_MESSAGE_RENDERED: "CHARACTER_MESSAGE_RENDERED",
     }[key];
-    if (lifecycleTraceStage) recordLifecycleTrace(lifecycleTraceStage, payload, chatId);
+    if (lifecycleTraceStage) diagnostics.recordLifecycleTrace(lifecycleTraceStage, payload, chatId);
     const chatChanged = chat.getEpoch() !== epochBefore;
     let sourceTransition = null;
     if (key === "CHAT_CHANGED" && chatChanged) {
@@ -2478,6 +2170,23 @@ export function createRuntime({
     const context = st.getContext?.();
     const source = context?.eventSource;
     const types = context?.eventTypes;
+    const handlers = {};
+    for (const key of LIFECYCLE_EVENTS) {
+      const eventType = types?.[key];
+      if (eventType == null || handlers[key]) continue;
+      handlers[key] = (payload) =>
+        handleLifecycleEvent(key, eventType, payload);
+    }
+    if (typeof st.subscribeLifecycle === "function") {
+      const unsubscribe = st.subscribeLifecycle({
+        eventTypes: types,
+        handlers,
+      });
+      if (typeof unsubscribe === "function") unbind.push(unsubscribe);
+      return;
+    }
+    // Compatibility path for injected legacy adapters that expose only the
+    // raw SillyTavern eventSource. The production adapter uses the seam above.
     if (
       !source ||
       typeof source.on !== "function" ||
@@ -2486,11 +2195,10 @@ export function createRuntime({
       return;
     }
     const boundEventTypes = new Set();
-    for (const key of LIFECYCLE_EVENTS) {
+    for (const key of Object.keys(handlers)) {
       const eventType = types?.[key];
       if (eventType == null || boundEventTypes.has(eventType)) continue;
-      const listener = (payload) =>
-        handleLifecycleEvent(key, eventType, payload);
+      const listener = handlers[key];
       source.on(eventType, listener);
       boundEventTypes.add(eventType);
       unbind.push(() => source.removeListener(eventType, listener));
@@ -2591,7 +2299,6 @@ export function createRuntime({
 
   async function getStoryTimeDebugInfo() {
     const info = await storyTimeCoordinator.getCurrentStoryTimeInfo();
-    const resolutionTrace = Array.isArray(info.trace) ? info.trace : [];
     let business = null;
     try {
       // This is a read-only derived-data read. It does not invoke Event Analyzer.
@@ -2599,74 +2306,13 @@ export function createRuntime({
     } catch {
       business = null;
     }
-    const trace = storyTimeCoordinator.getDebugTrace();
-    const latestResolution = [...resolutionTrace].reverse().find(entry => entry?.source !== 'historical_event_difference' && (entry?.story_time || entry?.source)) ?? null;
-    const currentStoryTime = info.story_time ?? null;
-    const differences = business?.current_story_time_differences ?? {};
-    const events = Array.isArray(business?.active_events) ? business.active_events : [];
-    const event = events.find(item => Object.prototype.hasOwnProperty.call(differences, String(item?.event_id ?? '')))
-      ?? events[0]
-      ?? null;
-    const eventId = event?.event_id ? String(event.event_id) : null;
-    const difference = eventId ? (differences[eventId] ?? null) : null;
-    const eventStoryTime = event
-      ? (storyTimeCoordinator.normalizeStoryTimeForRead?.(event.story_time) ?? event.story_time ?? null)
-      : null;
-    const calendar = latestResolution?.calendar ?? null;
-    const normalizeCandidateSource = source => source === 'synopsis_time' ? 'synopsis_block_time' : (source ?? 'unknown');
-    const debugSource = normalizeCandidateSource(latestResolution?.source);
-    const candidateSource = normalizeCandidateSource(latestResolution?.candidate_source ?? debugSource);
-    const currentStoryTimeParsed = Boolean(currentStoryTime?.normalized || currentStoryTime?.day_index !== null);
-    const eventStoryTimeParsed = Boolean(eventStoryTime?.normalized || eventStoryTime?.day_index !== null);
-    const failureReason = difference
-      ? null
-      : info.status === 'NO_CHARACTER_FLOOR'
-        ? 'CURRENT_STORY_TIME_UNKNOWN'
-        : !currentStoryTimeParsed
-          ? 'CURRENT_STORY_TIME_PARSE_FAILED'
-          : event && !eventStoryTimeParsed
-            ? 'HISTORICAL_STORY_TIME_PARSE_FAILED'
-            : (calendar?.failure_reason ?? 'STORY_TIME_NOT_COMPARABLE');
-    return {
-      status: info.status ?? 'unknown',
-      chat_id: chat.current() === undefined || chat.current() === null ? null : String(chat.current()),
-      floor: info.floor?.version ? {
-        floor: info.floor.version.floor ?? null,
-        message_id: info.floor.version.message_id ?? null,
-        swipe_id: info.floor.version.swipe_id ?? info.floor.swipeId ?? null,
-        content_hash: info.floor.version.content_hash ?? null,
-        message_version: info.floor.version.message_version ?? null,
-      } : null,
-      source: debugSource,
-      resolution_source: latestResolution?.resolution_source ?? (latestResolution?.source === 'cache' ? 'cache' : 'fresh'),
-      candidate_source: candidateSource,
-      candidate: latestResolution?.candidate ?? null,
-      story_time: currentStoryTime,
-      parsed_parts: latestResolution?.parsed_parts ?? null,
-      calendar: calendar ? {
-        calendar_id: calendar.calendar_id ?? currentStoryTime?.calendar_id ?? null,
-        era_label: calendar.era_label ?? latestResolution?.parsed_parts?.era_label ?? null,
-        calculation_level: calendar.calculation_level ?? null,
-        ordinal_in_year: latestResolution?.ordinal_in_year ?? null,
-        day_index: currentStoryTime?.day_index ?? null,
-        failure_reason: calendar.failure_reason ?? null,
-      } : {
-        calendar_id: currentStoryTime?.calendar_id ?? null,
-        era_label: latestResolution?.parsed_parts?.era_label ?? null,
-        calculation_level: null,
-        ordinal_in_year: null,
-        day_index: currentStoryTime?.day_index ?? null,
-        failure_reason: info.status === 'NO_CHARACTER_FLOOR' ? 'CURRENT_STORY_TIME_UNKNOWN' : 'NO_CALENDAR_MAPPING',
-      },
-      recent_event: event ? {
-        event_id: eventId,
-        story_time: eventStoryTime,
-        difference,
-      } : null,
-      difference,
-      failure_reason: difference ? null : failureReason,
-      trace,
-    };
+    return diagnostics.buildStoryTimeDebugInfo({
+      info,
+      business,
+      trace: storyTimeCoordinator.getDebugTrace(),
+      chatId: chat.current(),
+      normalizeStoryTimeForRead: value => storyTimeCoordinator.normalizeStoryTimeForRead?.(value),
+    });
   }
 
   const dataLifecycle = {
@@ -2705,6 +2351,7 @@ export function createRuntime({
     resolveCurrentBioWeaveFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     analyzeFloor: eventAnalysis.analyzeFloor,
     refreshCurrentFloorAnalysis: eventAnalysis.refreshCurrentFloorAnalysis,
+    analyzeCurrentCharacterEvents: eventAnalysis.analyzeCurrentCharacterEvents,
     requestAbortCurrentFloorAnalysis:
       eventAnalysis.requestAbortCurrentFloorAnalysis,
     getBioWeaveEnabled: isBioWeaveEnabled,
@@ -2712,7 +2359,7 @@ export function createRuntime({
     setBioWeaveEnabled,
     getCurrentFloorAnalysisStatus: eventAnalysis.getCurrentFloorAnalysisStatus,
     getAutoAnalysisSchedulerState: eventAnalysis.getAutoAnalysisSchedulerState,
-    getPersistenceTrace,
+    getPersistenceTrace: diagnostics.getPersistenceTrace,
     recordPersistenceTrace,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,

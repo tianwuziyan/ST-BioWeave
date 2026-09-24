@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify Event extraction preserves Floor ownership and canonical readback contracts"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Verify no lifecycle, terminal, or derived-state behavior changes"}

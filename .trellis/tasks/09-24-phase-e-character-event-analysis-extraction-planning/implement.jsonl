@@ -1,0 +1,4 @@
+{"file": "runtime/event-analysis.js", "reason": "Current Character Event orchestration, shared retry, terminal, snapshot, and tracking call graph"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Event identity registry ownership, Floor Version, historical provenance, and persistence boundary invariants"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle, stale-result, terminal persistence, and derived-state contracts"}
+{"file": "ai/analyzer.js", "reason": "Current Event transport parser and empty strict JSON contract"}

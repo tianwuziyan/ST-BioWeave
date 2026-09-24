@@ -58,6 +58,9 @@ incomplete. The Definition of Done is the combination of implementation,
 registry entry, lifecycle invalidation, tests, and an updated
 `docs/bioweave-data-lifecycle.md`.
 
+Analysis routing/input changes must not modify Floor persistence ownership
+without a separate persistence root-cause task.
+
 # AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
@@ -301,6 +304,12 @@ git status
 **必须以实际 Git Diff 为准。**
 
 ## 核心原则
+
+修改 BioWeave runtime behavior 前，必须先阅读
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。优先使用已有 feature owner；
+只有真正独立的 feature 才新建 module。不要把新功能继续堆进
+`runtime/events.js` 或 `runtime/event-analysis.js`，也不要在没有 root-cause
+证据时触碰已通过 real-host 验证的 Persistence、Adapter、Generation boundary。
 
 所有 GitHub 更新内容必须做到：
 

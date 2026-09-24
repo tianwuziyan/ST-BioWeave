@@ -767,3 +767,23 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: 修复人物分析 Prompt gender/type/capability 回归
+<!-- trellis-session: v=2 prompt-gender-type-regression-20260924 -->
+
+**Date**: 2026-09-24
+**Task**: 修复人物分析 Prompt gender/type/capability 回归
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+修复 `8f98263b` 引入的 Event Analyzer Prompt 冲突：明确生理性别可映射到当前 World Model 已存在的 `biological_type`，capability 仍只能来自匹配 baseline 或明确个体证据。补充 A–E regression coverage，保留并验证 `EXPOSURE_CARRYING_CAPABILITY` tracking fallback；未修改 Runtime、Floor、Persistence 或 World Model 结构。
+
+### Verification
+
+定向 Event/tracking 测试 56/56 通过；`npm run check` 928/928 通过；`node --check ai/prompts.js` 与 `git diff --check` 通过。未提交、未推送、未进入 Phase 2C。
+
+### Status
+
+[OK] **Implemented; commit intentionally not created per user instruction**

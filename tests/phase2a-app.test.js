@@ -167,7 +167,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, contextOverrides = {}, worldModel = null, reemitPersistenceTrace = false} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, reemitPersistenceTrace = false} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -205,6 +205,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let chat = chatData;
   let runtimeListener = null;
   let refreshCalls = 0;
+  let characterAnalysisCalls = 0;
   let abortCalls = 0;
   let currentBusy = analysisBusy;
   let updateCalls = 0;
@@ -267,6 +268,12 @@ async function createFixture({event = null, analysisState = 'success', analysisB
       if (onRefresh) await onRefresh({floor, chat, version, context});
       return {status: 'success'};
     },
+    async analyzeCurrentCharacterEvents() {
+      characterAnalysisCalls += 1;
+      if (characterAnalysisError) throw characterAnalysisError;
+      if (onRefresh) await onRefresh({floor, chat, version, context});
+      return {status: 'success'};
+    },
     async getCurrentFloorAnalysisStatus() {
       return businessData().analysis_status;
     },
@@ -320,7 +327,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     documentRef,
     emit: event => runtimeListener?.(event),
     toasts: () => [...toastCalls],
-    calls: () => ({refresh: refreshCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
+    calls: () => ({refresh: refreshCalls, characterAnalysis: characterAnalysisCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
     worldResolveCalls: () => worldResolveCalls,
     persistenceTrace: () => [...persistenceTrace],
   };
@@ -368,7 +375,8 @@ test('manual analyze action delegates to Runtime instead of the UI analyzer', as
     target: clickTarget('analyze-current-floor', {root: fixture.root}),
     preventDefault() {},
   });
-  assert.equal(fixture.calls().refresh, 1);
+  assert.equal(fixture.calls().refresh, 0);
+  assert.equal(fixture.calls().characterAnalysis, 1);
   assert.deepEqual(fixture.toasts(), [['success', 'BioWeave：人物分析完成']]);
   fixture.app.destroyBioWeave();
 });
@@ -395,6 +403,24 @@ test('manual Event Analysis shows one diagnostic error Toast and does not reject
   assert.deepEqual(fixture.toasts(), [
     ['error', 'BioWeave：事件分析失败（请求超时：等待 3 秒后已在本地终止。本次未自动重试。），上一份有效事件已保留。'],
   ]);
+  fixture.app.destroyBioWeave();
+});
+
+test('manual Character Analysis reports a missing World Model without falling back to World Analysis', async () => {
+  const fixture = await createFixture({
+    analysisState: 'not_analyzed',
+    characterAnalysisError: Object.assign(new Error('WORLD_MODEL_REQUIRED'), {code: 'WORLD_MODEL_REQUIRED'}),
+  });
+  const click = [...fixture.root.listeners.get('click')][0];
+  await assert.doesNotReject(
+    click({
+      target: clickTarget('analyze-current-floor', {root: fixture.root}),
+      preventDefault() {},
+    }),
+  );
+  assert.equal(fixture.calls().characterAnalysis, 1);
+  assert.equal(fixture.calls().refresh, 0);
+  assert.deepEqual(fixture.toasts(), [['warning', 'BioWeave：需要先完成世界分析。']]);
   fixture.app.destroyBioWeave();
 });
 

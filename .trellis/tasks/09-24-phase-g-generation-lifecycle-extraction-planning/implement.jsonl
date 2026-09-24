@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor Version and ownership boundary for lifecycle targets"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle clear, invalidation, and stale-result contract"}

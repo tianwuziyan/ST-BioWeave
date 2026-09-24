@@ -6894,6 +6894,158 @@ test("existing World Model is reused without an extra World AI request", async (
   fixture.runtime.destroy();
 });
 
+test("Manual Character Analysis reuses a valid current World without World AI", async () => {
+  const messages = [{ message_id: "current-floor", floor: 6, content: "当前剧情", role: "assistant" }];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "当前世界" }] });
+  let worldCalls = 0;
+  let eventCalls = 0;
+  let receivedWorld = null;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return worldModel;
+      },
+      async analyzeFloor({ world_model }) {
+        eventCalls += 1;
+        receivedWorld = world_model;
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "current-floor", floor: 6, text: "当前剧情" }),
+    world_model: worldModel,
+  });
+
+  const result = await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  assert.equal(result.status, "success");
+  assert.equal(worldCalls, 0);
+  assert.equal(eventCalls, 1);
+  assert.deepEqual(receivedWorld, worldModel);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldModel);
+  assert.equal(fixture.runtime.store.getFloor(0).analysis.status, "success");
+  fixture.runtime.destroy();
+});
+
+test("Manual Character Analysis reuses the nearest valid inherited World without World AI", async () => {
+  const messages = [
+    { message_id: "world-owner", floor: 3, content: "已有世界", role: "assistant" },
+    { message_id: "current-floor", floor: 6, content: "当前剧情", role: "assistant" },
+  ];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "继承世界" }] });
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return worldModel;
+      },
+      async analyzeFloor({ world_model }) {
+        eventCalls += 1;
+        assert.deepEqual(world_model, worldModel);
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-owner", floor: 3, text: "已有世界" }),
+    world_model: worldModel,
+  });
+
+  const result = await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  assert.equal(result.status, "success");
+  assert.equal(worldCalls, 0);
+  assert.equal(eventCalls, 1);
+  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  fixture.runtime.destroy();
+});
+
+test("Manual Character Analysis fails closed without a persisted World and writes no terminal failure", async () => {
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        throw new Error("WORLD_AI_MUST_NOT_BE_CALLED");
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        throw new Error("EVENT_AI_MUST_NOT_BE_CALLED");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    analysis: { status: "success", attempt: 3 },
+  });
+  const saveFloorCallsBefore = fixture.saveFloorCalls();
+
+  await assert.rejects(
+    fixture.runtime.analyzeCurrentCharacterEvents(),
+    error => error?.code === "WORLD_MODEL_REQUIRED" && error?.prerequisite_failed === true,
+  );
+
+  assert.equal(worldCalls, 0);
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), saveFloorCallsBefore);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).analysis, { status: "success", attempt: 3 });
+  fixture.runtime.destroy();
+});
+
+test("Manual Character Analysis skips a stale current World and reuses a valid inherited World", async () => {
+  const messages = [
+    { message_id: "world-owner", floor: 3, content: "已有世界", role: "assistant" },
+    { message_id: "current-floor", floor: 6, content: "当前剧情", role: "assistant" },
+  ];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "合法继承世界" }] });
+  let worldCalls = 0;
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        return worldModel;
+      },
+      async analyzeFloor({ world_model }) {
+        eventCalls += 1;
+        assert.deepEqual(world_model, worldModel);
+        return { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-owner", floor: 3, text: "已有世界" }),
+    world_model: worldModel,
+  });
+  await fixture.runtime.store.saveFloor(1, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "current-floor", floor: 6, text: "旧版本剧情" }),
+    world_model: normalizeWorldModel({ schema_version: 1, species: [{ name: "过期世界" }] }),
+  });
+
+  const result = await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  assert.equal(result.status, "success");
+  assert.equal(worldCalls, 0);
+  assert.equal(eventCalls, 1);
+  fixture.runtime.destroy();
+});
+
 test("World Patch Analysis merges deterministically and saves only the current Floor", async () => {
   const messages = [
     { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },

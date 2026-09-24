@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Tracking runtime must rebuild only from current valid Floor/active Swipe facts and preserve provenance and derived-state ownership."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Tracking consumes validated BiologicalEvents and must preserve the Event-to-registry boundary and pregnancy tracking semantics."}

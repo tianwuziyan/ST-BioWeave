@@ -306,11 +306,40 @@ active.
 
 ## 9. Mutation Safety
 
+### Known-good persistence boundary (frozen)
+
+The ordinary Floor persistence implementation is frozen at
+`storage/floor-persistence-coordinator.js`. `runtime/floor-persistence.js` is
+only a compatibility re-export. The frozen behavior includes the owner field
+allowlist, same-Floor serialization, dispatch-time Chat/message/Floor/Swipe/
+Version and execution checks, latest authoritative merge, sibling preservation,
+host synchronization, direct official save/readback, confirmed commit
+semantics, host-ahead bootstrap, true-stale fail-closed handling, terminal
+supersede, cancellation/supersede protection, and Swipe 0 ownership.
+
+World, Event/Character, Projection, Manual World, and approved Terminal paths
+are ordinary writers only when they submit an owner-scoped patch to the
+Coordinator. Chat/source clear, lifecycle root invalidation, migration/restore,
+Chat metadata/settings, and the Auto prerequisite host lifecycle/save boundary
+are explicit special operations or host boundaries, not alternative ordinary
+Floor writers. Analysis routing, prompt/input, UI, and Tracking work MUST NOT
+change this boundary without a separate persistence root-cause task and a new
+real-host durability validation.
+
 Business code uses the existing Floor storage abstraction for every Floor read
 and write. The abstraction owns host compatibility, Chat scope checks, cloning
 and the ordinary-message/per-Swipe slot distinction. Callers do not
 double-write host fields, directly mutate `message.extra` or
 `message.swipe_info[swipe_id].extra`, or write a Chat-level Floor history map.
+
+The current feature-to-file map is maintained in
+[`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md). In particular,
+`runtime/sillytavern-adapter.js` may expose raw host Floor-slot read/write
+primitives, but it does not own Floor Version checks, owner acquisition,
+host-ahead classification, sibling merge, or confirmed persistence policy.
+Those decisions remain outside the Adapter and ordinary owner-scoped writes
+still enter through the Coordinator. Raw host access is therefore not a
+second Floor storage abstraction.
 
 Ordinary writes are submitted to the single `FloorPersistenceCoordinator` as
 owner-scoped patches. World may patch only `world_model` and
@@ -589,7 +618,7 @@ invalidation when an old intermediate Floor is deleted.
 ## 13. Data lifecycle pointer
 
 The detailed clear, Chat-boundary, mutation, async, and persistence contract is
-maintained in [BioWeave Data Lifecycle](../../docs/bioweave-data-lifecycle.md).
+maintained in [BioWeave Data Lifecycle](../../../docs/bioweave-data-lifecycle.md).
 This pointer does not replace or alter the Floor ownership rules above.
 
 Lifecycle implementations MUST preserve this contract while applying the

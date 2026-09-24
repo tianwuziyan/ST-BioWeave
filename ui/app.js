@@ -642,11 +642,12 @@ export function createApp(runtime, options = {}) {
   }
   function isAutomaticRuntimeResult(payload = {}) {
     const value = String(payload.reason ?? payload.trigger ?? '').toLowerCase()
-    return value !== 'manual-refresh' && value !== 'manual-full' && value !== 'manual-patch'
+    return value !== 'manual-refresh' && value !== 'manual-character' && value !== 'manual-full' && value !== 'manual-patch'
   }
   function runtimeAnalysisFailureMessage(payload = {}, domain = 'analysis') {
     const code = String(payload.error_code ?? payload.code ?? '').toUpperCase()
     const retryClassification = String(payload.retry_classification ?? payload.classification ?? '').toLowerCase()
+    if (code === 'WORLD_MODEL_REQUIRED') return '需要先完成世界分析。'
     if (code === 'WORLD_MODEL_UI_NOT_READY')
       return domain === 'world' ? '世界数据未能正常显示，已停止人物分析' : '世界数据未能正常显示，已停止人物分析'
     if (retryClassification === 'temporary_server_convergence')
@@ -3091,6 +3092,7 @@ export function createApp(runtime, options = {}) {
           : (error?.code ?? error?.message ?? '')),
     )
     const messages = {
+      WORLD_MODEL_REQUIRED: '需要先完成世界分析。',
       API_PROFILE_NOT_CONFIGURED: '事件分析尚未配置 API，请在设置的任务分配中选择可用配置。',
       EVENT_ANALYSIS_INVALID: 'AI 返回的事件结果无法通过固定 JSON 校验，上一份有效事件已保留。',
       EVENT_RESPONSE_EMPTY: 'AI 响应为空或未能提取正文，上一份有效事件已保留。',
@@ -3168,16 +3170,18 @@ export function createApp(runtime, options = {}) {
   async function manualRefreshEventAnalysis() {
     try {
       runtime.assertBioWeaveEnabled?.()
-      if (typeof runtime.refreshCurrentFloorAnalysis !== 'function') {
+      if (typeof runtime.analyzeCurrentCharacterEvents !== 'function') {
         throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
       render()
-      const result = await runtime.refreshCurrentFloorAnalysis()
+      const result = await runtime.analyzeCurrentCharacterEvents()
       notify('BioWeave：人物分析完成', 'success', documentRef)
       return result
     } catch (error) {
-      const worldGateFailure = error?.code === 'WORLD_MODEL_UI_NOT_READY' || error?.code === 'WORLD_MODEL_UNAVAILABLE'
-      if (error?.code !== 'BIOWEAVE_DISABLED' && !worldGateFailure)
+      const worldGateFailure = error?.code === 'WORLD_MODEL_REQUIRED' || error?.code === 'WORLD_MODEL_UI_NOT_READY' || error?.code === 'WORLD_MODEL_UNAVAILABLE'
+      if (error?.code === 'WORLD_MODEL_REQUIRED')
+        notify('BioWeave：需要先完成世界分析。', 'warning', documentRef)
+      else if (error?.code !== 'BIOWEAVE_DISABLED' && !worldGateFailure)
         notify(`BioWeave：${eventAnalysisError(error)}`, 'error', documentRef)
       throw error
     } finally {

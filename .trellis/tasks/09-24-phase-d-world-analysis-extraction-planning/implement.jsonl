@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, version, Swipe, historical resolution and persistence boundary invariants"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle and stale-result constraints for World/analysis runtime"}

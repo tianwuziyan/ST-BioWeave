@@ -1,5 +1,8 @@
 # BioWeave 数据模型
 
+本文以 schema、字段位置和数据语义为主。当前 feature ownership、依赖方向
+和修改导航见 [ARCHITECTURE.md](./ARCHITECTURE.md)；本文不复制完整架构地图。
+
 ## Extension Level
 `SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。`retry_count=N` 是每个 World/Event 完整业务阶段失败后的额外重试次数：首次阶段执行为 `attempt=1/retry_index=0`，因此 N=1 最多两次完整阶段执行；它不是只重放 HTTP 请求，也不取代 Chat Scheduler 的 `retry_failed_analysis`。
 
@@ -28,8 +31,10 @@ Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由
 `message.extra.bioweave` 或当前结构化消息的
 `message.swipe_info[swipe_id].extra.bioweave` 同时承载不同业务域的 Floor
 字段。`world_model` / `world_model_meta` 属于 World Model owner；
-`analysis` / `events` / `character_registry` / `snapshot` 属于
-Character/Event owner。`snapshot` 是由 Current State 派生出的缓存检查点，
+`analysis` / `events` / `character_registry` 属于 Character/Event owner；
+`snapshot` / `projection_timeline` 由 Projection owner workflow 写入。
+对应的 Runtime/Storage owner 见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+`snapshot` 是由 Current State 派生出的缓存检查点，
 不是新的事实来源，也不能替代或删除 `events`。
 
 Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Event、State

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, invalidation, active Swipe, stale version, derived-state and persistence boundaries for Event Editing."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Event normalization, validation, identity and tracking contracts used by the extracted workflow."}

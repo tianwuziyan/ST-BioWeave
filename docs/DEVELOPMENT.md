@@ -1,5 +1,8 @@
 # BioWeave 开发规范（轻量模块版）
 
+当前 feature ownership、依赖方向和“Where do I change this?”导航以
+[ARCHITECTURE.md](./ARCHITECTURE.md) 为 canonical reference。本文保留开发规则、领域边界和已验证契约；历史 Trellis phase 文档不作为当前模块地图。
+
 ## 模块边界
 
 - `core/events.js`：BiologicalEvent 类型、固定结构、normalize / validate / sort；统一拥有 Event 边界，不让 UI 或其它消费者各自解析原始 payload。
@@ -17,6 +20,8 @@
 - `runtime/floor.js`：Floor Version、内容签名与成功版本去重基础设施；自动调度状态由 Runtime 持有。
 - `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、生产输入构建（含 `getCurrentFloorAnalysisInput()`）、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。Prompt Preview 复用该 Runtime 输入，不在 UI 重建 Floor Version。
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
+- `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
+- `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括独立于 Tracking Registry 的 Chat-local Character Registry projection 边界。
 
@@ -38,6 +43,8 @@
 手动清除入口统一位于“数据管理”，UI 只能调用 Runtime/Clear Service。
 
 ## 不再继续细拆的规则
+
+新增功能优先扩展已有 feature owner；只在形成独立生命周期、状态/行为边界、public capability 或可独立测试职责时新建 module。不要把新的独立 feature 堆回 `runtime/events.js` 或 `runtime/event-analysis.js`，也不要为单个 helper 创建碎片 module。原则是 **ONE FEATURE OWNER, NOT ONE FUNCTION PER FILE**。修改前先查 [ARCHITECTURE.md](./ARCHITECTURE.md) 的 Where-do-I-change-this 表。
 
 只有文件稳定超过约 500–800 行、出现两个独立职责、或独立测试明显更清楚时才拆。不要建立 event-store / event-validator / event-factory / event-interface 这类碎片目录。
 
@@ -85,11 +92,60 @@ World Analysis 只有两套底层能力：Full World Analysis 与 World Patch An
 
 ### Event Analysis Runtime API
 
-`createRuntime()` 对 UI 暴露 `analyzeCurrentFloor({force})`、`analyzeFloor(target, {force})`、`refreshCurrentFloorAnalysis()`、`requestAbortCurrentFloorAnalysis()`、`getCurrentFloorAnalysisStatus()`、`getCurrentFloorEvents()`、`getTrackingRegistry()`、`collectActiveBusinessData()`、`updateEvent()` 与 `deleteEvent()`。当前楼层始终是当前 Chat 最后一条消息的 active Swipe；指定消息优先按稳定 `message_id` 匹配，不能直接假定 lifecycle payload 的 `message_id` 是数组下标。
+`createRuntime()` 对 UI 暴露 `analyzeCurrentFloor({force})`、`analyzeCurrentCharacterEvents()`、`analyzeFloor(target, {force})`、`refreshCurrentFloorAnalysis()`、`requestAbortCurrentFloorAnalysis()`、`getCurrentFloorAnalysisStatus()`、`getCurrentFloorEvents()`、`getTrackingRegistry()`、`collectActiveBusinessData()`、`updateEvent()` 与 `deleteEvent()`。当前楼层始终是当前 Chat 最后一条消息的 active Swipe；指定消息优先按稳定 `message_id` 匹配，不能直接假定 lifecycle payload 的 `message_id` 是数组下标。
+
+### Manual Analysis Boundary
+
+Manual World Full/Patch 只执行 World Analysis，不进入 Character/Event stage。
+Manual Character 通过明确的 `analyzeCurrentCharacterEvents()` 入口执行：它只
+调用 `runtime/world-analysis.js` 的只读 persisted World prerequisite，按现有
+at-or-before、active Swipe、六字段 Floor Version、invalidated Floor 和
+canonical World UI-ready 规则复用 World；它绝不调用 World Full/Patch 或
+`resolveFinalWorldModelForAnalysis()`。缺少有效 World 时返回
+`WORLD_MODEL_REQUIRED`（`prerequisite_failed=true`、不可重试），不提交 Event
+patch，也不写 terminal failure；UI 提示用户先完成世界分析。
+
+该入口仍复用共享 execution、取消/supersede、Floor currentness 和 Event retry
+机制。AUTO 路径继续由 `runAnalysis()` 负责 World reuse/full/patch 后再进入
+Character/Event Analysis。Event Input Boundary 仍保持现状，后续独立处理。
 
 `collectActiveBusinessData()` 的 `analysis_status` 至少包含 `state`、`busy`、`current_floor`、`floor_version`、`attempt`、`last_success`、`last_error`、`event_count`、`active_event_count`、`sexual_activity_count`、`tracking_subject_count`、`tracking_candidate_count`、`pending_tracking_candidate_count`、`current_floor_events`、`active_events`、`tracking_decisions` 与 `registry_summary`，并在有执行记录时提供 `error_stage`、`error_code`、`safe_error_summary`、`started_at` 和 `finished_at`。其中 `tracking_decisions` 是 Core/Runtime 诊断兼容数据，不是人物业务实体，普通 Characters UI 不消费它。`running` 只存在于 Runtime transient execution，不作为持久历史状态；终止分析使用 Runtime AbortController，迟到结果不能写回 Floor 或 Registry。该 DTO 只包含结构化、可脱敏显示的数据；Raw AI Response 与 API Secret 不写入 Chat。
 
 UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` 或页面模块重新实现 Floor Version 有效性、Event normalize/validate、Tracking eligibility 或 Registry rebuild。强制刷新失败时，Runtime 写入失败状态，但保留同一 Floor Version 的上一份成功 Events；UI 不清空事件或人物。
+
+### KNOWN-GOOD Floor Persistence Mainline（Frozen Boundary）
+
+当前已经通过真实 SillyTavern World/Event 与 F5 durability 验证的普通
+Floor persistence mainline 必须视为冻结行为，而不是可顺手重构的基础设施。
+普通 World、Event/Character、Projection、Manual World 和获准的 Terminal
+写入统一遵循：
+
+```text
+owner-scoped patch
+  → storage/floor-persistence-coordinator.js
+  → latest authoritative Floor merge
+  → host sync + official save
+  → authoritative readback + sibling audit
+  → confirmed
+```
+
+`runtime/floor-persistence.js` 只是 compatibility re-export，不是第二套
+persistence implementation。冻结范围包括 owner allowlist、同 Floor 串行、
+当前 message/Swipe/Floor Version 校验、latest merge、sibling preservation、
+host-ahead bootstrap、official readback、confirmed 定义、terminal supersede、
+cancel/supersede guard，以及 Swipe 0 规则。`saveChat()` 或
+`saveChatConditional()` 的 Promise resolve 不能单独证明 durable persistence。
+
+World Analysis、Event Analysis、Character Analysis、Prompt、Input Builder、
+UI 或 Tracking 任务不得顺手修改这条 mainline。只有新的真实 SillyTavern
+Trace 直接证明 persistence defect，或明确的 persistence 需求变化，才可
+创建独立 persistence root-cause task；该任务必须独立说明根因、补充
+persistence regression tests，并重新执行 World + Event F5 durability 验证。
+
+明确的 Chat/source clear、lifecycle root invalidation、migration/restore、
+Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
+属于 special operation 或 host boundary，不得被误判为 ordinary Floor writer，
+也不得成为 ordinary owner patch 的绕过路径。
 
 ### 页面职责
 
@@ -140,4 +196,4 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
-自动检查不能证明真实 SillyTavern 行为。人工验收仍需在刷新或重装后的实际插件中完成：验证宿主 EventEmitter 与消息 `extra` / `swipe_info` 形状、Character counter、reroll/Swipe 分类、retryPaused、相同 Floor Version 去重、失败重试、手动刷新替换/保留、Floor 删除与 Swipe 切换、Event 编辑/真删除、Story Time，以及 Desktop / Tablet / Mobile 页面无横向溢出。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。
+自动检查不能证明全部 SillyTavern 行为。Phase H 已在真实宿主验证核心 EventEmitter、Character counter、reroll/Swipe 分类、官方持久化、F5 durability、new Swipe 和 existing Swipe 切换；仍需单独完成 Event 编辑/真删除、Story Time 以及 Desktop / Tablet / Mobile UI 验收。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

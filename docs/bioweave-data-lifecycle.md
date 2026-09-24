@@ -3,7 +3,9 @@
 > Status: normative developer contract and audited data map. The current
 > checkout implements the registry, Clear Service, source-targeted Start New
 > Chat cleanup, mutation invalidation, Settings UI, and automated contract
-> tests. Real SillyTavern host acceptance remains a separate required check.
+> tests. Phase H real SillyTavern validation covered automatic World/Event
+> analysis, official persistence, F5 durability, new Swipe and existing Swipe
+> switching; this is the known-good baseline for the boundaries below.
 
 This is the detailed lifecycle contract for BioWeave. The existing
 `Floor State Ownership Contract` remains authoritative for Floor ownership;
@@ -15,6 +17,22 @@ is accepted.
 
 The contract uses **MUST** for an invariant, **MUST NOT** for a forbidden
 state transition, and **MAY** only for an explicitly safe compatibility path.
+
+Current runtime ownership is summarized here and detailed in
+[ARCHITECTURE.md](./ARCHITECTURE.md): Generation mutable state belongs to
+`runtime/generation-lifecycle.js`; Tracking refresh orchestration belongs to
+`runtime/tracking-runtime.js`; World and Character/Event workflows belong to
+their respective runtime modules; Event Editing belongs to
+`runtime/event-editing.js`; raw ST I/O belongs to
+`runtime/sillytavern-adapter.js`; ordinary Floor transactions belong to
+`storage/floor-persistence-coordinator.js`. This document remains the
+authoritative lifecycle/field contract, not a second feature map.
+
+Manual Character analysis is an explicit Event-only runtime operation. It reads
+the nearest valid persisted World at or before the current Character Floor and
+never generates or persists a World prerequisite. If no canonical-ready World
+exists, it fails with `WORLD_MODEL_REQUIRED` before any Event or terminal patch;
+the existing AUTO Generation settled → World → Event lifecycle is unchanged.
 
 ## Chat-local BioWeave Runtime master switch
 
@@ -69,6 +87,50 @@ registry in `storage/lifecycle.js`, and the shared Clear Service in
 `storage/clear.js`. The registry and schema are the source of truth for future
 additions; a field is not complete until both are updated and the contract
 tests pass.
+
+## 1.1 KNOWN-GOOD PERSISTENCE CONTRACT (FROZEN)
+
+The current Floor persistence mainline is a known-good, real-host-validated
+contract. This section freezes the behavior, not the containing directories.
+Ordinary World, Event/Character, Projection, Manual World, and approved
+terminal Floor writes MUST submit owner-scoped patches to
+`storage/floor-persistence-coordinator.js`. `runtime/floor-persistence.js` is
+only a compatibility re-export and MUST NOT become a second implementation.
+
+The Coordinator owns the following invariants:
+
+- `FLOOR_OWNER_FIELDS` and owner-scoped patch validation;
+- same-Floor transaction serialization and dispatch-time owner/execution checks;
+- latest authoritative Floor reread and sibling-preserving merge;
+- host-memory synchronization, direct official save, and authoritative
+  readback;
+- complete six-field Floor Version and active Swipe validation, including
+  Swipe 0;
+- `AUTHORITATIVE_MATCH`, strictly guarded `HOST_AHEAD_OF_OFFICIAL` bootstrap,
+  and fail-closed true-stale owner handling;
+- terminal supersede and cancellation/supersede protection; and
+- `commitState: "confirmed"` only after owner patch, authoritative readback,
+  Floor Version, and sibling audit all succeed.
+
+`saveChat()`/`saveChatConditional()` resolution is not durable confirmation.
+Immediate readback is the confirmation boundary used by the ordinary Floor
+write path; future SillyTavern late-writer behavior remains a separate host
+acceptance concern and MUST NOT be hidden by retries or timing delays.
+
+The Generation Settle Barrier and Analysis Input Ready boundary are adjacent
+lifecycle contracts, not alternate persistence implementations. They remain
+frozen together with the Coordinator's owner acquisition, stale execution
+guard, cancellation guard, and complete Stage Retry contract. A World/Event/
+Character, prompt, input, UI, or tracking change MUST NOT alter this
+persistence mainline. A persistence change requires a separate persistence
+root-cause task, its own regression tests, and renewed real-host World + Event
+F5 durability validation.
+
+The following are not ordinary Floor patch writers: explicit Chat/source clear
+and cleanup, lifecycle root invalidation, migration/restore operations, Chat
+metadata/settings saves, and the Auto Analysis host lifecycle/save boundary.
+They retain their own explicit guards and MUST NOT be used as a bypass for an
+ordinary owner patch.
 
 The pinned SillyTavern/ST-SevenDaysCal lifecycle audit recorded the following
 host sequence for the release used by the task:
@@ -428,6 +490,11 @@ current audit identified these owners:
 - `runtime/event-analysis.js`: `inFlight` keyed by the complete Floor
   Version, `lastTerminal`, `attemptSequence`, `registryRefreshChain`, and the
   `AbortController` and terminal status held by each execution;
+- `runtime/generation-lifecycle.js`: pending generation intents, generation
+  sequence/completed markers, settle barrier and generation-specific cleanup;
+- `runtime/tracking-runtime.js`: Tracking refresh orchestration and its
+  refresh serialization state;
+- `runtime/diagnostics.js`: diagnostic trace buffers;
 - `ai/worldbook.js`: `list`, `contents`, `inFlight`, `listInFlight`, and
   `generation` in the worldbook cache;
 - `runtime/chat.js`: active Chat identity, `{chatId, epoch}` token, and
@@ -580,7 +647,9 @@ they are not a second ordinary patch path. A successful `saveFloor()` Promise
 does not by itself claim durable success: the coordinator requires read-back of
 the expected owner patch, preservation of every pre-existing sibling root, and
 a matching current Floor Version before returning `commitState: "confirmed"`.
-Real SillyTavern late-writer/F5 durability still requires host acceptance.
+Phase H real SillyTavern validation covered the ordinary save/readback/F5
+path, new Swipe and existing Swipe switching. Broader product and responsive
+UI acceptance remains separate from this persistence contract.
 
 When the SillyTavern source-owner capability is available, the adapter reads the
 latest authoritative Chat owner first, verifies the target `Floor Version` and
@@ -976,7 +1045,7 @@ the source of truth for the paths used by each answer.
 | Rollback | Known failures restore safe in-memory values without whole-snapshot overwrite or blind compensating writes; unknown state has an explicit retry/re-read path |
 | Tests | Contract tests enumerate schema fields, fail on unregistered persistent keys, cover all Swipe slots, compare global fixtures deeply, spy on zero Secret Store calls, and exercise Manual All/source equivalence, existing Chat, refresh, character switch, mutations, races, late responses, duplicate events, and rollback/unknown saves |
 | Docs | This document, `docs/DATA-MODEL.md`, `.trellis/spec/domain/floor-state.md`, and the short AI rule point to the same registry and implementation; every future persistent field is re-audited before landing |
-| Host acceptance | Real SillyTavern Desktop, Tablet, and Mobile lifecycle and Settings acceptance is recorded separately from Node tests and static checks |
+| Host acceptance | Phase H records core real SillyTavern persistence, generation and Swipe validation separately from Node tests; broader Desktop/Tablet/Mobile lifecycle and Settings acceptance remains separate |
 
 ### Required contract-test cases
 
@@ -1010,9 +1079,10 @@ The current checkout implements the registry, shared Clear Service,
 source-targeted Start New Chat cleanup, Settings data-management controls,
 Floor/Swipe invalidation, async owner guards, and the listed automated tests.
 `npm test`, `npm run check`, and changed-module syntax checks are the automated
-evidence for this checkout. Real SillyTavern Desktop/Tablet/Mobile acceptance
-remains separate because Node fixtures cannot prove the host's installed
-lifecycle and persistence behavior.
+evidence for this checkout. Phase H also records real SillyTavern validation
+of the core persistence, generation and Swipe baseline. Desktop/Tablet/Mobile
+and broader product acceptance remains separate because Node fixtures cannot
+prove every installed host lifecycle or UI behavior.
 
 When the final code differs from a planned name or path, update the registry
 and this document to the actual path. When the host lifecycle differs from the

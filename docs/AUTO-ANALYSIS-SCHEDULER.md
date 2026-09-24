@@ -1,5 +1,17 @@
 # BioWeave Auto Analysis Scheduler Architecture
 
+当前模块 ownership 以 [ARCHITECTURE.md](./ARCHITECTURE.md) 为准：
+`runtime/generation-lifecycle.js` 拥有 generation intent、settle barrier 和
+exactly-once state machine；`runtime/sillytavern-adapter.js` 只负责 ST listener
+subscribe/unsubscribe；`runtime/events.js` 负责 lifecycle orchestration；
+`runtime/event-analysis.js` 负责 scheduler、execution 和 analysis pipeline。
+
+Manual Character 不属于该自动 scheduler 的 World prerequisite：UI 通过
+`analyzeCurrentCharacterEvents()` 进入 Event-only 执行，先读取已持久化且
+canonical-ready 的 at-or-before World；缺少 World 时返回 `WORLD_MODEL_REQUIRED`
+并 fail closed。该路径的 World AI 调用数为 0，不改变下方 Generation settled
+到 AUTO World → Event 的状态机。
+
 状态：规范性设计说明。本文档是 BioWeave Auto Analysis Scheduler 的唯一
 权威说明。其它文档只描述摘要并链接到本文档；Floor ownership、持久化位置和
 清除生命周期仍以 [Floor State Ownership Contract](../.trellis/spec/domain/floor-state.md)
@@ -241,6 +253,10 @@ World Stage。它使用独立的 `ANALYSIS_*` persistence trace domain，避免�
 误读为一次额外的 `WORLD_SAVE_*`。
 
 ## 6. Runtime scheduler state
+
+以下 scheduler 状态仍由 `runtime/event-analysis.js` 的 Analysis Pipeline
+Coordinator 持有。Generation-specific intent/settle state 由
+`runtime/generation-lifecycle.js` 持有，不能因名称相近而合并。
 
 以下状态全部是 Runtime-only，不写入 Chat metadata、Floor、Snapshot、World Model
 或历史分析结果：

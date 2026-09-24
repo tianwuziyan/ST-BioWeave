@@ -6,7 +6,7 @@
 
 BioWeave 用结构化数据记录故事中的生理事件、状态、世界规则和非事实推演，并将当前 Chat 的相关上下文整理给 AI。它适合长篇角色扮演、原创物种设定和需要持续追踪生理变化的剧情。插件直接运行在 SillyTavern 中，不包含独立后端、独立数据库或单独的账号系统。
 
-> **开发状态**：项目仍在快速迭代中。World Model、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已有较完整实现；Phase 2A 的 Event / Tracking Subject 本地闭环已实现，真实 SillyTavern 宿主验收待完成。完整状态推演、Projection 生命周期及 Context 注入不属于本阶段已完成能力。
+> **开发状态**：项目仍在快速迭代中。World Model、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已有较完整实现；A-H 基础模块化以及真实 SillyTavern 的自动 World/Event、官方持久化、F5 durability、new Swipe 和 existing Swipe 切换验证已完成。完整状态推演、Projection 生命周期及 Context 注入仍不属于当前已完成能力。当前 feature ownership 以 [架构导航](docs/ARCHITECTURE.md) 为准。
 
 ## 目录
 
@@ -52,7 +52,7 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 | AnalysisInput / Worldbook | ✅ 可用 | 角色卡、世界书、最近剧情和可选公开记忆的选择、预览与输入构建。 |
 | API Profile / Secret | ✅ 可用 | 使用 SillyTavern 当前 API，或配置独立的 OpenAI-compatible Profile。 |
 | Runtime / Storage | ✅ 基础实现 | Chat 切换、楼层版本、作用域校验、宿主生命周期和失败保护。 |
-| Event / Tracking Subject | ✅ Phase 2A 本地闭环 | 已接通固定 Event、Floor/Swipe 绑定、Tracking Registry、人物/事件/总览真实 DTO；真实 SillyTavern 宿主验收仍待完成。 |
+| Event / Tracking Subject | ✅ Phase 2A + Real Host baseline | 已接通固定 Event、Floor/Swipe 绑定、Tracking Registry、人物/事件/总览真实 DTO，并完成真实 SillyTavern 自动分析、持久化、F5 和 Swipe 验证。 |
 | State / Snapshot / Projection / Genealogy | 🧩 后续阶段基础结构 | 本阶段保持空状态或兼容骨架，不实现完整妊娠计算、状态归约、快照恢复、推演和家系推导。 |
 | 多人总览、人物详情、事件、推演、家系 | 🧪 UI 基础/占位 | 页面路由和界面骨架已建立；Phase 2A 页面只能消费真实业务 DTO，接入前使用真实空状态，不写入演示数据。 |
 
@@ -240,6 +240,8 @@ unknowns[]
 
 ## 系统架构
 
+当前模块职责、依赖方向、普通 Floor 持久化路径和“修改某类问题应该去哪里”的完整导航见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。本节只保留高层概览，避免复制 canonical architecture。
+
 BioWeave 是宿主内运行的前端扩展，没有独立服务进程。入口负责挂接 SillyTavern 生命周期和扩展菜单；Runtime 负责作用域与事件；Storage 负责宿主设置、Chat metadata 和楼层 extra；Core 负责纯领域结构；AI 负责输入、请求和校验；UI 负责 overlay、路由和编辑交互。
 
 ```mermaid
@@ -354,7 +356,7 @@ Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、�
 
 自动分析按有效 Character Floor counter 和六字段 Floor Version 去重；User、普通编辑、生命周期更新、删除和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 只有形成新 Floor Version 才 force。完整 scheduler 状态机与设计理由见 [Auto Analysis Scheduler Architecture](docs/AUTO-ANALYSIS-SCHEDULER.md)。
 
-当前文档记录的是 Phase 2A 的批准契约，不把上述闭环写成已经通过真实宿主验证的功能。完成实现后仍需刷新/重装实际 SillyTavern 插件，在真实 Chat 中验证 Character counter、reroll/Swipe 分类、retryPaused、重复打开不重复请求、Event JSON 解析、Floor/Swipe extra 位置、删除/编辑和 Story Time；Node 检查不能替代这些验收。
+当前文档记录的是 Phase 2A 的批准契约。Phase H 已在真实 SillyTavern 中验证自动 World/Event、官方持久化、F5 durability、new Swipe 与 existing Swipe 切换；这不等同于所有产品行为、完整状态推演或 Desktop/Tablet/Mobile UI 验收均已完成。
 
 ### 外部记忆边界
 
@@ -394,10 +396,18 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   ├── snapshot.js          # Snapshot 间隔、检查点与恢复基础
 │   └── state.js              # 纯状态归约基础
 ├── runtime/
+│   ├── diagnostics.js       # Runtime diagnostics / trace DTO
+│   ├── event-analysis.js    # Analysis pipeline coordinator、execution、retry、scheduler
+│   ├── event-editing.js     # Event update/delete workflow
+│   ├── character-event-analysis.js # Character/Event analysis feature
+│   ├── generation-lifecycle.js # generation intent、settle、exactly-once
+│   ├── tracking-runtime.js  # Tracking Registry refresh orchestration
+│   ├── world-analysis.js    # World Analysis feature
+│   ├── sillytavern-adapter.js # raw SillyTavern I/O boundary
+│   ├── runtime.js           # lightweight feature composition root
+│   ├── events.js            # ST integration shell、lifecycle orchestration、compatibility facade
 │   ├── chat.js              # Chat token、epoch、stale guard
-│   ├── event-analysis.js    # Event Analysis 调度、提交、状态 DTO 与 Registry 重建
-│   ├── events.js            # SillyTavern 适配器、宿主事件与 Runtime API
-│   └── floor.js              # Floor Version、分析去重、失败保护
+│   └── floor.js             # Floor Version、分析去重、失败保护
 ├── storage/
 │   ├── schema.js            # Global/Chat/Floor 默认值与规范化
 │   ├── store.js              # Profile、Secret、Chat、Floor 存储边界
@@ -518,7 +528,7 @@ Chat-local settings 主要包括：
 - Worldbook 列表、正文、并发加载和 generation cache 分开管理；只有展开或选中的来源才延迟读取正文。
 - 输入构建保留来源分组和 token estimate，方便在发送 AI 请求前控制资料规模。
 - Floor Version 对文本计算 SHA-256；相同楼层的成功分析不会自动重复执行，编辑内容、swipe 或版本改变才会重新分析，失败和手动刷新遵守各自的替换/保留规则。
-- 自动分析继续按有效 Character Floor counter 触发，UI mount/open/reopen/init 不触发 AI；真实 SillyTavern 的宿主事件、Swipe 形状和实际 AI 请求仍需人工验收。
+- 自动分析继续按有效 Character Floor counter 触发，UI mount/open/reopen/init 不触发 AI；核心宿主事件、Swipe 形状、实际 AI 请求和 F5 durability 已通过 Phase H 真实宿主验证，完整 UI 与产品行为仍需分别验收。
 - 请求超时、主动取消和网络/5xx 重试分类明确；失败不会无界重试。
 - Chat boundary token/epoch 会拒绝过期异步读写；UI overlay、路由和主题状态由单一 App owner 管理，避免重复挂载。
 - 领域 Core 尽量使用纯函数，便于独立测试，也避免把宿主 DOM 或请求逻辑带进 reducer。
@@ -581,7 +591,7 @@ npm test 执行 node --test tests/*.test.js；npm run check 先检查 index.js �
 
 ### 贡献约定
 
-1. 修改前先阅读 [开发文档](docs/DEVELOPMENT.md)、[数据模型](docs/DATA-MODEL.md) 和 [UI 文档](docs/UI.md)。
+1. 修改前先阅读 [架构导航](docs/ARCHITECTURE.md)、[开发文档](docs/DEVELOPMENT.md)、[数据模型](docs/DATA-MODEL.md) 和 [UI 文档](docs/UI.md)。
 2. 保持原生 JS 和现有模块边界；不要为单次逻辑引入新的框架、全局 Store 或大量薄封装。
 3. 涉及宿主生命周期、路由、作用域、API 或数据结构时，同时补充对应的回归测试。
 4. UI 修改至少检查 Desktop、Tablet、Mobile 三种布局，并确认没有横向溢出或重复挂载。
@@ -645,6 +655,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 ## 相关文档
 
 - [数据模型与存储边界](docs/DATA-MODEL.md)
+- [当前架构导航与 Feature-to-File Map](docs/ARCHITECTURE.md)
 - [开发规范与模块边界](docs/DEVELOPMENT.md)
 - [UI 行为与页面说明](docs/UI.md)
 - [UI 迁移契约](docs/UI_MIGRATION_PROMPT.md)
