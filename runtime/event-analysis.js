@@ -12,6 +12,7 @@ import {
 import { traceApi } from "../ai/client.js";
 import {
   CAPABILITY_KEYS,
+  dedupeEvents,
   isPregnancyRelevantExposure,
   normalizeEvent,
   sortEvents,
@@ -2572,6 +2573,32 @@ export function createEventAnalysisCoordinator({
       externalMemoryProviderLoader: collectExternalMemoryProviders,
       includePersonaInTokenEstimate: true,
     });
+    const recentStoryFloors = new Set(
+      (commonInput.recent_story?.items ?? [])
+        .map((item) => Number(item?.floor))
+        .filter(Number.isFinite),
+    );
+    const discoveryWindowEvents = derived.states
+      .filter(
+        (state) =>
+          state.index < target.index &&
+          state.version.floor < target.version.floor &&
+          recentStoryFloors.has(Number(state.version.floor)) &&
+          state.floorData?.analysis?.status === "success" &&
+          !isFloorInvalidated(state) &&
+          sameFloorVersion(
+            floorVersionFromData(state.floorData),
+            state.version,
+          ),
+      )
+      .flatMap((state) => state.events);
+    // `existing_bioweave` remains the nearest previous Floor snapshot for
+    // identity/profile continuity. Event dedupe additionally receives only
+    // valid canonical Events inside the bounded narrative discovery window.
+    const existingEvents = dedupeEvents([
+      ...(Array.isArray(previous.events) ? previous.events : []),
+      ...discoveryWindowEvents,
+    ]);
     const characterContext = characterContextResolver(
       context,
       derivedState,
@@ -2621,6 +2648,7 @@ export function createEventAnalysisCoordinator({
       characterContext,
       characterRegistry,
       existingBioWeave,
+      existing_events: existingEvents,
     });
   }
   async function runAnalysis(execution, target, savedAnalysis) {

@@ -595,7 +595,7 @@ test('selected context, readable external memory, and token estimate are shared 
   assert.match(eventPrompt, /【当前 World Model 参考】/);
   assert.doesNotMatch(eventPrompt, /【现有 BioWeave 事实参考】/);
   assert.match(eventPrompt, /【剧情上下文】/);
-  assert.match(eventPrompt, /【本次目标楼层】/);
+  assert.match(eventPrompt, /【本次分析内容】/);
   assert.doesNotMatch(eventPrompt, /CHARACTER_SELECTED|WORLDBOOK_SELECTED|EXTERNAL_ENABLED|CHARACTER_NOT_SELECTED|WORLDBOOK_NOT_SELECTED|EXTERNAL_DISABLED|EXTERNAL_ERROR_RESPONSE/);
   assert.doesNotMatch(eventPrompt, /CHARACTER_OPENING_SELECTED|【开场白】/);
   assert.doesNotMatch(eventPrompt, /(?:^|\n)(?:persona|description|persona_description|user_persona)\s*:/iu);
@@ -736,6 +736,158 @@ test('Event formats normalized character profiles as a bounded reference block',
   assert.doesNotMatch(prompt, /character_card|CHARACTER_RAW|PERSONA_RAW|WORLDBOOK_RAW|EXTERNAL_MEMORY_RAW/u);
 });
 
+test('A: Initial Registry Bootstrap keeps Character Card biological evidence without a canonical ID', () => {
+  const input = eventInput({
+    meta: {character_name: 'bootstrap_character'},
+    character: {description: '当前角色具有明确的女性生理性别。'},
+    characterRegistry: {schema_version: 1, entities: {}},
+    worldModel: {
+      species: [{
+        name: 'Human',
+        biological_types: [{
+          name: '女性',
+          capabilities: {can_carry_pregnancy: true},
+        }],
+      }],
+    },
+  });
+  const messages = buildEventAnalysisMessages(input);
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.equal(input.individual_evidence.length, 1);
+  assert.equal(input.individual_evidence[0].character_id, null);
+  assert.equal(input.individual_evidence[0].subject_kind, 'current_character');
+  assert.equal(input.individual_evidence[0].stable_biological_evidence[0].kind, 'biological_sex');
+  assert.match(prompt, /稳定人物生理证据（不是当前 Floor Event）/u);
+  assert.match(prompt, /biological_sex：当前角色具有明确的女性生理性别/u);
+  assert.match(prompt, /未分配 canonical character_id/u);
+  assert.doesNotMatch(prompt, /character_id：bootstrap_character/u);
+});
+
+test('B: Persona evidence is projected to the Persona subject and old experiences remain non-Event context', () => {
+  const input = eventInput({
+    meta: {user_name: 'persona_subject'},
+    persona: {
+      name: 'persona_subject',
+      description: 'Persona 对应人物具有男性生理性别，曾经经历过旧事件。',
+    },
+    currentFloor: {
+      floor: 3,
+      message_id: 'message_target',
+      swipe_id: 1,
+      narrative: 'CURRENT_FLOOR_ONLY',
+    },
+  });
+  const messages = buildEventAnalysisMessages(input);
+  const prompt = messages.map(message => message.content).join('\n');
+  const narrative = messages.find(message => message.role === 'assistant')?.content ?? '';
+  assert.equal(input.individual_evidence[0].subject_kind, 'persona');
+  assert.equal(input.individual_evidence[0].provenance.source_kind, 'persona');
+  assert.match(prompt, /证据对象：persona/u);
+  assert.match(prompt, /biological_sex：Persona 对应人物具有男性生理性别/u);
+  assert.doesNotMatch(prompt, /曾经经历过旧事件/u);
+  assert.match(narrative, /TARGET_FLOOR_EVENT/u);
+  assert.doesNotMatch(narrative, /曾经经历过旧事件/u);
+});
+
+test('C: Existing canonical profile remains individual evidence with capabilities and evidence', () => {
+  const input = eventInput({
+    characterContext: {
+      profiles: {
+        canonical_subject: {
+          character_id: 'canonical_subject',
+          display_name: 'canonical_display',
+          species: 'Human',
+          biological_type: '女性',
+          reproductive_capabilities: {can_carry_pregnancy: true},
+          evidence: [{kind: 'profile', text: 'CANONICAL_PROFILE_EVIDENCE'}],
+        },
+      },
+    },
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+  assert.match(prompt, /角色标识：canonical_subject/u);
+  assert.match(prompt, /可承载妊娠：是/u);
+  assert.match(prompt, /CANONICAL_PROFILE_EVIDENCE/u);
+  assert.equal(input.individual_evidence[0].provenance.source_kind, 'existing_profile');
+});
+
+test('D: Nonhuman Character Evidence does not create or borrow a Human capability baseline', () => {
+  const input = eventInput({
+    character: {description: '该非人类角色具有女性生理性别。'},
+    worldModel: {
+      species: [{
+        name: 'Nonhuman',
+        biological_types: [{
+          name: '女性',
+          capabilities: {can_carry_pregnancy: null},
+        }],
+      }],
+    },
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+  assert.match(prompt, /biological_sex：该非人类角色具有女性生理性别/u);
+  assert.doesNotMatch(prompt, /已知生殖能力：[\s\S]*可承载妊娠：是/u);
+  assert.equal(input.individual_evidence[0].capabilities.can_carry_pregnancy, undefined);
+});
+
+test('E: Unknown Character data does not create a guessed Character Evidence record', () => {
+  const input = eventInput({
+    character: {description: '该角色喜欢蓝色，今天阅读了一本书。'},
+  });
+  const messages = buildEventAnalysisMessages(input);
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.deepEqual(input.individual_evidence, []);
+  assert.doesNotMatch(prompt, /【事件相关角色参考】/u);
+  assert.doesNotMatch(prompt, /可承载妊娠：是|生物类型：/u);
+});
+
+test('F: Unbound Worldbook and External Memory facts are not borrowed across characters', () => {
+  const input = eventInput({
+    character: {description: '当前人物没有稳定生理资料。'},
+    worldbooks: [{
+      source_id: 'worldbook_unbound',
+      entries: [{entry_id: 'other-person', content: '其他人物具有明确女性生理性别。'}],
+    }],
+    external_memory: [{
+      key: 'anima',
+      items: [{label: 'other-person-memory', content: '其他人物可承载妊娠。'}],
+    }],
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+  assert.equal(input.individual_evidence.some(item => item.provenance.source_kind === 'worldbook'), false);
+  assert.equal(input.individual_evidence.some(item => item.provenance.source_kind === 'external_memory'), false);
+  assert.doesNotMatch(prompt, /其他人物具有明确女性生理性别|其他人物可承载妊娠/u);
+});
+
+test('G: Event messages contain semantic Character Evidence but never raw host source DTOs', () => {
+  const input = eventInput({
+    character: {description: '当前角色具有女性生理性别。', host_only: 'CARD_HOST_OBJECT'},
+    persona: {name: 'persona_raw', description: 'PERSONA_RAW_DESCRIPTION 女性生理性别。', host_only: 'PERSONA_HOST_OBJECT'},
+    worldbooks: [{entries: [{content: 'WORLDBOOK_RAW_OTHER 女性生理性别。'}]}],
+    external_memory: [{items: [{content: 'EXTERNAL_RAW_OTHER 女性生理性别。'}]}],
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+  assert.match(prompt, /稳定人物生理证据（不是当前 Floor Event）/u);
+  assert.match(prompt, /biological_sex：当前角色具有女性生理性别/u);
+  for (const marker of [
+    'CARD_HOST_OBJECT',
+    'PERSONA_HOST_OBJECT',
+    'WORLDBOOK_RAW_OTHER',
+    'EXTERNAL_RAW_OTHER',
+  ]) {
+    assert.doesNotMatch(prompt, new RegExp(marker, 'u'));
+  }
+  assert.doesNotMatch(prompt, /"(?:character|persona|worldbooks|external_memory)"\s*:/u);
+});
+
 test('Event message roles and ordered blocks are stable, with narrative only in ASSISTANT', async () => {
   const input = eventInput(await collectAnalysisContext({
     sources: analysisSources(),
@@ -778,7 +930,7 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     '【当前 World Model 参考】',
     '【剧情上下文】',
     '【本次分析内容】',
-    '请根据以上资料分析本次目标楼层',
+    '请根据以上资料分析 narrative discovery window（Current Target Floor 与 Recent Story）',
   ];
   const combinedPrompt = messages.map(message => message.content).join('\n');
   let previous = -1;

@@ -1,5 +1,6 @@
 import { traceApi } from "../ai/client.js";
 import {
+  dedupeEventsAgainstExisting,
   dedupeEvents,
   normalizeEvent,
   validateEventCollection,
@@ -311,9 +312,24 @@ export function createCharacterEventAnalysis({
       narrative: analysisNarrative(analysisInput),
     });
     if (!identityResult.ok) throw identityResolutionError(identityResult);
+    const identityResolvedEvents = Array.isArray(identityResult.events)
+      ? identityResult.events
+      : [];
+    const dedupedEvents = dedupeEventsAgainstExisting(
+      identityResolvedEvents,
+      analysisInput.existing_events,
+    );
+    emitPersistenceTrace("EVENT_SEMANTIC_DEDUPE_RESULT", execution, target, {
+      input_event_count: identityResolvedEvents.length,
+      existing_event_count: Array.isArray(analysisInput.existing_events)
+        ? analysisInput.existing_events.length
+        : 0,
+      retained_event_count: dedupedEvents.length,
+      removed_event_count: identityResolvedEvents.length - dedupedEvents.length,
+    }, "event");
     execution.stage = "normalization";
     const enrichedEvents = await Promise.all(
-      (Array.isArray(identityResult.events) ? identityResult.events : []).map(
+      dedupedEvents.map(
         async (event, ordinal) => {
           const facts = event && typeof event === "object" && !Array.isArray(event)
             ? Object.fromEntries(Object.entries(event).filter(

@@ -1691,6 +1691,190 @@ test("successful Floor skips non-force analysis and force success replaces Event
   fixture.runtime.destroy();
 });
 
+test("Event dedupe references every valid Floor inside the bounded Recent Story window", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: "message-1", floor: 1, content: "历史楼一", role: "assistant"},
+      {message_id: "message-2", floor: 2, content: "历史楼二", role: "assistant"},
+      {message_id: "message-3", floor: 3, content: "当前目标楼", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        inputs.push(structuredClone(analysisInput));
+        const result = eventResult(`window-${inputs.length}`);
+        result.participants = result.participants.map((participant, index) => ({
+          ...participant,
+          display_name: `${participant.display_name}-${inputs.length}`,
+          identity_evidence: [
+            {kind: "explicit_distinct_entity", text: `window-${inputs.length}-${index}`},
+          ],
+        }));
+        return {events: [result]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 3}},
+  };
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  const targetInput = inputs.at(-1);
+  assert.deepEqual(
+    targetInput.existing_events.map((item) => item.source.floor).sort((a, b) => a - b),
+    [1, 2],
+  );
+  assert.deepEqual(
+    targetInput.existing_bioweave.events.map((item) => item.source.floor),
+    [2],
+  );
+  fixture.runtime.destroy();
+});
+
+test("semantic duplicate from Recent Story is not persisted a second time", async () => {
+  let persisted = null;
+  let calls = 0;
+  const storyTime = {
+    display: "寅时末",
+    normalized: "cn-42-6-10T03:30",
+    calendar_id: null,
+    day_index: null,
+    precision: "minute",
+    confidence: null,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "message-history", floor: 1, content: "历史 exposure", role: "assistant"},
+      {message_id: "message-target", floor: 2, content: "当前 physical symptom", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor() {
+        if (calls++ === 0) {
+          return {
+            events: [eventResult("history-raw", {
+              story_time: storyTime,
+              source_evidence: [
+                {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "明确历史 exposure"},
+              ],
+            })],
+          };
+        }
+        const duplicate = structuredClone(persisted);
+        delete duplicate.event_id;
+        delete duplicate.source;
+        duplicate.participants = duplicate.participants.map((participant) => ({
+          ...participant,
+          identity_status: "existing",
+          mention_id: null,
+        }));
+        return {events: [duplicate]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  persisted = fixture.context.chat[0].extra.bioweave.events[0];
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("historical exposure and current symptom keep separate times under the current Floor owner", async () => {
+  const exposure = eventResult("historical-exposure", {
+    participants: eventResult("historical-exposure").participants.map((participant, index) => ({
+      ...participant,
+      display_name: index === 0 ? "沈祁鸢" : "实际 conception source",
+    })),
+    story_time: {
+      display: "天河四十二年夏 六月初十 寅时末",
+      normalized: "cn-42-6-10T03:30",
+      calendar_id: null,
+      day_index: null,
+      precision: "minute",
+      confidence: null,
+    },
+    source_evidence: [
+      {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "明确历史 exposure"},
+    ],
+  });
+  const symptom = {
+    type: "physical_symptom",
+    status: "confirmed",
+    story_time: {
+      display: "天河四十二年夏 六月初十 辰时",
+      normalized: "cn-42-6-10T07:00",
+      calendar_id: null,
+      day_index: null,
+      precision: "hour",
+      confidence: null,
+    },
+    location: "偏厅",
+    participants: [{
+      ...structuredClone(exposure.participants[0]),
+      event_role: "other_participant",
+    }],
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      reproductive_mechanism: {
+        kind: "none",
+        label: "无",
+        pathway: "无",
+        world_model_rule_refs: [],
+        evidence: [],
+      },
+      confidence: null,
+    },
+    state_fact: {
+      subject_id: "historical-exposure-subject",
+      payload: {symptom: {kind: "soreness", description: "当前身体症状"}},
+    },
+    source_evidence: [{kind: "symptom_evidence", text: "当前 physical symptom"}],
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "message-history", floor: 1, content: "寅时末，沈祁鸢与实际 source 发生明确体内暴露", role: "assistant"},
+      {message_id: "message-target", floor: 2, content: "辰时，沈祁鸢出现当前 physical symptom", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [exposure, symptom]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  const persistedExposure = events.find((item) => item.type === "sexual_activity");
+  const persistedSymptom = events.find((item) => item.type === "physical_symptom");
+  assert.equal(events.length, 2);
+  assert.equal(persistedExposure.story_time.normalized, "cn-42-6-10T03:30");
+  assert.equal(persistedSymptom.story_time.normalized, "cn-42-6-10T07:00");
+  assert.equal(persistedExposure.source.floor, 2);
+  assert.equal(persistedSymptom.source.floor, 2);
+  assert.equal(persistedExposure.participants[0].display_name, "沈祁鸢");
+  assert.equal(persistedSymptom.pregnancy_relevance.relevant, false);
+  const business = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(Object.keys(business.tracking_subjects).length, 1);
+  fixture.runtime.destroy();
+});
+
 test("API input uses the nearest valid previous Floor Version provenance", async () => {
   const inputs = [];
   const fixture = createFixture({

@@ -940,7 +940,15 @@ export function normalizeEventAnalysisInput(options = {}) {
   const individualEvidence =
     source.individual_evidence ??
     nested.individual_evidence ??
-    projectEventIndividualEvidence(characterContext)
+    projectEventIndividualEvidence(characterContext, {
+      character: source.character ?? nested.character,
+      persona: source.persona ?? nested.persona,
+      worldbooks: source.worldbooks ?? nested.worldbooks,
+      externalMemory: source.external_memory ?? nested.external_memory,
+      meta,
+      chatId: chat_id,
+      floorVersion: floor_version,
+    })
   const existingEvents =
     source.existing_events ??
     nested.existing_events ??
@@ -993,14 +1001,162 @@ function projectEventIdentityContext(registry) {
   return {canonical_candidates: canonicalCandidates}
 }
 
-function projectEventIndividualEvidence(characterContext) {
+const STABLE_BIOLOGICAL_EVIDENCE_KINDS = Object.freeze([
+  'biological_sex',
+  'species',
+  'biological_type',
+  'stable_physiology',
+  'explicit_capability',
+  'other_stable_biological',
+])
+
+function classifyStableBiologicalEvidence(text) {
+  const value = safeText(text).trim()
+  if (!value) return null
+  if (/(?:生理性别|biological\s+sex|女性|男性|雌性|雄性|female|male)/iu.test(value))
+    return 'biological_sex'
+  if (/(?:biological[_\s-]?type|生物类型|生殖类型)/iu.test(value))
+    return 'biological_type'
+  if (/(?:物种|species|种族|human|人类|nonhuman|非人类)/iu.test(value))
+    return 'species'
+  if (/(?:can_[a-z_]+|明确能力|生殖能力|可承载|可导致受孕|可被受精|可产生精子|可产生卵子|capability)/iu.test(value))
+    return 'explicit_capability'
+  if (/(?:生理|physiology|解剖|anatomy|身体结构|reproductive|生殖)/iu.test(value))
+    return 'stable_physiology'
+  if (/(?:稳定|先天|发育|妊娠史|曾经怀孕|pregnan|fertil)/iu.test(value))
+    return 'other_stable_biological'
+  return null
+}
+
+function projectStableBiologicalEvidence(text) {
+  const parts = safeText(text)
+    .split(/(?<=[。！？!?，,;；\n])\s*/u)
+    .map(item => item.trim())
+    .filter(Boolean)
+  return parts
+    .map(item => {
+      const kind = classifyStableBiologicalEvidence(item)
+      return kind ? {kind, text: item} : null
+    })
+    .filter(Boolean)
+}
+
+function normalizeEvidenceItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .map(item => {
+      const text = safeText(
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? item.text ?? item.content
+          : item,
+      ).trim()
+      if (!text) return null
+      const requestedKind = safeText(item?.kind).trim()
+      const kind = STABLE_BIOLOGICAL_EVIDENCE_KINDS.includes(requestedKind)
+        ? requestedKind
+        : classifyStableBiologicalEvidence(text)
+      return kind ? {kind, text} : null
+    })
+    .filter(Boolean)
+}
+
+function eventEvidenceProvenance(sourceKind, sourceId, itemId, options) {
+  return {
+    source_kind: sourceKind,
+    source_id: safeText(sourceId).trim() || null,
+    item_id: safeText(itemId).trim() || null,
+    chat_id: safeId(options?.chatId) || null,
+    floor_version: safeStructuredValue(options?.floorVersion ?? null),
+  }
+}
+
+function projectSourceEvidence({
+  subjectKind,
+  characterId = null,
+  displayName = null,
+  identityHint = null,
+  sourceKind,
+  sourceId = null,
+  itemId = null,
+  text,
+  options,
+}) {
+  const stableBiologicalEvidence = projectStableBiologicalEvidence(text)
+  if (!stableBiologicalEvidence.length) return null
+  return {
+    character_id: safeText(characterId).trim() || null,
+    display_name: safeText(displayName).trim() || null,
+    subject_kind: subjectKind,
+    identity_hint: safeText(identityHint).trim() || null,
+    species: null,
+    biological_type: null,
+    capabilities: {},
+    evidence: [],
+    stable_biological_evidence: stableBiologicalEvidence,
+    provenance: eventEvidenceProvenance(sourceKind, sourceId, itemId, options),
+  }
+}
+
+function explicitSubjectBinding(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidates = [
+    value.character_id,
+    value.subject_character_id,
+    value.target_character_id,
+    value.subject_id,
+    value.character?.character_id,
+    value.subject?.character_id,
+  ]
+  return candidates.map(item => safeText(item).trim()).find(Boolean) || null
+}
+
+function projectBoundSourceItems(worldbooks, externalMemory, options) {
+  const projected = []
+  for (const worldbook of Array.isArray(worldbooks) ? worldbooks : []) {
+    const sourceId = safeId(worldbook?.source_id)
+    for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : []) {
+      const characterId = explicitSubjectBinding(entry)
+      if (!characterId) continue
+      const item = projectSourceEvidence({
+        subjectKind: 'canonical_character',
+        characterId,
+        identityHint: characterId,
+        sourceKind: 'worldbook',
+        sourceId,
+        itemId: entry?.entry_id,
+        text: entry?.content,
+        options,
+      })
+      if (item) projected.push(item)
+    }
+  }
+  for (const provider of Array.isArray(externalMemory) ? externalMemory : []) {
+    for (const item of Array.isArray(provider?.items) ? provider.items : []) {
+      const characterId = explicitSubjectBinding(item)
+      if (!characterId) continue
+      const projectedItem = projectSourceEvidence({
+        subjectKind: 'canonical_character',
+        characterId,
+        identityHint: characterId,
+        sourceKind: 'external_memory',
+        sourceId: provider?.key,
+        itemId: item?.item_id ?? item?.id,
+        text: item?.content ?? item?.text,
+        options,
+      })
+      if (projectedItem) projected.push(projectedItem)
+    }
+  }
+  return projected
+}
+
+function projectEventIndividualEvidence(characterContext, options = {}) {
   const value = characterContext && typeof characterContext === 'object' && !Array.isArray(characterContext)
     ? characterContext
     : {}
   const profiles = value.profiles && typeof value.profiles === 'object' && !Array.isArray(value.profiles)
     ? value.profiles
     : {}
-  return Object.entries(profiles)
+  const projectedProfiles = Object.entries(profiles)
     .map(([fallbackId, rawProfile]) => {
       const profile = rawProfile && typeof rawProfile === 'object' && !Array.isArray(rawProfile)
         ? rawProfile
@@ -1010,6 +1166,8 @@ function projectEventIndividualEvidence(characterContext) {
       const capabilities = profile.reproductive_capabilities ?? profile.reproductive_capabilities_used
       return {
         character_id: characterId,
+        subject_kind: 'canonical_character',
+        identity_hint: safeText(profile.display_name).trim() || characterId,
         display_name: safeText(profile.display_name).trim() || null,
         species: safeText(profile.species).trim() || null,
         biological_type: safeText(profile.biological_type).trim() || null,
@@ -1017,9 +1175,49 @@ function projectEventIndividualEvidence(characterContext) {
           ? safeStructuredValue(capabilities)
           : {},
         evidence: Array.isArray(profile.evidence) ? safeStructuredValue(profile.evidence) : [],
+        stable_biological_evidence: normalizeEvidenceItems(profile.stable_biological_evidence),
+        provenance: eventEvidenceProvenance(
+          'existing_profile',
+          profile.source_id,
+          null,
+          options,
+        ),
       }
     })
     .filter(Boolean)
+  const character = value.character_card && typeof value.character_card === 'object'
+    ? value.character_card
+    : options.character
+  const currentCharacter = safeText(
+    value.current_character ?? value.currentCharacter ?? options.meta?.character_name,
+  ).trim()
+  const persona = options.persona && typeof options.persona === 'object'
+    ? options.persona
+    : null
+  const projectedSources = []
+  const characterEvidence = projectSourceEvidence({
+    subjectKind: 'current_character',
+    displayName: currentCharacter,
+    identityHint: currentCharacter,
+    sourceKind: 'character_card',
+    text: character?.description,
+    options,
+  })
+  if (characterEvidence) projectedSources.push(characterEvidence)
+  const personaEvidence = projectSourceEvidence({
+    subjectKind: 'persona',
+    displayName: persona?.name ?? options.meta?.user_name,
+    identityHint: persona?.name ?? options.meta?.user_name,
+    sourceKind: 'persona',
+    text: persona?.description,
+    options,
+  })
+  if (personaEvidence) projectedSources.push(personaEvidence)
+  return [
+    ...projectedProfiles,
+    ...projectedSources,
+    ...projectBoundSourceItems(options.worldbooks, options.externalMemory, options),
+  ]
 }
 
 function projectEventExistingEvents(existingBioWeave, source, nested) {

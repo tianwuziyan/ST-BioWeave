@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"质量检查时验证 source provenance、Floor owner、current Swipe 和 no Chat-level derived fallback。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"质量检查时验证 Event collection、identity resolution 与 capability unknown/pending 约束。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"质量检查时验证 Nonhuman type isolation、baseline 与 explicit evidence 规则。"}
+{"file":"docs/ARCHITECTURE.md","reason":"质量检查时验证最小文件集合与禁止触及的 persistence/tracking/runtime 模块。"}

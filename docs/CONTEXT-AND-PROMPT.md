@@ -31,9 +31,39 @@ Raw SillyTavern Context
 - `external_memory`：已启用且确实可读的 provider 正文；
 - `meta`：不含 Secret 的显示和统计元数据。
 
-Event Analysis 在共享 wide DTO 之外建立独立的 semantic projection，组合 `world_model`、`existing_events`、`story_time`、`current_floor`、`recent_story`、identity projection、individual evidence 和 authoritative Floor boundary。完整 `existing_bioweave`、`character_registry` 以及 raw Character Card、Persona、Worldbook、External Memory 可以继续存在于 Runtime wide DTO，但不能由 Event prompt formatter 消费。
+Event Analysis 在共享 wide DTO 之外建立独立的 semantic projection，组合 `world_model`、`existing_events`、`story_time`、`current_floor`、`recent_story`、`identity_context`、Character Evidence (`individual_evidence`) 和 authoritative Floor boundary。完整 `existing_bioweave`、`character_registry` 以及 raw Character Card、Persona、Worldbook、External Memory 可以继续存在于 Runtime wide DTO，但不能由 Event prompt formatter 消费。模块独立不等于人物证据删除：正确链路是 raw/source collection → Character Evidence semantic projection → Character/Event Analyzer。
 
 Prompt Formatter 只能消费 normalized DTO，不能从 `context.chat`、原始 Character Card、原始 Worldbook、原始 Persona 或外部 provider response 补回内容。
+
+### Character Evidence contract
+
+`identity_context` 只回答“这个 mention 是谁”，包含 canonical
+`character_id`、`display_name`、aliases；它不提供 species、biological_type
+或 capability。`individual_evidence` / Character Evidence 只回答“这个人物
+有哪些稳定生理事实”，可包含 subject binding、typed
+`stable_biological_evidence: {kind, text}[]`、species/type、明确个体
+capability 与 provenance。`world_model` 回答“当前世界中该 species/type 的
+baseline biological rules 是什么”。三者不可互相替代。
+
+Character Card description 可为 `current_character` 提供稳定人物证据；Persona
+description 可为 `persona` 提供稳定人物证据；existing profile 保持原有
+canonical ID、species/type、capabilities/evidence。Recent Story 与 Current
+Floor 都是 narrative Event discovery evidence；Recent Story 中明确已经发生
+的历史事实可以生成 Event，并保留事实自己的 story_time。Worldbook/External Memory 只有可靠
+subject binding 才能进入 Character Evidence；文本包含姓名、first-match-wins
+和跨人物借证都不构成 binding，无绑定时排除而不是广播。
+
+能力解析顺序固定为：Character Evidence 映射到 persisted World Model 已存在
+的 species/type → 读取该 type baseline → 用明确个体 capability evidence
+覆盖或补充；冲突/不足保持 `null`。生理性别可以帮助 type mapping，但不能
+直接推出 capability；Character/Event 不创建 Human baseline、不创建缺失 type，
+Nonhuman 的同名 type 不能套 Human baseline，也不能用现实常识补空。
+
+Initial Registry Bootstrap 时，即使 Registry 为空、没有 profile 或 canonical
+ID，Character Evidence 仍可 transient 存在，`character_id` 必须为 `null`，并
+保留 subject kind、display name/identity hint 与 provenance；raw response 使用
+`identity_status=new|unresolved`，由 Runtime 后续分配 canonical ID。稳定人物
+证据不是当前 Floor Event，Character Evidence 也不新增 Chat/Floor 持久化字段。
 
 ## 3. Character selection contract
 
@@ -79,6 +109,21 @@ raw message
 
 Event 仍单独发送 Target Floor，但 Recent Story 必须包含同一个 Current BioWeave Character Floor；重复是有意的，确保 World/Event 使用一致的 recent-story 边界。Current Floor 之后的尾部 User message 不得进入任一分析 Context。
 
+Event discovery window 与 Event persistence owner 是两个独立概念：Current
+Target Floor 与 bounded Recent Story 都可参与 BiologicalEvent discovery；本轮
+新发现 Event 统一持久化到当前 Character Floor active Swipe。历史 Event 保留
+实际 story_time，但 canonical source 仍由 Runtime 绑定当前 Floor Version，表示
+本轮 persistence owner，而不是历史事实原始 Floor。
+
+`existing_bioweave` 继续只表示最近合法成功前置 Floor 的 snapshot，用于身份和
+profile continuity。Event prompt 的 `existing_events` 是单独的 bounded dedupe
+projection：除最近前置 snapshot 外，至少覆盖 Recent Story discovery window 中
+其它合法 active Floor 的 canonical Events；不扫描无限 Chat 历史，不包含 target 自身
+旧结果、删除/失效 Swipe 或 stale Floor。Runtime identity resolution 后，只有在
+type、structured story_time、canonical participant/subject/counterpart 集合、机制、
+关键事实 evidence 与 state fact 均完全匹配时才视为 semantic duplicate；资料不完整
+或存在差异时保留 Event。
+
 ## 6. External Memory provider contract
 
 只有设置中启用、宿主明确可用、provider 正文确实可读且没有读取错误的外部来源可以贡献正文。disabled、unavailable 和 error provider 不贡献正文；错误对象、response、`extra`、Store 或 debug 结构不得发送给模型。
@@ -98,9 +143,9 @@ User Persona 是否进入 Context 由任务策略决定，而不是由 Formatter
 | Task | common `analysis_prompt` | User Persona evidence |
 | --- | --- | --- |
 | World Analysis | yes | no |
-| Event Analysis | yes | no；只保留必要的 `user_name` / `character_name` 等窄命名 metadata |
+| Event Analysis | yes | yes；仅通过 Character Evidence projection，raw Persona DTO 不进入 |
 
-Event prompt 不再包含 raw Persona，也不提供 `【{{user}} 的人物设定】` section。Event 只保留必要的窄命名 metadata；Persona 中的生物学描述不得成为 Event evidence。World Analysis 仍按既有共享 collector 规则处理宿主来源。
+Event prompt 不包含 raw Persona，也不提供 `【{{user}} 的人物设定】` section；但 Persona 的稳定生理证据必须通过 Character Evidence projection 进入 Event。Persona 中的旧经历/背景事件不能成为当前 Floor Event，也不得广播给其他 participants。World Analysis 仍按既有共享 collector 规则处理宿主来源。
 
 ## 8. Message role contract
 
@@ -118,7 +163,7 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 
 1. 可选 `SYSTEM`：用户设置的“第一个 SYSTEM”（绝对第一条 SYSTEM）；
 2. `SYSTEM`：BioWeave Event Analysis Rules，合并 Protected Core、公共 `analysis_prompt`、Event Task、必要边界说明、输入后补充和 Protected Output Contract；
-3. 可选 `SYSTEM`：Reference Context，合并 persisted Current World Model、canonical identity projection、必要的 canonical/derived individual evidence 和 existing Events；raw Character Card、Persona、Worldbook、External Memory 不进入 Event prompt；
+3. 可选 `SYSTEM`：Reference Context，合并 persisted Current World Model、`identity_context`、经过 projection 的 Character Evidence (`individual_evidence`) 和 existing Events；raw Character Card、Persona、Worldbook、External Memory 不进入 Event prompt；
 4. `ASSISTANT`：唯一的 Narrative Context，按剧情顺序包含每层已处理的 Recent Story 和明确标记的 Target Floor；
 5. `USER`：最终执行指令；
 6. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（整个 `messages[]` 的绝对最后一项）。
@@ -127,9 +172,10 @@ World Analysis 使用相同的首尾边界、选择和来源处理，但不包�
 
 Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。用户 common prompt 可以补充行为，不能覆盖 schema、业务 invariant 或 validator contract。
 
-Event Analysis V1 的 Output Contract 允许一个 Target Floor Version 产生
+Event Analysis V1 的 Output Contract 允许一个当前 Target Floor Version 产生
 `0 / 1 / N` 个 BiologicalEvents。对于 pregnancy-related `sexual_activity`，Event
-granularity is per gestational subject：先 exhaustive scan 整个 Target Floor，建立临时
+granularity is per gestational subject：先 exhaustive scan 整个 narrative discovery
+window（Current Target Floor 与 Recent Story），建立临时
 candidate 集合并收集全部实际发生
 conception-relevant exposure 的 gestational subject，再按 subject 分组。同一
 subject 的多个 actual exposure source 合并为一个 Event；不同 subject 必须输出
@@ -149,18 +195,25 @@ biological identity；姓名、称谓、外貌、event_role、位置、主动/�
 同一 subject 的 sexual exposure、即时 symptoms、physical effects、直接身体反应
 和证据保持在同一 Event；其它真正独立的 `physical_symptom`、`medical_event` 或
 BiologicalEvent 可以并存。普通照顾/补品、食物、饮料、静态外貌/体质描写不自动
-形成独立 Event。多 Event response 不由 Runtime 或 UI 合并、拆分或按人物重建。
+形成独立 Event。Recent Story 中明确发生但尚未记录的 Event 可以在本轮补录；已
+存在的 canonical Event 通过 bounded `existing_events` semantic comparison 避免
+重复。多 Event response 不由 Runtime 或 UI 合并、拆分或按人物重建。
 
-对 pregnancy-related `sexual_activity`，每个 participant 都必须返回
-`biological_context: {species, biological_type}`；两个字段值只能是字符串或
-`null`，资料不足时不得单一线索猜测。`species` 取当前 World Model 对应人物的 species，
-`biological_type` 取该 species 下稳定的生理/生殖分类。`reproductive_capabilities_used`
-必须先使用匹配 World Model species/type 的 baseline，再综合 canonical/derived individual
-evidence 与当前剧情证据逐项填写；个体明确证据可覆盖或补充，
-未知保持 `null`。exposure recipient/source 和 `possible_conception` 由 World Model、
+每个已确认 participant 都必须返回 `biological_context: {species, biological_type}`；
+这项人物分析不以 `pregnancy_relevance.relevant === true` 为前提。两个字段值只能是
+字符串或 `null`，资料不足时不得单一线索猜测。`pregnancy_relevance` 描述当前 Event，
+participant biological facts 描述人物；`relevant=false` 不能跳过人物分析，也不能由
+人物 capability 反推为 pregnancy-related。固定顺序是 identity → Character Evidence →
+species → 该 species 内 biological_type → exact persisted World Model species/type →
+baseline capability → explicit individual capability evidence → final participant facts。
+`species` 取当前 World Model 对应人物的 species，`biological_type` 取该 species 下稳定的
+生理/生殖分类。`reproductive_capabilities_used` 必须先使用匹配 World Model species/type
+的 baseline，再综合 canonical/derived individual evidence 与当前剧情证据逐项填写；个体
+明确证据可覆盖或补充，未知保持 `null`。gender/sex 只能帮助映射已有 type，不能直接
+推出 capability。Human baseline 只能由 World Model 建立，Nonhuman 不套 Human baseline，
+也不创建缺失 type。exposure recipient/source 和 `possible_conception` 由 World Model、
 species/type reproduction rules/capabilities 与 Narrative evidence 共同决定，不将任一
-现实物种、性别、解剖结构或单一现实生殖机制硬编码为通用要求。非 pregnancy Event
-继续使用既有 participant 合同；不新增 `gender` 字段。
+现实物种、性别、解剖结构或单一现实生殖机制硬编码为通用要求。不新增 `gender` 字段。
 
 ## 9. Chinese semantic source labels
 
@@ -171,12 +224,16 @@ species/type reproduction rules/capabilities 与 Narrative evidence 共同决定
 - `【世界书参考资料】`（World Analysis only）；
 - `【外部历史参考信息】`（World Analysis only）；
 - `【近期剧情参考】`；
-- `【本次目标楼层】`；
+- `【本次分析内容】`（当前 Target Floor 正文）；
 - `【当前 World Model 参考】`；
 - `【现有 BioWeave 事实参考】`。
 
-Event 的参考 section 使用 canonical identity projection、individual evidence、persisted
-World Model 和 existing Events；不使用上述 raw host source sections。
+Event 的参考 section 使用 `identity_context`、Character Evidence
+(`individual_evidence`)、persisted World Model 和 existing Events；不使用上述
+raw host source sections。未来任何 Event Input Boundary、Prompt trimming、
+World/Event separation、sanitization 或 AnalysisInput narrowing 都必须保留
+等价或更严格的 Character Evidence projection，并由最终
+`buildEventAnalysisMessages()` 回归验证，而不能只验证 Prompt 规则文案。
 
 内部 DTO/schema key 继续使用英文；中文只属于 Prompt presentation，不改变 Domain contract。
 
@@ -196,7 +253,7 @@ World Model 和 existing Events；不使用上述 raw host source sections。
 
 最终 narrative presentation 不应看起来像 Runtime debug dump：不显示 floor number、user/assistant role、`正文：`、message_id、swipe_id、content_hash 或 message_version，也不为每层自动插入分隔线。空的 processed floor 从最终正文中省略，但内部 DTO 可以保留供测试和诊断；Target Floor 处理为空时不得回退到 raw content。
 
-Event 使用 `【剧情上下文】` 表示非目标历史内容，使用 `【本次分析内容】` 表示唯一的目标内容；没有历史时省略空的剧情上下文 section。World Model 的 Recent Story 使用 `【近期剧情参考】`。每个任务的历史与目标 narrative 最终都只生成一个 `ASSISTANT` message，Prompt Preview 必须直接展示同一份真实 message content。
+Event 使用 `【剧情上下文】` 表示 Recent Story，使用 `【本次分析内容】` 表示当前 Target Floor；两者共同构成 narrative discovery window，均可提供明确已发生 Event 的发现证据。没有历史时省略空的剧情上下文 section。World Model 的 Recent Story 使用 `【近期剧情参考】`。每个任务的历史与目标 narrative 最终都只生成一个 `ASSISTANT` message，Prompt Preview 必须直接展示同一份真实 message content。
 
 ## 11. Runtime authoritative identity
 

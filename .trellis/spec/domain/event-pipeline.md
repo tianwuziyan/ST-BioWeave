@@ -87,6 +87,129 @@ analysis and registry resolver. World Model resolvers are separate World/Floor
 operations; if they share mechanical traversal, the shared primitive must not
 understand either domain's fields.
 
+### Character Evidence semantic projection boundary
+
+Character/Event Analysis and World Model Analysis are independent business
+domains. “Independent” does not mean that the Character/Event Analyzer loses
+the stable evidence required to analyze a person. The correct boundary is:
+
+```text
+raw Host/source data
+  → source-specific collection
+  → Character Evidence semantic projection
+  → Character/Event Analyzer
+```
+
+It is neither raw source DTOs copied wholesale into the Event prompt nor raw
+sources isolated so completely that stable person evidence disappears. Module
+extraction separates responsibilities; it must not delete evidence required by
+those responsibilities.
+
+`individual_evidence` is the Event input projection for stable person facts.
+Each entry is source-specific and subject-bound, and may contain
+`subject_kind`, nullable `character_id`, `display_name`, `identity_hint`,
+typed `stable_biological_evidence: {kind, text}[]`, canonical species/type,
+explicit individual capabilities, and source/Floor provenance. Evidence kinds
+are `biological_sex`, `species`, `biological_type`, `stable_physiology`,
+`explicit_capability`, and `other_stable_biological`.
+
+Character Evidence is used only to resolve a mention, map a person to an
+already persisted World Model species/type, provide explicit individual
+physiology or reproductive capability evidence, and provide stable person
+background. It is not a current-Floor Event, a World Model rule, a Tracking
+eligibility result, a replacement for Character Registry identity candidates,
+a Chat-level fact, or a Characters UI list source.
+
+Source rules are: Character Card may provide stable evidence for the current
+Character; Persona may provide stable evidence for the Persona subject;
+existing canonical/derived profiles retain their canonical ID, species/type,
+capabilities and evidence; Current Floor and Recent Story are both narrative
+Event discovery evidence; and Worldbook/External Memory require reliable
+subject binding. Text containing a name is not a binding, first-match-wins and
+cross-person borrowing are forbidden, and an unbound item is excluded from
+Character Evidence rather than broadcast.
+Character Card/Persona history is not a current-Floor Event and Persona facts
+are never broadcast to other participants.
+
+### Event discovery window and persistence owner
+
+Event discovery window and Event persistence owner are independent concepts.
+The Runtime explicitly sends the Current Target Floor and the bounded Recent
+Story to the Event Analyzer as narrative evidence. Both may produce a
+BiologicalEvent when the text contains a clear fact that belongs to that
+window. A Recent Story fact is not limited to background context merely
+because it predates the Target Floor; its Event keeps the fact's own
+`story_time`.
+
+Every newly discovered Event is nevertheless persisted by the current active
+Character Floor/Swipe. Its canonical `source` is the current six-field Floor
+Version and therefore represents the persistence owner, not the historical
+time of the fact. The analyzer must not copy an historical Recent Story
+source into the canonical Event source or create a second historical owner.
+
+`existing_bioweave` keeps its existing contract: it is the nearest valid
+successful previous Floor snapshot used for profile/identity continuity. The
+separate `existing_events` projection is the bounded dedupe reference for the
+narrative discovery window. It contains valid canonical Events from the
+nearest previous snapshot plus older valid Floors represented in the selected
+Recent Story window; it never scans an unbounded Chat cache, includes the
+target's old result, or includes deleted, inactive-Swipe, stale, or invalidated
+owners.
+
+After Runtime identity resolution, a newly returned Event is compared with
+`existing_events` using a deterministic semantic key. The key requires a
+complete high-confidence match of Event type, structured story time,
+canonical participant set, gestational-subject set, counterpart set,
+reproductive mechanism fields, factual source evidence, and state fact. A
+candidate without complete key material is retained. Different Event types,
+subjects, counterpart sources, mechanisms, story times, or key factual
+evidence are never merged by fuzzy similarity. Same-time independent
+exposures therefore remain separate when their source set or evidence differs;
+`physical_symptom` and `sexual_activity` can never dedupe each other.
+
+Three projections remain distinct: `identity_context` answers which person a
+mention names and contains canonical ID/display name/aliases only;
+`individual_evidence` / Character Evidence answers which stable biological
+facts belong to that person and contains subject binding, typed evidence,
+species/type evidence, explicit capability evidence and provenance; and
+`world_model` answers which baseline rules apply to the current species/type.
+None of these projections may substitute for another.
+
+Capability resolution is ordered: map Character Evidence to an already
+persisted World Model species/type; read that type's baseline capabilities and
+mechanism rules; then use explicit individual capability evidence to override
+or supplement the baseline. Conflicting or insufficient evidence remains
+`null`. Physiological sex/gender may help map to an existing biological type,
+but never directly grants a capability. Human baseline is created only by
+World Model; Character/Event must not create Human baseline or a missing type,
+and a Nonhuman type named “female” or “male” does not inherit Human physiology.
+Real-world common sense cannot fill a persisted World Model `null`.
+
+During Initial Registry Bootstrap, Character Evidence remains usable when the
+registry is empty and no canonical ID exists. The transient subject uses
+`character_id: null`, subject kind, display name/identity hint and provenance;
+the raw AI response uses `identity_status: new` or `unresolved`, and Runtime
+later allocates the canonical ID. A missing profile or empty Registry must not
+discard Character Card/Persona evidence, and a display name must never become a
+fabricated canonical ID.
+
+Character Evidence is transient analyzer input. It adds no Chat metadata, Floor
+field, Event, Registry, World Model, profile read model, or Tracking Subject.
+`character_registry.entities` is not the Characters UI list; Characters UI
+continues to consume `tracking_subjects`, whose eligibility is decided from
+validated Events, participant biological context, World Model / explicit
+capability evidence, and `resolveCarryingCapability()`.
+
+#### Character Evidence regression guard
+
+Future changes to Event Input Boundary, prompt trimming, World/Event
+separation, source isolation, sanitization, module extraction, or
+`AnalysisInput` narrowing must preserve an equivalent or stricter Character
+Evidence projection. Removing raw sources is safe only when the projection
+remains available. Tests must inspect final `buildEventAnalysisMessages()`
+messages for projected Character Evidence; a Prompt rule saying that gender
+can map to a type is not sufficient.
+
 ## 2. Signatures
 
 - `buildEventAnalysisInput(options) -> EventAnalysisInput`
@@ -198,10 +321,11 @@ World Model validation keeps `carrying_compatibility` as `boolean | null`;
 Character/Event must consume that canonical value and must not reinterpret
 natural-language anatomy or mechanism descriptions as capability values.
 
-Event Analysis character references contain only the selected Character Card
-background. `character.greetings` may remain present in the shared
-`AnalysisInput` for World Model composition, but Event Analysis must not format
-or send greeting content or the `【开场白】` section.
+Event Analysis does not consume a raw Character Card DTO. The selected Character
+Card description may enter Event Analysis only through the Character Evidence
+semantic projection above. `character.greetings` may remain present in the
+shared `AnalysisInput` for World Model composition, but Event Analysis must not
+format or send greeting content or the `【开场白】` section.
 
 ### AI DTO / Domain DTO boundary
 
@@ -485,24 +609,33 @@ Every persisted, accepted Domain Event has:
 - `gestational_subject_ids[]` and `counterpart_ids[]`, never a scalar or a
   comma-delimited display string.
 
-For a pregnancy-related `sexual_activity` AI participant, `biological_context`
-is required and must contain `species` and `biological_type`, each a string or
-`null`. `species` comes from the participant's current World Model identity;
+Every confirmed Event participant must undergo the same `biological_context`
+analysis; it is not conditional on `pregnancy_relevance.relevant === true`.
+The output object contains `species` and `biological_type`, each a string or
+`null`, even for a non-pregnancy Event. `pregnancy_relevance` describes whether
+the current Event concerns conception/pregnancy; participant biological facts
+describe the person and must not be skipped, and a person's capability must not
+make an otherwise unrelated Event pregnancy-relevant. The stable analysis order
+is identity → Character Evidence → species → `biological_type` within that
+species → exact persisted World Model species/type → baseline capability →
+explicit individual capability evidence → final participant facts.
+
+`species` comes from the participant's current World Model identity;
 `biological_type` is the stable physiological/reproductive classification under
-that species. The Analyzer may combine Character Card, Persona, Worldbook,
-narrative, existing profile, stable setting, body/physiology/reproductive facts,
-and multiple consistent context clues to map an object to the current World
-Model. An explicit physiological-sex fact may be one piece of evidence for
-mapping `biological_type`, but it does not by itself authorize any capability.
-A name, title, event role, position, active/passive label, social role,
-clothing, demeanor, or one appearance clue is never sufficient by itself.
-Insufficient or conflicting evidence remains `null` and the recipient remains
-pending rather than disappearing. No `gender` field is added. Capability
-evaluation uses the current World Model baseline first, then existing profile
-and individual Character/Persona/Worldbook/current narrative evidence; explicit
-individual values may override or complete the baseline, while unknown values
-remain `null`. Non-pregnancy Events retain the existing optional participant
-context compatibility.
+that species. The Analyzer may combine projected Character Card, Persona,
+Worldbook, narrative, existing profile, stable setting, body/physiology/
+reproductive facts, and multiple consistent context clues to map an object to
+the current World Model. An explicit physiological-sex fact may be one piece
+of evidence for mapping `biological_type`, but it does not by itself authorize
+any capability. A name, title, event role, position, active/passive label,
+social role, clothing, demeanor, or one appearance clue is never sufficient by
+itself. Insufficient or conflicting evidence remains `null` and the recipient
+remains pending rather than disappearing. No `gender` field is added.
+Capability evaluation uses the current World Model baseline first, then
+projected existing profile/Character Evidence and current narrative evidence;
+explicit individual values may override or complete the baseline, while
+unknown values remain `null`. Non-pregnancy Events therefore retain full
+participant biological analysis, not merely optional context compatibility.
 
 For `sexual_activity`, `counterpart_ids[]` is a subset of `participants[]`
 containing only actual exposure source IDs. Whether an interaction is an actual

@@ -28,6 +28,24 @@
 ### Analysis Context / Prompt Contract
 
 所有新的或调整中的 Analyzer 必须遵守 [`docs/CONTEXT-AND-PROMPT.md`](./CONTEXT-AND-PROMPT.md)，尤其是 Settings selection、SYSTEM 首尾边界、逐楼层 narrative regex 和 Preview parity contract。设置先决定可读取的数据源、楼层数量、regex、Persona、Worldbook 和 External Memory；共享 Collector 完成选择、清洗和脱敏后，任务 Prompt Builder 才能格式化稳定的 `messages[]`。Prompt Preview 必须直接复用真实请求的同一个 message builder。多个 `SYSTEM` message 是合法的，但应按职责聚合，关键是绝对边界、稳定顺序，以及 Preview 与实际请求一致。
+
+Character/Event 与 World Model 是独立业务域，但拆分职责不等于删除人物证据。Event 输入必须保持：
+
+```text
+raw/source collection → Character Evidence semantic projection → Character/Event Analyzer
+```
+
+Event Analyzer 不直接消费 raw Character Card、Persona、Worldbook 或 External
+Memory DTO；Character Card/Persona 的稳定生理证据必须经
+`individual_evidence` projection 进入。`identity_context` 只负责 mention
+identity，Character Evidence 负责稳定人物事实，persisted `world_model`
+负责 species/type baseline。生理性别可参与已有 type mapping，但不得直接推出
+capability；Nonhuman 不套 Human baseline，未知保持 `null`。
+
+未来修改 Event Input Boundary、Prompt trimming、World/Event separation、source
+isolation、sanitization、module extraction 或 AnalysisInput narrowing 时，必须
+保留等价或更严格的 Character Evidence projection，并用最终
+`buildEventAnalysisMessages()` 回归验证，而不能只验证 Prompt 文案。
 - `story/*`：StoryTimeCoordinator、BioWeave 本地 canonical parser、era-aware 标准月份算术，以及独立的外部记忆适配。`story/time.js` 负责本地 Story Time 归一化、Calendar Engine 接线和 display formatter；`formatStoryTime()` 不从 display 反向推导日期。
 - `context/builder.js`：向 Tavern 注入短、稳定、结构化的 BioWeave Context。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。
@@ -53,11 +71,12 @@
 Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎。跨层数据流保持轻量：
 
 ```text
-当前 Chat / Floor / 最近剧情 / World Model / Story Time
+当前 Chat / Floor / Recent Story discovery window / World Model / Story Time
   → Event Analyzer raw JSON（existing/new/unresolved mention）
   → Runtime Character Identity resolution / registration
   → Event normalize / validate
-  → Floor-bound BiologicalEvent[0..N]（每个 Target Floor Version）
+  → bounded semantic duplicate guard
+  → 当前 active Character Floor-bound BiologicalEvent[0..N]
   → Chat-local Tracking Subject Registry
   → Characters / Events / Overview
 ```
@@ -66,13 +85,15 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 
 - 人物列表不是当前 Chat 的全角色列表，只读取 `tracking_subjects` 中 `eligibility: "eligible"` 的 active Tracking Subject。`BiologicalEvent.participants[]` 对 `sexual_activity` 只保存 actual reproductive exposure chain 的直接参与者，Event Participant 不等于 Tracking Subject；Subject 的进入由 BiologicalEvent、World Model、Narrative Evidence 和 `can_carry_pregnancy` 三态解析决定，pending recipient 保存在独立 `tracking_candidates`，UI 不参与判断。
 - BiologicalEvent 是当前范围内实际生物事实（尤其是 pregnancy-relevant reproductive exposure）的单一来源，不是完整 NSFW 行为日志。Subject 只保存 `created_from_event_id`、`exposure_event_ids[]` 等 Event 引用和必要索引，不复制完整 Event；稳定关联使用 `character_id`，不用姓名。
-- Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、persisted canonical World Model、结构化 Story Time、canonical identity projection、canonical/derived individual evidence 和 existing Events。输出只能是固定 `{schema_version, events[]}`，每个 Target Floor Version 允许 `events.length >= 0`。对于 pregnancy-related `sexual_activity`，AI 先识别所有实际暴露的 gestational subject，再按 subject 分组；每个 Event 恰好一个 subject，同一 subject 的多个 actual exposure source 合并，不同 subject 分 Event。即时症状、physical effect 和相关证据仍并入同一 subject 的 sexual Event；其它真正独立的 BiologicalEvent 可以并存。只有通过统一 normalize / validate 的结果才能写入 Floor。raw Character Card、Persona、Worldbook 和 External Memory 仍可保留在 Runtime wide DTO 供 World/legacy orchestration 使用，但不直接进入 Event prompt。
+- Event discovery window 与 persistence owner 独立：Current Target Floor 与 bounded Recent Story 都是允许产生 Event 的 narrative evidence；Recent Story 历史 Event 保留自己的 `story_time`，但本轮新发现结果统一写入当前 active Character Floor/Swipe，canonical `source` 仍表示当前 persistence owner。Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、persisted canonical World Model、结构化 Story Time、`identity_context`、经过 source-specific projection 的 Character Evidence (`individual_evidence`) 和 bounded existing Events。输出只能是固定 `{schema_version, events[]}`，每个 Target Floor Version 允许 `events.length >= 0`。对于 pregnancy-related `sexual_activity`，AI 先识别整个 discovery window 内所有实际暴露的 gestational subject，再按 subject 分组；每个 Event 恰好一个 subject，同一 subject 的多个 actual exposure source 合并，不同 subject 分 Event。即时症状、physical effect 和相关证据仍并入同一 subject 的 sexual Event；其它真正独立的 BiologicalEvent 可以并存。只有通过统一 normalize / validate 和 deterministic semantic duplicate guard 的结果才能写入 Floor。raw Character Card、Persona、Worldbook 和 External Memory 仍可保留在 Runtime wide DTO 供 World/legacy orchestration 使用，但不直接进入 Event prompt。Character Card/Persona stable evidence 不得因此丢失。
+- 每个已确认 Event participant 都必须执行人物 biological analysis，不论 `pregnancy_relevance.relevant` 是 true 还是 false。顺序固定为 identity → Character Evidence → species → species 内 biological_type → exact persisted World Model species/type → baseline capability → explicit individual capability evidence → participant facts。`pregnancy_relevance` 只描述当前 Event 是否与受孕/妊娠有关；它不是跳过 participant facts 的条件，也不能由人物 capability 反推为 true。gender/sex 只能帮助已有 type mapping，不能直接推出 capability；证据不足、冲突、缺失 World Model type 或 capability 未知时保持 `null`。Tracking 只消费最终 participant facts，不能弥补 Event Analyzer 缺失的人物分析。
 - Event Analyzer 另外接收独立的 Runtime identity projection。participant 的 `identity_status` 必须是 `existing`、`new` 或 `unresolved`；模型只能原样引用 projection 中的 existing ID，new/unresolved 使用 `character_id: null` 与 response-local `mention_id`。Runtime 完成 identity resolution/registration 后，才将 mention/reference 转为 canonical IDs 并执行 participant-backed pregnancy closure。完整 `character_registry`、Tracking Registry 和 raw character context 都不是 Event prompt 的输入；canonical/derived individual evidence 只保留必要的 profile/state/evidence 字段。
 - mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved。新人物 ID 只能由 Runtime 从当前 previous Floor Registry 的最大正式序号递增生成，不能从姓名、UUID、时间或随机值派生。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
 - `story_time` 是结构化对象；`display` 只用于显示。Floor 的 trusted candidate 由 StoryTimeCoordinator 提取，日期和传统时辰由 BioWeave 本地 parser 归一化，排序和计算只使用结构化字段，无法可靠获取时保存 `null`。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段以 pregnancy-relevant exposure 作为 Tracking gate。
 - `counterpart_ids[]` 只保存该 Event 的 `participants[]` 中最终实际造成该 gestational subject pregnancy-relevant exposure 的 source ID；不能跨 subject 或跨 Event 借用 source。对于 pregnancy-related `sexual_activity`，subject 数组严格一个、counterpart 至少一个、participants ID 集合严格等于 subject + counterpart 且各自去重；`relevant=true` 必须有 pregnancy-relevant exposure evidence、participant-backed 的数组和 `source_evidence` 中 kind 为 `pregnancy_relevant_exposure` 的 marker。无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
+- `existing_bioweave` 保持最近合法前置 Floor snapshot 语义；`existing_events` 额外覆盖 Recent Story discovery window 内的合法 active canonical Events，用于 semantic dedupe，不扫描无界 Chat 历史，不读取 Chat metadata/cache，不包含 target 自身旧结果、删除/失效 Swipe 或 stale Floor。去重要求 Event type、structured story_time、canonical participant/subject/counterpart 集合、机制、关键 source evidence 与 state fact 完全匹配；缺字段、不同 type、不同 subject/source、不同机制或不同事实 evidence 时保留两个 Event。不得使用模糊 AI 相似度 dedupe。
 - `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
 - StateReducer、Snapshot、Projection、Genealogy、完整妊娠计算、Gestational Age 和预计分娩日不在本阶段接通；对应页面/领域模块保持空状态或兼容骨架。
 
@@ -194,6 +215,6 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 
 ## Phase 2A 验证与真实宿主验收
 
-实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
+实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、Current Target Floor + Recent Story discovery、历史 Event 保留自身 story_time、当前 Floor source ownership、bounded existing_events 聚合、semantic duplicate guard、不同 source 的同时间 exposure 不误合并、不同 type 不互相去重、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
 自动检查不能证明全部 SillyTavern 行为。Phase H 已在真实宿主验证核心 EventEmitter、Character counter、reroll/Swipe 分类、官方持久化、F5 durability、new Swipe 和 existing Swipe 切换；仍需单独完成 Event 编辑/真删除、Story Time 以及 Desktop / Tablet / Mobile UI 验收。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。

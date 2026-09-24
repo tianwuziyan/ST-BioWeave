@@ -176,7 +176,7 @@ test('coordinator converts a throwing extension prompt setter into unavailable',
 
 test('Event Analysis contract treats injected Projection text as non-factual context', () => {
   assert.match(EVENT_ANALYZER_CORE_CONTRACT, /Projection Context/);
-  assert.match(EVENT_ANALYZER_CORE_CONTRACT, /只有本次目标正文实际写出的内容/);
+  assert.match(EVENT_ANALYZER_CORE_CONTRACT, /只有 narrative discovery window 中明确写出的历史或当前事实/);
 });
 
 test('coordinator destroy clears and refuses future writes', async () => {

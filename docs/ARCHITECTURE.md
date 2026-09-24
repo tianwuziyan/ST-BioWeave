@@ -200,7 +200,7 @@ Owner whitelist：
 
 ### 当前实现与目标契约
 
-当前代码已实现 Manual Character 的独立分析边界：它通过 `analyzeCurrentCharacterEvents()` 读取现有 at-or-before canonical World，不进入 `resolveFinalWorldModelForAnalysis()`，因此不会触发 World AI。缺少可用 World 时以 `WORLD_MODEL_REQUIRED` fail closed，且不写 Event 或 terminal failure。Event prompt 现在通过 input builder 的 narrow semantic projection 消费 persisted World Model、Target Floor、Recent Story、canonical identity projection、canonical/derived individual evidence、existing Events 和 Story Time；raw Character Card、Persona、Worldbook、External Memory 不直接进入 Event prompt。
+当前代码已实现 Manual Character 的独立分析边界：它通过 `analyzeCurrentCharacterEvents()` 读取现有 at-or-before canonical World，不进入 `resolveFinalWorldModelForAnalysis()`，因此不会触发 World AI。缺少可用 World 时以 `WORLD_MODEL_REQUIRED` fail closed，且不写 Event 或 terminal failure。Event prompt 通过 input builder 的 narrow semantic projection 消费 persisted World Model、Current Target Floor、Recent Story、`identity_context`、Character Evidence (`individual_evidence`)、bounded `existing_events` 和 Story Time；raw Character Card、Persona、Worldbook、External Memory 不直接进入 Event prompt，但 Character Card/Persona 的稳定人物证据必须先经过 projection。
 
 目标契约为：
 
@@ -214,7 +214,12 @@ MANUAL CHARACTER: existing persisted valid World → Event only
 
 Analysis Boundary Fix 与 Event Input Boundary Fix 均已实现；Event Input Boundary 不改变 World Analyzer 对 raw Character Card、Persona、Worldbook 和 External Memory 的既有输入。
 
-World feature 以宿主可选来源构建 World Model；Character/Event feature 以已持久化 `world_model`、target Floor narrative、必要 recent narrative、existing Event、identity projection 和 canonical/derived individual evidence 产生 `events`、`character_registry` 与 `analysis`。Runtime wide DTO 可以保留 raw sources 供 World/legacy orchestration，但 Event prompt 不消费这些 raw sources。
+World feature 以宿主可选来源构建 World Model；Character/Event feature 以已持久化 `world_model`、narrative discovery window（Current Target Floor + bounded Recent Story）、`identity_context`、Character Evidence (`individual_evidence`) 和 bounded existing Events 产生 `events`、`character_registry` 与 `analysis`。正确边界是 `raw/source collection → Character Evidence semantic projection → Character/Event Analyzer`：Runtime wide DTO 可以保留 raw sources 供 World/legacy orchestration，但 Event prompt 不消费 raw sources，也不能因隔离 raw DTO 而失去稳定人物证据。
+
+Event discovery window 与 Event persistence owner 是独立概念。Recent Story 中明确发生且尚未记录的历史 Event 可以在当前分析中被发现，保留自身 `story_time`；Runtime 仍将本轮所有新 Event 写入当前 Character Floor active Swipe，并将 canonical `source` 绑定当前 Floor Version。`existing_bioweave` 仍是最近合法前置 Floor snapshot；`existing_events` 是按 Recent Story 窗口从当前有效 Floor facts 聚合的 bounded semantic-dedupe reference，不是 Chat-level Event cache。identity resolution 后使用确定性完整事实 key 去重，缺少高置信度字段时保留候选。
+
+Character Evidence 只提供 mention identity context、已有 World Model species/type mapping evidence、明确个体生理/生殖 capability evidence 与稳定人物背景。它不是当前 Floor Event、World Model rule、Tracking eligibility、Character Registry identity source 的替代品、Chat-level 持久化字段或 UI 人物列表来源。生理性别可参与已有 type mapping，但不得直接推出 capability；Human baseline 只能由 World Model 建立，Nonhuman 不能套用 Human baseline。未来修改 Event Input Boundary、Prompt trimming 或 AnalysisInput narrowing，必须保留等价 projection，并用最终 `buildEventAnalysisMessages()` 测试验证。
+每个已确认 Event participant 都必须执行完整的人物分析，不以 `pregnancy_relevance.relevant === true` 为前提：identity → Character Evidence → species → species 内 biological_type → exact persisted World Model species/type → baseline capabilities → explicit individual capability evidence → final participant biological facts。`pregnancy_relevance` 只描述当前 Event，不能跳过人物 facts，也不能由人物 capability 反推妊娠相关性；证据不足保持 `null`。Tracking 继续消费最终 participant facts，Characters UI 继续消费 `tracking_subjects`，Registry 不直接成为人物列表。
 
 ## Character Registry 与 Tracking Subjects
 

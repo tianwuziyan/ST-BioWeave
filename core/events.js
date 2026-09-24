@@ -1013,6 +1013,84 @@ export function dedupeEvents(events = []) {
   return result;
 }
 
+function semanticEvidenceFingerprint(value) {
+  return normalizeEvidence(value)
+    .map((item) => ({
+      kind: String(item.kind ?? '').trim().toLowerCase(),
+      text: String(item.text ?? '').trim().replace(/\s+/gu, ' '),
+    }))
+    .filter((item) => item.kind && item.text)
+    .sort((left, right) =>
+      `${left.kind}\u0000${left.text}`.localeCompare(
+        `${right.kind}\u0000${right.text}`,
+      ),
+    );
+}
+
+/**
+ * Return a conservative, deterministic identity for a fully normalized Event.
+ * Missing story time, participants, or factual evidence deliberately disable
+ * semantic dedupe rather than risking the loss of an independent Event.
+ */
+export function eventSemanticKey(rawEvent) {
+  const event = normalizeEvent(rawEvent);
+  const storyTime = event.story_time ?? {};
+  const normalizedStoryTime = storyTime.normalized ?? (
+    Number.isFinite(storyTime.day_index)
+      ? `day_index:${storyTime.day_index}`
+      : null
+  );
+  const participantIds = event.participants
+    .map((participant) => participant.character_id)
+    .filter(Boolean)
+    .sort();
+  const sourceEvidence = semanticEvidenceFingerprint(event.source_evidence);
+  if (
+    !event.type ||
+    !normalizedStoryTime ||
+    !participantIds.length ||
+    !sourceEvidence.length
+  ) return null;
+  const relevance = event.pregnancy_relevance ?? {};
+  const mechanism = relevance.reproductive_mechanism ?? {};
+  return JSON.stringify({
+    type: event.type,
+    story_time: {
+      normalized: normalizedStoryTime,
+      precision: storyTime.precision ?? null,
+    },
+    participant_ids: participantIds,
+    gestational_subject_ids: [...(relevance.gestational_subject_ids ?? [])].sort(),
+    counterpart_ids: [...(relevance.counterpart_ids ?? [])].sort(),
+    reproductive_mechanism: {
+      kind: mechanism.kind ?? null,
+      label: mechanism.label ?? null,
+      pathway: mechanism.pathway ?? null,
+      world_model_rule_refs: [...(mechanism.world_model_rule_refs ?? [])].sort(),
+    },
+    source_evidence: sourceEvidence,
+    state_fact: event.state_fact ?? null,
+  });
+}
+
+/**
+ * Remove only candidates that exactly match a canonical Event already present
+ * in the bounded discovery reference window. Candidates without a complete
+ * high-confidence key are retained.
+ */
+export function dedupeEventsAgainstExisting(events = [], existingEvents = []) {
+  if (!Array.isArray(events)) return [];
+  const existingKeys = new Set(
+    (Array.isArray(existingEvents) ? existingEvents : [])
+      .map(eventSemanticKey)
+      .filter(Boolean),
+  );
+  return events.filter((event) => {
+    const key = eventSemanticKey(event);
+    return !key || !existingKeys.has(key);
+  });
+}
+
 function sortableNumber(value, fallback) {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

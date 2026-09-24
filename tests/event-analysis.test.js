@@ -15,7 +15,11 @@ import {
 } from '../ai/prompts.js';
 import { buildEventAnalysisInput } from '../ai/input-builder.js';
 import { createAnalyzer, normalizeWorldModel, parseEventAnalysisResponse } from '../ai/analyzer.js';
-import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from '../core/events.js';
+import {
+  dedupeEventsAgainstExisting,
+  eventSemanticKey,
+  PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+} from '../core/events.js';
 import { renderAnalysisDebugPopupContent } from '../ui/settings.js';
 import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js';
 
@@ -181,7 +185,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
   assert.match(prompt, /individual evidence/);
-  assert.match(prompt, /完整 Target Floor exhaustive scan/);
+  assert.match(prompt, /完整 narrative discovery window exhaustive scan/);
   assert.match(prompt, /临时.*candidate/);
   assert.match(prompt, /canonical.*derived.*individual evidence|individual evidence.*canonical.*derived/);
   assert.match(prompt, /现实.*生殖机制/);
@@ -224,6 +228,128 @@ test('Event prompt regression keeps gender as World Model type evidence only', (
     contracts,
     /不能使用现实人类常识、Character Card 的 gender\/sex 或旧默认能力补空/,
   );
+});
+
+test('Event discovery window includes Recent Story without weakening event boundaries', () => {
+  const messages = buildEventAnalysisMessages({
+    floor_version: floorVersion,
+    recent_story: {
+      items: [{floor: 11, role: 'assistant', content: 'HISTORICAL_EXPOSURE'}],
+    },
+    current_floor: {
+      floor: 12,
+      message_id: 'message-current',
+      narrative: 'CURRENT_PHYSICAL_SYMPTOM',
+    },
+    existing_events: [event({
+      event_id: 'existing-historical',
+      story_time: {
+        display: '寅时末',
+        normalized: 'cn-42-6-10T03:30',
+        calendar_id: null,
+        day_index: null,
+        precision: 'minute',
+        confidence: null,
+      },
+    })],
+  });
+  const prompt = messages.map((message) => message.content).join('\n');
+  assert.match(prompt, /narrative discovery window/);
+  assert.match(prompt, /Current Target Floor 与 Recent Story 都是 narrative discovery evidence/);
+  assert.match(prompt, /保留该事实自己的 story_time/);
+  assert.match(prompt, /existing_events/);
+  assert.match(prompt, /HISTORICAL_EXPOSURE/);
+  assert.match(prompt, /CURRENT_PHYSICAL_SYMPTOM/);
+  assert.doesNotMatch(prompt, /Recent Story 只作为前置剧情参考/);
+});
+
+test('semantic Event dedupe is exact and conservative across the discovery window', () => {
+  const historical = event({
+    event_id: 'historical-existing',
+    story_time: {
+      display: '寅时末',
+      normalized: 'cn-42-6-10T03:30',
+      calendar_id: null,
+      day_index: null,
+      precision: 'minute',
+      confidence: null,
+    },
+    source_evidence: [
+      {kind: 'pregnancy_relevant_exposure', text: '同一明确暴露事实'},
+    ],
+  });
+  const duplicate = structuredClone(historical);
+  duplicate.event_id = 'current-floor-new-id';
+  assert.equal(eventSemanticKey(historical), eventSemanticKey(duplicate));
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([duplicate], [historical]),
+    [],
+  );
+
+  const differentType = {
+    ...duplicate,
+    type: 'physical_symptom',
+    source_evidence: [{kind: 'symptom_evidence', text: '同一时刻的独立症状'}],
+  };
+  const differentCounterpart = {
+    ...duplicate,
+    participants: duplicate.participants.map((participant, index) =>
+      index === 1 ? {...participant, character_id: 'character_other_source'} : participant,
+    ),
+    pregnancy_relevance: {
+      ...duplicate.pregnancy_relevance,
+      counterpart_ids: ['character_other_source'],
+    },
+  };
+  assert.notEqual(eventSemanticKey(differentType), eventSemanticKey(historical));
+  assert.notEqual(eventSemanticKey(differentCounterpart), eventSemanticKey(historical));
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([differentType, differentCounterpart], [historical]),
+    [differentType, differentCounterpart],
+  );
+});
+
+test('Event prompt requires participant biological analysis for non-pregnancy Events', () => {
+  const messages = buildEventAnalysisMessages({
+    current_floor: {
+      narrative: '当前楼层记录沈祁鸢的大腿局部疼痛，形成 physical_symptom。',
+    },
+    individual_evidence: [{
+      character_id: null,
+      subject_kind: 'persona',
+      display_name: '沈祁鸢',
+      identity_hint: '沈祁鸢',
+      species: null,
+      biological_type: null,
+      capabilities: {},
+      evidence: [],
+      stable_biological_evidence: [
+        {kind: 'stable_physiology', text: '存在明确、可归属于沈祁鸢的稳定生理证据。'},
+      ],
+      provenance: {source_kind: 'persona'},
+    }],
+    world_model: {
+      species: [{
+        name: 'Human',
+        biological_types: [{
+          name: '女性',
+          capabilities: {can_carry_pregnancy: true},
+        }],
+      }],
+    },
+  });
+  const prompt = messages.map(message => message.content).join('\n');
+
+  assert.match(prompt, /participant biological analysis 不以 pregnancy_relevance\.relevant === true 为前提/);
+  assert.match(prompt, /无论 pregnancy_relevance\.relevant 为 true 还是 false，都必须先执行人物 biological analysis/);
+  assert.match(prompt, /species.*biological_type.*persisted World Model exact species\/type mapping.*baseline capability.*explicit individual capability evidence/s);
+  assert.match(prompt, /pregnancy_relevance 只描述当前 Event 是否与受孕\/妊娠有关/);
+  assert.match(prompt, /生理性别.*不能单独授权 capability/);
+  assert.match(prompt, /不得把其它 species 的同名 type 套用 Human baseline/);
+  assert.match(prompt, /稳定人物生理证据（不是当前 Floor Event）/);
+  assert.match(prompt, /【事件相关角色参考】/);
+  assert.match(prompt, /沈祁鸢/);
+  assert.doesNotMatch(prompt, /仅对 pregnancy_relevance\.relevant === true 的 pregnancy-related Event 强制要求 participant biological_context/);
 });
 
 test('Event input renders a separate canonical registry candidate block', () => {

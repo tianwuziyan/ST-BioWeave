@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"验证 Event 输入的 Floor/Swipe ownership、previous provenance、derived-state 边界；projection 必须是 transient 且不能成为第二事实源。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验证 Event/Character 分析、identity、capability 与 Tracking 消费边界，避免把 projection 设计成 Tracking 语义。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"验证 species/type evidence、baseline capability 与 no-hallucination 约束，确保 gender 只参与已有 type mapping。"}
+{"file":"docs/ARCHITECTURE.md","reason":"验证 AI input builder、Character/Event owner、World owner 及明确保持不动的模块边界。"}
