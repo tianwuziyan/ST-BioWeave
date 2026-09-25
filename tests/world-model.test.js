@@ -1442,6 +1442,63 @@ test('World Model Patch v2 evidence guard keeps NO-OP unproved and validates ADD
   ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
 })
 
+test('World Model Patch v2 maps familiar type labels from scoped biological wording', () => {
+  const existing = v2ExistingModel()
+  for (const evidence of [
+    'Species-A 的性别基本为男性，极少女 Species-A。',
+    'Species-A 基本为男性，极少雌性个体。',
+    'Species-A 基本为男性，极少男 Species-A。',
+  ]) {
+    assert.doesNotThrow(() => guardV2(
+      { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: evidence.includes('男 Species-A') ? '男性' : '女性' } },
+      existing,
+      evidence,
+    ))
+  }
+  assert.throws(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: '女性' } },
+    existing,
+    '角色甲是女性。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: '女性' } },
+    existing,
+    'Species-B 存在女性。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: '女性' } },
+    existing,
+    'Species-A 与女性角色互动。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } },
+    existing,
+    'Species-A 的 Type-B 是稳定生殖分类。',
+  ))
+})
+
+test('World Model Patch v2 accepts descriptive type paraphrase but blocks capability hitchhiking', () => {
+  const existing = v2ExistingModel()
+  assert.doesNotThrow(() => guardV2(
+    {
+      op: 'ADD_TYPE',
+      target: { kind: 'species', species_name: 'Species-A' },
+      type: { name: '女性', description: '极少数出现的女性形态 Species-A。' },
+    },
+    existing,
+    'Species-A 的性别基本为男性，极少女 Species-A。',
+  ))
+  assert.throws(() => guardV2(
+    {
+      op: 'ADD_TYPE',
+      target: { kind: 'species', species_name: 'Species-A' },
+      type: { name: '女性', description: '极少数出现且可以怀孕的女性形态 Species-A。' },
+    },
+    existing,
+    'Species-A 的性别基本为男性，极少女 Species-A。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+})
+
 test('World Model Patch v2 evidence guard validates collections, unknowns, exceptions, and projection adds', () => {
   const existing = v2ExistingModel()
   assert.doesNotThrow(() => guardV2(
@@ -2031,6 +2088,45 @@ test('World Model parser TRACE keeps the safe parser error code readable', async
   const logText = JSON.stringify(captured.entries)
   assert.match(logText, /parser-error/)
   assert.match(logText, /"code":"WORLD_MODEL_INVALID"/)
+})
+
+test('World Model Patch v2 TRACE exposes validation path and stage without evidence text', async () => {
+  const captured = await captureTraceLogs(async () => {
+    const analyzer = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({
+        chatCompletionSettings: { chat_completion_source: 'openai', model: 'test-model' },
+        getChatCompletionModel: () => 'test-model',
+        ChatCompletionService: {
+          async processRequest() {
+            return {
+              content: JSON.stringify({
+                schema_version: 2,
+                operations: [{
+                  op: 'ADD_TYPE',
+                  target: { kind: 'species', species_name: 'Species-A' },
+                  type: { name: 'Type-B' },
+                }],
+              }),
+            }
+          },
+        },
+      }),
+    })
+    await assert.rejects(
+      analyzer.analyzeWorldModelPatchV2({
+        analysisInput: { world_model: v2ExistingModel(), character: { description: '无相关世界级分类证据。' } },
+      }),
+      error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED',
+    )
+  })
+  const logText = JSON.stringify(captured.entries)
+  assert.match(logText, /world-model-patch-v2/)
+  assert.match(logText, /WORLD_MODEL_PATCH_V2_INVALID/)
+  assert.match(logText, /WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED/)
+  assert.match(logText, /world_patch_v2_evidence_guard/)
+  assert.match(logText, /operation\.type\.name/)
+  assert.doesNotMatch(logText, /无相关世界级分类证据/u)
 })
 
 test('World Model parser keeps bisexual/intersex capabilities independently evidence-based', () => {

@@ -1033,6 +1033,33 @@ function hasDirectTextEvidence(value, units) {
   return directTextEvidenceUnits(value, units).length > 0;
 }
 
+function familiarTypeLabelMatch(unit, speciesName, typeName) {
+  if (!FAMILIAR_TYPE_NAMES.has(typeName)) return null;
+  const text = compactEvidenceText(unit);
+  const pattern = typeName === '男性'
+    ? MALE_EVIDENCE_PATTERN
+    : typeName === '女性'
+      ? FEMALE_EVIDENCE_PATTERN
+      : DUAL_TERM_PATTERN;
+  const directMatch = text.match(pattern);
+  if (directMatch) return {index: directMatch.index ?? 0, label: directMatch[0]};
+  if (typeName !== '男性' && typeName !== '女性') return null;
+  const speciesToken = compactEvidenceText(speciesName);
+  if (!speciesToken) return null;
+  const prefix = typeName === '男性' ? '男' : '女';
+  const escapedSpecies = speciesToken
+    .replaceAll('\\', '\\\\')
+    .replaceAll('.', '\\.').replaceAll('*', '\\*').replaceAll('+', '\\+')
+    .replaceAll('?', '\\?').replaceAll('^', '\\^').replaceAll('$', '\\$')
+    .replaceAll('{', '\\{').replaceAll('}', '\\}').replaceAll('(', '\\(')
+    .replaceAll(')', '\\)').replaceAll('|', '\\|').replaceAll('[', '\\[')
+    .replaceAll(']', '\\]');
+  const prefixMatch = text.match(new RegExp(`${prefix}(?=${escapedSpecies})`, 'u'));
+  return prefixMatch
+    ? {index: prefixMatch.index ?? 0, label: prefixMatch[0]}
+    : null;
+}
+
 function hasDirectPatternTextEvidence(value, units, pattern) {
   const directUnits = directTextEvidenceUnits(value, units);
   return (
@@ -1040,9 +1067,11 @@ function hasDirectPatternTextEvidence(value, units, pattern) {
   );
 }
 
-function hasGenericScopedTypeEvidence(unit, speciesName, typeName) {
+function hasGenericScopedTypeEvidence(unit, speciesName, typeName, {allowFamiliar = false, strictInteraction = false} = {}) {
   const speciesMatch = genericDirectLabelMatch(unit, speciesName);
-  const typeMatch = genericDirectLabelMatch(unit, typeName);
+  const typeMatch =
+    genericDirectLabelMatch(unit, typeName) ??
+    (allowFamiliar ? familiarTypeLabelMatch(unit, speciesName, typeName) : null);
   if (!speciesMatch || !typeMatch) return false;
 
   const text = compactEvidenceText(unit);
@@ -1065,6 +1094,14 @@ function hasGenericScopedTypeEvidence(unit, speciesName, typeName) {
   const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣/u;
 
   if (
+    strictInteraction &&
+    interactionPattern.test(between) &&
+    !relationPattern.test(between)
+  )
+    return false;
+  if (strictInteraction && /互动|交互|伴侣关系/u.test(context) && interactionPattern.test(between)) return false;
+  if (
+    !strictInteraction &&
     between.length > 6 &&
     interactionPattern.test(between) &&
     !relationPattern.test(between)
@@ -3478,8 +3515,9 @@ function v2ScopedEvidenceUnits(units, context = {}) {
   if (context.typeName)
     return safeUnits.filter((unit) =>
       hasGenericDirectLabelEvidence(unit, context.speciesName) &&
-      hasGenericDirectLabelEvidence(unit, context.typeName) &&
-      hasGenericScopedTypeEvidence(unit, context.speciesName, context.typeName),
+      (hasGenericDirectLabelEvidence(unit, context.typeName) ||
+        familiarTypeLabelMatch(unit, context.speciesName, context.typeName)) &&
+      hasGenericScopedTypeEvidence(unit, context.speciesName, context.typeName, { allowFamiliar: true, strictInteraction: true }),
     );
   if (context.speciesName)
     return safeUnits.filter((unit) => hasGenericDirectLabelEvidence(unit, context.speciesName));
@@ -3492,14 +3530,25 @@ function v2EvidenceSupportsFact(value, units, context = {}) {
   if (context.nested === 'capabilities')
     return patchFactEvidence({ value }, scopedUnits, context);
   if (typeof value === 'string') {
+    if (context.descriptive === true && v2DescriptionHasProtectedSemanticClaim(value)) return false;
     const compactValue = compactEvidenceText(value).replace(/[。！？!?；;，,、]+$/gu, '');
     if (compactValue && scopedUnits.some((unit) => compactEvidenceText(unit).includes(compactValue))) return true;
+    if (context.descriptive === true && !v2DescriptionHasProtectedSemanticClaim(value)) return true;
   }
   if (patchFactEvidence({ value }, scopedUnits, context)) return true;
   if (typeof value !== 'string') return false;
   return scopedUnits.some((unit) =>
     hasDirectTextEvidence(value, [unit]) || hasGenericDirectLabelEvidence(unit, value),
   );
+}
+
+function v2DescriptionHasProtectedSemanticClaim(value) {
+  const text = String(value ?? '');
+  return [
+    ...Object.values(CAPABILITY_EVIDENCE_PATTERNS),
+    ...Object.values(REPRODUCTION_RULE_EVIDENCE_PATTERNS),
+    ...Object.values(LIFECYCLE_EVIDENCE_PATTERNS),
+  ].some((pattern) => pattern.test(text)) || /机制|通路|途径|繁殖|生殖/u.test(text);
 }
 
 function v2SpeciesExistenceSupported(speciesName, units) {
@@ -3512,7 +3561,7 @@ function v2TypeExistenceSupported(speciesName, typeName, units) {
 
 function v2KnownTypeLeaves(type, path, speciesName) {
   const facts = [];
-  if (v2Known(type.description)) facts.push({ path: `${path}.description`, value: type.description, context: { speciesName, typeName: type.name } });
+  if (v2Known(type.description)) facts.push({ path: `${path}.description`, value: type.description, context: { speciesName, typeName: type.name, descriptive: true } });
   for (const key of CAPABILITY_KEYS) {
     if (v2Known(type.capabilities?.[key])) facts.push({ path: `${path}.capabilities.${key}`, value: type.capabilities[key], context: { speciesName, typeName: type.name, nested: 'capabilities', key } });
   }
@@ -3566,7 +3615,7 @@ function v2ValidateTypeSubtree(type, speciesName, units, path) {
 
 function v2ValidateSpeciesSubtree(species, units, path) {
   if (!v2SpeciesExistenceSupported(species.name, units)) v2EvidenceError(`${path}.name`);
-  if (v2Known(species.description) && !v2EvidenceSupportsFact(species.description, units, { speciesName: species.name }))
+  if (v2Known(species.description) && !v2EvidenceSupportsFact(species.description, units, { speciesName: species.name, descriptive: true }))
     v2EvidenceError(`${path}.description`);
   for (const [index, type] of (species.biological_types ?? []).entries())
     v2ValidateTypeSubtree(type, species.name, units, `${path}.biological_types[${index}]`);
@@ -4200,13 +4249,25 @@ export function createAnalyzer({
       worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
     )
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
-    const patch = parseWorldModelPatchV2(responseText(raw))
-    const classified = applyWorldModelPatchV2EvidenceGuard(
-      patch,
-      existingModel,
-      analysisInput,
-    )
-    return { patch, classified }
+    try {
+      const patch = parseWorldModelPatchV2(responseText(raw))
+      const classified = applyWorldModelPatchV2EvidenceGuard(
+        patch,
+        existingModel,
+        analysisInput,
+      )
+      return { patch, classified }
+    } catch (error) {
+      traceApi('parser-error', {
+        parser: 'world-model-patch-v2',
+        responseTextLength: responseText(raw).length,
+        ...traceParserError(error),
+        diagnosticCode: error?.diagnosticCode ?? error?.diagnostic_code ?? error?.message ?? null,
+        analysisStage: error?.analysis_stage ?? 'world_patch_v2_evidence_guard',
+        stage: error?.stage ?? 'world_patch_v2',
+      })
+      throw error
+    }
   }
 
   async function analyzeFloor(input = {}) {

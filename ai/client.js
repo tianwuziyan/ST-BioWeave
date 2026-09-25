@@ -92,6 +92,8 @@ const TRACE_SAFE_STRING_KEYS = new Set([
   'stage',
   'analysisStage',
   'analysis_stage',
+  'path',
+  'diagnosticPath',
   'name',
   'method',
   'statusType',
