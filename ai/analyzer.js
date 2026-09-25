@@ -5,11 +5,12 @@ import {
   buildPrompt,
   buildWorldModelMessages,
   buildWorldModelPatchMessages,
+  buildWorldModelPatchMessagesV2,
   EVENT_STATUS,
   EVENT_TYPES,
   WORLD_MODEL_SCHEMA,
 } from './prompts.js';
-import { normalizeProjectionRules } from '../core/projection-eligibility.js';
+import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -3113,6 +3114,761 @@ export function parseWorldModelResponse(raw) {
   });
 }
 
+const WORLD_MODEL_PATCH_V2_OPERATIONS = Object.freeze([
+  'ADD_SPECIES',
+  'ADD_TYPE',
+  'SET_FIELD',
+  'ADD_SPECIAL_RULE',
+  'ADD_MECHANISM',
+  'ADD_EXCEPTION',
+  'ADD_UNKNOWN',
+  'ADD_PROJECTION_RULE',
+]);
+const WORLD_MODEL_PATCH_V2_SET_PATHS = Object.freeze({
+  biological_type: Object.freeze([
+    'capabilities.can_produce_sperm',
+    'capabilities.can_produce_ova',
+    'capabilities.can_be_fertilized',
+    'capabilities.can_fertilize',
+    'capabilities.can_cause_pregnancy',
+    'capabilities.can_carry_pregnancy',
+    'reproduction_rules.fertilization',
+    'reproduction_rules.pregnancy_or_carrying',
+    'reproduction_rules.cycle',
+    'reproduction_rules.ovulation',
+    'reproduction_rules.gestation',
+    'reproduction_rules.labor',
+    'lifecycle.maturation',
+    'lifecycle.aging',
+    'description',
+  ]),
+  species: Object.freeze(['description']),
+  world: Object.freeze([
+    'medical_context.childbirth_difficulty',
+    'medical_context.care_level',
+    'medical_context.evidence',
+  ]),
+});
+const V2_ENTITY_FIELDS = Object.freeze({
+  species: Object.freeze(['name', 'description', 'biological_types']),
+  type: Object.freeze(['name', 'description', 'capabilities', 'reproduction_rules', 'lifecycle', 'reproductive_mechanisms', 'special_rules']),
+  mechanism: Object.freeze(['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence']),
+  exception: Object.freeze(['statement', 'applies_to', 'evidence']),
+});
+
+function invalidWorldModelPatchV2(message = 'WORLD_MODEL_PATCH_V2_INVALID', details = {}) {
+  const error = new Error(message);
+  error.code = 'WORLD_MODEL_PATCH_V2_INVALID';
+  Object.assign(error, details);
+  return error;
+}
+
+function v2Record(value, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path, expected: 'object' });
+  return value;
+}
+
+function v2ExactKeys(value, allowed, path) {
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.${unknown}` });
+}
+
+function v2RequiredText(value, path) {
+  if (typeof value !== 'string' || !value.trim())
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path, expected: 'non-empty string' });
+  return value.trim();
+}
+
+function v2NullableText(value, path) {
+  if (value !== null && typeof value !== 'string')
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path, expected: 'string|null' });
+  return value;
+}
+
+function validateV2EntityObject(value, kind, path) {
+  const entity = v2Record(value, path);
+  v2ExactKeys(entity, V2_ENTITY_FIELDS[kind], path);
+  v2RequiredText(entity.name, `${path}.name`);
+  if (entity.description !== undefined) v2NullableText(entity.description, `${path}.description`);
+  if (kind === 'species') {
+    if (entity.biological_types !== undefined) {
+      if (!Array.isArray(entity.biological_types)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.biological_types`, expected: 'array' });
+      entity.biological_types.forEach((item, index) => validateV2EntityObject(item, 'type', `${path}.biological_types[${index}]`));
+    }
+    return entity;
+  }
+  for (const field of ['capabilities', 'reproduction_rules', 'lifecycle']) {
+    if (entity[field] === undefined) continue;
+    const object = v2Record(entity[field], `${path}.${field}`);
+    const keys = field === 'capabilities' ? CAPABILITY_KEYS : field === 'reproduction_rules' ? WORLD_RULE_KEYS : LIFECYCLE_KEYS;
+    v2ExactKeys(object, keys, `${path}.${field}`);
+    for (const key of Object.keys(object)) {
+      if (field === 'capabilities') {
+        if (![true, false, null].includes(object[key])) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.${field}.${key}`, expected: 'boolean|null' });
+      } else v2NullableText(object[key], `${path}.${field}.${key}`);
+    }
+  }
+  if (entity.reproductive_mechanisms !== undefined) {
+    if (!Array.isArray(entity.reproductive_mechanisms)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.reproductive_mechanisms`, expected: 'array' });
+    entity.reproductive_mechanisms.forEach((item, index) => validateV2Mechanism(item, `${path}.reproductive_mechanisms[${index}]`));
+  }
+  if (entity.special_rules !== undefined) {
+    if (!Array.isArray(entity.special_rules) || !entity.special_rules.every((item) => typeof item === 'string' && item.trim()))
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.special_rules`, expected: 'array<string>' });
+  }
+  return entity;
+}
+
+function validateV2Mechanism(value, path) {
+  const mechanism = v2Record(value, path);
+  v2ExactKeys(mechanism, V2_ENTITY_FIELDS.mechanism, path);
+  v2RequiredText(mechanism.key, `${path}.key`);
+  for (const field of ['label', 'pathway']) if (mechanism[field] !== undefined) v2NullableText(mechanism[field], `${path}.${field}`);
+  if (mechanism.carrying_compatibility !== undefined && ![true, false, null].includes(mechanism.carrying_compatibility))
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.carrying_compatibility` });
+  for (const field of ['world_model_rule_refs', 'evidence']) {
+    if (mechanism[field] !== undefined && (!Array.isArray(mechanism[field]) || !mechanism[field].every((item) => typeof item === 'string')))
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.${field}`, expected: 'array<string>' });
+  }
+  return mechanism;
+}
+
+function validateV2Target(value, kind) {
+  const target = v2Record(value, 'operation.target');
+  const fields = kind === 'world' ? ['kind'] : kind === 'species' ? ['kind', 'species_name'] : ['kind', 'species_name', 'type_name'];
+  v2ExactKeys(target, fields, 'operation.target');
+  if (target.kind !== kind) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: 'operation.target.kind' });
+  if (kind !== 'world') v2RequiredText(target.species_name, 'operation.target.species_name');
+  if (kind === 'biological_type') v2RequiredText(target.type_name, 'operation.target.type_name');
+  return target;
+}
+
+function validateV2Operation(operation, index) {
+  const path = `operations[${index}]`;
+  const value = v2Record(operation, path);
+  if (!WORLD_MODEL_PATCH_V2_OPERATIONS.includes(value.op))
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_OPERATION_UNSUPPORTED', { path: `${path}.op` });
+  if (Object.hasOwn(value, 'old_value') || Object.hasOwn(value, 'classification') || Object.hasOwn(value, 'status'))
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path });
+  if (value.op === 'ADD_SPECIES') {
+    v2ExactKeys(value, ['op', 'species'], path);
+    validateV2EntityObject(value.species, 'species', `${path}.species`);
+  } else if (value.op === 'ADD_TYPE') {
+    v2ExactKeys(value, ['op', 'target', 'type'], path);
+    validateV2Target(value.target, 'species');
+    validateV2EntityObject(value.type, 'type', `${path}.type`);
+  } else if (value.op === 'SET_FIELD') {
+    v2ExactKeys(value, ['op', 'target', 'path', 'value'], path);
+    const targetKind = value.target?.kind;
+    if (!['species', 'biological_type', 'world'].includes(targetKind)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.target.kind` });
+    validateV2Target(value.target, targetKind);
+    if (!Array.isArray(value.path) || value.path.length === 0 || !value.path.every((part) => typeof part === 'string' && part.trim()))
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.path` });
+    const fieldPath = value.path.join('.');
+    if (!WORLD_MODEL_PATCH_V2_SET_PATHS[targetKind].includes(fieldPath))
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.path` });
+    if (value.path[0] === 'capabilities') {
+      if (![true, false, null].includes(value.value)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.value`, expected: 'boolean|null' });
+    } else v2NullableText(value.value, `${path}.value`);
+  } else if (value.op === 'ADD_SPECIAL_RULE') {
+    v2ExactKeys(value, ['op', 'target', 'value'], path);
+    validateV2Target(value.target, 'biological_type');
+    v2RequiredText(value.value, `${path}.value`);
+  } else if (value.op === 'ADD_MECHANISM') {
+    v2ExactKeys(value, ['op', 'target', 'mechanism'], path);
+    validateV2Target(value.target, 'biological_type');
+    validateV2Mechanism(value.mechanism, `${path}.mechanism`);
+  } else if (value.op === 'ADD_EXCEPTION') {
+    v2ExactKeys(value, ['op', 'exception'], path);
+    const exception = v2Record(value.exception, `${path}.exception`);
+    v2ExactKeys(exception, V2_ENTITY_FIELDS.exception, `${path}.exception`);
+    v2RequiredText(exception.statement, `${path}.exception.statement`);
+    for (const field of ['applies_to', 'evidence']) if (exception[field] !== undefined) v2NullableText(exception[field], `${path}.exception.${field}`);
+  } else if (value.op === 'ADD_UNKNOWN') {
+    v2ExactKeys(value, ['op', 'unknown'], path);
+    v2RequiredText(value.unknown, `${path}.unknown`);
+  } else if (value.op === 'ADD_PROJECTION_RULE') {
+    v2ExactKeys(value, ['op', 'projection_rule'], path);
+    if (Object.hasOwn(value.projection_rule ?? {}, 'projection_rule_id')) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.projection_rule.projection_rule_id` });
+    const validation = validateProjectionRuleContent(value.projection_rule);
+    if (!validation.ok) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.projection_rule`, details: validation.errors });
+  }
+  return value;
+}
+
+export function validateWorldModelPatchV2(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModelPatchV2();
+  if (raw.schema_version !== 2) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_SCHEMA_VERSION_INVALID', { path: 'schema_version' });
+  if (!Array.isArray(raw.operations)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: 'operations', expected: 'array' });
+  v2ExactKeys(raw, ['schema_version', 'operations'], '$');
+  return { schema_version: 2, operations: raw.operations.map(validateV2Operation) };
+}
+
+export function parseWorldModelPatchV2(raw) {
+  if (typeof raw !== 'string') return validateWorldModelPatchV2(raw);
+  let lastSchemaError;
+  let lastParseError;
+  for (const candidate of jsonCandidates(raw)) {
+    let parsed;
+    try { parsed = JSON.parse(candidate); } catch (cause) { lastParseError = cause; continue; }
+    try { return validateWorldModelPatchV2(parsed); } catch (cause) { lastSchemaError = cause; }
+  }
+  if (lastSchemaError) throw lastSchemaError;
+  throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_JSON_INVALID', { path: '$', cause: lastParseError });
+}
+
+function v2Canonical(value) {
+  if (Array.isArray(value)) return value.map(v2Canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, v2Canonical(value[key])]));
+  return value;
+}
+
+function v2Equal(left, right) { return semanticPatchValueEqual(v2Canonical(left), v2Canonical(right)); }
+function v2TextIdentity(value) {
+  const normalized = normalizeRuleText(value);
+  return normalized ? normalized.replace(/\s+/gu, '').replace(/[。！？!?\.]+$/gu, '') : '';
+}
+function v2Type(existing, speciesName, typeName) { return existing.species.find((item) => item.name === speciesName)?.biological_types.find((item) => item.name === typeName) ?? null; }
+function v2Species(existing, speciesName) { return existing.species.find((item) => item.name === speciesName) ?? null; }
+function v2Known(value) { return value !== null && value !== undefined; }
+
+export function resolveWorldModelPatchV2Target(target) {
+  const kind = target?.kind;
+  validateV2Target(target, kind);
+  if (kind === 'world') return { kind };
+  const speciesName = canonicalSpeciesName(target.species_name);
+  if (kind === 'species') return { kind, species_name: speciesName };
+  return {
+    kind,
+    species_name: speciesName,
+    type_name: normalizeBiologicalTypeName(target.type_name, speciesName),
+  };
+}
+
+function v2CanonicalOperation(operation) {
+  if (operation.op === 'ADD_TYPE') {
+    return { ...operation, target: resolveWorldModelPatchV2Target(operation.target) };
+  }
+  if (['SET_FIELD', 'ADD_SPECIAL_RULE', 'ADD_MECHANISM'].includes(operation.op)) {
+    return { ...operation, target: resolveWorldModelPatchV2Target(operation.target) };
+  }
+  return operation;
+}
+
+function v2FieldValue(existing, operation) {
+  const target = operation.target;
+  const [group, key] = operation.path;
+  if (target.kind === 'world') return existing.medical_context?.[key] ?? null;
+  const entity = target.kind === 'species' ? v2Species(existing, target.species_name) : v2Type(existing, target.species_name, target.type_name);
+  if (!entity) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
+  return group ? entity[group]?.[key] ?? null : entity[key] ?? null;
+}
+
+function v2NormalizeField(operation) {
+  const [group] = operation.path;
+  if (group === 'capabilities') return operation.value === null ? null : nullableBoolean(operation.value, 'operation.value');
+  if (group === 'reproduction_rules' || group === 'lifecycle' || group === 'medical_context' || operation.path[0] === 'description') return operation.value === null ? null : normalizeRuleText(operation.value);
+  return operation.value;
+}
+
+function v2ClassifyField(existing, operation) {
+  const oldValue = v2FieldValue(existing, operation);
+  const newValue = v2NormalizeField(operation);
+  if (v2Equal(oldValue, newValue)) return 'NO-OP';
+  if (!v2Known(newValue)) {
+    if (v2Known(oldValue)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_REMOVE_UNSUPPORTED', { path: operation.path.join('.') });
+    return 'NO-OP';
+  }
+  return v2Known(oldValue) ? 'CHANGE' : 'ADD';
+}
+
+function v2NormalizeSpecies(value) { return normalizeWorldModel({ schema_version: 1, species: [value] }, { allowGeneratedProjectionRuleIds: true }).species[0]; }
+function v2NormalizeType(value, speciesName) { return v2NormalizeSpecies({ name: speciesName, biological_types: [value] }).biological_types[0]; }
+function v2NormalizeException(value) { return normalizeWorldModel({ schema_version: 1, exceptions: [value] }).exceptions[0]; }
+function v2MechanismContent(value) { return patchMechanismSemanticValue(value); }
+
+function v2CollectionClassification(existingValues, candidate, identityFor, contentFor) {
+  const identity = identityFor(candidate);
+  const current = existingValues.find((item) => identityFor(item) === identity);
+  if (current) return v2Equal(contentFor(current), contentFor(candidate)) ? 'NO-OP' : 'REJECT';
+  return 'ADD';
+}
+
+function v2PendingClassification(pending, identity, content, classification) {
+  const previous = pending.get(identity);
+  if (previous !== undefined) {
+    if (v2Equal(previous.content, content)) return 'NO-OP';
+    throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operations' });
+  }
+  pending.set(identity, { content, classification });
+  return classification;
+}
+
+export function classifyWorldModelPatchV2(raw, existingModel) {
+  const patch = validateWorldModelPatchV2(raw);
+  const existing = normalizeWorldModel(existingModel ?? { schema_version: 1, species: [], exceptions: [], unknowns: [], projection_rules: [] }, { allowGeneratedProjectionRuleIds: true });
+  const pending = new Map();
+  return patch.operations.map((rawOperation) => {
+    const operation = v2CanonicalOperation(rawOperation);
+    if (operation.op === 'SET_FIELD') {
+      const classification = v2ClassifyField(existing, operation);
+      const normalizedValue = v2NormalizeField(operation);
+      return { operation, classification: v2PendingClassification(pending, `field:${operation.target.kind}:${operation.target.species_name ?? ''}:${operation.target.type_name ?? ''}:${operation.path.join('.')}`, normalizedValue, classification) };
+    }
+    if (operation.op === 'ADD_SPECIES') {
+      const candidate = v2NormalizeSpecies(operation.species);
+      const current = v2Species(existing, candidate.name);
+      if (!current) return { operation, classification: v2PendingClassification(pending, `species:${candidate.name}`, candidate, 'ADD'), target: { kind: 'species', species_name: candidate.name } };
+      if (v2Equal(current, candidate)) return { operation, classification: 'NO-OP', target: { kind: 'species', species_name: candidate.name } };
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.species.name' });
+    }
+    if (operation.op === 'ADD_TYPE') {
+      const speciesName = canonicalSpeciesName(operation.target.species_name);
+      const species = v2Species(existing, speciesName);
+      if (!species) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target.species_name' });
+      const candidate = v2NormalizeType(operation.type, speciesName);
+      const current = species.biological_types.find((item) => item.name === candidate.name);
+      if (!current) return { operation, classification: v2PendingClassification(pending, `type:${speciesName}:${candidate.name}`, candidate, 'ADD'), target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } };
+      if (v2Equal(current, candidate)) return { operation, classification: 'NO-OP', target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } };
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.type.name' });
+    }
+    if (operation.op === 'ADD_SPECIAL_RULE') {
+      const type = v2Type(existing, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
+      if (!type) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
+      const value = v2TextIdentity(operation.value);
+      return { operation, classification: v2PendingClassification(pending, `special_rule:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${value}`, value, type.special_rules.some((item) => v2TextIdentity(item) === value) ? 'NO-OP' : 'ADD') };
+    }
+    if (operation.op === 'ADD_MECHANISM') {
+      const type = v2Type(existing, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
+      if (!type) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
+      const candidate = normalizeReproductiveMechanism(operation.mechanism, 'operation.mechanism');
+      const classification = v2PendingClassification(pending, `mechanism:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${candidate.key}`, candidate, v2CollectionClassification(type.reproductive_mechanisms, candidate, (item) => item.key, v2MechanismContent));
+      if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.mechanism.key' });
+      return { operation, classification, target: { kind: 'biological_type', species_name: canonicalSpeciesName(operation.target.species_name), type_name: type.name, mechanism_key: candidate.key } };
+    }
+    if (operation.op === 'ADD_EXCEPTION') {
+      const candidate = v2NormalizeException(operation.exception);
+      const exceptionIdentity = `${v2TextIdentity(candidate.statement)}|${v2TextIdentity(candidate.applies_to)}`;
+      const classification = v2PendingClassification(pending, `exception:${exceptionIdentity}`, candidate, v2CollectionClassification(existing.exceptions, candidate, (item) => `${v2TextIdentity(item.statement)}|${v2TextIdentity(item.applies_to)}`, (item) => ({ statement: v2TextIdentity(item.statement), applies_to: v2TextIdentity(item.applies_to), evidence: item.evidence ?? null })));
+      if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.exception' });
+      return { operation, classification };
+    }
+    if (operation.op === 'ADD_UNKNOWN') {
+      const candidate = v2TextIdentity(operation.unknown);
+      return { operation, classification: v2PendingClassification(pending, `unknown:${candidate}`, candidate, existing.unknowns.some((item) => v2TextIdentity(item) === candidate) ? 'NO-OP' : 'ADD') };
+    }
+    const candidate = normalizeProjectionRules([operation.projection_rule], { allowGeneratedIdentity: true })[0];
+    const classification = v2PendingClassification(pending, `projection_rule:${candidate.projection_rule_id}`, candidate, v2CollectionClassification(existing.projection_rules, candidate, (item) => item.projection_rule_id, (item) => item));
+    if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.projection_rule' });
+    return { operation, classification, target: { kind: 'projection_rule', projection_rule_id: candidate.projection_rule_id } };
+  });
+}
+
+function v2EvidenceError(path) {
+  throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED', { path });
+}
+
+function v2IndividualOnlyUnit(unit) {
+  return /(?:某(?:个|位|名)?(?:角色|人物|个体|NPC)|这个角色|该角色|单个(?:角色|人物|个体)|\b(?:an?|one|single)\s+(?:character|person|individual|NPC)\b)/iu.test(unit);
+}
+
+function v2ScopedEvidenceUnits(units, context = {}) {
+  const safeUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
+  if (context.typeName)
+    return safeUnits.filter((unit) =>
+      hasGenericDirectLabelEvidence(unit, context.speciesName) &&
+      hasGenericDirectLabelEvidence(unit, context.typeName) &&
+      hasGenericScopedTypeEvidence(unit, context.speciesName, context.typeName),
+    );
+  if (context.speciesName)
+    return safeUnits.filter((unit) => hasGenericDirectLabelEvidence(unit, context.speciesName));
+  return safeUnits;
+}
+
+function v2EvidenceSupportsFact(value, units, context = {}) {
+  const scopedUnits = v2ScopedEvidenceUnits(units, context);
+  if (!scopedUnits.length) return false;
+  if (context.nested === 'capabilities')
+    return patchFactEvidence({ value }, scopedUnits, context);
+  if (typeof value === 'string') {
+    const compactValue = compactEvidenceText(value).replace(/[。！？!?；;，,、]+$/gu, '');
+    if (compactValue && scopedUnits.some((unit) => compactEvidenceText(unit).includes(compactValue))) return true;
+  }
+  if (patchFactEvidence({ value }, scopedUnits, context)) return true;
+  if (typeof value !== 'string') return false;
+  return scopedUnits.some((unit) =>
+    hasDirectTextEvidence(value, [unit]) || hasGenericDirectLabelEvidence(unit, value),
+  );
+}
+
+function v2SpeciesExistenceSupported(speciesName, units) {
+  return speciesEvidenceUnits(units, speciesName).some((unit) => !v2IndividualOnlyUnit(unit));
+}
+
+function v2TypeExistenceSupported(speciesName, typeName, units) {
+  return v2ScopedEvidenceUnits(units, { speciesName, typeName }).length > 0;
+}
+
+function v2KnownTypeLeaves(type, path, speciesName) {
+  const facts = [];
+  if (v2Known(type.description)) facts.push({ path: `${path}.description`, value: type.description, context: { speciesName, typeName: type.name } });
+  for (const key of CAPABILITY_KEYS) {
+    if (v2Known(type.capabilities?.[key])) facts.push({ path: `${path}.capabilities.${key}`, value: type.capabilities[key], context: { speciesName, typeName: type.name, nested: 'capabilities', key } });
+  }
+  for (const key of WORLD_RULE_KEYS) {
+    if (v2Known(type.reproduction_rules?.[key])) facts.push({ path: `${path}.reproduction_rules.${key}`, value: type.reproduction_rules[key], context: { speciesName, typeName: type.name, nested: 'reproduction_rules', key } });
+  }
+  for (const key of LIFECYCLE_KEYS) {
+    if (v2Known(type.lifecycle?.[key])) facts.push({ path: `${path}.lifecycle.${key}`, value: type.lifecycle[key], context: { speciesName, typeName: type.name, nested: 'lifecycle', key } });
+  }
+  for (const [index, value] of (type.special_rules ?? []).entries()) {
+    if (v2Known(value)) facts.push({ path: `${path}.special_rules[${index}]`, value, context: { speciesName, typeName: type.name, nested: 'special_rules', key: value } });
+  }
+  for (const [index, mechanism] of (type.reproductive_mechanisms ?? []).entries()) {
+    const mechanismPath = `${path}.reproductive_mechanisms[${index}]`;
+    const mechanismContext = { speciesName, typeName: type.name, nested: 'reproductive_mechanisms', mechanismKey: mechanism.key };
+    const knownFields = ['label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs'];
+    for (const key of knownFields) {
+      const value = mechanism[key];
+      if (Array.isArray(value)) {
+        value.forEach((item, itemIndex) => {
+          if (v2Known(item)) facts.push({ path: `${mechanismPath}.${key}[${itemIndex}]`, value: item, context: { ...mechanismContext, key } });
+        });
+      } else if (v2Known(value)) facts.push({ path: `${mechanismPath}.${key}`, value, context: { ...mechanismContext, key } });
+    }
+    // key is identity, and evidence is provenance supplied by the model; neither self-proves the mechanism.
+  }
+  return facts;
+}
+
+function v2MechanismCompatibilityEvidence(value, units, context) {
+  const scopedText = v2ScopedEvidenceUnits(units, context).join('\n');
+  const expected = value === true
+    ? /(?:(?:支持|可以|能够|允许)[^。！？!?；;，,、\n]{0,10}(?:携带|妊娠|胎儿|兼容)|(?:携带|妊娠|胎儿|兼容)[^。！？!?；;，,、\n]{0,10}(?:支持|可以|能够|允许))/iu
+    : /(?:(?:不支持|不能|无法|不允许|不兼容)[^。！？!?；;，,、\n]{0,10}(?:携带|妊娠|胎儿|兼容)|(?:携带|妊娠|胎儿|兼容)[^。！？!?；;，,、\n]{0,10}(?:不支持|不能|无法|不允许|不兼容))/iu;
+  return expected.test(scopedText);
+}
+
+function v2ValidateTypeSubtree(type, speciesName, units, path) {
+  const knownFacts = v2KnownTypeLeaves(type, path, speciesName);
+  if (!v2TypeExistenceSupported(speciesName, type.name, units)) v2EvidenceError(`${path}.name`);
+  for (const fact of knownFacts) {
+    if (fact.context.nested === 'reproductive_mechanisms' && fact.context.key === 'carrying_compatibility') {
+      if (!v2MechanismCompatibilityEvidence(fact.value, units, fact.context)) v2EvidenceError(fact.path);
+      continue;
+    }
+    if (!v2EvidenceSupportsFact(fact.value, units, fact.context)) v2EvidenceError(fact.path);
+  }
+  if ((type.reproductive_mechanisms ?? []).some((mechanism) => !v2KnownTypeLeaves({ ...type, reproductive_mechanisms: [mechanism] }, path, speciesName).some((fact) => fact.context.mechanismKey === mechanism.key)))
+    v2EvidenceError(`${path}.reproductive_mechanisms`);
+}
+
+function v2ValidateSpeciesSubtree(species, units, path) {
+  if (!v2SpeciesExistenceSupported(species.name, units)) v2EvidenceError(`${path}.name`);
+  if (v2Known(species.description) && !v2EvidenceSupportsFact(species.description, units, { speciesName: species.name }))
+    v2EvidenceError(`${path}.description`);
+  for (const [index, type] of (species.biological_types ?? []).entries())
+    v2ValidateTypeSubtree(type, species.name, units, `${path}.biological_types[${index}]`);
+}
+
+function v2ValidateMechanismOperation(operation, units) {
+  const mechanism = operation.mechanism;
+  const context = { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: 'reproductive_mechanisms', mechanismKey: mechanism.key };
+  const knownFields = ['label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs'];
+  let supported = false;
+  for (const key of knownFields) {
+    const value = mechanism[key];
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) {
+      if (!v2Known(item)) continue;
+      if (key === 'carrying_compatibility') {
+        if (!v2MechanismCompatibilityEvidence(item, units, context)) v2EvidenceError(`operation.mechanism.${key}`);
+      } else if (!v2EvidenceSupportsFact(item, units, { ...context, key })) {
+        v2EvidenceError(`operation.mechanism.${key}`);
+      }
+      supported = true;
+    }
+  }
+  if (!supported) v2EvidenceError('operation.mechanism');
+}
+
+function v2ProjectionSemanticLeaves(rule, path = 'operation.projection_rule') {
+  const leaves = [];
+  const collect = (value, currentPath, key) => {
+    if (value === null || value === undefined || key === 'schema_version' || key === 'projection_rule_id') return;
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => collect(item, `${currentPath}[${index}]`, key));
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const [childKey, childValue] of Object.entries(value)) collect(childValue, `${currentPath}.${childKey}`, childKey);
+      return;
+    }
+    leaves.push({ path: currentPath, value });
+  };
+  for (const [key, value] of Object.entries(rule ?? {})) collect(value, `${path}.${key}`, key);
+  return leaves;
+}
+
+function v2ProjectionToken(value) {
+  return compactEvidenceText(String(value)).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function v2ProjectionContextualScalarSupported(path, value, units) {
+  const token = v2ProjectionToken(value);
+  if (!token) return false;
+  let contexts;
+  if (path.includes('.target_story_time.day_index')) {
+    contexts = ['target_story_time', 'target story time', 'story_time', 'story time', '故事时间', '目标故事时间'];
+  } else if (path.includes('.min_elapsed_story_days')) {
+    contexts = ['min_elapsed_story_days', 'min elapsed story days', 'elapsed story days', 'elapsed days', '经过天数'];
+  } else {
+    const key = path.split('.').at(-1)?.replace(/\[\d+\]/gu, '') ?? '';
+    contexts = key ? [key, key.replaceAll('_', ' ')] : [];
+  }
+  const contextPattern = contexts
+    .filter(Boolean)
+    .map((context) => v2ProjectionToken(context))
+    .join('|');
+  if (!contextPattern) return false;
+  const scalarPattern = path.includes('.target_story_time.') || path.includes('.min_elapsed_story_days')
+    ? new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}`, 'iu')
+    : new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}|${token}[^。！？!?；;，,、\\n]{0,28}(?:${contextPattern})`, 'iu');
+  return units.some((unit) => scalarPattern.test(compactEvidenceText(unit)));
+}
+
+function v2ProjectionBooleanSupported(path, value, units) {
+  const token = value ? '(?:true|是|支持|可以|能够|允许)' : '(?:false|否|不支持|不能|无法|不允许)';
+  const contexts = path.includes('.requirements.capabilities[')
+    ? ['capability', 'capabilities', '能力', 'equals', '要求', 'required']
+    : [path.split('.').at(-1)?.replace(/\[\d+\]/gu, '') ?? ''];
+  const contextPattern = contexts.filter(Boolean).map(v2ProjectionToken).join('|');
+  if (!contextPattern) return false;
+  const booleanPattern = new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}|${token}[^。！？!?；;，,、\\n]{0,28}(?:${contextPattern})`, 'iu');
+  return units.some((unit) => booleanPattern.test(compactEvidenceText(unit)));
+}
+
+function v2ProjectionLeafSupported(leaf, units) {
+  if (typeof leaf.value === 'string') return v2EvidenceSupportsFact(leaf.value, units, {});
+  if (typeof leaf.value === 'boolean') return v2ProjectionBooleanSupported(leaf.path, leaf.value, units);
+  if (typeof leaf.value === 'number') return v2ProjectionContextualScalarSupported(leaf.path, leaf.value, units);
+  return false;
+}
+
+function v2ValidateProjectionRuleEvidence(rule, units) {
+  const leaves = v2ProjectionSemanticLeaves(rule);
+  if (!leaves.length) v2EvidenceError('operation.projection_rule');
+  for (const leaf of leaves) {
+    if (!v2ProjectionLeafSupported(leaf, units)) v2EvidenceError(leaf.path);
+  }
+}
+
+function v2ValidateOperationEvidence(operation, classification, units, existing) {
+  if (classification === 'NO-OP') return;
+  if (classification === 'REJECT') v2EvidenceError('operation');
+  if (operation.op === 'ADD_SPECIES') {
+    v2ValidateSpeciesSubtree(v2NormalizeSpecies(operation.species), units, 'operation.species');
+    return;
+  }
+  if (operation.op === 'ADD_TYPE') {
+    const species = v2Species(existing, operation.target.species_name);
+    if (!species) v2EvidenceError('operation.target.species_name');
+    v2ValidateTypeSubtree(v2NormalizeType(operation.type, operation.target.species_name), operation.target.species_name, units, 'operation.type');
+    return;
+  }
+  if (operation.op === 'SET_FIELD') {
+    const context = { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: operation.path[0], key: operation.path[1] };
+    if (operation.target.kind === 'species') delete context.typeName;
+    if (operation.target.kind === 'world') delete context.speciesName;
+    if (!v2EvidenceSupportsFact(v2NormalizeField(operation), units, context)) v2EvidenceError(`operation.${operation.path.join('.')}`);
+    return;
+  }
+  if (operation.op === 'ADD_SPECIAL_RULE') {
+    if (!v2EvidenceSupportsFact(operation.value, units, { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: 'special_rules', key: operation.value })) v2EvidenceError('operation.value');
+    return;
+  }
+  if (operation.op === 'ADD_MECHANISM') {
+    v2ValidateMechanismOperation(operation, units);
+    return;
+  }
+  if (operation.op === 'ADD_EXCEPTION') {
+    const exception = v2NormalizeException(operation.exception);
+    const scope = exception.applies_to;
+    const context = v2Species(existing, scope) ? { speciesName: scope } : {};
+    if (!v2EvidenceSupportsFact(exception.statement, units, context)) v2EvidenceError('operation.exception.statement');
+    if (scope && !v2EvidenceSupportsFact(scope, units, context)) v2EvidenceError('operation.exception.applies_to');
+    return;
+  }
+  if (operation.op === 'ADD_UNKNOWN') {
+    if (!v2EvidenceSupportsFact(operation.unknown, units, {})) v2EvidenceError('operation.unknown');
+    return;
+  }
+  if (operation.op === 'ADD_PROJECTION_RULE') {
+    v2ValidateProjectionRuleEvidence(operation.projection_rule, units);
+  }
+}
+
+export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput = {}) {
+  const existing = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
+  const classified = classifyWorldModelPatchV2(patch, existing);
+  const units = evidenceUnits(analysisInput);
+  for (const result of classified) v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
+  return classified;
+}
+
+function v2MergeError(path, message = 'WORLD_MODEL_PATCH_V2_MERGE_INVALID') {
+  throw invalidWorldModelPatchV2(message, { path });
+}
+
+function v2MutableTarget(model, target) {
+  if (target.kind === 'world') return model;
+  const species = v2Species(model, target.species_name);
+  if (!species) v2MergeError('operation.target', 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND');
+  if (target.kind === 'species') return species;
+  const type = v2Type(model, target.species_name, target.type_name);
+  if (!type) v2MergeError('operation.target', 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND');
+  return type;
+}
+
+function v2ApplySetField(model, operation) {
+  const [group, key] = operation.path;
+  const entity = v2MutableTarget(model, operation.target);
+  const value = v2NormalizeField(operation);
+  if (operation.target.kind === 'world') {
+    model.medical_context = { ...model.medical_context, [key]: value };
+    return;
+  }
+  if (group === 'description') entity.description = value;
+  else entity[group] = { ...(entity[group] ?? {}), [key]: value };
+}
+
+function v2ApplyAddSpecies(model, operation) {
+  const species = v2NormalizeSpecies(operation.species);
+  if (v2Species(model, species.name)) v2MergeError('operation.species.name', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  model.species.push(species);
+}
+
+function v2ApplyAddType(model, operation) {
+  const speciesName = operation.target.species_name;
+  const species = v2Species(model, speciesName);
+  if (!species) v2MergeError('operation.target.species_name', 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND');
+  const type = v2NormalizeType(operation.type, speciesName);
+  if (species.biological_types.some((item) => item.name === type.name))
+    v2MergeError('operation.type.name', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  species.biological_types.push(type);
+}
+
+function v2ApplyAddSpecialRule(model, operation) {
+  const type = v2MutableTarget(model, operation.target);
+  const rule = v2TextIdentity(operation.value);
+  if (type.special_rules.some((item) => v2TextIdentity(item) === rule))
+    v2MergeError('operation.value', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  type.special_rules.push(rule);
+}
+
+function v2ApplyAddMechanism(model, operation) {
+  const type = v2MutableTarget(model, operation.target);
+  const mechanism = normalizeReproductiveMechanism(operation.mechanism, 'operation.mechanism');
+  const existing = type.reproductive_mechanisms.find((item) => item.key === mechanism.key);
+  if (existing) v2MergeError('operation.mechanism.key', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  type.reproductive_mechanisms.push(mechanism);
+}
+
+function v2ExceptionIdentity(exception) {
+  return `${v2TextIdentity(exception.statement)}|${v2TextIdentity(exception.applies_to)}`;
+}
+
+function v2ApplyAddException(model, operation) {
+  const exception = v2NormalizeException(operation.exception);
+  const identity = v2ExceptionIdentity(exception);
+  const existing = model.exceptions.find((item) => v2ExceptionIdentity(item) === identity);
+  if (existing) {
+    if (v2Equal(patchExceptionSemanticValue(existing), patchExceptionSemanticValue(exception))) return;
+    v2MergeError('operation.exception', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  }
+  model.exceptions.push(exception);
+}
+
+function v2ApplyAddUnknown(model, operation) {
+  const unknown = v2TextIdentity(operation.unknown);
+  if (model.unknowns.some((item) => v2TextIdentity(item) === unknown)) return;
+  model.unknowns.push(unknown);
+}
+
+function v2ApplyAddProjectionRule(model, operation) {
+  const rule = normalizeProjectionRules([operation.projection_rule], { allowGeneratedIdentity: true })[0];
+  const existing = model.projection_rules.find((item) => item.projection_rule_id === rule.projection_rule_id);
+  if (existing) {
+    if (v2Equal(existing, rule)) return;
+    v2MergeError('operation.projection_rule', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+  }
+  model.projection_rules.push(rule);
+}
+
+function v2ApplyClassifiedOperations(model, classified) {
+  for (const result of classified) {
+    if (result.classification === 'NO-OP') continue;
+    if (result.classification !== 'ADD' && result.classification !== 'CHANGE')
+      v2MergeError('operations', 'WORLD_MODEL_PATCH_V2_CLASSIFICATION_INVALID');
+    const operation = result.operation;
+    if (operation.op === 'ADD_SPECIES') v2ApplyAddSpecies(model, operation);
+    else if (operation.op === 'ADD_TYPE') v2ApplyAddType(model, operation);
+    else if (operation.op === 'SET_FIELD') v2ApplySetField(model, operation);
+    else if (operation.op === 'ADD_SPECIAL_RULE') v2ApplyAddSpecialRule(model, operation);
+    else if (operation.op === 'ADD_MECHANISM') v2ApplyAddMechanism(model, operation);
+    else if (operation.op === 'ADD_EXCEPTION') v2ApplyAddException(model, operation);
+    else if (operation.op === 'ADD_UNKNOWN') v2ApplyAddUnknown(model, operation);
+    else if (operation.op === 'ADD_PROJECTION_RULE') v2ApplyAddProjectionRule(model, operation);
+    else v2MergeError('operations', 'WORLD_MODEL_PATCH_V2_OPERATION_UNSUPPORTED');
+  }
+}
+
+function v2SortAppendedEntries(model, existing) {
+  const sortBy = (values, start, identity) => values.splice(start, values.length - start, ...values.slice(start).sort((left, right) => identity(left).localeCompare(identity(right))));
+  sortBy(model.species, existing.species.length, (item) => item.name);
+  for (const oldSpecies of existing.species) {
+    const species = v2Species(model, oldSpecies.name);
+    if (!species) continue;
+    sortBy(species.biological_types, oldSpecies.biological_types.length, (item) => item.name);
+    for (const oldType of oldSpecies.biological_types) {
+      const type = v2Type(model, oldSpecies.name, oldType.name);
+      if (!type) continue;
+      sortBy(type.special_rules, oldType.special_rules.length, v2TextIdentity);
+      sortBy(type.reproductive_mechanisms, oldType.reproductive_mechanisms.length, (item) => item.key ?? '');
+    }
+  }
+  sortBy(model.exceptions, existing.exceptions.length, v2ExceptionIdentity);
+  sortBy(model.unknowns, existing.unknowns.length, v2TextIdentity);
+  sortBy(model.projection_rules, existing.projection_rules.length, (item) => item.projection_rule_id);
+}
+
+function v2RestoreExistingProjectionOrder(model, existing) {
+  const existingIds = new Set(existing.projection_rules.map((item) => item.projection_rule_id));
+  const byId = new Map(model.projection_rules.map((item) => [item.projection_rule_id, item]));
+  const preserved = existing.projection_rules.map((item) => byId.get(item.projection_rule_id)).filter(Boolean);
+  const appended = model.projection_rules
+    .filter((item) => !existingIds.has(item.projection_rule_id))
+    .sort((left, right) => left.projection_rule_id.localeCompare(right.projection_rule_id));
+  return { ...model, projection_rules: [...preserved, ...appended] };
+}
+
+function mergeWorldModelPatchV2Classified(existingModel, classified) {
+  const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
+  const working = clonePatchValue(base);
+  v2ApplyClassifiedOperations(working, classified);
+  v2SortAppendedEntries(working, base);
+  const consistent = applyWorldModelFinalConsistencyGuard(working);
+  const normalized = normalizeWorldModel(consistent, { strict: true, allowGeneratedProjectionRuleIds: true });
+  return v2RestoreExistingProjectionOrder(normalized, base);
+}
+
+export function mergeWorldModelPatchV2(existingModel, patch, analysisInput = {}) {
+  const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
+  const guarded = applyWorldModelPatchV2EvidenceGuard(patch, base, analysisInput);
+  return mergeWorldModelPatchV2Classified(base, guarded);
+}
+
 const WORLD_MODEL_PATCH_FIELDS = Object.freeze({
   add: Object.freeze(['species', 'exceptions', 'unknowns', 'projection_rules']),
   update: Object.freeze(['species', 'medical_context', 'projection_rules']),
@@ -3426,6 +4182,33 @@ export function createAnalyzer({
     )
   }
 
+  // Explicit Phase 6 boundary. Runtime continues to call the v1 method until
+  // Phase 7 wires v2 sparse merge and persistence; never return this result to
+  // the v1 mergeWorldModelPatch() consumer.
+  async function analyzeWorldModelPatchV2(input = {}) {
+    const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
+    if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED')
+    const analysisInput = input.analysisInput ?? input
+    const existingModel = input.world_model ?? analysisInput.world_model
+    if (!existingModel) {
+      const error = new Error('WORLD_MODEL_PATCH_V2_TARGET_REQUIRED')
+      error.code = 'WORLD_MODEL_PATCH_V2_TARGET_REQUIRED'
+      throw error
+    }
+    const messages = buildWorldModelPatchMessagesV2(
+      analysisInput,
+      worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
+    )
+    const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
+    const patch = parseWorldModelPatchV2(responseText(raw))
+    const classified = applyWorldModelPatchV2EvidenceGuard(
+      patch,
+      existingModel,
+      analysisInput,
+    )
+    return { patch, classified }
+  }
+
   async function analyzeFloor(input = {}) {
     let profile;
     try {
@@ -3546,6 +4329,7 @@ export function createAnalyzer({
   return {
     analyzeWorldModel,
     analyzeWorldModelPatch,
+    analyzeWorldModelPatchV2,
     analyzeWorld: analyzeWorldModel,
     analyzeFloor,
     generateProjection: (input) => run('projection', input),

@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
+import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { applyWorldModelPatchEvidenceGuard, createAnalyzer, mergeWorldModelPatch, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch } from '../ai/analyzer.js'
+import { applyWorldModelPatchEvidenceGuard, applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatch, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelPatchV2, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch, validateWorldModelPatchV2 } from '../ai/analyzer.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -602,6 +602,128 @@ test('Supplement keeps permitted evidence roles while placing only its Target in
   assert.match(system, /允许 update 的字段：species、medical_context、projection_rules/u)
 })
 
+test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 message roles', () => {
+  const messages = buildWorldModelPatchMessagesV2({
+    world_model: v2ExistingModel(),
+    character: { description: 'Character Card evidence.' },
+    worldbooks: [{ entries: [{ label: 'Worldbook-A', content: 'Worldbook evidence.' }] }],
+    external_memory: [{ enabled: true, available: true, content_available: true, items: [{ label: 'Memory-A', content: 'External evidence.' }] }],
+    recent_story: { items: [{ content: 'Recent Story evidence.' }] },
+    persona: { description: 'Persona must remain excluded.' },
+  })
+  const prompt = messages.map(message => message.content).join('\n')
+  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user'])
+  assert.match(prompt, /\{"schema_version":2,"operations":\[\]\}/u)
+  for (const operation of ['ADD_SPECIES', 'ADD_TYPE', 'SET_FIELD', 'ADD_SPECIAL_RULE', 'ADD_MECHANISM', 'ADD_EXCEPTION', 'ADD_UNKNOWN', 'ADD_PROJECTION_RULE']) {
+    assert.match(prompt, new RegExp(operation))
+  }
+  assert.doesNotMatch(prompt, /\{"schema_version":1,"add":\{\},"update":\{\}\}/u)
+  assert.doesNotMatch(prompt, /update\.species|完整 updated canonical species|允许 add 的字段/u)
+  assert.match(prompt, /Existing = TARGET \+ comparison baseline/u)
+  assert.match(prompt, /Existing 本身不是 evidence/u)
+  assert.match(prompt, /unchanged facts|NO_OP operation|old_value/u)
+  assert.match(prompt, /Fact Discovery → Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate/u)
+  assert.match(prompt, /operations 为空只能在完成上述完整 review 后/u)
+  assert.match(prompt, /projection_rule_id/u)
+  assert.match(prompt, /<existing_world_model>/u)
+  assert.doesNotMatch(prompt, /Persona must remain excluded\./u)
+  assert.equal(messages.filter(message => message.role === 'assistant').length, 1)
+  assert.match(messages.find(message => message.role === 'assistant').content, /Recent Story evidence\./u)
+})
+
+test('World Model Supplement v2 prompt exposes exact operation shapes without alternate DTO grammar', () => {
+  const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
+  assert.match(prompt, /"op":"ADD_TYPE","target":\{"kind":"species","species_name":"Species-A"\},"type":\{"name":"Type-B"/u)
+  assert.match(prompt, /SET_FIELD[\s\S]*"path":\["capabilities","can_carry_pregnancy"\]/u)
+  assert.match(prompt, /"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"/u)
+  assert.match(prompt, /"target":\{"kind":"world"\}/u)
+  assert.match(prompt, /exception\.evidence 是 string\|null，不是 array/u)
+  assert.match(prompt, /"op":"ADD_UNKNOWN","unknown":"\.\.\."/u)
+  assert.match(prompt, /ADD_PROJECTION_RULE[\s\S]*不得包含 projection_rule_id/u)
+  assert.doesNotMatch(prompt, /"op":"ADD_TYPE","species_name"/u)
+  assert.doesNotMatch(prompt, /"field":"/u)
+  assert.doesNotMatch(prompt, /"path":"capabilities\./u)
+  assert.doesNotMatch(prompt, /"unknown":\{[\s\S]*\}/u)
+  assert.doesNotMatch(prompt, /"exception":\{[\s\S]*"evidence":\[\]/u)
+})
+
+test('World Model v2 analyzer rejects semantically correct but structurally wrong operation shapes', async () => {
+  const existing = v2ExistingModel()
+  const evidence = { character: { description: 'Species-A 中 Type-B 是少数但稳定存在的 biological type。' } }
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      generateRaw: () => JSON.stringify({
+        schema_version: 2,
+        operations: [{
+          op: 'ADD_TYPE',
+          species_name: 'Species-A',
+          target: { kind: 'species' },
+          type: { name: 'Type-B' },
+        }],
+      }),
+    }),
+  })
+  await assert.rejects(
+    analyzer.analyzeWorldModelPatchV2({ analysisInput: { world_model: existing, ...evidence } }),
+    error => error?.code === 'WORLD_MODEL_PATCH_V2_INVALID',
+  )
+
+  const accepted = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      generateRaw: () => JSON.stringify({
+        schema_version: 2,
+        operations: [{
+          op: 'ADD_TYPE',
+          target: { kind: 'species', species_name: 'Species-A' },
+          type: { name: 'Type-B' },
+        }],
+      }),
+    }),
+  })
+  const result = await accepted.analyzeWorldModelPatchV2({ analysisInput: { world_model: existing, ...evidence } })
+  assert.equal(result.patch.operations[0].type.name, 'Type-B')
+  assert.equal(result.classified[0].classification, 'ADD')
+})
+
+test('World Model v2 analyzer boundary accepts sparse minority Type-B without feeding v1 merge', async () => {
+  const existing = v2ExistingModel()
+  const evidence = 'Species-A 中 Type-A 是多数类型，Type-B 是少数但稳定存在的 biological type，Type-B description。'
+  const v2Response = JSON.stringify({
+    schema_version: 2,
+    operations: [{
+      op: 'ADD_TYPE',
+      target: { kind: 'species', species_name: 'Species-A' },
+      type: { name: 'Type-B', description: 'Type-B description。' },
+    }],
+  })
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({ generateRaw: () => v2Response }),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: { world_model: existing, character: { description: evidence } },
+  })
+  assert.equal(result.patch.schema_version, 2)
+  assert.equal(result.patch.operations.length, 1)
+  assert.equal(result.patch.operations[0].op, 'ADD_TYPE')
+  assert.equal(result.patch.operations[0].type.name, 'Type-B')
+  assert.equal(result.classified[0].classification, 'ADD')
+  assert.equal(result.patch.operations.some(operation => operation.type?.name === 'Type-A'), false)
+  assert.equal(result.patch.operations.some(operation => operation.species), false)
+  assert.deepEqual(mergeWorldModelPatchV2(existing, result.patch, { character: { description: evidence } }).species[0].biological_types.map(type => type.name), ['Type-A', 'Type-B'])
+
+  const v1Analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({ generateRaw: () => v2Response }),
+  })
+  await assert.rejects(
+    v1Analyzer.analyzeWorldModelPatch({ analysisInput: { world_model: existing, character: { description: evidence } } }),
+    error => error?.code === 'WORLD_MODEL_PATCH_INVALID',
+  )
+})
+
 test('World Model Patch evidence guard accepts differential evidence regardless of Floor origin', () => {
   const baseline = normalizeWorldModel({
     schema_version: 1,
@@ -1099,6 +1221,479 @@ test('World Model Patch analyzer accepts fenced JSON without relaxing the patch 
       }),
     }).analyzeWorldModelPatch({ analysisInput: {} }),
     error => error?.code === 'WORLD_MODEL_PATCH_INVALID',
+  )
+})
+
+function v2ExistingModel() {
+  return normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: 'Species-A',
+      description: 'Existing species.',
+      biological_types: [{
+        name: 'Type-A',
+        description: 'Existing type.',
+        capabilities: { can_produce_sperm: false },
+        reproduction_rules: { gestation: 'existing rule' },
+        special_rules: ['existing rule'],
+        reproductive_mechanisms: [{ key: 'mechanism-a', label: 'Existing mechanism' }],
+      }],
+    }],
+    medical_context: { childbirth_difficulty: 'existing difficulty', care_level: 'existing care', evidence: 'existing evidence' },
+    exceptions: [{ statement: 'Existing exception.', applies_to: 'Species-A' }],
+    unknowns: ['Existing unknown.'],
+  })
+}
+
+function v2Evidence(text) {
+  return { character: { description: text } }
+}
+
+function guardV2(operation, existing = v2ExistingModel(), evidence = '') {
+  return applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [operation] },
+    existing,
+    v2Evidence(evidence),
+  )
+}
+
+function mergeV2(operations, existing = v2ExistingModel(), evidence = '') {
+  return mergeWorldModelPatchV2(
+    existing,
+    { schema_version: 2, operations },
+    v2Evidence(evidence),
+  )
+}
+
+test('World Model Patch v2 structurally rejects non-v2 and non-contract DTOs', () => {
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 1, operations: [] }), error => error?.message === 'WORLD_MODEL_PATCH_V2_SCHEMA_VERSION_INVALID')
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: {} }), error => error?.path === 'operations')
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'REMOVE' }] }), error => error?.message === 'WORLD_MODEL_PATCH_V2_OPERATION_UNSUPPORTED')
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_produce_sperm', 'nested'], value: true }] }), error => error?.path?.endsWith('.path'))
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', '0'], value: true }] }), error => error?.path?.endsWith('.path'))
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A', name: 'renamed' }, path: ['description'], value: 'new' }] }), error => error?.path?.endsWith('.name'))
+  assert.throws(() => validateWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_PROJECTION_RULE', projection_rule: { projection_rule_id: 'ai-supplied' } }] }), error => error?.path?.endsWith('.projection_rule_id'))
+})
+
+test('World Model Patch v2 classifies SET_FIELD as NO-OP, ADD, CHANGE, and rejects weakening', () => {
+  const existing = v2ExistingModel()
+  const classify = (operation) => classifyWorldModelPatchV2({ schema_version: 2, operations: [operation] }, existing)[0].classification
+  assert.equal(classify({ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_produce_sperm'], value: false }), 'NO-OP')
+  assert.equal(classify({ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_produce_ova'], value: true }), 'ADD')
+  assert.equal(classify({ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'changed rule' }), 'CHANGE')
+  assert.equal(classify({ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'labor'], value: '无' }), 'ADD')
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: null }] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_REMOVE_UNSUPPORTED')
+})
+
+test('World Model Patch v2 detects duplicate and conflicting SET_FIELD changes independent of operation order', () => {
+  const existing = v2ExistingModel()
+  const target = { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }
+  const change = { op: 'SET_FIELD', target, path: ['reproduction_rules', 'gestation'], value: 'new rule' }
+  const duplicate = classifyWorldModelPatchV2({ schema_version: 2, operations: [change, structuredClone(change)] }, existing)
+  assert.deepEqual(duplicate.map(result => result.classification), ['CHANGE', 'NO-OP'])
+  const conflicting = { ...change, value: 'other rule' }
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [change, conflicting] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [conflicting, change] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+})
+
+test('World Model Patch v2 canonicalizes species and type targets before lookup and pending identity', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '人类', biological_types: [{ name: '男性', reproduction_rules: { gestation: 'existing rule' } }] }],
+  })
+  const canonicalTarget = { kind: 'biological_type', species_name: '人类', type_name: '男性' }
+  const aliasTarget = { kind: 'biological_type', species_name: 'Homo sapiens', type_name: '男性人类' }
+  const canonical = { op: 'SET_FIELD', target: canonicalTarget, path: ['reproduction_rules', 'gestation'], value: 'new rule' }
+  const alias = { op: 'SET_FIELD', target: aliasTarget, path: ['reproduction_rules', 'gestation'], value: 'new rule' }
+  const results = classifyWorldModelPatchV2({ schema_version: 2, operations: [canonical, alias] }, existing)
+  assert.deepEqual(results.map(result => result.classification), ['CHANGE', 'NO-OP'])
+  assert.deepEqual(results[1].operation.target, canonicalTarget)
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [
+    { ...canonical, value: 'canonical change' },
+    { ...alias, value: 'alias change' },
+  ] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+})
+
+test('World Model Patch v2 resolves species-local type identity and duplicate semantics', () => {
+  const existing = v2ExistingModel()
+  const typeB = { name: 'Type-B', description: 'New type.' }
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: typeB }] }, existing)[0].classification, 'ADD')
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-B' }, type: typeB }] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND')
+  const withTypeB = normalizeWorldModel({ ...existing, species: [{ ...existing.species[0], biological_types: [...existing.species[0].biological_types, typeB] }] })
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: typeB }] }, withTypeB)[0].classification, 'NO-OP')
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { ...typeB, description: 'conflict' } }] }, withTypeB), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+})
+
+test('World Model Patch v2 collection identity is semantic and order-independent', () => {
+  const existing = v2ExistingModel()
+  const classify = (operation) => classifyWorldModelPatchV2({ schema_version: 2, operations: [operation] }, existing)[0].classification
+  assert.equal(classify({ op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: ' existing rule。 ' }), 'NO-OP')
+  assert.equal(classify({ op: 'ADD_UNKNOWN', unknown: ' Existing unknown。 ' }), 'NO-OP')
+  assert.equal(classify({ op: 'ADD_MECHANISM', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, mechanism: { key: 'mechanism-a', label: 'Existing mechanism' } }), 'NO-OP')
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_MECHANISM', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, mechanism: { key: 'mechanism-a', label: 'Conflicting mechanism' } }] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+  const reordered = normalizeWorldModel({ ...existing, species: [{ ...existing.species[0], biological_types: [...existing.species[0].biological_types].reverse() }] })
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: structuredClone(reordered.species[0].biological_types[0]) }] }, reordered)[0].classification, 'NO-OP')
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_EXCEPTION', exception: { applies_to: 'Species-A', statement: 'Existing exception.' } }] }, existing)[0].classification, 'NO-OP')
+})
+
+test('World Model Patch v2 covers sparse world fields, species adds, duplicate operations, and generated projection identity', () => {
+  const existing = v2ExistingModel()
+  const validRule = {
+    schema_version: 1,
+    mechanism_key: 'mechanism-b',
+    development_concern_key: 'concern-b',
+    development_kind: 'possible_biological_change',
+    trigger: { kind: 'story_time_reached', target_story_time: { day_index: 10 } },
+  }
+  assert.deepEqual(parseWorldModelPatchV2('{"schema_version":2,"operations":[]}'), { schema_version: 2, operations: [] })
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_SPECIES', species: { name: 'Species-B', description: 'New species.' } }] }, existing)[0].classification, 'ADD')
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'world' }, path: ['medical_context', 'care_level'], value: 'new care' }] }, existing)[0].classification, 'CHANGE')
+  assert.equal(classifyWorldModelPatchV2({ schema_version: 2, operations: [{ op: 'ADD_PROJECTION_RULE', projection_rule: validRule }] }, existing)[0].classification, 'ADD')
+  const duplicateType = { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B', description: 'New type.' } }
+  const duplicateResults = classifyWorldModelPatchV2({ schema_version: 2, operations: [duplicateType, structuredClone(duplicateType)] }, existing)
+  assert.deepEqual(duplicateResults.map(result => result.classification).sort(), ['ADD', 'NO-OP'])
+  assert.throws(() => classifyWorldModelPatchV2({ schema_version: 2, operations: [{ ...duplicateType, type: { name: 'Type-B', description: 'Other content.' } }, duplicateType] }, existing), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+})
+
+test('World Model Patch v2 evidence guard validates species and species-local type existence', () => {
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_SPECIES', species: { name: 'Species-B' } },
+    v2ExistingModel(),
+    'Species-B exists as a stable world species.',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_SPECIES', species: { name: 'Species-B' } },
+    v2ExistingModel(),
+    'No permitted source names this species.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } },
+    v2ExistingModel(),
+    'Species-A 包含 Type-B 类型，属于稳定生物分类。',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } },
+    v2ExistingModel(),
+    'Species-B 包含 Type-B 类型，属于稳定生物分类。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } },
+    v2ExistingModel(),
+    'Type-B 类型被列出但没有物种范围。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+})
+
+test('World Model Patch v2 rejects subtree hitchhiking and accepts independently supported known leaves', () => {
+  const partial = {
+    op: 'ADD_TYPE',
+    target: { kind: 'species', species_name: 'Species-A' },
+    type: { name: 'Type-B', capabilities: { can_produce_ova: true, can_carry_pregnancy: false } },
+  }
+  assert.throws(() => guardV2(partial, v2ExistingModel(), 'Species-A 包含 Type-B 类型；Type-B 产生卵子。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  const complete = {
+    ...partial,
+    type: {
+      ...partial.type,
+      description: 'Type-B is a stable reproductive class.',
+      reproduction_rules: { gestation: '孕期为三月。' },
+      lifecycle: { maturation: 'Type-B reaches maturity at maturity age.' },
+      special_rules: ['Type-B follows the stable rule.'],
+      reproductive_mechanisms: [{ key: 'mechanism-b', label: '路径B' }],
+    },
+  }
+  assert.doesNotThrow(() => guardV2(
+    complete,
+    v2ExistingModel(),
+    'Species-A 包含 Type-B 类型。Species-A 的 Type-B 产生卵子且不能怀孕。Species-A 的 Type-B 是稳定生殖分类。Species-A 的 Type-B 孕期为三月。Species-A 的 Type-B 达到成熟年龄。Species-A 的 Type-B 遵循稳定规则。Species-A 的 Type-B 路径B。',
+  ))
+})
+
+test('World Model Patch v2 evidence guard keeps NO-OP unproved and validates ADD/CHANGE scope', () => {
+  const existing = v2ExistingModel()
+  assert.doesNotThrow(() => guardV2(
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'existing rule' },
+    existing,
+    '',
+  ))
+  assert.doesNotThrow(() => guardV2(
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: '新规则' },
+    existing,
+    'Species-A 的 Type-A 记录新规则。',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'new rule' },
+    existing,
+    '',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [{ op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'new rule' }] },
+    existing,
+    { world_model: existing },
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'new rule' },
+    existing,
+    '某个角色 Species-A Type-A has new rule.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'new rule' },
+    existing,
+    'Species-A and Type-A are mentioned without a binding rule.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+})
+
+test('World Model Patch v2 evidence guard validates collections, unknowns, exceptions, and projection adds', () => {
+  const existing = v2ExistingModel()
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: '新特殊规则' },
+    existing,
+    'Species-A 的 Type-A 特殊规则为新特殊规则。',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: 'new special rule' },
+    existing,
+    'A different fact is recorded.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_MECHANISM', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, mechanism: { key: 'mechanism-b', pathway: 'mechanism-b pathway', carrying_compatibility: true } },
+    existing,
+    'Species-A 的 Type-A 的 mechanism-b pathway 已支持，但兼容性未说明。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_MECHANISM', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, mechanism: { key: 'mechanism-b', label: '标签B', pathway: '路径B', carrying_compatibility: true, world_model_rule_refs: ['孕期规则'] } },
+    existing,
+    'Species-A 的 Type-A 的 mechanism-b 标签B路径B支持携带妊娠，相关规则为孕期规则。',
+  ))
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_EXCEPTION', exception: { statement: 'Species-A 存在世界级例外。', applies_to: 'Species-A' } },
+    existing,
+    'Species-A 存在世界级例外。',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_EXCEPTION', exception: { statement: 'Species-A 存在世界级例外。', applies_to: 'Species-A' } },
+    existing,
+    '某个角色经历了 Species-A 的单一个体例外。',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_UNKNOWN', unknown: 'Species-A mechanism remains unresolved.' },
+    existing,
+    'World-level Species-A mechanism remains unresolved.',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_UNKNOWN', unknown: 'A missing capability is worth investigating.' },
+    existing,
+    '',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: 'unsupported sibling rule' },
+    existing,
+    '',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => applyWorldModelPatchV2EvidenceGuard(
+    {
+      schema_version: 2,
+      operations: [
+        { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'existing rule' },
+        { op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: 'unsupported sibling rule' },
+      ],
+    },
+    existing,
+    {},
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  const projectionRule = {
+    schema_version: 1,
+    mechanism_key: 'mechanism-b',
+    development_concern_key: 'concern-b',
+    development_kind: 'possible_biological_change',
+    trigger: { kind: 'story_time_reached', target_story_time: { day_index: 10 } },
+  }
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'World rule mechanism-b supports concern-b possible_biological_change with story_time_reached target story day 10.',
+  ))
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'No permitted source supports this projection.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'The mechanism-b projection mechanism is supported.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'The development kind possible_biological_change is supported, but the trigger story_time_reached target is not established.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'An unrelated fact contains the number 10.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+    existing,
+    'A separate duration field is 10 days; no target story time is provided.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  const projectionRuleWithCapability = {
+    ...projectionRule,
+    requirements: { capabilities: [{ key: 'can_carry_pregnancy', equals: true }] },
+  }
+  assert.throws(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRuleWithCapability },
+    existing,
+    'World rule mechanism-b supports concern-b possible_biological_change with story_time_reached target story day 10; can_carry_pregnancy is listed, and an unrelated flag is true.',
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => guardV2(
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRuleWithCapability },
+    existing,
+    'World rule mechanism-b supports concern-b possible_biological_change with story_time_reached target story day 10; capability can_carry_pregnancy equals true.',
+  ))
+  assert.throws(() => applyWorldModelPatchV2EvidenceGuard(
+    [{
+      operation: { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: 'invented rule' },
+      classification: 'NO-OP',
+    }],
+    existing,
+    {},
+  ), error => error?.code === 'WORLD_MODEL_PATCH_V2_INVALID')
+})
+
+test('World Model Patch v2 sparse merge preserves Existing data and applies independent operations', () => {
+  const existing = v2ExistingModel()
+  const snapshot = structuredClone(existing)
+  assert.deepEqual(mergeV2([]), normalizeWorldModel(existing, { strict: true, allowGeneratedProjectionRuleIds: true }))
+  assert.deepEqual(mergeV2([
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_produce_sperm'], value: false },
+  ]), normalizeWorldModel(existing, { strict: true, allowGeneratedProjectionRuleIds: true }))
+
+  const result = mergeV2([
+    { op: 'ADD_SPECIES', species: { name: 'Species-B', description: '新物种描述' } },
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_produce_ova'], value: true },
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: '更新妊娠规则' },
+    { op: 'SET_FIELD', target: { kind: 'species', species_name: 'Species-A' }, path: ['description'], value: '更新物种描述' },
+    { op: 'SET_FIELD', target: { kind: 'world' }, path: ['medical_context', 'care_level'], value: '更新护理等级' },
+    { op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B', description: '新类型描述' } },
+    { op: 'ADD_SPECIAL_RULE', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, value: '新特殊规则' },
+    { op: 'ADD_MECHANISM', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, mechanism: { key: 'mechanism-b', label: '标签B', pathway: '路径B' } },
+    { op: 'ADD_EXCEPTION', exception: { statement: 'Species-A 存在世界级例外。', applies_to: 'Species-A' } },
+    { op: 'ADD_UNKNOWN', unknown: 'Species-A 的机制仍未确定。' },
+  ], existing, '【Species-B】存在，描述为新物种描述。Species-A 的 Type-B 是稳定生物类型，描述为新类型描述。Species-A 的 Type-A 能产生卵子，更新妊娠规则，描述为更新物种描述。World medical care_level 更新护理等级。Species-A 的 Type-A 新特殊规则。Species-A 的 Type-A 的 mechanism-b 标签B路径B。Species-A 存在世界级例外。Species-A 的机制仍未确定。')
+
+  assert.equal(result.species.find((item) => item.name === 'Species-A').description, '更新物种描述')
+  assert.equal(result.species.find((item) => item.name === 'Species-A').biological_types.find((item) => item.name === 'Type-A').capabilities.can_produce_ova, true)
+  assert.equal(result.species.find((item) => item.name === 'Species-A').biological_types.find((item) => item.name === 'Type-A').reproduction_rules.gestation, '更新妊娠规则')
+  assert.equal(result.species.find((item) => item.name === 'Species-A').biological_types.find((item) => item.name === 'Type-A').special_rules.length, 2)
+  assert.equal(result.species.find((item) => item.name === 'Species-A').biological_types.find((item) => item.name === 'Type-A').reproductive_mechanisms.length, 2)
+  assert.equal(result.medical_context.care_level, '更新护理等级')
+  assert.equal(result.medical_context.childbirth_difficulty, 'existing difficulty')
+  assert.equal(result.medical_context.evidence, 'existing evidence')
+  assert.equal(result.species.find((item) => item.name === 'Species-A').biological_types.find((item) => item.name === 'Type-A').reproduction_rules.cycle, null)
+  assert.deepEqual(existing, snapshot)
+})
+
+test('World Model Patch v2 sparse merge is atomic and rejects untrusted classified input', () => {
+  const existing = v2ExistingModel()
+  const snapshot = structuredClone(existing)
+  assert.throws(() => mergeWorldModelPatchV2(existing, [
+    { operation: { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['description'], value: 'forged' }, classification: 'NO-OP' },
+  ]), error => error?.code === 'WORLD_MODEL_PATCH_V2_INVALID')
+  assert.deepEqual(existing, snapshot)
+
+  assert.throws(() => mergeV2([
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['description'], value: 'accepted first' },
+    { op: 'REMOVE', target: { kind: 'species', species_name: 'Species-A' } },
+  ], existing, 'Species-A 的 Type-A description accepted first.'), error => error?.message === 'WORLD_MODEL_PATCH_V2_OPERATION_UNSUPPORTED')
+  assert.deepEqual(existing, snapshot)
+})
+
+test('World Model Patch v2 sparse merge is independent of operation order and keeps v1 merge separate', () => {
+  const existing = v2ExistingModel()
+  const operations = [
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['description'], value: '有序描述' },
+    { op: 'SET_FIELD', target: { kind: 'world' }, path: ['medical_context', 'care_level'], value: '有序护理' },
+  ]
+  const evidence = 'Species-A 的 Type-A 描述为有序描述。World medical care_level 为有序护理。'
+  const forward = mergeV2(operations, existing, evidence)
+  const reverse = mergeV2([...operations].reverse(), existing, evidence)
+  assert.deepEqual(reverse, forward)
+  assert.throws(() => mergeV2([
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: '第一次变更' },
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['reproduction_rules', 'gestation'], value: '第二次变更' },
+  ], existing, 'Species-A 的 Type-A 第一次变更 第二次变更。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT')
+  const v1 = mergeWorldModelPatch(existing, { schema_version: 1, add: {}, update: {} })
+  assert.deepEqual(v1, normalizeWorldModel(existing, { allowGeneratedProjectionRuleIds: true }))
+})
+
+test('World Model Patch v2 sparse merge applies projection generated identity and final consistency', () => {
+  const existing = v2ExistingModel()
+  const projectionRule = {
+    schema_version: 1,
+    mechanism_key: 'mechanism-b',
+    development_concern_key: 'concern-b',
+    development_kind: 'possible_biological_change',
+    trigger: { kind: 'story_time_reached', target_story_time: { day_index: 10 } },
+  }
+  const result = mergeV2([
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A' }, path: ['capabilities', 'can_carry_pregnancy'], value: false },
+    { op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule },
+  ], existing, 'Species-A 的 Type-A 不能妊娠。World rule mechanism-b supports concern-b possible_biological_change with story_time_reached target story day 10.')
+  const type = result.species[0].biological_types[0]
+  assert.equal(type.reproduction_rules.pregnancy_or_carrying, '无')
+  assert.equal(type.reproduction_rules.gestation, '无')
+  assert.equal(result.projection_rules.length, 1)
+  assert.match(result.projection_rules[0].projection_rule_id, /^projection_rule_/u)
+  assert.throws(() => mergeV2([
+    { op: 'SET_FIELD', target: { kind: 'biological_type', species_name: 'Species-A', type_name: 'Missing-Type' }, path: ['description'], value: 'invalid' },
+  ], existing, 'Species-A Missing-Type description invalid.'), error => error?.message === 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND')
+})
+
+test('World Model Patch v2 sorts only appended projections deterministically', () => {
+  const makeRule = (suffix, day) => ({
+    schema_version: 1,
+    mechanism_key: `mechanism-${suffix}`,
+    development_concern_key: `concern-${suffix}`,
+    development_kind: 'possible_biological_change',
+    trigger: { kind: 'story_time_reached', target_story_time: { day_index: day } },
+  })
+  const evidenceFor = (rule) => `World rule ${rule.mechanism_key} supports ${rule.development_concern_key} ${rule.development_kind} with story_time_reached target story day ${rule.trigger.target_story_time.day_index}.`
+  const existing = v2ExistingModel()
+  const ruleA = makeRule('a', 10)
+  const ruleB = makeRule('b', 20)
+  const ruleE = makeRule('e', 5)
+  const evidence = [ruleA, ruleB, ruleE].map(evidenceFor).join(' ')
+  const forward = mergeV2([
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleA },
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleB },
+  ], existing, evidence)
+  const reverse = mergeV2([
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleB },
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleA },
+  ], existing, evidence)
+  assert.deepEqual(forward, reverse)
+
+  const existingWithProjection = normalizeWorldModel({ ...existing, projection_rules: [ruleE] }, { allowGeneratedProjectionRuleIds: true })
+  const preserved = mergeV2([
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleA },
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleB },
+  ], existingWithProjection, evidence)
+  assert.equal(preserved.projection_rules[0].projection_rule_id, existingWithProjection.projection_rules[0].projection_rule_id)
+  assert.deepEqual(
+    preserved.projection_rules.slice(1).map((item) => item.projection_rule_id),
+    preserved.projection_rules.slice(1).map((item) => item.projection_rule_id).sort(),
+  )
+
+  const mixedOperations = [
+    { op: 'ADD_EXCEPTION', exception: { statement: 'Species-A 存在另一个世界级例外。', applies_to: 'Species-A' } },
+    { op: 'ADD_UNKNOWN', unknown: 'Species-A 的另一个机制仍未确定。' },
+    { op: 'ADD_PROJECTION_RULE', projection_rule: ruleA },
+  ]
+  const mixedEvidence = `${evidenceFor(ruleA)} Species-A 存在另一个世界级例外。Species-A 的另一个机制仍未确定。`
+  assert.deepEqual(
+    mergeV2(mixedOperations, existing, mixedEvidence),
+    mergeV2([...mixedOperations].reverse(), existing, mixedEvidence),
   )
 })
 

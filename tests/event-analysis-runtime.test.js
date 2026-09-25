@@ -226,6 +226,9 @@ function createFixture({
         ? async () => ({ schema_version: 1, add: {}, update: {} })
         : configuredAnalyzer.analyzeWorldModelPatch ??
           (async () => ({ schema_version: 1, add: {}, update: {} }))),
+    analyzeWorldModelPatchV2:
+      analyzer?.analyzeWorldModelPatchV2 ??
+      (async () => ({ patch: { schema_version: 2, operations: [] }, classified: [] })),
   };
   const runtime = createRuntime({
     adapter,
@@ -3337,13 +3340,13 @@ test("manual World Patch uses the same additional retry policy", async () => {
       { message_id: "patch-target-manual", floor: 2, content: "补充世界规则", role: "assistant" },
     ],
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
         if (patchCalls === 1) throw Object.assign(new Error("PATCH_SCHEMA"), {
           code: "WORLD_PATCH_SCHEMA_INVALID",
           analysis_stage: "schema_validation",
         });
-        return {schema_version: 1, add: {}, update: {}};
+        return {patch: {schema_version: 2, operations: []}, classified: []};
       },
     },
   });
@@ -4526,10 +4529,10 @@ test("World Patch failure retries Patch resolution on the next Character Floor",
       { message_id: "patch-failed", floor: 2, content: "新增世界规则：失败一次", role: "assistant" },
     ],
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
         if (patchCalls === 1) throw new Error("PATCH_FAILED");
-        return { schema_version: 1, add: {}, update: {} };
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
       },
       async analyzeFloor() {
         eventCalls += 1;
@@ -5288,8 +5291,8 @@ test("plugin reload rebuilds empty derived state before analyzing a new Floor", 
       async analyzeWorldModel() {
         return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
       },
-      async analyzeWorldModelPatch() {
-        return { schema_version: 1, add: {}, update: {} };
+      async analyzeWorldModelPatchV2() {
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
       },
       async analyzeFloor(request) {
         input = request.analysisInput;
@@ -7027,6 +7030,25 @@ test("automatic analysis runs Initial World Analysis before Character/Event Anal
   fixture.runtime.destroy();
 });
 
+test("Full World Analysis does not receive an Existing baseline field", async () => {
+  let receivedInput = null;
+  const fixture = createFixture({
+    messages: [{ message_id: "current-floor", floor: 6, content: "独立完整分析", role: "assistant" }],
+    analyzer: {
+      async analyzeWorldModel({ analysisInput }) {
+        receivedInput = analysisInput;
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A" }] });
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentWorldModelFull({
+    analysisInput: { world_model: normalizeWorldModel({ schema_version: 1, species: [{ name: "Existing-only" }] }) },
+  });
+  assert.equal(Object.hasOwn(receivedInput, "world_model"), false);
+  fixture.runtime.destroy();
+});
+
 test("World Analysis failure is fail-closed and does not run Character/Event Analysis", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
@@ -7075,6 +7097,32 @@ test("existing World Model is reused without an extra World AI request", async (
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: false });
   assert.equal(worldCalls, 0);
   assert.deepEqual(receivedWorld, worldModel);
+  fixture.runtime.destroy();
+});
+
+test("automatic World update signal uses v2 Supplement while preserving Full routing", async () => {
+  const messages = [
+    { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+    { message_id: "current-floor", floor: 6, content: "新增世界规则", role: "assistant" },
+  ];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A" }] });
+  let patchCalls = 0;
+  let fullCalls = 0;
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() { fullCalls += 1; return worldModel; },
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
+      },
+      async analyzeFloor() { return { events: [] }; },
+    },
+  });
+  await seedWorldOwner(fixture, worldModel);
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: false });
+  assert.equal(patchCalls, 1);
+  assert.equal(fullCalls, 0);
   fixture.runtime.destroy();
 });
 
@@ -7230,21 +7278,30 @@ test("Manual Character Analysis skips a stale current World and reuses a valid i
   fixture.runtime.destroy();
 });
 
-test("World Patch Analysis merges deterministically and saves only the current Floor", async () => {
+test("World Patch Analysis merges v2 sparsely and saves only the current Floor", async () => {
   const messages = [
     { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },
-    { message_id: "world-b-floor", floor: 6, content: "新增世界规则：出现新物种。", role: "assistant" },
+    { message_id: "world-b-floor", floor: 6, content: "Species-A 中 Type-B 是少数但稳定存在的 biological type。", role: "assistant" },
   ];
-  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "世界 A" }] });
-  const worldBSpecies = { name: "世界 B", description: "新增物种" };
+  const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A", biological_types: [{ name: "Type-A" }] }] });
   let patchCalls = 0;
   let receivedWorld = null;
   const fixture = createFixture({
     messages,
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
-        return { schema_version: 1, add: { species: [worldBSpecies] }, update: {} };
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{
+              op: "ADD_TYPE",
+              target: { kind: "species", species_name: "Species-A" },
+              type: { name: "Type-B" },
+            }],
+          },
+          classified: [],
+        };
       },
       async analyzeFloor({ world_model }) { receivedWorld = world_model; return { events: [] }; },
     },
@@ -7257,7 +7314,7 @@ test("World Patch Analysis merges deterministically and saves only the current F
   });
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
   assert.equal(patchCalls, 1);
-  assert.deepEqual(receivedWorld.species.map(item => item.name), ["世界 A", "世界 B"]);
+  assert.deepEqual(receivedWorld.species[0].biological_types.map(item => item.name), ["Type-A", "Type-B"]);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, receivedWorld);
   fixture.runtime.destroy();
@@ -7273,11 +7330,17 @@ test("invalid World Patch fails closed without replacing the existing World Mode
   const fixture = createFixture({
     messages,
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         return {
-          schema_version: 1,
-          add: {},
-          update: { species: [{ name: "不存在的旧物种", description: "不能静默替换" }] },
+          patch: {
+            schema_version: 2,
+            operations: [{
+              op: "ADD_TYPE",
+              target: { kind: "species", species_name: "Missing-Species" },
+              type: { name: "Type-B" },
+            }],
+          },
+          classified: [],
         };
       },
       async analyzeFloor() {
@@ -7299,6 +7362,147 @@ test("invalid World Patch fails closed without replacing the existing World Mode
   assert.equal(eventCalls, 0);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
   assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  fixture.runtime.destroy();
+});
+
+test("World Patch v2 rejects legacy v1 responses without fallback or persistence", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "新增世界规则", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        return { patch: { schema_version: 1, add: {}, update: {} }, classified: [] };
+      },
+      async analyzeFloor() { throw new Error("EVENT_MUST_NOT_RUN"); },
+    },
+  });
+  const existing = normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A" }] });
+  await seedWorldOwner(fixture, existing);
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true }),
+    error => error?.code === "WORLD_MODEL_UNAVAILABLE",
+  );
+  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, existing);
+  fixture.runtime.destroy();
+});
+
+test("World Patch v2 sparse SET_FIELD preserves untouched Existing data and writes one complete model", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "Species-A 的 Type-A 可以孕育。", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{
+              op: "SET_FIELD",
+              target: { kind: "biological_type", species_name: "Species-A", type_name: "Type-A" },
+              path: ["capabilities", "can_carry_pregnancy"],
+              value: true,
+            }],
+          },
+          classified: [],
+        };
+      },
+    },
+  });
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: "Species-A",
+      biological_types: [{
+        name: "Type-A",
+        capabilities: { can_carry_pregnancy: null, can_produce_ova: true },
+        reproduction_rules: { gestation: "Existing gestation" },
+        special_rules: ["Existing special rule"],
+      }],
+    }],
+  });
+  await seedWorldOwner(fixture, existing);
+  const beforeWrites = fixture.saveFloorCalls();
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: { character: { description: "Species-A 的 Type-A 可以孕育。" } },
+    trigger: "manual-patch",
+  });
+  const persisted = fixture.runtime.store.getFloor(1).world_model;
+  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
+  assert.equal(persisted.species[0].biological_types[0].capabilities.can_carry_pregnancy, true);
+  assert.equal(persisted.species[0].biological_types[0].capabilities.can_produce_ova, true);
+  assert.equal(persisted.species[0].biological_types[0].reproduction_rules.gestation, "Existing gestation");
+  assert.deepEqual(persisted.species[0].biological_types[0].special_rules, ["Existing special rule"]);
+  assert.equal(persisted.schema_version, 1);
+  fixture.runtime.destroy();
+});
+
+test("World Patch v2 empty operations preserve the complete Existing model", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "新增世界规则但没有合法变化", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
+      },
+    },
+  });
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "Species-A", biological_types: [{ name: "Type-A", special_rules: ["Keep me"] }] }],
+    unknowns: ["Existing unknown"],
+  });
+  await seedWorldOwner(fixture, existing);
+  const beforeWrites = fixture.saveFloorCalls();
+  await fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {}, trigger: "manual-patch" });
+  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
+  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
+  fixture.runtime.destroy();
+});
+
+test("World Patch v2 persists projection ADD with a generated canonical identity", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "新增 projection rule", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{
+              op: "ADD_PROJECTION_RULE",
+              projection_rule: {
+                schema_version: 1,
+                mechanism_key: "mechanism-b",
+                development_concern_key: "concern-b",
+                development_kind: "possible_biological_change",
+                trigger: { kind: "story_time_reached", target_story_time: { day_index: 10 } },
+              },
+            }],
+          },
+          classified: [],
+        };
+      },
+    },
+  });
+  const existing = normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A" }] });
+  await seedWorldOwner(fixture, existing);
+  const evidence = "World rule mechanism-b supports concern-b possible_biological_change with story_time_reached target story day 10.";
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: { character: { description: evidence } },
+    trigger: "manual-patch",
+  });
+  const persisted = fixture.runtime.store.getFloor(1).world_model;
+  assert.match(persisted.projection_rules[0].projection_rule_id, /^projection_rule_/u);
+  assert.equal(Object.hasOwn(persisted.projection_rules[0], "raw_projection_rule_id"), false);
+  assert.equal(persisted.schema_version, 1);
   fixture.runtime.destroy();
 });
 
@@ -7448,10 +7652,10 @@ test("World single-flight deduplicates Auto World and Manual Patch API requests"
   const fixture = createFixture({
     messages: worldFloorMessages(),
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
         await gate.pending;
-        return { schema_version: 1, add: {}, update: {} };
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
       },
       async analyzeFloor() {
         eventCalls += 1;
@@ -7505,10 +7709,10 @@ test("Auto Analysis reuses an in-flight Manual Patch request without a second Wo
   const fixture = createFixture({
     messages: worldFloorMessages(),
     analyzer: {
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
         await gate.pending;
-        return { schema_version: 1, add: {}, update: {} };
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
       },
       async analyzeFloor() { return { events: [] }; },
     },
@@ -7538,10 +7742,10 @@ test("Manual Full and Manual Patch share one World persistence job", async () =>
         await gate.pending;
         return worldB;
       },
-      async analyzeWorldModelPatch() {
+      async analyzeWorldModelPatchV2() {
         patchCalls += 1;
         await gate.pending;
-        return { schema_version: 1, add: {}, update: {} };
+        return { patch: { schema_version: 2, operations: [] }, classified: [] };
       },
     },
   });

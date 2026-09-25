@@ -723,6 +723,31 @@ export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
   'sparse section 中缺少字段永远表示不修改；complete update.species 中 Existing 已知事实消失会被视为删除风险。不要求事实首次出现于 current Floor；不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
 ].join('\n')
 
+// Compatibility-only v1 contract. The Runtime still consumes this path until
+// the v2 merge/persistence wiring is approved in Phase 7.
+export const WORLD_MODEL_PATCH_V2_TASK_PROMPT =
+  '请将 Existing World Model 作为 TARGET + comparison baseline，完整审阅当前 permitted World Analysis evidence。Existing 本身不是 evidence，不能证明任何新增或修改事实。严格依序执行 Fact Discovery → Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate。Candidate Ledger 必须穷举 missing species、missing biological types（包括 minority/rare types）、missing capability knowledge、reproductive mechanisms/rules、lifecycle、special_rules、exceptions、unknowns、medical_context、projection_rules、evidence-supported corrections 与 compatible completions。每个 species 必须先枚举全部 evidence-supported type candidates，再逐个执行 Species Binding → Exclusion Gate → Stability Gate → Biological/Reproductive Classification Gate → Evidence Sufficiency → Type Creation；发现多数 type 后不得停止 minority/rare type discovery。逐个将候选分类为 UNCHANGED、ADD、CHANGE 或 EXCLUDED；只有合法 evidence-supported ADD/CHANGE 才能进入 operations。Existing 中已经正确且未变化的事实不要返回。只有全部候选完成审查且没有合法 ADD/CHANGE 时，才允许 operations 为空。'
+
+export const WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT = [
+  '只输出一个 JSON 对象：{"schema_version":2,"operations":[]}。operations 只允许 ADD_SPECIES、ADD_TYPE、SET_FIELD、ADD_SPECIAL_RULE、ADD_MECHANISM、ADD_EXCEPTION、ADD_UNKNOWN、ADD_PROJECTION_RULE；不得输出其它 operation。',
+  '顶层唯一结构是 {"schema_version":2,"operations":[...]}。以下是 compact operation grammar；示例只说明 JSON shape，不是 domain fixture。target 只有三种形状：world 为 {"kind":"world"}；species 为 {"kind":"species","species_name":"Species-A"}；biological_type 为 {"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"}。不得使用 array index、target 之外的顶层 species_name/type_name、name mutation 或额外 target key。',
+  'ADD_SPECIES 的精确形状：{"op":"ADD_SPECIES","species":{"name":"Species-B","description":null,"biological_types":[]}}。species 只允许 canonical species entity fields；Entity Creation B 可以填入新 species 自身 subtree，但不得复制 Existing species。',
+  'ADD_TYPE 的精确形状：{"op":"ADD_TYPE","target":{"kind":"species","species_name":"Species-A"},"type":{"name":"Type-B","description":null}}。species_name 必须位于 target；type 不得把 Existing sibling data 带入。type 的其它 subtree fields 只能引用现有 World Model canonical contract。',
+  'SET_FIELD 的精确形状按 target 分为：{"op":"SET_FIELD","target":{"kind":"species","species_name":"Species-A"},"path":["description"],"value":"..."}；{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["capabilities","can_carry_pregnancy"],"value":true}；{"op":"SET_FIELD","target":{"kind":"world"},"path":["medical_context","care_level"],"value":"..."}。path 必须是 JSON string array，不是 dotted string、JSON Patch path 或 field/key；value 是 candidate new value，不输出 old_value。',
+  'ADD_SPECIAL_RULE 的精确形状：{"op":"ADD_SPECIAL_RULE","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"value":"..."}。',
+  'ADD_MECHANISM 的精确形状：{"op":"ADD_MECHANISM","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"mechanism":{"key":"...","label":"...","pathway":"...","carrying_compatibility":null,"world_model_rule_refs":[],"evidence":[]}}。只使用当前 validator 已允许的 mechanism fields，不扩大 schema。',
+  'ADD_EXCEPTION 的精确形状：{"op":"ADD_EXCEPTION","exception":{"statement":"...","applies_to":null,"evidence":null}}。exception.evidence 是 string|null，不是 array。',
+  'ADD_UNKNOWN 的精确形状：{"op":"ADD_UNKNOWN","unknown":"..."}。unknown 是 string，不是 object。',
+  'ADD_PROJECTION_RULE 的精确形状：{"op":"ADD_PROJECTION_RULE","projection_rule":{...existing raw projection rule contract...}}。只携带现有 raw projection rule fields；不得包含 projection_rule_id，generated ID 由 deterministic pipeline 创建。',
+  '这是 delta-only Patch：不要返回完整 Existing World Model、完整 Existing species、unchanged facts、NO_OP operation 或 old_value。不要输出 remove、invalidate、Structural Reclassification。',
+  'ADD_SPECIES 只新增 Existing 中不存在的 species，并可携带该新 species 自身的 evidence-supported initial subtree；不得复制其它 species 或 unchanged data。ADD_TYPE 只新增指定 species 下的 species-local biological type，并可携带该新 type 自身的 evidence-supported subtree。type existence 不自动证明 capability、reproduction rule、lifecycle、mechanism 或 special_rule；每个 nested known leaf 都需要独立 evidence。',
+  'SET_FIELD 只输出 new value，不输出 old_value、JSON Patch path、array index 或完整 subtree。target 使用 canonical identity。允许的 path 只有：biological_type 的 capabilities.<CAPABILITY_KEY>、reproduction_rules.<WORLD_RULE_KEY>、lifecycle.maturation、lifecycle.aging、description；species 的 description；world 的 medical_context.childbirth_difficulty、medical_context.care_level、medical_context.evidence。不得修改 identity/name、schema_version、collection 或以 null 删除已知事实。',
+  'ADD_SPECIAL_RULE 只新增一个 evidence-supported semantic rule；ADD_MECHANISM 只新增有 reliable stable key 的 reproductive mechanism，不更新 Existing mechanism；ADD_EXCEPTION 只用于 evidence-supported world-level exception；ADD_UNKNOWN 只用于 evidence 已触及的 world-level unresolved phenomenon。individual-only 或 scope ambiguous 的事实必须排除。',
+  'ADD_PROJECTION_RULE 只允许新增 raw projection rule。不得输出 projection_rule_id；由 deterministic pipeline 生成。Projection update 仍 unsupported。projection rule 的实际 semantic leaves 必须分别有 evidence，不能由单个 mechanism_key 或其它 sibling fact hitchhike。',
+  'CHANGE 只需 current permitted evidence 直接建立与 target scope compatible、且替代 Existing old value 的 candidate fact；不要求出现“修正/其实/原来/应为”等关键词。Existing baseline 不能自证 CHANGE。没有 evidence 的 capability 保持未知/null，但不要把 null 当作删除 operation。',
+  'operations 为空只能在完成上述完整 review 后表示没有合法 ADD/CHANGE；不能因为 Existing 非空而提前返回 empty。',
+].join('\n')
+
 export function buildWorldModelMessages(
   analysisInput = {},
   promptSettings = {},
@@ -768,6 +793,29 @@ export function buildWorldModelPatchMessages(
     `【World Model Patch 任务】\n${WORLD_MODEL_PATCH_TASK_PROMPT}`,
     formatAnalysisPromptTail(settings, names),
     `【World Model Patch 输出契约】\n${WORLD_MODEL_PATCH_OUTPUT_CONTRACT}`,
+  ]))
+  addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
+  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
+  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input, names))
+  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
+  return messages
+}
+
+export function buildWorldModelPatchMessagesV2(
+  analysisInput = {},
+  promptSettings = {},
+) {
+  const settings = normalizeAnalysisPrompt(promptSettings)
+  const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
+  const names = inputNames(input)
+  const messages = []
+  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
+  addMessage(messages, 'system', joinPromptSections([
+    `【BioWeave World Model Supplement v2 正式分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS}`,
+    formatCommonAnalysisPrompt(settings, names),
+    `【World Model Supplement v2 任务】\n${WORLD_MODEL_PATCH_V2_TASK_PROMPT}`,
+    formatAnalysisPromptTail(settings, names),
+    `【World Model Supplement v2 输出契约】\n${WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT}`,
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))

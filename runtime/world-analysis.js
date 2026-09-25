@@ -1,6 +1,6 @@
 import {
   buildWorldModelViewModel,
-  mergeWorldModelPatch,
+  mergeWorldModelPatchV2,
   normalizeStoredWorldModel,
   summarizeAnalysisInput,
 } from "../ai/analyzer.js";
@@ -313,7 +313,7 @@ export function createWorldAnalysis({
       if (!(await targetVersionIsCurrent(target))) throw requestAbortedError();
       if (mode === "full" && typeof analyzer?.analyzeWorldModel !== "function")
         throw worldModelUnavailableError(new Error("WORLD_ANALYZER_UNAVAILABLE"), target);
-      if (mode === "patch" && typeof analyzer?.analyzeWorldModelPatch !== "function")
+      if (mode === "patch" && typeof analyzer?.analyzeWorldModelPatchV2 !== "function")
         throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
       return runAnalysisStageWithRetry({
         domain: "world",
@@ -326,8 +326,10 @@ export function createWorldAnalysis({
           let meta;
           let model;
           if (mode === "full") {
+            const fullAnalysisInput = {...(analysisInput ?? {})};
+            delete fullAnalysisInput.world_model;
             model = normalizeStoredWorldModel(await analyzer.analyzeWorldModel({
-              analysisInput,
+              analysisInput: fullAnalysisInput,
               floor_version: target.version,
               authoritative_floor_version: target.version,
               signal,
@@ -341,12 +343,21 @@ export function createWorldAnalysis({
               error.analysis_stage = "world_preflight";
               throw error;
             }
-            model = mergeWorldModelPatch(resolved.model, await analyzer.analyzeWorldModelPatch({
-              analysisInput: {...(analysisInput ?? {}), world_model: cloneWorldValue(resolved.model)},
+            const patchAnalysisInput = {
+              ...(analysisInput ?? {}),
+              world_model: cloneWorldValue(resolved.model),
+            };
+            const patchResult = await analyzer.analyzeWorldModelPatchV2({
+              analysisInput: patchAnalysisInput,
               floor_version: target.version,
               authoritative_floor_version: target.version,
               signal,
-            }));
+            });
+            model = mergeWorldModelPatchV2(
+              resolved.model,
+              patchResult?.patch ?? patchResult,
+              patchAnalysisInput,
+            );
             meta = {
               ...cloneWorldValue(resolved.meta ?? {}),
               source: "world-patch-analysis",
