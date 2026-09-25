@@ -65,6 +65,28 @@ ID，Character Evidence 仍可 transient 存在，`character_id` 必须为 `null
 `identity_status=new|unresolved`，由 Runtime 后续分配 canonical ID。稳定人物
 证据不是当前 Floor Event，Character Evidence 也不新增 Chat/Floor 持久化字段。
 
+### Character identity output contract
+
+AI 只负责 participant identity classification，不拥有 canonical identity authority。
+`identity_context` 是唯一的 canonical identity candidate projection：
+
+- `existing` 必须原样引用其中唯一匹配的 canonical `character_id`；不存在、非法或
+  不允许引用的 ID 由 Runtime 拒绝，不能静默接受；
+- `new` / `unresolved` 必须使用 `character_id: null`。response-local mention token
+  只在同一 AI response 内引用同一人物，不跨分析持久化、不成为 registry key，也没有
+  固定字面格式；生产代码不得依赖编号 token；
+- 同名、alias collision、多候选或证据冲突必须 `unresolved`，禁止 first-match-wins。
+
+`display_name`、`aliases[]`、mention token、`event_role`、gender、physiological sex、
+species、biological_type、Tracking eligibility 和 UI visibility 都不能替代
+canonical `character_id`。正式 ID、participant reference canonicalization、registry
+registration、Event source 和 Floor ownership 全部由 Runtime 负责。
+
+Character Evidence 只能提供 semantic identity/biology evidence，不能创建 ID、替代
+registry、创建 Tracking Subject 或自动建立 alias。一次 narrative 称呼也不能自动
+持久化为 alias；只有明确 alias establishment evidence 或用户手动编辑才可进入
+`aliases[]`。
+
 ## 3. Character selection contract
 
 只有用户在当前 Chat 的分析来源设置中选择的 Character Card 字段可以进入 DTO。未选择的字段不得进入实际 API request、Prompt Preview 或 token estimate。展示给模型时使用中文来源说明，不展示原始对象式的 `character:`、`description:`、`greetings:` 结构。

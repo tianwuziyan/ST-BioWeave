@@ -449,11 +449,11 @@ valid and whether the Event can contribute to derived state.
 `{schema_version: 1, entities: {[character_id]: entry}}`. Each entry contains
 `character_id`, `display_name`, and `aliases[]`. It is a cumulative canonical
 identity snapshot owned by that successful Floor. It is not the same as the
-There is no Chat-level `character_registry` persistence layer.
+Tracking Subject projection, and there is no Chat-level `character_registry`
+persistence layer.
 
-The only formal new `character_id` shape is `char_` plus six decimal digits,
-from `char_000001` through `char_999999`. Runtime allocates it from the
-selected previous surviving snapshot; it does not use a Chat-global counter,
+Runtime allocates opaque canonical `character_id` values from the selected
+previous surviving snapshot; it does not use a Chat-global counter,
 name-derived value, UUID, timestamp, random value, migration, or tombstone.
 Development-era IDs are outside the current Contract and are not read or
 migrated by the production identity path.

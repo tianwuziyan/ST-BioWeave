@@ -36,13 +36,22 @@ BioWeave 的核心思路是把故事中的生理信息拆成不同可信度和�
 | 数据层 | 含义 | 当前保存位置 |
 | --- | --- | --- |
 | BiologicalEvent | 剧情中发生过的生理事实或候选事实；完整 NSFW 历史事实的单一来源 | 产生事件的楼层消息 extra.bioweave，或对应 swipe 的 extra.bioweave |
-| Tracking Subject Registry | 已进入妊娠相关追踪流程的人物索引；Subject 不复制 Event，只保存稳定人物信息和 event_id 引用 | 当前 Chat 的 `chat_metadata.bioweave` |
+| Canonical Character Registry | Floor-owned 的 canonical identity snapshot；不等于 Tracking Subject 或 UI 人物列表 | 当前 Character Floor active Swipe 的 Floor data |
+| Tracking Subject Registry | 已进入妊娠相关追踪流程的人物派生索引；Subject 不复制 Event，只保存稳定人物信息和 Event 引用 | Runtime 从当前有效 Floor facts 重建的 `tracking_subjects` / `tracking_candidates` DTO |
 | Current State | 由事件按确定性规则归约出的状态 | 下一阶段的当前 Chat 数据结构 |
 | Snapshot | 用于恢复或检查的状态检查点 | 当前楼层数据和 Chat 索引 |
 | Projection | 面向后续剧情的非事实推演 | 当前楼层消息的 BioWeave 数据 |
 | World Model | 当前有效 Floor/Swipe 的物种、生物类型和世界级生殖规则 | message.extra.bioweave 或 message.swipe_info[swipe_id].extra.bioweave |
 
 插件不会把 AI 的一次输出直接当作最终事实。World Model 分析结果要经过响应解析、固定 schema、字段规范化和证据边界校验；失败时保留最后一次成功结果。
+
+BioWeave 的人物系统不是一个列表：narrative mention、canonical character identity、
+tracking subject 和 Characters UI entry 是四个不同层级。AI 只能分类 mention，Runtime
+才拥有 canonical identity authority；Registry 有人物但 UI 没有人是合法状态，只有通过
+有效 pregnancy-relevant exposure 与 capability eligibility 的 `tracking_subjects` 才会
+进入当前 Characters UI。详细身份、Evidence、Floor ownership 与数据结构见
+[事件管线规范](.trellis/spec/domain/event-pipeline.md) 和
+[数据模型](docs/DATA-MODEL.md)。
 
 ### 当前功能分层
 
@@ -284,7 +293,7 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
              → State Reducer → Current State → Snapshot → Projection → Context
 ```
 
-其中 Event 表示历史事实，Tracking Subject 是指向有效 Event 的 Chat-local 索引，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的推演。Phase 2A 只闭环到 Event、Tracking Subject 和人物/事件/总览页面；StateReducer、Snapshot、Projection、Genealogy 和完整妊娠计算保持空状态或下一阶段边界。
+其中 Event 表示历史事实，Tracking Subject 是从当前有效 Floor facts 重建的 Runtime 派生索引，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的推演。Phase 2A 只闭环到 Event、Tracking Subject 和人物/事件/总览页面；StateReducer、Snapshot、Projection、Genealogy 和完整妊娠计算保持空状态或下一阶段边界。
 
 ### Phase 2A Event / Tracking 契约
 
@@ -295,7 +304,7 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
-- 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 Registry 的原因，UI 不复制资格条件。
+- 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 `tracking_subjects` 的原因，UI 不复制资格条件。
 - 本阶段保留其它 BiologicalEvent 类型兼容，但以 pregnancy-relevant exposure 作为 Tracking gate；妊娠概率、Gestational Age、预计分娩日、完整状态归约、Snapshot、Projection 和 Genealogy 仍是空状态或下一阶段。
 
 ## AI / World Model 工作流
@@ -630,7 +639,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 
 ### 人物列表为什么不等于当前 Chat 的全部角色？
 
-人物列表只展示已经进入妊娠相关追踪流程且 `eligibility: "eligible"` 的 Tracking Subjects。角色要先由 BiologicalEvent、World Model、Narrative Evidence 和明确的 `can_carry_pregnancy` 共同支持，并存在实际 pregnancy-relevant exposure；`false` 为 ineligible，`null`/无法确认的 recipient 保留为后台 `tracking_candidates` pending，不会自动建立人物卡。UI 只展示 Registry 结果，不负责重新判断资格；Tracking 也不代表 actual conception 或 pregnancy。
+人物列表只展示已经进入妊娠相关追踪流程且 `eligibility: "eligible"` 的 Tracking Subjects。角色要先由 BiologicalEvent、World Model、Narrative Evidence 和明确的 `can_carry_pregnancy` 共同支持，并存在实际 pregnancy-relevant exposure；`false` 为 ineligible，`null`/无法确认的 recipient 保留为后台 `tracking_candidates` pending，不会自动建立人物卡。UI 只展示 Runtime 提供的 `tracking_subjects` 业务投影，不负责重新判断资格，也不直接浏览 `character_registry`；Tracking 也不代表 actual conception 或 pregnancy。
 
 ### Event 和人物卡分别保存什么？
 

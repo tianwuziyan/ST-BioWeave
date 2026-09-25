@@ -71,6 +71,8 @@ flowchart TD
 | AI input construction | `ai/input-builder.js` | AnalysisInput 收集、选择、清洗和规范化 |
 | Analyzer boundary | `ai/analyzer.js` | analyzer invocation、raw response 解析和结果规范化入口 |
 | Prompt construction | `ai/prompts.js` | World/Event 等 analyzer prompt 和 contract |
+| Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
+| Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
 | Snapshot domain | `core/snapshot.js` | snapshot candidate、检查点和恢复相关 domain logic |
 | State domain | `core/state.js` | derived state reducer/domain state logic |
@@ -228,6 +230,31 @@ Character Evidence 只提供 mention identity context、已有 World Model speci
 - `character_registry`：Floor-owned canonical identity snapshot。
 - `tracking_subjects`：runtime-derived Tracking projection。
 - Characters UI 当前主要枚举 `tracking_subjects`。
+
+人物身份的 canonical pipeline 是：
+
+```text
+narrative mention
+  → identity_context + Character Evidence + previous valid registry snapshot
+  → AI identity classification
+  → Runtime canonical identity resolution
+  → participant canonicalization / Event validation
+  → current Floor character_registry snapshot
+  → BiologicalEvent
+  → tracking_subjects / tracking_candidates
+  → Characters UI
+```
+
+`core/identity.js` 是 identity domain owner；`runtime/character-event-analysis.js`
+负责 Runtime resolution/canonicalization；`ai/input-builder.js` 只负责 Character
+Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracking.js`
+只负责从 canonical Event 与 participant facts 派生 Tracking；`ui/characters.js`
+只负责 presentation。AI 不拥有 canonical ID authority，Registry 不直接成为 UI
+人物列表，Tracking 也不负责修复人物识别。
+
+Event discovery window、identity authority、Event occurrence time 和 persistence
+owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现
+Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Floor/Swipe 持久化。
 
 未来改变 Characters UI 产品定义应作为独立产品任务，不应偷偷改变 Event persistence schema。
 

@@ -37,6 +37,103 @@ Profile 只保存非秘密连接配置和不透明的 `secret_ref`；API Key 由
 `snapshot` 是由 Current State 派生出的缓存检查点，
 不是新的事实来源，也不能替代或删除 `events`。
 
+## Character Identity 与 Character Evidence
+
+BioWeave 的人物数据不是一个全量人物列表，必须区分四层：
+
+```text
+Narrative Person Mention
+  != Canonical Character Identity
+  != Tracking Subject
+  != Characters UI Entry
+```
+
+### Canonical identity pipeline
+
+```text
+narrative mention
+  → identity_context + Character Evidence + previous valid registry snapshot
+  → AI identity classification
+  → identity_status + canonical character_id 或 response-local mention token
+  → Runtime identity resolution
+  → canonical participant references
+  → Event validation
+  → current active Character Floor/Swipe character_registry snapshot
+  → BiologicalEvent
+  → Tracking derivation
+  → tracking_subjects / tracking_candidates
+  → Characters UI
+```
+
+`character_id` 是 Runtime 拥有的 canonical entity identity。AI 只能原样引用
+`identity_context` 中真实存在的 canonical ID；AI 不得按姓名、顺序、gender、
+biological type 或 event role 生成 ID。Runtime 必须验证 ID 所属的当前有效
+registry，非法 ID 不得静默接受。
+
+Participant 的身份状态只有三种：
+
+- `existing`：唯一匹配已有 canonical identity，`character_id` 必须是输入中真实存在的 ID；
+- `new`：当前叙事明确出现新人物，`character_id` 为 `null`，response-local mention token 只在本次 response 内引用同一人物；该 token 不持久化、不作为 registry key，也不要求固定字符串形式；
+- `unresolved`：无法唯一确认身份时 fail closed。同名、alias collision、证据冲突和多候选都不得 first-match-wins。
+
+`display_name`、`aliases[]`、response-local mention token、`event_role`、gender、
+physiological sex、species、biological type、Tracking eligibility 和 UI visibility
+都不是 canonical identity。`character_registry` 是 Floor-owned cumulative snapshot，
+由当前 Character Floor active Swipe 持有；User message、Chat metadata 和 inactive
+Swipe 都不是 owner。下一 Character Floor 只继承最近合法 previous snapshot；target
+自己的旧结果不能成为自己的 previous authority。删除 Floor、切换 Swipe 或 stale
+Floor Version 后，Runtime 只能从 surviving valid Character Floors 重建状态。
+
+### Alias 与 Character Evidence 边界
+
+mention resolution、alias establishment、alias persistence 是三个不同动作。一次
+称呼、代词、职位或共现不能自动写入 `aliases[]`；只有明确 alias establishment
+evidence 或用户手动编辑才可以持久化 alias。alias collision 必须 unresolved。手动
+alias 编辑只修改当前 active Swipe 的 registry snapshot，不改变 `character_id` 或
+`display_name`，不回写历史 Floor 或其它 Swipe，取消编辑不写入。
+
+Character Evidence 是 transient semantic projection，不是 identity database：
+
+```text
+raw source → source-specific collection → Character Evidence projection → Event Analyzer
+```
+
+它可以携带 identity hint、stable biological evidence、species/type evidence、explicit
+individual capability evidence 和 provenance；不能创建 canonical ID、替代 registry、
+创建 Tracking Subject 或自动建立 alias。Character Card/Persona 与可靠 subject-bound
+reference 可以提供稳定人物背景；Worldbook/External Memory 没有可靠 subject binding
+时必须排除。Recent Story/Current Target Floor 主要是 narrative Event evidence；一次
+narrative evidence 不自动升级为 stable Character Evidence persistence。
+
+### Capability 语义
+
+每个 confirmed participant 都按以下顺序建立最终人物事实，无论 Event 是否
+pregnancy-related：
+
+```text
+identity_context
+  → Character Evidence
+  → species
+  → biological_type within species
+  → exact persisted World Model species/type
+  → baseline capabilities
+  → explicit individual capability evidence
+  → conflict/no unique match/insufficient evidence => null
+  → participant biological facts
+  → Tracking
+```
+
+明确 physiological sex 只能帮助映射当前 species 中已经存在的 biological type，不能
+直接推出 `can_produce_sperm`、`can_produce_ova`、`can_be_fertilized`、`can_fertilize`、
+`can_cause_pregnancy` 或 `can_carry_pregnancy`，也不能创建缺失 type。Nonhuman 只能
+使用自身 species/type 的 World Model baseline，不得套用 Human baseline。
+
+`can_be_fertilized` 表示自身能否被受精；`can_fertilize` 表示自身能否使另一方受精；
+`can_cause_pregnancy` 是更广义的使另一方发生妊娠的能力；`can_carry_pregnancy`
+表示自身是否具备承载妊娠能力。这些字段不可互相替代。即使
+`can_carry_pregnancy === true`，没有有效 pregnancy-relevant exposure 也不能创建
+`tracking_subjects`。
+
 Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Event、State
 和 Snapshot 分离。其持久化根为：
 
@@ -192,6 +289,18 @@ Event Analysis V1 的输入单位是一个 Target Floor Version，但一个分�
 One Target Floor Version → 0 / 1 / N BiologicalEvents
 ```
 
+Event discovery window 与 persistence owner 是两个独立概念。Current Target Floor
+和 bounded Recent Story 都可以发现明确发生的 Event；Recent Story 发现的历史 Event
+保留自己的 occurrence `story_time`，但本轮新 Event 统一写入当前 Character Floor
+active Swipe。canonical `source` 表示当前 persistence owner，不表示 occurrence time。
+历史 Event 不回写原始历史 Floor，也不建立 Chat-level permanent Event cache。
+
+Runtime 将 identity resolution 后的候选与 discovery window 覆盖范围内的 bounded
+`existing_events` 比较。semantic duplicate 必须使用通用结构化事实：Event type、
+structured story_time、canonical participant/subject/counterpart 集合、mechanism、
+source evidence 和 state fact。缺少高置信字段时保留 candidate；不得使用姓名、固定
+ID、Floor 编号、Event 顺序或模糊文本相似度吞掉可能独立的 Event。
+
 对于 pregnancy-related `sexual_activity`，Event 的粒度是一个 gestational subject
 在本 Floor Version 中的一组实际 pregnancy-relevant exposure。先识别所有实际
 发生暴露的 subject，再按 subject 分组：每个 Event 的
@@ -320,8 +429,8 @@ Runtime 从当前有效 Floor Events、World Model 和 Floor `character_registry
 ```json
 {
   "tracking_subjects": {
-    "char_000001": {
-      "character_id": "char_000001",
+    "<canonical_character_id>": {
+      "character_id": "<canonical_character_id>",
       "display_name": "A",
       "created_from_event_id": "evt_001",
       "exposure_event_ids": ["evt_001", "evt_008"],

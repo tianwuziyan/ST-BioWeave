@@ -210,6 +210,141 @@ remains available. Tests must inspect final `buildEventAnalysisMessages()`
 messages for projected Character Evidence; a Prompt rule saying that gender
 can map to a type is not sufficient.
 
+### Character Identity and Character Evidence Contract
+
+BioWeave 不把“人物”当作单一列表。以下四层必须保持分离：
+
+```text
+Narrative Person Mention
+  != Canonical Character Identity
+  != Tracking Subject
+  != Characters UI Entry
+```
+
+Canonical identity pipeline is:
+
+```text
+narrative mention
+  → identity_context + Character Evidence + previous valid registry snapshot
+  → AI participant identity classification
+  → identity_status + existing canonical character_id or response-local mention token
+  → Runtime identity resolution
+  → canonical character_id
+  → participant reference canonicalization
+  → Event domain validation
+  → current Character Floor active-Swipe character_registry snapshot
+  → canonical BiologicalEvent
+  → Tracking derivation
+  → tracking_subjects / tracking_candidates
+  → Characters UI
+```
+
+AI may classify what a mention may refer to, but it never owns canonical identity
+authority. Runtime owns validation, allocation, registration, and canonical
+reference rewriting. A `character_registry` entry is not a Tracking Subject,
+and the Characters UI is not a registry browser; the UI currently displays
+active eligible `tracking_subjects`.
+
+The raw identity states are:
+
+- `existing`: the participant uniquely maps to an ID that actually exists in
+  `identity_context`; AI must copy that ID exactly. It must not derive an ID
+  from display name, order, gender, biological type, or event role. Runtime
+  rejects an unknown or unauthorized ID and never silently accepts it.
+- `new`: the narrative identifies a person not yet represented canonically;
+  raw `character_id` is `null` and the response-local mention token is only a
+  reference inside this AI response. It is not persisted, is never a registry
+  key, and has no required literal format. Production code must not depend on
+  numbered fixture tokens.
+- `unresolved`: identity cannot be uniquely established. Same-name or alias
+  collisions, contradictory evidence, and multiple candidates fail closed;
+  first-match-wins is forbidden.
+
+`display_name`, `aliases[]`, response-local mention tokens, `event_role`,
+gender, physiological sex, species, biological type, Tracking eligibility, and
+UI visibility are not canonical identity. `character_id` is the Runtime-owned
+opaque entity identity; display and alias values are resolution attributes.
+
+`character_registry` is a cumulative, Floor-owned canonical identity snapshot.
+The active Character Floor Swipe owns it; User messages, Chat metadata, and
+inactive Swipes do not. A valid next Character Floor inherits the nearest valid
+previous snapshot and resolves the new response against it. Target self-results
+are never their own previous authority. Deleted Floors, inactive Swipes, and
+stale Floor Versions cannot restore an old snapshot; Runtime rebuilds from
+surviving valid Character Floors.
+
+Mention resolution, alias establishment, and alias persistence are separate
+operations. A one-off form of address, pronoun, title, or co-occurrence does
+not enter `aliases[]`. Only explicit alias-establishment evidence or a manual
+alias edit may persist an alias. Alias collisions are unresolved. Manual alias
+editing changes the active Floor Swipe snapshot without changing
+`character_id` or `display_name`, without rewriting historical Floors or other
+Swipes; cancellation writes nothing.
+
+Character Evidence is a transient semantic projection, not an identity
+database. Its route is:
+
+```text
+raw source → source-specific collection → Character Evidence projection → Event Analyzer
+```
+
+It may provide identity hints, stable biological evidence, species/type
+evidence, explicit individual capability evidence, and provenance. It may help
+resolve a mention and map it to an existing World Model species/type, but it
+cannot create a canonical ID, replace the registry, create a Tracking Subject,
+or turn a name into an alias. Character Card/Persona and reliably subject-bound
+references may supply stable background evidence; Worldbook/External Memory
+require reliable subject binding. Recent Story and Current Target Floor are
+primarily narrative Event evidence. Narrative Event evidence is not automatically
+persisted as stable Character Evidence.
+
+For every confirmed Event participant, regardless of Event pregnancy relevance,
+the biological analysis order is:
+
+```text
+identity_context
+  → Character Evidence
+  → species
+  → biological_type within that species
+  → exact persisted World Model species/type
+  → baseline capabilities
+  → explicit individual capability evidence
+  → null on conflict/no unique match/insufficient evidence
+  → final participant biological facts
+  → Tracking consumes those facts
+```
+
+Physiological sex may help map an already existing biological type, but never
+directly supplies reproductive capability or creates a missing type. Nonhuman
+types are resolved within their own species and never borrow a Human baseline.
+`can_be_fertilized`, `can_fertilize`, `can_cause_pregnancy`, and
+`can_carry_pregnancy` are distinct facts; none substitutes for another.
+`can_carry_pregnancy: true` without a valid pregnancy-relevant exposure does not
+create a Tracking Subject.
+
+#### Identity guardrails
+
+Wrong: derive `character_id` from `display_name`, let AI invent a canonical ID,
+or persist a one-off nickname as an alias.
+
+Correct: use a unique canonical candidate as `existing`; otherwise return
+`new`/`unresolved` with `character_id: null` and a response-local token, then
+let Runtime resolve and persist the canonical ID or fail closed.
+
+Wrong: treat `character_registry` as the Characters UI list, or treat
+`can_carry_pregnancy: true` as UI eligibility.
+
+Correct: derive `tracking_subjects` only from canonical BiologicalEvents,
+participant facts, valid pregnancy-relevant exposure, and Tracking eligibility;
+the Characters UI consumes that projection.
+
+Wrong: make Recent Story reference-only or write a historical Event back to its
+original Floor.
+
+Correct: Current Target Floor and bounded Recent Story form the discovery
+window; preserve historical `story_time`, compare bounded `existing_events`,
+and persist a newly discovered Event to the current active Floor Swipe.
+
 ## 2. Signatures
 
 - `buildEventAnalysisInput(options) -> EventAnalysisInput`
@@ -409,9 +544,9 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   `{schema_version: 1, entities: {[canonicalId]: {character_id, display_name, aliases[]}}}`.
   The enclosing successful analysis and complete six-field Floor Version bind
   its validity. Cumulative does not mean global authoritative ownership.
-- `chatMetadata.bioweave.character_registry`, if retained, is only a
-  materialized projection/cache. It is not an independent historical source
-  for Analyzer API input.
+- Any `chatMetadata.bioweave.character_registry`, if retained for compatibility,
+  is only a materialized projection/cache. It is not the registry owner, an
+  independent historical source, or an Analyzer API input source.
 - `identity_status` is one of `existing`, `new`, or `unresolved` in the raw
   participant DTO. `new` and `unresolved` require `character_id: null` and a
   response-local, opaque `mention_id`; `existing` requires an ID supplied by the
@@ -425,9 +560,8 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 #### 3. Contracts
 
 1. Registry entries are keyed only by canonical `character_id`. New IDs are
-   generated by Runtime in the exact form `char_` plus six decimal digits,
-   from `char_000001` through `char_999999`. The sequence is opaque and never
-   derived from display names, pinyin, romanization, slugs, hashes, translations,
+   generated by Runtime through its canonical allocator. The exact sequence is
+   opaque and never derived from display names, pinyin, romanization, slugs, hashes, translations,
    initials, timestamps, UUIDs, or random values.
 2. `display_name` may change and `aliases[]` may grow; neither is a primary key.
    Same display names, same-sounding names, and same aliases may belong to
@@ -437,7 +571,7 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   authorize an ID absent from the registry. When the registry is empty, the
   prompt is an Initial Registry Bootstrap: there are no valid `existing`
   participants; new or unresolved raw participants use `character_id: null` and
-  opaque handles such as `mention_1`. The prompt does not expose the formal ID
+   opaque response-local handles. The prompt does not expose the formal ID
   format or sequence examples; the model does not need to know, predict, or emit
   a formal `character_id`, and Runtime assigns it after the response. The model
   MUST NOT use a name-shaped permanent ID or mention handle.
@@ -464,27 +598,27 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 | Same raw mention handle resolves to different canonical IDs | Reject atomically with `raw_identity_conflict` |
 | The same response-local `mention_id` appears in multiple Events | Reuse the one response-global canonical ID; never register a second entity |
 | One response-local `mention_id` carries contradictory identity data | Reject atomically with `raw_identity_conflict` or the equivalent identity error |
-| No sequence is available after `char_999999` | Fail closed with `character_id_sequence_exhausted`; never wrap or use a random fallback |
+| The Runtime canonical ID allocator is exhausted | Fail closed with `character_id_sequence_exhausted`; never wrap or use a random fallback |
 | Raw participants repeat a canonical ID before canonicalization | Preserve/check the raw records; strict post-resolution validation rejects the duplicate instead of allowing a last-record-wins write |
 | Alias candidate is empty, a duplicate, display name, pronoun, generic reference, title, or lacks explicit establishment evidence | Reject the candidate; do not modify aliases |
 | Existing ID has explicit name-revelation evidence and a new display name | Update the same registry entry, retain the old stable display form as an alias, and never create/merge an ID |
 
 #### 5. Good / Base / Bad Cases
 
-- Good: `霁棱` exactly matches the unique alias of `char_000001`, so the mention
-  resolves to `char_000001` and no new ID is generated.
-- Good: `曜柘` with an explicit first-appearance `new` status receives the next
+- Good: a mention exactly matches one unique alias candidate, so it resolves to
+  that canonical ID and no new ID is generated.
+- Good: a first-appearance `new` participant receives the next
   Runtime sequential ID, the current Event uses it, and the next Analyzer input
   lists the same ID and accepted aliases.
-- Good: `“沈祁鸢坐在窗边。鸢儿随后起身。”` may resolve the second mention for
-  this Event, but without explicit alias-establishment evidence it creates no
-  alias candidate and persists no alias.
-- Good: `“以后叫我鸢儿”“小名是鸢儿”“众人都称她为鸢儿”` may produce an
-  alias candidate; Runtime validates and persists it separately.
-- Good: `char_000001` and `char_000002` both have `澄砾`; exact matching returns both,
+- Good: a one-off narrative form of address may resolve for this Event, but
+  without explicit alias-establishment evidence it creates no alias candidate
+  and persists no alias.
+- Good: explicit alias-establishment language may produce an alias candidate;
+  Runtime validates and persists it separately.
+- Good: two canonical characters share one alias; exact matching returns both,
   and only reliable narrative context can select one.
 - Bad: `character_id = normalize(display_name)`, `registry[name] = character`,
-  or `shen_qi_yuan` returned by a model is written as a canonical ID.
+  or a model-generated slug is written as a canonical ID.
 - Bad: a single co-occurrence, continuity inference, title (`姐姐`), generic
   reference (`那个女孩`), or pronoun (`她`) is learned permanently as an alias.
 - Bad: a supplied display name, UUID, timestamp, random token, or self-created
@@ -668,7 +802,7 @@ An active subject stores only stable references and display/profile indexes:
 
 ```json
 {
-  "character_id": "char_000001",
+  "character_id": "<canonical_character_id>",
   "created_from_event_id": "evt_001",
   "exposure_event_ids": ["evt_001", "evt_008"],
   "status": "active"

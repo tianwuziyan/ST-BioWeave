@@ -6,8 +6,8 @@
 ## 模块边界
 
 - `core/events.js`：BiologicalEvent 类型、固定结构、normalize / validate / sort；统一拥有 Event 边界，不让 UI 或其它消费者各自解析原始 payload。
-- `core/identity.js`：Chat-local Character Registry、Runtime sequential canonical character ID、existing/new/unresolved identity resolution 和 alias candidate policy；不按姓名建立键，不执行 destructive merge。
-- Tracking Registry 领域逻辑：从已验证的 Floor-bound Event 建立/重建 Chat-local Tracking Subject 索引；只保存稳定人物信息和 `event_id` 引用，不访问 DOM、AI 或宿主。
+- `core/identity.js`：Floor-owned canonical Character Registry invariants、Runtime canonical character ID allocation、existing/new/unresolved identity resolution 和 alias candidate policy；不按姓名建立键，不执行 destructive merge。
+- Tracking Registry 领域逻辑：从已验证的 Floor-bound Event 建立/重建 Runtime Tracking Subject 派生索引；只保存稳定人物信息和 `event_id` 引用，不访问 DOM、AI 或宿主。
 - `core/state.js`：纯程序 State Reducer，不调用 AI；Phase 2A 不接通完整妊娠状态归约。
 - `core/snapshot.js`：检查点与删除楼层后的局部恢复。
 - `core/projection.js`：未来软推演数据；不是事实。
@@ -23,7 +23,7 @@
 - `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
 - `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
 - `storage/store.js`：两级存储统一入口。
-- `storage/schema.js`：默认结构和版本，包括独立于 Tracking Registry 的 Chat-local Character Registry projection 边界。
+- `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
 
 ### Analysis Context / Prompt Contract
 
@@ -77,7 +77,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
   → Event normalize / validate
   → bounded semantic duplicate guard
   → 当前 active Character Floor-bound BiologicalEvent[0..N]
-  → Chat-local Tracking Subject Registry
+  → Runtime-derived Tracking Subjects / Candidates
   → Characters / Events / Overview
 ```
 
@@ -88,7 +88,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 - Event discovery window 与 persistence owner 独立：Current Target Floor 与 bounded Recent Story 都是允许产生 Event 的 narrative evidence；Recent Story 历史 Event 保留自己的 `story_time`，但本轮新发现结果统一写入当前 active Character Floor/Swipe，canonical `source` 仍表示当前 persistence owner。Event Analyzer 输入至少覆盖 Current Chat Scope、Current Floor Version、当前 Floor Narrative、必要最近上下文、persisted canonical World Model、结构化 Story Time、`identity_context`、经过 source-specific projection 的 Character Evidence (`individual_evidence`) 和 bounded existing Events。输出只能是固定 `{schema_version, events[]}`，每个 Target Floor Version 允许 `events.length >= 0`。对于 pregnancy-related `sexual_activity`，AI 先识别整个 discovery window 内所有实际暴露的 gestational subject，再按 subject 分组；每个 Event 恰好一个 subject，同一 subject 的多个 actual exposure source 合并，不同 subject 分 Event。即时症状、physical effect 和相关证据仍并入同一 subject 的 sexual Event；其它真正独立的 BiologicalEvent 可以并存。只有通过统一 normalize / validate 和 deterministic semantic duplicate guard 的结果才能写入 Floor。raw Character Card、Persona、Worldbook 和 External Memory 仍可保留在 Runtime wide DTO 供 World/legacy orchestration 使用，但不直接进入 Event prompt。Character Card/Persona stable evidence 不得因此丢失。
 - 每个已确认 Event participant 都必须执行人物 biological analysis，不论 `pregnancy_relevance.relevant` 是 true 还是 false。顺序固定为 identity → Character Evidence → species → species 内 biological_type → exact persisted World Model species/type → baseline capability → explicit individual capability evidence → participant facts。`pregnancy_relevance` 只描述当前 Event 是否与受孕/妊娠有关；它不是跳过 participant facts 的条件，也不能由人物 capability 反推为 true。gender/sex 只能帮助已有 type mapping，不能直接推出 capability；证据不足、冲突、缺失 World Model type 或 capability 未知时保持 `null`。Tracking 只消费最终 participant facts，不能弥补 Event Analyzer 缺失的人物分析。
 - Event Analyzer 另外接收独立的 Runtime identity projection。participant 的 `identity_status` 必须是 `existing`、`new` 或 `unresolved`；模型只能原样引用 projection 中的 existing ID，new/unresolved 使用 `character_id: null` 与 response-local `mention_id`。Runtime 完成 identity resolution/registration 后，才将 mention/reference 转为 canonical IDs 并执行 participant-backed pregnancy closure。完整 `character_registry`、Tracking Registry 和 raw character context 都不是 Event prompt 的输入；canonical/derived individual evidence 只保留必要的 profile/state/evidence 字段。
-- mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved。新人物 ID 只能由 Runtime 从当前 previous Floor Registry 的最大正式序号递增生成，不能从姓名、UUID、时间或随机值派生。
+- mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved。新人物 ID 只能由 Runtime 的 canonical allocator 生成，不能从姓名、UUID、时间或随机值派生；AI 不依赖固定 ID 或 mention token 格式。
 - `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
 - `story_time` 是结构化对象；`display` 只用于显示。Floor 的 trusted candidate 由 StoryTimeCoordinator 提取，日期和传统时辰由 BioWeave 本地 parser 归一化，排序和计算只使用结构化字段，无法可靠获取时保存 `null`。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段以 pregnancy-relevant exposure 作为 Tracking gate。

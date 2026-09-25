@@ -156,7 +156,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /没有任何合法的 canonical identity candidate/);
   assert.match(prompt, /不存在合法的 identity_status=existing participant/);
   assert.match(prompt, /identity_status=new 或 unresolved、character_id:null/);
-  assert.match(prompt, /mention_1/);
+  assert.match(prompt, /response-local mention token/);
   assert.match(prompt, /无业务语义/);
   assert.match(prompt, /mention_id 必须为 null/);
   assert.match(prompt, /模型不需要知道、预测或输出正式 character_id/);
@@ -383,8 +383,8 @@ test('Event input renders a separate canonical registry candidate block', () => 
   assert.match(prompt, /Runtime Canonical Character Registry/);
   assert.doesNotMatch(prompt, /Initial Registry Bootstrap/);
   assert.match(prompt, /existing 只能从这些 ID 中原样选择，且 mention_id 必须为 null/);
-  assert.match(prompt, /identity_status=new、character_id=null.*mention_N/);
-  assert.match(prompt, /mention_1/);
+  assert.match(prompt, /identity_status=new、character_id=null.*response-local mention token/);
+  assert.match(prompt, /response-local mention token/);
 });
 
 test('Event parser preserves new and unresolved raw identity handles for Runtime resolution', () => {
