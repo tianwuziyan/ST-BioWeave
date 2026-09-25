@@ -277,6 +277,15 @@ World/Event separation、sanitization 或 AnalysisInput narrowing 都必须保�
 
 Event 使用 `【剧情上下文】` 表示 Recent Story，使用 `【本次分析内容】` 表示当前 Target Floor；两者共同构成 narrative discovery window，均可提供明确已发生 Event 的发现证据。没有历史时省略空的剧情上下文 section。World Model 的 Recent Story 使用 `【近期剧情参考】`。每个任务的历史与目标 narrative 最终都只生成一个 `ASSISTANT` message，Prompt Preview 必须直接展示同一份真实 message content。
 
+Event Analyzer 只负责从 Current Target Floor 与 bounded Recent Story 中发现
+明确已发生的 factual `BiologicalEvent`。它不根据“过了很久”宣布 Pregnancy
+Exposure Tracking Window expired，不自动生成 resolved-not-pregnant、negative
+pregnancy 或 medical fact。未来 Context Injection 如消费 Tracking Window，只能
+把仍为 `open` 的 Window 作为当前 pregnancy signal；已关闭 Window 不得继续以
+“这些 exposure 仍可能导致当前妊娠”的 active signal 注入。Window 生命周期由
+[Pregnancy Exposure Tracking Lifecycle Contract](../.trellis/spec/domain/pregnancy-tracking.md)
+定义，不能由 Prompt 文案替代。
+
 ## 11. Runtime authoritative identity
 
 Floor identity 和 Event provenance 由 Runtime 负责。必要的 boundary metadata 可以单独作为 SYSTEM scope block，用于限制输入范围；不要要求模型 echo 它们。最终 Event source 绑定当前 authoritative Floor Version，包含：

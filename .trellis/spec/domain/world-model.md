@@ -103,6 +103,14 @@ mechanism descriptions belong in `pathway`,
 and `evidence: string[]`. Omitted item fields receive the existing canonical
 defaults; non-string list elements remain invalid.
 
+World Model owns reproductive biological timing semantics for a species/type/
+mechanism, but the current v1 schema does not freeze dedicated fields for
+Pregnancy Exposure Tracking Window grouping, detection/resolution, or maximum
+tracking horizons. Gestation duration and lifecycle text are not those
+horizons. The proposed Window contract is documented separately in
+[Pregnancy Exposure Tracking Lifecycle](./pregnancy-tracking.md); this World
+Model contract does not add or imply a final horizon schema.
+
 Initial World Analysis and World Patch Analysis use the same mechanism
 contract. Projection Rule prompts mirror `normalizeProjectionRules()` and
 `validateProjectionRuleContent()`: raw rules require schema version 1,

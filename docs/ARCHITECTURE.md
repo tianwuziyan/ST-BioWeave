@@ -74,6 +74,7 @@ flowchart TD
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
+| Pregnancy Exposure Tracking lifecycle | `.trellis/spec/domain/pregnancy-tracking.md` | Proposed Window lifecycle contract；当前尚未有独立 Runtime owner |
 | Snapshot domain | `core/snapshot.js` | snapshot candidate、检查点和恢复相关 domain logic |
 | State domain | `core/state.js` | derived state reducer/domain state logic |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
@@ -251,6 +252,14 @@ Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracki
 只负责从 canonical Event 与 participant facts 派生 Tracking；`ui/characters.js`
 只负责 presentation。AI 不拥有 canonical ID authority，Registry 不直接成为 UI
 人物列表，Tracking 也不负责修复人物识别。
+
+Pregnancy Exposure Tracking Window 目前只有 Proposed Contract，没有独立的
+代码 owner、round identity、horizon 或 expiration implementation。不要把
+`core/tracking.js` 当前按 subject 聚合的 `tracking_subjects` 当作 Window；也
+不要把 `core/state.js` 的 Pregnancy Episode 或 `core/projection.js` 的
+Projection lifecycle 当作 Window。后续实现必须继续遵守 Floor/Swipe/Version
+authority，并由 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)
+指导设计。
 
 Event discovery window、identity authority、Event occurrence time 和 persistence
 owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现

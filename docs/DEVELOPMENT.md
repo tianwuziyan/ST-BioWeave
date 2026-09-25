@@ -11,6 +11,7 @@
 - `core/state.js`：纯程序 State Reducer，不调用 AI；Phase 2A 不接通完整妊娠状态归约。
 - `core/snapshot.js`：检查点与删除楼层后的局部恢复。
 - `core/projection.js`：未来软推演数据；不是事实。
+- Pregnancy Exposure Tracking Window：规范见 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)；当前 `core/tracking.js` 只有按有效 exposure 派生 Subject/Candidate，尚未实现独立 Window lifecycle。
 - `core/genealogy.js`：家系查询、世代与排序。
 - `ai/client.js`：API Profile 的校验、SillyTavern Secret 引用和宿主代理测试请求；不在浏览器或 Chat 数据中保存明文 API Key。
 - `ai/prompts.js`：受保护 Core Prompt + 公共 `analysis_prompt` + 各 Analyzer 的任务/输出 Contract Pipeline。
@@ -96,6 +97,7 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 - `existing_bioweave` 保持最近合法前置 Floor snapshot 语义；`existing_events` 额外覆盖 Recent Story discovery window 内的合法 active canonical Events，用于 semantic dedupe，不扫描无界 Chat 历史，不读取 Chat metadata/cache，不包含 target 自身旧结果、删除/失效 Swipe 或 stale Floor。去重要求 Event type、structured story_time、canonical participant/subject/counterpart 集合、机制、关键 source evidence 与 state fact 完全匹配；缺字段、不同 type、不同 subject/source、不同机制或不同事实 evidence 时保留两个 Event。不得使用模糊 AI 相似度 dedupe。
 - `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
 - StateReducer、Snapshot、Projection、Genealogy、完整妊娠计算、Gestational Age 和预计分娩日不在本阶段接通；对应页面/领域模块保持空状态或兼容骨架。
+- Tracking Window 尚未实现：当前 exposure 聚合没有 round identity、open/closed/expired 状态、Story Time horizon 或关闭后过滤；`core/state.js` 的 `elapsed_story_days` 只描述 State 派生值，不能冒充 Window expiration。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
 
 ### Floor / Swipe / Version 生命周期
 

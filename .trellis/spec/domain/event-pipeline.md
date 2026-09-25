@@ -798,6 +798,13 @@ allowed. Unknown locations remain `null`.
 Tracking rebuild and orphan invalidation follow [Floor State Ownership](./floor-state.md);
 the rules below define the Tracking projection shape and eligibility only.
 
+This document owns the `BiologicalEvent` → Tracking boundary. A valid
+pregnancy-relevant exposure Event is historical fact; it is not a Tracking
+Window. The planned Window lifecycle, including expiration and multiple rounds,
+is owned by [Pregnancy Exposure Tracking Lifecycle](./pregnancy-tracking.md).
+Window closure must never delete, negate, or rewrite the Event or its
+Floor/Swipe provenance.
+
 An active subject stores only stable references and display/profile indexes:
 
 ```json

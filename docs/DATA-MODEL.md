@@ -422,6 +422,33 @@ Custom Calendar 不属于 Event 或 Floor payload。BioWeave 对带 era 的年�
 比较；无法确定同一纪年体系时，相对差值保持 `null`。公历继续使用同一套内建
 Calendar Engine。
 
+### BiologicalEvent、Tracking Window 与 Pregnancy Episode
+
+以下对象必须保持分层：
+
+- `BiologicalEvent` 是已经发生的历史事实，保留在其 authoritative
+  Character Floor active Swipe；
+- Pregnancy Exposure Tracking Window 是按 canonical gestational subject
+  聚合 exposure Event 引用的计划中派生生命周期，不是 Event，也不是
+  `tracking_subjects` 的同义词；
+- Pregnancy Episode 是 `core/state.js` 根据 conception、suspicion、
+  confirmation、loss、delivery 等事实 Event 归约出的妊娠状态；
+- Projection 是未来可能性，拥有独立的 `realized` / `contradicted` /
+  `expired` lifecycle。
+
+当前项目尚未冻结 Window DTO/schema。目标语义要求 Window 支持多次
+exposure、多个 Story Time、多个 counterpart/source、按 subject 的多轮
+生命周期，以及 `open` / `resolved_pregnant` /
+`resolved_not_pregnant` / `expired` 状态。字段名、确定性 ID、Floor-bound
+或 Runtime-derived ownership、horizon 字段均属于后续设计，不应从本段
+推导出最终 JSON。
+
+`expired` 不删除 BiologicalEvent，不等于 confirmed-not-pregnant，不创建
+medical/state fact，也不修改 `reproductive_source_attribution`。只有 open
+Window 可以作为当前 pregnancy Tracking signal；已关闭 Window 的历史 Event
+仍按普通 bounded history 规则存在。详见 [Pregnancy Exposure Tracking
+Lifecycle Contract](../.trellis/spec/domain/pregnancy-tracking.md)。
+
 ### Tracking Subject Registry
 
 Runtime 从当前有效 Floor Events、World Model 和 Floor `character_registry` 重建 Tracking Registry，人物列表只消费其中的 `tracking_subjects`。`tracking_subjects` 只保存当前已确认具备承孕能力的 eligible Subject；能力未知的 exposure recipient 不进入人物列表，而保存在 Runtime `tracking_candidates`。Subject 的索引形状如下：
