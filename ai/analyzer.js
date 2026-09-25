@@ -1221,6 +1221,67 @@ function applyWorldModelEvidenceGuard(model, analysisInput) {
   };
 }
 
+function patchTextValues(value, values = []) {
+  if (typeof value === 'string') {
+    if (value.trim()) values.push(value)
+    return values
+  }
+  if (!value || typeof value !== 'object') return values
+  for (const child of Array.isArray(value) ? value : Object.values(value))
+    patchTextValues(child, values)
+  return values
+}
+
+function hasPatchTextEvidence(value, evidence) {
+  return (
+    hasGenericDirectLabelEvidence(evidence.join('\n'), value) ||
+    hasDirectRuleEvidence(value, evidence)
+  )
+}
+
+function hasPatchEntryEvidence(field, entry, evidence, knownSpeciesNames) {
+  if (field === 'species') {
+    const siblingNames = entry.biological_types
+      .map((type) => normalizeBiologicalTypeName(type?.name, entry.name))
+      .filter(Boolean)
+    const candidate = {
+      ...entry,
+      biological_types: entry.biological_types.map((type) =>
+        normalizeAnalysisType(type, entry.name, knownSpeciesNames, siblingNames),
+      ),
+    }
+    return hasSpeciesSubtreeEvidence(candidate, evidence)
+  }
+  return patchTextValues(entry).some((value) => hasPatchTextEvidence(value, evidence))
+}
+
+// Sparse Patch evidence is checked at the proposed-entry boundary. It does
+// not run the complete-model guard on a partial DTO and never treats omission
+// or Floor age as evidence about eligibility.
+export function applyWorldModelPatchEvidenceGuard(patch, analysisInput) {
+  const validatedPatch = validateWorldModelPatch(patch)
+  const evidence = evidenceUnits(analysisInput)
+  const knownSpeciesNames = [
+    ...(analysisInput?.world_model?.species ?? []),
+    ...(validatedPatch.add.species ?? []),
+    ...(validatedPatch.update.species ?? []),
+  ]
+    .map((item) => item?.name)
+    .filter(Boolean)
+  for (const section of ['add', 'update']) {
+    for (const [field, entries] of Object.entries(validatedPatch[section])) {
+      const values = field === 'medical_context' ? [entries] : entries
+      values.forEach((entry, index) => {
+        if (hasPatchEntryEvidence(field, entry, evidence, knownSpeciesNames)) return
+        throw invalidWorldModelPatch('WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED', {
+          path: `${section}.${field}${field === 'medical_context' ? '' : `[${index}]`}`,
+        })
+      })
+    }
+  }
+  return validatedPatch
+}
+
 const FERTILIZATION_RECIPIENT_PATTERN =
   /(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)|(?:卵子|卵细胞|雌性配子)[^。！？!?；;，,、\n]{0,16}(?:被|接受|承受)[^。！？!?；;，,、\n]{0,16}(?:受精|授精)/iu;
 const FERTILIZATION_DONOR_PATTERN =
@@ -3039,7 +3100,10 @@ export function createAnalyzer({
         cause: lastParseError ?? new Error('invalid JSON'),
       })
     }
-    return validateWorldModelPatch(parsed)
+    return applyWorldModelPatchEvidenceGuard(
+      validateWorldModelPatch(parsed),
+      input.analysisInput ?? input,
+    )
   }
 
   async function analyzeFloor(input = {}) {

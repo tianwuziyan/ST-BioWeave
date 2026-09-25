@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { createAnalyzer, mergeWorldModelPatch, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch } from '../ai/analyzer.js'
+import { applyWorldModelPatchEvidenceGuard, createAnalyzer, mergeWorldModelPatch, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch } from '../ai/analyzer.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -485,6 +485,121 @@ test('World Model Patch prompt requires sparse add/update output and forbids imp
   assert.match(prompt, /不要返回完整 World Model/)
   assert.match(prompt, /缺少字段永远表示不修改/)
   assert.match(prompt, /不支持 remove、invalidate/)
+  assert.match(prompt, /previously missed evidence/)
+  assert.match(prompt, /newly available evidence/)
+  assert.match(prompt, /不要求首次出现于 current Floor/)
+  assert.match(prompt, /evidence-supported sparse World Model Patch/)
+})
+
+test('World Model Patch final API messages include the baseline while Full messages do not anchor to it', async () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '已保存基线', description: '已有世界规则。' }],
+  })
+  const analysisInput = {
+    world_model: baseline,
+    character: { description: '此前资料明确记载一个补充事实。' },
+    recent_story: { items: [{ content: '同一允许证据集合中的历史资料。' }] },
+  }
+  const requests = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      generateRaw({ prompt }) {
+        requests.push(prompt)
+        return requests.length === 1
+          ? JSON.stringify({ schema_version: 1, add: {}, update: {} })
+          : JSON.stringify({
+              schema_version: 1,
+              species: [],
+              medical_context: null,
+              exceptions: [],
+              unknowns: [],
+              projection_rules: [],
+            })
+      },
+    }),
+  })
+
+  await analyzer.analyzeWorldModelPatch({ analysisInput })
+  await analyzer.analyzeWorldModel({ analysisInput })
+
+  assert.match(requests[0].map(message => message.content).join('\n'), /【当前 World Model 参考】/)
+  assert.match(requests[0].map(message => message.content).join('\n'), /已保存基线/)
+  assert.doesNotMatch(requests[1].map(message => message.content).join('\n'), /【当前 World Model 参考】/)
+  assert.doesNotMatch(requests[1].map(message => message.content).join('\n'), /已保存基线/)
+})
+
+test('World Model Patch evidence guard accepts differential evidence regardless of Floor origin', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '已有物种' }],
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    {
+      schema_version: 1,
+      add: { species: [{ name: '遗漏物种', description: '遗漏资料中的稳定规则。' }] },
+      update: {},
+    },
+    {
+      world_model: baseline,
+      recent_story: {
+        items: [{ floor: 2, content: '较早允许资料明确记载遗漏物种。' }],
+      },
+    },
+  )
+  assert.equal(patch.add.species[0].name, '遗漏物种')
+})
+
+test('World Model Patch evidence guard rejects unsupported canonical additions', () => {
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      {
+        schema_version: 1,
+        add: { species: [{ name: '没有证据的物种' }] },
+        update: {},
+      },
+      { recent_story: { items: [{ content: '只说明另一条事实。' }] } },
+    ),
+    error => error?.code === 'WORLD_MODEL_PATCH_INVALID'
+      && error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED'
+      && error?.path === 'add.species[0]',
+  )
+})
+
+test('World Model Patch analyzer rejects an unsupported addition at the API boundary', async () => {
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      generateRaw: () => JSON.stringify({
+        schema_version: 1,
+        add: { species: [{ name: 'API 无证据物种' }] },
+        update: {},
+      }),
+    }),
+  })
+  await assert.rejects(
+    analyzer.analyzeWorldModelPatch({
+      analysisInput: { recent_story: { items: [{ content: '没有相关证据。' }] } },
+    }),
+    error => error?.code === 'WORLD_MODEL_PATCH_INVALID'
+      && error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch evidence guard accepts evidence-supported correction of an existing entry', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '已有物种', description: '旧描述。' }],
+  })
+  const corrected = { ...baseline.species[0], description: '已有物种的规则已明确修正。' }
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [corrected] } },
+    { character: { description: '已有物种的规则已明确修正。' }, world_model: baseline },
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+  assert.equal(merged.species[0].description, corrected.description)
+  assert.doesNotThrow(() => normalizeWorldModel(merged, { strict: true }))
 })
 
 test('World Model Patch analyzer accepts fenced JSON without relaxing the patch schema', async () => {

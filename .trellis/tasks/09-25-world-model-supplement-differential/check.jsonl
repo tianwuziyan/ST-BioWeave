@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "Validate Patch evidence boundary and complete canonical World Model behavior."}
+{"file": "docs/CONTEXT-AND-PROMPT.md", "reason": "Check Full versus Supplement prompt reference semantics."}
+{"file": "tests/world-model.test.js", "reason": "Primary regression coverage for prompt, validator, merge, and evidence behavior."}

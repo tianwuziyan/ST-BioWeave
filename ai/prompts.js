@@ -648,6 +648,13 @@ function formatWorldModelReferences(input, names) {
   ])
 }
 
+function formatWorldModelPatchReferences(input, names) {
+  return joinPromptSections([
+    formatWorldModelReference(input.world_model),
+    formatWorldModelReferences(input, names),
+  ])
+}
+
 function formatEventAnalysisRules(input, settings, names) {
   return joinPromptSections([
     `【BioWeave Event Analysis 核心规则】\n${EVENT_ANALYZER_CORE_CONTRACT}`,
@@ -687,15 +694,15 @@ const WORLD_MODEL_TASK_PROMPT =
   '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
 
 export const WORLD_MODEL_PATCH_TASK_PROMPT =
-  '请只提取本次目标 Floor 新增或明确修正的世界级生物事实，返回 World Model Patch。不要返回完整 World Model，不要复述已有规则；未提及的字段表示不修改，不能表示删除。'
+  '请将 Existing World Model 作为 comparison baseline，重新审阅当前允许的完整 World Analysis evidence。返回只表达差异的 World Model Patch：当前 evidence 明确支持、但 Existing World Model 尚未充分表达的事实才进入 add/update。这里既包括 newly available evidence，也包括 previously missed evidence、已有 entry 的 evidence-supported 补充和 explicit correction；事实不要求首次出现于 current Floor。Existing World Model 已充分表达的内容不要重复输出。不要返回完整 World Model。'
 
 export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
   '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次正文明确新增或修正的字段；缺少字段永远表示不修改。',
   '允许 add 的字段：species、exceptions、unknowns、projection_rules；允许 update 的字段：species、medical_context、projection_rules。species 和 projection_rules 的 update 项必须包含稳定名称或 rule identity，并提供该项更新后的完整 canonical entry。',
   WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT,
   WORLD_MODEL_PROJECTION_RULE_CONTRACT,
-  '本版本不支持 remove、invalidate 或通过省略字段删除旧规则；不要输出 remove/invalidate。冲突只有在正文明确说明旧规则失效或已修正时才放入 update。',
-  'AI 只返回当前 Floor 的新增/明确修正 facts；不要把 Existing World Model 重新整理后作为完整结果返回。',
+  '本版本不支持 remove、invalidate 或通过省略字段删除旧规则；不要输出 remove/invalidate。明确 evidence-supported correction 只能通过 update 表达，不能通过省略字段或空值表达删除。',
+  '省略字段表示 unchanged。不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
 ].join('\n')
 
 export function buildWorldModelMessages(
@@ -744,9 +751,9 @@ export function buildWorldModelPatchMessages(
     formatAnalysisPromptTail(settings, names),
     `【World Model Patch 输出契约】\n${WORLD_MODEL_PATCH_OUTPUT_CONTRACT}`,
   ]))
-  addMessage(messages, 'system', formatWorldModelReferences(input, names))
+  addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', '只根据以上资料输出本次 Floor 的 World Model Patch JSON。')
+  addMessage(messages, 'user', '请根据 Existing World Model baseline 与以上完整 World Analysis evidence，输出 evidence-supported sparse World Model Patch JSON；只返回相对于 baseline 的 add/update，省略字段保持 unchanged。')
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }

@@ -57,7 +57,7 @@ flowchart TD
 | Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询 |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
-| World Analysis | `runtime/world-analysis.js` | World 查询、Full/Patch、World AI orchestration、结果 readback/readiness |
+| World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
 | SillyTavern Adapter | `runtime/sillytavern-adapter.js` | 原始 Host context、Chat/Floor slot I/O、HTTP transport、listener subscribe |
@@ -200,6 +200,13 @@ Owner whitelist：
 这些路径已通过自动化测试和真实 SillyTavern + F5 durability + Swipe 验证。与产品行为无关的问题不得顺手触碰它们。
 
 ## World 与 Character/Event
+
+World Analysis 的 domain owner 是
+[`World Model and World Analysis Contract`](../.trellis/spec/domain/world-model.md)：
+Full 使用 permitted evidence 重建 complete model，Supplement 使用同一 evidence
+set 加 Existing canonical baseline 做 semantic differential，再由 Runtime
+deterministically merge 并完成 canonical validation。本文只保留模块导航，不复制
+该领域算法；Floor/Swipe ownership 仍以 Floor State Ownership Contract 为准。
 
 ### 当前实现与目标契约
 

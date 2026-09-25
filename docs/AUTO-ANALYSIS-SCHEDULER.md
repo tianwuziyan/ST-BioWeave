@@ -19,6 +19,11 @@ canonical-ready 的 at-or-before World；缺少 World 时返回 `WORLD_MODEL_REQ
 
 ## 1. 核心定义
 
+World routing 与 World Analysis 语义分离。没有有效 World Model 时调用 Full；有
+效 World 且存在 world-relevant update signal 时调用 Supplement/Patch；有有效
+World 且没有 update signal 时 Reuse。Scheduler 只决定调用时机，不定义 Full 或
+Supplement 的事实语义；完整规则以 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) 为准。
+
 `analysis_interval` 表示“每 N 个新的有效 Character Floor 执行一次正常
 Auto Analysis”，不是 SillyTavern 的物理 message floor 差值。
 
@@ -198,7 +203,7 @@ retry 的对象是“当前 Floor 的完整 BioWeave 自动分析业务流程”
 
 - 没有当前可用 World：Full；
 - 已有合法 World 且没有 world-relevant 新证据：Reuse；
-- 已有合法 World 且当前 Floor 需要增量更新：Patch。
+- 已有合法 World 且当前分析触发了 world-relevant 更新信号：Supplement/Patch。该信号只决定是否调用 Patch 能力，不限定 Patch fact 必须首次来自当前 Floor；Patch 仍将 Existing World Model 与完整允许的 World Analysis evidence 做 baseline-aware semantic differential comparison。Existing baseline 不是 evidence。
 
 因此：
 
