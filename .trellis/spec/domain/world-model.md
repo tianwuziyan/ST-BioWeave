@@ -171,6 +171,131 @@ to conflict with an Existing world rule, scope is resolved first:
   current permitted evidence supports the new world-level statement;
 - ambiguous scope: do not force a World Model change.
 
+### 1.3.1 World Analysis Prompt regression freeze
+
+The following semantic invariants are shared by Full and Supplement. The
+Prompt may interpret the same evidence differently for complete reconstruction
+versus baseline comparison, but Supplement must not use a weaker biological
+classification or evidence boundary than Full.
+
+For every candidate biological type, the required order is:
+
+```text
+Candidate Discovery
+  -> Species Binding
+  -> Biological Type Exclusion Gate
+  -> Stability Gate
+  -> Biological / Reproductive Classification Gate
+  -> Evidence Sufficiency
+  -> Type Creation
+```
+
+`Fact Discovery` happens before this sequence and `Unarchived Fact Review`
+happens after it. Low-inference type discovery is permitted only after the
+Exclusion Gate. It must never turn a non-biological category into a
+`biological_type` merely because the category is mentioned together with
+body, sex, reproduction, or capability language.
+
+`biological_type` is a species-local, stable biological, physiological, or
+reproductive classification. The Exclusion Gate rejects a candidate whose
+meaning is principally any of the following, even when it has biological
+descriptions nearby:
+
+- species name, taxonomy, ordinary subspecies, lineage, ancestry, or origin;
+- occupation, cultivation identity, social identity, organization, sect,
+  faction, cultural group, or rank/realm;
+- ability system, attribute label, growth stage, progression, or skill state;
+- temporary condition, reversible body modification, transformation,
+  mutation, disease, anomaly, or a single body's shape;
+- personality, sexual preference, behavior, relationship, or an individual-only
+  description.
+
+An alleged type name is not evidence by itself. A name cannot establish type
+existence, capability, reproduction rule, lifecycle, special rule, or Human
+equivalence. Each of those facts requires evidence at its own scope. Species
+binding likewise requires direct or uniquely low-inference evidence in the
+same species context; another species, Human evidence, an unrelated partner,
+or the Existing baseline cannot authorize the candidate.
+
+The low-inference exception is intentionally retained. When the same species
+has two or more stable, mutually distinguishable, species-level reproductive
+physiology, reproductive-role, or reproductive-capability clusters, and the
+clusters uniquely define biological classes, a class may be created even if
+the source does not supply its label. This does not permit creating a paired
+class from one cluster, importing Human assumptions into a Nonhuman species,
+promoting an individual exception, or bypassing the Exclusion Gate.
+
+### 1.3.2 Evidence truth, Human boundary, and capability tri-state
+
+The following ordering and values are part of the shared semantic contract;
+they are not merely output formatting guidance:
+
+```text
+explicit current evidence
+  > reliable Human baseline
+  > unknown
+```
+
+Human baseline is limited to an already-established ordinary Human Male or
+Female. It fills only canonical null fields; explicit false, explicit
+absence, and explicit known values win. Nonhuman species never use Human
+baseline. This section does not redesign the Human baseline.
+
+For each of the six capability fields:
+
+- `true` requires evidence that the capability exists;
+- `false` requires explicit evidence that it is absent or impossible;
+- `null` means unknown, unmentioned, unobserved, insufficiently evidenced, or
+  unresolved.
+
+Absence of evidence is not false. No observed pregnancy, pseudo-pregnancy,
+interaction-only text, and an unproved type label do not establish `false`.
+
+### 1.3.3 Full, Supplement, and Empty Patch review
+
+Full and Supplement must execute the same Fact Discovery, species discovery,
+species binding, type exclusion, stability, classification, evidence-scope,
+Human/Nonhuman, and capability tri-state invariants. Their difference is the
+role of the Existing model:
+
+- Full builds an independent complete model from permitted evidence and does
+  not consume an Existing baseline;
+- Supplement receives the Existing canonical model only as a comparison
+  baseline, re-runs the same semantic review over the complete permitted
+  evidence set, and emits a sparse differential Candidate Patch.
+
+An Existing entry is not evidence for a new fact. Existing non-empty content
+does not authorize skipping Fact Discovery, species completeness review,
+biological-type classification review, missing-world-fact review, or
+compatible consolidation. An empty Patch is legal only after those reviews
+have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
+remains. “Existing already has content” is not a completed review.
+
+### 1.3.4 Structural Reclassification gap
+
+Prompt regression restoration and Structural Reclassification are separate
+problems. Supplement may continue to support safe field-level `CHANGE` and
+evidence-supported `ADD` under its current contract. If an Existing canonical
+entry's identity or knowledge outlet is itself wrong—for example, an Existing
+`biological_type` is actually an occupation or social classification—the
+current protection against unsupported `REMOVE` may prevent complete
+structural correction. This is an independent `Structural Reclassification /
+Existing Classification Correction` gap.
+
+This section records the gap but does not authorize arbitrary `REMOVE`,
+general reclassification, or a new deterministic narrative classifier.
+
+### 1.3.5 Historical implementation boundary
+
+The semantic invariants above are retained independently of the historical
+implementation used to enforce them. Do not restore branches for a concrete
+species, type, person, or fixture; fixture-specific `if/else`, large regex
+narrative classifiers, and a second NLP parser are not part of the contract.
+AI owns narrative Fact Discovery, scope, species binding, classification, and
+baseline-aware consolidation. Deterministic code owns structure, canonical
+identity, evidence isolation, delta/merge safety, complete-model consistency,
+and strict validation.
+
 ## 1.4 Existing baseline and evidence isolation
 
 The Existing World Model has exactly one role in Supplement: comparison

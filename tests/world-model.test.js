@@ -4038,7 +4038,7 @@ test('World Model prompt requires global species discovery before field analysis
   assert.match(prompt, /不得因为 type 不完整、生殖机制未知、capability 未知、lifecycle 未知或资料较少而删除/u)
   assert.match(prompt, /没有足够 type evidence 时输出 biological_types: \[\]/u)
   assert.match(prompt, /unknowns 替代/u)
-  assert.doesNotMatch(prompt, /具体角色|具体世界|Species A|Species B|Species C/u)
+  assert.doesNotMatch(prompt, /具体角色|具体世界|Species A|Species C|Species-[A-Z]/u)
 })
 
 test('World Model prompt declares ordered discovery, continuity, and final self-check stages', () => {
@@ -4069,6 +4069,63 @@ test('World Model prompt declares ordered discovery, continuity, and final self-
   assert.match(prompt, /来源不明时禁止 inheritance/u)
   assert.match(prompt, /个体来自 Human 不等于整个 species 有 Human origin/u)
   assert.match(prompt, /不新增 source_species、origin、inheritance 字段/u)
+})
+
+test('World Model prompts freeze the ordered generic biological type gate for Full and Supplement', () => {
+  const prompts = [
+    buildWorldModelMessages().map(message => message.content).join('\n'),
+    buildWorldModelPatchMessages().map(message => message.content).join('\n'),
+  ]
+  const stages = [
+    'Candidate Discovery',
+    'Species Binding',
+    'Biological Type Exclusion Gate',
+    'Stability Gate',
+    'Biological / Reproductive Classification Gate',
+    'Evidence Sufficiency',
+    'Type Creation',
+  ]
+
+  for (const prompt of prompts) {
+    let previousIndex = -1
+    for (const stage of stages) {
+      const index = prompt.indexOf(stage)
+      assert.ok(index > previousIndex, `${stage} must follow the previous biological type gate stage`)
+      previousIndex = index
+    }
+    assert.match(prompt, /low-inference discovery.*Exclusion Gate/u)
+    assert.match(prompt, /职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级\/境界、成长阶段/u)
+    assert.match(prompt, /临时或可逆状态/u)
+    assert.doesNotMatch(prompt, /Species-A|Species-B|Type-A|Occupation-X|Group-X/u)
+  }
+})
+
+test('World Model prompts separate type existence, capability evidence, and species-linked scope', () => {
+  const prompts = [
+    buildWorldModelMessages().map(message => message.content).join('\n'),
+    buildWorldModelPatchMessages().map(message => message.content).join('\n'),
+  ]
+
+  for (const prompt of prompts) {
+    assert.match(prompt, /type name、species name、Existing baseline 中已有的 type name 或任何标签本身都不能证明 type existence/u)
+    assert.match(prompt, /type existence evidence 与 capability evidence 必须分离/u)
+    assert.match(prompt, /Nonhuman type existence 与字段证据必须绑定到同一 species\/type scope/u)
+    assert.match(prompt, /其它 species、Human 常识、无关伴侣、单一个体或 Existing baseline 都不能授权当前 species/u)
+    assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/u)
+  }
+})
+
+test('Supplement prompt requires complete review before an empty Patch', () => {
+  const patchPrompt = buildWorldModelPatchMessages()
+    .map(message => message.content)
+    .join('\n')
+
+  assert.match(patchPrompt, /完整 evidence Fact Discovery、species completeness、biological type classification、missing world fact review 与 compatible consolidation review/u)
+  assert.match(patchPrompt, /Existing 非空、Existing type name 或某个不便删除的 Existing entry 都不能跳过这些 review/u)
+  assert.match(patchPrompt, /review 后没有合法 evidence-supported ADD\/CHANGE candidate，才允许返回 empty Patch/u)
+  assert.match(patchPrompt, /Existing baseline\/type name 不能作为新增 fact 的 evidence/u)
+  assert.match(patchPrompt, /只有完整 review 后没有合法 ADD\/CHANGE candidate 时才返回 empty Patch/u)
+  assert.match(patchPrompt, /不返回完整模型/u)
 })
 
 test('World Model keeps an empty type list when original evidence only names other classification axes', async () => {

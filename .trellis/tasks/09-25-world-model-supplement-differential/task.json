@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "09-26-world-analysis-prompt-regression-restore"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

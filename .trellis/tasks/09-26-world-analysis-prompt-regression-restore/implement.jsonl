@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Canonical World Model semantic contract to update with historical regression matrix conclusions, gate ordering, Full/Supplement invariants, Empty Patch meaning, and Structural Reclassification gap."}
+{"file":".trellis/tasks/09-25-world-model-supplement-differential/design.md","reason":"Existing Supplement design and baseline/delta boundary used as parent-task compatibility evidence."}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"Prompt documentation checked for direct conflict before deciding whether synchronization is necessary."}
