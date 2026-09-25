@@ -595,7 +595,7 @@ the source of any new fact.
 | Type is retained but a field lacks evidence | Keep the type; leave that field `null` |
 | Existing update field is unchanged | Do not require current evidence to repeat it |
 | Patch add field has no current evidence | Reject the Patch |
-| Patch change has only evidence of the new value, not correction | Reject the change |
+| Patch change has only a value mention without evidence establishing the Candidate at the compatible world scope | Reject the change |
 | Existing field disappears from a complete update | Treat as REMOVE and reject |
 | Existing baseline is the only support for a new Patch fact | Reject the Patch |
 | One nested field has evidence but a sibling nested field does not | Reject the unsupported sibling; do not bless the subtree |
