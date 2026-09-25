@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "09-26-world-analysis-prompt-regression-restore"
+    "09-26-world-analysis-prompt-regression-restore",
+    "09-26-world-model-minority-add-diagnosis"
   ],
   "parent": null,
   "relatedFiles": [],

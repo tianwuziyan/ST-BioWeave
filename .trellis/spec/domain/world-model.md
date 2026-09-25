@@ -259,7 +259,12 @@ Human/Nonhuman, and capability tri-state invariants. Their difference is the
 role of the Existing model:
 
 - Full builds an independent complete model from permitted evidence and does
-  not consume an Existing baseline;
+  not consume an Existing baseline. For each discovered species, Full first
+  enumerates every evidence-supported biological-type candidate, then applies
+  Species Binding -> Exclusion Gate -> Stability Gate -> Biological /
+  Reproductive Classification Gate -> Evidence Sufficiency -> Type Creation
+  to each candidate. Discovering a majority type must not end minority/rare
+  candidate discovery for that species;
 - Supplement receives the Existing canonical model only as a comparison
   baseline, re-runs the same semantic review over the complete permitted
   evidence set, and emits a sparse differential Candidate Patch.
@@ -270,6 +275,61 @@ biological-type classification review, missing-world-fact review, or
 compatible consolidation. An empty Patch is legal only after those reviews
 have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
 remains. “Existing already has content” is not a completed review.
+
+The Prompt operationalizes Supplement as an internal Candidate Ledger followed
+by Classification, Existing Comparison, Patch Selection, and the Empty Patch
+Gate. The Ledger is not an external DTO, parser input, or Patch schema field:
+
+The Supplement message architecture preserves the same epistemic boundary:
+the formal analysis contract and permitted evidence remain in their existing
+system/assistant positions; only the Existing target is moved to the user
+message:
+
+```text
+system  formal Supplement contract
+system  permitted World Analysis references
+assistant  Recent Story
+user  【Supplement Target：当前已保存的 World Model】
+      <existing_world_model>...</existing_world_model>
+      【Supplement Request】
+```
+
+The target block states that the model is the currently saved and active
+canonical model under review: `Existing = TARGET + comparison baseline`.
+Existing is never evidence. Worldbook, Character Card, External Memory, and
+Opening Greeting keep their permitted system evidence architecture. Recent
+Story remains a single permitted assistant message. Full continues to receive
+no Existing model and independently rebuilds from permitted evidence. Event
+and Character analyzers retain their existing World Model reference semantics;
+this Supplement-specific target formatter must not change them. Persona
+remains outside the World Model request unless a separate evidence-scope
+review authorizes it.
+
+```text
+permitted evidence
+  -> Candidate Ledger
+  -> Classification (UNCHANGED / ADD / CHANGE / EXCLUDED)
+  -> Existing Comparison (Supplement only)
+  -> Patch Selection
+  -> Empty Patch Gate
+```
+
+Candidate enumeration must explicitly cover missing species; missing
+biological types, including minority/rare types; missing capability knowledge;
+reproductive mechanisms/rules; lifecycle; `special_rules`; exceptions;
+unknowns; `medical_context`; `projection_rules`; evidence-supported
+corrections; and compatible completions. Each candidate receives exactly one
+classification: `UNCHANGED`, `ADD`, `CHANGE`, or `EXCLUDED`, after applying the
+shared scope, species/type binding, exclusion, stability, classification, and
+evidence rules. Existing is used only after candidate discovery, for
+comparison and compatible consolidation; it cannot create or prove a
+candidate. Patch Selection emits only legal evidence-supported `ADD`/`CHANGE`
+in the active Patch contract. The current v1 implementation uses a complete
+`update.species` Candidate; the frozen v2 design in §1.5.8 replaces that
+AI-facing duplication with explicit delta operations. The Empty Patch Gate may
+pass only after every candidate category and candidate has been reviewed and
+no legal `ADD` or `CHANGE` remains. Neither v1 nor v2 authorizes `REMOVE` or
+Structural Reclassification.
 
 ### 1.3.4 Structural Reclassification gap
 
@@ -550,6 +610,361 @@ If implementation would require changing one of these boundaries, stop and
 re-audit the contract instead of treating it as incidental Semantic Delta
 refactoring.
 
+### 1.5.8 Supplement Patch v2 DTO design (frozen, not implemented)
+
+#### 1.5.8.1 Scope / trigger and design decision
+
+The current v1 Patch accepts `update.species` as a complete canonical species
+Candidate and computes an internal Semantic Delta from it. That permits safe
+field-level comparison, but requires the AI to repeat unchanged Existing
+species, types, and sibling fields. Patch v2 changes the AI-facing contract to
+an explicit delta-only operation DTO. This section freezes the design for a
+later implementation; it does not authorize production-code changes in this
+phase.
+
+The chosen design is an explicit operation DTO rather than adding more
+ambiguous nested shapes under v1 `add`/`update`. Operation identity, operation
+kind, target scope, and proposed value are separate and therefore auditable.
+The DTO is versioned so v1 complete-candidate handling can remain during
+migration.
+
+#### 1.5.8.2 Message architecture
+
+Supplement v2 uses this role order, excluding optional configured boundary
+system messages:
+
+```text
+system     formal Supplement contract
+system     permitted World Analysis references
+assistant  Recent Story
+user       Supplement Target + Supplement Request
+```
+
+Only the user message contains Existing:
+
+```text
+【Supplement Target：当前已保存的 World Model】
+这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审查和补充的目标。
+Existing = TARGET + comparison baseline。
+Existing 本身不是 evidence。
+<existing_world_model>...</existing_world_model>
+
+【Supplement Request】
+使用 permitted evidence 审查 Target，只输出 evidence-supported v2 ADD/CHANGE operations。
+UNCHANGED 不输出；不要复制完整 Existing species 或 unchanged sibling fields。
+```
+
+Permitted Worldbook, Character Card, External Memory, Opening Greeting, and
+Recent Story evidence retain their existing message roles and provenance.
+Persona remains excluded from the World Model request. Full, Event, and
+Character message architecture is unchanged.
+
+#### 1.5.8.3 Signatures and top-level response contract
+
+The future v2 parser/validator boundary is conceptually:
+
+```text
+parseWorldModelPatchV2(raw) -> WorldModelPatchV2
+validateWorldModelPatchV2(patch) -> WorldModelPatchV2
+applyWorldModelPatchEvidenceGuardV2(patch, analysisInput) -> WorldModelPatchV2
+mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1
+```
+
+The AI-facing DTO is:
+
+```json
+{
+  "schema_version": 2,
+  "operations": []
+}
+```
+
+`operations` contains only evidence-supported proposed `ADD` or `CHANGE`
+information. It never contains complete updated Existing species,
+unchanged Existing fields, `UNCHANGED` operations, `REMOVE`, `invalidate`, or
+Structural Reclassification. `operations: []` means the complete Candidate
+Ledger and Existing comparison found no legal change.
+
+All operation targets use canonical identity, never array index, input order,
+mutable full-content identity, or guessed identity:
+
+| Domain object | Required identity |
+| --- | --- |
+| species | `species_name` |
+| biological type | `species_name` + `type_name` |
+| reproductive mechanism | `species_name` + `type_name` + stable `key` |
+| world field | explicit allowlisted canonical field path |
+| projection update | blocked; no v2 workaround |
+
+The DTO does not return `old_value`. The implementation resolves the old value
+from Existing and derives the semantic result.
+
+#### 1.5.8.4 Minimal operation set
+
+The frozen operation set is:
+
+| Operation | Purpose | Identity / payload |
+| --- | --- | --- |
+| `ADD_SPECIES` | Add a species absent from Existing | `species.name` plus supported new entry fields |
+| `ADD_TYPE` | Add a biological type to an Existing species | `target.species_name`, `type.name` plus supported new type fields |
+| `SET_FIELD` | Add or change one allowlisted scalar field | target + allowlisted `path` + proposed `value` |
+| `ADD_SPECIAL_RULE` | Add one type-local special rule | species + type + canonical rule string |
+| `ADD_MECHANISM` | Add one reproductive mechanism | species + type + stable mechanism `key` plus mechanism fields |
+| `ADD_EXCEPTION` | Add one world exception | canonical exception value |
+| `ADD_UNKNOWN` | Add one triggered world unknown | canonical unknown value |
+| `ADD_PROJECTION_RULE` | Add a new projection rule | existing raw new-rule fields; generated identity is deterministic and not AI-supplied |
+
+`medical_context` uses constrained `SET_FIELD` rather than a dedicated
+operation. It is already a world-scoped field object, and the same
+old-value/proposed-value/presence semantics apply without creating a
+single-use operation type. Only allowlisted `medical_context` keys are legal.
+
+No operation is defined for updating projection rules. `ADD_PROJECTION_RULE`
+retains the current raw AI new-rule contract: `schema_version`,
+`mechanism_key`, `development_concern_key`, `development_kind`, `trigger`, and
+the optional validated `requirements`, `realization`, `contradiction`, and
+`expiration` fields. AI must not include `projection_rule_id`; after raw
+validation, BioWeave generates it through the existing deterministic
+production path. Mutable Existing projection identity remains blocked, and
+this operation must not create an update workaround.
+
+Current source verification: `core/projection-eligibility.js` defines
+`RAW_RULE_FIELDS` and `validateProjectionRuleContent()` with exactly this raw
+boundary, while `normalizeProjectionRules()` calls `buildProjectionRuleId()`
+to add the generated identity. The v2 design does not change those functions
+or their ID algorithm.
+
+#### 1.5.8.5 SET_FIELD whitelist and validation matrix
+
+`SET_FIELD` is not an arbitrary JSON path mutation API. The path is a finite
+canonical tuple selected by `target.kind`:
+
+| `target.kind` | Allowed paths |
+| --- | --- |
+| `biological_type` | `capabilities.<CAPABILITY_KEY>`; `reproduction_rules.<WORLD_RULE_KEY>`; `lifecycle.maturation`; `lifecycle.aging`; `description` |
+| `species` | `description` and only future explicitly allowlisted species scalar correction fields |
+| `world` | `medical_context.childbirth_difficulty`; `medical_context.care_level`; `medical_context.evidence` |
+
+The initial species scalar whitelist is only `description`; adding another
+field requires a separate contract update. `description` is allowed because it
+is a canonical scalar, not an identity or collection replacement.
+
+The following are always invalid `SET_FIELD` paths:
+
+- any array index or numeric path segment;
+- `biological_types` as a whole or any biological-types array path;
+- `special_rules` as a whole;
+- `reproductive_mechanisms` as a whole;
+- `exceptions`, `unknowns`, or `projection_rules` as a whole;
+- `schema_version`, `name`, `species_name`, or `type_name` mutation;
+- any path not listed for the target kind;
+- `null` as a deletion/weakening value.
+
+Collection additions use their dedicated `ADD_*` operation. `false` and
+`"无"` are explicit known facts and are not unknown values.
+
+#### 1.5.8.6 Deterministic ADD / CHANGE semantics
+
+For `SET_FIELD`, the program resolves `old` from the canonical Existing target
+and reads `proposed` from the operation:
+
+| Existing `old` | Proposed value | Result |
+| --- | --- | --- |
+| equal to proposed | equal | `NO-OP`; do not emit or persist a delta |
+| `null` / unknown | known value | `ADD` |
+| known value | different known value | `CHANGE` |
+| known value | `null` | weakening / `REMOVE` semantic; reject |
+
+`false` and `"无"` remain known values. Existing supplies only the old value;
+it cannot prove the proposed value. Every operation must independently pass
+current permitted World Analysis evidence validation. One supported operation
+does not authorize any sibling operation.
+
+`ADD_TYPE` separates type existence evidence from type-field evidence. A type
+may be added with only evidence-supported identity/existence fields; capability
+fields without independent evidence remain canonical `null` after merge. Type
+existence never authorizes capability, lifecycle, reproduction, or mechanism
+facts.
+
+#### 1.5.8.7 Collection operation contracts
+
+| Operation | Identity / semantic equality | Evidence requirement | Merge behavior |
+| --- | --- | --- | --- |
+| `ADD_SPECIAL_RULE` | species + type + normalized semantic rule identity | evidence supports that type-local rule | same identity + same canonical content is deterministic `NO-OP`; different identity is `ADD`; same identity with different content is `REJECT` |
+| `ADD_MECHANISM` | species + type + non-empty stable `key` | each proposed mechanism fact is independently supported | same key + same canonical content is deterministic `NO-OP`; same key + different content is `REJECT`; no reliable key fails closed |
+| `ADD_EXCEPTION` | canonical `statement + applies_to`, not raw JSON key order | evidence supports the world-level exception scope | same identity + same canonical content is deterministic `NO-OP`; same identity with another fact-bearing conflict is `REJECT`; different identity is `ADD` |
+| `ADD_UNKNOWN` | canonical unknown value after normalization | input must trigger the unresolved world-level question | same canonical unknown is deterministic `NO-OP`; different canonical unknown is `ADD` |
+| `ADD_PROJECTION_RULE` | existing production canonical/generated new-rule identity; AI does not provide generated ID | raw new rule passes current `validateProjectionRuleContent()` and add evidence checks | same deterministic identity + same canonical content is `NO-OP`; identity collision with different content is `REJECT`; if safe comparison is unavailable, fail closed / `BLOCKED`; Existing rule update remains blocked |
+
+`ADD_MECHANISM` fails closed when no reliable stable key exists. It must not
+use label, array position, or mutable full content as a substitute identity.
+`ADD_EXCEPTION` must use canonical field equality and never raw
+`JSON.stringify()` ordering. Collection reorder is not a semantic delta.
+For every collection operation, same canonical identity plus same canonical
+content is a deterministic `NO-OP`; same identity plus different canonical
+content is a conflict and must `REJECT`; a different canonical identity is a
+normal `ADD` candidate. A `NO-OP` creates no semantic delta, no duplicate item,
+no persistence requirement, and no sibling authorization.
+
+#### 1.5.8.8 Evidence and merge pipeline
+
+Each operation is independently validated:
+
+```text
+clone Existing
+  -> validate operation shape and canonical identities
+  -> resolve Existing target / old value
+  -> evidence-validate exactly this operation
+  -> apply validated operation
+  -> complete-model consistency guard
+  -> strict canonical normalization / validation
+  -> persist
+```
+
+Absence of an operation means `UNCHANGED`; `NO-OP` is a deterministic
+validation result, not an AI operation type. AI must not emit `NO_OP`.
+Omission never implies REMOVE. If every operation resolves to `NO-OP`, the
+merged canonical model is unchanged and produces no `ADD`/`CHANGE` delta;
+whether persistence skips a write remains the existing Runtime/ownership
+contract and is not redesigned here.
+Merge applies a sparse field or collection addition to the cloned Existing
+model; it never replaces a complete Existing species entry. A supported
+capability operation cannot authorize another capability, reproduction rule,
+lifecycle field, special rule, or mechanism operation.
+
+#### 1.5.8.9 Compatibility and migration plan
+
+Migration is staged to preserve the already-tested v1 guard path:
+
+1. Keep v1 parsing, evidence guard, and complete-candidate merge as temporary
+   backward compatibility. Do not silently reinterpret v1 `update.species`.
+2. Implement an isolated v2 parser/validator and an internal operation
+   application path. A v1-to-internal adapter may translate only after v1
+   validation and must preserve v1 complete-candidate deletion-risk checks.
+3. Change only the Supplement Prompt to request `schema_version: 2` and
+   operation DTO output. Full output and Full schema remain unchanged.
+4. Route v2 responses through operation-level evidence validation and merge;
+   retain v1 fallback only for an explicitly defined compatibility period and
+   diagnostic path.
+5. Add API/runtime acceptance coverage, then remove the v1 complete-candidate
+   Supplement path in a separately approved cleanup change. Do not delete
+   v1 code in the initial v2 implementation.
+
+Runtime should not own semantic conversion. If an adapter is needed, it stays
+inside the World Model Patch parser/compatibility boundary and returns the
+same internal validated operation representation.
+
+#### 1.5.8.10 Generic DTO examples
+
+All examples use only generic names.
+
+```json
+// ADD_SPECIES
+{"schema_version":2,"operations":[{"op":"ADD_SPECIES","species":{"name":"Species-B","description":"Supported species."}}]}
+
+// ADD_TYPE
+{"schema_version":2,"operations":[{"op":"ADD_TYPE","target":{"species_name":"Species-A"},"type":{"name":"Type-B","description":"Supported type."}}]}
+
+// SET capability
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["capabilities","can_carry_pregnancy"],"value":true}]}
+
+// SET reproduction rule
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["reproduction_rules","gestation"],"value":"Supported gestation rule."}]}
+
+// SET lifecycle
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["lifecycle","maturation"],"value":"Supported maturation rule."}]}
+
+// ADD_SPECIAL_RULE
+{"schema_version":2,"operations":[{"op":"ADD_SPECIAL_RULE","target":{"species_name":"Species-A","type_name":"Type-A"},"value":"Supported special rule."}]}
+
+// ADD_MECHANISM
+{"schema_version":2,"operations":[{"op":"ADD_MECHANISM","target":{"species_name":"Species-A","type_name":"Type-A"},"mechanism":{"key":"stable-mechanism-key","label":"Supported mechanism","pathway":"Supported pathway","carrying_compatibility":null}}]}
+
+// medical_context field update
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"world"},"path":["medical_context","care_level"],"value":"Supported care level."}]}
+
+// ADD_EXCEPTION
+{"schema_version":2,"operations":[{"op":"ADD_EXCEPTION","exception":{"statement":"Supported exception.","applies_to":"Species-A"}}]}
+
+// ADD_UNKNOWN
+{"schema_version":2,"operations":[{"op":"ADD_UNKNOWN","unknown":"Supported unresolved world question."}]}
+
+// ADD_PROJECTION_RULE: raw AI payload; projection_rule_id is forbidden.
+{"schema_version":2,"operations":[{"op":"ADD_PROJECTION_RULE","projection_rule":{"schema_version":1,"mechanism_key":"stable-mechanism-key","development_concern_key":"concern","development_kind":"possible_detection","trigger":{"kind":"story_time_reached","target_story_time":{"day_index":1}}}}]}
+
+// no-op
+{"schema_version":2,"operations":[]}
+```
+
+The following are invalid and must fail closed:
+
+```json
+{"schema_version":2,"operations":[{"op":"REMOVE","target":{"species_name":"Species-A","type_name":"Type-A"}}]}
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["capabilities","can_carry_pregnancy"],"value":null}]}
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A","type_name":"Type-A"},"path":["biological_types",0,"capabilities"],"value":{}}]}
+{"schema_version":2,"operations":[{"op":"ADD_TYPE","target":{},"type":{"name":"Type-B"}}]}
+{"schema_version":2,"operations":[{"op":"SET_FIELD","target":{"kind":"biological_type","species_name":"Species-A"},"path":["capabilities","can_carry_pregnancy"],"value":true}]}
+```
+
+#### 1.5.8.11 Validation and error matrix
+
+| Condition | Required result |
+| --- | --- |
+| unsupported `schema_version` or unknown operation | reject closed |
+| missing species/type/mechanism identity | reject closed |
+| array index, identity mutation, or non-whitelisted path | reject closed |
+| Existing target species/type absent | reject closed |
+| proposed known value unsupported by permitted evidence | reject closed |
+| known Existing value -> `null` | reject as weakening / REMOVE |
+| duplicate type or mechanism identity | reject closed |
+| duplicate canonical collection addition | no-op or reject per collection policy; never duplicate or replace |
+| projection rule update | reject with explicit blocked status |
+| `REMOVE`, `invalidate`, Structural Reclassification | reject as unsupported |
+| valid no-op against same Existing value | no semantic delta; omit/persist no change |
+
+#### 1.5.8.12 Tests required
+
+Implementation must add coverage for:
+
+- role rollback: Existing only in user Target; permitted evidence in original
+  system/assistant roles; Recent Story once; Persona excluded;
+- Full without Existing and unchanged Event behavior;
+- every legal operation type and canonical identity resolution;
+- no-op and deterministic `ADD` versus `CHANGE` derivation;
+- known-to-null rejection, explicit `false` and `"无"` preservation;
+- capability/type/reproduction/lifecycle/special-rule sibling isolation;
+- baseline cannot self-prove a proposed value;
+- merge preservation of all untouched Existing data;
+- collection dedupe and reorder invariance;
+- REMOVE, Structural Reclassification, and projection update rejection;
+- final consistency and strict canonical validation;
+- generic production fixture leakage audit using only Species-A / Species-B /
+  Type-A / Type-B in tests.
+
+#### 1.5.8.13 Wrong versus correct
+
+Wrong: return a complete `update.species` containing Existing Type-A merely to
+add Type-B, or use a missing nested field to mean REMOVE.
+
+Correct: return one `ADD_TYPE` operation targeting `Species-A` with
+`Type-B`; merge resolves Existing Species-A, preserves Type-A untouched, and
+adds only the independently evidence-supported Type-B fields.
+
+#### 1.5.8.14 REVIEW REQUIRED
+
+The following remain open until implementation review:
+
+- whether the external API may accept v1 and v2 concurrently during migration;
+- implementation conformance to the frozen collection policy: same identity +
+  same canonical content is `NO-OP`, while same identity + different content
+  is `REJECT`;
+- the final allowlist of species scalar correction fields beyond `description`;
+- implementation verification that `ADD_PROJECTION_RULE` invokes the existing
+  raw validator and deterministic generator without accepting an AI-supplied
+  `projection_rule_id`;
+- whether v1 compatibility must be time-limited by release or capability flag;
+- adapter placement and API error codes for v2 operation failures.
+
 ## 1.6 Routing and scheduler ownership
 
 Manual routing is fixed:
@@ -572,8 +987,8 @@ model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
 ## 1.7 Current implementation status
 
-The current implementation has the v2 safety path in place but remains
-**REVIEW REQUIRED / PARTIAL** against the full contract. Existing capability
+The current implementation is still the v1 complete-candidate Patch path and
+is **REVIEW REQUIRED / PARTIAL** against the frozen v2 design. Existing capability
 includes Full/Patch Runtime routing, Full/Supplement Prompt separation, Patch
 baseline final-message injection, Full baseline isolation, the shared permitted
 evidence universe, Existing baseline isolation from evidence, World Fact
@@ -582,9 +997,12 @@ validation, top-level `remove`/`invalidate` rejection, deterministic merge,
 strict canonical normalization, canonical Existing/Candidate comparison,
 changed-fact `UNCHANGED`/`ADD`/`CHANGE`/`REMOVE` safety classification,
 per-fact evidence checks, sparse medical presence preservation, and post-merge
-complete-model consistency finalization. The Prompt and evidence boundaries
-remain correct: Patch receives Existing baseline, Full does not consume it, and
-Existing baseline is not collected by `evidenceUnits()`.
+complete-model consistency finalization. These v1 capabilities remain the
+temporary compatibility path; v2 operation parsing, operation-level evidence
+validation, and sparse operation merge are not implemented by this document
+update. The Prompt and evidence boundaries remain correct: Patch receives
+Existing baseline, Full does not consume it, and Existing baseline is not
+collected by `evidenceUnits()`.
 
 The remaining limits are intentional or independently blocked: deterministic
 code does not re-implement narrative World Fact Discovery; AI remains
@@ -604,6 +1022,9 @@ contract above.
 - `parseWorldModelResponse(raw) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModel(input) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModelPatch(input) -> WorldModelPatchV1`
+- `parseWorldModelPatchV2(raw) -> WorldModelPatchV2` (planned)
+- `validateWorldModelPatchV2(patch) -> WorldModelPatchV2` (planned)
+- `mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1` (planned)
 - `applyWorldModelEvidenceGuard(model, analysisInput) -> WorldModelV1`
 - `applyWorldModelPatchEvidenceGuard(patch, analysisInput) -> WorldModelPatchV1`
 

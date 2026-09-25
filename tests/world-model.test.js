@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
+import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
 import { applyWorldModelPatchEvidenceGuard, createAnalyzer, mergeWorldModelPatch, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch } from '../ai/analyzer.js'
 import {
@@ -485,7 +485,7 @@ test('World Model Patch prompt requires sparse add/update output and forbids imp
   assert.match(prompt, /不要返回完整 World Model/)
   assert.match(prompt, /缺少字段永远表示不修改/)
   assert.match(prompt, /不支持 remove、invalidate/)
-  assert.match(prompt, /previously missed evidence/)
+  assert.match(prompt, /previously missed evidence（此前漏掉的 evidence）与 newly available evidence/)
   assert.match(prompt, /newly available evidence/)
   assert.match(prompt, /不要求首次出现于 current Floor/)
   assert.match(prompt, /evidence-supported sparse World Model Patch/)
@@ -524,10 +524,82 @@ test('World Model Patch final API messages include the baseline while Full messa
   await analyzer.analyzeWorldModelPatch({ analysisInput })
   await analyzer.analyzeWorldModel({ analysisInput })
 
-  assert.match(requests[0].map(message => message.content).join('\n'), /【当前 World Model 参考】/)
-  assert.match(requests[0].map(message => message.content).join('\n'), /已保存基线/)
+  assert.deepEqual(requests[0].map(message => message.role), ['system', 'system', 'assistant', 'user'])
+  const patchSystem = requests[0].filter(message => message.role === 'system').map(message => message.content).join('\n')
+  const patchUser = requests[0].find(message => message.role === 'user')?.content ?? ''
+  assert.doesNotMatch(patchSystem, /已保存基线/)
+  assert.match(patchUser, /【Supplement Target：当前已保存的 World Model】/)
+  assert.match(patchUser, /已保存基线/)
   assert.doesNotMatch(requests[1].map(message => message.content).join('\n'), /【当前 World Model 参考】/)
   assert.doesNotMatch(requests[1].map(message => message.content).join('\n'), /已保存基线/)
+})
+
+test('Supplement keeps permitted evidence roles while placing only its Target in the user message', () => {
+  const existing = { schema_version: 1, species: [{ name: 'Species-A', description: '当前 canonical baseline。' }] }
+  const patchMessages = buildWorldModelPatchMessages({
+    world_model: existing,
+    character: {
+      description: 'Character Card evidence for Type-B.',
+      greetings: [{ content: 'Character greeting evidence.' }],
+    },
+    persona: { name: '用户', description: 'Persona private content.' },
+    worldbooks: [{ entries: [{ label: 'Worldbook-A', content: 'Worldbook evidence for Type-B.' }] }],
+    external_memory: [{
+      enabled: true,
+      available: true,
+      content_available: true,
+      items: [{ label: 'External Memory-A', content: 'External memory evidence for Type-B.' }],
+    }],
+    recent_story: { items: [{ content: 'Recent Story evidence for Type-B.' }] },
+  })
+  const userMessages = patchMessages.filter(message => message.role === 'user')
+  const user = userMessages[0].content
+  const system = patchMessages.filter(message => message.role === 'system').map(message => message.content).join('\n')
+  const evidenceSystem = patchMessages.filter(message => message.role === 'system')[1]?.content ?? ''
+  const recentStoryMessages = patchMessages.filter(message => message.role === 'assistant')
+  const targetIndex = user.indexOf('【Supplement Target：当前已保存的 World Model】')
+  const requestIndex = user.indexOf('【Supplement Request】')
+
+  assert.deepEqual(patchMessages.map(message => message.role), ['system', 'system', 'assistant', 'user'])
+  assert.equal(userMessages.length, 1)
+  assert.ok(targetIndex >= 0 && requestIndex > targetIndex)
+  assert.match(user, /Existing = TARGET \+ comparison baseline/u)
+  assert.match(user, /Existing 本身不是 evidence/u)
+  assert.match(user, /<existing_world_model>[\s\S]*当前 canonical baseline。[\s\S]*<\/existing_world_model>/u)
+  assert.doesNotMatch(system, /当前 canonical baseline。|<existing_world_model>/u)
+  assert.doesNotMatch(user, /【当前 World Model 参考】|仅作为生物规则和能力背景参考|Worldbook evidence for Type-B\.|Character Card evidence for Type-B\.|External memory evidence for Type-B\.|Character greeting evidence\.|External memory evidence for Type-B\.|Recent Story evidence for Type-B\./u)
+  assert.match(evidenceSystem, /【世界书参考资料】[\s\S]*Worldbook evidence for Type-B\./u)
+  assert.match(evidenceSystem, /Character Card evidence for Type-B\./u)
+  assert.match(evidenceSystem, /External memory evidence for Type-B\./u)
+  assert.match(evidenceSystem, /Character greeting evidence\./u)
+  assert.equal(recentStoryMessages.length, 1)
+  assert.match(recentStoryMessages[0].content, /Recent Story evidence for Type-B\./u)
+  assert.doesNotMatch(user, /Persona private content\.|人物设定/u)
+  assert.match(user.slice(requestIndex), /permitted World Analysis evidence/u)
+  assert.match(user.slice(requestIndex), /Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate/u)
+
+  const boundedMessages = buildWorldModelPatchMessages(
+    {
+      world_model: existing,
+      character: { description: 'Character Card evidence.' },
+      recent_story: { items: [{ content: 'Recent Story evidence for Type-B.' }] },
+    },
+    { system_top: 'TOP', system_bottom: 'BOTTOM' },
+  )
+  assert.deepEqual(boundedMessages[0], { role: 'system', content: 'TOP' })
+  assert.deepEqual(boundedMessages.at(-1), { role: 'system', content: 'BOTTOM' })
+  assert.deepEqual(boundedMessages.slice(1, -1).map(message => message.role), ['system', 'system', 'assistant', 'user'])
+
+  const fullMessages = buildWorldModelMessages({ world_model: existing })
+  assert.doesNotMatch(JSON.stringify(fullMessages), /当前 canonical baseline。|existing_world_model/u)
+
+  const eventMessages = buildEventAnalysisMessages({ world_model: existing })
+  assert.match(JSON.stringify(eventMessages), /【当前 World Model 参考】/u)
+  assert.match(JSON.stringify(eventMessages), /仅作为生物规则和能力背景参考/u)
+
+  assert.match(system, /\{"schema_version":1,"add":\{\},"update":\{\}\}/u)
+  assert.match(system, /允许 add 的字段：species、exceptions、unknowns、projection_rules/u)
+  assert.match(system, /允许 update 的字段：species、medical_context、projection_rules/u)
 })
 
 test('World Model Patch evidence guard accepts differential evidence regardless of Floor origin', () => {
@@ -844,6 +916,24 @@ test('World Model Patch expands a new biological type into semantic field adds (
   )
   assert.equal(patch.update.species[0].biological_types[0].name, '新增型')
   assert.deepEqual(patch.update.species[0].biological_types[0].special_rules, ['新增类型规则'])
+})
+
+test('World Model Patch guard and merge support a generic Type-B add without claiming discovery (U2)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: 'Species-A', biological_types: [{ name: 'Type-A', description: 'Existing type.' }] }],
+  })
+  const candidate = structuredClone(baseline.species[0])
+  candidate.biological_types.push({ name: 'Type-B', special_rules: ['Type-B'] })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    { world_model: baseline, character: { description: 'Species-A：Type-B。' } },
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+
+  assert.deepEqual(merged.species[0].biological_types.map(type => type.name), ['Type-A', 'Type-B'])
+  assert.ok(merged.species[0].biological_types[1].capabilities)
+  assert.ok(Object.values(merged.species[0].biological_types[1].capabilities).every(value => value === null))
 })
 
 test('World Model Patch rejects unsupported nested capability on a new type (V)', () => {
@@ -4100,6 +4190,19 @@ test('World Model prompts freeze the ordered generic biological type gate for Fu
   }
 })
 
+test('World Model Full and Supplement prompts enumerate minority types and run the shared candidate gates', () => {
+  const fullPrompt = buildWorldModelMessages().map(message => message.content).join('\n')
+  const supplementPrompt = buildWorldModelPatchMessages().map(message => message.content).join('\n')
+
+  for (const prompt of [fullPrompt, supplementPrompt]) {
+    const enumeration = prompt.indexOf('对每个已发现 species 执行 Candidate Discovery，枚举 AnalysisInput 中全部 evidence-supported biological type candidates')
+    const majorityRule = prompt.indexOf('不得因发现或确认 majority type 而终止', enumeration)
+    assert.ok(enumeration >= 0, 'all evidence-supported type candidates must be enumerated per species')
+    assert.ok(majorityRule > enumeration, 'minority discovery must continue after majority discovery')
+    assert.match(prompt, /Species Binding → Biological Type Exclusion Gate → Stability Gate → Biological \/ Reproductive Classification Gate → Evidence Sufficiency → Type Creation/u)
+  }
+})
+
 test('World Model prompts separate type existence, capability evidence, and species-linked scope', () => {
   const prompts = [
     buildWorldModelMessages().map(message => message.content).join('\n'),
@@ -4115,17 +4218,47 @@ test('World Model prompts separate type existence, capability evidence, and spec
   }
 })
 
-test('Supplement prompt requires complete review before an empty Patch', () => {
+test('Supplement prompt runs the candidate ledger procedure and reviews every candidate category before an empty Patch', () => {
   const patchPrompt = buildWorldModelPatchMessages()
     .map(message => message.content)
     .join('\n')
 
-  assert.match(patchPrompt, /完整 evidence Fact Discovery、species completeness、biological type classification、missing world fact review 与 compatible consolidation review/u)
-  assert.match(patchPrompt, /Existing 非空、Existing type name 或某个不便删除的 Existing entry 都不能跳过这些 review/u)
-  assert.match(patchPrompt, /review 后没有合法 evidence-supported ADD\/CHANGE candidate，才允许返回 empty Patch/u)
-  assert.match(patchPrompt, /Existing baseline\/type name 不能作为新增 fact 的 evidence/u)
-  assert.match(patchPrompt, /只有完整 review 后没有合法 ADD\/CHANGE candidate 时才返回 empty Patch/u)
-  assert.match(patchPrompt, /不返回完整模型/u)
+  const stages = [
+    'Candidate Ledger',
+    'Classification',
+    'Existing Comparison',
+    'Patch Selection',
+    'Empty Patch Gate',
+  ]
+  let previousIndex = -1
+  for (const stage of stages) {
+    const index = patchPrompt.indexOf(stage, patchPrompt.indexOf('严格依序执行 Candidate Ledger'))
+    assert.ok(index > previousIndex, `${stage} must follow the previous Supplement procedure stage`)
+    previousIndex = index
+  }
+
+  for (const category of [
+    'missing species',
+    'missing biological types（包括 minority/rare types）',
+    'missing capability knowledge',
+    'reproductive mechanisms/rules',
+    'lifecycle',
+    'special_rules',
+    'exceptions',
+    'unknowns',
+    'medical_context',
+    'projection_rules',
+    'evidence-supported corrections',
+    'compatible completions',
+  ]) {
+    assert.ok(patchPrompt.includes(category), `Candidate Ledger must cover ${category}`)
+  }
+  for (const classification of ['UNCHANGED', 'ADD', 'CHANGE', 'EXCLUDED']) {
+    assert.ok(patchPrompt.includes(classification), `each candidate must be classified ${classification}`)
+  }
+  assert.match(patchPrompt, /Existing 仅用于判断是否已表达及兼容合并方式，绝不是 candidate generation 的依据或 evidence/u)
+  assert.match(patchPrompt, /所有候选类别和候选均完成审查、没有任何合法 ADD\/CHANGE 后才允许返回 empty Patch/u)
+  assert.match(patchPrompt, /不要返回完整 World Model/u)
 })
 
 test('World Model keeps an empty type list when original evidence only names other classification axes', async () => {
