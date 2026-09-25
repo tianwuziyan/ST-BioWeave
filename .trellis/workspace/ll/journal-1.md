@@ -787,3 +787,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Implemented; commit intentionally not created per user instruction**
+
+
+## Session 36: 恢复 World Analysis Prompt 生物类型证据边界
+<!-- trellis-session: v=2 fp=6178491a912dc76a -->
+
+**Date**: 2026-09-26
+**Task**: 恢复 World Analysis Prompt 生物类型证据边界
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完成 World Analysis Prompt regression archaeology 的 canonical spec 与 Trellis design；强化 Full/Supplement 共享 biological type gate、species binding、capability evidence 与 Supplement 完整 review/Empty Patch 合同，新增 generic Prompt contract tests。World Model tests 193/193、完整测试 979/979；已提交并推送，未修改 analyzer、validator、merge、Runtime、storage、UI。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a13dfe` | 恢复 World Analysis Prompt 生物类型证据边界 |
+
+### Status
+
+[OK] **Completed**

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
-- **Last Active**: 2026-09-20
+- **Total Sessions**: 36
+- **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~769 | Active |
+| `journal-1.md` | ~811 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-09-26 | 恢复 World Analysis Prompt 生物类型证据边界 | `7a13dfe` | `fix/world-model-prompt-baseline` |
 | 34 | 2026-09-20 | 收敛 Floor 数据所有权并修复 World clear 回归 | `0cdd648` | `fix/world-model-prompt-baseline` |
 | 33 | 2026-09-20 | 删除世界分析页面的分析输入入口并同步 GitHub | `473843c` | `fix/world-model-prompt-baseline` |
 | 32 | 2026-09-20 | 修复角色卡开场白 Prompt 边界并同步 GitHub | `2b739ce` | `fix/world-model-prompt-baseline` |
