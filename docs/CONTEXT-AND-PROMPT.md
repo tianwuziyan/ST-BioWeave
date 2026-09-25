@@ -190,9 +190,13 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 5. `USER`：最终执行指令；
 6. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（整个 `messages[]` 的绝对最后一项）。
 
-World Analysis 使用相同的首尾边界、选择和来源处理，但不包含 User Persona、Event 角色资料、Target Floor 或 Existing BioWeave reference 等 Event 专属资料。Full World Analysis 的语义是 `evidence → complete World Model`，不消费 Existing World Model baseline；即使调用路径或 `AnalysisInput` 偶然带有旧 `world_model`，Full final messages 也不得包含 `【当前 World Model 参考】`。
+World Analysis 使用相同的首尾边界、选择和来源处理，但不包含 User Persona、Event 角色资料、Target Floor 或 Existing BioWeave reference 等 Event 专属资料。Full World Analysis 的语义是 `permitted evidence → World Fact Discovery / scope / classification → complete World Model`，不消费 Existing World Model baseline；即使调用路径或 `AnalysisInput` 偶然带有旧 `world_model`，Full final messages 也不得包含 `【当前 World Model 参考】`。
 
-Supplement/Patch World Analysis 的语义是 `Existing World Model + evidence → baseline-aware semantic differential → sparse Patch`。它必须在最终 API messages 的 Reference Context 中包含已验证的 Existing World Model comparison baseline，并与 Full 使用相同的完整、允许的 World Analysis evidence set。baseline 不是 evidence，不得被 `evidenceUnits()` 收集，也不能证明它自身产生的新 Patch fact。Analyzer 重新审阅这些 evidence：新近资料中新出现的事实、较早资料中之前遗漏的事实、已有 entry 的 evidence-supported 补充，以及 explicit evidence-supported correction，都可以相对于 baseline 产生 `add` 或 `update`；事实不要求首次出现于 current Floor。Existing Model 已充分表达的事实不重复输出，省略字段表示 unchanged，`remove` / `invalidate` 仍不支持。Patch evidence validation 必须验证 canonical semantic delta，而不是以整个 entry 任意一个字符串命中 evidence 就放行。
+Supplement/Patch World Analysis 的语义是 `Existing World Model + evidence → World Fact Discovery / scope / classification → baseline-aware consolidation → Candidate Patch`。它必须在最终 API messages 的 Reference Context 中包含已验证的 Existing World Model comparison baseline，并与 Full 使用相同的完整、允许的 World Analysis evidence set。baseline 不是 evidence，不得被 `evidenceUnits()` 收集，也不能证明它自身产生的新 Patch fact。Prompt 必须要求模型先区分 individual fact、world-level rule、world-level exception、world-level unknown、world-level medical context 与 species/type special rule；single-character evidence 不得自动升级为 species/type world rule。新近资料、较早资料中此前遗漏的世界级事实、兼容补充以及明确世界级 correction 都可以相对于 baseline 提出 Candidate；事实不要求首次出现于 current Floor。Existing Model 已充分表达的事实不重复输出；在 sparse Patch section 中省略字段表示 unchanged，`remove` / `invalidate` 仍不支持。Semantic Delta 只作为 deterministic safety layer，负责 changed fact、evidence、隐式删除与搭便车安全，不替代 scope/classification。
+
+AI 在 Supplement 中只提出 Candidate；semantic delta、evidence authority、merge、canonical
+validation 和 persistence 仍由 Program/Runtime 负责。Full 的 baseline-free 边界与
+Supplement 的 baseline-aware 边界不得因共享 AnalysisInput DTO 而混淆。
 
 Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。用户 common prompt 可以补充行为，不能覆盖 schema、业务 invariant 或 validator contract。
 

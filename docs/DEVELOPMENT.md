@@ -111,11 +111,18 @@ World Full/Patch 在当前 Floor read-back 与共享 World canonical view-model 
 
 World Model / World Analysis 的完整 canonical 规则见
 [`../.trellis/spec/domain/world-model.md`](../.trellis/spec/domain/world-model.md)。
-Full 是 `permitted evidence → complete canonical model`，不消费 Existing World
-Model baseline；Supplement 是 `Existing canonical model + 同一 permitted evidence
-set → semantic differential → sparse Patch → deterministic merge → complete
-canonical validation`。Existing baseline 只是 comparison baseline，不是 evidence；
-Supplement eligibility 不由事实是否首次出现在 current Floor 决定。
+Full 是 `permitted evidence → World Fact Discovery / scope / classification → complete
+canonical model`，不消费 Existing World Model baseline；Supplement 是 `Existing
+canonical model + 同一 permitted evidence set → scope/classification → baseline-aware
+consolidation → Candidate Patch → deterministic safety → merge → complete canonical
+validation`。Existing baseline 只是 comparison baseline，不是 evidence；Supplement
+eligibility 不由事实是否首次出现在 current Floor 决定。
+
+Semantic Delta 实现必须保留需要的 Raw Patch field presence，区分 complete
+`update.species` Candidate 与 sparse `update.medical_context`，并保持 canonical
+null/boolean/`"无"` 语义。不得借此重写 Full evidence collector、Human baseline、
+Fact Discovery、UI read model 或既有 World canonicalizer。单一 character evidence
+也不得自动提升为 species/type world rule；具体执行合同以 canonical spec 为准。
 
 World Analysis 只有两套底层能力：Full World Analysis 与 World Patch Analysis。Initial Full、Manual“开始分析”和 Auto 在没有有效 World 时都调用同一个 Full 能力；Manual“补充分析”和 Auto 在存在 world-relevant 新证据信号时都调用同一个 Patch 能力。该触发信号不改变 Supplement 的事实 eligibility：Patch 仍重新审阅完整允许的 World Analysis evidence，既可补充较早资料中已存在但之前遗漏的事实，也可处理新近 evidence。已有 World 且没有 world-relevant 新证据触发信号时，Auto 不调用 World AI，直接 Reuse 已验证的 World 后再进行 Character/Event Analysis。Scheduler 只负责调用时机和 Reuse 路由，不拥有 Full/Supplement 的业务语义；当前 Patch semantic-delta guard 尚未完成，状态以 canonical spec 标注的 BLOCKER 为准。
 

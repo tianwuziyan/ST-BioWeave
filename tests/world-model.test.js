@@ -544,7 +544,7 @@ test('World Model Patch evidence guard accepts differential evidence regardless 
     {
       world_model: baseline,
       recent_story: {
-        items: [{ floor: 2, content: '较早允许资料明确记载遗漏物种。' }],
+        items: [{ floor: 2, content: '较早允许资料明确记载遗漏物种，描述为遗漏资料中的稳定规则。' }],
       },
     },
   )
@@ -562,8 +562,7 @@ test('World Model Patch evidence guard rejects unsupported canonical additions',
       { recent_story: { items: [{ content: '只说明另一条事实。' }] } },
     ),
     error => error?.code === 'WORLD_MODEL_PATCH_INVALID'
-      && error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED'
-      && error?.path === 'add.species[0]',
+      && error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
   )
 })
 
@@ -600,6 +599,397 @@ test('World Model Patch evidence guard accepts evidence-supported correction of 
   const merged = mergeWorldModelPatch(baseline, patch)
   assert.equal(merged.species[0].description, corrected.description)
   assert.doesNotThrow(() => normalizeWorldModel(merged, { strict: true }))
+})
+
+function patchSpeciesCandidate(baseline, typePatch = {}) {
+  const species = structuredClone(baseline.species[0])
+  species.biological_types[0] = {
+    ...species.biological_types[0],
+    ...typePatch,
+  }
+  return species
+}
+
+function patchEvidenceInput(baseline, content) {
+  return {
+    world_model: baseline,
+    recent_story: { items: [{ content }] },
+  }
+}
+
+test('World Model Patch semantic safety accepts compatible accumulation and preserves Existing facts (A, C, I)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '累积物种',
+      biological_types: [structuredFixtureType('甲型', '已有类型描述。', { special_rules: ['已有世界规则'] })],
+    }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, {
+    special_rules: ['已有世界规则', '新增世界规则'],
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '累积物种甲型明确具有新增世界规则。'),
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+  assert.deepEqual(merged.species[0].biological_types[0].special_rules, ['已有世界规则', '新增世界规则'])
+})
+
+test('World Model Patch rejects unsupported nested piggyback (B, J, N)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '安全物种',
+      biological_types: [structuredFixtureType('甲型', '已有类型描述。', { special_rules: ['已有世界规则'] })],
+    }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, {
+    special_rules: ['已有世界规则', '证据规则', '无证据规则'],
+    capabilities: { ...baseline.species[0].biological_types[0].capabilities, can_produce_sperm: true, can_produce_ova: true },
+  })
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '安全物种甲型产生精子，具有证据规则。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch rejects baseline self-proof and complete-candidate deletion (D, E, K)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '基线物种',
+      biological_types: [structuredFixtureType('甲型', '已有类型描述。', {
+        capabilities: { ...structuredFixtureType('x', '').capabilities, can_carry_pregnancy: true },
+        special_rules: ['Existing 已知规则'],
+      })],
+    }],
+    unknowns: ['仅存在于 Existing 的未知事项'],
+  })
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: { unknowns: ['仅存在于 Existing 的未知事项'] }, update: {} },
+      { world_model: baseline },
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+  const candidate = patchSpeciesCandidate(baseline, { special_rules: [] })
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '基线物种甲型仍有其它规则。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch accepts CHANGE from direct compatible world evidence without correction keywords (F)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '直接属性物种',
+      biological_types: [structuredFixtureType('甲型', '旧世界规则。')],
+    }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, { description: '新世界规则。' })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '直接属性物种甲型明确适用新世界规则。'),
+  )
+  assert.equal(patch.update.species[0].biological_types[0].description, '新世界规则。')
+})
+
+test('World Model Patch rejects individual-only world-rule promotion (G)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '个体边界物种',
+      biological_types: [structuredFixtureType('甲型', '已有世界规则。', { special_rules: ['有特征'] })],
+    }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, { special_rules: ['有特征', '没有特征'] })
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '某个角色没有特征。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch keeps general rules and adds world exceptions without replacing them (H)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '例外物种', biological_types: [structuredFixtureType('甲型', '一般规则。')] }],
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    {
+      schema_version: 1,
+      add: { exceptions: [{ statement: '某类异常个体不表现一般规则。' }] },
+      update: {},
+    },
+    patchEvidenceInput(baseline, '例外物种存在某类异常个体不表现一般规则。'),
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+  assert.equal(merged.species[0].biological_types[0].description, '一般规则。')
+  assert.equal(merged.exceptions[0].statement, '某类异常个体不表现一般规则。')
+})
+
+test('World Model Patch rejects individual uncertainty and individual medical promotion (G, O, P)', () => {
+  const baseline = normalizeWorldModel({ schema_version: 1, species: [{ name: '范围物种' }] })
+  for (const patch of [
+    { add: { unknowns: ['某角色的机制无法确定。'] }, update: {} },
+    { add: {}, update: { medical_context: { care_level: '需要特殊照护。' } } },
+  ]) {
+    assert.throws(
+      () => applyWorldModelPatchEvidenceGuard(
+        { schema_version: 1, ...patch },
+        patchEvidenceInput(baseline, '某角色的机制无法确定，需要特殊照护。'),
+      ),
+      error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+    )
+  }
+})
+
+test('World Model Patch preserves sparse medical context presence (J)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    medical_context: {
+      childbirth_difficulty: 'Existing difficulty',
+      care_level: 'Existing care',
+      evidence: 'Existing evidence',
+    },
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { medical_context: { care_level: 'New care' } } },
+    patchEvidenceInput(baseline, '世界级医疗背景明确为 New care。'),
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+  assert.deepEqual(merged.medical_context, {
+    childbirth_difficulty: 'Existing difficulty',
+    care_level: 'New care',
+    evidence: 'Existing evidence',
+  })
+})
+
+test('World Model Patch treats canonical null, false, and 无 as distinct unchanged values (L)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '三态物种', biological_types: [structuredFixtureType('甲型', '已有规则。', {
+      capabilities: { ...structuredFixtureType('x', '').capabilities, can_carry_pregnancy: false },
+      reproduction_rules: { ...structuredFixtureType('x', '').reproduction_rules, gestation: '无' },
+    })] }],
+  })
+  const candidate = patchSpeciesCandidate(baseline)
+  assert.doesNotThrow(() => applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    { world_model: baseline, recent_story: { items: [] } },
+  ))
+})
+
+test('World Model Patch does not create delta for collection reorder (M)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '排序物种', biological_types: [structuredFixtureType('甲型', '规则。', { special_rules: ['规则一', '规则二'] })] }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, { special_rules: ['规则二', '规则一'] })
+  assert.doesNotThrow(() => applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    { world_model: baseline, recent_story: { items: [] } },
+  ))
+})
+
+test('World Model Patch applies shared final consistency after merge (S)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '一致性物种', biological_types: [structuredFixtureType('甲型', '规则。', {
+      capabilities: { ...structuredFixtureType('x', '').capabilities, can_carry_pregnancy: true },
+      reproduction_rules: { ...structuredFixtureType('x', '').reproduction_rules, gestation: '有妊娠。' },
+    })] }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, {
+    capabilities: { ...baseline.species[0].biological_types[0].capabilities, can_carry_pregnancy: false },
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '一致性物种甲型不能怀孕。'),
+  )
+  const merged = mergeWorldModelPatch(baseline, patch)
+  assert.equal(merged.species[0].biological_types[0].reproduction_rules.gestation, '无')
+  assert.doesNotThrow(() => normalizeWorldModel(merged, { strict: true }))
+})
+
+test('World Model Patch keeps projection update identity blocked (T)', () => {
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { projection_rules: [{ schema_version: 1, mechanism_key: 'm', development_concern_key: 'c', development_kind: 'possible_detection', trigger: { kind: 'story_time_reached', target_story_time: { day_index: 1 } } }] } },
+      { recent_story: { items: [{ content: '世界规则支持该 projection rule。' }] } },
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch expands a new biological type into semantic field adds (U)', () => {
+  const baseline = normalizeWorldModel({ schema_version: 1, species: [{ name: '新增类型物种', biological_types: [] }] })
+  const candidate = {
+    ...baseline.species[0],
+    biological_types: [{ name: '新增型', description: '新增类型存在。', special_rules: ['新增类型规则'] }],
+  }
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '新增类型物种新增型明确存在，新增类型存在，新增类型规则。'),
+  )
+  assert.equal(patch.update.species[0].biological_types[0].name, '新增型')
+  assert.deepEqual(patch.update.species[0].biological_types[0].special_rules, ['新增类型规则'])
+})
+
+test('World Model Patch rejects unsupported nested capability on a new type (V)', () => {
+  const baseline = normalizeWorldModel({ schema_version: 1, species: [{ name: '新增能力物种', biological_types: [] }] })
+  const candidate = {
+    ...baseline.species[0],
+    biological_types: [{
+      name: '新增型',
+      description: '新增类型存在。',
+      capabilities: { can_carry_pregnancy: true },
+    }],
+  }
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '新增能力物种新增型明确存在，新增类型存在。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch accepts a safe new reproductive mechanism add (W)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '新增机制物种', biological_types: [structuredFixtureType('甲型', '已有类型。')] }],
+  })
+  const candidate = structuredClone(baseline.species[0])
+  candidate.biological_types[0].reproductive_mechanisms = [{
+    key: 'new_mechanism',
+    label: '新增机制',
+    pathway: '新增路径',
+  }]
+  const patch = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '新增机制物种甲型新增机制 new_mechanism，路径为新增路径。'),
+  )
+  assert.equal(patch.update.species[0].biological_types[0].reproductive_mechanisms[0].key, 'new_mechanism')
+})
+
+test('World Model Patch blocks mechanism updates without stable identity (X)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: '机制身份物种',
+      biological_types: [{
+        ...structuredFixtureType('甲型', '已有类型。'),
+        reproductive_mechanisms: [{ key: 'mechanism_key', label: '旧标签', pathway: '旧路径' }],
+      }],
+    }],
+  })
+  const candidate = structuredClone(baseline.species[0])
+  candidate.biological_types[0].reproductive_mechanisms[0].label = '新标签'
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '机制身份物种甲型机制标签变为新标签。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch uses canonical exception equality rather than object key order (Y)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [],
+    exceptions: [{ statement: '已有例外。', applies_to: '某类', evidence: '已有证据。' }],
+  })
+  const patch = applyWorldModelPatchEvidenceGuard(
+    {
+      schema_version: 1,
+      add: { exceptions: [{ evidence: '已有证据。', statement: '已有例外。', applies_to: '某类' }] },
+      update: {},
+    },
+    { recent_story: { items: [{ content: '已有例外。某类。已有证据。' }] }, world_model: baseline },
+  )
+  assert.throws(
+    () => mergeWorldModelPatch(baseline, patch),
+    error => error?.message === 'WORLD_MODEL_PATCH_DUPLICATE_ADD',
+  )
+})
+
+test('World Model Patch distinguishes explicit medical null from absent presence (Z, AA)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    medical_context: { childbirth_difficulty: 'known', care_level: 'known', evidence: 'known' },
+  })
+  const unchanged = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { medical_context: { care_level: 'new' } } },
+    patchEvidenceInput(baseline, '世界级医疗背景的照护等级是 new。'),
+  )
+  const merged = mergeWorldModelPatch(baseline, unchanged)
+  assert.deepEqual(merged.medical_context, { childbirth_difficulty: 'known', care_level: 'new', evidence: 'known' })
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { medical_context: { care_level: null } } },
+      patchEvidenceInput(baseline, '世界级医疗背景。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch accepts CHANGE without correction wording (AB)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '直接规则物种', biological_types: [structuredFixtureType('甲型', '已有描述。', {
+      reproduction_rules: { ...structuredFixtureType('x', '').reproduction_rules, gestation: '旧妊娠规则。' },
+    })] }],
+  })
+  const candidate = patchSpeciesCandidate(baseline, {
+    reproduction_rules: { ...baseline.species[0].biological_types[0].reproduction_rules, gestation: '新妊娠规则。' },
+  })
+  assert.doesNotThrow(() => applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { species: [candidate] } },
+    patchEvidenceInput(baseline, '直接规则物种甲型的妊娠规则为新妊娠规则。'),
+  ))
+})
+
+test('World Model Patch rejects an explicitly individual-bound label hit (AC)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: '边界物种', description: '旧属性。' }],
+  })
+  const candidate = { ...baseline.species[0], description: '个体属性。' }
+  assert.throws(
+    () => applyWorldModelPatchEvidenceGuard(
+      { schema_version: 1, add: {}, update: { species: [candidate] } },
+      patchEvidenceInput(baseline, '边界物种的某个角色具有个体属性。'),
+    ),
+    error => error?.message === 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED',
+  )
+})
+
+test('World Model Patch presence metadata loss fails closed (AD)', () => {
+  const baseline = normalizeWorldModel({
+    schema_version: 1,
+    medical_context: { childbirth_difficulty: 'known', care_level: 'known', evidence: 'known' },
+  })
+  const validated = applyWorldModelPatchEvidenceGuard(
+    { schema_version: 1, add: {}, update: { medical_context: { care_level: 'new' } } },
+    patchEvidenceInput(baseline, '世界级医疗背景的照护等级是 new。'),
+  )
+  const cloned = structuredClone(validated)
+  assert.throws(
+    () => mergeWorldModelPatch(baseline, cloned),
+    error => error?.message === 'WORLD_MODEL_PATCH_PRESENCE_UNAVAILABLE',
+  )
 })
 
 test('World Model Patch analyzer accepts fenced JSON without relaxing the patch schema', async () => {

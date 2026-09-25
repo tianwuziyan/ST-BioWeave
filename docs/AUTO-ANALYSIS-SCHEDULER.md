@@ -203,7 +203,7 @@ retry 的对象是“当前 Floor 的完整 BioWeave 自动分析业务流程”
 
 - 没有当前可用 World：Full；
 - 已有合法 World 且没有 world-relevant 新证据：Reuse；
-- 已有合法 World 且当前分析触发了 world-relevant 更新信号：Supplement/Patch。该信号只决定是否调用 Patch 能力，不限定 Patch fact 必须首次来自当前 Floor；Patch 仍将 Existing World Model 与完整允许的 World Analysis evidence 做 baseline-aware semantic differential comparison。Existing baseline 不是 evidence。
+- 已有合法 World 且当前分析触发了 world-relevant 更新信号：Supplement/Patch。该信号只决定是否调用 Patch 能力，不限定 Patch fact 必须首次来自当前 Floor；Patch 仍将 Existing World Model 与完整允许的 World Analysis evidence 做 baseline-aware world-knowledge review/consolidation。Existing baseline 不是 evidence。
 
 因此：
 

@@ -694,15 +694,16 @@ const WORLD_MODEL_TASK_PROMPT =
   '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
 
 export const WORLD_MODEL_PATCH_TASK_PROMPT =
-  '请将 Existing World Model 作为 comparison baseline，重新审阅当前允许的完整 World Analysis evidence。返回只表达差异的 World Model Patch：当前 evidence 明确支持、但 Existing World Model 尚未充分表达的事实才进入 add/update。这里既包括 newly available evidence，也包括 previously missed evidence、已有 entry 的 evidence-supported 补充和 explicit correction；事实不要求首次出现于 current Floor。Existing World Model 已充分表达的内容不要重复输出。不要返回完整 World Model。'
+  '请将 Existing World Model 作为 comparison baseline，重新审阅当前允许的完整 World Analysis evidence。先进行 World Fact Discovery，再判断每条事实的 scope：individual-only fact、world-level species/type/population rule、world-level exception、world-level unknown、world/species/group medical context、species/type special rule，或 ambiguous/insufficient scope。individual-only fact 不进入 World Model，不要因为一个角色的特征改变整个 species/type；ambiguous scope 保留 Existing。对 world-level fact 选择正确的 World Model knowledge outlet。兼容的 world knowledge 要与 Existing consolidation，保留 Existing compatible facts；只有 Existing 尚未充分表达、且当前 evidence 明确建立了同一兼容 world scope 的新知识才进入 Candidate Patch。previously missed evidence 与 newly available evidence 使用相同的 eligibility 规则；不要求首次出现于 current Floor。若新 world-level fact 与 Existing rule 冲突且确实替代该 rule，可以提出 correction Candidate；不要求出现任何固定的“修正/其实/原来/并非/应为”措辞，但仅提到新值、individual-only evidence 或 Existing baseline 本身都不够。不要返回完整 replacement World Model。'
 
 export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
-  '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次正文明确新增或修正的字段；缺少字段永远表示不修改。',
+  '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次允许 evidence 建立的 world-level 新知识或 correction；不要输出 individual-only fact，也不要输出 scope ambiguous 的 world rule。不要输出内部 Semantic Delta 标签或解释，不要返回完整 World Model。',
   '允许 add 的字段：species、exceptions、unknowns、projection_rules；允许 update 的字段：species、medical_context、projection_rules。species 和 projection_rules 的 update 项必须包含稳定名称或 rule identity，并提供该项更新后的完整 canonical entry。',
+  'update.species 是 complete updated canonical species Candidate：兼容补充时必须保留 Existing 中仍成立的 species/type/rule/fact，再加入当前 evidence 支持的新知识；不能只返回一个 nested sparse fragment。update.medical_context 是 sparse field update，Raw field absent 表示 unchanged。',
   WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT,
   WORLD_MODEL_PROJECTION_RULE_CONTRACT,
   '本版本不支持 remove、invalidate 或通过省略字段删除旧规则；不要输出 remove/invalidate。明确 evidence-supported correction 只能通过 update 表达，不能通过省略字段或空值表达删除。',
-  '省略字段表示 unchanged。不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
+  'sparse section 中缺少字段永远表示不修改；complete update.species 中 Existing 已知事实消失会被视为删除风险。不要求事实首次出现于 current Floor；不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
 ].join('\n')
 
 export function buildWorldModelMessages(
@@ -753,7 +754,7 @@ export function buildWorldModelPatchMessages(
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', '请根据 Existing World Model baseline 与以上完整 World Analysis evidence，输出 evidence-supported sparse World Model Patch JSON；只返回相对于 baseline 的 add/update，省略字段保持 unchanged。')
+  addMessage(messages, 'user', '请根据 Existing World Model baseline 与以上完整 World Analysis evidence，先完成 World Fact Discovery、scope/classification 与 baseline-aware consolidation，再输出 evidence-supported sparse World Model Patch JSON；Individual-only 或 scope ambiguous 的事实不要进入 World Model，兼容 Existing knowledge 必须保留，省略字段按对应 Patch section 的 contract 处理；只返回 add/update，不返回完整模型。')
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }

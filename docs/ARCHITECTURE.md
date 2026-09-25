@@ -204,8 +204,10 @@ Owner whitelist：
 World Analysis 的 domain owner 是
 [`World Model and World Analysis Contract`](../.trellis/spec/domain/world-model.md)：
 Full 使用 permitted evidence 重建 complete model，Supplement 使用同一 evidence
-set 加 Existing canonical baseline 做 semantic differential，再由 Runtime
-deterministically merge 并完成 canonical validation。本文只保留模块导航，不复制
+set 加 Existing canonical baseline，先进行 World Fact Discovery、scope/classification
+与 baseline-aware consolidation，再由 Runtime 生成 Candidate Patch、执行
+deterministic safety validation、merge，经过 shared complete-model consistency 与
+strict canonical validation 后持久化。本文只保留模块导航，不复制
 该领域算法；Floor/Swipe ownership 仍以 Floor State Ownership Contract 为准。
 
 ### 当前实现与目标契约

@@ -4,9 +4,9 @@
 
 This is the canonical domain owner for World Model and World Analysis. It
 defines how permitted evidence becomes a complete canonical model in Full
-Analysis, or a baseline-aware sparse differential Patch in Supplement
-Analysis. It also defines the evidence, canonicalization, merge, and
-ownership boundaries; it does not turn the Analyzer into a world-knowledge
+Analysis, or a scope-aware, baseline-consolidated sparse Patch in Supplement
+Analysis. It also defines the evidence, canonicalization, merge, and ownership
+boundaries; it does not turn deterministic validation into a world-knowledge
 parser.
 
 When World Model values participate in Floor-bound analysis, storage,
@@ -26,7 +26,8 @@ owners.
 World Model owns:
 
 - world-rule analysis, `species`, `biological_types`, capability baselines,
-  reproduction rules, lifecycle/special rules, and medical/world context;
+  reproduction rules, lifecycle/special rules, `exceptions`, `unknowns`,
+  `medical_context`, `projection_rules`, and other medical/world context;
 - World Model prompt construction, parser, normalizer, evidence guard;
 - World Model Floor persistence and World-specific resolution.
 
@@ -79,24 +80,29 @@ current permitted World Analysis evidence
 ```
 
 When a valid prior World Model exists, Runtime reuses it by default. World
-Patch / Supplement Analysis is baseline-aware differential analysis:
+Patch / Supplement Analysis first reviews what world-level knowledge the
+current evidence establishes, then consolidates it against the baseline:
 
 ```text
 Existing canonical World Model + current permitted World Analysis evidence
-  -> baseline-aware semantic differential analysis
-  -> evidence-supported sparse add/update Patch
+  -> World Fact Discovery / scope / classification
+  -> baseline-aware consolidation
+  -> Candidate Patch
+  -> deterministic safety validation
   -> deterministic merge
-  -> complete canonical World Model validation
+  -> complete-model consistency
+  -> strict canonical validation
 ```
 
 Supplement must receive the validated canonical Existing World Model as a
 comparison baseline and must re-review the complete permitted evidence set.
-The same mechanism covers newly available evidence, previously available but
-missed evidence, completion of an existing entry, and an explicit
-evidence-supported correction. Eligibility is whether the Existing Model
-already expresses the evidence-supported fact sufficiently; the fact need not
-originate on the current Floor. Supplement is not a current-Floor-only mode and
-does not return a complete replacement model.
+The first question is the scope of each discovered fact: individual,
+world-level rule, world-level exception, world-level unknown, world-level
+medical context, or species/type special rule. Only world-level knowledge is
+eligible for World Model consolidation. The same mechanism covers newly
+available evidence and previously available but missed world-level evidence;
+current-Floor origin is not an eligibility rule. Supplement does not return a
+complete replacement model.
 
 Full and Supplement share the same permitted evidence boundary. The mode
 changes the interpretation of that evidence, not the set of legal evidence
@@ -107,18 +113,65 @@ eligibility rule.
 The pipeline is therefore:
 
 ```text
-Full:       evidence -> complete candidate -> full guards -> canonical model
-Supplement: Existing canonical model + evidence
-            -> semantic delta -> sparse Patch -> deterministic merge
-            -> complete canonical validation -> persist
+Full:       evidence -> fact discovery/scope/classification
+            -> complete candidate -> Full guards
+            -> complete consistency -> canonical model -> persist
+Supplement: Existing model + evidence
+            -> fact discovery/scope/classification
+            -> baseline consolidation -> Candidate Patch
+            -> delta safety -> deterministic merge
+            -> complete consistency -> canonical validation -> persist
 ```
 
-Omitted Patch fields are unchanged. `remove` and `invalidate` are unsupported.
-The complete merged result must pass canonical validation before persistence;
+Omitted fields in sparse Patch sections are unchanged; complete Candidate
+sections follow their explicit contract in section 1.5.2. `remove` and
+`invalidate` are unsupported. The complete merged result must pass canonical validation before persistence;
 otherwise the update and downstream Character/Event analysis fail closed and
 the prior model remains intact.
 
-## 1.3 Existing baseline and evidence isolation
+## 1.3 World Knowledge Scope and canonical outlets
+
+World Analysis separates factual truth from evidence scope. A statement can be
+true for one character without establishing a rule for a species, biological
+type, population, or world. Supplement must classify scope before selecting a
+World Model outlet; it must not default every new fact into
+`species -> biological_types`.
+
+| Evidence scope | Default owner or outlet | World Model behavior |
+| --- | --- | --- |
+| Individual fact tied only to one character | Character / Event | Do not update species/type world rules |
+| World-level species/type rule or population mechanism | World Model | Consolidate into the matching species/type/rule area |
+| World-level exception to a general rule | `exceptions` | Preserve the general rule and add the exception mechanism |
+| World-level unresolved question | `unknowns` | Record only when the evidence establishes a world-level unknown |
+| World/species/population medical or care context | `medical_context` | Update only when the scope is world-level, species-level, or group-level |
+| Species/type rule outside fixed fields | `special_rules` | Add as an open-ended world rule |
+| Ambiguous or insufficient scope | None | Preserve Existing; do not force classification |
+
+The canonical World Model outlets are peer capabilities with different
+semantics: `species` / `biological_types`, capabilities,
+`reproduction_rules`, lifecycle, `special_rules`, `exceptions`, `unknowns`,
+`medical_context`, and `projection_rules`. AI must discover the world-level
+fact and classify its outlet before proposing a Candidate Patch.
+
+An individual-only statement must not be promoted into a population rule. A
+single anomalous character does not automatically create a world exception, and
+an individual uncertainty does not automatically create a world unknown. A
+single character's medical need does not update world medical context. If the
+evidence explicitly establishes a world-level exception, unknown, or medical
+background, that knowledge may enter its corresponding outlet.
+
+When a new world-level fact is compatible with Existing knowledge, Supplement
+consolidates it rather than replacing the Existing entry. When a fact appears
+to conflict with an Existing world rule, scope is resolved first:
+
+- individual-only difference: preserve the Existing world rule;
+- explicit world-level exception: preserve the general rule and add the
+  exception;
+- explicit world-level correction: allow a correction Candidate only when
+  current permitted evidence supports the new world-level statement;
+- ambiguous scope: do not force a World Model change.
+
+## 1.4 Existing baseline and evidence isolation
 
 The Existing World Model has exactly one role in Supplement: comparison
 baseline. It is not a source of evidence and must not be collected by
@@ -135,11 +188,14 @@ Full final messages must not contain the Existing World Model baseline. Patch
 final messages must contain the validated baseline in a clearly labelled
 reference boundary, separate in meaning from ordinary evidence references.
 
-## 1.4 Semantic Delta Patch contract
+## 1.5 Semantic Delta safety contract
 
-Patch evidence validation is defined over semantic changes relative to the
-canonical Existing target entry, not over an arbitrary string hit anywhere in a
-whole entry. The program must:
+Semantic Delta remains a deterministic safety layer after AI World Fact
+Discovery, scope/classification, and baseline-aware consolidation. It is not a
+world-semantics engine. It must not decide whether an NPC represents a whole
+species, whether two narrative descriptions are compatible world knowledge,
+or whether a fact belongs in a species rule versus an exception. The program
+must instead use the Candidate already proposed by AI to:
 
 1. resolve the Existing update target using the canonical identity used by the
    deterministic merge;
@@ -153,18 +209,19 @@ The semantic delta has four states:
 | --- | --- | --- |
 | `UNCHANGED` | Candidate preserves an Existing canonical fact | No current-evidence re-proof is required |
 | `ADD` | Candidate introduces a fact absent from Existing | Current permitted evidence is required |
-| `CHANGE` | Candidate replaces an Existing value with another value | Explicit evidence of correction, replacement, or conflict resolution is required |
+| `CHANGE` | Candidate replaces an Existing value with another value | Current permitted evidence must directly establish the Candidate world-level fact at a scope compatible with the Existing rule and semantically conflicting with or replacing the Existing value |
 | `REMOVE` | An Existing fact disappears from a complete update | Unsupported; reject |
 
-An `add` entry has no Existing target, so every fact-bearing semantic field in
-the new entity is delta and must be independently supported. A species name
-being evidenced cannot authorize its entire subtree. An `update` may contain a
-complete canonical entry, but unchanged Existing fields do not need to appear
-again in current evidence. A supported new rule or field cannot allow an
+An `add` entry has no Existing target, so every world-level fact-bearing
+semantic field in the new entity is delta and must be independently supported.
+A species name being evidenced cannot authorize its entire subtree. An
+`update` may contain a complete canonical entry, but unchanged Existing fields
+do not need to appear again in current evidence. A supported new rule or field
+cannot allow an
 unsupported capability, rule, lifecycle value, special rule, reproductive
 mechanism, or other nested fact to hitchhike into the model.
 
-This field/path treatment applies to species and nested
+This safety treatment applies to species and nested
 `biological_types`, `capabilities`, `reproduction_rules`, `lifecycle`,
 `special_rules`, and `reproductive_mechanisms`, as well as
 `projection_rules`, `exceptions`, `unknowns`, and `medical_context`. The exact
@@ -178,13 +235,197 @@ fields are mechanical changes rather than new world facts. If a complete
 update omits an Existing fact, that omission is a `REMOVE` attempt, not an
 unchanged field, and must be rejected.
 
-`CHANGE` is stricter than `ADD`: evidence that merely presents the new value
-does not automatically prove that the old value was wrong. AI proposes a
-candidate only. Program/Runtime owns structural validation, semantic delta,
-evidence and consistency validation, deterministic merge, complete canonical
-validation, and persistence authority.
+`CHANGE` is stricter than `ADD`: evidence that merely mentions the new value,
+without establishing the same compatible world-level scope and its conflict or
+replacement of the Existing value, does not support the change. No special
+correction wording such as “修正”, “其实”, “原来”, “并非”, or “应为” is
+required. AI proposes a Candidate only. Program/Runtime owns structural
+validation, semantic delta, evidence and consistency validation, deterministic
+merge, complete canonical validation, and persistence authority.
 
-## 1.5 Routing and scheduler ownership
+Evidence factual truth and evidence scope are separate checks. AI owns
+narrative World Fact Discovery and scope/classification. Deterministic Patch
+validation must not promote a Candidate merely because a text/value hit exists;
+it may reject clearly incompatible or explicitly individual-bound support when
+the existing evidence structure makes that contradiction reliable. It does not
+claim complete narrative-scope inference and must not become a second
+regex-driven natural-language parser. Ambiguous semantic scope is resolved by
+the AI Candidate contract, while Existing baseline remains comparison only and
+never becomes evidence.
+
+### 1.5.1 Patch presence and canonical null contract
+
+Patch field presence and canonical value semantics are separate dimensions.
+The complete canonical model retains the existing tri-state meanings:
+
+| Canonical value | Meaning |
+| --- | --- |
+| `true` / `false` | Explicitly present / explicitly absent boolean fact |
+| `null` | Unknown or insufficiently established fact |
+| `"无"` | Explicitly absent or not applicable rule/text fact |
+| non-empty text | Known descriptive fact |
+
+For a sparse Patch object, a raw field that is absent means `UNCHANGED`; a
+field that is present is an explicit Candidate value. Raw Patch presence must
+therefore be retained until Semantic Delta classification. A complete-model
+canonicalizer may add `null`, `[]`, or other stable default shape when
+finalizing a complete model, but those generated values must not be mistaken
+for an AI-proposed Patch value.
+
+This distinction is especially important for `update.medical_context`. A raw
+Patch such as:
+
+```json
+{ "care_level": "specialist" }
+```
+
+updates only `care_level`; an absent `childbirth_difficulty` remains
+`UNCHANGED`, even if complete-model normalization would represent it as
+`null`. This is a Patch presence boundary, not a defect in
+`normalizeMedicalContext()` and must not be fixed by changing the complete
+canonical null contract. `null`, `false`, `"无"`, and an absent Patch field
+must never be conflated.
+
+### 1.5.2 Complete and sparse Patch candidates
+
+Patch sections do not all have the same omission semantics:
+
+- `update.species` is a complete updated canonical species Candidate. It is not
+  a nested sparse species Patch. Existing semantic facts that disappear from
+  that Candidate are `REMOVE` / knowledge weakening attempts and must be
+  rejected; omission does not mean unchanged inside this complete Candidate.
+- `update.medical_context` is a sparse field update. Only fields present in
+  the raw Patch participate in the delta; absent fields are `UNCHANGED`.
+
+These contracts must remain distinct. The implementation must not let a
+partial species object silently replace a complete Existing species, or let
+canonical defaults in a partial medical-context object overwrite Existing
+fields that the AI omitted.
+
+### 1.5.3 Canonical Semantic Delta boundary
+
+The executable boundary is:
+
+```text
+Raw Supplement Patch
+  -> structural validation
+  -> preserve required Patch presence information
+  -> canonical Candidate
+  -> resolve canonical Existing target
+  -> semantic delta
+```
+
+Semantic Delta compares canonical Existing semantic values with canonical
+Candidate semantic values. It must not compare raw AI JSON, Prompt text,
+serialized baseline text, storage raw objects, or arbitrary
+`JSON.stringify()` output. Species aliases, biological-type normalization,
+Human baseline handling, null tri-state, `"无"`, normalized strings,
+canonical defaults, and generated structures must not create false deltas.
+
+For scalar or fixed semantic fields, the minimum classification is:
+
+| Existing | Candidate | Delta |
+| --- | --- | --- |
+| same value | same value | `UNCHANGED` |
+| `null` | known value | `ADD` |
+| known value | different known value | `CHANGE` |
+| known value | `null` | `REMOVE` / knowledge weakening |
+
+For booleans, `null -> true/false` is `ADD`, `true <-> false` is `CHANGE`,
+and `true/false -> null` is `REMOVE`. For rule text, `null -> "无"` and
+`null -> non-empty text` are `ADD`; `"无" -> non-empty text` and
+`non-empty text -> "无"` are `CHANGE`; a known value to `null` is `REMOVE`.
+`"无"` is never equivalent to `null`.
+
+Knowledge weakening includes more than an explicit top-level `remove`: a
+known scalar or text becoming `null`, an Existing collection item disappearing,
+or an Existing nested type/rule/fact disappearing from a complete Candidate is
+a `REMOVE` attempt. Supplement v1 rejects all such changes because
+`remove`/`invalidate` is unsupported.
+
+### 1.5.4 Collection comparison boundary
+
+Collections require domain semantic identity, not generic raw deep diff. The
+current contract establishes only these identity principles:
+
+- `species[]`: canonical species identity;
+- `biological_types[]`: species-local canonical biological-type identity;
+- `special_rules[]`: normalized semantic string membership.
+
+For `reproductive_mechanisms[]`, `exceptions[]`, `unknowns[]`, and
+`projection_rules[]`, identity is only as reliable as the current domain
+contract. Where canonical identity is insufficient, the implementation must
+record `PARTIAL`, `GAP`, or `BLOCKED` rather than inventing an identity. In
+particular, `projection_rules.update` remains a separate identity blocker:
+its current generated ID includes mutable rule content, so changing that
+content can change the ID needed to locate the Existing rule. This document
+does not resolve that gap.
+
+### 1.5.5 Delta evidence validation
+
+Patch evidence validation must operate on each changed semantic fact:
+
+- `UNCHANGED` requires no current-evidence re-proof;
+- `ADD` requires support in the current permitted World Analysis evidence;
+- `CHANGE` requires sufficient current evidence for the replacement or
+  correction, not merely a mention of the new value;
+- `REMOVE` is rejected in Supplement v1.
+
+One supported delta cannot authorize another unsupported delta in the same
+Candidate. For example, a supported new rule and an unsupported new
+capability must cause the Patch to be rejected together; a species name hit or
+one nested-field hit cannot authorize the entire species subtree. The guard
+must be generic and must not use current-Floor origin, fixed people/species,
+Floor numbers, or test-story literals as eligibility rules.
+
+The CHANGE principle is frozen here without inventing a brittle keyword
+algorithm. Its executable semantics must reuse and be audited against the
+existing field-specific evidence machinery during implementation.
+
+### 1.5.6 Complete-model finalization
+
+Supplement does not end at schema-valid Patch merge. Its final responsibility
+chain is:
+
+```text
+validated Semantic Delta
+  -> deterministic merge
+  -> complete canonical World Model
+  -> shared complete-model consistency invariant
+  -> strict canonical validation
+  -> persist
+```
+
+The merged complete model must satisfy the same canonical consistency
+invariants as a Full result. For example, a final
+`can_carry_pregnancy: false` cannot coexist with conflicting pregnancy,
+gestation, or labor facts. If a supported world-level capability change
+deterministically produces `pregnancy_or_carrying: "无"`,
+`gestation: "无"`, or `labor: "无"`, those are consistency consequences, not
+new AI-proposed Patch facts and do not require three independent evidence
+proofs. This freezes the invariant, not a particular function name: the sparse
+Patch guard must not be forced to call the Full complete-model evidence guard
+merely for reuse.
+
+### 1.5.7 Semantic Delta implementation guardrails
+
+Implementing Semantic Delta must preserve, rather than redesign:
+
+- World Model canonical null semantics, `nullableBoolean()`, and
+  `normalizeRuleText()`;
+- the complete-model responsibility of `normalizeMedicalContext()`;
+- UI null rendering and `buildWorldModelViewModel()`;
+- Human baseline and Fact Discovery;
+- the shared `evidenceUnits()` permitted evidence universe;
+- Full Analysis Prompt and Full baseline isolation;
+- Runtime Full/Patch/Reuse selection;
+- Floor ownership, World Model persistence ownership, and Pregnancy Tracking.
+
+If implementation would require changing one of these boundaries, stop and
+re-audit the contract instead of treating it as incidental Semantic Delta
+refactoring.
+
+## 1.6 Routing and scheduler ownership
 
 Manual routing is fixed:
 
@@ -204,18 +445,31 @@ Automatic routing is fixed:
 The scheduler decides when to invoke a capability and when to reuse a valid
 model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
-## 1.6 Current implementation status
+## 1.7 Current implementation status
 
-The current uncommitted implementation is **BLOCKER / NOT YET CONFORMANT** to
-this contract. The Prompt baseline boundary is substantially correct: Patch
-receives Existing baseline, Full does not consume it, and Existing baseline is
-not collected by `evidenceUnits()`. However,
-`applyWorldModelPatchEvidenceGuard()` still performs entry-level evidence-hit
-validation rather than semantic-delta validation. Existing baseline is not
-actually compared at semantic-delta level; nested fields are not protected at
-delta level; Cases A/B/C/D below are not covered by current tests; and
-`projection_rules.update` has the identity gap documented in section 2.1.
-This status records the implementation state, not a weakening of the target
+The current implementation has the v2 safety path in place but remains
+**REVIEW REQUIRED / PARTIAL** against the full contract. Existing capability
+includes Full/Patch Runtime routing, Full/Supplement Prompt separation, Patch
+baseline final-message injection, Full baseline isolation, the shared permitted
+evidence universe, Existing baseline isolation from evidence, World Fact
+Discovery, canonical null semantics, Human baseline, Patch DTO structural
+validation, top-level `remove`/`invalidate` rejection, deterministic merge,
+strict canonical normalization, canonical Existing/Candidate comparison,
+changed-fact `UNCHANGED`/`ADD`/`CHANGE`/`REMOVE` safety classification,
+per-fact evidence checks, sparse medical presence preservation, and post-merge
+complete-model consistency finalization. The Prompt and evidence boundaries
+remain correct: Patch receives Existing baseline, Full does not consume it, and
+Existing baseline is not collected by `evidenceUnits()`.
+
+The remaining limits are intentional or independently blocked: deterministic
+code does not re-implement narrative World Fact Discovery; AI remains
+responsible for scope, outlet classification, compatible consolidation, and
+correction proposals. Existing reproductive-mechanism update identity remains
+blocked when no stable logical identity is available, while safe new mechanism
+adds require an explicit non-colliding key. Exceptions use explicit canonical
+field equality rather than serialized-object identity. `projection_rules.update`
+remains blocked by the mutable-content identity gap documented in section 2.1.
+This status records implementation reality and does not weaken the target
 contract above.
 
 ## 2. Signatures
@@ -282,15 +536,20 @@ the current identity generation.
 World Analysis has two deliberate final message shapes:
 
 - Full: permitted World Analysis evidence references, without an Existing World
-  Model baseline; `evidence -> complete model`.
+  Model baseline; `evidence -> World Fact Discovery / scope / classification
+  -> complete model`.
 - Supplement/Patch: the same permitted evidence references plus a clearly
   labelled Existing canonical World Model comparison baseline; `existing model
-  + evidence -> sparse differential Patch`.
+  + evidence -> World Fact Discovery / scope / classification
+  -> baseline-aware consolidation -> sparse Candidate Patch`.
 
 The baseline is not evidence and must not be described to the model as proof of
 new Patch facts. Full must remain baseline-free even if `AnalysisInput` carries
 an old `world_model` property. Patch must not be constrained to facts first
-introduced by the current Floor.
+introduced by the current Floor. Patch instructions must distinguish
+individual-only facts from world-level rules, exceptions, unknowns, medical
+context, and species/type special rules; the baseline is a comparison aid, not
+the source of any new fact.
 
 - `formatCharacterReference()` only formats the selected Character Card
   background.
@@ -368,11 +627,20 @@ introduced by the current Floor.
   or fixture-specific biological rule is added.
 - Final-message tests asserting Patch includes Existing baseline and Full excludes
   it even when `AnalysisInput.world_model` exists.
-- Semantic-delta tests for accepted unchanged Existing fields plus one supported
+- World Knowledge Scope tests: an individual-only fact does not update a
+  species/type rule; an explicit world correction can update it; a world-level
+  exception preserves the general rule; an individual anomaly does not create
+  an exception; an individual uncertainty does not create a world unknown; and
+  individual medical context does not update world medical context.
+- Consolidation tests: compatible world-level facts merge with Existing
+  knowledge instead of replacing it; older permitted evidence can supplement a
+  missing Existing fact even when it is not from the current Floor.
+- Semantic-safety tests: accepted unchanged Existing fields plus one supported
   add, rejected unsupported hitchhiking fields, accepted unchanged fields not
   repeated in current evidence, and rejection when the baseline alone is the
-  purported evidence (Cases A-D). Also test complete-update omission as REMOVE
-  and correction evidence stricter than ordinary ADD.
+  purported evidence (Cases A-D). Also test complete-update omission as REMOVE,
+  correction evidence stricter than ordinary ADD, sparse medical presence, and
+  deterministic consistency consequences without Full evidence re-proof.
 - A production-source scan asserting no fixture/person/species/type/Floor
   literal is introduced by the generic Patch guard.
 
