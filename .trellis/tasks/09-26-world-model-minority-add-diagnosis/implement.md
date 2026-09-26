@@ -295,3 +295,17 @@ v1 先完成既有 validation，再转换到内部表示；不静默改变 v1 se
 
 出现模型非确定性、真实 API empty patch、projection identity ambiguity、
 或 Structural Reclassification 需求时，停止并单独 review，不扩展本任务。
+
+### Phase 8 blocker hardening record
+
+本次只处理两个已确认的 v2 acceptance blocker：
+
+- `ADD_EXCEPTION.statement` 改为按条件、适用范围、核心效果与显式时间约束
+  做保守的组件级证据检查，允许 permitted evidence 支持的 canonical paraphrase，
+  不改变 DTO、collection CHANGE、atomicity 或其它 outlet 的 evidence contract；
+- World retry/final failure trace 透传安全的 `error_message`、`error_path`、
+  `diagnostic_code`、`analysis_stage`、`validation_stage`，不记录完整 evidence、
+  prompt 或 hidden reasoning。
+
+仍未实施：Prompt、Runtime routing、storage ownership、UI、v1、REMOVE、
+Structural Reclassification、collection CHANGE 与 Projection identity/update。

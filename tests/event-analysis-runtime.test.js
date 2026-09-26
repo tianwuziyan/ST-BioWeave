@@ -3967,6 +3967,56 @@ test("World canonical UI readiness failure retries the complete World stage", as
   fixture.runtime.destroy();
 });
 
+test("World v2 validation failure trace preserves safe diagnostic fields", async () => {
+  const failure = new Error("WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED: full evidence body must not be traced");
+  failure.code = "WORLD_MODEL_PATCH_V2_INVALID";
+  failure.path = "operation.exception.statement";
+  failure.diagnosticCode = "WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED";
+  failure.analysis_stage = "world_patch_v2_evidence_guard";
+  failure.validation_stage = "evidence_guard";
+  const messages = [
+    { message_id: "world-diagnostic-base", floor: 3, content: "A", role: "assistant" },
+    { message_id: "world-diagnostic-current", floor: 6, content: "新增世界规则：Species-A 的 biological type 有变化。", role: "assistant" },
+  ];
+  const fixture = createFixture({
+    messages,
+    retryCount: 0,
+    analyzer: {
+      async analyzeWorldModel() {
+        throw failure;
+      },
+      async analyzeWorldModelPatchV2() {
+        throw failure;
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_SHOULD_NOT_RUN");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "world-diagnostic-base", floor: 3, text: "A" }),
+    world_model: normalizeWorldModel({ schema_version: 1, species: [{ name: "Species-A" }] }),
+  });
+  await assert.rejects(
+    fixture.runtime.analyzeCurrentWorldModelPatch({ __messageIndex: true, index: 1 }),
+    error => error?.code === "WORLD_MODEL_PATCH_V2_INVALID",
+  );
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  for (const stage of ["WORLD_AI_ATTEMPT_FAILED", "WORLD_STAGE_ATTEMPT_FAILED"]) {
+    const entry = trace.find(item => item.stage === stage);
+    assert.equal(entry?.failure_code, "WORLD_MODEL_PATCH_V2_INVALID");
+    assert.equal(entry?.error_message, "WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED");
+    assert.ok(!JSON.stringify(entry).includes("full evidence body"));
+    assert.equal(entry?.error_path, "operation.exception.statement");
+    assert.equal(entry?.diagnostic_code, "WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED");
+    assert.equal(entry?.analysis_stage, "world_patch_v2_evidence_guard");
+    assert.equal(entry?.validation_stage, "evidence_guard");
+  }
+  fixture.runtime.destroy();
+});
+
 test("World stage retry repeats the complete AI-to-ready chain after persistence failure", async () => {
   let worldCalls = 0;
   let eventCalls = 0;

@@ -665,10 +665,73 @@ function formatWorldModelPatchTarget(worldModel) {
   ].join('\n')
 }
 
-function formatWorldModelPatchUserMessage(input, names) {
+function appendSupplementReferenceField(lines, label, value, { collection = false } = {}) {
+  const rendered = collection && Array.isArray(value) && value.length === 0
+    ? 'NONE RECORDED'
+    : formatPromptValue(value)
+  if (rendered.includes('\n')) lines.push(`${label}:\n${rendered}`)
+  else lines.push(`${label}: ${rendered}`)
+}
+
+export function formatWorldModelSupplementReference(worldModel) {
+  const model = worldModel && typeof worldModel === 'object' && !Array.isArray(worldModel)
+    ? worldModel
+    : {}
+  const lines = ['<existing_world_model_reference>', '[World]']
+  appendSupplementReferenceField(lines, 'schema_version', model.schema_version)
+  appendSupplementReferenceField(lines, 'exceptions', model.exceptions, { collection: true })
+  appendSupplementReferenceField(lines, 'unknowns', model.unknowns, { collection: true })
+  appendSupplementReferenceField(lines, 'medical_context', model.medical_context)
+  appendSupplementReferenceField(lines, 'projection_rules', model.projection_rules, { collection: true })
+
+  for (const species of Array.isArray(model.species) ? model.species : []) {
+    lines.push('[Species]')
+    appendSupplementReferenceField(lines, 'name', species?.name)
+    appendSupplementReferenceField(lines, 'description', species?.description)
+    const biologicalTypes = Array.isArray(species?.biological_types)
+      ? species.biological_types
+      : []
+    if (biologicalTypes.length === 0) {
+      lines.push('existing_biological_types: NONE RECORDED')
+    } else {
+      lines.push('existing_biological_types:')
+      for (const type of biologicalTypes) lines.push(`- ${formatPromptValue(type?.name)}`)
+    }
+
+    for (const type of biologicalTypes) {
+      lines.push('[Biological Type]')
+      appendSupplementReferenceField(lines, 'species', species?.name)
+      appendSupplementReferenceField(lines, 'name', type?.name)
+      appendSupplementReferenceField(lines, 'description', type?.description)
+      appendSupplementReferenceField(lines, 'capabilities', type?.capabilities)
+      appendSupplementReferenceField(lines, 'reproduction_rules', type?.reproduction_rules)
+      appendSupplementReferenceField(lines, 'lifecycle', type?.lifecycle)
+      appendSupplementReferenceField(lines, 'reproductive_mechanisms', type?.reproductive_mechanisms, { collection: true })
+      appendSupplementReferenceField(lines, 'special_rules', type?.special_rules, { collection: true })
+    }
+  }
+
+  lines.push('</existing_world_model_reference>')
+  return lines.join('\n')
+}
+
+function formatWorldModelSupplementTarget(worldModel) {
+  return [
+    '【Supplement Target：当前已保存的 World Model】',
+    '这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审阅与补全的目标；Existing = TARGET + comparison baseline。Existing 本身不是 evidence。NONE RECORDED 表示 Existing canonical World Model 当前没有记录该 collection，只是 coverage marker，不是 negative biological evidence。',
+    formatWorldModelSupplementReference(worldModel),
+  ].join('\n')
+}
+
+function formatWorldModelPatchUserMessage(input, names, { evidenceFirst = false, supplementReference = false } = {}) {
+  const request = evidenceFirst
+    ? '【Supplement Request】先从前面的 permitted World Analysis evidence 独立建立完整的 evidence-supported World Fact Candidate Ledger，再读取 Existing World Model 作为 TARGET + comparison baseline。依序执行 Evidence Candidate Ledger → Existing Ledger → Candidate Ledger − Existing Coverage → Patch Selection → Empty Patch Gate；只输出 evidence-supported sparse World Model Patch JSON。'
+    : '【Supplement Request】根据前面的 permitted World Analysis evidence，审查并补充这个当前 World Model。只输出 evidence-supported sparse World Model Patch JSON；依序完成 Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate。'
   return joinPromptSections([
-    formatWorldModelPatchTarget(input.world_model),
-    '【Supplement Request】根据前面的 permitted World Analysis evidence，审查并补充这个当前 World Model。只输出 evidence-supported sparse World Model Patch JSON；依序完成 Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate。',
+    supplementReference
+      ? formatWorldModelSupplementTarget(input.world_model)
+      : formatWorldModelPatchTarget(input.world_model),
+    request,
   ])
 }
 
@@ -723,10 +786,10 @@ export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
   'sparse section 中缺少字段永远表示不修改；complete update.species 中 Existing 已知事实消失会被视为删除风险。不要求事实首次出现于 current Floor；不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
 ].join('\n')
 
-// Compatibility-only v1 contract. The Runtime still consumes this path until
-// the v2 merge/persistence wiring is approved in Phase 7.
+// Compatibility-only v1 contract.
+// Production Supplement uses the v2 analysis and merge pipeline.
 export const WORLD_MODEL_PATCH_V2_TASK_PROMPT =
-  '请将 Existing World Model 作为 TARGET + comparison baseline，完整审阅当前 permitted World Analysis evidence。Existing 本身不是 evidence，不能证明任何新增或修改事实。严格依序执行 Fact Discovery → Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate。Candidate Ledger 必须穷举 missing species、missing biological types（包括 minority/rare types）、missing capability knowledge、reproductive mechanisms/rules、lifecycle、special_rules、exceptions、unknowns、medical_context、projection_rules、evidence-supported corrections 与 compatible completions。每个 species 必须先枚举全部 evidence-supported type candidates，再逐个执行 Species Binding → Exclusion Gate → Stability Gate → Biological/Reproductive Classification Gate → Evidence Sufficiency → Type Creation；发现多数 type 后不得停止 minority/rare type discovery。逐个将候选分类为 UNCHANGED、ADD、CHANGE 或 EXCLUDED；只有合法 evidence-supported ADD/CHANGE 才能进入 operations。Existing 中已经正确且未变化的事实不要返回。只有全部候选完成审查且没有合法 ADD/CHANGE 时，才允许 operations 为空。'
+  'Supplement 的分析顺序必须是 evidence-first，禁止从 Existing 反向推断 evidence 中是否存在 candidate：先从当前 permitted World Analysis evidence 独立建立完整 Evidence Candidate Ledger，再建立 Existing Ledger，最后计算 Candidate Ledger − Existing Coverage。Existing 是 TARGET + comparison baseline，不是 evidence，也不能决定 candidate enumeration。Evidence Candidate Ledger 必须穷举 species、每个 species 的 biological types、capabilities、reproduction_rules、lifecycle、reproductive_mechanisms、special_rules、exceptions、unknowns、medical_context、projection_rules、evidence-supported corrections 与 compatible completions。对每个已成立 species，必须先枚举全部 biological type candidates，包括 majority、minority、rare 及 exceptional but stable classifications；枚举完成后逐个执行 Species Binding → Exclusion Gate → Stability Gate → Biological/Reproductive Classification → Evidence Sufficiency → Candidate Accepted/Excluded。发现多数 type 后不得停止 minority/rare review；不得因 species 有发情期、子宫、特殊性器、精液/爱液、普通性别称谓、个体特征、临时状态、transformation-derived subcategory 或 Human 常识而绕过这些 gates 创建 type。Existing Ledger 中 biological_types: []、空 collections 或 null fields 只表示当前 canonical model 尚未记录该内容，绝不表示 evidence 已证明不存在，也不表示无需继续扫描；Existing 非空也不表示 analysis complete。只有在 Candidate Ledger 完成、全部候选分类为 UNCHANGED/ADD/CHANGE/EXCLUDED、Existing comparison 完成、且没有任何合法 evidence-supported ADD/CHANGE 后，才允许 operations: []。如果任一 evidence-supported candidate 在 Existing 中缺失，operations 不能为空。Candidate Ledger 是内部审查流程，不要输出 ledger、chain-of-thought 或解释。'
 
 export const WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT = [
   '只输出一个 JSON 对象：{"schema_version":2,"operations":[]}。operations 只允许 ADD_SPECIES、ADD_TYPE、SET_FIELD、ADD_SPECIAL_RULE、ADD_MECHANISM、ADD_EXCEPTION、ADD_UNKNOWN、ADD_PROJECTION_RULE；不得输出其它 operation。',
@@ -819,7 +882,7 @@ export function buildWorldModelPatchMessagesV2(
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input, names))
+  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input, names, { evidenceFirst: true, supplementReference: true }))
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }

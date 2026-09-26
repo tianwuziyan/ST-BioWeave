@@ -734,6 +734,47 @@ export function createEventAnalysisCoordinator({
     invoke,
     complete = null,
   }) {
+    const failureDiagnostics = (error) => ({
+      error_message: (() => {
+        const code = typeof error?.diagnostic_code === "string"
+          ? error.diagnostic_code
+          : typeof error?.diagnosticCode === "string"
+            ? error.diagnosticCode
+            : typeof error?.code === "string"
+              ? error.code
+              : null;
+        return code ? code.slice(0, 240) : null;
+      })(),
+      error_path: (() => {
+        const path = typeof error?.path === "string"
+          ? error.path
+          : typeof error?.error_path === "string"
+            ? error.error_path
+            : typeof error?.diagnostic_path === "string"
+              ? error.diagnostic_path
+              : null;
+        return path && /^[A-Za-z0-9_$.[\]-]+$/.test(path) ? path : null;
+      })(),
+      diagnostic_code: typeof error?.diagnostic_code === "string"
+        ? error.diagnostic_code
+        : typeof error?.diagnosticCode === "string"
+          ? error.diagnosticCode
+          : null,
+      failure_code: (() => {
+        const code = typeof error?.code === "string"
+          ? error.code
+          : typeof error?.error_code === "string"
+            ? error.error_code
+            : typeof error?.diagnostic_code === "string"
+              ? error.diagnostic_code
+              : typeof error?.diagnosticCode === "string"
+                ? error.diagnosticCode
+                : null;
+        return code ?? null;
+      })(),
+      analysis_stage: typeof error?.analysis_stage === "string" ? error.analysis_stage : null,
+      validation_stage: typeof error?.validation_stage === "string" ? error.validation_stage : null,
+    });
     const retryConfig = analysisRetryConfig();
     const maxRetries = retryConfig.normalized_retry_count;
     if (!execution || !execution.retryConfigEmitted) {
@@ -807,13 +848,14 @@ export function createEventAnalysisCoordinator({
             retry_index: retryIndex,
             max_retries: maxRetries,
             failure_stage: error?.analysis_stage ?? domain,
-            failure_code: error?.code ?? error?.error_code ?? error?.message ?? "ANALYSIS_FAILED",
+            failure_code: failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED",
+            ...failureDiagnostics(error),
           }, domain === "world" ? "world" : "analysis");
         }
         const retryable = await retryableStageFailure(error, { domain, target, execution, token });
         const canRetry = retryable && retryIndex < maxRetries;
         const failureStage = error?.analysis_stage ?? domain;
-        const failureCode = error?.code ?? error?.error_code ?? error?.message ?? "ANALYSIS_FAILED";
+        const failureCode = failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED";
         emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_FAILED`, execution, target, {
           domain,
           attempt,
@@ -821,6 +863,7 @@ export function createEventAnalysisCoordinator({
           max_retries: maxRetries,
           failure_stage: failureStage,
           failure_code: failureCode,
+          ...failureDiagnostics(error),
           retryable,
           retries_remaining: Math.max(0, maxRetries - retryIndex),
           retry_decision: canRetry ? "retry" : "stop",
@@ -842,6 +885,7 @@ export function createEventAnalysisCoordinator({
               max_retries: maxRetries,
               failure_stage: failureStage,
               failure_code: failureCode,
+              ...failureDiagnostics(error),
               retryable,
               retries_remaining: 0,
               retry_decision: "stop",
@@ -859,6 +903,7 @@ export function createEventAnalysisCoordinator({
           max_retries: maxRetries,
           failure_stage: failureStage,
           failure_code: failureCode,
+          ...failureDiagnostics(error),
           retry_decision: "retry",
           retry_reason: "retry-limit-available",
         }, domain === "world" ? "world" : "analysis");

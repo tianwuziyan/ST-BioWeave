@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
+import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, formatWorldModelSupplementReference, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
 import { applyWorldModelPatchEvidenceGuard, applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatch, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelPatchV2, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch, validateWorldModelPatchV2 } from '../ai/analyzer.js'
 import {
@@ -622,13 +622,178 @@ test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 messa
   assert.match(prompt, /Existing = TARGET \+ comparison baseline/u)
   assert.match(prompt, /Existing 本身不是 evidence/u)
   assert.match(prompt, /unchanged facts|NO_OP operation|old_value/u)
-  assert.match(prompt, /Fact Discovery → Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate/u)
-  assert.match(prompt, /operations 为空只能在完成上述完整 review 后/u)
+  assert.match(prompt, /Evidence Candidate Ledger → Existing Ledger → Candidate Ledger − Existing Coverage → Patch Selection → Empty Patch Gate/u)
+  assert.match(prompt, /Candidate Ledger 必须穷举 species、每个 species 的 biological types/u)
+  assert.match(prompt, /majority、minority、rare/u)
+  assert.match(prompt, /biological_types: \[\]、空 collections 或 null fields 只表示当前 canonical model 尚未记录/u)
+  assert.match(prompt, /如果任一 evidence-supported candidate 在 Existing 中缺失，operations 不能为空/u)
+  assert.match(prompt, /operations: \[\]/u)
   assert.match(prompt, /projection_rule_id/u)
-  assert.match(prompt, /<existing_world_model>/u)
+  assert.match(prompt, /<existing_world_model_reference>/u)
+  assert.doesNotMatch(prompt, /<existing_world_model>/u)
   assert.doesNotMatch(prompt, /Persona must remain excluded\./u)
   assert.equal(messages.filter(message => message.role === 'assistant').length, 1)
   assert.match(messages.find(message => message.role === 'assistant').content, /Recent Story evidence\./u)
+})
+
+test('World Model Supplement v2 prompt makes evidence-first candidate review explicit without lowering type gates', () => {
+  const messages = buildWorldModelPatchMessagesV2({
+    world_model: normalizeWorldModel({
+      schema_version: 1,
+      species: [{ name: 'Species-A', biological_types: [] }],
+    }),
+  })
+  const prompt = messages.map(message => message.content).join('\n')
+
+  assert.match(prompt, /先从前面的 permitted World Analysis evidence 独立建立完整的 evidence-supported World Fact Candidate Ledger，再读取 Existing World Model/u)
+  assert.match(prompt, /最后计算 Candidate Ledger − Existing Coverage/u)
+  for (const outlet of ['species', 'biological types', 'capabilities', 'reproduction_rules', 'lifecycle', 'reproductive_mechanisms', 'special_rules', 'exceptions', 'unknowns', 'medical_context', 'projection_rules']) {
+    assert.match(prompt, new RegExp(outlet.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
+  }
+  assert.match(prompt, /Existing Ledger 中 biological_types: \[\]、空 collections 或 null fields 只表示当前 canonical model 尚未记录/u)
+  assert.match(prompt, /绝不表示 evidence 已证明不存在/u)
+  assert.match(prompt, /Candidate Ledger 完成、全部候选分类为 UNCHANGED\/ADD\/CHANGE\/EXCLUDED、Existing comparison 完成/u)
+  assert.match(prompt, /如果任一 evidence-supported candidate 在 Existing 中缺失，operations 不能为空/u)
+  assert.match(prompt, /不得因 species 有发情期、子宫、特殊性器、精液\/爱液、普通性别称谓、个体特征、临时状态、transformation-derived subcategory/u)
+})
+
+test('Supplement Existing reference is identity-first and preserves canonical coverage', () => {
+  const existing = {
+    schema_version: 1,
+    exceptions: [{ statement: 'Exception-A', applies_to: 'Species-A', evidence: 'Evidence-A' }],
+    unknowns: ['Unknown-A'],
+    medical_context: { childbirth_difficulty: null, care_level: 'false-like text', evidence: '无' },
+    projection_rules: [{ projection_rule_id: 'projection-a', mechanism_key: 'mechanism-a', development_concern_key: 'concern-a', development_kind: 'possible_detection', trigger: { kind: 'story_time_reached', target_story_time: { day_index: 1 } } }],
+    species: [
+      {
+        name: 'Species-A',
+        description: 'Species-A description.',
+        biological_types: [{
+          name: 'Type-A',
+          description: 'Type-A description.',
+          capabilities: {
+            can_produce_sperm: true,
+            can_produce_ova: false,
+            can_be_fertilized: null,
+            can_fertilize: true,
+            can_cause_pregnancy: false,
+            can_carry_pregnancy: null,
+          },
+          reproduction_rules: { fertilization: '无', pregnancy_or_carrying: null, cycle: 'Rule-A' },
+          lifecycle: { maturation: 'Maturation-A', aging: null },
+          reproductive_mechanisms: [{ key: 'mechanism-a', label: 'Mechanism-A' }],
+          special_rules: ['Special-A'],
+        }],
+      },
+      { name: 'Species-B', description: 'Species-B description.', biological_types: [] },
+      { name: 'Species-C', description: 'Species-C description.', biological_types: [{ name: 'Type-C', description: 'Type-C description.' }] },
+    ],
+  }
+  const reference = formatWorldModelSupplementReference(existing)
+
+  assert.match(reference, /<existing_world_model_reference>[\s\S]*<\/existing_world_model_reference>/u)
+  assert.ok(reference.indexOf('name: Species-A') < reference.indexOf('existing_biological_types:\n- Type-A'))
+  assert.ok(reference.indexOf('species: Species-A\nname: Type-A') < reference.indexOf('description: Type-A description.'))
+  assert.match(reference, /\[Species\]\nname: Species-B\ndescription: Species-B description\.\nexisting_biological_types: NONE RECORDED/u)
+  assert.ok(reference.indexOf('[Species]\nname: Species-B') < reference.indexOf('[Species]\nname: Species-C'))
+  assert.match(reference, /capabilities:[\s\S]*can_produce_sperm: true/u)
+  assert.match(reference, /capabilities:[\s\S]*can_produce_ova: false/u)
+  assert.match(reference, /capabilities:[\s\S]*can_be_fertilized: null/u)
+  assert.match(reference, /capabilities:[\s\S]*can_cause_pregnancy: false/u)
+  assert.match(reference, /fertilization: 无/u)
+  assert.match(reference, /childbirth_difficulty: null/u)
+  assert.match(reference, /projection_rule_id: projection-a/u)
+  assert.match(reference, /exceptions:[\s\S]*Exception-A/u)
+  assert.match(reference, /unknowns:[\s\S]*Unknown-A/u)
+  assert.match(reference, /reproductive_mechanisms:[\s\S]*key: mechanism-a/u)
+  assert.match(reference, /special_rules:[\s\S]*Special-A/u)
+  assert.doesNotMatch(reference, /新增|推断|missing|candidate/u)
+})
+
+test('Supplement v2 uses the coverage-oriented Existing reference without changing message roles or boundaries', () => {
+  const existing = {
+    schema_version: 1,
+    species: [
+      { name: 'Species-A', description: 'Species-A description.', biological_types: [{ name: 'Type-A' }] },
+      { name: 'Species-B', description: 'Species-B description.', biological_types: [] },
+      { name: 'Species-C', description: 'Species-C description.', biological_types: [] },
+    ],
+  }
+  const messages = buildWorldModelPatchMessagesV2(
+    {
+      world_model: existing,
+      character: { description: 'Character evidence.' },
+      worldbooks: [{ entries: [{ content: 'Worldbook evidence.' }] }],
+      recent_story: { items: [{ content: 'Recent Story evidence.' }] },
+    },
+    { system_top: 'TOP', system_bottom: 'BOTTOM' },
+  )
+  const user = messages.find(message => message.role === 'user')?.content ?? ''
+  const evidenceSystem = messages.filter(message => message.role === 'system')[2]?.content ?? ''
+  const fullMessages = buildWorldModelMessages(
+    {
+      character: { description: 'Character evidence.' },
+      worldbooks: [{ entries: [{ content: 'Worldbook evidence.' }] }],
+      recent_story: { items: [{ content: 'Recent Story evidence.' }] },
+      world_model: existing,
+    },
+    { system_top: 'TOP', system_bottom: 'BOTTOM' },
+  )
+
+  assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'system', 'assistant', 'user', 'system'])
+  assert.equal(messages[0].content, 'TOP')
+  assert.equal(messages.at(-1).content, 'BOTTOM')
+  assert.match(user, /\[Species\]\nname: Species-B[\s\S]*existing_biological_types: NONE RECORDED/u)
+  assert.match(user, /\[Species\]\nname: Species-C[\s\S]*existing_biological_types: NONE RECORDED/u)
+  assert.doesNotMatch(user, /^biological_types:/mu)
+  assert.doesNotMatch(user, /<existing_world_model>/u)
+  assert.match(evidenceSystem, /Worldbook evidence\./u)
+  assert.equal(messages.filter(message => message.role === 'assistant').length, 1)
+  assert.match(messages.find(message => message.role === 'assistant').content, /Recent Story evidence\./u)
+  assert.deepEqual(fullMessages.map(message => message.role), ['system', 'system', 'system', 'assistant', 'user', 'system'])
+  assert.equal(fullMessages[0].content, 'TOP')
+  assert.equal(fullMessages.at(-1).content, 'BOTTOM')
+  assert.doesNotMatch(JSON.stringify(fullMessages), /Species-B description|existing_world_model_reference/u)
+})
+
+test('World Model Supplement v2 generic candidate ledger boundary preserves missing-type and negative cases', () => {
+  const emptyTypeModel = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: 'Species-A', biological_types: [] }],
+  })
+  const stableType = {
+    op: 'ADD_TYPE',
+    target: { kind: 'species', species_name: 'Species-A' },
+    type: { name: 'Type-B' },
+  }
+
+  assert.doesNotThrow(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [stableType] },
+    emptyTypeModel,
+    v2Evidence('Species-A 包含 Type-B 类型，属于稳定生物分类。'),
+  ))
+  assert.throws(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [stableType] },
+    emptyTypeModel,
+    v2Evidence('某个角色表现出 Species-A 的 Type-B biological feature。'),
+  ), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotThrow(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [] },
+    emptyTypeModel,
+    v2Evidence('Species-A 的 Type-B 只在 Condition-X 下暂时出现。'),
+  ))
+
+  const majorityModel = v2ExistingModel()
+  assert.doesNotThrow(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [stableType] },
+    majorityModel,
+    v2Evidence('Species-A 的 Type-A 是多数，Type-B 是少数但稳定存在的 biological classification。'),
+  ))
+  assert.doesNotThrow(() => applyWorldModelPatchV2EvidenceGuard(
+    { schema_version: 2, operations: [] },
+    majorityModel,
+    {},
+  ))
 })
 
 test('World Model Supplement v2 prompt exposes exact operation shapes without alternate DTO grammar', () => {
@@ -1616,6 +1781,85 @@ test('World Model Patch v2 evidence guard validates collections, unknowns, excep
     existing,
     {},
   ), error => error?.code === 'WORLD_MODEL_PATCH_V2_INVALID')
+})
+
+test('World Model Patch v2 accepts evidence-grounded exception paraphrase and rejects semantic hitchhiking', () => {
+  const existing = v2ExistingModel()
+  const evidence = 'Compound-X 服用后不论性别、物种均产生 Effect-Y 三日。'
+  const paraphrase = {
+    op: 'ADD_EXCEPTION',
+    exception: {
+      statement: '服用 Compound-X 后，任何性别与物种的个体均会出现 Effect-Y，持续三日。',
+      applies_to: '任何性别与物种',
+      evidence,
+    },
+  }
+  assert.doesNotThrow(() => guardV2(paraphrase, existing, evidence))
+  assert.doesNotThrow(() => guardV2({
+    ...paraphrase,
+    exception: { ...paraphrase.exception, statement: evidence },
+  }, existing, evidence))
+  assert.throws(() => guardV2({
+    ...paraphrase,
+    exception: { ...paraphrase.exception, statement: '服用 Compound-X 后永久出现 Effect-Y。' },
+  }, existing, evidence), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2({
+    ...paraphrase,
+    exception: { ...paraphrase.exception, statement: '服用 Compound-X 后，任何性别与物种的个体均会出现 Effect-Z，持续三日。' },
+  }, existing, evidence), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2({
+    ...paraphrase,
+    exception: { ...paraphrase.exception, statement: '所有个体天然具有 Effect-Y。' },
+  }, existing, evidence), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2({
+    ...paraphrase,
+    exception: { ...paraphrase.exception, statement: '服用 Effect-Y 后，任何性别与物种的个体均会出现 Compound-X，持续三日。' },
+  }, existing, evidence), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+})
+
+test('World Model Patch v2 exception guard rejects unsupported scope and individual-only upgrades', () => {
+  const existing = v2ExistingModel()
+  assert.throws(() => guardV2({
+    op: 'ADD_EXCEPTION',
+    exception: {
+      statement: '服用 Compound-X 后，任何物种都会出现 Effect-Y。',
+      applies_to: '任何物种',
+    },
+  }, existing, 'Species-A 服用 Compound-X 后出现 Effect-Y。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2({
+    op: 'ADD_EXCEPTION',
+    exception: {
+      statement: '所有 Species-A 个体服用 Compound-X 后都会出现 Effect-Y。',
+      applies_to: 'Species-A',
+    },
+  }, existing, 'Character-A 服用 Compound-X 后出现 Effect-Y。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.throws(() => guardV2({
+    op: 'ADD_EXCEPTION',
+    exception: {
+      statement: '服用 Compound-X 后获得怀孕能力。',
+      applies_to: '任何性别与物种',
+    },
+  }, existing, 'Compound-X 服用后不论性别、物种均产生 Effect-Y 三日。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+})
+
+test('World Model Patch v2 preserves atomicity for valid type plus invalid exception', () => {
+  const existing = v2ExistingModel()
+  const snapshot = structuredClone(existing)
+  assert.throws(() => mergeV2([
+    {
+      op: 'ADD_TYPE',
+      target: { kind: 'species', species_name: 'Species-A' },
+      type: { name: 'Type-B', description: '稳定新增类型。' },
+    },
+    {
+      op: 'ADD_EXCEPTION',
+      exception: {
+        statement: '服用 Compound-X 后永久出现 Effect-Y。',
+        applies_to: '任何性别与物种',
+      },
+    },
+  ], existing, 'Species-A 存在稳定 Type-B 类型。Compound-X 服用后不论性别、物种均产生 Effect-Y 三日。'), error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.deepEqual(existing, snapshot)
 })
 
 test('World Model Patch v2 sparse merge preserves Existing data and applies independent operations', () => {

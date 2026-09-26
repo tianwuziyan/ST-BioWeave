@@ -3542,6 +3542,105 @@ function v2EvidenceSupportsFact(value, units, context = {}) {
   );
 }
 
+const V2_EXCEPTION_CONDITION_PATTERN = /(?:服用|使用|摄入|接触|注射|施用|在[^。！？!?；;，,、\n]{0,24}(?:后|时|期间)|after|upon|following|when|if|taking|using)/iu;
+const V2_EXCEPTION_TEMPORAL_PATTERN = /(?:永久|永远|始终|短暂|暂时|临时|持续[^。！？!?；;，,\n]{0,8}|一(?:天|日|周|月)|[一二三四五六七八九十百千万\d]+\s*(?:天|日|周|月|小时|年)|for\s+[^,.;!?]+|permanent(?:ly)?|temporary|for\s+\d+\s+(?:day|days|hour|hours|week|weeks|month|months|year|years))/iu;
+const V2_EXCEPTION_ANCHOR_STOP_PATTERN = /^(?:服用|使用|摄入|接触|注射|施用|在|后|时|期间|任何|所有|全体|不论|无论|个体|对象|效果|出现|产生|发生|导致|可以|能够|会|均|都|其|该|持续|永久|永远|after|upon|following|when|if|taking|using|all|any|every|individuals?|persons?|people|experience|appears?|occurs?|for|days?|hours?|weeks?|months?|years?)$/iu;
+
+function v2ExceptionAnchors(value) {
+  return [...compactEvidenceText(value).matchAll(/[A-Za-z][A-Za-z0-9_-]*|[\u3400-\u9fff]{2,}/gu)]
+    .map((match) => match[0])
+    .filter((token) => !V2_EXCEPTION_ANCHOR_STOP_PATTERN.test(token));
+}
+
+function v2ExceptionClaimRegion(value) {
+  const text = compactEvidenceText(value);
+  const condition = text.match(V2_EXCEPTION_CONDITION_PATTERN);
+  if (!condition) return text;
+  return text.slice((condition.index ?? 0) + condition[0].length);
+}
+
+function v2ExceptionConditionAnchors(value, condition) {
+  const text = compactEvidenceText(value);
+  const prefix = text.slice(0, condition?.index ?? 0);
+  const prefixAnchors = v2ExceptionAnchors(prefix);
+  if (prefixAnchors.length) return prefixAnchors;
+  const suffix = text.slice((condition?.index ?? 0) + condition[0].length, (condition?.index ?? 0) + condition[0].length + 20);
+  return v2ExceptionAnchors(suffix);
+}
+
+function v2ExceptionTemporalClaims(value) {
+  return [...compactEvidenceText(value).matchAll(new RegExp(V2_EXCEPTION_TEMPORAL_PATTERN.source, 'giu'))]
+    .map((match) => match[0].replace(/^(?:持续|维持|for)\s*/iu, ''));
+}
+
+function v2ExceptionScopeBroadening(candidate, source) {
+  const candidateText = compactEvidenceText(candidate);
+  const sourceText = compactEvidenceText(source);
+  const sourceBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(sourceText);
+  const candidateBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(candidateText);
+  const candidateRestrictive = /(?:仅|只有|除非|only|except)/iu.test(candidateText);
+  return (!sourceBroad && candidateBroad) || (sourceBroad && candidateRestrictive);
+}
+
+function v2ExceptionStatementSupportedInUnit(statement, sourceText) {
+  if (v2ExceptionScopeBroadening(statement, sourceText)) return false;
+
+  const sourceHasCondition = V2_EXCEPTION_CONDITION_PATTERN.test(sourceText);
+  if (sourceHasCondition) {
+    const candidateCondition = statement.match(V2_EXCEPTION_CONDITION_PATTERN);
+    if (!candidateCondition) return false;
+    const sourceCondition = sourceText.match(V2_EXCEPTION_CONDITION_PATTERN);
+    const sourceConditionAnchors = new Set(v2ExceptionConditionAnchors(sourceText, sourceCondition));
+    const candidateConditionAnchors = v2ExceptionConditionAnchors(statement, candidateCondition);
+    if (!candidateConditionAnchors.some((anchor) => sourceConditionAnchors.has(anchor))) return false;
+  }
+
+  const candidateTemporal = v2ExceptionTemporalClaims(statement);
+  if (candidateTemporal.length && !candidateTemporal.every((claim) => sourceText.includes(claim))) return false;
+
+  const sourceEffectAnchors = new Set(v2ExceptionAnchors(v2ExceptionClaimRegion(sourceText)));
+  const candidateCondition = statement.match(V2_EXCEPTION_CONDITION_PATTERN);
+  const candidateConditionAnchors = new Set(candidateCondition ? v2ExceptionConditionAnchors(statement, candidateCondition) : []);
+  const candidateEffectAnchors = v2ExceptionAnchors(v2ExceptionClaimRegion(statement))
+    .filter((anchor) => !candidateConditionAnchors.has(anchor));
+  return candidateEffectAnchors.some((anchor) => sourceEffectAnchors.has(anchor));
+}
+
+function v2ExceptionStatementSupported(exception, units) {
+  const statement = compactEvidenceText(exception.statement);
+  const scopedUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
+  return scopedUnits.some((unit) => {
+    const sourceText = compactEvidenceText(unit);
+    return sourceText.includes(statement) || v2ExceptionStatementSupportedInUnit(statement, sourceText);
+  });
+}
+
+function v2ExceptionScopeSupported(exception, units) {
+  if (!exception.applies_to) return true;
+  const candidate = compactEvidenceText(exception.applies_to);
+  return units.filter((unit) => !v2IndividualOnlyUnit(unit)).some((unit) => {
+    if (v2EvidenceSupportsFact(exception.applies_to, [unit], {})) return true;
+    const source = compactEvidenceText(unit);
+    const candidateBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(candidate);
+    const sourceBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(source);
+    if (!candidateBroad || !sourceBroad) return false;
+    const scopeDimensions = [
+      { candidate: /性别|sex|gender/iu, source: /性别|sex|gender/iu },
+      { candidate: /物种|种族|species|race/iu, source: /物种|种族|species|race/iu },
+    ];
+    return scopeDimensions.every((dimension) => !dimension.candidate.test(candidate) || dimension.source.test(source));
+  });
+}
+
+function v2ExceptionEvidenceSupported(exception, units) {
+  if (exception.evidence !== null && exception.evidence !== undefined &&
+      !units.some((unit) => compactEvidenceText(unit).includes(
+        compactEvidenceText(exception.evidence).replace(/[。！？!?；;，,、]+$/gu, ''),
+      ))) return false;
+  if (!v2ExceptionScopeSupported(exception, units)) return false;
+  return v2ExceptionStatementSupported(exception, units);
+}
+
 function v2DescriptionHasProtectedSemanticClaim(value) {
   const text = String(value ?? '');
   return [
@@ -3743,10 +3842,7 @@ function v2ValidateOperationEvidence(operation, classification, units, existing)
   }
   if (operation.op === 'ADD_EXCEPTION') {
     const exception = v2NormalizeException(operation.exception);
-    const scope = exception.applies_to;
-    const context = v2Species(existing, scope) ? { speciesName: scope } : {};
-    if (!v2EvidenceSupportsFact(exception.statement, units, context)) v2EvidenceError('operation.exception.statement');
-    if (scope && !v2EvidenceSupportsFact(scope, units, context)) v2EvidenceError('operation.exception.applies_to');
+    if (!v2ExceptionEvidenceSupported(exception, units)) v2EvidenceError('operation.exception.statement');
     return;
   }
   if (operation.op === 'ADD_UNKNOWN') {
