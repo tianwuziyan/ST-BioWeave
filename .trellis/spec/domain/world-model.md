@@ -4,8 +4,8 @@
 
 This is the canonical domain owner for World Model and World Analysis. It
 defines how permitted evidence becomes a complete canonical model in Full
-Analysis, or a scope-aware, baseline-consolidated sparse Patch in Supplement
-Analysis. It also defines the evidence, canonicalization, merge, and ownership
+Analysis, or a scope-aware Supplement Candidate that deterministic code turns
+into an internal Patch v2 in Supplement Analysis. It also defines the evidence, canonicalization, merge, and ownership
 boundaries; it does not turn deterministic validation into a world-knowledge
 parser.
 
@@ -88,7 +88,7 @@ current permitted World Analysis evidence + Existing target/reference
   -> one Supplement AI request / one response
      -> Complete Evidence-Supported Candidate Tree
   -> deterministic Existing comparison / delta derivation
-  -> Candidate Patch
+  -> internal Patch v2
   -> deterministic safety validation
   -> deterministic merge
   -> complete-model consistency
@@ -152,9 +152,9 @@ claim/preserve Existing, never removal. When an Existing Species/Type is only
 a parent scope for a new child, do not restate its Description unless a real
 evidence-backed description delta exists.
 
-Omitted fields in sparse Patch sections are unchanged; complete Candidate
-sections follow their explicit contract in section 1.5.2. `remove` and
-`invalidate` are unsupported. The complete merged result must pass canonical validation before persistence;
+Omitted fields in the presence-sensitive Candidate are no claim/preserve
+Existing; complete Candidate sections are not canonical World Model objects.
+`remove` and `invalidate` are unsupported. The complete merged result must pass canonical validation before persistence;
 otherwise the update and downstream Character/Event analysis fail closed and
 the prior model remains intact.
 
@@ -180,7 +180,7 @@ The canonical World Model outlets are peer capabilities with different
 semantics: `species` / `biological_types`, capabilities,
 `reproduction_rules`, lifecycle, `special_rules`, `exceptions`, `unknowns`,
 `medical_context`, and `projection_rules`. AI must discover the world-level
-fact and classify its outlet before proposing a Candidate Patch.
+fact and classify its outlet before emitting a Supplement Candidate claim.
 
 An individual-only statement must not be promoted into a population rule. A
 single anomalous character does not automatically create a world exception, and
@@ -375,10 +375,11 @@ review authorizes it.
 permitted evidence + Existing target/reference
   -> one response: internal Complete Evidence Discovery
      -> Complete Evidence-Supported Candidate
-  -> deterministic Existing Comparison / Classification (NO-OP / ADD / CHANGE)
-  -> Existing Comparison (Candidate Builder logical phase only)
-  -> Patch Selection
-  -> Empty Patch Gate
+  -> deterministic Existing Comparison
+  -> internal Patch v2
+  -> Evidence Guard
+  -> merge
+  -> canonical World Model
 ```
 
 Fact review must cover missing Species/Types, field knowledge, reproductive
@@ -388,14 +389,13 @@ compatible completions. Each reviewed candidate receives exactly one
 classification: `UNCHANGED`, `ADD`, `CHANGE`, or `EXCLUDED`, after applying the
 shared scope, Species/Type binding, exclusion, stability, classification, and
 evidence rules. Existing is used only after evidence-only discovery, for
-comparison and compatible consolidation; it cannot create or prove a
-candidate. Patch Selection emits only legal evidence-supported `ADD`/`CHANGE`
-in the active Patch contract. The compatibility v1 implementation uses a
-complete `update.species` Candidate; the production Supplement path in §1.5.8
-replaces AI-facing Patch construction with a sparse hierarchical Candidate and
-deterministic internal delta operations. The Empty Patch Gate may
+  comparison and compatible consolidation; it cannot create or prove a
+  candidate. The retired Patch v1 design used a complete `update.species`
+  Candidate. The current Supplement path in §1.5.8 uses a hierarchical
+  Candidate and deterministic internal Patch v2 operations. The Empty Patch
+  Gate may
 pass only after every candidate category and candidate has been reviewed and
-no legal `ADD` or `CHANGE` remains. Neither v1 nor v2 authorizes `REMOVE` or
+  no legal mutation remains. The internal Patch v2 vocabulary does not authorize `REMOVE` or
 Structural Reclassification.
 
 ### 1.3.4 Structural Reclassification gap
@@ -505,7 +505,11 @@ regex-driven natural-language parser. Ambiguous semantic scope is resolved by
 the AI Candidate contract, while Existing baseline remains comparison only and
 never becomes evidence.
 
-### 1.5.1 Patch presence and canonical null contract
+### 1.5.1 Retired Patch v1 presence and canonical null contract
+
+The following Patch v1 presence contract is historical/retired. It is kept only
+as design history; no current analyzer entry or production Supplement path
+parses or emits this DTO.
 
 Patch field presence and canonical value semantics are separate dimensions.
 The complete canonical model retains the existing tri-state meanings:
@@ -538,7 +542,11 @@ updates only `care_level`; an absent `childbirth_difficulty` remains
 canonical null contract. `null`, `false`, `"无"`, and an absent Patch field
 must never be conflated.
 
-### 1.5.2 Complete and sparse Patch candidates
+### 1.5.2 Historical / retired Patch v1 candidates
+
+Sections 1.5.2–1.5.7 below document the retired AI-facing Patch v1 semantic
+delta design and are not current production API contracts. The current
+Supplement contract is defined in section 1.5.8.
 
 Patch sections do not all have the same omission semantics:
 
@@ -592,7 +600,7 @@ and `true/false -> null` is `REMOVE`. For rule text, `null -> "无"` and
 Knowledge weakening includes more than an explicit top-level `remove`: a
 known scalar or text becoming `null`, an Existing collection item disappearing,
 or an Existing nested type/rule/fact disappearing from a complete Candidate is
-a `REMOVE` attempt. Supplement v1 rejects all such changes because
+a `REMOVE` attempt. The retired Supplement v1 rejected all such changes because
 `remove`/`invalidate` is unsupported.
 
 ### 1.5.4 Collection comparison boundary
@@ -621,7 +629,7 @@ Patch evidence validation must operate on each changed semantic fact:
 - `ADD` requires support in the current permitted World Analysis evidence;
 - `CHANGE` requires sufficient current evidence for the replacement or
   correction, not merely a mention of the new value;
-- `REMOVE` is rejected in Supplement v1.
+- `REMOVE` was rejected in the retired Supplement v1 contract.
 
 One supported delta cannot authorize another unsupported delta in the same
 Candidate. For example, a supported new rule and an unsupported new
@@ -677,7 +685,7 @@ If implementation would require changing one of these boundaries, stop and
 re-audit the contract instead of treating it as incidental Semantic Delta
 refactoring.
 
-### 1.5.8 Supplement Patch v2 DTO design (frozen, not implemented)
+### 1.5.8 Supplement Candidate and internal Patch v2 design
 
 #### 1.5.8.1 Scope / trigger and design decision
 
@@ -787,7 +795,7 @@ The production parser/validator boundary is:
 
 ```text
 parseWorldModelSupplementText(raw) -> { candidate, diagnostics }
-validateWorldModelCandidate(candidate) -> SparseWorldFactCandidate
+validateWorldModelCandidate(candidate) -> presence-sensitive Supplement Candidate DTO
 worldModelIdentityIndex(model) -> exact identity index or duplicate error
 worldModelCandidateToPatchV2(candidate, existingModel) -> WorldModelPatchV2
 applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> classified Patch v2
@@ -806,7 +814,7 @@ Patch v2 remains an internal deterministic IR:
 The internally generated `operations` contains only evidence-supported proposed `ADD` or `CHANGE`
 information. It never contains complete updated Existing species,
 unchanged Existing fields, `UNCHANGED` operations, `REMOVE`, `invalidate`, or
-Structural Reclassification. `operations: []` means the Sparse Candidate and
+Structural Reclassification. `operations: []` means the Supplement Candidate and
 Existing comparison found no legal change.
 
 All operation targets use canonical identity, never array index, input order,
@@ -1072,26 +1080,14 @@ identity mutation is weakening and fails closed as unsupported `REMOVE`.
 Projection updates remain blocked. No new mechanism, exception, or projection
 update operation is introduced.
 
-#### 1.5.8.11 Compatibility and migration status
+#### 1.5.8.11 Migration status
 
-The completed migration preserves the already-tested v1 guard path:
-
-1. Keep v1 parsing, evidence guard, and complete-candidate merge as temporary
-   backward compatibility. Do not silently reinterpret v1 `update.species`.
-2. Implement an isolated v2 parser/validator and an internal operation
-   application path. A v1-to-internal adapter may translate only after v1
-   validation and must preserve v1 complete-candidate deletion-risk checks.
-3. Change only the Supplement Prompt to request hierarchical Candidate Text.
-   Full output and Full schema remain unchanged.
-4. Route Candidate responses through deterministic Candidate -> Patch v2
-   conversion, then the existing operation-level evidence validation and merge.
-5. Keep the v1 parser/guard/merge compatibility path for non-migrated callers;
-   the production Supplement path no longer asks the AI for v1 or v2 Patch
-   operations.
-
-Runtime should not own semantic conversion. If an adapter is needed, it stays
-inside the World Model Patch parser/compatibility boundary and returns the
-same internal validated operation representation.
+Patch v1 AI JSON ingestion and its analyzer/guard/merge entrypoints are retired.
+The current production path is the hierarchical Supplement Candidate text
+parser followed by deterministic Candidate -> internal Patch v2 conversion,
+operation-level evidence validation, merge, consistency, and canonical
+validation. Patch v2 remains an internal mutation IR and is not an AI-facing
+transport contract.
 
 #### 1.5.8.10 Generic DTO examples
 
@@ -1226,10 +1222,8 @@ model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
 ## 1.7 Current implementation status
 
-The current implementation keeps the v1 complete-candidate Patch path as
-compatibility for non-migrated callers, while the production Supplement v2
-path uses one Complete Evidence-Supported Candidate Tree, deterministic Existing
-comparison, hierarchical Candidate parsing, internal Patch v2, operation-level
+The current implementation uses one Complete Evidence-Supported Candidate Tree,
+deterministic Existing comparison, hierarchical Candidate parsing, internal Patch v2, operation-level
 evidence validation, sparse merge, complete-model consistency, and canonical
 validation. Full does not consume Existing; Supplement receives Existing only
 as TARGET/comparison/reference, and Existing is not collected by
@@ -1250,15 +1244,15 @@ contract above.
 ## 2. Signatures
 
 - `buildWorldModelMessages(analysisInput, promptSettings) -> ChatMessage[]`
-- `buildWorldModelPatchMessages(analysisInput, promptSettings) -> ChatMessage[]`
+- `buildWorldModelPatchMessagesV2(analysisInput, promptSettings) -> ChatMessage[]`
 - `parseWorldModelResponse(raw) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModel(input) -> WorldModelV1`
-- `createAnalyzer(deps).analyzeWorldModelPatch(input) -> WorldModelPatchV1`
-- `parseWorldModelPatchV2(raw) -> WorldModelPatchV2` (planned)
-- `validateWorldModelPatchV2(patch) -> WorldModelPatchV2` (planned)
-- `mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1` (planned)
+- `parseWorldModelSupplementText(raw) -> { candidate, diagnostics }`
+- `validateWorldModelCandidate(candidate) -> Supplement Candidate DTO`
+- `validateWorldModelPatchV2(patch) -> WorldModelPatchV2`
+- `mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1`
 - `applyWorldModelEvidenceGuard(model, analysisInput) -> WorldModelV1`
-- `applyWorldModelPatchEvidenceGuard(patch, analysisInput) -> WorldModelPatchV1`
+- `applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> WorldModelPatchV2`
 
 ## 2.1 Reproductive mechanism and Projection Rule output contract
 

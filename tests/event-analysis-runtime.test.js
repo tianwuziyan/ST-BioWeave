@@ -220,12 +220,6 @@ function createFixture({
         ? async () => normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] })
         : configuredAnalyzer.analyzeWorldModel ??
           (async () => normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] }))),
-    analyzeWorldModelPatch:
-      analyzer?.analyzeWorldModelPatch ??
-      (rawApiResponse !== null
-        ? async () => ({ schema_version: 1, add: {}, update: {} })
-        : configuredAnalyzer.analyzeWorldModelPatch ??
-          (async () => ({ schema_version: 1, add: {}, update: {} }))),
     analyzeWorldModelPatchV2:
       analyzer?.analyzeWorldModelPatchV2 ??
       (async () => ({ patch: { schema_version: 2, operations: [] }, classified: [] })),

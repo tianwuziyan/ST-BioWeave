@@ -4,7 +4,6 @@ import {
   buildEventAnalysisMessages,
   buildPrompt,
   buildWorldModelMessages,
-  buildWorldModelPatchMessages,
   buildWorldModelPatchMessagesV2,
   EVENT_STATUS,
   EVENT_TYPES,
@@ -1287,25 +1286,6 @@ function semanticPatchValueEqual(left, right) {
   return false
 }
 
-function patchFactHasValue(value) {
-  if (value === null || value === undefined) return false
-  if (typeof value === 'string') return value.trim() !== ''
-  if (typeof value === 'boolean' || typeof value === 'number') return true
-  return false
-}
-
-function patchCollectionMap(values, identityFor, path) {
-  const map = new Map()
-  for (const value of Array.isArray(values) ? values : []) {
-    const identity = identityFor(value)
-    if (!identity || map.has(identity)) {
-      throw invalidWorldModelPatch('WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED', { path })
-    }
-    map.set(identity, value)
-  }
-  return map
-}
-
 function patchExceptionSemanticValue(value) {
   return {
     statement: value?.statement ?? null,
@@ -1328,151 +1308,6 @@ function patchMechanismSemanticValue(value) {
     carrying_compatibility: value?.carrying_compatibility ?? null,
     world_model_rule_refs: [...new Set(value?.world_model_rule_refs ?? [])].sort(),
   }
-}
-
-function patchMechanismFingerprint(value) {
-  const semantic = patchMechanismSemanticValue(value)
-  const encode = (item) => `${typeof item}:${String(item).length}:${String(item)}`
-  return [
-    semantic.key,
-    semantic.label,
-    semantic.pathway,
-    semantic.carrying_compatibility,
-    ...semantic.world_model_rule_refs,
-  ].map(encode).join('|')
-}
-
-function patchPresenceOf(patch) {
-  return patch?.[PATCH_PRESENCE] ?? null
-}
-
-function patchPresenceKeys(patch, section, field, value) {
-  const presence = patchPresenceOf(patch)?.[section]?.[field]
-  if (!Array.isArray(presence))
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_PRESENCE_UNAVAILABLE', { section, field })
-  return presence
-}
-
-function patchDeltaError(path, code = 'WORLD_MODEL_PATCH_EVIDENCE_UNSUPPORTED') {
-  throw invalidWorldModelPatch(code, { path })
-}
-
-function addPatchDelta(deltas, path, oldValue, newValue, context = {}) {
-  if (semanticPatchValueEqual(oldValue, newValue)) return
-  const kind = oldValue === null || oldValue === undefined
-    ? (newValue === null || newValue === undefined ? 'UNCHANGED' : 'ADD')
-    : (newValue === null || newValue === undefined ? 'REMOVE' : 'CHANGE')
-  if (kind !== 'UNCHANGED') deltas.push({ kind, path, oldValue, newValue, ...context })
-}
-
-function comparePatchScalarObject(existing, candidate, keys, path, deltas, context = {}) {
-  for (const key of keys)
-    addPatchDelta(deltas, `${path}.${key}`, existing?.[key] ?? null, candidate?.[key] ?? null, { ...context, key })
-}
-
-function comparePatchStringMembership(existing, candidate, path, deltas, context = {}) {
-  const oldSet = new Set(Array.isArray(existing) ? existing : [])
-  const newSet = new Set(Array.isArray(candidate) ? candidate : [])
-  for (const value of oldSet) {
-    if (!newSet.has(value)) addPatchDelta(deltas, `${path}[${value}]`, value, null, { ...context, value })
-  }
-  for (const value of newSet) {
-    if (!oldSet.has(value)) addPatchDelta(deltas, `${path}[${value}]`, null, value, { ...context, value })
-  }
-}
-
-function comparePatchMechanisms(existing, candidate, path, deltas, context = {}) {
-  const oldValues = Array.isArray(existing) ? existing : []
-  const newValues = Array.isArray(candidate) ? candidate : []
-  const oldMap = patchCollectionMap(oldValues, patchMechanismFingerprint, path)
-  const newMap = patchCollectionMap(newValues, patchMechanismFingerprint, path)
-  const oldKeys = new Set(oldValues.map((value) => value?.key).filter(Boolean))
-  const newKeys = new Set(newValues.map((value) => value?.key).filter(Boolean))
-
-  for (const [fingerprint, oldValue] of oldMap) {
-    if (newMap.has(fingerprint)) continue
-    if (oldValue?.key && newKeys.has(oldValue.key))
-      patchDeltaError(`${path}[${oldValue.key}]`, 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED')
-    addPatchDelta(deltas, `${path}[${fingerprint}]`, oldValue, null, { ...context, identity: fingerprint })
-  }
-
-  for (const [fingerprint, newValue] of newMap) {
-    if (oldMap.has(fingerprint)) continue
-    if (!newValue?.key || oldKeys.has(newValue.key))
-      patchDeltaError(`${path}[${newValue?.key ?? fingerprint}]`, 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED')
-    deltas.push({
-      kind: 'ADD_MECHANISM',
-      path: `${path}[${newValue.key}]`,
-      newValue,
-      ...context,
-      nested: 'reproductive_mechanisms',
-      mechanismKey: newValue.key,
-    })
-  }
-}
-
-function comparePatchBiologicalType(existing, candidate, path, deltas, context = {}) {
-  comparePatchScalarObject(existing, candidate, ['description'], path, deltas, context)
-  comparePatchScalarObject(existing?.capabilities, candidate?.capabilities, CAPABILITY_KEYS, `${path}.capabilities`, deltas, { ...context, nested: 'capabilities' })
-  comparePatchScalarObject(existing?.reproduction_rules, candidate?.reproduction_rules, WORLD_RULE_KEYS, `${path}.reproduction_rules`, deltas, { ...context, nested: 'reproduction_rules' })
-  comparePatchScalarObject(existing?.lifecycle, candidate?.lifecycle, LIFECYCLE_KEYS, `${path}.lifecycle`, deltas, { ...context, nested: 'lifecycle' })
-  comparePatchStringMembership(existing?.special_rules, candidate?.special_rules, `${path}.special_rules`, deltas, { ...context, nested: 'special_rules' })
-  comparePatchMechanisms(existing?.reproductive_mechanisms, candidate?.reproductive_mechanisms, `${path}.reproductive_mechanisms`, deltas, context)
-}
-
-function comparePatchSpecies(existing, candidate, deltas) {
-  const speciesName = existing?.name ?? candidate?.name
-  addPatchDelta(deltas, 'species.description', existing?.description ?? null, candidate?.description ?? null, { speciesName })
-  const oldTypes = patchCollectionMap(existing?.biological_types, (value) => value?.name, 'species.biological_types')
-  const newTypes = patchCollectionMap(candidate?.biological_types, (value) => value?.name, 'species.biological_types')
-  for (const [identity, oldType] of oldTypes) {
-    const path = `species[${speciesName}].biological_types[${identity}]`
-    if (!newTypes.has(identity)) {
-      addPatchDelta(deltas, path, oldType, null, { speciesName, typeName: identity })
-      continue
-    }
-    comparePatchBiologicalType(oldType, newTypes.get(identity), path, deltas, { speciesName, typeName: identity })
-  }
-  for (const [identity, newType] of newTypes) {
-    if (!oldTypes.has(identity)) {
-      const path = `species[${speciesName}].biological_types[${identity}]`
-      deltas.push({
-        kind: 'ADD_TYPE',
-        path,
-        newValue: newType,
-        speciesName,
-        typeName: identity,
-      })
-    }
-  }
-}
-
-function collectPatchFactLeaves(value, path, facts, context = {}, key = '') {
-  if (key === 'name') return facts
-  if (['evidence', 'schema_version', 'projection_rule_id'].includes(key)) return facts
-  if (patchFactHasValue(value)) {
-    facts.push({ path, value, ...context, key })
-    return facts
-  }
-  if (!value || typeof value !== 'object') return facts
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const childContext = key === 'biological_types' && item && typeof item === 'object'
-        ? { ...context, typeName: item.name }
-        : key === 'reproductive_mechanisms' && item && typeof item === 'object'
-          ? { ...context, nested: 'reproductive_mechanisms', mechanismKey: item.key }
-          : context
-      collectPatchFactLeaves(item, `${path}[]`, facts, childContext, key)
-    }
-    return facts
-  }
-  for (const [childKey, childValue] of Object.entries(value)) {
-    const childContext = ['capabilities', 'reproduction_rules', 'lifecycle', 'special_rules', 'reproductive_mechanisms'].includes(childKey)
-      ? { ...context, nested: childKey }
-      : context
-    collectPatchFactLeaves(childValue, `${path}.${childKey}`, facts, childContext, childKey)
-  }
-  return facts
 }
 
 function scopeCompatiblePatchUnits(units, delta) {
@@ -1509,94 +1344,6 @@ function patchFactEvidence(fact, units, delta) {
     if (direct) return true
   }
   return hasPatchTextEvidence(String(fact.value), scopedUnits)
-}
-
-function validateAddedPatchEntry(field, entry, evidence, context = {}) {
-  const facts = collectPatchFactLeaves(entry, field, [], context)
-  if (!facts.length) patchDeltaError(field)
-  for (const fact of facts) {
-    if (!patchFactEvidence(fact, evidence, fact)) patchDeltaError(fact.path)
-  }
-}
-
-function validateAddedBiologicalType(speciesName, type, evidence, path) {
-  const identity = { value: type.name, speciesName, typeName: type.name, key: 'name' }
-  if (!patchFactEvidence(identity, evidence, identity)) patchDeltaError(`${path}.name`)
-  const facts = collectPatchFactLeaves(type, path, [], { speciesName, typeName: type.name })
-  for (const fact of facts) {
-    if (!patchFactEvidence(fact, evidence, fact)) patchDeltaError(fact.path)
-  }
-}
-
-function validateAddedReproductiveMechanism(mechanism, evidence, context, path) {
-  if (!mechanism?.key) patchDeltaError(path, 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED')
-  const facts = collectPatchFactLeaves(
-    mechanism,
-    path,
-    [],
-    { ...context, nested: 'reproductive_mechanisms', mechanismKey: mechanism.key },
-  )
-  for (const fact of facts) {
-    if (!patchFactEvidence(fact, evidence, fact)) patchDeltaError(fact.path)
-  }
-}
-
-function validatePatchDeltas(deltas, evidence) {
-  for (const delta of deltas) {
-    if (delta.kind === 'ADD_TYPE') {
-      validateAddedBiologicalType(delta.speciesName, delta.newValue, evidence, delta.path)
-      continue
-    }
-    if (delta.kind === 'ADD_MECHANISM') {
-      validateAddedReproductiveMechanism(delta.newValue, evidence, delta, delta.path)
-      continue
-    }
-    if (delta.kind === 'REMOVE') patchDeltaError(delta.path)
-    if (delta.kind === 'UNCHANGED') continue
-    const fact = { value: delta.newValue }
-    if (!patchFactEvidence(fact, evidence, delta)) patchDeltaError(delta.path)
-  }
-}
-
-// Patch validation is intentionally narrower than the Full evidence guard:
-// AI performs World Fact Discovery and scope/classification; this layer only
-// checks canonical safety, changed-fact evidence, presence, and deletion risk.
-export function applyWorldModelPatchEvidenceGuard(patch, analysisInput) {
-  const validatedPatch = validateWorldModelPatch(patch)
-  const evidence = evidenceUnits(analysisInput)
-  const existing = analysisInput?.world_model
-    ? normalizeWorldModel(analysisInput.world_model, { strict: true, allowGeneratedProjectionRuleIds: true })
-    : null
-
-  for (const entry of validatedPatch.add.species ?? [])
-    validateAddedPatchEntry('add.species', entry, evidence, { speciesName: entry.name })
-  for (const entry of validatedPatch.add.exceptions ?? [])
-    validateAddedPatchEntry('add.exceptions', entry, evidence)
-  for (const entry of validatedPatch.add.unknowns ?? [])
-    validateAddedPatchEntry('add.unknowns', entry, evidence)
-  for (const entry of validatedPatch.add.projection_rules ?? [])
-    validateAddedPatchEntry('add.projection_rules', entry, evidence)
-
-  for (const candidate of validatedPatch.update.species ?? []) {
-    const target = existing?.species?.find((item) => item.name === candidate.name)
-    if (!target) patchDeltaError(`update.species[${candidate.name}]`, 'WORLD_MODEL_PATCH_TARGET_NOT_FOUND')
-    const deltas = []
-    comparePatchSpecies(target, candidate, deltas)
-    validatePatchDeltas(deltas, evidence)
-  }
-
-  const medical = validatedPatch.update.medical_context
-  if (medical) {
-    if (!existing) patchDeltaError('update.medical_context', 'WORLD_MODEL_PATCH_TARGET_NOT_FOUND')
-    const deltas = []
-    for (const key of patchPresenceKeys(validatedPatch, 'update', 'medical_context', medical))
-      addPatchDelta(deltas, `update.medical_context.${key}`, existing.medical_context?.[key] ?? null, medical[key] ?? null, { nested: 'medical_context', key })
-    validatePatchDeltas(deltas, evidence)
-  }
-
-  for (const entry of validatedPatch.update.projection_rules ?? [])
-    patchDeltaError('update.projection_rules', 'WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED')
-  return validatedPatch
 }
 
 const FERTILIZATION_RECIPIENT_PATTERN =
@@ -3352,19 +3099,6 @@ export function validateWorldModelPatchV2(raw) {
   return { schema_version: 2, operations: raw.operations.map(validateV2Operation) };
 }
 
-export function parseWorldModelPatchV2(raw) {
-  if (typeof raw !== 'string') return validateWorldModelPatchV2(raw);
-  let lastSchemaError;
-  let lastParseError;
-  for (const candidate of jsonCandidates(raw)) {
-    let parsed;
-    try { parsed = JSON.parse(candidate); } catch (cause) { lastParseError = cause; continue; }
-    try { return validateWorldModelPatchV2(parsed); } catch (cause) { lastSchemaError = cause; }
-  }
-  if (lastSchemaError) throw lastSchemaError;
-  throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_JSON_INVALID', { path: '$', cause: lastParseError });
-}
-
 function v2Canonical(value) {
   if (Array.isArray(value)) return value.map(v2Canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, v2Canonical(value[key])]));
@@ -4055,158 +3789,12 @@ export function mergeWorldModelPatchV2(existingModel, patch, analysisInput = {})
   return mergeWorldModelPatchV2Classified(base, guarded);
 }
 
-const WORLD_MODEL_PATCH_FIELDS = Object.freeze({
-  add: Object.freeze(['species', 'exceptions', 'unknowns', 'projection_rules']),
-  update: Object.freeze(['species', 'medical_context', 'projection_rules']),
-})
-const PATCH_PRESENCE = Symbol('worldModelPatchPresence')
-
-function invalidWorldModelPatch(message = 'WORLD_MODEL_PATCH_INVALID', details = {}) {
-  const error = new Error(message)
-  error.code = 'WORLD_MODEL_PATCH_INVALID'
-  Object.assign(error, details)
-  return error
-}
-
 function clonePatchValue(value) {
   if (value === undefined || value === null) return value
   if (typeof structuredClone === 'function') return structuredClone(value)
   if (Array.isArray(value)) return value.map(clonePatchValue)
   if (typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clonePatchValue(item)]))
   return value
-}
-
-function patchSection(raw, section) {
-  if (raw === undefined) return {}
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: section })
-  const unknown = Object.keys(raw).find(key => !WORLD_MODEL_PATCH_FIELDS[section].includes(key))
-  if (unknown)
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: `${section}.${unknown}` })
-  return raw
-}
-
-function normalizePatchEntry(field, value, section, index) {
-  const probe = { schema_version: 1, species: [], exceptions: [], unknowns: [], projection_rules: [] }
-  if (field === 'species') probe.species = [value]
-  else if (field === 'exceptions') probe.exceptions = [value]
-  else if (field === 'unknowns') probe.unknowns = [value]
-  else if (field === 'projection_rules') probe.projection_rules = [value]
-  else if (field === 'medical_context') probe.medical_context = value
-  try {
-    const normalized = normalizeWorldModel(probe, { strict: false, allowGeneratedProjectionRuleIds: true })
-    if (field === 'species') return normalized.species[0]
-    if (field === 'exceptions') return normalized.exceptions[0]
-    if (field === 'unknowns') return normalized.unknowns[0]
-    if (field === 'projection_rules') return normalized.projection_rules[0]
-    return normalized.medical_context
-  } catch (cause) {
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', {
-      path: `${section}.${field}[${index}]`, cause,
-    })
-  }
-}
-
-function capturePatchPresence(raw) {
-  if (raw?.[PATCH_PRESENCE]) return raw[PATCH_PRESENCE]
-  const presence = { add: {}, update: {} }
-  for (const section of ['add', 'update']) {
-    const source = raw?.[section]
-    if (!source || typeof source !== 'object' || Array.isArray(source)) continue
-    for (const field of WORLD_MODEL_PATCH_FIELDS[section]) {
-      if (!Object.hasOwn(source, field)) continue
-      if (field === 'medical_context') {
-        presence[section][field] = source[field] && typeof source[field] === 'object'
-          ? Object.keys(source[field])
-          : null
-      } else {
-        presence[section][field] = true
-      }
-    }
-  }
-  return presence
-}
-
-export function validateWorldModelPatch(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalidWorldModelPatch()
-  if (Number(raw.schema_version ?? 1) !== 1) throw invalidWorldModelPatch()
-  if (Object.hasOwn(raw, 'remove') || Object.hasOwn(raw, 'invalidate'))
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_REMOVE_UNSUPPORTED')
-  const presence = capturePatchPresence(raw)
-  const result = { schema_version: 1, add: {}, update: {} }
-  for (const section of ['add', 'update']) {
-    const source = patchSection(raw[section], section)
-    for (const field of WORLD_MODEL_PATCH_FIELDS[section]) {
-      if (source[field] === undefined) continue
-      if (field === 'medical_context') {
-        if (!source[field] || typeof source[field] !== 'object' || Array.isArray(source[field]))
-          throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: `${section}.${field}` })
-        result[section][field] = normalizePatchEntry(field, source[field], section, 0)
-        continue
-      }
-      if (!Array.isArray(source[field]))
-        throw invalidWorldModelPatch('WORLD_MODEL_PATCH_INVALID', { path: `${section}.${field}` })
-      result[section][field] = source[field].map((entry, index) => normalizePatchEntry(field, entry, section, index))
-    }
-  }
-  Object.defineProperty(result, PATCH_PRESENCE, {
-    value: presence,
-    enumerable: false,
-  })
-  return result
-}
-
-function stablePatchIdentity(field, entry) {
-  if (field === 'species') return String(entry?.name ?? '')
-  if (field === 'projection_rules') return String(entry?.projection_rule_id ?? entry?.mechanism_key ?? '')
-  if (field === 'unknowns') return String(entry ?? '')
-  return null
-}
-
-function mergeNamedEntries(base, entries, field, mode) {
-  const next = Array.isArray(base) ? base.map(clonePatchValue) : []
-  for (const entry of entries ?? []) {
-    if (field === 'exceptions') {
-      const index = next.findIndex((item) => patchExceptionSemanticEqual(item, entry))
-      if (mode === 'update') throw invalidWorldModelPatch('WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED', { field })
-      if (index >= 0) throw invalidWorldModelPatch('WORLD_MODEL_PATCH_DUPLICATE_ADD', { field })
-      next.push(clonePatchValue(entry))
-      continue
-    }
-    const identity = stablePatchIdentity(field, entry)
-    if (!identity) throw invalidWorldModelPatch('WORLD_MODEL_PATCH_IDENTITY_UNSUPPORTED', { field })
-    const index = next.findIndex(item => stablePatchIdentity(field, item) === identity)
-    if (mode === 'update') {
-      if (index < 0) throw invalidWorldModelPatch('WORLD_MODEL_PATCH_TARGET_NOT_FOUND', { field, identity })
-      next[index] = clonePatchValue(entry)
-    } else if (index < 0) next.push(clonePatchValue(entry))
-    else throw invalidWorldModelPatch('WORLD_MODEL_PATCH_DUPLICATE_ADD', { field, identity })
-  }
-  return next
-}
-
-export function mergeWorldModelPatch(existingModel, patch) {
-  const base = normalizeWorldModel(existingModel, { allowGeneratedProjectionRuleIds: true })
-  if (patch?.update?.medical_context !== undefined && !patch?.[PATCH_PRESENCE])
-    throw invalidWorldModelPatch('WORLD_MODEL_PATCH_PRESENCE_UNAVAILABLE', { section: 'update', field: 'medical_context' })
-  const validatedPatch = validateWorldModelPatch(patch)
-  const merged = clonePatchValue(base)
-  for (const field of ['species', 'projection_rules']) {
-    merged[field] = mergeNamedEntries(merged[field], validatedPatch.add[field], field, 'add')
-    merged[field] = mergeNamedEntries(merged[field], validatedPatch.update[field], field, 'update')
-  }
-  for (const field of ['exceptions', 'unknowns'])
-    merged[field] = mergeNamedEntries(merged[field], validatedPatch.add[field], field, 'add')
-  if (validatedPatch.update.medical_context) {
-    const medicalContext = clonePatchValue(validatedPatch.update.medical_context)
-    const keys = patchPresenceKeys(validatedPatch, 'update', 'medical_context', medicalContext)
-    merged.medical_context = {
-      ...merged.medical_context,
-      ...Object.fromEntries(keys.map((key) => [key, medicalContext[key]])),
-    }
-  }
-  const consistent = applyWorldModelFinalConsistencyGuard(merged)
-  return normalizeWorldModel(consistent, { strict: true, allowGeneratedProjectionRuleIds: true })
 }
 
 // 只保存来源数量、范围和状态，不保存 AnalysisInput 正文。
@@ -4426,35 +4014,6 @@ export function createAnalyzer({
     return canonicalModel;
   }
 
-  async function analyzeWorldModelPatch(input = {}) {
-    const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
-    if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED')
-    const messages = buildWorldModelPatchMessages(
-      input.analysisInput ?? input,
-      worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
-    )
-    const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
-    let parsed = null
-    let lastParseError = null
-    for (const candidate of jsonCandidates(responseText(raw))) {
-      try {
-        parsed = JSON.parse(candidate)
-        break
-      } catch (cause) {
-        lastParseError = cause
-      }
-    }
-    if (!parsed) {
-      throw invalidWorldModelPatch('WORLD_MODEL_PATCH_JSON_INVALID', {
-        cause: lastParseError ?? new Error('invalid JSON'),
-      })
-    }
-    return applyWorldModelPatchEvidenceGuard(
-      validateWorldModelPatch(parsed),
-      input.analysisInput ?? input,
-    )
-  }
-
   // Supplement AI returns hierarchical Candidate Text. Patch v2 remains an
   // internal deterministic mutation IR for the existing guard/merge boundary.
   async function analyzeWorldModelPatchV2(input = {}) {
@@ -4619,7 +4178,6 @@ export function createAnalyzer({
 
   return {
     analyzeWorldModel,
-    analyzeWorldModelPatch,
     analyzeWorldModelPatchV2,
     analyzeWorld: analyzeWorldModel,
     analyzeFloor,

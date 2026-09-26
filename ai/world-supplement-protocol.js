@@ -111,14 +111,6 @@ const SECTION_FIELDS = Object.freeze({
   [TAGS.projection_rule]: new Set(['json']),
 })
 
-// Compatibility-only legacy exports. Production Supplement parsing uses the
-// single Sparse Evidence Candidate tree below; no analyzer path calls these.
-export const WORLD_MODEL_DISCOVERY_TAGS = Object.freeze({
-  root: 'Discovery',
-  species: 'Species',
-  type: 'Biological Type',
-})
-
 function quote(value) {
   if (value === undefined) return ''
   if (value === null) return 'null'
@@ -454,130 +446,6 @@ export function validateWorldModelCandidate(candidate) {
   return candidate
 }
 
-function discoveryError(message, diagnostics = [], code = 'WORLD_MODEL_DISCOVERY_INVALID') {
-  const error = new Error(message)
-  error.code = code
-  error.diagnostics = diagnostics
-  return error
-}
-
-function discoveryFrame(tag, parent = null) {
-  return {tag, parent, data: {}, fields: new Set(), valid: true}
-}
-
-function discoveryAllowedChild(parent, child) {
-  if (parent === WORLD_MODEL_DISCOVERY_TAGS.root) return child === WORLD_MODEL_DISCOVERY_TAGS.species
-  if (parent === WORLD_MODEL_DISCOVERY_TAGS.species) return child === WORLD_MODEL_DISCOVERY_TAGS.type
-  return false
-}
-
-function attachDiscovery(parent, child) {
-  if (!parent || !child.valid) return
-  if (child.tag === WORLD_MODEL_DISCOVERY_TAGS.species) parent.data.species.push(child.data)
-  if (child.tag === WORLD_MODEL_DISCOVERY_TAGS.type) parent.data.biological_types.push(child.data)
-}
-
-function finalizeDiscovery(frameValue, diagnostics) {
-  if ((frameValue.tag === WORLD_MODEL_DISCOVERY_TAGS.species || frameValue.tag === WORLD_MODEL_DISCOVERY_TAGS.type) &&
-      (typeof frameValue.data.name !== 'string' || !frameValue.data.name.trim())) {
-    frameValue.valid = false
-    diagnostics.push({code: 'missing_required_field', tag: frameValue.tag, field: 'name'})
-  }
-  if (frameValue.tag === WORLD_MODEL_DISCOVERY_TAGS.species && !Array.isArray(frameValue.data.biological_types)) frameValue.data.biological_types = []
-  return frameValue
-}
-
-export function parseWorldModelDiscoveryText(raw) {
-  const text = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '')
-  const diagnostics = []
-  const root = discoveryFrame(WORLD_MODEL_DISCOVERY_TAGS.root)
-  root.data = {species: []}
-  const stack = []
-  let sawRoot = false
-  let closedRoot = false
-  const lines = text.split(/\r?\n/u)
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].trim()
-    if (!line) continue
-    const tag = parseTag(line)
-    if (tag) {
-      if (tag.closing) {
-        const position = stack.map((item) => item.tag).lastIndexOf(tag.name)
-        if (position < 0) {
-          diagnostics.push({code: 'closing_tag_without_opening', line: index + 1, tag: tag.name})
-          continue
-        }
-        if (position !== stack.length - 1) {
-          diagnostics.push({code: 'closing_tag_mismatch', line: index + 1, tag: tag.name})
-          for (let cursor = stack.length - 1; cursor >= position; cursor -= 1) stack[cursor].valid = false
-        }
-        while (stack.length > position) {
-          const completed = finalizeDiscovery(stack.pop(), diagnostics)
-          if (completed.tag === WORLD_MODEL_DISCOVERY_TAGS.root) {
-            if (completed.valid) sawRoot = true
-            closedRoot = true
-          } else attachDiscovery(stack.at(-1) ?? root, completed)
-        }
-        continue
-      }
-      if (tag.name === WORLD_MODEL_DISCOVERY_TAGS.root && stack.length === 0) {
-        if (closedRoot || sawRoot) diagnostics.push({code: 'duplicate_root', line: index + 1, tag: tag.name})
-        else stack.push(root)
-        continue
-      }
-      const known = Object.values(WORLD_MODEL_DISCOVERY_TAGS).includes(tag.name)
-      if (!known) {
-        diagnostics.push({code: 'unsupported_discovery_tag', line: index + 1, tag: tag.name})
-        stack.push({...discoveryFrame(tag, stack.at(-1)), valid: false})
-        continue
-      }
-      const parent = stack.at(-1)
-      if (!parent || !discoveryAllowedChild(parent.tag, tag.name) || !parent.valid) {
-        diagnostics.push({code: 'ownership_ambiguous', line: index + 1, tag: tag.name})
-        stack.push({...discoveryFrame(tag.name, parent), valid: false})
-        continue
-      }
-      const child = discoveryFrame(tag.name, parent)
-      if (tag.name === WORLD_MODEL_DISCOVERY_TAGS.species) child.data = {biological_types: []}
-      if (tag.name === WORLD_MODEL_DISCOVERY_TAGS.type) child.data = {}
-      stack.push(child)
-      continue
-    }
-    const fieldMatch = line.match(/^([^:]+):\s*(.*)$/u)
-    if (!fieldMatch) {
-      diagnostics.push({code: 'unrecognized_line', line: index + 1})
-      continue
-    }
-    const current = stack.at(-1)
-    if (!current || !current.valid) continue
-    if (fieldMatch[1].trim() !== 'Name') {
-      diagnostics.push({code: 'unsupported_discovery_field', line: index + 1, field: fieldMatch[1].trim()})
-      current.valid = false
-      continue
-    }
-    if (current.tag !== WORLD_MODEL_DISCOVERY_TAGS.species && current.tag !== WORLD_MODEL_DISCOVERY_TAGS.type) {
-      diagnostics.push({code: 'ownership_ambiguous', line: index + 1, field: 'Name'})
-      current.valid = false
-      continue
-    }
-    if (current.fields.has('name')) {
-      diagnostics.push({code: 'duplicate_scalar', line: index + 1, field: 'Name'})
-      current.valid = false
-      continue
-    }
-    current.fields.add('name')
-    current.data.name = fieldMatch[2].trim()
-  }
-  if (stack.length) {
-    for (const item of stack) {
-      item.valid = false
-      diagnostics.push({code: 'unclosed_tag', tag: item.tag})
-    }
-  }
-  if (!sawRoot) throw discoveryError('WORLD_MODEL_DISCOVERY_ROOT_INVALID', diagnostics)
-  return {ledger: root.data, diagnostics}
-}
-
 function supplementError(message, diagnostics = []) {
   const error = new Error(message)
   error.code = 'WORLD_MODEL_SUPPLEMENT_INVALID'
@@ -673,26 +541,4 @@ export function parseWorldModelSupplementText(raw) {
     candidate: candidate.candidate,
     diagnostics: candidate.diagnostics,
   }
-}
-
-export function validateWorldModelDiscoveryLedger(ledger) {
-  if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger) || !Array.isArray(ledger.species)) {
-    throw discoveryError('WORLD_MODEL_DISCOVERY_INVALID')
-  }
-  const validName = value => typeof value === 'string' && value.trim() !== ''
-  const speciesNames = new Set()
-  for (const species of ledger.species) {
-    if (!species || typeof species !== 'object' || Array.isArray(species) || !validName(species.name) || !Array.isArray(species.biological_types)) {
-      throw discoveryError('WORLD_MODEL_DISCOVERY_SPECIES_INVALID')
-    }
-    if (speciesNames.has(species.name)) throw discoveryError('WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY', [{code: 'duplicate_species_identity', name: species.name}], 'WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY')
-    speciesNames.add(species.name)
-    const typeNames = new Set()
-    for (const type of species.biological_types) {
-      if (!type || typeof type !== 'object' || Array.isArray(type) || !validName(type.name)) throw discoveryError('WORLD_MODEL_DISCOVERY_TYPE_INVALID')
-      if (typeNames.has(type.name)) throw discoveryError('WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY', [{code: 'duplicate_type_identity', species: species.name, name: type.name}], 'WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY')
-      typeNames.add(type.name)
-    }
-  }
-  return ledger
 }

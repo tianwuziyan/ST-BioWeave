@@ -658,14 +658,6 @@ function formatWorldModelPatchReferences(input, names) {
   ])
 }
 
-function formatWorldModelPatchTarget(worldModel) {
-  return [
-    '【Supplement Target：当前已保存的 World Model】',
-    '这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审阅与补全的目标；Existing = TARGET + comparison baseline。Existing 本身不是 evidence。',
-    `<existing_world_model>${formatPromptValue(worldModel)}</existing_world_model>`,
-  ].join('\n')
-}
-
 function formatWorldModelSupplementTarget(worldModel) {
   return [
     '【Supplement Target：当前已保存的 World Model】',
@@ -674,14 +666,10 @@ function formatWorldModelSupplementTarget(worldModel) {
   ].join('\n')
 }
 
-function formatWorldModelPatchUserMessage(input, names, { evidenceFirst = false, supplementReference = false } = {}) {
-  const request = supplementReference
-    ? '【Supplement Evidence Candidate Output】根据 permitted evidence 与完整 Existing reference 输出一棵 hierarchical Complete Evidence-Supported Candidate。Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence。对 evidence-supported fact 逐字段比较：Existing 相同值已记录则省略；null、absent 或缺少 collection member 视为未记录并可补充；明确不同 known value 才提出 correction claim。不要执行 ADD、CHANGE、NO-OP 或 delta 判断。严格使用 v3 underscore semantic transport labels，只输出协议文本，不输出解释、JSON、Patch operation、target、path、classification 或 old_value。'
-    : '【Supplement Request】根据前面的 permitted World Analysis evidence，完成事实发现、scope/classification 与 Existing exact comparison；只输出符合旧版契约的 evidence-supported sparse add/update JSON。Existing 不是 evidence；unchanged omission 保留 Existing；不要返回完整 World Model。'
+function formatWorldModelPatchUserMessage(input) {
+  const request = '【Supplement Evidence Candidate Output】根据 permitted evidence 与完整 Existing reference 输出一棵 hierarchical Complete Evidence-Supported Candidate。Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence。对 evidence-supported fact 逐字段比较：Existing 相同值已记录则省略；null、absent 或缺少 collection member 视为未记录并可补充；明确不同 known value 才提出 correction claim。不要执行 ADD、CHANGE、NO-OP 或 delta 判断。严格使用 v3 underscore semantic transport labels，只输出协议文本，不输出解释、JSON、Patch operation、target、path、classification 或 old_value。'
   return joinPromptSections([
-    supplementReference
-      ? formatWorldModelSupplementTarget(input.world_model)
-      : formatWorldModelPatchTarget(input.world_model),
+    formatWorldModelSupplementTarget(input.world_model),
     request,
   ])
 }
@@ -723,19 +711,6 @@ function inputNames(input) {
 }
 const WORLD_MODEL_TASK_PROMPT =
   '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
-
-export const WORLD_MODEL_PATCH_TASK_PROMPT =
-  '请重新审阅当前允许的完整 World Analysis evidence，先完成 Fact Discovery、Species/Type scope 与共享 Direct/Derived Type existence gates，再将已判断的事实与 Existing 做 exact comparison。Existing 仅是 comparison baseline 与兼容合并参考，不是 evidence；不得用 Existing 或 type name 证明新的 Species/Type/field。对所有 evidence-supported stable classifications 与其它合法 outlets 完成 review 后，只输出 evidence-supported sparse v1 add/update delta：UNCHANGED 不输出，合法 ADD/CHANGE 才输出，omission 保留 Existing，不能输出完整 replacement World Model，也不能用 remove、invalidate、null 或空值表示删除。Previously missed 与 newly available evidence 使用相同 eligibility；individual-only、temporary、scope ambiguous 或 unsupported facts 不得升级为 world-level Patch。'
-
-export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
-  '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次允许 evidence 建立的 world-level 新知识或 correction；不要输出 individual-only fact，也不要输出 scope ambiguous 的 world rule。不要输出内部 Semantic Delta 标签或解释，不要返回完整 World Model。',
-  '允许 add 的字段：species、exceptions、unknowns、projection_rules；允许 update 的字段：species、medical_context、projection_rules。species 和 projection_rules 的 update 项必须包含稳定名称或 rule identity，并提供该项更新后的完整 canonical entry。',
-  'update.species 是 complete updated canonical species Candidate：兼容补充时必须保留 Existing 中仍成立的 species/type/rule/fact，再加入当前 evidence 支持的新知识；不能只返回一个 nested sparse fragment。update.medical_context 是 sparse field update，Raw field absent 表示 unchanged。',
-  WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT,
-  WORLD_MODEL_PROJECTION_RULE_CONTRACT,
-  '本版本不支持 remove、invalidate 或通过省略字段删除旧规则；不要输出 remove/invalidate。明确 evidence-supported correction 只能通过 update 表达，不能通过省略字段或空值表达删除。',
-  'sparse section 中缺少字段永远表示不修改；complete update.species 中 Existing 已知事实消失会被视为删除风险。不要求事实首次出现于 current Floor；不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
-].join('\n')
 
 export const WORLD_MODEL_SUPPLEMENT_FIELD_DICTIONARY = [
   '【World Model AI Field Dictionary】先理解每个字段在问什么，再按后续 evidence/scope rules 判断是否可以填写。所有例子只是帮助理解，不是 enum；Species 与 Biological_Type 都是开放字符串。',
@@ -860,29 +835,6 @@ export function buildWorldModelMessages(
   return messages
 }
 
-export function buildWorldModelPatchMessages(
-  analysisInput = {},
-  promptSettings = {},
-) {
-  const settings = normalizeAnalysisPrompt(promptSettings)
-  const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
-  const names = inputNames(input)
-  const messages = []
-  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
-  addMessage(messages, 'system', joinPromptSections([
-    `【BioWeave World Model Patch 分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS}`,
-    formatCommonAnalysisPrompt(settings, names),
-    `【World Model Patch 任务】\n${WORLD_MODEL_PATCH_TASK_PROMPT}`,
-    formatAnalysisPromptTail(settings, names),
-    `【World Model Patch 输出契约】\n${WORLD_MODEL_PATCH_OUTPUT_CONTRACT}`,
-  ]))
-  addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
-  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input, names))
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
-  return messages
-}
-
 export function buildWorldModelPatchMessagesV2(
   analysisInput = {},
   promptSettings = {},
@@ -898,7 +850,7 @@ export function buildWorldModelPatchMessagesV2(
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input, names, { evidenceFirst: true, supplementReference: true }))
+  addMessage(messages, 'user', formatWorldModelPatchUserMessage(input))
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }
