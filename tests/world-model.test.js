@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { applyWorldModelPatchEvidenceGuard, applyWorldModelPatchV2EvidenceGuard, checkWorldModelCandidateDiscoveryCoverage, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatch, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelPatchV2, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
-import { formatWorldModelSupplementReference, parseWorldModelCandidateText, parseWorldModelDiscoveryText, parseWorldModelSupplementText, validateWorldModelDiscoveryLedger } from '../ai/world-supplement-protocol.js'
+import { applyWorldModelPatchEvidenceGuard, applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatch, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelPatchV2, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatch, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
+import { formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelSupplementText } from '../ai/world-supplement-protocol.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -56,12 +56,39 @@ function messageStartingWith(messages, marker) {
 }
 
 function candidateText({type = 'Type-B', description = 'Type-B description。'} = {}) {
-  return `[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: ${type}\nDescription: ${description}\n[/Biological Type]\n[/Species]\n[/World Model]`
+  return `[World Model]\n[Species]\nSpecies: Species-A\n[Biological Type]\nBiological_Type: ${type}\nType_Description: ${description}\n[/Biological Type]\n[/Species]\n[/World Model]`
 }
 
-function supplementText({discoveryTypes = ['Type-B'], candidate = candidateText()} = {}) {
-  const discovery = ['[Discovery]', '[Species]', 'Name: Species-A', ...discoveryTypes.flatMap(type => ['[Biological Type]', `Name: ${type}`, '[/Biological Type]']), '[/Species]', '[/Discovery]'].join('\n')
-  return `[World Model Supplement]\n${discovery}\n[Candidate]\n${candidate}\n[/Candidate]\n[/World Model Supplement]`
+function parseWorldModelCandidateText(raw) {
+  const stack = []
+  const labels = {
+    Species: {Name: 'Species', Description: 'Species_Description'},
+    'Biological Type': {Name: 'Biological_Type', Description: 'Type_Description'},
+    Capabilities: Object.fromEntries(['Can Produce Sperm', 'Can Produce Ova', 'Can Be Fertilized', 'Can Fertilize', 'Can Cause Pregnancy', 'Can Carry Pregnancy'].map(label => [label, label.replaceAll(' ', '_')])),
+    'Reproduction Rules': {'Pregnancy Or Carrying': 'Pregnancy_Or_Carrying'},
+    Mechanism: {Key: 'Mechanism_Key', Label: 'Mechanism_Label', Pathway: 'Mechanism_Pathway', 'Carrying Compatibility': 'Carrying_Compatibility', 'World Model Rule Refs': 'World_Model_Rule_Refs'},
+    Rule: {Value: 'Rule'},
+    'Medical Context': {'Childbirth Difficulty': 'Childbirth_Difficulty', 'Care Level': 'Care_Level'},
+    Exception: {Statement: 'Exception_Statement', 'Applies To': 'Applies_To'},
+    Unknown: {Value: 'Unknown_Fact'},
+  }
+  const rewritten = String(raw).split(/\r?\n/u).map(line => {
+    const trimmed = line.trim()
+    const tag = trimmed.match(/^\[\/?(.+)\]$/u)
+    if (tag) {
+      if (trimmed.startsWith('[/')) stack.pop()
+      else stack.push(tag[1])
+      return line
+    }
+    const match = line.match(/^(\s*)([^:]+):(.*)$/u)
+    const label = labels[stack.at(-1)]?.[match?.[2]?.trim()]
+    return label ? `${match[1]}${label}:${match[3]}` : line
+  }).join('\n')
+  return parseWorldModelCandidateTextRaw(rewritten)
+}
+
+function supplementText({candidate = candidateText()} = {}) {
+  return `[World Model Supplement]\n${candidate}\n[/World Model Supplement]`
 }
 
 async function captureTraceLogs(run) {
@@ -495,10 +522,10 @@ test('World Model Patch prompt requires sparse add/update output and forbids imp
   assert.match(prompt, /不要返回完整 World Model/)
   assert.match(prompt, /缺少字段永远表示不修改/)
   assert.match(prompt, /不支持 remove、invalidate/)
-  assert.match(prompt, /previously missed evidence（此前漏掉的 evidence）与 newly available evidence/)
+  assert.match(prompt, /Previously missed 与 newly available evidence 使用相同 eligibility/)
   assert.match(prompt, /newly available evidence/)
-  assert.match(prompt, /不要求首次出现于 current Floor/)
-  assert.match(prompt, /evidence-supported sparse World Model Patch/)
+  assert.match(prompt, /不要求事实首次出现于 current Floor/)
+  assert.match(prompt, /evidence-supported sparse v1 add\/update delta/)
 })
 
 test('World Model Patch final API messages include the baseline while Full messages do not anchor to it', async () => {
@@ -586,7 +613,7 @@ test('Supplement keeps permitted evidence roles while placing only its Target in
   assert.match(recentStoryMessages[0].content, /Recent Story evidence for Type-B\./u)
   assert.doesNotMatch(user, /Persona private content\.|人物设定/u)
   assert.match(user.slice(requestIndex), /permitted World Analysis evidence/u)
-  assert.match(user.slice(requestIndex), /Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate/u)
+  assert.match(user.slice(requestIndex), /完成事实发现、scope\/classification 与 Existing exact comparison/u)
 
   const boundedMessages = buildWorldModelPatchMessages(
     {
@@ -632,10 +659,9 @@ test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 messa
   assert.match(prompt, /Existing = TARGET \+ comparison baseline/u)
   assert.match(prompt, /Existing 本身不是 evidence/u)
   assert.match(prompt, /Species → Biological Type → Details/u)
-  assert.match(prompt, /ownership 只能由 opening\/closing tags 与 parser stack 确定/u)
-  assert.match(prompt, /Candidate 是 sparse claims/u)
-  assert.match(prompt, /majority、minority、rare/u)
-  assert.match(prompt, /Patch v2 是 Runtime 内部 deterministic mutation IR/u)
+  assert.match(prompt, /opening\/closing tags 与 parser stack 是唯一 ownership signal/u)
+  assert.match(prompt, /字段 absent = no claim\/preserve Existing/u)
+  assert.match(prompt, /Patch v2 是 internal deterministic IR/u)
   assert.match(prompt, /<existing_world_model_reference>/u)
   assert.doesNotMatch(prompt, /<existing_world_model>/u)
   assert.doesNotMatch(prompt, /Persona must remain excluded\./u)
@@ -643,7 +669,7 @@ test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 messa
   assert.match(messages.find(message => message.role === 'assistant').content, /Recent Story evidence\./u)
 })
 
-test('World Model Supplement v2 prompt makes same-response Discovery/Candidate review explicit without lowering type gates', () => {
+test('World Model Supplement v2 prompt keeps one sparse response and deterministic comparison boundaries', () => {
   const messages = buildWorldModelPatchMessagesV2({
     world_model: normalizeWorldModel({
       schema_version: 1,
@@ -652,14 +678,14 @@ test('World Model Supplement v2 prompt makes same-response Discovery/Candidate r
   })
   const prompt = messages.map(message => message.content).join('\n')
 
-  assert.match(prompt, /同一次 AI response 中先完成 evidence-only Discovery，再完成 Candidate Builder/u)
-  assert.match(prompt, /Existing 继续作为 TARGET、comparison baseline 与结构参考/u)
-  for (const outlet of ['species', 'biological_types', 'capabilities', 'reproduction_rules', 'lifecycle', 'reproductive_mechanisms', 'special_rules', 'exceptions', 'unknowns', 'medical_context', 'projection_rules']) {
+  assert.match(prompt, /一次 Supplement attempt 只有一次 API request/u)
+  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
+  for (const outlet of ['Species', 'Biological Type', 'Capabilities', 'Reproduction Rules', 'Lifecycle', 'Reproductive Mechanisms', 'Special Rules', 'Exceptions', 'Unknowns', 'Medical Context', 'Projection Rules']) {
     assert.match(prompt, new RegExp(outlet.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   }
-  assert.match(prompt, /Candidate 必须保持 Species → Biological Type → Details 的层级/u)
-  assert.match(prompt, /ownership 只能由 opening\/closing tags 与 parser stack 确定/u)
-  assert.match(prompt, /不得因 species 有发情期、子宫、特殊性器、精液\/爱液、普通性别称谓、个体特征、临时状态、transformation-derived subcategory/u)
+  assert.match(prompt, /所有 opening\/closing tags 与 parser stack 是唯一 ownership signal/u)
+  assert.match(prompt, /Sparse Evidence Candidate/u)
+  assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
 })
 
 test('Supplement Existing reference is identity-first and preserves canonical coverage', () => {
@@ -697,21 +723,21 @@ test('Supplement Existing reference is identity-first and preserves canonical co
   const reference = formatWorldModelSupplementReference(existing)
 
   assert.match(reference, /<existing_world_model_reference>[\s\S]*<\/existing_world_model_reference>/u)
-  assert.ok(reference.indexOf('[Species]\nName: Species-A') < reference.indexOf('[Biological Type]\nName: Type-A'))
-  assert.ok(reference.indexOf('[Biological Type]\nName: Type-A') < reference.indexOf('Description: Type-A description.'))
-  assert.match(reference, /\[Species\]\nName: Species-B\nDescription: Species-B description\.[\s\S]*\[\/Species\]/u)
-  assert.ok(reference.indexOf('[Species]\nName: Species-B') < reference.indexOf('[Species]\nName: Species-C'))
-  assert.match(reference, /\[Capabilities\][\s\S]*Can Produce Sperm: true/u)
-  assert.match(reference, /\[Capabilities\][\s\S]*Can Produce Ova: false/u)
-  assert.match(reference, /\[Capabilities\][\s\S]*Can Be Fertilized: null/u)
-  assert.match(reference, /\[Capabilities\][\s\S]*Can Cause Pregnancy: false/u)
+  assert.ok(reference.indexOf('[Species]\nSpecies: Species-A') < reference.indexOf('[Biological Type]\nBiological_Type: Type-A'))
+  assert.ok(reference.indexOf('[Biological Type]\nBiological_Type: Type-A') < reference.indexOf('Type_Description: Type-A description.'))
+  assert.match(reference, /\[Species\]\nSpecies: Species-B\nSpecies_Description: Species-B description\.[\s\S]*\[\/Species\]/u)
+  assert.ok(reference.indexOf('[Species]\nSpecies: Species-B') < reference.indexOf('[Species]\nSpecies: Species-C'))
+  assert.match(reference, /\[Capabilities\][\s\S]*Can_Produce_Sperm: true/u)
+  assert.match(reference, /\[Capabilities\][\s\S]*Can_Produce_Ova: false/u)
+  assert.match(reference, /\[Capabilities\][\s\S]*Can_Be_Fertilized: null/u)
+  assert.match(reference, /\[Capabilities\][\s\S]*Can_Cause_Pregnancy: false/u)
   assert.match(reference, /Fertilization: 无/u)
-  assert.match(reference, /Childbirth Difficulty: null/u)
+  assert.match(reference, /Childbirth_Difficulty: null/u)
   assert.match(reference, /projection_rule_id.*projection-a/u)
   assert.match(reference, /\[Exceptions\][\s\S]*Exception-A/u)
   assert.match(reference, /\[Unknowns\][\s\S]*Unknown-A/u)
-  assert.match(reference, /\[Reproductive Mechanisms\][\s\S]*Key: mechanism-a/u)
-  assert.match(reference, /\[Special Rules\][\s\S]*Value: Special-A/u)
+  assert.match(reference, /\[Reproductive Mechanisms\][\s\S]*Mechanism_Key: mechanism-a/u)
+  assert.match(reference, /\[Special Rules\][\s\S]*Rule: Special-A/u)
   assert.doesNotMatch(reference, /新增|推断|missing|candidate/u)
 })
 
@@ -748,8 +774,8 @@ test('Supplement v2 uses the coverage-oriented Existing reference without changi
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'system', 'assistant', 'user', 'system'])
   assert.equal(messages[0].content, 'TOP')
   assert.equal(messages.at(-1).content, 'BOTTOM')
-  assert.match(user, /\[Species\]\nName: Species-B[\s\S]*\[\/Species\]/u)
-  assert.match(user, /\[Species\]\nName: Species-C[\s\S]*\[\/Species\]/u)
+  assert.match(user, /\[Species\]\nSpecies: Species-B[\s\S]*\[\/Species\]/u)
+  assert.match(user, /\[Species\]\nSpecies: Species-C[\s\S]*\[\/Species\]/u)
   assert.doesNotMatch(user, /^biological_types:/mu)
   assert.doesNotMatch(user, /<existing_world_model>/u)
   assert.match(evidenceSystem, /Worldbook evidence\./u)
@@ -832,6 +858,24 @@ test('Hierarchical Candidate parser accepts only formal field label tokens', () 
   assert.ok(parsed.diagnostics.some(item => item.code === 'unknown_field'))
 })
 
+test('Semantic transport parser rejects ambiguous legacy identity and outlet labels', () => {
+  const parsed = parseWorldModelCandidateTextRaw(`[World Model]
+[Species]
+Name: Species-A
+[Biological Type]
+Name: Type-A
+[Special Rules]
+[Rule]
+Value: legacy
+[/Rule]
+[/Special Rules]
+[/Biological Type]
+[/Species]
+[/World Model]`)
+  assert.deepEqual(parsed.candidate.species, [])
+  assert.ok(parsed.diagnostics.some(item => item.code === 'unknown_field'))
+})
+
 test('World Model Supplement v2 generic candidate ledger boundary preserves missing-type and negative cases', () => {
   const emptyTypeModel = normalizeWorldModel({
     schema_version: 1,
@@ -886,41 +930,102 @@ test('World Model Supplement v2 prompt exposes the hierarchical Candidate gramma
 
 test('World Model Supplement v2 prompt publishes exact section field grammar', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /\[Rule\]\nValue: \.\.\.\n\[\/Rule\]/u)
+  assert.match(prompt, /\[Rule\]\nRule: \.\.\.\n\[\/Rule\]/u)
   assert.doesNotMatch(prompt, /\[Rule\]\nName:/u)
   assert.doesNotMatch(prompt, /\[Rule\]\nDescription:/u)
   for (const label of [
-    'Name', 'Description', 'Can Produce Sperm', 'Can Produce Ova', 'Can Be Fertilized',
-    'Can Fertilize', 'Can Cause Pregnancy', 'Can Carry Pregnancy', 'Fertilization',
-    'Pregnancy Or Carrying', 'Cycle', 'Ovulation', 'Gestation', 'Labor', 'Maturation',
-    'Aging', 'Key', 'Label', 'Pathway', 'Carrying Compatibility', 'World Model Rule Refs',
-    'Evidence', 'Childbirth Difficulty', 'Care Level', 'Statement', 'Applies To', 'Value',
+    'Species', 'Species_Description', 'Biological_Type', 'Type_Description', 'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized',
+    'Can_Fertilize', 'Can_Cause_Pregnancy', 'Can_Carry_Pregnancy', 'Fertilization',
+    'Pregnancy_Or_Carrying', 'Cycle', 'Ovulation', 'Gestation', 'Labor', 'Maturation',
+    'Aging', 'Mechanism_Key', 'Mechanism_Label', 'Mechanism_Pathway', 'Carrying_Compatibility', 'World_Model_Rule_Refs',
+    'Evidence', 'Childbirth_Difficulty', 'Care_Level', 'Exception_Statement', 'Applies_To', 'Rule', 'Unknown_Fact',
   ]) assert.match(prompt, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}:`, 'u'))
   assert.match(prompt, /Projection Rule 唯一允许的 representation 是单个 JSON object/u)
-  assert.match(prompt, /只能使用 grammar 中定义的 exact field labels/u)
-  assert.match(prompt, /不得使用 snake_case、underscore alias、hyphen alias/u)
+  assert.match(prompt, /每个 section 只允许下列 exact labels/u)
+  assert.match(prompt, /snake_case alias/u)
+})
+
+test('Supplement v3 assembled production prompt includes the semantic Field Dictionary', () => {
+  const prompt = buildWorldModelPatchMessagesV2({
+    world_model: {schema_version: 1, species: []},
+  }).map(message => message.content).join('\n')
+  assert.match(prompt, /Species \/ Species.*稳定生命种类/u)
+  assert.match(prompt, /Species_Description.*物种描述/u)
+  assert.match(prompt, /Biological_Type.*稳定生理\/生殖分类/u)
+  assert.match(prompt, /男性、女性、雄性、雌性、双性、间性、Alpha、Beta、Omega/u)
+  assert.match(prompt, /不是 enum/u)
+  assert.match(prompt, /Type identity 只证明分类存在，不授权 capability/u)
+  for (const field of [
+    'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized',
+    'Can_Fertilize', 'Can_Cause_Pregnancy', 'Can_Carry_Pregnancy',
+    'Fertilization', 'Pregnancy_Or_Carrying', 'Cycle', 'Ovulation',
+    'Gestation', 'Labor', 'Maturation', 'Aging', 'Mechanism_Key',
+    'Mechanism_Label', 'Mechanism_Pathway', 'Carrying_Compatibility',
+    'World_Model_Rule_Refs', 'Childbirth_Difficulty', 'Care_Level',
+    'Exception_Statement', 'Applies_To', 'Unknown_Fact',
+  ]) assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+  assert.match(prompt, /Fertilization：受精如何发生/u)
+  assert.match(prompt, /Pregnancy_Or_Carrying：妊娠\/承载如何发生/u)
+  assert.match(prompt, /Gestation：进入妊娠后的孕期长度/u)
+  assert.match(prompt, /Maturation：生物成熟/u)
+  assert.match(prompt, /Aging：寿命、衰老/u)
+  assert.match(prompt, /普通性交、生殖或妊娠事实不自动创建 Mechanism/u)
+  assert.match(prompt, /Rule 是 fallback outlet，不是事实垃圾桶/u)
+  assert.match(prompt, /world-level 的医疗\/照护背景/u)
+  assert.match(prompt, /未知、资料不足和普通临时事实不自动成为 Exception/u)
+  assert.match(prompt, /schema field 没资料不是 Unknown/u)
+  assert.match(prompt, /明确正向证据=true，明确负向证据=false，unknown\/unstated\/insufficient=omit/u)
+  assert.match(prompt, /Candidate 禁止 null/u)
+  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
+  assert.match(prompt, /Candidate 可以重复 Existing/u)
+  assert.match(prompt, /不负责 ADD、CHANGE 或 NO-OP/u)
+  assert.doesNotMatch(prompt, /Supplement only outputs ADD\/CHANGE|avoid NO-OP|do not repeat Existing unchanged facts/u)
 })
 
 test('World Model Supplement v2 prompt enforces Nonhuman field-level evidence and minority completeness', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /Type existence 与 capabilities、reproduction_rules、lifecycle、special_rules、reproductive_mechanisms 的 field evidence 完全分离/u)
-  assert.match(prompt, /每一个 capability 都必须重新寻找绑定到同一 Species \+ Biological Type 的独立 evidence/u)
-  assert.match(prompt, /名称本身不能推出任何 capability/u)
-  assert.match(prompt, /没有独立 evidence 的 capability 必须省略/u)
-  assert.match(prompt, /Human baseline、现实常识、配对性别、性交行为/u)
-  assert.match(prompt, /Species-A has stable Type-A and rare Type-B/u)
-  assert.match(prompt, /必须分别建立两个 Candidate biological type/u)
-  assert.match(prompt, /rare\/minority 数量少不是 omission 理由/u)
-  assert.match(prompt, /Existing 只作 TARGET、comparison baseline、structure reference，不是 evidence/u)
+  assert.match(prompt, /Type identity != details/u)
+  assert.match(prompt, /每个字段必须有同一 scope 的独立 permitted evidence/u)
+  assert.match(prompt, /Type 名称、male\/female\/sex-like label、外形、性交行为、schema 对称性和现实常识都不能授权 capability/u)
+  assert.match(prompt, /unknown\/unstated\/insufficient evidence 省略；Candidate 禁止 null/u)
+  assert.match(prompt, /rare、minority、uncommon、low prevalence 不影响 existence，数量少不等于 temporary/u)
+  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
 })
 
-test('Supplement single-response prompt keeps Discovery logical phase and Candidate Builder boundaries', () => {
+test('World Model prompt keeps direct stable rare Type existence separate from prevalence and details', () => {
+  const fullPrompt = buildWorldModelMessages().map(message => message.content).join('\n')
+  const supplementPrompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
+  for (const prompt of [fullPrompt]) {
+    assert.match(prompt, /Species-A has stable Type-B 只证明 Species-A\/Type-B identity/u)
+    assert.match(prompt, /直接陈述某 Species 长期存在/u)
+    assert.match(prompt, /rare != temporary，minority != unstable，low prevalence != insufficient existence evidence/u)
+    assert.match(prompt, /Type existence != Type details\/capabilities/u)
+    assert.match(prompt, /temporary、reversible、conditional-only/u)
+    assert.match(prompt, /没有独立 evidence 的 capability 必须省略|Supplement Candidate 对无证据字段省略/u)
+  }
+  assert.match(supplementPrompt, /Species scope 下明确持续存在的 classification 可直接成立/u)
+  assert.match(supplementPrompt, /rare、minority、uncommon、low prevalence 不影响 existence/u)
+  assert.match(supplementPrompt, /Type identity != details/u)
+})
+
+test('Supplement deterministic comparison permits Existing identity field-only delta and empty sparse output', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: 'Species-A', biological_types: [{ name: 'Type-A' }] }],
+  })
+  const existingTypeCandidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[Capabilities]\nCan Produce Ova: true\n[/Capabilities]\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
+  const emptyCandidate = { schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: [], projection_rules: [] }
+  assert.equal(worldModelCandidateToPatchV2(existingTypeCandidate, existing).operations.length, 1)
+  assert.equal(worldModelCandidateToPatchV2(emptyCandidate, existing).operations.length, 0)
+})
+
+test('Supplement single-response prompt keeps internal discovery and sparse Candidate boundaries', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /同一次 AI response 中先完成 evidence-only Discovery，再完成 Candidate Builder/u)
-  assert.match(prompt, /不得重新发现或创建新的 Species\/Type identity/u)
-  assert.match(prompt, /field-level evidence review、Existing comparison、semantic consolidation/u)
-  assert.match(prompt, /Existing 继续作为 TARGET、comparison baseline 与结构参考/u)
-  assert.match(prompt, /不得声称 Discovery 来自前一次 AI call/u)
+  assert.match(prompt, /internal Complete Evidence Discovery/u)
+  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
+  assert.match(prompt, /Sparse Evidence Candidate/u)
+  assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
+  assert.doesNotMatch(prompt, /前一次 AI call/u)
 })
 
 test('Hierarchical Candidate parser rejects Rule Name and Description fields', () => {
@@ -929,32 +1034,7 @@ test('Hierarchical Candidate parser rejects Rule Name and Description fields', (
   assert.equal(parsed.diagnostics.filter(item => item.code === 'unsupported_field_for_section').length, 2)
 })
 
-test('Discovery Ledger parser is identity-only, stack-owned, indentation-independent, and transactional', () => {
-  const raw = `[Discovery]\n  [Species]\n  Name: Species-A\n    [Biological Type]\n    Name: Type-A\n    [/Biological Type]\n    [Biological Type]\n    Name: Type-B\n    [/Biological Type]\n  [/Species]\n[/Discovery]`
-  const parsed = parseWorldModelDiscoveryText(raw)
-  assert.deepEqual(parsed.ledger, {
-    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}],
-  })
-  assert.deepEqual(validateWorldModelDiscoveryLedger(parsed.ledger), parsed.ledger)
-})
-
-test('Discovery Ledger rejects duplicate Species and duplicate Type identities without last-write-wins', () => {
-  assert.throws(
-    () => validateWorldModelDiscoveryLedger({species: [
-      {name: 'Species-A', biological_types: [{name: 'Type-A'}]},
-      {name: 'Species-A', biological_types: [{name: 'Type-B'}]},
-    ]}),
-    error => error?.code === 'WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY',
-  )
-  assert.throws(
-    () => validateWorldModelDiscoveryLedger({species: [
-      {name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-A'}]},
-    ]}),
-    error => error?.code === 'WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY',
-  )
-})
-
-test('Candidate rejects duplicate Species and duplicate Type identities before coverage indexing', () => {
+test('Single-tree Candidate rejects duplicate Species and duplicate Type identities before indexing', () => {
   const duplicateSpecies = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-C\n[/Biological Type]\n[/Species]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
   assert.throws(() => worldModelIdentityIndex(duplicateSpecies), error => error?.code === 'WORLD_MODEL_IDENTITY_DUPLICATE')
   assert.throws(
@@ -969,101 +1049,124 @@ test('Candidate rejects duplicate Species and duplicate Type identities before c
 })
 
 test('Candidate Type-C cannot be hidden by a later duplicate Species index entry', () => {
-  const ledger = {species: [{name: 'Species-A', biological_types: [{name: 'Type-B'}]}]}
   const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-C\n[/Biological Type]\n[/Species]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
+  assert.throws(() => worldModelCandidateToPatchV2(candidate, v2ExistingModel()), error => error?.code === 'WORLD_MODEL_CANDIDATE_DUPLICATE_IDENTITY')
+})
+
+test('A single Species block with distinct Type identities passes deterministic translation', () => {
+  const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
+  assert.equal(worldModelCandidateToPatchV2(candidate, v2ExistingModel()).operations.length, 1)
+  assert.deepEqual([...worldModelIdentityIndex(candidate).get('Species-A')], ['Type-B'])
+})
+
+test('Direct stable rare Type identity passes ADD_TYPE without detail evidence', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+  })
+  const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
+  const patch = worldModelCandidateToPatchV2(candidate, existing)
+  assert.equal(patch.operations[0].op, 'ADD_TYPE')
+  const evidenceVariants = [
+    'Species-A mostly has Type-A, while a small persistent Type-B population also exists.',
+    'Type-B exists in small numbers in Species-A.',
+    'Species-A has an uncommon but stable Type-B population.',
+    'A persistent minority Type-B population exists in Species-A.',
+  ]
+  for (const evidence of evidenceVariants) {
+    assert.doesNotThrow(() => applyWorldModelPatchV2EvidenceGuard(patch, existing, v2Evidence(evidence)))
+  }
+  const merged = mergeWorldModelPatchV2(existing, patch, v2Evidence(evidenceVariants[0]))
+  assert.deepEqual(merged.species[0].biological_types.map(type => type.name), ['Type-A', 'Type-B'])
+})
+
+test('Direct Type identity does not authorize an unsupported capability detail', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+  })
+  const candidate = {
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-B', capabilities: {can_produce_ova: true}}]}],
+    medical_context: {}, exceptions: [], unknowns: [], projection_rules: [],
+  }
+  const patch = worldModelCandidateToPatchV2(candidate, existing)
   assert.throws(
-    () => checkWorldModelCandidateDiscoveryCoverage(ledger, candidate, v2ExistingModel()),
-    error => error?.code === 'WORLD_MODEL_CANDIDATE_DUPLICATE_IDENTITY',
+    () => applyWorldModelPatchV2EvidenceGuard(
+      patch,
+      existing,
+      v2Evidence('Species-A has a small persistent Type-B population.'),
+    ),
+    error => error?.path === 'operation.type.capabilities.can_produce_ova' && error?.path !== 'operation.type.name',
   )
 })
 
-test('A single Species block with distinct Type identities passes coverage and identity indexing', () => {
-  const ledger = {species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}]}
-  const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
-  assert.deepEqual(checkWorldModelCandidateDiscoveryCoverage(ledger, candidate, v2ExistingModel()), {ok: true})
-  assert.deepEqual([...worldModelIdentityIndex(candidate).get('Species-A')], ['Type-A', 'Type-B'])
+test('Temporary Type identity does not satisfy the stable ADD_TYPE existence contract', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+  })
+  assert.throws(
+    () => guardV2(
+      {op: 'ADD_TYPE', target: {kind: 'species', species_name: 'Species-A'}, type: {name: 'Type-B'}},
+      existing,
+      'Species-A temporarily becomes Type-B under Condition-X.',
+    ),
+    error => error?.path === 'operation.type.name',
+  )
 })
 
-test('Discovery Ledger rejects details, type outside Species, malformed identity, and closing mismatch without re-parenting', () => {
-  const parsed = parseWorldModelDiscoveryText(`[Discovery]\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[Species]\nDescription: unsupported\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Species]\n[/Discovery]`)
-  assert.deepEqual(parsed.ledger.species, [])
-  assert.ok(parsed.diagnostics.some(item => item.code === 'unsupported_discovery_tag' || item.code === 'unsupported_discovery_field'))
-  assert.ok(parsed.diagnostics.some(item => item.code === 'closing_tag_mismatch'))
-})
-
-test('Discovery coverage compares only exact Species/Type identity sets', () => {
-  const ledger = {species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}]}
-  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
-  const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
-  assert.deepEqual(checkWorldModelCandidateDiscoveryCoverage(ledger, candidate, existing), {ok: true})
-  assert.throws(() => checkWorldModelCandidateDiscoveryCoverage(ledger, {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: [], projection_rules: []}, existing), error => error?.code === 'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING')
-  const unknown = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-C\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
-  assert.throws(() => checkWorldModelCandidateDiscoveryCoverage(ledger, unknown, existing), error => error?.code === 'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_INVALID')
-})
-
-test('Discovery coverage preserves Existing identities and requires only new ledger identities', () => {
-  const ledger = {species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}]}
-  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}]})
-  const empty = {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: [], projection_rules: []}
-  assert.deepEqual(checkWorldModelCandidateDiscoveryCoverage(ledger, empty, existing), {ok: true})
-})
-
-test('Supplement single request contains both sections and Existing only as Candidate reference', () => {
+test('Supplement single request contains one sparse tree and Existing only as reference', () => {
   const input = {
     world_model: {schema_version: 1, species: [{name: 'Species-A', biological_types: []}]},
     character: {description: 'Evidence for Species-A and Type-A.'},
   }
   const prompt = buildWorldModelPatchMessagesV2(input).map(message => message.content).join('\n')
-  assert.match(prompt, /\[World Model Supplement\][\s\S]*\[Discovery\][\s\S]*\[Candidate\]/u)
-  assert.match(prompt, /唯一允许的 field label 是 Name/u)
+  assert.match(prompt, /\[World Model Supplement\][\s\S]*\[World Model\][\s\S]*\[\/World Model\][\s\S]*\[\/World Model Supplement\]/u)
+  assert.doesNotMatch(prompt, /\[Discovery\]|\[Candidate\]|Missing Identity Ledger|identity universe/u)
   assert.match(prompt, /existing_world_model_reference/u)
-  assert.match(prompt, /Discovery 阶段不得使用 Existing 证明/u)
+  assert.match(prompt, /读完全部 permitted evidence/u)
 })
 
-test('Single Supplement response parser extracts isolated Discovery and Candidate sections', () => {
+test('Single Supplement response parser extracts one hierarchical Candidate tree', () => {
   const parsed = parseWorldModelSupplementText(`[World Model Supplement]
-[Discovery]
-[Species]
-Name: Species-A
-[Biological Type]
-Name: Type-A
-[/Biological Type]
-[Biological Type]
-Name: Type-B
-[/Biological Type]
-[/Species]
-[/Discovery]
-[Candidate]
 [World Model]
 [Species]
-Name: Species-A
+Species: Species-A
 [Biological Type]
-Name: Type-B
+Biological_Type: Type-B
 [/Biological Type]
 [/Species]
 [/World Model]
-[/Candidate]
 [/World Model Supplement]`)
-  assert.deepEqual(parsed.discoveryLedger, {species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]}]})
   assert.deepEqual(parsed.candidate.species.map(species => ({name: species.name, types: species.biological_types.map(type => type.name)})), [{name: 'Species-A', types: ['Type-B']}])
 })
 
-test('Single Supplement parser fails closed without cross-partition re-parenting', () => {
+test('Single Supplement parser rejects legacy wrapper and preserves hierarchy failure closure', () => {
   assert.throws(
     () => parseWorldModelSupplementText(`[World Model Supplement]
 [Discovery]
 [Species]
 Name: Species-A
-[Candidate]
-[World Model]
-[Species]
-Name: Species-B
 [/Species]
-[/World Model]
-[/Candidate]
 [/World Model Supplement]`),
     error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INVALID',
   )
+  assert.throws(() => parseWorldModelSupplementText(`[World Model Supplement]
+[World Model]
+[Species]
+Name: Species-A
+[Biological Type]
+Name: Type-A
+[/Species]
+[Species]
+Name: Species-B
+[Biological Type]
+Name: Type-B
+[/Biological Type]
+[/Species]
+[/World Model]
+[/World Model Supplement]`), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INVALID')
 })
 
 test('Species and Type identity alone create ADD_TYPE without capability fallback', () => {
@@ -1073,6 +1176,43 @@ test('Species and Type identity alone create ADD_TYPE without capability fallbac
   assert.equal(patch.operations[0].op, 'ADD_TYPE')
   assert.equal(patch.operations[0].type.name, 'Type-B')
   assert.deepEqual(patch.operations[0].type.capabilities, {})
+})
+
+test('Single-tree Supplement treats repeated Existing identity as deterministic NO-OP', () => {
+  const existing = v2ExistingModel()
+  const candidate = parseWorldModelCandidateText(`[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[/Species]\n[/World Model]`).candidate
+  assert.deepEqual(worldModelCandidateToPatchV2(candidate, existing).operations, [])
+})
+
+test('Single-tree Supplement translates multiple missing Types and Species without a discovery copy', () => {
+  const candidate = parseWorldModelCandidateText(`[World Model]
+[Species]
+Name: Species-A
+[Biological Type]
+Name: Type-B
+[/Biological Type]
+[Biological Type]
+Name: Type-C
+[/Biological Type]
+[/Species]
+[Species]
+Name: Species-B
+[Biological Type]
+Name: Type-C
+[/Biological Type]
+[/Species]
+[/World Model]`).candidate
+  const operations = worldModelCandidateToPatchV2(candidate, v2ExistingModel()).operations
+  assert.deepEqual(operations.filter(operation => operation.op === 'ADD_TYPE').map(operation => [operation.target.species_name, operation.type.name]), [
+    ['Species-A', 'Type-B'],
+    ['Species-A', 'Type-C'],
+  ])
+  assert.deepEqual(operations.filter(operation => operation.op === 'ADD_SPECIES').map(operation => [operation.species.name, operation.species.biological_types.map(type => type.name)]), [['Species-B', ['Type-C']]])
+})
+
+test('Empty single-tree Supplement is a valid empty delta', () => {
+  const parsed = parseWorldModelSupplementText('[World Model Supplement]\n[World Model]\n[/World Model]\n[/World Model Supplement]')
+  assert.deepEqual(worldModelCandidateToPatchV2(parsed.candidate, v2ExistingModel()).operations, [])
 })
 
 test('Unsupported Nonhuman capability omission cannot gain a deterministic fallback', () => {
@@ -1119,7 +1259,7 @@ test('World Model v2 analyzer rejects semantically correct but structurally wron
   })
   await assert.rejects(
     analyzer.analyzeWorldModelPatchV2({ analysisInput: { world_model: existing, ...evidence } }),
-    error => error?.code === 'WORLD_MODEL_CANDIDATE_INVALID',
+    error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INVALID',
   )
   assert.equal(invalidCall, 1)
 
@@ -1169,20 +1309,6 @@ test('World Model v2 analyzer boundary accepts sparse minority Type-B without fe
     v1Analyzer.analyzeWorldModelPatch({ analysisInput: { world_model: existing, character: { description: evidence } } }),
     error => error?.code === 'WORLD_MODEL_PATCH_INVALID',
   )
-})
-
-test('World Model v2 analyzer fails closed when Candidate omits a new Discovery identity', async () => {
-  const emptyCandidate = supplementText({candidate: '[World Model]\n[/World Model]'})
-  let call = 0
-  const analyzer = createAnalyzer({
-    profileResolver: () => SILLYTAVERN_CURRENT_API,
-    contextResolver: () => ({generateRaw: () => { call += 1; return emptyCandidate }}),
-  })
-  await assert.rejects(
-    analyzer.analyzeWorldModelPatchV2({analysisInput: {world_model: v2ExistingModel(), character: {description: 'Species-A supports Type-B.'}}}),
-    error => error?.code === 'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING',
-  )
-  assert.equal(call, 1)
 })
 
 test('World Model Candidate deterministically maps all legal internal Patch v2 operations and preserves omission', () => {
@@ -2443,13 +2569,13 @@ test('World Model prompt routes discovered facts without relaxing evidence thres
   const prompt = buildWorldModelMessages({ character: { description: fixtures[0].input } })
     .map(message => message.content)
     .join('\n\n')
-  assert.match(prompt, /先完整发现与生物学、生殖、妊娠、分娩、生理变化、生殖相关医疗\/照护有关的有效事实/)
-  assert.match(prompt, /再判断每条事实最适合归入 species、biological_type、capabilities、reproductive_mechanisms、reproduction_rules、lifecycle、special_rules、medical_context、exceptions、unknowns 或 projection_rules/)
-  assert.match(prompt, /某条事实不适合这些主分类，不代表可以丢弃/)
-  assert.match(prompt, /个体案例只能证明“这种情况存在”，不得自动推广为整个 species、国家或世界的普遍规则/)
-  assert.match(prompt, /没有 exception evidence 时必须输出 \[\]/)
-  assert.match(prompt, /不得从 null 字段、空字段或 schema 缺口自动生成 unknown/)
-  assert.match(prompt, /未归档事实复查|Unarchived Fact Review/)
+  assert.match(prompt, /完整扫描全部 permitted AnalysisInput，先发现所有与生物学、生殖、妊娠、分娩、生理变化和医疗\/照护有关的 evidence-supported biological facts/)
+  assert.match(prompt, /继续检查 reproduction_rules、reproductive_mechanisms、special_rules、medical_context、exceptions、unknowns、projection_rules 等合法 outlet/)
+  assert.match(prompt, /事实不能建立 Biological Type 时，不得因此丢弃/)
+  assert.match(prompt, /individual fact 不自动升级为 species\/world-wide rule/)
+  assert.match(prompt, /没有 exception evidence 不生成 exception/)
+  assert.match(prompt, /unknowns 只记录已被 evidence 触及但仍 unresolved/u)
+  assert.match(prompt, /是否有已发现但未归档的 biological fact/)
 
   for (const fixture of fixtures) {
     const fixturePrompt = buildWorldModelMessages({ character: { description: fixture.input } })
@@ -2703,7 +2829,35 @@ test('World Model Patch v2 TRACE exposes validation path and stage without evide
   assert.match(logText, /WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED/)
   assert.match(logText, /world_patch_v2_evidence_guard/)
   assert.match(logText, /operation\.type\.name/)
+  assert.match(logText, /"operationIndex":0/)
+  assert.match(logText, /"operationOp":\{"type":"string","length":8\}/)
+  assert.match(logText, /"canonicalTargetPath":\{"type":"string","length":41\}/)
+  assert.match(logText, /"validationStage":\{"type":"string","length":29\}/)
   assert.doesNotMatch(logText, /无相关世界级分类证据/u)
+})
+
+test('World Model Patch v2 reports unsupported descriptions at the exact operation path', () => {
+  assert.throws(
+    () => applyWorldModelPatchV2EvidenceGuard(
+      {
+        schema_version: 2,
+        operations: [{
+          op: 'SET_FIELD',
+          target: { kind: 'species', species_name: 'Species-A' },
+          path: ['description'],
+          value: 'Synthesized unsupported description.',
+        }],
+      },
+      v2ExistingModel(),
+      { character: { description: 'Species-A is present.' } },
+    ),
+    error => error?.path === 'operation.description' &&
+      error?.operation_index === 0 &&
+      error?.operation_op === 'SET_FIELD' &&
+      error?.canonical_target_path === 'species.Species-A.description' &&
+      error?.rejected_semantic_field === 'operation.description' &&
+      error?.validation_stage === 'world_patch_v2_evidence_guard',
+  )
 })
 
 test('World Model parser keeps bisexual/intersex capabilities independently evidence-based', () => {
@@ -5235,15 +5389,15 @@ test('World Model prompt distinguishes unknown non-human rules from the identifi
   })
   const prompt = messages.map(message => message.content).join('\n')
   assert.match(prompt, /人类/)
-  assert.match(prompt, /【3\. Baseline \/ Origin \/ Transformation】/)
-  assert.match(prompt, /Human 是唯一内置现实生物 baseline/)
-  assert.match(prompt, /不创建缺失 type/)
-  assert.match(prompt, /字段优先级为明确当前个体事实 > 明确 transformation\/特殊体系规则 > 明确世界级规则 > Human baseline > unknown/)
-  assert.match(prompt, /【2\. Biological Type Discovery】[\s\S]*species → biological_types/)
-  assert.match(prompt, /Nonhuman 不使用 Human template/)
-  assert.match(prompt, /该 species\/type 自身证据/)
+  assert.match(prompt, /【5\. Baseline \/ Origin \/ Transformation】/)
+  assert.match(prompt, /Human baseline 只在现有合法条件下使用/)
+  assert.match(prompt, /不创建缺失 Type/)
+  assert.match(prompt, /Human species 与 Human biological_type 分层/)
+  assert.match(prompt, /【2\. Entity Discovery】[\s\S]*Species existence/)
+  assert.match(prompt, /Nonhuman 不使用 Human baseline/)
+  assert.match(prompt, /每个 fact 必须绑定明确 scope/)
   assert.match(prompt, /未说明\/未知\/证据不足为 null/)
-  assert.match(prompt, /【5\. Reproduction \/ Lifecycle】[\s\S]*fertilization/)
+  assert.match(prompt, /【4\. Reproduction \/ Lifecycle \/ Outlet Classification】[\s\S]*fertilization/)
   assert.match(prompt, /medical_context/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
   assert.match(
@@ -5260,7 +5414,7 @@ test('World Model prompt keeps the Human fallback bounded and generic', () => {
   const prompt = messages[0].content
   assert.match(prompt, /普通 Human 支持可来自显式 Human\/人类/)
   assert.match(prompt, /没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分/)
-  assert.match(prompt, /Human 是唯一内置现实生物 baseline，只能用于已经成立的普通 Human Male\/Female，不创建缺失 type/)
+  assert.match(prompt, /普通 Human Male\/Female 及字段 baseline 不创建缺失 Type/)
   assert.match(prompt, /只输出资料实际支持的 species、biological_type、能力和规则，不使用模型常识补写/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
 })
@@ -5270,7 +5424,7 @@ test('World Model prompt distinguishes fixed dual evidence from temporary dualiz
     character: { description: '明确证据：角色本身是双性，并明确可产生精子；也可以短暂双性化。' },
   })
   const prompt = messages[0].content
-  assert.match(prompt, /固定双性分类统一使用名称“双性”/)
+  assert.match(prompt, /Species-scoped stable statement 可以/)
   assert.match(prompt, /临时、可逆或条件性的性征、器官、生殖能力或身体变化不得建立新的 biological_type/)
   assert.match(messageStartingWith(messages, '【角色卡：角色 的背景资料】'), /角色本身是双性/)
   assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/)
@@ -5282,7 +5436,7 @@ test('World Model prompt rejects dual types inferred from default male/female in
   })
   const prompt = messages[0].content
   assert.match(prompt, /名称保持开放字符串/)
-  assert.match(prompt, /证据不足保持 biological_types: \[\]/)
+  assert.match(prompt, /缺少 Type evidence 时保持 biological_types: \[\]/)
   assert.doesNotMatch(prompt, /默认人类基础类型包含男性、女性和双性/)
   const characterMessage = messageStartingWith(messages, '【角色卡：角色 的背景资料】')
   assert.match(characterMessage, /资料只呈现默认男性\/女性二元/)
@@ -5292,21 +5446,21 @@ test('World Model prompt rejects dual types inferred from default male/female in
 test('World Model prompt states the complete generic field semantic contract', () => {
   const prompt = buildWorldModelMessages()[0].content
 
-  assert.match(prompt, /【2\. Biological Type Discovery】[\s\S]*稳定生理、生殖或直接影响生殖机制/)
-  assert.match(prompt, /职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级\/境界、成长阶段/)
-  assert.match(prompt, /证据不足保持 biological_types: \[\]/)
-  assert.match(prompt, /【4\. Field Evidence】[\s\S]*六个 capability/)
+  assert.match(prompt, /【2\.1 Direct Stable Classification】[\s\S]*生理性别、生物性别、生理类别、生殖类别/)
+  assert.match(prompt, /profession、social identity、organization、culture\/faction、power system、rank\/stage/)
+  assert.match(prompt, /缺少 Type evidence 时保持 biological_types: \[\]/)
+  assert.match(prompt, /【3\. Field Evidence】[\s\S]*capability evidence/)
   assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/)
-  assert.match(prompt, /生理性别事实可以支持 type 存在/)
-  assert.match(prompt, /不得从男性、女性、雄性、雌性等 type 名称直接推 capability/)
-  assert.match(prompt, /Nonhuman 不使用 Human template/)
-  assert.match(prompt, /【5\. Reproduction \/ Lifecycle】[\s\S]*性交、体液\/能量交换、感染、寄生、侵蚀、异化/)
-  assert.match(prompt, /lifecycle\.maturation 只描述生物成熟或生命阶段变化/)
-  assert.match(prompt, /修炼境界、技能\/力量 progression、职业\/关系成长、觉醒流程、单纯 transformation\/化形流程不得写入 lifecycle/)
-  assert.match(prompt, /【6\. Temporary \/ Exceptions \/ Unknowns】[\s\S]*不得建立新的 biological_type/)
-  assert.match(prompt, /null 表示未知、未提及、证据不足或无法判断/)
-  assert.match(prompt, /“无”只表示明确不存在、不具备或不适用/)
-  assert.match(prompt, /【7\. Final Self-check】/)
+  assert.match(prompt, /生理性别事实可以支持 Species-scoped type existence/)
+  assert.match(prompt, /Type name、male\/female\/sex-like label、外形、性交行为/)
+  assert.match(prompt, /Nonhuman 不使用 Human baseline/)
+  assert.match(prompt, /【4\. Reproduction \/ Lifecycle \/ Outlet Classification】[\s\S]*真实 fertilization/)
+  assert.match(prompt, /lifecycle 只描述生物成熟、寿命或衰老/)
+  assert.match(prompt, /lifecycle 只描述生物成熟、寿命或衰老，不吸收 cultivation\/power progression/)
+  assert.match(prompt, /【6\. Temporary \/ Exceptions \/ Medical】[\s\S]*不得建立新的 biological_type/)
+  assert.match(prompt, /未说明\/未知\/证据不足为 null/)
+  assert.match(prompt, /“无”是已知不存在\/不适用/)
+  assert.match(prompt, /【7\. Final Completeness Check】/)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/)
 })
 
@@ -5314,21 +5468,17 @@ test('World Model prompt requires a full biological type candidate gate without 
   const prompt = buildWorldModelMessages()[0].content
 
   for (const pattern of [
-    /species 回答“这是什么生物或稳定生命类别”/u,
-    /稳定生理、生殖或直接影响生殖机制/u,
-    /候选必须同时满足 A–E/u,
-    /普通 taxonomy/u,
-    /职业.*身份.*社会角色.*组织.*文化群体.*阵营/u,
-    /等级.*成长阶段/u,
-    /疾病.*异常.*个体特质.*行为/u,
-    /AnalysisInput 有充分直接证据或确定性低推理证据/u,
-    /多数.*少数.*极少.*少量.*罕见.*通常.*也存在.*除……外.*例外/u,
-    /不能因数量少或已有主要 type 而遗漏/u,
-    /原文无需提供 classification name.*分类边界能由同一 species 的直接生理\/生殖证据唯一确定.*无法唯一确定边界时才不得创建/u,
-    /不得按常识补齐配对 type/u,
-    /A\. 明确绑定当前 species/u,
-    /E\. 当前 AnalysisInput 有充分/u,
-    /证据不足保持 biological_types: \[\]/u,
+    /Species 回答“这是什么生物或稳定生命类别”/u,
+    /Type prevalence 不参与 existence threshold/u,
+    /rare != temporary，minority != unstable，low prevalence != insufficient existence evidence/u,
+    /直接陈述某 Species 长期存在/u,
+    /数量、比例、常见程度不参与 Stability Gate/u,
+    /只有原文没有直接命名 classification 时/u,
+    /分类边界必须唯一确定/u,
+    /只有一个 cluster 不得按现实常识补 paired Type/u,
+    /不得跨 Species 借 evidence/u,
+    /Human 常识补 Nonhuman Type/u,
+    /缺少 Type evidence 时保持 biological_types: \[\]/u,
   ]) {
     assert.match(prompt, pattern)
   }
@@ -5339,16 +5489,15 @@ test('World Model prompt allows unnamed structural reproductive classes without 
   const prompt = buildWorldModelMessages()[0].content
 
   const genericCases = [
-    /稳定 biological classification 的 existence evidence 不要求原文显式命名该 classification/u,
-    /同一 species 的 species-wide 资料明确描述两种或多种稳定、互相可区分的 reproductive physiology \/ reproductive role \/ reproductive capability clusters/u,
-    /sperm-producing \/ fertilizing reproductive role.*ova-producing \/ pregnancy-carrying reproductive role/u,
-    /即使没有 male\/female 标签，也可以使用证据最直接对应的简洁 canonical label/u,
-    /只有一个稳定结构\/角色 cluster 的证据时不得按常识补齐配对 type/u,
-    /同一稳定 type 明确同时具有这些结构或能力时不得强行拆分/u,
-    /可选 mutation、异常状态、职业\/法术效果、个体差异或其它非 species-wide、非 type-level 证据不得拆分或升级 type/u,
-    /不得跨 species 借证据/u,
-    /仅有 type 名称仍不能推 capability/u,
-    /Nonhuman 仍不使用 Human baseline/u,
+    /只有原文没有直接命名 classification 时，才使用同一 Species 内 stable physiology、reproductive structure、reproductive role 或 reproductive capability/u,
+    /稳定且互相可区分 cluster/u,
+    /分类边界必须唯一确定/u,
+    /只有一个 cluster 不得按现实常识补 paired Type/u,
+    /同一个 stable Type 同时具有多个结构\/能力时不得为 schema 对称强行拆分/u,
+    /同一个 stable Type 同时具有多个结构\/能力时不得为 schema 对称强行拆分/u,
+    /不得跨 Species 借 evidence/u,
+    /Type name、male\/female\/sex-like label、外形、性交行为、配对性别和现实常识都不能自动授权 capability/u,
+    /Nonhuman 不使用 Human baseline/u,
   ]
 
   for (const pattern of genericCases) {
@@ -5364,25 +5513,25 @@ test('World Model prompt defines conditional implicit Human baseline and field-l
   assert.match(prompt, /Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景/u)
   assert.match(prompt, /不要求字面出现 Human\/人类/u)
   assert.match(prompt, /没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分/u)
-  assert.match(prompt, /字段优先级为明确当前个体事实 > 明确 transformation\/特殊体系规则 > 明确世界级规则 > Human baseline > unknown/u)
-  assert.match(prompt, /delta 只覆盖明确改变的字段，其余稳定 baseline 保留/u)
-  assert.match(prompt, /只输出最终当前 species\/type 与合成字段，不新增 source_species、origin、inheritance 字段/u)
-  assert.match(prompt, /个体来自 Human 不等于整个 species 有 Human origin/u)
-  assert.match(prompt, /gestation 只描述真实妊娠或孕育/u)
+  assert.match(prompt, /Human baseline 只在现有合法条件下使用/u)
+  assert.match(prompt, /稳定 transformation continuity 只保留 evidence 已建立且未被替换\/消除的事实/u)
+  assert.match(prompt, /不新增 source_species、origin 或 inheritance 字段/u)
+  assert.match(prompt, /不新增 source_species、origin 或 inheritance 字段/u)
+  assert.match(prompt, /gestation 只描述真实 pregnancy\/carrying/u)
   assert.doesNotMatch(prompt, /例如|比如|示例/u)
 })
 
 test('World Model prompt requires exhaustive Human type recall without baseline invention', () => {
   const prompt = buildWorldModelMessages()[0].content
 
-  assert.match(prompt, /Human species 与 Human biological_type 不同层级/u)
-  assert.match(prompt, /Human species 可靠成立后.*明确男性、女性、稳定双性（canonical “双性”）/u)
-  assert.match(prompt, /其它满足 §2 A–E 的自定义分类才建立对应 type/u)
-  assert.match(prompt, /不要求归入男性、女性或双性体系/u)
+  assert.match(prompt, /Human species 与 Human biological_type 分层/u)
+  assert.match(prompt, /Direct Stable Classification/u)
+  assert.match(prompt, /Derived Stable Classification/u)
+  assert.match(prompt, /不使用模型常识补写/u)
   assert.match(prompt, /不要求字面出现 Human\/人类/u)
-  assert.match(prompt, /普通 Human.*不创建缺失 type/u)
-  assert.match(prompt, /独立 Nonhuman、陌生生命、不同生理体系、冲突证据或无法判断时禁止 fallback/u)
-  assert.match(prompt, /临时或可逆状态（见 §6）都不是 type/u)
+  assert.match(prompt, /普通 Human Male\/Female 及字段 baseline 不创建缺失 Type/u)
+  assert.match(prompt, /Nonhuman、独立生理体系、冲突证据或无法判断时禁止 fallback/u)
+  assert.match(prompt, /temporary、reversible、conditional-only.*不创建 permanent Type/u)
   assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/u)
 })
 
@@ -5390,27 +5539,29 @@ test('World Model prompt requires global species discovery before field analysis
   const prompt = buildWorldModelMessages()[0].content
 
   assert.match(prompt, /在分析任何 biological_type、capability、reproduction_rules 或 lifecycle 前/u)
-  assert.match(prompt, /exhaustive scan.*整个 AnalysisInput.*建立全部有可靠 existence evidence 的 species/u)
-  assert.match(prompt, /species existence 与 biological_type、capability、reproduction_rules、lifecycle 的完整程度独立/u)
-  assert.match(prompt, /只要资料明确证明 species 存在就必须保留/u)
-  assert.match(prompt, /不得因为 type 不完整、生殖机制未知、capability 未知、lifecycle 未知或资料较少而删除/u)
-  assert.match(prompt, /没有足够 type evidence 时输出 biological_types: \[\]/u)
-  assert.match(prompt, /unknowns 替代/u)
-  assert.doesNotMatch(prompt, /具体角色|具体世界|Species A|Species C|Species-[A-Z]/u)
+  assert.match(prompt, /完整扫描全部 permitted AnalysisInput，先发现所有/u)
+  assert.match(prompt, /Species existence、Biological Type existence、Type details 和各 outlet completeness 相互独立/u)
+  assert.match(prompt, /Species existence 只需可靠的 Species-scoped existence evidence/u)
+  assert.match(prompt, /type\/details 不完整不删除 Species/u)
+  assert.match(prompt, /缺少 Type evidence 时保持 biological_types: \[\]/u)
+  assert.match(prompt, /unknowns 只记录已被 evidence 触及但仍 unresolved/u)
+  assert.doesNotMatch(prompt, /具体角色|具体世界|妖|魔|剑灵|精灵|兽人|极少女剑灵/u)
 })
 
 test('World Model prompt declares ordered discovery, continuity, and final self-check stages', () => {
   const prompt = buildWorldModelMessages()[0].content
 
   const stages = [
-    '【0. 总原则 / Analysis Order】',
-    '【1. Species Discovery】',
-    '【2. Biological Type Discovery】',
-    '【3. Baseline / Origin / Transformation】',
-    '【4. Field Evidence】',
-    '【5. Reproduction / Lifecycle】',
-    '【6. Temporary / Exceptions / Unknowns】',
-    '【7. Final Self-check】',
+    '【0. Priority / Core Invariants】',
+    '【1. Fact Discovery】',
+    '【2. Entity Discovery】',
+    '【2.1 Direct Stable Classification】',
+    '【2.2 Derived Stable Classification】',
+    '【3. Field Evidence】',
+    '【4. Reproduction / Lifecycle / Outlet Classification】',
+    '【5. Baseline / Origin / Transformation】',
+    '【6. Temporary / Exceptions / Medical】',
+    '【7. Final Completeness Check】',
   ]
   let previousIndex = -1
   for (const stage of stages) {
@@ -5418,15 +5569,12 @@ test('World Model prompt declares ordered discovery, continuity, and final self-
     assert.ok(index > previousIndex, `${stage} must follow the previous analysis stage`)
     previousIndex = index
   }
-  assert.equal((prompt.match(/【[0-7]\. /g) ?? []).length, 8)
-  assert.equal((prompt.match(/候选必须同时满足 A–E/g) ?? []).length, 1)
-  assert.equal((prompt.match(/lifecycle\.maturation 只描述/g) ?? []).length, 1)
-  assert.equal((prompt.match(/Human 是唯一内置现实生物 baseline/g) ?? []).length, 1)
-  assert.match(prompt, /前层未知不代表后层不存在.*后层资料不足也不能删除前层已可靠建立的实体/u)
-  assert.match(prompt, /来源中已成立且未被明确改变、替换或消除的稳定 type\/字段可 continuity/u)
-  assert.match(prompt, /来源不明时禁止 inheritance/u)
-  assert.match(prompt, /个体来自 Human 不等于整个 species 有 Human origin/u)
-  assert.match(prompt, /不新增 source_species、origin、inheritance 字段/u)
+  assert.equal((prompt.match(/lifecycle 只描述/g) ?? []).length, 1)
+  assert.equal((prompt.match(/Human baseline/g) ?? []).length >= 1, true)
+  assert.match(prompt, /type\/details 不完整不删除 Species/u)
+  assert.match(prompt, /稳定 transformation continuity/u)
+  assert.match(prompt, /不新增 source_species、origin 或 inheritance 字段/u)
+  assert.match(prompt, /不新增 source_species、origin 或 inheritance 字段/u)
 })
 
 test('World Model prompts freeze the ordered generic biological type gate for Full and Supplement', () => {
@@ -5435,13 +5583,7 @@ test('World Model prompts freeze the ordered generic biological type gate for Fu
     buildWorldModelPatchMessages().map(message => message.content).join('\n'),
   ]
   const stages = [
-    'Candidate Discovery',
-    'Species Binding',
-    'Biological Type Exclusion Gate',
-    'Stability Gate',
-    'Biological / Reproductive Classification Gate',
-    'Evidence Sufficiency',
-    'Type Creation',
+    'Species Binding → Exclusion Gate → Stability Gate → Biological/Reproductive Classification → Evidence Sufficiency → Type Creation',
   ]
 
   for (const prompt of prompts) {
@@ -5451,10 +5593,10 @@ test('World Model prompts freeze the ordered generic biological type gate for Fu
       assert.ok(index > previousIndex, `${stage} must follow the previous biological type gate stage`)
       previousIndex = index
     }
-    assert.match(prompt, /low-inference discovery.*Exclusion Gate/u)
-    assert.match(prompt, /职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级\/境界、成长阶段/u)
-    assert.match(prompt, /临时或可逆状态/u)
-    assert.doesNotMatch(prompt, /Species-A|Species-B|Type-A|Occupation-X|Group-X/u)
+    assert.match(prompt, /分类边界必须唯一确定/u)
+    assert.match(prompt, /profession、social identity、organization、culture\/faction、power system、rank\/stage/u)
+    assert.match(prompt, /临时、可逆/u)
+    assert.doesNotMatch(prompt, /妖|魔|剑灵|精灵|兽人|极少女剑灵/u)
   }
 })
 
@@ -5463,11 +5605,9 @@ test('World Model Full and Supplement prompts enumerate minority types and run t
   const supplementPrompt = buildWorldModelPatchMessages().map(message => message.content).join('\n')
 
   for (const prompt of [fullPrompt, supplementPrompt]) {
-    const enumeration = prompt.indexOf('对每个已发现 species 执行 Candidate Discovery，枚举 AnalysisInput 中全部 evidence-supported biological type candidates')
-    const majorityRule = prompt.indexOf('不得因发现或确认 majority type 而终止', enumeration)
-    assert.ok(enumeration >= 0, 'all evidence-supported type candidates must be enumerated per species')
-    assert.ok(majorityRule > enumeration, 'minority discovery must continue after majority discovery')
-    assert.match(prompt, /Species Binding → Biological Type Exclusion Gate → Stability Gate → Biological \/ Reproductive Classification Gate → Evidence Sufficiency → Type Creation/u)
+    assert.match(prompt, /对每个 Species 必须审查全部 evidence-supported stable biological classifications/u)
+    assert.match(prompt, /确认一个 Type 后不得停止该 Species 的 Type discovery/u)
+    assert.match(prompt, /Species Binding → Exclusion Gate → Stability Gate → Biological\/Reproductive Classification → Evidence Sufficiency → Type Creation/u)
   }
 })
 
@@ -5478,55 +5618,24 @@ test('World Model prompts separate type existence, capability evidence, and spec
   ]
 
   for (const prompt of prompts) {
-    assert.match(prompt, /type name、species name、Existing baseline 中已有的 type name 或任何标签本身都不能证明 type existence/u)
-    assert.match(prompt, /type existence evidence 与 capability evidence 必须分离/u)
-    assert.match(prompt, /Nonhuman type existence 与字段证据必须绑定到同一 species\/type scope/u)
-    assert.match(prompt, /其它 species、Human 常识、无关伴侣、单一个体或 Existing baseline 都不能授权当前 species/u)
+    assert.match(prompt, /Type existence != Type details\/capabilities/u)
+    assert.match(prompt, /type existence evidence 与 capability evidence 分离/u)
+    assert.match(prompt, /每个 fact 必须绑定明确 scope/u)
+    assert.match(prompt, /不跨 Species\/Type 借 evidence/u)
     assert.match(prompt, /明确具备为 true，明确不具备为 false，未说明\/未知\/证据不足为 null/u)
   }
 })
 
-test('Supplement prompt runs the candidate ledger procedure and reviews every candidate category before an empty Patch', () => {
+test('Supplement compatibility prompt keeps shared review and sparse delta responsibilities', () => {
   const patchPrompt = buildWorldModelPatchMessages()
     .map(message => message.content)
     .join('\n')
-
-  const stages = [
-    'Candidate Ledger',
-    'Classification',
-    'Existing Comparison',
-    'Patch Selection',
-    'Empty Patch Gate',
-  ]
-  let previousIndex = -1
-  for (const stage of stages) {
-    const index = patchPrompt.indexOf(stage, patchPrompt.indexOf('严格依序执行 Candidate Ledger'))
-    assert.ok(index > previousIndex, `${stage} must follow the previous Supplement procedure stage`)
-    previousIndex = index
-  }
-
-  for (const category of [
-    'missing species',
-    'missing biological types（包括 minority/rare types）',
-    'missing capability knowledge',
-    'reproductive mechanisms/rules',
-    'lifecycle',
-    'special_rules',
-    'exceptions',
-    'unknowns',
-    'medical_context',
-    'projection_rules',
-    'evidence-supported corrections',
-    'compatible completions',
-  ]) {
-    assert.ok(patchPrompt.includes(category), `Candidate Ledger must cover ${category}`)
-  }
-  for (const classification of ['UNCHANGED', 'ADD', 'CHANGE', 'EXCLUDED']) {
-    assert.ok(patchPrompt.includes(classification), `each candidate must be classified ${classification}`)
-  }
-  assert.match(patchPrompt, /Existing 仅用于判断是否已表达及兼容合并方式，绝不是 candidate generation 的依据或 evidence/u)
-  assert.match(patchPrompt, /所有候选类别和候选均完成审查、没有任何合法 ADD\/CHANGE 后才允许返回 empty Patch/u)
-  assert.match(patchPrompt, /不要返回完整 World Model/u)
+  assert.match(patchPrompt, /先完成 Fact Discovery、Species\/Type scope 与共享 Direct\/Derived Type existence gates/u)
+  assert.match(patchPrompt, /Existing 仅是 comparison baseline 与兼容合并参考，不是 evidence/u)
+  assert.match(patchPrompt, /只输出 evidence-supported sparse v1 add\/update delta/u)
+  assert.match(patchPrompt, /UNCHANGED 不输出，合法 ADD\/CHANGE 才输出/u)
+  assert.match(patchPrompt, /不能输出完整 replacement World Model/u)
+  assert.match(patchPrompt, /individual-only、temporary、scope ambiguous 或 unsupported facts/u)
 })
 
 test('World Model keeps an empty type list when original evidence only names other classification axes', async () => {

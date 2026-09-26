@@ -19,17 +19,17 @@ const TAGS = Object.freeze({
 })
 
 const FIELD_LABELS = Object.freeze({
-  schema_version: 'Schema Version',
+  schema_version: 'Schema_Version',
   name: 'Name',
   description: 'Description',
-  can_produce_sperm: 'Can Produce Sperm',
-  can_produce_ova: 'Can Produce Ova',
-  can_be_fertilized: 'Can Be Fertilized',
-  can_fertilize: 'Can Fertilize',
-  can_cause_pregnancy: 'Can Cause Pregnancy',
-  can_carry_pregnancy: 'Can Carry Pregnancy',
+  can_produce_sperm: 'Can_Produce_Sperm',
+  can_produce_ova: 'Can_Produce_Ova',
+  can_be_fertilized: 'Can_Be_Fertilized',
+  can_fertilize: 'Can_Fertilize',
+  can_cause_pregnancy: 'Can_Cause_Pregnancy',
+  can_carry_pregnancy: 'Can_Carry_Pregnancy',
   fertilization: 'Fertilization',
-  pregnancy_or_carrying: 'Pregnancy Or Carrying',
+  pregnancy_or_carrying: 'Pregnancy_Or_Carrying',
   cycle: 'Cycle',
   ovulation: 'Ovulation',
   gestation: 'Gestation',
@@ -39,19 +39,34 @@ const FIELD_LABELS = Object.freeze({
   key: 'Key',
   label: 'Label',
   pathway: 'Pathway',
-  carrying_compatibility: 'Carrying Compatibility',
-  world_model_rule_refs: 'World Model Rule Refs',
+  carrying_compatibility: 'Carrying_Compatibility',
+  world_model_rule_refs: 'World_Model_Rule_Refs',
   evidence: 'Evidence',
   statement: 'Statement',
-  applies_to: 'Applies To',
-  childbirth_difficulty: 'Childbirth Difficulty',
-  care_level: 'Care Level',
+  applies_to: 'Applies_To',
+  childbirth_difficulty: 'Childbirth_Difficulty',
+  care_level: 'Care_Level',
   value: 'Value',
   json: 'JSON',
 })
 
+const TRANSPORT_FIELD_LABELS = Object.freeze({
+  [`${TAGS.species}:name`]: 'Species',
+  [`${TAGS.species}:description`]: 'Species_Description',
+  [`${TAGS.type}:name`]: 'Biological_Type',
+  [`${TAGS.type}:description`]: 'Type_Description',
+  [`${TAGS.mechanism}:key`]: 'Mechanism_Key',
+  [`${TAGS.mechanism}:label`]: 'Mechanism_Label',
+  [`${TAGS.mechanism}:pathway`]: 'Mechanism_Pathway',
+  [`${TAGS.rule}:value`]: 'Rule',
+  [`${TAGS.exception}:statement`]: 'Exception_Statement',
+  [`${TAGS.exception}:applies_to`]: 'Applies_To',
+  [`${TAGS.unknown}:value`]: 'Unknown_Fact',
+})
+
 const TAG_BY_NAME = new Map(Object.values(TAGS).map((tag) => [tag, tag]))
 const FIELD_KEY_BY_LABEL = new Map(Object.entries(FIELD_LABELS).map(([key, label]) => [label, key]))
+const TRANSPORT_KEY_BY_LABEL = new Map(Object.entries(TRANSPORT_FIELD_LABELS).map(([key, label]) => [key.split(':')[0] + ':' + label, key.split(':')[1]]))
 const BOOLEAN_FIELDS = new Set([
   'can_produce_sperm',
   'can_produce_ova',
@@ -96,6 +111,8 @@ const SECTION_FIELDS = Object.freeze({
   [TAGS.projection_rule]: new Set(['json']),
 })
 
+// Compatibility-only legacy exports. Production Supplement parsing uses the
+// single Sparse Evidence Candidate tree below; no analyzer path calls these.
 export const WORLD_MODEL_DISCOVERY_TAGS = Object.freeze({
   root: 'Discovery',
   species: 'Species',
@@ -109,9 +126,10 @@ function quote(value) {
   return JSON.stringify(value)
 }
 
-function field(lines, key, value) {
+function field(lines, key, value, section = null) {
   if (value === undefined) return
-  lines.push(`${FIELD_LABELS[key] ?? key}: ${quote(value)}`)
+  const label = TRANSPORT_FIELD_LABELS[`${section ?? ''}:${key}`] ?? FIELD_LABELS[key] ?? key
+  lines.push(`${label}: ${quote(value)}`)
 }
 
 function open(lines, tag) { lines.push(`[${tag}]`) }
@@ -119,7 +137,7 @@ function close(lines, tag) { lines.push(`[/${tag}]`) }
 
 function formatMechanism(lines, mechanism) {
   open(lines, TAGS.mechanism)
-  for (const key of ['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence']) field(lines, key, mechanism?.[key])
+  for (const key of ['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence']) field(lines, key, mechanism?.[key], TAGS.mechanism)
   close(lines, TAGS.mechanism)
 }
 
@@ -135,12 +153,12 @@ export function formatWorldModelSupplementReference(worldModel) {
   field(lines, 'schema_version', model.schema_version)
   for (const species of Array.isArray(model.species) ? model.species : []) {
     open(lines, TAGS.species)
-    field(lines, 'name', species?.name)
-    field(lines, 'description', species?.description)
+    field(lines, 'name', species?.name, TAGS.species)
+    field(lines, 'description', species?.description, TAGS.species)
     for (const type of Array.isArray(species?.biological_types) ? species.biological_types : []) {
       open(lines, TAGS.type)
-      field(lines, 'name', type?.name)
-      field(lines, 'description', type?.description)
+      field(lines, 'name', type?.name, TAGS.type)
+      field(lines, 'description', type?.description, TAGS.type)
       open(lines, TAGS.capabilities)
       for (const key of CAPABILITY_FIELDS) field(lines, key, type?.capabilities?.[key])
       close(lines, TAGS.capabilities)
@@ -156,7 +174,7 @@ export function formatWorldModelSupplementReference(worldModel) {
       open(lines, TAGS.special_rules)
       for (const value of Array.isArray(type?.special_rules) ? type.special_rules : []) {
         open(lines, TAGS.rule)
-        field(lines, 'value', value)
+        field(lines, 'value', value, TAGS.rule)
         close(lines, TAGS.rule)
       }
       close(lines, TAGS.special_rules)
@@ -170,14 +188,14 @@ export function formatWorldModelSupplementReference(worldModel) {
   open(lines, TAGS.exceptions)
   for (const exception of Array.isArray(model.exceptions) ? model.exceptions : []) {
     open(lines, TAGS.exception)
-    for (const key of ['statement', 'applies_to', 'evidence']) field(lines, key, exception?.[key])
+    for (const key of ['statement', 'applies_to', 'evidence']) field(lines, key, exception?.[key], TAGS.exception)
     close(lines, TAGS.exception)
   }
   close(lines, TAGS.exceptions)
   open(lines, TAGS.unknowns)
   for (const value of Array.isArray(model.unknowns) ? model.unknowns : []) {
     open(lines, TAGS.unknown)
-    field(lines, 'value', value)
+    field(lines, 'value', value, TAGS.unknown)
     close(lines, TAGS.unknown)
   }
   close(lines, TAGS.unknowns)
@@ -204,8 +222,13 @@ function parseTag(line) {
   return {closing, name}
 }
 
-function labelKey(label) {
-  return FIELD_KEY_BY_LABEL.get(String(label).trim()) ?? null
+function labelKey(label, section) {
+  const normalized = String(label).trim()
+  const semanticKey = TRANSPORT_KEY_BY_LABEL.get(`${section}:${normalized}`)
+  if (semanticKey) return semanticKey
+  const key = FIELD_KEY_BY_LABEL.get(normalized)
+  if (!key) return null
+  return TRANSPORT_FIELD_LABELS[`${section}:${key}`] === normalized || !TRANSPORT_FIELD_LABELS[`${section}:${key}`] ? key : null
 }
 
 function parseValue(raw, key) {
@@ -364,7 +387,7 @@ export function parseWorldModelCandidateText(raw) {
     }
     const current = stack.at(-1)
     if (!current || !current.valid) continue
-    const key = labelKey(fieldMatch[1])
+    const key = labelKey(fieldMatch[1], current.tag)
     if (!key) {
       diagnostics.push({code: 'unknown_field', line: index + 1, field: fieldMatch[1]})
       continue
@@ -569,104 +592,86 @@ function sectionBody(lines) {
 export function parseWorldModelSupplementText(raw) {
   const text = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '')
   const diagnostics = []
-  const sectionLines = new Map()
-  const invalidSections = new Set()
+  const candidateLines = []
   const stack = []
-  let activeSection = null
   let sawRoot = false
   let closedRoot = false
-  let sectionOrder = []
-
-  const markInvalid = (section = activeSection) => {
-    if (section) invalidSections.add(section)
-  }
+  let sawWorldModel = false
+  let closedWorldModel = false
 
   for (const [lineIndex, rawLine] of text.split(/\r?\n/u).entries()) {
     const line = rawLine.trim()
     if (!line) continue
     const tag = parseTag(line)
     if (!tag) {
-      if (activeSection) sectionLines.get(activeSection).push(line)
+      if (stack.some(item => item.tag === 'World Model') && !stack.some(item => item.invalid)) candidateLines.push(line)
       else diagnostics.push({code: 'supplement_unowned_line', line: lineIndex + 1})
       continue
     }
 
     if (tag.closing) {
-      if (activeSection) sectionLines.get(activeSection).push(line)
+      if (stack.some(item => item.tag === 'World Model') && tag.name !== 'World Model Supplement') candidateLines.push(line)
       const position = stack.map(item => item.tag).lastIndexOf(tag.name)
       if (position < 0) {
         diagnostics.push({code: 'closing_tag_without_opening', line: lineIndex + 1, tag: tag.name})
-        markInvalid()
         continue
       }
       if (position !== stack.length - 1) {
         diagnostics.push({code: 'closing_tag_mismatch', line: lineIndex + 1, tag: tag.name})
-        markInvalid()
-        for (let cursor = stack.length - 1; cursor >= position; cursor -= 1) markInvalid(stack[cursor].section)
+        for (let cursor = stack.length - 1; cursor >= position; cursor -= 1) {
+          diagnostics.push({code: 'invalid_subtree_discarded', tag: stack[cursor].tag})
+        }
       }
       while (stack.length > position + 1) stack.pop()
       const completed = stack.pop()
+      if (completed.tag === 'World Model') {
+        closedWorldModel = true
+        if (position !== 1) diagnostics.push({code: 'supplement_world_model_scope_invalid', line: lineIndex + 1})
+      }
       if (completed.tag === 'World Model Supplement') {
         sawRoot = true
         closedRoot = true
-        if (activeSection) markInvalid()
-      } else if (completed.tag === 'Discovery' || completed.tag === 'Candidate') {
-        if (activeSection !== completed.tag) markInvalid(completed.tag)
-        activeSection = null
       }
       continue
     }
 
-    if (stack.length === 0) {
+    if (!stack.length) {
       if (tag.name !== 'World Model Supplement' || sawRoot || closedRoot) {
         diagnostics.push({code: 'supplement_root_invalid', line: lineIndex + 1, tag: tag.name})
-        markInvalid()
         continue
       }
-      stack.push({tag: tag.name, section: null})
+      stack.push({tag: tag.name})
       continue
     }
 
-    if (stack.length === 1 && stack[0].tag === 'World Model Supplement') {
-      if (tag.name !== 'Discovery' && tag.name !== 'Candidate') {
-        diagnostics.push({code: 'supplement_section_invalid', line: lineIndex + 1, tag: tag.name})
-        markInvalid()
-        stack.push({tag: tag.name, section: activeSection})
+    if (stack.length === 1) {
+      if (tag.name !== 'World Model' || sawWorldModel) {
+        diagnostics.push({code: 'supplement_world_model_invalid', line: lineIndex + 1, tag: tag.name})
+        stack.push({tag: tag.name, invalid: true})
         continue
       }
-      if (activeSection || sectionLines.has(tag.name) || (tag.name === 'Discovery' && sectionOrder.includes('Candidate'))) {
-        diagnostics.push({code: 'duplicate_or_out_of_order_section', line: lineIndex + 1, tag: tag.name})
-        markInvalid(tag.name)
-      }
-      activeSection = tag.name
-      sectionOrder.push(tag.name)
-      sectionLines.set(tag.name, [line])
-      stack.push({tag: tag.name, section: tag.name})
+      sawWorldModel = true
+      stack.push({tag: tag.name})
+      candidateLines.push(line)
       continue
     }
 
-    if (activeSection) sectionLines.get(activeSection).push(line)
-    stack.push({tag: tag.name, section: activeSection})
-  }
-
-  if (stack.length) {
-    for (const item of stack) {
-      diagnostics.push({code: 'unclosed_tag', tag: item.tag})
-      markInvalid(item.section)
+    if (stack.some(item => item.invalid)) {
+      stack.push({tag: tag.name, invalid: true})
+      continue
     }
+    candidateLines.push(line)
+    stack.push({tag: tag.name})
   }
-  if (!sawRoot || !closedRoot) diagnostics.push({code: 'supplement_root_invalid'})
-  if (!sectionLines.has('Discovery')) diagnostics.push({code: 'missing_discovery_section'})
-  if (!sectionLines.has('Candidate')) diagnostics.push({code: 'missing_candidate_section'})
-  if (sectionOrder.join('|') !== 'Discovery|Candidate') diagnostics.push({code: 'supplement_section_order_invalid'})
-  if (diagnostics.length || invalidSections.size) throw supplementError('WORLD_MODEL_SUPPLEMENT_INVALID', diagnostics)
 
-  const discovery = parseWorldModelDiscoveryText(sectionLines.get('Discovery').join('\n'))
-  const candidate = parseWorldModelCandidateText(sectionBody(sectionLines.get('Candidate')))
+  for (const item of stack) diagnostics.push({code: 'unclosed_tag', tag: item.tag})
+  if (!sawRoot || !closedRoot || !sawWorldModel || !closedWorldModel) diagnostics.push({code: 'supplement_root_invalid'})
+  if (diagnostics.length) throw supplementError('WORLD_MODEL_SUPPLEMENT_INVALID', diagnostics)
+
+  const candidate = parseWorldModelCandidateText(candidateLines.join('\n'))
   return {
-    discoveryLedger: discovery.ledger,
     candidate: candidate.candidate,
-    diagnostics: [...discovery.diagnostics, ...candidate.diagnostics],
+    diagnostics: candidate.diagnostics,
   }
 }
 

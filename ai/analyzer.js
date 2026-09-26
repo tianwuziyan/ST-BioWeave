@@ -15,7 +15,6 @@ import {
   parseWorldModelCandidateText,
   parseWorldModelSupplementText,
   validateWorldModelCandidate,
-  validateWorldModelDiscoveryLedger,
 } from './world-supplement-protocol.js';
 
 const CAPABILITY_KEYS = Object.freeze([
@@ -985,7 +984,7 @@ function genericLabelVariants(value) {
 }
 
 function genericDirectLabelMatch(unit, value) {
-  const text = compactEvidenceText(unit);
+  const text = String(unit ?? '').replace(/\s+/gu, ' ').trim();
   for (const label of genericLabelVariants(value)) {
     let labelIndex = text.indexOf(label);
     while (labelIndex >= 0) {
@@ -1080,7 +1079,7 @@ function hasGenericScopedTypeEvidence(unit, speciesName, typeName, {allowFamilia
     (allowFamiliar ? familiarTypeLabelMatch(unit, speciesName, typeName) : null);
   if (!speciesMatch || !typeMatch) return false;
 
-  const text = compactEvidenceText(unit);
+  const text = String(unit ?? '').replace(/\s+/gu, ' ').trim();
   const speciesStart = speciesMatch.index;
   const speciesEnd = speciesStart + speciesMatch.label.length;
   const typeStart = typeMatch.index;
@@ -1094,10 +1093,10 @@ function hasGenericScopedTypeEvidence(unit, speciesName, typeName, {allowFamilia
     Math.min(text.length, Math.max(speciesEnd, typeEnd) + 8),
   );
   const relationPattern =
-    /性别|生殖分类|分类|类型|存在|包括|包含|分为|基本|主要|多数|少数|极少|少量|大多|通常|均为|都是|为主|有|属于|明确|记录|记载|说明/u;
+    /性别|生殖分类|分类|类型|存在|包括|包含|分为|基本|主要|多数|少数|极少|少量|大多|通常|均为|都是|为主|有|属于|明确|记录|记载|说明|(?:sex|gender|classification|class|type|exists?|present|population|minority|majority|rare|uncommon|mostly|primarily|stable|persistent|permanent|consists?|includes?|contains?|classified|belongs?|has)/iu;
   const individualPattern =
     /某(?:个|位|名)|一(?:个|位|名)|这个角色|该角色|某人物|单个/u;
-  const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣/u;
+  const interactionPattern = /与|和|同|对|向|被|交配|性交|伴侣|(?:interact(?:s|ed|ing)?|partner(?:s|ed)?|mating|paired|with|and|or)/iu;
 
   if (
     strictInteraction &&
@@ -1852,6 +1851,11 @@ function traceParserError(error) {
     expected: typeof error?.expected === 'string' ? error.expected : null,
     received: typeof error?.received === 'string' ? error.received : null,
     validator: typeof error?.validator === 'string' ? error.validator : null,
+    operationIndex: Number.isInteger(error?.operation_index) ? error.operation_index : null,
+    operationOp: typeof error?.operation_op === 'string' ? error.operation_op : null,
+    canonicalTargetPath: typeof error?.canonical_target_path === 'string' ? error.canonical_target_path : null,
+    rejectedSemanticField: typeof error?.rejected_semantic_field === 'string' ? error.rejected_semantic_field : null,
+    validationStage: typeof error?.validation_stage === 'string' ? error.validation_stage : null,
     keyword: typeof error?.keyword === 'string' ? error.keyword : null,
     instancePath: typeof error?.instancePath === 'string' ? error.instancePath : null,
     schemaPath: typeof error?.schemaPath === 'string' ? error.schemaPath : null,
@@ -3518,13 +3522,14 @@ function v2IndividualOnlyUnit(unit) {
 
 function v2ScopedEvidenceUnits(units, context = {}) {
   const safeUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
-  if (context.typeName)
+  if (context.typeName) {
     return safeUnits.filter((unit) =>
       hasGenericDirectLabelEvidence(unit, context.speciesName) &&
       (hasGenericDirectLabelEvidence(unit, context.typeName) ||
         familiarTypeLabelMatch(unit, context.speciesName, context.typeName)) &&
       hasGenericScopedTypeEvidence(unit, context.speciesName, context.typeName, { allowFamiliar: true, strictInteraction: true }),
     );
+  }
   if (context.speciesName)
     return safeUnits.filter((unit) => hasGenericDirectLabelEvidence(unit, context.speciesName));
   return safeUnits;
@@ -3661,7 +3666,10 @@ function v2SpeciesExistenceSupported(speciesName, units) {
 }
 
 function v2TypeExistenceSupported(speciesName, typeName, units) {
-  return v2ScopedEvidenceUnits(units, { speciesName, typeName }).length > 0;
+  const stableTypePattern = /稳定|长期|持续|固定|stable|persistent|permanent|long[- ]?term|exists?|present|population|minority|majority|rare|uncommon|mostly|primarily|基本|主要|多数|少数|极少|少量|大多|通常|为主/u;
+  const temporaryTypePattern = /临时|暂时|短暂|可逆|条件性|暂态|temporary|temporarily|reversible|conditional(?:ly)?|transient|under\s+condition/iu;
+  const scoped = v2ScopedEvidenceUnits(units, { speciesName, typeName });
+  return scoped.some((unit) => stableTypePattern.test(unit) && !temporaryTypePattern.test(unit));
 }
 
 function v2KnownTypeLeaves(type, path, speciesName) {
@@ -3860,11 +3868,38 @@ function v2ValidateOperationEvidence(operation, classification, units, existing)
   }
 }
 
+function v2CanonicalTargetPath(operation) {
+  const target = operation?.target ?? {};
+  if (operation?.op === 'ADD_SPECIES') return `species.${operation.species?.name ?? '<unknown>'}`;
+  if (operation?.op === 'ADD_TYPE') return `species.${target.species_name ?? '<unknown>'}.biological_types.${operation.type?.name ?? '<unknown>'}`;
+  if (target.kind === 'world') return `world.${(operation.path ?? []).join('.')}`;
+  if (target.kind === 'species') return `species.${target.species_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
+  if (target.kind === 'biological_type') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
+  return 'unknown';
+}
+
+function annotateV2GuardFailure(error, result, operationIndex) {
+  if (!error || typeof error !== 'object') return error;
+  error.operation_index = operationIndex;
+  error.operation_op = result?.operation?.op ?? null;
+  error.operation_target = result?.operation?.target ?? null;
+  error.canonical_target_path = v2CanonicalTargetPath(result?.operation);
+  error.rejected_semantic_field = error.path ?? null;
+  error.validation_stage = 'world_patch_v2_evidence_guard';
+  return error;
+}
+
 export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput = {}) {
   const existing = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const classified = classifyWorldModelPatchV2(patch, existing);
   const units = evidenceUnits(analysisInput);
-  for (const result of classified) v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
+  for (const [operationIndex, result] of classified.entries()) {
+    try {
+      v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
+    } catch (error) {
+      throw annotateV2GuardFailure(error, result, operationIndex);
+    }
+  }
   return classified;
 }
 
@@ -4300,60 +4335,6 @@ export function worldModelIdentityIndex(model) {
   return index
 }
 
-function discoveryCoverageError(code, path, message) {
-  const error = new Error(code)
-  error.code = code
-  error.path = path
-  error.error_path = path
-  error.diagnosticCode = code
-  error.analysis_stage = 'world_patch_v2_discovery_coverage'
-  error.message = message ?? code
-  return error
-}
-
-export function checkWorldModelCandidateDiscoveryCoverage(discoveryLedger, candidate, existingModel) {
-  const ledger = validateWorldModelDiscoveryLedger(discoveryLedger)
-  const value = validateWorldModelCandidate(candidate)
-  const existing = worldModelIdentityIndex(existingModel)
-  const discovered = worldModelIdentityIndex(ledger)
-  const emitted = worldModelIdentityIndex(value)
-
-  for (const [speciesName, typeNames] of emitted) {
-    const ledgerTypes = discovered.get(speciesName)
-    if (!ledgerTypes) throw discoveryCoverageError(
-      'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_INVALID',
-      `candidate.species.${speciesName}`,
-      'Candidate identity is not present in the Discovery Ledger',
-    )
-    for (const typeName of typeNames) {
-      if (!ledgerTypes.has(typeName)) throw discoveryCoverageError(
-        'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_INVALID',
-        `candidate.species.${speciesName}.biological_types.${typeName}`,
-        'Candidate identity is not present in the Discovery Ledger',
-      )
-    }
-  }
-
-  for (const [speciesName, typeNames] of discovered) {
-    const existingTypes = existing.get(speciesName)
-    const emittedTypes = emitted.get(speciesName)
-    if (!existingTypes && !emitted.has(speciesName)) throw discoveryCoverageError(
-      'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING',
-      `candidate.species.${speciesName}`,
-      'Discovery Ledger species identity is missing from Candidate',
-    )
-    for (const typeName of typeNames) {
-      if (existingTypes?.has(typeName)) continue
-      if (!emittedTypes?.has(typeName)) throw discoveryCoverageError(
-        'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING',
-        `candidate.species.${speciesName}.biological_types.${typeName}`,
-        'Discovery Ledger biological type identity is missing from Candidate',
-      )
-    }
-  }
-  return {ok: true}
-}
-
 export function createAnalyzer({
   profileResolver,
   contextResolver,
@@ -4491,9 +4472,7 @@ export function createAnalyzer({
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
     try {
       const parsed = parseWorldModelSupplementText(responseText(raw))
-      const discoveryLedger = validateWorldModelDiscoveryLedger(parsed.discoveryLedger)
       const candidate = validateWorldModelCandidate(parsed.candidate)
-      checkWorldModelCandidateDiscoveryCoverage(discoveryLedger, candidate, existingModel)
       const patch = worldModelCandidateToPatchV2(candidate, existingModel)
       const classified = applyWorldModelPatchV2EvidenceGuard(
         patch,
@@ -4503,8 +4482,6 @@ export function createAnalyzer({
       return {
         patch,
         candidate,
-        discoveryLedger,
-        discoveryDiagnostics: parsed.diagnostics,
         diagnostics: parsed.diagnostics,
         classified,
       }

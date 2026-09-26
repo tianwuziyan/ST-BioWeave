@@ -140,17 +140,16 @@ export const EVENT_ANALYZER_SCHEMA_TEXT = JSON.stringify(
   2,
 )
 const WORLD_MODEL_CORE_INSTRUCTIONS = [
-  '【0. 总原则 / Analysis Order】任务：从本次 AnalysisInput 提取当前 Chat 的生物学 World Model，只输出资料实际支持的 species、biological_type、能力和规则，不使用模型常识补写。事实发现优先于 schema 归类：先完整发现与生物学、生殖、妊娠、分娩、生理变化、生殖相关医疗/照护有关的有效事实，再判断每条事实最适合归入 species、biological_type、capabilities、reproductive_mechanisms、reproduction_rules、lifecycle、special_rules、medical_context、exceptions、unknowns 或 projection_rules；最后执行各字段 evidence validation 与未归档事实复查。不得只围绕 species → biological_type → capability → reproduction/lifecycle 建模：某条事实不适合这些主分类，不代表可以丢弃。前层未知不代表后层不存在，后层资料不足也不能删除前层已可靠建立的实体。保留所有既有严格证据规则；发现事实不等于允许推测事实。',
-  '【1. Species Discovery】在分析任何 biological_type、capability、reproduction_rules 或 lifecycle 前，先完成事实发现，再必须 exhaustive scan（完整扫描）整个 AnalysisInput，建立全部有可靠 existence evidence 的 species。species 回答“这是什么生物或稳定生命类别”；species existence 与 biological_type、capability、reproduction_rules、lifecycle 的完整程度独立。只要资料明确证明 species 存在就必须保留，不得因为 type 不完整、生殖机制未知、capability 未知、lifecycle 未知或资料较少而删除、遗漏或用 unknowns 替代；没有足够 type evidence 时输出 biological_types: []。',
-  '【Biological Type Gate Order】Full 必须先对每个已发现 species 执行 Candidate Discovery，枚举 AnalysisInput 中全部 evidence-supported biological type candidates，再逐个对每个 candidate 严格按 Species Binding → Biological Type Exclusion Gate → Stability Gate → Biological / Reproductive Classification Gate → Evidence Sufficiency → Type Creation 执行；候选枚举和逐候选处理不得因发现或确认 majority type 而终止，必须继续检查 minority、rare、少量及例外类候选。Supplement 对 Candidate Ledger 中每个 biological type candidate 使用相同顺序。Exclusion Gate 必须先于 low-inference discovery；任何低推理 reproductive cluster 只能在排除非生物类别、确认同一 species 绑定且确认稳定后继续，不能绕过 Exclusion Gate。Full 与 Supplement 共享这套 classification/evidence 顺序；Supplement 只额外使用 Existing World Model 做 baseline-aware comparison、completeness review 与 consolidation，不能使用更弱的 type 规则。',
-  '【2. Biological Type Discovery】对每个已建立的 species 重新扫描完整 AnalysisInput，只寻找属于它的稳定生理、生殖或直接影响生殖机制的 biological classification；species 与 biological_type 是不同层级，按 species → biological_types → capabilities / reproduction_rules / lifecycle / special_rules 分层，名称保持开放字符串。候选必须同时满足 A–E：A. 明确绑定当前 species；B. 稳定存在而非一次性、条件性或临时状态；C. 直接涉及身体结构、生理机制、生殖角色或生殖能力；D. 去除职业、身份、社会角色、组织、文化群体、阵营、能力体系、等级/境界、成长阶段等非生物背景后仍成立；E. 当前 AnalysisInput 有充分直接证据或确定性低推理证据。稳定 biological classification 的 existence evidence 不要求原文显式命名该 classification：如果同一 species 的 species-wide 资料明确描述两种或多种稳定、互相可区分的 reproductive physiology / reproductive role / reproductive capability clusters，并能唯一映射为不同 biological classes，也属于确定性低推理 existence evidence；一组稳定证据指向 sperm-producing / fertilizing reproductive role、另一组稳定证据指向 ova-producing / pregnancy-carrying reproductive role 时，即使没有 male/female 标签，也可以使用证据最直接对应的简洁 canonical label（如“雄性”“雌性”或等价的稳定生殖分类名称）。原文无需提供 classification name，只要分类边界能由同一 species 的直接生理/生殖证据唯一确定即可建立；无法唯一确定边界时才不得创建。直接点名、数量/频率、对比、并存、例外语义均可作为证据；多数、少数、极少、少量、罕见、通常、也存在、除……外、例外等 type 不能因数量少或已有主要 type 而遗漏。只有一个稳定结构/角色 cluster 的证据时不得按常识补齐配对 type；同一稳定 type 明确同时具有这些结构或能力时不得强行拆分。可选 mutation、异常状态、职业/法术效果、个体差异或其它非 species-wide、非 type-level 证据不得拆分或升级 type，也不得跨 species 借证据；该规则不改变 §4：仅有 type 名称仍不能推 capability，Nonhuman 仍不使用 Human baseline。species、亚种或普通 taxonomy、血统/来源、职业/身份/组织/文化/阵营、能力体系、等级/境界、成长阶段、疾病/异常、个体特质/行为，以及临时或可逆状态（见 §6）都不是 type；不满足 A–E 就不建立，证据不足保持 biological_types: []，不得按常识补齐配对 type。固定双性分类统一使用名称“双性”。',
-  '【Biological Type Name and Scope Evidence】type name、species name、Existing baseline 中已有的 type name 或任何标签本身都不能证明 type existence，也不能证明 capability、reproduction rule、lifecycle、special rule 或 Human equivalence。type existence evidence 与 capability evidence 必须分离：生理性别、type label 或低推理 cluster 只可在满足前述 gate 后支持 type existence；每个 capability 仍须独立证据。Nonhuman type existence 与字段证据必须绑定到同一 species/type scope；其它 species、Human 常识、无关伴侣、单一个体或 Existing baseline 都不能授权当前 species。',
-  '【3. Baseline / Origin / Transformation】Human species 与 Human biological_type 不同层级。Human species 可靠成立后，重新扫描完整 AnalysisInput：明确男性、女性、稳定双性（canonical “双性”）或其它满足 §2 A–E 的自定义分类才建立对应 type；其它稳定自定义分类不要求归入男性、女性或双性体系。“人类/普通人类”若只是重复 species 含义，不得作为 type 兜底。Human 是唯一内置现实生物 baseline，只能用于已经成立的普通 Human Male/Female，不创建缺失 type。普通 Human 支持可来自显式 Human/人类或 Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景，不要求字面出现 Human/人类；独立 Nonhuman、陌生生命、不同生理体系、冲突证据或无法判断时禁止 fallback；没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分。字段优先级为明确当前个体事实 > 明确 transformation/特殊体系规则 > 明确世界级规则 > Human baseline > unknown；delta 只覆盖明确改变的字段，其余稳定 baseline 保留。普通 Human Male 已知不适用的 pregnancy_or_carrying、cycle、ovulation、gestation、labor 写“无”，普通 Human Female 的 cycle、ovulation、gestation、labor 使用简洁 baseline；其它 Human type 不套用该 baseline。若资料证明当前 species/稳定形态来自已有类别的永久转化，来源中已成立且未被明确改变、替换或消除的稳定 type/字段可 continuity，明确 transformation delta 覆盖变化部分；已建立新 biological classification system 时使用新体系，来源不明时禁止 inheritance。个体来自 Human 不等于整个 species 有 Human origin，不得扩展为 species-wide 规则；只输出最终当前 species/type 与合成字段，不新增 source_species、origin、inheritance 字段。',
-  '【4. Field Evidence】每个 species、biological_type 和字段独立举证，不跨 species/type 借证据。六个 capability（can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_cause_pregnancy、can_carry_pregnancy）逐字段判断：明确具备为 true，明确不具备为 false，未说明/未知/证据不足为 null。生理性别事实可以支持 type 存在，但除已成立的 Human baseline 或可靠 continuity 外，不得从男性、女性、雄性、雌性等 type 名称直接推 capability；Nonhuman 不使用 Human template，即使类人、名称相同、器官相似或有性交行为，也必须依该 species/type 自身证据，未知保持 null。规则字段只有在明确不存在或不适用时写“无”，不能把未知写成“无”。',
-  '【Full / Supplement Shared Review】Full 与 Supplement 都必须先完成 Fact Discovery、species completeness、species/type binding、Exclusion Gate、stable classification、field-level evidence review 和 Unarchived Fact Review。Full 从 permitted evidence 独立建立 complete model，不读取 Existing baseline；对每个 species 枚举全部 evidence-supported biological type candidates，并逐候选完成共享 gate；majority type 的发现不能结束该 species 的 minority/rare type 搜索。Supplement 只在同一 permitted evidence 上额外比较 Existing baseline。Existing 非空不等于完成审查，不能跳过遗漏 species/type、未归档 world fact、capability 或规则分类。Empty Patch 只有在这些 review 全部完成且没有合法 evidence-supported ADD/CHANGE candidate 时才表示无变化；不能仅因为 Existing 已有内容或某个 Existing entry 不便删除就返回空 Patch。',
-  '【5. Reproduction / Lifecycle】reproduction_rules 与 lifecycle 的 string 字段中，null 表示未知、未提及、证据不足或无法判断；非空字符串表示资料支持机制存在；“无”只表示明确不存在、不具备或不适用。fertilization 只描述真实受精、授精或配子结合及当前 type 的供体/受体角色；性交、体液/能量交换、感染、寄生、侵蚀、异化、身体改造、觉醒、个体生成、力量变化或关系变化本身都不是 fertilization。gestation 只描述真实妊娠或孕育。lifecycle.maturation 只描述生物成熟或生命阶段变化，lifecycle.aging 只描述寿命、衰老或明确抗衰老生理；修炼境界、技能/力量 progression、职业/关系成长、觉醒流程、单纯 transformation/化形流程不得写入 lifecycle。资料只声明与人类相同，也只继承被声明的范围。',
-  '【6. Temporary / Exceptions / Unknowns】临时、可逆或条件性的性征、器官、生殖能力或身体变化不得建立新的 biological_type。稳定属于既有 biological_type 自身的规则进入 special_rules；只有在一般 biological rule 或 baseline 已成立、且 AnalysisInput 明确支持特定对象、条件、临时或可逆偏离时，才进入 exceptions；没有 exception evidence 时必须输出 []。medical_context 是 World Model 的横向背景，只记录 AnalysisInput 明确支持的妊娠、分娩、产后相关医疗事实、照护条件、分娩困难、风险或明确结果；个体案例只能证明“这种情况存在”，不得自动推广为整个 species、国家或世界的普遍规则。普通人物剧情中的 medical_event 仍属于 Event Analyzer，不要全部塞进 medical_context。unknowns 不是所有未提到的 schema 字段：只有当 AnalysisInput 已经触及某个重要生物学事实/现象，而机制、条件、边界、适用范围或冲突仍不足以确定，且该问题会影响当前 World Model 时，才记录 unknown。unknown 的答案本身可以未知，但“该问题已被输入触发”必须有证据；不得从 null 字段、空字段或 schema 缺口自动生成 unknown。',
-  '【7. Final Self-check】完成 species、biological_type、capability、reproductive_mechanisms、reproduction_rules 与 lifecycle 后，执行 Unarchived Fact Review：重新检查已经发现但尚未进入任何输出字段的有效生物事实，判断其是否应进入 special_rules、medical_context、exceptions 或 unknowns，而不是直接丢弃。同步检查：个体案例是否被错误推广成 world-wide rule；普通缺失信息是否被错误生成 unknown；临时状态是否被错误建立为 permanent biological_type；没有 evidence 的 exception 是否被编造。最后按 §1 检查 species completeness，按 §2 检查 rare/minority/exception stable type，按 §3 检查 Human/Nonhuman baseline 与 continuity，按 §4 检查 capability evidence，按 §5 检查 reproduction/lifecycle，按 §6 检查横向字段；无可靠依据的字段保持 null 或空数组。',
+  '【0. Priority / Core Invariants】任务：从本次 AnalysisInput 提取当前 Chat 的生物学 World Model，只输出资料实际支持的 species、biological_type、能力和规则，不使用模型常识补写。先完成事实发现，再做 schema classification；Species existence、Biological Type existence、Type details 和各 outlet completeness 相互独立。Type existence != Type details/capabilities；Existing 不是 evidence；Nonhuman 不使用 Human baseline。每个 fact 必须绑定明确 scope，不跨 Species/Type 借 evidence；individual fact 不自动升级为 species/world-wide rule。',
+  '【1. Fact Discovery】在分析任何 biological_type、capability、reproduction_rules 或 lifecycle 前，完整扫描全部 permitted AnalysisInput，先发现所有与生物学、生殖、妊娠、分娩、生理变化和医疗/照护有关的 evidence-supported biological facts，再决定其 outlet。事实不能建立 Biological Type 时，不得因此丢弃；继续检查 reproduction_rules、reproductive_mechanisms、special_rules、medical_context、exceptions、unknowns、projection_rules 等合法 outlet。Fact discovery 不等于输出：Full 构建 complete canonical model；Supplement 之后只输出相对 Existing 的合法 ADD/CHANGE delta。',
+  '【2. Entity Discovery】Species 回答“这是什么生物或稳定生命类别”；Species existence 只需可靠的 Species-scoped existence evidence。type/details 不完整不删除 Species，缺少 Type evidence 时保持 biological_types: []。对每个 Species 必须审查全部 evidence-supported stable biological classifications；确认一个 Type 后不得停止该 Species 的 Type discovery。Type prevalence 不参与 existence threshold：rare != temporary，minority != unstable，low prevalence != insufficient existence evidence。名称保持开放字符串。',
+  '【2.1 Direct Stable Classification】如果 permitted evidence 直接陈述某 Species 长期存在某个生理性别、生物性别、生理类别、生殖类别或其它 biological classification，且不是 temporary、reversible、conditional-only、profession、social identity、organization、culture/faction、power system、rank/stage、disease/abnormal transient state 或 individual-only trait，则该 Type existence 可以直接成立。数量、比例、常见程度不参与 Stability Gate；Stability Gate 只判断 classification 是否具有持续的生物分类性质。孤立、无 Species scope、社会称呼/角色、单一个体或临时状态的性别词不能单独证明 Species-level Type，但 Species-scoped stable statement 可以。',
+  '【2.2 Derived Stable Classification】只有原文没有直接命名 classification 时，才使用同一 Species 内 stable physiology、reproductive structure、reproductive role 或 reproductive capability 形成的稳定且互相可区分 cluster。分类边界必须唯一确定，并严格执行 Species Binding → Exclusion Gate → Stability Gate → Biological/Reproductive Classification → Evidence Sufficiency → Type Creation；无法唯一确定边界不创建。只有一个 cluster 不得按现实常识补 paired Type；同一个 stable Type 同时具有多个结构/能力时不得为 schema 对称强行拆分。Derived path 不得跨 Species 借 evidence，也不得使用 Human 常识补 Nonhuman Type。',
+  '【3. Field Evidence】Type existence 与 Type details 必须分开判断；type existence evidence 与 capability evidence 分离。Species-A has stable Type-B 只证明 Species-A/Type-B identity，不证明任何 capability、reproduction rule、lifecycle、mechanism 或 special_rule。每个 capability、rule、detail 都必须绑定同一 Species + Type 的独立 evidence；生理性别事实可以支持 Species-scoped type existence，但孤立 label 不能替代 scope evidence。Nonhuman 的 Type name、male/female/sex-like label、外形、性交行为、配对性别和现实常识都不能自动授权 capability。明确具备为 true，明确不具备为 false，未说明/未知/证据不足为 null；Supplement Candidate 对无证据字段省略，不输出 false 或 null。',
+  '【4. Reproduction / Lifecycle / Outlet Classification】fertilization 只描述真实 fertilization、insemination 或 gamete relation；gestation 只描述真实 pregnancy/carrying。lifecycle 只描述生物成熟、寿命或衰老，不吸收 cultivation/power progression、职业/关系成长或 transformation。稳定 Type 自身规则进入 special_rules；individual/conditional deviation 只有明确 exception evidence 才进入 exceptions；medical_context 只记录明确的 world-level medical/care evidence；unknowns 只记录已被 evidence 触及但仍 unresolved 且影响 World Model 的事实，不是 schema missing-field dump。',
+  '【5. Baseline / Origin / Transformation】Human baseline 只在现有合法条件下使用；Human species 与 Human biological_type 分层，普通 Human 支持可来自显式 Human/人类或 Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景，不要求字面出现 Human/人类；没有 species、没有 Human 字样、类人外形、性别称谓、性交行为或社会结构单独都不充分。普通 Human Male/Female 及字段 baseline 不创建缺失 Type。Nonhuman、独立生理体系、冲突证据或无法判断时禁止 fallback。稳定 transformation continuity 只保留 evidence 已建立且未被替换/消除的事实，并由明确 delta 覆盖变化；不新增 source_species、origin 或 inheritance 字段。',
+  '【6. Temporary / Exceptions / Medical】临时、可逆或条件性的性征、器官、生殖能力或身体变化不得建立新的 biological_type；temporary、reversible、conditional-only、疾病/异常 transient state 不创建 permanent Type。异常、个体差异、临时或条件偏离必须有明确 scope；没有 exception evidence 不生成 exception。个体 medical fact 不自动推广为 species/world-wide medical_context。',
+  '【7. Final Completeness Check】只做最终短检查：是否遗漏 evidence-supported Species；是否遗漏 stable Type，尤其不能因 rare/minority/low prevalence 遗漏；是否把 temporary/social/individual classification 错建为 Type；是否从 Type name 自动推了 unsupported detail；是否有已发现但未归档的 biological fact；是否错误推广 individual fact；是否生成无 evidence 的 exception/unknown；Supplement 是否只输出 ADD/CHANGE delta 且没有重复 Existing unchanged facts。',
 ].join('\n')
 const WORLD_MODEL_REPRODUCTIVE_MECHANISM_CONTRACT = [
   'reproductive_mechanisms 必须是 JSON array；没有机制时输出 []，不得输出 null。该字段可以省略，省略时 BioWeave canonicalize 为 []。',
@@ -677,8 +676,8 @@ function formatWorldModelSupplementTarget(worldModel) {
 
 function formatWorldModelPatchUserMessage(input, names, { evidenceFirst = false, supplementReference = false } = {}) {
   const request = supplementReference
-    ? '【Supplement Single-Response Request】在同一次响应中严格按顺序完成四个逻辑阶段：A. 只根据 permitted World Analysis evidence 做 evidence-only identity discovery；B. 对同一响应中的 Discovery identities 做逐字段 evidence review；C. 使用 Existing 进行 comparison；D. 生成 sparse hierarchical Candidate。Discovery 阶段不得使用 Existing 证明 Species/Type identity；Existing 只作为 TARGET、comparison baseline 与 structure reference，不是 evidence。Candidate 不得重新创建同一次 Discovery 中没有的 Species/Type identity。Ledger identity 已存在 Existing 且没有新的合法 claim 时可以 omission；Ledger identity 不存在 Existing 时必须输出对应 identity block。world-level non-identity outlets 继续按现有 evidence contract 处理。输出必须先是 [Discovery]，再是 [Candidate]；不要输出 JSON、Patch v2 operation、target、path、classification、old_value 或分析过程。'
-    : '【Supplement Request】根据前面的 permitted World Analysis evidence，依序执行 Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate，审查并补充这个当前 World Model。只输出符合旧版契约的 sparse add/update JSON，不要返回完整 World Model。'
+    ? '【Supplement Evidence Candidate Output】根据 permitted evidence 输出一棵完整审阅后的 hierarchical Evidence Candidate。Existing 仅作 reference context；不要执行 ADD、CHANGE、NO-OP 或 delta 判断。Candidate 可以重复 Existing，omission 只表示 no claim。严格使用 v3 underscore semantic transport labels，只输出协议文本，不输出解释、JSON、Patch operation、target、path、classification 或 old_value。'
+    : '【Supplement Request】根据前面的 permitted World Analysis evidence，完成事实发现、scope/classification 与 Existing exact comparison；只输出符合旧版契约的 evidence-supported sparse add/update JSON。Existing 不是 evidence；unchanged omission 保留 Existing；不要返回完整 World Model。'
   return joinPromptSections([
     supplementReference
       ? formatWorldModelSupplementTarget(input.world_model)
@@ -726,7 +725,7 @@ const WORLD_MODEL_TASK_PROMPT =
   '请根据下面的资料整理当前 Chat 的生物学世界规则。只使用资料中的明确证据，不要把推测写成事实。'
 
 export const WORLD_MODEL_PATCH_TASK_PROMPT =
-  '请将 Existing World Model 作为 comparison baseline，重新审阅当前允许的完整 World Analysis evidence，生成 evidence-supported sparse World Model Patch。严格依序执行 Candidate Ledger → Classification → Existing Comparison → Patch Selection → Empty Patch Gate。Candidate Ledger 必须从 permitted evidence 枚举所有候选，覆盖 missing species、missing biological types（包括 minority/rare types）、missing capability knowledge、reproductive mechanisms/rules、lifecycle、special_rules、exceptions、unknowns、medical_context、projection_rules、evidence-supported corrections、compatible completions；每个 species 的 majority type 发现后仍须继续枚举其 minority/rare type candidates。Classification 对每个候选判断 scope、species/type binding、共享 biological type gates 与独立证据充分性，并标记 UNCHANGED / ADD / CHANGE / EXCLUDED 之一；individual-only 或 scope ambiguous 的事实不得升级为 world-level candidate。Existing Comparison 逐候选比较 baseline：Existing 仅用于判断是否已表达及兼容合并方式，绝不是 candidate generation 的依据或 evidence，Existing type name 也不能证明新 type existence。Patch Selection 仅将合法 evidence-supported ADD/CHANGE 编入 sparse add/update，并保留兼容 Existing facts。Empty Patch Gate 只有在所有候选类别和候选均完成审查、没有任何合法 ADD/CHANGE 后才允许返回 empty Patch；不能因 Existing 非空或 review 提前停止而返回空。previously missed evidence（此前漏掉的 evidence）与 newly available evidence 使用相同 eligibility 规则；不要求首次出现于 current Floor。若新 world-level fact 与 Existing rule 冲突且确实替代该 rule，可以提出 correction Candidate；不要求出现任何固定的“修正/其实/原来/并非/应为”措辞，但仅提到新值、individual-only evidence 或 Existing baseline 本身都不够。不要返回完整 replacement World Model。'
+  '请重新审阅当前允许的完整 World Analysis evidence，先完成 Fact Discovery、Species/Type scope 与共享 Direct/Derived Type existence gates，再将已判断的事实与 Existing 做 exact comparison。Existing 仅是 comparison baseline 与兼容合并参考，不是 evidence；不得用 Existing 或 type name 证明新的 Species/Type/field。对所有 evidence-supported stable classifications 与其它合法 outlets 完成 review 后，只输出 evidence-supported sparse v1 add/update delta：UNCHANGED 不输出，合法 ADD/CHANGE 才输出，omission 保留 Existing，不能输出完整 replacement World Model，也不能用 remove、invalidate、null 或空值表示删除。Previously missed 与 newly available evidence 使用相同 eligibility；individual-only、temporary、scope ambiguous 或 unsupported facts 不得升级为 world-level Patch。'
 
 export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
   '只输出一个 JSON 对象：{"schema_version":1,"add":{},"update":{}}。add/update 只包含本次允许 evidence 建立的 world-level 新知识或 correction；不要输出 individual-only fact，也不要输出 scope ambiguous 的 world rule。不要输出内部 Semantic Delta 标签或解释，不要返回完整 World Model。',
@@ -738,49 +737,59 @@ export const WORLD_MODEL_PATCH_OUTPUT_CONTRACT = [
   'sparse section 中缺少字段永远表示不修改；complete update.species 中 Existing 已知事实消失会被视为删除风险。不要求事实首次出现于 current Floor；不要因为某事实不是 current Floor 首次出现，就排除当前允许 evidence 中对 Existing Model 的补充；也不要把 Existing World Model 重新整理后作为完整结果返回。',
 ].join('\n')
 
-// Compatibility names retained for callers; the production Supplement output
-// is one hierarchical response containing a logical Discovery phase followed
-// by a Candidate phase, while v2 remains internal to Runtime.
+export const WORLD_MODEL_SUPPLEMENT_FIELD_DICTIONARY = [
+  '【World Model AI Field Dictionary】先理解每个字段在问什么，再按后续 evidence/scope rules 判断是否可以填写。所有例子只是帮助理解，不是 enum；Species 与 Biological_Type 都是开放字符串。',
+  'Species / Species（物种、人种、生命种类）：提取 evidence 明确支持的稳定生命种类，例如 Species-A、人类、妖族、兽族、魔族、龙族、精灵或其它世界观生命种类。不得填性别、生理类型、职业、门派、阵营、社会身份、修炼境界或临时身体状态。缺少 Species-scoped evidence 时省略，不从 Existing 或其它 Species 补写。',
+  'Species_Description（物种描述）：提取该 Species 由 evidence 支持的稳定身份、生物性质、来源或总体特征，例如 Species-A 的稳定来源描述。若事实已有 capability、reproduction rule、lifecycle 或 mechanism 专用字段，优先填写专用字段，不在 Description 中重复总结；Existing 或现实常识不足以支持它。',
+  'Biological_Type / Biological_Type（稳定生理/生殖分类；性别是常见形式）：提取 Species 内 evidence 明确建立的稳定 biological、physiological 或 reproductive classification。男性、女性、雄性、雌性、双性、间性、Alpha、Beta、Omega 以及架空分类都只是开放字符串例子，不是 enum。Species scope 下直接陈述的 stable classification 可建立 identity；没有直接命名时才走 frozen Type Gate 的稳定、可重复、边界唯一 cluster 派生路径。职业、社会身份、组织/阵营、修炼阶段、疾病、临时/可逆/conditional-only 状态和 individual-only trait 不属于 Type。rare/minority/uncommon/low prevalence 不等于 temporary；“Species-A 大多为 Type-A，少量 Type-B 长期存在”可分别支持两个 identity。Type identity 只证明分类存在，不授权 capability。',
+  'Type_Description（生理类型描述）：只提取该 Biological_Type 本身由 evidence 支持的稳定分类特征。不要把 capabilities、reproduction rules、lifecycle 或 mechanisms 拼成描述；例如 evidence 只支持 Can_Produce_Sperm 与 Can_Fertilize 时，不要自行生成“能产生精子并进行受精的类型”。没有独立 descriptive statement 时省略。',
+  '【Capabilities】表示该 Biological_Type 被 evidence 明确支持的生殖能力；每个字段独立判断，Type identity 或另一个 capability 都不能授权它。明确正向证据=true，明确负向证据=false，unknown/unstated/insufficient=omit；Candidate 禁止 null，false 不表示 unknown、删除或 REMOVE。',
+  'Can_Produce_Sperm：提取该 Type 是否产生精子或世界观等价雄性配子；不能仅凭男性、雄性或 Alpha 名称推断。Can_Produce_Ova：提取是否产生卵子或等价雌性配子；不能仅凭女性、雌性或 Omega 名称推断。',
+  'Can_Be_Fertilized：提取该 Type 是否能作为被受精方；与 Can_Carry_Pregnancy 不同，被受精不自动意味着承载妊娠。Can_Fertilize：提取是否能使另一方配子/生殖结构发生受精；与 Can_Cause_Pregnancy 不同，能受精不自动意味着导致妊娠。',
+  'Can_Cause_Pregnancy：提取该 Type 是否能通过 evidence 明确的生殖机制使另一承载方进入妊娠；性交、插入、精液或男性/雄性身份本身不够。Can_Carry_Pregnancy：提取该 Type 是否能作为妊娠承载方，使胚胎/胎儿在其身体或明确承载结构中发育；女性、雌性或 Omega 名称本身不够。',
+  '【Reproduction Rules】只提取该 Type 的稳定生殖过程规则，不把 capability boolean 当作 rule。Fertilization：受精如何发生、配子如何结合、条件或授精机制；不写单纯妊娠、孕期、分娩或性行为。Pregnancy_Or_Carrying：妊娠/承载如何发生、承载结构与条件；它不是“能否怀孕”的 boolean。',
+  'Cycle：稳定生殖、发情、月经或繁殖周期；一次性欲望变化不属于 Cycle。Ovulation：排卵、释放卵细胞或等价过程的稳定规则。Gestation：进入妊娠后的孕期长度、阶段或持续进展；不等于 Can_Carry_Pregnancy。Labor：分娩、生产、产程或出生方式；不要把 fertilization 或 gestation 重复到 Labor。各字段没有独立 evidence 时分别省略。',
+  '【Lifecycle】Maturation：生物成熟、性成熟、成年或稳定发育成熟过程；不写修炼升级、职业成长、关系成长或力量境界。Aging：寿命、衰老、老化或年龄相关稳定变化；不写修炼境界或力量变化。',
+  '【Reproductive Mechanisms / Mechanism】仅当普通 capability/rule 字段无法完整表达、且 evidence 明确支持独立生殖机制时使用；普通性交、生殖或妊娠事实不自动创建 Mechanism。Mechanism_Key 是稳定简短机器 key；Mechanism_Label 是人类可读名称；Mechanism_Pathway 是实际运作路径；Carrying_Compatibility 只有明确 true/false evidence 才输出；World_Model_Rule_Refs 只能引用明确关联的既有 rule reference；Evidence 只记录该机制对应的合法 evidence contract。',
+  '【Special Rules / Rule】提取确实属于当前 Biological_Type、由 evidence 支持且没有更准确 structured field 表达的稳定特殊规则。Rule 是 fallback outlet，不是事实垃圾桶；若 capability、reproduction rule、lifecycle 或 mechanism 已能表达，则不要重复。Species-scoped rule 不得强行挂到 Type。',
+  '【Medical Context】只记录明确属于 world-level 的医疗/照护背景。Childbirth_Difficulty 是世界级分娩难度或总体产科风险；Care_Level 是世界级医疗、产科或照护水平；Evidence 支持该 world-level context。单一个体治疗、症状、检查或护理不能自动升级为 world-level。',
+  '【Exception】Exception_Statement 是偏离一般 World Model 规则的明确例外；Applies_To 是明确适用对象/范围；Evidence 支持该例外。未知、资料不足和普通临时事实不自动成为 Exception。',
+  '【Unknown】Unknown_Fact 只记录 evidence 已触及但明确 unresolved、unknown 或 conflicting、且会影响 World Model 的重要事实，例如“尚不清楚 Species-A 是否存在第三种稳定 Biological_Type”。schema field 没资料不是 Unknown；missing field 与 omitted capability 都不是 Unknown。',
+  '【Projection Rule】只记录合法 future projection rule contract，继续使用严格 JSON payload；AI 不创建 projection_rule_id，也不把普通 biological fact 塞进 Projection Rule。',
+  '【Scope examples】Species-scoped fact 只能留在 Species scope；Type-scoped fact 必须留在对应 Species + Biological_Type；individual fact 不能自动升级为 Type、Species 或 world-level rule。“Species-A 中存在 Type-B”只支持 identity，不支持 Type-B capability。“Species-A 的个体甲可以承载妊娠”没有 Type-wide evidence 时不能输出 Type 的 Can_Carry_Pregnancy。Species 整体规则若没有合法 Species-scope outlet，也不能错误挂到任意 Type。',
+].join('\n')
+
 export const WORLD_MODEL_PATCH_V2_TASK_PROMPT =
-  'Supplement 必须在同一次 AI response 中先完成 evidence-only Discovery，再完成 Candidate Builder。Discovery 只从 permitted World Analysis evidence 发现全部 Species/Biological Type identities，不能使用 Existing 证明事实；Candidate Builder 使用同一响应中的 Discovery identities 作为本轮 identity universe，只对这些 identities 执行 field-level evidence review、Existing comparison、semantic consolidation、scope/outlet classification 与 sparse Candidate synthesis；不得重新发现或创建新的 Species/Type identity。Existing 继续作为 TARGET、comparison baseline 与结构参考，但只用于 Candidate 的比较/引用；Existing 不是 evidence，不能进入 evidenceUnits()，不能证明新事实，也不能阻止 missing/minority/rare type discovery。Candidate 必须保持 Species → Biological Type → Details 的层级；同一 Species 的全部 Candidate identities 必须集中在同一 Species block。'
-
-export const WORLD_MODEL_DISCOVERY_TASK_PROMPT = [
-  '这是 Supplement 单次 response 中的第一个逻辑阶段：evidence-only identity discovery。只从 permitted World Analysis evidence 发现 evidence-supported Species 与 Biological Type identities。',
-  '该逻辑阶段不得使用 Existing World Model 证明 identity，不做 Existing comparison，不输出 details、field claims、Patch operation 或自然语言分析。每个 majority、minority、rare、exceptional-but-stable candidate 都必须独立经过现有 frozen Type Gate；发现一个 candidate 后不得停止审阅同一 Species。',
-].join('\n')
-
-export const WORLD_MODEL_DISCOVERY_OUTPUT_CONTRACT = [
-  '这是单次 Supplement response 中的 [Discovery] logical section；只输出以下 exact grammar，不输出 JSON、Markdown 围栏、Existing、details、Description、Capabilities、Reproduction Rules、Lifecycle、Mechanism、Rule、Medical Context、Exception、Unknown、Projection Rule 或 Patch 内容。',
-  '[Discovery]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[/Species]\n[/Discovery]',
-  '唯一允许的 tags 是 [Discovery]、[Species]、[Biological Type] 及对应 closing tags；唯一允许的 field label 是 Name。Species 只能直接包含 Biological Type，Biological Type 只能位于 Species 内。',
-  'opening/closing tags 与 parser stack 是唯一 ownership 信号；缩进不参与语义；不得隐式闭合、跨 Species re-parent、使用 fuzzy alias、snake_case alias 或自然语言猜 identity。缺失 Name、parent 不明确、closing mismatch 或 unsupported tag 时，受影响 subtree fail closed。',
-].join('\n')
+  '【Supplement Evidence Candidate】一次 Supplement attempt 只有一次 API request。只根据本次 permitted evidence，先完成 internal Complete Evidence Discovery，再输出一棵 Sparse Evidence Candidate；不负责 ADD、CHANGE 或 NO-OP。Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence；不要因为 Existing 已有某事实就跳过它，也不要为了避免 NO-OP 而省略 evidence-supported fact；不要因为 Existing 为 null 就推断 false。程序负责 deterministic comparison。\n\n' +
+  WORLD_MODEL_SUPPLEMENT_FIELD_DICTIONARY +
+  '\n\n【完整 evidence review】输出前读完全部 permitted evidence。对每个 Species 检查 Species existence、直接陈述的 stable Biological Type、严格派生的 stable Type、Species-scoped facts、每个 Type 的独立字段证据，以及 mechanism、special rule、medical context、exception、unknown、projection rule。发现一个 Species 或 Type 后不得停止。\n\n【Type identity】Biological Type 不等同于性别，但性别、生理性别、生殖型是常见 Type；允许架空稳定分类。Species scope 下明确持续存在的 classification 可直接成立；rare、minority、uncommon、low prevalence 不影响 existence，数量少不等于 temporary。没有直接命名时，只有稳定、可重复识别且边界唯一的 physiology、reproductive structure、reproductive role 或 capability cluster 才可派生；只有一个 cluster 不补 paired Type。temporary、reversible、conditional-only、职业、社会身份、组织、阵营、修炼阶段、疾病/异常 transient state 和 individual-only trait 不建立 permanent Type。\n\n【Type identity != details】Type 名称、male/female/sex-like label、外形、性交行为、schema 对称性和现实常识都不能授权 capability。每个字段必须有同一 scope 的独立 permitted evidence；明确正面证据才输出 true，明确负面证据才输出 false，unknown/unstated/insufficient evidence 省略；Candidate 禁止 null，false 不表示 unknown、删除或无证据。Species-scoped fact 不得挂到 Type；Type-scoped fact 不得推广到 Species；individual fact 不得升级 scope。Nonhuman 不使用 Human baseline，不跨 Species 借 evidence。\n\n【Description discipline】Description 只用于可选的 identity/context 描述，不是结构化事实的兜底字段。已有专用 capability、rule、lifecycle 或 mechanism 字段时，优先写专用字段；不要把多个结构化事实拼成新的 Description。Existing Description 只有在 permitted evidence 本身支持时才可重复，Existing 单独不能证明 Description。\n\n【输出】Candidate 可以重复 Existing；重复 unchanged claim 由程序变为 NO-OP。omission = no claim/preserve Existing，不表示 REMOVE。只输出层级 transport grammar 和 semantic exact field labels，不输出 JSON、delta、Patch v2 operation、target、path、classification、old_value 或解释。'
 
 export const WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT = [
-  '只输出一个单次响应的层级标签文本，不输出 JSON、Markdown 代码围栏、Patch v2 operation、target、path、classification、old_value 或解释。必须严格按顺序输出 [World Model Supplement]、[Discovery]、[Candidate]，最后输出对应 closing tags。',
-  '[World Model Supplement]\n[Discovery]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[/Species]\n[/Discovery]\n[Candidate]\n[World Model]\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]\n[/Candidate]\n[/World Model Supplement]',
-  'Discovery 是同一次生成中的 evidence-only logical phase，只允许 Species、Biological Type 与 Name；唯一允许的 field label 是 Name。它不得读取 Existing 来证明 identity。Candidate phase 使用同一响应中的 Discovery identities、permitted evidence 和 Existing TARGET/reference 完成 field-level review、comparison、consolidation 与 sparse synthesis。不得声称 Discovery 来自前一次 AI call，也不得把 Discovery 重新作为第二个 user message 发送。',
-  '必须使用明确 opening/closing tags：[World Model]、[Species]、[Biological Type]、[Capabilities]、[Reproduction Rules]、[Lifecycle]、[Reproductive Mechanisms]、[Mechanism]、[Special Rules]、[Rule]、[Medical Context]、[Exceptions]、[Exception]、[Unknowns]、[Unknown]、[Projection Rules]、[Projection Rule]，并使用对应 [/...] closing tags。缩进和空白不参与语义。',
-  `完整 Candidate grammar（每个 section 只允许下列 exact labels；不得创建未列出的字段；unsupported field 必须省略；不要为了让 section 完整而补字段）：
+  'Output Grammar：只输出一个单次响应的层级标签文本；不得输出 JSON、Markdown fence、额外 discovery section、Candidate wrapper、Patch v2 operation、target、path、classification、old_value 或解释。顺序必须是 [World Model Supplement] → [World Model] → corresponding closing tags。',
+  '[World Model Supplement]\n[World Model]\n[Species]\nSpecies: Species-A\n[Biological Type]\nBiological_Type: Type-B\n[/Biological Type]\n[/Species]\n[/World Model]\n[/World Model Supplement]',
+  'Sparse Evidence Candidate 是唯一 AI transport tree；它可以同时包含新 Species/Type identity 与 Existing identity 下的 evidence-supported field claims，也可以重复 Existing facts。程序负责 exact Existing comparison、ADD/CHANGE/NO-OP classification 与 Patch v2 派生。',
+  '层级只允许 World Model → Species → Biological Type → Details；同一 Species 只使用一个 block。所有 opening/closing tags 与 parser stack 是唯一 ownership signal；indentation 不参与语义；不允许 implicit close、cross-scope re-parent、fuzzy alias、snake_case alias 或未定义标签。',
+  'Allowed tags 只包括 [World Model Supplement]、[World Model]、[Species]、[Biological Type]、[Capabilities]、[Reproduction Rules]、[Lifecycle]、[Reproductive Mechanisms]、[Mechanism]、[Special Rules]、[Rule]、[Medical Context]、[Exceptions]、[Exception]、[Unknowns]、[Unknown]、[Projection Rules]、[Projection Rule] 及对应 closing tags。',
+  `Sparse Evidence Candidate grammar（每个 section 只允许下列 exact labels；不得创建未列出的字段；unsupported field 必须省略；不要为了让 section 完整而补字段）：
 [Species]
-Name: ...
-Description: ...
+Species: ...
+Species_Description: ...
 [/Species]
 [Biological Type]
-Name: ...
-Description: ...
+Biological_Type: ...
+Type_Description: ...
 [/Biological Type]
 [Capabilities]
-Can Produce Sperm: true|false
-Can Produce Ova: true|false
-Can Be Fertilized: true|false
-Can Fertilize: true|false
-Can Cause Pregnancy: true|false
-Can Carry Pregnancy: true|false
+Can_Produce_Sperm: true|false
+Can_Produce_Ova: true|false
+Can_Be_Fertilized: true|false
+Can_Fertilize: true|false
+Can_Cause_Pregnancy: true|false
+Can_Carry_Pregnancy: true|false
 [/Capabilities]
 [Reproduction Rules]
 Fertilization: ...
-Pregnancy Or Carrying: ...
+Pregnancy_Or_Carrying: ...
 Cycle: ...
 Ovulation: ...
 Gestation: ...
@@ -791,45 +800,34 @@ Maturation: ...
 Aging: ...
 [/Lifecycle]
 [Mechanism]
-Key: ...
-Label: ...
-Pathway: ...
-Carrying Compatibility: true|false
-World Model Rule Refs: [...]
+Mechanism_Key: ...
+Mechanism_Label: ...
+Mechanism_Pathway: ...
+Carrying_Compatibility: true|false
+World_Model_Rule_Refs: [...]
 Evidence: [...]
 [/Mechanism]
 [Rule]
-Value: ...
+Rule: ...
 [/Rule]
 [Medical Context]
-Childbirth Difficulty: ...
-Care Level: ...
+Childbirth_Difficulty: ...
+Care_Level: ...
 Evidence: ...
 [/Medical Context]
 [Exception]
-Statement: ...
-Applies To: ...
+Exception_Statement: ...
+Applies_To: ...
 Evidence: ...
 [/Exception]
 [Unknown]
-Value: ...
+Unknown_Fact: ...
 [/Unknown]
 [Projection Rule]
 JSON: {"schema_version":1,...}
 [/Projection Rule]
 Projection Rule 唯一允许的 representation 是单个 JSON object 的 JSON: 行；不得输出 projection_rule_id，不得在 Projection Rule 内使用 Name/Description 或其它逐字段标签。`,
-  'ownership 只能由 opening/closing tags 与 parser stack 确定。Species 是 Biological Type 的父节点，Biological Type 是 capabilities、reproduction rules、lifecycle、mechanisms、special rules 的父节点。Species/Type 缺 Name、无明确 parent、closing mismatch 或结构边界不明确时，拒绝最小安全 subtree，绝不通过最近节点、自然语言或隐式闭合猜测归属。',
-  '只能使用 grammar 中定义的 exact field labels；不得使用 snake_case、underscore alias、hyphen alias、大小写变体或其它 fuzzy alias。Rule section 只允许 Value，不得输出 Rule Name、Description 或其它字段。',
-  'Candidate 是 sparse claims：字段省略表示 no claim / preserve Existing；不得输出 null 来表示删除，不得输出 false 代替未知，不得输出 empty collection 触发清空。boolean 只允许明确 true/false；世界级 unresolved proposition 使用 [Unknown] outlet。',
-  '生成顺序必须先判断 Type existence，再逐字段判断 Type details。Type existence 与 capabilities、reproduction_rules、lifecycle、special_rules、reproductive_mechanisms 的 field evidence 完全分离。仅有 Species + Biological Type Name 时，可以只输出这两个 identity fields。',
-  '对 Nonhuman Species，每一个 capability 都必须重新寻找绑定到同一 Species + Biological Type 的独立 evidence。男性、女性、雄性、雌性等名称本身不能推出任何 capability；不得使用 Human baseline、现实常识、配对性别、性交行为或泛化生殖词汇自动补齐 capability。没有独立 evidence 的 capability 必须省略，不输出 false，也不输出 null。reproduction_rules、lifecycle、special_rules、reproductive_mechanisms 同样逐字段独立举证，不因 Type existence 自动补齐。',
-  'Generic example：Evidence: Species-A has stable Type-A and rare Type-B。合法 Candidate 可以是：\n[Species]\nName: Species-A\n[Biological Type]\nName: Type-A\n[/Biological Type]\n[Biological Type]\nName: Type-B\n[/Biological Type]\n[/Species]。如果 evidence 没有分别证明 sperm/ova/pregnancy capabilities，绝对不能输出这些 capability fields。',
-  '不得因 species 有发情期、子宫、特殊性器、精液/爱液、普通性别称谓、个体特征、临时状态、transformation-derived subcategory 就创建 biological type；继续执行 frozen Type Gate。',
-  'Minority completeness：如果同一 evidence statement 同时明确支持 majority Type-A 和 rare/minority Type-B，必须分别建立两个 Candidate biological type 并分别执行 frozen Type Gate。确认 Type-A 后不得结束当前 Species review；rare/minority 数量少不是 omission 理由。',
-  '在关闭一个 Species block 前，必须完成该 species 的全部 evidence-supported biological type candidates review，包括 majority、minority、rare、exceptional-but-stable candidates；不得因发现 majority type 而停止。继续执行现有 frozen Type Gate。',
-  'Existing 只作 TARGET、comparison baseline、structure reference，不是 evidence；Existing type/name/baseline 不能授权当前 Nonhuman 的 capability、rule、lifecycle 或 mechanism。',
-  '如果 Existing Species/Type 只是新增 child fact 的 parent scope，只输出该 parent 的 exact Name 与新增 child；不要重述 Existing Description 或其它既有字段。只有 permitted evidence 明确支持真正的 Description ADD/CHANGE claim 时才输出 Description；不得通过忽略所有 description change 来规避合法 correction。',
-  'Patch v2 是 Runtime 内部 deterministic mutation IR，不是 AI 输出协议。不要输出 REMOVE，不新增 mechanism/exception/projection update。',
+  'Field labels 只能使用上述 exact underscore semantic tokens：Species、Species_Description、Biological_Type、Type_Description、Can_Produce_Sperm、Can_Produce_Ova、Can_Be_Fertilized、Can_Fertilize、Can_Cause_Pregnancy、Can_Carry_Pregnancy、Pregnancy_Or_Carrying、Mechanism_Key、Mechanism_Label、Mechanism_Pathway、Carrying_Compatibility、World_Model_Rule_Refs、Childbirth_Difficulty、Care_Level、Applies_To、Exception_Statement、Unknown_Fact，以及允许保留的单词 labels。不得使用旧 space labels、Name、Description、Value、Key、Label、Pathway、Statement 或 snake_case internal-field aliases；unsupported field 必须省略。Projection Rule 只允许一个 JSON object 的 JSON: line；boolean 只允许 true|false。malformed identity/hierarchy fail closed；leaf error 可在 ownership unambiguous 的最小 subtree 内 fail-soft。字段 absent = no claim/preserve Existing；不得用 null、false 或 empty collection 表示删除。Patch v2 是 internal deterministic IR，不由 AI 输出。',
 ].join('\n')
 
 export function buildWorldModelMessages(
@@ -895,11 +893,8 @@ export function buildWorldModelPatchMessagesV2(
   const messages = []
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', joinPromptSections([
-    `【BioWeave World Model Supplement v2 正式分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS}`,
-    formatCommonAnalysisPrompt(settings, names),
-    `【World Model Supplement v2 任务】\n${WORLD_MODEL_PATCH_V2_TASK_PROMPT}`,
-    formatAnalysisPromptTail(settings, names),
-    `【World Model Supplement v2 输出契约】\n${WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT}`,
+    `【BioWeave World Model Supplement v3 Evidence Candidate 正式分析规则】\n${WORLD_MODEL_PATCH_V2_TASK_PROMPT}`,
+    `【World Model Supplement v3 输出契约】\n${WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT}`,
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))

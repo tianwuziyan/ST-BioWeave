@@ -86,10 +86,8 @@ current evidence establishes, then consolidates it against the baseline:
 ```text
 current permitted World Analysis evidence + Existing target/reference
   -> one Supplement AI request / one response
-     -> logical evidence-only Discovery Ledger
-     -> logical field review / Existing comparison / sparse Candidate
-  -> deterministic identity coverage check
-  -> baseline-aware consolidation
+     -> Sparse Evidence Candidate Tree
+  -> deterministic Existing comparison / delta derivation
   -> Candidate Patch
   -> deterministic safety validation
   -> deterministic merge
@@ -98,11 +96,11 @@ current permitted World Analysis evidence + Existing target/reference
 ```
 
 Supplement must receive the validated canonical Existing World Model in the
-same request as a comparison baseline for the Candidate phase and must
-re-review the complete permitted evidence set. Discovery is an evidence-only
-logical phase in that response: it must not use Existing to prove Species or
-Biological Type identity. The Candidate phase may use Existing for comparison
-and structure reference. The first question is the scope of each discovered fact: individual,
+same request as a TARGET, comparison baseline, and structure reference, and
+must re-review the complete permitted evidence set. AI performs evidence
+discovery and structured claim synthesis; deterministic code performs exact
+Existing comparison and delta calculation. Existing is never evidence. The
+first question is the scope of each discovered fact: individual,
 world-level rule, world-level exception, world-level unknown, world-level
 medical context, or species/type special rule. Only world-level knowledge is
 eligible for World Model consolidation. The same mechanism covers newly
@@ -123,51 +121,31 @@ Full:       evidence -> fact discovery/scope/classification
             -> complete candidate -> Full guards
             -> complete consistency -> canonical model -> persist
 Supplement: evidence + Existing target -> one AI response containing
-            evidence-only Discovery Ledger followed by sparse Candidate Builder
-            -> deterministic identity coverage check
+            one Sparse Evidence Candidate Tree
+            -> deterministic Existing comparison
             -> Candidate -> internal Patch v2
             -> delta safety / Evidence Guard -> deterministic merge
             -> complete consistency -> canonical validation -> persist
 ```
 
-The Supplement Discovery Ledger is a transient, strict structured protocol.
-Its grammar contains only `Discovery -> Species -> Name -> Biological Type ->
-Name`; it does not contain Existing, details, natural-language parsing, or
-Patch operations. Opening/closing tags and a parser stack determine ownership;
-indentation has no semantic effect. Missing identity, unsupported tags,
-closing mismatch, or ambiguous parent ownership rejects the affected subtree
-without re-parenting. The Discovery Ledger is not persisted and is never sent
-to UI or Floor storage.
+The Supplement response is one strict hierarchical Sparse Evidence Candidate
+Tree. It contains no serialized discovery ledger or second candidate wrapper;
+each identity/fact is serialized once. The AI performs a short internal
+Complete Evidence Discovery before writing it, then emits supported ADD/CHANGE
+claims. Opening/closing tags and a parser stack determine ownership; indentation
+has no semantic effect. Missing identity, unsupported tags, closing mismatch,
+or ambiguous parent ownership rejects the affected subtree without
+re-parenting. Duplicate Species/Type identities fail closed with
+`WORLD_MODEL_CANDIDATE_DUPLICATE_IDENTITY`; indexing is never last-write-wins
+or fuzzy-merged. The Candidate is transient and is not persisted or sent to UI
+or Floor storage.
 
-One valid Discovery Ledger contains at most one Species block for each exact
-Species name, and each Species block contains at most one Biological Type
-entry for each exact Type name. Duplicate Species or Type identity is a
-protocol error (`WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY`); it is never
-last-write-wins or fuzzy-merged.
-
-The single Supplement response contains the permitted evidence-driven
-Discovery Ledger and the sparse Candidate. The Candidate Builder logical phase
-uses that same-response Ledger plus the canonical Existing model. The Ledger is
-the complete Species/Type identity universe for this pass: Candidate Builder does not
-rediscover or create a new Species/Type identity. It only performs
-field-level evidence review, Existing comparison, semantic consolidation, and
-sparse Candidate synthesis. It emits the existing sparse hierarchical
-Candidate DTO. Candidate omission is no claim/preserve Existing;
-it is not removal. When an Existing Species/Type is only a parent scope for a
-new child, the Candidate emits identity only and does not restate Existing
-Description. A Description is emitted only for an evidence-supported
-description ADD/CHANGE claim. Candidate protocol likewise permits at most one
-Species block per exact Species name and at most one Type entry per Species;
-duplicates fail closed with `WORLD_MODEL_CANDIDATE_DUPLICATE_IDENTITY` before
-coverage indexing or Candidate-to-Patch translation.
-
-The deterministic Discovery Coverage Check compares only exact canonical
-Species/Type identity sets. Every Ledger identity absent from Existing must be
-present in Candidate; every Candidate identity must be present in the Ledger.
-It does not read evidence prose, perform NLP, infer biology, pair types, use
-name dictionaries, or create identities. Missing coverage fails closed before
-Candidate-to-Patch conversion with
-`WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING`.
+Existing identity may be repeated unchanged and is accepted; deterministic
+comparison produces NO-OP. Existing identity may also carry an independently
+evidenced field-only ADD/CHANGE. Candidate omission is no claim/preserve
+Existing, never removal. When an Existing Species/Type is only a parent scope
+for a new child, do not restate its Description unless a real evidence-backed
+description delta exists.
 
 Omitted fields in sparse Patch sections are unchanged; complete Candidate
 sections follow their explicit contract in section 1.5.2. `remove` and
@@ -237,10 +215,15 @@ Candidate Discovery
 ```
 
 `Fact Discovery` happens before this sequence and `Unarchived Fact Review`
-happens after it. Low-inference type discovery is permitted only after the
-Exclusion Gate. It must never turn a non-biological category into a
-`biological_type` merely because the category is mentioned together with
-body, sex, reproduction, or capability language.
+happens after it. Type existence has two paths. Direct Stable Classification
+applies when permitted evidence directly names a Species-scoped, persistent
+physiological, biological-sex, reproductive, or other biological
+classification. Derived Stable Classification is used only when the source
+does not name the classification and a stable, mutually distinguishable,
+species-level cluster uniquely defines its boundary. Low-inference type
+discovery is permitted only after the Exclusion Gate. It must never turn a
+non-biological category into a `biological_type` merely because the category
+is mentioned together with body, sex, reproduction, or capability language.
 
 `biological_type` is a species-local, stable biological, physiological, or
 reproductive classification. The Exclusion Gate rejects a candidate whose
@@ -256,12 +239,37 @@ descriptions nearby:
 - personality, sexual preference, behavior, relationship, or an individual-only
   description.
 
-An alleged type name is not evidence by itself. A name cannot establish type
-existence, capability, reproduction rule, lifecycle, special rule, or Human
-equivalence. Each of those facts requires evidence at its own scope. Species
-binding likewise requires direct or uniquely low-inference evidence in the
-same species context; another species, Human evidence, an unrelated partner,
-or the Existing baseline cannot authorize the candidate.
+An alleged type name is not evidence by itself. An isolated, unscoped,
+social/role-based, individual-only, or temporary sex-like label cannot establish
+Species-level type existence. Conversely, a direct Species-scoped statement
+that the classification is stable is sufficient for type-existence review; it
+does not require a second capability cluster. Each detail still requires
+evidence at its own scope. Species binding likewise requires direct or
+uniquely low-inference evidence in the same species context; another species,
+Human evidence, an unrelated partner, or the Existing baseline cannot
+authorize the candidate.
+
+Prevalence and stability are separate dimensions. Quantity, ratio, commonness,
+or rarity do not participate in the existence threshold: rare != temporary,
+minority != unstable, and low prevalence != insufficient existence evidence.
+The Stability Gate asks whether the classification is persistent and biological,
+not whether it is common. Every evidence-supported stable classification must
+be reviewed; confirming one type must not stop review of the same Species.
+
+Type existence != type details. A proven identity does not authorize
+capabilities, reproduction rules, lifecycle, mechanisms, special rules, or
+other details. Those fields remain independently evidenced and may remain
+unknown/null (or omitted in Supplement Candidate output).
+
+For Patch v2 `ADD_TYPE`, `operation.type.name` uses the same frozen Type
+existence contract as analysis: a Species-scoped Direct Stable Classification
+may establish identity without a capability/detail claim, and the Derived
+Stable Classification path remains available only for a uniquely bounded,
+stable, species-local biological/reproductive cluster after the existing
+Species Binding, Exclusion, Stability, Classification, and Evidence
+Sufficiency gates. Prevalence never lowers either path. Detail leaves are
+validated independently; unsupported capability or description evidence must
+fail at that detail path, not at `operation.type.name`.
 
 The low-inference exception is intentionally retained. When the same species
 has two or more stable, mutually distinguishable, species-level reproductive
@@ -311,27 +319,26 @@ role of the Existing model:
   Reproductive Classification Gate -> Evidence Sufficiency -> Type Creation
   to each candidate. Discovering a majority type must not end minority/rare
   candidate discovery for that species;
-- Supplement emits one AI response whose logical first phase freezes the
-  evidence-only Discovery Ledger, then whose Candidate Builder phase receives
-  Existing only as a comparison baseline and re-runs field-level evidence
-  review, semantic consolidation, and sparse Candidate synthesis over the
-  Ledger identities and complete permitted evidence set. Candidate Builder
-  does not rediscover or create Species/Type identities, and emits a sparse
-  differential Candidate Patch.
+- Supplement performs internal Complete Evidence Discovery inside one AI
+  response, then serializes one Sparse Evidence Candidate Tree over the
+  complete permitted evidence set. Existing is only TARGET/comparison/structure
+  reference; deterministic code computes identity and field deltas. Existing
+  identities may receive field-only ADD/CHANGE claims, and unchanged repeated
+  identities become deterministic NO-OP.
 
 An Existing entry is not evidence for a new fact. Existing non-empty content
-does not authorize skipping Discovery Ledger review, species completeness
+does not authorize skipping complete evidence review, species completeness
 review, biological-type classification review, missing-world-fact review, or
 compatible consolidation. An empty Patch is legal only after those reviews
 have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
 remains. “Existing already has content” is not a completed review.
 
-The Prompt operationalizes Supplement as one request and one response with an
-evidence-only Discovery Ledger followed by a Candidate Builder logical phase
-that performs field Classification, Existing Comparison, Patch Selection, and
-the Empty Patch Gate. This two-phase semantic workflow is not two API requests.
-The Discovery Ledger is strict structured content in the response, is not
-persisted, and is not a Patch schema field:
+The Prompt operationalizes Supplement as one request and one response with
+internal Complete Evidence Discovery followed by one Sparse Evidence Candidate
+serialization. Deterministic code performs Existing Comparison, Patch
+Selection, and the Empty Patch Gate. The semantic workflow is not two API
+requests. The Candidate is transient, is not persisted, and is not a Patch
+schema field:
 
 The Supplement message architecture preserves the same epistemic boundary in
 one request: the formal analysis contract and permitted evidence remain in
@@ -360,21 +367,21 @@ review authorizes it.
 
 ```text
 permitted evidence + Existing target/reference
-  -> one response: evidence-only Discovery Ledger
-     -> Candidate Builder / Classification (UNCHANGED / ADD / CHANGE / EXCLUDED)
+  -> one response: internal Complete Evidence Discovery
+     -> Sparse Evidence Candidate
+  -> deterministic Existing Comparison / Classification (NO-OP / ADD / CHANGE)
   -> Existing Comparison (Candidate Builder logical phase only)
   -> Patch Selection
   -> Empty Patch Gate
 ```
 
-Candidate enumeration must explicitly cover missing species; missing
-biological types, including minority/rare types; missing capability knowledge;
-reproductive mechanisms/rules; lifecycle; `special_rules`; exceptions;
-unknowns; `medical_context`; `projection_rules`; evidence-supported
-corrections; and compatible completions. Each candidate receives exactly one
+Fact review must cover missing Species/Types, field knowledge, reproductive
+mechanisms/rules, lifecycle, `special_rules`, exceptions, unknowns,
+`medical_context`, `projection_rules`, evidence-supported corrections, and
+compatible completions. Each reviewed candidate receives exactly one
 classification: `UNCHANGED`, `ADD`, `CHANGE`, or `EXCLUDED`, after applying the
-shared scope, species/type binding, exclusion, stability, classification, and
-evidence rules. Existing is used only after candidate discovery, for
+shared scope, Species/Type binding, exclusion, stability, classification, and
+evidence rules. Existing is used only after evidence-only discovery, for
 comparison and compatible consolidation; it cannot create or prove a
 candidate. Patch Selection emits only legal evidence-supported `ADD`/`CHANGE`
 in the active Patch contract. The compatibility v1 implementation uses a
@@ -680,9 +687,8 @@ The complete production chain is:
 ```text
 Evidence + Existing target/reference
   -> one Supplement AI request / one hierarchical response
-     -> [Discovery] evidence-only identity ledger
-     -> [Candidate] sparse hierarchical Candidate Text
-  -> deterministic identity coverage check
+     -> one Sparse Evidence Candidate Tree
+  -> deterministic Existing comparison / delta derivation
   -> stack-based Candidate parser
   -> Candidate + Existing deterministic comparison
   -> internal Patch v2
@@ -709,10 +715,10 @@ assistant  Recent Story
 user       Existing target + Supplement Single-Response Request
 ```
 
-The response contains both logical phases in one explicit top-level grammar.
-Discovery must not use Existing to prove identity. Candidate Builder may use
-the same request's Existing target as comparison baseline and structure
-reference; Existing is never evidence:
+The response contains one explicit top-level grammar. The AI must internally
+scan all permitted evidence before serialization, but does not serialize an
+identity ledger. Existing is the comparison target/reference and is never
+evidence:
 
 ```text
 【Supplement Target：当前已保存的 World Model】
@@ -722,14 +728,42 @@ Existing 本身不是 evidence。
 <existing_world_model_reference>...</existing_world_model_reference>
 
 【Supplement Single-Response Request】
-在同一次响应中先输出 [Discovery]，再输出 [Candidate]。Discovery 只根据
-permitted evidence 建立 Species/Type identity；Candidate 只对同一响应中的
-Discovery identities 做 field-level evidence review、Existing comparison、
-semantic consolidation 与 sparse Candidate synthesis。不要重新发现或创建新的
-Species/Type identity。Ledger identity 已存在 Existing 且无新 claim 时可以
-省略；Ledger identity 不存在 Existing 时必须输出 identity block。
+先完成 internal Complete Evidence Discovery，再在同一响应中输出一棵
+Evidence Candidate，包含 permitted evidence 支持的 scoped facts。Existing
+仅用于 TARGET、structure reference 和 comparison context；Existing identity
+可作为 field-only claim 的 parent/target。AI 不计算 ADD、CHANGE 或 NO-OP，
+重复 unchanged claim 由程序确定为 NO-OP。
 不要输出 JSON、operation、target、path、classification 或 old_value。
 ```
+
+Transport field labels are semantic and exact underscore tokens. Species uses
+`Species` and `Species_Description`; Biological Type uses `Biological_Type` and
+`Type_Description`. Mechanism fields use `Mechanism_Key`, `Mechanism_Label`,
+and `Mechanism_Pathway`; special rules use `Rule`; exceptions use
+`Exception_Statement`; unknowns use `Unknown_Fact`. Multi-word capability,
+reproduction, medical, and mechanism labels likewise use the explicitly
+defined underscore tokens. The parser maps these transport labels back to the
+existing internal field keys; the canonical World Model JSON schema is
+unchanged. Space labels and ambiguous legacy labels such as `Name`,
+`Description`, `Value`, `Key`, `Label`, `Pathway`, or `Statement` are not
+accepted where a semantic label is required.
+
+Description is optional identity/context text, not a catch-all semantic outlet.
+When a fact has a dedicated capability, rule, lifecycle, or mechanism field,
+the Candidate should use that field rather than restating several structured
+facts in Description. Existing alone never proves a Description claim; a
+repeated Description requires permitted evidence at the same scope.
+
+The production Supplement prompt also carries a World Model AI Field
+Dictionary. It defines, for Species, Species_Description, Biological_Type,
+Type_Description, every capability, every reproduction/lifecycle field,
+Mechanism, Rule, Medical Context, Exception, Unknown, and Projection Rule:
+the field meaning, evidence to extract, legal illustrative examples, excluded
+meanings, neighboring-field distinction, and insufficient-evidence behavior.
+The dictionary is an AI semantic aid only; it does not add schema fields,
+change transport labels, or replace the program-level Evidence Guard and Type
+Gate. Field-specific evidence remains independent, and omission remains no
+claim rather than removal.
 
 Permitted Worldbook, Character Card, External Memory, Opening Greeting, and
 Recent Story evidence retain their existing message roles and provenance.
@@ -741,10 +775,8 @@ Character message architecture is unchanged.
 The production parser/validator boundary is:
 
 ```text
-parseWorldModelSupplementText(raw) -> { discoveryLedger, candidate, diagnostics }
-validateWorldModelDiscoveryLedger(ledger) -> DiscoveryLedger
+parseWorldModelSupplementText(raw) -> { candidate, diagnostics }
 validateWorldModelCandidate(candidate) -> SparseWorldFactCandidate
-checkWorldModelCandidateDiscoveryCoverage(ledger, candidate, existing) -> pass/fail
 worldModelIdentityIndex(model) -> exact identity index or duplicate error
 worldModelCandidateToPatchV2(candidate, existingModel) -> WorldModelPatchV2
 applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> classified Patch v2
@@ -763,8 +795,8 @@ Patch v2 remains an internal deterministic IR:
 The internally generated `operations` contains only evidence-supported proposed `ADD` or `CHANGE`
 information. It never contains complete updated Existing species,
 unchanged Existing fields, `UNCHANGED` operations, `REMOVE`, `invalidate`, or
-Structural Reclassification. `operations: []` means the complete Candidate
-Ledger and Existing comparison found no legal change.
+Structural Reclassification. `operations: []` means the Sparse Candidate and
+Existing comparison found no legal change.
 
 All operation targets use canonical identity, never array index, input order,
 mutable full-content identity, or guessed identity:
@@ -944,20 +976,20 @@ semantic. The allowed hierarchy is:
 The protocol field labels are fixed per section:
 
 ```text
-[Species]                 Name, Description
-[Biological Type]         Name, Description
-[Capabilities]            Can Produce Sperm, Can Produce Ova,
-                          Can Be Fertilized, Can Fertilize,
-                          Can Cause Pregnancy, Can Carry Pregnancy
-[Reproduction Rules]      Fertilization, Pregnancy Or Carrying, Cycle,
+[Species]                 Species, Species_Description
+[Biological Type]         Biological_Type, Type_Description
+[Capabilities]            Can_Produce_Sperm, Can_Produce_Ova,
+                          Can_Be_Fertilized, Can_Fertilize,
+                          Can_Cause_Pregnancy, Can_Carry_Pregnancy
+[Reproduction Rules]      Fertilization, Pregnancy_Or_Carrying, Cycle,
                           Ovulation, Gestation, Labor
 [Lifecycle]               Maturation, Aging
-[Mechanism]               Key, Label, Pathway, Carrying Compatibility,
-                          World Model Rule Refs, Evidence
-[Rule]                    Value only
-[Medical Context]         Childbirth Difficulty, Care Level, Evidence
-[Exception]               Statement, Applies To, Evidence
-[Unknown]                 Value only
+[Mechanism]               Mechanism_Key, Mechanism_Label, Mechanism_Pathway,
+                          Carrying_Compatibility, World_Model_Rule_Refs, Evidence
+[Rule]                    Rule only
+[Medical Context]         Childbirth_Difficulty, Care_Level, Evidence
+[Exception]               Exception_Statement, Applies_To, Evidence
+[Unknown]                 Unknown_Fact only
 [Projection Rule]         JSON only: one raw projection-rule object without
                           projection_rule_id
 ```
@@ -967,7 +999,8 @@ underscore/hyphen aliases, fuzzy case or spacing variants, and fields not
 listed for the current section are invalid and must be omitted. In particular,
 `[Rule]` cannot contain `Name` or `Description`.
 
-Species and Biological Type require an explicit `Name`. A child is attached
+Species and Biological Type require an explicit `Species` or `Biological_Type`
+transport label. A child is attached
 only when its opening tag is legal under the current stack parent. Missing
 identity, mismatched closing tags, illegal nesting, a new Species before the
 previous Species closes, or an unclosed subtree invalidates the smallest safe
@@ -980,10 +1013,11 @@ still be recovered. Projection identity is not Candidate input:
 `projection_rule_id` is rejected and generated only by the existing production
 normalization path.
 
-Field parsing accepts only the exact protocol labels defined by the grammar
-(`Name`, `Description`, `Can Carry Pregnancy`, and so on). Internal canonical
-snake_case names, underscore aliases, hyphen aliases, and fuzzy case/spacing
-variants are not Candidate protocol tokens.
+Field parsing accepts only the exact transport labels defined by the grammar
+(`Species`, `Species_Description`, `Biological_Type`, `Type_Description`,
+`Can_Carry_Pregnancy`, and so on). Internal canonical snake_case names,
+unlisted underscore aliases, space labels, hyphen aliases, and fuzzy
+case/spacing variants are not Candidate protocol tokens.
 
 Candidate values have these meanings:
 
@@ -1183,17 +1217,16 @@ model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
 The current implementation keeps the v1 complete-candidate Patch path as
 compatibility for non-migrated callers, while the production Supplement v2
-path uses the evidence-only Discovery Ledger, deterministic identity coverage,
-hierarchical Candidate Text, internal Patch v2, operation-level evidence
-validation, sparse merge, complete-model consistency, and canonical
-validation. Full does not consume Existing; Candidate Builder receives
-Existing only as TARGET/comparison/reference, and Existing is not collected by
+path uses one Sparse Evidence Candidate Tree, deterministic Existing
+comparison, hierarchical Candidate parsing, internal Patch v2, operation-level
+evidence validation, sparse merge, complete-model consistency, and canonical
+validation. Full does not consume Existing; Supplement receives Existing only
+as TARGET/comparison/reference, and Existing is not collected by
 `evidenceUnits()`.
 
 The remaining limits are intentional or independently blocked: deterministic
 code does not re-implement narrative World Fact Discovery or infer facts from
-evidence prose; the Discovery parser and coverage checker only parse and
-compare identities. AI remains responsible for scope, outlet classification,
+evidence prose. AI remains responsible for scope, outlet classification,
 compatible consolidation, and correction proposals. Existing
 reproductive-mechanism update identity remains
 blocked when no stable logical identity is available, while safe new mechanism
@@ -1299,10 +1332,12 @@ the source of any new fact.
 - `biological_type` is a stable physiological or reproductive classification
   inside one `species`; it is not a general taxonomy, identity, occupation,
   route, level, phase, temporary state, or individual label.
-- A type has independent evidence. Direct naming and deterministic,
-  low-inference existence language based on quantity, frequency, contrast,
-  coexistence, or exception relations are valid evidence for the type's
-  existence. Rarity does not invalidate an otherwise stable type.
+- A type has independent evidence. Species-scoped direct naming or stable
+  classification language can establish existence; when no classification is
+  directly named, deterministic low-inference cluster evidence may establish
+  it only when the boundary is unique. Quantity, ratio, and frequency do not
+  set the existence threshold. Rarity does not invalidate an otherwise stable
+  type.
 - The Prompt performs the per-species completeness scan: after collecting
   candidates, it rescans the full `AnalysisInput` for explicitly indicated
   stable types and re-applies the type contract. It must not fill a sibling
