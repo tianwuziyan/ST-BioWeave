@@ -86,7 +86,7 @@ current evidence establishes, then consolidates it against the baseline:
 ```text
 current permitted World Analysis evidence + Existing target/reference
   -> one Supplement AI request / one response
-     -> Sparse Evidence Candidate Tree
+     -> Complete Evidence-Supported Candidate Tree
   -> deterministic Existing comparison / delta derivation
   -> Candidate Patch
   -> deterministic safety validation
@@ -121,18 +121,23 @@ Full:       evidence -> fact discovery/scope/classification
             -> complete candidate -> Full guards
             -> complete consistency -> canonical model -> persist
 Supplement: evidence + Existing target -> one AI response containing
-            one Sparse Evidence Candidate Tree
+            one Complete Evidence-Supported Candidate Tree
             -> deterministic Existing comparison
             -> Candidate -> internal Patch v2
             -> delta safety / Evidence Guard -> deterministic merge
             -> complete consistency -> canonical validation -> persist
 ```
 
-The Supplement response is one strict hierarchical Sparse Evidence Candidate
-Tree. It contains no serialized discovery ledger or second candidate wrapper;
-each identity/fact is serialized once. The AI performs a short internal
-Complete Evidence Discovery before writing it, then emits supported ADD/CHANGE
-claims. Opening/closing tags and a parser stack determine ownership; indentation
+The Supplement response is one strict hierarchical Complete Evidence-Supported
+Candidate Tree. It contains no serialized discovery ledger or second candidate
+wrapper. Complete means complete with respect to permitted evidence, not
+complete with respect to schema: every clearly scoped fact that can legally map
+to the World Model is emitted, while unsupported schema fields are omitted.
+Evidence completeness is not schema completeness. The AI performs internal
+Complete Evidence Discovery before writing it. It must not compress away
+rare/minority facts or complete unsupported schema fields. Identity discovery
+comes before detail extraction; identity evidence does not authorize details.
+Opening/closing tags and a parser stack determine ownership; indentation
 has no semantic effect. Missing identity, unsupported tags, closing mismatch,
 or ambiguous parent ownership rejects the affected subtree without
 re-parenting. Duplicate Species/Type identities fail closed with
@@ -140,12 +145,12 @@ re-parenting. Duplicate Species/Type identities fail closed with
 or fuzzy-merged. The Candidate is transient and is not persisted or sent to UI
 or Floor storage.
 
-Existing identity may be repeated unchanged and is accepted; deterministic
-comparison produces NO-OP. Existing identity may also carry an independently
-evidenced field-only ADD/CHANGE. Candidate omission is no claim/preserve
-Existing, never removal. When an Existing Species/Type is only a parent scope
-for a new child, do not restate its Description unless a real evidence-backed
-description delta exists.
+Existing identity/facts with the same known value are omitted from the
+Supplement Candidate. Existing identity may carry an independently evidenced
+field-only ADD/CHANGE or correction claim. Candidate omission is no
+claim/preserve Existing, never removal. When an Existing Species/Type is only
+a parent scope for a new child, do not restate its Description unless a real
+evidence-backed description delta exists.
 
 Omitted fields in sparse Patch sections are unchanged; complete Candidate
 sections follow their explicit contract in section 1.5.2. `remove` and
@@ -320,11 +325,11 @@ role of the Existing model:
   to each candidate. Discovering a majority type must not end minority/rare
   candidate discovery for that species;
 - Supplement performs internal Complete Evidence Discovery inside one AI
-  response, then serializes one Sparse Evidence Candidate Tree over the
+  response, then serializes one Complete Evidence-Supported Candidate Tree over the
   complete permitted evidence set. Existing is only TARGET/comparison/structure
   reference; deterministic code computes identity and field deltas. Existing
-  identities may receive field-only ADD/CHANGE claims, and unchanged repeated
-  identities become deterministic NO-OP.
+  identities may receive field-only ADD/CHANGE or correction claims, while
+  unchanged Existing identities are omitted from the AI Candidate.
 
 An Existing entry is not evidence for a new fact. Existing non-empty content
 does not authorize skipping complete evidence review, species completeness
@@ -334,7 +339,8 @@ have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
 remains. “Existing already has content” is not a completed review.
 
 The Prompt operationalizes Supplement as one request and one response with
-internal Complete Evidence Discovery followed by one Sparse Evidence Candidate
+internal Complete Evidence Discovery followed by one Complete
+Evidence-Supported Candidate
 serialization. Deterministic code performs Existing Comparison, Patch
 Selection, and the Empty Patch Gate. The semantic workflow is not two API
 requests. The Candidate is transient, is not persisted, and is not a Patch
@@ -368,7 +374,7 @@ review authorizes it.
 ```text
 permitted evidence + Existing target/reference
   -> one response: internal Complete Evidence Discovery
-     -> Sparse Evidence Candidate
+     -> Complete Evidence-Supported Candidate
   -> deterministic Existing Comparison / Classification (NO-OP / ADD / CHANGE)
   -> Existing Comparison (Candidate Builder logical phase only)
   -> Patch Selection
@@ -675,7 +681,7 @@ refactoring.
 
 #### 1.5.8.1 Scope / trigger and design decision
 
-The production Supplement boundary is now hierarchical Sparse World Fact
+The production Supplement boundary is now hierarchical Complete Evidence-Supported World Fact
 Candidate Text. The AI discovers and structures evidence-supported facts;
 deterministic code parses ownership, compares the Candidate with Existing, and
 creates the internal Patch v2 mutation IR. Patch v2 is not an AI-facing output
@@ -687,7 +693,7 @@ The complete production chain is:
 ```text
 Evidence + Existing target/reference
   -> one Supplement AI request / one hierarchical response
-     -> one Sparse Evidence Candidate Tree
+     -> one Complete Evidence-Supported Candidate Tree
   -> deterministic Existing comparison / delta derivation
   -> stack-based Candidate parser
   -> Candidate + Existing deterministic comparison
@@ -728,11 +734,16 @@ Existing 本身不是 evidence。
 <existing_world_model_reference>...</existing_world_model_reference>
 
 【Supplement Single-Response Request】
-先完成 internal Complete Evidence Discovery，再在同一响应中输出一棵
-Evidence Candidate，包含 permitted evidence 支持的 scoped facts。Existing
-仅用于 TARGET、structure reference 和 comparison context；Existing identity
-可作为 field-only claim 的 parent/target。AI 不计算 ADD、CHANGE 或 NO-OP，
-重复 unchanged claim 由程序确定为 NO-OP。
+读取全部 permitted evidence 与完整 Existing canonical World Model，先完成
+internal Complete Evidence Discovery，再在同一响应中输出一棵
+Complete Evidence-Supported Candidate。Candidate 只包含 permitted evidence
+支持且 Existing 尚未记录的事实，或 permitted evidence 明确支持的 correction
+claim；Existing 已有完全相同 known value 的事实不输出。Existing 的 null、
+absent 或 collection 中缺少 identity/member 表示尚未记录，若 evidence 支持则
+可以输出。Existing 仅用于 TARGET、comparison baseline 和 structure reference，
+不是 evidence。Existing 已有 identity 可作为 field-only correction/supplement
+的 parent/target，缺失 identity 才输出 identity claim。AI 不计算 ADD、CHANGE
+或 NO-OP，程序对已输出 claims 执行 deterministic comparison 和 Patch v2 派生。
 不要输出 JSON、operation、target、path、classification 或 old_value。
 ```
 
@@ -1217,7 +1228,7 @@ model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
 The current implementation keeps the v1 complete-candidate Patch path as
 compatibility for non-migrated callers, while the production Supplement v2
-path uses one Sparse Evidence Candidate Tree, deterministic Existing
+path uses one Complete Evidence-Supported Candidate Tree, deterministic Existing
 comparison, hierarchical Candidate parsing, internal Patch v2, operation-level
 evidence validation, sparse merge, complete-model consistency, and canonical
 validation. Full does not consume Existing; Supplement receives Existing only
@@ -1308,7 +1319,7 @@ World Analysis has two deliberate final message shapes:
 - Supplement/Patch: the same permitted evidence references plus a clearly
   labelled Existing canonical World Model comparison baseline; `existing model
   + evidence -> World Fact Discovery / scope / classification
-  -> baseline-aware consolidation -> sparse Candidate Patch`.
+  -> baseline-aware consolidation -> Complete Evidence-Supported Candidate`.
 
 The baseline is not evidence and must not be described to the model as proof of
 new Patch facts. Full must remain baseline-free even if `AnalysisInput` carries
@@ -1362,7 +1373,7 @@ the source of any new fact.
 | Canonical type name uses a generic lexical suffix while preserving a source stem | Allow generic source binding |
 | Canonical type has no source name, description, rule, lifecycle, or field anchor | Remove it |
 | Type is retained but a field lacks evidence | Keep the type; leave that field `null` |
-| Existing update field is unchanged | Do not require current evidence to repeat it |
+| Existing update field is unchanged | Omit it from the Supplement Candidate |
 | Patch add field has no current evidence | Reject the Patch |
 | Patch change has only a value mention without evidence establishing the Candidate at the compatible world scope | Reject the change |
 | Existing field disappears from a complete update | Treat as REMOVE and reject |

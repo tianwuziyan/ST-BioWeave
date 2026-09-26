@@ -639,7 +639,7 @@ test('Supplement keeps permitted evidence roles while placing only its Target in
   assert.match(system, /允许 update 的字段：species、medical_context、projection_rules/u)
 })
 
-test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 message roles', () => {
+test('World Model Supplement v3 prompt is gated and keeps Phase 1 message roles', () => {
   const messages = buildWorldModelPatchMessagesV2({
     world_model: v2ExistingModel(),
     character: { description: 'Character Card evidence.' },
@@ -669,7 +669,7 @@ test('World Model Supplement v2 prompt is sparse, gated, and keeps Phase 1 messa
   assert.match(messages.find(message => message.role === 'assistant').content, /Recent Story evidence\./u)
 })
 
-test('World Model Supplement v2 prompt keeps one sparse response and deterministic comparison boundaries', () => {
+test('World Model Supplement v3 prompt keeps one response and deterministic comparison boundaries', () => {
   const messages = buildWorldModelPatchMessagesV2({
     world_model: normalizeWorldModel({
       schema_version: 1,
@@ -679,12 +679,12 @@ test('World Model Supplement v2 prompt keeps one sparse response and determinist
   const prompt = messages.map(message => message.content).join('\n')
 
   assert.match(prompt, /一次 Supplement attempt 只有一次 API request/u)
-  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
+  assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
   for (const outlet of ['Species', 'Biological Type', 'Capabilities', 'Reproduction Rules', 'Lifecycle', 'Reproductive Mechanisms', 'Special Rules', 'Exceptions', 'Unknowns', 'Medical Context', 'Projection Rules']) {
     assert.match(prompt, new RegExp(outlet.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   }
   assert.match(prompt, /所有 opening\/closing tags 与 parser stack 是唯一 ownership signal/u)
-  assert.match(prompt, /Sparse Evidence Candidate/u)
+  assert.match(prompt, /Complete Evidence-Supported Candidate/u)
   assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
 })
 
@@ -976,9 +976,16 @@ test('Supplement v3 assembled production prompt includes the semantic Field Dict
   assert.match(prompt, /schema field 没资料不是 Unknown/u)
   assert.match(prompt, /明确正向证据=true，明确负向证据=false，unknown\/unstated\/insufficient=omit/u)
   assert.match(prompt, /Candidate 禁止 null/u)
-  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
-  assert.match(prompt, /Candidate 可以重复 Existing/u)
+  assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
+  assert.match(prompt, /Existing 相同 known fact 不输出/u)
+  assert.match(prompt, /null、absent 或 collection 中没有该 identity\/member/u)
+  assert.match(prompt, /Existing Description 仍必须遵守 Existing comparison/u)
+  assert.match(prompt, /Existing 已记录完全相同的 Description 时不输出/u)
+  assert.match(prompt, /Existing Description 为 null\/absent 且 permitted evidence 支持/u)
+  assert.match(prompt, /permitted evidence 明确支持与 Existing 不同的 known Description 时/u)
+  assert.doesNotMatch(prompt, /Existing Description.*可重复/u)
   assert.match(prompt, /不负责 ADD、CHANGE 或 NO-OP/u)
+  assert.doesNotMatch(prompt, /Candidate 可以重复 Existing|重复 unchanged claim|不要因为 Existing 已有/u)
   assert.doesNotMatch(prompt, /Supplement only outputs ADD\/CHANGE|avoid NO-OP|do not repeat Existing unchanged facts/u)
 })
 
@@ -989,7 +996,8 @@ test('World Model Supplement v2 prompt enforces Nonhuman field-level evidence an
   assert.match(prompt, /Type 名称、male\/female\/sex-like label、外形、性交行为、schema 对称性和现实常识都不能授权 capability/u)
   assert.match(prompt, /unknown\/unstated\/insufficient evidence 省略；Candidate 禁止 null/u)
   assert.match(prompt, /rare、minority、uncommon、low prevalence 不影响 existence，数量少不等于 temporary/u)
-  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
+  assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
+  assert.match(prompt, /Existing 相同 known fact 不输出/u)
 })
 
 test('World Model prompt keeps direct stable rare Type existence separate from prevalence and details', () => {
@@ -1019,11 +1027,23 @@ test('Supplement deterministic comparison permits Existing identity field-only d
   assert.equal(worldModelCandidateToPatchV2(emptyCandidate, existing).operations.length, 0)
 })
 
-test('Supplement single-response prompt keeps internal discovery and sparse Candidate boundaries', () => {
+test('Supplement single-response prompt keeps internal discovery and complete evidence boundaries', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
   assert.match(prompt, /internal Complete Evidence Discovery/u)
-  assert.match(prompt, /Existing 仅是 TARGET、structure reference 和 comparison context，不是 evidence/u)
-  assert.match(prompt, /Sparse Evidence Candidate/u)
+  assert.match(prompt, /Complete Evidence-Supported Candidate/u)
+  assert.match(prompt, /complete with respect to permitted evidence/u)
+  assert.match(prompt, /not complete with respect to schema/u)
+  assert.match(prompt, /Evidence completeness != Schema completeness/u)
+  assert.match(prompt, /No Evidence Compression/u)
+  assert.match(prompt, /No Schema Completion/u)
+  assert.match(prompt, /Identity discovery first\. Detail extraction second\./u)
+  assert.match(prompt, /Type identity does not authorize details/u)
+  assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
+  assert.match(prompt, /Existing 相同 known fact 不输出/u)
+  assert.match(prompt, /correction claim/u)
+  assert.match(prompt, /不支持的 schema field 必须省略|schema 中存在但 evidence 不支持的 field 必须省略/u)
+  assert.doesNotMatch(prompt, /Candidate 可以重复 Existing|重复 unchanged claim|不要因为 Existing 已有/u)
+  assert.doesNotMatch(prompt, /Sparse Evidence Candidate/u)
   assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
   assert.doesNotMatch(prompt, /前一次 AI call/u)
 })
@@ -1140,6 +1160,28 @@ Biological_Type: Type-B
 [/World Model]
 [/World Model Supplement]`)
   assert.deepEqual(parsed.candidate.species.map(species => ({name: species.name, types: species.biological_types.map(type => type.name)})), [{name: 'Species-A', types: ['Type-B']}])
+})
+
+test('Single Supplement parser preserves multiple evidence-supported types under one Species', () => {
+  const parsed = parseWorldModelSupplementText(`[World Model Supplement]
+[World Model]
+[Species]
+Species: Species-A
+[Biological Type]
+Biological_Type: Type-A
+[/Biological Type]
+[Biological Type]
+Biological_Type: Type-B
+[/Biological Type]
+[/Species]
+[/World Model]
+[/World Model Supplement]`)
+  assert.deepEqual(parsed.candidate.species.map(species => ({
+    name: species.name,
+    types: species.biological_types.map(type => type.name),
+  })), [{name: 'Species-A', types: ['Type-A', 'Type-B']}])
+  const patch = worldModelCandidateToPatchV2(parsed.candidate, v2ExistingModel())
+  assert.deepEqual(patch.operations.map(operation => [operation.op, operation.type?.name]), [['ADD_TYPE', 'Type-B']])
 })
 
 test('Single Supplement parser rejects legacy wrapper and preserves hierarchy failure closure', () => {
