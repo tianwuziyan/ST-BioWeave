@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify the hierarchical protocol, ownership safety invariants, Existing semantics, Candidate-to-Patch mapping and canonical-only persistence/UI contract."}
+{"file":"tests/world-model.test.js","reason":"Verify generic parser, recovery, omission preservation, Candidate-to-Patch mapping and existing guard/merge behavior."}
+{"file":"tests/floor-persistence-coordinator.test.js","reason":"Verify only final canonical World Model persistence remains in the Floor coordinator boundary."}
+{"file":"tests/ui.test.js","reason":"Verify UI continues to consume canonical World Model view-model only."}

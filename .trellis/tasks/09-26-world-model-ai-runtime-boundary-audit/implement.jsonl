@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Canonical World Model and Supplement contract; update the normative AI-facing Patch v2 wording to hierarchical Candidate Text and internal Patch v2."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership, provenance and canonical-only persistence boundary."}
+{"file":"docs/ARCHITECTURE.md","reason":"Runtime ownership and allowed World Model module boundaries."}

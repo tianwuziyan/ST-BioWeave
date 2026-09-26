@@ -84,8 +84,11 @@ Patch / Supplement Analysis first reviews what world-level knowledge the
 current evidence establishes, then consolidates it against the baseline:
 
 ```text
-Existing canonical World Model + current permitted World Analysis evidence
-  -> World Fact Discovery / scope / classification
+current permitted World Analysis evidence + Existing target/reference
+  -> one Supplement AI request / one response
+     -> logical evidence-only Discovery Ledger
+     -> logical field review / Existing comparison / sparse Candidate
+  -> deterministic identity coverage check
   -> baseline-aware consolidation
   -> Candidate Patch
   -> deterministic safety validation
@@ -94,9 +97,12 @@ Existing canonical World Model + current permitted World Analysis evidence
   -> strict canonical validation
 ```
 
-Supplement must receive the validated canonical Existing World Model as a
-comparison baseline and must re-review the complete permitted evidence set.
-The first question is the scope of each discovered fact: individual,
+Supplement must receive the validated canonical Existing World Model in the
+same request as a comparison baseline for the Candidate phase and must
+re-review the complete permitted evidence set. Discovery is an evidence-only
+logical phase in that response: it must not use Existing to prove Species or
+Biological Type identity. The Candidate phase may use Existing for comparison
+and structure reference. The first question is the scope of each discovered fact: individual,
 world-level rule, world-level exception, world-level unknown, world-level
 medical context, or species/type special rule. Only world-level knowledge is
 eligible for World Model consolidation. The same mechanism covers newly
@@ -116,12 +122,52 @@ The pipeline is therefore:
 Full:       evidence -> fact discovery/scope/classification
             -> complete candidate -> Full guards
             -> complete consistency -> canonical model -> persist
-Supplement: Existing model + evidence
-            -> fact discovery/scope/classification
-            -> baseline consolidation -> Candidate Patch
-            -> delta safety -> deterministic merge
+Supplement: evidence + Existing target -> one AI response containing
+            evidence-only Discovery Ledger followed by sparse Candidate Builder
+            -> deterministic identity coverage check
+            -> Candidate -> internal Patch v2
+            -> delta safety / Evidence Guard -> deterministic merge
             -> complete consistency -> canonical validation -> persist
 ```
+
+The Supplement Discovery Ledger is a transient, strict structured protocol.
+Its grammar contains only `Discovery -> Species -> Name -> Biological Type ->
+Name`; it does not contain Existing, details, natural-language parsing, or
+Patch operations. Opening/closing tags and a parser stack determine ownership;
+indentation has no semantic effect. Missing identity, unsupported tags,
+closing mismatch, or ambiguous parent ownership rejects the affected subtree
+without re-parenting. The Discovery Ledger is not persisted and is never sent
+to UI or Floor storage.
+
+One valid Discovery Ledger contains at most one Species block for each exact
+Species name, and each Species block contains at most one Biological Type
+entry for each exact Type name. Duplicate Species or Type identity is a
+protocol error (`WORLD_MODEL_DISCOVERY_DUPLICATE_IDENTITY`); it is never
+last-write-wins or fuzzy-merged.
+
+The single Supplement response contains the permitted evidence-driven
+Discovery Ledger and the sparse Candidate. The Candidate Builder logical phase
+uses that same-response Ledger plus the canonical Existing model. The Ledger is
+the complete Species/Type identity universe for this pass: Candidate Builder does not
+rediscover or create a new Species/Type identity. It only performs
+field-level evidence review, Existing comparison, semantic consolidation, and
+sparse Candidate synthesis. It emits the existing sparse hierarchical
+Candidate DTO. Candidate omission is no claim/preserve Existing;
+it is not removal. When an Existing Species/Type is only a parent scope for a
+new child, the Candidate emits identity only and does not restate Existing
+Description. A Description is emitted only for an evidence-supported
+description ADD/CHANGE claim. Candidate protocol likewise permits at most one
+Species block per exact Species name and at most one Type entry per Species;
+duplicates fail closed with `WORLD_MODEL_CANDIDATE_DUPLICATE_IDENTITY` before
+coverage indexing or Candidate-to-Patch translation.
+
+The deterministic Discovery Coverage Check compares only exact canonical
+Species/Type identity sets. Every Ledger identity absent from Existing must be
+present in Candidate; every Candidate identity must be present in the Ledger.
+It does not read evidence prose, perform NLP, infer biology, pair types, use
+name dictionaries, or create identities. Missing coverage fails closed before
+Candidate-to-Patch conversion with
+`WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING`.
 
 Omitted fields in sparse Patch sections are unchanged; complete Candidate
 sections follow their explicit contract in section 1.5.2. `remove` and
@@ -265,33 +311,40 @@ role of the Existing model:
   Reproductive Classification Gate -> Evidence Sufficiency -> Type Creation
   to each candidate. Discovering a majority type must not end minority/rare
   candidate discovery for that species;
-- Supplement receives the Existing canonical model only as a comparison
-  baseline, re-runs the same semantic review over the complete permitted
-  evidence set, and emits a sparse differential Candidate Patch.
+- Supplement emits one AI response whose logical first phase freezes the
+  evidence-only Discovery Ledger, then whose Candidate Builder phase receives
+  Existing only as a comparison baseline and re-runs field-level evidence
+  review, semantic consolidation, and sparse Candidate synthesis over the
+  Ledger identities and complete permitted evidence set. Candidate Builder
+  does not rediscover or create Species/Type identities, and emits a sparse
+  differential Candidate Patch.
 
 An Existing entry is not evidence for a new fact. Existing non-empty content
-does not authorize skipping Fact Discovery, species completeness review,
-biological-type classification review, missing-world-fact review, or
+does not authorize skipping Discovery Ledger review, species completeness
+review, biological-type classification review, missing-world-fact review, or
 compatible consolidation. An empty Patch is legal only after those reviews
 have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
 remains. “Existing already has content” is not a completed review.
 
-The Prompt operationalizes Supplement as an internal Candidate Ledger followed
-by Classification, Existing Comparison, Patch Selection, and the Empty Patch
-Gate. The Ledger is not an external DTO, parser input, or Patch schema field:
+The Prompt operationalizes Supplement as one request and one response with an
+evidence-only Discovery Ledger followed by a Candidate Builder logical phase
+that performs field Classification, Existing Comparison, Patch Selection, and
+the Empty Patch Gate. This two-phase semantic workflow is not two API requests.
+The Discovery Ledger is strict structured content in the response, is not
+persisted, and is not a Patch schema field:
 
-The Supplement message architecture preserves the same epistemic boundary:
-the formal analysis contract and permitted evidence remain in their existing
-system/assistant positions; only the Existing target is moved to the user
-message:
+The Supplement message architecture preserves the same epistemic boundary in
+one request: the formal analysis contract and permitted evidence remain in
+their existing system/assistant positions, and the Existing target remains in
+the user message:
 
 ```text
-system  formal Supplement contract
+system  formal Supplement single-response contract
 system  permitted World Analysis references
 assistant  Recent Story
 user  【Supplement Target：当前已保存的 World Model】
       <existing_world_model>...</existing_world_model>
-      【Supplement Request】
+      【Supplement Single-Response Request】
 ```
 
 The target block states that the model is the currently saved and active
@@ -306,10 +359,10 @@ remains outside the World Model request unless a separate evidence-scope
 review authorizes it.
 
 ```text
-permitted evidence
-  -> Candidate Ledger
-  -> Classification (UNCHANGED / ADD / CHANGE / EXCLUDED)
-  -> Existing Comparison (Supplement only)
+permitted evidence + Existing target/reference
+  -> one response: evidence-only Discovery Ledger
+     -> Candidate Builder / Classification (UNCHANGED / ADD / CHANGE / EXCLUDED)
+  -> Existing Comparison (Candidate Builder logical phase only)
   -> Patch Selection
   -> Empty Patch Gate
 ```
@@ -324,9 +377,10 @@ shared scope, species/type binding, exclusion, stability, classification, and
 evidence rules. Existing is used only after candidate discovery, for
 comparison and compatible consolidation; it cannot create or prove a
 candidate. Patch Selection emits only legal evidence-supported `ADD`/`CHANGE`
-in the active Patch contract. The current v1 implementation uses a complete
-`update.species` Candidate; the frozen v2 design in §1.5.8 replaces that
-AI-facing duplication with explicit delta operations. The Empty Patch Gate may
+in the active Patch contract. The compatibility v1 implementation uses a
+complete `update.species` Candidate; the production Supplement path in §1.5.8
+replaces AI-facing Patch construction with a sparse hierarchical Candidate and
+deterministic internal delta operations. The Empty Patch Gate may
 pass only after every candidate category and candidate has been reviewed and
 no legal `ADD` or `CHANGE` remains. Neither v1 nor v2 authorizes `REMOVE` or
 Structural Reclassification.
@@ -614,44 +668,67 @@ refactoring.
 
 #### 1.5.8.1 Scope / trigger and design decision
 
-The current v1 Patch accepts `update.species` as a complete canonical species
-Candidate and computes an internal Semantic Delta from it. That permits safe
-field-level comparison, but requires the AI to repeat unchanged Existing
-species, types, and sibling fields. Patch v2 changes the AI-facing contract to
-an explicit delta-only operation DTO. This section freezes the design for a
-later implementation; it does not authorize production-code changes in this
-phase.
+The production Supplement boundary is now hierarchical Sparse World Fact
+Candidate Text. The AI discovers and structures evidence-supported facts;
+deterministic code parses ownership, compares the Candidate with Existing, and
+creates the internal Patch v2 mutation IR. Patch v2 is not an AI-facing output
+contract. The Candidate is not persisted, returned to UI, or used as a Floor
+schema.
 
-The chosen design is an explicit operation DTO rather than adding more
-ambiguous nested shapes under v1 `add`/`update`. Operation identity, operation
-kind, target scope, and proposed value are separate and therefore auditable.
-The DTO is versioned so v1 complete-candidate handling can remain during
-migration.
+The complete production chain is:
+
+```text
+Evidence + Existing target/reference
+  -> one Supplement AI request / one hierarchical response
+     -> [Discovery] evidence-only identity ledger
+     -> [Candidate] sparse hierarchical Candidate Text
+  -> deterministic identity coverage check
+  -> stack-based Candidate parser
+  -> Candidate + Existing deterministic comparison
+  -> internal Patch v2
+  -> existing Evidence Guard
+  -> existing mergeWorldModelPatchV2
+  -> final consistency + canonical validation
+  -> complete canonical World Model
+  -> existing Floor persistence / UI view model
+```
+
+Candidate omission is no claim and preserves Existing. No Candidate field or
+empty outlet can request removal. Full remains on its existing complete-model
+contract and is not part of this migration.
 
 #### 1.5.8.2 Message architecture
 
-Supplement v2 uses this role order, excluding optional configured boundary
-system messages:
+The single Supplement request uses this role order, excluding optional
+configured boundary system messages:
 
 ```text
-system     formal Supplement contract
+system     formal Supplement single-response contract
 system     permitted World Analysis references
 assistant  Recent Story
-user       Supplement Target + Supplement Request
+user       Existing target + Supplement Single-Response Request
 ```
 
-Only the user message contains Existing:
+The response contains both logical phases in one explicit top-level grammar.
+Discovery must not use Existing to prove identity. Candidate Builder may use
+the same request's Existing target as comparison baseline and structure
+reference; Existing is never evidence:
 
 ```text
 【Supplement Target：当前已保存的 World Model】
 这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审查和补充的目标。
 Existing = TARGET + comparison baseline。
 Existing 本身不是 evidence。
-<existing_world_model>...</existing_world_model>
+<existing_world_model_reference>...</existing_world_model_reference>
 
-【Supplement Request】
-使用 permitted evidence 审查 Target，只输出 evidence-supported v2 ADD/CHANGE operations。
-UNCHANGED 不输出；不要复制完整 Existing species 或 unchanged sibling fields。
+【Supplement Single-Response Request】
+在同一次响应中先输出 [Discovery]，再输出 [Candidate]。Discovery 只根据
+permitted evidence 建立 Species/Type identity；Candidate 只对同一响应中的
+Discovery identities 做 field-level evidence review、Existing comparison、
+semantic consolidation 与 sparse Candidate synthesis。不要重新发现或创建新的
+Species/Type identity。Ledger identity 已存在 Existing 且无新 claim 时可以
+省略；Ledger identity 不存在 Existing 时必须输出 identity block。
+不要输出 JSON、operation、target、path、classification 或 old_value。
 ```
 
 Permitted Worldbook, Character Card, External Memory, Opening Greeting, and
@@ -661,16 +738,20 @@ Character message architecture is unchanged.
 
 #### 1.5.8.3 Signatures and top-level response contract
 
-The future v2 parser/validator boundary is conceptually:
+The production parser/validator boundary is:
 
 ```text
-parseWorldModelPatchV2(raw) -> WorldModelPatchV2
-validateWorldModelPatchV2(patch) -> WorldModelPatchV2
-applyWorldModelPatchEvidenceGuardV2(patch, analysisInput) -> WorldModelPatchV2
-mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1
+parseWorldModelSupplementText(raw) -> { discoveryLedger, candidate, diagnostics }
+validateWorldModelDiscoveryLedger(ledger) -> DiscoveryLedger
+validateWorldModelCandidate(candidate) -> SparseWorldFactCandidate
+checkWorldModelCandidateDiscoveryCoverage(ledger, candidate, existing) -> pass/fail
+worldModelIdentityIndex(model) -> exact identity index or duplicate error
+worldModelCandidateToPatchV2(candidate, existingModel) -> WorldModelPatchV2
+applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> classified Patch v2
+mergeWorldModelPatchV2(existingModel, patch) -> complete WorldModelV1
 ```
 
-The AI-facing DTO is:
+Patch v2 remains an internal deterministic IR:
 
 ```json
 {
@@ -679,7 +760,7 @@ The AI-facing DTO is:
 }
 ```
 
-`operations` contains only evidence-supported proposed `ADD` or `CHANGE`
+The internally generated `operations` contains only evidence-supported proposed `ADD` or `CHANGE`
 information. It never contains complete updated Existing species,
 unchanged Existing fields, `UNCHANGED` operations, `REMOVE`, `invalidate`, or
 Structural Reclassification. `operations: []` means the complete Candidate
@@ -832,23 +913,136 @@ model; it never replaces a complete Existing species entry. A supported
 capability operation cannot authorize another capability, reproduction rule,
 lifecycle field, special rule, or mechanism operation.
 
-#### 1.5.8.9 Compatibility and migration plan
+#### 1.5.8.9 Candidate grammar and presence semantics
 
-Migration is staged to preserve the already-tested v1 guard path:
+Candidate Text uses explicit opening/closing tags and a parser stack. Indent,
+nearest-node lookup, natural-language headings, and implicit close are not
+semantic. The allowed hierarchy is:
+
+```text
+[World Model]
+  [Species]
+    [Biological Type]
+      [Capabilities] ... [/Capabilities]
+      [Reproduction Rules] ... [/Reproduction Rules]
+      [Lifecycle] ... [/Lifecycle]
+      [Reproductive Mechanisms]
+        [Mechanism] ... [/Mechanism]
+      [/Reproductive Mechanisms]
+      [Special Rules]
+        [Rule] ... [/Rule]
+      [/Special Rules]
+    [/Biological Type]
+  [/Species]
+  [Medical Context] ... [/Medical Context]
+  [Exceptions] [Exception] ... [/Exception] [/Exceptions]
+  [Unknowns] [Unknown] ... [/Unknown] [/Unknowns]
+  [Projection Rules] [Projection Rule] ... [/Projection Rules]
+[/World Model]
+```
+
+The protocol field labels are fixed per section:
+
+```text
+[Species]                 Name, Description
+[Biological Type]         Name, Description
+[Capabilities]            Can Produce Sperm, Can Produce Ova,
+                          Can Be Fertilized, Can Fertilize,
+                          Can Cause Pregnancy, Can Carry Pregnancy
+[Reproduction Rules]      Fertilization, Pregnancy Or Carrying, Cycle,
+                          Ovulation, Gestation, Labor
+[Lifecycle]               Maturation, Aging
+[Mechanism]               Key, Label, Pathway, Carrying Compatibility,
+                          World Model Rule Refs, Evidence
+[Rule]                    Value only
+[Medical Context]         Childbirth Difficulty, Care Level, Evidence
+[Exception]               Statement, Applies To, Evidence
+[Unknown]                 Value only
+[Projection Rule]         JSON only: one raw projection-rule object without
+                          projection_rule_id
+```
+
+Only these exact protocol labels are accepted. Internal snake_case names,
+underscore/hyphen aliases, fuzzy case or spacing variants, and fields not
+listed for the current section are invalid and must be omitted. In particular,
+`[Rule]` cannot contain `Name` or `Description`.
+
+Species and Biological Type require an explicit `Name`. A child is attached
+only when its opening tag is legal under the current stack parent. Missing
+identity, mismatched closing tags, illegal nesting, a new Species before the
+previous Species closes, or an unclosed subtree invalidates the smallest safe
+subtree. Every section and collection item is transactional: fields are staged
+only in the current frame, and `attach()` commits them to the parent only
+after a normal closing tag and successful finalization. An invalid section is
+discarded without mutating its parent, so no rollback is required. The parser
+never re-parents a fact to another Species or Type; valid closed siblings may
+still be recovered. Projection identity is not Candidate input:
+`projection_rule_id` is rejected and generated only by the existing production
+normalization path.
+
+Field parsing accepts only the exact protocol labels defined by the grammar
+(`Name`, `Description`, `Can Carry Pregnancy`, and so on). Internal canonical
+snake_case names, underscore aliases, hyphen aliases, and fuzzy case/spacing
+variants are not Candidate protocol tokens.
+
+Candidate values have these meanings:
+
+| Candidate form | Meaning |
+| --- | --- |
+| field absent | no claim; preserve Existing |
+| `null` | invalid Candidate value; never a removal request |
+| empty array/outlet | no collection claim; preserve Existing, never clear it |
+| explicit `true`/`false` | evidence-supported boolean fact |
+| `[Unknown]` item | explicit unresolved world proposition supported by evidence |
+| non-empty text/object | evidence-supported semantic fact |
+
+Existing formatter output may show canonical `null` and `NONE RECORDED` as
+reference markers. The Candidate parser does not treat those markers as
+claims. Existing remains TARGET, comparison baseline, and structure reference,
+never evidence.
+
+#### 1.5.8.10 Deterministic Candidate -> Patch v2 mapping
+
+For each Candidate fact, deterministic code resolves canonical identity in
+Existing and emits the smallest internal operation. A missing Existing entity
+emits `ADD`; an equal fact emits no operation (`NO-OP`); a different known fact
+emits `CHANGE` and remains subject to the existing guard; Candidate omission
+preserves Existing. The mapping is:
+
+| Candidate fact | Existing comparison | Internal operation |
+| --- | --- | --- |
+| new Species subtree | species identity absent | `ADD_SPECIES` |
+| new Biological Type | species exists, type identity absent | `ADD_TYPE` |
+| species/type scalar, capability, rule, lifecycle, or medical field | absent/unknown | `SET_FIELD` classified `ADD` |
+| same scalar/field | equal canonical value | no operation (`NO-OP`) |
+| changed scalar/field | different known canonical value | `SET_FIELD` classified `CHANGE` |
+| type-local special rule | semantic rule identity absent/equal | `ADD_SPECIAL_RULE` / no-op |
+| reproductive mechanism | stable mechanism key absent/equal | `ADD_MECHANISM` / no-op |
+| world exception | canonical statement + scope absent/equal | `ADD_EXCEPTION` / no-op |
+| triggered world unknown | canonical unknown absent/equal | `ADD_UNKNOWN` / no-op |
+| new projection rule | generated identity absent/equal | `ADD_PROJECTION_RULE` / no-op |
+
+Known Existing value -> Candidate `null`, collection disappearance, or any
+identity mutation is weakening and fails closed as unsupported `REMOVE`.
+Projection updates remain blocked. No new mechanism, exception, or projection
+update operation is introduced.
+
+#### 1.5.8.11 Compatibility and migration status
+
+The completed migration preserves the already-tested v1 guard path:
 
 1. Keep v1 parsing, evidence guard, and complete-candidate merge as temporary
    backward compatibility. Do not silently reinterpret v1 `update.species`.
 2. Implement an isolated v2 parser/validator and an internal operation
    application path. A v1-to-internal adapter may translate only after v1
    validation and must preserve v1 complete-candidate deletion-risk checks.
-3. Change only the Supplement Prompt to request `schema_version: 2` and
-   operation DTO output. Full output and Full schema remain unchanged.
-4. Route v2 responses through operation-level evidence validation and merge;
-   retain v1 fallback only for an explicitly defined compatibility period and
-   diagnostic path.
-5. Add API/runtime acceptance coverage, then remove the v1 complete-candidate
-   Supplement path in a separately approved cleanup change. Do not delete
-   v1 code in the initial v2 implementation.
+3. Change only the Supplement Prompt to request hierarchical Candidate Text.
+   Full output and Full schema remain unchanged.
+4. Route Candidate responses through deterministic Candidate -> Patch v2
+   conversion, then the existing operation-level evidence validation and merge.
+5. Keep the v1 parser/guard/merge compatibility path for non-migrated callers;
+   the production Supplement path no longer asks the AI for v1 or v2 Patch
+   operations.
 
 Runtime should not own semantic conversion. If an adapter is needed, it stays
 inside the World Model Patch parser/compatibility boundary and returns the
@@ -987,27 +1181,21 @@ model; it does not define Full/Supplement semantics or Patch fact eligibility.
 
 ## 1.7 Current implementation status
 
-The current implementation is still the v1 complete-candidate Patch path and
-is **REVIEW REQUIRED / PARTIAL** against the frozen v2 design. Existing capability
-includes Full/Patch Runtime routing, Full/Supplement Prompt separation, Patch
-baseline final-message injection, Full baseline isolation, the shared permitted
-evidence universe, Existing baseline isolation from evidence, World Fact
-Discovery, canonical null semantics, Human baseline, Patch DTO structural
-validation, top-level `remove`/`invalidate` rejection, deterministic merge,
-strict canonical normalization, canonical Existing/Candidate comparison,
-changed-fact `UNCHANGED`/`ADD`/`CHANGE`/`REMOVE` safety classification,
-per-fact evidence checks, sparse medical presence preservation, and post-merge
-complete-model consistency finalization. These v1 capabilities remain the
-temporary compatibility path; v2 operation parsing, operation-level evidence
-validation, and sparse operation merge are not implemented by this document
-update. The Prompt and evidence boundaries remain correct: Patch receives
-Existing baseline, Full does not consume it, and Existing baseline is not
-collected by `evidenceUnits()`.
+The current implementation keeps the v1 complete-candidate Patch path as
+compatibility for non-migrated callers, while the production Supplement v2
+path uses the evidence-only Discovery Ledger, deterministic identity coverage,
+hierarchical Candidate Text, internal Patch v2, operation-level evidence
+validation, sparse merge, complete-model consistency, and canonical
+validation. Full does not consume Existing; Candidate Builder receives
+Existing only as TARGET/comparison/reference, and Existing is not collected by
+`evidenceUnits()`.
 
 The remaining limits are intentional or independently blocked: deterministic
-code does not re-implement narrative World Fact Discovery; AI remains
-responsible for scope, outlet classification, compatible consolidation, and
-correction proposals. Existing reproductive-mechanism update identity remains
+code does not re-implement narrative World Fact Discovery or infer facts from
+evidence prose; the Discovery parser and coverage checker only parse and
+compare identities. AI remains responsible for scope, outlet classification,
+compatible consolidation, and correction proposals. Existing
+reproductive-mechanism update identity remains
 blocked when no stable logical identity is available, while safe new mechanism
 adds require an explicit non-colliding key. Exceptions use explicit canonical
 field equality rather than serialized-object identity. `projection_rules.update`

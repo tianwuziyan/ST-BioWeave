@@ -11,6 +11,12 @@ import {
   WORLD_MODEL_SCHEMA,
 } from './prompts.js';
 import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
+import {
+  parseWorldModelCandidateText,
+  parseWorldModelSupplementText,
+  validateWorldModelCandidate,
+  validateWorldModelDiscoveryLedger,
+} from './world-supplement-protocol.js';
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -4207,6 +4213,147 @@ export function summarizeAnalysisInput(input = {}) {
   };
 }
 
+function candidateTarget(kind, speciesName, typeName = undefined) {
+  if (kind === 'world') return {kind: 'world'}
+  if (kind === 'species') return {kind: 'species', species_name: speciesName}
+  return {kind: 'biological_type', species_name: speciesName, type_name: typeName}
+}
+
+function addCandidateField(operations, target, path, value, existingValue = undefined) {
+  if (value === undefined || value === null) return
+  if (v2Equal(value, existingValue)) return
+  operations.push({op: 'SET_FIELD', target, path, value})
+}
+
+function candidateTypeOperations(operations, speciesName, type, existingType) {
+  const typeName = type?.name
+  if (typeof typeName !== 'string' || !typeName.trim()) return
+  const target = candidateTarget('biological_type', speciesName, typeName)
+  addCandidateField(operations, target, ['description'], type.description, existingType?.description)
+  for (const key of CAPABILITY_KEYS) if (hasOwn(type.capabilities, key)) addCandidateField(operations, target, ['capabilities', key], type.capabilities[key], existingType?.capabilities?.[key])
+  for (const key of WORLD_RULE_KEYS) if (hasOwn(type.reproduction_rules, key)) addCandidateField(operations, target, ['reproduction_rules', key], type.reproduction_rules[key], existingType?.reproduction_rules?.[key])
+  for (const key of LIFECYCLE_KEYS) if (hasOwn(type.lifecycle, key)) addCandidateField(operations, target, ['lifecycle', key], type.lifecycle[key], existingType?.lifecycle?.[key])
+  for (const value of Array.isArray(type.special_rules) ? type.special_rules : []) if (typeof value === 'string' && value.trim() && !existingType?.special_rules?.some(item => v2TextIdentity(item) === v2TextIdentity(value))) operations.push({op: 'ADD_SPECIAL_RULE', target, value})
+  for (const mechanism of Array.isArray(type.reproductive_mechanisms) ? type.reproductive_mechanisms : []) if (mechanism && typeof mechanism === 'object' && !existingType?.reproductive_mechanisms?.some(item => item?.key === mechanism.key && v2Equal(item, mechanism))) operations.push({op: 'ADD_MECHANISM', target, mechanism})
+}
+
+function candidateSpeciesOperation(species) {
+  const value = {name: species.name}
+  if (hasOwn(species, 'description')) value.description = species.description
+  if (Array.isArray(species.biological_types) && species.biological_types.length) value.biological_types = species.biological_types
+  return {op: 'ADD_SPECIES', species: value}
+}
+
+export function worldModelCandidateToPatchV2(candidate, existingModel) {
+  const value = validateWorldModelCandidate(candidate)
+  const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+  const operations = []
+  for (const species of value.species) {
+    if (!species || typeof species.name !== 'string' || !species.name.trim()) continue
+    const currentSpecies = existing.species.find((item) => item.name === species.name)
+    if (!currentSpecies) {
+      operations.push(candidateSpeciesOperation(species))
+      continue
+    }
+    addCandidateField(operations, candidateTarget('species', species.name), ['description'], species.description, currentSpecies.description)
+    for (const type of Array.isArray(species.biological_types) ? species.biological_types : []) {
+      if (!type || typeof type.name !== 'string' || !type.name.trim()) continue
+      const currentType = currentSpecies.biological_types.find((item) => item.name === type.name)
+      if (!currentType) operations.push({op: 'ADD_TYPE', target: candidateTarget('species', species.name), type})
+      else candidateTypeOperations(operations, species.name, type, currentType)
+    }
+  }
+  for (const key of ['childbirth_difficulty', 'care_level', 'evidence']) if (hasOwn(value.medical_context, key)) addCandidateField(operations, candidateTarget('world'), ['medical_context', key], value.medical_context[key], existing.medical_context?.[key])
+  for (const exception of value.exceptions) if (exception && typeof exception === 'object' && !existing.exceptions.some(item => patchExceptionSemanticEqual(item, exception))) operations.push({op: 'ADD_EXCEPTION', exception})
+  for (const unknown of value.unknowns) if (typeof unknown === 'string' && unknown.trim() && !existing.unknowns.some(item => v2TextIdentity(item) === v2TextIdentity(unknown))) operations.push({op: 'ADD_UNKNOWN', unknown})
+  for (const projectionRule of value.projection_rules) if (projectionRule && typeof projectionRule === 'object' && !existing.projection_rules.some(item => v2Equal(item, projectionRule))) operations.push({op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule})
+  return {schema_version: 2, operations}
+}
+
+export function worldModelIdentityIndex(model) {
+  const index = new Map()
+  for (const species of Array.isArray(model?.species) ? model.species : []) {
+    if (!species || typeof species.name !== 'string' || !species.name.trim()) continue
+    if (index.has(species.name)) {
+      const error = new Error('WORLD_MODEL_IDENTITY_DUPLICATE')
+      error.code = 'WORLD_MODEL_IDENTITY_DUPLICATE'
+      error.path = `species.${species.name}`
+      throw error
+    }
+    const typeNames = new Set()
+    for (const type of Array.isArray(species.biological_types) ? species.biological_types : []) {
+      if (!type || typeof type.name !== 'string' || !type.name.trim()) continue
+      if (typeNames.has(type.name)) {
+        const error = new Error('WORLD_MODEL_IDENTITY_DUPLICATE')
+        error.code = 'WORLD_MODEL_IDENTITY_DUPLICATE'
+        error.path = `species.${species.name}.biological_types.${type.name}`
+        throw error
+      }
+      typeNames.add(type.name)
+    }
+    index.set(species.name, new Set(
+      (Array.isArray(species.biological_types) ? species.biological_types : [])
+        .filter(type => type && typeof type.name === 'string' && type.name.trim())
+        .map(type => type.name),
+    ))
+  }
+  return index
+}
+
+function discoveryCoverageError(code, path, message) {
+  const error = new Error(code)
+  error.code = code
+  error.path = path
+  error.error_path = path
+  error.diagnosticCode = code
+  error.analysis_stage = 'world_patch_v2_discovery_coverage'
+  error.message = message ?? code
+  return error
+}
+
+export function checkWorldModelCandidateDiscoveryCoverage(discoveryLedger, candidate, existingModel) {
+  const ledger = validateWorldModelDiscoveryLedger(discoveryLedger)
+  const value = validateWorldModelCandidate(candidate)
+  const existing = worldModelIdentityIndex(existingModel)
+  const discovered = worldModelIdentityIndex(ledger)
+  const emitted = worldModelIdentityIndex(value)
+
+  for (const [speciesName, typeNames] of emitted) {
+    const ledgerTypes = discovered.get(speciesName)
+    if (!ledgerTypes) throw discoveryCoverageError(
+      'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_INVALID',
+      `candidate.species.${speciesName}`,
+      'Candidate identity is not present in the Discovery Ledger',
+    )
+    for (const typeName of typeNames) {
+      if (!ledgerTypes.has(typeName)) throw discoveryCoverageError(
+        'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_INVALID',
+        `candidate.species.${speciesName}.biological_types.${typeName}`,
+        'Candidate identity is not present in the Discovery Ledger',
+      )
+    }
+  }
+
+  for (const [speciesName, typeNames] of discovered) {
+    const existingTypes = existing.get(speciesName)
+    const emittedTypes = emitted.get(speciesName)
+    if (!existingTypes && !emitted.has(speciesName)) throw discoveryCoverageError(
+      'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING',
+      `candidate.species.${speciesName}`,
+      'Discovery Ledger species identity is missing from Candidate',
+    )
+    for (const typeName of typeNames) {
+      if (existingTypes?.has(typeName)) continue
+      if (!emittedTypes?.has(typeName)) throw discoveryCoverageError(
+        'WORLD_MODEL_CANDIDATE_DISCOVERY_COVERAGE_MISSING',
+        `candidate.species.${speciesName}.biological_types.${typeName}`,
+        'Discovery Ledger biological type identity is missing from Candidate',
+      )
+    }
+  }
+  return {ok: true}
+}
+
 export function createAnalyzer({
   profileResolver,
   contextResolver,
@@ -4327,9 +4474,8 @@ export function createAnalyzer({
     )
   }
 
-  // Explicit Phase 6 boundary. Runtime continues to call the v1 method until
-  // Phase 7 wires v2 sparse merge and persistence; never return this result to
-  // the v1 mergeWorldModelPatch() consumer.
+  // Supplement AI returns hierarchical Candidate Text. Patch v2 remains an
+  // internal deterministic mutation IR for the existing guard/merge boundary.
   async function analyzeWorldModelPatchV2(input = {}) {
     const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
     if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED')
@@ -4340,26 +4486,37 @@ export function createAnalyzer({
       error.code = 'WORLD_MODEL_PATCH_V2_TARGET_REQUIRED'
       throw error
     }
-    const messages = buildWorldModelPatchMessagesV2(
-      analysisInput,
-      worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {},
-    )
+    const promptSettings = worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {}
+    const messages = buildWorldModelPatchMessagesV2(analysisInput, promptSettings)
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
     try {
-      const patch = parseWorldModelPatchV2(responseText(raw))
+      const parsed = parseWorldModelSupplementText(responseText(raw))
+      const discoveryLedger = validateWorldModelDiscoveryLedger(parsed.discoveryLedger)
+      const candidate = validateWorldModelCandidate(parsed.candidate)
+      checkWorldModelCandidateDiscoveryCoverage(discoveryLedger, candidate, existingModel)
+      const patch = worldModelCandidateToPatchV2(candidate, existingModel)
       const classified = applyWorldModelPatchV2EvidenceGuard(
         patch,
         existingModel,
         analysisInput,
       )
-      return { patch, classified }
+      return {
+        patch,
+        candidate,
+        discoveryLedger,
+        discoveryDiagnostics: parsed.diagnostics,
+        diagnostics: parsed.diagnostics,
+        classified,
+      }
     } catch (error) {
       traceApi('parser-error', {
-        parser: 'world-model-patch-v2',
+        parser: 'world-model-supplement-text',
         responseTextLength: responseText(raw).length,
         ...traceParserError(error),
         diagnosticCode: error?.diagnosticCode ?? error?.diagnostic_code ?? error?.message ?? null,
-        analysisStage: error?.analysis_stage ?? 'world_patch_v2_evidence_guard',
+        analysisStage: error?.analysis_stage ?? (error?.code === 'WORLD_MODEL_PATCH_V2_INVALID'
+          ? 'world_patch_v2_evidence_guard'
+          : 'world_patch_v2_supplement_parse'),
         stage: error?.stage ?? 'world_patch_v2',
       })
       throw error
