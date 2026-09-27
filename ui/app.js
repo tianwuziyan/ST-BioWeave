@@ -27,6 +27,15 @@ import {
   traceApi,
 } from '../ai/client.js'
 import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
+import {
+  buildRenderedWorldLayerSnapshot,
+  buildWorldModelLayerSnapshot,
+  compareWorldModelLayers,
+  diffWorldModelAddresses,
+  fingerprintWorldModel,
+  stableWorldModelStringify,
+  worldModelAddressInventory,
+} from '../utils/world-model-debug.js'
 import { collectAnalysisContext } from '../ai/input-builder.js'
 import {
   characterOpeningSelectionState,
@@ -519,6 +528,7 @@ export function createApp(runtime, options = {}) {
   let analysisSourcesState = createAnalysisSourcesState()
   let analysisPreviewState = createAnalysisPreviewState()
   let worldModelState = createWorldModelState()
+  let lastWorldRenderDiagnostic = null
   let worldModelLoadGeneration = 0
   let lastWorldUiRenderedGeneration = 0
   let worldModelRefreshInFlight = null
@@ -802,10 +812,11 @@ export function createApp(runtime, options = {}) {
   function isPopupContentElement(value) {
     return Boolean(value && typeof value === 'object' && typeof value.addEventListener === 'function' && 'innerHTML' in value)
   }
-  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt) {
+  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt, worldModelLiveState = null) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
       persistenceTrace: runtime.getPersistenceTrace?.() ?? null,
+      worldModelLiveState,
       analysisPrompt: promptSettings,
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
@@ -816,13 +827,133 @@ export function createApp(runtime, options = {}) {
     }
     return nextContent
   }
-  async function copyPersistenceTrace() {
-    const trace = runtime.getPersistenceTrace?.()
-    if (!trace) {
-      notify('暂无最近一次分析诊断。', 'warning', documentRef)
-      return false
+
+  function floorIdentityEqual(left, right) {
+    if (!left && !right) return true
+    if (!left || !right) return false
+    const fields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+    return fields.every(field => left[field] !== undefined && left[field] === right[field])
+  }
+
+  function snapshotId() {
+    return globalThis.crypto?.randomUUID?.() ?? `world-live-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
+  async function collectWorldModelLiveState() {
+    const startedAt = new Date().toISOString()
+    const id = snapshotId()
+    const collectAttempt = async () => {
+      let targetBefore = null
+      let targetBeforeError = null
+      try {
+        targetBefore = await runtime.resolveCurrentBioWeaveFloor?.()
+      } catch (error) {
+        targetBeforeError = error
+      }
+      const runtimeDiagnostic = runtime.getWorldModelDiagnosticState?.() ?? null
+      let floorResolution = null
+      let floorReadError = null
+      try {
+        floorResolution = await runtime.resolveWorldModelAtOrBefore?.(targetBefore)
+      } catch (error) {
+        floorReadError = error
+      }
+      let targetAfter = null
+      let targetAfterError = null
+      try {
+        targetAfter = await runtime.resolveCurrentBioWeaveFloor?.()
+      } catch (error) {
+        targetAfterError = error
+      }
+      const targetChanged = !floorIdentityEqual(targetBefore?.version, targetAfter?.version)
+        || String(targetBefore?.chatId ?? runtime.chat.current()) !== String(targetAfter?.chatId ?? runtime.chat.current())
+      const layers = {}
+      const candidateFingerprint = runtimeDiagnostic?.candidate_model
+        ? await fingerprintWorldModel(runtimeDiagnostic.candidate_model)
+        : null
+      layers.runtime = await buildWorldModelLayerSnapshot({
+        model: runtimeDiagnostic?.runtime_model ?? null,
+        source: 'runtime_diagnostic_state',
+        unavailableReason: runtimeDiagnostic ? null : 'runtime_state_not_retained',
+      })
+      layers.runtime.floor_version = runtimeDiagnostic?.floor_version ?? null
+      layers.floor = await buildWorldModelLayerSnapshot({
+        model: floorResolution?.model ?? null,
+        source: 'authoritative_floor_resolver',
+        unavailableReason: floorReadError ? 'floor_read_failed' : null,
+      })
+      layers.floor.floor_read_status = floorReadError ? 'failed' : 'success'
+      layers.floor.floor_read_error_code = floorReadError?.code ?? floorReadError?.message ?? null
+      layers.floor.floor_meta_present = floorResolution?.meta !== null && floorResolution?.meta !== undefined
+      layers.floor.floor_version = floorResolution?.floor_version ?? null
+      layers.floor.floor_version_match = Boolean(floorResolution?.floor_version && targetBefore?.version && floorIdentityEqual(floorResolution.floor_version, targetBefore.version))
+      layers.ui = await buildWorldModelLayerSnapshot({
+        model: worldModelState.model,
+        source: 'ui_world_model_state',
+        unavailableReason: worldModelState.model ? null : 'ui_world_model_not_present',
+      })
+      layers.last_render = lastWorldRenderDiagnostic
+        ? await buildRenderedWorldLayerSnapshot(lastWorldRenderDiagnostic)
+        : {...await buildWorldModelLayerSnapshot({model: null, source: 'last_render_diagnostic', unavailableReason: 'render_not_recorded'})}
+      const consistency = targetChanged
+        ? {world_consistency: {runtime_vs_floor: 'UNAVAILABLE', floor_vs_ui: 'UNAVAILABLE', ui_vs_last_render: 'UNAVAILABLE', runtime_vs_ui: 'UNAVAILABLE'}, mismatch_layers: []}
+        : compareWorldModelLayers(layers)
+      const addressDiff = targetChanged
+        ? Object.fromEntries(Object.keys(diffWorldModelAddresses(layers)).map(key => [key, []]))
+        : diffWorldModelAddresses(layers)
+      const trace = runtime.getPersistenceTrace?.() ?? null
+      const traceSequence = Array.isArray(trace?.sequence) ? trace.sequence : []
+      return {
+        snapshot_id: id,
+        snapshot_started_at: startedAt,
+        snapshot_completed_at: new Date().toISOString(),
+        snapshot_generated_at: startedAt,
+        chat_id: targetBefore?.version?.chat_id ?? runtime.chat.current() ?? null,
+        message_id: targetBefore?.version?.message_id ?? null,
+        floor: targetBefore?.version?.floor ?? null,
+        swipe_id: targetBefore?.version?.swipe_id ?? null,
+        content_hash: targetBefore?.version?.content_hash ?? null,
+        message_version: targetBefore?.version?.message_version ?? null,
+        snapshot_consistent: !targetChanged,
+        snapshot_invalidation_reason: targetChanged ? 'active_target_changed_during_collection' : null,
+        target_before: targetBefore?.version ?? null,
+        target_after: targetAfter?.version ?? null,
+        active_world_execution_id: runtimeDiagnostic?.execution_id ?? null,
+        latest_world_fact_delta_execution_id: runtimeDiagnostic?.latest_world_fact_delta_execution_id ?? null,
+        latest_fact_delta: runtimeDiagnostic?.fact_delta_summary
+          ? {
+              ...runtimeDiagnostic.fact_delta_summary,
+              resolved_candidate_world_fingerprint: candidateFingerprint?.fingerprint ?? null,
+              resolved_candidate_world_full_hash: candidateFingerprint?.full_hash ?? null,
+            }
+          : {
+              candidate_world_fingerprint: null,
+              reason: 'candidate_not_retained',
+            },
+        target_read_error_code: targetBeforeError?.code ?? targetBeforeError?.message ?? targetAfterError?.code ?? targetAfterError?.message ?? null,
+        history_trace_metadata: {
+          trace_buffer_capacity: null,
+          trace_event_count: traceSequence.length,
+          trace_truncated: null,
+          oldest_trace_timestamp: traceSequence[0]?.timestamp ?? traceSequence[0]?.created_at ?? null,
+          newest_trace_timestamp: traceSequence.at(-1)?.timestamp ?? traceSequence.at(-1)?.created_at ?? null,
+        },
+        layers,
+        ...consistency,
+        address_diff: addressDiff,
+      }
     }
-    const text = JSON.stringify(trace, null, 2)
+    let snapshot = await collectAttempt()
+    if (!snapshot.snapshot_consistent) {
+      snapshot = await collectAttempt()
+      if (snapshot.snapshot_consistent) snapshot.snapshot_invalidation_reason = 'recovered_after_single_retry'
+    }
+    return snapshot
+  }
+  async function copyPersistenceTrace() {
+    const liveState = await collectWorldModelLiveState()
+    const trace = runtime.getPersistenceTrace?.()
+    const text = JSON.stringify({debug_metadata: {live_state_source: 'sampled_at_export_time', history_trace_source: 'event_buffer'}, world_model_live_state: liveState, history_trace: trace}, null, 2)
     const clipboard = documentRef?.defaultView?.navigator?.clipboard ?? globalThis.navigator?.clipboard
     let textarea = null
     let copied = false
@@ -848,7 +979,7 @@ export function createApp(runtime, options = {}) {
         if (!documentRef.execCommand('copy')) throw new Error('CLIPBOARD_COPY_FAILED')
       }
       if (textarea) textarea.remove?.()
-      notify('最近一次分析诊断已复制。', 'success', documentRef)
+      notify('World Model LIVE STATE 与历史诊断已复制。', 'success', documentRef)
       return true
     } catch {
       textarea?.remove?.()
@@ -875,7 +1006,8 @@ export function createApp(runtime, options = {}) {
       notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef)
       return false
     }
-    const content = renderDebugPopupContent(null, promptSettings)
+    const liveState = await collectWorldModelLiveState()
+    const content = renderDebugPopupContent(null, promptSettings, liveState)
     const localContent = isPopupContentElement(content) ? content : null
     const handlePopupClick = async event => {
       const target = event?.target?.closest?.('[data-bioweave-action]')
@@ -885,9 +1017,9 @@ export function createApp(runtime, options = {}) {
       if (action === 'refresh-analysis-preview') {
         event.preventDefault?.()
         const pending = refreshAnalysisPreview()
-        renderDebugPopupContent(localContent, promptSettings)
+        renderDebugPopupContent(localContent, promptSettings, await collectWorldModelLiveState())
         await pending
-        renderDebugPopupContent(localContent, promptSettings)
+        renderDebugPopupContent(localContent, promptSettings, await collectWorldModelLiveState())
         return
       }
       if (action === 'analysis-preview-mode') {
@@ -3223,7 +3355,7 @@ export function createApp(runtime, options = {}) {
     const main = root.querySelector('.bioweave-main')
     if (!main) return
     const scrollPositions = captureScrollPositions(root)
-    main.innerHTML = page[2]({
+    const pageMarkup = page[2]({
       characterId: focusedCharacterId,
       trackingSubjects: businessState.trackingSubjects,
       characterProfiles: businessState.characterProfiles,
@@ -3271,6 +3403,22 @@ export function createApp(runtime, options = {}) {
           }
         : {}),
     })
+    main.innerHTML = pageMarkup
+    if (route === 'world') {
+      const model = worldModelState.model
+      lastWorldRenderDiagnostic = {
+        canonicalSerialized: model ? stableWorldModelStringify(model) : null,
+        viewModelSerialized: model ? stableWorldModelStringify(model) : null,
+        counts: {
+          species_count: Array.isArray(model?.species) ? model.species.length : 0,
+          biological_type_count: Array.isArray(model?.species)
+            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
+            : 0,
+        },
+        addresses: model ? worldModelAddressInventory(model) : [],
+        rendered_at: new Date().toISOString(),
+      }
+    }
     if (route === 'world' && worldModelLoadGeneration > 0 && lastWorldUiRenderedGeneration !== worldModelLoadGeneration) {
       lastWorldUiRenderedGeneration = worldModelLoadGeneration
       runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_RENDERED', chat_id: runtime.chat.current(), world_model_present: Boolean(worldModelState.model)})
@@ -4835,6 +4983,7 @@ export function createApp(runtime, options = {}) {
     focusedCharacterId = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()
+    lastWorldRenderDiagnostic = null
     dataManagementState = createDataManagementState()
     businessState = {
       loaded: false,
@@ -4896,6 +5045,11 @@ export function createApp(runtime, options = {}) {
     getOverlay: () => lifecycle.getOverlay(),
     getRoute: () => route,
     getFocusedCharacterId: () => focusedCharacterId,
+    collectWorldModelLiveState,
+    getWorldModelUiDiagnosticState: () => ({
+      world_model: worldModelState.model,
+      last_render: lastWorldRenderDiagnostic,
+    }),
     getSettingsState: () => ({
       ...settingsState,
       dataManagement: {...dataManagementState},

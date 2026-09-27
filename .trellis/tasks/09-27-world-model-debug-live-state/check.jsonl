@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Floor ownership or persistence architecture regression."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify no parser, guard, prompt, resolver, schema, or merge business change."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Verify UI state/render ownership, no DOM scraping, and focused UI tests."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify changed frontend code and static boundaries."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify cross-layer placement and final architecture documentation sync."}

@@ -97,7 +97,7 @@ flowchart TD
 | Generation settle | `runtime/generation-lifecycle.js` | lifecycle tests | Persistence |
 | Retry behavior | `runtime/event-analysis.js` | World/Event attempt modules | Generation state |
 | Scheduler | `runtime/event-analysis.js` | settings/runtime wiring | Adapter |
-| Diagnostics | `runtime/diagnostics.js` | caller-specific trace emission | General event bus |
+| Diagnostics | `runtime/diagnostics.js`、`utils/world-model-debug.js` | caller-specific trace emission、World LIVE STATE fingerprint/diff | General event bus、Floor writers |
 | AI input construction | `ai/input-builder.js` | `runtime/event-analysis.js` caller | Persistence |
 | World prompt | `ai/prompts.js` | `ai/analyzer.js` | Event runtime |
 | Event prompt | `ai/prompts.js` | `ai/input-builder.js` | World runtime |
@@ -111,6 +111,31 @@ flowchart TD
 | Source cleanup | `runtime/events.js`、`storage/clear.js` | lifecycle contract | Adapter policy |
 | Settings | `ui/settings.js`、settings/storage callers | `runtime/events.js` host/settings glue | new Settings service |
 | Clear/reset | `storage/clear.js` + owning runtime bridge | `runtime/events.js` orchestration | ordinary Floor writer |
+
+### World Model Debug LIVE STATE boundary
+
+Settings Debug keeps two explicitly different data sources:
+
+```text
+user action (open / refresh / copy)
+→ ui/app.js collectWorldModelLiveState()
+→ Runtime transient diagnostic state (read only)
+→ existing authoritative World/Floor resolver (read only)
+→ current ui/app.js World state
+→ last World render diagnostic
+→ utils/world-model-debug.js fingerprint / comparison / address diff
+→ WORLD MODEL LIVE STATE + HISTORY TRACE output
+```
+
+`WORLD MODEL LIVE STATE` is sampled at the action boundary and includes its own
+snapshot ID, started/completed timestamps, six-field target identity, layer
+fingerprints, dynamic addresses, consistency status, and target-change
+invalidation. `HISTORY TRACE` remains the event buffer returned by
+`runtime/diagnostics.js`; it is labeled as historical and is never used as a
+substitute for current Runtime, Floor, UI, or renderer state. The collector has
+no Floor writer, does not call analysis or repair, and does not alter the
+canonical `saveWorldModel → commitFloorPatch(owner="world") →
+FloorPersistenceCoordinator` path.
 
 ## Feature module creation rule
 

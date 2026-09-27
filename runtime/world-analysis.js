@@ -135,6 +135,7 @@ export function createWorldAnalysis({
   ) throw new TypeError("WORLD_ANALYSIS_DEPENDENCIES_REQUIRED");
 
   const worldInFlight = new Map();
+  let latestWorldModelDiagnostic = null;
 
   function hasWorldModelUpdateSignal(target) {
     return WORLD_MODEL_UPDATE_SIGNAL.test(getMessageText(target?.message, target?.swipeId));
@@ -385,7 +386,12 @@ export function createWorldAnalysis({
             return {
               model,
               meta,
-              fact_delta_summary: cloneWorldValue(patchResult?.fact_delta_summary ?? null),
+              fact_delta_summary: patchResult
+                ? {
+                    ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
+                    fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
+                  }
+                : null,
             };
           }
           return {model, meta};
@@ -480,6 +486,17 @@ export function createWorldAnalysis({
           publishPhase("world_readback");
           publishPhase("world_ui_ready");
           const ready = await resolveWorldModelUiReady(target);
+          latestWorldModelDiagnostic = {
+            execution_id: job.diagnostic_execution_id,
+            latest_world_fact_delta_execution_id: factDeltaSummary ? job.diagnostic_execution_id : null,
+            mode,
+            trigger,
+            floor_version: cloneWorldValue(target.version),
+            candidate_model: cloneWorldValue(model),
+            runtime_model: cloneWorldValue(ready?.model),
+            fact_delta_summary: cloneWorldValue(factDeltaSummary ?? null),
+            updated_at: new Date().toISOString(),
+          };
           emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
           emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {floor_version_match: true, world_model_present: Boolean(ready?.model)}, "world");
           emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
@@ -594,6 +611,10 @@ export function createWorldAnalysis({
     analyzeCurrentWorldModelFull,
     analyzeCurrentWorldModelPatch,
     resolveFinalWorldModelForAnalysis,
-    clear: () => worldInFlight.clear(),
+    getWorldModelDiagnosticState: () => cloneWorldValue(latestWorldModelDiagnostic),
+    clear: () => {
+      worldInFlight.clear();
+      latestWorldModelDiagnostic = null;
+    },
   };
 }

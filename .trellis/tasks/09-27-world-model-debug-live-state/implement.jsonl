@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor authoritative ownership, read boundary, six-field version, and forbidden alternate fact sources."}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model evidence/persistence boundary; implementation must not change business semantics."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Plain DOM UI ownership, lifecycle, and testing constraints for Settings/debug wiring."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and forbidden patterns for read-only diagnostics."}
+{"file":"docs/ARCHITECTURE.md","reason":"Runtime/UI/storage module boundaries and existing feature-owner placement."}

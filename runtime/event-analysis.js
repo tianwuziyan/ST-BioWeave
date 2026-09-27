@@ -1787,6 +1787,7 @@ export function createEventAnalysisCoordinator({
   const resolveWorldModelAtOrBefore = worldAnalysis.resolveWorldModelAtOrBefore;
   const resolveWorldModelStrictlyBefore = worldAnalysis.resolveWorldModelStrictlyBefore;
   const resolvePersistedWorldModelForAnalysis = worldAnalysis.resolvePersistedWorldModelForAnalysis;
+  const getWorldModelDiagnosticState = worldAnalysis.getWorldModelDiagnosticState;
   const saveWorldModel = worldAnalysis.saveWorldModel;
   const analyzeCurrentWorldModelFull = worldAnalysis.analyzeCurrentWorldModelFull;
   const analyzeCurrentWorldModelPatch = worldAnalysis.analyzeCurrentWorldModelPatch;
@@ -3252,6 +3253,7 @@ export function createEventAnalysisCoordinator({
     resolveWorldModelAtOrBefore,
     resolveWorldModelStrictlyBefore,
     resolvePersistedWorldModelForAnalysis,
+    getWorldModelDiagnosticState,
     saveWorldModel,
     analyzeCurrentWorldModelFull,
     analyzeCurrentWorldModelPatch,

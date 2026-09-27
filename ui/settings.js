@@ -1073,9 +1073,19 @@ function renderPersistenceTrace(trace = null) {
   ].join('');
 }
 
+function renderWorldModelLiveState(liveState = null) {
+  return [
+    '<section class="bioweave-card bioweave-world-model-live-state" data-bioweave-world-model-live-state>',
+    '<header><div><h4>WORLD MODEL LIVE STATE</h4><p class="bioweave-muted">在查看或导出动作触发时重新采样；只读，不触发分析或修复。</p></div></header>',
+    '<pre data-bioweave-world-model-live-state-content>' + escapeHtml(traceValueText(liveState, '尚未采样 LIVE STATE')) + '</pre>',
+    '</section>',
+  ].join('');
+}
+
 export function renderAnalysisDebugPopupContent({
   analysisPreview = {},
   persistenceTrace = null,
+  worldModelLiveState = null,
   storyTimeDebug = {},
   analysisPrompt = null,
   analysisPromptDraft = null,
@@ -1105,6 +1115,7 @@ export function renderAnalysisDebugPopupContent({
       openSettingsSections,
     }),
     '<section class="bioweave-analysis-debug-section bioweave-analysis-diagnostic-section">',
+    renderWorldModelLiveState(worldModelLiveState),
     renderPersistenceTrace(persistenceTrace),
     '</section>',
   ].join('');
