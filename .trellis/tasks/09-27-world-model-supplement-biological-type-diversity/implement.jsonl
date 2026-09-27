@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model Supplement, evidence boundary, and canonical merge contract."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership and persistence boundary that must remain frozen."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"AI/runtime/diagnostic data-flow change across layers."}

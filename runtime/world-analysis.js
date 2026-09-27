@@ -4,6 +4,7 @@ import {
   normalizeStoredWorldModel,
   summarizeAnalysisInput,
 } from "../ai/analyzer.js";
+import {buildWorldModelSupplementCoverageTargets} from "../ai/world-supplement-protocol.js";
 import { emptyFloor } from "../storage/schema.js";
 import {
   floorVersionFromData,
@@ -334,7 +335,7 @@ export function createWorldAnalysis({
       promise: null,
       diagnostic_execution_id: `world-fact-delta-${Date.now()}-${++worldFactDeltaDiagnosticSequence}`,
     };
-      const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
+    const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
     let supplementCompletenessRetry = null;
     const publishPhase = phase => {
       onPhase?.(phase);
@@ -411,7 +412,27 @@ export function createWorldAnalysis({
                   }, "world");
                 },
               });
+              const baseSummary = patchResult
+                ? {
+                    ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
+                    fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
+                  }
+                : null;
+              const candidateModel = mergeWorldModelPatchV2(
+                resolved.model,
+                patchResult?.patch ?? patchResult,
+                patchAnalysisInput,
+              );
+              const baselineTargetKeys = new Set(buildWorldModelSupplementCoverageTargets(resolved.model).map(target => JSON.stringify(target)))
+              const candidateTargets = buildWorldModelSupplementCoverageTargets(candidateModel)
+              const newUnreviewedTargetCount = candidateTargets.filter(target => !baselineTargetKeys.has(JSON.stringify(target))).length
               supplementCompletenessRetry = null;
+              factDeltaSummary = {
+                ...(baseSummary ?? {}),
+                dynamic_coverage_target_count: newUnreviewedTargetCount,
+                coverage_expansion_round_count: 0,
+                coverage_fixed_point_reached: newUnreviewedTargetCount === 0,
+              };
             } catch (error) {
               rememberFactDeltaExecution(
                 factDeltaExecutionId,
@@ -427,7 +448,8 @@ export function createWorldAnalysis({
                 },
                 null,
               );
-              if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") supplementCompletenessRetry = cloneWorldValue(error.diagnostics);
+              if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE")
+                supplementCompletenessRetry = cloneWorldValue(error.diagnostics);
               throw error;
             }
             model = mergeWorldModelPatchV2(
@@ -443,12 +465,7 @@ export function createWorldAnalysis({
             return {
               model,
               meta,
-              fact_delta_summary: patchResult
-                ? {
-                    ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
-                    fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
-                  }
-                : null,
+              fact_delta_summary: factDeltaSummary,
               fact_delta_execution_id: factDeltaExecutionId,
               require_supplement_completeness: true,
             };

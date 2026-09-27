@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Canonical Supplement Fact Delta, evidence boundary, identity-vs-detail and Floor/UI ownership contract."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Required Floor-derived fact ownership and no-bypass persistence boundary."}
+{"file":"docs/ARCHITECTURE.md","reason":"Current World Analysis, diagnostics and Floor coordinator feature ownership."}
+{"file":"docs/ui-framework.config.json","reason":"Required UI contract for any Settings diagnostic display change."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Required UI structure, tokens and diagnostic popup conventions."}

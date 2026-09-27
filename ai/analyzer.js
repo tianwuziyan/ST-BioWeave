@@ -16,6 +16,7 @@ import {
   buildWorldModelSupplementCoverageTargets,
   buildWorldModelSupplementIdentityReviewSubjects,
   parseWorldModelSupplementReviewText,
+  summarizeWorldModelSupplementIdentityDiversity,
   validateWorldModelSupplementCompleteness,
   validateWorldModelFactDelta,
   validateWorldModelCandidate,
@@ -4789,9 +4790,14 @@ export function createAnalyzer({
       throw error
     }
     const promptSettings = worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {}
-    const coverageTargets = buildWorldModelSupplementCoverageTargets(existingModel)
-    const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(existingModel, input.supplement_identity_subjects ?? analysisInput.supplement_identity_subjects)
-    const messages = buildWorldModelPatchMessagesV2(analysisInput, promptSettings)
+    const candidateModel = input.supplement_candidate ?? analysisInput.supplement_candidate ?? existingModel
+    const coverageTargets = buildWorldModelSupplementCoverageTargets(candidateModel)
+    const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(candidateModel, input.supplement_identity_subjects ?? analysisInput.supplement_identity_subjects)
+    const messages = buildWorldModelPatchMessagesV2({
+      ...analysisInput,
+      world_model: existingModel,
+      supplement_candidate: candidateModel,
+    }, promptSettings)
     const debug = factDeltaDebugEnabled(input)
     const emitFactDeltaTrace = (stage, details = {}) => {
       if (typeof input?.onFactDeltaTrace !== 'function') return
@@ -4851,8 +4857,8 @@ export function createAnalyzer({
         failure_code: rejected.code,
         reason: rejected.reason,
       })
-      const resolution = resolveWorldModelFactDelta(facts, existingModel)
-      const normalizedExisting = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+      const resolution = resolveWorldModelFactDelta(facts, candidateModel)
+      const normalizedExisting = normalizeWorldModel(candidateModel, {strict: true, allowGeneratedProjectionRuleIds: true})
       let completenessSummary = null
       if (input.require_supplement_completeness === true) {
         try {
@@ -4862,6 +4868,7 @@ export function createAnalyzer({
             identitySubjects,
             identityReviews: review.identity_reviews,
             facts,
+            existingModel: candidateModel,
           })
         } catch (error) {
           emitFactDeltaTrace('WORLD_SUPPLEMENT_INCOMPLETE', {
@@ -4873,6 +4880,16 @@ export function createAnalyzer({
         }
       }
       const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
+      const acceptedIdentityFacts = guarded.factResults
+        .filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status) && item.fact?.field === 'Type_Identity')
+        .map(item => item.fact)
+      const identityDiversity = summarizeWorldModelSupplementIdentityDiversity({
+        existingModel: candidateModel,
+        identitySubjects,
+        identityReviews: review.identity_reviews,
+        facts,
+        acceptedFacts: acceptedIdentityFacts,
+      })
       for (const rejected of guarded.rejectedFacts) {
         const error = rejected.guardError
         const operation = factDeltaRejectedOperation(error)
@@ -4931,6 +4948,18 @@ export function createAnalyzer({
         ...(completenessSummary ?? {
           supplement_completeness_complete: input.require_supplement_completeness !== true,
         }),
+        identity_diversity: identityDiversity.subjects,
+        reported_distinct_type_count: identityDiversity.reported_distinct_type_count,
+        host_observed_distinct_type_count: identityDiversity.host_observed_distinct_type_count,
+        accepted_canonical_type_count: identityDiversity.accepted_canonical_type_count,
+        discovered_sibling_type_count: identityDiversity.discovered_sibling_type_count,
+        discovered_sibling_type_names: identityDiversity.discovered_sibling_type_names,
+        accepted_sibling_type_count: identityDiversity.accepted_sibling_type_count,
+        accepted_sibling_type_names: identityDiversity.accepted_sibling_type_names,
+        rejected_sibling_type_count: identityDiversity.rejected_sibling_type_count,
+        rejected_sibling_type_names: identityDiversity.rejected_sibling_type_names,
+        new_type_identity_fact_count: identityDiversity.new_type_identity_fact_count,
+        accepted_new_type_identity_count: identityDiversity.accepted_new_type_identity_count,
         completeness_satisfied: completenessSummary?.supplement_completeness_complete ?? input.require_supplement_completeness !== true,
       }
       emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {

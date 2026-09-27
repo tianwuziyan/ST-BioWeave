@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify Supplement completeness and evidence invariants."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Floor persistence architecture drift."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify any diagnostic presentation changes stay within existing UI conventions."}

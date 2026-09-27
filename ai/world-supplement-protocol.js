@@ -746,6 +746,136 @@ function reviewBlockName(name) {
   return null
 }
 
+const IDENTITY_REVIEW_FIELDS = new Set([
+  'Subject_ID',
+  'Species',
+  'Disposition',
+  'Distinct_Type_Count',
+  'Additional_Type_Search',
+])
+
+function identityTypesForSpecies(model, speciesName) {
+  const species = Array.isArray(model?.species)
+    ? model.species.find(item => item?.name === speciesName)
+    : null
+  return new Set(
+    (Array.isArray(species?.biological_types) ? species.biological_types : [])
+      .filter(type => typeof type?.name === 'string' && type.name.trim())
+      .map(type => type.name.trim()),
+  )
+}
+
+function identityFactsForSpecies(facts, speciesName) {
+  return (Array.isArray(facts) ? facts : [])
+    .filter(fact => fact?.field === 'Type_Identity' && fact?.species === speciesName && typeof fact?.biological_type === 'string' && fact.biological_type.trim())
+}
+
+function distinctIdentityFactCount(facts, existingTypes) {
+  return new Set(
+    facts
+      .map(fact => fact.biological_type.trim())
+      .filter(type => !existingTypes.has(type)),
+  ).size
+}
+
+export function summarizeWorldModelSupplementIdentityDiversity({
+  existingModel = {},
+  identitySubjects = [],
+  identityReviews = [],
+  facts = [],
+  acceptedFacts = [],
+} = {}) {
+  const reviewsBySubject = new Map(
+    (Array.isArray(identityReviews) ? identityReviews : [])
+      .filter(review => review && typeof review === 'object')
+      .map(review => [review.subject_id, review]),
+  )
+  const subjects = (Array.isArray(identitySubjects) ? identitySubjects : []).map(subject => {
+    const review = reviewsBySubject.get(subject?.subject_id)
+    const existingTypes = identityTypesForSpecies(existingModel, subject?.species)
+    const responseFacts = identityFactsForSpecies(facts, subject?.species)
+    const acceptedResponseFacts = identityFactsForSpecies(acceptedFacts, subject?.species)
+    const observedTypes = new Set(existingTypes)
+    for (const fact of responseFacts) observedTypes.add(fact.biological_type.trim())
+    const reported = Number.isInteger(review?.distinct_type_count) && review.distinct_type_count >= 0
+      ? review.distinct_type_count
+      : null
+    const initialTypeNames = [...existingTypes].sort((left, right) => left.localeCompare(right))
+    const discoveredSiblingTypeNames = [...new Set(responseFacts.map(fact => fact.biological_type.trim()))]
+      .filter(type => !existingTypes.has(type))
+      .sort((left, right) => left.localeCompare(right))
+    const acceptedSiblingTypeNames = [...new Set(acceptedResponseFacts.map(fact => fact.biological_type.trim()))]
+      .filter(type => !existingTypes.has(type))
+      .sort((left, right) => left.localeCompare(right))
+    const rejectedSiblingTypeNames = discoveredSiblingTypeNames.filter(type => !acceptedSiblingTypeNames.includes(type))
+    const initialIdentitySearchPerformed = Boolean(review && Object.hasOwn(review, 'additional_type_search'))
+    const siblingSearchSeeded = existingTypes.size > 0
+    const siblingSearchComplete = initialIdentitySearchPerformed && review?.additional_type_search === 'EXHAUSTED'
+    let code = null
+    if (!review) code = 'WORLD_MODEL_SUPPLEMENT_IDENTITY_REVIEW_MISSING'
+    else if (review.disposition !== 'REVIEWED' || review.species !== subject?.species) code = 'WORLD_MODEL_SUPPLEMENT_IDENTITY_REVIEW_INVALID'
+    else if (!Number.isInteger(review.distinct_type_count) || review.distinct_type_count < 0) code = 'WORLD_MODEL_SUPPLEMENT_IDENTITY_COUNT_INVALID'
+    else if (review.additional_type_search !== 'EXHAUSTED') code = 'WORLD_MODEL_SUPPLEMENT_IDENTITY_SEARCH_NOT_EXHAUSTED'
+    else if (reported !== observedTypes.size) code = 'WORLD_MODEL_SUPPLEMENT_IDENTITY_COUNT_MISMATCH'
+    return {
+      subject_id: subject?.subject_id ?? null,
+      species: subject?.species ?? null,
+      initial_type_count: existingTypes.size,
+      initial_type_names: initialTypeNames,
+      initial_identity_search_performed: initialIdentitySearchPerformed,
+      sibling_search_seeded: siblingSearchSeeded,
+      sibling_search_complete: siblingSearchComplete,
+      discovered_sibling_type_count: discoveredSiblingTypeNames.length,
+      discovered_sibling_type_names: discoveredSiblingTypeNames,
+      accepted_sibling_type_count: acceptedSiblingTypeNames.length,
+      accepted_sibling_type_names: acceptedSiblingTypeNames,
+      rejected_sibling_type_count: rejectedSiblingTypeNames.length,
+      rejected_sibling_type_names: rejectedSiblingTypeNames,
+      reported_distinct_type_count: reported,
+      host_observed_distinct_type_count: observedTypes.size,
+      accepted_canonical_type_count: existingTypes.size + acceptedSiblingTypeNames.length,
+      new_type_identity_fact_count: distinctIdentityFactCount(responseFacts, existingTypes),
+      accepted_new_type_identity_count: distinctIdentityFactCount(acceptedResponseFacts, existingTypes),
+      observed_type_names: [...observedTypes].sort((left, right) => left.localeCompare(right)),
+      complete: !code,
+      ...(code ? {code} : {}),
+    }
+  })
+  const aggregate = subjects.reduce((summary, subject) => {
+    summary.reported_distinct_type_count += subject.reported_distinct_type_count ?? 0
+    summary.host_observed_distinct_type_count += subject.host_observed_distinct_type_count
+    summary.accepted_canonical_type_count += subject.accepted_canonical_type_count
+    summary.discovered_sibling_type_count += subject.discovered_sibling_type_count
+    summary.accepted_sibling_type_count += subject.accepted_sibling_type_count
+    summary.rejected_sibling_type_count += subject.rejected_sibling_type_count
+    summary.discovered_sibling_type_names.push(...subject.discovered_sibling_type_names)
+    summary.accepted_sibling_type_names.push(...subject.accepted_sibling_type_names)
+    summary.rejected_sibling_type_names.push(...subject.rejected_sibling_type_names)
+    summary.new_type_identity_fact_count += subject.new_type_identity_fact_count
+    summary.accepted_new_type_identity_count += subject.accepted_new_type_identity_count
+    return summary
+  }, {
+    reported_distinct_type_count: 0,
+    host_observed_distinct_type_count: 0,
+    accepted_canonical_type_count: 0,
+    discovered_sibling_type_count: 0,
+    accepted_sibling_type_count: 0,
+    rejected_sibling_type_count: 0,
+    discovered_sibling_type_names: [],
+    accepted_sibling_type_names: [],
+    rejected_sibling_type_names: [],
+    new_type_identity_fact_count: 0,
+    accepted_new_type_identity_count: 0,
+  })
+  return {
+    subjects,
+    ...aggregate,
+    discovered_sibling_type_names: [...new Set(aggregate.discovered_sibling_type_names)].sort((left, right) => left.localeCompare(right)),
+    accepted_sibling_type_names: [...new Set(aggregate.accepted_sibling_type_names)].sort((left, right) => left.localeCompare(right)),
+    rejected_sibling_type_names: [...new Set(aggregate.rejected_sibling_type_names)].sort((left, right) => left.localeCompare(right)),
+  }
+}
+
 function factDeltaAddress(fact) {
   if (fact?.field === 'Exception' || fact?.field === 'Unknown' || fact?.field === 'Projection_Rule' || !fact?.species) {
     return {scope: 'world'}
@@ -757,13 +887,20 @@ function factDeltaAddress(fact) {
 }
 
 export function parseWorldModelSupplementReviewText(raw) {
-  const lines = String(raw ?? '').split(/\r?\n/u)
+  const lines = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '').split(/\r?\n/u)
   const coverage = []
   const identity = []
+  let rootState = 'none'
   let block = null
   let fields = null
+  let factBlock = false
   const flush = () => {
     if (!fields) return
+    const reportedCount = fields.Distinct_Type_Count === undefined
+      ? undefined
+      : /^\d+$/u.test(fields.Distinct_Type_Count)
+        ? Number(fields.Distinct_Type_Count)
+        : Number.NaN
     const target = block === 'coverage' ? {
       target_id: fields.Target_ID,
       disposition: fields.Disposition,
@@ -771,12 +908,38 @@ export function parseWorldModelSupplementReviewText(raw) {
       subject_id: fields.Subject_ID,
       species: fields.Species,
       disposition: fields.Disposition,
+      distinct_type_count: reportedCount,
+      additional_type_search: fields.Additional_Type_Search,
     }
     ;(block === 'coverage' ? coverage : identity).push(target)
     fields = null
   }
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim()
+    if (!line) continue
+    if (line === '[World Model Updates]') {
+      if (rootState !== 'none') throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_ROOT_INVALID', [{line: index + 1}])
+      rootState = 'open'
+      continue
+    }
+    if (line === '[/World Model Updates]') {
+      if (rootState !== 'open' || block || factBlock) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_ROOT_INVALID', [{line: index + 1}])
+      rootState = 'closed'
+      continue
+    }
+    if (rootState !== 'open') throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_ROOT_INVALID', [{line: index + 1}])
+    if (line === '[Fact]') {
+      if (block) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1}])
+      factBlock = true
+      continue
+    }
+    if (line === '[/Fact]') {
+      if (!factBlock) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1}])
+      factBlock = false
+      continue
+    }
+    if (factBlock) continue
+    if (line.includes('|')) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1}])
     const open = line.match(/^\[([^/][^\]]*)\]$/u)
     const close = line.match(/^\[\/([^\]]+)\]$/u)
     if (open) {
@@ -793,15 +956,15 @@ export function parseWorldModelSupplementReviewText(raw) {
       block = null
       continue
     }
-    if (!block || !line) continue
+    if (!block) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1}])
     const pair = line.match(/^([^:]+):\s*(.*)$/u)
     if (!pair) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1}])
     const key = pair[1].trim()
-    const allowed = block === 'coverage' ? new Set(['Target_ID', 'Disposition']) : new Set(['Subject_ID', 'Species', 'Disposition'])
+    const allowed = block === 'coverage' ? new Set(['Target_ID', 'Disposition']) : IDENTITY_REVIEW_FIELDS
     if (!allowed.has(key) || Object.hasOwn(fields, key)) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID', [{line: index + 1, field: key}])
     fields[key] = pair[2].trim()
   }
-  if (block) throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_GRAMMAR_INVALID')
+  if (block || factBlock || rootState !== 'closed') throw reviewError('WORLD_MODEL_SUPPLEMENT_REVIEW_ROOT_INVALID')
   return {coverage_dispositions: coverage, identity_reviews: identity}
 }
 
@@ -811,6 +974,7 @@ export function validateWorldModelSupplementCompleteness({
   identitySubjects = [],
   identityReviews = [],
   facts = [],
+  existingModel = {},
 } = {}) {
   const targetById = new Map(coverageTargets.map(target => [target.target_id, target]))
   const seenCoverage = new Set()
@@ -842,7 +1006,23 @@ export function validateWorldModelSupplementCompleteness({
       invalid.push({subject_id: review.subject_id ?? null, reason: 'invalid_or_duplicate_identity_review'})
     else seenSubjects.add(review.subject_id)
   }
-  for (const subject of identitySubjects) if (!seenSubjects.has(subject.subject_id)) missing.push({subject_id: subject.subject_id, reason: 'missing_identity_review'})
+  for (const subject of identitySubjects) if (!seenSubjects.has(subject.subject_id)) missing.push({subject_id: subject.subject_id, reason: 'missing_identity_review', code: 'WORLD_MODEL_SUPPLEMENT_IDENTITY_REVIEW_MISSING'})
+  const identityDiversity = summarizeWorldModelSupplementIdentityDiversity({
+    existingModel,
+    identitySubjects,
+    identityReviews,
+    facts,
+  })
+  for (const subject of identityDiversity.subjects) {
+    if (subject.code && !invalid.some(item => item.subject_id === subject.subject_id && item.code === subject.code)) {
+      invalid.push({
+        ...subject,
+        reported: subject.reported_distinct_type_count,
+        observed: subject.host_observed_distinct_type_count,
+        reason: 'identity_diversity_accounting_invalid',
+      })
+    }
+  }
   const coverageMissingDispositionCount = missing.filter(item => item.reason === 'missing_disposition').length
   const identityReviewMissingCount = missing.filter(item => item.reason === 'missing_identity_review').length
   const accounting = {
@@ -850,11 +1030,22 @@ export function validateWorldModelSupplementCompleteness({
     identity_review_count: identitySubjects.length,
     identity_review_completed_count: seenSubjects.size,
     identity_review_missing_count: identityReviewMissingCount,
+    identity_diversity: identityDiversity.subjects,
+    reported_distinct_type_count: identityDiversity.reported_distinct_type_count,
+    host_observed_distinct_type_count: identityDiversity.host_observed_distinct_type_count,
+    new_type_identity_fact_count: identityDiversity.new_type_identity_fact_count,
+    accepted_new_type_identity_count: identityDiversity.accepted_new_type_identity_count,
     coverage_target_count: coverageTargets.length,
     coverage_disposition_count: Array.isArray(coverageDispositions) ? coverageDispositions.length : 0,
     coverage_missing_disposition_count: coverageMissingDispositionCount,
   }
-  if (missing.length || invalid.length) throw reviewError('WORLD_MODEL_SUPPLEMENT_INCOMPLETE', [{missing, invalid, ...accounting}])
+  if (missing.length || invalid.length) {
+    const error = reviewError('WORLD_MODEL_SUPPLEMENT_INCOMPLETE', [{missing, invalid, ...accounting}])
+    error.analysis_stage = 'supplement_completeness'
+    error.completeness_failure = true
+    error.diagnostic_code = invalid.find(item => item.code)?.code ?? 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE'
+    throw error
+  }
   return {complete: true, ...accounting}
 }
 

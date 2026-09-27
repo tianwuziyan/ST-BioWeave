@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
 import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, resolveWorldModelFactDelta, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelFactDeltaToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
-import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementReviewText, parseWorldModelSupplementText, validateWorldModelSupplementCompleteness } from '../ai/world-supplement-protocol.js'
+import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementReviewText, parseWorldModelSupplementText, summarizeWorldModelSupplementIdentityDiversity, validateWorldModelSupplementCompleteness } from '../ai/world-supplement-protocol.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -1314,12 +1314,137 @@ test('Supplement coverage and identity reviews use stable IDs and exact terminal
   assert.deepEqual(targets.map(item => item.target_id), buildWorldModelSupplementCoverageTargets(existing).map(item => item.target_id))
   assert.deepEqual(subjects.map(item => item.species), ['Species-A', 'Species-B'])
   const reviewText = [
+    '[World Model Updates]',
     ...targets.map(target => `[Coverage Review]\nTarget_ID: ${target.target_id}\nDisposition: NO_EVIDENCE\n[/Coverage Review]`),
-    ...subjects.map(subject => `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: ${subject.species}\nDisposition: REVIEWED\n[/Identity Discovery Review]`),
+    ...subjects.map(subject => {
+      const species = existing.species.find(item => item.name === subject.species)
+      const count = Array.isArray(species?.biological_types) ? species.biological_types.length : 0
+      return `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: ${subject.species}\nDisposition: REVIEWED\nDistinct_Type_Count: ${count}\nAdditional_Type_Search: EXHAUSTED\n[/Identity Discovery Review]`
+    }),
+    '[/World Model Updates]',
   ].join('\n')
   const review = parseWorldModelSupplementReviewText(reviewText)
-  assert.doesNotThrow(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions, identitySubjects: subjects, identityReviews: review.identity_reviews, facts: []}))
-  assert.throws(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions.slice(1), identitySubjects: subjects, identityReviews: review.identity_reviews, facts: []}), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
+  assert.doesNotThrow(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions, identitySubjects: subjects, identityReviews: review.identity_reviews, facts: [], existingModel: existing}))
+  assert.throws(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions.slice(1), identitySubjects: subjects, identityReviews: review.identity_reviews, facts: [], existingModel: existing}), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
+})
+
+test('Supplement identity diversity accounts for zero through three open-string Types without a minimum', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [
+    {name: 'Species-0', biological_types: []},
+    {name: 'Species-1', biological_types: [{name: 'Type-A'}]},
+    {name: 'Species-2', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]},
+    {name: 'Species-3', biological_types: [{name: 'Type-A'}]},
+  ]})
+  const subjects = buildWorldModelSupplementIdentityReviewSubjects(existing)
+  const facts = [
+    {species: 'Species-3', biological_type: 'Type-γ', field: 'Type_Identity'},
+    {species: 'Species-3', biological_type: 'Type-Ω', field: 'Type_Identity'},
+  ]
+  const counts = new Map([['Species-0', 0], ['Species-1', 1], ['Species-2', 2], ['Species-3', 3]])
+  const identityReviews = subjects.map(subject => ({
+    subject_id: subject.subject_id,
+    species: subject.species,
+    disposition: 'REVIEWED',
+    distinct_type_count: counts.get(subject.species),
+    additional_type_search: 'EXHAUSTED',
+  }))
+  const summary = summarizeWorldModelSupplementIdentityDiversity({existingModel: existing, identitySubjects: subjects, identityReviews, facts})
+  assert.deepEqual(summary.subjects.map(subject => [subject.species, subject.reported_distinct_type_count, subject.host_observed_distinct_type_count]), [
+    ['Species-0', 0, 0],
+    ['Species-1', 1, 1],
+    ['Species-2', 2, 2],
+    ['Species-3', 3, 3],
+  ])
+  assert.equal(summary.new_type_identity_fact_count, 2)
+  assert.doesNotThrow(() => validateWorldModelSupplementCompleteness({
+    coverageTargets: [],
+    coverageDispositions: [],
+    identitySubjects: subjects,
+    identityReviews,
+    facts,
+    existingModel: existing,
+  }))
+})
+
+test('Supplement identity count mismatch fails closed with subject, species, reported, observed, and code diagnostics', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const [subject] = buildWorldModelSupplementIdentityReviewSubjects(existing)
+  const identityReviews = [{
+    subject_id: subject.subject_id,
+    species: subject.species,
+    disposition: 'REVIEWED',
+    distinct_type_count: 2,
+    additional_type_search: 'EXHAUSTED',
+  }]
+  assert.throws(() => validateWorldModelSupplementCompleteness({
+    coverageTargets: [],
+    coverageDispositions: [],
+    identitySubjects: [subject],
+    identityReviews,
+    facts: [],
+    existingModel: existing,
+  }), error => {
+    const diagnostic = error?.diagnostics?.[0]?.invalid?.find(item => item.code === 'WORLD_MODEL_SUPPLEMENT_IDENTITY_COUNT_MISMATCH')
+    assert.deepEqual({
+      subject_id: diagnostic?.subject_id,
+      species: diagnostic?.species,
+      reported: diagnostic?.reported,
+      observed: diagnostic?.observed,
+      code: diagnostic?.code,
+    }, {
+      subject_id: subject.subject_id,
+      species: 'Species-A',
+      reported: 2,
+      observed: 1,
+      code: 'WORLD_MODEL_SUPPLEMENT_IDENTITY_COUNT_MISMATCH',
+    })
+    return error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE'
+  })
+})
+
+test('Supplement identity review separates observed Type candidates from Evidence Guard acceptance', async () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const targets = buildWorldModelSupplementCoverageTargets(existing)
+  const [subject] = buildWorldModelSupplementIdentityReviewSubjects(existing)
+  const response = [
+    '[World Model Updates]',
+    '[Fact]',
+    'Species: Species-A',
+    'Biological_Type: Type-B',
+    'Field: Type_Identity',
+    '[/Fact]',
+    ...targets.map(target => `[Coverage Review]\nTarget_ID: ${target.target_id}\nDisposition: NO_EVIDENCE\n[/Coverage Review]`),
+    `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: Species-A\nDisposition: REVIEWED\nDistinct_Type_Count: 2\nAdditional_Type_Search: EXHAUSTED\n[/Identity Discovery Review]`,
+    '[/World Model Updates]',
+  ].join('\n')
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: existing,
+      character: {description: 'Species-A 中 Type-B 是 temporary、reversible 的个体状态，不是稳定 biological type。'},
+    },
+    require_supplement_completeness: true,
+  })
+  assert.equal(result.patch.operations.length, 0)
+  assert.equal(result.fact_delta_summary.reported_distinct_type_count, 2)
+  assert.equal(result.fact_delta_summary.host_observed_distinct_type_count, 2)
+  assert.equal(result.fact_delta_summary.new_type_identity_fact_count, 1)
+  assert.equal(result.fact_delta_summary.accepted_new_type_identity_count, 0)
+  assert.equal(result.rejectedFacts.some(item => item.fact?.field === 'Type_Identity' && item.guardError), true)
+})
+
+test('Supplement prompt requires exhaustive alternate Type discovery and open-string accounting', () => {
+  const prompt = buildWorldModelPatchMessagesV2({world_model: normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A'}]})}).map(message => message.content).join('\n')
+  assert.match(prompt, /必须扫描全部 permitted evidence/u)
+  assert.match(prompt, /alternate\/sibling Type|定向 Biological Type 搜索/u)
+  assert.match(prompt, /即使已有两个也不能停止/u)
+  assert.match(prompt, /Distinct_Type_Count/u)
+  assert.match(prompt, /Additional_Type_Search: EXHAUSTED/u)
+  assert.match(prompt, /Biological_Type 保持开放字符串/u)
+  assert.doesNotMatch(prompt, /至少两个 biological_types|minimum.*biological_types/u)
 })
 
 test('Supplement completeness is a separate terminal outcome and retries only when requested', async () => {
@@ -2135,7 +2260,7 @@ test('World Model v2 analyzer rejects semantically correct but structurally wron
   })
   await assert.rejects(
     analyzer.analyzeWorldModelPatchV2({ analysisInput: { world_model: existing, ...evidence } }),
-    error => error?.code === 'WORLD_MODEL_FACT_DELTA_INVALID' && error?.message === 'WORLD_MODEL_FACT_DELTA_TRAILING_TEXT',
+    error => error?.code === 'WORLD_MODEL_SUPPLEMENT_REVIEW_ROOT_INVALID',
   )
   assert.equal(invalidCall, 1)
 

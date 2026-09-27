@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify parser/resolver/Guard changes preserve World Model Supplement invariants."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no new writer or Floor ownership bypass is introduced."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify changed modules remain within feature ownership and Debug read-only boundary."}
+{"file":"docs/ui-framework.config.json","reason":"Verify Settings diagnostic markup remains on the fixed UI framework contract."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Verify any debug funnel presentation follows production UI conventions."}

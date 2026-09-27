@@ -658,24 +658,36 @@ function formatWorldModelPatchReferences(input, names) {
   ])
 }
 
-function formatWorldModelSupplementTarget(worldModel) {
-  return [
+function formatWorldModelSupplementTarget(worldModel, candidateModel = null) {
+  const sections = [
     '【Supplement Target：当前已保存的 World Model】',
     '这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审阅与补全的目标；Existing = TARGET + comparison baseline。Existing 本身不是 evidence。NONE RECORDED 表示 Existing canonical World Model 当前没有记录该 collection，只是 coverage marker，不是 negative biological evidence。',
     formatWorldModelSupplementReference(worldModel),
-  ].join('\n')
+  ]
+  if (candidateModel && JSON.stringify(candidateModel) !== JSON.stringify(worldModel)) {
+    sections.push(
+      '【Supplement Transient Candidate：fixed-point review context】',
+      '这是本次请求中由已接受 Facts 临时合并得到的 candidate，仅用于继续 coverage review；candidate 不是新的 evidence、不是第二个持久化事实源，也不能授权任何 unsupported claim。',
+      formatWorldModelSupplementReference(candidateModel),
+    )
+  }
+  return sections.join('\n')
 }
 
-function formatWorldModelSupplementCoverageTargets(worldModel, evidenceSubjects = [], retryDiagnostics = null) {
-  const targets = buildWorldModelSupplementCoverageTargets(worldModel)
-  const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(worldModel, evidenceSubjects)
+function formatWorldModelSupplementCoverageTargets(worldModel, evidenceSubjects = [], retryDiagnostics = null, candidateModel = worldModel) {
+  const targets = buildWorldModelSupplementCoverageTargets(candidateModel)
+  const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(candidateModel, evidenceSubjects)
   const retry = Array.isArray(retryDiagnostics) ? retryDiagnostics[0] : retryDiagnostics
   const retryItems = [
     ...(Array.isArray(retry?.missing) ? retry.missing : []),
     ...(Array.isArray(retry?.invalid) ? retry.invalid : []),
   ]
   const retrySection = retryItems.length
-    ? ['【Supplement Completeness Retry】上一轮响应未完成 review accounting；本次仍须发送完整 Facts，并补齐以下确定性 review 项：', ...retryItems.map(item => `${item.target_id ? `Target_ID: ${item.target_id}` : `Subject_ID: ${item.subject_id ?? ''}`} (${item.reason ?? 'invalid'})`)].join('\n')
+    ? ['【Supplement Completeness Retry】上一轮响应未完成 review accounting；本次仍须发送完整 Facts，并补齐以下确定性 review 项：', ...retryItems.map(item => {
+      const identifier = item.target_id ? `Target_ID: ${item.target_id}` : `Subject_ID: ${item.subject_id ?? ''}`
+      const detail = [item.reason ?? 'invalid', item.code, item.reported !== undefined ? `reported=${item.reported}` : null, item.observed !== undefined ? `observed=${item.observed}` : null].filter(Boolean).join('; ')
+      return `${identifier} (${detail})`
+    })].join('\n')
     : ''
   const lines = targets.length
     ? targets.map(target => [
@@ -689,8 +701,16 @@ function formatWorldModelSupplementCoverageTargets(worldModel, evidenceSubjects 
     '【Supplement Missing Coverage Targets】',
     '以下列表只表示需要逐项审阅的 canonical address，不是 evidence，不携带 Value，也不授权任何事实。必须针对 EACH target 搜索全部 permitted evidence；有 sufficient permitted evidence 且相对 Existing 缺失时才输出完整 Fact，没有证据就输出 Coverage Review disposition NO_EVIDENCE。Coverage Review 必须逐项使用 Target_ID 与唯一 Disposition：EMITTED 或 NO_EVIDENCE，不能重复、遗漏或使用其它值。Coverage Targets 是 minimum explicit review queue，不是 allowed output whitelist；完成列表后仍须继续从完整 permitted evidence 发现列表之外的新 identity、correction 和 world-level collection facts。',
     lines,
-    '【Identity Discovery Review】以下是需要逐项确认的 species-level identity subjects；每项必须输出独立 [Identity Discovery Review]，Disposition 只能是 REVIEWED。Species 是开放字符串，不得生成或硬编码 Biological_Type。',
-    identitySubjects.map(subject => `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: ${subject.species}\nDisposition: REVIEWED\n[/Identity Discovery Review]`).join('\n'),
+    '【Identity Discovery Review 输入】以下是本次请求的定向 Biological Type 搜索 subjects。输入只提供 Subject_ID、Species 与 Known_Biological_Types；不得把 review 结果预填进输入。对每个 subject 必须在同一份 permitted evidence 中完成 discovery、定向 sibling search、new-Type semantic coverage、Existing comparison、Facts、Coverage Reviews 与 Identity Review。Biological_Type 保持开放字符串，不使用硬编码映射。Existing 有已知 Type 时，以全部 Known_Biological_Types 为 seed，继续搜索同一 Species、同一稳定 classification dimension 下的其它 distinct sibling Type；Existing 没有 Type 时执行 first-Type search，若发现 Type 立即继续 sibling search；若没有 stable Type，允许保持 0。找到一个或多个 Type 后都必须继续到证据耗尽；majority/minority/rare/common 或数量暗示不是 Type identity，只有同一响应中的明确 Type_Identity Fact 才能建立新 Type。',
+    identitySubjects.map(subject => {
+      const species = candidateModel?.species?.find(item => item?.name === subject.species)
+      const knownTypes = Array.isArray(species?.biological_types)
+        ? species.biological_types
+          .filter(type => typeof type?.name === 'string' && type.name.trim())
+          .map(type => type.name.trim())
+        : []
+      return [`Subject_ID: ${subject.subject_id}`, `Species: ${subject.species}`, `Known_Biological_Types: ${knownTypes.length ? knownTypes.join(', ') : '(none recorded)'}`].join('\n')
+    }).join('\n'),
     retrySection,
   ].join('\n')
 }
@@ -698,8 +718,8 @@ function formatWorldModelSupplementCoverageTargets(worldModel, evidenceSubjects 
 function formatWorldModelPatchUserMessage(input) {
   const request = '【Supplement Fact Delta Output】根据 permitted evidence 与完整 Existing reference 输出独立 Facts。不要输出 hierarchical Candidate、JSON 或 Patch IR。'
   return joinPromptSections([
-    formatWorldModelSupplementTarget(input.world_model),
-    formatWorldModelSupplementCoverageTargets(input.world_model, input.supplement_identity_subjects, input.supplement_completeness_retry),
+    formatWorldModelSupplementTarget(input.world_model, input.supplement_candidate),
+    formatWorldModelSupplementCoverageTargets(input.world_model, input.supplement_identity_subjects, input.supplement_completeness_retry, input.supplement_candidate),
     input.supplement_completeness_retry
       ? `【Supplement Completeness Retry】上一次响应未完成 deterministic accounting。只修正这些 transient missing/invalid IDs，保留完整 Existing、permitted evidence、Coverage queue 与 Identity queue；不要改变 Fact parser、Evidence Guard 或输出边界。\n${JSON.stringify(input.supplement_completeness_retry)}`
       : null,
@@ -840,6 +860,7 @@ Projection Rule 唯一允许的 representation 是单个 JSON object 的 JSON: �
 
 export const WORLD_MODEL_FACT_DELTA_TASK_PROMPT = [
   '【World Model Supplement Fact Delta v1】读取全部 permitted evidence 与完整 Existing。先完成 internal Complete Fact Discovery，再只输出相对 Existing 缺失或由当前 evidence 明确支持的 correction Facts。Existing same known fact 省略；Existing 相同 known fact 不输出；每个 correction claim 必须由当前 evidence 明确支持；omission 只表示 preserve Existing，绝不表示 REMOVE。Supplement 的 semantic surface 不限于 Species / Biological Type identity；必须覆盖每个 Type 的 identity、description、六项 capability、生殖规则、生命周期、special rule、reproductive mechanism，以及 world-level medical/care、exception、unknown、projection rule。Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence。Patch v2 是 internal deterministic IR，canonical World Model 是 persistent/UI representation。',
+    '【Biological Type sibling discovery】Identity Discovery Review 必须扫描全部 permitted evidence；找到第一个 Type 后继续查找 alternate/sibling Type，即使已有两个也不能停止，直到 exhausted。Distinct_Type_Count 必须报告 Existing 与当前响应中 syntactically valid Type_Identity Facts 的 distinct union；Additional_Type_Search 必须精确为 EXHAUSTED。majority、minority、rare、common、plural wording 或数量暗示本身都不是 sibling identity；只有同一响应中的明确 Type_Identity Fact 才能建立新 Type。不要设置 biological_types 最小数量，不要引入 sex/gender enum，不要为了满足 reported count 创造 Type。任何新 Type 都必须独立经过 resolver 与 Evidence Guard；Review metadata 不是 evidence。',
   '【Complete semantic coverage pass：先发现，后解析地址，后比较，最后输出】任何 Fact 都必须经过不可跳过的固定阶段：Evidence discovery → semantic Field classification → scope classification → canonical address resolution → Existing comparison → Fact emission。不得在 identity、description、某个 capability、某个 Type、某个 Species 或某个 outlet 完成后提前停止：1. 读完全部 permitted evidence，逐一阅读每个 evidence unit，建立 evidence-supported claim inventory；2. 遍历 evidence 中的全部 Species，并对每个 Species 遍历全部 stable Biological Type identities；3. 对每个 Type 逐字段检查 Type_Description、Can_Produce_Sperm、Can_Produce_Ova、Can_Be_Fertilized、Can_Fertilize、Can_Cause_Pregnancy、Can_Carry_Pregnancy、Fertilization、Pregnancy_Or_Carrying、Cycle、Ovulation、Gestation、Labor、Maturation、Aging、Special_Rule、Reproductive_Mechanism；每个字段独立判断，不因前一个字段无证据而跳过后续字段；4. 完成所有 Species/Type 的逐字段扫描后，继续独立扫描 world scope：Childbirth_Difficulty、Care_Level、Medical_Evidence、Exception、Unknown、Projection_Rule；5. 只有整个 coverage pass 完成后，才将 claim inventory 与 Existing 比较；6. 只序列化 evidence-supported 且相对 Existing 为 MISSING 或 permitted evidence 明确支持 CORRECTION_SUPPORTED 的 claims。完整扫描 semantic surface 不等于填满 schema；没有 permitted evidence 的 field 必须省略。',
   '【Address Resolution Gate】先决定 Field 的 semantic scope，再决定 canonical target，最后才允许序列化 Fact。Species_Identity、Species_Description 只能使用 Species；Type_Identity、Type_Description、六项 capability、全部 reproduction/lifecycle fields、Special_Rule、Reproductive_Mechanism 永远必须同时使用 Species + Biological_Type。Species-only 的 Type-scoped claim 永远不能输出，也不能改写为 Species-level rule、Unknown 或 Exception；如果 permitted evidence 只能确定 Species、不能可靠确定 Biological_Type，就省略该 claim。Existing identity 只能帮助解析已存在的 canonical address，不是 claim evidence。',
   '【Multi-Type address resolution】如果同一 evidence 明确把同一 Type-scoped claim 赋予同一 Species 下多个 stable Biological Types，先为每个 Type 建立独立 canonical address，再输出多个 self-contained Facts；例如明确支持 Species-A / Type-A 与 Species-A / Type-B 时，必须分别输出带 Biological_Type: Type-A 和 Biological_Type: Type-B 的 Facts。不能因为 Existing 或 response 中存在多个 sibling Types，就把 Species-level statement speculative projection 到所有 Types；没有逐 Type 或明确 all-of-these-Type scope 的 evidence 时，只保留有证据的 Type，其他 Type 省略。',
@@ -852,8 +873,8 @@ export const WORLD_MODEL_FACT_DELTA_TASK_PROMPT = [
 ].join('\n')
 
 export const WORLD_MODEL_FACT_DELTA_OUTPUT_CONTRACT = [
-  'Output 只允许一个 root：[World Model Updates] ... [/World Model Updates]。root 内只能有零个或多个独立闭合的 [Fact]，以及独立的 [Coverage Review] 与 [Identity Discovery Review] accounting blocks。Coverage Review 只能使用 Target_ID + Disposition，其中 Disposition 只能是 EMITTED 或 NO_EVIDENCE；Identity Discovery Review 只能使用 Subject_ID + Species + Disposition，其中 Disposition 只能是 REVIEWED。不得 nested Fact、隐式 parent、trailing free text、未知 payload key 或 Patch IR。',
-  '[World Model Updates]\n[Fact]\nSpecies: Species-A\nField: Species_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Can_Carry_Pregnancy\nValue: true\n[/Fact]\n[Fact]\nField: Care_Level\nValue: supported world-level care rule\n[/Fact]\n[Fact]\nField: Unknown\nValue: supported unresolved world-level fact\n[/Fact]\n[/World Model Updates]',
+  'Output 只允许一个 root：[World Model Updates] ... [/World Model Updates]。root 内只能有零个或多个独立闭合的 [Fact]、每个 target 一个独立闭合的 [Coverage Review]、以及每个 subject 一个独立闭合的 [Identity Discovery Review]。所有 Fact/Coverage/Identity blocks 必须完整包含在这一个 root 内；root 外任何 block、解释、尾随文本、第二个 root 都必须视为 malformed。每个字段必须独占一条物理行，禁止 pipe/compressed syntax（例如 `Target_ID: ... | Disposition: ...`）。Coverage Review 只能使用 Target_ID + Disposition，其中 Disposition 只能是 EMITTED 或 NO_EVIDENCE；Identity Discovery Review 必须使用 Subject_ID + Species + Disposition + Distinct_Type_Count + Additional_Type_Search，其中 Disposition 只能是 REVIEWED，Distinct_Type_Count 必须是大于等于 0 的整数，Additional_Type_Search 必须精确为 EXHAUSTED。不得 nested Fact、隐式 parent、未知 payload key 或 Patch IR。',
+  '[World Model Updates]\n[Fact]\nSpecies: Species-A\nField: Species_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Type_Identity\n[/Fact]\n[Coverage Review]\nTarget_ID: coverage-target-v1-0001\nDisposition: NO_EVIDENCE\n[/Coverage Review]\n[Identity Discovery Review]\nSubject_ID: identity-review-v1-0001\nSpecies: Species-A\nDisposition: REVIEWED\nDistinct_Type_Count: 0\nAdditional_Type_Search: EXHAUSTED\n[/Identity Discovery Review]\n[/World Model Updates]',
   'Identity Fact 不包含 Value。Scalar Fact 使用 Value；Capability Value 只允许 true|false。Species-scoped Fact 必须带 Species 且禁止 Biological_Type；Type-scoped Fact 必须带 Species 与 Biological_Type；World-scoped Fact 不带 Species 或 Biological_Type。所有 Field 与 payload label 必须 exact/case-sensitive。',
   '尽量让每个 label 与 payload 保持在同一物理行；只有自然语言文本 payload 才可在下一行续写，禁止拆分 address、Field、boolean、JSON 或其它结构化 token。',
   '不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释；仅 Projection_Rule Fact 的 Projection_Rule_JSON payload 允许按约定输出单个 JSON object，禁止 projection_rule_id。不要输出 ADD、CHANGE、SET_FIELD、ADD_TYPE、REMOVE、NO_OP 等 operation token。',

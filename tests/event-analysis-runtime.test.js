@@ -7391,21 +7391,24 @@ test("World Patch Analysis merges v2 sparsely and saves only the current Floor",
   let patchCalls = 0;
   let receivedWorld = null;
   const fixture = createFixture({
+    retryCount: 1,
     messages,
     analyzer: {
       async analyzeWorldModelPatchV2() {
         patchCalls += 1;
-        return {
-          patch: {
-            schema_version: 2,
-            operations: [{
-              op: "ADD_TYPE",
-              target: { kind: "species", species_name: "Species-A" },
-              type: { name: "Type-B" },
-            }],
-          },
-          classified: [],
-        };
+        return patchCalls === 1
+          ? {
+              patch: {
+                schema_version: 2,
+                operations: [{
+                  op: "ADD_TYPE",
+                  target: { kind: "species", species_name: "Species-A" },
+                  type: { name: "Type-B" },
+                }],
+              },
+              classified: [],
+            }
+          : {patch: {schema_version: 2, operations: []}, classified: []};
       },
       async analyzeFloor({ world_model }) { receivedWorld = world_model; return { events: [] }; },
     },
@@ -7421,6 +7424,78 @@ test("World Patch Analysis merges v2 sparsely and saves only the current Floor",
   assert.deepEqual(receivedWorld.species[0].biological_types.map(item => item.name), ["Type-A", "Type-B"]);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, receivedWorld);
+  fixture.runtime.destroy();
+});
+
+test("World Patch keeps new-Type coverage in one semantic API request for audit", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    messages: [
+      worldFloorMessages()[0],
+      {...worldFloorMessages()[1], content: "Species-A 中 Type-B 是少数但稳定存在的 biological type。Species-A 中 Type-C 是少数但稳定存在的 biological type。"},
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-B"}}],
+          },
+          classified: [],
+        };
+      },
+    },
+  });
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: {character: {description: "Species-A 中 Type-B 是少数但稳定存在的 biological type。Species-A 中 Type-C 是少数但稳定存在的 biological type。"}},
+    trigger: "manual-patch",
+  });
+  const persisted = fixture.runtime.store.getFloor(1).world_model;
+  const summary = fixture.runtime.getWorldModelDiagnosticState().latest_fact_delta;
+  assert.equal(patchCalls, 1);
+  assert.deepEqual(persisted.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
+  assert.equal(summary.coverage_expansion_round_count, 0);
+  assert.equal(summary.coverage_fixed_point_reached, false);
+  assert.ok(summary.dynamic_coverage_target_count > 0);
+  fixture.runtime.destroy();
+});
+
+test("World Patch does not retry semantic coverage expansion", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    messages: [
+      worldFloorMessages()[0],
+      {...worldFloorMessages()[1], content: "Species-A 中 Type-B 是少数但稳定存在的 biological type。Species-A 中 Type-C 是少数但稳定存在的 biological type。"},
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        const typeName = patchCalls === 1 ? "Type-B" : "Type-C";
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: typeName}}],
+          },
+          classified: [],
+        };
+      },
+    },
+  });
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: {character: {description: "Species-A 中 Type-B 是少数但稳定存在的 biological type。Species-A 中 Type-C 是少数但稳定存在的 biological type。"}},
+    trigger: "manual-patch",
+  });
+  const diagnostic = fixture.runtime.getWorldModelDiagnosticState();
+  assert.equal(patchCalls, 1);
+  assert.ok(fixture.saveFloorCalls() > 0);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
+  assert.equal(diagnostic.latest_fact_delta.failure_code, undefined);
+  assert.equal(diagnostic.latest_fact_delta.coverage_fixed_point_reached, false);
   fixture.runtime.destroy();
 });
 
