@@ -188,7 +188,7 @@ export function createSillyTavernAdapter() {
       const allowed = new Set([
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash",
         "message_version", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "path", "reason",
-        "execution_id", "mode", "response_text_length", "fact_count", "patch_operation_count", "fields", "scope_summary", "address_summary", "facts", "fact_mappings",
+        "execution_id", "mode", "response_text_length", "fact_count", "rejected_fact_count", "patch_operation_count", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding",
         "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason",
         "cancel_stage", "cancel_reason", "cancel_code",

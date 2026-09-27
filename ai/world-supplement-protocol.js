@@ -630,12 +630,12 @@ function factDeltaError(message, diagnostics = [], code = 'WORLD_MODEL_FACT_DELT
 function factDeltaText(value, field) {
   const text = String(value ?? '').trim()
   if (!text || text === 'null' || (field !== 'Field' && /^unknown$/iu.test(text)) || text === 'NONE RECORDED') {
-    throw factDeltaError('WORLD_MODEL_FACT_DELTA_VALUE_INVALID', [{field}])
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_VALUE_INVALID', [{field}], 'WORLD_MODEL_FACT_DELTA_VALUE_INVALID')
   }
   if (FACT_DELTA_BOOLEAN_FIELDS.has(field)) {
     if (text === 'true') return true
     if (text === 'false') return false
-    throw factDeltaError('WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID', [{field}])
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID', [{field}], 'WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID')
   }
   return text
 }
@@ -743,10 +743,29 @@ export function parseWorldModelFactDeltaText(raw) {
   const text = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '')
   const lines = text.split(/\r?\n/u)
   const diagnostics = []
+  const rejectedFacts = []
   const facts = []
   let rootState = 'none'
   let factLines = null
   let factStart = 0
+  let factIndex = -1
+  let factDepth = 0
+  let factInvalid = null
+  let factRaw = []
+  const rejectFact = (error) => {
+    const diagnosticCode = error?.code && error.code !== 'WORLD_MODEL_FACT_DELTA_INVALID'
+      ? error.code
+      : error?.message?.startsWith('WORLD_MODEL_FACT_DELTA_')
+        ? error.message
+        : 'WORLD_MODEL_FACT_DELTA_FACT_INVALID'
+    rejectedFacts.push({
+      index: factIndex,
+      raw: factRaw.join('\n'),
+      code: diagnosticCode,
+      reason: error?.message ?? 'WORLD_MODEL_FACT_DELTA_FACT_INVALID',
+      diagnostics: Array.isArray(error?.diagnostics) ? error.diagnostics : [],
+    })
+  }
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim()
     if (!line) continue
@@ -762,24 +781,61 @@ export function parseWorldModelFactDeltaText(raw) {
     }
     if (rootState !== 'open') throw factDeltaError('WORLD_MODEL_FACT_DELTA_TRAILING_TEXT', [{line: index + 1}])
     if (line === '[Fact]') {
-      if (factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_NESTED_FACT', [{line: index + 1}])
+      if (factLines) {
+        factRaw.push(line)
+        factInvalid ??= factDeltaError('WORLD_MODEL_FACT_DELTA_NESTED_FACT', [{line: index + 1}])
+        factDepth += 1
+        continue
+      }
       factLines = []
       factStart = index + 1
+      factIndex += 1
+      factDepth = 1
+      factInvalid = null
+      factRaw = [line]
       continue
     }
     if (line === '[/Fact]') {
       if (!factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_FACT_CLOSE_INVALID', [{line: index + 1}])
-      facts.push(factDeltaFinalize(factLines, factStart))
+      factRaw.push(line)
+      if (factDepth > 1) {
+        factDepth -= 1
+        continue
+      }
+      if (factInvalid) rejectFact(factInvalid)
+      else {
+        try {
+          facts.push(factDeltaFinalize(factLines, factStart))
+        } catch (error) {
+          rejectFact(error)
+        }
+      }
       factLines = null
+      factDepth = 0
+      factInvalid = null
+      factRaw = []
       continue
     }
     if (!factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TRAILING_TEXT', [{line: index + 1}])
-    if (/^(?:ADD_|SET_FIELD|REMOVE|CHANGE|NO_OP|NO-OP)\b/u.test(line)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_PATCH_IR_FORBIDDEN', [{line: index + 1}])
-    const pair = factDeltaParseLine(line, index + 1)
-    factLines.push({...pair, line: index + 1})
+    factRaw.push(line)
+    if (/^(?:ADD_|SET_FIELD|REMOVE|CHANGE|NO_OP|NO-OP)\b/u.test(line)) {
+      factInvalid ??= factDeltaError('WORLD_MODEL_FACT_DELTA_PATCH_IR_FORBIDDEN', [{line: index + 1}])
+      continue
+    }
+    if (factInvalid) continue
+    try {
+      const pair = factDeltaParseLine(line, index + 1)
+      factLines.push({...pair, line: index + 1})
+    } catch (error) {
+      factInvalid = error
+    }
   }
-  if (rootState !== 'closed' || factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', diagnostics)
-  return {facts, diagnostics}
+  if (rootState !== 'closed') throw factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', diagnostics)
+  if (factLines) {
+    rejectFact(factInvalid ?? factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', diagnostics))
+    factLines = null
+  }
+  return {facts, rejectedFacts, diagnostics}
 }
 
 export function validateWorldModelFactDelta(facts) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelFactDeltaToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
+import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, resolveWorldModelFactDelta, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelFactDeltaToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
 import { formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementText } from '../ai/world-supplement-protocol.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
@@ -999,12 +999,31 @@ Field: Type_Identity
     '[Fact]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Type_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Can_Carry_Pregnancy\nValue: true\n[/Fact]',
   )
   assert.deepEqual(parseWorldModelFactDeltaText(ordered).facts, parseWorldModelFactDeltaText(reversed).facts.reverse())
-  for (const malformed of [
-    ordered.replace('Field: Type_Identity', 'Field: type_identity'),
-    ordered.replace('[/Fact]\n[Fact]', '[Fact]\n[/Fact]\n[Fact]'),
-    `${ordered}\ntrailing text`,
-    ordered.replace('Value: true', 'Value: null'),
-  ]) assert.throws(() => parseWorldModelFactDeltaText(malformed), /WORLD_MODEL_FACT_DELTA/u)
+  const locallyRejected = parseWorldModelFactDeltaText(ordered.replace('Field: Type_Identity', 'Field: type_identity'))
+  assert.equal(locallyRejected.facts.length, 1)
+  assert.equal(locallyRejected.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_SCOPE_INVALID')
+  const nestedRejected = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[Fact]
+Field: Unknown
+Value: nested
+[/Fact]
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[/World Model Updates]`)
+  assert.ok(nestedRejected.rejectedFacts.some(item => item.code === 'WORLD_MODEL_FACT_DELTA_NESTED_FACT'))
+  assert.throws(() => parseWorldModelFactDeltaText(`${ordered}\ntrailing text`), /WORLD_MODEL_FACT_DELTA/u)
+  const invalidBoolean = parseWorldModelFactDeltaText(ordered.replace('Value: true', 'Value: null'))
+  assert.equal(invalidBoolean.facts.length, 1)
+  assert.equal(invalidBoolean.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_VALUE_INVALID')
 })
 
 test('Fact Delta keeps Unknown vocabulary exact and rejects Unknown_Fact', () => {
@@ -1015,12 +1034,14 @@ Value: supported unresolved world-level fact
 [/Fact]
 [/World Model Updates]`)
   assert.equal(valid.facts[0].field, 'Unknown')
-  assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]
+  const rejected = parseWorldModelFactDeltaText(`[World Model Updates]
 [Fact]
 Field: Unknown_Fact
 Value: unsupported alias
 [/Fact]
-[/World Model Updates]`), error => error?.message === 'WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED')
+[/World Model Updates]`)
+  assert.equal(rejected.facts.length, 0)
+  assert.equal(rejected.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED')
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
   assert.doesNotMatch(prompt, /Unknown_Fact/u)
   assert.match(prompt, /不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释/u)
@@ -1044,7 +1065,7 @@ Value: supported unresolved world-level fact
 [/Fact]
 [/World Model Updates]`).facts
   assert.equal(worldFacts.every(fact => !Object.hasOwn(fact, 'species') && !Object.hasOwn(fact, 'biological_type')), true)
-  assert.deepEqual(worldModelFactDeltaToPatchV2(worldFacts, v2ExistingModel()).operations.map(operation => operation.op), ['SET_FIELD', 'ADD_EXCEPTION', 'ADD_UNKNOWN'])
+  assert.deepEqual(worldModelFactDeltaToPatchV2(worldFacts, v2ExistingModel()).operations.map(operation => operation.op), ['ADD_EXCEPTION', 'SET_FIELD', 'ADD_UNKNOWN'])
 
   const projection = parseWorldModelFactDeltaText(`[World Model Updates]
 [Fact]
@@ -1061,7 +1082,7 @@ Projection_Rule_JSON: {"schema_version":1,"mechanism_key":"mechanism-b","develop
     `[Fact]\nField: Species_Description\nValue: missing species\n[/Fact]`,
     `[Fact]\nSpecies: Species-A\nField: Type_Description\nValue: missing type\n[/Fact]`,
   ]
-  for (const fact of invalid) assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]\n${fact}\n[/World Model Updates]`), /WORLD_MODEL_FACT_DELTA/u)
+  for (const fact of invalid) assert.equal(parseWorldModelFactDeltaText(`[World Model Updates]\n${fact}\n[/World Model Updates]`).facts.length, 0)
 })
 
 test('Fact Delta identities are separate from addresses and establish deterministic dependencies', () => {
@@ -1084,7 +1105,7 @@ Field: Can_Produce_Sperm
 Value: true
 [/Fact]
 [/World Model Updates]`).facts
-  assert.throws(() => worldModelFactDeltaToPatchV2(newTypeDetail, existing), error => error?.code === 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED')
+  assert.equal(worldModelFactDeltaToPatchV2(newTypeDetail, existing).operations.length, 0)
 
   const newType = parseWorldModelFactDeltaText(`[World Model Updates]
 [Fact]
@@ -1100,7 +1121,288 @@ Value: true
 [/Fact]
 [/World Model Updates]`).facts
   const patch = worldModelFactDeltaToPatchV2(newType, existing)
-  assert.deepEqual(patch.operations.map(operation => operation.op), ['ADD_TYPE'])
+  assert.deepEqual(patch.operations.map(operation => operation.op), ['ADD_TYPE', 'SET_FIELD'])
+})
+
+test('Fact Delta parser isolates a malformed Fact while preserving valid siblings', () => {
+  const parsed = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Ova
+Value: maybe
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Fertilize
+Value: false
+[/Fact]
+[/World Model Updates]`)
+  assert.deepEqual(parsed.facts.map(fact => fact.field), ['Can_Carry_Pregnancy', 'Can_Fertilize'])
+  assert.equal(parsed.rejectedFacts.length, 1)
+  assert.equal(parsed.rejectedFacts[0].index, 1)
+  assert.equal(parsed.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID')
+})
+
+test('Fact Delta production keeps valid sibling mutations after a malformed Fact', async () => {
+  const response = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Ova
+Value: maybe
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Fertilize
+Value: false
+[/Fact]
+[/World Model Updates]`
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: v2ExistingModel(),
+      character: {description: 'Species-A Type-A 的能力是携带胎儿。Species-A Type-A 不能使其受精。没有产生卵子的证据。'},
+    },
+  })
+  assert.deepEqual(result.patch.operations.map(operation => operation.path.join('.')), ['capabilities.can_carry_pregnancy', 'capabilities.can_fertilize'])
+  assert.ok(result.rejectedFacts.some(item => item.code === 'WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID'))
+})
+
+test('Fact Delta resolver keeps accepted type identity and capability siblings separate from unsupported detail', async () => {
+  const existing = v2ExistingModel()
+  const response = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Description
+Value: unsupported description
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[/World Model Updates]`
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: existing,
+      character: {description: 'Species-A 的 Type-B 是稳定生物分类，可以携带妊娠。'},
+    },
+    onFactDeltaTrace: trace => traces.push(trace),
+  })
+  assert.deepEqual(result.patch.operations.map(operation => operation.op), ['ADD_TYPE', 'SET_FIELD'])
+  assert.equal(result.patch.operations[0].type.description, undefined)
+  assert.equal(result.patch.operations[1].path.join('.'), 'capabilities.can_carry_pregnancy')
+  assert.ok(result.rejectedFacts.some(item => item.field === 'Type_Description'))
+  assert.equal(traces.filter(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED').length, 1)
+})
+
+test('Fact Delta identity dependency rejection does not discard unrelated accepted Facts', async () => {
+  const existing = v2ExistingModel()
+  const response = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-C
+Field: Can_Carry_Pregnancy
+Value: false
+[/Fact]
+[/World Model Updates]`
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: existing,
+      character: {description: 'Species-A 的 Type-B 是稳定生物分类，可以携带妊娠。'},
+    },
+  })
+  assert.deepEqual(result.patch.operations.map(operation => operation.op), ['ADD_TYPE', 'SET_FIELD'])
+  assert.equal(result.patch.operations[0].type.name, 'Type-B')
+  assert.equal(result.patch.operations[1].target.type_name, 'Type-B')
+  assert.ok(result.rejectedFacts.some(item => item.biological_type === 'Type-C' && item.code === 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED'))
+})
+
+test('Fact Delta order permutation has the same partial acceptance result', async () => {
+  const existing = v2ExistingModel()
+  const facts = [
+    `Species: Species-A\nBiological_Type: Type-B\nField: Type_Identity`,
+    `Species: Species-A\nBiological_Type: Type-B\nField: Can_Carry_Pregnancy\nValue: true`,
+  ]
+  const makeResponse = lines => `[World Model Updates]\n${lines.map(line => `[Fact]\n${line}\n[/Fact]`).join('\n')}\n[/World Model Updates]`
+  const run = async response => createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  }).analyzeWorldModelPatchV2({
+    analysisInput: {world_model: existing, character: {description: 'Species-A 的 Type-B 是稳定生物分类，可以携带妊娠。'}},
+  })
+  const ordered = await run(makeResponse(facts))
+  const reversed = await run(makeResponse([...facts].reverse()))
+  assert.deepEqual(reversed.patch, ordered.patch)
+  assert.deepEqual(reversed.rejectedFacts, ordered.rejectedFacts)
+})
+
+test('Fact Delta exception evidence binding includes statement and evidence candidates', async () => {
+  const existing = v2ExistingModel()
+  const response = `[World Model Updates]
+[Fact]
+Field: Exception
+Exception_Statement: Species-A has a supported world exception after Condition-X.
+Applies_To: Species-A
+Exception_Evidence: Species-A has a supported world exception after Condition-X.
+[/Fact]
+[/World Model Updates]`
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {world_model: existing, character: {description: 'Species-A has a supported world exception after Condition-X.'}},
+    fact_delta_debug: true,
+    onFactDeltaTrace: trace => traces.push(trace),
+  })
+  assert.equal(result.patch.operations[0].op, 'ADD_EXCEPTION')
+  const summary = traces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_SUMMARY')
+  assert.ok(summary.unit_count > 0)
+  assert.ok(summary.units.some(unit => unit.source_kind === 'character_description'))
+
+  const rejectedTraces = []
+  const rejectedAnalyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => `[World Model Updates]
+[Fact]
+Field: Exception
+Exception_Statement: unsupported exception statement
+Applies_To: Species-A
+Exception_Evidence: Species-A has a supported world exception after Condition-X.
+[/Fact]
+[/World Model Updates]`}),
+  })
+  await rejectedAnalyzer.analyzeWorldModelPatchV2({
+    analysisInput: {world_model: existing, character: {description: 'Species-A has a supported world exception after Condition-X.'}},
+    fact_delta_debug: true,
+    onFactDeltaTrace: trace => rejectedTraces.push(trace),
+  })
+  const rejected = rejectedTraces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
+  assert.deepEqual(rejected.evidence_binding.candidate_unit_indices, [0])
+})
+
+test('Fact Delta real multi-type shape does not rebuild aggregate ADD_TYPE transactions', async () => {
+  const existing = v2ExistingModel()
+  const response = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Description
+Value: unsupported sibling description
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-C
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-C
+Field: Can_Carry_Pregnancy
+Value: false
+[/Fact]
+[/World Model Updates]`
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: existing,
+      character: {description: 'Species-A 的 Type-B 是稳定生物分类，Type-B 可以携带妊娠。Species-A 的 Type-C 是稳定生物分类，Type-C 不能携带妊娠。'},
+    },
+  })
+  assert.deepEqual(result.patch.operations.map(operation => operation.op), ['ADD_TYPE', 'ADD_TYPE', 'SET_FIELD', 'SET_FIELD'])
+  assert.deepEqual(result.patch.operations.filter(operation => operation.op === 'ADD_TYPE').map(operation => operation.type), [{name: 'Type-B'}, {name: 'Type-C'}])
+  assert.equal(result.rejectedFacts.filter(item => item.field === 'Type_Description').length, 1)
+  const merged = mergeWorldModelPatchV2(existing, result.patch, {
+    character: {description: 'Species-A 的 Type-B 是稳定生物分类，Type-B 可以携带妊娠。Species-A 的 Type-C 是稳定生物分类，Type-C 不能携带妊娠。'},
+  })
+  assert.deepEqual(merged.species[0].biological_types.map(type => type.name), ['Type-A', 'Type-B', 'Type-C'])
+})
+
+test('Fact Delta rejects one unsupported Exception while accepting another', async () => {
+  const existing = v2ExistingModel()
+  const response = `[World Model Updates]
+[Fact]
+Field: Exception
+Exception_Statement: Species-A has supported exception A.
+Applies_To: Species-A
+[/Fact]
+[Fact]
+Field: Exception
+Exception_Statement: Species-A has unsupported exception B.
+Applies_To: Species-A
+[/Fact]
+[/World Model Updates]`
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {world_model: existing, character: {description: 'Species-A has supported exception A.'}},
+  })
+  assert.deepEqual(result.patch.operations.map(operation => operation.op), ['ADD_EXCEPTION'])
+  assert.equal(result.patch.operations[0].exception.statement, 'Species-A has supported exception A.')
+  assert.ok(result.rejectedFacts.some(item => item.fact?.exception?.statement === 'Species-A has unsupported exception B.'))
 })
 
 test('Fact Delta comparison dedupes no-ops, preserves omission, and rejects conflicts', () => {
@@ -1135,7 +1437,9 @@ Field: Can_Produce_Sperm
 Value: false
 [/Fact]
 [/World Model Updates]`).facts
-  assert.throws(() => worldModelFactDeltaToPatchV2(conflict, existing), error => error?.code === 'WORLD_MODEL_FACT_DELTA_CONFLICT')
+  const conflictResult = resolveWorldModelFactDelta(conflict, existing)
+  assert.equal(conflictResult.patch.operations.length, 1)
+  assert.equal(conflictResult.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_CONFLICT')
 })
 
 test('Fact Delta maps collections and structured outlets without inventing Patch operations', () => {
@@ -1165,13 +1469,14 @@ Mechanism_Label: Mechanism-B
 Mechanism_Pathway: pathway-b
 [/Fact]
 [/World Model Updates]`).facts
-  assert.deepEqual(worldModelFactDeltaToPatchV2(facts, existing).operations.map(operation => operation.op), ['ADD_SPECIAL_RULE', 'ADD_MECHANISM', 'ADD_EXCEPTION', 'ADD_UNKNOWN'])
-  assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]
+  assert.deepEqual(worldModelFactDeltaToPatchV2(facts, existing).operations.map(operation => operation.op), ['ADD_MECHANISM', 'ADD_SPECIAL_RULE', 'ADD_EXCEPTION', 'ADD_UNKNOWN'])
+  const projectionRejected = parseWorldModelFactDeltaText(`[World Model Updates]
 [Fact]
 Field: Projection_Rule
 Projection_Rule_JSON: {"projection_rule_id":"forbidden"}
 [/Fact]
-[/World Model Updates]`), error => error?.message === 'WORLD_MODEL_FACT_DELTA_PROJECTION_ID_FORBIDDEN')
+[/World Model Updates]`)
+  assert.equal(projectionRejected.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_PROJECTION_ID_FORBIDDEN')
 })
 
 test('Fact Delta mechanism and projection corrections fail closed', () => {
@@ -1186,7 +1491,9 @@ Mechanism_Label: New
 Mechanism_Pathway: new
 [/Fact]
 [/World Model Updates]`).facts
-  assert.throws(() => worldModelFactDeltaToPatchV2(mechanism, existing), error => error?.code === 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED')
+  const result = resolveWorldModelFactDelta(mechanism, existing)
+  assert.equal(result.patch.operations.length, 0)
+  assert.equal(result.rejectedFacts[0].code, 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED')
 })
 
 test('Single Supplement response parser extracts one hierarchical Candidate tree', () => {
@@ -1444,15 +1751,13 @@ test('Supplement Evidence Guard rejection diagnostics identify Type identity and
     profileResolver: () => SILLYTAVERN_CURRENT_API,
     contextResolver: () => ({generateRaw: () => factDeltaText({type: 'Type-B', capability: 'true'})}),
   })
-  await assert.rejects(
-    analyzer.analyzeWorldModelPatchV2({
+  const typeResult = await analyzer.analyzeWorldModelPatchV2({
       analysisInput: {world_model: existing, character: {description: 'Type-B is temporary and not a stable biological type.'}},
       fact_delta_attempt: 2,
       fact_delta_retry_index: 1,
       onFactDeltaTrace: trace => traces.push(trace),
-    }),
-    error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED' && error?.path === 'operation.type.name',
-  )
+    })
+  assert.equal(typeResult.patch.operations.length, 0)
   const rejected = traces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
   assert.equal(rejected.mode, 'patch')
   assert.equal(rejected.attempt, 2)
@@ -1470,15 +1775,13 @@ test('Supplement Evidence Guard rejection diagnostics identify Type identity and
     profileResolver: () => SILLYTAVERN_CURRENT_API,
     contextResolver: () => ({generateRaw: () => `[World Model Updates]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Can_Produce_Ova\nValue: true\n[/Fact]\n[/World Model Updates]`}),
   })
-  await assert.rejects(
-    capabilityAnalyzer.analyzeWorldModelPatchV2({
+  const capabilityResult = await capabilityAnalyzer.analyzeWorldModelPatchV2({
       analysisInput: {world_model: existing, character: {description: 'Species-A 中 Type-A 是稳定存在的 biological type，但没有卵相关证据。'}},
       fact_delta_attempt: 1,
       fact_delta_retry_index: 0,
       onFactDeltaTrace: trace => capabilityTraces.push(trace),
-    }),
-    error => error?.path === 'operation.capabilities.can_produce_ova',
-  )
+    })
+  assert.equal(capabilityResult.patch.operations.length, 0)
   const capabilityRejected = capabilityTraces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
   assert.equal(capabilityRejected.species, 'Species-A')
   assert.equal(capabilityRejected.biological_type, 'Type-A')
@@ -2477,6 +2780,7 @@ test('World Model parser TRACE keeps the safe parser error code readable', async
 })
 
 test('World Model Patch v2 TRACE exposes validation path and stage without evidence text', async () => {
+  const diagnostics = []
   const captured = await captureTraceLogs(async () => {
     const analyzer = createAnalyzer({
       profileResolver: () => SILLYTAVERN_CURRENT_API,
@@ -2490,23 +2794,17 @@ test('World Model Patch v2 TRACE exposes validation path and stage without evide
         },
       }),
     })
-    await assert.rejects(
-      analyzer.analyzeWorldModelPatchV2({
-        analysisInput: { world_model: v2ExistingModel(), character: { description: '无相关世界级分类证据。' } },
-      }),
-      error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED',
-    )
+    const result = await analyzer.analyzeWorldModelPatchV2({
+      analysisInput: { world_model: v2ExistingModel(), character: { description: '无相关世界级分类证据。' } },
+      onFactDeltaTrace: trace => diagnostics.push(trace),
+    })
+    assert.equal(result.patch.operations.length, 0)
   })
   const logText = JSON.stringify(captured.entries)
-  assert.match(logText, /world-model-fact-delta/)
-  assert.match(logText, /WORLD_MODEL_PATCH_V2_INVALID/)
-  assert.match(logText, /WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED/)
-  assert.match(logText, /world_patch_v2_evidence_guard/)
-  assert.match(logText, /operation\.type\.name/)
-  assert.match(logText, /"operationIndex":0/)
-  assert.match(logText, /"operationOp":\{"type":"string","length":8\}/)
-  assert.match(logText, /"canonicalTargetPath":\{"type":"string","length":41\}/)
-  assert.match(logText, /"validationStage":\{"type":"string","length":29\}/)
+  const rejected = diagnostics.find(entry => entry.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
+  assert.equal(rejected.rejected_semantic_field, 'operation.type.name')
+  assert.equal(rejected.evidence_guard_failure_code, 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+  assert.doesNotMatch(logText, /WORLD_MODEL_PATCH_V2_INVALID/u)
   assert.doesNotMatch(logText, /无相关世界级分类证据/u)
 })
 

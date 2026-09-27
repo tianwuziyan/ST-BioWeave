@@ -140,8 +140,9 @@ rare/minority facts or complete unsupported schema fields. Identity discovery
 comes before detail extraction; identity evidence does not authorize details.
 Fact order, indentation, previous Fact state, and implicit parent state have no
 semantic effect. Missing identity, unsupported fields, malformed payloads,
-scope mismatch, or unresolved dependency reject the whole response; indexing
-is never last-write-wins or fuzzy-merged. Fact Delta is transient and is not
+scope mismatch, or unresolved dependency reject that Fact; root framing and
+unrecoverable protocol violations reject the response. Indexing is never
+last-write-wins or fuzzy-merged. Fact Delta is transient and is not
 persisted or sent to UI or Floor storage.
 
 Existing identity/facts with the same known value are omitted from the
@@ -772,7 +773,7 @@ accepted where a semantic label is required.
 
 Description is optional identity/context text, not a catch-all semantic outlet.
 When a fact has a dedicated capability, rule, lifecycle, or mechanism field,
-the Candidate should use that field rather than restating several structured
+the Fact Delta should use that field rather than restating several structured
 facts in Description. Existing alone never proves a Description claim; a
 repeated Description requires permitted evidence at the same scope.
 
@@ -812,10 +813,12 @@ its Projection Rule Fact.
 The production Supplement parser/resolver boundary is:
 
 ```text
-parseWorldModelFactDeltaText(raw) -> { facts, diagnostics }
+parseWorldModelFactDeltaText(raw) -> { facts, rejectedFacts, diagnostics }
 validateWorldModelFactDelta(facts) -> validated Fact Delta
 worldModelIdentityIndex(model) -> exact identity index or duplicate error
 worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2
+resolveWorldModelFactDelta(facts, existingModel) -> per-Fact resolution + Patch v2
+Supplement operation-level Evidence Guard -> accepted Patch v2 + rejected Facts
 applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> classified Patch v2
 mergeWorldModelPatchV2(existingModel, patch) -> complete WorldModelV1
 ```
@@ -832,7 +835,7 @@ Patch v2 remains an internal deterministic IR:
 The internally generated `operations` contains only evidence-supported proposed `ADD` or `CHANGE`
 information. It never contains complete updated Existing species,
 unchanged Existing fields, `UNCHANGED` operations, `REMOVE`, `invalidate`, or
-Structural Reclassification. `operations: []` means the Supplement Candidate and
+Structural Reclassification. `operations: []` means the Supplement Fact Delta and
 Existing comparison found no legal change.
 
 All operation targets use canonical identity, never array index, input order,
@@ -1266,8 +1269,9 @@ contract above.
 - `buildWorldModelPatchMessagesV2(analysisInput, promptSettings) -> ChatMessage[]`
 - `parseWorldModelResponse(raw) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModel(input) -> WorldModelV1`
-- `parseWorldModelFactDeltaText(raw) -> { facts, diagnostics }`
+- `parseWorldModelFactDeltaText(raw) -> { facts, rejectedFacts, diagnostics }`
 - `validateWorldModelFactDelta(facts) -> validated Fact Delta`
+- `resolveWorldModelFactDelta(facts, existingModel) -> per-Fact resolution + Patch v2`
 - `worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2`
 - `validateWorldModelPatchV2(patch) -> WorldModelPatchV2`
 - `mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1`
@@ -1474,3 +1478,33 @@ attempt, and retry index. Diagnostic callbacks are best-effort and must never
 change parser, resolver, Guard, retry, persistence, canonical, or UI behavior.
 Evidence excerpts, when enabled for Host acceptance, are bounded and are never
 stored in a Floor.
+
+### 8.1 Supplement Fact-level failure isolation
+
+The Supplement production path keeps Fact boundaries after transport parsing:
+
+```text
+Fact Delta root
+  -> parse each Fact independently
+  -> deterministic Fact resolver / Existing comparison
+  -> one Patch v2 operation per accepted Fact
+  -> invoke the existing Evidence Guard per operation
+  -> retain accepted operations only
+  -> existing Patch v2 merge / canonical validation
+```
+
+The root and its framing remain whole-response protocol boundaries. Once the
+root is valid, a malformed Fact is represented in `rejectedFacts` and does not
+discard valid sibling Facts. Resolver conflicts, unresolved identity
+dependencies, unsupported composite corrections, and Evidence Guard failures
+are also per-Fact rejections. A new identity is processed before its dependent
+detail Facts, independent of response order; if identity acceptance fails,
+dependent details receive an unresolved-dependency rejection.
+
+The existing hierarchical Candidate parser and
+`worldModelCandidateToPatchV2` remain compatibility/Full-side helpers. They
+are not called by the Supplement Fact Delta production path. The canonical
+World Model remains hierarchical, and Patch v2 operation names remain
+unchanged. The Supplement adapter may split a new identity from its detail
+Facts into `ADD_SPECIES`/`ADD_TYPE` plus field-level Patch v2 operations; this
+does not change the canonical schema or Evidence Guard matching rules.

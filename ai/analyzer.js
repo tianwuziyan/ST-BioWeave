@@ -623,14 +623,15 @@ function factDeltaExistingComparison(fact, existing) {
   return v2Equal(current, fact.value) ? 'same' : 'correction';
 }
 
-function factDeltaResolutionDiagnostics(facts, patch, existing) {
+function factDeltaResolutionDiagnostics(facts, patch, existing, factResults = []) {
   const classified = classifyWorldModelPatchV2(patch, existing);
   return facts.map((fact, fact_index) => {
     const operationIndex = patch.operations.findIndex(operation => factDeltaOperationMatchesFact(fact, operation));
     const operation = operationIndex >= 0 ? patch.operations[operationIndex] : null;
     const classification = operationIndex >= 0 ? classified[operationIndex]?.classification ?? null : null;
+    const lifecycle = factResults.find(item => item.fact_index === (fact.fact_index ?? fact_index))
     return {
-      fact_index,
+      fact_index: fact.fact_index ?? fact_index,
       field: fact.field,
       species: fact.species ?? null,
       biological_type: fact.biological_type ?? null,
@@ -639,6 +640,12 @@ function factDeltaResolutionDiagnostics(facts, patch, existing) {
       patch_operation_type: operation?.op ?? null,
       patch_path: operation ? v2CanonicalTargetPath(operation) : null,
       classification,
+      ...(lifecycle?.status === 'rejected' ? {
+        status: 'rejected',
+        failure_stage: lifecycle.guardError?.validation_stage ?? 'fact_resolution',
+        failure_code: lifecycle.code ?? null,
+        reason: lifecycle.reason ?? null,
+      } : {}),
     };
   });
 }
@@ -651,7 +658,19 @@ function factDeltaRejectedOperation(error) {
 
 function factDeltaEvidenceCandidates(operation, units, debug) {
   const target = operation?.target ?? {};
-  const tokens = [target.species_name, target.type_name, operation?.type?.name, operation?.value]
+  const tokens = [
+    target.species_name,
+    target.type_name,
+    operation?.type?.name,
+    operation?.value,
+    operation?.unknown,
+    operation?.exception?.statement,
+    operation?.exception?.applies_to,
+    operation?.exception?.evidence,
+    operation?.mechanism?.key,
+    operation?.mechanism?.label,
+    operation?.mechanism?.pathway,
+  ]
     .filter(value => typeof value === 'string' && value.trim())
     .map(value => value.trim().toLocaleLowerCase());
   const candidateIndices = units
@@ -3363,60 +3382,65 @@ function v2PendingClassification(pending, identity, content, classification) {
 export function classifyWorldModelPatchV2(raw, existingModel) {
   const patch = validateWorldModelPatchV2(raw);
   const existing = normalizeWorldModel(existingModel ?? { schema_version: 1, species: [], exceptions: [], unknowns: [], projection_rules: [] }, { allowGeneratedProjectionRuleIds: true });
+  const working = clonePatchValue(existing);
   const pending = new Map();
+  const finalize = result => {
+    if (result.classification === 'ADD' || result.classification === 'CHANGE') v2ApplyClassifiedOperations(working, [result]);
+    return result;
+  };
   return patch.operations.map((rawOperation) => {
     const operation = v2CanonicalOperation(rawOperation);
     if (operation.op === 'SET_FIELD') {
-      const classification = v2ClassifyField(existing, operation);
+      const classification = v2ClassifyField(working, operation);
       const normalizedValue = v2NormalizeField(operation);
-      return { operation, classification: v2PendingClassification(pending, `field:${operation.target.kind}:${operation.target.species_name ?? ''}:${operation.target.type_name ?? ''}:${operation.path.join('.')}`, normalizedValue, classification) };
+      return finalize({ operation, classification: v2PendingClassification(pending, `field:${operation.target.kind}:${operation.target.species_name ?? ''}:${operation.target.type_name ?? ''}:${operation.path.join('.')}`, normalizedValue, classification) });
     }
     if (operation.op === 'ADD_SPECIES') {
       const candidate = v2NormalizeSpecies(operation.species);
-      const current = v2Species(existing, candidate.name);
-      if (!current) return { operation, classification: v2PendingClassification(pending, `species:${candidate.name}`, candidate, 'ADD'), target: { kind: 'species', species_name: candidate.name } };
-      if (v2Equal(current, candidate)) return { operation, classification: 'NO-OP', target: { kind: 'species', species_name: candidate.name } };
+      const current = v2Species(working, candidate.name);
+      if (!current) return finalize({ operation, classification: v2PendingClassification(pending, `species:${candidate.name}`, candidate, 'ADD'), target: { kind: 'species', species_name: candidate.name } });
+      if (v2Equal(current, candidate)) return finalize({ operation, classification: 'NO-OP', target: { kind: 'species', species_name: candidate.name } });
       throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.species.name' });
     }
     if (operation.op === 'ADD_TYPE') {
       const speciesName = canonicalSpeciesName(operation.target.species_name);
-      const species = v2Species(existing, speciesName);
+      const species = v2Species(working, speciesName);
       if (!species) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target.species_name' });
       const candidate = v2NormalizeType(operation.type, speciesName);
       const current = species.biological_types.find((item) => item.name === candidate.name);
-      if (!current) return { operation, classification: v2PendingClassification(pending, `type:${speciesName}:${candidate.name}`, candidate, 'ADD'), target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } };
-      if (v2Equal(current, candidate)) return { operation, classification: 'NO-OP', target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } };
+      if (!current) return finalize({ operation, classification: v2PendingClassification(pending, `type:${speciesName}:${candidate.name}`, candidate, 'ADD'), target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } });
+      if (v2Equal(current, candidate)) return finalize({ operation, classification: 'NO-OP', target: { kind: 'biological_type', species_name: speciesName, type_name: candidate.name } });
       throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.type.name' });
     }
     if (operation.op === 'ADD_SPECIAL_RULE') {
-      const type = v2Type(existing, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
+      const type = v2Type(working, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
       if (!type) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
       const value = v2TextIdentity(operation.value);
-      return { operation, classification: v2PendingClassification(pending, `special_rule:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${value}`, value, type.special_rules.some((item) => v2TextIdentity(item) === value) ? 'NO-OP' : 'ADD') };
+      return finalize({ operation, classification: v2PendingClassification(pending, `special_rule:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${value}`, value, type.special_rules.some((item) => v2TextIdentity(item) === value) ? 'NO-OP' : 'ADD') });
     }
     if (operation.op === 'ADD_MECHANISM') {
-      const type = v2Type(existing, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
+      const type = v2Type(working, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
       if (!type) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
       const candidate = normalizeReproductiveMechanism(operation.mechanism, 'operation.mechanism');
       const classification = v2PendingClassification(pending, `mechanism:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${candidate.key}`, candidate, v2CollectionClassification(type.reproductive_mechanisms, candidate, (item) => item.key, v2MechanismContent));
       if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.mechanism.key' });
-      return { operation, classification, target: { kind: 'biological_type', species_name: canonicalSpeciesName(operation.target.species_name), type_name: type.name, mechanism_key: candidate.key } };
+      return finalize({ operation, classification, target: { kind: 'biological_type', species_name: canonicalSpeciesName(operation.target.species_name), type_name: type.name, mechanism_key: candidate.key } });
     }
     if (operation.op === 'ADD_EXCEPTION') {
       const candidate = v2NormalizeException(operation.exception);
       const exceptionIdentity = `${v2TextIdentity(candidate.statement)}|${v2TextIdentity(candidate.applies_to)}`;
-      const classification = v2PendingClassification(pending, `exception:${exceptionIdentity}`, candidate, v2CollectionClassification(existing.exceptions, candidate, (item) => `${v2TextIdentity(item.statement)}|${v2TextIdentity(item.applies_to)}`, (item) => ({ statement: v2TextIdentity(item.statement), applies_to: v2TextIdentity(item.applies_to), evidence: item.evidence ?? null })));
+      const classification = v2PendingClassification(pending, `exception:${exceptionIdentity}`, candidate, v2CollectionClassification(working.exceptions, candidate, (item) => `${v2TextIdentity(item.statement)}|${v2TextIdentity(item.applies_to)}`, (item) => ({ statement: v2TextIdentity(item.statement), applies_to: v2TextIdentity(item.applies_to), evidence: item.evidence ?? null })));
       if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.exception' });
-      return { operation, classification };
+      return finalize({ operation, classification });
     }
     if (operation.op === 'ADD_UNKNOWN') {
       const candidate = v2TextIdentity(operation.unknown);
-      return { operation, classification: v2PendingClassification(pending, `unknown:${candidate}`, candidate, existing.unknowns.some((item) => v2TextIdentity(item) === candidate) ? 'NO-OP' : 'ADD') };
+      return finalize({ operation, classification: v2PendingClassification(pending, `unknown:${candidate}`, candidate, working.unknowns.some((item) => v2TextIdentity(item) === candidate) ? 'NO-OP' : 'ADD') });
     }
     const candidate = normalizeProjectionRules([operation.projection_rule], { allowGeneratedIdentity: true })[0];
-    const classification = v2PendingClassification(pending, `projection_rule:${candidate.projection_rule_id}`, candidate, v2CollectionClassification(existing.projection_rules, candidate, (item) => item.projection_rule_id, (item) => item));
+    const classification = v2PendingClassification(pending, `projection_rule:${candidate.projection_rule_id}`, candidate, v2CollectionClassification(working.projection_rules, candidate, (item) => item.projection_rule_id, (item) => item));
     if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.projection_rule' });
-    return { operation, classification, target: { kind: 'projection_rule', projection_rule_id: candidate.projection_rule_id } };
+    return finalize({ operation, classification, target: { kind: 'projection_rule', projection_rule_id: candidate.projection_rule_id } });
   });
 }
 
@@ -3982,6 +4006,61 @@ function mergeWorldModelPatchV2Classified(existingModel, classified) {
   return v2RestoreExistingProjectionOrder(normalized, base);
 }
 
+function factDeltaOperationTargetExists(model, operation) {
+  if (!operation?.target || operation.target.kind === 'world') return true
+  if (operation.target.kind === 'species') return Boolean(v2Species(model, operation.target.species_name))
+  return Boolean(v2Type(model, operation.target.species_name, operation.target.type_name))
+}
+
+function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
+  let working = resolution.existing
+  const acceptedOperations = []
+  const acceptedResults = []
+  const rejectedFacts = [...resolution.rejectedFacts]
+  for (const result of resolution.factResults) {
+    if (!result.operation || result.status !== 'resolved') {
+      if (result.status === 'no-op' || result.status === 'deduplicated') acceptedResults.push(result)
+      continue
+    }
+    if (!factDeltaOperationTargetExists(working, result.operation)) {
+      result.status = 'rejected'
+      result.code = result.operation.op === 'ADD_TYPE'
+        ? 'WORLD_MODEL_FACT_DELTA_SPECIES_IDENTITY_REQUIRED'
+        : 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED'
+      result.reason = 'identity dependency was not accepted'
+      rejectedFacts.push(result)
+      continue
+    }
+    try {
+      const classified = applyWorldModelPatchV2EvidenceGuard(
+        {schema_version: 2, operations: [result.operation]},
+        working,
+        analysisInput,
+      )
+      const classifiedResult = classified[0]
+      if (classifiedResult.classification !== 'NO-OP') {
+        working = mergeWorldModelPatchV2Classified(working, classified)
+        acceptedOperations.push(result.operation)
+      }
+      result.status = classifiedResult.classification === 'NO-OP' ? 'no-op' : 'accepted'
+      result.classification = classifiedResult.classification
+      acceptedResults.push(result)
+    } catch (error) {
+      result.status = 'rejected'
+      result.code = error?.code ?? error?.message ?? 'WORLD_MODEL_PATCH_V2_INVALID'
+      result.reason = error?.message ?? result.code
+      result.guardError = error
+      rejectedFacts.push(result)
+    }
+  }
+  return {
+    patch: {schema_version: 2, operations: acceptedOperations},
+    factResults: [...acceptedResults, ...rejectedFacts],
+    rejectedFacts,
+    classified: classifyWorldModelPatchV2({schema_version: 2, operations: acceptedOperations}, resolution.existing),
+  }
+}
+
 export function mergeWorldModelPatchV2(existingModel, patch, analysisInput = {}) {
   const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const guarded = applyWorldModelPatchV2EvidenceGuard(patch, base, analysisInput);
@@ -4146,6 +4225,8 @@ function factDeltaAddUnique(map, key, value, {equal = v2Equal} = {}) {
   if (!equal(previous, value)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_CONFLICT', {path: key}, 'WORLD_MODEL_FACT_DELTA_CONFLICT')
 }
 
+// Compatibility-only candidate assembly. Supplement production uses the
+// per-Fact resolver below so sibling claims never share an ADD_TYPE object.
 function factDeltaBuildCandidate(facts, existingModel) {
   const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
   const speciesByName = new Map()
@@ -4255,21 +4336,160 @@ function factDeltaBuildCandidate(facts, existingModel) {
 }
 
 export function worldModelFactDeltaToPatchV2(facts, existingModel) {
-  const built = factDeltaBuildCandidate(facts, existingModel)
-  for (const {species, type, mechanism} of built.mechanisms.values()) {
-    const existingType = built.existing.species.find(item => item.name === species)?.biological_types.find(item => item.name === type)
-    const current = existingType?.reproductive_mechanisms?.find(item => item.key === mechanism.key)
-    if (current && !v2Equal(current, mechanism)) throw factDeltaError('FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED', {species, type, key: mechanism.key}, 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED')
+  return resolveWorldModelFactDelta(facts, existingModel).patch
+}
+
+function factDeltaFactKey(fact) {
+  if (fact.field === 'Species_Identity') return `species:${fact.species}`
+  if (fact.field === 'Type_Identity') return `type:${fact.species}:${fact.biological_type}`
+  if (FACT_DELTA_SCALAR_PATHS[fact.field]) return factDeltaPathKey(fact)
+  if (fact.field === 'Special_Rule') return `special:${fact.species}:${fact.biological_type}:${v2TextIdentity(fact.value)}`
+  if (fact.field === 'Reproductive_Mechanism') return `mechanism:${fact.species}:${fact.biological_type}:${fact.mechanism?.key}`
+  if (fact.field === 'Exception') return `exception:${v2TextIdentity(fact.exception?.statement)}:${v2TextIdentity(fact.exception?.applies_to)}`
+  if (fact.field === 'Unknown') return `unknown:${v2TextIdentity(fact.value)}`
+  if (fact.field === 'Projection_Rule') return `projection:${fact.projection_rule?.projection_rule_id ?? JSON.stringify(v2Canonical(fact.projection_rule))}`
+  return `fact:${JSON.stringify(v2Canonical(fact))}`
+}
+
+function factDeltaFactContent(fact) {
+  if (fact.field === 'Species_Identity' || fact.field === 'Type_Identity') return fact.field === 'Species_Identity' ? fact.species : fact.biological_type
+  if (fact.field === 'Reproductive_Mechanism') return fact.mechanism
+  if (fact.field === 'Exception') return fact.exception
+  if (fact.field === 'Projection_Rule') return fact.projection_rule
+  return fact.value
+}
+
+function factDeltaOperationForFact(fact, existing) {
+  const comparison = factDeltaExistingComparison(fact, existing)
+  if (comparison === 'same') return null
+  if (fact.field === 'Species_Identity') return {op: 'ADD_SPECIES', species: {name: fact.species}}
+  if (fact.field === 'Type_Identity') return {
+    op: 'ADD_TYPE',
+    target: candidateTarget('species', fact.species),
+    type: {name: fact.biological_type},
   }
-  const existingProjectionIds = new Map(built.existing.projection_rules.map(rule => [rule.projection_rule_id, rule]))
-  const projectionFacts = []
-  for (const rule of built.projections.values()) {
-    const current = existingProjectionIds.get(rule.projection_rule_id)
-    if (current && !v2Equal(current, rule)) throw factDeltaError('FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED', {projection_rule_id: rule.projection_rule_id}, 'FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED')
-    if (!current) projectionFacts.push(rule)
+  if (FACT_DELTA_SCALAR_PATHS[fact.field]) {
+    const path = FACT_DELTA_SCALAR_PATHS[fact.field]
+    const target = path[0] === 'world'
+      ? candidateTarget('world')
+      : path[0] === 'species'
+        ? candidateTarget('species', fact.species)
+        : candidateTarget('biological_type', fact.species, fact.biological_type)
+    return {op: 'SET_FIELD', target, path: path[0] === 'world' ? path.slice(1) : path.slice(1), value: fact.value}
   }
-  built.candidate.projection_rules = projectionFacts.map(({projection_rule_id, ...rule}) => rule)
-  return worldModelCandidateToPatchV2(built.candidate, built.existing)
+  if (fact.field === 'Special_Rule') return {
+    op: 'ADD_SPECIAL_RULE',
+    target: candidateTarget('biological_type', fact.species, fact.biological_type),
+    value: fact.value,
+  }
+  if (fact.field === 'Reproductive_Mechanism') return {
+    op: 'ADD_MECHANISM',
+    target: candidateTarget('biological_type', fact.species, fact.biological_type),
+    mechanism: factDeltaCanonicalMechanism(fact.mechanism),
+  }
+  if (fact.field === 'Exception') return {op: 'ADD_EXCEPTION', exception: fact.exception}
+  if (fact.field === 'Unknown') return {op: 'ADD_UNKNOWN', unknown: fact.value}
+  if (fact.field === 'Projection_Rule') {
+    const {projection_rule_id, ...projection_rule} = factDeltaCanonicalProjection(fact.projection_rule)
+    return {op: 'ADD_PROJECTION_RULE', projection_rule}
+  }
+  throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', {field: fact.field})
+}
+
+function factDeltaDependency(fact, existing, responseSpecies, responseTypes) {
+  if (fact.field === 'Species_Identity' || fact.field === 'Type_Identity' || factDeltaAddress(fact).scope === 'world') return null
+  const species = existing.species.find(item => item.name === fact.species)
+  if (!species && !responseSpecies.has(fact.species)) return {
+    code: 'WORLD_MODEL_FACT_DELTA_SPECIES_IDENTITY_REQUIRED',
+    species: fact.species,
+  }
+  if (factDeltaAddress(fact).scope !== 'biological_type') return null
+  const typeExists = species?.biological_types?.some(item => item.name === fact.biological_type)
+  if (!typeExists && !responseTypes.has(`${fact.species}\u0000${fact.biological_type}`)) return {
+    code: 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED',
+    species: fact.species,
+    type: fact.biological_type,
+  }
+  return null
+}
+
+function factDeltaFactPriority(fact) {
+  if (fact.field === 'Species_Identity') return 0
+  if (fact.field === 'Type_Identity') return 1
+  return 2
+}
+
+export function resolveWorldModelFactDelta(facts, existingModel) {
+  const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+  const inputFacts = Array.isArray(facts) ? facts : []
+  const responseSpecies = new Set(inputFacts.filter(fact => fact?.field === 'Species_Identity').map(fact => fact.species))
+  const responseTypes = new Set(inputFacts.filter(fact => fact?.field === 'Type_Identity').map(fact => `${fact.species}\u0000${fact.biological_type}`))
+  const seen = new Map()
+  const factResults = []
+  const ordered = inputFacts
+    .map((fact, index) => ({fact, index, fact_index: fact?.fact_index ?? index}))
+    .sort((left, right) => factDeltaFactPriority(left.fact) - factDeltaFactPriority(right.fact) || JSON.stringify(v2Canonical(left.fact)).localeCompare(JSON.stringify(v2Canonical(right.fact))))
+  for (const {fact, index, fact_index} of ordered) {
+    const result = {fact, index, fact_index, field: fact?.field ?? null, species: fact?.species ?? null, biological_type: fact?.biological_type ?? null, operation: null, status: 'rejected'}
+    try {
+      validateWorldModelFactDelta([fact])
+      const key = factDeltaFactKey(fact)
+      const previous = seen.get(key)
+      if (previous) {
+        if (v2Equal(factDeltaFactContent(previous.fact), factDeltaFactContent(fact))) {
+          result.status = 'deduplicated'
+          result.code = 'FACT_DELTA_DUPLICATE_DEDUPED'
+        } else {
+          result.code = 'WORLD_MODEL_FACT_DELTA_CONFLICT'
+          result.reason = 'same canonical Fact address has different content'
+        }
+        factResults.push(result)
+        continue
+      }
+      const dependency = factDeltaDependency(fact, existing, responseSpecies, responseTypes)
+      if (dependency) {
+        Object.assign(result, dependency)
+        result.reason = 'identity dependency is unresolved'
+        factResults.push(result)
+        continue
+      }
+      if (fact.field === 'Reproductive_Mechanism') {
+        const current = existing.species.find(item => item.name === fact.species)?.biological_types?.find(item => item.name === fact.biological_type)?.reproductive_mechanisms?.find(item => item.key === fact.mechanism?.key)
+        const candidate = factDeltaCanonicalMechanism(fact.mechanism)
+        if (current && !v2Equal(current, candidate)) {
+          result.code = 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED'
+          result.reason = 'existing reproductive mechanism correction has no Patch v2 outlet'
+          factResults.push(result)
+          continue
+        }
+      }
+      if (fact.field === 'Projection_Rule') {
+        const candidate = factDeltaCanonicalProjection(fact.projection_rule)
+        const current = existing.projection_rules.find(item => item.projection_rule_id === candidate.projection_rule_id)
+        if (current && !v2Equal(current, candidate)) {
+          result.code = 'FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED'
+          result.reason = 'existing projection rule correction has no Patch v2 outlet'
+          factResults.push(result)
+          continue
+        }
+      }
+      const operation = factDeltaOperationForFact(fact, existing)
+      seen.set(key, {fact, operation})
+      result.operation = operation
+      result.status = operation ? 'resolved' : 'no-op'
+      factResults.push(result)
+    } catch (error) {
+      result.code = error?.code ?? 'WORLD_MODEL_FACT_DELTA_INVALID'
+      result.reason = error?.message ?? result.code
+      factResults.push(result)
+    }
+  }
+  return {
+    patch: {schema_version: 2, operations: factResults.filter(result => result.operation).map(result => result.operation)},
+    factResults,
+    rejectedFacts: factResults.filter(result => result.status === 'rejected'),
+    existing,
+  }
 }
 
 export function worldModelIdentityIndex(model) {
@@ -4430,9 +4650,14 @@ export function createAnalyzer({
     })
     try {
       const parsed = parseWorldModelFactDeltaText(response)
-      const facts = validateWorldModelFactDelta(parsed.facts)
+      const facts = validateWorldModelFactDelta(parsed.facts).map((fact, factIndex) => {
+        const indexed = {...fact}
+        Object.defineProperty(indexed, 'fact_index', {value: factIndex, enumerable: false})
+        return indexed
+      })
       emitFactDeltaTrace('WORLD_FACT_DELTA_PARSED', {
         fact_count: facts.length,
+        rejected_fact_count: parsed.rejectedFacts?.length ?? 0,
         fields: [...new Set(facts.map(fact => fact.field))],
         scope_summary: facts.reduce((summary, fact) => {
           const scope = factDeltaAddress(fact).scope
@@ -4440,25 +4665,68 @@ export function createAnalyzer({
           return summary
         }, {}),
         address_summary: facts.map(fact => ({field: fact.field, ...factDeltaAddress(fact)})),
+        rejected_facts: (parsed.rejectedFacts ?? []).map(item => ({
+          index: item.index,
+          code: item.code,
+          reason: item.reason,
+          ...(debug ? {raw: String(item.raw ?? '').slice(0, 1000)} : {}),
+        })),
         ...(debug ? {facts: facts.map(fact => factDeltaDiagnosticValue(fact))} : {}),
       })
-      const patch = worldModelFactDeltaToPatchV2(facts, existingModel)
+      for (const rejected of parsed.rejectedFacts ?? []) emitFactDeltaTrace('WORLD_FACT_DELTA_REJECTED', {
+        fact_index: rejected.index,
+        field: rejected.diagnostics?.find(item => item.field)?.field ?? null,
+        failure_stage: 'fact_parse',
+        failure_code: rejected.code,
+        reason: rejected.reason,
+      })
+      const resolution = resolveWorldModelFactDelta(facts, existingModel)
       const normalizedExisting = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+      const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
+      for (const rejected of guarded.rejectedFacts) {
+        const error = rejected.guardError
+        const operation = factDeltaRejectedOperation(error)
+        if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
+          emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_REJECTED', {
+            fact_index: rejected.fact_index,
+            rejected_operation_type: operation?.operation_type ?? error.operation_op ?? rejected.operation?.op ?? null,
+            rejected_semantic_path: operation?.semantic_path ?? error.canonical_target_path ?? error.path ?? null,
+            species: operation?.species ?? rejected.species ?? null,
+            biological_type: operation?.biological_type ?? rejected.biological_type ?? null,
+            field: operation?.field ?? rejected.field ?? null,
+            proposed_value: operation?.proposed_value ?? null,
+            classification: operation?.classification ?? null,
+            evidence_guard_failure_code: error.message ?? error.code ?? rejected.code,
+            rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
+            evidence_binding: factDeltaEvidenceCandidates(rejected.operation ?? {
+              op: operation?.operation_type,
+              target: error.operation_target,
+              value: operation?.proposed_value,
+            }, factDeltaEvidenceTraceUnits(analysisInput), debug),
+          })
+        } else {
+          emitFactDeltaTrace('WORLD_FACT_DELTA_REJECTED', {
+            fact_index: rejected.fact_index,
+            field: rejected.field,
+            species: rejected.species,
+            biological_type: rejected.biological_type,
+            failure_stage: error?.validation_stage ?? 'fact_resolution',
+            failure_code: rejected.code,
+            reason: rejected.reason,
+          })
+        }
+      }
       emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {
         fact_count: facts.length,
-        patch_operation_count: patch.operations.length,
-        fact_mappings: factDeltaResolutionDiagnostics(facts, patch, normalizedExisting),
+        patch_operation_count: guarded.patch.operations.length,
+        fact_mappings: factDeltaResolutionDiagnostics(facts, guarded.patch, normalizedExisting, guarded.factResults),
       })
-      const classified = applyWorldModelPatchV2EvidenceGuard(
-        patch,
-        existingModel,
-        analysisInput,
-      )
       return {
-        patch,
+        patch: guarded.patch,
         facts,
         diagnostics: parsed.diagnostics,
-        classified,
+        rejectedFacts: [...(parsed.rejectedFacts ?? []), ...guarded.rejectedFacts],
+        classified: guarded.classified,
       }
     } catch (error) {
       if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
