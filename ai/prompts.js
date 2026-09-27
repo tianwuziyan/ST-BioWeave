@@ -667,7 +667,7 @@ function formatWorldModelSupplementTarget(worldModel) {
 }
 
 function formatWorldModelPatchUserMessage(input) {
-  const request = '【Supplement Evidence Candidate Output】根据 permitted evidence 与完整 Existing reference 输出一棵 hierarchical Complete Evidence-Supported Candidate。Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence。对 evidence-supported fact 逐字段比较：Existing 相同值已记录则省略；null、absent 或缺少 collection member 视为未记录并可补充；明确不同 known value 才提出 correction claim。不要执行 ADD、CHANGE、NO-OP 或 delta 判断。严格使用 v3 underscore semantic transport labels，只输出协议文本，不输出解释、JSON、Patch operation、target、path、classification 或 old_value。'
+  const request = '【Supplement Fact Delta Output】根据 permitted evidence 与完整 Existing reference 输出独立 Facts。不要输出 hierarchical Candidate、JSON 或 Patch IR。'
   return joinPromptSections([
     formatWorldModelSupplementTarget(input.world_model),
     request,
@@ -729,7 +729,7 @@ export const WORLD_MODEL_SUPPLEMENT_FIELD_DICTIONARY = [
   '【Special Rules / Rule】提取确实属于当前 Biological_Type、由 evidence 支持且没有更准确 structured field 表达的稳定特殊规则。Rule 是 fallback outlet，不是事实垃圾桶；若 capability、reproduction rule、lifecycle 或 mechanism 已能表达，则不要重复。Species-scoped rule 不得强行挂到 Type。',
   '【Medical Context】只记录明确属于 world-level 的医疗/照护背景。Childbirth_Difficulty 是世界级分娩难度或总体产科风险；Care_Level 是世界级医疗、产科或照护水平；Evidence 支持该 world-level context。单一个体治疗、症状、检查或护理不能自动升级为 world-level。',
   '【Exception】Exception_Statement 是偏离一般 World Model 规则的明确例外；Applies_To 是明确适用对象/范围；Evidence 支持该例外。未知、资料不足和普通临时事实不自动成为 Exception。',
-  '【Unknown】Unknown_Fact 只记录 evidence 已触及但明确 unresolved、unknown 或 conflicting、且会影响 World Model 的重要事实，例如“尚不清楚 Species-A 是否存在第三种稳定 Biological_Type”。schema field 没资料不是 Unknown；missing field 与 omitted capability 都不是 Unknown。',
+  '【Unknown】Unknown 只记录 evidence 已触及但明确 unresolved、unknown 或 conflicting、且会影响 World Model 的重要事实，例如“尚不清楚 Species-A 是否存在第三种稳定 Biological_Type”。schema field 没资料不是 Unknown；missing field 与 omitted capability 都不是 Unknown。',
   '【Projection Rule】只记录合法 future projection rule contract，继续使用严格 JSON payload；AI 不创建 projection_rule_id，也不把普通 biological fact 塞进 Projection Rule。',
   '【Scope examples】Species-scoped fact 只能留在 Species scope；Type-scoped fact 必须留在对应 Species + Biological_Type；individual fact 不能自动升级为 Type、Species 或 world-level rule。“Species-A 中存在 Type-B”只支持 identity，不支持 Type-B capability。“Species-A 的个体甲可以承载妊娠”没有 Type-wide evidence 时不能输出 Type 的 Can_Carry_Pregnancy。Species 整体规则若没有合法 Species-scope outlet，也不能错误挂到任意 Type。',
 ].join('\n')
@@ -805,6 +805,23 @@ Projection Rule 唯一允许的 representation 是单个 JSON object 的 JSON: �
   'Field labels 只能使用上述 exact underscore semantic tokens：Species、Species_Description、Biological_Type、Type_Description、Can_Produce_Sperm、Can_Produce_Ova、Can_Be_Fertilized、Can_Fertilize、Can_Cause_Pregnancy、Can_Carry_Pregnancy、Pregnancy_Or_Carrying、Mechanism_Key、Mechanism_Label、Mechanism_Pathway、Carrying_Compatibility、World_Model_Rule_Refs、Childbirth_Difficulty、Care_Level、Applies_To、Exception_Statement、Unknown_Fact，以及允许保留的单词 labels。不得使用旧 space labels、Name、Description、Value、Key、Label、Pathway、Statement 或 snake_case internal-field aliases；unsupported field 必须省略。Projection Rule 只允许一个 JSON object 的 JSON: line；boolean 只允许 true|false。malformed identity/hierarchy fail closed；leaf error 可在 ownership unambiguous 的最小 subtree 内 fail-soft。字段 absent = no claim/preserve Existing；不得用 null、false 或 empty collection 表示删除。Patch v2 是 internal deterministic IR，不由 AI 输出。',
 ].join('\n')
 
+export const WORLD_MODEL_FACT_DELTA_TASK_PROMPT = [
+  '【World Model Supplement Fact Delta v1】读取全部 permitted evidence 与完整 Existing。读完全部 permitted evidence 后，先完成 internal Complete Fact Discovery，再只输出相对 Existing 缺失或由当前 evidence 明确支持的 correction Facts。每个 correction claim 必须由当前 evidence 明确支持。Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence。Existing same known fact 省略；Existing 相同 known fact 不输出；omission 只表示 preserve Existing，绝不表示 REMOVE。Patch v2 是 internal deterministic IR，canonical World Model 是 persistent/UI representation。',
+  '对每个 Species 穷举全部 evidence-supported stable Biological Type identities；Species scope 下明确持续存在的 classification 可直接成立；没有直接命名时，只有稳定、可重复识别且边界唯一的 classification cluster 才可派生；发现一个 Species 或 Type 后不得停止。同一句 evidence 支持多个 Type 时分别发现。rare、minority、uncommon、low prevalence 不影响 existence，数量少不等于 temporary。Type identity != Type details；Type identity != details；Type identity does not authorize details；Type identity 不授权 capability、reproduction、lifecycle、mechanism 或 special rule。保留 Species Binding、Biological Type Exclusion Gate、Stability Gate、direct/derived stable classification、derived stability frozen gate、capability tri-state、scope preservation 与 Human/Nonhuman baseline boundary。',
+  '每个 Fact 必须 self-contained，address 与 payload 分离。Species-scoped Field（Species_Identity、Species_Description）必须包含 Species 且禁止 Biological_Type；Type-scoped Field（Type_Identity、Type_Description、capabilities、reproduction rules、lifecycle、Special_Rule、Reproductive_Mechanism）必须包含 Species 与 Biological_Type；World-scoped Field（Childbirth_Difficulty、Care_Level、Medical_Evidence、Exception、Unknown、Projection_Rule）禁止 Species 与 Biological_Type。Applies_To 是 Exception payload，不改变 Fact scope。Fact order 没有语义；不要依赖前一个 Fact、Species block、indentation 或 implicit parent。Species/Type 是开放字符串，Field 只能使用 exact semantic vocabulary。不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释；仅 Projection_Rule Fact 的 Projection_Rule_JSON payload 允许按约定输出单个 JSON object。',
+  'Identity 与 address 分离：Species/Type 字段只表示 Fact scope；只有 Species_Identity 或 Type_Identity 才能建立新 identity。Existing identity 不需要重复 Identity Fact。新 identity 的 detail 必须和对应 identity Fact 在同一响应内出现。',
+  'Field vocabulary：Species_Identity、Type_Identity、Species_Description、Type_Description；Can_Produce_Sperm、Can_Produce_Ova、Can_Be_Fertilized、Can_Fertilize、Can_Cause_Pregnancy、Can_Carry_Pregnancy；Fertilization、Pregnancy_Or_Carrying、Cycle、Ovulation、Gestation、Labor；Maturation、Aging；Special_Rule、Reproductive_Mechanism、Exception、Unknown、Projection_Rule；Childbirth_Difficulty、Care_Level、Medical_Evidence。',
+  'Capabilities 的 Value 只能是 true 或 false；其它 scalar Value 必须是 evidence-supported non-empty string。null、unknown、NONE RECORDED、empty value 不输出。Special_Rule/Unknown 使用 Value；Exception 使用 Exception_Statement、可选 Applies_To、可选 Exception_Evidence；Reproductive_Mechanism 使用 Mechanism_Key、可选 Mechanism_Label、Mechanism_Pathway、Carrying_Compatibility、World_Model_Rule_Refs、Mechanism_Evidence；Projection_Rule 使用一个 raw Projection_Rule_JSON object，不得包含 projection_rule_id。',
+  '不输出 unsupported facts。schema 中存在但 evidence 不支持的 field 必须省略。每个字段必须有同一 scope 的独立 permitted evidence；不跨 Species 借 evidence。相同 Fact 不重复；同一 semantic identity 的 collection content 不同表示冲突，不要选择最后一个。已有 reproductive mechanism 或 projection rule 的 correction 暂不输出，因为 downstream Patch v2 没有对应 update outlet。',
+].join('\n')
+
+export const WORLD_MODEL_FACT_DELTA_OUTPUT_CONTRACT = [
+  'Output 只允许一个 root：[World Model Updates] ... [/World Model Updates]。root 内只能有零个或多个独立闭合的 [Fact]。不允许 nested Fact、隐式 parent、trailing free text、未知 payload key 或 Patch IR。',
+  '[World Model Updates]\n[Fact]\nSpecies: Species-A\nField: Species_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Can_Carry_Pregnancy\nValue: true\n[/Fact]\n[Fact]\nField: Care_Level\nValue: supported world-level care rule\n[/Fact]\n[Fact]\nField: Unknown\nValue: supported unresolved world-level fact\n[/Fact]\n[/World Model Updates]',
+  'Identity Fact 不包含 Value。Scalar Fact 使用 Value；Capability Value 只允许 true|false。Species-scoped Fact 必须带 Species 且禁止 Biological_Type；Type-scoped Fact 必须带 Species 与 Biological_Type；World-scoped Fact 不带 Species 或 Biological_Type。所有 Field 与 payload label 必须 exact/case-sensitive。',
+  '不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释；仅 Projection_Rule Fact 的 Projection_Rule_JSON payload 允许按约定输出单个 JSON object，禁止 projection_rule_id。不要输出 ADD、CHANGE、SET_FIELD、ADD_TYPE、REMOVE、NO_OP 等 operation token。',
+].join('\n')
+
 export function buildWorldModelMessages(
   analysisInput = {},
   promptSettings = {},
@@ -845,8 +862,8 @@ export function buildWorldModelPatchMessagesV2(
   const messages = []
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', joinPromptSections([
-    `【BioWeave World Model Supplement v3 Evidence Candidate 正式分析规则】\n${WORLD_MODEL_PATCH_V2_TASK_PROMPT}`,
-    `【World Model Supplement v3 输出契约】\n${WORLD_MODEL_PATCH_V2_OUTPUT_CONTRACT}`,
+    `【BioWeave World Model Supplement Fact Delta v1 正式分析规则】\n${WORLD_MODEL_FACT_DELTA_TASK_PROMPT}`,
+    `【World Model Supplement Fact Delta v1 输出契约】\n${WORLD_MODEL_FACT_DELTA_OUTPUT_CONTRACT}`,
   ]))
   addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
   addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))

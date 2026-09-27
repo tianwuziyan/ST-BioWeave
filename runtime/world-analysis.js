@@ -11,6 +11,7 @@ import {
 } from "./floor.js";
 
 const WORLD_MODEL_UPDATE_SIGNAL = /(?:世界规则|世界设定|物种规则|生物类型|biological[_\s-]*type|species\s*(?:rule|type)|生殖机制|受精机制|妊娠规则|怀孕规则|生殖能力|受孕能力|投影规则|projection[_\s-]*rule|can_(?:produce|be_fertilized|fertilize|cause_pregnancy|carry_pregnancy))/iu;
+let worldFactDeltaDiagnosticSequence = 0;
 
 function worldModelUnavailableError(cause, target = null) {
   const error = new Error("WORLD_MODEL_UNAVAILABLE");
@@ -296,7 +297,16 @@ export function createWorldAnalysis({
     const existing = worldInFlight.get(key);
     if (existing) return existing.promise;
     if (mode !== "full" && mode !== "patch") throw new Error("WORLD_ANALYSIS_MODE_INVALID");
-    const job = {key, target, mode, trigger, signal, released: false, promise: null};
+    const job = {
+      key,
+      target,
+      mode,
+      trigger,
+      signal,
+      released: false,
+      promise: null,
+      diagnostic_execution_id: `world-fact-delta-${Date.now()}-${++worldFactDeltaDiagnosticSequence}`,
+    };
     const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
     const publishPhase = phase => {
       onPhase?.(phase);
@@ -322,7 +332,7 @@ export function createWorldAnalysis({
         execution,
         signal,
         trigger,
-        invoke: async () => {
+        invoke: async ({attempt, retryIndex}) => {
           let meta;
           let model;
           if (mode === "full") {
@@ -352,6 +362,15 @@ export function createWorldAnalysis({
               floor_version: target.version,
               authoritative_floor_version: target.version,
               signal,
+              fact_delta_attempt: attempt,
+              fact_delta_retry_index: retryIndex,
+              onFactDeltaTrace: details => emitPersistenceTrace(details.stage, execution, target, {
+                ...details,
+                execution_id: job.diagnostic_execution_id,
+                attempt,
+                retry_index: retryIndex,
+                mode: "patch",
+              }, "world"),
             });
             model = mergeWorldModelPatchV2(
               resolved.model,

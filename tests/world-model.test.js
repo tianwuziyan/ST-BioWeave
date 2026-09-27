@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
-import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
-import { formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelSupplementText } from '../ai/world-supplement-protocol.js'
+import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelFactDeltaToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
+import { formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementText } from '../ai/world-supplement-protocol.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -89,6 +89,14 @@ function parseWorldModelCandidateText(raw) {
 
 function supplementText({candidate = candidateText()} = {}) {
   return `[World Model Supplement]\n${candidate}\n[/World Model Supplement]`
+}
+
+function factDeltaText({type = 'Type-B', capability = null} = {}) {
+  const facts = [
+    `[Fact]\nSpecies: Species-A\nBiological_Type: ${type}\nField: Type_Identity\n[/Fact]`,
+  ]
+  if (capability) facts.push(`[Fact]\nSpecies: Species-A\nBiological_Type: ${type}\nField: Can_Produce_Sperm\nValue: ${capability}\n[/Fact]`)
+  return `[World Model Updates]\n${facts.join('\n')}\n[/World Model Updates]`
 }
 
 async function captureTraceLogs(run) {
@@ -495,16 +503,20 @@ test('Supplement prompt is gated and keeps message roles', () => {
   const prompt = messages.map(message => message.content).join('\n')
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user'])
   assert.match(prompt, /\[World Model\][\s\S]*\[\/World Model\]/u)
-  for (const tag of ['Species', 'Biological Type', 'Capabilities', 'Reproduction Rules', 'Lifecycle', 'Reproductive Mechanisms', 'Mechanism', 'Special Rules', 'Rule', 'Medical Context', 'Exceptions', 'Exception', 'Unknowns', 'Unknown', 'Projection Rules', 'Projection Rule']) assert.match(prompt, new RegExp(`\\[${tag}\\]`))
+  assert.match(prompt, /\[World Model Updates\]/u)
+  assert.match(prompt, /\[Fact\]/u)
+  assert.match(prompt, /Species_Identity/u)
+  assert.match(prompt, /Type_Identity/u)
+  assert.match(prompt, /Can_Carry_Pregnancy/u)
   assert.doesNotMatch(prompt, /\{"schema_version":2,"operations"/u)
   assert.doesNotMatch(prompt, /"op":"(?:ADD|SET)_/u)
   assert.doesNotMatch(prompt, /\{"schema_version":1,"add":\{\},"update":\{\}\}/u)
   assert.doesNotMatch(prompt, /update\.species|完整 updated canonical species|允许 add 的字段/u)
   assert.match(prompt, /Existing = TARGET \+ comparison baseline/u)
   assert.match(prompt, /Existing 本身不是 evidence/u)
-  assert.match(prompt, /Species → Biological Type → Details/u)
-  assert.match(prompt, /opening\/closing tags 与 parser stack 是唯一 ownership signal/u)
-  assert.match(prompt, /字段 absent = no claim\/preserve Existing/u)
+  assert.match(prompt, /Fact order 没有语义/u)
+  assert.match(prompt, /每个 Fact 必须 self-contained/u)
+  assert.match(prompt, /omission 只表示 preserve Existing/u)
   assert.match(prompt, /Patch v2 是 internal deterministic IR/u)
   assert.match(prompt, /<existing_world_model_reference>/u)
   assert.doesNotMatch(prompt, /<existing_world_model>/u)
@@ -522,14 +534,14 @@ test('Supplement prompt keeps one response and deterministic comparison boundari
   })
   const prompt = messages.map(message => message.content).join('\n')
 
-  assert.match(prompt, /一次 Supplement attempt 只有一次 API request/u)
+  assert.match(prompt, /Fact Delta v1/u)
   assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
-  for (const outlet of ['Species', 'Biological Type', 'Capabilities', 'Reproduction Rules', 'Lifecycle', 'Reproductive Mechanisms', 'Special Rules', 'Exceptions', 'Unknowns', 'Medical Context', 'Projection Rules']) {
-    assert.match(prompt, new RegExp(outlet.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
+  for (const field of ['Species_Identity', 'Type_Identity', 'Species_Description', 'Type_Description', 'Can_Produce_Sperm', 'Fertilization', 'Maturation', 'Special_Rule', 'Reproductive_Mechanism', 'Exception', 'Unknown', 'Projection_Rule', 'Childbirth_Difficulty', 'Care_Level']) {
+    assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   }
-  assert.match(prompt, /所有 opening\/closing tags 与 parser stack 是唯一 ownership signal/u)
-  assert.match(prompt, /Complete Evidence-Supported Candidate/u)
-  assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
+  assert.match(prompt, /每个 Species 穷举全部 evidence-supported stable Biological Type identities/u)
+  assert.match(prompt, /Fact order 没有语义/u)
+  assert.doesNotMatch(prompt, /Complete Evidence-Supported Candidate/u)
 })
 
 test('Supplement Existing reference is identity-first and preserves canonical coverage', () => {
@@ -760,45 +772,42 @@ test('Supplement identity evidence guard preserves missing-type and negative cas
   ))
 })
 
-test('Supplement prompt exposes hierarchical Candidate grammar without Patch DTO output', () => {
+test('Supplement prompt exposes Fact Delta grammar without Patch DTO output', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /\[Species\]/u)
-  assert.match(prompt, /\[Biological Type\]/u)
-  assert.match(prompt, /\[Capabilities\]/u)
-  assert.match(prompt, /\[Mechanism\]/u)
-  assert.match(prompt, /\[Unknown\]/u)
+  assert.match(prompt, /\[World Model Updates\]/u)
+  assert.match(prompt, /\[Fact\]/u)
+  assert.match(prompt, /Species_Identity/u)
+  assert.match(prompt, /Reproductive_Mechanism/u)
+  assert.match(prompt, /Projection_Rule_JSON/u)
   assert.doesNotMatch(prompt, /"op"\s*:/u)
   assert.doesNotMatch(prompt, /"target"\s*:/u)
   assert.doesNotMatch(prompt, /"path"\s*:/u)
 })
 
-test('Supplement prompt publishes exact section field grammar', () => {
+test('Supplement prompt publishes exact Fact field grammar', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /\[Rule\]\nRule: \.\.\.\n\[\/Rule\]/u)
-  assert.doesNotMatch(prompt, /\[Rule\]\nName:/u)
-  assert.doesNotMatch(prompt, /\[Rule\]\nDescription:/u)
   for (const label of [
-    'Species', 'Species_Description', 'Biological_Type', 'Type_Description', 'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized',
+    'Species', 'Species_Identity', 'Type_Identity', 'Species_Description', 'Biological_Type', 'Type_Description', 'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized',
     'Can_Fertilize', 'Can_Cause_Pregnancy', 'Can_Carry_Pregnancy', 'Fertilization',
     'Pregnancy_Or_Carrying', 'Cycle', 'Ovulation', 'Gestation', 'Labor', 'Maturation',
     'Aging', 'Mechanism_Key', 'Mechanism_Label', 'Mechanism_Pathway', 'Carrying_Compatibility', 'World_Model_Rule_Refs',
-    'Evidence', 'Childbirth_Difficulty', 'Care_Level', 'Exception_Statement', 'Applies_To', 'Rule', 'Unknown_Fact',
-  ]) assert.match(prompt, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}:`, 'u'))
-  assert.match(prompt, /Projection Rule 唯一允许的 representation 是单个 JSON object/u)
-  assert.match(prompt, /每个 section 只允许下列 exact labels/u)
-  assert.match(prompt, /snake_case alias/u)
+    'Mechanism_Evidence', 'Childbirth_Difficulty', 'Care_Level', 'Medical_Evidence', 'Exception_Statement', 'Applies_To', 'Exception_Evidence', 'Unknown', 'Projection_Rule_JSON',
+  ]) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    assert.match(prompt, new RegExp(escaped, 'u'))
+  }
+  assert.match(prompt, /Identity Fact 不包含 Value/u)
+  assert.match(prompt, /exact\/case-sensitive/u)
+  assert.match(prompt, /禁止 projection_rule_id/u)
 })
 
-test('Supplement v3 assembled production prompt includes the semantic Field Dictionary', () => {
+test('Supplement Fact Delta production prompt includes the semantic Field Dictionary', () => {
   const prompt = buildWorldModelPatchMessagesV2({
     world_model: {schema_version: 1, species: []},
   }).map(message => message.content).join('\n')
-  assert.match(prompt, /Species \/ Species.*稳定生命种类/u)
-  assert.match(prompt, /Species_Description.*物种描述/u)
-  assert.match(prompt, /Biological_Type.*稳定生理\/生殖分类/u)
-  assert.match(prompt, /男性、女性、雄性、雌性、双性、间性、Alpha、Beta、Omega/u)
-  assert.match(prompt, /不是 enum/u)
-  assert.match(prompt, /Type identity 只证明分类存在，不授权 capability/u)
+  assert.match(prompt, /Species\/Type 是开放字符串/u)
+  assert.match(prompt, /Type identity != Type details/u)
+  assert.match(prompt, /rare、minority、uncommon、low prevalence 不影响 existence/u)
   for (const field of [
     'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized',
     'Can_Fertilize', 'Can_Cause_Pregnancy', 'Can_Carry_Pregnancy',
@@ -806,39 +815,22 @@ test('Supplement v3 assembled production prompt includes the semantic Field Dict
     'Gestation', 'Labor', 'Maturation', 'Aging', 'Mechanism_Key',
     'Mechanism_Label', 'Mechanism_Pathway', 'Carrying_Compatibility',
     'World_Model_Rule_Refs', 'Childbirth_Difficulty', 'Care_Level',
-    'Exception_Statement', 'Applies_To', 'Unknown_Fact',
+    'Exception_Statement', 'Applies_To', 'Unknown',
   ]) assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
-  assert.match(prompt, /Fertilization：受精如何发生/u)
-  assert.match(prompt, /Pregnancy_Or_Carrying：妊娠\/承载如何发生/u)
-  assert.match(prompt, /Gestation：进入妊娠后的孕期长度/u)
-  assert.match(prompt, /Maturation：生物成熟/u)
-  assert.match(prompt, /Aging：寿命、衰老/u)
-  assert.match(prompt, /普通性交、生殖或妊娠事实不自动创建 Mechanism/u)
-  assert.match(prompt, /Rule 是 fallback outlet，不是事实垃圾桶/u)
-  assert.match(prompt, /world-level 的医疗\/照护背景/u)
-  assert.match(prompt, /未知、资料不足和普通临时事实不自动成为 Exception/u)
-  assert.match(prompt, /schema field 没资料不是 Unknown/u)
-  assert.match(prompt, /明确正向证据=true，明确负向证据=false，unknown\/unstated\/insufficient=omit/u)
-  assert.match(prompt, /Candidate 禁止 null/u)
+  assert.match(prompt, /Capabilities 的 Value 只能是 true 或 false/u)
+  assert.match(prompt, /不输出 unsupported facts/u)
   assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
   assert.match(prompt, /Existing 相同 known fact 不输出/u)
-  assert.match(prompt, /null、absent 或 collection 中没有该 identity\/member/u)
-  assert.match(prompt, /Existing Description 仍必须遵守 Existing comparison/u)
-  assert.match(prompt, /Existing 已记录完全相同的 Description 时不输出/u)
-  assert.match(prompt, /Existing Description 为 null\/absent 且 permitted evidence 支持/u)
-  assert.match(prompt, /permitted evidence 明确支持与 Existing 不同的 known Description 时/u)
-  assert.doesNotMatch(prompt, /Existing Description.*可重复/u)
-  assert.match(prompt, /不负责 ADD、CHANGE 或 NO-OP/u)
-  assert.doesNotMatch(prompt, /Candidate 可以重复 Existing|重复 unchanged claim|不要因为 Existing 已有/u)
-  assert.doesNotMatch(prompt, /Supplement only outputs ADD\/CHANGE|avoid NO-OP|do not repeat Existing unchanged facts/u)
+  assert.match(prompt, /Existing same known fact 省略/u)
+  assert.match(prompt, /omission 只表示 preserve Existing/u)
+  assert.doesNotMatch(prompt, /Complete Evidence-Supported Candidate/u)
 })
 
 test('Supplement prompt enforces Nonhuman field-level evidence and minority completeness', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /Type identity != details/u)
-  assert.match(prompt, /每个字段必须有同一 scope 的独立 permitted evidence/u)
-  assert.match(prompt, /Type 名称、male\/female\/sex-like label、外形、性交行为、schema 对称性和现实常识都不能授权 capability/u)
-  assert.match(prompt, /unknown\/unstated\/insufficient evidence 省略；Candidate 禁止 null/u)
+  assert.match(prompt, /Type identity != Type details/u)
+  assert.match(prompt, /Type identity 不授权 capability/u)
+  assert.match(prompt, /Capabilities 的 Value 只能是 true 或 false/u)
   assert.match(prompt, /rare、minority、uncommon、low prevalence 不影响 existence，数量少不等于 temporary/u)
   assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
   assert.match(prompt, /Existing 相同 known fact 不输出/u)
@@ -855,9 +847,9 @@ test('World Model prompt keeps direct stable rare Type existence separate from p
     assert.match(prompt, /temporary、reversible、conditional-only/u)
     assert.match(prompt, /没有独立 evidence 的 capability 必须省略|Supplement Candidate 对无证据字段省略/u)
   }
-  assert.match(supplementPrompt, /Species scope 下明确持续存在的 classification 可直接成立/u)
+  assert.match(supplementPrompt, /Species\/Type 是开放字符串/u)
   assert.match(supplementPrompt, /rare、minority、uncommon、low prevalence 不影响 existence/u)
-  assert.match(supplementPrompt, /Type identity != details/u)
+  assert.match(supplementPrompt, /Type identity != Type details/u)
 })
 
 test('Supplement deterministic comparison permits Existing identity field-only delta and empty presence-sensitive output', () => {
@@ -873,14 +865,10 @@ test('Supplement deterministic comparison permits Existing identity field-only d
 
 test('Supplement single-response prompt keeps internal discovery and complete evidence boundaries', () => {
   const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
-  assert.match(prompt, /internal Complete Evidence Discovery/u)
-  assert.match(prompt, /Complete Evidence-Supported Candidate/u)
-  assert.match(prompt, /complete with respect to permitted evidence/u)
-  assert.match(prompt, /not complete with respect to schema/u)
-  assert.match(prompt, /Evidence completeness != Schema completeness/u)
-  assert.match(prompt, /No Evidence Compression/u)
-  assert.match(prompt, /No Schema Completion/u)
-  assert.match(prompt, /Identity discovery first\. Detail extraction second\./u)
+  assert.match(prompt, /internal Complete Fact Discovery/u)
+  assert.match(prompt, /Complete Fact Discovery/u)
+  assert.match(prompt, /Fact order 没有语义/u)
+  assert.match(prompt, /Identity 与 address 分离/u)
   assert.match(prompt, /Type identity does not authorize details/u)
   assert.match(prompt, /Existing 仅作 TARGET、comparison baseline 和 structure reference，不是 evidence/u)
   assert.match(prompt, /Existing 相同 known fact 不输出/u)
@@ -888,7 +876,7 @@ test('Supplement single-response prompt keeps internal discovery and complete ev
   assert.match(prompt, /不支持的 schema field 必须省略|schema 中存在但 evidence 不支持的 field 必须省略/u)
   assert.doesNotMatch(prompt, /Candidate 可以重复 Existing|重复 unchanged claim|不要因为 Existing 已有/u)
   assert.doesNotMatch(prompt, /Sparse Evidence Candidate/u)
-  assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]/u)
+  assert.doesNotMatch(prompt, /Missing Identity Ledger|Candidate Ledger|identity universe|\[Discovery\]|\[Candidate\]|Complete Evidence-Supported Candidate/u)
   assert.doesNotMatch(prompt, /前一次 AI call/u)
 })
 
@@ -980,16 +968,225 @@ test('Temporary Type identity does not satisfy the stable ADD_TYPE existence con
   )
 })
 
-test('Supplement single request contains one Candidate tree and Existing only as reference', () => {
+test('Supplement single request contains Fact Delta and Existing only as reference', () => {
   const input = {
     world_model: {schema_version: 1, species: [{name: 'Species-A', biological_types: []}]},
     character: {description: 'Evidence for Species-A and Type-A.'},
   }
   const prompt = buildWorldModelPatchMessagesV2(input).map(message => message.content).join('\n')
-  assert.match(prompt, /\[World Model Supplement\][\s\S]*\[World Model\][\s\S]*\[\/World Model\][\s\S]*\[\/World Model Supplement\]/u)
-  assert.doesNotMatch(prompt, /\[Discovery\]|\[Candidate\]|Missing Identity Ledger|identity universe/u)
+  assert.match(prompt, /\[World Model Updates\][\s\S]*\[Fact\][\s\S]*\[\/Fact\][\s\S]*\[\/World Model Updates\]/u)
+  assert.doesNotMatch(prompt, /\[Discovery\]|\[Candidate\]|Complete Evidence-Supported Candidate/u)
   assert.match(prompt, /existing_world_model_reference/u)
   assert.match(prompt, /读完全部 permitted evidence/u)
+})
+
+test('Fact Delta parser is self-contained, order-independent, and fail-closed', () => {
+  const ordered = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[/World Model Updates]`
+  const reversed = ordered.replace(
+    /\[Fact\]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Can_Carry_Pregnancy\nValue: true\n\[\/Fact\]\n\[Fact\]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Type_Identity\n\[\/Fact\]/u,
+    '[Fact]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Type_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-B\nField: Can_Carry_Pregnancy\nValue: true\n[/Fact]',
+  )
+  assert.deepEqual(parseWorldModelFactDeltaText(ordered).facts, parseWorldModelFactDeltaText(reversed).facts.reverse())
+  for (const malformed of [
+    ordered.replace('Field: Type_Identity', 'Field: type_identity'),
+    ordered.replace('[/Fact]\n[Fact]', '[Fact]\n[/Fact]\n[Fact]'),
+    `${ordered}\ntrailing text`,
+    ordered.replace('Value: true', 'Value: null'),
+  ]) assert.throws(() => parseWorldModelFactDeltaText(malformed), /WORLD_MODEL_FACT_DELTA/u)
+})
+
+test('Fact Delta keeps Unknown vocabulary exact and rejects Unknown_Fact', () => {
+  const valid = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Field: Unknown
+Value: supported unresolved world-level fact
+[/Fact]
+[/World Model Updates]`)
+  assert.equal(valid.facts[0].field, 'Unknown')
+  assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Field: Unknown_Fact
+Value: unsupported alias
+[/Fact]
+[/World Model Updates]`), error => error?.message === 'WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED')
+  const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
+  assert.doesNotMatch(prompt, /Unknown_Fact/u)
+  assert.match(prompt, /不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释/u)
+  assert.match(prompt, /仅 Projection_Rule Fact 的 Projection_Rule_JSON payload 允许/u)
+})
+
+test('Fact Delta enforces address scope and permits world facts without dummy Species', () => {
+  const worldFacts = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Field: Care_Level
+Value: supported world-level care rule
+[/Fact]
+[Fact]
+Field: Exception
+Exception_Statement: supported exception
+Applies_To: Species-A
+[/Fact]
+[Fact]
+Field: Unknown
+Value: supported unresolved world-level fact
+[/Fact]
+[/World Model Updates]`).facts
+  assert.equal(worldFacts.every(fact => !Object.hasOwn(fact, 'species') && !Object.hasOwn(fact, 'biological_type')), true)
+  assert.deepEqual(worldModelFactDeltaToPatchV2(worldFacts, v2ExistingModel()).operations.map(operation => operation.op), ['SET_FIELD', 'ADD_EXCEPTION', 'ADD_UNKNOWN'])
+
+  const projection = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Field: Projection_Rule
+Projection_Rule_JSON: {"schema_version":1,"mechanism_key":"mechanism-b","development_concern_key":"concern-b","development_kind":"possible_detection","trigger":{"kind":"story_time_reached","target_story_time":{"day_index":1}}}
+[/Fact]
+[/World Model Updates]`).facts
+  assert.equal(Object.hasOwn(projection[0], 'species'), false)
+  assert.equal(worldModelFactDeltaToPatchV2(projection, v2ExistingModel()).operations[0].op, 'ADD_PROJECTION_RULE')
+
+  const invalid = [
+    `[Fact]\nSpecies: Species-A\nField: Care_Level\nValue: invalid scope\n[/Fact]`,
+    `[Fact]\nBiological_Type: Type-A\nField: Unknown\nValue: invalid scope\n[/Fact]`,
+    `[Fact]\nField: Species_Description\nValue: missing species\n[/Fact]`,
+    `[Fact]\nSpecies: Species-A\nField: Type_Description\nValue: missing type\n[/Fact]`,
+  ]
+  for (const fact of invalid) assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]\n${fact}\n[/World Model Updates]`), /WORLD_MODEL_FACT_DELTA/u)
+})
+
+test('Fact Delta identities are separate from addresses and establish deterministic dependencies', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const existingDetail = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[/World Model Updates]`).facts
+  assert.deepEqual(worldModelFactDeltaToPatchV2(existingDetail, existing).operations.map(operation => operation.op), ['SET_FIELD'])
+
+  const newTypeDetail = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[/World Model Updates]`).facts
+  assert.throws(() => worldModelFactDeltaToPatchV2(newTypeDetail, existing), error => error?.code === 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED')
+
+  const newType = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[/World Model Updates]`).facts
+  const patch = worldModelFactDeltaToPatchV2(newType, existing)
+  assert.deepEqual(patch.operations.map(operation => operation.op), ['ADD_TYPE'])
+})
+
+test('Fact Delta comparison dedupes no-ops, preserves omission, and rejects conflicts', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A', capabilities: {can_produce_sperm: true}}]}]})
+  const same = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[/World Model Updates]`).facts
+  assert.deepEqual(worldModelFactDeltaToPatchV2(same, existing).operations, [])
+  assert.deepEqual(worldModelFactDeltaToPatchV2([], existing).operations, [])
+  const conflict = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Sperm
+Value: true
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Can_Produce_Sperm
+Value: false
+[/Fact]
+[/World Model Updates]`).facts
+  assert.throws(() => worldModelFactDeltaToPatchV2(conflict, existing), error => error?.code === 'WORLD_MODEL_FACT_DELTA_CONFLICT')
+})
+
+test('Fact Delta maps collections and structured outlets without inventing Patch operations', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const facts = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Special_Rule
+Value: Rule-A
+[/Fact]
+[Fact]
+Field: Exception
+Exception_Statement: Exception-A
+Applies_To: Species-A
+[/Fact]
+[Fact]
+Field: Unknown
+Value: Unknown-A
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Reproductive_Mechanism
+Mechanism_Key: mechanism-b
+Mechanism_Label: Mechanism-B
+Mechanism_Pathway: pathway-b
+[/Fact]
+[/World Model Updates]`).facts
+  assert.deepEqual(worldModelFactDeltaToPatchV2(facts, existing).operations.map(operation => operation.op), ['ADD_SPECIAL_RULE', 'ADD_MECHANISM', 'ADD_EXCEPTION', 'ADD_UNKNOWN'])
+  assert.throws(() => parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Field: Projection_Rule
+Projection_Rule_JSON: {"projection_rule_id":"forbidden"}
+[/Fact]
+[/World Model Updates]`), error => error?.message === 'WORLD_MODEL_FACT_DELTA_PROJECTION_ID_FORBIDDEN')
+})
+
+test('Fact Delta mechanism and projection corrections fail closed', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A', reproductive_mechanisms: [{key: 'mechanism-a', label: 'Old', pathway: 'old'}]}]}]})
+  const mechanism = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Reproductive_Mechanism
+Mechanism_Key: mechanism-a
+Mechanism_Label: New
+Mechanism_Pathway: new
+[/Fact]
+[/World Model Updates]`).facts
+  assert.throws(() => worldModelFactDeltaToPatchV2(mechanism, existing), error => error?.code === 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED')
 })
 
 test('Single Supplement response parser extracts one hierarchical Candidate tree', () => {
@@ -1137,15 +1334,15 @@ test('World Model v2 analyzer rejects semantically correct but structurally wron
       generateRaw: () => {
         invalidCall += 1
         return supplementText({candidate: JSON.stringify({
-        schema_version: 2,
-        operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } }],
+          schema_version: 2,
+          operations: [{ op: 'ADD_TYPE', target: { kind: 'species', species_name: 'Species-A' }, type: { name: 'Type-B' } }],
         })})
       },
     }),
   })
   await assert.rejects(
     analyzer.analyzeWorldModelPatchV2({ analysisInput: { world_model: existing, ...evidence } }),
-    error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INVALID',
+    error => error?.code === 'WORLD_MODEL_FACT_DELTA_INVALID' && error?.message === 'WORLD_MODEL_FACT_DELTA_TRAILING_TEXT',
   )
   assert.equal(invalidCall, 1)
 
@@ -1155,7 +1352,7 @@ test('World Model v2 analyzer rejects semantically correct but structurally wron
     contextResolver: () => ({
       generateRaw: () => {
         acceptedCall += 1
-        return supplementText({candidate: candidateText({type: 'Type-B'})})
+        return factDeltaText({type: 'Type-B'})
       },
     }),
   })
@@ -1168,7 +1365,7 @@ test('World Model v2 analyzer rejects semantically correct but structurally wron
 test('World Model v2 analyzer boundary accepts sparse minority Type-B without feeding v1 merge', async () => {
   const existing = v2ExistingModel()
   const evidence = 'Species-A 中 Type-A 是多数类型，Type-B 是少数但稳定存在的 biological type，Type-B description。'
-  const v2Response = supplementText({candidate: candidateText()})
+  const v2Response = factDeltaText({type: 'Type-B'})
   let call = 0
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
@@ -1187,6 +1384,107 @@ test('World Model v2 analyzer boundary accepts sparse minority Type-B without fe
   assert.equal(result.patch.operations.some(operation => operation.species), false)
   assert.deepEqual(mergeWorldModelPatchV2(existing, result.patch, { character: { description: evidence } }).species[0].biological_types.map(type => type.name), ['Type-A', 'Type-B'])
 
+})
+
+test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, and debug payload without changing the patch', async () => {
+  const existing = v2ExistingModel()
+  const analysisInput = {
+    world_model: existing,
+    character: {description: 'Species-A 中 Type-B 是少数但稳定存在的 biological type。'},
+  }
+  const response = factDeltaText({type: 'Type-B'})
+  const baseline = worldModelFactDeltaToPatchV2(parseWorldModelFactDeltaText(response).facts, existing)
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput,
+    fact_delta_attempt: 1,
+    fact_delta_retry_index: 0,
+    fact_delta_debug: true,
+    onFactDeltaTrace: trace => traces.push(trace),
+  })
+  assert.deepEqual(result.patch, baseline)
+  assert.deepEqual(traces.map(trace => trace.stage), [
+    'WORLD_PATCH_EVIDENCE_SUMMARY',
+    'WORLD_FACT_DELTA_RESPONSE_RECEIVED',
+    'WORLD_FACT_DELTA_PARSED',
+    'WORLD_FACT_DELTA_RESOLVED',
+  ])
+  for (const trace of traces) {
+    assert.equal(trace.mode, 'patch')
+    assert.equal(trace.attempt, 1)
+    assert.equal(trace.retry_index, 0)
+  }
+  const parsed = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_PARSED')
+  assert.equal(parsed.fact_count, 1)
+  assert.deepEqual(parsed.fields, ['Type_Identity'])
+  assert.equal(parsed.facts[0].species, 'Species-A')
+  const resolved = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_RESOLVED')
+  assert.deepEqual(resolved.fact_mappings[0], {
+    fact_index: 0,
+    field: 'Type_Identity',
+    species: 'Species-A',
+    biological_type: 'Type-B',
+    canonical_address: {scope: 'biological_type', species: 'Species-A', biological_type: 'Type-B'},
+    comparison: 'missing',
+    patch_operation_type: 'ADD_TYPE',
+    patch_path: 'species.Species-A.biological_types.Type-B',
+    classification: 'ADD',
+  })
+  assert.equal(JSON.stringify(traces).includes('Existing species.'), false)
+})
+
+test('Supplement Evidence Guard rejection diagnostics identify Type identity and capability claims', async () => {
+  const existing = v2ExistingModel()
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => factDeltaText({type: 'Type-B', capability: 'true'})}),
+  })
+  await assert.rejects(
+    analyzer.analyzeWorldModelPatchV2({
+      analysisInput: {world_model: existing, character: {description: 'Type-B is temporary and not a stable biological type.'}},
+      fact_delta_attempt: 2,
+      fact_delta_retry_index: 1,
+      onFactDeltaTrace: trace => traces.push(trace),
+    }),
+    error => error?.message === 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED' && error?.path === 'operation.type.name',
+  )
+  const rejected = traces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
+  assert.equal(rejected.mode, 'patch')
+  assert.equal(rejected.attempt, 2)
+  assert.equal(rejected.retry_index, 1)
+  assert.equal(rejected.rejected_operation_type, 'ADD_TYPE')
+  assert.equal(rejected.species, 'Species-A')
+  assert.equal(rejected.biological_type, 'Type-B')
+  assert.equal(rejected.field, 'Type_Identity')
+  assert.equal(rejected.classification, 'ADD')
+  assert.equal(rejected.rejected_semantic_field, 'operation.type.name')
+  assert.equal(rejected.evidence_binding.source_kind, 'permitted_world_model_evidence')
+
+  const capabilityTraces = []
+  const capabilityAnalyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => `[World Model Updates]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Can_Produce_Ova\nValue: true\n[/Fact]\n[/World Model Updates]`}),
+  })
+  await assert.rejects(
+    capabilityAnalyzer.analyzeWorldModelPatchV2({
+      analysisInput: {world_model: existing, character: {description: 'Species-A 中 Type-A 是稳定存在的 biological type，但没有卵相关证据。'}},
+      fact_delta_attempt: 1,
+      fact_delta_retry_index: 0,
+      onFactDeltaTrace: trace => capabilityTraces.push(trace),
+    }),
+    error => error?.path === 'operation.capabilities.can_produce_ova',
+  )
+  const capabilityRejected = capabilityTraces.find(trace => trace.stage === 'WORLD_PATCH_EVIDENCE_REJECTED')
+  assert.equal(capabilityRejected.species, 'Species-A')
+  assert.equal(capabilityRejected.biological_type, 'Type-A')
+  assert.equal(capabilityRejected.field, 'Can_Produce_Ova')
+  assert.equal(capabilityRejected.proposed_value, true)
+  assert.equal(capabilityRejected.rejected_semantic_field, 'operation.capabilities.can_produce_ova')
 })
 
 test('World Model Candidate deterministically maps all legal internal Patch v2 operations and preserves omission', () => {
@@ -2114,7 +2412,7 @@ test('World Model Initial and Supplement prompts expose the same strict mechanis
     assert.match(prompt, /immediate_after_event/)
     assert.match(prompt, /禁止 projection rule 中出现 probability/)
   }
-  assert.match(patchPrompt, /World Model Supplement v3|Complete Evidence-Supported Candidate/u)
+  assert.match(patchPrompt, /World Model Supplement Fact Delta v1/u)
   const schema = JSON.parse(WORLD_MODEL_SCHEMA_TEXT)
   const mechanism = schema.species[0].biological_types[0].reproductive_mechanisms[0]
   assert.equal(mechanism.carrying_compatibility, null)
@@ -2187,7 +2485,7 @@ test('World Model Patch v2 TRACE exposes validation path and stage without evide
         getChatCompletionModel: () => 'test-model',
         ChatCompletionService: {
           async processRequest() {
-            return { content: supplementText({candidate: candidateText()}) }
+            return { content: factDeltaText({type: 'Type-B', capability: 'true'}) }
           },
         },
       }),
@@ -2200,7 +2498,7 @@ test('World Model Patch v2 TRACE exposes validation path and stage without evide
     )
   })
   const logText = JSON.stringify(captured.entries)
-  assert.match(logText, /world-model-supplement-text/)
+  assert.match(logText, /world-model-fact-delta/)
   assert.match(logText, /WORLD_MODEL_PATCH_V2_INVALID/)
   assert.match(logText, /WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED/)
   assert.match(logText, /world_patch_v2_evidence_guard/)

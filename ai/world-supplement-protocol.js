@@ -309,7 +309,7 @@ function finalize(frameValue, diagnostics) {
 }
 
 export function parseWorldModelCandidateText(raw) {
-  const text = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '')
+  const text = String(raw ?? '')
   const diagnostics = []
   const root = frame(TAGS.world)
   root.data = {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: [], projection_rules: []}
@@ -541,4 +541,259 @@ export function parseWorldModelSupplementText(raw) {
     candidate: candidate.candidate,
     diagnostics: candidate.diagnostics,
   }
+}
+
+const FACT_DELTA_FIELDS = Object.freeze({
+  identity: new Set(['Species_Identity', 'Type_Identity']),
+  species: new Set(['Species_Description']),
+  type: new Set([
+    'Type_Description',
+    'Can_Produce_Sperm',
+    'Can_Produce_Ova',
+    'Can_Be_Fertilized',
+    'Can_Fertilize',
+    'Can_Cause_Pregnancy',
+    'Can_Carry_Pregnancy',
+    'Fertilization',
+    'Pregnancy_Or_Carrying',
+    'Cycle',
+    'Ovulation',
+    'Gestation',
+    'Labor',
+    'Maturation',
+    'Aging',
+    'Special_Rule',
+    'Reproductive_Mechanism',
+  ]),
+  world: new Set([
+    'Childbirth_Difficulty',
+    'Care_Level',
+    'Medical_Evidence',
+    'Exception',
+    'Unknown',
+    'Projection_Rule',
+  ]),
+})
+
+const FACT_DELTA_SCALAR_FIELDS = new Set([
+  'Species_Description',
+  'Type_Description',
+  'Can_Produce_Sperm',
+  'Can_Produce_Ova',
+  'Can_Be_Fertilized',
+  'Can_Fertilize',
+  'Can_Cause_Pregnancy',
+  'Can_Carry_Pregnancy',
+  'Fertilization',
+  'Pregnancy_Or_Carrying',
+  'Cycle',
+  'Ovulation',
+  'Gestation',
+  'Labor',
+  'Maturation',
+  'Aging',
+  'Childbirth_Difficulty',
+  'Care_Level',
+  'Medical_Evidence',
+])
+
+const FACT_DELTA_BOOLEAN_FIELDS = new Set([
+  'Can_Produce_Sperm',
+  'Can_Produce_Ova',
+  'Can_Be_Fertilized',
+  'Can_Fertilize',
+  'Can_Cause_Pregnancy',
+  'Can_Carry_Pregnancy',
+  'Carrying_Compatibility',
+])
+
+const FACT_DELTA_PAYLOAD_KEYS = Object.freeze({
+  Reproductive_Mechanism: new Set([
+    'Mechanism_Key',
+    'Mechanism_Label',
+    'Mechanism_Pathway',
+    'Carrying_Compatibility',
+    'World_Model_Rule_Refs',
+    'Mechanism_Evidence',
+  ]),
+  Exception: new Set(['Exception_Statement', 'Applies_To', 'Exception_Evidence']),
+  Projection_Rule: new Set(['Projection_Rule_JSON']),
+})
+
+function factDeltaError(message, diagnostics = [], code = 'WORLD_MODEL_FACT_DELTA_INVALID') {
+  const error = new Error(message)
+  error.code = code
+  error.diagnostics = diagnostics
+  return error
+}
+
+function factDeltaText(value, field) {
+  const text = String(value ?? '').trim()
+  if (!text || text === 'null' || (field !== 'Field' && /^unknown$/iu.test(text)) || text === 'NONE RECORDED') {
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_VALUE_INVALID', [{field}])
+  }
+  if (FACT_DELTA_BOOLEAN_FIELDS.has(field)) {
+    if (text === 'true') return true
+    if (text === 'false') return false
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_BOOLEAN_INVALID', [{field}])
+  }
+  return text
+}
+
+function factDeltaJson(value, field, expected) {
+  const text = String(value ?? '').trim()
+  if (!text) throw factDeltaError('WORLD_MODEL_FACT_DELTA_VALUE_INVALID', [{field}])
+  let parsed
+  try { parsed = JSON.parse(text) } catch { throw factDeltaError('WORLD_MODEL_FACT_DELTA_JSON_INVALID', [{field}]) }
+  if (expected === 'object' && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)))
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_JSON_INVALID', [{field}])
+  if (expected === 'string[]' && (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string')))
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_JSON_INVALID', [{field}])
+  return parsed
+}
+
+function factDeltaParseLine(line, lineNumber) {
+  const match = line.match(/^([^:]+):\s*(.*)$/u)
+  if (!match) throw factDeltaError('WORLD_MODEL_FACT_DELTA_LINE_INVALID', [{line: lineNumber}])
+  return {key: match[1].trim(), value: match[2]}
+}
+
+function factDeltaScope(fact) {
+  if (fact.field === 'Species_Identity' || fact.field === 'Species_Description') return 'species'
+  if (fact.field === 'Type_Identity' || FACT_DELTA_FIELDS.type.has(fact.field)) return 'type'
+  return 'world'
+}
+
+function factDeltaFinalize(lines, startLine) {
+  const pairs = new Map()
+  for (const item of lines) {
+    if (pairs.has(item.key)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_DUPLICATE_FIELD', [{line: item.line, field: item.key}])
+    pairs.set(item.key, item.value)
+  }
+  const species = pairs.has('Species') ? factDeltaText(pairs.get('Species'), 'Species') : undefined
+  const type = pairs.has('Biological_Type') ? factDeltaText(pairs.get('Biological_Type'), 'Biological_Type') : undefined
+  const field = factDeltaText(pairs.get('Field'), 'Field')
+  const scope = factDeltaScope({field})
+  if (scope !== 'world' && !species) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SPECIES_REQUIRED', [{line: startLine, field}])
+  if (scope === 'species' && type) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCOPE_INVALID', [{line: startLine, field}])
+  if (scope === 'world' && (species || type)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCOPE_INVALID', [{line: startLine, field}])
+  const allowed = scope === 'species'
+    ? FACT_DELTA_FIELDS.species
+    : scope === 'type'
+      ? FACT_DELTA_FIELDS.type
+      : FACT_DELTA_FIELDS.world
+  if (!allowed.has(field) && !FACT_DELTA_FIELDS.identity.has(field))
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', [{line: startLine, field}])
+  if (field === 'Type_Identity' && !type) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_REQUIRED', [{line: startLine}])
+  if (field !== 'Type_Identity' && scope === 'type' && !type)
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_REQUIRED', [{line: startLine, field}])
+  const baseSize = 1 + (species ? 1 : 0) + (type ? 1 : 0)
+  if (field === 'Species_Identity' || field === 'Type_Identity') {
+    if (pairs.size !== baseSize) throw factDeltaError('WORLD_MODEL_FACT_DELTA_IDENTITY_PAYLOAD_INVALID', [{line: startLine}])
+    return {species, ...(type ? {biological_type: type} : {}), field}
+  }
+  const address = scope === 'world' ? {} : {species, ...(type ? {biological_type: type} : {})}
+  const knownKeys = new Set(['Species', 'Biological_Type', 'Field', ...(FACT_DELTA_SCALAR_FIELDS.has(field) || field === 'Special_Rule' || field === 'Unknown' ? ['Value'] : []), ...FACT_DELTA_PAYLOAD_KEYS[field] ?? []])
+  for (const key of pairs.keys()) if (!knownKeys.has(key)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_PAYLOAD_KEY_UNKNOWN', [{line: startLine, field: key}])
+  if (FACT_DELTA_SCALAR_FIELDS.has(field)) {
+    if (pairs.size !== baseSize + 1 || !pairs.has('Value')) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCALAR_PAYLOAD_INVALID', [{line: startLine, field}])
+    return {...address, field, value: factDeltaText(pairs.get('Value'), field)}
+  }
+  if (field === 'Special_Rule' || field === 'Unknown') {
+    if (pairs.size !== baseSize + 1 || !pairs.has('Value')) throw factDeltaError('WORLD_MODEL_FACT_DELTA_COLLECTION_PAYLOAD_INVALID', [{line: startLine, field}])
+    return {...address, field, value: factDeltaText(pairs.get('Value'), field)}
+  }
+  if (field === 'Exception') {
+    if (!pairs.has('Exception_Statement') || pairs.size < baseSize + 1 || pairs.size > baseSize + 3)
+      throw factDeltaError('WORLD_MODEL_FACT_DELTA_EXCEPTION_PAYLOAD_INVALID', [{line: startLine}])
+    return {
+      ...address,
+      field,
+      exception: {
+        statement: factDeltaText(pairs.get('Exception_Statement'), 'Exception_Statement'),
+        ...(pairs.has('Applies_To') ? {applies_to: factDeltaText(pairs.get('Applies_To'), 'Applies_To')} : {}),
+        ...(pairs.has('Exception_Evidence') ? {evidence: factDeltaText(pairs.get('Exception_Evidence'), 'Exception_Evidence')} : {}),
+      },
+    }
+  }
+  if (field === 'Reproductive_Mechanism') {
+    if (!type || !pairs.has('Mechanism_Key')) throw factDeltaError('WORLD_MODEL_FACT_DELTA_MECHANISM_PAYLOAD_INVALID', [{line: startLine}])
+    const mechanism = {key: factDeltaText(pairs.get('Mechanism_Key'), 'Mechanism_Key')}
+    for (const [transport, canonical] of [
+      ['Mechanism_Label', 'label'], ['Mechanism_Pathway', 'pathway'],
+      ['Carrying_Compatibility', 'carrying_compatibility'],
+      ['World_Model_Rule_Refs', 'world_model_rule_refs'], ['Mechanism_Evidence', 'evidence'],
+    ]) if (pairs.has(transport)) mechanism[canonical] = FACT_DELTA_BOOLEAN_FIELDS.has(transport)
+      ? factDeltaText(pairs.get(transport), transport)
+      : (transport === 'World_Model_Rule_Refs' || transport === 'Mechanism_Evidence'
+        ? factDeltaJson(pairs.get(transport), transport, 'string[]')
+        : factDeltaText(pairs.get(transport), transport))
+    return {...address, field, mechanism}
+  }
+  if (field === 'Projection_Rule') {
+    if (pairs.size !== baseSize + 1 || !pairs.has('Projection_Rule_JSON')) throw factDeltaError('WORLD_MODEL_FACT_DELTA_PROJECTION_PAYLOAD_INVALID', [{line: startLine}])
+    const projection_rule = factDeltaJson(pairs.get('Projection_Rule_JSON'), 'Projection_Rule_JSON', 'object')
+    if (Object.hasOwn(projection_rule, 'projection_rule_id')) throw factDeltaError('WORLD_MODEL_FACT_DELTA_PROJECTION_ID_FORBIDDEN', [{line: startLine}])
+    return {...address, field, projection_rule}
+  }
+  throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', [{line: startLine, field}])
+}
+
+export function parseWorldModelFactDeltaText(raw) {
+  const text = String(raw ?? '').replace(/^```(?:text|markdown)?\s*/iu, '').replace(/\s*```$/u, '')
+  const lines = text.split(/\r?\n/u)
+  const diagnostics = []
+  const facts = []
+  let rootState = 'none'
+  let factLines = null
+  let factStart = 0
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim()
+    if (!line) continue
+    if (line === '[World Model Updates]') {
+      if (rootState !== 'none') throw factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', [{line: index + 1}])
+      rootState = 'open'
+      continue
+    }
+    if (line === '[/World Model Updates]') {
+      if (rootState !== 'open' || factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', [{line: index + 1}])
+      rootState = 'closed'
+      continue
+    }
+    if (rootState !== 'open') throw factDeltaError('WORLD_MODEL_FACT_DELTA_TRAILING_TEXT', [{line: index + 1}])
+    if (line === '[Fact]') {
+      if (factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_NESTED_FACT', [{line: index + 1}])
+      factLines = []
+      factStart = index + 1
+      continue
+    }
+    if (line === '[/Fact]') {
+      if (!factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_FACT_CLOSE_INVALID', [{line: index + 1}])
+      facts.push(factDeltaFinalize(factLines, factStart))
+      factLines = null
+      continue
+    }
+    if (!factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TRAILING_TEXT', [{line: index + 1}])
+    if (/^(?:ADD_|SET_FIELD|REMOVE|CHANGE|NO_OP|NO-OP)\b/u.test(line)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_PATCH_IR_FORBIDDEN', [{line: index + 1}])
+    const pair = factDeltaParseLine(line, index + 1)
+    factLines.push({...pair, line: index + 1})
+  }
+  if (rootState !== 'closed' || factLines) throw factDeltaError('WORLD_MODEL_FACT_DELTA_ROOT_INVALID', diagnostics)
+  return {facts, diagnostics}
+}
+
+export function validateWorldModelFactDelta(facts) {
+  if (!Array.isArray(facts)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_INVALID')
+  for (const fact of facts) {
+    if (!fact || typeof fact !== 'object' || Array.isArray(fact) || typeof fact.field !== 'string')
+      throw factDeltaError('WORLD_MODEL_FACT_DELTA_FACT_INVALID')
+    const scope = factDeltaScope(fact)
+    const hasSpecies = typeof fact.species === 'string' && fact.species.trim()
+    const hasType = typeof fact.biological_type === 'string' && fact.biological_type.trim()
+    if (scope === 'world' && (hasSpecies || hasType)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCOPE_INVALID')
+    if (scope !== 'world' && !hasSpecies) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SPECIES_REQUIRED')
+    if (scope === 'species' && hasType) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCOPE_INVALID')
+    if (scope === 'type' && !hasType) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_REQUIRED')
+  }
+  return facts
 }

@@ -12,7 +12,8 @@ import {
 import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
 import {
   parseWorldModelCandidateText,
-  parseWorldModelSupplementText,
+  parseWorldModelFactDeltaText,
+  validateWorldModelFactDelta,
   validateWorldModelCandidate,
 } from './world-supplement-protocol.js';
 
@@ -496,6 +497,179 @@ function evidenceUnits(input) {
       .map((value) => value.trim())
       .filter(Boolean)
   );
+}
+
+function factDeltaDebugEnabled(input = {}) {
+  return input?.fact_delta_debug === true || globalThis?.__BIOWEAVE_API_TRACE__ === true;
+}
+
+function factDeltaDiagnosticValue(value, depth = 0) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+  if (typeof value === 'string') return value.slice(0, 240);
+  if (depth >= 4) return {type: typeof value};
+  if (Array.isArray(value)) return value.slice(0, 32).map(item => factDeltaDiagnosticValue(item, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).slice(0, 48).map(([key, item]) => [key, factDeltaDiagnosticValue(item, depth + 1)]),
+    );
+  }
+  return {type: typeof value};
+}
+
+function worldModelEvidenceParts(input = {}) {
+  const parts = [];
+  const character = input?.character && typeof input.character === 'object' ? input.character : {};
+  parts.push({source_kind: 'character_description', text: character.description});
+  for (const greeting of Array.isArray(character.greetings) ? character.greetings : [])
+    parts.push({source_kind: 'character_greeting', text: greeting?.content});
+  for (const worldbook of Array.isArray(input?.worldbooks) ? input.worldbooks : [])
+    for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : [])
+      parts.push({source_kind: 'worldbook_entry', text: entry?.content});
+  const recentStory = input?.recent_story && typeof input.recent_story === 'object' ? input.recent_story : {};
+  for (const item of Array.isArray(recentStory.items) ? recentStory.items : [])
+    parts.push({source_kind: 'recent_story', text: item?.content});
+  for (const provider of Array.isArray(input?.external_memory) ? input.external_memory : [])
+    for (const item of Array.isArray(provider?.items) ? provider.items : [])
+      parts.push({source_kind: 'external_memory', text: item?.content});
+  return parts;
+}
+
+function factDeltaEvidenceTraceUnits(input = {}) {
+  return worldModelEvidenceParts(input).flatMap(({source_kind, text}) => {
+    if (typeof text !== 'string') return [];
+    return text
+      .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性')
+      .split(/[。！？!?；;\n]+/u)
+      .map(value => value.trim())
+      .filter(Boolean)
+      .map(value => ({source_kind, text: value}));
+  });
+}
+
+function factDeltaAddress(fact) {
+  if (fact?.field === 'Exception' || fact?.field === 'Unknown' || fact?.field === 'Projection_Rule' || !fact?.species) {
+    return {scope: 'world'};
+  }
+  if (fact?.biological_type) {
+    return {scope: 'biological_type', species: fact.species, biological_type: fact.biological_type};
+  }
+  return {scope: 'species', species: fact.species};
+}
+
+function factDeltaEvidenceSummary(input = {}) {
+  const units = factDeltaEvidenceTraceUnits(input);
+  return {
+    unit_count: units.length,
+    units: units.map(({source_kind, text}, index) => ({
+      unit_index: index,
+      stable_unit_id: `world-evidence-${index}`,
+      source_kind,
+      text_length: text.length,
+    })),
+  };
+}
+
+function factDeltaFieldForOperation(operation) {
+  if (!operation) return null;
+  if (operation.op === 'ADD_SPECIES') return 'Species_Identity';
+  if (operation.op === 'ADD_TYPE') return 'Type_Identity';
+  if (operation.op === 'ADD_SPECIAL_RULE') return 'Special_Rule';
+  if (operation.op === 'ADD_MECHANISM') return 'Reproductive_Mechanism';
+  if (operation.op === 'ADD_EXCEPTION') return 'Exception';
+  if (operation.op === 'ADD_UNKNOWN') return 'Unknown';
+  if (operation.op === 'ADD_PROJECTION_RULE') return 'Projection_Rule';
+  if (operation.op !== 'SET_FIELD') return null;
+  const path = operation.path?.join('.') ?? '';
+  const match = Object.entries(FACT_DELTA_SCALAR_PATHS).find(([, candidate]) => {
+    if (candidate[0] === 'world') return operation.target?.kind === 'world' && candidate.slice(1).join('.') === path;
+    if (candidate[0] === 'species') return operation.target?.kind === 'species' && candidate.slice(1).join('.') === path;
+    return operation.target?.kind === 'biological_type' && candidate.slice(1).join('.') === path;
+  });
+  return match?.[0] ?? null;
+}
+
+function factDeltaOperationMatchesFact(fact, operation) {
+  if (!operation) return false;
+  if (factDeltaFieldForOperation(operation) !== fact?.field) return false;
+  const target = operation.target ?? {};
+  if (fact?.field === 'Species_Identity') return operation.species?.name === fact.species;
+  if (fact?.field === 'Type_Identity') return target.species_name === fact.species && operation.type?.name === fact.biological_type;
+  if (fact?.field === 'Exception') return v2Equal(operation.exception, fact.exception);
+  if (fact?.field === 'Unknown') return v2TextIdentity(operation.unknown) === v2TextIdentity(fact.value);
+  if (fact?.field === 'Projection_Rule') return v2Equal(operation.projection_rule, fact.projection_rule);
+  if (fact?.field === 'Special_Rule') return target.species_name === fact.species && target.type_name === fact.biological_type && v2TextIdentity(operation.value) === v2TextIdentity(fact.value);
+  if (fact?.field === 'Reproductive_Mechanism') return target.species_name === fact.species && target.type_name === fact.biological_type && operation.mechanism?.key === fact.mechanism?.key;
+  if (operation.target?.kind === 'species') return target.species_name === fact.species && v2Equal(operation.value, fact.value);
+  return target.species_name === fact.species && target.type_name === fact.biological_type && v2Equal(operation.value, fact.value);
+}
+
+function factDeltaExistingComparison(fact, existing) {
+  const species = existing.species.find(item => item.name === fact?.species);
+  if (fact?.field === 'Species_Identity') return species ? 'same' : 'missing';
+  const type = species?.biological_types?.find(item => item.name === fact?.biological_type);
+  if (fact?.field === 'Type_Identity') return type ? 'same' : 'missing';
+  let current;
+  if (fact?.field === 'Species_Description') current = species?.description;
+  else if (fact?.field === 'Type_Description') current = type?.description;
+  else if (FACT_DELTA_SCALAR_PATHS[fact?.field]?.[0] === 'world') current = existing.medical_context?.[FACT_DELTA_SCALAR_PATHS[fact.field][2]];
+  else if (FACT_DELTA_SCALAR_PATHS[fact?.field]) current = type?.[FACT_DELTA_SCALAR_PATHS[fact.field][1]]?.[FACT_DELTA_SCALAR_PATHS[fact.field][2]];
+  else if (fact?.field === 'Special_Rule') return type?.special_rules?.some(value => v2TextIdentity(value) === v2TextIdentity(fact.value)) ? 'same' : 'missing';
+  else if (fact?.field === 'Reproductive_Mechanism') return type?.reproductive_mechanisms?.some(value => value?.key === fact.mechanism?.key && v2Equal(value, fact.mechanism)) ? 'same' : 'missing';
+  else if (fact?.field === 'Exception') return existing.exceptions?.some(value => v2Equal(value, fact.exception)) ? 'same' : 'missing';
+  else if (fact?.field === 'Unknown') return existing.unknowns?.some(value => v2TextIdentity(value) === v2TextIdentity(fact.value)) ? 'same' : 'missing';
+  else if (fact?.field === 'Projection_Rule') return existing.projection_rules?.some(value => v2Equal(value, fact.projection_rule)) ? 'same' : 'missing';
+  else return 'missing';
+  if (current === null || current === undefined) return 'missing';
+  return v2Equal(current, fact.value) ? 'same' : 'correction';
+}
+
+function factDeltaResolutionDiagnostics(facts, patch, existing) {
+  const classified = classifyWorldModelPatchV2(patch, existing);
+  return facts.map((fact, fact_index) => {
+    const operationIndex = patch.operations.findIndex(operation => factDeltaOperationMatchesFact(fact, operation));
+    const operation = operationIndex >= 0 ? patch.operations[operationIndex] : null;
+    const classification = operationIndex >= 0 ? classified[operationIndex]?.classification ?? null : null;
+    return {
+      fact_index,
+      field: fact.field,
+      species: fact.species ?? null,
+      biological_type: fact.biological_type ?? null,
+      canonical_address: factDeltaAddress(fact),
+      comparison: factDeltaExistingComparison(fact, existing),
+      patch_operation_type: operation?.op ?? null,
+      patch_path: operation ? v2CanonicalTargetPath(operation) : null,
+      classification,
+    };
+  });
+}
+
+function factDeltaRejectedOperation(error) {
+  return error?.rejected_operation && typeof error.rejected_operation === 'object'
+    ? error.rejected_operation
+    : null;
+}
+
+function factDeltaEvidenceCandidates(operation, units, debug) {
+  const target = operation?.target ?? {};
+  const tokens = [target.species_name, target.type_name, operation?.type?.name, operation?.value]
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => value.trim().toLocaleLowerCase());
+  const candidateIndices = units
+    .map((unit, index) => ({unit: unit.text, index}))
+    .filter(({unit}) => tokens.some(token => unit.toLocaleLowerCase().includes(token)))
+    .map(({index}) => index);
+  return {
+    source_kind: 'permitted_world_model_evidence',
+    unit_count: units.length,
+    candidate_unit_indices: candidateIndices,
+    units: units.map(({source_kind, text}, unit_index) => ({
+      unit_index,
+      stable_unit_id: `world-evidence-${unit_index}`,
+      source_kind,
+      text_length: text.length,
+      ...(debug && candidateIndices.includes(unit_index) ? {excerpt: text.slice(0, 240)} : {}),
+    })),
+  };
 }
 
 function hasLabelEvidenceInUnits(units, pattern) {
@@ -3617,6 +3791,31 @@ function annotateV2GuardFailure(error, result, operationIndex) {
   error.operation_index = operationIndex;
   error.operation_op = result?.operation?.op ?? null;
   error.operation_target = result?.operation?.target ?? null;
+  error.rejected_operation = {
+    operation_type: result?.operation?.op ?? null,
+    semantic_path: v2CanonicalTargetPath(result?.operation),
+    field: factDeltaFieldForOperation(result?.operation),
+    species: result?.operation?.target?.species_name ?? result?.operation?.species?.name ?? null,
+    biological_type: result?.operation?.target?.type_name ?? result?.operation?.type?.name ?? null,
+    proposed_value: factDeltaDiagnosticValue(
+      result?.operation?.op === 'ADD_TYPE'
+        ? result?.operation?.type?.name
+        : result?.operation?.op === 'ADD_SPECIES'
+          ? result?.operation?.species?.name
+          : result?.operation?.op === 'SET_FIELD'
+            ? result?.operation?.value
+            : result?.operation?.op === 'ADD_SPECIAL_RULE'
+              ? result?.operation?.value
+              : result?.operation?.op === 'ADD_UNKNOWN'
+                ? result?.operation?.unknown
+                : result?.operation?.op === 'ADD_MECHANISM'
+                  ? result?.operation?.mechanism
+                  : result?.operation?.op === 'ADD_EXCEPTION'
+                    ? result?.operation?.exception
+                    : result?.operation?.projection_rule,
+    ),
+    classification: result?.classification ?? null,
+  };
   error.canonical_target_path = v2CanonicalTargetPath(result?.operation);
   error.rejected_semantic_field = error.path ?? null;
   error.validation_stage = 'world_patch_v2_evidence_guard';
@@ -3893,6 +4092,186 @@ export function worldModelCandidateToPatchV2(candidate, existingModel) {
   return {schema_version: 2, operations}
 }
 
+function factDeltaError(message, details = {}, code = 'WORLD_MODEL_FACT_DELTA_INVALID') {
+  const error = new Error(message)
+  error.code = code
+  Object.assign(error, details)
+  return error
+}
+
+const FACT_DELTA_SCALAR_PATHS = Object.freeze({
+  Species_Description: ['species', 'description'],
+  Type_Description: ['biological_type', 'description'],
+  Can_Produce_Sperm: ['biological_type', 'capabilities', 'can_produce_sperm'],
+  Can_Produce_Ova: ['biological_type', 'capabilities', 'can_produce_ova'],
+  Can_Be_Fertilized: ['biological_type', 'capabilities', 'can_be_fertilized'],
+  Can_Fertilize: ['biological_type', 'capabilities', 'can_fertilize'],
+  Can_Cause_Pregnancy: ['biological_type', 'capabilities', 'can_cause_pregnancy'],
+  Can_Carry_Pregnancy: ['biological_type', 'capabilities', 'can_carry_pregnancy'],
+  Fertilization: ['biological_type', 'reproduction_rules', 'fertilization'],
+  Pregnancy_Or_Carrying: ['biological_type', 'reproduction_rules', 'pregnancy_or_carrying'],
+  Cycle: ['biological_type', 'reproduction_rules', 'cycle'],
+  Ovulation: ['biological_type', 'reproduction_rules', 'ovulation'],
+  Gestation: ['biological_type', 'reproduction_rules', 'gestation'],
+  Labor: ['biological_type', 'reproduction_rules', 'labor'],
+  Maturation: ['biological_type', 'lifecycle', 'maturation'],
+  Aging: ['biological_type', 'lifecycle', 'aging'],
+  Childbirth_Difficulty: ['world', 'medical_context', 'childbirth_difficulty'],
+  Care_Level: ['world', 'medical_context', 'care_level'],
+  Medical_Evidence: ['world', 'medical_context', 'evidence'],
+})
+
+function factDeltaPathKey(fact) {
+  const path = FACT_DELTA_SCALAR_PATHS[fact.field]
+  if (!path) return null
+  if (path[0] === 'species') return `species:${fact.species}:${path.join('.')}`
+  if (path[0] === 'world') return `world:${path.join('.')}`
+  return `type:${fact.species}:${fact.biological_type}:${path.slice(1).join('.')}`
+}
+
+function factDeltaCanonicalMechanism(mechanism) {
+  return normalizeReproductiveMechanism(mechanism, 'fact.mechanism')
+}
+
+function factDeltaCanonicalProjection(rule) {
+  return normalizeProjectionRules([rule], {allowGeneratedIdentity: true})[0]
+}
+
+function factDeltaAddUnique(map, key, value, {equal = v2Equal} = {}) {
+  const previous = map.get(key)
+  if (previous === undefined) {
+    map.set(key, value)
+    return
+  }
+  if (!equal(previous, value)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_CONFLICT', {path: key}, 'WORLD_MODEL_FACT_DELTA_CONFLICT')
+}
+
+function factDeltaBuildCandidate(facts, existingModel) {
+  const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+  const speciesByName = new Map()
+  const scalarFacts = new Map()
+  const specialRules = new Map()
+  const mechanisms = new Map()
+  const exceptions = new Map()
+  const unknowns = new Map()
+  const projections = new Map()
+  const speciesIdentities = new Set()
+  const typeIdentities = new Set()
+
+  const normalizedFacts = [...validateWorldModelFactDelta(facts)].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+  for (const fact of normalizedFacts) {
+    const species = String(fact.species).trim()
+    const type = fact.biological_type ? String(fact.biological_type).trim() : null
+    if (fact.field === 'Species_Identity') {
+      if (type) throw factDeltaError('WORLD_MODEL_FACT_DELTA_IDENTITY_SCOPE_INVALID', {species}, 'WORLD_MODEL_FACT_DELTA_IDENTITY_SCOPE_INVALID')
+      speciesIdentities.add(species)
+      continue
+    }
+    if (fact.field === 'Type_Identity') {
+      typeIdentities.add(`${species}\u0000${type}`)
+      continue
+    }
+    const scope = FACT_DELTA_SCALAR_PATHS[fact.field]?.[0] === 'world' ? 'world' : fact.field === 'Exception' || fact.field === 'Unknown' || fact.field === 'Projection_Rule' ? 'world' : 'entity'
+    if (scope === 'entity') {
+      const speciesEntry = speciesByName.get(species) ?? {name: species, biological_types: []}
+      speciesByName.set(species, speciesEntry)
+    }
+    if (FACT_DELTA_SCALAR_PATHS[fact.field]) {
+      factDeltaAddUnique(scalarFacts, factDeltaPathKey({...fact, species, biological_type: type}), fact.value)
+      continue
+    }
+    if (fact.field === 'Special_Rule') {
+      if (!type) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_REQUIRED', {field: fact.field})
+      const key = `special:${species}\u0000${type}\u0000${String(fact.value).trim()}`
+      factDeltaAddUnique(specialRules, key, {species, type, value: String(fact.value).trim()}, {equal: (left, right) => left.value === right.value})
+      continue
+    }
+    if (fact.field === 'Reproductive_Mechanism') {
+      if (!type) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_REQUIRED', {field: fact.field})
+      const mechanism = factDeltaCanonicalMechanism(fact.mechanism)
+      const key = `mechanism:${species}\u0000${type}\u0000${mechanism.key}`
+      factDeltaAddUnique(mechanisms, key, {species, type, mechanism})
+      continue
+    }
+    if (fact.field === 'Exception') {
+      const exception = {...fact.exception, applies_to: fact.exception.applies_to ?? null, evidence: fact.exception.evidence ?? null}
+      const key = `exception:${String(exception.statement).trim()}\u0000${String(exception.applies_to ?? '').trim()}`
+      factDeltaAddUnique(exceptions, key, exception)
+      continue
+    }
+    if (fact.field === 'Unknown') {
+      const value = String(fact.value).trim()
+      factDeltaAddUnique(unknowns, `unknown:${value}`, value, {equal: (left, right) => left === right})
+      continue
+    }
+    if (fact.field === 'Projection_Rule') {
+      const rule = factDeltaCanonicalProjection(fact.projection_rule)
+      const key = `projection:${rule.projection_rule_id}`
+      factDeltaAddUnique(projections, key, rule)
+      continue
+    }
+    throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', {field: fact.field})
+  }
+
+  const candidate = {schema_version: 1, species: [], medical_context: {}, exceptions: [...exceptions.values()], unknowns: [...unknowns.values()], projection_rules: []}
+  const getSpecies = name => {
+    let value = speciesByName.get(name)
+    if (!value) { value = {name, biological_types: []}; speciesByName.set(name, value) }
+    return value
+  }
+  const getType = (species, name) => {
+    let value = species.biological_types.find(item => item.name === name)
+    if (!value) { value = {name}; species.biological_types.push(value) }
+    return value
+  }
+  for (const fact of normalizedFacts) {
+    if (fact.field === 'Species_Description') getSpecies(fact.species).description = fact.value
+    else if (fact.field === 'Type_Description') getType(getSpecies(fact.species), fact.biological_type).description = fact.value
+    else if (FACT_DELTA_SCALAR_PATHS[fact.field]) {
+      if (fact.field === 'Childbirth_Difficulty') candidate.medical_context.childbirth_difficulty = fact.value
+      else if (fact.field === 'Care_Level') candidate.medical_context.care_level = fact.value
+      else if (fact.field === 'Medical_Evidence') candidate.medical_context.evidence = fact.value
+      else {
+        const type = getType(getSpecies(fact.species), fact.biological_type)
+        const [group, key] = FACT_DELTA_SCALAR_PATHS[fact.field].slice(1)
+        type[group] ??= {}
+        type[group][key] = fact.value
+      }
+    } else if (fact.field === 'Special_Rule') getType(getSpecies(fact.species), fact.biological_type).special_rules = [...(getType(getSpecies(fact.species), fact.biological_type).special_rules ?? []), fact.value]
+    else if (fact.field === 'Reproductive_Mechanism') getType(getSpecies(fact.species), fact.biological_type).reproductive_mechanisms = [...(getType(getSpecies(fact.species), fact.biological_type).reproductive_mechanisms ?? []), factDeltaCanonicalMechanism(fact.mechanism)]
+    else if (fact.field === 'Projection_Rule') candidate.projection_rules.push(fact.projection_rule)
+  }
+  for (const speciesName of speciesIdentities) getSpecies(speciesName)
+  for (const key of typeIdentities) { const [speciesName, typeName] = key.split('\u0000'); getType(getSpecies(speciesName), typeName) }
+  for (const species of speciesByName.values()) {
+    if (!speciesIdentities.has(species.name) && !existing.species.some(item => item.name === species.name)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SPECIES_IDENTITY_REQUIRED', {species: species.name}, 'WORLD_MODEL_FACT_DELTA_SPECIES_IDENTITY_REQUIRED')
+    for (const type of species.biological_types) {
+      const typeKey = `${species.name}\u0000${type.name}`
+      if (!typeIdentities.has(typeKey) && !existing.species.find(item => item.name === species.name)?.biological_types.some(item => item.name === type.name)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED', {species: species.name, type: type.name}, 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED')
+    }
+    candidate.species.push(species)
+  }
+  return {candidate, existing, mechanisms, projections}
+}
+
+export function worldModelFactDeltaToPatchV2(facts, existingModel) {
+  const built = factDeltaBuildCandidate(facts, existingModel)
+  for (const {species, type, mechanism} of built.mechanisms.values()) {
+    const existingType = built.existing.species.find(item => item.name === species)?.biological_types.find(item => item.name === type)
+    const current = existingType?.reproductive_mechanisms?.find(item => item.key === mechanism.key)
+    if (current && !v2Equal(current, mechanism)) throw factDeltaError('FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED', {species, type, key: mechanism.key}, 'FACT_DELTA_EXISTING_MECHANISM_UPDATE_UNSUPPORTED')
+  }
+  const existingProjectionIds = new Map(built.existing.projection_rules.map(rule => [rule.projection_rule_id, rule]))
+  const projectionFacts = []
+  for (const rule of built.projections.values()) {
+    const current = existingProjectionIds.get(rule.projection_rule_id)
+    if (current && !v2Equal(current, rule)) throw factDeltaError('FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED', {projection_rule_id: rule.projection_rule_id}, 'FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED')
+    if (!current) projectionFacts.push(rule)
+  }
+  built.candidate.projection_rules = projectionFacts.map(({projection_rule_id, ...rule}) => rule)
+  return worldModelCandidateToPatchV2(built.candidate, built.existing)
+}
+
 export function worldModelIdentityIndex(model) {
   const index = new Map()
   for (const species of Array.isArray(model?.species) ? model.species : []) {
@@ -4014,8 +4393,8 @@ export function createAnalyzer({
     return canonicalModel;
   }
 
-  // Supplement AI returns hierarchical Candidate Text. Patch v2 remains an
-  // internal deterministic mutation IR for the existing guard/merge boundary.
+  // Supplement AI returns Fact Delta Text. Patch v2 remains an internal
+  // deterministic mutation IR for the existing guard/merge boundary.
   async function analyzeWorldModelPatchV2(input = {}) {
     const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
     if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED')
@@ -4028,11 +4407,48 @@ export function createAnalyzer({
     }
     const promptSettings = worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {}
     const messages = buildWorldModelPatchMessagesV2(analysisInput, promptSettings)
+    const debug = factDeltaDebugEnabled(input)
+    const emitFactDeltaTrace = (stage, details = {}) => {
+      if (typeof input?.onFactDeltaTrace !== 'function') return
+      try {
+        input.onFactDeltaTrace({
+          stage,
+          mode: 'patch',
+          attempt: input.fact_delta_attempt ?? null,
+          retry_index: input.fact_delta_retry_index ?? null,
+          ...details,
+        })
+      } catch {
+        // Diagnostics must never affect the Supplement result.
+      }
+    }
+    emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_SUMMARY', factDeltaEvidenceSummary(analysisInput))
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
+    const response = responseText(raw)
+    emitFactDeltaTrace('WORLD_FACT_DELTA_RESPONSE_RECEIVED', {
+      response_text_length: response.length,
+    })
     try {
-      const parsed = parseWorldModelSupplementText(responseText(raw))
-      const candidate = validateWorldModelCandidate(parsed.candidate)
-      const patch = worldModelCandidateToPatchV2(candidate, existingModel)
+      const parsed = parseWorldModelFactDeltaText(response)
+      const facts = validateWorldModelFactDelta(parsed.facts)
+      emitFactDeltaTrace('WORLD_FACT_DELTA_PARSED', {
+        fact_count: facts.length,
+        fields: [...new Set(facts.map(fact => fact.field))],
+        scope_summary: facts.reduce((summary, fact) => {
+          const scope = factDeltaAddress(fact).scope
+          summary[scope] = (summary[scope] ?? 0) + 1
+          return summary
+        }, {}),
+        address_summary: facts.map(fact => ({field: fact.field, ...factDeltaAddress(fact)})),
+        ...(debug ? {facts: facts.map(fact => factDeltaDiagnosticValue(fact))} : {}),
+      })
+      const patch = worldModelFactDeltaToPatchV2(facts, existingModel)
+      const normalizedExisting = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+      emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {
+        fact_count: facts.length,
+        patch_operation_count: patch.operations.length,
+        fact_mappings: factDeltaResolutionDiagnostics(facts, patch, normalizedExisting),
+      })
       const classified = applyWorldModelPatchV2EvidenceGuard(
         patch,
         existingModel,
@@ -4040,19 +4456,34 @@ export function createAnalyzer({
       )
       return {
         patch,
-        candidate,
+        facts,
         diagnostics: parsed.diagnostics,
         classified,
       }
     } catch (error) {
+      if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
+        const rejected = factDeltaRejectedOperation(error)
+        emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_REJECTED', {
+          rejected_operation_type: rejected?.operation_type ?? error.operation_op ?? null,
+          rejected_semantic_path: rejected?.semantic_path ?? error.canonical_target_path ?? error.path ?? null,
+          species: rejected?.species ?? error.operation_target?.species_name ?? null,
+          biological_type: rejected?.biological_type ?? error.operation_target?.type_name ?? null,
+          field: rejected?.field ?? null,
+          proposed_value: rejected?.proposed_value ?? null,
+          classification: rejected?.classification ?? null,
+          evidence_guard_failure_code: error.code ?? error.message ?? null,
+          rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
+          evidence_binding: factDeltaEvidenceCandidates(rejected, factDeltaEvidenceTraceUnits(analysisInput), debug),
+        })
+      }
       traceApi('parser-error', {
-        parser: 'world-model-supplement-text',
-        responseTextLength: responseText(raw).length,
+        parser: 'world-model-fact-delta',
+        responseTextLength: response.length,
         ...traceParserError(error),
         diagnosticCode: error?.diagnosticCode ?? error?.diagnostic_code ?? error?.message ?? null,
         analysisStage: error?.analysis_stage ?? (error?.code === 'WORLD_MODEL_PATCH_V2_INVALID'
           ? 'world_patch_v2_evidence_guard'
-          : 'world_patch_v2_supplement_parse'),
+          : 'world_fact_delta_parse'),
         stage: error?.stage ?? 'world_patch_v2',
       })
       throw error

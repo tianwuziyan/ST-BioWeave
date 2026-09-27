@@ -7364,6 +7364,57 @@ test("World Patch Analysis merges v2 sparsely and saves only the current Floor",
   fixture.runtime.destroy();
 });
 
+test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation without changing persistence", async () => {
+  const received = [];
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "当前楼层新增世界规则", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2(input) {
+        received.push({
+          attempt: input.fact_delta_attempt,
+          retry_index: input.fact_delta_retry_index,
+          hasCallback: typeof input.onFactDeltaTrace === "function",
+        });
+        input.onFactDeltaTrace?.({
+          stage: "WORLD_FACT_DELTA_PARSED",
+          fact_count: 0,
+          fields: [],
+          scope_summary: {},
+          address_summary: [],
+        });
+        input.onFactDeltaTrace?.({
+          stage: "WORLD_FACT_DELTA_RESOLVED",
+          fact_count: 0,
+          patch_operation_count: 0,
+          fact_mappings: [],
+        });
+        return {patch: {schema_version: 2, operations: []}, classified: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]});
+  await seedWorldOwner(fixture, existing);
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+
+  assert.deepEqual(received, [{attempt: 1, retry_index: 0, hasCallback: true}]);
+  const trace = fixture.runtime.getPersistenceTrace().sequence.filter(entry => (
+    entry.stage === "WORLD_FACT_DELTA_PARSED" || entry.stage === "WORLD_FACT_DELTA_RESOLVED"
+  ));
+  assert.equal(trace.length, 2);
+  assert.ok(trace[0].execution_id);
+  assert.equal(trace[0].execution_id, trace[1].execution_id);
+  assert.equal(trace[0].mode, "patch");
+  assert.equal(trace[0].attempt, 1);
+  assert.equal(trace[0].retry_index, 0);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
+  assert.equal(JSON.stringify(fixture.runtime.store.getFloor(1)).includes("WORLD_FACT_DELTA_PARSED"), false);
+  fixture.runtime.destroy();
+});
+
 test("invalid World Patch fails closed without replacing the existing World Model", async () => {
   const messages = [
     { message_id: "world-a-floor", floor: 3, content: "A", role: "assistant" },

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model evidence, Supplement, Patch v2 and canonical ownership contract"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership boundary must remain unchanged while migrating transport"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Fact transport crosses prompt, parser, resolver and canonical adapter layers"}
