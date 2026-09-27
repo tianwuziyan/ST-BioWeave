@@ -1074,10 +1074,44 @@ function renderPersistenceTrace(trace = null) {
 }
 
 function renderWorldModelLiveState(liveState = null) {
+  const latestFactDelta = liveState?.latest_fact_delta;
+  const funnelFields = [
+    ['Raw Fact Blocks', 'raw_fact_block_count'],
+    ['Parsed Facts', 'parsed_fact_count'],
+    ['Parse Rejected', 'parse_rejected_fact_count'],
+    ['Resolution Rejected', 'resolution_rejected_fact_count'],
+    ['Evidence Guard Rejected', 'evidence_guard_rejected_fact_count'],
+    ['Accepted Facts', 'accepted_fact_count'],
+    ['Accepted Operations', 'accepted_operation_count'],
+  ];
+  const funnel = latestFactDelta && typeof latestFactDelta === 'object' && funnelFields.some(([, key]) => Object.hasOwn(latestFactDelta, key))
+    ? '<section class="bioweave-world-model-fact-funnel" data-bioweave-world-model-fact-funnel><h5>Fact Delta Funnel</h5><dl>' + funnelFields.map(([label, key]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(String(latestFactDelta[key] ?? 0)) + '</dd></div>').join('') + '</dl></section>'
+    : '';
+  const completenessFields = [
+    ['Identity Reviews', 'identity_review_completed_count', 'identity_review_count'],
+    ['Coverage Dispositions', 'coverage_disposition_count', 'coverage_target_count'],
+  ];
+  const completeness = latestFactDelta && typeof latestFactDelta === 'object' && completenessFields.some(([, completed]) => Object.hasOwn(latestFactDelta, completed))
+    ? '<section class="bioweave-world-model-completeness" data-bioweave-world-model-completeness><h5>Supplement Completeness</h5><dl>' + completenessFields.map(([label, completed, total]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(`${latestFactDelta[completed] ?? 0} / ${latestFactDelta[total] ?? 0}`) + '</dd></div>').join('') + '<div><dt>Complete</dt><dd>' + escapeHtml(String(latestFactDelta.supplement_completeness_complete ?? latestFactDelta.completeness_satisfied ?? false)) + '</dd></div></dl></section>'
+    : '';
+  const latestNonempty = liveState?.latest_nonempty_fact_delta;
+  const latestNonemptySummary = latestNonempty?.summary ?? latestNonempty;
+  const nonempty = latestNonemptySummary && typeof latestNonemptySummary === 'object'
+    ? '<section class="bioweave-world-model-latest-nonempty" data-bioweave-world-model-latest-nonempty><h5>Latest Non-empty Fact Delta</h5><dl><div><dt>Execution</dt><dd>' + escapeHtml(String(latestNonempty.execution_id ?? '')) + '</dd></div><div><dt>Raw Fact Blocks</dt><dd>' + escapeHtml(String(latestNonemptySummary.raw_fact_block_count ?? 0)) + '</dd></div><div><dt>Parsed Facts</dt><dd>' + escapeHtml(String(latestNonemptySummary.parsed_fact_count ?? 0)) + '</dd></div><div><dt>Guard Rejected</dt><dd>' + escapeHtml(String(latestNonemptySummary.evidence_guard_rejected_fact_count ?? 0)) + '</dd></div><div><dt>Accepted Facts</dt><dd>' + escapeHtml(String(latestNonemptySummary.accepted_fact_count ?? 0)) + '</dd></div></dl></section>'
+    : '';
+  const displayLiveState = latestFactDelta && typeof latestFactDelta === 'object'
+    ? {
+        ...liveState,
+        latest_fact_delta: Object.fromEntries(Object.entries(latestFactDelta).filter(([key]) => key !== 'fact_count' && key !== 'rejected_fact_count')),
+      }
+    : liveState;
   return [
     '<section class="bioweave-card bioweave-world-model-live-state" data-bioweave-world-model-live-state>',
     '<header><div><h4>WORLD MODEL LIVE STATE</h4><p class="bioweave-muted">在查看或导出动作触发时重新采样；只读，不触发分析或修复。</p></div></header>',
-    '<pre data-bioweave-world-model-live-state-content>' + escapeHtml(traceValueText(liveState, '尚未采样 LIVE STATE')) + '</pre>',
+    funnel,
+    completeness,
+    nonempty,
+    '<pre data-bioweave-world-model-live-state-content>' + escapeHtml(traceValueText(displayLiveState, '尚未采样 LIVE STATE')) + '</pre>',
     '</section>',
   ].join('');
 }

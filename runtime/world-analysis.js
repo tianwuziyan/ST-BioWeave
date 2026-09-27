@@ -136,6 +136,32 @@ export function createWorldAnalysis({
 
   const worldInFlight = new Map();
   let latestWorldModelDiagnostic = null;
+  let recentFactDeltaExecutions = [];
+
+  function canonicalWorldEqual(left, right) {
+    if (left === null || left === undefined || right === null || right === undefined) return left === right;
+    try {
+      return JSON.stringify(normalizeStoredWorldModel(left)) === JSON.stringify(normalizeStoredWorldModel(right));
+    } catch {
+      return false;
+    }
+  }
+
+  function rememberFactDeltaExecution(executionId, target, mode, summary, candidateModel) {
+    if (!executionId || !summary) return;
+    const entry = {
+      execution_id: executionId,
+      mode,
+      floor_version: cloneWorldValue(target?.version),
+      summary: cloneWorldValue(summary),
+      candidate_model: cloneWorldValue(candidateModel),
+      updated_at: new Date().toISOString(),
+    };
+    recentFactDeltaExecutions = [
+      ...recentFactDeltaExecutions.filter(item => item.execution_id !== executionId),
+      entry,
+    ].slice(-8);
+  }
 
   function hasWorldModelUpdateSignal(target) {
     return WORLD_MODEL_UPDATE_SIGNAL.test(getMessageText(target?.message, target?.swipeId));
@@ -308,7 +334,8 @@ export function createWorldAnalysis({
       promise: null,
       diagnostic_execution_id: `world-fact-delta-${Date.now()}-${++worldFactDeltaDiagnosticSequence}`,
     };
-    const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
+      const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
+    let supplementCompletenessRetry = null;
     const publishPhase = phase => {
       onPhase?.(phase);
       notify({
@@ -347,6 +374,7 @@ export function createWorldAnalysis({
             }));
             meta = {source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput)};
           } else {
+            const factDeltaExecutionId = `${job.diagnostic_execution_id}-attempt-${attempt}`;
             const resolved = await resolveWorldModelAtOrBefore(target);
             if (!resolved) {
               const error = new Error("WORLD_MODEL_REQUIRED_FOR_PATCH");
@@ -357,22 +385,51 @@ export function createWorldAnalysis({
             const patchAnalysisInput = {
               ...(analysisInput ?? {}),
               world_model: cloneWorldValue(resolved.model),
+              ...(supplementCompletenessRetry ? {supplement_completeness_retry: supplementCompletenessRetry} : {}),
             };
-            const patchResult = await analyzer.analyzeWorldModelPatchV2({
-              analysisInput: patchAnalysisInput,
-              floor_version: target.version,
-              authoritative_floor_version: target.version,
-              signal,
-              fact_delta_attempt: attempt,
-              fact_delta_retry_index: retryIndex,
-              onFactDeltaTrace: details => emitPersistenceTrace(details.stage, execution, target, {
-                ...details,
-                execution_id: job.diagnostic_execution_id,
-                attempt,
-                retry_index: retryIndex,
-                mode: "patch",
-              }, "world"),
-            });
+            let patchResult;
+            let factDeltaSummary = null;
+            try {
+              patchResult = await analyzer.analyzeWorldModelPatchV2({
+                analysisInput: patchAnalysisInput,
+                require_supplement_completeness: true,
+                floor_version: target.version,
+                authoritative_floor_version: target.version,
+                signal,
+                fact_delta_attempt: attempt,
+                fact_delta_retry_index: retryIndex,
+                onFactDeltaTrace: details => {
+                  if (details.stage === "WORLD_FACT_DELTA_RESOLVED") {
+                    factDeltaSummary = cloneWorldValue(details);
+                  }
+                  emitPersistenceTrace(details.stage, execution, target, {
+                    ...details,
+                    execution_id: factDeltaExecutionId,
+                    attempt,
+                    retry_index: retryIndex,
+                    mode: "patch",
+                  }, "world");
+                },
+              });
+              supplementCompletenessRetry = null;
+            } catch (error) {
+              rememberFactDeltaExecution(
+                factDeltaExecutionId,
+                target,
+                mode,
+                factDeltaSummary ?? {
+                  analysis_stage_succeeded: false,
+                  completeness_required: true,
+                  completeness_satisfied: false,
+                  failure_stage: error?.analysis_stage ?? "supplement_completeness",
+                  failure_code: error?.code ?? error?.message ?? "WORLD_MODEL_SUPPLEMENT_FAILED",
+                  ...(error?.diagnostics ? {completeness_diagnostics: cloneWorldValue(error.diagnostics)} : {}),
+                },
+                null,
+              );
+              if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") supplementCompletenessRetry = cloneWorldValue(error.diagnostics);
+              throw error;
+            }
             model = mergeWorldModelPatchV2(
               resolved.model,
               patchResult?.patch ?? patchResult,
@@ -392,11 +449,13 @@ export function createWorldAnalysis({
                     fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
                   }
                 : null,
+              fact_delta_execution_id: factDeltaExecutionId,
+              require_supplement_completeness: true,
             };
           }
           return {model, meta};
         },
-        complete: async ({model, meta, fact_delta_summary: factDeltaSummary}, {attempt, retryIndex}) => {
+        complete: async ({model, meta, fact_delta_summary: factDeltaSummary, fact_delta_execution_id: factDeltaExecutionId}, {attempt, retryIndex}) => {
           const ownerKey = `${key}:${attempt}:${retryIndex}`;
           if (persistenceOwner.attempt !== ownerKey) {
             persistenceOwner.attempt = ownerKey;
@@ -473,6 +532,41 @@ export function createWorldAnalysis({
             throw requestAbortedError();
           }
           const analyzedAt = new Date().toISOString();
+          if (factDeltaSummary) {
+            rememberFactDeltaExecution(
+              factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`,
+              target,
+              mode,
+              factDeltaSummary,
+              model,
+            );
+          }
+          const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
+          const canonicalNoop = sameFloorVersion(floorVersionFromData(currentFloorData), target.version)
+            && canonicalWorldEqual(currentFloorData.world_model, model);
+          if (canonicalNoop) {
+            emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
+              reason: "canonical_noop",
+              persistence_occurred: false,
+              canonical_mutation_occurred: false,
+              world_model_present: true,
+            }, "world");
+            const ready = await resolveWorldModelUiReady(target);
+            latestWorldModelDiagnostic = {
+              execution_id: job.diagnostic_execution_id,
+              latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
+              latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
+              latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
+              recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+              mode,
+              trigger,
+              floor_version: cloneWorldValue(target.version),
+              candidate_model: cloneWorldValue(model),
+              runtime_model: cloneWorldValue(ready?.model),
+              updated_at: new Date().toISOString(),
+            };
+            return {model: ready.view_model.model, view_model: ready.view_model, floor_version: cloneWorldValue(target.version), persistence_skipped: true};
+          }
           const saved = await saveWorldModel({
             model,
             meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: {...target.version}},
@@ -488,13 +582,16 @@ export function createWorldAnalysis({
           const ready = await resolveWorldModelUiReady(target);
           latestWorldModelDiagnostic = {
             execution_id: job.diagnostic_execution_id,
-            latest_world_fact_delta_execution_id: factDeltaSummary ? job.diagnostic_execution_id : null,
+            latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
             mode,
             trigger,
             floor_version: cloneWorldValue(target.version),
             candidate_model: cloneWorldValue(model),
             runtime_model: cloneWorldValue(ready?.model),
             fact_delta_summary: cloneWorldValue(factDeltaSummary ?? null),
+            latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
+            latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
+            recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
             updated_at: new Date().toISOString(),
           };
           emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
@@ -520,6 +617,22 @@ export function createWorldAnalysis({
         return result;
       },
       error => {
+        const latestFactDelta = recentFactDeltaExecutions.at(-1) ?? null;
+        if (latestFactDelta) {
+          latestWorldModelDiagnostic = {
+            execution_id: job.diagnostic_execution_id,
+            latest_world_fact_delta_execution_id: latestFactDelta.execution_id,
+            latest_fact_delta: cloneWorldValue(latestFactDelta.summary),
+            latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
+            recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+            mode,
+            trigger,
+            floor_version: cloneWorldValue(target.version),
+            candidate_model: null,
+            runtime_model: null,
+            updated_at: new Date().toISOString(),
+          };
+        }
         notify({
           type: "WORLD_ANALYSIS_STATUS_CHANGED",
           payload: {
@@ -615,6 +728,7 @@ export function createWorldAnalysis({
     clear: () => {
       worldInFlight.clear();
       latestWorldModelDiagnostic = null;
+      recentFactDeltaExecutions = [];
     },
   };
 }

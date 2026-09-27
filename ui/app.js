@@ -930,6 +930,10 @@ export function createApp(runtime, options = {}) {
               candidate_world_fingerprint: null,
               reason: 'candidate_not_retained',
             },
+        latest_nonempty_fact_delta: runtimeDiagnostic?.latest_nonempty_fact_delta ?? null,
+        recent_fact_delta_executions: Array.isArray(runtimeDiagnostic?.recent_fact_delta_executions)
+          ? runtimeDiagnostic.recent_fact_delta_executions
+          : [],
         target_read_error_code: targetBeforeError?.code ?? targetBeforeError?.message ?? targetAfterError?.code ?? targetAfterError?.message ?? null,
         history_trace_metadata: {
           trace_buffer_capacity: null,

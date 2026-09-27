@@ -26,7 +26,20 @@ const modelR2 = {
 function runtimeFixture({runtimeModel = modelR1, floorModel = modelR1, targetSequence = []} = {}) {
   let targetIndex = 0;
   const target = () => targetSequence[targetIndex++] ?? {version: {chat_id: 'chat-a', message_id: 1, floor: 1, swipe_id: 0, content_hash: 'hash-a', message_version: 'v1'}};
-  let diagnostic = {execution_id: 'exec-r1', runtime_model: runtimeModel, fact_delta_summary: {fact_count: 1}};
+  let diagnostic = {
+    execution_id: 'exec-r1',
+    runtime_model: runtimeModel,
+    fact_delta_summary: {
+      raw_fact_block_count: 1,
+      parsed_fact_count: 1,
+      parse_rejected_fact_count: 0,
+      resolution_rejected_fact_count: 0,
+      evidence_guard_rejected_fact_count: 0,
+      accepted_fact_count: 1,
+      accepted_operation_count: 1,
+      fact_count: 1,
+    },
+  };
   const calls = {save: 0, commit: 0, storeSave: 0};
   const runtime = {
     chat: {current: () => 'chat-a'},
@@ -90,10 +103,23 @@ test('collectWorldModelLiveState samples the current Runtime and remains read on
   const fixture = runtimeFixture({runtimeModel: modelR1});
   const app = createApp(fixture.runtime, {documentRef: {}, storageRef: {}});
   const first = await app.collectWorldModelLiveState();
-  fixture.setDiagnostic({execution_id: 'exec-r2', runtime_model: modelR2, fact_delta_summary: {fact_count: 2}});
+  fixture.setDiagnostic({
+    execution_id: 'exec-r2',
+    runtime_model: modelR2,
+    fact_delta_summary: {
+      raw_fact_block_count: 1,
+      parsed_fact_count: 1,
+      accepted_fact_count: 1,
+      accepted_operation_count: 1,
+      fact_count: 2,
+    },
+  });
   const second = await app.collectWorldModelLiveState();
   assert.notEqual(first.layers.runtime.full_hash, second.layers.runtime.full_hash);
   assert.equal(second.active_world_execution_id, 'exec-r2');
+  assert.equal(second.latest_fact_delta.raw_fact_block_count, 1);
+  assert.equal(second.latest_fact_delta.parsed_fact_count, 1);
+  assert.equal(second.latest_fact_delta.accepted_operation_count, 1);
   assert.equal(fixture.calls.save, 0);
   assert.equal(fixture.calls.commit, 0);
   assert.equal(fixture.calls.storeSave, 0);
@@ -126,11 +152,46 @@ test('target change during async collection invalidates the snapshot instead of 
 
 test('debug output separates LIVE STATE from HISTORY TRACE', () => {
   const markup = renderAnalysisDebugPopupContent({
-    worldModelLiveState: {snapshot_generated_at: 'now', world_consistency: {floor_vs_ui: 'MISMATCH'}},
+    worldModelLiveState: {
+      snapshot_generated_at: 'now',
+      world_consistency: {floor_vs_ui: 'MISMATCH'},
+      latest_fact_delta: {
+        raw_fact_block_count: 4,
+        parsed_fact_count: 1,
+        parse_rejected_fact_count: 3,
+        resolution_rejected_fact_count: 0,
+        evidence_guard_rejected_fact_count: 1,
+        accepted_fact_count: 0,
+        accepted_operation_count: 0,
+        identity_review_completed_count: 4,
+        identity_review_count: 4,
+        coverage_disposition_count: 23,
+        coverage_target_count: 23,
+        supplement_completeness_complete: true,
+      },
+      latest_nonempty_fact_delta: {
+        execution_id: 'exec-nonempty',
+        summary: {
+          raw_fact_block_count: 2,
+          parsed_fact_count: 2,
+          evidence_guard_rejected_fact_count: 2,
+          accepted_fact_count: 0,
+        },
+      },
+    },
     persistenceTrace: {sequence: [{stage: 'WORLD_UI_RENDERED'}]},
     documentRef: null,
   });
   assert.match(markup, /WORLD MODEL LIVE STATE/u);
   assert.match(markup, /WORLD_UI_RENDERED/u);
   assert.match(markup, /data-bioweave-world-model-live-state/u);
+  assert.match(markup, /Raw Fact Blocks/u);
+  assert.match(markup, />4<\/dd>/u);
+  assert.match(markup, /Evidence Guard Rejected/u);
+  assert.match(markup, /Identity Reviews/u);
+  assert.match(markup, />4 \/ 4<\/dd>/u);
+  assert.match(markup, /Coverage Dispositions/u);
+  assert.match(markup, /Latest Non-empty Fact Delta/u);
+  assert.match(markup, /exec-nonempty/u);
+  assert.doesNotMatch(markup, /"fact_count"/u);
 });

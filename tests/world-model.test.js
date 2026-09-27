@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { buildEventAnalysisMessages, buildWorldModelMessages, buildWorldModelPatchMessagesV2, buildWorldModelPrompt, WORLD_MODEL_SCHEMA, WORLD_MODEL_SCHEMA_TEXT } from '../ai/prompts.js'
 import { buildAnalysisInput } from '../ai/input-builder.js'
 import { applyWorldModelPatchV2EvidenceGuard, classifyWorldModelPatchV2, createAnalyzer, mergeWorldModelPatchV2, normalizeWorldModel, parseWorldModelResponse, resolveWorldModelFactDelta, summarizeAnalysisInput, validateWorldModelPatchV2, worldModelCandidateToPatchV2, worldModelFactDeltaToPatchV2, worldModelIdentityIndex } from '../ai/analyzer.js'
-import { buildWorldModelSupplementCoverageTargets, formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementText } from '../ai/world-supplement-protocol.js'
+import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, formatWorldModelSupplementReference, parseWorldModelCandidateText as parseWorldModelCandidateTextRaw, parseWorldModelFactDeltaText, parseWorldModelSupplementReviewText, parseWorldModelSupplementText, validateWorldModelSupplementCompleteness } from '../ai/world-supplement-protocol.js'
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -836,6 +836,7 @@ test('Supplement prompt publishes exact Fact field grammar', () => {
   assert.match(prompt, /Identity Fact 不包含 Value/u)
   assert.match(prompt, /exact\/case-sensitive/u)
   assert.match(prompt, /禁止 projection_rule_id/u)
+  assert.match(prompt, /同一物理行/u)
 })
 
 test('Supplement Fact Delta production prompt includes the semantic Field Dictionary', () => {
@@ -1155,6 +1156,51 @@ Value: true
   assert.equal(invalidBoolean.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_VALUE_INVALID')
 })
 
+test('Fact Delta parser permits only schema-approved natural-language continuation', () => {
+  const multiline = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-A
+Field: Type_Description
+Value: Type-A has a stable description
+that continues on the next physical line.
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[/World Model Updates]`)
+  assert.equal(multiline.raw_fact_block_count, 2)
+  assert.equal(multiline.rejectedFacts.length, 0)
+  assert.equal(multiline.facts[0].value, 'Type-A has a stable description that continues on the next physical line.')
+  assert.equal(multiline.facts[1].biological_type, 'Type-B')
+
+  const splitLabel = parseWorldModelFactDeltaText(`[World Model Updates]
+[Fact]
+Species: Species-A
+Field: Type_Description
+Value: valid text
+Field
+: Special_Rule
+[/Fact]
+[/World Model Updates]`)
+  assert.equal(splitLabel.facts.length, 0)
+  assert.equal(splitLabel.rejectedFacts.length, 1)
+
+  for (const body of [
+    'Species: Species-A\nSpecies-A continuation',
+    'Field: Type_Description\nField continuation',
+    'Field: Can_Carry_Pregnancy\nValue: true\nboolean continuation',
+    'Field: Projection_Rule\nProjection_Rule_JSON: {"schema_version":1}\njson continuation',
+    'Field: Type_Description\nUnknown_Label: not allowed',
+  ]) {
+    const parsed = parseWorldModelFactDeltaText(`[World Model Updates]\n[Fact]\n${body}\n[/Fact]\n[/World Model Updates]`)
+    assert.equal(parsed.facts.length, 0, body)
+    assert.equal(parsed.rejectedFacts.length, 1, body)
+  }
+})
+
 test('Fact Delta keeps Unknown vocabulary exact and rejects Unknown_Fact', () => {
   const valid = parseWorldModelFactDeltaText(`[World Model Updates]
 [Fact]
@@ -1255,6 +1301,77 @@ test('Supplement coverage targets are deterministic, address-complete, and conse
   assert.ok(addresses.includes('world::Unknown'))
   assert.ok(addresses.includes('world::Projection_Rule'))
   assert.equal(targets.every(target => !Object.hasOwn(target, 'value')), true)
+})
+
+test('Supplement coverage and identity reviews use stable IDs and exact terminal grammar', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [
+    {name: 'Species-B', biological_types: [{name: 'Type-C'}]},
+    {name: 'Species-A', biological_types: [{name: 'Type-A'}]},
+  ]})
+  const targets = buildWorldModelSupplementCoverageTargets(existing)
+  const subjects = buildWorldModelSupplementIdentityReviewSubjects(existing)
+  assert.equal(targets[0].target_id, 'coverage-target-v1-0001')
+  assert.deepEqual(targets.map(item => item.target_id), buildWorldModelSupplementCoverageTargets(existing).map(item => item.target_id))
+  assert.deepEqual(subjects.map(item => item.species), ['Species-A', 'Species-B'])
+  const reviewText = [
+    ...targets.map(target => `[Coverage Review]\nTarget_ID: ${target.target_id}\nDisposition: NO_EVIDENCE\n[/Coverage Review]`),
+    ...subjects.map(subject => `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: ${subject.species}\nDisposition: REVIEWED\n[/Identity Discovery Review]`),
+  ].join('\n')
+  const review = parseWorldModelSupplementReviewText(reviewText)
+  assert.doesNotThrow(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions, identitySubjects: subjects, identityReviews: review.identity_reviews, facts: []}))
+  assert.throws(() => validateWorldModelSupplementCompleteness({coverageTargets: targets, coverageDispositions: review.coverage_dispositions.slice(1), identitySubjects: subjects, identityReviews: review.identity_reviews, facts: []}), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
+})
+
+test('Supplement completeness is a separate terminal outcome and retries only when requested', async () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const analyzer = createAnalyzer({profileResolver: () => SILLYTAVERN_CURRENT_API, contextResolver: () => ({generateRaw: () => '[World Model Updates]\n[/World Model Updates]'})})
+  await assert.rejects(analyzer.analyzeWorldModelPatchV2({analysisInput: {world_model: existing}, require_supplement_completeness: true}), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
+  const result = await analyzer.analyzeWorldModelPatchV2({analysisInput: {world_model: existing}})
+  assert.equal(result.fact_delta_summary.analysis_stage_succeeded, true)
+})
+
+test('Supplement retry prompt carries only missing and invalid review identifiers', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const prompt = buildWorldModelPatchMessagesV2({
+    world_model: existing,
+    supplement_completeness_retry: [{
+      missing: [{target_id: 'coverage-target-v1-0001', reason: 'missing_disposition'}],
+      invalid: [{subject_id: 'identity-review-v1-0001', reason: 'invalid_or_duplicate_identity_review'}],
+    }],
+  }).map(message => message.content).join('\n')
+  assert.match(prompt, /Supplement Completeness Retry/u)
+  assert.match(prompt, /coverage-target-v1-0001/u)
+  assert.match(prompt, /identity-review-v1-0001/u)
+})
+
+test('Supplement completeness maps EMITTED coverage to exactly one Fact', () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: []}]})
+  const targets = buildWorldModelSupplementCoverageTargets(existing)
+  assert.ok(targets.length > 0)
+  const target = targets[0]
+  const fact = target.scope === 'species'
+    ? {species: target.species, field: target.field, value: '补充事实'}
+    : target.scope === 'biological_type'
+      ? {species: target.species, biological_type: target.biological_type, field: target.field, value: '补充事实'}
+      : {field: target.field, value: '补充事实'}
+  const completeReview = {
+    coverageDispositions: targets.map(item => ({target_id: item.target_id, disposition: item.target_id === target.target_id ? 'EMITTED' : 'NO_EVIDENCE'})),
+    identityReviews: [],
+  }
+  assert.doesNotThrow(() => validateWorldModelSupplementCompleteness({
+    coverageTargets: targets,
+    coverageDispositions: completeReview.coverageDispositions,
+    identitySubjects: [],
+    identityReviews: completeReview.identityReviews,
+    facts: [fact],
+  }))
+  assert.throws(() => validateWorldModelSupplementCompleteness({
+    coverageTargets: targets,
+    coverageDispositions: completeReview.coverageDispositions,
+    identitySubjects: [],
+    identityReviews: completeReview.identityReviews,
+    facts: [],
+  }), error => error?.code === 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
 })
 
 test('Supplement coverage targets serialize complete Type addresses without becoming evidence', async () => {
@@ -2096,11 +2213,19 @@ test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, 
     assert.equal(trace.retry_index, 0)
   }
   const parsed = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_PARSED')
+  assert.equal(parsed.raw_fact_block_count, 1)
+  assert.equal(parsed.parsed_fact_count, 1)
+  assert.equal(parsed.parse_rejected_fact_count, 0)
   assert.equal(parsed.fact_count, 1)
   assert.deepEqual(parsed.fields, ['Type_Identity'])
   assert.equal(parsed.facts[0].species, 'Species-A')
   const resolved = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_RESOLVED')
   assert.equal(resolved.analysis_stage_succeeded, true)
+  assert.equal(resolved.raw_fact_block_count, 1)
+  assert.equal(resolved.parsed_fact_count, 1)
+  assert.equal(resolved.parse_rejected_fact_count, 0)
+  assert.equal(resolved.resolution_rejected_fact_count, 0)
+  assert.equal(resolved.evidence_guard_rejected_fact_count, 0)
   assert.equal(resolved.accepted_fact_count, 1)
   assert.equal(resolved.rejected_fact_count, 0)
   assert.equal(resolved.accepted_operation_count, 1)
@@ -2145,8 +2270,16 @@ test('Supplement Evidence Guard rejection diagnostics identify Type identity and
   assert.equal(rejected.classification, 'ADD')
   assert.equal(rejected.rejected_semantic_field, 'operation.type.name')
   assert.equal(rejected.evidence_binding.source_kind, 'permitted_world_model_evidence')
-  assert.equal(rejected.evidence_binding.rejection_code, 'IDENTITY_SUPPORT_FAILED')
+  assert.equal(rejected.evidence_binding.rejection_stage, 'world_patch_v2_evidence_guard')
+  assert.equal(rejected.evidence_binding.scope, 'biological_type')
+  assert.deepEqual(rejected.evidence_binding.canonical_address, {scope: 'biological_type', species: 'Species-A', biological_type: 'Type-B'})
+  assert.equal(rejected.evidence_binding.rejection_code, 'SCOPE_BINDING_FAILED')
   assert.ok(rejected.evidence_binding.candidate_unit_count > 0)
+  assert.equal(rejected.evidence_binding.candidate_evidence_unit_count, rejected.evidence_binding.candidate_unit_count)
+  assert.deepEqual(rejected.evidence_binding.candidate_evidence_unit_indices, rejected.evidence_binding.candidate_unit_indices)
+  assert.equal(rejected.evidence_binding.scoped_evidence_unit_count, 0)
+  assert.deepEqual(rejected.evidence_binding.scoped_evidence_unit_indices, [])
+  assert.deepEqual(rejected.evidence_binding.matched_evidence_unit_indices, [])
 
   const capabilityTraces = []
   const capabilityAnalyzer = createAnalyzer({
@@ -2168,6 +2301,57 @@ test('Supplement Evidence Guard rejection diagnostics identify Type identity and
   assert.equal(capabilityRejected.rejected_semantic_field, 'operation.capabilities.can_produce_ova')
   assert.equal(capabilityRejected.evidence_binding.rejection_code, 'VALUE_SUPPORT_FAILED')
   assert.ok(capabilityRejected.evidence_binding.scoped_unit_count > 0)
+})
+
+test('Supplement Fact Delta LIVE STATE counters account for parser and Guard terminal buckets', async () => {
+  const response = `[World Model Updates]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Identity
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Type_Description
+Value: valid description
+Unknown_Label: malformed
+[/Fact]
+[Fact]
+Species: Species-A
+Field
+: Species_Description
+Value: malformed address
+[/Fact]
+[Fact]
+Species: Species-A
+Biological_Type: Type-B
+Field: Can_Carry_Pregnancy
+Value: tr
+ue
+[/Fact]
+[/World Model Updates]`
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => response}),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {world_model: v2ExistingModel(), character: {description: 'Type-B is temporary and not a stable biological type.'}},
+    onFactDeltaTrace: trace => traces.push(trace),
+  })
+  assert.equal(result.fact_delta_summary.raw_fact_block_count, 4)
+  assert.equal(result.fact_delta_summary.parsed_fact_count, 1)
+  assert.equal(result.fact_delta_summary.parse_rejected_fact_count, 3)
+  assert.equal(result.fact_delta_summary.resolution_rejected_fact_count, 0)
+  assert.equal(result.fact_delta_summary.evidence_guard_rejected_fact_count, 1)
+  assert.equal(result.fact_delta_summary.accepted_fact_count, 0)
+  assert.equal(result.fact_delta_summary.accepted_operation_count, 0)
+  assert.equal(result.fact_delta_summary.raw_fact_block_count, result.fact_delta_summary.parsed_fact_count + result.fact_delta_summary.parse_rejected_fact_count)
+  assert.equal(result.fact_delta_summary.parsed_fact_count, result.fact_delta_summary.resolution_rejected_fact_count + result.fact_delta_summary.evidence_guard_rejected_fact_count + result.fact_delta_summary.accepted_fact_count)
+  const resolved = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_RESOLVED')
+  assert.equal(resolved.fact_count, 1)
+  assert.equal(resolved.rejected_fact_count, 4)
 })
 
 test('World Model Candidate deterministically maps all legal internal Patch v2 operations and preserves omission', () => {

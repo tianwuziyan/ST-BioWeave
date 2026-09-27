@@ -3360,6 +3360,66 @@ test("manual World Patch uses the same additional retry policy", async () => {
   fixture.runtime.destroy();
 });
 
+test("incomplete World Supplement reuses the existing Stage retry and persists only after completion", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "补充世界规则", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        if (patchCalls === 1) throw Object.assign(new Error("WORLD_MODEL_SUPPLEMENT_INCOMPLETE"), {
+          code: "WORLD_MODEL_SUPPLEMENT_INCOMPLETE",
+          analysis_stage: "supplement_completeness",
+          diagnostics: [{missing: [{target_id: "coverage-target-v1-0001"}], invalid: []}],
+        });
+        return {patch: {schema_version: 2, operations: []}, classified: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+  assert.equal(patchCalls, 2);
+  assert.deepEqual(
+    fixture.runtime.getPersistenceTrace().sequence.filter(item => item.stage === "WORLD_STAGE_ATTEMPT_BEGIN").map(item => item.attempt),
+    [1, 2],
+  );
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED"), true);
+  fixture.runtime.destroy();
+});
+
+test("incomplete World Supplement exhausts the existing retry budget without persistence", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    retryCount: 1,
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "补充世界规则", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        throw Object.assign(new Error("WORLD_MODEL_SUPPLEMENT_INCOMPLETE"), {
+          code: "WORLD_MODEL_SUPPLEMENT_INCOMPLETE",
+          analysis_stage: "supplement_completeness",
+          diagnostics: [{missing: [{target_id: "coverage-target-v1-0001"}], invalid: []}],
+        });
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
+  const beforeWrites = fixture.saveFloorCalls();
+  await assert.rejects(fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"}), /WORLD_MODEL_SUPPLEMENT_INCOMPLETE/u);
+  assert.equal(patchCalls, 2);
+  assert.equal(fixture.saveFloorCalls(), beforeWrites);
+  fixture.runtime.destroy();
+});
+
 test("Character counter ignores User Floors and ordinary edits", async () => {
   const fixture = createFixture({
     messages: [{ message_id: "character-1", floor: 2, content: "一", role: "assistant" }],
@@ -7583,6 +7643,61 @@ test("World Patch v2 empty operations preserve the complete Existing model", asy
   await fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {}, trigger: "manual-patch" });
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
   assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
+  fixture.runtime.destroy();
+});
+
+test("World Patch v2 canonical no-op skips the Floor transaction", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "current-floor", floor: 6, content: "无变化", role: "assistant" }],
+    analyzer: { async analyzeWorldModelPatchV2() { return {patch: {schema_version: 2, operations: []}, classified: []}; } },
+  });
+  const model = normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]});
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({chatId: "chat-runtime", messageId: "current-floor", floor: 6, text: "无变化"}),
+    world_model: model,
+  });
+  const beforeWrites = fixture.saveFloorCalls();
+  await fixture.runtime.analyzeCurrentWorldModelPatch({analysisInput: {}, trigger: "manual-patch"});
+  assert.equal(fixture.saveFloorCalls(), beforeWrites);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_PERSISTENCE_SKIPPED" && item.reason === "canonical_noop"), true);
+  fixture.runtime.destroy();
+});
+
+test("World Fact Delta diagnostics retain the latest non-empty execution after an empty no-op", async () => {
+  let patchCalls = 0;
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "重复补充", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        patchCalls += 1;
+        return patchCalls === 1
+          ? {
+              patch: {schema_version: 2, operations: []},
+              classified: [],
+              fact_delta_summary: {raw_fact_block_count: 1, parsed_fact_count: 1, parse_rejected_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 1, accepted_operation_count: 1, canonical_mutation_occurred: true, persistence_occurred: false},
+            }
+          : {
+              patch: {schema_version: 2, operations: []},
+              classified: [],
+              fact_delta_summary: {raw_fact_block_count: 0, parsed_fact_count: 0, parse_rejected_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 0, accepted_operation_count: 0, canonical_mutation_occurred: false, persistence_occurred: false},
+            };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+  const diagnostic = fixture.runtime.getWorldModelDiagnosticState();
+  assert.equal(patchCalls, 2);
+  assert.equal(diagnostic.latest_fact_delta.raw_fact_block_count, 0);
+  assert.equal(diagnostic.latest_nonempty_fact_delta.summary.raw_fact_block_count, 1);
+  assert.equal(diagnostic.recent_fact_delta_executions.length, 2);
   fixture.runtime.destroy();
 });
 

@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "冻结 Floor ownership、coordinator、authoritative readback 与 runtime transient 边界"}
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model schema、analysis 与 evidence boundaries"}
+{"file": ".trellis/spec/guides/index.md", "reason": "共享开发与审计指南"}

@@ -15,7 +15,7 @@ import {
   PROJECTION_TRIGGER_KINDS,
 } from '../core/projection.js'
 import { normalizeEventAnalysisInput } from './input-builder.js'
-import { buildWorldModelSupplementCoverageTargets, formatWorldModelSupplementReference } from './world-supplement-protocol.js'
+import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, formatWorldModelSupplementReference } from './world-supplement-protocol.js'
 export { WORLD_MODEL_SCHEMA }
 export { formatWorldModelSupplementReference }
 export const CORE_PROMPTS = {
@@ -666,10 +666,20 @@ function formatWorldModelSupplementTarget(worldModel) {
   ].join('\n')
 }
 
-function formatWorldModelSupplementCoverageTargets(worldModel) {
+function formatWorldModelSupplementCoverageTargets(worldModel, evidenceSubjects = [], retryDiagnostics = null) {
   const targets = buildWorldModelSupplementCoverageTargets(worldModel)
+  const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(worldModel, evidenceSubjects)
+  const retry = Array.isArray(retryDiagnostics) ? retryDiagnostics[0] : retryDiagnostics
+  const retryItems = [
+    ...(Array.isArray(retry?.missing) ? retry.missing : []),
+    ...(Array.isArray(retry?.invalid) ? retry.invalid : []),
+  ]
+  const retrySection = retryItems.length
+    ? ['【Supplement Completeness Retry】上一轮响应未完成 review accounting；本次仍须发送完整 Facts，并补齐以下确定性 review 项：', ...retryItems.map(item => `${item.target_id ? `Target_ID: ${item.target_id}` : `Subject_ID: ${item.subject_id ?? ''}`} (${item.reason ?? 'invalid'})`)].join('\n')
+    : ''
   const lines = targets.length
     ? targets.map(target => [
+      `Target_ID: ${target.target_id}`,
       target.species ? `Species: ${target.species}` : null,
       target.biological_type ? `Biological_Type: ${target.biological_type}` : null,
       `Field: ${target.field}`,
@@ -677,8 +687,11 @@ function formatWorldModelSupplementCoverageTargets(worldModel) {
     : '当前 Existing 没有可由 canonical 缺失状态确定的 review target。'
   return [
     '【Supplement Missing Coverage Targets】',
-    '以下列表只表示需要逐项审阅的 canonical address，不是 evidence，不携带 Value，也不授权任何事实。必须针对 EACH target 搜索全部 permitted evidence；有 sufficient permitted evidence 且相对 Existing 缺失时才输出完整 Fact，没有证据就省略。一个 target 未产生 Fact 只表示 target_not_emitted，不表示 NO_EVIDENCE 或已完成审阅。Coverage Targets 是 minimum explicit review queue，不是 allowed output whitelist；完成列表后仍须继续从完整 permitted evidence 发现列表之外的新 identity、correction 和 world-level collection facts。',
+    '以下列表只表示需要逐项审阅的 canonical address，不是 evidence，不携带 Value，也不授权任何事实。必须针对 EACH target 搜索全部 permitted evidence；有 sufficient permitted evidence 且相对 Existing 缺失时才输出完整 Fact，没有证据就输出 Coverage Review disposition NO_EVIDENCE。Coverage Review 必须逐项使用 Target_ID 与唯一 Disposition：EMITTED 或 NO_EVIDENCE，不能重复、遗漏或使用其它值。Coverage Targets 是 minimum explicit review queue，不是 allowed output whitelist；完成列表后仍须继续从完整 permitted evidence 发现列表之外的新 identity、correction 和 world-level collection facts。',
     lines,
+    '【Identity Discovery Review】以下是需要逐项确认的 species-level identity subjects；每项必须输出独立 [Identity Discovery Review]，Disposition 只能是 REVIEWED。Species 是开放字符串，不得生成或硬编码 Biological_Type。',
+    identitySubjects.map(subject => `[Identity Discovery Review]\nSubject_ID: ${subject.subject_id}\nSpecies: ${subject.species}\nDisposition: REVIEWED\n[/Identity Discovery Review]`).join('\n'),
+    retrySection,
   ].join('\n')
 }
 
@@ -686,7 +699,10 @@ function formatWorldModelPatchUserMessage(input) {
   const request = '【Supplement Fact Delta Output】根据 permitted evidence 与完整 Existing reference 输出独立 Facts。不要输出 hierarchical Candidate、JSON 或 Patch IR。'
   return joinPromptSections([
     formatWorldModelSupplementTarget(input.world_model),
-    formatWorldModelSupplementCoverageTargets(input.world_model),
+    formatWorldModelSupplementCoverageTargets(input.world_model, input.supplement_identity_subjects, input.supplement_completeness_retry),
+    input.supplement_completeness_retry
+      ? `【Supplement Completeness Retry】上一次响应未完成 deterministic accounting。只修正这些 transient missing/invalid IDs，保留完整 Existing、permitted evidence、Coverage queue 与 Identity queue；不要改变 Fact parser、Evidence Guard 或输出边界。\n${JSON.stringify(input.supplement_completeness_retry)}`
+      : null,
     request,
   ])
 }
@@ -836,9 +852,10 @@ export const WORLD_MODEL_FACT_DELTA_TASK_PROMPT = [
 ].join('\n')
 
 export const WORLD_MODEL_FACT_DELTA_OUTPUT_CONTRACT = [
-  'Output 只允许一个 root：[World Model Updates] ... [/World Model Updates]。root 内只能有零个或多个独立闭合的 [Fact]。不允许 nested Fact、隐式 parent、trailing free text、未知 payload key 或 Patch IR。',
+  'Output 只允许一个 root：[World Model Updates] ... [/World Model Updates]。root 内只能有零个或多个独立闭合的 [Fact]，以及独立的 [Coverage Review] 与 [Identity Discovery Review] accounting blocks。Coverage Review 只能使用 Target_ID + Disposition，其中 Disposition 只能是 EMITTED 或 NO_EVIDENCE；Identity Discovery Review 只能使用 Subject_ID + Species + Disposition，其中 Disposition 只能是 REVIEWED。不得 nested Fact、隐式 parent、trailing free text、未知 payload key 或 Patch IR。',
   '[World Model Updates]\n[Fact]\nSpecies: Species-A\nField: Species_Identity\n[/Fact]\n[Fact]\nSpecies: Species-A\nBiological_Type: Type-A\nField: Can_Carry_Pregnancy\nValue: true\n[/Fact]\n[Fact]\nField: Care_Level\nValue: supported world-level care rule\n[/Fact]\n[Fact]\nField: Unknown\nValue: supported unresolved world-level fact\n[/Fact]\n[/World Model Updates]',
   'Identity Fact 不包含 Value。Scalar Fact 使用 Value；Capability Value 只允许 true|false。Species-scoped Fact 必须带 Species 且禁止 Biological_Type；Type-scoped Fact 必须带 Species 与 Biological_Type；World-scoped Fact 不带 Species 或 Biological_Type。所有 Field 与 payload label 必须 exact/case-sensitive。',
+  '尽量让每个 label 与 payload 保持在同一物理行；只有自然语言文本 payload 才可在下一行续写，禁止拆分 address、Field、boolean、JSON 或其它结构化 token。',
   '不要输出 canonical DTO、Patch JSON、顶层 JSON 或解释；仅 Projection_Rule Fact 的 Projection_Rule_JSON payload 允许按约定输出单个 JSON object，禁止 projection_rule_id。不要输出 ADD、CHANGE、SET_FIELD、ADD_TYPE、REMOVE、NO_OP 等 operation token。',
 ].join('\n')
 
