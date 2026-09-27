@@ -13,6 +13,7 @@ import { normalizeProjectionRules, validateProjectionRuleContent } from '../core
 import {
   parseWorldModelCandidateText,
   parseWorldModelFactDeltaText,
+  buildWorldModelSupplementCoverageTargets,
   validateWorldModelFactDelta,
   validateWorldModelCandidate,
 } from './world-supplement-protocol.js';
@@ -534,16 +535,61 @@ function worldModelEvidenceParts(input = {}) {
   return parts;
 }
 
-function factDeltaEvidenceTraceUnits(input = {}) {
-  return worldModelEvidenceParts(input).flatMap(({source_kind, text}) => {
+function factDeltaEvidenceUnitRecords(input = {}) {
+  const speciesLabel = /^(?:[\[({\s"']*)Species\s*[:：=]\s*([^\]})\n,;]+)[\]})\s"']*$/iu;
+  const typeLabel = /^(?:[\[({\s"']*)(?:Biological[_ ]?Type|Type)\s*[:：=]\s*([^\]})\n,;]+)[\]})\s"']*$/iu;
+  return worldModelEvidenceParts(input).flatMap(({source_kind, text}, source_index) => {
     if (typeof text !== 'string') return [];
-    return text
-      .replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性')
-      .split(/[。！？!?；;\n]+/u)
-      .map(value => value.trim())
-      .filter(Boolean)
-      .map(value => ({source_kind, text: value}));
+    let species = null;
+    let biological_type = null;
+    const headings = [];
+    const records = [];
+    for (const [line_index, rawLine] of text.replace(COMPOSITE_DUAL_LABEL_PATTERN, '双性').split('\n').entries()) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const indentation = rawLine.match(/^\s*/u)?.[0].length ?? 0;
+      const headingMatch = rawLine.match(/^\s*(?:[-*]\s*)?([^:：\n]{1,80})\s*[:：]\s*$/u);
+      if (headingMatch) {
+        while (headings.length && headings.at(-1).indentation >= indentation) headings.pop();
+        headings.push({indentation, label: headingMatch[1].trim()});
+      }
+      for (const segment of line.split(/[。！？!?；;]+/u).map(value => value.trim()).filter(Boolean)) {
+        const value = segment;
+        const speciesMatch = value.match(speciesLabel);
+        if (speciesMatch) {
+          species = speciesMatch[1].trim();
+          biological_type = null;
+        }
+        const typeMatch = value.match(typeLabel);
+        if (typeMatch) biological_type = typeMatch[1].trim();
+        const parent = [...headings.map(item => item.label), species && `Species: ${species}`, biological_type && `Biological_Type: ${biological_type}`]
+          .filter(Boolean)
+          .join(' | ');
+        records.push({
+          source_kind,
+          source_index,
+          line_index,
+          text: parent && !value.includes(parent) ? `${parent} | ${value}` : value,
+          parent_context: {headings: headings.map(item => item.label), species, biological_type},
+        });
+      }
+    }
+    return records;
   });
+}
+
+function factDeltaEvidenceUnits(input = {}) {
+  return factDeltaEvidenceUnitRecords(input).map(({text}) => text);
+}
+
+function factDeltaEvidenceTraceUnits(input = {}) {
+  return factDeltaEvidenceUnitRecords(input).map(({source_kind, source_index, line_index, text, parent_context}) => ({
+    source_kind,
+    source_index,
+    line_index,
+    text,
+    parent_context,
+  }));
 }
 
 function factDeltaAddress(fact) {
@@ -567,6 +613,35 @@ function factDeltaEvidenceSummary(input = {}) {
       text_length: text.length,
     })),
   };
+}
+
+function factDeltaCoverageTargetKey(target) {
+  return [target?.scope, target?.species ?? '', target?.biological_type ?? '', target?.field].join(':')
+}
+
+function factDeltaCoverageSummary(targets, facts = []) {
+  const list = Array.isArray(targets) ? targets : []
+  const emitted = new Set((Array.isArray(facts) ? facts : []).map(fact => factDeltaCoverageTargetKey({
+    scope: factDeltaAddress(fact).scope,
+    species: fact?.species,
+    biological_type: fact?.biological_type,
+    field: fact?.field,
+  })))
+  const targetSummary = list.map(target => ({
+    ...target,
+    ...(emitted.has(factDeltaCoverageTargetKey(target)) ? {target_emitted: true} : {target_not_emitted: true}),
+  }))
+  return {
+    coverage_target_count: list.length,
+    coverage_target_counts: list.reduce((counts, target) => {
+      counts.by_scope[target.scope] = (counts.by_scope[target.scope] ?? 0) + 1
+      counts.by_category[target.category] = (counts.by_category[target.category] ?? 0) + 1
+      return counts
+    }, {by_scope: {}, by_category: {}}),
+    covered_target_count: targetSummary.filter(target => target.target_emitted).length,
+    coverage_targets: targetSummary.slice(0, 128),
+    coverage_targets_truncated: targetSummary.length > 128,
+  }
 }
 
 function factDeltaFieldForOperation(operation) {
@@ -661,6 +736,7 @@ function factDeltaEvidenceCandidates(operation, units, debug) {
   const tokens = [
     target.species_name,
     target.type_name,
+    operation?.species?.name,
     operation?.type?.name,
     operation?.value,
     operation?.unknown,
@@ -670,7 +746,14 @@ function factDeltaEvidenceCandidates(operation, units, debug) {
     operation?.mechanism?.key,
     operation?.mechanism?.label,
     operation?.mechanism?.pathway,
+    ...(Array.isArray(operation?.mechanism?.world_model_rule_refs) ? operation.mechanism.world_model_rule_refs : []),
+    ...(Array.isArray(operation?.mechanism?.evidence) ? operation.mechanism.evidence : []),
   ]
+    .concat(
+      operation?.projection_rule && typeof operation.projection_rule === 'object'
+        ? Object.values(operation.projection_rule).flatMap(value => Array.isArray(value) ? value : [value]).filter(value => typeof value === 'string')
+        : [],
+    )
     .filter(value => typeof value === 'string' && value.trim())
     .map(value => value.trim().toLocaleLowerCase());
   const candidateIndices = units
@@ -681,13 +764,54 @@ function factDeltaEvidenceCandidates(operation, units, debug) {
     source_kind: 'permitted_world_model_evidence',
     unit_count: units.length,
     candidate_unit_indices: candidateIndices,
-    units: units.map(({source_kind, text}, unit_index) => ({
+    units: units.map(({source_kind, source_index, line_index, text, parent_context}, unit_index) => ({
       unit_index,
       stable_unit_id: `world-evidence-${unit_index}`,
       source_kind,
+      source_index,
+      line_index,
       text_length: text.length,
+      ...(debug ? {parent_context} : {}),
       ...(debug && candidateIndices.includes(unit_index) ? {excerpt: text.slice(0, 240)} : {}),
     })),
+  };
+}
+
+function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = null, debug = false) {
+  const units = factDeltaEvidenceUnits(analysisInput);
+  const traceUnits = factDeltaEvidenceTraceUnits(analysisInput);
+  const candidateBinding = factDeltaEvidenceCandidates(operation, traceUnits, debug);
+  const target = operation?.target ?? {};
+  const context = {
+    speciesName: target.species_name,
+    typeName: target.type_name,
+    nested: operation?.op === 'SET_FIELD' ? operation.path?.[0] : null,
+    key: operation?.op === 'SET_FIELD' ? operation.path?.[1] : null,
+  };
+  if (target.kind === 'world') {
+    delete context.speciesName;
+    delete context.typeName;
+  }
+  if (target.kind === 'species') delete context.typeName;
+  const scopedUnits = v2ScopedEvidenceUnits(units, context);
+  const scopedUnitIndices = scopedUnits.flatMap((unit) => {
+    const index = units.indexOf(unit);
+    return index >= 0 ? [index] : [];
+  });
+  let code = null;
+  if (candidateBinding.candidate_unit_indices.length === 0) code = 'NO_CANDIDATE_EVIDENCE';
+  else if (context.typeName && scopedUnitIndices.length === 0) code = 'SCOPE_BINDING_FAILED';
+  else if (operation?.op === 'ADD_TYPE' || operation?.op === 'ADD_SPECIES') code = 'IDENTITY_SUPPORT_FAILED';
+  else if (operation?.op === 'ADD_SPECIAL_RULE' || operation?.op === 'ADD_MECHANISM') code = 'SEMANTIC_FIELD_SUPPORT_FAILED';
+  else if (error) code = 'VALUE_SUPPORT_FAILED';
+  return {
+    ...candidateBinding,
+    candidate_unit_count: candidateBinding.candidate_unit_indices.length,
+    scoped_unit_indices: scopedUnitIndices,
+    scoped_unit_count: scopedUnitIndices.length,
+    matched_supporting_unit_indices: [],
+    rejection_stage: error ? 'evidence_guard' : null,
+    rejection_code: code,
   };
 }
 
@@ -1519,6 +1643,14 @@ function scopeCompatiblePatchUnits(units, delta) {
 function patchFactEvidence(fact, units, delta) {
   const scopedUnits = scopeCompatiblePatchUnits(units, delta)
   if (delta.typeName && scopedUnits.length === 0) return false
+  if (delta.nested === 'special_rules') {
+    if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
+    const sourceText = scopedUnits.join('\n')
+    const typeIsNamed = delta.typeName && scopedUnits.some(unit => hasGenericDirectLabelEvidence(unit, delta.typeName))
+    const sourceHasRuleCue = /特殊规则|稳定规则|规则|special\s+rule|stable\s+rule|follows/iu.test(sourceText)
+    const valueHasRuleCue = /特殊规则|规则|special\s+rule|stable\s+rule|follows|rule/iu.test(String(fact.value ?? ''))
+    return Boolean(typeIsNamed && sourceHasRuleCue && valueHasRuleCue)
+  }
   const capabilityKey = delta.nested === 'capabilities' ? delta.key : null
   if (capabilityKey && Object.hasOwn(CAPABILITY_EVIDENCE_PATTERNS, capabilityKey))
     return capabilityEvidenceValue(scopedUnits, CAPABILITY_EVIDENCE_PATTERNS[capabilityKey]) === fact.value
@@ -3804,6 +3936,11 @@ function v2CanonicalTargetPath(operation) {
   const target = operation?.target ?? {};
   if (operation?.op === 'ADD_SPECIES') return `species.${operation.species?.name ?? '<unknown>'}`;
   if (operation?.op === 'ADD_TYPE') return `species.${target.species_name ?? '<unknown>'}.biological_types.${operation.type?.name ?? '<unknown>'}`;
+  if (operation?.op === 'ADD_EXCEPTION') return 'world.exceptions';
+  if (operation?.op === 'ADD_UNKNOWN') return 'world.unknowns';
+  if (operation?.op === 'ADD_PROJECTION_RULE') return 'world.projection_rules';
+  if (operation?.op === 'ADD_SPECIAL_RULE') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.special_rules`;
+  if (operation?.op === 'ADD_MECHANISM') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.reproductive_mechanisms`;
   if (target.kind === 'world') return `world.${(operation.path ?? []).join('.')}`;
   if (target.kind === 'species') return `species.${target.species_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
   if (target.kind === 'biological_type') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
@@ -3849,7 +3986,7 @@ function annotateV2GuardFailure(error, result, operationIndex) {
 export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput = {}) {
   const existing = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const classified = classifyWorldModelPatchV2(patch, existing);
-  const units = evidenceUnits(analysisInput);
+  const units = factDeltaEvidenceUnits(analysisInput);
   for (const [operationIndex, result] of classified.entries()) {
     try {
       v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
@@ -4626,6 +4763,7 @@ export function createAnalyzer({
       throw error
     }
     const promptSettings = worldModelPromptResolver?.() ?? analysisPromptResolver?.() ?? {}
+    const coverageTargets = buildWorldModelSupplementCoverageTargets(existingModel)
     const messages = buildWorldModelPatchMessagesV2(analysisInput, promptSettings)
     const debug = factDeltaDebugEnabled(input)
     const emitFactDeltaTrace = (stage, details = {}) => {
@@ -4643,6 +4781,7 @@ export function createAnalyzer({
       }
     }
     emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_SUMMARY', factDeltaEvidenceSummary(analysisInput))
+    emitFactDeltaTrace('WORLD_SUPPLEMENT_COVERAGE_TARGETS', factDeltaCoverageSummary(coverageTargets))
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
     const response = responseText(raw)
     emitFactDeltaTrace('WORLD_FACT_DELTA_RESPONSE_RECEIVED', {
@@ -4672,6 +4811,7 @@ export function createAnalyzer({
           ...(debug ? {raw: String(item.raw ?? '').slice(0, 1000)} : {}),
         })),
         ...(debug ? {facts: facts.map(fact => factDeltaDiagnosticValue(fact))} : {}),
+        ...factDeltaCoverageSummary(coverageTargets, facts),
       })
       for (const rejected of parsed.rejectedFacts ?? []) emitFactDeltaTrace('WORLD_FACT_DELTA_REJECTED', {
         fact_index: rejected.index,
@@ -4698,11 +4838,11 @@ export function createAnalyzer({
             classification: operation?.classification ?? null,
             evidence_guard_failure_code: error.message ?? error.code ?? rejected.code,
             rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
-            evidence_binding: factDeltaEvidenceCandidates(rejected.operation ?? {
+            evidence_binding: factDeltaEvidenceBindingDiagnostics(rejected.operation ?? {
               op: operation?.operation_type,
               target: error.operation_target,
               value: operation?.proposed_value,
-            }, factDeltaEvidenceTraceUnits(analysisInput), debug),
+            }, analysisInput, error, debug),
           })
         } else {
           emitFactDeltaTrace('WORLD_FACT_DELTA_REJECTED', {
@@ -4716,10 +4856,22 @@ export function createAnalyzer({
           })
         }
       }
+      const acceptedFactCount = guarded.factResults.filter(item => item.status === 'accepted').length
+      const rejectedFactCount = (parsed.rejectedFacts?.length ?? 0) + guarded.rejectedFacts.length
+      const factDeltaSummary = {
+        analysis_stage_succeeded: true,
+        accepted_fact_count: acceptedFactCount,
+        rejected_fact_count: rejectedFactCount,
+        accepted_operation_count: guarded.patch.operations.length,
+        canonical_mutation_occurred: guarded.patch.operations.length > 0,
+        persistence_occurred: false,
+      }
       emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {
         fact_count: facts.length,
         patch_operation_count: guarded.patch.operations.length,
+        ...factDeltaSummary,
         fact_mappings: factDeltaResolutionDiagnostics(facts, guarded.patch, normalizedExisting, guarded.factResults),
+        ...factDeltaCoverageSummary(coverageTargets, facts),
       })
       return {
         patch: guarded.patch,
@@ -4727,6 +4879,7 @@ export function createAnalyzer({
         diagnostics: parsed.diagnostics,
         rejectedFacts: [...(parsed.rejectedFacts ?? []), ...guarded.rejectedFacts],
         classified: guarded.classified,
+        fact_delta_summary: factDeltaSummary,
       }
     } catch (error) {
       if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
@@ -4741,7 +4894,7 @@ export function createAnalyzer({
           classification: rejected?.classification ?? null,
           evidence_guard_failure_code: error.code ?? error.message ?? null,
           rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
-          evidence_binding: factDeltaEvidenceCandidates(rejected, factDeltaEvidenceTraceUnits(analysisInput), debug),
+          evidence_binding: factDeltaEvidenceBindingDiagnostics(rejected, analysisInput, error, debug),
         })
       }
       traceApi('parser-error', {

@@ -7389,9 +7389,26 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
           stage: "WORLD_FACT_DELTA_RESOLVED",
           fact_count: 0,
           patch_operation_count: 0,
+          analysis_stage_succeeded: true,
+          accepted_fact_count: 0,
+          rejected_fact_count: 0,
+          accepted_operation_count: 0,
+          canonical_mutation_occurred: false,
+          persistence_occurred: false,
           fact_mappings: [],
         });
-        return {patch: {schema_version: 2, operations: []}, classified: []};
+        return {
+          patch: {schema_version: 2, operations: []},
+          classified: [],
+          fact_delta_summary: {
+            analysis_stage_succeeded: true,
+            accepted_fact_count: 0,
+            rejected_fact_count: 0,
+            accepted_operation_count: 0,
+            canonical_mutation_occurred: false,
+            persistence_occurred: false,
+          },
+        };
       },
     },
   });
@@ -7410,6 +7427,15 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
   assert.equal(trace[0].mode, "patch");
   assert.equal(trace[0].attempt, 1);
   assert.equal(trace[0].retry_index, 0);
+  const accepted = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "WORLD_ACCEPTED");
+  assert.equal(accepted.analysis_stage_succeeded, true);
+  assert.equal(accepted.accepted_fact_count, 0);
+  assert.equal(accepted.rejected_fact_count, 0);
+  assert.equal(accepted.accepted_operation_count, 0);
+  assert.equal(accepted.canonical_mutation_occurred, false);
+  assert.equal(accepted.persistence_occurred, false);
+  const confirmed = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "WORLD_PERSISTENCE_CONFIRMED");
+  assert.equal(confirmed.persistence_occurred, true);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
   assert.equal(JSON.stringify(fixture.runtime.store.getFloor(1)).includes("WORLD_FACT_DELTA_PARSED"), false);
   fixture.runtime.destroy();

@@ -158,6 +158,58 @@ World Model object.
 otherwise the update and downstream Character/Event analysis fail closed and
 the prior model remains intact.
 
+Supplement discovery and downstream acceptance are separate contracts. Before
+comparing against Existing, AI performs a complete semantic coverage pass: it
+scans all evidence-supported Species, every stable Biological Type under each
+Species, and for each Type the description, six capabilities, reproduction
+rules, lifecycle, special rules, and reproductive mechanisms. Only after every
+Type has been reviewed does it scan world-scoped medical/care fields,
+exceptions, unknowns, and projection rules. Coverage means checking the whole
+semantic surface, not filling unsupported schema fields. Existing null or
+absence is not evidence; unsupported fields remain omitted.
+
+Downstream acceptance remains independent per Fact. A supported Fact may pass
+the existing Evidence Guard, map to an existing Patch v2 operation, merge, and
+persist while an unsupported sibling Fact is rejected. Evidence Guard matching
+is not weakened to improve discovery recall. Open-ended Type special rules use
+direct claim/rule-context binding rather than the generic short-substring
+fallback, so an unrelated capability or rule word cannot authorize a new
+Special_Rule. Runtime diagnostics distinguish a successful analysis stage with
+zero accepted operations from a response that produced a canonical mutation
+and from confirmed persistence.
+
+Fact Discovery must resolve address before emission. The Supplement sequence is
+Evidence discovery -> semantic Field classification -> scope classification ->
+canonical address resolution -> Existing comparison -> Fact emission. All
+Type-scoped fields, including descriptions, capabilities, reproduction rules,
+lifecycle, special rules, and reproductive mechanisms, require both Species and
+Biological Type. A Species-only claim has no valid Type outlet and is omitted;
+it is never projected to sibling Types, rewritten as Unknown/Exception, or
+stored as a Species-level rule. One evidence claim may expand to multiple Facts
+only when its permitted evidence explicitly scopes the claim to each addressed
+stable Type. Existing identities may resolve an address but remain outside the
+evidence set.
+
+Supplement may add deterministic Missing Coverage Targets derived only from
+the Existing canonical model. A target is a review address, not evidence and
+not an output whitelist: the AI must search the complete permitted evidence
+for each target, emit a Fact only when that evidence supports it, and may still
+discover valid claims outside the target list. Missing scalar outlets produce
+targets for null, empty, or `NONE RECORDED` values. Empty collections may
+produce a category target, but a non-empty collection is not claimed complete
+or incomplete because the canonical schema has no collection completeness
+marker. Target diagnostics may report that a Fact was emitted for an address;
+they must not infer `NO_EVIDENCE` or `reviewed` from omission.
+
+For Supplement Patch v2 evidence binding, structured permitted-evidence lines
+may be split into local units only when their explicit Species and
+Biological_Type labels, or their structurally preserved parent headings, are
+retained as transient provenance on each descendant unit. This provenance is
+context from the same permitted source, not a new evidence source and not
+Existing/Coverage Target data. It must never authorize a claim without an
+independently matching semantic value; Full Analysis keeps its existing
+evidence-unit path.
+
 ## 1.3 World Knowledge Scope and canonical outlets
 
 World Analysis separates factual truth from evidence scope. A statement can be

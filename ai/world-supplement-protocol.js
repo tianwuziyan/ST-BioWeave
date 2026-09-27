@@ -620,6 +620,97 @@ const FACT_DELTA_PAYLOAD_KEYS = Object.freeze({
   Projection_Rule: new Set(['Projection_Rule_JSON']),
 })
 
+const COVERAGE_TYPE_SCALAR_FIELDS = Object.freeze([
+  ['Type_Description', ['description']],
+  ['Can_Produce_Sperm', ['capabilities', 'can_produce_sperm']],
+  ['Can_Produce_Ova', ['capabilities', 'can_produce_ova']],
+  ['Can_Be_Fertilized', ['capabilities', 'can_be_fertilized']],
+  ['Can_Fertilize', ['capabilities', 'can_fertilize']],
+  ['Can_Cause_Pregnancy', ['capabilities', 'can_cause_pregnancy']],
+  ['Can_Carry_Pregnancy', ['capabilities', 'can_carry_pregnancy']],
+  ['Fertilization', ['reproduction_rules', 'fertilization']],
+  ['Pregnancy_Or_Carrying', ['reproduction_rules', 'pregnancy_or_carrying']],
+  ['Cycle', ['reproduction_rules', 'cycle']],
+  ['Ovulation', ['reproduction_rules', 'ovulation']],
+  ['Gestation', ['reproduction_rules', 'gestation']],
+  ['Labor', ['reproduction_rules', 'labor']],
+  ['Maturation', ['lifecycle', 'maturation']],
+  ['Aging', ['lifecycle', 'aging']],
+])
+
+const COVERAGE_WORLD_SCALAR_FIELDS = Object.freeze([
+  ['Childbirth_Difficulty', ['medical_context', 'childbirth_difficulty']],
+  ['Care_Level', ['medical_context', 'care_level']],
+  ['Medical_Evidence', ['medical_context', 'evidence']],
+])
+
+const COVERAGE_COLLECTION_FIELDS = Object.freeze([
+  ['Special_Rule', ['special_rules'], 'biological_type'],
+  ['Reproductive_Mechanism', ['reproductive_mechanisms'], 'biological_type'],
+  ['Exception', ['exceptions'], 'world'],
+  ['Unknown', ['unknowns'], 'world'],
+  ['Projection_Rule', ['projection_rules'], 'world'],
+])
+
+function coverageMissingScalar(value) {
+  return value === null || value === undefined || (
+    typeof value === 'string' && (!value.trim() || /^NONE RECORDED$/iu.test(value.trim()))
+  )
+}
+
+function coverageCollectionHasContent(value, field) {
+  if (!Array.isArray(value) || value.length === 0) return false
+  return value.some(item => {
+    if (typeof item === 'string') return item.trim() && !/^NONE RECORDED$/iu.test(item.trim())
+    if (!item || typeof item !== 'object') return false
+    if (field === 'Reproductive_Mechanism') return typeof item.key === 'string' && item.key.trim() && !/^NONE RECORDED$/iu.test(item.key.trim())
+    if (field === 'Exception') return typeof item.statement === 'string' && item.statement.trim() && !/^NONE RECORDED$/iu.test(item.statement.trim())
+    return true
+  })
+}
+
+function coverageTarget(scope, field, species, biologicalType, category) {
+  return {
+    scope,
+    category,
+    field,
+    ...(species ? {species} : {}),
+    ...(biologicalType ? {biological_type: biologicalType} : {}),
+  }
+}
+
+export function buildWorldModelSupplementCoverageTargets(existingModel = {}) {
+  const model = existingModel && typeof existingModel === 'object' ? existingModel : {}
+  const targets = []
+  for (const species of Array.isArray(model.species) ? model.species : []) {
+    if (!species || typeof species.name !== 'string' || !species.name.trim()) continue
+    const speciesName = species.name.trim()
+    if (coverageMissingScalar(species.description))
+      targets.push(coverageTarget('species', 'Species_Description', speciesName, null, 'description'))
+    for (const type of Array.isArray(species.biological_types) ? species.biological_types : []) {
+      if (!type || typeof type.name !== 'string' || !type.name.trim()) continue
+      const typeName = type.name.trim()
+      for (const [field, path] of COVERAGE_TYPE_SCALAR_FIELDS) {
+        const value = type?.[path[0]]?.[path[1]]
+        if (coverageMissingScalar(value)) targets.push(coverageTarget('biological_type', field, speciesName, typeName, path[0]))
+      }
+      for (const [field, path, scope] of COVERAGE_COLLECTION_FIELDS) {
+        if (scope !== 'biological_type') continue
+        if (!coverageCollectionHasContent(type?.[path[0]], field))
+          targets.push(coverageTarget('biological_type', field, speciesName, typeName, path[0]))
+      }
+    }
+  }
+  for (const [field, path] of COVERAGE_WORLD_SCALAR_FIELDS) {
+    if (coverageMissingScalar(model?.[path[0]]?.[path[1]])) targets.push(coverageTarget('world', field, null, null, path[0]))
+  }
+  for (const [field, path, scope] of COVERAGE_COLLECTION_FIELDS) {
+    if (scope !== 'world') continue
+    if (!coverageCollectionHasContent(model?.[path[0]], field)) targets.push(coverageTarget('world', field, null, null, path[0]))
+  }
+  return targets
+}
+
 function factDeltaError(message, diagnostics = [], code = 'WORLD_MODEL_FACT_DELTA_INVALID') {
   const error = new Error(message)
   error.code = code

@@ -382,10 +382,15 @@ export function createWorldAnalysis({
               source: "world-patch-analysis",
               source_summary: summarizeAnalysisInput(analysisInput),
             };
+            return {
+              model,
+              meta,
+              fact_delta_summary: cloneWorldValue(patchResult?.fact_delta_summary ?? null),
+            };
           }
           return {model, meta};
         },
-        complete: async ({model, meta}, {attempt, retryIndex}) => {
+        complete: async ({model, meta, fact_delta_summary: factDeltaSummary}, {attempt, retryIndex}) => {
           const ownerKey = `${key}:${attempt}:${retryIndex}`;
           if (persistenceOwner.attempt !== ownerKey) {
             persistenceOwner.attempt = ownerKey;
@@ -405,6 +410,8 @@ export function createWorldAnalysis({
             biological_type_count: Array.isArray(model?.species)
               ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
               : 0,
+            ...(factDeltaSummary ?? {}),
+            persistence_occurred: false,
           }, "world");
           assertToken(token);
           if (execution && !executionIsCurrent(execution)) {
@@ -479,6 +486,8 @@ export function createWorldAnalysis({
           emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
             world_model_present: Boolean(ready?.model),
             species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
+            ...(factDeltaSummary ?? {}),
+            persistence_occurred: true,
           }, "world");
           return {...saved, model: ready.view_model.model, view_model: ready.view_model};
         },
