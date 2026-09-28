@@ -1116,6 +1116,51 @@ function renderWorldModelLiveState(liveState = null) {
   ].join('');
 }
 
+function renderWorldModelLastExecution(liveState = null) {
+  const fact = liveState?.latest_fact_delta ?? {};
+  const debugSchemaVersion = Number(fact?.world_model_debug_schema_version ?? 0);
+  const rows = [
+    ['Debug Schema Version', fact?.world_model_debug_schema_version],
+    ['Execution ID', liveState?.active_world_execution_id ?? liveState?.latest_world_fact_delta_execution_id],
+    ['First Failed Stage', fact?.first_failed_stage],
+    ['Request Mode', fact?.request_envelope?.request_mode ?? fact?.request_mode],
+    ['Raw Facts', fact?.raw_fact_block_count],
+    ['Parsed Facts', fact?.parsed_fact_count],
+    ['Resolver Rejected', fact?.resolution_rejected_fact_count],
+    ['Guard Rejected', fact?.evidence_guard_rejected_fact_count],
+    ['Accepted Operations', fact?.accepted_operation_count],
+    ['Canonical Mutation', fact?.canonical_mutation_occurred],
+    ['Candidate', liveState?.candidate_execution_id ?? liveState?.candidate_state],
+    ['Current Execution Candidate', liveState?.current_execution_candidate_id],
+    ['Candidate Belongs to Previous Execution', liveState?.candidate_belongs_to_previous_execution],
+    ['Candidate Fingerprint', liveState?.candidate_fingerprint],
+    ['UI Projection', liveState?.ui_projection_state],
+    ['UI Fingerprint', liveState?.ui_state_fingerprint],
+    ['Persistence Confirmed', liveState?.persistence_confirmed],
+    ['Persisted Fingerprint', liveState?.persisted_fingerprint],
+    ['Final Result', liveState?.final_result ?? fact?.final_result],
+  ];
+  const transition = Array.isArray(liveState?.request_transitions) ? liveState.request_transitions.at(-1) : null;
+  const transitionMarkup = transition
+    ? '<h5>WORLD MODEL REQUEST TRANSITION</h5><pre data-bioweave-world-model-request-transition>' + escapeHtml(traceValueText(transition)) + '</pre>'
+    : '';
+  const identityMarkup = Array.isArray(fact?.type_identity_decisions)
+    ? '<h5>TYPE IDENTITY DECISIONS</h5><pre data-bioweave-world-model-type-identity-decisions>' + escapeHtml(traceValueText(fact.type_identity_decisions.slice(0, 32))) + '</pre>'
+    : '';
+  const schemaMismatchMarkup = debugSchemaVersion > 0 && debugSchemaVersion !== 2
+    ? '<p class="bioweave-status-error" data-bioweave-world-model-debug-schema-mismatch>DEBUG_SCHEMA_MISMATCH</p>'
+    : '';
+  return [
+    '<section class="bioweave-card bioweave-world-model-last-execution" data-bioweave-world-model-last-execution>',
+    '<header><div><h4>WORLD MODEL LAST EXECUTION</h4><p class="bioweave-muted">按阶段显示最近一次 World Model execution 的真实断点；不包含完整 prompt。</p></div></header>',
+    schemaMismatchMarkup,
+    '<dl class="bioweave-data-list">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(String(value ?? '—')) + '</dd></div>').join('') + '</dl>',
+    transitionMarkup,
+    identityMarkup,
+    '</section>',
+  ].join('');
+}
+
 export function renderAnalysisDebugPopupContent({
   analysisPreview = {},
   persistenceTrace = null,
@@ -1149,6 +1194,7 @@ export function renderAnalysisDebugPopupContent({
       openSettingsSections,
     }),
     '<section class="bioweave-analysis-debug-section bioweave-analysis-diagnostic-section">',
+    renderWorldModelLastExecution(worldModelLiveState),
     renderWorldModelLiveState(worldModelLiveState),
     renderPersistenceTrace(persistenceTrace),
     '</section>',

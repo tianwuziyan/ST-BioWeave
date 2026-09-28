@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"World Candidate delivery, UI adoption ACK, no-op and persistence ordering contract."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership and stale provenance constraints for the read-only reload audit."}
+{"file":"docs/ARCHITECTURE.md","reason":"World Analysis owner, UI boundary, and Floor Coordinator prohibition."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Existing UI rendering and state conventions before changing app ingress."}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model Supplement completeness, coverage targets, Fact Delta and persistence gate contract."}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership and no-intermediate-persistence invariant."}

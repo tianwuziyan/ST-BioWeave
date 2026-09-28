@@ -54,6 +54,33 @@ World Model fields. Only an explicit complete Floor lifecycle invalidation may
 clear multiple business-owned fields together. Do not introduce a combined
 World + Character save/update helper.
 
+### Candidate delivery and persistence order
+
+An accepted World analysis result is first a transient validated candidate, not
+yet an authoritative Floor value. Runtime assigns it an execution-bound
+revision using the canonical World fingerprint and persists it directly through
+`saveWorldModel()` and the existing `FloorPersistenceCoordinator`. The UI does
+not authorize or block that write. Only the authoritative Floor readback may be
+projected into `worldModelState.model`.
+
+```text
+validated candidate -> saveWorldModel -> commitFloorPatch(owner="world")
+  -> FloorPersistenceCoordinator -> authoritative readback
+  -> WORLD_PERSISTENCE_CONFIRMED -> shared UI projection ingress
+```
+
+`resolveWorldModelUiReady()` and equivalent persisted/view-model helpers prove
+only that an authoritative Floor model can be read and rendered. A reload that
+started before a newer committed projection must not replace that newer
+application state when its older Floor result returns. Projection failure,
+closed tabs, loading gates, and delayed rendering do not release or reverse a
+confirmed Floor transaction.
+
+The candidate revision is transient and distinct from the Floor transaction
+identity. Candidate creation remains diagnostic and persistence input only.
+Canonical no-op candidates skip an unnecessary Floor transaction and do not
+create a UI projection mutation.
+
 World resolvers such as `resolveWorldModelAtOrBefore()` and
 `resolveWorldModelStrictlyBefore()` belong to the World/Floor boundary.
 Character Registry previous-snapshot resolution remains independent. Shared
@@ -168,6 +195,22 @@ exceptions, unknowns, and projection rules. Coverage means checking the whole
 semantic surface, not filling unsupported schema fields. Existing null or
 absence is not evidence; unsupported fields remain omitted.
 
+The Supplement discovery pass is operationally divided into three internal
+passes: (1) Identity Discovery exhausts open-string stable Biological Types and
+their siblings for every evidence-supported Species; (2) Type Semantic
+Discovery independently scans the complete Type field matrix for every known
+or newly discovered Species/Type, without short-circuiting after a missing
+field, one accepted Fact, one completed outlet, or one Type; and (3) World
+Semantic Discovery rescans all permitted evidence independently for
+world-scoped childbirth difficulty, care level, medical evidence, exceptions,
+unknowns, and projection rules. Only after those passes is an internal claim
+inventory compared with Existing. The inventory is model-internal and is not
+serialized, parsed, persisted, used as Evidence Guard evidence, or added to
+diagnostics. Coverage Targets remain a completeness audit checklist rather
+than the primary discovery driver. `NO_EVIDENCE` is valid only after the
+complete discovery passes have actively searched all permitted evidence for
+the target canonical address and field and found no legal supporting claim.
+
 Downstream acceptance remains independent per Fact. A supported Fact may pass
 the existing Evidence Guard, map to an existing Patch v2 operation, merge, and
 persist while an unsupported sibling Fact is rejected. Evidence Guard matching
@@ -201,6 +244,16 @@ or incomplete because the canonical schema has no collection completeness
 marker. Target diagnostics may report that a Fact was emitted for an address;
 they must not infer `NO_EVIDENCE` or `reviewed` from omission.
 
+When completeness review is required, each Coverage Target carries one
+cardinality contract from the target builder. Scalar targets with `EMITTED`
+require exactly one exact-address Fact; collection targets (`Special_Rule`,
+`Reproductive_Mechanism`, `Exception`, `Unknown`, and `Projection_Rule`) with
+`EMITTED` require at least one exact-address Fact and allow multiple distinct
+items at that address. Both scalar and collection targets with `NO_EVIDENCE`
+require zero exact-address Facts. This is coverage accounting only: Fact
+identity, semantic deduplication, resolver validation, and Evidence Guard
+decisions remain owned by their existing validators.
+
 For Supplement Patch v2 evidence binding, structured permitted-evidence lines
 may be split into local units only when their explicit Species and
 Biological_Type labels, or their structurally preserved parent headings, are
@@ -209,6 +262,13 @@ context from the same permitted source, not a new evidence source and not
 Existing/Coverage Target data. It must never authorize a claim without an
 independently matching semantic value; Full Analysis keeps its existing
 evidence-unit path.
+
+The Fact Delta Evidence Guard must consume that transient provenance at the
+scope-binding edge. A structured `parent_context` containing Species and
+Biological_Type is an exact scope constraint for Type-scoped operations; a
+missing Type context cannot be replaced by a later text heuristic, and a
+different Species or sibling Type cannot inherit the unit. After scope binds,
+the existing value-support and Evidence Guard thresholds still apply.
 
 ## 1.3 World Knowledge Scope and canonical outlets
 
@@ -391,31 +451,31 @@ have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
 remains. “Existing already has content” is not a completed review.
 
 The Prompt operationalizes Supplement as one request and one response with
-internal Complete Fact Discovery followed by Fact Delta serialization.
-Deterministic code performs Fact parsing, semantic resolution, Existing
+internal Complete Fact Discovery followed by JSON Fact Delta serialization.
+Deterministic code performs JSON root parsing, per-Fact validation, semantic resolution, Existing
 Comparison, Patch Selection, and the Empty Patch Gate. The semantic workflow
 is not two API requests. Fact Delta is transient, is not persisted, and is not
 a canonical schema field or Patch v2 AI output:
 
-The Supplement message architecture preserves the same epistemic boundary in
-one request: the formal analysis contract and permitted evidence remain in
-their existing system/assistant positions, and the Existing target remains in
-the user message:
+The Supplement message architecture preserves the historical role ownership:
+analyzer control and permitted source context remain in system messages,
+Recent Story remains an assistant message, and Existing/Coverage/task remain
+in the user request:
 
 ```text
-system  formal Supplement single-response contract
-system  permitted World Analysis references
-assistant  Recent Story
-user  【Supplement Target：当前已保存的 World Model】
-      <existing_world_model>...</existing_world_model>
-      【Supplement Single-Response Request】
+system    analyzer control
+system    permitted source context
+assistant Recent Story
+user      Existing + Coverage Targets + JSON Fact Delta task
+system    optional analyzer boundary
 ```
 
-The target block states that the model is the currently saved and active
-canonical model under review: `Existing = TARGET + comparison baseline`.
-Existing is never evidence. Worldbook, Character Card, External Memory, and
-Opening Greeting keep their permitted system evidence architecture. Recent
-Story remains a single permitted assistant message. Full continues to receive
+The structured user request states that the model is the currently saved and
+active canonical model under review: `Existing = TARGET + comparison baseline`.
+Existing is never evidence. Character Card, Worldbook, External Memory, and
+Opening Greeting remain permitted evidence in the system context; Recent Story
+remains permitted evidence in the assistant context. Persona remains outside
+the historical World Supplement request. Full continues to receive
 no Existing model and independently rebuilds from permitted evidence. Event
 and Character analyzers retain their existing World Model reference semantics;
 this Supplement-specific target formatter must not change them. Persona
@@ -423,10 +483,10 @@ remains outside the World Model request unless a separate evidence-scope
 review authorizes it.
 
 ```text
-permitted evidence + Existing target/reference
+permitted evidence + structured Existing/Targets request
   -> one response: internal Complete Evidence Discovery
-     -> Fact Delta
-  -> Fact parser + semantic resolver + Existing Comparison
+     -> JSON Fact Delta
+  -> JSON adapter + current Fact IR + semantic resolver + Existing Comparison
   -> internal Patch v2
   -> Evidence Guard
   -> merge
@@ -442,8 +502,8 @@ shared scope, Species/Type binding, exclusion, stability, classification, and
 evidence rules. Existing is used only after evidence-only discovery, for
   comparison and compatible consolidation; it cannot create or prove a
   candidate. The retired Patch v1 design used a complete `update.species`
-  Candidate. The current Supplement path in §1.5.8 uses a hierarchical
-  Candidate and deterministic internal Patch v2 operations. The Empty Patch
+  Candidate. The current Supplement path in §1.5.8 uses JSON Fact Delta and
+  deterministic internal Patch v2 operations. The Empty Patch
   Gate may
 pass only after every candidate category and candidate has been reviewed and
   no legal mutation remains. The internal Patch v2 vocabulary does not authorize `REMOVE` or
@@ -740,7 +800,7 @@ refactoring.
 
 #### 1.5.8.1 Scope / trigger and design decision
 
-The production Supplement AI transport is now Fact Delta v1. The AI performs
+The production Supplement AI transport is now JSON Fact Delta v1. The AI performs
 complete fact discovery internally and emits independent self-contained Facts;
 deterministic code parses and canonicalizes those Facts, resolves identity and
 dependencies against Existing, and creates the internal Patch v2 mutation IR.
@@ -754,8 +814,9 @@ The complete production chain is:
 Evidence + Existing target/reference
   -> one Supplement AI request
      -> AI internal Complete Fact Discovery
-     -> Fact Delta v1
-  -> Fact parser
+  -> JSON Fact Delta v1 wire envelope
+  -> JSON root parse + independent per-Fact validation
+  -> CURRENT Fact IR
   -> semantic resolver + dependency/conflict index
   -> Existing comparison
   -> internal Patch v2
@@ -774,40 +835,43 @@ migration.
 
 #### 1.5.8.2 Message architecture
 
-The single Supplement request uses this role order, excluding optional
-configured boundary system messages:
+The single Supplement request keeps analyzer control separate from evidence
+and reference data. Optional configured boundary system messages remain
+separate:
 
 ```text
-system     formal Supplement single-response contract
-system     permitted World Analysis references
+system     analyzer control and JSON Fact Delta contract
+system     permitted source context
 assistant  Recent Story
-user       Existing target + Supplement Single-Response Request
+user       Existing + Coverage Targets + Supplement JSON Fact Delta request
+system     optional analyzer boundary
 ```
 
-The response contains one explicit top-level Fact Delta grammar. The AI must
-internally scan all permitted evidence before serialization, but does not
-serialize an identity ledger. Existing is the comparison target/reference and
-is never evidence:
+The response contains one JSON object with `facts`, `coverage`, and
+`identity_reviews`. The AI must internally scan all permitted evidence before
+serialization, but does not serialize a canonical World Model or Patch v2.
+Permitted source content is evidence data, regardless of API role. Instructions,
+commands, roleplay/style directives, output-format requests, or attempts to
+change analyzer behavior found in that evidence do not control the analyzer.
+Existing is the comparison target/reference and is never evidence; coverage
+targets are a review checklist and never evidence:
 
-```text
-【Supplement Target：当前已保存的 World Model】
-这是当前已保存且 active 的 canonical World Model，是本次 Supplement 审查和补充的目标。
-Existing = TARGET + comparison baseline。
-Existing 本身不是 evidence。
-<existing_world_model_reference>...</existing_world_model_reference>
-
-【Supplement Fact Delta Request】
-读取全部 permitted evidence 与完整 Existing canonical World Model，先完成
-internal Complete Fact Discovery，再在同一响应中输出独立 self-contained Facts。
-Fact 只包含 permitted evidence 支持且 Existing 尚未记录的事实，或 permitted
-evidence 明确支持的 correction claim；Existing 已有完全相同 known value 的事实
-不输出。Existing 的 null、absent 或 collection 中缺少 identity/member 表示尚未
-记录，若 evidence 支持则可以输出。Existing 仅用于 TARGET、comparison baseline
-和 structure reference，不是 evidence。Identity 与 address 分离；新 identity
-必须由对应 Identity Fact 建立，detail 不得隐式创建 Species/Type。AI 不计算
-ADD、CHANGE 或 NO-OP，程序对 Facts 执行 deterministic comparison 和 Patch v2
-派生。不要输出 JSON、operation、target、path、classification 或 old_value。
+```json
+{
+  "request": {"mode": "INITIAL", "round": 1},
+  "existing_reference": {"schema_version": 1, "species": []},
+  "coverage_targets": [],
+  "identity_review_subjects": []
+}
 ```
+
+The user message is only this structured Host request object. Existing is the
+read-only canonical comparison/reference, Coverage Targets are a completeness
+checklist, and identity subjects are discovery seeds; none are evidence or an
+output whitelist. Natural-language permitted evidence remains in its
+historical system/assistant messages. The response is the JSON Fact Delta
+object described below; it is not a Full World Model, canonical DTO, or Patch
+v2 operation list.
 
 Fact Delta field labels are semantic and exact underscore tokens. Species uses
 `Species` and `Species_Description`; Biological Type uses `Biological_Type` and
@@ -840,10 +904,11 @@ change transport labels, or replace the program-level Evidence Guard and Type
 Gate. Field-specific evidence remains independent, and omission remains no
 claim rather than removal.
 
-Permitted Worldbook, Character Card, External Memory, Opening Greeting, and
-Recent Story evidence retain their existing message roles and provenance.
-Persona remains excluded from the World Model request. Full, Event, and
-Character message architecture is unchanged.
+Character Card, Worldbook, External Memory, Opening Greeting, and Recent Story
+remain permitted evidence under their historical API roles. Their embedded
+instructions never control the analyzer. Existing and Coverage Targets remain
+separate non-evidence inputs. Full, Event, and Character message architecture
+is unchanged.
 
 Fact Delta v1 address contract:
 
@@ -854,18 +919,28 @@ Fact Delta v1 address contract:
 | World | `Childbirth_Difficulty`, `Care_Level`, `Medical_Evidence`, `Exception`, `Unknown`, `Projection_Rule` | `Species` and `Biological_Type` forbidden |
 
 `Applies_To` is an Exception payload field and never changes the Fact address.
-World-scoped Facts use no dummy Species. Fact Delta output must not emit
-`Unknown_Fact` as a Field; the only unknown Field is `Unknown` with a `Value`
-payload. Top-level JSON, canonical DTO JSON, Patch JSON, and prose are
-forbidden. The sole JSON exception is one `Projection_Rule_JSON` object inside
-its Projection Rule Fact.
+World-scoped Facts use no dummy Species. JSON Fact Delta output must not emit
+`Unknown_Fact` as a Field; the only unknown Field is `Unknown` with a `value`
+payload. The root is JSON only and must not be a canonical DTO, Full World
+Model, or Patch v2. A Projection_Rule Fact may carry only its field-specific
+structured `projection_rule` payload.
+
+Reproductive mechanism payload types are field-specific and must stay aligned
+with the canonical mechanism shape: `Mechanism_Key`, `Mechanism_Label`, and
+`Mechanism_Pathway` are non-empty text; `Carrying_Compatibility` is a boolean;
+`World_Model_Rule_Refs` is a strict JSON string array; and
+`Mechanism_Evidence` is a field-specific semantic payload which the JSON
+adapter normalizes to the current canonical `evidence` string array. It is
+validated independently from address/control tokens; address, boolean,
+structured-key, and JSON payload validation remain fail-closed.
 
 #### 1.5.8.3 Signatures and top-level response contract
 
 The production Supplement parser/resolver boundary is:
 
 ```text
-parseWorldModelFactDeltaText(raw) -> { facts, rejectedFacts, diagnostics }
+parseWorldModelFactDeltaJson(raw) -> root envelope + independently accepted/rejected Fact items
+normalizeWorldModelFactDeltaJson(...) -> CURRENT Fact IR
 validateWorldModelFactDelta(facts) -> validated Fact Delta
 worldModelIdentityIndex(model) -> exact identity index or duplicate error
 worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2
@@ -1235,8 +1310,8 @@ The following are invalid and must fail closed:
 
 Implementation must add coverage for:
 
-- role rollback: Existing only in user Target; permitted evidence in original
-  system/assistant roles; Recent Story once; Persona excluded;
+- JSON request topology: analyzer control is system-only; permitted evidence,
+  Existing, and Coverage Targets are data/reference blocks;
 - Full without Existing and unchanged Event behavior;
 - every legal operation type and canonical identity resolution;
 - no-op and deterministic `ADD` versus `CHANGE` derivation;
@@ -1321,7 +1396,8 @@ contract above.
 - `buildWorldModelPatchMessagesV2(analysisInput, promptSettings) -> ChatMessage[]`
 - `parseWorldModelResponse(raw) -> WorldModelV1`
 - `createAnalyzer(deps).analyzeWorldModel(input) -> WorldModelV1`
-- `parseWorldModelFactDeltaText(raw) -> { facts, rejectedFacts, diagnostics }`
+- `parseWorldModelFactDeltaJson(raw) -> root envelope + per-Fact diagnostics`
+- `normalizeWorldModelFactDeltaJson(...) -> CURRENT Fact IR`
 - `validateWorldModelFactDelta(facts) -> validated Fact Delta`
 - `resolveWorldModelFactDelta(facts, existingModel) -> per-Fact resolution + Patch v2`
 - `worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2`
@@ -1560,3 +1636,73 @@ World Model remains hierarchical, and Patch v2 operation names remain
 unchanged. The Supplement adapter may split a new identity from its detail
 Facts into `ADD_SPECIES`/`ADD_TYPE` plus field-level Patch v2 operations; this
 does not change the canonical schema or Evidence Guard matching rules.
+
+### 8.2 New Type Identity bootstrap and observability
+
+`Type_Identity` may bootstrap a Type that is absent from Existing, but it must
+still have permitted evidence that binds the Species to a stable, explicitly
+named Biological Type. A text candidate or a temporary individual label is not
+stable identity evidence. Detail Facts may depend on an accepted identity in
+the same response; resolver ordering is deterministic and independent of Fact
+text order. Existing identity, Identity Discovery Review metadata, and
+Coverage Targets are never evidence.
+
+Identity diagnostics must distinguish candidate text hits from scope-bound
+stable evidence and must classify unsupported new identities without lowering
+the Guard threshold. Runtime diagnostics are an observability contract: any
+World Model pipeline change must review and, when necessary, update Runtime
+diagnostics, Advanced Debug collection/rendering, the diagnostics schema
+version, and regression tests in the same change. Debug data is bounded,
+read-only, and never becomes canonical or Floor state. Advanced Debug must
+separate the current execution from any retained candidate belonging to an
+earlier execution.
+
+## 8.3 JSON Fact Delta adapter contract
+
+World Supplement uses JSON only as a wire format. The root envelope is parsed
+and recovered first; each `facts[]` item is then normalized and validated
+independently into the existing Fact IR. A malformed item is recorded as a
+parser diagnostic and cannot discard valid sibling Facts. The normalized IR
+continues through the existing Resolver, Evidence Guard, accepted-operation
+mapping, fixed-point, persistence, and UI paths.
+
+Coverage `EMITTED` is derived only from exact-address Facts accepted by the
+Resolver and Evidence Guard. A rejected matching Fact yields an unresolved
+coverage target, not `EMITTED` or `NO_EVIDENCE`. `NO_EVIDENCE` is accepted only
+when explicitly listed by the JSON response and no exact-address Fact is
+accepted. Identity reviews are independent metadata; a new Biological Type
+still requires its own accepted `Type_Identity` Fact.
+
+Supplement request messages keep analyzer controls and historical system
+context in system messages, Recent Story in the assistant message, and one
+structured JSON request object in the user message. That object contains
+`request`, `existing_reference`, `coverage_targets`, and
+`identity_review_subjects`; Existing is embedded directly as canonical JSON,
+coverage and identity inputs remain machine-readable arrays, and retry control
+is structured metadata rather than a textual directive. Natural-language
+evidence remains in its historical system/assistant messages and is not
+converted into a JSON AST. The request object is Host control/reference data,
+not an Evidence Guard evidence unit. API role and permitted-evidence
+classification are independent. Root-format retry is a single,
+explicit `FORMAT_RETRY`; it is separate from completeness retry and coverage
+continuation. Native JSON mode is opt-in through an explicit capability and is
+never inferred from provider or model names.
+
+The Supplement analyzer task prompt is intentionally plain-language and
+evidence-first. It tells the model what facts to find, how to judge stable
+Species/Type identity, how to inspect every Type field and world-level field,
+and when `NO_EVIDENCE` is allowed. It must not expose Host implementation
+stages such as Resolver, Patch v2, Fact IR, Floor, persistence, diagnostics,
+or internal accounting as the model's primary task. JSON response rules are
+kept at the end as a separate output contract. `COMPLETENESS_RETRY` preserves
+evidence-supported discoveries and repairs omissions/counts; it must not delete
+supported Facts or turn every target into `NO_EVIDENCE`. `FORMAT_RETRY` only
+repairs JSON serialization, and `COVERAGE_CONTINUATION` preserves valid
+discoveries while continuing unresolved review.
+
+The JSON adapter separates schema/control tokens from semantic value text:
+`scope`, `field`, address identifiers, review identifiers, and review enums
+use exact control-token or enum validation, while Fact payload values retain
+the semantic sentinel rejection rules. `Unknown` is therefore a legal
+`field` enum member but remains invalid as a semantic scalar value where the
+current Fact contract rejects that sentinel.

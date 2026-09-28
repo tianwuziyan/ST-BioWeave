@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Floor ownership or provenance invariant is violated."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify candidate normalization, canonical model, and World ownership remain intact."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend state/update and forbidden direct storage patterns."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify existing fingerprint, reload, trace, and coordinator helpers are reused."}

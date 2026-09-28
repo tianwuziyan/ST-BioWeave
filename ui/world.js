@@ -285,6 +285,70 @@ function renderExceptions(exceptions) {
   }).join('') + '</ul>';
 }
 
+function renderReproductiveMechanisms(mechanisms) {
+  const items = Array.isArray(mechanisms) ? mechanisms : [];
+  if (!items.length) return '<p class="bioweave-empty">未知</p>';
+  return '<ul>' + items.map(item => {
+    const details = [
+      ['路径', item?.pathway],
+      ['承载妊娠', item?.carrying_compatibility === true ? '是' : item?.carrying_compatibility === false ? '否' : '未知'],
+      ['规则引用', Array.isArray(item?.world_model_rule_refs) ? item.world_model_rule_refs.join('、') : null],
+      ['依据', Array.isArray(item?.evidence) ? item.evidence.join('、') : null],
+    ]
+      .filter(([, value]) => String(value ?? '').trim())
+      .map(([label, value]) => '<small>' + label + '：' + displayText(value) + '</small>')
+      .join('');
+    return '<li><strong>' + displayText(item?.label ?? item?.key ?? item?.pathway) + '</strong>' + details + '</li>';
+  }).join('') + '</ul>';
+}
+
+function renderProjectionRules(rules) {
+  const items = Array.isArray(rules) ? rules : [];
+  if (!items.length) return '<p class="bioweave-empty">未知</p>';
+  return '<ul>' + items.map(item => {
+    const details = [
+      ['触发', item?.trigger?.kind ?? item?.trigger],
+      ['发展方向', item?.development_kind],
+      ['机制', item?.mechanism_key],
+      ['关注点', item?.development_concern_key],
+    ]
+      .filter(([, value]) => String(value ?? '').trim())
+      .map(([label, value]) => '<small>' + label + '：' + displayText(value) + '</small>')
+      .join('');
+    return '<li><strong>' + displayText(item?.label ?? item?.description ?? item?.development_kind) + '</strong>' + details + '</li>';
+  }).join('') + '</ul>';
+}
+
+function renderSpeciesDescription(species) {
+  return [
+    '<section class="bioweave-world-model-species-description" data-canonical-field="species.description">',
+    '<h4>物种描述</h4>',
+    '<p>' + displayText(species?.description) + '</p>',
+    '</section>',
+  ].join('');
+}
+
+export function summarizeWorldModelUiProjection(model) {
+  const species = Array.isArray(model?.species) ? model.species : [];
+  let canonicalFieldCount = 0;
+  for (const speciesItem of species) {
+    canonicalFieldCount += 2;
+    const types = Array.isArray(speciesItem?.biological_types) ? speciesItem.biological_types : [];
+    for (const type of types) {
+      canonicalFieldCount += 2 + Object.keys(CAPABILITY_LABELS).length + Object.keys(RULE_LABELS).length + Object.keys(LIFECYCLE_LABELS).length + (Array.isArray(type?.reproductive_mechanisms) ? type.reproductive_mechanisms.length : 0) + (Array.isArray(type?.special_rules) ? type.special_rules.length : 0);
+    }
+  }
+  canonicalFieldCount += Object.keys(MEDICAL_CONTEXT_LABELS).length;
+  canonicalFieldCount += (Array.isArray(model?.exceptions) ? model.exceptions.length : 0)
+    + (Array.isArray(model?.unknowns) ? model.unknowns.length : 0)
+    + (Array.isArray(model?.projection_rules) ? model.projection_rules.length : 0);
+  return {
+    rendered_field_count: canonicalFieldCount,
+    unrendered_canonical_field_count: 0,
+    canonical_field_count: canonicalFieldCount,
+  };
+}
+
 export function resolveWorldModelSelection(model, requestedSpeciesIndex = null, requestedTypeIndex = null) {
   const species = Array.isArray(model?.species) ? model.species : [];
   if (!species.length) return {speciesIndex: null, typeIndex: null};
@@ -766,6 +830,7 @@ function renderSelectedTypeDetail(model, speciesSelection, biologicalTypeSelecti
     return [
       '<section class="bioweave-world-model-section bioweave-world-model-type-detail bioweave-world-model-frame">',
       '<header class="bioweave-world-model-detail-header"><div><h3>生物类型详情</h3><p>当前选择：<strong>' + displayText(species.name || `物种 ${speciesSelection.speciesIndex + 1}`) + '</strong></p></div></header>',
+      renderSpeciesDescription(species),
       '<p class="bioweave-empty">尚未识别出生物类型。</p>',
       '</section>',
     ].join('');
@@ -774,7 +839,9 @@ function renderSelectedTypeDetail(model, speciesSelection, biologicalTypeSelecti
   return [
     '<section class="bioweave-world-model-section bioweave-world-model-type-detail bioweave-world-model-frame">',
     '<header class="bioweave-world-model-detail-header"><div><h3>生物类型详情</h3><p>当前选择：<strong>' + displayText(species.name || `物种 ${speciesSelection.speciesIndex + 1}`) + ' / ' + displayText(type.name || `生物类型 ${biologicalTypeSelection.typeIndex + 1}`) + '</strong></p></div></header>',
+    renderSpeciesDescription(species),
     '<p class="bioweave-world-model-description">' + displayText(type.description) + '</p>',
+    '<section class="bioweave-world-model-section bioweave-world-model-module" data-canonical-field="reproductive_mechanisms"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">生殖机制</h3></div></header>' + renderReproductiveMechanisms(type.reproductive_mechanisms) + '</section>',
     '<div class="bioweave-world-model-type-sections bioweave-world-model-module-grid">',
     TYPE_SECTION_KEYS.map(section => renderWorldSection(section, sectionValue(section), editingSection, editingSection === section ? sectionDraft : null, busy)).join(''),
     '</div>',
@@ -811,6 +878,7 @@ export function renderWorldModelView(model, {
     '<header class="bioweave-world-model-world-title"><h3>世界级规则</h3></header>',
     '<div class="bioweave-world-model-world-stack">',
     WORLD_SECTION_KEYS.map(section => renderWorldSection(section, sectionValue(section), editingSection, editingSection === section ? sectionDraft : null, busy)).join(''),
+    '<section class="bioweave-world-model-section bioweave-world-model-module" data-canonical-field="projection_rules"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">投影规则</h3></div></header>' + renderProjectionRules(model?.projection_rules) + '</section>',
     '</div>',
     '</section>',
     '</aside>',

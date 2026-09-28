@@ -5,6 +5,7 @@ import {
   summarizeAnalysisInput,
 } from "../ai/analyzer.js";
 import {buildWorldModelSupplementCoverageTargets} from "../ai/world-supplement-protocol.js";
+import {fingerprintWorldModel} from "../utils/world-model-debug.js";
 import { emptyFloor } from "../storage/schema.js";
 import {
   floorVersionFromData,
@@ -59,6 +60,40 @@ function cloneWorldValue(value) {
   if (typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneWorldValue(item)]));
   return value;
+}
+
+function supplementCoverageAddress(target) {
+  return [
+    target?.scope ?? '',
+    target?.species ?? '',
+    target?.biological_type ?? '',
+    target?.field ?? '',
+  ].join('\u001f');
+}
+
+function buildSupplementRetryDirective(diagnostics, kind = 'completeness_retry') {
+  const groups = Array.isArray(diagnostics) ? diagnostics : [diagnostics];
+  const items = groups.flatMap(group => [
+    ...(Array.isArray(group?.missing) ? group.missing : []),
+    ...(Array.isArray(group?.invalid) ? group.invalid : []),
+    ...(Array.isArray(group?.dynamic_coverage_target_ids)
+      ? group.dynamic_coverage_target_ids.map(target_id => ({target_id, reason: group.reason ?? 'dynamic_coverage_pending'}))
+      : []),
+    ...(group && !Array.isArray(group?.missing) && !Array.isArray(group?.invalid) && !Array.isArray(group?.dynamic_coverage_target_ids) ? [group] : []),
+  ]);
+  const seen = new Set();
+  const bounded = items.filter(item => item && typeof item === 'object').map(item => ({
+    target_id: typeof item.target_id === 'string' ? item.target_id : null,
+    subject_id: typeof item.subject_id === 'string' ? item.subject_id : null,
+    reason: typeof item.reason === 'string' ? item.reason : 'invalid',
+    code: typeof item.code === 'string' ? item.code : null,
+  })).filter(item => {
+    const key = `${item.target_id ?? ''}|${item.subject_id ?? ''}|${item.reason}|${item.code ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return Boolean(item.target_id || item.subject_id);
+  }).slice(0, 32);
+  return {kind, items: bounded};
 }
 
 export function createWorldAnalysis({
@@ -136,8 +171,12 @@ export function createWorldAnalysis({
   ) throw new TypeError("WORLD_ANALYSIS_DEPENDENCIES_REQUIRED");
 
   const worldInFlight = new Map();
+  const completedWorldCandidates = new Map();
+  let worldCandidateSequence = 0;
   let latestWorldModelDiagnostic = null;
   let recentFactDeltaExecutions = [];
+  let recentWorldRequestTransitions = [];
+  let lastIndependentWorldRequest = null;
 
   function canonicalWorldEqual(left, right) {
     if (left === null || left === undefined || right === null || right === undefined) return left === right;
@@ -146,6 +185,27 @@ export function createWorldAnalysis({
     } catch {
       return false;
     }
+  }
+
+  function classifyWorldModelFinalResult({summary = null, canonicalNoop = false, error = null, persistenceConfirmed = false} = {}) {
+    const parsed = Number(summary?.parsed_fact_count ?? summary?.fact_count ?? 0);
+    const acceptedOperations = Number(summary?.accepted_operation_count ?? 0);
+    const rejected = Number(summary?.rejected_fact_count ?? 0);
+    const attemptedFacts = parsed > 0;
+    const allFactsRejected = attemptedFacts
+      && acceptedOperations === 0
+      && rejected >= parsed
+      && Number(summary?.accepted_fact_count ?? 0) === 0;
+    if (allFactsRejected) return 'ALL_FACTS_REJECTED';
+    if (error) {
+      const code = String(error.code ?? error.diagnostic_code ?? error.message ?? '');
+      if (/ALL_FACTS_REJECTED/u.test(code)) return 'ALL_FACTS_REJECTED';
+      if (/PERSIST|FLOOR|READBACK|RECONCILIATION/u.test(code)) return 'PERSISTENCE_FAILED';
+      return 'ANALYSIS_FAILED';
+    }
+    if (canonicalNoop || (acceptedOperations === 0 && !attemptedFacts)) return 'NO_CHANGE';
+    if (acceptedOperations > 0 && persistenceConfirmed) return 'UPDATED';
+    return 'NO_CHANGE';
   }
 
   function rememberFactDeltaExecution(executionId, target, mode, summary, candidateModel) {
@@ -162,6 +222,114 @@ export function createWorldAnalysis({
       ...recentFactDeltaExecutions.filter(item => item.execution_id !== executionId),
       entry,
     ].slice(-8);
+  }
+
+  function worldModelAddressSet(model) {
+    const addresses = new Set();
+    for (const species of Array.isArray(model?.species) ? model.species : []) {
+      addresses.add(`species.${species.name}`);
+      for (const type of Array.isArray(species?.biological_types) ? species.biological_types : []) {
+        const base = `species.${species.name}.biological_types.${type.name}`;
+        addresses.add(base);
+        for (const group of ['capabilities', 'reproduction_rules', 'lifecycle']) {
+          for (const key of Object.keys(type?.[group] ?? {})) addresses.add(`${base}.${group}.${key}`);
+        }
+        for (const value of Array.isArray(type?.special_rules) ? type.special_rules : []) addresses.add(`${base}.special_rules.${String(value).slice(0, 80)}`);
+        for (const mechanism of Array.isArray(type?.reproductive_mechanisms) ? type.reproductive_mechanisms : []) addresses.add(`${base}.reproductive_mechanisms.${mechanism.key ?? ''}`);
+      }
+    }
+    for (const exception of Array.isArray(model?.exceptions) ? model.exceptions : []) addresses.add(`world.exceptions.${String(exception?.statement ?? '').slice(0, 80)}`);
+    for (const value of Array.isArray(model?.unknowns) ? model.unknowns : []) addresses.add(`world.unknowns.${String(value).slice(0, 80)}`);
+    for (const rule of Array.isArray(model?.projection_rules) ? model.projection_rules : []) addresses.add(`world.projection_rules.${rule.projection_rule_id ?? ''}`);
+    return addresses;
+  }
+
+  function buildWorldRequestTransition(current) {
+    const previous = lastIndependentWorldRequest;
+    if (!previous) return null;
+    const diff = (left, right) => [...new Set([...left].filter(value => !right.has(value)))].slice(0, 64);
+    const previousAddresses = worldModelAddressSet(previous.model);
+    const currentAddresses = worldModelAddressSet(current.model);
+    const previousTargets = new Set(previous.target_ids ?? []);
+    const currentTargets = new Set(current.target_ids ?? []);
+    return {
+      previous_execution_id: previous.execution_id,
+      current_execution_id: current.execution_id,
+      permitted_evidence: previous.evidence_fingerprint === current.evidence_fingerprint ? 'SAME' : 'CHANGED',
+      existing_reference: previous.existing_fingerprint === current.existing_fingerprint ? 'SAME' : 'CHANGED',
+      coverage_targets: previous.target_fingerprint === current.target_fingerprint ? 'SAME' : 'CHANGED',
+      added_existing_addresses: diff(currentAddresses, previousAddresses),
+      removed_existing_addresses: diff(previousAddresses, currentAddresses),
+      added_target_ids: diff(currentTargets, previousTargets),
+      removed_target_ids: diff(previousTargets, currentTargets),
+      baseline_source: current.baseline_source,
+      baseline_fingerprint: current.existing_fingerprint,
+      mutation_source_execution_id: current.mutation_source_execution_id ?? null,
+      mutation_source_candidate_fingerprint: current.mutation_source_candidate_fingerprint ?? null,
+      mutation_persisted: current.mutation_persisted ?? null,
+      mutation_ui_projected: current.mutation_ui_projected ?? null,
+    };
+  }
+
+  function candidateError(code, details = {}) {
+    const error = new Error(code);
+    error.code = code;
+    Object.assign(error, details);
+    return error;
+  }
+
+  async function publishWorldModelCandidate({model, meta, target, execution, mode, trigger, executionId}) {
+    const fingerprint = await fingerprintWorldModel(model);
+    const candidate = {
+      execution_id: executionId ?? `world-candidate-${Date.now()}-${++worldCandidateSequence}`,
+      candidate_fingerprint: fingerprint.fingerprint,
+      candidate_full_hash: fingerprint.full_hash,
+      chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+      floor_version: cloneWorldValue(target?.version ?? null),
+      model: cloneWorldValue(model),
+      meta: cloneWorldValue(meta),
+      mode: mode ?? null,
+      trigger: trigger ?? null,
+      created_at: new Date().toISOString(),
+    state: "VALIDATED",
+    };
+    for (const older of completedWorldCandidates.values()) {
+      if (older.state !== "PERSISTING" && older.state !== "VALIDATED") continue;
+      older.state = "SUPERSEDED";
+      emitPersistenceTrace("WORLD_CANDIDATE_SUPERSEDED", execution, target, {
+        execution_id: older.execution_id,
+        candidate_fingerprint: older.candidate_fingerprint,
+        superseded_by: candidate.execution_id,
+      }, "world");
+    }
+    emitPersistenceTrace("WORLD_CANDIDATE_CREATED", execution, target, {
+      execution_id: candidate.execution_id,
+      candidate_fingerprint: candidate.candidate_fingerprint,
+      candidate_full_hash: candidate.candidate_full_hash,
+      candidate_state: candidate.state,
+      candidate_created_at: candidate.created_at,
+    }, "world");
+    completedWorldCandidates.set(candidate.execution_id, candidate);
+    while (completedWorldCandidates.size > 32)
+      completedWorldCandidates.delete(completedWorldCandidates.keys().next().value);
+    notify({
+      type: "WORLD_CANONICAL_CANDIDATE_CREATED",
+      payload: {
+        state: "candidate_ready",
+        execution_id: candidate.execution_id,
+        candidate_fingerprint: candidate.candidate_fingerprint,
+        candidate_full_hash: candidate.candidate_full_hash,
+        candidate_created_at: candidate.created_at,
+        chat_id: candidate.chat_id,
+        floor_version: candidate.floor_version,
+        model: candidate.model,
+        meta: candidate.meta,
+        mode: candidate.mode,
+        trigger: candidate.trigger,
+      },
+      chatId: candidate.chat_id,
+    });
+    return candidate;
   }
 
   function hasWorldModelUpdateSignal(target) {
@@ -336,7 +504,9 @@ export function createWorldAnalysis({
       diagnostic_execution_id: `world-fact-delta-${Date.now()}-${++worldFactDeltaDiagnosticSequence}`,
     };
     const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
-    let supplementCompletenessRetry = null;
+    let supplementRetryDirective = null;
+    let formatRetryUsed = false;
+    let supplementContinuationState = null;
     const publishPhase = phase => {
       onPhase?.(phase);
       notify({
@@ -376,18 +546,52 @@ export function createWorldAnalysis({
             meta = {source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput)};
           } else {
             const factDeltaExecutionId = `${job.diagnostic_execution_id}-attempt-${attempt}`;
-            const resolved = await resolveWorldModelAtOrBefore(target);
+            const resolved = supplementContinuationState
+              ? {
+                  model: supplementContinuationState.transientModel,
+                  meta: supplementContinuationState.meta,
+                }
+              : await resolveWorldModelAtOrBefore(target);
             if (!resolved) {
               const error = new Error("WORLD_MODEL_REQUIRED_FOR_PATCH");
               error.code = "WORLD_MODEL_REQUIRED_FOR_PATCH";
               error.analysis_stage = "world_preflight";
               throw error;
             }
+            if (!supplementContinuationState) {
+              const initialTargets = buildWorldModelSupplementCoverageTargets(resolved.model);
+              supplementContinuationState = {
+                baselineModel: cloneWorldValue(resolved.model),
+                transientModel: cloneWorldValue(resolved.model),
+                meta: cloneWorldValue(resolved.meta ?? {}),
+                baselineTargetKeys: new Set(initialTargets.map(supplementCoverageAddress)),
+                reviewedTargetKeys: new Set(),
+                rounds: [],
+                coverageExpansionRoundCount: 0,
+                initialTargetCount: initialTargets.length,
+              };
+            }
+            const baselineFingerprint = await fingerprintWorldModel(resolved.model);
+            const baselineSource = supplementContinuationState.rounds.length
+              ? "TRANSIENT_CANDIDATE"
+              : "AUTHORITATIVE_FLOOR";
             const patchAnalysisInput = {
               ...(analysisInput ?? {}),
               world_model: cloneWorldValue(resolved.model),
-              ...(supplementCompletenessRetry ? {supplement_completeness_retry: supplementCompletenessRetry} : {}),
+              supplement_candidate: cloneWorldValue(resolved.model),
+              supplement_request_mode: supplementRetryDirective?.kind === "coverage_continuation"
+                ? "COVERAGE_CONTINUATION"
+                : supplementRetryDirective?.kind === "format_retry"
+                  ? "FORMAT_RETRY"
+                : supplementRetryDirective
+                  ? "AUTOMATIC_RETRY"
+                  : (supplementContinuationState.rounds.length ? "COVERAGE_CONTINUATION" : "INITIAL"),
+              supplement_request_round: supplementContinuationState.rounds.length + 1,
+              ...(supplementRetryDirective?.kind === "coverage_continuation" || supplementRetryDirective?.kind === "format_retry"
+                ? {supplement_retry_directive: cloneWorldValue(supplementRetryDirective)}
+                : {}),
             };
+            const inputTargets = buildWorldModelSupplementCoverageTargets(resolved.model);
             let patchResult;
             let factDeltaSummary = null;
             try {
@@ -412,51 +616,162 @@ export function createWorldAnalysis({
                   }, "world");
                 },
               });
-              const baseSummary = patchResult
-                ? {
-                    ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
-                    fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
-                  }
-                : null;
               const candidateModel = mergeWorldModelPatchV2(
                 resolved.model,
                 patchResult?.patch ?? patchResult,
                 patchAnalysisInput,
               );
-              const baselineTargetKeys = new Set(buildWorldModelSupplementCoverageTargets(resolved.model).map(target => JSON.stringify(target)))
-              const candidateTargets = buildWorldModelSupplementCoverageTargets(candidateModel)
-              const newUnreviewedTargetCount = candidateTargets.filter(target => !baselineTargetKeys.has(JSON.stringify(target))).length
-              supplementCompletenessRetry = null;
-              factDeltaSummary = {
-                ...(baseSummary ?? {}),
-                dynamic_coverage_target_count: newUnreviewedTargetCount,
-                coverage_expansion_round_count: 0,
-                coverage_fixed_point_reached: newUnreviewedTargetCount === 0,
+              const baseSummary = patchResult
+                ? {
+                    ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
+                    fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
+                  }
+                : {};
+              const candidateFingerprint = await fingerprintWorldModel(candidateModel);
+              const requestEnvelope = baseSummary.request_envelope ?? {};
+              const requestSnapshot = {
+                execution_id: job.diagnostic_execution_id,
+                model: cloneWorldValue(resolved.model),
+                evidence_fingerprint: requestEnvelope.permitted_evidence_fingerprint ?? null,
+                existing_fingerprint: requestEnvelope.existing_reference_fingerprint ?? baselineFingerprint.fingerprint,
+                target_fingerprint: requestEnvelope.coverage_target_set_fingerprint ?? null,
+                target_ids: inputTargets.map(item => item.target_id),
+                baseline_source: baselineSource,
+                mutation_source_execution_id: Number(baseSummary.accepted_operation_count) > 0 ? factDeltaExecutionId : null,
+                mutation_source_candidate_fingerprint: Number(baseSummary.accepted_operation_count) > 0 ? candidateFingerprint.fingerprint : null,
+                mutation_persisted: null,
+                mutation_ui_projected: null,
               };
+              const requestTransition = baselineSource === "AUTHORITATIVE_FLOOR"
+                ? buildWorldRequestTransition(requestSnapshot)
+                : null;
+              if (baselineSource === "AUTHORITATIVE_FLOOR") {
+                lastIndependentWorldRequest = requestSnapshot;
+                if (requestTransition) recentWorldRequestTransitions = [...recentWorldRequestTransitions, requestTransition].slice(-8);
+              }
+              const dispositionById = new Map(
+                (Array.isArray(baseSummary.coverage_dispositions) ? baseSummary.coverage_dispositions : [])
+                  .map(item => [item.target_id, item.disposition]),
+              );
+              const inputTargetById = new Map(inputTargets.map(item => [item.target_id, item]));
+              for (const [targetId, disposition] of dispositionById) {
+                if (['EMITTED', 'NO_EVIDENCE'].includes(disposition) && inputTargetById.has(targetId))
+                  supplementContinuationState.reviewedTargetKeys.add(supplementCoverageAddress(inputTargetById.get(targetId)));
+              }
+              if (
+                !supplementContinuationState.rounds.length &&
+                baseSummary.supplement_completeness_complete !== false &&
+                dispositionById.size === 0
+              ) {
+                for (const inputTarget of inputTargets)
+                  supplementContinuationState.reviewedTargetKeys.add(supplementCoverageAddress(inputTarget));
+              }
+              supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
+              const candidateTargets = buildWorldModelSupplementCoverageTargets(candidateModel);
+              const dynamicTargets = candidateTargets.filter(target => !supplementContinuationState.baselineTargetKeys.has(supplementCoverageAddress(target)));
+              const unresolvedDynamicTargets = dynamicTargets.filter(target => !supplementContinuationState.reviewedTargetKeys.has(supplementCoverageAddress(target)));
+              const acceptedNewIdentityCount = Number(baseSummary.accepted_new_type_identity_count) || 0;
+              const roundSummary = {
+                round: supplementContinuationState.rounds.length + 1,
+                input_target_count: inputTargets.length,
+                reviewed_target_count: dispositionById.size || inputTargets.length,
+                emitted_count: [...dispositionById.values()].filter(value => value === 'EMITTED').length,
+                no_evidence_count: [...dispositionById.values()].filter(value => value === 'NO_EVIDENCE').length,
+                accepted_fact_count: Number(baseSummary.accepted_fact_count) || 0,
+                accepted_operation_count: Number(baseSummary.accepted_operation_count) || 0,
+                new_identity_count: acceptedNewIdentityCount,
+                expanded_target_count: dynamicTargets.length,
+                unresolved_target_count: unresolvedDynamicTargets.length,
+              };
+              supplementContinuationState.rounds.push(roundSummary);
+              if (unresolvedDynamicTargets.length > 0) supplementContinuationState.coverageExpansionRoundCount += 1;
+              supplementRetryDirective = null;
+              factDeltaSummary = {
+                ...baseSummary,
+                baseline_source: baselineSource,
+                baseline_execution_id: baselineSource === "TRANSIENT_CANDIDATE" ? job.diagnostic_execution_id : null,
+                baseline_fingerprint: baselineFingerprint.fingerprint,
+                request_transition: requestTransition,
+                mutation_source_execution_id: requestSnapshot.mutation_source_execution_id,
+                mutation_source_candidate_fingerprint: requestSnapshot.mutation_source_candidate_fingerprint,
+                coverage_initial_target_count: supplementContinuationState.initialTargetCount,
+                coverage_current_target_count: candidateTargets.length,
+                dynamic_coverage_target_count: dynamicTargets.length,
+                dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
+                unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
+                unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
+                coverage_expansion_round_count: supplementContinuationState.coverageExpansionRoundCount,
+                coverage_rounds: cloneWorldValue(supplementContinuationState.rounds.slice(-16)),
+                coverage_fixed_point_reached: unresolvedDynamicTargets.length === 0,
+              };
+              factDeltaSummary.final_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
+              if (unresolvedDynamicTargets.length > 0) {
+                const error = new Error("WORLD_MODEL_SUPPLEMENT_INCOMPLETE");
+                error.code = "WORLD_MODEL_SUPPLEMENT_INCOMPLETE";
+                error.diagnostic_code = "WORLD_MODEL_SUPPLEMENT_COVERAGE_NOT_AT_FIXED_POINT";
+                error.retry_kind = "coverage_continuation";
+                error.analysis_stage = "supplement_completeness";
+                error.completeness_failure = true;
+                error.diagnostics = [{
+                  reason: "dynamic_coverage_pending",
+                  dynamic_coverage_target_count: dynamicTargets.length,
+                  dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
+                  unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
+                  unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
+                  coverage_expansion_round_count: supplementContinuationState.coverageExpansionRoundCount,
+                }];
+                throw error;
+              }
             } catch (error) {
+              let nextRetryDirective = supplementRetryDirective;
+              if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
+                const kind = error?.retry_kind
+                  ?? (error?.diagnostic_code === "WORLD_MODEL_SUPPLEMENT_COVERAGE_NOT_AT_FIXED_POINT"
+                    ? "coverage_continuation"
+                    : "completeness_retry");
+                nextRetryDirective = buildSupplementRetryDirective(error.diagnostics, kind);
+                supplementRetryDirective = nextRetryDirective;
+              } else if (error?.format_retryable === true) {
+                if (!formatRetryUsed) {
+                  formatRetryUsed = true;
+                  error.retry_kind = "format_retry";
+                  error.analysis_stage = "supplement_format";
+                  supplementRetryDirective = {kind: "format_retry", items: []};
+                  nextRetryDirective = supplementRetryDirective;
+                } else {
+                  error.format_retry_exhausted = true;
+                  error.analysis_stage = "supplement_format";
+                }
+              }
+              const failureSummary = {
+                ...(factDeltaSummary ?? {
+                  analysis_stage_succeeded: false,
+                  completeness_required: true,
+                  completeness_satisfied: false,
+                }),
+                completeness_satisfied: false,
+                failure_stage: error?.analysis_stage ?? "supplement_completeness",
+                failure_code: error?.diagnostic_code ?? error?.code ?? error?.message ?? "WORLD_MODEL_SUPPLEMENT_FAILED",
+                ...(error?.diagnostic_code ? {diagnostic_code: error.diagnostic_code} : {}),
+                ...(error?.diagnostics ? {completeness_diagnostics: cloneWorldValue(error.diagnostics)} : {}),
+                ...(nextRetryDirective ? {
+                  retry_reason: nextRetryDirective.items?.[0]?.reason ?? error?.diagnostic_code ?? error?.code ?? null,
+                  retry_target_ids: (nextRetryDirective.items ?? []).map(item => item.target_id).filter(Boolean).slice(0, 64),
+                  retry_attempt: retryIndex + 1,
+                  previous_failure_code: error?.diagnostic_code ?? error?.code ?? null,
+                } : {}),
+              };
+              failureSummary.final_result = classifyWorldModelFinalResult({summary: failureSummary, error});
               rememberFactDeltaExecution(
                 factDeltaExecutionId,
                 target,
                 mode,
-                factDeltaSummary ?? {
-                  analysis_stage_succeeded: false,
-                  completeness_required: true,
-                  completeness_satisfied: false,
-                  failure_stage: error?.analysis_stage ?? "supplement_completeness",
-                  failure_code: error?.code ?? error?.message ?? "WORLD_MODEL_SUPPLEMENT_FAILED",
-                  ...(error?.diagnostics ? {completeness_diagnostics: cloneWorldValue(error.diagnostics)} : {}),
-                },
+                failureSummary,
                 null,
               );
-              if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE")
-                supplementCompletenessRetry = cloneWorldValue(error.diagnostics);
               throw error;
             }
-            model = mergeWorldModelPatchV2(
-              resolved.model,
-              patchResult?.patch ?? patchResult,
-              patchAnalysisInput,
-            );
+            model = cloneWorldValue(supplementContinuationState.transientModel);
             meta = {
               ...cloneWorldValue(resolved.meta ?? {}),
               source: "world-patch-analysis",
@@ -558,32 +873,84 @@ export function createWorldAnalysis({
               model,
             );
           }
+          if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED') {
+            throw candidateError('WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED', {
+              analysis_stage: 'world_patch_v2_evidence_guard',
+              retryable: false,
+            });
+          }
           const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
           const canonicalNoop = sameFloorVersion(floorVersionFromData(currentFloorData), target.version)
             && canonicalWorldEqual(currentFloorData.world_model, model);
           if (canonicalNoop) {
+            const noopFingerprint = await fingerprintWorldModel(model);
             emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
               reason: "canonical_noop",
               persistence_occurred: false,
               canonical_mutation_occurred: false,
+              accepted_operation_count: Number(factDeltaSummary?.accepted_operation_count) || 0,
+              candidate_fingerprint: noopFingerprint.fingerprint,
               world_model_present: true,
             }, "world");
-            const ready = await resolveWorldModelUiReady(target);
+            emitPersistenceTrace("WORLD_RECONCILIATION_CONFIRMED", execution, target, {
+              execution_id: null,
+              candidate_fingerprint: noopFingerprint.fingerprint,
+              reconciliation_status: "confirmed",
+              reconciliation_fingerprint: noopFingerprint.fingerprint,
+              persistence_occurred: false,
+            }, "world");
             latestWorldModelDiagnostic = {
-              execution_id: job.diagnostic_execution_id,
+              execution_id: execution?.diagnostic_execution_id ?? null,
+              candidate_execution_id: null,
+              candidate_fingerprint: noopFingerprint.fingerprint,
+              candidate_state: "CANONICAL_NOOP",
+              final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+              candidate_created_at: null,
+              ui_projection_state: "NOT_REQUIRED",
+              persistence_requested: false,
+              persistence_confirmed: false,
+              persisted_fingerprint: noopFingerprint.fingerprint,
+              reconciliation_status: "confirmed",
+              reconciliation_fingerprint: noopFingerprint.fingerprint,
               latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
               latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
               latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
               recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+              request_transitions: cloneWorldValue(recentWorldRequestTransitions),
               mode,
               trigger,
               floor_version: cloneWorldValue(target.version),
               candidate_model: cloneWorldValue(model),
-              runtime_model: cloneWorldValue(ready?.model),
+              runtime_model: cloneWorldValue(model),
               updated_at: new Date().toISOString(),
             };
-            return {model: ready.view_model.model, view_model: ready.view_model, floor_version: cloneWorldValue(target.version), persistence_skipped: true};
+            return {
+              model: cloneWorldValue(model),
+              view_model: buildWorldModelViewModel(model),
+              floor_version: cloneWorldValue(target.version),
+              persistence_skipped: true,
+              candidate_execution_id: null,
+              candidate_fingerprint: noopFingerprint.fingerprint,
+              candidate_full_hash: noopFingerprint.full_hash,
+              canonical_noop: true,
+              final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+            };
           }
+          const candidate = await publishWorldModelCandidate({
+            model,
+            meta,
+            target,
+            execution,
+            mode,
+            trigger,
+            executionId: `${job.diagnostic_execution_id}-candidate-${attempt}`,
+          });
+          candidate.state = "PERSISTING";
+          emitPersistenceTrace("WORLD_PERSISTENCE_REQUESTED", execution, target, {
+            execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            persistence_requested: true,
+          }, "world");
           const saved = await saveWorldModel({
             model,
             meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: {...target.version}},
@@ -597,8 +964,24 @@ export function createWorldAnalysis({
           publishPhase("world_readback");
           publishPhase("world_ui_ready");
           const ready = await resolveWorldModelUiReady(target);
+          const persistedFingerprint = await fingerprintWorldModel(ready?.model);
+          const reconciliationStatus = persistedFingerprint.full_hash === candidate.candidate_full_hash
+            ? "confirmed"
+            : "mismatch";
           latestWorldModelDiagnostic = {
-            execution_id: job.diagnostic_execution_id,
+            execution_id: candidate.execution_id,
+            candidate_execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            candidate_state: candidate.state,
+            final_result: 'UPDATED',
+            candidate_created_at: candidate.created_at,
+            ui_projection_state: "PENDING",
+            committed_fingerprint: persistedFingerprint.fingerprint,
+            persistence_requested: true,
+            persistence_confirmed: true,
+            persisted_fingerprint: persistedFingerprint.fingerprint,
+            reconciliation_status: reconciliationStatus,
+            reconciliation_fingerprint: persistedFingerprint.fingerprint,
             latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
             mode,
             trigger,
@@ -609,18 +992,73 @@ export function createWorldAnalysis({
             latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
             latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
             recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+            request_transitions: cloneWorldValue(recentWorldRequestTransitions),
             updated_at: new Date().toISOString(),
           };
           emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
           emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {floor_version_match: true, world_model_present: Boolean(ready?.model)}, "world");
           emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
+          emitPersistenceTrace(
+            reconciliationStatus === "confirmed" ? "WORLD_RECONCILIATION_CONFIRMED" : "WORLD_RECONCILIATION_MISMATCH",
+            execution,
+            target,
+            {
+              execution_id: candidate.execution_id,
+              candidate_fingerprint: candidate.candidate_fingerprint,
+              reconciliation_status: reconciliationStatus,
+              reconciliation_fingerprint: persistedFingerprint.fingerprint,
+              persisted_fingerprint: persistedFingerprint.fingerprint,
+            },
+            "world",
+          );
+          if (reconciliationStatus !== "confirmed") {
+            const error = candidateError("WORLD_UI_FLOOR_RECONCILIATION_MISMATCH", {
+              analysis_stage: "world_reconciliation",
+              candidate_fingerprint: candidate.candidate_fingerprint,
+              persisted_fingerprint: persistedFingerprint.fingerprint,
+            });
+            throw error;
+          }
           emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
+            execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
             world_model_present: Boolean(ready?.model),
             species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
             ...(factDeltaSummary ?? {}),
             persistence_occurred: true,
           }, "world");
-          return {...saved, model: ready.view_model.model, view_model: ready.view_model};
+          candidate.state = "PERSISTED";
+          notify({
+            type: "WORLD_PERSISTENCE_CONFIRMED",
+            payload: {
+              execution_id: candidate.execution_id,
+              candidate_fingerprint: candidate.candidate_fingerprint,
+              candidate_full_hash: candidate.candidate_full_hash,
+              model: cloneWorldValue(ready?.model),
+              meta: cloneWorldValue(ready?.meta ?? saved?.meta ?? null),
+              floor_version: cloneWorldValue(ready?.floor_version ?? target.version),
+              persistence_confirmed: true,
+              authoritative: true,
+            },
+            chatId: target.chatId,
+          });
+          if (lastIndependentWorldRequest?.execution_id === job.diagnostic_execution_id) {
+            lastIndependentWorldRequest = {
+              ...lastIndependentWorldRequest,
+              mutation_persisted: true,
+              mutation_ui_projected: null,
+              mutation_source_candidate_fingerprint: candidate.candidate_fingerprint,
+            };
+          }
+          return {
+            ...saved,
+            model: ready.view_model.model,
+            view_model: ready.view_model,
+            candidate_execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            candidate_full_hash: candidate.candidate_full_hash,
+            final_result: 'UPDATED',
+          };
         },
       });
     })();
@@ -628,7 +1066,17 @@ export function createWorldAnalysis({
       result => {
         notify({
           type: "WORLD_ANALYSIS_STATUS_CHANGED",
-          payload: {state: "success", mode, trigger, world_ready: true, floor_version: target.version},
+          payload: {
+            state: "success",
+            mode,
+            trigger,
+            world_ready: true,
+            floor_version: target.version,
+            execution_id: result?.candidate_execution_id ?? job.diagnostic_execution_id,
+            candidate_fingerprint: result?.candidate_fingerprint ?? null,
+            persistence_confirmed: result?.persistence_skipped !== true,
+            final_result: result?.final_result ?? null,
+          },
           chatId: target.chatId,
         });
         return result;
@@ -640,8 +1088,10 @@ export function createWorldAnalysis({
             execution_id: job.diagnostic_execution_id,
             latest_world_fact_delta_execution_id: latestFactDelta.execution_id,
             latest_fact_delta: cloneWorldValue(latestFactDelta.summary),
+            final_result: classifyWorldModelFinalResult({summary: latestFactDelta.summary, error}),
             latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
             recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+            request_transitions: cloneWorldValue(recentWorldRequestTransitions),
             mode,
             trigger,
             floor_version: cloneWorldValue(target.version),
@@ -744,8 +1194,11 @@ export function createWorldAnalysis({
     getWorldModelDiagnosticState: () => cloneWorldValue(latestWorldModelDiagnostic),
     clear: () => {
       worldInFlight.clear();
+      completedWorldCandidates.clear();
       latestWorldModelDiagnostic = null;
       recentFactDeltaExecutions = [];
+      recentWorldRequestTransitions = [];
+      lastIndependentWorldRequest = null;
     },
   };
 }

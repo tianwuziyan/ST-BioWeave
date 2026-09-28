@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model evidence boundary, Supplement scope binding, Evidence Guard, and canonicalization contract"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership boundary; prevent Phase 1 analysis changes from touching persistence ownership"}

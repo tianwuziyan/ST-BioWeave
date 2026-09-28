@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "Check evidence provenance, scope binding, fail-closed semantics, and Full/Supplement boundaries"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check that Floor/persistence ownership remains unchanged"}

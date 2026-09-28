@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "Current World Model Full/Supplement discovery, Fact Delta, Coverage, Evidence Guard, and persistence boundaries."}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership and provenance constraints that must remain frozen."}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "World Model Supplement Fact Delta、scope、coverage、identity、Evidence Guard 边界"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "确认本轮不得改变 Floor ownership、provenance、persistence 边界"}
+{"file": "docs/ARCHITECTURE.md", "reason": "确认 AI、World Runtime、Coordinator、UI feature owner 与冻结层"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 AI wire format、runtime acceptance、persistence 的边界检查"}

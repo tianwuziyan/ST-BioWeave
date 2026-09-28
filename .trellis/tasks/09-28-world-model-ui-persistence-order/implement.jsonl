@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership, current Chat/Swipe validity, and no-bypass persistence constraints."}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model business ownership and canonical/no-op semantics."}
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"UI/runtime diagnostic and error propagation conventions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Required cross-layer contract review for candidate, UI, runtime, and Floor flow."}

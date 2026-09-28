@@ -6,8 +6,12 @@ import {charactersPage} from '../ui/characters.js';
 import {eventsPage} from '../ui/events.js';
 import {overviewPage} from '../ui/overview.js';
 import {statePage} from '../ui/state.js';
-import {worldPage} from '../ui/world.js';
+import {summarizeWorldModelUiProjection, worldPage} from '../ui/world.js';
 import {PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND} from '../core/events.js';
+import {
+  createWorldModelUiIngressFixture,
+  WORLD_MODEL_UI_INGRESS_VALUES,
+} from './fixtures/world-model/ui-ingress.js';
 
 const event = {
   event_id: 'evt-1',
@@ -354,6 +358,16 @@ test('capability labels remain Chinese across Character, State, and World UI', (
     assert.doesNotMatch(html, />can_fertilize</);
   }
   assert.doesNotMatch(stateHtml, /可使对方受精|can_fertilize/);
+});
+
+test('canonical World Model mutation fields reach the World renderer', () => {
+  const model = createWorldModelUiIngressFixture();
+  const html = worldPage({worldModel: model, selectedSpeciesIndex: 0, selectedTypeIndex: 0});
+  for (const value of WORLD_MODEL_UI_INGRESS_VALUES)
+    assert.match(html, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const projection = summarizeWorldModelUiProjection(model);
+  assert.equal(projection.unrendered_canonical_field_count, 0);
+  assert.ok(projection.rendered_field_count > 0);
 });
 
 test('overview renders business analysis status without execution diagnostics', () => {

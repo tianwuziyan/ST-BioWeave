@@ -757,6 +757,18 @@ test('successful response shapes remain available to the client normalization bo
   )
   assert.deepEqual(sseResult, { content: '{}' })
 })
+
+test('JSON response format is sent only with an explicit capability', async () => {
+  const bodies = []
+  const fetchRef = async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return new Response(JSON.stringify({content: '{}'}), {status: 200})
+  }
+  await callOpenAICompatible(independentApiProfile(), [{role: 'user', content: 'test'}], independentApiOptions(fetchRef))
+  await callOpenAICompatible(independentApiProfile(), [{role: 'user', content: 'test'}], independentApiOptions(fetchRef, {responseFormatCapability: true}))
+  assert.equal(Object.hasOwn(bodies[0], 'response_format'), false)
+  assert.deepEqual(bodies[1].response_format, {type: 'json_object'})
+})
 test('standard native Response SSE remains an explicit json-first diagnostic', async () => {
   await assert.rejects(
     callOpenAICompatible(

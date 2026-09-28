@@ -601,7 +601,7 @@ function setDefinedRequestField(target, key, value) {
   if (value === undefined || value === null || value === '') return
   target[key] = value
 }
-async function currentApiRequest(profile, messages, context) {
+async function currentApiRequest(profile, messages, context, options = {}) {
   const settings = context?.chatCompletionSettings
   if (!settings || typeof settings !== 'object') return null
   const service = context?.ChatCompletionService
@@ -621,6 +621,7 @@ async function currentApiRequest(profile, messages, context) {
     max_tokens: numeric(outputTokens, 4096, 1, 10000000, true),
     temperature: numeric(settings.temp_openai ?? settings.temperature, 0.2, 0, 2),
   }
+  if (options.responseFormatCapability === true) request.response_format = {type: 'json_object'}
   const settingFields = {
     frequency_penalty: settings.freq_openai,
     presence_penalty: settings.pres_openai,
@@ -1154,8 +1155,8 @@ async function normalizeResponseLike(value, requestState = {}, { attempt = reque
     throw error
   }
 }
-async function runCurrentApi(profile, messages, context, signal, requestState) {
-  const currentRequest = await currentApiRequest(profile, messages, context)
+async function runCurrentApi(profile, messages, context, signal, requestState, options = {}) {
+  const currentRequest = await currentApiRequest(profile, messages, context, options)
   if (currentRequest) {
     // ChatCompletionService 不挂接 GENERATION_STOPPED，避免宿主结束主楼生成时取消本次分析。
     const result = await currentRequest.service.processRequest(currentRequest.request, {}, true, signal)
@@ -1173,7 +1174,7 @@ async function runCurrentApi(profile, messages, context, signal, requestState) {
   traceTransportResolved(result)
   return normalizeResponseLike(result, requestState)
 }
-async function runIndependentApi(profile, messages, context, signal, requestState, fetchRef) {
+async function runIndependentApi(profile, messages, context, signal, requestState, fetchRef, options = {}) {
   const apiUrl = apiUrlFrom(profile)
   if (!apiUrl || !profile.model) {
     const error = new Error('API_PROFILE_INVALID')
@@ -1197,6 +1198,7 @@ async function runIndependentApi(profile, messages, context, signal, requestStat
       secret_id: profile.secret_ref || NO_SECRET_ID,
       max_tokens: numeric(profile.max_output_tokens, 4096, 1, 10000000, true),
       temperature: numeric(profile.temperature, 0.2, 0, 2),
+      ...(options.responseFormatCapability === true ? {response_format: {type: 'json_object'}} : {}),
     }),
     signal,
   })
@@ -1288,8 +1290,8 @@ export async function callOpenAICompatible(profile, messages, options = {}) {
     return await requestWithRetry(
       (signal, requestState) =>
         isCurrentApi(profile)
-          ? runCurrentApi(profile, messages, context, signal, requestState)
-          : runIndependentApi(normalized, messages, context, signal, requestState, fetchRef),
+          ? runCurrentApi(profile, messages, context, signal, requestState, {responseFormatCapability: options.responseFormatCapability === true})
+          : runIndependentApi(normalized, messages, context, signal, requestState, fetchRef, {responseFormatCapability: options.responseFormatCapability === true}),
       options,
     )
   } catch (error) {

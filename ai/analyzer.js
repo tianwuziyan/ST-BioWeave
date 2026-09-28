@@ -12,15 +12,18 @@ import {
 import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
 import {
   parseWorldModelCandidateText,
-  parseWorldModelFactDeltaText,
   buildWorldModelSupplementCoverageTargets,
   buildWorldModelSupplementIdentityReviewSubjects,
-  parseWorldModelSupplementReviewText,
+  parseWorldModelFactDeltaJson,
   summarizeWorldModelSupplementIdentityDiversity,
   validateWorldModelSupplementCompleteness,
+  worldModelSupplementCoverageCardinality,
   validateWorldModelFactDelta,
   validateWorldModelCandidate,
 } from './world-supplement-protocol.js';
+import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
+
+const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 2;
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -596,6 +599,10 @@ function factDeltaEvidenceTraceUnits(input = {}) {
   }));
 }
 
+function factDeltaEvidenceGuardUnits(input = {}) {
+  return factDeltaEvidenceUnitRecords(input).map((record) => Object.assign(new String(record.text), record));
+}
+
 function factDeltaAddress(fact) {
   if (fact?.field === 'Exception' || fact?.field === 'Unknown' || fact?.field === 'Projection_Rule' || !fact?.species) {
     return {scope: 'world'};
@@ -617,6 +624,133 @@ function factDeltaEvidenceSummary(input = {}) {
       text_length: text.length,
     })),
   };
+}
+
+function supplementRequestBaseInput(input = {}, existingModel, candidateModel) {
+  const {
+    supplement_request_mode: _requestMode,
+    supplement_request_round: _requestRound,
+    supplement_retry_directive: _retryDirective,
+    ...baseInput
+  } = input && typeof input === 'object' ? input : {};
+  return {
+    ...baseInput,
+    world_model: existingModel,
+    supplement_candidate: candidateModel,
+    supplement_request_mode: undefined,
+    supplement_request_round: undefined,
+    supplement_retry_directive: undefined,
+  };
+}
+
+async function supplementRequestParity({analysisInput, existingModel, candidateModel, retryDirective, requestMode, requestRound, promptSettings, messages}) {
+  const evidenceUnits = factDeltaEvidenceTraceUnits(analysisInput);
+  const evidencePayload = evidenceUnits.map(({source_kind, source_index, line_index, text, parent_context}) => ({
+    source_kind,
+    source_index,
+    line_index,
+    text,
+    parent_context,
+  }));
+  const coverageTargets = buildWorldModelSupplementCoverageTargets(candidateModel);
+  const baseMessages = buildWorldModelPatchMessagesV2(
+    supplementRequestBaseInput(analysisInput, existingModel, candidateModel),
+    promptSettings,
+  );
+  const fingerprint = async value => fingerprintWorldModelString(stableWorldModelStringify(value));
+  const [evidenceFingerprint, existingFingerprint, targetFingerprint, analysisPayloadFingerprint, modelRequestPayloadFingerprint, controlDirectiveFingerprint] = await Promise.all([
+    fingerprint(evidencePayload),
+    fingerprint(existingModel),
+    fingerprint(coverageTargets.map(target => ({
+      target_id: target.target_id,
+      scope: target.scope,
+      species: target.species ?? null,
+      biological_type: target.biological_type ?? null,
+      field: target.field,
+      cardinality: target.cardinality,
+    })).sort((left, right) => left.target_id.localeCompare(right.target_id))),
+    fingerprint(baseMessages),
+    fingerprint(messages),
+    fingerprint({request_mode: requestMode, request_round: requestRound, directive: retryDirective ?? null}),
+  ]);
+  return {
+    permitted_evidence_fingerprint: evidenceFingerprint.fingerprint,
+    existing_reference_fingerprint: existingFingerprint.fingerprint,
+    coverage_target_set_fingerprint: targetFingerprint.fingerprint,
+    analysis_payload_fingerprint: analysisPayloadFingerprint.fingerprint,
+    model_request_payload_fingerprint: modelRequestPayloadFingerprint.fingerprint,
+    control_directive_fingerprint: controlDirectiveFingerprint.fingerprint,
+    permitted_evidence_char_count: evidencePayload.reduce((total, item) => total + item.text.length, 0),
+  };
+}
+
+function canonicalCoverageAddress({scope, species = null, biological_type = null, field} = {}) {
+  return {
+    scope: String(scope ?? '').trim(),
+    species: species == null ? null : String(species).trim(),
+    biological_type: biological_type == null ? null : String(biological_type).trim(),
+    field: String(field ?? '').trim(),
+  }
+}
+
+function canonicalFactCoverageAddress(fact) {
+  return canonicalCoverageAddress({
+    ...factDeltaAddress(fact),
+    species: fact?.species,
+    biological_type: fact?.biological_type,
+    field: fact?.field,
+  })
+}
+
+function coverageAddressEquals(left, right) {
+  return stableWorldModelStringify(left) === stableWorldModelStringify(right)
+}
+
+export function buildWorldModelSupplementCoverageFactMappings(coverageTargets = [], facts = [], resolution = {}) {
+  const results = Array.isArray(resolution?.factResults) ? resolution.factResults : []
+  const sourceFacts = Array.isArray(facts) ? facts : []
+  return (Array.isArray(coverageTargets) ? coverageTargets : []).slice(0, 128).map(target => {
+    const expected = canonicalCoverageAddress(target)
+    const candidates = sourceFacts.map((fact, index) => ({fact, index, address: canonicalFactCoverageAddress(fact)}))
+    const exact = candidates.filter(item => coverageAddressEquals(item.address, expected))
+    const accepted = exact.filter(item => results.some(result => result?.fact === item.fact && ['accepted', 'no-op', 'deduplicated'].includes(result?.status)))
+    const resolved = exact.filter(item => results.some(result => result?.fact === item.fact && result?.status !== 'rejected'))
+    const matching = accepted.map(item => ({
+      fact_index: item.fact?.fact_index ?? item.index,
+      field: item.fact?.field ?? null,
+      address: item.address,
+    }))
+    const cardinality = target?.cardinality ?? worldModelSupplementCoverageCardinality(target?.field)
+    const result = cardinality === 'collection'
+      ? accepted.length > 0 ? 'MATCHED' : exact.length > 0 ? 'UNRESOLVED' : 'NO_EXACT_MATCH'
+      : accepted.length === 1 ? 'EXACT_MATCH' : accepted.length === 0 ? (exact.length > 0 ? 'UNRESOLVED' : 'NO_EXACT_MATCH') : 'MULTIPLE_EXACT_MATCH'
+    return {
+      target_id: target?.target_id ?? null,
+      target_scope: target?.scope ?? null,
+      target_species: target?.species ?? null,
+      target_biological_type: target?.biological_type ?? null,
+      target_field: target?.field ?? null,
+      expected_canonical_address: expected,
+      raw_candidate_fact_count: exact.length,
+      parsed_candidate_fact_count: exact.length,
+      resolved_candidate_fact_count: resolved.length,
+      accepted_candidate_fact_count: accepted.length,
+      candidate_fact_addresses: candidates.slice(0, 16).map(item => item.address),
+      raw_exact_address_match_count: exact.length,
+      exact_address_match_count: accepted.length,
+      matched_fact_indices: matching.slice(0, 16).map(item => item.fact_index),
+      matched_fact_fields: matching.slice(0, 16).map(item => item.field),
+      matched_fact_addresses: matching.slice(0, 16).map(item => item.address),
+      target_cardinality: cardinality,
+      minimum_required_fact_count: cardinality === 'collection' ? 1 : 1,
+      maximum_allowed_fact_count: cardinality === 'collection' ? null : 1,
+      target_collection_semantics: cardinality,
+      mapping_result: result,
+      ...(result === 'EXACT_MATCH' || result === 'MATCHED'
+        ? {mapping_failure_reason: null}
+        : {mapping_failure_reason: result === 'MULTIPLE_EXACT_MATCH' ? 'exact_address_must_match_once' : result === 'UNRESOLVED' ? 'matching_fact_rejected' : 'no_exact_address_match'}),
+    }
+  })
 }
 
 function factDeltaCoverageTargetKey(target) {
@@ -646,6 +780,36 @@ function factDeltaCoverageSummary(targets, facts = []) {
     coverage_targets: targetSummary.slice(0, 128),
     coverage_targets_truncated: targetSummary.length > 128,
   }
+}
+
+function factDeltaMutationStates(targets, dispositions, factResults) {
+  const factsByAddress = new Map()
+  for (const result of Array.isArray(factResults) ? factResults : []) {
+    if (!result?.fact) continue
+    const fact = result.fact
+    const key = factDeltaCoverageTargetKey({
+      scope: factDeltaAddress(fact).scope,
+      species: fact.species,
+      biological_type: fact.biological_type,
+      field: fact.field,
+    })
+    factsByAddress.set(key, result)
+  }
+  return (Array.isArray(dispositions) ? dispositions : []).slice(0, 64).map(disposition => {
+    const target = (Array.isArray(targets) ? targets : []).find(item => item.target_id === disposition.target_id)
+    const result = target ? factsByAddress.get(factDeltaCoverageTargetKey(target)) : null
+    if (disposition.disposition === 'NO_EVIDENCE') {
+      return {target_id: disposition.target_id, review_status: 'REVIEWED', disposition: 'NO_EVIDENCE', mutation_status: 'NOT_APPLICABLE'}
+    }
+    const accepted = ['accepted', 'no-op', 'deduplicated'].includes(result?.status)
+    return {
+      target_id: disposition.target_id,
+      review_status: 'REVIEWED',
+      disposition: 'EMITTED',
+      mutation_status: accepted ? 'ACCEPTED' : 'REJECTED',
+      ...(accepted ? {} : {mutation_rejection_reason: result?.code ?? result?.reason ?? 'FACT_REJECTED'}),
+    }
+  })
 }
 
 function factDeltaFieldForOperation(operation) {
@@ -782,8 +946,8 @@ function factDeltaEvidenceCandidates(operation, units, debug) {
 }
 
 function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = null, debug = false) {
-  const units = factDeltaEvidenceUnits(analysisInput);
-  const traceUnits = factDeltaEvidenceTraceUnits(analysisInput);
+  const units = factDeltaEvidenceGuardUnits(analysisInput);
+  const traceUnits = units;
   const candidateBinding = factDeltaEvidenceCandidates(operation, traceUnits, debug);
   const target = operation?.target ?? {};
   const speciesName = target.species_name ?? operation?.species?.name ?? null;
@@ -799,12 +963,28 @@ function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = n
     delete context.typeName;
   }
   if (target.kind === 'species' && operation?.op !== 'ADD_TYPE') delete context.typeName;
-  const scopedUnits = v2ScopedEvidenceUnits(units, context);
-  const scopedUnitIndices = scopedUnits.flatMap((unit) => {
+  const scopedUnitRecords = v2ScopedEvidenceUnitRecords(units, context);
+  const scopedUnits = scopedUnitRecords.map(evidenceUnitText);
+  const scopedUnitIndices = scopedUnitRecords.flatMap((unit) => {
     const index = units.indexOf(unit);
     return index >= 0 ? [index] : [];
   });
   const matchedSupportingUnitIndices = candidateBinding.candidate_unit_indices.filter(index => scopedUnitIndices.includes(index));
+  const operationValue = operation?.op === 'SET_FIELD'
+    ? operation.value
+    : operation?.op === 'ADD_TYPE'
+      ? operation.type?.name
+      : operation?.op === 'ADD_SPECIES'
+        ? operation.species?.name
+        : operation?.op === 'ADD_SPECIAL_RULE' || operation?.op === 'ADD_UNKNOWN'
+          ? (operation.value ?? operation.unknown)
+          : operation?.op === 'ADD_EXCEPTION'
+            ? operation.exception
+            : operation?.op === 'ADD_MECHANISM'
+              ? operation.mechanism
+              : operation?.op === 'ADD_PROJECTION_RULE'
+                ? operation.projection_rule
+                : null;
   let code = null;
   if (candidateBinding.candidate_unit_indices.length === 0) code = 'NO_CANDIDATE_EVIDENCE';
   else if (context.typeName && scopedUnitIndices.length === 0) code = 'SCOPE_BINDING_FAILED';
@@ -837,9 +1017,101 @@ function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = n
     matched_supporting_unit_count: matchedSupportingUnitIndices.length,
     matched_evidence_unit_count: matchedSupportingUnitIndices.length,
     matched_evidence_unit_indices: matchedSupportingUnitIndices,
+    matched_evidence_excerpts: matchedSupportingUnitIndices.slice(0, 8).map(index => ({
+      unit_index: index,
+      excerpt: String(traceUnits[index]?.text ?? '').slice(0, 240),
+    })),
+    candidate_value: factDeltaDiagnosticValue(operationValue),
+    candidate_normalized_value: typeof operationValue === 'string'
+      ? compactEvidenceText(operationValue).slice(0, 240)
+      : factDeltaDiagnosticValue(operationValue),
+    support_strategy: error ? 'v2_validate_operation_evidence' : null,
+    support_score_if_any: null,
+    required_threshold_if_any: null,
+    scope_binding_result: scopedUnitIndices.length > 0 ? 'BOUND' : 'NO_MATCH',
+    value_support_result: error ? 'REJECTED' : matchedSupportingUnitIndices.length > 0 ? 'MATCHED' : 'NOT_EVALUATED',
+    rejection_detail: error?.message ?? error?.code ?? null,
     rejection_stage: error ? 'world_patch_v2_evidence_guard' : null,
     rejection_code: code,
   };
+}
+
+function factDeltaEvidenceGuardDecision(operation, analysisInput, error, factIndex = null, debug = false) {
+  const binding = factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error, debug);
+  return {
+    fact_index: factIndex,
+    field: operation ? factDeltaFieldForOperation(operation) : null,
+    canonical_address: binding.canonical_address,
+    candidate_value: binding.candidate_value,
+    candidate_normalized_value: binding.candidate_normalized_value,
+    scoped_evidence_unit_count: binding.scoped_unit_count,
+    matched_evidence_unit_count: binding.matched_evidence_unit_count,
+    matched_evidence_unit_indices: binding.matched_evidence_unit_indices,
+    matched_evidence_excerpts: binding.matched_evidence_excerpts,
+    support_strategy: binding.support_strategy,
+    support_score_if_any: binding.support_score_if_any,
+    required_threshold_if_any: binding.required_threshold_if_any,
+    scope_binding_result: binding.scope_binding_result,
+    value_support_result: binding.value_support_result,
+    rejection_code: binding.rejection_code,
+    rejection_detail: binding.rejection_detail,
+  };
+}
+
+function factDeltaTypeIdentityDecisions({facts = [], resolution, guarded, existing, analysisInput, debug = false} = {}) {
+  const normalizedExisting = normalizeWorldModel(existing, {strict: true, allowGeneratedProjectionRuleIds: true});
+  const results = Array.isArray(guarded?.factResults) ? guarded.factResults : [];
+  return (Array.isArray(facts) ? facts : [])
+    .filter(fact => fact?.field === 'Type_Identity')
+    .slice(0, 32)
+    .map(fact => {
+      const factIndex = fact.fact_index ?? facts.indexOf(fact);
+      const lifecycle = results.find(item => item.fact_index === factIndex);
+      const species = normalizedExisting.species.find(item => item.name === fact.species);
+      const existingIdentity = Boolean(species?.biological_types?.some(item => item.name === fact.biological_type));
+      const operation = lifecycle?.operation ?? factDeltaOperationForFact(fact, normalizedExisting);
+      const error = lifecycle?.guardError ?? null;
+      const binding = operation
+        ? factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error, debug)
+        : null;
+      const dependentFacts = (Array.isArray(facts) ? facts : []).filter(item =>
+        item?.species === fact.species && item?.biological_type === fact.biological_type && item?.field !== 'Type_Identity',
+      );
+      const dependentResults = dependentFacts.map(dependent => results.find(item => item.fact_index === (dependent.fact_index ?? facts.indexOf(dependent))));
+      const accepted = ['accepted', 'no-op', 'deduplicated'].includes(lifecycle?.status);
+      const identitySupportClassification = existingIdentity
+        ? 'EXISTING_IDENTITY'
+        : binding?.scoped_unit_count > 0
+          ? 'SUPPORTED'
+          : 'LEGITIMATELY_UNSUPPORTED';
+      return {
+        fact_index: factIndex,
+        species: fact.species ?? null,
+        biological_type: fact.biological_type ?? null,
+        existing_identity: existingIdentity,
+        new_identity: !existingIdentity,
+        evidence_unit_count: binding?.unit_count ?? null,
+        candidate_unit_count: binding?.candidate_unit_count ?? null,
+        candidate_unit_indices: binding?.candidate_unit_indices?.slice(0, 16) ?? [],
+        species_scoped_unit_count: binding?.scoped_unit_count ?? null,
+        candidate_type_matching_unit_count: binding?.matched_supporting_unit_count ?? null,
+        matched_evidence_unit_indices: binding?.matched_supporting_unit_indices?.slice(0, 16) ?? [],
+        scope_binding_strategy: 'SPECIES_PLUS_STABLE_TYPE_IDENTITY_SCOPE',
+        scope_binding_result: binding?.scope_binding_result ?? null,
+        value_support_strategy: binding?.support_strategy ?? null,
+        value_support_result: binding?.value_support_result ?? null,
+        identity_support_classification: identitySupportClassification,
+        guard_decision: accepted ? 'ACCEPTED' : 'REJECTED',
+        rejection_code: lifecycle?.code ?? error?.code ?? null,
+        identity_operation_produced: Boolean(operation),
+        identity_accepted: accepted,
+        dependent_fact_count: dependentFacts.length,
+        dependent_facts_unlocked: accepted
+          ? dependentFacts.filter((_, index) => !['WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED', 'WORLD_MODEL_FACT_DELTA_SPECIES_IDENTITY_REQUIRED'].includes(dependentResults[index]?.code)).map(item => item.fact_index ?? facts.indexOf(item)).slice(0, 32)
+          : [],
+        dependent_facts_blocked: dependentFacts.filter((_, index) => dependentResults[index]?.code === 'WORLD_MODEL_FACT_DELTA_TYPE_IDENTITY_REQUIRED').map(item => item.fact_index ?? facts.indexOf(item)).slice(0, 32),
+      };
+    });
 }
 
 function hasLabelEvidenceInUnits(units, pattern) {
@@ -3608,22 +3880,49 @@ function v2EvidenceError(path) {
 }
 
 function v2IndividualOnlyUnit(unit) {
-  return /(?:某(?:个|位|名)?(?:角色|人物|个体|NPC)|这个角色|该角色|单个(?:角色|人物|个体)|\b(?:an?|one|single)\s+(?:character|person|individual|NPC)\b)/iu.test(unit);
+  return /(?:某(?:个|位|名)?(?:角色|人物|个体|NPC)|这个角色|该角色|单个(?:角色|人物|个体)|\b(?:an?|one|single)\s+(?:character|person|individual|NPC)\b)/iu.test(evidenceUnitText(unit));
+}
+
+function evidenceUnitText(unit) {
+  return typeof unit === 'string' ? unit : String(unit?.text ?? '');
+}
+
+function structuredScopeMatches(unit, context = {}) {
+  const parent = unit?.parent_context;
+  if (!parent || (!parent.species && !parent.biological_type)) return null;
+  const parentSpecies = compactEvidenceText(parent.species);
+  const parentType = compactEvidenceText(parent.biological_type);
+  const expectedSpecies = compactEvidenceText(context.speciesName);
+  const expectedType = compactEvidenceText(context.typeName);
+  if (context.typeName) {
+    return Boolean(parentSpecies && parentType && parentSpecies === expectedSpecies && parentType === expectedType);
+  }
+  if (context.speciesName) return Boolean(parentSpecies && parentSpecies === expectedSpecies);
+  return true;
+}
+
+function v2ScopedEvidenceUnitRecords(units, context = {}) {
+  const safeUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
+  if (context.typeName) {
+    return safeUnits.filter((unit) => {
+      const structured = structuredScopeMatches(unit, context);
+      if (structured !== null) return structured;
+      const text = evidenceUnitText(unit);
+      return hasGenericDirectLabelEvidence(text, context.speciesName) &&
+        (hasGenericDirectLabelEvidence(text, context.typeName) ||
+          familiarTypeLabelMatch(text, context.speciesName, context.typeName)) &&
+        hasGenericScopedTypeEvidence(text, context.speciesName, context.typeName, { allowFamiliar: true, strictInteraction: true });
+    });
+  }
+  if (context.speciesName) return safeUnits.filter((unit) => {
+    const structured = structuredScopeMatches(unit, context);
+    return structured !== null ? structured : hasGenericDirectLabelEvidence(evidenceUnitText(unit), context.speciesName);
+  });
+  return safeUnits;
 }
 
 function v2ScopedEvidenceUnits(units, context = {}) {
-  const safeUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
-  if (context.typeName) {
-    return safeUnits.filter((unit) =>
-      hasGenericDirectLabelEvidence(unit, context.speciesName) &&
-      (hasGenericDirectLabelEvidence(unit, context.typeName) ||
-        familiarTypeLabelMatch(unit, context.speciesName, context.typeName)) &&
-      hasGenericScopedTypeEvidence(unit, context.speciesName, context.typeName, { allowFamiliar: true, strictInteraction: true }),
-    );
-  }
-  if (context.speciesName)
-    return safeUnits.filter((unit) => hasGenericDirectLabelEvidence(unit, context.speciesName));
-  return safeUnits;
+  return v2ScopedEvidenceUnitRecords(units, context).map(evidenceUnitText);
 }
 
 function v2EvidenceSupportsFact(value, units, context = {}) {
@@ -4013,7 +4312,7 @@ function annotateV2GuardFailure(error, result, operationIndex) {
 export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput = {}) {
   const existing = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const classified = classifyWorldModelPatchV2(patch, existing);
-  const units = factDeltaEvidenceUnits(analysisInput);
+  const units = factDeltaEvidenceGuardUnits(analysisInput);
   for (const [operationIndex, result] of classified.entries()) {
     try {
       v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
@@ -4713,6 +5012,9 @@ export function createAnalyzer({
       signal: input.signal,
       context: contextResolver?.(),
       requestSettings: requestSettingsResolver?.(),
+      // JSON mode is opt-in from an explicit host capability, never inferred
+      // from provider/model names. Prompt-only JSON remains the fallback.
+      responseFormatCapability: input.response_format_capability === true,
     };
   }
 
@@ -4777,7 +5079,7 @@ export function createAnalyzer({
     return canonicalModel;
   }
 
-  // Supplement AI returns Fact Delta Text. Patch v2 remains an internal
+  // Supplement AI returns JSON Fact Delta. Patch v2 remains an internal
   // deterministic mutation IR for the existing guard/merge boundary.
   async function analyzeWorldModelPatchV2(input = {}) {
     const profile = profileResolver?.('world_analysis') ?? profileResolver?.('world')
@@ -4793,11 +5095,47 @@ export function createAnalyzer({
     const candidateModel = input.supplement_candidate ?? analysisInput.supplement_candidate ?? existingModel
     const coverageTargets = buildWorldModelSupplementCoverageTargets(candidateModel)
     const identitySubjects = buildWorldModelSupplementIdentityReviewSubjects(candidateModel, input.supplement_identity_subjects ?? analysisInput.supplement_identity_subjects)
+    const retryDirective = input.supplement_retry_directive
+      ?? analysisInput.supplement_retry_directive
     const messages = buildWorldModelPatchMessagesV2({
       ...analysisInput,
       world_model: existingModel,
       supplement_candidate: candidateModel,
+      supplement_retry_directive: retryDirective,
     }, promptSettings)
+    const requestMode = input.supplement_request_mode
+      ?? analysisInput.supplement_request_mode
+      ?? (retryDirective?.kind ?? (retryDirective ? 'completeness_retry' : 'initial'))
+    const requestRound = Number(input.supplement_request_round ?? analysisInput.supplement_request_round) || 1
+    const requestParity = await supplementRequestParity({
+      analysisInput,
+      existingModel,
+      candidateModel,
+      retryDirective,
+      requestMode,
+      requestRound,
+      promptSettings,
+      messages,
+    })
+    const requestEnvelope = {
+      request_mode: requestMode,
+      request_round: requestRound,
+      request_total_char_count: messages.reduce((total, message) => total + String(message?.content ?? '').length, 0),
+      permitted_evidence_char_count: requestParity.permitted_evidence_char_count,
+      existing_reference_char_count: JSON.stringify(existingModel ?? {}).length,
+      coverage_target_char_count: JSON.stringify(coverageTargets).length,
+      retry_directive_char_count: JSON.stringify(retryDirective ?? '').length,
+      continuation_directive_char_count: String(requestMode).toUpperCase() === 'COVERAGE_CONTINUATION'
+        ? JSON.stringify(retryDirective ?? '').length
+        : 0,
+      host_diagnostics_included: false,
+      permitted_evidence_fingerprint: requestParity.permitted_evidence_fingerprint,
+      existing_reference_fingerprint: requestParity.existing_reference_fingerprint,
+      coverage_target_set_fingerprint: requestParity.coverage_target_set_fingerprint,
+      analysis_payload_fingerprint: requestParity.analysis_payload_fingerprint,
+      model_request_payload_fingerprint: requestParity.model_request_payload_fingerprint,
+      control_directive_fingerprint: requestParity.control_directive_fingerprint,
+    }
     const debug = factDeltaDebugEnabled(input)
     const emitFactDeltaTrace = (stage, details = {}) => {
       if (typeof input?.onFactDeltaTrace !== 'function') return
@@ -4815,21 +5153,21 @@ export function createAnalyzer({
     }
     emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_SUMMARY', factDeltaEvidenceSummary(analysisInput))
     emitFactDeltaTrace('WORLD_SUPPLEMENT_COVERAGE_TARGETS', factDeltaCoverageSummary(coverageTargets))
+    emitFactDeltaTrace('WORLD_SUPPLEMENT_REQUEST_ENVELOPE', requestEnvelope)
     const raw = await callOpenAICompatible(profile, messages, requestOptions(input))
     const response = responseText(raw)
     emitFactDeltaTrace('WORLD_FACT_DELTA_RESPONSE_RECEIVED', {
       response_text_length: response.length,
     })
     try {
-      const review = parseWorldModelSupplementReviewText(response)
-      const parsed = parseWorldModelFactDeltaText(response)
-      const facts = validateWorldModelFactDelta(parsed.facts).map((fact, factIndex) => {
+      const parsed = parseWorldModelFactDeltaJson(response)
+      const facts = parsed.facts.map((fact, factIndex) => {
         const indexed = {...fact}
         Object.defineProperty(indexed, 'fact_index', {value: factIndex, enumerable: false})
         return indexed
       })
       emitFactDeltaTrace('WORLD_FACT_DELTA_PARSED', {
-        raw_fact_block_count: parsed.raw_fact_block_count ?? facts.length + (parsed.rejectedFacts?.length ?? 0),
+        raw_fact_block_count: facts.length + (parsed.rejectedFacts?.length ?? 0),
         parsed_fact_count: facts.length,
         parse_rejected_fact_count: parsed.rejectedFacts?.length ?? 0,
         fact_count: facts.length,
@@ -4859,6 +5197,23 @@ export function createAnalyzer({
       })
       const resolution = resolveWorldModelFactDelta(facts, candidateModel)
       const normalizedExisting = normalizeWorldModel(candidateModel, {strict: true, allowGeneratedProjectionRuleIds: true})
+      const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
+      const acceptedFacts = guarded.factResults
+        .filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status))
+        .map(item => item.fact)
+      const coverageFactMappings = buildWorldModelSupplementCoverageFactMappings(coverageTargets, facts, guarded)
+      const coverageDispositions = coverageTargets.flatMap(target => {
+        const mapping = coverageFactMappings.find(item => item.target_id === target.target_id)
+        const acceptedCount = mapping?.exact_address_match_count ?? 0
+        const complete = target.cardinality === 'collection' ? acceptedCount >= 1 : acceptedCount === 1
+        if (parsed.coverage_no_evidence_target_ids.includes(target.target_id) && acceptedCount === 0)
+          return [{target_id: target.target_id, disposition: 'NO_EVIDENCE'}]
+        return complete ? [{target_id: target.target_id, disposition: 'EMITTED'}] : []
+      })
+      const review = {
+        coverage_dispositions: coverageDispositions,
+        identity_reviews: parsed.identity_reviews,
+      }
       let completenessSummary = null
       if (input.require_supplement_completeness === true) {
         try {
@@ -4868,6 +5223,8 @@ export function createAnalyzer({
             identitySubjects,
             identityReviews: review.identity_reviews,
             facts,
+            coverageFactMappings,
+            acceptedFacts,
             existingModel: candidateModel,
           })
         } catch (error) {
@@ -4879,10 +5236,14 @@ export function createAnalyzer({
           throw error
         }
       }
-      const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
       const acceptedIdentityFacts = guarded.factResults
         .filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status) && item.fact?.field === 'Type_Identity')
         .map(item => item.fact)
+      const coverageMutationStates = factDeltaMutationStates(
+        coverageTargets,
+        review.coverage_dispositions,
+        guarded.factResults,
+      )
       const identityDiversity = summarizeWorldModelSupplementIdentityDiversity({
         existingModel: candidateModel,
         identitySubjects,
@@ -4890,10 +5251,39 @@ export function createAnalyzer({
         facts,
         acceptedFacts: acceptedIdentityFacts,
       })
+      const typeIdentityDecisions = factDeltaTypeIdentityDecisions({
+        facts,
+        resolution,
+        guarded,
+        existing: candidateModel,
+        analysisInput,
+        debug,
+      })
+      for (const decision of typeIdentityDecisions)
+        emitFactDeltaTrace('WORLD_TYPE_IDENTITY_DECISION', {
+          execution_id: input.fact_delta_execution_id ?? null,
+          world_model_debug_schema_version: WORLD_MODEL_DEBUG_SCHEMA_VERSION,
+          ...decision,
+        })
       for (const rejected of guarded.rejectedFacts) {
         const error = rejected.guardError
         const operation = factDeltaRejectedOperation(error)
         if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
+          const decision = factDeltaEvidenceGuardDecision(
+            rejected.operation ?? {
+              op: operation?.operation_type,
+              target: error.operation_target,
+              value: operation?.proposed_value,
+            },
+            analysisInput,
+            error,
+            rejected.fact_index ?? rejected.index ?? null,
+            debug,
+          )
+          emitFactDeltaTrace('WORLD_EVIDENCE_GUARD_DECISION', {
+            execution_id: input.fact_delta_execution_id ?? null,
+            ...decision,
+          })
           emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_REJECTED', {
             fact_index: rejected.fact_index,
             rejected_operation_type: operation?.operation_type ?? error.operation_op ?? rejected.operation?.op ?? null,
@@ -4910,6 +5300,7 @@ export function createAnalyzer({
               target: error.operation_target,
               value: operation?.proposed_value,
             }, analysisInput, error, debug),
+            decision,
           })
         } else {
           emitFactDeltaTrace('WORLD_FACT_DELTA_REJECTED', {
@@ -4931,6 +5322,7 @@ export function createAnalyzer({
       // parsed = resolution-rejected + Guard-rejected + accepted facts.
       const rejectedFactCount = parseRejectedFactCount + resolutionRejectedFactCount + evidenceGuardRejectedFactCount
       const factDeltaSummary = {
+        world_model_debug_schema_version: WORLD_MODEL_DEBUG_SCHEMA_VERSION,
         analysis_stage_succeeded: true,
         raw_fact_block_count: parsed.raw_fact_block_count ?? facts.length + parseRejectedFactCount,
         parsed_fact_count: facts.length,
@@ -4960,7 +5352,25 @@ export function createAnalyzer({
         rejected_sibling_type_names: identityDiversity.rejected_sibling_type_names,
         new_type_identity_fact_count: identityDiversity.new_type_identity_fact_count,
         accepted_new_type_identity_count: identityDiversity.accepted_new_type_identity_count,
+        type_identity_decisions: typeIdentityDecisions,
+        first_failed_stage: parseRejectedFactCount > 0
+          ? 'FACT_PARSE'
+          : resolutionRejectedFactCount > 0
+            ? 'FACT_RESOLUTION'
+            : evidenceGuardRejectedFactCount > 0
+              ? 'EVIDENCE_GUARD'
+              : null,
         completeness_satisfied: completenessSummary?.supplement_completeness_complete ?? input.require_supplement_completeness !== true,
+        coverage_dispositions: Array.isArray(review.coverage_dispositions)
+          ? review.coverage_dispositions.slice(0, 64).map(item => ({
+              target_id: item.target_id,
+              disposition: item.disposition,
+            }))
+          : [],
+        coverage_mutation_states: coverageMutationStates,
+        review_accounted: completenessSummary?.supplement_completeness_complete ?? input.require_supplement_completeness !== true,
+        mutation_rejected_count: coverageMutationStates.filter(item => item.mutation_status === 'REJECTED').length,
+        request_envelope: requestEnvelope,
       }
       emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {
         raw_fact_block_count: factDeltaSummary.raw_fact_block_count,
@@ -4973,19 +5383,31 @@ export function createAnalyzer({
         patch_operation_count: guarded.patch.operations.length,
         ...factDeltaSummary,
         fact_mappings: factDeltaResolutionDiagnostics(facts, guarded.patch, normalizedExisting, guarded.factResults),
+        coverage_fact_mappings: coverageFactMappings,
         ...factDeltaCoverageSummary(coverageTargets, facts),
       })
       return {
         patch: guarded.patch,
         facts,
-        diagnostics: parsed.diagnostics,
+        diagnostics: [
+          ...(Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []),
+          ...(parsed.coverageDiagnostics ?? []),
+          ...(parsed.rejectedIdentityReviews ?? []),
+        ],
         rejectedFacts: [...(parsed.rejectedFacts ?? []), ...guarded.rejectedFacts],
+        rejectedIdentityReviews: parsed.rejectedIdentityReviews ?? [],
+        coverageDiagnostics: parsed.coverageDiagnostics ?? [],
         classified: guarded.classified,
         fact_delta_summary: factDeltaSummary,
       }
     } catch (error) {
       if (error?.validation_stage === 'world_patch_v2_evidence_guard') {
         const rejected = factDeltaRejectedOperation(error)
+        const decision = factDeltaEvidenceGuardDecision(rejected, analysisInput, error, error.fact_index ?? null, debug)
+        emitFactDeltaTrace('WORLD_EVIDENCE_GUARD_DECISION', {
+          execution_id: input.fact_delta_execution_id ?? null,
+          ...decision,
+        })
         emitFactDeltaTrace('WORLD_PATCH_EVIDENCE_REJECTED', {
           rejected_operation_type: rejected?.operation_type ?? error.operation_op ?? null,
           rejected_semantic_path: rejected?.semantic_path ?? error.canonical_target_path ?? error.path ?? null,
@@ -4997,6 +5419,7 @@ export function createAnalyzer({
           evidence_guard_failure_code: error.code ?? error.message ?? null,
           rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
           evidence_binding: factDeltaEvidenceBindingDiagnostics(rejected, analysisInput, error, debug),
+          decision,
         })
       }
       traceApi('parser-error', {

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/world-model.md", "reason": "检查 Supplement semantic contract 与 completeness/cardinality"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "检查 Floor ownership 与 persistence 没有回归"}
+{"file": "docs/ARCHITECTURE.md", "reason": "检查跨层修改范围与 frozen owner"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查数据格式迁移的跨层风险"}

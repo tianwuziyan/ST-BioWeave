@@ -640,6 +640,7 @@ export function createEventAnalysisCoordinator({
   }
 
   async function retryableStageFailure(error, { domain, target, execution, token } = {}) {
+    if (error?.format_retry_exhausted === true) return false;
     const code = String(error?.code ?? error?.error_code ?? "").toUpperCase();
     const causeCode = String(error?.cause?.code ?? error?.cause?.error_code ?? "").toUpperCase();
     const stage = String(error?.analysis_stage ?? "").toLowerCase();
@@ -853,7 +854,8 @@ export function createEventAnalysisCoordinator({
           }, domain === "world" ? "world" : "analysis");
         }
         const retryable = await retryableStageFailure(error, { domain, target, execution, token });
-        const canRetry = retryable && retryIndex < maxRetries;
+        const formatRetry = error?.retry_kind === "format_retry" && error?.format_retry_exhausted !== true;
+        const canRetry = formatRetry || (retryable && retryIndex < maxRetries);
         const failureStage = error?.analysis_stage ?? domain;
         const failureCode = failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED";
         emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_FAILED`, execution, target, {

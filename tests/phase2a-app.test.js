@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createApp} from '../ui/app.js';
 import {floorVersion} from '../runtime/floor.js';
+import {fingerprintWorldModel} from '../utils/world-model-debug.js';
+import {normalizeWorldModel} from '../ai/analyzer.js';
+import {
+  createWorldModelUiIngressFixture,
+  WORLD_MODEL_UI_INGRESS_VALUES,
+} from './fixtures/world-model/ui-ingress.js';
 
 class FakeElement {
   constructor(documentRef, tagName = 'div') {
@@ -167,7 +173,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, reemitPersistenceTrace = false} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -252,6 +258,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     setEnabled(value) { enabled = value !== false; },
     async resolveWorldModelAtOrBefore() {
       worldResolveCalls += 1;
+      if (typeof resolveWorldModel === 'function') return resolveWorldModel();
       return worldModel ? {model: structuredClone(worldModel), meta: {}} : null;
     },
     recordPersistenceTrace(entry) {
@@ -274,6 +281,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
       if (onRefresh) await onRefresh({floor, chat, version, context});
       return {status: 'success'};
     },
+    ...(typeof analyzeWorldPatch === 'function' ? {analyzeCurrentWorldModelPatch: analyzeWorldPatch} : {}),
     async getCurrentFloorAnalysisStatus() {
       return businessData().analysis_status;
     },
@@ -345,6 +353,33 @@ function clickTarget(action, extra = {}) {
 
 function visibleMarkup(html) {
   return html.replace(/\sdata-[\w-]+(?:="[^"]*")?/g, '');
+}
+
+async function waitFor(predicate, message = 'condition') {
+  for (let index = 0; index < 40; index += 1) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.fail(`Timed out waiting for ${message}`);
+}
+
+function worldCandidatePayload({model, fingerprint, version, executionId, trigger = 'auto-patch'}) {
+  return {
+    state: 'candidate_ready',
+    execution_id: executionId,
+    candidate_revision: fingerprint.full_hash,
+    candidate_fingerprint: fingerprint.fingerprint,
+    candidate_full_hash: fingerprint.full_hash,
+    chat_id: 'chat-app',
+    floor_version: version,
+    model,
+    meta: {source: 'world-patch-analysis'},
+    mode: 'patch',
+    trigger,
+    accepted_operation_count: 1,
+    canonical_mutation_occurred: true,
+    final_result: 'UPDATED',
+  };
 }
 
 test('App consumes persisted events and Tracking Registry without creating Chat-wide characters', async () => {
@@ -462,6 +497,204 @@ test('automatic World Full phase owns World busy state before Event Analysis', a
   assert.match(charactersMarkup, /等待世界分析完成…/);
   assert.doesNotMatch(charactersMarkup, /当前楼层正在分析中/);
   fixture.app.destroyBioWeave();
+});
+
+test('T1-T5/T10 closed-tab committed readback uses shared ingress despite an active loading gate', async () => {
+  let resolveFloor;
+  let fixture;
+  const pending = new Promise(resolve => { resolveFloor = resolve; });
+  const oldModel = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-Old', biological_types: []}]});
+  const candidateModel = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fingerprint = await fingerprintWorldModel(candidateModel);
+  fixture = await createFixture({
+    worldModel: oldModel,
+    resolveWorldModel: () => pending,
+  });
+  fixture.app.go('world');
+  await waitFor(() => fixture.worldResolveCalls() === 1, 'initial World reload');
+  fixture.app.go('overview');
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: worldCandidatePayload({model: candidateModel, fingerprint, version: fixture.version, executionId: 'candidate-closed'}),
+  });
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.model_fingerprint === fingerprint.fingerprint, 'closed-tab committed projection');
+  const adopted = fixture.app.getWorldModelUiDiagnosticState();
+  assert.equal(adopted.application_state.committed_full_hash, fingerprint.full_hash);
+  assert.equal(adopted.application_state.projection_state, 'APPLIED');
+  assert.equal(adopted.last_ingress.ui_fingerprint_after, fingerprint.fingerprint);
+  assert.equal(adopted.last_ingress.view_model_fingerprint, fingerprint.fingerprint);
+
+  fixture.app.go('world');
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({target: clickTarget('world-model-select-species', {root: fixture.root, bioweaveWorldSpeciesIndex: '0'}), preventDefault() {}});
+  await click({target: clickTarget('world-model-select-type', {root: fixture.root, bioweaveWorldSpeciesIndex: '0', bioweaveWorldTypeIndex: '0'}), preventDefault() {}});
+  const worldMarkup = fixture.root.querySelector('.bioweave-main').innerHTML;
+  for (const value of WORLD_MODEL_UI_INGRESS_VALUES)
+    assert.match(worldMarkup, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(fixture.app.getWorldModelUiDiagnosticState().last_render.model_fingerprint, fingerprint.fingerprint);
+
+  resolveFloor({model: oldModel, meta: {}, floor_version: fixture.version});
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.stale_reload_suppression_count === 1, 'stale reload suppression');
+  assert.equal(fixture.app.getWorldModelUiDiagnosticState().application_state.model_fingerprint, fingerprint.fingerprint);
+  fixture.app.destroyBioWeave();
+});
+
+test('T11 open World tab renders the committed readback projection', async () => {
+  let fixture;
+  const candidateModel = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fingerprint = await fingerprintWorldModel(candidateModel);
+  fixture = await createFixture({
+  });
+  fixture.app.go('world');
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.loaded, 'empty World state');
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: worldCandidatePayload({model: candidateModel, fingerprint, version: fixture.version, executionId: 'candidate-open'}),
+  });
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().last_render.model_fingerprint === fingerprint.fingerprint, 'open-tab committed projection');
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /Species-A/);
+  fixture.app.destroyBioWeave();
+});
+
+test('T6/T7 stale Floor N-1 is suppressed after a newer committed projection', async () => {
+  let resolveFirst;
+  let resolverCall = 0;
+  const first = new Promise(resolve => { resolveFirst = resolve; });
+  const oldModel = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-Old', biological_types: []}]});
+  const candidateModel = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fingerprint = await fingerprintWorldModel(candidateModel);
+  let fixture;
+  fixture = await createFixture({
+    resolveWorldModel: () => {
+      resolverCall += 1;
+      if (resolverCall === 1) return first;
+      return {model: candidateModel, meta: {source: 'authoritative-readback'}, floor_version: fixture.version};
+    },
+  });
+  fixture.app.go('world');
+  await waitFor(() => resolverCall === 1, 'stale Floor resolver');
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: worldCandidatePayload({model: candidateModel, fingerprint, version: fixture.version, executionId: 'candidate-reconcile'}),
+  });
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.committed_fingerprint === fingerprint.fingerprint, 'Committed projection');
+  fixture.emit({
+    type: 'BIOWEAVE_LIFECYCLE_SETTLED',
+    mutationType: 'MESSAGE_UPDATED',
+    payload: {floor_version: fixture.version},
+  });
+  resolveFirst({model: oldModel, meta: {}, floor_version: fixture.version});
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.projection_state === 'APPLIED', 'authoritative committed readback');
+  const state = fixture.app.getWorldModelUiDiagnosticState();
+  assert.equal(resolverCall, 1);
+  assert.equal(state.application_state.model_fingerprint, fingerprint.fingerprint);
+  assert.equal(state.application_state.stale_reload_suppression_count, 0);
+  assert.equal(state.last_ingress.ingress_source, 'authoritative-persistence-readback');
+  fixture.app.destroyBioWeave();
+});
+
+test('T6 stale resolver rejection cannot clear a committed projection', async () => {
+  let rejectFloor;
+  const pending = new Promise((resolve, reject) => { rejectFloor = reject; });
+  const candidateModel = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fingerprint = await fingerprintWorldModel(candidateModel);
+  const fixture = await createFixture({resolveWorldModel: () => pending});
+  fixture.app.go('world');
+  await waitFor(() => fixture.worldResolveCalls() === 1, 'rejecting Floor resolver');
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: worldCandidatePayload({model: candidateModel, fingerprint, version: fixture.version, executionId: 'candidate-before-reject'}),
+  });
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.committed_fingerprint === fingerprint.fingerprint, 'Committed projection before rejection');
+  rejectFloor(new Error('STALE_FLOOR_READ'));
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.stale_reload_suppression_count === 1, 'resolver rejection suppression');
+  const state = fixture.app.getWorldModelUiDiagnosticState();
+  assert.equal(state.application_state.model_fingerprint, fingerprint.fingerprint);
+  assert.equal(state.application_state.loading, false);
+  fixture.app.destroyBioWeave();
+});
+
+test('T8/T9 Manual and Automatic paths converge on the same committed UI ingress', async () => {
+  const baseModel = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-Base', biological_types: []}]});
+  const candidateModel = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fingerprint = await fingerprintWorldModel(candidateModel);
+
+  const automatic = await createFixture();
+  automatic.app.go('world');
+  await waitFor(() => automatic.app.getWorldModelUiDiagnosticState().application_state.loaded, 'Automatic empty World state');
+  automatic.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: worldCandidatePayload({model: candidateModel, fingerprint, version: automatic.version, executionId: 'candidate-automatic'}),
+  });
+  await waitFor(() => automatic.app.getWorldModelUiDiagnosticState().application_state.committed_fingerprint === fingerprint.fingerprint, 'Automatic committed projection');
+
+  let manual;
+  manual = await createFixture({
+    worldModel: baseModel,
+    analyzeWorldPatch: async () => ({
+      ...worldCandidatePayload({model: candidateModel, fingerprint, version: manual.version, executionId: 'candidate-manual', trigger: 'manual-patch'}),
+      candidate_execution_id: 'candidate-manual',
+    }),
+  });
+  manual.app.go('world');
+  await waitFor(() => manual.app.getWorldModelUiDiagnosticState().application_state.loaded, 'Manual base World state');
+  const click = [...manual.root.listeners.get('click')][0];
+  await click({target: clickTarget('world-model-patch', {root: manual.root}), preventDefault() {}});
+  const automaticState = automatic.app.getWorldModelUiDiagnosticState();
+  const manualState = manual.app.getWorldModelUiDiagnosticState();
+  assert.equal(automaticState.application_state.model_fingerprint, fingerprint.fingerprint);
+  assert.equal(manualState.application_state.model_fingerprint, fingerprint.fingerprint);
+  assert.deepEqual(manualState.world_model, automaticState.world_model);
+  assert.equal(automaticState.last_ingress.ingress_source, 'authoritative-persistence-readback');
+  assert.equal(manualState.last_ingress.ingress_source, 'authoritative-persistence-readback');
+  assert.equal(manualState.last_ingress.view_model_fingerprint, automaticState.last_ingress.view_model_fingerprint);
+  automatic.app.destroyBioWeave();
+  manual.app.destroyBioWeave();
+});
+
+test('T15 canonical no-op does not create a persistence transaction or run model ingress', async () => {
+  const model = normalizeWorldModel(createWorldModelUiIngressFixture());
+  const fixture = await createFixture({
+    worldModel: model,
+    analyzeWorldPatch: async () => ({
+      model,
+      final_result: 'NO_CHANGE',
+      canonical_noop: true,
+      candidate_execution_id: null,
+      accepted_operation_count: 0,
+      canonical_mutation_occurred: false,
+    }),
+  });
+  fixture.app.go('world');
+  await waitFor(() => fixture.app.getWorldModelUiDiagnosticState().application_state.loaded, 'no-op base model');
+  const before = fixture.app.getWorldModelUiDiagnosticState();
+  const ingressCount = fixture.persistenceTrace().filter(item => item.stage === 'WORLD_UI_INGRESS_COMPLETED').length;
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({target: clickTarget('world-model-patch', {root: fixture.root}), preventDefault() {}});
+  const after = fixture.app.getWorldModelUiDiagnosticState();
+  assert.equal(after.application_state.model_fingerprint, before.application_state.model_fingerprint);
+  assert.equal(after.application_state.committed_fingerprint, null);
+  assert.equal(fixture.persistenceTrace().filter(item => item.stage === 'WORLD_UI_INGRESS_COMPLETED').length, ingressCount);
+  assert.equal(fixture.persistenceTrace().some(item => item.stage === 'WORLD_UI_PROJECTION_FAILED'), false);
+  fixture.app.destroyBioWeave();
+});
+
+test('UI projection failure does not roll back confirmed Floor state', async () => {
+  const fixture = await createFixture();
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: {execution_id: 'committed-missing-model', floor_version: fixture.version, persistence_confirmed: true},
+  });
+  await waitFor(() => fixture.persistenceTrace().some(item => item.stage === 'WORLD_UI_PROJECTION_FAILED'), 'projection failure');
+  assert.equal(fixture.app.getWorldModelUiDiagnosticState().world_model, null);
+  fixture.app.destroyBioWeave();
+
 });
 
 test('WORLD_READY transition clears World busy and starts Event busy', async () => {

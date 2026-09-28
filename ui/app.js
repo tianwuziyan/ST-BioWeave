@@ -12,6 +12,7 @@ import {
   createWorldModelSpeciesSelection,
   normalizeWorldModelBiologicalTypeSelection,
   normalizeWorldModelSpeciesSelection,
+  summarizeWorldModelUiProjection,
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
 } from './world.js'
@@ -302,6 +303,13 @@ function createWorldModelState() {
     notice: null,
     operation: null,
     phase: null,
+    committedRevision: null,
+    committedFingerprint: null,
+    committedFullHash: null,
+    committedFloorVersion: null,
+    projectionState: null,
+    modelFingerprint: null,
+    modelFullHash: null,
   }
 }
 function createDataManagementState() {
@@ -529,9 +537,13 @@ export function createApp(runtime, options = {}) {
   let analysisPreviewState = createAnalysisPreviewState()
   let worldModelState = createWorldModelState()
   let lastWorldRenderDiagnostic = null
+  let lastWorldUiIngressDiagnostic = null
   let worldModelLoadGeneration = 0
+  let worldModelProjectionSequence = 0
+  let worldModelStaleReloadSuppressionCount = 0
   let lastWorldUiRenderedGeneration = 0
   let worldModelRefreshInFlight = null
+  let worldModelQueuedRefresh = null
   let worldModelLastRefreshKey = null
   let uiRefreshCycleSequence = 0
   let dataManagementState = createDataManagementState()
@@ -919,6 +931,43 @@ export function createApp(runtime, options = {}) {
         target_before: targetBefore?.version ?? null,
         target_after: targetAfter?.version ?? null,
         active_world_execution_id: runtimeDiagnostic?.execution_id ?? null,
+        candidate_execution_id: runtimeDiagnostic?.candidate_execution_id ?? null,
+        current_execution_candidate_id: runtimeDiagnostic?.candidate_execution_id === (runtimeDiagnostic?.execution_id ?? null)
+          ? runtimeDiagnostic?.candidate_execution_id ?? null
+          : null,
+        candidate_belongs_to_previous_execution: Boolean(
+          runtimeDiagnostic?.candidate_execution_id &&
+          runtimeDiagnostic?.execution_id &&
+          runtimeDiagnostic.candidate_execution_id !== runtimeDiagnostic.execution_id,
+        ),
+        candidate_fingerprint: runtimeDiagnostic?.candidate_fingerprint ?? null,
+        candidate_state: runtimeDiagnostic?.candidate_state ?? null,
+        candidate_created_at: runtimeDiagnostic?.candidate_created_at ?? null,
+        ui_projection_state: runtimeDiagnostic?.ui_projection_state ?? worldModelState.projectionState ?? null,
+        committed_fingerprint: runtimeDiagnostic?.committed_fingerprint ?? worldModelState.committedFingerprint ?? null,
+        ui_state_fingerprint: layers.ui?.fingerprint ?? null,
+        rendered_field_count: lastWorldRenderDiagnostic?.rendered_field_count ?? null,
+        unrendered_canonical_field_count: lastWorldRenderDiagnostic?.unrendered_canonical_field_count ?? null,
+        canonical_mutation_occurred: runtimeDiagnostic?.latest_fact_delta?.canonical_mutation_occurred ?? null,
+        accepted_operation_count: runtimeDiagnostic?.latest_fact_delta?.accepted_operation_count ?? null,
+        final_result: runtimeDiagnostic?.final_result ?? runtimeDiagnostic?.latest_fact_delta?.final_result ?? null,
+        request_transitions: Array.isArray(runtimeDiagnostic?.request_transitions)
+          ? runtimeDiagnostic.request_transitions
+          : [],
+        persistence_requested: runtimeDiagnostic?.persistence_requested ?? null,
+        persistence_confirmed: runtimeDiagnostic?.persistence_confirmed ?? null,
+        persisted_fingerprint: runtimeDiagnostic?.persisted_fingerprint ?? null,
+        reconciliation_status: runtimeDiagnostic?.reconciliation_status ?? null,
+        reconciliation_fingerprint: runtimeDiagnostic?.reconciliation_fingerprint ?? null,
+        ui_ingress_source: lastWorldUiIngressDiagnostic?.ingress_source ?? null,
+        ui_ingress_revision: lastWorldUiIngressDiagnostic?.candidate_revision ?? null,
+        ui_ingress_fingerprint_before: lastWorldUiIngressDiagnostic?.ui_fingerprint_before ?? null,
+        ui_ingress_fingerprint_after: lastWorldUiIngressDiagnostic?.ui_fingerprint_after ?? worldModelState.modelFingerprint ?? null,
+        ui_ingress_render_requested: lastWorldUiIngressDiagnostic?.render_requested ?? null,
+        ui_ingress_render_completed: lastWorldUiIngressDiagnostic?.render_completed ?? null,
+        ui_rendered_revision: lastWorldRenderDiagnostic?.rendered_revision ?? null,
+        ui_rendered_model_fingerprint: lastWorldRenderDiagnostic?.model_fingerprint ?? null,
+        stale_reload_suppression_count: worldModelStaleReloadSuppressionCount,
         latest_world_fact_delta_execution_id: runtimeDiagnostic?.latest_world_fact_delta_execution_id ?? null,
         latest_fact_delta: runtimeDiagnostic?.fact_delta_summary
           ? {
@@ -1789,6 +1838,8 @@ export function createApp(runtime, options = {}) {
   }
   function invalidateWorldModelView({ deferReload = true, renderView = true } = {}) {
     worldModelLoadGeneration += 1
+    worldModelProjectionSequence += 1
+    worldModelQueuedRefresh = null
     worldModelLastRefreshKey = null
     worldModelState = {
       ...createWorldModelState(),
@@ -1818,24 +1869,185 @@ export function createApp(runtime, options = {}) {
       ...details,
     })
   }
+  async function applyWorldModelUiIngress({
+    model: rawModel,
+    meta = null,
+    chatId,
+    source,
+    committed = null,
+    commitBeforeFingerprint = false,
+    assertCurrent = () => {},
+  }) {
+    const previousState = worldModelState
+    const ingressStartedAt = new Date().toISOString()
+    const loadGenerationBefore = worldModelLoadGeneration
+    const fingerprintBefore = previousState.modelFingerprint ?? null
+    assertCurrent()
+    const canonicalModel = normalizeStoredWorldModel(rawModel)
+    const viewModel = buildWorldModelViewModel(canonicalModel).model
+    let canonicalFingerprint = null
+    let viewFingerprint = null
+    if (!commitBeforeFingerprint) {
+      canonicalFingerprint = await fingerprintWorldModel(canonicalModel)
+      assertCurrent()
+      viewFingerprint = await fingerprintWorldModel(viewModel)
+      assertCurrent()
+    }
+    if (
+      !commitBeforeFingerprint && (
+        canonicalFingerprint.fingerprint !== viewFingerprint.fingerprint ||
+        canonicalFingerprint.full_hash !== viewFingerprint.full_hash
+      )
+    ) {
+      throw Object.assign(new Error('WORLD_UI_INGRESS_FINGERPRINT_MISMATCH'), {
+        code: 'WORLD_UI_INGRESS_FINGERPRINT_MISMATCH',
+      })
+    }
+    const nextState = {
+      ...createWorldModelState(),
+      loaded: true,
+      chatId,
+      model: viewModel,
+      meta,
+      committedRevision: committed?.revision ?? null,
+      committedFingerprint: committed?.fingerprint ?? null,
+      committedFullHash: committed?.fullHash ?? null,
+      committedFloorVersion: committed?.floorVersion ?? null,
+      projectionState: committed ? 'APPLIED' : null,
+      modelFingerprint: canonicalFingerprint?.fingerprint ?? null,
+      modelFullHash: canonicalFingerprint?.full_hash ?? null,
+    }
+    assertCurrent()
+    worldModelProjectionSequence += 1
+    worldModelState = nextState
+    const renderRequested = route === 'world'
+    let renderCompleted = false
+    try {
+      if (renderRequested) {
+        render()
+        renderCompleted = commitBeforeFingerprint ||
+          lastWorldRenderDiagnostic?.model_fingerprint === canonicalFingerprint.fingerprint
+        if (!renderCompleted) {
+          throw Object.assign(new Error('WORLD_UI_RENDER_INCOMPLETE'), {
+            code: 'WORLD_UI_RENDER_INCOMPLETE',
+          })
+        }
+      }
+    } catch (error) {
+      if (worldModelState === nextState) worldModelState = previousState
+      throw error
+    }
+    const ingressCompletedAt = new Date().toISOString()
+    const diagnostic = {
+      ingress_source: source,
+      ingress_started_at: ingressStartedAt,
+      ingress_completed_at: ingressCompletedAt,
+      ui_ingress_started: ingressStartedAt,
+      ui_ingress_completed: ingressCompletedAt,
+      execution_id: committed?.executionId ?? null,
+      committed_revision: committed?.revision ?? null,
+      committed_fingerprint: committed ? canonicalFingerprint.fingerprint : null,
+      ui_fingerprint_before: fingerprintBefore,
+      ui_fingerprint_after: canonicalFingerprint?.fingerprint ?? null,
+      view_model_fingerprint: viewFingerprint?.fingerprint ?? null,
+      load_generation_before: loadGenerationBefore,
+      load_generation_after: worldModelLoadGeneration,
+      world_model_load_generation_before: loadGenerationBefore,
+      world_model_load_generation_after: worldModelLoadGeneration,
+      projection_sequence: worldModelProjectionSequence,
+      render_requested: renderRequested,
+      render_completed: renderCompleted,
+      rendered_revision: renderRequested
+        ? lastWorldRenderDiagnostic?.rendered_revision ?? null
+        : null,
+      rendered_model_fingerprint: renderRequested
+        ? lastWorldRenderDiagnostic?.model_fingerprint ?? null
+        : null,
+      rendered_candidate_revision: renderRequested
+        ? lastWorldRenderDiagnostic?.rendered_revision ?? null
+        : null,
+      stale_reload_suppression_count: worldModelStaleReloadSuppressionCount,
+      ack_sent: false,
+      ack_candidate_fingerprint: null,
+    }
+    lastWorldUiIngressDiagnostic = diagnostic
+    recordUiRefreshTrace('WORLD_UI_INGRESS_COMPLETED', diagnostic)
+    if (commitBeforeFingerprint) {
+      canonicalFingerprint = await fingerprintWorldModel(canonicalModel)
+      assertCurrent()
+      viewFingerprint = await fingerprintWorldModel(viewModel)
+      assertCurrent()
+      if (
+        canonicalFingerprint.fingerprint !== viewFingerprint.fingerprint ||
+        canonicalFingerprint.full_hash !== viewFingerprint.full_hash
+      ) {
+        throw Object.assign(new Error('WORLD_UI_INGRESS_FINGERPRINT_MISMATCH'), {
+          code: 'WORLD_UI_INGRESS_FINGERPRINT_MISMATCH',
+        })
+      }
+      if (worldModelState === nextState) {
+        worldModelState = {
+          ...worldModelState,
+          modelFingerprint: canonicalFingerprint.fingerprint,
+          modelFullHash: canonicalFingerprint.full_hash,
+        }
+        lastWorldUiIngressDiagnostic = {
+          ...lastWorldUiIngressDiagnostic,
+          ui_fingerprint_after: canonicalFingerprint.fingerprint,
+          view_model_fingerprint: viewFingerprint.fingerprint,
+        }
+      }
+    }
+    return {
+      model: viewModel,
+      fingerprint: canonicalFingerprint,
+      renderRequested,
+      renderCompleted,
+      diagnostic,
+    }
+  }
+  async function projectCommittedWorldModel(payload = {}) {
+    const model = payload.model ?? payload.authoritative_model
+    if (!model) throw new Error('WORLD_PERSISTENCE_CONFIRMED_MODEL_MISSING')
+    const fingerprint = payload.candidate_fingerprint ?? payload.persisted_fingerprint ?? null
+    const fullHash = payload.candidate_full_hash ?? payload.persisted_full_hash ?? null
+    const revision = payload.committed_revision ?? payload.floor_version?.message_version ?? fullHash ?? fingerprint ?? null
+    const {chatId: currentChatId, token} = currentAnalysisChatToken()
+    if (String(payload.chat_id ?? currentChatId) !== String(currentChatId)) throw new Error('STALE_CHAT')
+    return applyWorldModelUiIngress({
+      model,
+      meta: payload.meta ?? null,
+      chatId: currentChatId,
+      source: 'authoritative-persistence-readback',
+      committed: {
+        revision,
+        fingerprint,
+        fullHash,
+        floorVersion: payload.floor_version ?? null,
+      },
+      assertCurrent: () => assertAnalysisChatToken(token),
+    })
+  }
   function reloadWorldModelFromRuntime({key = null, requestSource = 'world-state'} = {}) {
     const chatId = runtime.chat.current()
-    if (key && worldModelLastRefreshKey === key) {
-      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
-        request_source: requestSource,
-        reason: 'same_refresh_key',
-        refresh_cycle_in_flight: Boolean(worldModelRefreshInFlight),
-        same_refresh_key: true,
-      })
-      return false
-    }
     if (worldModelRefreshInFlight?.chatId === chatId) {
-      if (key) worldModelLastRefreshKey = key
+      worldModelQueuedRefresh = {key, requestSource, chatId}
       recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
         request_source: requestSource,
         reason: 'refresh_cycle_in_flight',
         refresh_cycle_in_flight: true,
-        same_refresh_key: false,
+        queued_refresh: true,
+        same_refresh_key: Boolean(key && worldModelLastRefreshKey === key),
+      })
+      return false
+    }
+    if (key && worldModelLastRefreshKey === key) {
+      recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
+        request_source: requestSource,
+        reason: 'same_refresh_key',
+        refresh_cycle_in_flight: false,
+        queued_refresh: false,
+        same_refresh_key: true,
       })
       return false
     }
@@ -1850,15 +2062,24 @@ export function createApp(runtime, options = {}) {
     }
     const token = runtime.chat.token?.()
     const generation = ++worldModelLoadGeneration
+    const projectionSequence = worldModelProjectionSequence
+    const committedSnapshot =
+      worldModelState.committedFingerprint
+        ? {
+            revision: worldModelState.committedRevision,
+            fingerprint: worldModelState.committedFingerprint,
+            fullHash: worldModelState.committedFullHash,
+            floorVersion: worldModelState.committedFloorVersion,
+          }
+        : null
     if (key) worldModelLastRefreshKey = key
     const cycleId = ++uiRefreshCycleSequence
     const requestState = {chatId, cycleId, request: null, key, requestSource}
+    let cycleResult = 'pending'
     worldModelRefreshInFlight = requestState
-    worldModelState = {
-      ...createWorldModelState(),
-      loading: true,
-      chatId,
-    }
+    worldModelState = worldModelState.chatId === chatId
+      ? {...worldModelState, reloadPending: false, loading: true, notice: null}
+      : {...createWorldModelState(), loading: true, chatId}
     recordUiRefreshTrace('UI_REFRESH_REQUEST_RECEIVED', {
       request_source: requestSource,
       ui_refresh_cycle_id: cycleId,
@@ -1891,6 +2112,47 @@ export function createApp(runtime, options = {}) {
       })
       return
     }
+    const reloadIsCurrent = () => {
+      if (generation !== worldModelLoadGeneration) return false
+      if (runtime.chat.current() !== chatId) return false
+      try {
+        runtime.chat.assert?.(token)
+      } catch {
+        return false
+      }
+      return true
+    }
+    const suppressReload = (reason) => {
+      cycleResult = 'suppressed'
+      worldModelStaleReloadSuppressionCount += 1
+      if (key && worldModelLastRefreshKey === key) worldModelLastRefreshKey = null
+      if (worldModelState.chatId === chatId) {
+        worldModelState = {
+          ...worldModelState,
+          loaded: true,
+          reloadPending: false,
+          loading: false,
+        }
+      }
+      recordUiRefreshTrace('WORLD_UI_RELOAD_SUPPRESSED', {
+        ui_refresh_cycle_id: cycleId,
+        reload_suppressed_by_newer_committed_revision: true,
+        reload_skipped_reason: reason,
+        authoritative_reload_generation: generation,
+        committed_revision: worldModelState.committedRevision ?? committedSnapshot?.revision ?? null,
+        committed_fingerprint: worldModelState.committedFingerprint ?? committedSnapshot?.fingerprint ?? null,
+        stale_reload_suppression_count: worldModelStaleReloadSuppressionCount,
+      })
+    }
+    const commitEmptyReloadState = (notice = null) => {
+      worldModelState = {
+        ...createWorldModelState(),
+        loaded: true,
+        chatId,
+        notice,
+      }
+      if (route === 'world') render()
+    }
     let request
     try {
       request = Promise.resolve(resolver())
@@ -1898,66 +2160,112 @@ export function createApp(runtime, options = {}) {
       request = Promise.reject(error)
     }
     requestState.request = request
-    void request.then((resolved) => {
-      if (generation !== worldModelLoadGeneration) return
-      if (runtime.chat.current() !== chatId) return
-      try {
-        runtime.chat.assert?.(token)
-      } catch {
+    void request.then(async (resolved) => {
+      if (!reloadIsCurrent()) return
+      if (worldModelProjectionSequence > projectionSequence) {
+        suppressReload('newer_committed_projection')
         return
       }
-      let model = null
-      let notice = null
+      let resolvedModel = null
       try {
-        model = resolved?.model ? buildWorldModelViewModel(resolved.model).model : null
-      } catch {
-        notice = '已保存的世界模型格式无效，请重新分析。'
-      }
-      worldModelState = {
-        ...createWorldModelState(),
-        loaded: true,
-        chatId,
-        model,
-        meta: resolved?.meta ?? null,
-        notice,
+        resolvedModel = resolved?.model
+          ? normalizeStoredWorldModel(resolved.model)
+          : null
+      } catch (error) {
+        if (committedSnapshot) {
+          suppressReload('candidate_readback_invalid')
+          return
+        }
+        cycleResult = 'failed'
+        commitEmptyReloadState('已保存的世界模型格式无效，请重新分析。')
+        resolvedModel = null
       }
       recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
         ui_refresh_cycle_id: cycleId,
-        floor_version_match: Boolean(resolved?.floor_version),
+        floor_version_match: Boolean(
+          resolved?.floor_version &&
+          (!committedSnapshot || floorIdentityEqual(resolved.floor_version, committedSnapshot.floorVersion)),
+        ),
         bioweave_present: Boolean(resolved?.model),
-        world_present: Boolean(model),
-        resolution_reason: model ? 'resolved' : 'world_missing',
+        world_present: Boolean(resolvedModel),
+        resolution_reason: resolvedModel ? 'resolved' : 'world_missing',
       })
+      if (!reloadIsCurrent()) return
+      if (worldModelProjectionSequence > projectionSequence) {
+        suppressReload('newer_committed_projection')
+        return
+      }
+      if (committedSnapshot) {
+        if (!resolvedModel) {
+          suppressReload('candidate_not_yet_authoritative')
+          return
+        }
+        const readbackFingerprint = await fingerprintWorldModel(resolvedModel)
+        if (!reloadIsCurrent()) return
+        if (worldModelProjectionSequence > projectionSequence) {
+          suppressReload('newer_committed_projection')
+          return
+        }
+        if (
+          !committedSnapshot.floorVersion ||
+          !floorIdentityEqual(resolved?.floor_version, committedSnapshot.floorVersion) ||
+          readbackFingerprint.fingerprint !== committedSnapshot.fingerprint ||
+          readbackFingerprint.full_hash !== committedSnapshot.fullHash
+        ) {
+          suppressReload('candidate_not_yet_authoritative')
+          return
+        }
+      }
       recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
         ui_refresh_cycle_id: cycleId,
         world_present: Boolean(resolved?.model),
-        canonical_view_model_present: Boolean(model),
+        canonical_view_model_present: Boolean(resolvedModel),
       })
       recordUiRefreshTrace('UI_STATE_COMMIT_BEGIN', {ui_refresh_cycle_id: cycleId})
+      if (resolvedModel) {
+        await applyWorldModelUiIngress({
+          model: resolvedModel,
+          meta: resolved?.meta ?? null,
+          chatId,
+          source: committedSnapshot ? 'authoritative-committed-reload' : 'authoritative-reload',
+          committed: committedSnapshot,
+          commitBeforeFingerprint: !committedSnapshot,
+          assertCurrent: () => {
+            if (
+              !reloadIsCurrent() ||
+              worldModelProjectionSequence !== projectionSequence
+            ) {
+              throw Object.assign(new Error('STALE_WORLD_UI_RELOAD'), {
+                code: 'STALE_WORLD_UI_RELOAD',
+              })
+            }
+          },
+        })
+      } else if (cycleResult !== 'failed') {
+        commitEmptyReloadState()
+      }
+      cycleResult = cycleResult === 'failed'
+        ? 'failed'
+        : committedSnapshot
+          ? 'reconciled'
+          : 'success'
       recordUiRefreshTrace('UI_STATE_COMMIT_END', {
         ui_refresh_cycle_id: cycleId,
-        world_present: Boolean(model),
+        world_present: Boolean(resolvedModel),
       })
-      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(model)})
-      if (route === 'world') {
-        recordUiRefreshTrace('UI_RENDER_BEGIN', {ui_refresh_cycle_id: cycleId})
-        render()
-        recordUiRefreshTrace('UI_RENDER_END', {ui_refresh_cycle_id: cycleId})
-      }
-    }).catch(() => {
-      if (generation !== worldModelLoadGeneration) return
-      if (runtime.chat.current() !== chatId) return
-      try {
-        runtime.chat.assert?.(token)
-      } catch {
+      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(resolvedModel)})
+    }, () => {
+      if (!reloadIsCurrent()) return
+      if (worldModelProjectionSequence > projectionSequence) {
+        suppressReload('newer_committed_projection')
         return
       }
-      worldModelState = {
-        ...createWorldModelState(),
-        loaded: true,
-        chatId,
-        notice: '世界模型读取失败，请重试。',
+      if (committedSnapshot) {
+        suppressReload('candidate_resolver_failed')
+        return
       }
+      cycleResult = 'failed'
+      commitEmptyReloadState('世界模型读取失败，请重试。')
       recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
         ui_refresh_cycle_id: cycleId,
         floor_version_match: false,
@@ -1976,18 +2284,37 @@ export function createApp(runtime, options = {}) {
         world_present: false,
       })
       runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: false})
-      if (route === 'world') {
-        recordUiRefreshTrace('UI_RENDER_BEGIN', {ui_refresh_cycle_id: cycleId})
-        render()
-        recordUiRefreshTrace('UI_RENDER_END', {ui_refresh_cycle_id: cycleId})
+    }).catch((error) => {
+      if (!reloadIsCurrent()) return
+      if (worldModelProjectionSequence > projectionSequence) {
+        suppressReload('newer_committed_projection')
+        return
       }
+      if (committedSnapshot && worldModelState.committedFingerprint) {
+        suppressReload('committed_readback_failed')
+        return
+      }
+      cycleResult = 'failed'
+      commitEmptyReloadState('世界模型读取失败，请重试。')
+      recordUiRefreshTrace('WORLD_UI_RELOAD_FAILED', {
+        ui_refresh_cycle_id: cycleId,
+        error_code: error?.code ?? error?.message ?? 'WORLD_UI_RELOAD_FAILED',
+      })
     }).finally(() => {
       if (worldModelRefreshInFlight === requestState) worldModelRefreshInFlight = null
       recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
         ui_refresh_cycle_id: cycleId,
         request_source: requestSource,
-        result: worldModelState.notice ? 'failed' : 'success',
+        result: cycleResult === 'pending' ? 'stale' : cycleResult,
       })
+      const queuedRefresh = worldModelQueuedRefresh
+      if (queuedRefresh?.chatId === chatId && runtime.chat.current() === chatId) {
+        worldModelQueuedRefresh = null
+        reloadWorldModelFromRuntime({
+          key: queuedRefresh.key,
+          requestSource: queuedRefresh.requestSource,
+        })
+      }
     })
     return true
   }
@@ -2041,6 +2368,7 @@ export function createApp(runtime, options = {}) {
       WORLD_ANALYZER_UNAVAILABLE: '世界分析功能暂不可用，请重新加载 BioWeave。',
       WORLD_RUNTIME_ANALYZER_UNAVAILABLE: '世界分析 Runtime 暂不可用，请重新加载 BioWeave。',
       WORLD_MODEL_REQUIRED_FOR_PATCH: '需要先建立世界模型后才能进行补充分析。',
+      WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED: '世界补充中的候选事实均未通过证据校验，未更新世界模型。',
       WORLD_MODEL_UI_NOT_READY: '世界数据未能正常显示，已停止人物分析。',
       WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED: '世界数据保存失败，已停止人物分析。',
       WORLD_MODEL_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
@@ -2464,6 +2792,7 @@ export function createApp(runtime, options = {}) {
     worldModelState = { ...worldModelState, busy: true, operation, notice: null }
     let activityResult = 'cancelled'
     let activityError = null
+    let ingressRendered = false
     runtime.startActivity?.('world_analysis')
     if (route === 'world') render()
     try {
@@ -2507,28 +2836,55 @@ export function createApp(runtime, options = {}) {
         chatId,
         error: null,
       }
-      worldModelState = {
-        ...worldModelState,
-        loaded: true,
-        busy: false,
-        operation: null,
-        model,
-        meta,
-        chatId,
-        selectedSpecies: null,
-        selectedBiologicalType: null,
-        editingSection: null,
-        sectionDraft: null,
-        sectionDirty: false,
-        notice: null,
+      const finalResult = result?.final_result ?? 'UPDATED'
+      if (finalResult === 'NO_CHANGE') {
+        worldModelState = {
+          ...worldModelState,
+          busy: false,
+          operation: null,
+          phase: null,
+          notice: null,
+        }
+      } else if (result?.persistence_confirmed || result?.candidate_execution_id) {
+        const alreadyProjected = worldModelState.committedFullHash === result.candidate_full_hash &&
+          worldModelState.modelFullHash === result.candidate_full_hash
+        if (!alreadyProjected) {
+          const projection = await projectCommittedWorldModel({
+            ...result,
+            model,
+            meta,
+            chat_id: chatId,
+            floor_version: result.floor_version,
+          })
+          ingressRendered = projection.renderCompleted === true
+        } else {
+          ingressRendered = route === 'world' &&
+            lastWorldRenderDiagnostic?.model_fingerprint === worldModelState.modelFingerprint
+        }
+      } else {
+        const ingress = await applyWorldModelUiIngress({
+          model,
+          meta,
+          chatId,
+          source: operation === 'patch' ? 'manual-patch' : 'manual-full',
+          assertCurrent: () => assertAnalysisChatToken(token),
+        })
+        ingressRendered = ingress.renderCompleted
       }
       activityResult = 'success'
       traceApi('world-model-ui-success', {
         phase: 'world-model-ui',
         speciesCount: Array.isArray(model.species) ? model.species.length : 0,
-        modelSaved: true,
+        modelSaved: finalResult === 'UPDATED',
+        final_result: finalResult,
       })
-      notify(operation === 'patch' ? 'BioWeave：世界补充完成' : 'BioWeave：世界分析完成', 'success', documentRef)
+      notify(
+        finalResult === 'NO_CHANGE'
+          ? 'BioWeave：世界模型没有需要更新的内容'
+          : operation === 'patch' ? 'BioWeave：世界补充完成' : 'BioWeave：世界分析完成',
+        finalResult === 'NO_CHANGE' ? 'info' : 'success',
+        documentRef,
+      )
     } catch (error) {
       activityError = error
       const activityCode = String(error?.code ?? error?.message ?? '')
@@ -2554,7 +2910,7 @@ export function createApp(runtime, options = {}) {
       if (worldModelAbortController === controller) worldModelAbortController = null
       runtime.finishActivity?.('world_analysis', activityResult, activityError)
     }
-    if (route === 'world') render()
+    if (route === 'world' && !ingressRendered) render()
   }
   function setAnalysisPreviewMode(mode) {
     const nextMode = mode === 'raw' ? 'raw' : 'structure'
@@ -3413,6 +3769,8 @@ export function createApp(runtime, options = {}) {
       lastWorldRenderDiagnostic = {
         canonicalSerialized: model ? stableWorldModelStringify(model) : null,
         viewModelSerialized: model ? stableWorldModelStringify(model) : null,
+        rendered_revision: worldModelState.committedRevision ?? worldModelState.modelFullHash ?? null,
+        model_fingerprint: worldModelState.modelFingerprint ?? null,
         counts: {
           species_count: Array.isArray(model?.species) ? model.species.length : 0,
           biological_type_count: Array.isArray(model?.species)
@@ -3420,6 +3778,7 @@ export function createApp(runtime, options = {}) {
             : 0,
         },
         addresses: model ? worldModelAddressInventory(model) : [],
+        ...summarizeWorldModelUiProjection(model),
         rendered_at: new Date().toISOString(),
       }
     }
@@ -4299,6 +4658,16 @@ export function createApp(runtime, options = {}) {
         },
       }
     }
+    if (event?.type === 'WORLD_PERSISTENCE_CONFIRMED') {
+      void projectCommittedWorldModel(event.payload ?? {}).catch(error => {
+        recordUiRefreshTrace('WORLD_UI_PROJECTION_FAILED', {
+          execution_id: event.payload?.execution_id ?? null,
+          candidate_fingerprint: event.payload?.candidate_fingerprint ?? null,
+          projection_state: 'FAILED',
+          error_code: error?.code ?? error?.message ?? 'WORLD_UI_PROJECTION_FAILED',
+        })
+      })
+    }
     if (event?.type === 'WORLD_ANALYSIS_STATUS_CHANGED') {
       const payload = event.payload ?? {}
       const automatic = isAutomaticRuntimeResult(payload)
@@ -4312,7 +4681,6 @@ export function createApp(runtime, options = {}) {
       } else if (payload.state !== 'running' && worldModelState.operation && automatic) {
         worldModelState = { ...worldModelState, busy: false, operation: null, phase: null }
       }
-      if (payload.state === 'success' && route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(payload), requestSource: event.type})
       if (payload.state === 'failed' && isAutomaticRuntimeResult(payload)) {
         notifyRuntimeTerminal(
           event,
@@ -4968,6 +5336,7 @@ export function createApp(runtime, options = {}) {
     clearPendingRecentStorySaves()
     abortUiWorldModelRequest()
     worldModelLoadGeneration += 1
+    worldModelProjectionSequence += 1
     modelRefreshSequence += 1
     analysisSourceRequestSequence += 1
     analysisSourceSaveSequence += 1
@@ -4982,12 +5351,14 @@ export function createApp(runtime, options = {}) {
     businessRefreshInFlight = null
     businessRefreshQueued = null
     worldModelRefreshInFlight = null
+    worldModelQueuedRefresh = null
     worldModelLastRefreshKey = null
     route = 'overview'
     focusedCharacterId = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()
     lastWorldRenderDiagnostic = null
+    lastWorldUiIngressDiagnostic = null
     dataManagementState = createDataManagementState()
     businessState = {
       loaded: false,
@@ -5053,6 +5424,21 @@ export function createApp(runtime, options = {}) {
     getWorldModelUiDiagnosticState: () => ({
       world_model: worldModelState.model,
       last_render: lastWorldRenderDiagnostic,
+      last_ingress: lastWorldUiIngressDiagnostic,
+      application_state: {
+        loaded: worldModelState.loaded,
+        loading: worldModelState.loading,
+        busy: worldModelState.busy,
+        chat_id: worldModelState.chatId,
+        model_fingerprint: worldModelState.modelFingerprint,
+        model_full_hash: worldModelState.modelFullHash,
+        committed_revision: worldModelState.committedRevision,
+        committed_fingerprint: worldModelState.committedFingerprint,
+        committed_full_hash: worldModelState.committedFullHash,
+        committed_floor_version: worldModelState.committedFloorVersion,
+        projection_state: worldModelState.projectionState,
+        stale_reload_suppression_count: worldModelStaleReloadSuppressionCount,
+      },
     }),
     getSettingsState: () => ({
       ...settingsState,

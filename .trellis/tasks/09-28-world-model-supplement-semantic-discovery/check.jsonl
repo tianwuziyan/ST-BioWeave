@@ -1,0 +1,2 @@
+{"file": "tests/world-model.test.js", "reason": "Existing Supplement prompt, parser, Guard, retry, fixed-point, and fail-soft regression coverage."}
+{"file": "docs/ARCHITECTURE.md", "reason": "Feature ownership and forbidden persistence/UI cross-layer changes."}

@@ -168,7 +168,17 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
         coverage_disposition_count: 23,
         coverage_target_count: 23,
         supplement_completeness_complete: true,
+        world_model_debug_schema_version: 2,
+        first_failed_stage: 'FACT_RESOLUTION',
+        type_identity_decisions: [{species: 'Species-A', biological_type: 'Type-B', identity_support_classification: 'LEGITIMATELY_UNSUPPORTED'}],
+        final_result: 'ALL_FACTS_REJECTED',
       },
+      active_world_execution_id: 'exec-last',
+      current_execution_candidate_id: null,
+      candidate_belongs_to_previous_execution: true,
+      final_result: 'ALL_FACTS_REJECTED',
+      candidate_state: null,
+      request_transitions: [{previous_execution_id: 'exec-previous', current_execution_id: 'exec-last', existing_reference: 'CHANGED'}],
       latest_nonempty_fact_delta: {
         execution_id: 'exec-nonempty',
         summary: {
@@ -183,6 +193,12 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
     documentRef: null,
   });
   assert.match(markup, /WORLD MODEL LIVE STATE/u);
+  assert.match(markup, /WORLD MODEL LAST EXECUTION/u);
+  assert.match(markup, /ALL_FACTS_REJECTED/u);
+  assert.match(markup, /WORLD MODEL REQUEST TRANSITION/u);
+  assert.match(markup, /TYPE IDENTITY DECISIONS/u);
+  assert.match(markup, /FACT_RESOLUTION/u);
+  assert.match(markup, /Candidate Belongs to Previous Execution/u);
   assert.match(markup, /WORLD_UI_RENDERED/u);
   assert.match(markup, /data-bioweave-world-model-live-state/u);
   assert.match(markup, /Raw Fact Blocks/u);
@@ -194,4 +210,12 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
   assert.match(markup, /Latest Non-empty Fact Delta/u);
   assert.match(markup, /exec-nonempty/u);
   assert.doesNotMatch(markup, /"fact_count"/u);
+});
+
+test('Advanced Debug marks an unknown World Model diagnostics schema', () => {
+  const markup = renderAnalysisDebugPopupContent({
+    worldModelLiveState: {latest_fact_delta: {world_model_debug_schema_version: 99}},
+    documentRef: null,
+  });
+  assert.match(markup, /DEBUG_SCHEMA_MISMATCH/u);
 });
