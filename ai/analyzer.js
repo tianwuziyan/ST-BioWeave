@@ -5228,10 +5228,35 @@ export function createAnalyzer({
             existingModel: candidateModel,
           })
         } catch (error) {
+          if (guarded.patch?.operations?.length) {
+            error.accepted_patch = typeof structuredClone === 'function'
+              ? structuredClone(guarded.patch)
+              : JSON.parse(JSON.stringify(guarded.patch))
+            error.accepted_fact_delta_summary = {
+              world_model_debug_schema_version: WORLD_MODEL_DEBUG_SCHEMA_VERSION,
+              analysis_stage_succeeded: true,
+              raw_fact_block_count: parsed.raw_fact_block_count ?? facts.length + (parsed.rejectedFacts?.length ?? 0),
+              parsed_fact_count: facts.length,
+              parse_rejected_fact_count: parsed.rejectedFacts?.length ?? 0,
+              fact_count: facts.length,
+              rejected_fact_count: (parsed.rejectedFacts?.length ?? 0) + guarded.rejectedFacts.length,
+              accepted_fact_count: guarded.factResults.filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status)).length,
+              accepted_operation_count: guarded.patch.operations.length,
+              canonical_mutation_occurred: true,
+              persistence_occurred: false,
+              completeness_required: true,
+              completeness_satisfied: false,
+              supplement_completeness_complete: false,
+              coverage_dispositions: review.coverage_dispositions,
+              request_envelope: requestEnvelope,
+            }
+          }
           emitFactDeltaTrace('WORLD_SUPPLEMENT_INCOMPLETE', {
             failure_stage: 'supplement_completeness',
             failure_code: error.code,
             completeness_diagnostics: error.diagnostics,
+            accepted_operation_count: guarded.patch.operations.length,
+            canonical_mutation_occurred: guarded.patch.operations.length > 0,
           })
           throw error
         }

@@ -524,7 +524,309 @@ export function createWorldAnalysis({
         throw worldModelUnavailableError(new Error("WORLD_ANALYZER_UNAVAILABLE"), target);
       if (mode === "patch" && typeof analyzer?.analyzeWorldModelPatchV2 !== "function")
         throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
-      return runAnalysisStageWithRetry({
+      const completeWorldAnalysis = async ({model, meta, fact_delta_summary: factDeltaSummary, fact_delta_execution_id: factDeltaExecutionId}, {attempt, retryIndex}) => {
+        const ownerKey = `${key}:${attempt}:${retryIndex}`;
+        if (persistenceOwner.attempt !== ownerKey) {
+          persistenceOwner.attempt = ownerKey;
+          persistenceOwner.retryIndex = retryIndex;
+          persistenceOwner.claimed = false;
+        }
+        if (persistenceOwner.claimed) {
+          const error = new Error("WORLD_STAGE_PERSISTENCE_DUPLICATE");
+          error.code = "WORLD_STAGE_PERSISTENCE_DUPLICATE";
+          error.analysis_stage = "world_persistence_owner";
+          error.retryable = false;
+          throw error;
+        }
+        emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
+          world_model_present: true,
+          species_count: Array.isArray(model?.species) ? model.species.length : 0,
+          biological_type_count: Array.isArray(model?.species)
+            ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
+            : 0,
+          ...(factDeltaSummary ?? {}),
+          execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
+          execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
+          execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
+          execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
+          execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+          execution_snapshot_persistence_eligible: mode === "patch"
+            ? Boolean(supplementContinuationState?.hasAcceptedMutation)
+            : true,
+          persistence_occurred: false,
+        }, "world");
+        assertToken(token);
+        if (execution && !executionIsCurrent(execution)) {
+          const error = requestAbortedError();
+          error.analysis_stage = "world_post_accept_execution_guard";
+          setExecutionCancellationMetadata(execution, {
+            stage: "world_post_accept_execution_guard",
+            reason: execution.cancel_reason ?? "execution-invalidated",
+            code: execution.cancel_code ?? "REQUEST_ABORTED",
+          });
+          setExecutionDiagnostic(execution, {
+            ...formatExecutionDiagnostic(error, error.analysis_stage),
+            cancel_stage: execution.cancel_stage,
+            cancel_reason: execution.cancel_reason,
+            cancel_code: execution.cancel_code,
+            execution_active: false,
+            ...floorVersionComparison(execution.version, null),
+            generation_id: execution.generation_id ?? null,
+            generation_type: execution.generation_type ?? null,
+            generation_identity_match: null,
+          });
+          throw error;
+        }
+        let currentAfterWorld;
+        try {
+          currentAfterWorld = await resolveFloorAtIndex({__messageIndex: true, index: target.index});
+        } catch (cause) {
+          if (!execution) throw cause;
+          const error = requestAbortedError();
+          error.analysis_stage = "world_post_accept_owner_guard";
+          setExecutionCancellationMetadata(execution, {
+            stage: "world_post_accept_owner_guard",
+            reason: "floor-owner-unavailable",
+            code: cause?.code ?? cause?.message ?? "REQUEST_ABORTED",
+          });
+          setExecutionDiagnostic(execution, {
+            ...formatExecutionDiagnostic(error, error.analysis_stage),
+            cancel_stage: execution.cancel_stage,
+            cancel_reason: execution.cancel_reason,
+            cancel_code: execution.cancel_code,
+            execution_active: executionIsCurrent(execution),
+            ...floorVersionComparison(execution.version, null),
+          });
+          throw error;
+        }
+        if (!sameFloorVersion(currentAfterWorld.version, target.version)) {
+          if (execution) {
+            invalidateExecution(execution, {
+              stage: "world_post_accept_floor_version_guard",
+              reason: "floor-version-changed-after-world-accepted",
+              code: "STALE_FLOOR_VERSION",
+              currentVersion: currentAfterWorld.version,
+            });
+          }
+          const error = requestAbortedError();
+          error.analysis_stage = "world_post_accept_floor_version_guard";
+          throw error;
+        }
+        const analyzedAt = new Date().toISOString();
+        if (factDeltaSummary) {
+          rememberFactDeltaExecution(
+            factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`,
+            target,
+            mode,
+            factDeltaSummary,
+            model,
+          );
+        }
+        if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED' && !supplementContinuationState?.hasAcceptedMutation) {
+          throw candidateError('WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED', {
+            analysis_stage: 'world_patch_v2_evidence_guard',
+            retryable: false,
+          });
+        }
+        const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
+        const canonicalNoop = sameFloorVersion(floorVersionFromData(currentFloorData), target.version)
+          && canonicalWorldEqual(currentFloorData.world_model, model);
+        if (canonicalNoop) {
+          const noopFingerprint = await fingerprintWorldModel(model);
+          emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
+            reason: "canonical_noop",
+            persistence_occurred: false,
+            canonical_mutation_occurred: false,
+            accepted_operation_count: Number(factDeltaSummary?.accepted_operation_count) || 0,
+            candidate_fingerprint: noopFingerprint.fingerprint,
+            world_model_present: true,
+          }, "world");
+          emitPersistenceTrace("WORLD_RECONCILIATION_CONFIRMED", execution, target, {
+            execution_id: null,
+            candidate_fingerprint: noopFingerprint.fingerprint,
+            reconciliation_status: "confirmed",
+            reconciliation_fingerprint: noopFingerprint.fingerprint,
+            persistence_occurred: false,
+          }, "world");
+          latestWorldModelDiagnostic = {
+            execution_id: execution?.diagnostic_execution_id ?? null,
+            candidate_execution_id: null,
+            candidate_fingerprint: noopFingerprint.fingerprint,
+            candidate_state: "CANONICAL_NOOP",
+            final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+            candidate_created_at: null,
+            ui_projection_state: "NOT_REQUIRED",
+            persistence_requested: false,
+            persistence_confirmed: false,
+            persisted_fingerprint: noopFingerprint.fingerprint,
+            reconciliation_status: "confirmed",
+            reconciliation_fingerprint: noopFingerprint.fingerprint,
+            latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
+            execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
+            execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
+            execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
+            execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
+            execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+            execution_snapshot_persistence_eligible: false,
+            latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
+            latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
+            recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+            request_transitions: cloneWorldValue(recentWorldRequestTransitions),
+            mode,
+            trigger,
+            floor_version: cloneWorldValue(target.version),
+            candidate_model: cloneWorldValue(model),
+            runtime_model: cloneWorldValue(model),
+            updated_at: new Date().toISOString(),
+          };
+          return {
+            model: cloneWorldValue(model),
+            view_model: buildWorldModelViewModel(model),
+            floor_version: cloneWorldValue(target.version),
+            persistence_skipped: true,
+            candidate_execution_id: null,
+            candidate_fingerprint: noopFingerprint.fingerprint,
+            candidate_full_hash: noopFingerprint.full_hash,
+            canonical_noop: true,
+            final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+          };
+        }
+        const candidate = await publishWorldModelCandidate({
+          model,
+          meta,
+          target,
+          execution,
+          mode,
+          trigger,
+          executionId: `${job.diagnostic_execution_id}-candidate-${attempt}`,
+        });
+        candidate.state = "PERSISTING";
+        supplementContinuationState && (supplementContinuationState.persistenceRequested = true);
+        emitPersistenceTrace("WORLD_PERSISTENCE_REQUESTED", execution, target, {
+          execution_id: candidate.execution_id,
+          candidate_fingerprint: candidate.candidate_fingerprint,
+          persistence_requested: true,
+        }, "world");
+        const saved = await saveWorldModel({
+          model,
+          meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: {...target.version}},
+          selector: target,
+          automatic: true,
+          traceExecution: execution,
+          persistenceOwner,
+        });
+        assertToken(token);
+        emitPersistenceTrace("WORLD_READBACK_BEGIN", execution, target, {}, "world");
+        publishPhase("world_readback");
+        publishPhase("world_ui_ready");
+        const ready = await resolveWorldModelUiReady(target);
+        const persistedFingerprint = await fingerprintWorldModel(ready?.model);
+        const reconciliationStatus = persistedFingerprint.full_hash === candidate.candidate_full_hash
+          ? "confirmed"
+          : "mismatch";
+        latestWorldModelDiagnostic = {
+          execution_id: candidate.execution_id,
+          candidate_execution_id: candidate.execution_id,
+          candidate_fingerprint: candidate.candidate_fingerprint,
+          candidate_state: candidate.state,
+          final_result: 'UPDATED',
+          candidate_created_at: candidate.created_at,
+          ui_projection_state: "PENDING",
+          committed_fingerprint: persistedFingerprint.fingerprint,
+          persistence_requested: true,
+          persistence_confirmed: true,
+          persisted_fingerprint: persistedFingerprint.fingerprint,
+          reconciliation_status: reconciliationStatus,
+          reconciliation_fingerprint: persistedFingerprint.fingerprint,
+          latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
+          execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
+          execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
+          execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
+          execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
+          execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+          execution_snapshot_persistence_eligible: mode === "patch"
+            ? Boolean(supplementContinuationState?.hasAcceptedMutation)
+            : true,
+          mode,
+          trigger,
+          floor_version: cloneWorldValue(target.version),
+          candidate_model: cloneWorldValue(model),
+          runtime_model: cloneWorldValue(ready?.model),
+          fact_delta_summary: cloneWorldValue(factDeltaSummary ?? null),
+          latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
+          latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
+          recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
+          request_transitions: cloneWorldValue(recentWorldRequestTransitions),
+          updated_at: new Date().toISOString(),
+        };
+        emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
+        emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {floor_version_match: true, world_model_present: Boolean(ready?.model)}, "world");
+        emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
+        emitPersistenceTrace(
+          reconciliationStatus === "confirmed" ? "WORLD_RECONCILIATION_CONFIRMED" : "WORLD_RECONCILIATION_MISMATCH",
+          execution,
+          target,
+          {
+            execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            reconciliation_status: reconciliationStatus,
+            reconciliation_fingerprint: persistedFingerprint.fingerprint,
+            persisted_fingerprint: persistedFingerprint.fingerprint,
+          },
+          "world",
+        );
+        if (reconciliationStatus !== "confirmed") {
+          const error = candidateError("WORLD_UI_FLOOR_RECONCILIATION_MISMATCH", {
+            analysis_stage: "world_reconciliation",
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            persisted_fingerprint: persistedFingerprint.fingerprint,
+          });
+          throw error;
+        }
+        emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
+          execution_id: candidate.execution_id,
+          candidate_fingerprint: candidate.candidate_fingerprint,
+          world_model_present: Boolean(ready?.model),
+          species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
+          ...(factDeltaSummary ?? {}),
+          persistence_occurred: true,
+        }, "world");
+        if (supplementContinuationState) supplementContinuationState.persistenceConfirmed = true;
+        candidate.state = "PERSISTED";
+        notify({
+          type: "WORLD_PERSISTENCE_CONFIRMED",
+          payload: {
+            execution_id: candidate.execution_id,
+            candidate_fingerprint: candidate.candidate_fingerprint,
+            candidate_full_hash: candidate.candidate_full_hash,
+            model: cloneWorldValue(ready?.model),
+            meta: cloneWorldValue(ready?.meta ?? saved?.meta ?? null),
+            floor_version: cloneWorldValue(ready?.floor_version ?? target.version),
+            persistence_confirmed: true,
+            authoritative: true,
+          },
+          chatId: target.chatId,
+        });
+        if (lastIndependentWorldRequest?.execution_id === job.diagnostic_execution_id) {
+          lastIndependentWorldRequest = {
+            ...lastIndependentWorldRequest,
+            mutation_persisted: true,
+            mutation_ui_projected: null,
+            mutation_source_candidate_fingerprint: candidate.candidate_fingerprint,
+          };
+        }
+        return {
+          ...saved,
+          model: ready.view_model.model,
+          view_model: ready.view_model,
+          candidate_execution_id: candidate.execution_id,
+          candidate_fingerprint: candidate.candidate_fingerprint,
+          candidate_full_hash: candidate.candidate_full_hash,
+          final_result: 'UPDATED',
+        };
+      };
+      try {
+        return await runAnalysisStageWithRetry({
         domain: "world",
         target,
         token,
@@ -569,6 +871,15 @@ export function createWorldAnalysis({
                 rounds: [],
                 coverageExpansionRoundCount: 0,
                 initialTargetCount: initialTargets.length,
+                hasAcceptedMutation: false,
+                acceptedOperationCount: 0,
+                successfulRoundCount: 0,
+                lastSuccessfulRound: null,
+                snapshotFingerprint: null,
+                lastFactDeltaSummary: null,
+                lastAttemptFailed: false,
+                persistenceRequested: false,
+                persistenceConfirmed: false,
               };
             }
             const baselineFingerprint = await fingerprintWorldModel(resolved.model);
@@ -592,6 +903,27 @@ export function createWorldAnalysis({
                 : {}),
             };
             const inputTargets = buildWorldModelSupplementCoverageTargets(resolved.model);
+            const mergeAcceptedSupplementPatch = async (patch, summary) => {
+              const previousSnapshot = supplementContinuationState.transientModel;
+              const candidateModel = mergeWorldModelPatchV2(
+                previousSnapshot,
+                patch,
+                patchAnalysisInput,
+              );
+              const snapshotChanged = !canonicalWorldEqual(previousSnapshot, candidateModel);
+              supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
+              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(summary ?? null);
+              if (snapshotChanged) {
+                supplementContinuationState.hasAcceptedMutation = true;
+                supplementContinuationState.acceptedOperationCount += Number(summary?.accepted_operation_count)
+                  || Number(patch?.operations?.length)
+                  || 0;
+                supplementContinuationState.successfulRoundCount += 1;
+                supplementContinuationState.lastSuccessfulRound = supplementContinuationState.rounds.length + 1;
+                supplementContinuationState.snapshotFingerprint = (await fingerprintWorldModel(candidateModel)).fingerprint;
+              }
+              return {candidateModel, snapshotChanged};
+            };
             let patchResult;
             let factDeltaSummary = null;
             try {
@@ -614,19 +946,18 @@ export function createWorldAnalysis({
                     retry_index: retryIndex,
                     mode: "patch",
                   }, "world");
-                },
-              });
-              const candidateModel = mergeWorldModelPatchV2(
-                resolved.model,
-                patchResult?.patch ?? patchResult,
-                patchAnalysisInput,
-              );
+                  },
+                });
               const baseSummary = patchResult
                 ? {
                     ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
                     fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
                   }
                 : {};
+              const {candidateModel} = await mergeAcceptedSupplementPatch(
+                patchResult?.patch ?? patchResult,
+                baseSummary,
+              );
               const candidateFingerprint = await fingerprintWorldModel(candidateModel);
               const requestEnvelope = baseSummary.request_envelope ?? {};
               const requestSnapshot = {
@@ -666,7 +997,6 @@ export function createWorldAnalysis({
                 for (const inputTarget of inputTargets)
                   supplementContinuationState.reviewedTargetKeys.add(supplementCoverageAddress(inputTarget));
               }
-              supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
               const candidateTargets = buildWorldModelSupplementCoverageTargets(candidateModel);
               const dynamicTargets = candidateTargets.filter(target => !supplementContinuationState.baselineTargetKeys.has(supplementCoverageAddress(target)));
               const unresolvedDynamicTargets = dynamicTargets.filter(target => !supplementContinuationState.reviewedTargetKeys.has(supplementCoverageAddress(target)));
@@ -705,6 +1035,7 @@ export function createWorldAnalysis({
                 coverage_fixed_point_reached: unresolvedDynamicTargets.length === 0,
               };
               factDeltaSummary.final_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
+              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
               if (unresolvedDynamicTargets.length > 0) {
                 const error = new Error("WORLD_MODEL_SUPPLEMENT_INCOMPLETE");
                 error.code = "WORLD_MODEL_SUPPLEMENT_INCOMPLETE";
@@ -723,6 +1054,31 @@ export function createWorldAnalysis({
                 throw error;
               }
             } catch (error) {
+              if (error?.accepted_patch?.operations?.length) {
+                factDeltaSummary = cloneWorldValue(error.accepted_fact_delta_summary ?? {
+                  accepted_operation_count: error.accepted_patch.operations.length,
+                  canonical_mutation_occurred: true,
+                  completeness_required: true,
+                  completeness_satisfied: false,
+                });
+                const {candidateModel} = await mergeAcceptedSupplementPatch(
+                  error.accepted_patch,
+                  factDeltaSummary,
+                );
+                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
+                supplementContinuationState.rounds.push({
+                  round: supplementContinuationState.rounds.length + 1,
+                  input_target_count: inputTargets.length,
+                  reviewed_target_count: 0,
+                  emitted_count: 0,
+                  no_evidence_count: 0,
+                  accepted_fact_count: Number(factDeltaSummary.accepted_fact_count) || 0,
+                  accepted_operation_count: Number(factDeltaSummary.accepted_operation_count) || error.accepted_patch.operations.length,
+                  new_identity_count: Number(factDeltaSummary.accepted_new_type_identity_count) || 0,
+                  expanded_target_count: buildWorldModelSupplementCoverageTargets(candidateModel).length,
+                  unresolved_target_count: 0,
+                });
+              }
               let nextRetryDirective = supplementRetryDirective;
               if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
                 const kind = error?.retry_kind
@@ -767,8 +1123,9 @@ export function createWorldAnalysis({
                 target,
                 mode,
                 failureSummary,
-                null,
+                supplementContinuationState?.transientModel ?? null,
               );
+              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
               throw error;
             }
             model = cloneWorldValue(supplementContinuationState.transientModel);
@@ -787,280 +1144,69 @@ export function createWorldAnalysis({
           }
           return {model, meta};
         },
-        complete: async ({model, meta, fact_delta_summary: factDeltaSummary, fact_delta_execution_id: factDeltaExecutionId}, {attempt, retryIndex}) => {
-          const ownerKey = `${key}:${attempt}:${retryIndex}`;
-          if (persistenceOwner.attempt !== ownerKey) {
-            persistenceOwner.attempt = ownerKey;
-            persistenceOwner.retryIndex = retryIndex;
-            persistenceOwner.claimed = false;
-          }
-          if (persistenceOwner.claimed) {
-            const error = new Error("WORLD_STAGE_PERSISTENCE_DUPLICATE");
-            error.code = "WORLD_STAGE_PERSISTENCE_DUPLICATE";
-            error.analysis_stage = "world_persistence_owner";
-            error.retryable = false;
-            throw error;
-          }
-          emitPersistenceTrace("WORLD_ACCEPTED", execution, target, {
-            world_model_present: true,
-            species_count: Array.isArray(model?.species) ? model.species.length : 0,
-            biological_type_count: Array.isArray(model?.species)
-              ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
-              : 0,
-            ...(factDeltaSummary ?? {}),
-            persistence_occurred: false,
-          }, "world");
-          assertToken(token);
-          if (execution && !executionIsCurrent(execution)) {
-            const error = requestAbortedError();
-            error.analysis_stage = "world_post_accept_execution_guard";
-            setExecutionCancellationMetadata(execution, {
-              stage: "world_post_accept_execution_guard",
-              reason: execution.cancel_reason ?? "execution-invalidated",
-              code: execution.cancel_code ?? "REQUEST_ABORTED",
-            });
-            setExecutionDiagnostic(execution, {
-              ...formatExecutionDiagnostic(error, error.analysis_stage),
-              cancel_stage: execution.cancel_stage,
-              cancel_reason: execution.cancel_reason,
-              cancel_code: execution.cancel_code,
-              execution_active: false,
-              ...floorVersionComparison(execution.version, null),
-              generation_id: execution.generation_id ?? null,
-              generation_type: execution.generation_type ?? null,
-              generation_identity_match: null,
-            });
-            throw error;
-          }
-          let currentAfterWorld;
+        complete: completeWorldAnalysis,
+      });
+      } catch (error) {
+        const snapshot = supplementContinuationState;
+        const canPersistSnapshot = mode === "patch"
+          && snapshot?.hasAcceptedMutation
+          && !snapshot.persistenceRequested
+          && !isRequestAborted(error)
+          && error?.code !== "STALE_FLOOR_VERSION"
+          && error?.code !== "STALE_SWIPE"
+          && error?.code !== "SWIPE_NOT_FOUND"
+          && error?.code !== "BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN"
+          && (!execution || executionIsCurrent(execution));
+        if (canPersistSnapshot) {
+          snapshot.lastAttemptFailed = true;
+          const failureAttempt = Number(execution?.stage_attempt) || snapshot.rounds.length + 1;
+          const failureRetryIndex = Math.max(0, failureAttempt - 1);
           try {
-            currentAfterWorld = await resolveFloorAtIndex({__messageIndex: true, index: target.index});
-          } catch (cause) {
-            if (!execution) throw cause;
-            const error = requestAbortedError();
-            error.analysis_stage = "world_post_accept_owner_guard";
-            setExecutionCancellationMetadata(execution, {
-              stage: "world_post_accept_owner_guard",
-              reason: "floor-owner-unavailable",
-              code: cause?.code ?? cause?.message ?? "REQUEST_ABORTED",
-            });
-            setExecutionDiagnostic(execution, {
-              ...formatExecutionDiagnostic(error, error.analysis_stage),
-              cancel_stage: execution.cancel_stage,
-              cancel_reason: execution.cancel_reason,
-              cancel_code: execution.cancel_code,
-              execution_active: executionIsCurrent(execution),
-              ...floorVersionComparison(execution.version, null),
-            });
-            throw error;
-          }
-          if (!sameFloorVersion(currentAfterWorld.version, target.version)) {
-            invalidateExecution(execution, {
-              stage: "world_post_accept_floor_version_guard",
-              reason: "floor-version-changed-after-world-accepted",
-              code: "STALE_FLOOR_VERSION",
-              currentVersion: currentAfterWorld.version,
-            });
-            throw requestAbortedError();
-          }
-          const analyzedAt = new Date().toISOString();
-          if (factDeltaSummary) {
-            rememberFactDeltaExecution(
-              factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`,
-              target,
-              mode,
-              factDeltaSummary,
-              model,
-            );
-          }
-          if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED') {
-            throw candidateError('WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED', {
-              analysis_stage: 'world_patch_v2_evidence_guard',
-              retryable: false,
-            });
-          }
-          const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
-          const canonicalNoop = sameFloorVersion(floorVersionFromData(currentFloorData), target.version)
-            && canonicalWorldEqual(currentFloorData.world_model, model);
-          if (canonicalNoop) {
-            const noopFingerprint = await fingerprintWorldModel(model);
-            emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
-              reason: "canonical_noop",
-              persistence_occurred: false,
-              canonical_mutation_occurred: false,
-              accepted_operation_count: Number(factDeltaSummary?.accepted_operation_count) || 0,
-              candidate_fingerprint: noopFingerprint.fingerprint,
-              world_model_present: true,
-            }, "world");
-            emitPersistenceTrace("WORLD_RECONCILIATION_CONFIRMED", execution, target, {
-              execution_id: null,
-              candidate_fingerprint: noopFingerprint.fingerprint,
-              reconciliation_status: "confirmed",
-              reconciliation_fingerprint: noopFingerprint.fingerprint,
-              persistence_occurred: false,
-            }, "world");
+            const recovered = await completeWorldAnalysis({
+              model: cloneWorldValue(snapshot.transientModel),
+              meta: cloneWorldValue(snapshot.meta),
+              fact_delta_summary: cloneWorldValue(snapshot.lastFactDeltaSummary),
+              fact_delta_execution_id: `${job.diagnostic_execution_id}-snapshot-recovery`,
+            }, {attempt: failureAttempt, retryIndex: failureRetryIndex});
             latestWorldModelDiagnostic = {
-              execution_id: execution?.diagnostic_execution_id ?? null,
-              candidate_execution_id: null,
-              candidate_fingerprint: noopFingerprint.fingerprint,
-              candidate_state: "CANONICAL_NOOP",
-              final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
-              candidate_created_at: null,
-              ui_projection_state: "NOT_REQUIRED",
-              persistence_requested: false,
-              persistence_confirmed: false,
-              persisted_fingerprint: noopFingerprint.fingerprint,
-              reconciliation_status: "confirmed",
-              reconciliation_fingerprint: noopFingerprint.fingerprint,
-              latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
-              latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
-              latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
-              recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
-              request_transitions: cloneWorldValue(recentWorldRequestTransitions),
-              mode,
-              trigger,
-              floor_version: cloneWorldValue(target.version),
-              candidate_model: cloneWorldValue(model),
-              runtime_model: cloneWorldValue(model),
+              ...(latestWorldModelDiagnostic ?? {}),
+              execution_id: job.diagnostic_execution_id,
+              last_attempt_failed: true,
+              snapshot_preserved: true,
+              execution_snapshot_present: true,
+              execution_snapshot_mutated: true,
+              execution_snapshot_accepted_operation_count: snapshot.acceptedOperationCount,
+              execution_snapshot_successful_round_count: snapshot.successfulRoundCount,
+              execution_snapshot_last_successful_round: snapshot.lastSuccessfulRound,
+              execution_snapshot_persistence_eligible: true,
+              persistence_requested: true,
+              persistence_confirmed: snapshot.persistenceConfirmed,
+              final_result: snapshot.persistenceConfirmed ? "UPDATED_AFTER_RETRY_FAILURE" : "PERSISTENCE_FAILED",
+              last_attempt_failure_code: error?.code ?? error?.message ?? "ANALYSIS_FAILED",
+              candidate_model: cloneWorldValue(snapshot.transientModel),
+              runtime_model: cloneWorldValue(recovered?.model ?? snapshot.transientModel),
               updated_at: new Date().toISOString(),
             };
-            return {
-              model: cloneWorldValue(model),
-              view_model: buildWorldModelViewModel(model),
-              floor_version: cloneWorldValue(target.version),
-              persistence_skipped: true,
-              candidate_execution_id: null,
-              candidate_fingerprint: noopFingerprint.fingerprint,
-              candidate_full_hash: noopFingerprint.full_hash,
-              canonical_noop: true,
-              final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
-            };
+            emitPersistenceTrace("WORLD_SNAPSHOT_PERSISTED_AFTER_ATTEMPT_FAILURE", execution, target, {
+              last_attempt_failed: true,
+              snapshot_preserved: true,
+              execution_snapshot_present: true,
+              execution_snapshot_mutated: true,
+              execution_snapshot_accepted_operation_count: snapshot.acceptedOperationCount,
+              execution_snapshot_successful_round_count: snapshot.successfulRoundCount,
+              execution_snapshot_last_successful_round: snapshot.lastSuccessfulRound,
+              execution_snapshot_persistence_eligible: true,
+              persistence_requested: true,
+              persistence_confirmed: snapshot.persistenceConfirmed,
+              failure_code: error?.code ?? error?.message ?? "ANALYSIS_FAILED",
+            }, "world");
+          } catch (persistenceError) {
+            persistenceError.cause = error;
+            throw persistenceError;
           }
-          const candidate = await publishWorldModelCandidate({
-            model,
-            meta,
-            target,
-            execution,
-            mode,
-            trigger,
-            executionId: `${job.diagnostic_execution_id}-candidate-${attempt}`,
-          });
-          candidate.state = "PERSISTING";
-          emitPersistenceTrace("WORLD_PERSISTENCE_REQUESTED", execution, target, {
-            execution_id: candidate.execution_id,
-            candidate_fingerprint: candidate.candidate_fingerprint,
-            persistence_requested: true,
-          }, "world");
-          const saved = await saveWorldModel({
-            model,
-            meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: {...target.version}},
-            selector: target,
-            automatic: true,
-            traceExecution: execution,
-            persistenceOwner,
-          });
-          assertToken(token);
-          emitPersistenceTrace("WORLD_READBACK_BEGIN", execution, target, {}, "world");
-          publishPhase("world_readback");
-          publishPhase("world_ui_ready");
-          const ready = await resolveWorldModelUiReady(target);
-          const persistedFingerprint = await fingerprintWorldModel(ready?.model);
-          const reconciliationStatus = persistedFingerprint.full_hash === candidate.candidate_full_hash
-            ? "confirmed"
-            : "mismatch";
-          latestWorldModelDiagnostic = {
-            execution_id: candidate.execution_id,
-            candidate_execution_id: candidate.execution_id,
-            candidate_fingerprint: candidate.candidate_fingerprint,
-            candidate_state: candidate.state,
-            final_result: 'UPDATED',
-            candidate_created_at: candidate.created_at,
-            ui_projection_state: "PENDING",
-            committed_fingerprint: persistedFingerprint.fingerprint,
-            persistence_requested: true,
-            persistence_confirmed: true,
-            persisted_fingerprint: persistedFingerprint.fingerprint,
-            reconciliation_status: reconciliationStatus,
-            reconciliation_fingerprint: persistedFingerprint.fingerprint,
-            latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
-            mode,
-            trigger,
-            floor_version: cloneWorldValue(target.version),
-            candidate_model: cloneWorldValue(model),
-            runtime_model: cloneWorldValue(ready?.model),
-            fact_delta_summary: cloneWorldValue(factDeltaSummary ?? null),
-            latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
-            latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
-            recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
-            request_transitions: cloneWorldValue(recentWorldRequestTransitions),
-            updated_at: new Date().toISOString(),
-          };
-          emitPersistenceTrace("WORLD_READBACK_FOUND", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
-          emitPersistenceTrace("WORLD_READBACK_VALIDATED", execution, target, {floor_version_match: true, world_model_present: Boolean(ready?.model)}, "world");
-          emitPersistenceTrace("WORLD_RUNTIME_STATE_UPDATED", execution, target, {world_model_present: Boolean(ready?.model)}, "world");
-          emitPersistenceTrace(
-            reconciliationStatus === "confirmed" ? "WORLD_RECONCILIATION_CONFIRMED" : "WORLD_RECONCILIATION_MISMATCH",
-            execution,
-            target,
-            {
-              execution_id: candidate.execution_id,
-              candidate_fingerprint: candidate.candidate_fingerprint,
-              reconciliation_status: reconciliationStatus,
-              reconciliation_fingerprint: persistedFingerprint.fingerprint,
-              persisted_fingerprint: persistedFingerprint.fingerprint,
-            },
-            "world",
-          );
-          if (reconciliationStatus !== "confirmed") {
-            const error = candidateError("WORLD_UI_FLOOR_RECONCILIATION_MISMATCH", {
-              analysis_stage: "world_reconciliation",
-              candidate_fingerprint: candidate.candidate_fingerprint,
-              persisted_fingerprint: persistedFingerprint.fingerprint,
-            });
-            throw error;
-          }
-          emitPersistenceTrace("WORLD_PERSISTENCE_CONFIRMED", execution, target, {
-            execution_id: candidate.execution_id,
-            candidate_fingerprint: candidate.candidate_fingerprint,
-            world_model_present: Boolean(ready?.model),
-            species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
-            ...(factDeltaSummary ?? {}),
-            persistence_occurred: true,
-          }, "world");
-          candidate.state = "PERSISTED";
-          notify({
-            type: "WORLD_PERSISTENCE_CONFIRMED",
-            payload: {
-              execution_id: candidate.execution_id,
-              candidate_fingerprint: candidate.candidate_fingerprint,
-              candidate_full_hash: candidate.candidate_full_hash,
-              model: cloneWorldValue(ready?.model),
-              meta: cloneWorldValue(ready?.meta ?? saved?.meta ?? null),
-              floor_version: cloneWorldValue(ready?.floor_version ?? target.version),
-              persistence_confirmed: true,
-              authoritative: true,
-            },
-            chatId: target.chatId,
-          });
-          if (lastIndependentWorldRequest?.execution_id === job.diagnostic_execution_id) {
-            lastIndependentWorldRequest = {
-              ...lastIndependentWorldRequest,
-              mutation_persisted: true,
-              mutation_ui_projected: null,
-              mutation_source_candidate_fingerprint: candidate.candidate_fingerprint,
-            };
-          }
-          return {
-            ...saved,
-            model: ready.view_model.model,
-            view_model: ready.view_model,
-            candidate_execution_id: candidate.execution_id,
-            candidate_fingerprint: candidate.candidate_fingerprint,
-            candidate_full_hash: candidate.candidate_full_hash,
-            final_result: 'UPDATED',
-          };
-        },
-      });
+        }
+        throw error;
+      }
     })();
     job.promise = work.then(
       result => {
@@ -1085,6 +1231,7 @@ export function createWorldAnalysis({
         const latestFactDelta = recentFactDeltaExecutions.at(-1) ?? null;
         if (latestFactDelta) {
           latestWorldModelDiagnostic = {
+            ...(latestWorldModelDiagnostic?.snapshot_preserved ? latestWorldModelDiagnostic : {}),
             execution_id: job.diagnostic_execution_id,
             latest_world_fact_delta_execution_id: latestFactDelta.execution_id,
             latest_fact_delta: cloneWorldValue(latestFactDelta.summary),
@@ -1095,8 +1242,12 @@ export function createWorldAnalysis({
             mode,
             trigger,
             floor_version: cloneWorldValue(target.version),
-            candidate_model: null,
-            runtime_model: null,
+            candidate_model: latestWorldModelDiagnostic?.snapshot_preserved
+              ? latestWorldModelDiagnostic.candidate_model
+              : null,
+            runtime_model: latestWorldModelDiagnostic?.snapshot_preserved
+              ? latestWorldModelDiagnostic.runtime_model
+              : null,
             updated_at: new Date().toISOString(),
           };
         }

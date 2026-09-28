@@ -81,6 +81,30 @@ identity. Candidate creation remains diagnostic and persistence input only.
 Canonical no-op candidates skip an unnecessary Floor transaction and do not
 create a UI projection mutation.
 
+### Supplement execution snapshot transaction
+
+World Supplement uses one execution-scoped cumulative snapshot. At execution
+start, Runtime clones the authoritative baseline model from the valid Floor.
+Each guarded accepted Patch v2 delta merges into that snapshot; parser,
+Resolver, or Evidence Guard rejected Facts never enter it. A later retry,
+completeness failure, coverage continuation failure, format failure, or API
+failure cannot roll back an already accepted snapshot mutation.
+
+Attempts never write the Floor directly. When the execution ends, Runtime
+compares the accumulated snapshot with the authoritative baseline. A changed,
+canonical-valid snapshot is persisted exactly once through the existing
+`saveWorldModel()` -> `commitFloorPatch(owner="world")` -> authoritative
+readback path. If the snapshot is canonically equal to the baseline, the
+execution is `NO_CHANGE` and skips the Floor transaction.
+
+The final attempt result and the execution snapshot are independent diagnostic
+states: a terminal retry failure may coexist with a preserved, mutated,
+persistence-confirmed snapshot. This recovery path remains fail-closed when
+the execution is superseded, the Floor/Swipe Version changes, the request is
+aborted, canonical validation fails, or the persistence coordinator rejects the
+transaction. A persistence failure does not erase the in-memory snapshot or
+pretend that the mutation was confirmed.
+
 World resolvers such as `resolveWorldModelAtOrBefore()` and
 `resolveWorldModelStrictlyBefore()` belong to the World/Floor boundary.
 Character Registry previous-snapshot resolution remains independent. Shared

@@ -1697,6 +1697,30 @@ test('Supplement completeness is a separate terminal outcome and retries only wh
   assert.equal(result.fact_delta_summary.analysis_stage_succeeded, true)
 })
 
+test('Supplement completeness failure preserves the guarded partial patch for retry recovery', async () => {
+  const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
+  const [subject] = buildWorldModelSupplementIdentityReviewSubjects(existing)
+  const targets = buildWorldModelSupplementCoverageTargets(existing)
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({generateRaw: () => factDeltaJson({
+      facts: [{scope: 'type', species: 'Species-A', biological_type: 'Type-B', field: 'Type_Identity'}],
+      noEvidenceTargetIds: targets.map(target => target.target_id),
+      identityReviews: [{subject_id: subject.subject_id, species: 'Species-A', status: 'REVIEWED', distinct_type_count: 1, additional_type_search: 'EXHAUSTED'}],
+    })}),
+  })
+
+  await assert.rejects(analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {world_model: existing, character: {description: 'Species-A 中 Type-B 是稳定 Biological Type。'}},
+    require_supplement_completeness: true,
+  }), error => {
+    assert.equal(error.code, 'WORLD_MODEL_SUPPLEMENT_INCOMPLETE')
+    assert.deepEqual(error.accepted_patch.operations.map(operation => operation.op), ['ADD_TYPE'])
+    assert.equal(error.accepted_fact_delta_summary.accepted_operation_count, 1)
+    return true
+  })
+})
+
 test('Supplement collection coverage stays incomplete when matching Facts are rejected', async () => {
   const existing = normalizeWorldModel({schema_version: 1, species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}]})
   const targets = buildWorldModelSupplementCoverageTargets(existing)
