@@ -2828,10 +2828,20 @@ test('World Model collection edits persist on the current resolver and preserve 
   await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '1'}), preventDefault() {}})
   await click({target: nestedActionTarget('world-model-delete-species'), preventDefault() {}})
   assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
+  assert.equal(currentMeta.archived_species.length, 1)
+  assert.equal(currentMeta.archived_species[0].species.name, '高等种族 B')
+  await click({target: nestedActionTarget('world-model-toggle-archive'), preventDefault() {}})
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '高等种族 B')
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
+  assert.match(toastCalls.at(-1)[1], /归档名单/)
+  await click({target: nestedActionTarget('world-model-restore-species', {bioweaveWorldArchiveIndex: '0'}), preventDefault() {}})
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A', '高等种族 B'])
+  assert.deepEqual(currentMeta.archived_species, [])
 
   failSave = true
   await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '失败后不应显示')
-  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A', '高等种族 B'])
   assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /失败后不应显示/)
   assert.equal(toastCalls.at(-1)[0], 'error')
 
@@ -2841,7 +2851,7 @@ test('World Model collection edits persist on the current resolver and preserve 
   reloaded.go('world')
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.match(reloadedRoot.querySelector('.bioweave-main').innerHTML, /种族 A/)
-  assert.doesNotMatch(reloadedRoot.querySelector('.bioweave-main').innerHTML, /种族 B/)
+  assert.match(reloadedRoot.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
   reloaded.destroyBioWeave()
 })
 test('worldbook source checkbox updates immediately and saves with a success Toast without a page notice', async () => {

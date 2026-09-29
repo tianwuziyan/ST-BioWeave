@@ -1,4 +1,5 @@
 import { buildWorldModelViewModel } from '../ai/analyzer.js'
+import { listArchivedSpecies } from '../core/world-species-archive.js'
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '产生精子',
   can_produce_ova: '产生卵子',
@@ -867,6 +868,27 @@ function renderSelectedTypeDetail(model, speciesSelection, biologicalTypeSelecti
     '</section>',
   ].join('')
 }
+export function renderSpeciesArchive(meta, {open = false, busy = false} = {}) {
+  const entries = listArchivedSpecies(meta)
+  const toggle = `<button type="button" class="bioweave-secondary-action bioweave-world-model-archive-toggle" data-bioweave-action="world-model-toggle-archive" aria-expanded="${open}">${open ? '关闭归档名单' : '归档名单'}${entries.length ? `（${entries.length}）` : ''}</button>`
+  if (!open) return `<section class="bioweave-world-model-archive bioweave-world-model-frame"><header class="bioweave-world-model-archive-header"><div><h3>归档名单</h3><p>用户归档的 Species 不会被分析重新加入 active World Model。</p></div>${toggle}</header></section>`
+  const items = entries.length
+    ? entries.map((entry, index) => [
+        '<li class="bioweave-world-model-archive-item">',
+        `<div><strong>${escapeHtml(entry.species?.name ?? '')}</strong><small>归档于 ${escapeHtml(entry.archived_at ?? '未知时间')}</small></div>`,
+        `<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-restore-species" data-bioweave-world-archive-index="${index}"${busy ? ' disabled' : ''}>还原</button>`,
+        '</li>',
+      ].join('')).join('')
+    : '<li class="bioweave-empty">暂无已归档 Species。</li>'
+  return [
+    '<section class="bioweave-world-model-archive bioweave-world-model-frame">',
+    '<header class="bioweave-world-model-archive-header"><div><h3>归档名单</h3><p>归档只移出 active World Model，完整 subtree 会在还原时恢复。</p></div>',
+    toggle,
+    '</header>',
+    `<ul class="bioweave-world-model-archive-list">${items}</ul>`,
+    '</section>',
+  ].join('')
+}
 export function renderWorldModelView(
   model,
   {
@@ -928,6 +950,7 @@ export function worldPage({
   sectionDraft = null,
   collectionEditor = null,
   worldModelNotice = null,
+  worldModelArchiveOpen = false,
 } = {}) {
   const model = worldModel ?? null
   const phaseBusy = new Set(['world_full', 'world_patch', 'world_readback', 'world_ui_ready']).has(worldModelPhase)
@@ -993,6 +1016,7 @@ export function worldPage({
       actions +
       '</div></header>',
     notice,
+    renderSpeciesArchive(worldModelMeta, {open: worldModelArchiveOpen, busy: effectiveBusy}),
     body,
     '</section>',
   ].join('')

@@ -29,6 +29,15 @@ import {
 } from '../ai/client.js'
 import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import {
+  archiveWorldSpecies,
+  isSpeciesArchived,
+  normalizeSpeciesIdentity,
+  normalizeWorldSpeciesArchiveMeta,
+  restoreWorldSpecies,
+  WORLD_SPECIES_ARCHIVE_DUPLICATE,
+  WORLD_SPECIES_ARCHIVE_RESTORE_COLLISION,
+} from '../core/world-species-archive.js'
+import {
   buildRenderedWorldLayerSnapshot,
   buildWorldModelLayerSnapshot,
   compareWorldModelLayers,
@@ -300,6 +309,7 @@ function createWorldModelState() {
     sectionDraft: null,
     sectionDirty: false,
     collectionEditor: null,
+    archiveOpen: false,
     notice: null,
     operation: null,
     phase: null,
@@ -1876,6 +1886,7 @@ export function createApp(runtime, options = {}) {
     source,
     committed = null,
     commitBeforeFingerprint = false,
+    onRenderCommitted = null,
     assertCurrent = () => {},
   }) {
     const previousState = worldModelState
@@ -1972,10 +1983,14 @@ export function createApp(runtime, options = {}) {
     }
     lastWorldUiIngressDiagnostic = diagnostic
     recordUiRefreshTrace('WORLD_UI_INGRESS_COMPLETED', diagnostic)
+    onRenderCommitted?.(diagnostic)
     if (commitBeforeFingerprint) {
-      canonicalFingerprint = await fingerprintWorldModel(canonicalModel)
-      assertCurrent()
-      viewFingerprint = await fingerprintWorldModel(viewModel)
+      const [nextCanonicalFingerprint, nextViewFingerprint] = await Promise.all([
+        fingerprintWorldModel(canonicalModel),
+        fingerprintWorldModel(viewModel),
+      ])
+      canonicalFingerprint = nextCanonicalFingerprint
+      viewFingerprint = nextViewFingerprint
       assertCurrent()
       if (
         canonicalFingerprint.fingerprint !== viewFingerprint.fingerprint ||
@@ -2076,6 +2091,7 @@ export function createApp(runtime, options = {}) {
     const cycleId = ++uiRefreshCycleSequence
     const requestState = {chatId, cycleId, request: null, key, requestSource}
     let cycleResult = 'pending'
+    let refreshCycleEndedByIngress = false
     worldModelRefreshInFlight = requestState
     worldModelState = worldModelState.chatId === chatId
       ? {...worldModelState, reloadPending: false, loading: true, notice: null}
@@ -2230,6 +2246,23 @@ export function createApp(runtime, options = {}) {
           source: committedSnapshot ? 'authoritative-committed-reload' : 'authoritative-reload',
           committed: committedSnapshot,
           commitBeforeFingerprint: !committedSnapshot,
+          onRenderCommitted: committedSnapshot
+            ? null
+            : () => {
+                if (refreshCycleEndedByIngress) return
+                refreshCycleEndedByIngress = true
+                cycleResult = 'success'
+                recordUiRefreshTrace('UI_STATE_COMMIT_END', {
+                  ui_refresh_cycle_id: cycleId,
+                  world_present: Boolean(resolvedModel),
+                })
+                runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(resolvedModel)})
+                recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
+                  ui_refresh_cycle_id: cycleId,
+                  request_source: requestSource,
+                  result: cycleResult,
+                })
+              },
           assertCurrent: () => {
             if (
               !reloadIsCurrent() ||
@@ -2249,11 +2282,13 @@ export function createApp(runtime, options = {}) {
         : committedSnapshot
           ? 'reconciled'
           : 'success'
-      recordUiRefreshTrace('UI_STATE_COMMIT_END', {
-        ui_refresh_cycle_id: cycleId,
-        world_present: Boolean(resolvedModel),
-      })
-      runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(resolvedModel)})
+      if (!refreshCycleEndedByIngress) {
+        recordUiRefreshTrace('UI_STATE_COMMIT_END', {
+          ui_refresh_cycle_id: cycleId,
+          world_present: Boolean(resolvedModel),
+        })
+        runtime.recordPersistenceTrace?.({stage: 'WORLD_UI_STATE_UPDATED', chat_id: chatId, world_model_present: Boolean(resolvedModel)})
+      }
     }, () => {
       if (!reloadIsCurrent()) return
       if (worldModelProjectionSequence > projectionSequence) {
@@ -2302,11 +2337,13 @@ export function createApp(runtime, options = {}) {
       })
     }).finally(() => {
       if (worldModelRefreshInFlight === requestState) worldModelRefreshInFlight = null
-      recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
-        ui_refresh_cycle_id: cycleId,
-        request_source: requestSource,
-        result: cycleResult === 'pending' ? 'stale' : cycleResult,
-      })
+      if (!refreshCycleEndedByIngress) {
+        recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
+          ui_refresh_cycle_id: cycleId,
+          request_source: requestSource,
+          result: cycleResult === 'pending' ? 'stale' : cycleResult,
+        })
+      }
       const queuedRefresh = worldModelQueuedRefresh
       if (queuedRefresh?.chatId === chatId && runtime.chat.current() === chatId) {
         worldModelQueuedRefresh = null
@@ -2659,7 +2696,7 @@ export function createApp(runtime, options = {}) {
         return
       }
       speciesIndex = selectedSpecies.speciesIndex
-      operation = 'remove-species'
+      operation = 'archive-species'
     }
     if (operation === 'delete-biological-type-selection') {
       if (!selectedSpecies || !selectedBiologicalType || selectedBiologicalType.speciesIndex !== selectedSpecies.speciesIndex) {
@@ -2682,16 +2719,37 @@ export function createApp(runtime, options = {}) {
       typeIndex = selectedBiologicalType.typeIndex
       operation = 'rename-biological-type'
     }
-    const result = applyWorldModelCollectionEdit(base, {operation, speciesIndex, typeIndex, name})
+    const archiveIdentity = normalizeSpeciesIdentity(name)
+    const currentSpeciesIdentity = normalizeSpeciesIdentity(selectedSpecies?.speciesName)
+    if (
+      (operation === 'add-species' || operation === 'rename-species') &&
+      archiveIdentity &&
+      archiveIdentity !== currentSpeciesIdentity &&
+      isSpeciesArchived(archiveIdentity, worldModelState.meta)
+    ) {
+      notify('该 Species 已在归档名单中，请先从“归档名单”还原。', 'warning', documentRef)
+      worldModelState = {...worldModelState, collectionEditor: null, notice: null}
+      render()
+      return
+    }
+    const result = operation === 'archive-species'
+      ? archiveWorldSpecies(base, worldModelState.meta, speciesIndex)
+      : applyWorldModelCollectionEdit(base, {operation, speciesIndex, typeIndex, name})
     if (!result.changed) {
       if (operation.startsWith('add-') && String(name ?? '').trim()) notify('该名称已存在。', 'warning', documentRef)
+      else if (operation === 'archive-species' && result.code === WORLD_SPECIES_ARCHIVE_DUPLICATE)
+        notify('该 Species 已经在归档名单中，未重复归档。', 'warning', documentRef)
       worldModelState = {...worldModelState, collectionEditor: null, notice: null}
       render()
       return
     }
     let model
+    let meta
     try {
       model = normalizeStoredWorldModel(result.model)
+      meta = operation === 'archive-species'
+        ? normalizeWorldSpeciesArchiveMeta(result.meta ?? worldModelState.meta)
+        : (result.meta ?? worldModelState.meta)
     } catch (error) {
       notify(worldModelOperationError(error), 'error', documentRef)
       return
@@ -2701,7 +2759,7 @@ export function createApp(runtime, options = {}) {
     render()
     try {
       if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
-      await runtime.saveWorldModel({model, meta: worldModelState.meta})
+      await runtime.saveWorldModel({model, meta})
       assertAnalysisChatToken(token)
       await refreshTrackingAfterWorldModelSave('world-model-manual-collection-save')
       let nextSpecies = selectedSpecies
@@ -2716,7 +2774,7 @@ export function createApp(runtime, options = {}) {
         nextSpecies = createWorldModelSpeciesSelection(model, nextSpeciesIndex)
         nextBiologicalType = createWorldModelBiologicalTypeSelection(model, nextSpeciesIndex, nextTypes.length - 1)
       }
-      if (operation === 'remove-species') {
+      if (operation === 'remove-species' || operation === 'archive-species') {
         nextSpecies = null
         nextBiologicalType = null
       }
@@ -2736,6 +2794,7 @@ export function createApp(runtime, options = {}) {
         loaded: true,
         busy: false,
         model,
+        meta,
         selectedSpecies: nextSpecies,
         selectedBiologicalType: nextBiologicalType,
         notice: null,
@@ -2748,6 +2807,59 @@ export function createApp(runtime, options = {}) {
         return
       }
       worldModelState = {...worldModelState, busy: false, collectionEditor: null, notice: null}
+      notify(worldModelOperationError(error), 'error', documentRef)
+    }
+    render()
+  }
+  async function restoreWorldModelSpecies(archiveIndex) {
+    if (worldModelState.busy || !Number.isInteger(archiveIndex)) return
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
+    if (!(await canDiscardWorldModelSectionDraft())) return
+    const base = normalizeStoredWorldModel(worldModelState.model ?? {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: []})
+    const result = restoreWorldSpecies(base, worldModelState.meta, archiveIndex)
+    if (!result.changed) {
+      if (result.code === WORLD_SPECIES_ARCHIVE_RESTORE_COLLISION)
+        notify('active World Model 已存在同名 Species，归档项未还原。', 'warning', documentRef)
+      else notify('归档名单中没有找到该 Species。', 'warning', documentRef)
+      return
+    }
+    let model
+    let meta
+    try {
+      model = normalizeStoredWorldModel(result.model)
+      meta = normalizeWorldSpeciesArchiveMeta(result.meta)
+    } catch (error) {
+      notify(worldModelOperationError(error), 'error', documentRef)
+      return
+    }
+    const {token} = currentAnalysisChatToken()
+    worldModelState = {...worldModelState, busy: true, notice: null}
+    render()
+    try {
+      if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
+      await runtime.saveWorldModel({model, meta})
+      assertAnalysisChatToken(token)
+      await refreshTrackingAfterWorldModelSave('world-model-manual-species-restore')
+      const restoredIndex = model.species.length - 1
+      worldModelState = {
+        ...worldModelState,
+        loaded: true,
+        busy: false,
+        model,
+        meta,
+        archiveOpen: true,
+        selectedSpecies: createWorldModelSpeciesSelection(model, restoredIndex),
+        selectedBiologicalType: null,
+        notice: null,
+      }
+      notify('Species 已还原，后续分析将重新允许它进入 World Model。', 'success', documentRef)
+    } catch (error) {
+      try {
+        assertAnalysisChatToken(token)
+      } catch {
+        return
+      }
+      worldModelState = {...worldModelState, busy: false, notice: null}
       notify(worldModelOperationError(error), 'error', documentRef)
     }
     render()
@@ -3759,6 +3871,7 @@ export function createApp(runtime, options = {}) {
             editingSection: worldModelState.editingSection,
             sectionDraft: worldModelState.sectionDraft,
             collectionEditor: worldModelState.collectionEditor,
+            worldModelArchiveOpen: worldModelState.archiveOpen,
             worldModelNotice: worldModelState.notice,
           }
         : {}),
@@ -4955,6 +5068,17 @@ export function createApp(runtime, options = {}) {
       } else {
         await analyzeWorldModel(operation)
       }
+      return
+    }
+    if (action === 'world-model-toggle-archive') {
+      event.preventDefault()
+      worldModelState = {...worldModelState, archiveOpen: !worldModelState.archiveOpen}
+      render()
+      return
+    }
+    if (action === 'world-model-restore-species') {
+      event.preventDefault()
+      await restoreWorldModelSpecies(Number(target.dataset.bioweaveWorldArchiveIndex))
       return
     }
     if (action === 'world-model-add-species') {

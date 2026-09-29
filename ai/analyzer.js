@@ -10,6 +10,8 @@ import {
   WORLD_MODEL_SCHEMA,
 } from './prompts.js';
 import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
+import { rejectArchivedSpeciesFact, rejectArchivedSpeciesOperation } from '../core/world-species-archive.js';
+import {canonicalWorldSpeciesName, isCanonicalWorldHumanSpecies} from '../core/world-species-identity.js';
 import {
   buildWorldModelSupplementCoverageTargets,
   buildWorldModelSupplementIdentityReviewSubjects,
@@ -103,16 +105,6 @@ const NON_EVIDENCE_CAPABILITY_PATTERN =
   /(?:仅(?:存在|有)?[^。！？!?；;\n，,、]{0,16}(?:假孕|假性妊娠)|(?:无(?!法)|没有|未(?:有|能|观察到|记录|发现|实际)?|尚无|暂无|目前没有|没有实际|无实际)[^。！？!?；;\n，,、]{0,16}(?:妊娠|怀孕|生育|精子|卵子|受精|能力|记录|证据|观察))/u;
 const UNSPECIFIED_FIELD_CONTEXT_PATTERN =
   /(?:没有(?:明确|说明|提及|描述|提供)|未(?:明确|说明|提及|描述|提供)|不确定|不明确|不清楚|未知|尚未(?:明确|说明)|无从判断)[^。！？!?；;，,、\n]{0,10}$/u;
-const HUMAN_SPECIES_NAMES = new Set([
-  '人类',
-  '人',
-  'human',
-  'humans',
-  '人类human',
-  'human人类',
-  '人类人类',
-  'homosapiens',
-]);
 const UNKNOWN_RULE_TEXT_PATTERN =
   /^(?:未知|不确定|不知道|未(?:说明|提及|提到|描述|提供)|没有(?:说明|提及|提到|描述|提供|资料|相关资料|对应资料)|资料不足|证据不足|无法(?:判断|确定)|不能(?:判断|确定)|不明确|不清楚|不明|尚未(?:明确|说明)|暂无(?:资料|记录|证据))$/u;
 const KNOWN_ABSENT_RULE_PATTERN =
@@ -305,16 +297,8 @@ function normalizeReproductiveMechanism(raw, path) {
   };
 }
 
-function humanSpeciesAliasKey(value) {
-  return compactEvidenceText(value)
-    .replace(/[()\uFF08\uFF09]/gu, '')
-    .toLowerCase();
-}
-
 function canonicalSpeciesName(value) {
-  const text = nullableText(value);
-  if (!text) return text;
-  return isHumanSpeciesName(text) ? '人类' : localizedWorldModelText(text);
+  return canonicalWorldSpeciesName(nullableText(value))
 }
 
 function normalizeSpecies(raw, index, { strict = false } = {}) {
@@ -1380,7 +1364,7 @@ function fieldEvidenceUnits(units, speciesName, typeName) {
 }
 
 function isHumanSpeciesName(speciesName) {
-  return HUMAN_SPECIES_NAMES.has(humanSpeciesAliasKey(speciesName));
+  return isCanonicalWorldHumanSpecies(speciesName);
 }
 
 function capabilityEvidenceContext(unit, match) {
@@ -4263,9 +4247,27 @@ export function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
   const acceptedOperations = []
   const acceptedResults = []
   const rejectedFacts = [...resolution.rejectedFacts]
+  const archivedSpeciesMeta = Array.isArray(analysisInput?.archived_species_exclusions)
+    ? {
+        archived_species: analysisInput.archived_species_exclusions.map(item => ({
+          species: {name: item?.name},
+        })),
+      }
+    : analysisInput?.world_model_meta
   for (const result of resolution.factResults) {
     if (!result.operation || result.status !== 'resolved') {
       if (result.status === 'no-op' || result.status === 'deduplicated') acceptedResults.push(result)
+      continue
+    }
+    const archivedDiagnostic = rejectArchivedSpeciesOperation(result.operation, archivedSpeciesMeta)
+    if (archivedDiagnostic) {
+      const error = Object.assign(new Error(archivedDiagnostic.code), archivedDiagnostic)
+      annotateV2GuardFailure(error, result, result.fact_index ?? result.index ?? 0)
+      result.status = 'rejected'
+      result.code = archivedDiagnostic.code
+      result.reason = archivedDiagnostic.code
+      result.guardError = error
+      rejectedFacts.push(result)
       continue
     }
     if (!factDeltaOperationTargetExists(working, result.operation)) {
@@ -4629,7 +4631,7 @@ function factDeltaIsAppendOnlyCollection(fact) {
   return fact?.field === 'Special_Rule' || fact?.field === 'Exception' || fact?.field === 'Unknown'
 }
 
-export function resolveWorldModelFactDelta(facts, existingModel) {
+export function resolveWorldModelFactDelta(facts, existingModel, archiveMeta = null) {
   const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
   const inputFacts = Array.isArray(facts) ? facts : []
   const responseSpecies = new Set(inputFacts.filter(fact => fact?.field === 'Species_Identity').map(fact => fact.species))
@@ -4651,6 +4653,12 @@ export function resolveWorldModelFactDelta(facts, existingModel) {
     const result = {fact, index, fact_index, field: fact?.field ?? null, species: fact?.species ?? null, biological_type: fact?.biological_type ?? null, operation: null, status: 'rejected'}
     try {
       validateWorldModelFactDelta([fact])
+      const archivedDiagnostic = rejectArchivedSpeciesFact(fact, archiveMeta)
+      if (archivedDiagnostic) {
+        Object.assign(result, archivedDiagnostic, {reason: archivedDiagnostic.code})
+        factResults.push(result)
+        continue
+      }
       const key = factDeltaFactKey(fact)
       const previous = seen.get(key)
       if (previous) {
@@ -4943,7 +4951,7 @@ export function createAnalyzer({
         reason: rejected.reason,
       })
       const resolution = {
-        ...resolveWorldModelFactDelta(facts, candidateModel),
+        ...resolveWorldModelFactDelta(facts, candidateModel, analysisInput),
         resolved_unknown_ids: parsed.resolved_unknown_ids,
       }
       const normalizedExisting = normalizeWorldModel(candidateModel, {strict: true, allowGeneratedProjectionRuleIds: true})

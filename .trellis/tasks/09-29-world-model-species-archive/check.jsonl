@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Review archive persistence and readback against Floor/Swipe ownership."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Review deterministic exclusion gate without changing Fact Delta/Patch contracts."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Review lifecycle registry and clear/invalidation completeness for archived metadata."}
+{"file":"docs/ARCHITECTURE.md","reason":"Review changed files against feature owners and frozen coordinator boundaries."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Review archive UI structure, hooks, and responsive/accessibility compliance."}

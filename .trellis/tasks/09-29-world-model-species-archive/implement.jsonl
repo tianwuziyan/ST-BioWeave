@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership, World owner allowlist, authoritative readback, and no-direct-writer constraints."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Full/Supplement separation, Fact Delta safety boundary, canonical model and evidence contracts."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent field registry, World clear behavior, exact Floor/Swipe lifecycle and async guards."}
+{"file":"docs/ARCHITECTURE.md","reason":"Feature owner map and frozen persistence architecture."}
+{"file":"docs/ui-framework.config.json","reason":"Production UI tokens, hooks, accessibility, and responsive constraints."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"World Model component and action markup conventions."}

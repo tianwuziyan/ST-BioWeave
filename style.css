@@ -1202,6 +1202,69 @@
   font-weight: 600;
 }
 
+.bioweave-world-model-archive {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 11px;
+}
+
+.bioweave-world-model-archive-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bioweave-world-model-archive-header h3,
+.bioweave-world-model-archive-header p {
+  margin: 0;
+}
+
+.bioweave-world-model-archive-header p {
+  margin-top: 3px;
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+}
+
+.bioweave-world-model-archive-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bioweave-world-model-archive-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--bioweave-border-soft);
+  border-radius: 8px;
+  background: var(--bioweave-card);
+}
+
+.bioweave-world-model-archive-item > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bioweave-world-model-archive-item strong,
+.bioweave-world-model-archive-item small {
+  overflow-wrap: anywhere;
+}
+
+.bioweave-world-model-archive-item small {
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+}
+
 .bioweave-world-model-section {
   display: grid;
   gap: 8px;

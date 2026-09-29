@@ -54,6 +54,15 @@ World Model fields. Only an explicit complete Floor lifecycle invalidation may
 clear multiple business-owned fields together. Do not introduce a combined
 World + Character save/update helper.
 
+Manual Species deletion is an Archive transaction, not canonical deletion:
+the complete Species subtree is removed from `world_model.species[]` and
+stored in `world_model_meta.archived_species[]` in the same World save. Archive
+entries are user-owned exclusion identities for both Full and Supplement
+analysis; they are neither Existing World Model nor permitted evidence. A
+deterministic identity gate rejects archived Species subtree Facts, and Full
+results are filtered before persistence. Explicit Restore atomically puts the
+original subtree back and removes its exclusion; no separate blacklist exists.
+
 ### Candidate delivery and persistence order
 
 这里的 persistence candidate 是当前仍有效的运行时概念：它表示 authoritative

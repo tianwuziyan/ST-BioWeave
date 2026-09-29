@@ -43,6 +43,15 @@ import {
 } from '../storage/schema.js'
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import {
+  archiveWorldModelSpecies,
+  restoreWorldModelSpecies,
+  buildArchivedSpeciesReference,
+  filterArchivedWorldModelSpecies,
+  rejectArchivedSpeciesOperation,
+  rejectArchivedSpeciesFact,
+  normalizeWorldSpeciesIdentity,
+} from '../core/world-species-archive.js'
+import {
   applyWorldModelCollectionEdit,
   applyWorldModelSection,
   createWorldModelBiologicalTypeSelection,
@@ -8073,4 +8082,87 @@ test('Supplement Unknown partial resolution removes only accepted bindings', () 
   assert.deepEqual(guarded.model.unknowns, ['U2', 'U3', 'U4'])
   assert.equal(guarded.unknownResolution.find(item => item.unknown_id === worldModelUnknownId('U1')).status, 'removed')
   assert.equal(guarded.unknownResolution.find(item => item.unknown_id === worldModelUnknownId('U2')).status, 'retained')
+})
+
+test('World Model Species Archive preserves and restores the complete generic subtree', () => {
+  const species = {name: 'Species-A', description: 'description', biological_types: [{name: 'Type-A', capabilities: {can_produce_sperm: true}, special_rules: ['rule'], reproductive_mechanisms: [{key: 'mechanism-a'}]}]}
+  const source = {schema_version: 1, species: [species, {name: 'Species-B', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []}
+  const archived = archiveWorldModelSpecies(source, {}, 0, {archivedAt: '2026-09-29T00:00:00.000Z'})
+  assert.deepEqual(source.species[0], species)
+  assert.deepEqual(archived.model.species.map(item => item.name), ['Species-B'])
+  assert.deepEqual(archived.meta.archived_species[0].species, species)
+  assert.deepEqual(buildArchivedSpeciesReference(archived.meta), [{name: 'Species-A'}])
+  const restored = restoreWorldModelSpecies(archived.model, archived.meta, 0)
+  assert.deepEqual(restored.model.species[1], species)
+  assert.deepEqual(restored.meta.archived_species, [])
+  assert.equal(normalizeWorldSpeciesIdentity(' Species-A '), 'Species-A')
+})
+
+test('World Model Species Archive keeps canonical case-sensitive Species identities distinct', () => {
+  const source = {
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: []}, {name: 'species-a', biological_types: []}],
+    medical_context: {},
+    exceptions: [],
+    unknowns: [],
+  }
+  const archived = archiveWorldModelSpecies(source, {}, 0, {archivedAt: '2026-09-29T00:00:00.000Z'})
+  assert.deepEqual(archived.model.species.map(item => item.name), ['species-a'])
+  assert.equal(rejectArchivedSpeciesOperation({op: 'ADD_SPECIES', species: {name: 'species-a'}}, archived.meta), null)
+  assert.deepEqual(filterArchivedWorldModelSpecies(source, archived.meta).species.map(item => item.name), ['species-a'])
+  const restored = restoreWorldModelSpecies(archived.model, archived.meta, 0)
+  assert.equal(restored.changed, true)
+  assert.deepEqual(restored.model.species.map(item => item.name), ['species-a', 'Species-A'])
+})
+
+test('World Model Species Archive filters Full output and rejects the whole Supplement subtree', () => {
+  const meta = {archived_species: [{species: {name: 'Species-A'}}]}
+  const model = {schema_version: 1, species: [{name: 'Species-A', biological_types: []}, {name: 'Species-C', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []}
+  assert.deepEqual(filterArchivedWorldModelSpecies(model, meta).species.map(item => item.name), ['Species-C'])
+  for (const operation of [
+    {op: 'ADD_SPECIES', species: {name: 'Species-A'}},
+    {op: 'ADD_TYPE', target: {kind: 'species', species_name: 'Species-A'}, type: {name: 'Type-A'}},
+    {op: 'SET_FIELD', target: {kind: 'type', species_name: 'Species-A', type_name: 'Type-A'}, path: ['capabilities', 'can_produce_sperm'], value: true},
+    {op: 'ADD_SPECIAL_RULE', target: {kind: 'type', species_name: 'Species-A', type_name: 'Type-A'}, value: 'rule'},
+    {op: 'ADD_MECHANISM', target: {kind: 'type', species_name: 'Species-A', type_name: 'Type-A'}, mechanism: {key: 'mechanism-a'}},
+  ]) assert.equal(rejectArchivedSpeciesOperation(operation, meta)?.code, 'ARCHIVED_SPECIES_EXCLUDED')
+  assert.equal(rejectArchivedSpeciesOperation({op: 'ADD_SPECIES', species: {name: 'Species-C'}}, meta), null)
+})
+
+test('Archived Species Facts receive deterministic exclusion before dependency resolution', () => {
+  const meta = {archived_species: [{species: {name: 'Species-A'}}]}
+  const existing = normalizeWorldModel({schema_version: 1, species: [], exceptions: [], unknowns: []})
+  const facts = [
+    {scope: 'species', species: 'Species-A', field: 'Species_Identity'},
+    {scope: 'species', species: 'Species-A', field: 'Species_Description', value: 'description'},
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Type_Identity'},
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Type_Description', value: 'description'},
+    ...['Can_Produce_Sperm', 'Fertilization', 'Maturation'].map((field, index) => ({
+      scope: 'type', species: 'Species-A', biological_type: 'Type-A', field, value: `value-${index}`,
+    })),
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Special_Rule', value: 'rule'},
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Reproductive_Mechanism', mechanism: {key: 'mechanism'}},
+  ]
+  const resolution = resolveWorldModelFactDelta(facts, existing, meta)
+  assert.ok(resolution.factResults.every(result => result.code === 'ARCHIVED_SPECIES_EXCLUDED'))
+  assert.equal(resolution.patch.operations.length, 0)
+  assert.equal(rejectArchivedSpeciesFact({scope: 'world', field: 'Exception', exception: {statement: 'Species-A applies here'}}, meta), null)
+  assert.equal(rejectArchivedSpeciesFact({scope: 'world', field: 'Unknown', value: 'Species-A remains unresolved'}, meta), null)
+})
+
+test('Production World Model builders expose Archive exclusion separately from Existing', () => {
+  const input = {
+    character: {description: 'Species-A appears in evidence.'},
+    world_model: {schema_version: 1, species: [{name: 'Species-C', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []},
+    supplement_candidate: {schema_version: 1, species: [{name: 'Species-C', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []},
+    world_model_meta: {archived_species: [{species: {name: 'Species-A', description: 'private', biological_types: [{name: 'Type-A'}]}}]},
+  }
+  const full = buildWorldModelMessages(input).map(message => message.content).join('\n')
+  const supplement = buildWorldModelPatchMessagesV2(input).map(message => message.content).join('\n')
+  for (const messages of [full, supplement]) {
+    assert.match(messages, /用户归档 Species 排除/)
+    assert.match(messages, /不是 Existing World Model，也不是 permitted evidence/)
+    assert.match(messages, /Species-A/)
+  }
+  assert.match(supplement, /existing_reference/)
 })

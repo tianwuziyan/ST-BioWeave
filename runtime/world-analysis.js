@@ -5,6 +5,11 @@ import {
   summarizeAnalysisInput,
 } from "../ai/analyzer.js";
 import {buildWorldModelSupplementCoverageTargets} from "../ai/world-supplement-protocol.js";
+import {
+  buildWorldSpeciesArchiveReferences,
+  filterArchivedSpecies,
+  normalizeWorldSpeciesArchiveMeta,
+} from "../core/world-species-archive.js";
 import {fingerprintWorldModel} from "../utils/world-model-debug.js";
 import { emptyFloor } from "../storage/schema.js";
 import {
@@ -504,6 +509,9 @@ export function createWorldAnalysis({
         throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
       const completeWorldAnalysis = async ({model, meta, fact_delta_summary: factDeltaSummary, fact_delta_execution_id: factDeltaExecutionId}, {attempt, retryIndex}) => {
         factDeltaSummary = normalizeFactDeltaDiagnostic(factDeltaSummary);
+        const archiveMeta = normalizeWorldSpeciesArchiveMeta(meta);
+        model = filterArchivedSpecies(model, archiveMeta);
+        meta = archiveMeta;
         const ownerKey = `${key}:${attempt}:${retryIndex}`;
         if (persistenceOwner.attempt !== ownerKey) {
           persistenceOwner.attempt = ownerKey;
@@ -816,15 +824,25 @@ export function createWorldAnalysis({
           let meta;
           let model;
           if (mode === "full") {
+            const resolvedArchive = await resolveWorldModelAtOrBefore(target);
+            const archiveMeta = normalizeWorldSpeciesArchiveMeta(resolvedArchive?.meta);
+            const archivedSpeciesExclusions = buildWorldSpeciesArchiveReferences(archiveMeta);
             const fullAnalysisInput = {...(analysisInput ?? {})};
             delete fullAnalysisInput.world_model;
+            fullAnalysisInput.archived_species_exclusions = archivedSpeciesExclusions;
+            fullAnalysisInput.world_model_meta = archiveMeta;
             model = normalizeStoredWorldModel(await analyzer.analyzeWorldModel({
               analysisInput: fullAnalysisInput,
               floor_version: target.version,
               authoritative_floor_version: target.version,
               signal,
             }));
-            meta = {source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput)};
+            model = filterArchivedSpecies(model, archiveMeta);
+            meta = {
+              ...archiveMeta,
+              source: "world-full-analysis",
+              source_summary: summarizeAnalysisInput(analysisInput),
+            };
           } else {
             const factDeltaExecutionId = `${job.diagnostic_execution_id}-attempt-${attempt}`;
             const resolved = supplementExecutionState
@@ -844,7 +862,7 @@ export function createWorldAnalysis({
               supplementExecutionState = {
                 baselineModel: cloneWorldValue(resolved.model),
                 transientModel: cloneWorldValue(resolved.model),
-                meta: cloneWorldValue(resolved.meta ?? {}),
+                meta: cloneWorldValue(normalizeWorldSpeciesArchiveMeta(resolved.meta)),
                 rounds: [],
                 initialTargetCount: initialTargets.length,
                 hasAcceptedMutation: false,
@@ -860,10 +878,14 @@ export function createWorldAnalysis({
             }
             const baselineFingerprint = await fingerprintWorldModel(resolved.model);
             const baselineSource = "AUTHORITATIVE_FLOOR";
+            const archiveMeta = normalizeWorldSpeciesArchiveMeta(resolved.meta);
+            const archivedSpeciesExclusions = buildWorldSpeciesArchiveReferences(archiveMeta);
             const patchAnalysisInput = {
               ...(analysisInput ?? {}),
               world_model: cloneWorldValue(resolved.model),
               supplement_candidate: cloneWorldValue(resolved.model),
+              archived_species_exclusions: archivedSpeciesExclusions,
+              world_model_meta: cloneWorldValue(archiveMeta),
               supplement_request_mode: "INITIAL",
               ...(formatRetryUsed
                 ? {supplement_retry_directive: {kind: "format_retry", items: []}}

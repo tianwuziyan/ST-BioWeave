@@ -395,6 +395,16 @@ replace only these two fields and preserve `analysis`, `events`, and
 preserve the World fields. The shared Floor container does not merge these
 business owners.
 
+`world_model_meta.archived_species[]` is a nested World-owned user lifecycle
+collection. Each entry stores the complete canonical Species snapshot together
+with `archived_at` and `archived_by`; it is not part of canonical
+`world_model.species[]`, Chat metadata, or a permanent blacklist. Missing
+metadata normalizes to an empty collection. Archive and Restore replace
+`world_model` and `world_model_meta` together in one owner-scoped World save;
+World/All clear removes the collection with `world_model_meta`, and Floor/Swipe
+version and owner guards apply exactly as they do to the surrounding World
+fields. Restore removes the dynamic analysis exclusion immediately.
+
 The canonical `events[]` field set from `core/events.js` is:
 
 ```text

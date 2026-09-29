@@ -471,7 +471,8 @@
       "collectionActions": {
         "add": "data-bioweave-action=world-model-add-species",
         "edit": "data-bioweave-action=world-model-edit-species",
-        "remove": "data-bioweave-action=world-model-delete-species",
+        "archive": "data-bioweave-action=world-model-toggle-archive",
+        "deleteAction": "data-bioweave-action=world-model-delete-species",
         "placement": "section header actions, margin-left auto",
         "iconOnly": true,
         "requiresTitleAndAriaLabel": true
@@ -537,6 +538,7 @@
         "data-bioweave-action=world-model-add-species",
         "data-bioweave-action=world-model-edit-species",
         "data-bioweave-action=world-model-delete-species",
+        "data-bioweave-action=world-model-toggle-archive",
         "data-bioweave-action=world-model-add-biological-type",
         "data-bioweave-action=world-model-edit-biological-type",
         "data-bioweave-action=world-model-delete-biological-type"
@@ -545,6 +547,14 @@
       "requiresTitleAndAriaLabel": true,
       "layout": "each collection section owns one header action group; no per-item actions",
       "selectionState": "runtime-only selectedSpecies and selectedBiologicalType with name snapshots for stale-target validation"
+    },
+    "worldSpeciesArchive": {
+      "root": "bioweave-world-model-archive",
+      "toggleHook": "data-bioweave-action=world-model-toggle-archive",
+      "restoreHook": "data-bioweave-action=world-model-restore-species",
+      "source": "Runtime DTO worldModelMeta.archived_species",
+      "activeSelectorIsolation": true,
+      "restorePreservesCanonicalSubtree": true
     },
     "worldModule": {
       "root": "bioweave-world-module",
