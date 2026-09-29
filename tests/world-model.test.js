@@ -7650,7 +7650,11 @@ test('World UI card CSS keeps the reference density across devices', () => {
   )
   assert.match(
     STYLE_SOURCE,
-    /@media\s*\(min-width:\s*1200px\)[\s\S]*?\.bioweave-world-model-page \.bioweave-world-model-content-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*6fr\)\s*minmax\(0,\s*4fr\)\s*!important/s,
+    /@media\s*\(min-width:\s*1200px\)[\s\S]*?\.bioweave-world-model-page \.bioweave-world-model-content-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*5\.5fr\)\s*minmax\(0,\s*4\.5fr\)\s*!important/s,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /@media\s*\(min-width:\s*768px\)[\s\S]*?\.bioweave-world-model-page \.bioweave-world-model-content-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*5\.5fr\)\s*minmax\(0,\s*4\.5fr\)\s*!important/s,
   )
   assert.match(
     STYLE_SOURCE,

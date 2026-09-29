@@ -41,3 +41,7 @@
 - 2026-09-30 editor typography follow-up：编辑态标签与输入统一为 13px / 1.5，输入内边距 6px；世界级规则第一列收窄为 `minmax(92px, max-content)`。
 - 2026-09-30 tight editor follow-up：医疗与照护、特殊例外编辑窗口的标签列进一步收窄为 `minmax(72px, max-content)`，右侧内容列扩大并左移。
 - 2026-09-30 medical readout follow-up：医疗与照护正常展示态第一列同步收窄为 72px，右侧内容列扩大。
+## Latest follow-up
+
+- 桌面端生物类型详情与世界级规则栏调整为 5.5:4.5，左栏略窄、右栏略宽；平板与移动端仍为单列。
+- 桌面与平板统一使用 5.5:4.5 两栏，手机（≤767px）保持单列。
