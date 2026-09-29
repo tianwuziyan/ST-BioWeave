@@ -147,7 +147,7 @@ Biological_Type：同一 Species 内稳定存在的生物性别、生理类型�
   Lifecycle
     Maturation：生物上的成长和成熟，例如身体成熟、性成熟、成年等。修炼升级、境界突破、职业成长、关系成长不算。
     Aging：寿命、衰老、老化速度以及随年龄产生的稳定生物变化。修炼境界变化本身不算 Aging。
-  Special_Rules：这个 Species 或 Type 有明确、稳定的特殊生物规则，但上面的字段都放不下时才写这里。它是兜底字段，不是杂物箱。能放进 Capabilities、Reproduction_Rules、Lifecycle、Mechanism 等字段的内容不要重复写这里，并保持原本的 Species/Type 范围。
+  Special_Rules：这个 Biological Type 有明确、稳定的特殊生物规则，但上面的字段都放不下时才写这里。它是兜底字段，不是杂物箱。能放进 Capabilities、Reproduction_Rules、Lifecycle、Mechanism 等字段的内容不要重复写这里，并保持 Type scope。
 Medical_Context
   Childbirth_Difficulty：整个世界普遍的分娩难度或产科风险。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。
   Care_Level：整个世界普遍的医疗、产科或照护水平。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。
@@ -678,7 +678,7 @@ export const WORLD_MODEL_SUPPLEMENT_FIELD_DICTIONARY = [
   '【Reproduction Rules】只提取该 Type 的稳定生殖过程规则，不把 capability boolean 当作 rule。Fertilization：受精如何发生、配子如何结合、条件或授精机制；不写单纯妊娠、孕期、分娩或性行为。Pregnancy_Or_Carrying：妊娠/承载如何发生、承载结构与条件；它不是“能否怀孕”的 boolean。',
   'Cycle：稳定生殖、发情、月经或繁殖周期；一次性欲望变化不属于 Cycle。Ovulation：排卵、释放卵细胞或等价过程的稳定规则。Gestation：进入妊娠后的孕期长度、阶段或持续进展；不等于 Can_Carry_Pregnancy。Labor：分娩、生产、产程或出生方式；不要把 fertilization 或 gestation 重复到 Labor。各字段没有独立 evidence 时分别省略。',
   '【Lifecycle】Maturation：生物成熟、性成熟、成年或稳定发育成熟过程；不写修炼升级、职业成长、关系成长或力量境界。Aging：寿命、衰老、老化或年龄相关稳定变化；不写修炼境界或力量变化。',
-  '【Reproductive Mechanisms / Mechanism】仅当普通 capability/rule 字段无法完整表达、且 evidence 明确支持独立生殖机制时使用；普通性交、生殖或妊娠事实不自动创建 Mechanism。Mechanism_Key 是稳定简短机器 key；Mechanism_Label 是人类可读名称；Mechanism_Pathway 是实际运作路径；Carrying_Compatibility 只有明确 true/false evidence 才输出；World_Model_Rule_Refs 只能引用明确关联的既有 rule reference；Evidence 只记录该机制对应的合法 evidence contract。',
+  '【Reproductive Mechanisms / Mechanism】仅当普通 capability/rule 字段无法完整表达、且 evidence 明确支持独立生殖机制时使用；普通性交、生殖或妊娠事实不自动创建 Mechanism。Mechanism_Key 是稳定简短机器 key；Mechanism_Label 是人类可读名称；Mechanism_Pathway 是实际运作路径；Carrying_Compatibility 只有明确 true/false evidence 才输出；World_Model_Rule_Refs（如果提供）必须是 string[]，每一项都是明确关联的既有 rule reference；Evidence（如果提供）必须是 string[]，每一项都是支持该机制的合法 evidence。不得把任一数组字段写成单个字符串。',
   '【Special Rules / Rule】提取确实属于当前 Biological_Type、由 evidence 支持且没有更准确 structured field 表达的稳定特殊规则。Rule 是 fallback outlet，不是事实垃圾桶；若 capability、reproduction rule、lifecycle 或 mechanism 已能表达，则不要重复。Species-scoped rule 不得强行挂到 Type。',
   '【Medical Context】只记录明确属于 world-level 的医疗/照护背景。Childbirth_Difficulty 是世界级分娩难度或总体产科风险；Care_Level 是世界级医疗、产科或照护水平；Evidence 支持该 world-level context。单一个体治疗、症状、检查或护理不能自动升级为 world-level。',
   '【Exception】Exception_Statement 是偏离一般 World Model 规则的明确例外；Applies_To 是明确适用对象/范围；Evidence 支持该例外。未知、资料不足和普通临时事实不自动成为 Exception。',
@@ -791,7 +791,7 @@ Biological_Type：同一 Species 内稳定存在的性别/生理/生殖分类，
   Lifecycle
     Maturation：生物上的成长和成熟，例如身体成熟、性成熟、成年等。修炼升级、境界突破、职业成长、关系成长不算。
     Aging：寿命、衰老、老化速度以及随年龄产生的稳定生物变化。修炼境界变化本身不算 Aging。
-  Special_Rules：这个 Species 或 Type 有明确、稳定的特殊生物规则，但上面的字段都放不下时才写这里。它是兜底字段，不是杂物箱。能放进 Capabilities、Reproduction_Rules、Lifecycle、Mechanism 等字段的内容不要重复写这里，并保持原本的 Species/Type 范围。
+  Special_Rules：这个 Biological Type 有明确、稳定的特殊生物规则，但上面的字段都放不下时才写这里。它是兜底字段，不是杂物箱。能放进 Capabilities、Reproduction_Rules、Lifecycle、Mechanism 等字段的内容不要重复写这里，并保持 Type scope。
 Medical_Context
   Childbirth_Difficulty：整个世界普遍的分娩难度或产科风险。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。
   Care_Level：整个世界普遍的医疗、产科或照护水平。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。
@@ -843,7 +843,7 @@ const WORLD_MODEL_LEGACY_FACT_DELTA_TASK_PROMPT = [
   'Maturation: 该 Type 是否有明确生物成熟/发育规则？不写修炼升级、职业成长。',
   'Aging: 该 Type 是否有明确寿命/衰老规则？不把境界变化当 aging。',
   'Reproductive_Mechanism: 是否存在不能被简单 capability/rule 表达的稳定生殖机制？填 Mechanism Key/Label/Pathway，普通性交/生殖/妊娠事实不自动创建。',
-  'Special_Rule: 是否存在该 scope 下稳定、特殊、但不属于其它标准字段的生物规则？保持原始 scope，能被其它字段表达的不要重复。',
+  'Special_Rule: 是否存在该 Biological Type 下稳定、特殊、但不属于其它标准字段的生物规则？必须保持 Type scope，能被其它字段表达的不要重复。',
   'Medical_Context: 是否有明确 world-level 医疗/照护背景？填 Childbirth Difficulty/Care Level/Evidence，个体医疗事实不推广。',
   'Exception: 是否有明确的个体/条件性偏离规则？填 Exception Statement/Applies To/Evidence，没有明确 evidence 不生成。',
   'Unknown: 证据是否明确触及某个重要事实但仍无法确定？填 Unknown Fact，missing field 不是 Unknown。',
@@ -956,7 +956,7 @@ export const WORLD_MODEL_JSON_FACT_DELTA_OUTPUT_CONTRACT = [
   'resolved_unknown_ids 是可选数组。每项必须是 {unknown_id, resolving_fact_addresses}；unknown_id 必须原样引用 user request 的 existing_unknowns，且 resolving_fact_addresses 至少包含一个 {scope, species?, biological_type?, field} 精确 canonical Fact 地址。只有同一响应中该地址的 Fact 被 Host 接受后，Unknown 才会移除；no_evidence、rejected、unresolved 或 no-op Fact 都不能移除。未声明或未满足绑定的 Unknown 必须保留。',
   'identity_reviews 必须逐 subject 提供 subject_id、species、status=REVIEWED、distinct_type_count、additional_type_search=EXHAUSTED。Identity Review 不是 evidence，新 Type 必须另有 Type_Identity Fact。',
   'Existing 只是 reference/comparison baseline，不是 evidence；Coverage Targets 只是 review checklist，不是 evidence 或 output whitelist。',
-  'Fact encoding is field-specific and must use only the keys shown below. Identity Facts do not have a payload key: Species_Identity uses scope=species with species and field only; Type_Identity uses scope=type with species, biological_type, and field only. String scalar Facts use a non-empty string value: Species_Description, Type_Description, Fertilization, Pregnancy_Or_Carrying, Cycle, Ovulation, Gestation, Labor, Maturation, Aging, Childbirth_Difficulty, Care_Level, and Medical_Evidence. Capability Facts use value=true or value=false as JSON booleans, never strings. Special_Rule is type-scoped and uses species, biological_type, field, and a non-empty string value. Unknown is world-scoped and uses field and a non-empty string value. Exception is world-scoped and uses field plus exception={statement, applies_to?, evidence?}; Reproductive_Mechanism is type-scoped and uses species, biological_type, field, and mechanism={key, label?, pathway?, carrying_compatibility?, world_model_rule_refs?, evidence?}; Projection_Rule is world-scoped and uses field plus projection_rule as one object without projection_rule_id. Do not add value to identity, exception, mechanism, or projection facts.',
+  'Fact encoding is field-specific and must use only the keys shown below. Identity Facts do not have a payload key: Species_Identity uses scope=species with species and field only; Type_Identity uses scope=type with species, biological_type, and field only. String scalar Facts use a non-empty string value: Species_Description, Type_Description, Fertilization, Pregnancy_Or_Carrying, Cycle, Ovulation, Gestation, Labor, Maturation, Aging, Childbirth_Difficulty, Care_Level, and Medical_Evidence. Capability Facts use value=true or value=false as JSON booleans, never strings. Special_Rule is type-scoped and uses species, biological_type, field, and a non-empty string value. Unknown is world-scoped and uses field and a non-empty string value. Exception is world-scoped and uses field plus exception={statement, applies_to?, evidence?}; Reproductive_Mechanism is type-scoped and uses species, biological_type, field, and mechanism={key, label?, pathway?, carrying_compatibility?, world_model_rule_refs?, evidence?}. In that mechanism object, key MUST be a non-empty string; label and pathway, when present, MUST be strings; carrying_compatibility, when present, MUST be a JSON boolean; world_model_rule_refs, when present, MUST be an array of strings; and evidence, when present, MUST be an array of strings. Do not emit a single string in place of either array. For example: {"scope":"type","species":"Species-A","biological_type":"Type-A","field":"Reproductive_Mechanism","mechanism":{"key":"mechanism-a","label":"Mechanism A","pathway":"Pathway A","carrying_compatibility":true,"world_model_rule_refs":["Rule-Ref-A"],"evidence":["Evidence-A"]}}. Projection_Rule is world-scoped and uses field plus projection_rule as one object without projection_rule_id. Do not add value to identity, exception, mechanism, or projection facts.',
 ].join('\n')
 export function buildWorldModelMessages(analysisInput = {}, promptSettings = {}) {
   const settings = normalizeAnalysisPrompt(promptSettings)

@@ -32,6 +32,8 @@ import {
   buildWorldModelSupplementIdentityReviewSubjects,
   parseWorldModelCandidateText as parseWorldModelCandidateTextRaw,
   parseWorldModelFactDeltaJson,
+  SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS,
+  SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY,
   worldModelUnknownId,
   parseWorldModelSupplementText,
   summarizeWorldModelSupplementIdentityDiversity,
@@ -58,6 +60,7 @@ import {
   resolveWorldModelSelection,
   WORLD_MODEL_SECTION_KEYS,
   worldPage,
+  renderWorldModelView,
 } from '../ui/world.js'
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
@@ -3402,15 +3405,19 @@ test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, 
   assert.deepEqual(resolved.fact_mappings[0], {
     fact_index: 0,
     field: 'Type_Identity',
+    registry_field: 'Type_Identity',
     species: 'Species-A',
     biological_type: 'Type-B',
     canonical_address: { scope: 'biological_type', species: 'Species-A', biological_type: 'Type-B' },
+    canonical_scope: 'biological_type',
     comparison: 'missing',
     patch_operation_type: 'ADD_TYPE',
     patch_path: 'species.Species-A.biological_types.Type-B',
     classification: 'ADD',
     resolver_status: 'resolved',
     guard_status: 'accepted',
+    guard_type: null,
+    snapshot_applied: true,
   })
   assert.equal(JSON.stringify(traces).includes('Existing species.'), false)
 })
@@ -3755,6 +3762,244 @@ test('Supplement JSON Facts map nested scalar fields through the guarded canonic
     const [group, key] = path
     assert.equal(type[group][key], value, field)
   }
+})
+
+test('Supplement writability registry covers every legal Fact with a deterministic operation', () => {
+  assert.deepEqual(
+    [...SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS],
+    Object.keys(SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY),
+  )
+  assert.equal(SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS.length, 26)
+
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+  })
+  const projectionRule = {
+    schema_version: 1,
+    mechanism_key: 'Mechanism-A',
+    development_concern_key: 'Concern-A',
+    development_kind: 'possible_detection',
+    trigger: {kind: 'story_time_reached', target_story_time: {day_index: 1}},
+  }
+  const factFor = field => {
+    const descriptor = SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field]
+    if (field === 'Species_Identity') return {scope: 'species', species: 'Species-B', field}
+    if (field === 'Type_Identity') return {scope: 'type', species: 'Species-A', biological_type: 'Type-B', field}
+    if (descriptor.container === 'scalar') return {
+      scope: descriptor.wireScope,
+      ...(descriptor.wireScope === 'species' ? {species: 'Species-A'} : {}),
+      ...(descriptor.wireScope === 'type' ? {species: 'Species-A', biological_type: 'Type-A'} : {}),
+      field,
+      value: descriptor.payload === 'boolean' ? true : `${field}-Value-A`,
+    }
+    if (field === 'Special_Rule') return {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field, value: 'Rule-A'}
+    if (field === 'Unknown') return {scope: 'world', field, value: 'Unknown-A'}
+    if (field === 'Reproductive_Mechanism') return {
+      scope: 'type', species: 'Species-A', biological_type: 'Type-A', field,
+      mechanism: {
+        key: 'Mechanism-A', label: 'Mechanism A', pathway: 'Pathway A',
+        carrying_compatibility: true, world_model_rule_refs: ['Rule-A'], evidence: ['Evidence-A'],
+      },
+    }
+    if (field === 'Exception') return {
+      scope: 'world', field,
+      exception: {statement: 'Exception-A', applies_to: 'Species-A', evidence: 'Evidence-A'},
+    }
+    if (field === 'Projection_Rule') return {scope: 'world', field, projection_rule: projectionRule}
+    throw new Error(`missing fixture for ${field}`)
+  }
+
+  for (const field of SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS) {
+    const descriptor = SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field]
+    const fact = factFor(field)
+    const parsed = parseWorldModelFactDeltaJson(factDeltaJson({facts: [fact]}))
+    assert.equal(parsed.facts.length, 1, field)
+    const resolution = resolveWorldModelFactDelta(parsed.facts, existing)
+    assert.equal(resolution.patch.operations.length, 1, field)
+    const operation = resolution.patch.operations[0]
+    assert.equal(
+      operation.op,
+      descriptor.mutation,
+      `${field} must resolve through its registered mutation`,
+    )
+    if (descriptor.container === 'scalar') assert.deepEqual(operation.path, descriptor.path, field)
+    if (field === 'Type_Identity') {
+      assert.equal(operation.target.kind, 'species', field)
+      assert.equal(operation.target.species_name, 'Species-A', field)
+      assert.equal(operation.type.name, 'Type-B', field)
+    } else if (descriptor.owner === 'biological_type') {
+      assert.equal(operation.target.kind, 'biological_type', field)
+      assert.equal(operation.target.species_name, 'Species-A', field)
+      assert.equal(operation.target.type_name, 'Type-A', field)
+    }
+  }
+})
+
+test('Supplement registry writes the complete canonical tree and exposes every major UI outlet', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+  })
+  const projectionRule = {
+    schema_version: 1,
+    mechanism_key: 'Mechanism-A',
+    development_concern_key: 'Concern-A',
+    development_kind: 'possible_detection',
+    trigger: {kind: 'story_time_reached', target_story_time: {day_index: 1}},
+  }
+  const facts = [
+    {scope: 'species', species: 'Species-A', field: 'Species_Description', value: 'Species description A'},
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Type_Description', value: 'Type description A'},
+    ...[
+      'Can_Produce_Sperm', 'Can_Produce_Ova', 'Can_Be_Fertilized', 'Can_Fertilize',
+      'Can_Cause_Pregnancy', 'Can_Carry_Pregnancy',
+    ].map(field => ({scope: 'type', species: 'Species-A', biological_type: 'Type-A', field, value: true})),
+    ...[
+      'Fertilization', 'Pregnancy_Or_Carrying', 'Cycle', 'Ovulation', 'Gestation', 'Labor',
+    ].map(field => ({scope: 'type', species: 'Species-A', biological_type: 'Type-A', field, value: `${field}-Value-A`})),
+    ...['Maturation', 'Aging'].map(field => ({scope: 'type', species: 'Species-A', biological_type: 'Type-A', field, value: `${field}-Value-A`})),
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Special_Rule', value: 'Rule-A'},
+    {
+      scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Reproductive_Mechanism',
+      mechanism: {key: 'Mechanism-A', label: 'Mechanism A', pathway: 'Pathway A', carrying_compatibility: true, world_model_rule_refs: ['Rule-A'], evidence: ['Evidence-A']},
+    },
+    {scope: 'world', field: 'Childbirth_Difficulty', value: 'Difficulty-A'},
+    {scope: 'world', field: 'Care_Level', value: 'Care-A'},
+    {scope: 'world', field: 'Medical_Evidence', value: 'Medical evidence A'},
+    {scope: 'world', field: 'Exception', exception: {statement: 'Exception-A', applies_to: 'Species-A', evidence: 'Evidence-A'}},
+    {scope: 'world', field: 'Unknown', value: 'Unknown-A'},
+    {scope: 'world', field: 'Projection_Rule', projection_rule: projectionRule},
+  ]
+  const parsed = parseWorldModelFactDeltaJson(factDeltaJson({facts}))
+  assert.equal(parsed.facts.length, facts.length)
+  const resolution = resolveWorldModelFactDelta(parsed.facts, existing)
+  assert.equal(resolution.patch.operations.length, facts.length)
+  const evidence = {character: {description: 'Species-A Type-A is described in the permitted evidence.'}}
+  const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, evidence)
+  assert.equal(guarded.patch.operations.length, facts.length)
+  const result = mergeWorldModelSupplementPatch(existing, guarded.patch, evidence)
+  const species = result.species.find(item => item.name === 'Species-A')
+  const type = species.biological_types.find(item => item.name === 'Type-A')
+  assert.equal(species.description, 'Species description A')
+  assert.equal(type.description, 'Type description A')
+  for (const field of ['can_produce_sperm', 'can_produce_ova', 'can_be_fertilized', 'can_fertilize', 'can_cause_pregnancy', 'can_carry_pregnancy'])
+    assert.equal(type.capabilities[field], true, field)
+  for (const field of ['fertilization', 'pregnancy_or_carrying', 'cycle', 'ovulation', 'gestation', 'labor'])
+    assert.equal(type.reproduction_rules[field], `${field === 'pregnancy_or_carrying' ? 'Pregnancy_Or_Carrying' : field[0].toUpperCase() + field.slice(1)}-Value-A`, field)
+  assert.equal(type.lifecycle.maturation, 'Maturation-Value-A')
+  assert.equal(type.lifecycle.aging, 'Aging-Value-A')
+  assert.deepEqual(type.special_rules, ['Rule-A'])
+  assert.deepEqual(type.reproductive_mechanisms[0], {
+    key: 'Mechanism-A', label: 'Mechanism A', pathway: 'Pathway A', carrying_compatibility: true,
+    world_model_rule_refs: ['Rule-A'], evidence: ['Evidence-A'],
+  })
+  assert.deepEqual(result.medical_context, {childbirth_difficulty: 'Difficulty-A', care_level: 'Care-A', evidence: 'Medical evidence A'})
+  assert.deepEqual(result.exceptions, [{statement: 'Exception-A', applies_to: 'Species-A', evidence: 'Evidence-A'}])
+  assert.deepEqual(result.unknowns, ['Unknown-A'])
+  assert.equal(result.projection_rules.length, 1)
+  assert.equal(result.projection_rules[0].mechanism_key, 'Mechanism-A')
+  assert.equal(result.projection_rules[0].development_concern_key, 'Concern-A')
+  assert.equal(result.projection_rules[0].trigger.target_story_time.day_index, 1)
+
+  const html = renderWorldModelView(result, {selectedSpeciesIndex: 0, selectedTypeIndex: 0})
+  for (const value of ['Species description A', 'Type description A', 'Cycle-Value-A', 'Maturation-Value-A', 'Rule-A', 'Mechanism A', 'Pathway A', 'Difficulty-A', 'Exception-A', 'Unknown-A', 'possible_detection'])
+    assert.match(html, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+})
+
+test('Supplement type-field scope binding is uniform across every type-owned family', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [
+      {name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]},
+      {name: 'Species-B', biological_types: [{name: 'Type-A'}]},
+    ],
+  })
+  const typeFields = SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS.filter(field =>
+    SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field].owner === 'biological_type' &&
+    SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field].container !== 'identity',
+  )
+  const factFor = (field, type = 'Type-A', species = 'Species-A') => {
+    const descriptor = SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field]
+    if (descriptor.container === 'scalar') return {
+      scope: 'type', species, biological_type: type, field,
+      value: descriptor.payload === 'boolean' ? true : `${field}-Value-A`,
+    }
+    if (field === 'Special_Rule') return {scope: 'type', species, biological_type: type, field, value: 'Rule-A'}
+    return {
+      scope: 'type', species, biological_type: type, field,
+      mechanism: {key: 'Mechanism-A', label: 'Mechanism A', pathway: 'Pathway A', carrying_compatibility: true},
+    }
+  }
+  for (const field of typeFields) {
+    const fact = factFor(field)
+    const resolution = resolveWorldModelFactDelta([fact], existing)
+    const accepted = applyWorldModelFactDeltaEvidenceGuard(resolution, {
+      character: {description: 'Species: Species-A\nBiological_Type: Type-A\nType-A has the permitted evidence.'},
+    })
+    assert.equal(accepted.patch.operations.length, 1, `${field} should accept its exact Type scope`)
+
+    const wrongType = applyWorldModelFactDeltaEvidenceGuard(resolveWorldModelFactDelta([factFor(field, 'Type-B')], existing), {
+      character: {description: 'Species: Species-A\nBiological_Type: Type-A\nType-A has the permitted evidence.'},
+    })
+    assert.equal(wrongType.patch.operations.length, 0, `${field} must not cross sibling Type scope`)
+
+    const wrongSpecies = applyWorldModelFactDeltaEvidenceGuard(resolveWorldModelFactDelta([factFor(field, 'Type-A', 'Species-B')], existing), {
+      character: {description: 'Species: Species-A\nBiological_Type: Type-A\nType-A has the permitted evidence.'},
+    })
+    assert.equal(wrongSpecies.patch.operations.length, 0, `${field} must not cross Species scope`)
+  }
+})
+
+test('Supplement existing Type Facts use resolved address without reclassifying the semantic Field', () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [
+      {name: 'Species-A', biological_types: [{name: 'Type-A'}, {name: 'Type-B'}]},
+      {name: 'Species-B', biological_types: [{name: 'Type-A'}]},
+    ],
+  })
+  const facts = [
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Special_Rule', value: 'Rule-A'},
+    {
+      scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Reproductive_Mechanism',
+      mechanism: {key: 'Mechanism-A', label: 'Mechanism A', pathway: 'Pathway A', evidence: ['Evidence-A']},
+    },
+    {scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Cycle', value: 'Cycle-A'},
+  ]
+  const resolution = resolveWorldModelFactDelta(facts, existing)
+  const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, {
+    character: {description: 'Rule-A and Cycle-A are present in the permitted evidence.'},
+  })
+  assert.equal(guarded.patch.operations.length, 3)
+  assert.deepEqual(guarded.patch.operations.map(operation => operation.target), [
+    {kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A'},
+    {kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A'},
+    {kind: 'biological_type', species_name: 'Species-A', type_name: 'Type-A'},
+  ])
+  const merged = mergeWorldModelSupplementPatch(existing, guarded.patch, {
+    character: {description: 'Rule-A and Cycle-A are present in the permitted evidence.'},
+  })
+  const typeA = merged.species.find(item => item.name === 'Species-A').biological_types.find(item => item.name === 'Type-A')
+  const typeB = merged.species.find(item => item.name === 'Species-A').biological_types.find(item => item.name === 'Type-B')
+  assert.deepEqual(typeA.special_rules, ['Rule-A'])
+  assert.equal(typeA.reproduction_rules.cycle, 'Cycle-A')
+  assert.equal(typeA.reproductive_mechanisms[0].key, 'Mechanism-A')
+  assert.deepEqual(typeB.special_rules, [])
+
+  const wrongType = applyWorldModelFactDeltaEvidenceGuard(
+    resolveWorldModelFactDelta([{...facts[0], biological_type: 'Type-B'}], existing),
+    {character: {description: 'Species-A Type-A has an explicitly different scoped rule.'}},
+  )
+  assert.equal(wrongType.patch.operations.length, 0)
+  assert.equal(wrongType.factResults[0].reason, 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+
+  const wrongSpecies = applyWorldModelFactDeltaEvidenceGuard(
+    resolveWorldModelFactDelta([{...facts[0], species: 'Species-B'}], existing),
+    {character: {description: 'Species-A Type-A has an explicitly different scoped rule.'}},
+  )
+  assert.equal(wrongSpecies.patch.operations.length, 0)
+  assert.equal(wrongSpecies.factResults[0].reason, 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
 })
 
 test('Supplement JSON Cycle Fact accepts Species-wide evidence without crossing Type or Species scope', async () => {
@@ -5250,6 +5495,74 @@ test('World Model Initial and Supplement prompts expose the same strict mechanis
   assert.equal(mechanism.carrying_compatibility, null)
   assert.deepEqual(mechanism.world_model_rule_refs, [])
   assert.deepEqual(mechanism.evidence, [])
+})
+
+test('Supplement Reproductive_Mechanism JSON contract requires string arrays', () => {
+  const valid = {
+    scope: 'type',
+    species: 'Species-A',
+    biological_type: 'Type-A',
+    field: 'Reproductive_Mechanism',
+    mechanism: {
+      key: 'mechanism-a',
+      label: 'Mechanism A',
+      pathway: 'Pathway A',
+      carrying_compatibility: true,
+      world_model_rule_refs: ['Rule-Ref-A', 'Rule-Ref-B'],
+      evidence: ['Evidence-A', 'Evidence-B'],
+    },
+  }
+  const parsed = parseWorldModelFactDeltaJson(JSON.stringify({facts: [valid]}))
+  assert.deepEqual(parsed.facts[0].mechanism.world_model_rule_refs, ['Rule-Ref-A', 'Rule-Ref-B'])
+  assert.deepEqual(parsed.facts[0].mechanism.evidence, ['Evidence-A', 'Evidence-B'])
+
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: 'Species-A',
+      biological_types: [{
+        name: 'Type-A',
+        reproductive_mechanisms: [{key: 'mechanism-existing', label: 'Existing', pathway: 'Existing path'}],
+      }],
+    }],
+  })
+  const resolution = resolveWorldModelFactDelta(parsed.facts, existing)
+  assert.equal(resolution.patch.operations[0].op, 'ADD_MECHANISM')
+  const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, {
+    character: {description: 'The permitted evidence supports the new mechanism.'},
+  })
+  assert.equal(guarded.patch.operations.length, 1)
+  const merged = mergeWorldModelSupplementPatch(existing, guarded.patch, {
+    character: {description: 'The permitted evidence supports the new mechanism.'},
+  })
+  assert.deepEqual(
+    merged.species[0].biological_types[0].reproductive_mechanisms.map(item => item.key),
+    ['mechanism-existing', 'mechanism-a'],
+  )
+  assert.deepEqual(merged.species[0].biological_types[0].reproductive_mechanisms[1].world_model_rule_refs, ['Rule-Ref-A', 'Rule-Ref-B'])
+  assert.deepEqual(merged.species[0].biological_types[0].reproductive_mechanisms[1].evidence, ['Evidence-A', 'Evidence-B'])
+
+  for (const property of ['world_model_rule_refs', 'evidence']) {
+    const invalid = structuredClone(valid)
+    invalid.mechanism[property] = property === 'evidence' ? 'Evidence-A' : 'Rule-Ref-A'
+    const result = parseWorldModelFactDeltaJson(JSON.stringify({facts: [invalid]}))
+    assert.equal(result.facts.length, 0, property)
+    assert.equal(result.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_JSON_COLLECTION_INVALID', property)
+    assert.equal(
+      result.rejectedFacts[0].diagnostics.some(diagnostic => diagnostic.field === property),
+      true,
+      property,
+    )
+  }
+})
+
+test('Supplement production prompt publishes the strict mechanism collection shape', () => {
+  const prompt = buildWorldModelPatchMessagesV2().map(message => message.content).join('\n')
+  assert.match(prompt, /world_model_rule_refs[\s\S]{0,120}MUST be an array of strings/u)
+  assert.match(prompt, /evidence[\s\S]{0,120}MUST be an array of strings/u)
+  assert.match(prompt, /"world_model_rule_refs":\["Rule-Ref-A"\]/u)
+  assert.match(prompt, /"evidence":\["Evidence-A"\]/u)
+  assert.match(prompt, /Do not emit a single string in place of either array/u)
 })
 
 test('World Model analyzer preserves processRequest content and OpenAI message content', async () => {

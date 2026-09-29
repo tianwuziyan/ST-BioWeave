@@ -455,36 +455,60 @@ export function parseWorldModelSupplementText(raw) {
   }
 }
 
+const WRITABLE_FACTS = [
+  {field: 'Species_Identity', wireScope: 'species', owner: 'species', path: ['name'], container: 'identity', mutation: 'ADD_SPECIES', payload: 'identity', createWritable: true, correctionWritable: false, uiOutlet: 'species_selector'},
+  {field: 'Species_Description', wireScope: 'species', owner: 'species', path: ['description'], container: 'scalar', mutation: 'SET_FIELD', payload: 'string', createWritable: true, correctionWritable: true, uiOutlet: 'species_description'},
+  {field: 'Type_Identity', wireScope: 'type', owner: 'biological_type', path: ['name'], container: 'identity', mutation: 'ADD_TYPE', payload: 'identity', createWritable: true, correctionWritable: false, uiOutlet: 'type_selector'},
+  {field: 'Type_Description', wireScope: 'type', owner: 'biological_type', path: ['description'], container: 'scalar', mutation: 'SET_FIELD', payload: 'string', createWritable: true, correctionWritable: true, uiOutlet: 'type_description'},
+  ...[
+    ['Can_Produce_Sperm', ['capabilities', 'can_produce_sperm']],
+    ['Can_Produce_Ova', ['capabilities', 'can_produce_ova']],
+    ['Can_Be_Fertilized', ['capabilities', 'can_be_fertilized']],
+    ['Can_Fertilize', ['capabilities', 'can_fertilize']],
+    ['Can_Cause_Pregnancy', ['capabilities', 'can_cause_pregnancy']],
+    ['Can_Carry_Pregnancy', ['capabilities', 'can_carry_pregnancy']],
+  ].map(([field, path]) => ({field, wireScope: 'type', owner: 'biological_type', path, container: 'scalar', mutation: 'SET_FIELD', payload: 'boolean', createWritable: true, correctionWritable: true, uiOutlet: 'capabilities'})),
+  ...[
+    ['Fertilization', ['reproduction_rules', 'fertilization']],
+    ['Pregnancy_Or_Carrying', ['reproduction_rules', 'pregnancy_or_carrying']],
+    ['Cycle', ['reproduction_rules', 'cycle']],
+    ['Ovulation', ['reproduction_rules', 'ovulation']],
+    ['Gestation', ['reproduction_rules', 'gestation']],
+    ['Labor', ['reproduction_rules', 'labor']],
+  ].map(([field, path]) => ({field, wireScope: 'type', owner: 'biological_type', path, container: 'scalar', mutation: 'SET_FIELD', payload: 'string', createWritable: true, correctionWritable: true, uiOutlet: 'reproduction_rules'})),
+  ...[
+    ['Maturation', ['lifecycle', 'maturation']],
+    ['Aging', ['lifecycle', 'aging']],
+  ].map(([field, path]) => ({field, wireScope: 'type', owner: 'biological_type', path, container: 'scalar', mutation: 'SET_FIELD', payload: 'string', createWritable: true, correctionWritable: true, uiOutlet: 'lifecycle'})),
+  {field: 'Special_Rule', wireScope: 'type', owner: 'biological_type', path: ['special_rules'], container: 'simple_collection', mutation: 'ADD_SPECIAL_RULE', payload: 'string', createWritable: true, correctionWritable: false, uiOutlet: 'special_rules'},
+  {field: 'Reproductive_Mechanism', wireScope: 'type', owner: 'biological_type', path: ['reproductive_mechanisms'], container: 'structured_collection', mutation: 'ADD_MECHANISM', payload: 'mechanism', createWritable: true, correctionWritable: false, identity: 'key', uiOutlet: 'reproductive_mechanisms'},
+  ...[
+    ['Childbirth_Difficulty', ['medical_context', 'childbirth_difficulty']],
+    ['Care_Level', ['medical_context', 'care_level']],
+    ['Medical_Evidence', ['medical_context', 'evidence']],
+  ].map(([field, path]) => ({field, wireScope: 'world', owner: 'world', path, container: 'scalar', mutation: 'SET_FIELD', payload: 'string', createWritable: true, correctionWritable: true, uiOutlet: 'medical_context'})),
+  {field: 'Exception', wireScope: 'world', owner: 'world', path: ['exceptions'], container: 'structured_collection', mutation: 'ADD_EXCEPTION', payload: 'exception', createWritable: true, correctionWritable: false, identity: 'statement+applies_to', uiOutlet: 'exceptions'},
+  {field: 'Unknown', wireScope: 'world', owner: 'world', path: ['unknowns'], container: 'lifecycle_collection', mutation: 'ADD_UNKNOWN', payload: 'string', createWritable: true, correctionWritable: false, identity: 'normalized_text', uiOutlet: 'unknowns'},
+  {field: 'Projection_Rule', wireScope: 'world', owner: 'world', path: ['projection_rules'], container: 'structured_collection', mutation: 'ADD_PROJECTION_RULE', payload: 'projection_rule', createWritable: true, correctionWritable: false, identity: 'projection_rule_id', uiOutlet: 'projection_rules'},
+]
+
+export const SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY = Object.freeze(
+  Object.fromEntries(WRITABLE_FACTS.map(entry => [entry.field, Object.freeze({...entry, path: Object.freeze([...entry.path])})])),
+)
+
+export const SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS = Object.freeze(
+  WRITABLE_FACTS.map(entry => entry.field),
+)
+
+export function supplementFactDescriptor(field) {
+  return SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field] ?? null
+}
+
 const FACT_DELTA_FIELDS = Object.freeze({
-  identity: new Set(['Species_Identity', 'Type_Identity']),
-  species: new Set(['Species_Description']),
-  type: new Set([
-    'Type_Description',
-    'Can_Produce_Sperm',
-    'Can_Produce_Ova',
-    'Can_Be_Fertilized',
-    'Can_Fertilize',
-    'Can_Cause_Pregnancy',
-    'Can_Carry_Pregnancy',
-    'Fertilization',
-    'Pregnancy_Or_Carrying',
-    'Cycle',
-    'Ovulation',
-    'Gestation',
-    'Labor',
-    'Maturation',
-    'Aging',
-    'Special_Rule',
-    'Reproductive_Mechanism',
-  ]),
-  world: new Set([
-    'Childbirth_Difficulty',
-    'Care_Level',
-    'Medical_Evidence',
-    'Exception',
-    'Unknown',
-    'Projection_Rule',
-  ]),
+  identity: new Set(WRITABLE_FACTS.filter(item => item.container === 'identity').map(item => item.field)),
+  species: new Set(WRITABLE_FACTS.filter(item => item.wireScope === 'species' && item.container !== 'identity').map(item => item.field)),
+  type: new Set(WRITABLE_FACTS.filter(item => item.wireScope === 'type' && item.container !== 'identity').map(item => item.field)),
+  world: new Set(WRITABLE_FACTS.filter(item => item.wireScope === 'world').map(item => item.field)),
 })
 
 const JSON_FACT_FIELDS = new Set([
@@ -494,69 +518,29 @@ const JSON_FACT_FIELDS = new Set([
   ...FACT_DELTA_FIELDS.world,
 ])
 
-const FACT_DELTA_SCALAR_FIELDS = new Set([
-  'Species_Description',
-  'Type_Description',
-  'Can_Produce_Sperm',
-  'Can_Produce_Ova',
-  'Can_Be_Fertilized',
-  'Can_Fertilize',
-  'Can_Cause_Pregnancy',
-  'Can_Carry_Pregnancy',
-  'Fertilization',
-  'Pregnancy_Or_Carrying',
-  'Cycle',
-  'Ovulation',
-  'Gestation',
-  'Labor',
-  'Maturation',
-  'Aging',
-  'Childbirth_Difficulty',
-  'Care_Level',
-  'Medical_Evidence',
-])
+const FACT_DELTA_SCALAR_FIELDS = new Set(WRITABLE_FACTS.filter(item => item.container === 'scalar').map(item => item.field))
 
-const FACT_DELTA_BOOLEAN_FIELDS = new Set([
-  'Can_Produce_Sperm',
-  'Can_Produce_Ova',
-  'Can_Be_Fertilized',
-  'Can_Fertilize',
-  'Can_Cause_Pregnancy',
-  'Can_Carry_Pregnancy',
-  'Carrying_Compatibility',
-])
+const FACT_DELTA_BOOLEAN_FIELDS = new Set(
+  WRITABLE_FACTS.filter(item => item.payload === 'boolean').map(item => item.field),
+)
 
-const COVERAGE_TYPE_SCALAR_FIELDS = Object.freeze([
-  ['Type_Description', ['description']],
-  ['Can_Produce_Sperm', ['capabilities', 'can_produce_sperm']],
-  ['Can_Produce_Ova', ['capabilities', 'can_produce_ova']],
-  ['Can_Be_Fertilized', ['capabilities', 'can_be_fertilized']],
-  ['Can_Fertilize', ['capabilities', 'can_fertilize']],
-  ['Can_Cause_Pregnancy', ['capabilities', 'can_cause_pregnancy']],
-  ['Can_Carry_Pregnancy', ['capabilities', 'can_carry_pregnancy']],
-  ['Fertilization', ['reproduction_rules', 'fertilization']],
-  ['Pregnancy_Or_Carrying', ['reproduction_rules', 'pregnancy_or_carrying']],
-  ['Cycle', ['reproduction_rules', 'cycle']],
-  ['Ovulation', ['reproduction_rules', 'ovulation']],
-  ['Gestation', ['reproduction_rules', 'gestation']],
-  ['Labor', ['reproduction_rules', 'labor']],
-  ['Maturation', ['lifecycle', 'maturation']],
-  ['Aging', ['lifecycle', 'aging']],
-])
+const COVERAGE_TYPE_SCALAR_FIELDS = Object.freeze(
+  WRITABLE_FACTS
+    .filter(item => item.container === 'scalar' && item.wireScope === 'type')
+    .map(item => [item.field, item.path]),
+)
 
-const COVERAGE_WORLD_SCALAR_FIELDS = Object.freeze([
-  ['Childbirth_Difficulty', ['medical_context', 'childbirth_difficulty']],
-  ['Care_Level', ['medical_context', 'care_level']],
-  ['Medical_Evidence', ['medical_context', 'evidence']],
-])
+const COVERAGE_WORLD_SCALAR_FIELDS = Object.freeze(
+  WRITABLE_FACTS
+    .filter(item => item.container === 'scalar' && item.wireScope === 'world')
+    .map(item => [item.field, item.path]),
+)
 
-const COVERAGE_COLLECTION_FIELDS = Object.freeze([
-  ['Special_Rule', ['special_rules'], 'biological_type'],
-  ['Reproductive_Mechanism', ['reproductive_mechanisms'], 'biological_type'],
-  ['Exception', ['exceptions'], 'world'],
-  ['Unknown', ['unknowns'], 'world'],
-  ['Projection_Rule', ['projection_rules'], 'world'],
-])
+const COVERAGE_COLLECTION_FIELDS = Object.freeze(
+  WRITABLE_FACTS
+    .filter(item => item.container === 'simple_collection' || item.container === 'structured_collection' || item.container === 'lifecycle_collection')
+    .map(item => [item.field, item.path, item.owner]),
+)
 
 export function worldModelSupplementCoverageCardinality(field) {
   return COVERAGE_COLLECTION_FIELDS.some(([collectionField]) => collectionField === field)
@@ -918,9 +902,7 @@ function factDeltaError(message, diagnostics = [], code = 'WORLD_MODEL_FACT_DELT
 }
 
 function factDeltaScope(fact) {
-  if (fact.field === 'Species_Identity' || fact.field === 'Species_Description') return 'species'
-  if (fact.field === 'Type_Identity' || FACT_DELTA_FIELDS.type.has(fact.field)) return 'type'
-  return 'world'
+  return supplementFactDescriptor(fact?.field)?.wireScope ?? null
 }
 
 export function validateWorldModelFactDelta(facts) {
@@ -929,6 +911,7 @@ export function validateWorldModelFactDelta(facts) {
     if (!fact || typeof fact !== 'object' || Array.isArray(fact) || typeof fact.field !== 'string')
       throw factDeltaError('WORLD_MODEL_FACT_DELTA_FACT_INVALID')
     const scope = factDeltaScope(fact)
+    if (!scope) throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', [{field: fact.field}], 'WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED')
     const hasSpecies = typeof fact.species === 'string' && fact.species.trim()
     const hasType = typeof fact.biological_type === 'string' && fact.biological_type.trim()
     if (scope === 'world' && (hasSpecies || hasType)) throw factDeltaError('WORLD_MODEL_FACT_DELTA_SCOPE_INVALID')
@@ -1016,6 +999,7 @@ function normalizeJsonFact(item, index) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_FACT_INVALID', index)
   const field = jsonFactField(item.field, index)
   const scope = factDeltaScope({field})
+  if (!scope) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_FIELD_UNSUPPORTED', index, {field})
   if (item.scope !== scope) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_SCOPE_INVALID', index, {field, expected_scope: scope, actual_scope: item.scope})
   const {species, biologicalType} = jsonFactAddress(item, field, index, scope)
   const base = {
@@ -1023,11 +1007,12 @@ function normalizeJsonFact(item, index) {
     ...(biologicalType !== undefined ? {biological_type: biologicalType} : {}),
     field,
   }
-  if (field === 'Species_Identity' || field === 'Type_Identity') {
+  const descriptor = supplementFactDescriptor(field)
+  if (descriptor?.container === 'identity') {
     assertJsonKeys(item, new Set(['scope', 'species', 'biological_type', 'field']), index)
     return base
   }
-  if (FACT_DELTA_SCALAR_FIELDS.has(field)) {
+  if (descriptor?.container === 'scalar') {
     assertJsonKeys(item, new Set(['scope', 'species', 'biological_type', 'field', 'value']), index)
     if (!Object.hasOwn(item, 'value')) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_SCALAR_PAYLOAD_INVALID', index, {field})
     return {
@@ -1037,11 +1022,11 @@ function normalizeJsonFact(item, index) {
         : jsonFactText(item.value, field, index),
     }
   }
-  if (field === 'Special_Rule' || field === 'Unknown') {
+  if (descriptor?.container === 'simple_collection' || descriptor?.container === 'lifecycle_collection') {
     assertJsonKeys(item, new Set(['scope', 'species', 'biological_type', 'field', 'value']), index)
     return {...base, value: jsonFactText(item.value, field, index)}
   }
-  if (field === 'Exception') {
+  if (descriptor?.field === 'Exception') {
     assertJsonKeys(item, new Set(['scope', 'field', 'exception']), index)
     const exception = item.exception
     if (!exception || typeof exception !== 'object' || Array.isArray(exception)) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_EXCEPTION_PAYLOAD_INVALID', index)
@@ -1055,7 +1040,7 @@ function normalizeJsonFact(item, index) {
       },
     }
   }
-  if (field === 'Reproductive_Mechanism') {
+  if (descriptor?.field === 'Reproductive_Mechanism') {
     assertJsonKeys(item, new Set(['scope', 'species', 'biological_type', 'field', 'mechanism']), index)
     const mechanism = item.mechanism
     if (!mechanism || typeof mechanism !== 'object' || Array.isArray(mechanism)) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_MECHANISM_PAYLOAD_INVALID', index)
@@ -1070,7 +1055,7 @@ function normalizeJsonFact(item, index) {
     }
     return {...base, mechanism: normalized}
   }
-  if (field === 'Projection_Rule') {
+  if (descriptor?.field === 'Projection_Rule') {
     assertJsonKeys(item, new Set(['scope', 'field', 'projection_rule']), index)
     if (!item.projection_rule || typeof item.projection_rule !== 'object' || Array.isArray(item.projection_rule) || Object.hasOwn(item.projection_rule, 'projection_rule_id'))
       throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_PAYLOAD_INVALID', index)

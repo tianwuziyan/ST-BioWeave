@@ -1314,13 +1314,83 @@ update operation is introduced.
 
 #### 1.5.8.11 Migration status
 
-Patch v1 AI JSON ingestion and its analyzer/guard/merge entrypoints are retired.
-The current production path is the Fact Delta v1 text parser and semantic
-resolver followed by deterministic Fact Delta -> internal Patch v2 conversion,
-operation-level evidence validation, merge, consistency, and canonical
-validation. The legacy hierarchical Candidate parser remains only for
-compatibility callers/tests and is not a Supplement production fallback. Patch
-v2 remains an internal mutation IR and is not an AI-facing transport contract.
+The production Supplement path is JSON Fact Delta v1. The current production
+path is the JSON root/per-Fact adapter and semantic resolver followed by
+deterministic Fact Delta -> internal Patch v2 conversion, operation-level
+evidence validation, merge, consistency, and canonical validation. The legacy
+hierarchical Candidate parser remains only for compatibility callers/tests and
+is not a Supplement production fallback. Patch v2 remains an internal mutation
+IR and is not an AI-facing transport contract.
+
+#### 1.5.8.12 Canonical writability registry
+
+`SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY` is the machine-checkable registry
+for the writable Supplement Fact contract. Each legal Field declares its wire
+scope, canonical owner, relative canonical path, container kind, mutation
+operation, payload kind, create policy, correction policy, and UI outlet. The
+registry is an address and writability contract, not a second canonical schema.
+
+Address resolution and mutation are separate steps:
+
+```text
+JSON Fact -> registry address descriptor -> Patch v2 operation
+```
+
+Scalar descriptors use `SET_FIELD`; type-local `Special_Rule` uses append-only
+deduplicated `ADD_SPECIAL_RULE`; structured collections use deterministic item
+identity; `Unknown` remains an append-only lifecycle queue; identity Facts add
+Species or Biological Type containers. Existing mechanism and projection item
+corrections remain unsupported (`create_writable=true`,
+`correction_writable=false`) and fail closed rather than inventing an update
+operation.
+
+The registry must satisfy `SUPPLEMENT_CANONICAL_WRITABILITY_INVARIANT`: every
+Field accepted by the JSON adapter has a deterministic canonical outlet,
+resolver operation, Snapshot application path, final Floor persistence path,
+authoritative readback, and UI projection outlet. Table-driven tests must fail
+when a legal Field is added without a registry entry or when its resolver
+operation/path does not match the canonical tree.
+
+The canonical path below the addressed owner is:
+
+| Field family | Canonical path | Container / operation |
+| --- | --- | --- |
+| `Species_Identity`, `Type_Identity` | `species[].name`, `species[].biological_types[].name` | identity add |
+| `Species_Description`, `Type_Description` | `species[].description`, `species[].biological_types[].description` | scalar `SET_FIELD` |
+| capabilities | `biological_types[].capabilities.<key>` | scalar `SET_FIELD` |
+| reproduction rules | `biological_types[].reproduction_rules.<key>` | scalar `SET_FIELD` |
+| lifecycle | `biological_types[].lifecycle.<key>` | scalar `SET_FIELD` |
+| `Special_Rule` | `biological_types[].special_rules[]` | append + dedupe |
+| `Reproductive_Mechanism` | `biological_types[].reproductive_mechanisms[]` | structured add by `key` |
+| `Childbirth_Difficulty`, `Care_Level`, `Medical_Evidence` | `medical_context.<key>` | scalar `SET_FIELD` |
+| `Exception` | `exceptions[]` | structured add by `statement + applies_to` |
+| `Unknown` | `unknowns[]` | lifecycle append/dedupe/resolution |
+| `Projection_Rule` | `projection_rules[]` | structured add by generated identity |
+
+The Supplement Evidence Guard is orthogonal to this hierarchy. It checks
+permitted-evidence membership, identity/address safety, scope binding,
+payload safety, and cross-Species/Type isolation. It must not re-run an
+independent field-specific NLP classifier for a structurally valid JSON Fact.
+Species-wide evidence may support a Fact at an explicitly addressed Type when
+the canonical schema has no Species-level slot, but evidence bound to a
+different sibling Type or Species never crosses that boundary.
+
+The JSON Fact payload for `Reproductive_Mechanism` is strict and mirrors the
+canonical item contract: `key` is required text; `label`, `pathway`, and
+`carrying_compatibility` are optional scalar properties; and
+`world_model_rule_refs`, when present, is an array of strings while `evidence`,
+when present, is also an array of strings. A scalar string in either collection
+property is invalid and must remain a parser diagnostic; the adapter must not
+silently coerce it into a one-item array.
+
+For an existing canonical Biological Type, structured Supplement guard
+validation uses the JSON Fact address as the semantic scope already selected by
+the analyzer. Natural-language evidence is used only as a permitted-evidence
+boundary and as a contradiction check: explicit evidence for another Species
+or sibling Type rejects the Fact, while the absence of a repeated Type label
+does not by itself reject an otherwise valid addressed Fact. A new Type
+identity remains stricter and requires explicit Species + Biological Type
+evidence before dependent Facts can be accepted.
 
 #### 1.5.8.10 Generic DTO examples
 

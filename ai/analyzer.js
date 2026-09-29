@@ -19,6 +19,7 @@ import {
   validateWorldModelSupplementCompleteness,
   worldModelSupplementCoverageCardinality,
   validateWorldModelFactDelta,
+  SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY,
   validateWorldModelCandidate,
   worldModelUnknownId,
 } from './world-supplement-protocol.js';
@@ -887,15 +888,24 @@ function factDeltaResolutionDiagnostics(facts, patch, existing, factResults = []
     return {
       fact_index: fact.fact_index ?? fact_index,
       field: fact.field,
+      registry_field: fact.field,
       species: fact.species ?? null,
       biological_type: fact.biological_type ?? null,
       canonical_address: factDeltaAddress(fact),
+      canonical_scope: factDeltaAddress(fact).scope,
       comparison: factDeltaExistingComparison(fact, existing),
       patch_operation_type: operation?.op ?? null,
       patch_path: operation ? v2CanonicalTargetPath(operation) : null,
       classification,
       resolver_status: resolverStatus,
       guard_status: guardStatus,
+      guard_type: lifecycle?.guardError?.guard_kind === 'structured_fact_boundary'
+        ? 'structural'
+        : lifecycle?.guardError ? 'legacy_or_semantic' : null,
+      snapshot_applied: lifecycle?.status === 'accepted',
+      ...(operation?.op === 'ADD_SPECIAL_RULE' || operation?.op === 'ADD_MECHANISM' || operation?.op === 'ADD_EXCEPTION' || operation?.op === 'ADD_UNKNOWN' || operation?.op === 'ADD_PROJECTION_RULE'
+        ? {collection_mutation: lifecycle?.status === 'accepted' ? 'appended' : lifecycle?.status === 'deduplicated' || lifecycle?.status === 'no-op' ? 'deduped' : 'not_applied'}
+        : {}),
       ...(lifecycle?.status === 'rejected' ? {
         status: 'rejected',
         failure_stage: lifecycle.guardError?.validation_stage ?? 'fact_resolution',
@@ -1016,6 +1026,10 @@ function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = n
   return {
     ...candidateBinding,
     scope,
+    registry_field: factDeltaFieldForOperation(operation),
+    canonical_scope: scope,
+    canonical_container_path: v2CanonicalTargetPath(operation),
+    guard_type: error?.guard_kind === 'structured_fact_boundary' ? 'structural' : error ? 'legacy_or_semantic' : null,
     canonical_address: scope === 'world'
       ? {scope: 'world'}
       : scope === 'species'
@@ -1068,6 +1082,10 @@ function factDeltaEvidenceGuardDecision(operation, analysisInput, error, factInd
     required_threshold_if_any: binding.required_threshold_if_any,
     scope_binding_result: binding.scope_binding_result,
     value_support_result: binding.value_support_result,
+    registry_field: binding.registry_field,
+    canonical_scope: binding.canonical_scope,
+    canonical_container_path: binding.canonical_container_path,
+    guard_type: binding.guard_type,
     rejection_code: binding.rejection_code,
     rejection_detail: binding.rejection_detail,
   };
@@ -3909,15 +3927,30 @@ function evidenceUnitText(unit) {
 
 function structuredScopeMatches(unit, context = {}) {
   const parent = unit?.parent_context;
-  if (!parent || (!parent.species && !parent.biological_type)) return null;
-  const parentSpecies = compactEvidenceText(parent.species);
-  const parentType = compactEvidenceText(parent.biological_type);
+  const headings = Array.isArray(parent?.headings)
+    ? parent.headings.map(value => compactEvidenceText(value)).filter(Boolean)
+    : [];
+  const parentSpecies = compactEvidenceText(parent?.species);
+  const parentType = compactEvidenceText(parent?.biological_type);
   const expectedSpecies = compactEvidenceText(context.speciesName);
   const expectedType = compactEvidenceText(context.typeName);
+  const speciesMatches = value => {
+    const actual = compactEvidenceText(value);
+    return actual === expectedSpecies || isSpeciesNameOrGenericDerivative(actual, expectedSpecies);
+  };
+  if (!parentSpecies && !parentType && headings.length === 0) return null;
   if (context.typeName) {
-    return Boolean(parentSpecies && parentType && parentSpecies === expectedSpecies && parentType === expectedType);
+    if (parentSpecies || parentType)
+      return Boolean(parentSpecies && parentType && speciesMatches(parentSpecies) && parentType === expectedType);
+    return Boolean(
+      headings.some(speciesMatches) &&
+      headings.includes(expectedType),
+    );
   }
-  if (context.speciesName) return Boolean(parentSpecies && parentSpecies === expectedSpecies);
+  if (context.speciesName) {
+    if (parentSpecies) return speciesMatches(parentSpecies);
+    return headings.some(speciesMatches);
+  }
   return true;
 }
 
@@ -4308,11 +4341,14 @@ function v2StructuredOperationEvidenceUnits(operation, units, existing) {
     : null
   const siblingTypeNames = species?.biological_types?.map(item => item?.name).filter(Boolean) ?? []
   const individualOnlyPattern = /某(?:个|位|名)?(?:角色|人物|NPC)|这个角色|该角色|单个(?:角色|人物|个体)/iu
-  const exact = scopeCompatiblePatchUnits(units, {
-    speciesName,
-    typeName,
-    siblingTypeNames,
-  }).filter((unit) => !individualOnlyPattern.test(String(unit)))
+  const safeUnits = units.filter((unit) => !individualOnlyPattern.test(String(unit)))
+  const exact = (typeName && speciesName
+    ? v2ScopedEvidenceUnitRecords(safeUnits, {speciesName, typeName})
+    : scopeCompatiblePatchUnits(safeUnits, {
+      speciesName,
+      typeName,
+      siblingTypeNames,
+    }))
   // A new Type identity needs explicit Species + Type evidence. A
   // Species-wide unit can support a nested Fact for an already addressed
   // Type, but cannot manufacture the Type address itself.
@@ -4322,14 +4358,47 @@ function v2StructuredOperationEvidenceUnits(operation, units, existing) {
     const siblingNames = new Set(siblingTypeNames
       .map(name => compactEvidenceText(name))
       .filter(name => name && name !== compactEvidenceText(typeName)))
-    const speciesWide = units.filter(unit => {
-      if (individualOnlyPattern.test(String(unit))) return false
-      if (!hasGenericDirectLabelEvidence(unit, speciesName)) return false
-      const structured = structuredScopeMatches(unit, {speciesName})
-      if (structured?.biological_type && structured.biological_type !== typeName) return false
-      return ![...siblingNames].some(name => hasGenericDirectLabelEvidence(unit, name))
+    const knownSpeciesNames = (existing?.species ?? [])
+      .map(item => compactEvidenceText(item?.name))
+      .filter(Boolean)
+    const explicitTargetType = safeUnits.some(unit => {
+      const parentType = compactEvidenceText(unit?.parent_context?.biological_type)
+      return parentType === compactEvidenceText(typeName) || hasGenericDirectLabelEvidence(evidenceUnitText(unit), typeName)
     })
-    return [...new Set([...exact, ...speciesWide])]
+    const explicitSiblingType = [...siblingNames].some(name => safeUnits.some(unit => {
+      const parentType = compactEvidenceText(unit?.parent_context?.biological_type)
+      return parentType === name || hasGenericDirectLabelEvidence(evidenceUnitText(unit), name)
+    }))
+    if (explicitSiblingType && !explicitTargetType) return []
+    const compatible = safeUnits.filter(unit => {
+      const parent = unit?.parent_context
+      const parentSpecies = compactEvidenceText(parent?.species)
+      const parentType = compactEvidenceText(parent?.biological_type)
+      const headings = Array.isArray(parent?.headings)
+        ? parent.headings.map(value => compactEvidenceText(value)).filter(Boolean)
+        : []
+      const structuredSpecies = [parentSpecies, ...headings].filter(Boolean)
+      const hasOtherStructuredSpecies = structuredSpecies.some(value =>
+        knownSpeciesNames.some(name =>
+          (value === name || isSpeciesNameOrGenericDerivative(value, name)) &&
+          !(value === compactEvidenceText(speciesName) || isSpeciesNameOrGenericDerivative(value, speciesName)),
+        ),
+      )
+      if (hasOtherStructuredSpecies) return false
+      if (parentType && parentType !== compactEvidenceText(typeName)) return false
+      if (headings.some(value => siblingNames.has(value))) return false
+
+      const text = evidenceUnitText(unit)
+      const textSpecies = knownSpeciesNames.filter(name => matchesSpeciesName(text, name))
+      if (textSpecies.length && !textSpecies.includes(compactEvidenceText(speciesName))) return false
+      if ([...siblingNames].some(name => hasGenericDirectLabelEvidence(text, name))) return false
+      return true
+    })
+    // Existing canonical addresses have already passed Fact schema, identity,
+    // and target validation. For Supplement, this stage only rejects explicit
+    // contradictory Species/Type scope; it does not reclassify the Field or
+    // compare the proposed value with natural-language evidence.
+    return [...new Set([...exact, ...compatible])]
   }
   return exact
 }
@@ -4789,27 +4858,23 @@ function factDeltaError(message, details = {}, code = 'WORLD_MODEL_FACT_DELTA_IN
   return error
 }
 
-const FACT_DELTA_SCALAR_PATHS = Object.freeze({
-  Species_Description: ['species', 'description'],
-  Type_Description: ['biological_type', 'description'],
-  Can_Produce_Sperm: ['biological_type', 'capabilities', 'can_produce_sperm'],
-  Can_Produce_Ova: ['biological_type', 'capabilities', 'can_produce_ova'],
-  Can_Be_Fertilized: ['biological_type', 'capabilities', 'can_be_fertilized'],
-  Can_Fertilize: ['biological_type', 'capabilities', 'can_fertilize'],
-  Can_Cause_Pregnancy: ['biological_type', 'capabilities', 'can_cause_pregnancy'],
-  Can_Carry_Pregnancy: ['biological_type', 'capabilities', 'can_carry_pregnancy'],
-  Fertilization: ['biological_type', 'reproduction_rules', 'fertilization'],
-  Pregnancy_Or_Carrying: ['biological_type', 'reproduction_rules', 'pregnancy_or_carrying'],
-  Cycle: ['biological_type', 'reproduction_rules', 'cycle'],
-  Ovulation: ['biological_type', 'reproduction_rules', 'ovulation'],
-  Gestation: ['biological_type', 'reproduction_rules', 'gestation'],
-  Labor: ['biological_type', 'reproduction_rules', 'labor'],
-  Maturation: ['biological_type', 'lifecycle', 'maturation'],
-  Aging: ['biological_type', 'lifecycle', 'aging'],
-  Childbirth_Difficulty: ['world', 'medical_context', 'childbirth_difficulty'],
-  Care_Level: ['world', 'medical_context', 'care_level'],
-  Medical_Evidence: ['world', 'medical_context', 'evidence'],
-})
+const FACT_DELTA_SCALAR_PATHS = Object.freeze(
+  Object.fromEntries(
+    Object.values(SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY)
+      .filter(descriptor => descriptor.container === 'scalar')
+      .map(descriptor => [
+        descriptor.field,
+        [
+          descriptor.owner === 'world'
+            ? 'world'
+            : descriptor.owner === 'species'
+              ? 'species'
+              : 'biological_type',
+          ...descriptor.path,
+        ],
+      ]),
+  ),
+)
 
 function factDeltaPathKey(fact) {
   const path = FACT_DELTA_SCALAR_PATHS[fact.field]
