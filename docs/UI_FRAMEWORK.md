@@ -114,6 +114,12 @@ BioWeave 使用低装饰、信息密度适中的生物观测面板。默认夜�
 </button>
 ~~~
 
+本轮视觉细节：模块标题右侧的编辑按钮使用 26px 无边框图标，图标颜色为 muted，悬停时仅显示浅色背景；物种描述正文使用 12px、1.5 行高和 muted 色。
+
+实测复核后，生产 UI 的模块编辑按钮收敛为 24px、15px 图标；集合标题右侧的新增/编辑/删除按钮仍保持 32px。
+
+再次复核后，模块编辑按钮最终使用 20px、13px 图标；集合操作按钮尺寸不变。
+
 三套主题的核心颜色职责如下，完整 token 和宿主变量映射以 `docs/ui-framework.config.json` 为准：
 
 | 主题 | 基底 | 面板 | 正文 | 交互色 | 设计意图 |
@@ -312,7 +318,9 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 ## 世界模型格式
 
-世界模型采用“种族卡网格 → 当前选中种族的性别 / 生物类型卡网格 → 当前类型模块”的层级。种族卡和类型卡使用按钮语义，不能用普通 div 模拟点击；类型卡不能继续嵌套在每张种族卡内部。类型超过三项时不截断、不改名：所有类型保持 Runtime 数组顺序，点击只改变选中样式，不重新排序或交换左右位置，在类型卡网格中自然换行。种族和类型各自的 section header 右侧拥有自己的 `[+]` / `[edit]` / `[trash]` 图标按钮，Species 区另有“归档名单”入口；条目本身不放操作按钮。归档视图只读取 `worldModelMeta.archived_species`，不混入 active selector；每个归档项使用 `data-bioweave-action="world-model-restore-species"` 还原完整 subtree。种族加号不依赖 selection；种族编辑和归档依赖当前选中种族；类型加号依赖当前选中种族，类型编辑和删除还依赖当前选中类型。所有按钮使用 Font Awesome 图标或现有文本按钮样式，必须有 `title` 与 `aria-label`，不得把所有 species 的类型扁平化。下面的名称只用于演示结构，不是生产枚举：
+世界模型详情中的物种描述正文使用 12px、1.5 行高和 `var(--bioweave-text-muted)`，保持紧凑的参考稿层级。
+
+世界模型采用“种族卡网格 → 当前选中种族的性别 / 生物类型卡网格 → 当前类型模块”的层级。种族卡和类型卡使用按钮语义，不能用普通 div 模拟点击；类型卡不能继续嵌套在每张种族卡内部。类型超过三项时不截断、不改名：所有类型保持 Runtime 数组顺序，点击只改变选中样式，不重新排序或交换左右位置，在类型卡网格中自然换行。种族 section header 的操作区按“归档资料（带数量徽标）、[+]、[edit]、[trash]”排列；集合操作图标按钮固定为 32px 正方形、7px 圆角；归档入口使用 32px 高、13px、600 字重的文本按钮，文字颜色与同组操作一致，打开只读浮层，浮层只显示 Runtime 归档名称和 `data-bioweave-action="world-model-restore-species"` 还原按钮，不显示归档时间。点击面板内浮层外的操作先关闭浮层并继续原操作；Escape 先关闭浮层，再次 Escape 才关闭面板。归档视图只读取 `worldModelMeta.archived_species`，不混入 active selector。类型侧四个模块可独立编辑，模块右侧编辑入口使用带 `title` 与 `aria-label` 的 32px 正方形 Font Awesome 图标按钮；生物类型详情的物种描述不显示额外标题，正文使用 13px、1.6 行高和 muted 色。生殖机制（仅有条目时显示）和世界级投影规则均为只读投影。模块属性和规则正文使用 13px、1.5 行高，字段名使用 secondary 色，值和辅助说明使用 muted 色；能力展示的“是”左对齐，“否”左对齐，未知右对齐并使用 warn 色。能力编辑继续使用原生三态 checkbox，`null` 使用 indeterminate 并显示 “-” 语义（`aria-checked="mixed"`），交互后仍保存 true / false / null。所有按钮使用 Font Awesome 图标或现有文本按钮样式，必须有 `title` 与 `aria-label`，不得把所有 species 的类型扁平化。下面的名称只用于演示结构，不是生产枚举：
 
 ~~~html
 <button
@@ -331,6 +339,8 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 类型卡副文案也必须使用独立的结构类名：
 
+只读的生殖机制与投影规则不提供编辑按钮；世界侧特殊例外、尚未确定和投影规则的长列表在正文区域最多 180px 并独立滚动，编辑表单不受该高度限制。类型侧特殊规则使用 13px / 1.5 行高，不设固定滚动高度。桌面详情与世界规则使用 6:4 分栏，平板和手机改为单列，手机种族卡只允许选择区局部横向滚动。
+
 ~~~html
 <button class="bioweave-type-card" type="button" data-bioweave-action="world-model-select-type">
   <span class="bioweave-world-model-type-card-head">
@@ -348,11 +358,13 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
   <header class="bioweave-world-module-head">
     <h3>生殖能力</h3>
     <button
-      class="bioweave-button small"
+      class="bioweave-world-model-icon-button"
       type="button"
       data-bioweave-action="world-model-edit-section"
-      data-bioweave-section="capabilities"
-    >编辑</button>
+      data-bioweave-world-section="capabilities"
+      title="编辑生殖能力"
+      aria-label="编辑生殖能力"
+    ><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
   </header>
   <div class="bioweave-world-module-body">
     <!-- 只读字段或当前模块编辑器 -->
@@ -381,7 +393,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 </label>
 ~~~
 
-物种选择区使用 `bioweave-world-model-card-head`、`bioweave-world-model-card-title`、`bioweave-world-model-card-mark` 和 `bioweave-world-model-card-summary` 组成物种卡；物种卡副文案必须使用 Runtime 的 `biological_types` 生成“`N 个类型 · 类型 / 类型`”，不能继续显示无关 description。生物类型卡使用 `bioweave-world-model-type-card-head`、`bioweave-world-model-card-mark` 和 `bioweave-world-model-type-card-summary`；副文案必须按能力字段真实的 true / false 数量显示“`已知数/总能力数 项能力已知 · 可承担妊娠 / 不可承担妊娠 / 妊娠未知`”，不能从类型名称推断能力。选择区标题与卡片之间保持紧凑的 5px 底部间距，类型标题上方 5px、下方 4px；类型卡标题使用 Desktop 15px、Mobile 14px，不能因为增加字号而恢复大块留白。四个类型模块“生殖能力、生殖规则、生命周期、特殊规则”必须在当前类型详情面板内组成一个连续的纵向模块组，不使用 2×2 分散卡片；Desktop 的生物类型详情与右侧世界级规则按 6:4 分栏，iPad / Mobile 退回单列。能力表格使用紧凑的两列：`否`左对齐，`是`右对齐并使用 `success` 色且保留 8px 右侧内缩，`未知`右对齐并使用 `warn` 色且保留同样内缩。医疗与照护表格单独使用 `minmax(92px, max-content) minmax(0, 1fr)` 和 5px 列间距，避免右侧内容离左侧过远。编辑状态使用现有的 data-bioweave-world-section-form、data-bioweave-world-section-field 和 data-bioweave-world-section-row；能力编辑采用原生 `bioweave-checkbox`，true 为勾选、false 为不勾选、null 使用 indeterminate，交互后仍保留 null / 未知语义。UI 不根据名称、性别、代词、外貌或类型名称推断生物能力；true、false、null 的显示由 Runtime DTO 决定。
+物种选择区使用 `bioweave-world-model-card-head`、`bioweave-world-model-card-title`、`bioweave-world-model-card-mark` 和 `bioweave-world-model-card-summary` 组成物种卡；物种卡副文案必须使用 Runtime 的 `biological_types` 生成“`N 个类型 · 类型 / 类型`”，不能继续显示无关 description。生物类型卡使用 `bioweave-world-model-type-card-head`、`bioweave-world-model-card-mark` 和 `bioweave-world-model-type-card-summary`；副文案必须按能力字段真实的 true / false 数量显示“`已知数/总能力数 项能力已知 · 可承担妊娠 / 不可承担妊娠 / 妊娠未知`”，不能从类型名称推断能力。选择区标题与卡片之间保持紧凑的 5px 底部间距，类型标题上方 5px、下方 4px；类型卡标题使用 Desktop 15px、Mobile 14px，不能因为增加字号而恢复大块留白。四个类型模块“生殖能力、生殖规则、生命周期、特殊规则”必须在当前类型详情面板内组成一个连续的纵向模块组，不使用 2×2 分散卡片；Desktop 的生物类型详情与右侧世界级规则按 6:4 分栏，iPad / Mobile 退回单列。能力表格使用紧凑的两列：`否`左对齐，`是`左对齐并使用 `success` 色，`未知`右对齐并使用 `warn` 色且保留 8px 右侧内缩。医疗与照护表格单独使用 `minmax(92px, max-content) minmax(0, 1fr)` 和 5px 列间距，避免右侧内容离左侧过远。编辑状态使用现有的 data-bioweave-world-section-form、data-bioweave-world-section-field 和 data-bioweave-world-section-row；能力编辑采用原生 `bioweave-checkbox`，true 为勾选、false 为不勾选、null 使用 indeterminate，交互后仍保留 null / 未知语义。UI 不根据名称、性别、代词、外貌或类型名称推断生物能力；true、false、null 的显示由 Runtime DTO 决定。
 
 ## 设置格式
 

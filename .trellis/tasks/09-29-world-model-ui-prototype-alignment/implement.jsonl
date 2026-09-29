@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index and page scope"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Plain DOM page and app event ownership"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"World page scoped styles and host checks"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"World UI consumes authoritative Floor projection only"}
+{"file":".trellis/spec/domain/world-model.md","reason":"Archive and World Model ownership contracts"}

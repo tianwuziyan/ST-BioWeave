@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for review scope"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review scoped CSS and real-host verification expectations"}
+{"file":".trellis/spec/domain/world-model.md","reason":"Review archive restore and read-only projection boundary"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Review authoritative World projection ownership"}

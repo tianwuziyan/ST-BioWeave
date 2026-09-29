@@ -4847,6 +4847,18 @@ export function createApp(runtime, options = {}) {
   async function handleClick(event) {
     if (!root?.contains(event.target)) return
     if (assignmentControlForEvent(event.target)) return
+    if (
+      worldModelState.archiveOpen &&
+      route === 'world' &&
+      !event.target.closest?.('.bioweave-world-model-archive')
+    ) {
+      worldModelState = {...worldModelState, archiveOpen: false}
+      const archivePopover = root.querySelector?.('.bioweave-world-model-archive-popover')
+      archivePopover?.remove?.()
+      const archiveToggle = root.querySelector?.('.bioweave-world-model-archive-toggle')
+      archiveToggle?.setAttribute?.('aria-expanded', 'false')
+      archiveToggle?.removeAttribute?.('aria-controls')
+    }
     captureAnalysisSourceDisclosure()
     if (handleAnalysisParentToggleClick(event)) return
     if (event.target.closest?.('[data-bioweave-analysis-prompt-settings], [data-bioweave-world-analysis-prompt-settings]')) {
@@ -5332,6 +5344,12 @@ export function createApp(runtime, options = {}) {
   }
   function handleKeydown(event) {
     if (event.key !== 'Escape' || root?.dataset.open !== 'true') return
+    if (worldModelState.archiveOpen && route === 'world') {
+      event.preventDefault()
+      worldModelState = {...worldModelState, archiveOpen: false}
+      render()
+      return
+    }
     event.preventDefault()
     closeBioWeave()
   }

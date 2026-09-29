@@ -545,14 +545,22 @@
       ],
       "iconOnly": true,
       "requiresTitleAndAriaLabel": true,
+      "iconButtonGeometry": "32px square; 7px radius; zero horizontal padding",
       "layout": "each collection section owns one header action group; no per-item actions",
       "selectionState": "runtime-only selectedSpecies and selectedBiologicalType with name snapshots for stale-target validation"
     },
     "worldSpeciesArchive": {
       "root": "bioweave-world-model-archive",
+      "popover": "bioweave-world-model-archive-popover",
       "toggleHook": "data-bioweave-action=world-model-toggle-archive",
       "restoreHook": "data-bioweave-action=world-model-restore-species",
       "source": "Runtime DTO worldModelMeta.archived_species",
+      "placement": "species section header actions, before add",
+      "toggleStyle": "text subtle button with inline count badge",
+      "visibleFields": ["species.name", "restore action"],
+      "hiddenFields": ["archived_at"],
+      "escapeOrder": ["close archive popover", "close BioWeave panel"],
+      "outsideClick": "dismiss popover inside panel while allowing the original action to continue",
       "activeSelectorIsolation": true,
       "restorePreservesCanonicalSubtree": true
     },
@@ -567,8 +575,15 @@
       "propertyGap": "6px",
       "medicalPropertyColumns": "minmax(92px, max-content) minmax(0, 1fr)",
       "medicalPropertyGap": "5px",
+      "moduleIcon": {"base": "26px", "glyph": "17px"},
+      "moduleEditButton": {"size": "20px", "border": "transparent", "background": "transparent", "color": "var(--bioweave-text-muted)", "glyph": "fa-pen", "glyphSize": "13px"},
+      "speciesDescription": {"fontSize": "12px", "lineHeight": "1.5", "color": "var(--bioweave-text-muted)", "title": false},
+      "worldRuleText": {"fontSize": "13px", "lineHeight": "1.5"},
+      "readOnlyModules": ["reproductive_mechanisms", "projection_rules"],
+      "longContentMaxHeight": "180px",
+      "longContentScroll": ["exceptions", "unknowns", "projection_rules"],
       "booleanValues": {
-        "true": "是: right aligned with 8px inset, var(--bioweave-success)",
+        "true": "是: left aligned, var(--bioweave-success)",
         "false": "否: left aligned, var(--bioweave-text-secondary)",
         "unknown": "未知: right aligned with 8px inset, var(--bioweave-warn)"
       },
@@ -579,6 +594,7 @@
       },
       "editor": {
         "capabilities": "native bioweave-checkbox with indeterminate for null; checked=true and unchecked=false after interaction",
+        "unknownDisplay": "native indeterminate checkbox renders a dash (-); aria-checked=mixed",
         "preserveNull": true
       }
     },

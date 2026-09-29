@@ -1253,6 +1253,12 @@
         grid-template-columns: minmax(0, 6fr) minmax(0, 4fr);
         gap: 8px;
       }
+      .bw-world-description {
+        margin: 13px 0 16px;
+        color: var(--bw-muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
       .bw-world-detail-column,
       .bw-world-rules-column {
         min-width: 0;
@@ -2253,7 +2259,7 @@
                 <h2>种族</h2>
                 <p>使用卡片选择；性别 / 生物类型始终属于当前选中的种族。</p>
               </div>
-              <div class="bw-world-model-section-actions"><button class="bw-icon-button" type="button" data-bioweave-action="world-model-add-species" title="新增种族" aria-label="新增种族"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-species" title="编辑种族" aria-label="编辑种族"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button class="bw-icon-button" type="button" data-bioweave-action="world-model-delete-species" title="归档种族" aria-label="归档种族" disabled><i class="fa-solid fa-box-archive" aria-hidden="true"></i></button><button class="bw-button small" type="button" data-bioweave-action="world-model-toggle-archive" aria-expanded="false">归档名单</button></div>
+              <div class="bw-world-model-section-actions"><div class="bw-world-model-archive"><button class="bw-button subtle" type="button" data-bioweave-action="world-model-toggle-archive" title="打开归档资料" aria-label="打开归档资料" aria-expanded="false">归档资料 <span class="bw-count">2</span></button></div><button class="bw-icon-button" type="button" data-bioweave-action="world-model-add-species" title="新增种族" aria-label="新增种族"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-species" title="编辑种族" aria-label="编辑种族"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button class="bw-icon-button" type="button" data-bioweave-action="world-model-delete-species" title="归档种族" aria-label="归档种族" disabled><i class="fa-solid fa-box-archive" aria-hidden="true"></i></button></div>
             </header>
             <!-- 卡片内部结构与配置登记：head / title / mark / summary；名称和数量只演示 Runtime 映射，不固定性别枚举。 -->
             <div class="bw-species-grid">
@@ -2298,6 +2304,7 @@
                 <p>每个模块独立编辑，每个模块只有一个编辑入口。</p>
               </div>
             </header>
+            <p class="bw-world-description">以潮汐环境为主要活动场域；能力按当前 Runtime 类型资料分别记录。</p>
             <div class="bw-world-content-grid">
               <div class="bw-world-detail-column">
                 <div class="bw-module-grid">
@@ -2305,7 +2312,7 @@
                     <header class="bw-module-head">
                       <h3>生殖能力</h3>
                       <span class="spacer"></span
-                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                      ><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-section" title="编辑生殖能力" aria-label="编辑生殖能力"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
                     </header>
                     <div class="bw-module-body">
                       <dl class="bw-kv">
@@ -2328,7 +2335,7 @@
                     <header class="bw-module-head">
                       <h3>生殖规则</h3>
                       <span class="spacer"></span
-                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                      ><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-section" title="编辑生殖规则" aria-label="编辑生殖规则"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
                     </header>
                     <div class="bw-module-body">
                       <dl class="bw-kv">
@@ -2343,11 +2350,16 @@
                       </dl>
                     </div>
                   </article>
+                  <!-- Render only when Runtime biological_type.reproductive_mechanisms has entries; no edit hook. -->
+                  <article class="bw-module bw-readonly-module" data-canonical-field="reproductive_mechanisms">
+                    <header class="bw-module-head"><h3>生殖机制</h3></header>
+                    <div class="bw-module-body"><ul><li><strong>Runtime mechanism</strong><small>路径与依据来自 Runtime DTO</small></li></ul></div>
+                  </article>
                   <article class="bw-module" data-bioweave-world-section="lifecycle">
                     <header class="bw-module-head">
                       <h3>生命周期</h3>
                       <span class="spacer"></span
-                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                      ><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-section" title="编辑生命周期" aria-label="编辑生命周期"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
                     </header>
                     <div class="bw-module-body">
                       <dl class="bw-kv">
@@ -2366,7 +2378,7 @@
                     <header class="bw-module-head">
                       <h3>特殊规则</h3>
                       <span class="spacer"></span
-                      ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                      ><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-section" title="编辑特殊规则" aria-label="编辑特殊规则"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
                     </header>
                     <div class="bw-module-body">
                       <dl class="bw-kv">
@@ -2396,7 +2408,7 @@
                       <header class="bw-module-head">
                         <h3>医疗与照护</h3>
                         <span class="spacer"></span
-                        ><button class="bw-button small" type="button" data-bioweave-action="world-model-edit-section">编辑</button>
+                        ><button class="bw-icon-button" type="button" data-bioweave-action="world-model-edit-section" title="编辑医疗与照护" aria-label="编辑医疗与照护"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
                       </header>
                       <div class="bw-module-body">
                         <dl class="bw-kv">
@@ -2410,6 +2422,10 @@
                           </div>
                         </dl>
                       </div>
+                    </article>
+                    <article class="bw-module bw-readonly-module" data-canonical-field="projection_rules">
+                      <header class="bw-module-head"><h3>投影规则</h3></header>
+                      <div class="bw-module-body bw-scroll-body"><ul><li><strong>Runtime projection</strong><small>只读投影规则</small></li></ul></div>
                     </article>
                   </div>
                 </section>

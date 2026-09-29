@@ -7823,3 +7823,227 @@
 .bioweave-analysis-debug-popup-content .bioweave-persistence-trace pre {
   text-align: left !important;
 }
+
+/* World model page: compact archive popover and read-only content bounds. */
+.bioweave-world-model-page .bioweave-world-model-section-heading { position: relative; }
+.bioweave-world-model-page .bioweave-world-model-section-heading > .bioweave-world-model-archive {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0;
+}
+.bioweave-world-model-page .bioweave-world-model-archive-popover {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: min(320px, calc(100vw - 32px));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 8px;
+  background: var(--bioweave-surface-raised);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 28%);
+}
+.bioweave-world-model-page .bioweave-world-model-archive-popover header h3,
+.bioweave-world-model-page .bioweave-world-model-archive-popover header p { margin: 0; }
+.bioweave-world-model-page .bioweave-world-model-archive-popover header p {
+  margin-top: 3px;
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+}
+.bioweave-world-model-page .bioweave-world-model-archive-item small { display: none; }
+.bioweave-world-model-page .bioweave-world-model-module-icon { width: 26px; height: 26px; }
+.bioweave-world-model-page .bioweave-world-model-module-icon > i { font-size: 17px; }
+.bioweave-world-model-page .bioweave-world-model-world-rules .bioweave-world-model-module > ul,
+.bioweave-world-model-page .bioweave-world-model-world-rules .bioweave-world-model-module > p,
+.bioweave-world-model-page .bioweave-world-model-world-rules .bioweave-world-model-module > .bioweave-world-model-properties {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.bioweave-world-model-page [data-bioweave-world-section="special_rules"] > ul,
+.bioweave-world-model-page [data-bioweave-world-section="special_rules"] > p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.bioweave-world-model-page .bioweave-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.bioweave-world-model-page .bioweave-world-model-world-rules .bioweave-world-model-scroll-module > ul,
+.bioweave-world-model-page .bioweave-world-model-world-rules .bioweave-world-model-readonly-module > ul {
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+/* World model controls and module copy follow the reference page contract. */
+.bioweave-world-model-page .bioweave-primary-action,
+.bioweave-world-model-page .bioweave-secondary-action,
+.bioweave-world-model-page .bioweave-danger-action,
+.bioweave-world-model-page .bioweave-world-model-section-actions button {
+  min-height: 32px !important;
+  padding: 0 11px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-title-copy p {
+  margin-top: 3px !important;
+  color: var(--bioweave-text-muted) !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-actions > .bioweave-world-model-archive {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-action-separator {
+  height: 20px;
+  margin: 0 2px;
+  border-left: 1px solid var(--bioweave-border);
+}
+
+.bioweave-world-model-page .bioweave-world-model-archive-toggle {
+  border-color: var(--bioweave-border) !important;
+  background: transparent !important;
+  color: var(--bioweave-text-muted) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-archive-toggle:hover,
+.bioweave-world-model-page .bioweave-world-model-archive-toggle:focus-visible {
+  background: var(--bioweave-hover) !important;
+  color: var(--bioweave-text) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-archive-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bioweave-accent-soft);
+  color: var(--bioweave-accent);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-actions > .bioweave-world-model-archive .bioweave-world-model-archive-popover {
+  top: calc(100% + 8px);
+  right: 0;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property,
+.bioweave-world-model-page .bioweave-world-model-module > ul,
+.bioweave-world-model-page .bioweave-world-model-module > p,
+.bioweave-world-model-page .bioweave-world-model-module > .bioweave-world-model-properties {
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property dt {
+  color: var(--bioweave-text-secondary) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property dd,
+.bioweave-world-model-page .bioweave-world-model-module > ul,
+.bioweave-world-model-page .bioweave-world-model-module > p {
+  color: var(--bioweave-text-muted) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module > ul small {
+  color: var(--bioweave-text-muted) !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-module > ul li > strong {
+  color: var(--bioweave-text-secondary) !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+}
+
+/* Final world page controls mirror the reference's compact square icon actions. */
+.bioweave-world-model-page .bioweave-world-model-section-actions > .bioweave-world-model-icon-button,
+.bioweave-world-model-page .bioweave-world-model-edit-button {
+  box-sizing: border-box !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 !important;
+  border-radius: 7px !important;
+}
+
+/* Module edit controls follow the reference: glyph only, transparent border. */
+.bioweave-world-model-page .bioweave-world-model-edit-button {
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--bioweave-text-muted) !important;
+  font-size: 13px !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-edit-button:hover,
+.bioweave-world-model-page .bioweave-world-model-edit-button:focus-visible {
+  border-color: transparent !important;
+  background: var(--bioweave-surface-soft) !important;
+  color: var(--bioweave-text) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-edit-button > i {
+  font-size: 13px !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-top .bioweave-page-actions .bioweave-secondary-action {
+  min-height: 32px !important;
+  padding: 0 11px !important;
+  border: 1px solid var(--bioweave-border) !important;
+  border-radius: 7px !important;
+  background: var(--bioweave-surface-soft) !important;
+  color: var(--bioweave-text) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-archive-toggle {
+  color: var(--bioweave-text) !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-species-description {
+  margin: 13px 0 16px !important;
+  color: var(--bioweave-text-muted) !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-property dd.bioweave-world-model-value-good {
+  justify-self: start !important;
+  padding-right: 0 !important;
+  text-align: left !important;
+}
+
+/* Keep the species description at the compact reference body scale. */
+.bioweave-world-model-page .bioweave-world-model-species-description {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}

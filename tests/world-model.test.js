@@ -7673,6 +7673,22 @@ test('World UI card CSS keeps the reference density across devices', () => {
     STYLE_SOURCE,
     /\.bioweave-world-model-page \.bioweave-world-model-capability-check\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*16px\s*!important/s,
   )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-page \.bioweave-world-model-section-actions > \.bioweave-world-model-icon-button,[\s\S]*?width:\s*32px\s*!important;[\s\S]*?height:\s*32px\s*!important/s,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-page \.bioweave-world-model-property dd\.bioweave-world-model-value-good\s*\{[^}]*justify-self:\s*start\s*!important;[^}]*text-align:\s*left\s*!important/s,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-page \.bioweave-world-model-species-description\s*\{[^}]*font-size:\s*12px\s*!important;[^}]*line-height:\s*1\.5\s*!important/s,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-page \.bioweave-world-model-edit-button\s*\{[^}]*width:\s*20px\s*!important;[^}]*border-color:\s*transparent\s*!important;[^}]*background:\s*transparent\s*!important;[^}]*color:\s*var\(--bioweave-text-muted\)\s*!important/s,
+  )
   assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-card-summary\s*,[^}]*\{[^}]*display:\s*block\s*!important/s)
   assert.match(
     STYLE_SOURCE,
@@ -7919,6 +7935,42 @@ test('World UI uses seven independent section editors and keeps the global edito
   assert.match(editingHtml, /data-bioweave-world-capability-state="unknown"[^>]*aria-checked="mixed"/)
   assert.doesNotMatch(editingHtml, /<select[^>]*data-bioweave-world-section-field/)
   assert.equal((editingHtml.match(/data-bioweave-action="world-model-edit-section"/g) ?? []).length, 6)
+  assert.match(viewHtml, /class="bioweave-world-model-icon-button bioweave-world-model-edit-button"[^>]*title="编辑生殖能力"/)
+  assert.doesNotMatch(viewHtml, /bioweave-world-model-edit-button[^>]*>[\s\S]*<span>编辑<\/span>/)
+  assert.doesNotMatch(viewHtml, /<h4>物种描述<\/h4>/)
+})
+
+test('World UI keeps archive and read-only projections within the approved boundaries', () => {
+  const model = structuredClone(modelFixture)
+  model.species[0].biological_types[0].reproductive_mechanisms = [{key: 'mechanism-a', label: '机制 A', pathway: 'Runtime 路径'}]
+  const html = worldPage({
+    worldModel: model,
+    worldModelMeta: {archived_species: [{species: {name: '已归档种族'}, archived_at: '2026-09-29T00:00:00.000Z'}]},
+    worldModelArchiveOpen: true,
+    selectedSpeciesIndex: 0,
+    selectedTypeIndex: 0,
+  })
+  assert.match(html, /bioweave-world-model-archive-popover/)
+  assert.match(html, /bioweave-secondary-action bioweave-world-model-archive-toggle/)
+  assert.match(html, /归档资料 <span class="bioweave-world-model-archive-count">1<\/span>/)
+  assert.match(html, /已归档种族/)
+  assert.doesNotMatch(html, /2026-09-29T00:00:00/)
+  assert.match(html, /data-bioweave-action="world-model-restore-species"/)
+  assert.match(html, /data-canonical-field="reproductive_mechanisms"/)
+  assert.match(html, /生殖机制/)
+  const mechanismModule = html.match(/<section[^>]*data-canonical-field="reproductive_mechanisms"[\s\S]*?<\/section>/)?.[0] ?? ''
+  assert.doesNotMatch(mechanismModule, /data-bioweave-action="world-model-edit-section"/)
+  assert.ok(html.indexOf('data-bioweave-world-section="reproduction_rules"') < html.indexOf('data-canonical-field="reproductive_mechanisms"'))
+  assert.ok(html.indexOf('data-canonical-field="reproductive_mechanisms"') < html.indexOf('data-bioweave-world-section="lifecycle"'))
+  assert.match(html, /data-canonical-field="projection_rules"/)
+  assert.match(html, /class="[^"]*bioweave-world-model-archive-toggle[^"]*"[^>]*>[\s\S]*归档资料/)
+})
+
+test('World UI omits empty reproductive mechanisms instead of rendering an unknown module', () => {
+  const model = structuredClone(modelFixture)
+  model.species[0].biological_types[0].reproductive_mechanisms = []
+  const html = worldPage({worldModel: model, selectedSpeciesIndex: 0, selectedTypeIndex: 0})
+  assert.doesNotMatch(html, /生殖机制/)
 })
 
 test('World Model production code remains free of fixture-specific species rules', () => {

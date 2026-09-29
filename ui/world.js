@@ -295,12 +295,7 @@ function renderProjectionRules(rules) {
   )
 }
 function renderSpeciesDescription(species) {
-  return [
-    '<section class="bioweave-world-model-species-description" data-canonical-field="species.description">',
-    '<h4>物种描述</h4>',
-    '<p>' + displayText(species?.description) + '</p>',
-    '</section>',
-  ].join('')
+  return '<p class="bioweave-world-model-description bioweave-world-model-species-description" data-canonical-field="species.description">' + displayText(species?.description) + '</p>'
 }
 export function summarizeWorldModelUiProjection(model) {
   const species = Array.isArray(model?.species) ? model.species : []
@@ -554,7 +549,8 @@ function renderPropertyList(values, labels) {
   return '<dl class="bioweave-world-model-properties bioweave-world-model-kv">' + renderPropertyRows(values, labels) + '</dl>'
 }
 function renderSectionEditButton(section, busy) {
-  return `<button type="button" class="bioweave-secondary-action bioweave-world-model-edit-button" data-bioweave-action="world-model-edit-section" data-bioweave-world-section="${section}"${busy ? ' disabled' : ''}><i class="fa-solid fa-pen" aria-hidden="true"></i><span>编辑</span></button>`
+  const label = SECTION_LABELS[section] || '模块'
+  return `<button type="button" class="bioweave-world-model-icon-button bioweave-world-model-edit-button" data-bioweave-action="world-model-edit-section" data-bioweave-world-section="${section}" title="编辑${label}" aria-label="编辑${label}"${busy ? ' disabled' : ''}><i class="fa-solid fa-pen" aria-hidden="true"></i></button>`
 }
 function renderTextEditorField(key, label, value, multiline = true) {
   const text = escapeHtml(value ?? '')
@@ -669,7 +665,7 @@ function renderWorldSection(section, value, editingSection, sectionDraft, busy) 
                 ? renderPropertyList(value, LIFECYCLE_LABELS)
                 : displayList(value)
   return [
-    `<section class="bioweave-world-model-section bioweave-world-model-module bioweave-world-module${isEditing ? ' active' : ''}" data-bioweave-world-section="${section}">`,
+    `<section class="bioweave-world-model-section bioweave-world-model-module bioweave-world-module${isEditing ? ' active' : ''}${!isEditing && ['exceptions', 'unknowns'].includes(section) ? ' bioweave-world-model-scroll-module' : ''}" data-bioweave-world-section="${section}">`,
     '<header class="bioweave-world-model-module-header">',
     '<div class="bioweave-world-model-module-heading"><span class="bioweave-world-model-module-icon"><i class="fa-solid ' +
       SECTION_ICONS[section] +
@@ -710,13 +706,14 @@ function renderCollectionAddForm(kind, speciesIndex, busy, { mode = 'add', typeI
     '</form>',
   ].join('')
 }
-function renderCollectionActions({ scope, addEnabled = true, editEnabled = false, removeEnabled = false, busy, label }) {
+function renderCollectionActions({ scope, addEnabled = true, editEnabled = false, removeEnabled = false, busy, label, leading = '' }) {
   const actionLabel = scope === 'species' ? '种族' : '性别 / 生物类型'
   const addAction = scope === 'species' ? 'world-model-add-species' : 'world-model-add-biological-type'
   const editAction = scope === 'species' ? 'world-model-edit-species' : 'world-model-edit-biological-type'
   const removeAction = scope === 'species' ? 'world-model-delete-species' : 'world-model-delete-biological-type'
   return [
     '<div class="bioweave-world-model-section-actions">',
+    leading,
     '<button type="button" class="bioweave-world-model-icon-button" data-bioweave-action="' +
       addAction +
       '" title="新增' +
@@ -749,7 +746,7 @@ function renderCollectionActions({ scope, addEnabled = true, editEnabled = false
     '</div>',
   ].join('')
 }
-function renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection, collectionEditor = null, busy = false) {
+function renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection, collectionEditor = null, busy = false, worldModelMeta = null, archiveOpen = false) {
   const species = Array.isArray(model?.species) ? model.species : []
   const selectedSpecies = speciesSelection ? species[speciesSelection.speciesIndex] : null
   const selectedTypes = Array.isArray(selectedSpecies?.biological_types) ? selectedSpecies.biological_types : []
@@ -802,6 +799,7 @@ function renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection,
         removeEnabled: Boolean(speciesSelection),
         busy,
         label: displayText(speciesSelection?.speciesName || ''),
+        leading: '<span class="bioweave-world-model-action-separator" aria-hidden="true"></span>' + renderSpeciesArchive(worldModelMeta, {open: archiveOpen, busy}),
       }) +
       '</div>',
     collectionEditor?.kind === 'species' ? renderCollectionAddForm('species', null, busy, collectionEditor) : '',
@@ -857,41 +855,40 @@ function renderSelectedTypeDetail(model, speciesSelection, biologicalTypeSelecti
       '</strong></p></div></header>',
     renderSpeciesDescription(species),
     '<p class="bioweave-world-model-description">' + displayText(type.description) + '</p>',
-    '<section class="bioweave-world-model-section bioweave-world-model-module" data-canonical-field="reproductive_mechanisms"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">生殖机制</h3></div></header>' +
-      renderReproductiveMechanisms(type.reproductive_mechanisms) +
-      '</section>',
     '<div class="bioweave-world-model-type-sections bioweave-world-model-module-grid">',
-    TYPE_SECTION_KEYS.map(section =>
+    TYPE_SECTION_KEYS.map(section => [
       renderWorldSection(section, sectionValue(section), editingSection, editingSection === section ? sectionDraft : null, busy),
-    ).join(''),
+      section === 'reproduction_rules' && Array.isArray(type.reproductive_mechanisms) && type.reproductive_mechanisms.length
+        ? '<section class="bioweave-world-model-section bioweave-world-model-module bioweave-world-model-readonly-module" data-canonical-field="reproductive_mechanisms"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">生殖机制</h3></div></header>' +
+          renderReproductiveMechanisms(type.reproductive_mechanisms) +
+          '</section>'
+        : '',
+    ].join('')).join(''),
     '</div>',
     '</section>',
   ].join('')
 }
 export function renderSpeciesArchive(meta, {open = false, busy = false} = {}) {
   const entries = listArchivedSpecies(meta)
-  const toggle = `<button type="button" class="bioweave-secondary-action bioweave-world-model-archive-toggle" data-bioweave-action="world-model-toggle-archive" aria-expanded="${open}">${open ? '关闭归档名单' : '归档名单'}${entries.length ? `（${entries.length}）` : ''}</button>`
-  if (!open) return `<section class="bioweave-world-model-archive bioweave-world-model-frame"><header class="bioweave-world-model-archive-header"><div><h3>归档名单</h3><p>用户归档的 Species 不会被分析重新加入 active World Model。</p></div>${toggle}</header></section>`
+  const toggle = `<button type="button" class="bioweave-secondary-action bioweave-world-model-archive-toggle" data-bioweave-action="world-model-toggle-archive" aria-expanded="${open}"${open ? ' aria-controls="bioweave-world-model-archive-popover"' : ''} title="${open ? '关闭归档资料' : '打开归档资料'}" aria-label="${open ? '关闭归档资料' : '打开归档资料'}">归档资料${entries.length ? ` <span class="bioweave-world-model-archive-count">${entries.length}</span>` : ''}</button>`
+  if (!open) return `<div class="bioweave-world-model-archive">${toggle}</div>`
   const items = entries.length
     ? entries.map((entry, index) => [
         '<li class="bioweave-world-model-archive-item">',
-        `<div><strong>${escapeHtml(entry.species?.name ?? '')}</strong><small>归档于 ${escapeHtml(entry.archived_at ?? '未知时间')}</small></div>`,
+        `<div><strong>${escapeHtml(entry.species?.name ?? '')}</strong></div>`,
         `<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-restore-species" data-bioweave-world-archive-index="${index}"${busy ? ' disabled' : ''}>还原</button>`,
         '</li>',
       ].join('')).join('')
     : '<li class="bioweave-empty">暂无已归档 Species。</li>'
   return [
-    '<section class="bioweave-world-model-archive bioweave-world-model-frame">',
-    '<header class="bioweave-world-model-archive-header"><div><h3>归档名单</h3><p>归档只移出 active World Model，完整 subtree 会在还原时恢复。</p></div>',
-    toggle,
-    '</header>',
-    `<ul class="bioweave-world-model-archive-list">${items}</ul>`,
-    '</section>',
+    `<div class="bioweave-world-model-archive">${toggle}<div class="bioweave-world-model-archive-popover" id="bioweave-world-model-archive-popover" role="dialog" aria-label="归档名单"><header><h3>归档名单</h3><p>归档只移出 active World Model，完整 subtree 会在还原时恢复。</p></header><ul class="bioweave-world-model-archive-list">${items}</ul></div></div>`,
   ].join('')
 }
 export function renderWorldModelView(
   model,
   {
+    worldModelMeta = null,
+    worldModelArchiveOpen = false,
     selectedSpecies = null,
     selectedBiologicalType = null,
     selectedSpeciesIndex = null,
@@ -915,7 +912,7 @@ export function renderWorldModelView(
       : createWorldModelBiologicalTypeSelection(model, selectedSpeciesIndex, selectedTypeIndex)
   const sectionValue = section => getWorldModelSection(model, section, biologicalTypeSelection ?? {})
   return [
-    renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection, collectionEditor, busy),
+    renderSpeciesSelector(model, speciesSelection, biologicalTypeSelection, collectionEditor, busy, worldModelMeta, worldModelArchiveOpen),
     '<div class="bioweave-world-model-content-grid">',
     '<div class="bioweave-world-model-detail-column">',
     renderSelectedTypeDetail(model, speciesSelection, biologicalTypeSelection, editingSection, sectionDraft, busy),
@@ -927,7 +924,7 @@ export function renderWorldModelView(
     WORLD_SECTION_KEYS.map(section =>
       renderWorldSection(section, sectionValue(section), editingSection, editingSection === section ? sectionDraft : null, busy),
     ).join(''),
-    '<section class="bioweave-world-model-section bioweave-world-model-module" data-canonical-field="projection_rules"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">投影规则</h3></div></header>' +
+    '<section class="bioweave-world-model-section bioweave-world-model-module bioweave-world-model-readonly-module" data-canonical-field="projection_rules"><header class="bioweave-world-model-module-header"><div class="bioweave-world-model-module-heading"><h3 class="bioweave-world-model-module-title">投影规则</h3></div></header>' +
       renderProjectionRules(model?.projection_rules) +
       '</section>',
     '</div>',
@@ -995,6 +992,8 @@ export function worldPage({
     : ''
   const body = model
     ? renderWorldModelView(model, {
+        worldModelMeta,
+        worldModelArchiveOpen,
         selectedSpecies,
         selectedBiologicalType,
         selectedSpeciesIndex,
@@ -1005,7 +1004,7 @@ export function worldPage({
         busy: effectiveBusy,
       })
     : '<section class="bioweave-card bioweave-empty"><b>世界模型尚未建立</b><p>点击“开始分析”，使用当前已选择的分析来源生成 Chat 独立的生物学规则。</p></section>' +
-      renderSpeciesSelector({ species: [] }, null, null, collectionEditor, worldModelBusy)
+        renderSpeciesSelector({ species: [] }, null, null, collectionEditor, worldModelBusy, worldModelMeta, worldModelArchiveOpen)
   return [
     '<section class="bioweave-page bioweave-world-model-page" data-bioweave-page="world">',
     '<header class="bioweave-page-title bioweave-page-head bioweave-world-model-titlebar bioweave-world-model-top' +
@@ -1016,7 +1015,6 @@ export function worldPage({
       actions +
       '</div></header>',
     notice,
-    renderSpeciesArchive(worldModelMeta, {open: worldModelArchiveOpen, busy: effectiveBusy}),
     body,
     '</section>',
   ].join('')
