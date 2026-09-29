@@ -1,6 +1,5 @@
 import {
   buildWorldModelViewModel,
-  mergeWorldModelPatchV2,
   mergeWorldModelSupplementPatch,
   normalizeStoredWorldModel,
   summarizeAnalysisInput,
@@ -472,7 +471,7 @@ export function createWorldAnalysis({
     };
     const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
     let formatRetryUsed = false;
-    let supplementContinuationState = null;
+    let supplementExecutionState = null;
     const publishPhase = phase => {
       onPhase?.(phase);
       notify({
@@ -511,13 +510,13 @@ export function createWorldAnalysis({
             ? model.species.reduce((count, species) => count + (Array.isArray(species?.biological_types) ? species.biological_types.length : 0), 0)
             : 0,
           ...(factDeltaSummary ?? {}),
-          execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
-          execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
-          execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
-          execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
-          execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+          execution_snapshot_present: mode === "patch" && Boolean(supplementExecutionState),
+          execution_snapshot_mutated: mode === "patch" && Boolean(supplementExecutionState?.hasAcceptedMutation),
+          execution_snapshot_accepted_operation_count: supplementExecutionState?.acceptedOperationCount ?? 0,
+          execution_snapshot_successful_round_count: supplementExecutionState?.successfulRoundCount ?? 0,
+          execution_snapshot_last_successful_round: supplementExecutionState?.lastSuccessfulRound ?? null,
           execution_snapshot_persistence_eligible: mode === "patch"
-            ? Boolean(supplementContinuationState?.hasAcceptedMutation)
+            ? Boolean(supplementExecutionState?.hasAcceptedMutation)
             : true,
           persistence_occurred: false,
         }, "world");
@@ -588,18 +587,18 @@ export function createWorldAnalysis({
             model,
           );
         }
-        if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED' && !supplementContinuationState?.hasAcceptedMutation) {
+        if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED' && !supplementExecutionState?.hasAcceptedMutation) {
           throw candidateError('WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED', {
             analysis_stage: 'world_patch_v2_evidence_guard',
             retryable: false,
           });
         }
         const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
-        const baselineModel = mode === "patch" && supplementContinuationState
-          ? supplementContinuationState.baselineModel
+        const baselineModel = mode === "patch" && supplementExecutionState
+          ? supplementExecutionState.baselineModel
           : currentFloorData.world_model;
         const canonicalNoop = canonicalWorldEqual(baselineModel, model)
-          && (mode !== "patch" || Boolean(supplementContinuationState));
+          && (mode !== "patch" || Boolean(supplementExecutionState));
         if (canonicalNoop) {
           const noopFingerprint = await fingerprintWorldModel(model);
           emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
@@ -631,11 +630,11 @@ export function createWorldAnalysis({
             reconciliation_status: "confirmed",
             reconciliation_fingerprint: noopFingerprint.fingerprint,
             latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
-            execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
-            execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
-            execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
-            execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
-            execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+            execution_snapshot_present: mode === "patch" && Boolean(supplementExecutionState),
+            execution_snapshot_mutated: mode === "patch" && Boolean(supplementExecutionState?.hasAcceptedMutation),
+            execution_snapshot_accepted_operation_count: supplementExecutionState?.acceptedOperationCount ?? 0,
+            execution_snapshot_successful_round_count: supplementExecutionState?.successfulRoundCount ?? 0,
+            execution_snapshot_last_successful_round: supplementExecutionState?.lastSuccessfulRound ?? null,
             execution_snapshot_persistence_eligible: false,
             latest_fact_delta: factDeltaSummary ? cloneWorldValue(factDeltaSummary) : null,
             latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
@@ -670,7 +669,7 @@ export function createWorldAnalysis({
           executionId: `${job.diagnostic_execution_id}-candidate-${attempt}`,
         });
         candidate.state = "PERSISTING";
-        supplementContinuationState && (supplementContinuationState.persistenceRequested = true);
+        supplementExecutionState && (supplementExecutionState.persistenceRequested = true);
         emitPersistenceTrace("WORLD_PERSISTENCE_REQUESTED", execution, target, {
           execution_id: candidate.execution_id,
           candidate_fingerprint: candidate.candidate_fingerprint,
@@ -708,13 +707,13 @@ export function createWorldAnalysis({
           reconciliation_status: reconciliationStatus,
           reconciliation_fingerprint: persistedFingerprint.fingerprint,
           latest_world_fact_delta_execution_id: factDeltaSummary ? (factDeltaExecutionId ?? `${job.diagnostic_execution_id}-attempt-${attempt}`) : null,
-          execution_snapshot_present: mode === "patch" && Boolean(supplementContinuationState),
-          execution_snapshot_mutated: mode === "patch" && Boolean(supplementContinuationState?.hasAcceptedMutation),
-          execution_snapshot_accepted_operation_count: supplementContinuationState?.acceptedOperationCount ?? 0,
-          execution_snapshot_successful_round_count: supplementContinuationState?.successfulRoundCount ?? 0,
-          execution_snapshot_last_successful_round: supplementContinuationState?.lastSuccessfulRound ?? null,
+          execution_snapshot_present: mode === "patch" && Boolean(supplementExecutionState),
+          execution_snapshot_mutated: mode === "patch" && Boolean(supplementExecutionState?.hasAcceptedMutation),
+          execution_snapshot_accepted_operation_count: supplementExecutionState?.acceptedOperationCount ?? 0,
+          execution_snapshot_successful_round_count: supplementExecutionState?.successfulRoundCount ?? 0,
+          execution_snapshot_last_successful_round: supplementExecutionState?.lastSuccessfulRound ?? null,
           execution_snapshot_persistence_eligible: mode === "patch"
-            ? Boolean(supplementContinuationState?.hasAcceptedMutation)
+            ? Boolean(supplementExecutionState?.hasAcceptedMutation)
             : true,
           mode,
           trigger,
@@ -760,7 +759,7 @@ export function createWorldAnalysis({
           ...(factDeltaSummary ?? {}),
           persistence_occurred: true,
         }, "world");
-        if (supplementContinuationState) supplementContinuationState.persistenceConfirmed = true;
+        if (supplementExecutionState) supplementExecutionState.persistenceConfirmed = true;
         candidate.state = "PERSISTED";
         notify({
           type: "WORLD_PERSISTENCE_CONFIRMED",
@@ -817,10 +816,10 @@ export function createWorldAnalysis({
             meta = {source: "world-full-analysis", source_summary: summarizeAnalysisInput(analysisInput)};
           } else {
             const factDeltaExecutionId = `${job.diagnostic_execution_id}-attempt-${attempt}`;
-            const resolved = supplementContinuationState
+            const resolved = supplementExecutionState
               ? {
-                  model: supplementContinuationState.transientModel,
-                  meta: supplementContinuationState.meta,
+                  model: supplementExecutionState.transientModel,
+                  meta: supplementExecutionState.meta,
                 }
               : await resolveWorldModelAtOrBefore(target);
             if (!resolved) {
@@ -829,9 +828,9 @@ export function createWorldAnalysis({
               error.analysis_stage = "world_preflight";
               throw error;
             }
-            if (!supplementContinuationState) {
+            if (!supplementExecutionState) {
               const initialTargets = buildWorldModelSupplementCoverageTargets(resolved.model);
-              supplementContinuationState = {
+              supplementExecutionState = {
                 baselineModel: cloneWorldValue(resolved.model),
                 transientModel: cloneWorldValue(resolved.model),
                 meta: cloneWorldValue(resolved.meta ?? {}),
@@ -867,7 +866,7 @@ export function createWorldAnalysis({
               target.field ?? '',
             ].join('\u001f')));
             const mergeAcceptedSupplementPatch = async (patch, summary, snapshotModel = null) => {
-              const previousSnapshot = supplementContinuationState.transientModel;
+              const previousSnapshot = supplementExecutionState.transientModel;
               const candidateModel = snapshotModel
                 ? cloneWorldValue(snapshotModel)
                 : mergeWorldModelSupplementPatch(
@@ -876,7 +875,7 @@ export function createWorldAnalysis({
                     patchAnalysisInput,
                   );
               const snapshotChanged = !canonicalWorldEqual(previousSnapshot, candidateModel);
-              supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
+              supplementExecutionState.transientModel = cloneWorldValue(candidateModel);
               const snapshotSummary = summary && typeof summary === "object"
                 ? {
                     ...summary,
@@ -890,15 +889,15 @@ export function createWorldAnalysis({
                       : {}),
                   }
                 : summary;
-              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(snapshotSummary ?? null);
+              supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(snapshotSummary ?? null);
               if (snapshotChanged) {
-                supplementContinuationState.hasAcceptedMutation = true;
-                supplementContinuationState.acceptedOperationCount += Number(summary?.accepted_operation_count)
+                supplementExecutionState.hasAcceptedMutation = true;
+                supplementExecutionState.acceptedOperationCount += Number(summary?.accepted_operation_count)
                   || Number(patch?.operations?.length)
                   || 0;
-                supplementContinuationState.successfulRoundCount += 1;
-                supplementContinuationState.lastSuccessfulRound = supplementContinuationState.rounds.length + 1;
-                supplementContinuationState.snapshotFingerprint = (await fingerprintWorldModel(candidateModel)).fingerprint;
+                supplementExecutionState.successfulRoundCount += 1;
+                supplementExecutionState.lastSuccessfulRound = supplementExecutionState.rounds.length + 1;
+                supplementExecutionState.snapshotFingerprint = (await fingerprintWorldModel(candidateModel)).fingerprint;
               }
               return {candidateModel, snapshotChanged, snapshotSummary};
             };
@@ -981,7 +980,7 @@ export function createWorldAnalysis({
               const unresolvedDynamicTargets = dynamicTargets;
               const acceptedNewIdentityCount = Number(baseSummary.accepted_new_type_identity_count) || 0;
               const roundSummary = {
-                round: supplementContinuationState.rounds.length + 1,
+                round: supplementExecutionState.rounds.length + 1,
                 input_target_count: inputTargets.length,
                 reviewed_target_count: dispositionById.size,
                 emitted_count: [...dispositionById.values()].filter(value => value === 'EMITTED').length,
@@ -992,7 +991,7 @@ export function createWorldAnalysis({
                 expanded_target_count: dynamicTargets.length,
                 unresolved_target_count: unresolvedDynamicTargets.length,
               };
-              supplementContinuationState.rounds.push(roundSummary);
+              supplementExecutionState.rounds.push(roundSummary);
               factDeltaSummary = {
                 ...baseSummary,
                 baseline_source: baselineSource,
@@ -1001,18 +1000,18 @@ export function createWorldAnalysis({
                 request_transition: requestTransition,
                 mutation_source_execution_id: requestSnapshot.mutation_source_execution_id,
                 mutation_source_candidate_fingerprint: requestSnapshot.mutation_source_candidate_fingerprint,
-                coverage_initial_target_count: supplementContinuationState.initialTargetCount,
+                coverage_initial_target_count: supplementExecutionState.initialTargetCount,
                 coverage_current_target_count: candidateTargets.length,
                 dynamic_coverage_target_count: dynamicTargets.length,
                 dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
                 unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
                 unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
-                coverage_rounds: cloneWorldValue(supplementContinuationState.rounds.slice(-16)),
+                coverage_rounds: cloneWorldValue(supplementExecutionState.rounds.slice(-16)),
                 coverage_fixed_point_reached: unresolvedDynamicTargets.length === 0,
                 dynamic_coverage_unresolved_in_single_response: unresolvedDynamicTargets.length > 0,
               };
               factDeltaSummary.final_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
-              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
+              supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
             } catch (error) {
               if (error?.accepted_patch?.operations?.length) {
                 factDeltaSummary = cloneWorldValue(error.accepted_fact_delta_summary ?? {
@@ -1027,9 +1026,9 @@ export function createWorldAnalysis({
                 );
                 if (Array.isArray(snapshotSummary?.fact_mappings))
                   factDeltaSummary.fact_mappings = cloneWorldValue(snapshotSummary.fact_mappings);
-                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
-                supplementContinuationState.rounds.push({
-                  round: supplementContinuationState.rounds.length + 1,
+                supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
+                supplementExecutionState.rounds.push({
+                  round: supplementExecutionState.rounds.length + 1,
                   input_target_count: inputTargets.length,
                   reviewed_target_count: 0,
                   emitted_count: 0,
@@ -1060,9 +1059,9 @@ export function createWorldAnalysis({
                   target,
                   mode,
                   semanticFailureSummary,
-                  supplementContinuationState?.transientModel ?? null,
+                  supplementExecutionState?.transientModel ?? null,
                 );
-                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(semanticFailureSummary);
+                supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(semanticFailureSummary);
                 factDeltaSummary = semanticFailureSummary;
               } else if (error?.format_retryable === true) {
                 if (!formatRetryUsed) {
@@ -1093,13 +1092,13 @@ export function createWorldAnalysis({
                   target,
                   mode,
                   failureSummary,
-                  supplementContinuationState?.transientModel ?? null,
+                  supplementExecutionState?.transientModel ?? null,
                 );
-                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
+                supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
                 throw error;
               }
             }
-            model = cloneWorldValue(supplementContinuationState.transientModel);
+            model = cloneWorldValue(supplementExecutionState.transientModel);
             meta = {
               ...cloneWorldValue(resolved.meta ?? {}),
               source: "world-patch-analysis",
@@ -1118,7 +1117,7 @@ export function createWorldAnalysis({
         complete: completeWorldAnalysis,
       });
       } catch (error) {
-        const snapshot = supplementContinuationState;
+        const snapshot = supplementExecutionState;
         const canPersistSnapshot = mode === "patch"
           && snapshot?.hasAcceptedMutation
           && !snapshot.persistenceRequested

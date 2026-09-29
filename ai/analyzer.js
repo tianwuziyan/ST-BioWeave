@@ -11,7 +11,6 @@ import {
 } from './prompts.js';
 import { normalizeProjectionRules, validateProjectionRuleContent } from '../core/projection-eligibility.js';
 import {
-  parseWorldModelCandidateText,
   buildWorldModelSupplementCoverageTargets,
   buildWorldModelSupplementIdentityReviewSubjects,
   parseWorldModelFactDeltaJson,
@@ -20,7 +19,6 @@ import {
   worldModelSupplementCoverageCardinality,
   validateWorldModelFactDelta,
   SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY,
-  validateWorldModelCandidate,
   worldModelUnknownId,
 } from './world-supplement-protocol.js';
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
@@ -1935,20 +1933,6 @@ function semanticPatchValueEqual(left, right) {
   return false
 }
 
-function patchExceptionSemanticValue(value) {
-  return {
-    statement: value?.statement ?? null,
-    applies_to: value?.applies_to ?? null,
-  }
-}
-
-function patchExceptionSemanticEqual(left, right) {
-  return semanticPatchValueEqual(
-    patchExceptionSemanticValue(left),
-    patchExceptionSemanticValue(right),
-  )
-}
-
 function patchMechanismSemanticValue(value) {
   return {
     key: value?.key ?? null,
@@ -1973,37 +1957,6 @@ function scopeCompatiblePatchUnits(units, delta) {
       .filter((unit) => !individualOnlyPattern.test(unit))
   }
   return units.filter((unit) => !individualOnlyPattern.test(unit))
-}
-
-function patchFactEvidence(fact, units, delta) {
-  const scopedUnits = scopeCompatiblePatchUnits(units, delta)
-  if (delta.typeName && scopedUnits.length === 0) return false
-  if (delta.nested === 'special_rules') {
-    if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
-    const sourceText = scopedUnits.join('\n')
-    const typeIsNamed = delta.typeName && scopedUnits.some(unit => hasGenericDirectLabelEvidence(unit, delta.typeName))
-    const sourceHasRuleCue = /特殊规则|稳定规则|规则|special\s+rule|stable\s+rule|follows/iu.test(sourceText)
-    const valueHasRuleCue = /特殊规则|规则|special\s+rule|stable\s+rule|follows|rule/iu.test(String(fact.value ?? ''))
-    return Boolean(typeIsNamed && sourceHasRuleCue && valueHasRuleCue)
-  }
-  const capabilityKey = delta.nested === 'capabilities' ? delta.key : null
-  if (capabilityKey && Object.hasOwn(CAPABILITY_EVIDENCE_PATTERNS, capabilityKey))
-    return capabilityEvidenceValue(scopedUnits, CAPABILITY_EVIDENCE_PATTERNS[capabilityKey]) === fact.value
-  const ruleKey = delta.nested === 'reproduction_rules'
-    ? delta.key
-    : delta.nested === 'lifecycle'
-      ? delta.key
-      : null
-  const rulePattern = delta.nested === 'reproduction_rules'
-    ? REPRODUCTION_RULE_EVIDENCE_PATTERNS[ruleKey]
-    : delta.nested === 'lifecycle'
-      ? LIFECYCLE_EVIDENCE_PATTERNS[ruleKey]
-      : null
-  if (rulePattern && typeof fact.value === 'string') {
-    const direct = hasDirectPatternTextEvidence(fact.value, scopedUnits, rulePattern)
-    if (direct) return true
-  }
-  return hasPatchTextEvidence(String(fact.value), scopedUnits)
 }
 
 const FERTILIZATION_RECIPIENT_PATTERN =
@@ -3974,359 +3927,6 @@ function v2ScopedEvidenceUnitRecords(units, context = {}) {
   return safeUnits;
 }
 
-function v2ScopedEvidenceUnits(units, context = {}) {
-  return v2ScopedEvidenceUnitRecords(units, context).map(evidenceUnitText);
-}
-
-function v2EvidenceSupportsFact(value, units, context = {}) {
-  const scopedUnits = v2ScopedEvidenceUnits(units, context);
-  if (!scopedUnits.length) return false;
-  if (context.nested === 'capabilities')
-    return patchFactEvidence({ value }, scopedUnits, context);
-  if (typeof value === 'string') {
-    if (context.descriptive === true && v2DescriptionHasProtectedSemanticClaim(value)) return false;
-    const compactValue = compactEvidenceText(value).replace(/[。！？!?；;，,、]+$/gu, '');
-    if (compactValue && scopedUnits.some((unit) => compactEvidenceText(unit).includes(compactValue))) return true;
-    if (context.descriptive === true && !v2DescriptionHasProtectedSemanticClaim(value)) return true;
-  }
-  if (patchFactEvidence({ value }, scopedUnits, context)) return true;
-  if (typeof value !== 'string') return false;
-  return scopedUnits.some((unit) =>
-    hasDirectTextEvidence(value, [unit]) || hasGenericDirectLabelEvidence(unit, value),
-  );
-}
-
-const V2_EXCEPTION_CONDITION_PATTERN = /(?:服用|使用|摄入|接触|注射|施用|在[^。！？!?；;，,、\n]{0,24}(?:后|时|期间)|after|upon|following|when|if|taking|using)/iu;
-const V2_EXCEPTION_TEMPORAL_PATTERN = /(?:永久|永远|始终|短暂|暂时|临时|持续[^。！？!?；;，,\n]{0,8}|一(?:天|日|周|月)|[一二三四五六七八九十百千万\d]+\s*(?:天|日|周|月|小时|年)|for\s+[^,.;!?]+|permanent(?:ly)?|temporary|for\s+\d+\s+(?:day|days|hour|hours|week|weeks|month|months|year|years))/iu;
-const V2_EXCEPTION_ANCHOR_STOP_PATTERN = /^(?:服用|使用|摄入|接触|注射|施用|在|后|时|期间|任何|所有|全体|不论|无论|个体|对象|效果|出现|产生|发生|导致|可以|能够|会|均|都|其|该|持续|永久|永远|after|upon|following|when|if|taking|using|all|any|every|individuals?|persons?|people|experience|appears?|occurs?|for|days?|hours?|weeks?|months?|years?)$/iu;
-
-function v2ExceptionAnchors(value) {
-  return [...compactEvidenceText(value).matchAll(/[A-Za-z][A-Za-z0-9_-]*|[\u3400-\u9fff]{2,}/gu)]
-    .map((match) => match[0])
-    .filter((token) => !V2_EXCEPTION_ANCHOR_STOP_PATTERN.test(token));
-}
-
-function v2ExceptionClaimRegion(value) {
-  const text = compactEvidenceText(value);
-  const condition = text.match(V2_EXCEPTION_CONDITION_PATTERN);
-  if (!condition) return text;
-  return text.slice((condition.index ?? 0) + condition[0].length);
-}
-
-function v2ExceptionConditionAnchors(value, condition) {
-  const text = compactEvidenceText(value);
-  const prefix = text.slice(0, condition?.index ?? 0);
-  const prefixAnchors = v2ExceptionAnchors(prefix);
-  if (prefixAnchors.length) return prefixAnchors;
-  const suffix = text.slice((condition?.index ?? 0) + condition[0].length, (condition?.index ?? 0) + condition[0].length + 20);
-  return v2ExceptionAnchors(suffix);
-}
-
-function v2ExceptionTemporalClaims(value) {
-  return [...compactEvidenceText(value).matchAll(new RegExp(V2_EXCEPTION_TEMPORAL_PATTERN.source, 'giu'))]
-    .map((match) => match[0].replace(/^(?:持续|维持|for)\s*/iu, ''));
-}
-
-function v2ExceptionScopeBroadening(candidate, source) {
-  const candidateText = compactEvidenceText(candidate);
-  const sourceText = compactEvidenceText(source);
-  const sourceBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(sourceText);
-  const candidateBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(candidateText);
-  const candidateRestrictive = /(?:仅|只有|除非|only|except)/iu.test(candidateText);
-  return (!sourceBroad && candidateBroad) || (sourceBroad && candidateRestrictive);
-}
-
-function v2ExceptionStatementSupportedInUnit(statement, sourceText) {
-  if (v2ExceptionScopeBroadening(statement, sourceText)) return false;
-
-  const sourceHasCondition = V2_EXCEPTION_CONDITION_PATTERN.test(sourceText);
-  if (sourceHasCondition) {
-    const candidateCondition = statement.match(V2_EXCEPTION_CONDITION_PATTERN);
-    if (!candidateCondition) return false;
-    const sourceCondition = sourceText.match(V2_EXCEPTION_CONDITION_PATTERN);
-    const sourceConditionAnchors = new Set(v2ExceptionConditionAnchors(sourceText, sourceCondition));
-    const candidateConditionAnchors = v2ExceptionConditionAnchors(statement, candidateCondition);
-    if (!candidateConditionAnchors.some((anchor) => sourceConditionAnchors.has(anchor))) return false;
-  }
-
-  const candidateTemporal = v2ExceptionTemporalClaims(statement);
-  if (candidateTemporal.length && !candidateTemporal.every((claim) => sourceText.includes(claim))) return false;
-
-  const sourceEffectAnchors = new Set(v2ExceptionAnchors(v2ExceptionClaimRegion(sourceText)));
-  const candidateCondition = statement.match(V2_EXCEPTION_CONDITION_PATTERN);
-  const candidateConditionAnchors = new Set(candidateCondition ? v2ExceptionConditionAnchors(statement, candidateCondition) : []);
-  const candidateEffectAnchors = v2ExceptionAnchors(v2ExceptionClaimRegion(statement))
-    .filter((anchor) => !candidateConditionAnchors.has(anchor));
-  return candidateEffectAnchors.some((anchor) => sourceEffectAnchors.has(anchor));
-}
-
-function v2ExceptionStatementSupported(exception, units) {
-  const statement = compactEvidenceText(exception.statement);
-  const scopedUnits = units.filter((unit) => !v2IndividualOnlyUnit(unit));
-  return scopedUnits.some((unit) => {
-    const sourceText = compactEvidenceText(unit);
-    return sourceText.includes(statement) || v2ExceptionStatementSupportedInUnit(statement, sourceText);
-  });
-}
-
-function v2ExceptionScopeSupported(exception, units) {
-  if (!exception.applies_to) return true;
-  const candidate = compactEvidenceText(exception.applies_to);
-  return units.filter((unit) => !v2IndividualOnlyUnit(unit)).some((unit) => {
-    if (v2EvidenceSupportsFact(exception.applies_to, [unit], {})) return true;
-    const source = compactEvidenceText(unit);
-    const candidateBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(candidate);
-    const sourceBroad = /(?:任何|所有|全体|不论|无论|any|all|every|regardless)/iu.test(source);
-    if (!candidateBroad || !sourceBroad) return false;
-    const scopeDimensions = [
-      { candidate: /性别|sex|gender/iu, source: /性别|sex|gender/iu },
-      { candidate: /物种|种族|species|race/iu, source: /物种|种族|species|race/iu },
-    ];
-    return scopeDimensions.every((dimension) => !dimension.candidate.test(candidate) || dimension.source.test(source));
-  });
-}
-
-function v2ExceptionEvidenceSupported(exception, units) {
-  if (exception.evidence !== null && exception.evidence !== undefined &&
-      !units.some((unit) => compactEvidenceText(unit).includes(
-        compactEvidenceText(exception.evidence).replace(/[。！？!?；;，,、]+$/gu, ''),
-      ))) return false;
-  if (!v2ExceptionScopeSupported(exception, units)) return false;
-  return v2ExceptionStatementSupported(exception, units);
-}
-
-function v2DescriptionHasProtectedSemanticClaim(value) {
-  const text = String(value ?? '');
-  return [
-    ...Object.values(CAPABILITY_EVIDENCE_PATTERNS),
-    ...Object.values(REPRODUCTION_RULE_EVIDENCE_PATTERNS),
-    ...Object.values(LIFECYCLE_EVIDENCE_PATTERNS),
-  ].some((pattern) => pattern.test(text)) || /机制|通路|途径|繁殖|生殖/u.test(text);
-}
-
-function v2SpeciesExistenceSupported(speciesName, units) {
-  return speciesEvidenceUnits(units, speciesName).some((unit) => !v2IndividualOnlyUnit(unit));
-}
-
-function v2TypeExistenceSupported(speciesName, typeName, units) {
-  const stableTypePattern = /稳定|长期|持续|固定|stable|persistent|permanent|long[- ]?term|exists?|present|population|minority|majority|rare|uncommon|mostly|primarily|基本|主要|多数|少数|极少|少量|大多|通常|为主/u;
-  const temporaryTypePattern = /临时|暂时|短暂|可逆|条件性|暂态|temporary|temporarily|reversible|conditional(?:ly)?|transient|under\s+condition/iu;
-  const scoped = v2ScopedEvidenceUnits(units, { speciesName, typeName });
-  return scoped.some((unit) => stableTypePattern.test(unit) && !temporaryTypePattern.test(unit));
-}
-
-function v2KnownTypeLeaves(type, path, speciesName) {
-  const facts = [];
-  if (v2Known(type.description)) facts.push({ path: `${path}.description`, value: type.description, context: { speciesName, typeName: type.name, descriptive: true } });
-  for (const key of CAPABILITY_KEYS) {
-    if (v2Known(type.capabilities?.[key])) facts.push({ path: `${path}.capabilities.${key}`, value: type.capabilities[key], context: { speciesName, typeName: type.name, nested: 'capabilities', key } });
-  }
-  for (const key of WORLD_RULE_KEYS) {
-    if (v2Known(type.reproduction_rules?.[key])) facts.push({ path: `${path}.reproduction_rules.${key}`, value: type.reproduction_rules[key], context: { speciesName, typeName: type.name, nested: 'reproduction_rules', key } });
-  }
-  for (const key of LIFECYCLE_KEYS) {
-    if (v2Known(type.lifecycle?.[key])) facts.push({ path: `${path}.lifecycle.${key}`, value: type.lifecycle[key], context: { speciesName, typeName: type.name, nested: 'lifecycle', key } });
-  }
-  for (const [index, value] of (type.special_rules ?? []).entries()) {
-    if (v2Known(value)) facts.push({ path: `${path}.special_rules[${index}]`, value, context: { speciesName, typeName: type.name, nested: 'special_rules', key: value } });
-  }
-  for (const [index, mechanism] of (type.reproductive_mechanisms ?? []).entries()) {
-    const mechanismPath = `${path}.reproductive_mechanisms[${index}]`;
-    const mechanismContext = { speciesName, typeName: type.name, nested: 'reproductive_mechanisms', mechanismKey: mechanism.key };
-    const knownFields = ['label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs'];
-    for (const key of knownFields) {
-      const value = mechanism[key];
-      if (Array.isArray(value)) {
-        value.forEach((item, itemIndex) => {
-          if (v2Known(item)) facts.push({ path: `${mechanismPath}.${key}[${itemIndex}]`, value: item, context: { ...mechanismContext, key } });
-        });
-      } else if (v2Known(value)) facts.push({ path: `${mechanismPath}.${key}`, value, context: { ...mechanismContext, key } });
-    }
-    // key is identity, and evidence is provenance supplied by the model; neither self-proves the mechanism.
-  }
-  return facts;
-}
-
-function v2MechanismCompatibilityEvidence(value, units, context) {
-  const scopedText = v2ScopedEvidenceUnits(units, context).join('\n');
-  const expected = value === true
-    ? /(?:(?:支持|可以|能够|允许)[^。！？!?；;，,、\n]{0,10}(?:携带|妊娠|胎儿|兼容)|(?:携带|妊娠|胎儿|兼容)[^。！？!?；;，,、\n]{0,10}(?:支持|可以|能够|允许))/iu
-    : /(?:(?:不支持|不能|无法|不允许|不兼容)[^。！？!?；;，,、\n]{0,10}(?:携带|妊娠|胎儿|兼容)|(?:携带|妊娠|胎儿|兼容)[^。！？!?；;，,、\n]{0,10}(?:不支持|不能|无法|不允许|不兼容))/iu;
-  return expected.test(scopedText);
-}
-
-function v2ValidateTypeSubtree(type, speciesName, units, path) {
-  const knownFacts = v2KnownTypeLeaves(type, path, speciesName);
-  if (!v2TypeExistenceSupported(speciesName, type.name, units)) v2EvidenceError(`${path}.name`);
-  for (const fact of knownFacts) {
-    if (fact.context.nested === 'reproductive_mechanisms' && fact.context.key === 'carrying_compatibility') {
-      if (!v2MechanismCompatibilityEvidence(fact.value, units, fact.context)) v2EvidenceError(fact.path);
-      continue;
-    }
-    if (!v2EvidenceSupportsFact(fact.value, units, fact.context)) v2EvidenceError(fact.path);
-  }
-  if ((type.reproductive_mechanisms ?? []).some((mechanism) => !v2KnownTypeLeaves({ ...type, reproductive_mechanisms: [mechanism] }, path, speciesName).some((fact) => fact.context.mechanismKey === mechanism.key)))
-    v2EvidenceError(`${path}.reproductive_mechanisms`);
-}
-
-function v2ValidateSpeciesSubtree(species, units, path) {
-  if (!v2SpeciesExistenceSupported(species.name, units)) v2EvidenceError(`${path}.name`);
-  if (v2Known(species.description) && !v2EvidenceSupportsFact(species.description, units, { speciesName: species.name, descriptive: true }))
-    v2EvidenceError(`${path}.description`);
-  for (const [index, type] of (species.biological_types ?? []).entries())
-    v2ValidateTypeSubtree(type, species.name, units, `${path}.biological_types[${index}]`);
-}
-
-function v2ValidateMechanismOperation(operation, units) {
-  const mechanism = operation.mechanism;
-  const context = { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: 'reproductive_mechanisms', mechanismKey: mechanism.key };
-  const knownFields = ['label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs'];
-  let supported = false;
-  for (const key of knownFields) {
-    const value = mechanism[key];
-    const values = Array.isArray(value) ? value : [value];
-    for (const item of values) {
-      if (!v2Known(item)) continue;
-      if (key === 'carrying_compatibility') {
-        if (!v2MechanismCompatibilityEvidence(item, units, context)) v2EvidenceError(`operation.mechanism.${key}`);
-      } else if (!v2EvidenceSupportsFact(item, units, { ...context, key })) {
-        v2EvidenceError(`operation.mechanism.${key}`);
-      }
-      supported = true;
-    }
-  }
-  if (!supported) v2EvidenceError('operation.mechanism');
-}
-
-function v2ProjectionSemanticLeaves(rule, path = 'operation.projection_rule') {
-  const leaves = [];
-  const collect = (value, currentPath, key) => {
-    if (value === null || value === undefined || key === 'schema_version' || key === 'projection_rule_id') return;
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => collect(item, `${currentPath}[${index}]`, key));
-      return;
-    }
-    if (typeof value === 'object') {
-      for (const [childKey, childValue] of Object.entries(value)) collect(childValue, `${currentPath}.${childKey}`, childKey);
-      return;
-    }
-    leaves.push({ path: currentPath, value });
-  };
-  for (const [key, value] of Object.entries(rule ?? {})) collect(value, `${path}.${key}`, key);
-  return leaves;
-}
-
-function v2ProjectionToken(value) {
-  return compactEvidenceText(String(value)).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function v2ProjectionContextualScalarSupported(path, value, units) {
-  const token = v2ProjectionToken(value);
-  if (!token) return false;
-  let contexts;
-  if (path.includes('.target_story_time.day_index')) {
-    contexts = ['target_story_time', 'target story time', 'story_time', 'story time', '故事时间', '目标故事时间'];
-  } else if (path.includes('.min_elapsed_story_days')) {
-    contexts = ['min_elapsed_story_days', 'min elapsed story days', 'elapsed story days', 'elapsed days', '经过天数'];
-  } else {
-    const key = path.split('.').at(-1)?.replace(/\[\d+\]/gu, '') ?? '';
-    contexts = key ? [key, key.replaceAll('_', ' ')] : [];
-  }
-  const contextPattern = contexts
-    .filter(Boolean)
-    .map((context) => v2ProjectionToken(context))
-    .join('|');
-  if (!contextPattern) return false;
-  const scalarPattern = path.includes('.target_story_time.') || path.includes('.min_elapsed_story_days')
-    ? new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}`, 'iu')
-    : new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}|${token}[^。！？!?；;，,、\\n]{0,28}(?:${contextPattern})`, 'iu');
-  return units.some((unit) => scalarPattern.test(compactEvidenceText(unit)));
-}
-
-function v2ProjectionBooleanSupported(path, value, units) {
-  const token = value ? '(?:true|是|支持|可以|能够|允许)' : '(?:false|否|不支持|不能|无法|不允许)';
-  const contexts = path.includes('.requirements.capabilities[')
-    ? ['capability', 'capabilities', '能力', 'equals', '要求', 'required']
-    : [path.split('.').at(-1)?.replace(/\[\d+\]/gu, '') ?? ''];
-  const contextPattern = contexts.filter(Boolean).map(v2ProjectionToken).join('|');
-  if (!contextPattern) return false;
-  const booleanPattern = new RegExp(`(?:${contextPattern})[^。！？!?；;，,、\\n]{0,28}${token}|${token}[^。！？!?；;，,、\\n]{0,28}(?:${contextPattern})`, 'iu');
-  return units.some((unit) => booleanPattern.test(compactEvidenceText(unit)));
-}
-
-function v2ProjectionLeafSupported(leaf, units) {
-  if (typeof leaf.value === 'string') return v2EvidenceSupportsFact(leaf.value, units, {});
-  if (typeof leaf.value === 'boolean') return v2ProjectionBooleanSupported(leaf.path, leaf.value, units);
-  if (typeof leaf.value === 'number') return v2ProjectionContextualScalarSupported(leaf.path, leaf.value, units);
-  return false;
-}
-
-function v2ValidateProjectionRuleEvidence(rule, units) {
-  const leaves = v2ProjectionSemanticLeaves(rule);
-  if (!leaves.length) v2EvidenceError('operation.projection_rule');
-  for (const leaf of leaves) {
-    if (!v2ProjectionLeafSupported(leaf, units)) v2EvidenceError(leaf.path);
-  }
-}
-
-function v2ValidateOperationEvidence(operation, classification, units, existing, options = {}) {
-  if (classification === 'NO-OP') return;
-  if (classification === 'REJECT') v2EvidenceError('operation');
-  if (operation.op === 'ADD_SPECIES') {
-    v2ValidateSpeciesSubtree(v2NormalizeSpecies(operation.species), units, 'operation.species');
-    return;
-  }
-  if (operation.op === 'ADD_TYPE') {
-    const species = v2Species(existing, operation.target.species_name);
-    if (!species) v2EvidenceError('operation.target.species_name');
-    v2ValidateTypeSubtree(v2NormalizeType(operation.type, operation.target.species_name), operation.target.species_name, units, 'operation.type');
-    return;
-  }
-  if (operation.op === 'SET_FIELD') {
-    const species = v2Species(existing, operation.target.species_name)
-    const context = {
-      speciesName: operation.target.species_name,
-      typeName: operation.target.type_name,
-      nested: operation.path[0],
-      key: operation.path[1],
-      ...options,
-      siblingTypeNames: species?.biological_types?.map((type) => type.name) ?? [],
-    };
-    if (operation.target.kind === 'species') delete context.typeName;
-    if (operation.target.kind === 'world') delete context.speciesName;
-    if (!v2EvidenceSupportsFact(v2NormalizeField(operation), units, context)) v2EvidenceError(`operation.${operation.path.join('.')}`);
-    return;
-  }
-  if (operation.op === 'ADD_SPECIAL_RULE') {
-    const species = v2Species(existing, operation.target.species_name)
-    if (!v2EvidenceSupportsFact(operation.value, units, {
-      speciesName: operation.target.species_name,
-      typeName: operation.target.type_name,
-      nested: 'special_rules',
-      key: operation.value,
-      ...options,
-      siblingTypeNames: species?.biological_types?.map((type) => type.name) ?? [],
-    })) v2EvidenceError('operation.value');
-    return;
-  }
-  if (operation.op === 'ADD_MECHANISM') {
-    v2ValidateMechanismOperation(operation, units);
-    return;
-  }
-  if (operation.op === 'ADD_EXCEPTION') {
-    const exception = v2NormalizeException(operation.exception);
-    if (!v2ExceptionEvidenceSupported(exception, units)) v2EvidenceError('operation.exception.statement');
-    return;
-  }
-  if (operation.op === 'ADD_UNKNOWN') {
-    if (!v2EvidenceSupportsFact(operation.unknown, units, {})) v2EvidenceError('operation.unknown');
-    return;
-  }
-  if (operation.op === 'ADD_PROJECTION_RULE') {
-    v2ValidateProjectionRuleEvidence(operation.projection_rule, units);
-  }
-}
-
 // Supplement JSON Facts are already field-classified by the protocol.  Keep
 // this guard limited to structural/address/scope and permitted-evidence
 // membership checks; Full analysis retains the semantic guard above.
@@ -4473,20 +4073,6 @@ function annotateV2GuardFailure(error, result, operationIndex) {
   error.rejected_structural_path = error.guard_kind === 'structured_fact_boundary' ? error.path ?? null : null;
   error.validation_stage = 'world_patch_v2_evidence_guard';
   return error;
-}
-
-export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput = {}) {
-  const existing = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
-  const classified = classifyWorldModelPatchV2(patch, existing);
-  const units = factDeltaEvidenceGuardUnits(analysisInput);
-  for (const [operationIndex, result] of classified.entries()) {
-    try {
-      v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
-    } catch (error) {
-      throw annotateV2GuardFailure(error, result, operationIndex);
-    }
-  }
-  return classified;
 }
 
 function canonicalUnknownResolutionAddress(fact) {
@@ -4732,12 +4318,6 @@ export function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
   }
 }
 
-export function mergeWorldModelPatchV2(existingModel, patch, analysisInput = {}) {
-  const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
-  const guarded = applyWorldModelPatchV2EvidenceGuard(patch, base, analysisInput);
-  return mergeWorldModelPatchV2Classified(base, guarded);
-}
-
 export function mergeWorldModelSupplementPatch(existingModel, patch, analysisInput = {}) {
   const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const classified = classifyWorldModelPatchV2(patch, base);
@@ -4800,56 +4380,6 @@ function candidateTarget(kind, speciesName, typeName = undefined) {
   return {kind: 'biological_type', species_name: speciesName, type_name: typeName}
 }
 
-function addCandidateField(operations, target, path, value, existingValue = undefined) {
-  if (value === undefined || value === null) return
-  if (v2Equal(value, existingValue)) return
-  operations.push({op: 'SET_FIELD', target, path, value})
-}
-
-function candidateTypeOperations(operations, speciesName, type, existingType) {
-  const typeName = type?.name
-  if (typeof typeName !== 'string' || !typeName.trim()) return
-  const target = candidateTarget('biological_type', speciesName, typeName)
-  addCandidateField(operations, target, ['description'], type.description, existingType?.description)
-  for (const key of CAPABILITY_KEYS) if (hasOwn(type.capabilities, key)) addCandidateField(operations, target, ['capabilities', key], type.capabilities[key], existingType?.capabilities?.[key])
-  for (const key of WORLD_RULE_KEYS) if (hasOwn(type.reproduction_rules, key)) addCandidateField(operations, target, ['reproduction_rules', key], type.reproduction_rules[key], existingType?.reproduction_rules?.[key])
-  for (const key of LIFECYCLE_KEYS) if (hasOwn(type.lifecycle, key)) addCandidateField(operations, target, ['lifecycle', key], type.lifecycle[key], existingType?.lifecycle?.[key])
-  for (const value of Array.isArray(type.special_rules) ? type.special_rules : []) if (typeof value === 'string' && value.trim() && !existingType?.special_rules?.some(item => v2TextIdentity(item) === v2TextIdentity(value))) operations.push({op: 'ADD_SPECIAL_RULE', target, value})
-  for (const mechanism of Array.isArray(type.reproductive_mechanisms) ? type.reproductive_mechanisms : []) if (mechanism && typeof mechanism === 'object' && !existingType?.reproductive_mechanisms?.some(item => item?.key === mechanism.key && v2Equal(item, mechanism))) operations.push({op: 'ADD_MECHANISM', target, mechanism})
-}
-
-function candidateSpeciesOperation(species) {
-  const value = {name: species.name}
-  if (hasOwn(species, 'description')) value.description = species.description
-  if (Array.isArray(species.biological_types) && species.biological_types.length) value.biological_types = species.biological_types
-  return {op: 'ADD_SPECIES', species: value}
-}
-
-export function worldModelCandidateToPatchV2(candidate, existingModel) {
-  const value = validateWorldModelCandidate(candidate)
-  const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
-  const operations = []
-  for (const species of value.species) {
-    if (!species || typeof species.name !== 'string' || !species.name.trim()) continue
-    const currentSpecies = existing.species.find((item) => item.name === species.name)
-    if (!currentSpecies) {
-      operations.push(candidateSpeciesOperation(species))
-      continue
-    }
-    addCandidateField(operations, candidateTarget('species', species.name), ['description'], species.description, currentSpecies.description)
-    for (const type of Array.isArray(species.biological_types) ? species.biological_types : []) {
-      if (!type || typeof type.name !== 'string' || !type.name.trim()) continue
-      const currentType = currentSpecies.biological_types.find((item) => item.name === type.name)
-      if (!currentType) operations.push({op: 'ADD_TYPE', target: candidateTarget('species', species.name), type})
-      else candidateTypeOperations(operations, species.name, type, currentType)
-    }
-  }
-  for (const key of ['childbirth_difficulty', 'care_level', 'evidence']) if (hasOwn(value.medical_context, key)) addCandidateField(operations, candidateTarget('world'), ['medical_context', key], value.medical_context[key], existing.medical_context?.[key])
-  for (const exception of value.exceptions) if (exception && typeof exception === 'object' && !existing.exceptions.some(item => patchExceptionSemanticEqual(item, exception))) operations.push({op: 'ADD_EXCEPTION', exception})
-  for (const unknown of value.unknowns) if (typeof unknown === 'string' && unknown.trim() && !existing.unknowns.some(item => v2TextIdentity(item) === v2TextIdentity(unknown))) operations.push({op: 'ADD_UNKNOWN', unknown})
-  for (const projectionRule of value.projection_rules) if (projectionRule && typeof projectionRule === 'object' && !existing.projection_rules.some(item => v2Equal(item, projectionRule))) operations.push({op: 'ADD_PROJECTION_RULE', projection_rule: projectionRule})
-  return {schema_version: 2, operations}
-}
 
 function factDeltaError(message, details = {}, code = 'WORLD_MODEL_FACT_DELTA_INVALID') {
   const error = new Error(message)

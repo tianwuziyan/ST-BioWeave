@@ -259,15 +259,16 @@ than the primary discovery driver. `NO_EVIDENCE` is valid only after the
 complete discovery passes have actively searched all permitted evidence for
 the target canonical address and field and found no legal supporting claim.
 
-Downstream acceptance remains independent per Fact. A supported Fact may pass
-the existing Evidence Guard, map to an existing Patch v2 operation, merge, and
-persist while an unsupported sibling Fact is rejected. Evidence Guard matching
-is not weakened to improve discovery recall. Open-ended Type special rules use
-direct claim/rule-context binding rather than the generic short-substring
-fallback, so an unrelated capability or rule word cannot authorize a new
-Special_Rule. Runtime diagnostics distinguish a successful analysis stage with
-zero accepted operations from a response that produced a canonical mutation
-and from confirmed persistence.
+Downstream acceptance remains independent per Fact. A supported Fact passes
+the Supplement structured safety boundary, maps to an internal Patch v2
+operation, merges, and persists while an unsupported sibling Fact is rejected.
+The Supplement boundary validates canonical address/identity safety,
+permitted-evidence scope, contradiction isolation, individual-only isolation,
+and structural mutation safety; it does not reclassify the declared semantic
+Field from natural-language evidence. Full analysis has its own independent
+semantic Evidence Guard. Runtime diagnostics distinguish a successful
+analysis stage with zero accepted operations from a response that produced a
+canonical mutation and from confirmed persistence.
 
 Fact Discovery must resolve address before emission. The Supplement sequence is
 Evidence discovery -> semantic Field classification -> scope classification ->
@@ -351,7 +352,7 @@ The canonical World Model outlets are peer capabilities with different
 semantics: `species` / `biological_types`, capabilities,
 `reproduction_rules`, lifecycle, `special_rules`, `exceptions`, `unknowns`,
 `medical_context`, and `projection_rules`. AI must discover the world-level
-fact and classify its outlet before emitting a Supplement Candidate claim.
+fact and classify its outlet before emitting a Supplement Fact claim.
 
 An individual-only statement must not be promoted into a population rule. A
 single anomalous character does not automatically create a world exception, and
@@ -367,7 +368,7 @@ to conflict with an Existing world rule, scope is resolved first:
 - individual-only difference: preserve the Existing world rule;
 - explicit world-level exception: preserve the general rule and add the
   exception;
-- explicit world-level correction: allow a correction Candidate only when
+- explicit world-level correction: allow a correction Fact only when
   current permitted evidence supports the new world-level statement;
 - ambiguous scope: do not force a World Model change.
 
@@ -435,7 +436,7 @@ be reviewed; confirming one type must not stop review of the same Species.
 Type existence != type details. A proven identity does not authorize
 capabilities, reproduction rules, lifecycle, mechanisms, special rules, or
 other details. Those fields remain independently evidenced and may remain
-unknown/null (or omitted in Supplement Candidate output).
+unknown/null (or omitted in Supplement Fact Delta output).
 
 For Patch v2 `ADD_TYPE`, `operation.type.name` uses the same frozen Type
 existence contract as analysis: a Species-scoped Direct Stable Classification
@@ -560,8 +561,8 @@ classification: `UNCHANGED`, `ADD`, `CHANGE`, or `EXCLUDED`, after applying the
 shared scope, Species/Type binding, exclusion, stability, classification, and
 evidence rules. Existing is used only after evidence-only discovery, for
   comparison and compatible consolidation; it cannot create or prove a
-  candidate. The retired Patch v1 design used a complete `update.species`
-  Candidate. The current Supplement path in §1.5.8 uses JSON Fact Delta and
+  fact. The retired Patch v1 design used a complete `update.species` DTO.
+  The current Supplement path in §1.5.8 uses JSON Fact Delta and
   deterministic internal Patch v2 operations. The Empty Patch
   Gate may
 pass only after every candidate category and candidate has been reviewed and
@@ -612,30 +613,30 @@ reference boundary, separate in meaning from ordinary evidence references.
 
 ## 1.5 Semantic Delta safety contract
 
-Semantic Delta remains a deterministic safety layer after AI World Fact
-Discovery, scope/classification, and baseline-aware consolidation. It is not a
-world-semantics engine. It must not decide whether an NPC represents a whole
-species, whether two narrative descriptions are compatible world knowledge,
-or whether a fact belongs in a species rule versus an exception. The program
-must instead use the Candidate already proposed by AI to:
+The Supplement structural/safety boundary runs after AI World Fact Discovery
+and scope classification. It is not a world-semantics engine. It must not
+decide whether an NPC represents a whole species, whether two narrative
+descriptions are compatible world knowledge, or whether a fact belongs in a
+species rule versus an exception. The program operates on the structured Facts
+already proposed by AI to:
 
-1. resolve the Existing update target using the canonical identity used by the
+1. resolve the Existing comparison target using the canonical identity used by the
    deterministic merge;
-2. canonicalize Existing and Candidate using the same World Model boundary;
-3. compute the semantic delta at field/path level; and
-4. validate only the changed facts against current permitted evidence.
+2. canonicalize Existing and the accepted Fact payload using the same World Model boundary;
+3. compute the deterministic delta at field/path level; and
+4. validate only the proposed Facts against the current permitted-evidence and address-safety boundary.
 
 The semantic delta has four states:
 
 | Delta | Meaning | Evidence rule |
 | --- | --- | --- |
-| `UNCHANGED` | Candidate preserves an Existing canonical fact | No current-evidence re-proof is required |
-| `ADD` | Candidate introduces a fact absent from Existing | Current permitted evidence is required |
-| `CHANGE` | Candidate replaces an Existing value with another value | Current permitted evidence must directly establish the Candidate world-level fact at a scope compatible with the Existing rule and semantically conflicting with or replacing the Existing value |
+| `UNCHANGED` | Fact matches an Existing canonical fact | No mutation is emitted |
+| `ADD` | Fact introduces a value absent from Existing | Current permitted evidence and address safety are required |
+| `CHANGE` | Fact proposes a supported replacement for an Existing value | Current permitted evidence and address safety are required |
 | `REMOVE` | An Existing fact disappears from a complete update | Unsupported; reject |
 
-An `add` entry has no Existing target, so every world-level fact-bearing
-semantic field in the new entity is delta and must be independently supported.
+An `ADD` Fact has no Existing value, so the proposed field must be independently
+supported and addressable.
 A species name being evidenced cannot authorize its entire subtree. An
 `update` may contain a complete canonical entry, but unchanged Existing fields
 do not need to appear again in current evidence. A supported new rule or field
@@ -657,22 +658,20 @@ fields are mechanical changes rather than new world facts. If a complete
 update omits an Existing fact, that omission is a `REMOVE` attempt, not an
 unchanged field, and must be rejected.
 
-`CHANGE` is stricter than `ADD`: evidence that merely mentions the new value,
-without establishing the same compatible world-level scope and its conflict or
-replacement of the Existing value, does not support the change. No special
-correction wording such as “修正”, “其实”, “原来”, “并非”, or “应为” is
-required. AI proposes a Candidate only. Program/Runtime owns structural
-validation, semantic delta, evidence and consistency validation, deterministic
-merge, complete canonical validation, and persistence authority.
+`CHANGE` remains subject to the current structured Fact contract and address
+safety. No special correction wording such as “修正”, “其实”, “原来”, “并非”,
+or “应为” is required. AI proposes sparse structured Facts only.
+Program/Runtime owns structural validation, deterministic comparison, safety
+validation, merge, canonical validation, and persistence authority.
 
 Evidence factual truth and evidence scope are separate checks. AI owns
-narrative World Fact Discovery and scope/classification. Deterministic Patch
-validation must not promote a Candidate merely because a text/value hit exists;
+narrative World Fact Discovery and scope/classification. Deterministic Fact
+validation must not accept a Fact merely because an unrelated text/value hit exists;
 it may reject clearly incompatible or explicitly individual-bound support when
 the existing evidence structure makes that contradiction reliable. It does not
 claim complete narrative-scope inference and must not become a second
 regex-driven natural-language parser. Ambiguous semantic scope is resolved by
-the AI Candidate contract, while Existing baseline remains comparison only and
+the JSON Fact contract, while Existing baseline remains comparison only and
 never becomes evidence.
 
 ### 1.5.1 Retired Patch v1 presence and canonical null contract
@@ -879,8 +878,9 @@ Evidence + Existing target/reference
   -> semantic resolver + dependency/conflict index
   -> Existing comparison
   -> internal Patch v2
-  -> existing Evidence Guard
-  -> existing mergeWorldModelPatchV2
+  -> applyWorldModelFactDeltaEvidenceGuard
+  -> structured/permitted-evidence safety boundary
+  -> mergeWorldModelPatchV2Classified
   -> final consistency + canonical validation
   -> complete canonical World Model
   -> existing Floor persistence / UI view model
@@ -917,7 +917,7 @@ targets are a review checklist and never evidence:
 
 ```json
 {
-  "request": {"mode": "INITIAL", "round": 1},
+  "request": {"mode": "INITIAL"},
   "existing_reference": {"schema_version": 1, "species": []},
   "coverage_targets": [],
   "identity_review_subjects": []
@@ -937,8 +937,7 @@ Fact Delta field labels are semantic and exact underscore tokens. Species uses
 `Type_Description`. Mechanism fields use `Mechanism_Key`, `Mechanism_Label`,
 and `Mechanism_Pathway`; special rules use `Special_Rule`; exceptions use
 `Exception_Statement`; Fact Delta unknowns use `Field: Unknown` with `Value`.
-The legacy hierarchical Candidate compatibility parser may still use its
-`Unknown_Fact` label; that label is not part of Fact Delta v1. Multi-word capability,
+`Unknown_Fact` is not a Supplement transport label. Multi-word capability,
 reproduction, medical, and mechanism labels likewise use the explicitly
 defined underscore tokens. The parser maps these transport labels back to the
 existing internal field keys; the canonical World Model JSON schema is
@@ -1030,9 +1029,8 @@ validateWorldModelFactDelta(facts) -> validated Fact Delta
 worldModelIdentityIndex(model) -> exact identity index or duplicate error
 worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2
 resolveWorldModelFactDelta(facts, existingModel) -> per-Fact resolution + Patch v2
-Supplement operation-level Evidence Guard -> accepted Patch v2 + rejected Facts
-applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> classified Patch v2
-mergeWorldModelPatchV2(existingModel, patch) -> complete WorldModelV1
+applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) -> accepted Patch v2 + rejected Facts
+mergeWorldModelSupplementPatch(existingModel, patch, analysisInput) -> complete WorldModelV1
 ```
 
 Patch v2 remains an internal deterministic IR:
@@ -1196,108 +1194,18 @@ model; it never replaces a complete Existing species entry. A supported
 capability operation cannot authorize another capability, reproduction rule,
 lifecycle field, special rule, or mechanism operation.
 
-#### 1.5.8.9 Candidate grammar and presence semantics
+#### 1.5.8.9 JSON Fact Delta to Patch v2 mapping
 
-Candidate Text uses explicit opening/closing tags and a parser stack. Indent,
-nearest-node lookup, natural-language headings, and implicit close are not
-semantic. The allowed hierarchy is:
+The Supplement AI wire contract is a sparse JSON Fact Delta. It does not emit
+a hierarchical transport tree, canonical DTO, or Patch v2 operation list.
 
-```text
-[World Model]
-  [Species]
-    [Biological Type]
-      [Capabilities] ... [/Capabilities]
-      [Reproduction Rules] ... [/Reproduction Rules]
-      [Lifecycle] ... [/Lifecycle]
-      [Reproductive Mechanisms]
-        [Mechanism] ... [/Mechanism]
-      [/Reproductive Mechanisms]
-      [Special Rules]
-        [Rule] ... [/Rule]
-      [/Special Rules]
-    [/Biological Type]
-  [/Species]
-  [Medical Context] ... [/Medical Context]
-  [Exceptions] [Exception] ... [/Exception] [/Exceptions]
-  [Unknowns] [Unknown] ... [/Unknown] [/Unknowns]
-  [Projection Rules] [Projection Rule] ... [/Projection Rules]
-[/World Model]
-```
+For each valid Fact, deterministic Host code resolves the declared semantic
+address against Existing and emits the smallest internal operation:
 
-The protocol field labels are fixed per section:
-
-```text
-[Species]                 Species, Species_Description
-[Biological Type]         Biological_Type, Type_Description
-[Capabilities]            Can_Produce_Sperm, Can_Produce_Ova,
-                          Can_Be_Fertilized, Can_Fertilize,
-                          Can_Cause_Pregnancy, Can_Carry_Pregnancy
-[Reproduction Rules]      Fertilization, Pregnancy_Or_Carrying, Cycle,
-                          Ovulation, Gestation, Labor
-[Lifecycle]               Maturation, Aging
-[Mechanism]               Mechanism_Key, Mechanism_Label, Mechanism_Pathway,
-                          Carrying_Compatibility, World_Model_Rule_Refs, Evidence
-[Rule]                    Rule only
-[Medical Context]         Childbirth_Difficulty, Care_Level, Evidence
-[Exception]               Exception_Statement, Applies_To, Evidence
-[Unknown]                 Unknown_Fact only
-[Projection Rule]         JSON only: one raw projection-rule object without
-                          projection_rule_id
-```
-
-Only these exact protocol labels are accepted. Internal snake_case names,
-underscore/hyphen aliases, fuzzy case or spacing variants, and fields not
-listed for the current section are invalid and must be omitted. In particular,
-`[Rule]` cannot contain `Name` or `Description`.
-
-Species and Biological Type require an explicit `Species` or `Biological_Type`
-transport label. A child is attached
-only when its opening tag is legal under the current stack parent. Missing
-identity, mismatched closing tags, illegal nesting, a new Species before the
-previous Species closes, or an unclosed subtree invalidates the smallest safe
-subtree. Every section and collection item is transactional: fields are staged
-only in the current frame, and `attach()` commits them to the parent only
-after a normal closing tag and successful finalization. An invalid section is
-discarded without mutating its parent, so no rollback is required. The parser
-never re-parents a fact to another Species or Type; valid closed siblings may
-still be recovered. Projection identity is not Candidate input:
-`projection_rule_id` is rejected and generated only by the existing production
-normalization path.
-
-Field parsing accepts only the exact transport labels defined by the grammar
-(`Species`, `Species_Description`, `Biological_Type`, `Type_Description`,
-`Can_Carry_Pregnancy`, and so on). Internal canonical snake_case names,
-unlisted underscore aliases, space labels, hyphen aliases, and fuzzy
-case/spacing variants are not Candidate protocol tokens.
-
-Candidate values have these meanings:
-
-| Candidate form | Meaning |
-| --- | --- |
-| field absent | no claim; preserve Existing |
-| `null` | invalid Candidate value; never a removal request |
-| empty array/outlet | no collection claim; preserve Existing, never clear it |
-| explicit `true`/`false` | evidence-supported boolean fact |
-| `[Unknown]` item | explicit unresolved world proposition supported by evidence |
-| non-empty text/object | evidence-supported semantic fact |
-
-Existing formatter output may show canonical `null` and `NONE RECORDED` as
-reference markers. The Candidate parser does not treat those markers as
-claims. Existing remains TARGET, comparison baseline, and structure reference,
-never evidence.
-
-#### 1.5.8.10 Deterministic Candidate -> Patch v2 mapping
-
-For each Candidate fact, deterministic code resolves canonical identity in
-Existing and emits the smallest internal operation. A missing Existing entity
-emits `ADD`; an equal fact emits no operation (`NO-OP`); a different known fact
-emits `CHANGE` and remains subject to the existing guard; Candidate omission
-preserves Existing. The mapping is:
-
-| Candidate fact | Existing comparison | Internal operation |
+| Fact | Existing comparison | Internal operation |
 | --- | --- | --- |
-| new Species subtree | species identity absent | `ADD_SPECIES` |
-| new Biological Type | species exists, type identity absent | `ADD_TYPE` |
+| new Species identity | species identity absent | `ADD_SPECIES` |
+| new Biological Type identity | species exists, type identity absent | `ADD_TYPE` |
 | species/type scalar, capability, rule, lifecycle, or medical field | absent/unknown | `SET_FIELD` classified `ADD` |
 | same scalar/field | equal canonical value | no operation (`NO-OP`) |
 | changed scalar/field | different known canonical value | `SET_FIELD` classified `CHANGE` |
@@ -1307,20 +1215,49 @@ preserves Existing. The mapping is:
 | triggered world unknown | canonical unknown absent/equal | `ADD_UNKNOWN` / no-op |
 | new projection rule | generated identity absent/equal | `ADD_PROJECTION_RULE` / no-op |
 
-Known Existing value -> Fact Delta `null`, collection disappearance, or any
-identity mutation is weakening and fails closed as unsupported `REMOVE`.
-Projection updates remain blocked. No new mechanism, exception, or projection
-update operation is introduced.
+Fact omission means no claim and preserves Existing. A Fact Delta cannot
+request removal. Existing remains a comparison/reference input and never
+becomes evidence. Patch v2 is the Host-internal deterministic mutation IR,
+not an AI-facing transport.
+
+#### 1.5.8.10 Fact Delta presence and collection semantics
+
+A valid JSON root may contain independent Facts. A malformed Fact, resolver
+conflict, unresolved identity dependency, unsupported correction, or
+Supplement structural/safety rejection only rejects that Fact; valid sibling
+Facts survive.
+
+Scalar Facts use field-specific payload types. Identity Facts establish
+canonical Species or Biological Type containers. Collection Facts use
+append/dedupe semantics: special rules, exceptions, and unknowns preserve
+existing order and append unique entries; resolved Unknown removal requires an
+accepted Fact-bound `resolved_unknown_ids` declaration. Reproductive
+mechanisms are added deterministically by key, and projection rules are
+added deterministically by generated identity. Mechanism and projection
+corrections remain fail-closed where the current contract does not provide an
+update operation.
+
+Canonical World Model storage remains hierarchical. The Resolver maps flat
+semantic Fact fields to canonical paths before Patch v2 classification and
+merge; the JSON wire object does not repeat canonical parent sections.
+
 
 #### 1.5.8.11 Migration status
 
 The production Supplement path is JSON Fact Delta v1. The current production
 path is the JSON root/per-Fact adapter and semantic resolver followed by
-deterministic Fact Delta -> internal Patch v2 conversion, operation-level
-evidence validation, merge, consistency, and canonical validation. The legacy
-hierarchical Candidate parser remains only for compatibility callers/tests and
-is not a Supplement production fallback. Patch v2 remains an internal mutation
-IR and is not an AI-facing transport contract.
+deterministic Fact Delta -> internal Patch v2 conversion,
+`applyWorldModelFactDeltaEvidenceGuard()` structured safety validation,
+`mergeWorldModelSupplementPatch()`, consistency, and canonical validation.
+`mergeWorldModelPatchV2Classified()` is the remaining Host-internal mutation
+primitive. The removed raw Patch v2 semantic-guard path is not a Supplement
+API, Full production path, or compatibility contract. Patch v2 remains an
+internal mutation IR and is not an AI-facing transport contract.
+Runtime keeps the cumulative Supplement snapshot and its Host-local accounting
+in `supplementExecutionState`. Despite the historical name change, this state
+does not represent semantic continuation and never schedules another semantic
+model request. Dynamic coverage target fields remain Debug Schema v2
+diagnostics for local accounting only.
 
 #### 1.5.8.12 Canonical writability registry
 
@@ -1556,9 +1493,10 @@ contract above.
 - `resolveWorldModelFactDelta(facts, existingModel) -> per-Fact resolution + Patch v2`
 - `worldModelFactDeltaToPatchV2(facts, existingModel) -> WorldModelPatchV2`
 - `validateWorldModelPatchV2(patch) -> WorldModelPatchV2`
-- `mergeWorldModelPatchV2(existingModel, patch) -> WorldModelV1`
+- `applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) -> accepted Patch v2 + rejected Facts`
+- `mergeWorldModelSupplementPatch(existingModel, patch, analysisInput) -> WorldModelV1`
 - `applyWorldModelEvidenceGuard(model, analysisInput) -> WorldModelV1`
-- `applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analysisInput) -> WorldModelPatchV2`
+- `mergeWorldModelPatchV2Classified(existingModel, classified) -> WorldModelV1` (Host-internal mutation primitive)
 
 ## 2.1 Reproductive mechanism and Projection Rule output contract
 
@@ -1617,9 +1555,11 @@ World Analysis has two deliberate final message shapes:
   Model baseline; `evidence -> World Fact Discovery / scope / classification
   -> complete model`.
 - Supplement/Patch: the same permitted evidence references plus a clearly
-  labelled Existing canonical World Model comparison baseline; `existing model
-  + evidence -> World Fact Discovery / scope / classification
-  -> baseline-aware consolidation -> Complete Evidence-Supported Candidate`.
+  labelled Existing canonical World Model comparison baseline; `permitted
+  evidence + Existing reference -> AI semantic discovery -> JSON Fact Delta
+  -> strict Fact validation -> canonical address resolution -> Existing
+  comparison -> Host-internal Patch v2 operation -> Supplement structural and
+  safety boundary -> Execution Snapshot`.
 
 The baseline is not evidence and must not be described to the model as proof of
 new Patch facts. Full must remain baseline-free even if `AnalysisInput` carries
@@ -1673,7 +1613,7 @@ the source of any new fact.
 | Canonical type name uses a generic lexical suffix while preserving a source stem | Allow generic source binding |
 | Canonical type has no source name, description, rule, lifecycle, or field anchor | Remove it |
 | Type is retained but a field lacks evidence | Keep the type; leave that field `null` |
-| Existing update field is unchanged | Omit it from the Supplement Candidate |
+| Existing update field is unchanged | Omit it from the Supplement Fact Delta |
 | Patch add field has no current evidence | Reject the Patch |
 | Patch change has only a value mention without evidence establishing the Candidate at the compatible world scope | Reject the change |
 | Existing field disappears from a complete update | Treat as REMOVE and reject |
@@ -1776,9 +1716,9 @@ Fact Delta root
   -> parse each Fact independently
   -> deterministic Fact resolver / Existing comparison
   -> one Patch v2 operation per accepted Fact
-  -> invoke the existing Evidence Guard per operation
+  -> invoke the Supplement structured safety boundary per operation
   -> retain accepted operations only
-  -> existing Patch v2 merge / canonical validation
+  -> internal Patch v2 merge / canonical validation
 ```
 
 The root and its framing remain whole-response protocol boundaries. Once the
@@ -1789,13 +1729,11 @@ are also per-Fact rejections. A new identity is processed before its dependent
 detail Facts, independent of response order; if identity acceptance fails,
 dependent details receive an unresolved-dependency rejection.
 
-The existing hierarchical Candidate parser and
-`worldModelCandidateToPatchV2` remain compatibility/Full-side helpers. They
-are not called by the Supplement Fact Delta production path. The canonical
-World Model remains hierarchical, and Patch v2 operation names remain
-unchanged. The Supplement adapter may split a new identity from its detail
-Facts into `ADD_SPECIES`/`ADD_TYPE` plus field-level Patch v2 operations; this
-does not change the canonical schema or Evidence Guard matching rules.
+The canonical World Model remains hierarchical, and Patch v2 operation names
+remain unchanged. The Supplement adapter may split a new identity from its
+detail Facts into `ADD_SPECIES`/`ADD_TYPE` plus field-level Patch v2
+operations; this does not change the canonical schema or Evidence Guard
+matching rules.
 
 ### 8.2 New Type Identity bootstrap and observability
 
