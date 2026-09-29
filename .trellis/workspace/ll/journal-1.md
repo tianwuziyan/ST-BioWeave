@@ -809,3 +809,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: 完成 World Supplement 集合与 Unknown 生命周期
+<!-- trellis-session: v=2 fp=1c5a7ed6367d7ab2 -->
+
+**Date**: 2026-09-29
+**Task**: 完成 World Supplement 集合与 Unknown 生命周期
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+实现 Special_Rule/Exception 保序追加去重、Unknown 稳定身份与 accepted Fact 绑定的原子生命周期；隔离 Supplement structured Fact 安全校验和 Full 语义 guard，补齐 Prompt、规格、测试与验证记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `506ab70` | 实现 World Supplement 集合与 Unknown 生命周期 |
+
+### Status
+
+[OK] **Completed**
