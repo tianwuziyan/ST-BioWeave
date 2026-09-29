@@ -8013,6 +8013,33 @@
   font-size: 13px !important;
 }
 
+/* Keep edit form labels compact so the value column starts closer to the left. */
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-settings-field {
+  grid-template-columns: minmax(92px, max-content) minmax(0, 1fr) !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-input,
+.bioweave-world-model-page .bioweave-world-model-section-editor .bioweave-select {
+  padding: 6px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-world-model-page .bioweave-world-model-world-column .bioweave-world-model-property {
+  grid-template-columns: minmax(92px, max-content) minmax(0, 1fr) !important;
+  gap: 5px !important;
+}
+
+/* Medical and exception editors use the tighter reference label column. */
+.bioweave-world-model-page [data-bioweave-world-section="medical_context"] .bioweave-world-model-section-editor .bioweave-settings-field,
+.bioweave-world-model-page .bioweave-world-model-exception-editor .bioweave-settings-field {
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr) !important;
+  gap: 5px !important;
+}
+
 .bioweave-world-model-page .bioweave-world-model-top .bioweave-page-actions .bioweave-secondary-action {
   min-height: 32px !important;
   padding: 0 11px !important;

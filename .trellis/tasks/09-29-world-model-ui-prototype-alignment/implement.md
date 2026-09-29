@@ -37,3 +37,6 @@
 - 2026-09-30 module edit follow-up：按效果稿将生物类型详情与世界级规则模块标题右侧编辑入口改为 26px 无边框、透明背景的 muted `fa-pen` 图标按钮，悬停仅显示浅色背景；保留现有 hooks 和可访问性属性。新增样式回归断言并同步 UI 配置/规范。语法检查、聚焦 World UI 测试 2/2、UI 配置解析和 `git diff --check` 通过。
 - 2026-09-30 module edit size follow-up：根据实测反馈继续缩小模块编辑按钮为 24px、图标 15px；集合操作按钮保持原有 32px，不受影响。
 - 2026-09-30 module edit size follow-up 2：根据再次实测反馈缩小模块编辑按钮为 20px、图标 13px；集合操作按钮保持原有 32px，不受影响。
+- 2026-09-30 editor field follow-up：编辑态字段列改为 `minmax(92px, max-content) minmax(0, 1fr)`，缩短第一列并让右侧输入区域左移；移动端单列规则保持不变。
+- 2026-09-30 editor typography follow-up：编辑态标签与输入统一为 13px / 1.5，输入内边距 6px；世界级规则第一列收窄为 `minmax(92px, max-content)`。
+- 2026-09-30 tight editor follow-up：医疗与照护、特殊例外编辑窗口的标签列进一步收窄为 `minmax(72px, max-content)`，右侧内容列扩大并左移。
