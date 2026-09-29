@@ -580,6 +580,7 @@
       "editorFieldColumns": "minmax(92px, max-content) minmax(0, 1fr)",
       "editorFieldTypography": {"labelFontSize": "13px", "inputFontSize": "13px", "lineHeight": "1.5", "padding": "6px"},
       "worldRulePropertyColumns": "minmax(92px, max-content) minmax(0, 1fr)",
+      "medicalContextPropertyColumns": "minmax(72px, max-content) minmax(0, 1fr)",
       "tightEditorFieldColumns": {"medical_context": "minmax(72px, max-content) minmax(0, 1fr)", "exceptions": "minmax(72px, max-content) minmax(0, 1fr)"},
       "speciesDescription": {"fontSize": "12px", "lineHeight": "1.5", "color": "var(--bioweave-text-muted)", "title": false},
       "worldRuleText": {"fontSize": "13px", "lineHeight": "1.5"},

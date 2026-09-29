@@ -7663,7 +7663,7 @@ test('World UI card CSS keeps the reference density across devices', () => {
   assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-type-card-head b\s*\{[^}]*font-size:\s*15px\s*!important/s)
   assert.match(
     STYLE_SOURCE,
-    /data-bioweave-world-section="medical_context"\]\s*\.bioweave-world-model-property\s*\{[^}]*grid-template-columns:\s*minmax\(92px,\s*max-content\)\s*minmax\(0,\s*1fr\)\s*!important;[^}]*gap:\s*5px\s*!important/s,
+    /data-bioweave-world-section="medical_context"\]\s*\.bioweave-world-model-property\s*\{[^}]*grid-template-columns:\s*minmax\(72px,\s*max-content\)\s*minmax\(0,\s*1fr\)\s*!important;[^}]*gap:\s*5px\s*!important/s,
   )
   assert.match(
     STYLE_SOURCE,
@@ -7704,6 +7704,10 @@ test('World UI card CSS keeps the reference density across devices', () => {
   assert.match(
     STYLE_SOURCE,
     /data-bioweave-world-section="medical_context"[^}]*\.bioweave-world-model-section-editor \.bioweave-settings-field,[\s\S]*?grid-template-columns:\s*minmax\(72px,\s*max-content\)\s+minmax\(0,\s*1fr\)\s*!important/s,
+  )
+  assert.match(
+    STYLE_SOURCE,
+    /\.bioweave-world-model-world-column \[data-bioweave-world-section="medical_context"\] \.bioweave-world-model-property\s*\{[^}]*grid-template-columns:\s*minmax\(72px,\s*max-content\)\s+minmax\(0,\s*1fr\)\s*!important/s,
   )
   assert.match(STYLE_SOURCE, /\.bioweave-world-model-page \.bioweave-world-model-card-summary\s*,[^}]*\{[^}]*display:\s*block\s*!important/s)
   assert.match(

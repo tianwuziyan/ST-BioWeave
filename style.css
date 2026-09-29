@@ -7001,7 +7001,7 @@
 }
 
 .bioweave-world-model-page .bioweave-world-model-world-column [data-bioweave-world-section="medical_context"] .bioweave-world-model-property {
-  grid-template-columns: minmax(92px, max-content) minmax(0, 1fr) !important;
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr) !important;
   gap: 5px !important;
 }
 
