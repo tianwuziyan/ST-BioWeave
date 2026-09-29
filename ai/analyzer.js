@@ -20,6 +20,7 @@ import {
   worldModelSupplementCoverageCardinality,
   validateWorldModelFactDelta,
   validateWorldModelCandidate,
+  worldModelUnknownId,
 } from './world-supplement-protocol.js';
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
 
@@ -746,7 +747,7 @@ export function buildWorldModelSupplementCoverageFactMappings(coverageTargets = 
       mapping_result: result,
       ...(result === 'EXACT_MATCH' || result === 'MATCHED'
         ? {mapping_failure_reason: null}
-        : {mapping_failure_reason: result === 'MULTIPLE_EXACT_MATCH' ? 'exact_address_must_match_once' : result === 'UNRESOLVED' ? 'matching_fact_rejected' : 'no_exact_address_match'}),
+        : {mapping_failure_reason: result === 'MULTIPLE_EXACT_MATCH' ? 'exact_address_must_match_once' : result === 'UNRESOLVED' ? 'accepted_fact_address_unresolved' : 'no_exact_address_match'}),
     }
   })
 }
@@ -998,7 +999,9 @@ function factDeltaEvidenceBindingDiagnostics(operation, analysisInput, error = n
                 ? operation.projection_rule
                 : null;
   let code = null;
-  if (candidateBinding.candidate_unit_indices.length === 0) code = 'NO_CANDIDATE_EVIDENCE';
+  if (error?.guard_kind === 'structured_fact_boundary') {
+    code = scopedUnitIndices.length === 0 ? 'EVIDENCE_SCOPE_MISMATCH' : 'EVIDENCE_NOT_PERMITTED'
+  } else if (candidateBinding.candidate_unit_indices.length === 0) code = 'NO_CANDIDATE_EVIDENCE';
   else if (context.typeName && scopedUnitIndices.length === 0) code = 'SCOPE_BINDING_FAILED';
   else if (operation?.op === 'ADD_TYPE' || operation?.op === 'ADD_SPECIES') code = 'IDENTITY_SUPPORT_FAILED';
   else if (operation?.op === 'ADD_SPECIAL_RULE' || operation?.op === 'ADD_MECHANISM') code = 'SEMANTIC_FIELD_SUPPORT_FAILED';
@@ -1944,29 +1947,7 @@ function scopeCompatiblePatchUnits(units, delta) {
     const exactTypeUnits = units.filter((unit) =>
       hasGenericScopedTypeEvidence(unit, delta.speciesName, delta.typeName),
     )
-    if (!delta.structuredFactDelta) return exactTypeUnits
-
-    // JSON Fact Delta has already performed semantic field classification. A
-    // stable Species-wide statement may still be stored under each applicable
-    // Type because the canonical schema has no Species-level slot for these
-    // nested fields. Permit that evidence only when it is not explicitly
-    // scoped to a sibling Type; never broaden Type-A evidence to Type-B.
-    const siblingTypeNames = new Set(
-      (delta.siblingTypeNames ?? [])
-        .map((name) => compactEvidenceText(name))
-        .filter((name) => name && name !== compactEvidenceText(delta.typeName)),
-    )
-    const speciesWideUnits = units.filter((unit) => {
-      if (individualOnlyPattern.test(String(unit))) return false
-      if (!hasGenericDirectLabelEvidence(unit, delta.speciesName)) return false
-      const structured = structuredScopeMatches(unit, {
-        speciesName: delta.speciesName,
-      })
-      if (structured?.biological_type && structured.biological_type !== delta.typeName)
-        return false
-      return ![...siblingTypeNames].some((name) => hasGenericDirectLabelEvidence(unit, name))
-    })
-    return [...new Set([...exactTypeUnits, ...speciesWideUnits])]
+    return exactTypeUnits
   }
   if (delta.speciesName) {
     return units
@@ -1979,13 +1960,6 @@ function scopeCompatiblePatchUnits(units, delta) {
 function patchFactEvidence(fact, units, delta) {
   const scopedUnits = scopeCompatiblePatchUnits(units, delta)
   if (delta.typeName && scopedUnits.length === 0) return false
-  if (delta.structuredFactDelta && typeof fact.value === 'string') {
-    // The model has already classified a validated JSON Fact as Cycle,
-    // Gestation, Maturation, etc. For Supplement JSON Facts, direct evidence
-    // membership is the safety check; do not re-run the old field-specific
-    // NLP classifier and reject a faithful paraphrase.
-    if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
-  }
   if (delta.nested === 'special_rules') {
     if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
     const sourceText = scopedUnits.join('\n')
@@ -3904,7 +3878,9 @@ export function classifyWorldModelPatchV2(raw, existingModel) {
     if (operation.op === 'ADD_EXCEPTION') {
       const candidate = v2NormalizeException(operation.exception);
       const exceptionIdentity = `${v2TextIdentity(candidate.statement)}|${v2TextIdentity(candidate.applies_to)}`;
-      const classification = v2PendingClassification(pending, `exception:${exceptionIdentity}`, candidate, v2CollectionClassification(working.exceptions, candidate, (item) => `${v2TextIdentity(item.statement)}|${v2TextIdentity(item.applies_to)}`, (item) => ({ statement: v2TextIdentity(item.statement), applies_to: v2TextIdentity(item.applies_to), evidence: item.evidence ?? null })));
+      const classification = working.exceptions.some(item => `${v2TextIdentity(item.statement)}|${v2TextIdentity(item.applies_to)}` === exceptionIdentity)
+        ? 'NO-OP'
+        : v2PendingClassification(pending, `exception:${exceptionIdentity}`, candidate, 'ADD');
       if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.exception' });
       return finalize({ operation, classification });
     }
@@ -3970,9 +3946,7 @@ function v2ScopedEvidenceUnits(units, context = {}) {
 }
 
 function v2EvidenceSupportsFact(value, units, context = {}) {
-  const scopedUnits = context.structuredFactDelta
-    ? scopeCompatiblePatchUnits(units, context).map(evidenceUnitText)
-    : v2ScopedEvidenceUnits(units, context);
+  const scopedUnits = v2ScopedEvidenceUnits(units, context);
   if (!scopedUnits.length) return false;
   if (context.nested === 'capabilities')
     return patchFactEvidence({ value }, scopedUnits, context);
@@ -4320,6 +4294,66 @@ function v2ValidateOperationEvidence(operation, classification, units, existing,
   }
 }
 
+// Supplement JSON Facts are already field-classified by the protocol.  Keep
+// this guard limited to structural/address/scope and permitted-evidence
+// membership checks; Full analysis retains the semantic guard above.
+function v2StructuredOperationEvidenceUnits(operation, units, existing) {
+  const target = operation?.target ?? {}
+  const speciesName = target.species_name
+    ?? (operation.op === 'ADD_SPECIES' ? operation.species?.name : undefined)
+  const typeName = target.type_name
+    ?? (operation.op === 'ADD_TYPE' ? operation.type?.name : undefined)
+  const species = speciesName && Array.isArray(existing?.species)
+    ? existing.species.find(item => item?.name === speciesName)
+    : null
+  const siblingTypeNames = species?.biological_types?.map(item => item?.name).filter(Boolean) ?? []
+  const individualOnlyPattern = /某(?:个|位|名)?(?:角色|人物|NPC)|这个角色|该角色|单个(?:角色|人物|个体)/iu
+  const exact = scopeCompatiblePatchUnits(units, {
+    speciesName,
+    typeName,
+    siblingTypeNames,
+  }).filter((unit) => !individualOnlyPattern.test(String(unit)))
+  // A new Type identity needs explicit Species + Type evidence. A
+  // Species-wide unit can support a nested Fact for an already addressed
+  // Type, but cannot manufacture the Type address itself.
+  if (operation?.op === 'ADD_TYPE' && speciesName && typeName)
+    return exact.filter((unit) => hasGenericScopedTypeEvidence(unit, speciesName, typeName))
+  if (typeName && speciesName) {
+    const siblingNames = new Set(siblingTypeNames
+      .map(name => compactEvidenceText(name))
+      .filter(name => name && name !== compactEvidenceText(typeName)))
+    const speciesWide = units.filter(unit => {
+      if (individualOnlyPattern.test(String(unit))) return false
+      if (!hasGenericDirectLabelEvidence(unit, speciesName)) return false
+      const structured = structuredScopeMatches(unit, {speciesName})
+      if (structured?.biological_type && structured.biological_type !== typeName) return false
+      return ![...siblingNames].some(name => hasGenericDirectLabelEvidence(unit, name))
+    })
+    return [...new Set([...exact, ...speciesWide])]
+  }
+  return exact
+}
+
+function v2ValidateStructuredOperationEvidence(operation, classification, units, existing) {
+  if (classification === 'NO-OP') return
+  if (classification === 'REJECT') v2EvidenceError(v2StructuredOperationEvidencePath(operation))
+  // The JSON contract already carries the model's field classification. Host
+  // validation must only establish permitted, correctly scoped evidence; it
+  // must not compare the proposed value with text or run field-specific NLP.
+  if (!v2StructuredOperationEvidenceUnits(operation, units, existing).length)
+    v2EvidenceError(v2StructuredOperationEvidencePath(operation))
+}
+
+function v2StructuredOperationEvidencePath(operation) {
+  if (operation?.op === 'ADD_TYPE') return 'operation.type.name'
+  if (operation?.op === 'ADD_SPECIES') return 'operation.species.name'
+  if (operation?.op === 'SET_FIELD') return 'operation.value'
+  if (operation?.op === 'ADD_SPECIAL_RULE') return 'operation.value'
+  if (operation?.op === 'ADD_EXCEPTION') return 'operation.exception.statement'
+  if (operation?.op === 'ADD_UNKNOWN') return 'operation.unknown'
+  return 'operation'
+}
+
 function v2CanonicalTargetPath(operation) {
   const target = operation?.target ?? {};
   if (operation?.op === 'ADD_SPECIES') return `species.${operation.species?.name ?? '<unknown>'}`;
@@ -4366,7 +4400,8 @@ function annotateV2GuardFailure(error, result, operationIndex) {
     classification: result?.classification ?? null,
   };
   error.canonical_target_path = v2CanonicalTargetPath(result?.operation);
-  error.rejected_semantic_field = error.path ?? null;
+  error.rejected_semantic_field = error.guard_kind === 'structured_fact_boundary' ? null : error.path ?? null;
+  error.rejected_structural_path = error.guard_kind === 'structured_fact_boundary' ? error.path ?? null : null;
   error.validation_stage = 'world_patch_v2_evidence_guard';
   return error;
 }
@@ -4377,14 +4412,41 @@ export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analys
   const units = factDeltaEvidenceGuardUnits(analysisInput);
   for (const [operationIndex, result] of classified.entries()) {
     try {
-      v2ValidateOperationEvidence(result.operation, result.classification, units, existing, {
-        structuredFactDelta: analysisInput?.structured_fact_delta === true,
-      });
+      v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
     } catch (error) {
       throw annotateV2GuardFailure(error, result, operationIndex);
     }
   }
   return classified;
+}
+
+function canonicalUnknownResolutionAddress(fact) {
+  return {...factDeltaAddress(fact), field: fact?.field ?? null}
+}
+
+function applyWorldModelUnknownResolutions(model, declarations, factResults, baselineUnknowns = model.unknowns) {
+  const existingUnknowns = Array.isArray(baselineUnknowns) ? baselineUnknowns : []
+  const acceptedFacts = (Array.isArray(factResults) ? factResults : []).filter((result) => result?.status === 'accepted' && result.operation && result.fact?.field !== 'Unknown')
+  const removals = new Set()
+  const diagnostics = []
+  for (const declaration of Array.isArray(declarations) ? declarations : []) {
+    const index = existingUnknowns.findIndex((value) => worldModelUnknownId(value) === declaration.unknown_id)
+    if (index < 0) {
+      diagnostics.push({unknown_id: declaration.unknown_id, status: 'rejected', code: 'UNKNOWN_RESOLUTION_ID_NOT_FOUND'})
+      continue
+    }
+    const addresses = Array.isArray(declaration.resolving_fact_addresses) ? declaration.resolving_fact_addresses : []
+    const bound = acceptedFacts.some((result) => addresses.some((address) => JSON.stringify(address) === JSON.stringify(canonicalUnknownResolutionAddress(result.fact))))
+    if (bound) {
+      removals.add(index)
+      diagnostics.push({unknown_id: declaration.unknown_id, status: 'removed', code: 'UNKNOWN_RESOLUTION_ACCEPTED'})
+    } else {
+      diagnostics.push({unknown_id: declaration.unknown_id, status: 'retained', code: 'UNKNOWN_RESOLUTION_FACT_NOT_ACCEPTED'})
+    }
+  }
+  if (!removals.size) return {model, diagnostics}
+  const removedIds = new Set(existingUnknowns.filter((_, index) => removals.has(index)).map(worldModelUnknownId))
+  return {model: {...model, unknowns: model.unknowns.filter((value) => !removedIds.has(worldModelUnknownId(value)))}, diagnostics}
 }
 
 function v2MergeError(path, message = 'WORLD_MODEL_PATCH_V2_MERGE_INVALID') {
@@ -4454,8 +4516,10 @@ function v2ApplyAddException(model, operation) {
   const identity = v2ExceptionIdentity(exception);
   const existing = model.exceptions.find((item) => v2ExceptionIdentity(item) === identity);
   if (existing) {
-    if (v2Equal(patchExceptionSemanticValue(existing), patchExceptionSemanticValue(exception))) return;
-    v2MergeError('operation.exception', 'WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT');
+    // Evidence is provenance, not collection identity. An equivalent
+    // canonical exception is therefore a no-op even when its new evidence
+    // payload differs.
+    return;
   }
   model.exceptions.push(exception);
 }
@@ -4523,11 +4587,11 @@ function v2RestoreExistingProjectionOrder(model, existing) {
   return { ...model, projection_rules: [...preserved, ...appended] };
 }
 
-function mergeWorldModelPatchV2Classified(existingModel, classified) {
+function mergeWorldModelPatchV2Classified(existingModel, classified, {preserveCollectionOrder = false} = {}) {
   const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const working = clonePatchValue(base);
   v2ApplyClassifiedOperations(working, classified);
-  v2SortAppendedEntries(working, base);
+  if (!preserveCollectionOrder) v2SortAppendedEntries(working, base);
   const consistent = applyWorldModelFinalConsistencyGuard(working);
   const normalized = normalizeWorldModel(consistent, { strict: true, allowGeneratedProjectionRuleIds: true });
   return v2RestoreExistingProjectionOrder(normalized, base);
@@ -4539,7 +4603,7 @@ function factDeltaOperationTargetExists(model, operation) {
   return Boolean(v2Type(model, operation.target.species_name, operation.target.type_name))
 }
 
-function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
+export function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
   let working = resolution.existing
   const acceptedOperations = []
   const acceptedResults = []
@@ -4559,20 +4623,22 @@ function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
       continue
     }
     try {
-      const classified = applyWorldModelPatchV2EvidenceGuard(
-        {schema_version: 2, operations: [result.operation]},
-        working,
-        {...analysisInput, structured_fact_delta: true},
-      )
+      const existing = normalizeWorldModel(working, { strict: true, allowGeneratedProjectionRuleIds: true })
+      const classified = classifyWorldModelPatchV2({schema_version: 2, operations: [result.operation]}, existing)
+      const units = factDeltaEvidenceGuardUnits(analysisInput)
+      v2ValidateStructuredOperationEvidence(result.operation, classified[0].classification, units, existing)
       const classifiedResult = classified[0]
       if (classifiedResult.classification !== 'NO-OP') {
-        working = mergeWorldModelPatchV2Classified(working, classified)
+        working = mergeWorldModelPatchV2Classified(working, classified, {preserveCollectionOrder: true})
         acceptedOperations.push(result.operation)
       }
       result.status = classifiedResult.classification === 'NO-OP' ? 'no-op' : 'accepted'
       result.classification = classifiedResult.classification
       acceptedResults.push(result)
     } catch (error) {
+      error.validation_stage ??= 'world_patch_v2_evidence_guard'
+      error.guard_kind ??= 'structured_fact_boundary'
+      annotateV2GuardFailure(error, result, result.fact_index ?? result.index ?? 0)
       result.status = 'rejected'
       result.code = error?.code ?? error?.message ?? 'WORLD_MODEL_PATCH_V2_INVALID'
       result.reason = error?.message ?? result.code
@@ -4580,11 +4646,20 @@ function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
       rejectedFacts.push(result)
     }
   }
+  const unknownResolution = applyWorldModelUnknownResolutions(
+    working,
+    resolution.resolved_unknown_ids,
+    acceptedResults,
+    resolution.existing?.unknowns,
+  )
+  working = unknownResolution.model
   return {
     patch: {schema_version: 2, operations: acceptedOperations},
     factResults: [...acceptedResults, ...rejectedFacts],
     rejectedFacts,
+    unknownResolution: unknownResolution.diagnostics,
     classified: classifyWorldModelPatchV2({schema_version: 2, operations: acceptedOperations}, resolution.existing),
+    model: working,
   }
 }
 
@@ -4592,6 +4667,15 @@ export function mergeWorldModelPatchV2(existingModel, patch, analysisInput = {})
   const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
   const guarded = applyWorldModelPatchV2EvidenceGuard(patch, base, analysisInput);
   return mergeWorldModelPatchV2Classified(base, guarded);
+}
+
+export function mergeWorldModelSupplementPatch(existingModel, patch, analysisInput = {}) {
+  const base = normalizeWorldModel(existingModel, { strict: true, allowGeneratedProjectionRuleIds: true });
+  const classified = classifyWorldModelPatchV2(patch, base);
+  const units = factDeltaEvidenceGuardUnits(analysisInput);
+  for (const result of classified)
+    v2ValidateStructuredOperationEvidence(result.operation, result.classification, units, base);
+  return mergeWorldModelPatchV2Classified(base, classified, {preserveCollectionOrder: true});
 }
 
 function clonePatchValue(value) {
@@ -4946,6 +5030,10 @@ function factDeltaFactPriority(fact) {
   return 2
 }
 
+function factDeltaIsAppendOnlyCollection(fact) {
+  return fact?.field === 'Special_Rule' || fact?.field === 'Exception' || fact?.field === 'Unknown'
+}
+
 export function resolveWorldModelFactDelta(facts, existingModel) {
   const existing = normalizeWorldModel(existingModel, {strict: true, allowGeneratedProjectionRuleIds: true})
   const inputFacts = Array.isArray(facts) ? facts : []
@@ -4955,7 +5043,15 @@ export function resolveWorldModelFactDelta(facts, existingModel) {
   const factResults = []
   const ordered = inputFacts
     .map((fact, index) => ({fact, index, fact_index: fact?.fact_index ?? index}))
-    .sort((left, right) => factDeltaFactPriority(left.fact) - factDeltaFactPriority(right.fact) || JSON.stringify(v2Canonical(left.fact)).localeCompare(JSON.stringify(v2Canonical(right.fact))))
+    // Identity dependencies are resolved first. Collection Facts retain their
+    // response order; other equal-priority Facts keep the historical
+    // deterministic order used by scalar conflict resolution.
+    .sort((left, right) => {
+      const priority = factDeltaFactPriority(left.fact) - factDeltaFactPriority(right.fact)
+      if (priority) return priority
+      if (factDeltaIsAppendOnlyCollection(left.fact) && factDeltaIsAppendOnlyCollection(right.fact)) return left.index - right.index
+      return JSON.stringify(v2Canonical(left.fact)).localeCompare(JSON.stringify(v2Canonical(right.fact)))
+    })
   for (const {fact, index, fact_index} of ordered) {
     const result = {fact, index, fact_index, field: fact?.field ?? null, species: fact?.species ?? null, biological_type: fact?.biological_type ?? null, operation: null, status: 'rejected'}
     try {
@@ -5251,7 +5347,10 @@ export function createAnalyzer({
         failure_code: rejected.code,
         reason: rejected.reason,
       })
-      const resolution = resolveWorldModelFactDelta(facts, candidateModel)
+      const resolution = {
+        ...resolveWorldModelFactDelta(facts, candidateModel),
+        resolved_unknown_ids: parsed.resolved_unknown_ids,
+      }
       const normalizedExisting = normalizeWorldModel(candidateModel, {strict: true, allowGeneratedProjectionRuleIds: true})
       const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput)
       const acceptedFacts = guarded.factResults
@@ -5375,7 +5474,8 @@ export function createAnalyzer({
             proposed_value: operation?.proposed_value ?? null,
             classification: operation?.classification ?? null,
             evidence_guard_failure_code: error.message ?? error.code ?? rejected.code,
-            rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
+            rejected_semantic_field: error.guard_kind === 'structured_fact_boundary' ? null : error.rejected_semantic_field ?? error.path ?? null,
+            rejected_structural_path: error.guard_kind === 'structured_fact_boundary' ? error.path ?? null : null,
             evidence_binding: factDeltaEvidenceBindingDiagnostics(rejected.operation ?? {
               op: operation?.operation_type,
               target: error.operation_target,
@@ -5399,6 +5499,21 @@ export function createAnalyzer({
       const resolutionRejectedFactCount = guarded.rejectedFacts.filter(item => !item.guardError).length
       const evidenceGuardRejectedFactCount = guarded.rejectedFacts.filter(item => item.guardError).length
       const acceptedFactCount = guarded.factResults.filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status)).length
+      const collectionResults = Array.isArray(guarded.factResults) ? guarded.factResults : []
+      const countCollection = (field, statuses) => collectionResults.filter(item => item.field === field && statuses.includes(item.status)).length
+      const collectionLifecycle = {
+        special_rule_appended_count: guarded.patch.operations.filter(operation => operation.op === 'ADD_SPECIAL_RULE').length,
+        special_rule_deduped_count: countCollection('Special_Rule', ['no-op', 'deduplicated']),
+        exception_appended_count: guarded.patch.operations.filter(operation => operation.op === 'ADD_EXCEPTION').length,
+        exception_deduped_count: countCollection('Exception', ['no-op', 'deduplicated']),
+        unknown_existing_count: Array.isArray(candidateModel?.unknowns) ? candidateModel.unknowns.length : 0,
+        unknown_appended_count: guarded.patch.operations.filter(operation => operation.op === 'ADD_UNKNOWN').length,
+        unknown_deduped_count: countCollection('Unknown', ['no-op', 'deduplicated']),
+        unknown_resolved_count: (guarded.unknownResolution ?? []).filter(item => item.status === 'removed').length,
+        unknown_resolution_rejected_count: (guarded.unknownResolution ?? []).filter(item => item.status !== 'removed').length,
+        unknown_resolution: guarded.unknownResolution ?? [],
+      }
+      emitFactDeltaTrace('WORLD_COLLECTION_LIFECYCLE', collectionLifecycle)
       // These buckets are mutually exclusive: raw = parsed + parse-rejected;
       // parsed = resolution-rejected + Guard-rejected + accepted facts.
       const rejectedFactCount = parseRejectedFactCount + resolutionRejectedFactCount + evidenceGuardRejectedFactCount
@@ -5451,6 +5566,9 @@ export function createAnalyzer({
         coverage_mutation_states: coverageMutationStates,
         review_accounted: completenessSummary?.supplement_completeness_complete ?? input.require_supplement_completeness !== true,
         mutation_rejected_count: coverageMutationStates.filter(item => item.mutation_status === 'REJECTED').length,
+        unknown_resolution: guarded.unknownResolution ?? [],
+        unknown_removed_count: (guarded.unknownResolution ?? []).filter(item => item.status === 'removed').length,
+        collection_lifecycle: collectionLifecycle,
         request_envelope: requestEnvelope,
       }
       emitFactDeltaTrace('WORLD_FACT_DELTA_RESOLVED', {
@@ -5474,11 +5592,15 @@ export function createAnalyzer({
           ...(Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []),
           ...(parsed.coverageDiagnostics ?? []),
           ...(parsed.rejectedIdentityReviews ?? []),
+          ...(parsed.rejectedUnknownResolutions ?? []),
         ],
         rejectedFacts: [...(parsed.rejectedFacts ?? []), ...guarded.rejectedFacts],
         rejectedIdentityReviews: parsed.rejectedIdentityReviews ?? [],
+        resolvedUnknownIds: parsed.resolved_unknown_ids ?? [],
+        rejectedUnknownResolutions: parsed.rejectedUnknownResolutions ?? [],
         coverageDiagnostics: parsed.coverageDiagnostics ?? [],
         classified: guarded.classified,
+        snapshot_model: clonePatchValue(guarded.model),
         fact_delta_summary: factDeltaSummary,
       }
     } catch (error) {
@@ -5498,7 +5620,8 @@ export function createAnalyzer({
           proposed_value: rejected?.proposed_value ?? null,
           classification: rejected?.classification ?? null,
           evidence_guard_failure_code: error.code ?? error.message ?? null,
-          rejected_semantic_field: error.rejected_semantic_field ?? error.path ?? null,
+          rejected_semantic_field: error.guard_kind === 'structured_fact_boundary' ? null : error.rejected_semantic_field ?? error.path ?? null,
+          rejected_structural_path: error.guard_kind === 'structured_fact_boundary' ? error.path ?? null : null,
           evidence_binding: factDeltaEvidenceBindingDiagnostics(rejected, analysisInput, error, debug),
           decision,
         })

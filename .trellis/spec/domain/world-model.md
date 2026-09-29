@@ -105,6 +105,30 @@ aborted, canonical validation fails, or the persistence coordinator rejects the
 transaction. A persistence failure does not erase the in-memory snapshot or
 pretend that the mutation was confirmed.
 
+#### Supplement collection and Unknown lifecycle
+
+Supplement JSON Facts use four mutation classes: scalar Facts are
+`SET_FIELD` replacements; `Special_Rule` and `Exception` are append-only
+collections with canonical host-owned deduplication; and `Unknown` is an
+append-only unresolved queue. Existing collection order is authoritative:
+accepted unique response items append in response order and are never
+re-sorted. Existing Unknowns are sent in the same request with deterministic
+host-owned `unknown_id` values derived from canonical text.
+
+The optional `resolved_unknown_ids` response declaration contains an
+`unknown_id` and one or more exact canonical `resolving_fact_addresses`. A
+declared Unknown is removed only after the same response supplies a Fact at one
+of those addresses and that Fact is accepted by structural/address/scope and
+permitted-evidence guards. Rejected, unresolved, no-evidence, duplicate/no-op,
+or unbound Facts retain the Unknown. Resolution is per queue item, and
+accepted Fact mutation plus queue removal happens in the same execution
+snapshot before the single World owner persistence transaction.
+
+Supplement structured Facts do not enter Full-only field-specific semantic
+regex/NLP reclassification. Their guard validates JSON structure, canonical
+address/dependency, scope, permitted-evidence membership, and boundary safety;
+Full analysis retains its independent semantic evidence guard.
+
 World resolvers such as `resolveWorldModelAtOrBefore()` and
 `resolveWorldModelStrictlyBefore()` belong to the World/Floor boundary.
 Character Registry previous-snapshot resolution remains independent. Shared
@@ -1131,21 +1155,20 @@ facts.
 
 | Operation | Identity / semantic equality | Evidence requirement | Merge behavior |
 | --- | --- | --- | --- |
-| `ADD_SPECIAL_RULE` | species + type + normalized semantic rule identity | evidence supports that type-local rule | same identity + same canonical content is deterministic `NO-OP`; different identity is `ADD`; same identity with different content is `REJECT` |
+| `ADD_SPECIAL_RULE` | species + type + normalized rule text | structured Fact has permitted, type-compatible evidence | same identity is deterministic `NO-OP`; different identity is `ADD` at the response tail; existing order is never re-sorted |
 | `ADD_MECHANISM` | species + type + non-empty stable `key` | each proposed mechanism fact is independently supported | same key + same canonical content is deterministic `NO-OP`; same key + different content is `REJECT`; no reliable key fails closed |
-| `ADD_EXCEPTION` | canonical `statement + applies_to`, not raw JSON key order | evidence supports the world-level exception scope | same identity + same canonical content is deterministic `NO-OP`; same identity with another fact-bearing conflict is `REJECT`; different identity is `ADD` |
+| `ADD_EXCEPTION` | host-owned canonical `statement + applies_to`, not raw JSON key order | structured Fact has permitted world-scope evidence | same identity is deterministic `NO-OP` even if provenance/evidence differs; different identity is `ADD` at the response tail |
 | `ADD_UNKNOWN` | canonical unknown value after normalization | input must trigger the unresolved world-level question | same canonical unknown is deterministic `NO-OP`; different canonical unknown is `ADD` |
 | `ADD_PROJECTION_RULE` | existing production canonical/generated new-rule identity; AI does not provide generated ID | raw new rule passes current `validateProjectionRuleContent()` and add evidence checks | same deterministic identity + same canonical content is `NO-OP`; identity collision with different content is `REJECT`; if safe comparison is unavailable, fail closed / `BLOCKED`; Existing rule update remains blocked |
 
 `ADD_MECHANISM` fails closed when no reliable stable key exists. It must not
 use label, array position, or mutable full content as a substitute identity.
-`ADD_EXCEPTION` must use canonical field equality and never raw
-`JSON.stringify()` ordering. Collection reorder is not a semantic delta.
-For every collection operation, same canonical identity plus same canonical
-content is a deterministic `NO-OP`; same identity plus different canonical
-content is a conflict and must `REJECT`; a different canonical identity is a
-normal `ADD` candidate. A `NO-OP` creates no semantic delta, no duplicate item,
-no persistence requirement, and no sibling authorization.
+`ADD_EXCEPTION` must use canonical identity and never raw `JSON.stringify()`
+ordering. Collection reorder is not a semantic delta. For
+`Special_Rule`/`Exception`/`Unknown`, existing items remain at their original
+indices and accepted unique items append in response order. A collection
+`NO-OP` creates no semantic delta, no duplicate item, no persistence
+requirement, and no sibling authorization.
 
 #### 1.5.8.8 Evidence and merge pipeline
 
@@ -1664,6 +1687,9 @@ The Supplement analyzer may emit the following structured stages:
   snapshot.
 - `WORLD_PATCH_EVIDENCE_REJECTED`: rejected operation/path, semantic address,
   proposed value, classification, Guard failure, and evidence candidate summary.
+- `WORLD_COLLECTION_LIFECYCLE`: append/dedupe counts for Special_Rule and
+  Exception, existing/appended/deduped/resolved Unknown counts, and per-Unknown
+  retention/removal reason.
 
 Every Supplement diagnostic carries `mode: "patch"`, an execution identifier,
 attempt, and retry index. Diagnostic callbacks are best-effort and must never

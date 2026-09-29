@@ -7844,6 +7844,64 @@ test("World Patch v2 persists a guarded Cycle mutation at the canonical nested p
   fixture.runtime.destroy();
 });
 
+test("World Supplement snapshot applies collection append and Unknown resolution in one Floor commit", async () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "Species-A", biological_types: [{ name: "Type-A", special_rules: ["A"], reproduction_rules: { cycle: "old" } }] }],
+    exceptions: [{ statement: "A", applies_to: "Species-A" }],
+    unknowns: ["U1", "U2"],
+  });
+  const finalSnapshot = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "Species-A", biological_types: [{ name: "Type-A", special_rules: ["A", "B"], reproduction_rules: { cycle: "updated" } }] }],
+    exceptions: [{ statement: "A", applies_to: "Species-A" }, { statement: "B", applies_to: "Species-A" }],
+    unknowns: ["U2", "U3"],
+  });
+  let supplementCalls = 0;
+  const fixture = createFixture({
+    messages: worldFloorMessages(),
+    analyzer: {
+      async analyzeWorldModelPatchV2(input) {
+        supplementCalls += 1;
+        assert.deepEqual(input.analysisInput.world_model.unknowns, ["U1", "U2"]);
+        return {
+          patch: { schema_version: 2, operations: [{ op: "ADD_SPECIAL_RULE" }, { op: "ADD_EXCEPTION" }, { op: "SET_FIELD" }] },
+          snapshot_model: finalSnapshot,
+          classified: [],
+          fact_delta_summary: {
+            accepted_operation_count: 3,
+            accepted_fact_count: 4,
+            canonical_mutation_occurred: true,
+            collection_lifecycle: {
+              special_rule_appended_count: 1,
+              exception_appended_count: 1,
+              unknown_resolved_count: 1,
+            },
+          },
+        };
+      },
+    },
+  });
+  await seedWorldOwner(fixture, existing);
+  const beforeWrites = fixture.saveFloorCalls();
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: { character: { description: "World Supplement evidence" } },
+    trigger: "manual-patch",
+  });
+  const persisted = fixture.runtime.store.getFloor(1).world_model;
+  assert.equal(supplementCalls, 1);
+  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
+  assert.deepEqual(persisted.species[0].biological_types[0].special_rules, ["A", "B"]);
+  assert.deepEqual(persisted.exceptions.map(item => item.statement), ["A", "B"]);
+  assert.deepEqual(persisted.unknowns, ["U2", "U3"]);
+  assert.equal(persisted.species[0].biological_types[0].reproduction_rules.cycle, "updated");
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.filter(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED").length,
+    1,
+  );
+  fixture.runtime.destroy();
+});
+
 test("World Patch v2 empty operations preserve the complete Existing model", async () => {
   const fixture = createFixture({
     messages: [

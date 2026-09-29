@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Floor ownership or provenance regression."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify mutation classes, Unknown lifecycle, evidence guard and Full/Supplement isolation."}
+{"file":"ai/analyzer.js","reason":"Verify parser, Resolver, guard split, deterministic mutation, Snapshot application and diagnostics."}
+{"file":"runtime/world-analysis.js","reason":"Verify one semantic request, transient Execution Snapshot, saveWorldModel, commit and readback."}
+{"file":"tests/world-model.test.js","reason":"Verify collection, Unknown, scalar, prompt parity and legacy cleanup regressions."}
+{"file":"tests/event-analysis-runtime.test.js","reason":"Verify production-style World Floor integration and commit count."}

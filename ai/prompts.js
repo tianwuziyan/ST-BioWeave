@@ -9,7 +9,7 @@ import {
 } from '../core/events.js'
 import { PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KINDS } from '../core/projection.js'
 import { normalizeEventAnalysisInput } from './input-builder.js'
-import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects } from './world-supplement-protocol.js'
+import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, buildWorldModelSupplementUnknownContext } from './world-supplement-protocol.js'
 export { WORLD_MODEL_SCHEMA }
 export const CORE_PROMPTS = {
   world: 'Analyze world rules into the required JSON schema. Unknown facts remain unknown.',
@@ -626,6 +626,7 @@ function buildWorldModelSupplementInputRequest(input) {
   return {
     request,
     existing_reference: candidateModel,
+    existing_unknowns: buildWorldModelSupplementUnknownContext(candidateModel),
     coverage_targets: coverageTargets.map(supplementInputTarget),
     identity_review_subjects: identitySubjects.map(subject => supplementInputIdentitySubject(subject, candidateModel)),
   }
@@ -942,6 +943,8 @@ ${WORLD_MODEL_SUPPLEMENT_FIELD_SEMANTICS}
 【Fact 属于谁】Species_Identity / Species_Description 只填写 species。Type_Identity、Type_Description、capability、reproduction、lifecycle、Special_Rule、Reproductive_Mechanism 必须同时填写 species 和 biological_type。Childbirth_Difficulty、Care_Level、Medical_Evidence、Exception、Unknown、Projection_Rule 属于整个世界，不填写 species 或 biological_type。如果资料只说明 Species，却不能确定具体 Biological Type，不要把 Type-level 事实猜给某个 Type。如果资料明确说明同一事实同时适用于多个 Type，就分别输出多个 Facts。
 本次响应必须独立完成当前 Supplement 分析。如果在证据中发现 Existing 尚未记录的新 Species 或 Biological Type，应在同一次响应内继续检查该 identity 的所有相关可支持字段；不要等待后续请求。FORMAT_RETRY 只修复 JSON 格式，不改变事实判断。
 
+Existing Unknowns 是 unresolved knowledge queue，不是 evidence。对每个 existing_unknowns 项，如果本次同一响应中的 accepted Fact 明确解决它，可以在 resolved_unknown_ids 中声明其 unknown_id，并填写该 Fact 的 exact canonical address；没有 accepted resolving Fact 时不要声明移除。保留未解决项，不能用 no_evidence、Fact omission、文本相似或 no-op Fact 清除 Unknown。
+
 `
 
 export const WORLD_MODEL_JSON_FACT_DELTA_OUTPUT_CONTRACT = [
@@ -950,6 +953,7 @@ export const WORLD_MODEL_JSON_FACT_DELTA_OUTPUT_CONTRACT = [
   '每个 Fact 必须 self-contained，并使用 scope=species|type|world、exact field、必要的 species/biological_type 与 field-specific value/mechanism/exception/projection_rule payload。',
   'facts[] 中某一项 malformed 时，保留其它合法 Fact；不要因为单项错误删除整个 facts 数组。',
   'coverage 只允许 no_evidence_target_ids；EMITTED 不由模型输出，由 Host 根据 accepted Facts 推导。no_evidence_target_ids 只能表示完成完整搜索后没有 evidence-supported Fact 的 target。',
+  'resolved_unknown_ids 是可选数组。每项必须是 {unknown_id, resolving_fact_addresses}；unknown_id 必须原样引用 user request 的 existing_unknowns，且 resolving_fact_addresses 至少包含一个 {scope, species?, biological_type?, field} 精确 canonical Fact 地址。只有同一响应中该地址的 Fact 被 Host 接受后，Unknown 才会移除；no_evidence、rejected、unresolved 或 no-op Fact 都不能移除。未声明或未满足绑定的 Unknown 必须保留。',
   'identity_reviews 必须逐 subject 提供 subject_id、species、status=REVIEWED、distinct_type_count、additional_type_search=EXHAUSTED。Identity Review 不是 evidence，新 Type 必须另有 Type_Identity Fact。',
   'Existing 只是 reference/comparison baseline，不是 evidence；Coverage Targets 只是 review checklist，不是 evidence 或 output whitelist。',
   'Fact encoding is field-specific and must use only the keys shown below. Identity Facts do not have a payload key: Species_Identity uses scope=species with species and field only; Type_Identity uses scope=type with species, biological_type, and field only. String scalar Facts use a non-empty string value: Species_Description, Type_Description, Fertilization, Pregnancy_Or_Carrying, Cycle, Ovulation, Gestation, Labor, Maturation, Aging, Childbirth_Difficulty, Care_Level, and Medical_Evidence. Capability Facts use value=true or value=false as JSON booleans, never strings. Special_Rule is type-scoped and uses species, biological_type, field, and a non-empty string value. Unknown is world-scoped and uses field and a non-empty string value. Exception is world-scoped and uses field plus exception={statement, applies_to?, evidence?}; Reproductive_Mechanism is type-scoped and uses species, biological_type, field, and mechanism={key, label?, pathway?, carrying_compatibility?, world_model_rule_refs?, evidence?}; Projection_Rule is world-scoped and uses field plus projection_rule as one object without projection_rule_id. Do not add value to identity, exception, mechanism, or projection facts.',

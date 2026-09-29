@@ -957,6 +957,28 @@ function jsonFactControlText(value, field, index) {
   return value.trim()
 }
 
+// Unknowns are persisted as strings for schema compatibility.  Their queue
+// identity is therefore derived by the host from canonical text, never from
+// model-generated or time-based identifiers.
+export function worldModelUnknownId(value) {
+  const text = String(value ?? '').trim().normalize('NFKC').replace(/\s+/gu, ' ').toLowerCase()
+  let hash = 2166136261
+  for (const char of text) {
+    hash ^= char.codePointAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `unknown_${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
+export function buildWorldModelSupplementUnknownContext(model = {}) {
+  return (Array.isArray(model.unknowns) ? model.unknowns : []).map((value) => ({
+    unknown_id: worldModelUnknownId(value),
+    value: String(value).trim(),
+    expected_scope: 'world',
+    expected_resolution: 'accepted_fact_with_exact_canonical_address',
+  }))
+}
+
 function jsonFactEnum(value, field, allowed, index) {
   const token = jsonFactControlText(value, field, index)
   if (!allowed.has(token)) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_ENUM_INVALID', index, {field, value: token})
@@ -1102,7 +1124,7 @@ export function parseWorldModelFactDeltaJson(raw) {
     error.format_retryable = true
     throw error
   }
-  const rootKeys = new Set(['facts', 'coverage', 'identity_reviews'])
+  const rootKeys = new Set(['facts', 'coverage', 'identity_reviews', 'resolved_unknown_ids'])
   if (Object.keys(root).some(key => !rootKeys.has(key))) {
     const error = factDeltaError('WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID', [], 'WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID')
     error.format_retryable = true
@@ -1157,12 +1179,41 @@ export function parseWorldModelFactDeltaJson(raw) {
       rejectedIdentityReviews.push({index, raw: review, code: error?.message ?? 'WORLD_MODEL_SUPPLEMENT_JSON_IDENTITY_REVIEW_INVALID', reason: error?.message ?? 'WORLD_MODEL_SUPPLEMENT_JSON_IDENTITY_REVIEW_INVALID'})
     }
   }
+  const resolvedUnknownIds = []
+  const rejectedUnknownResolutions = []
+  if (root.resolved_unknown_ids !== undefined && !Array.isArray(root.resolved_unknown_ids))
+    rejectedUnknownResolutions.push({index: null, code: 'WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTIONS_INVALID', reason: 'resolved_unknown_ids must be an array'})
+  for (const [index, declaration] of (Array.isArray(root.resolved_unknown_ids) ? root.resolved_unknown_ids : []).entries()) {
+    try {
+      if (!declaration || typeof declaration !== 'object' || Array.isArray(declaration)) throw new Error('WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_INVALID')
+      assertJsonKeys(declaration, new Set(['unknown_id', 'resolving_fact_addresses']), index)
+      const unknown_id = jsonFactControlText(declaration.unknown_id, 'unknown_id', index)
+      if (!Array.isArray(declaration.resolving_fact_addresses) || declaration.resolving_fact_addresses.length === 0)
+        throw new Error('WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_ADDRESS_INVALID')
+      const resolving_fact_addresses = declaration.resolving_fact_addresses.map((address) => {
+        if (!address || typeof address !== 'object' || Array.isArray(address)) throw new Error('WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_ADDRESS_INVALID')
+        assertJsonKeys(address, new Set(['scope', 'species', 'biological_type', 'field']), index)
+        const scope = jsonFactControlText(address.scope, 'scope', index)
+        if (!new Set(['world', 'species', 'biological_type']).has(scope)) throw new Error('WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_SCOPE_INVALID')
+        const normalized = {scope}
+        if (scope !== 'world') normalized.species = jsonFactControlText(address.species, 'species', index)
+        if (scope === 'biological_type') normalized.biological_type = jsonFactControlText(address.biological_type, 'biological_type', index)
+        normalized.field = jsonFactControlText(address.field, 'field', index)
+        return normalized
+      })
+      resolvedUnknownIds.push({unknown_id, resolving_fact_addresses})
+    } catch (error) {
+      rejectedUnknownResolutions.push({index, raw: declaration, code: error?.message ?? 'WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_INVALID', reason: error?.message ?? 'WORLD_MODEL_SUPPLEMENT_JSON_UNKNOWN_RESOLUTION_INVALID'})
+    }
+  }
   return {
     facts,
     rejectedFacts,
     coverage_no_evidence_target_ids: [...new Set(noEvidence)],
     identity_reviews: identityReviews,
     rejectedIdentityReviews,
+    resolved_unknown_ids: resolvedUnknownIds,
+    rejectedUnknownResolutions,
     coverageDiagnostics,
   }
 }

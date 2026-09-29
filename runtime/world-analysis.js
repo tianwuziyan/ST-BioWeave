@@ -1,6 +1,7 @@
 import {
   buildWorldModelViewModel,
   mergeWorldModelPatchV2,
+  mergeWorldModelSupplementPatch,
   normalizeStoredWorldModel,
   summarizeAnalysisInput,
 } from "../ai/analyzer.js";
@@ -865,13 +866,15 @@ export function createWorldAnalysis({
               target.biological_type ?? '',
               target.field ?? '',
             ].join('\u001f')));
-            const mergeAcceptedSupplementPatch = async (patch, summary) => {
+            const mergeAcceptedSupplementPatch = async (patch, summary, snapshotModel = null) => {
               const previousSnapshot = supplementContinuationState.transientModel;
-              const candidateModel = mergeWorldModelPatchV2(
-                previousSnapshot,
-                patch,
-                {...patchAnalysisInput, structured_fact_delta: true},
-              );
+              const candidateModel = snapshotModel
+                ? cloneWorldValue(snapshotModel)
+                : mergeWorldModelSupplementPatch(
+                    previousSnapshot,
+                    patch,
+                    patchAnalysisInput,
+                  );
               const snapshotChanged = !canonicalWorldEqual(previousSnapshot, candidateModel);
               supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
               const snapshotSummary = summary && typeof summary === "object"
@@ -904,7 +907,10 @@ export function createWorldAnalysis({
             try {
               patchResult = await analyzer.analyzeWorldModelPatchV2({
                 analysisInput: patchAnalysisInput,
-                require_supplement_completeness: true,
+                // Coverage/identity metadata is diagnostic only. Supplement
+                // accepts one response; semantic incompleteness is not a
+                // continuation request or a second model call.
+                require_supplement_completeness: false,
                 floor_version: target.version,
                 authoritative_floor_version: target.version,
                 signal,
@@ -935,6 +941,7 @@ export function createWorldAnalysis({
               const {candidateModel, snapshotSummary} = await mergeAcceptedSupplementPatch(
                 patchResult?.patch ?? patchResult,
                 baseSummary,
+                patchResult?.snapshot_model ?? null,
               );
               if (Array.isArray(snapshotSummary?.fact_mappings))
                 baseSummary.fact_mappings = cloneWorldValue(snapshotSummary.fact_mappings);
@@ -1103,7 +1110,7 @@ export function createWorldAnalysis({
               meta,
               fact_delta_summary: factDeltaSummary,
               fact_delta_execution_id: factDeltaExecutionId,
-              require_supplement_completeness: true,
+              require_supplement_completeness: false,
             };
           }
           return {model, meta};

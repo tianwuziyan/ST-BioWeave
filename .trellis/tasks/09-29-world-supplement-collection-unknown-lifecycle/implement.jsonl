@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, authoritative World persistence, Snapshot provenance, and one owner-scoped commit boundary."}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Full/Supplement contracts, evidence boundaries, Patch v2 mutation and canonicalization rules."}
+{"file":"docs/ARCHITECTURE.md","reason":"Runtime module ownership and protected persistence coordinator boundaries."}
+{"file":"ai/world-supplement-protocol.js","reason":"JSON Fact Delta schema, parser, validator, coverage and canonical protocol helpers."}
+{"file":"ai/prompts.js","reason":"Final Supplement message topology, prompt task, Existing reference and JSON output contract."}
