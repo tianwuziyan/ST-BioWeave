@@ -3370,7 +3370,7 @@ test("manual World Patch uses the same additional retry policy", async () => {
   fixture.runtime.destroy();
 });
 
-test("incomplete World Supplement reuses the existing Stage retry and persists only after completion", async () => {
+test("incomplete World Supplement is diagnosed locally without a semantic retry", async () => {
   let patchCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -3393,16 +3393,17 @@ test("incomplete World Supplement reuses the existing Stage retry and persists o
   await fixture.runtime.init();
   await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
   await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
-  assert.equal(patchCalls, 2);
+  assert.equal(patchCalls, 1);
   assert.deepEqual(
     fixture.runtime.getPersistenceTrace().sequence.filter(item => item.stage === "WORLD_STAGE_ATTEMPT_BEGIN").map(item => item.attempt),
-    [1, 2],
+    [1],
   );
-  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED"), true);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED"), false);
+  assert.equal(fixture.runtime.getWorldModelDiagnosticState().latest_fact_delta.semantic_incomplete, true);
   fixture.runtime.destroy();
 });
 
-test("automatic Supplement completeness retry keeps the model request control-free", async () => {
+test("automatic Supplement semantic incompleteness does not consume the retry budget", async () => {
   let patchCalls = 0;
   const inputs = [];
   const fixture = createFixture({
@@ -3427,14 +3428,13 @@ test("automatic Supplement completeness retry keeps the model request control-fr
   await fixture.runtime.init();
   await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
   await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "automatic-supplement"});
-  assert.equal(patchCalls, 2);
+  assert.equal(patchCalls, 1);
   assert.equal(inputs[0].analysisInput.supplement_request_mode, "INITIAL");
-  assert.equal(inputs[1].analysisInput.supplement_request_mode, "AUTOMATIC_RETRY");
-  assert.equal(Object.hasOwn(inputs[1].analysisInput, "supplement_retry_directive"), false);
+  assert.equal(inputs.length, 1);
   fixture.runtime.destroy();
 });
 
-test("incomplete World Supplement exhausts the existing retry budget without persistence", async () => {
+test("incomplete World Supplement with no mutation is a local no-change result", async () => {
   let patchCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -3456,8 +3456,8 @@ test("incomplete World Supplement exhausts the existing retry budget without per
   await fixture.runtime.init();
   await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
   const beforeWrites = fixture.saveFloorCalls();
-  await assert.rejects(fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"}), /WORLD_MODEL_SUPPLEMENT_INCOMPLETE/u);
-  assert.equal(patchCalls, 2);
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+  assert.equal(patchCalls, 1);
   assert.equal(fixture.saveFloorCalls(), beforeWrites);
   fixture.runtime.destroy();
 });
@@ -7470,14 +7470,14 @@ test("World Patch Analysis merges v2 sparsely and saves only the current Floor",
     world_model: worldA,
   });
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
-  assert.equal(patchCalls, 2);
+  assert.equal(patchCalls, 1);
   assert.deepEqual(receivedWorld.species[0].biological_types.map(item => item.name), ["Type-A", "Type-B"]);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldA);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, receivedWorld);
   fixture.runtime.destroy();
 });
 
-test("World Patch continues after a new identity and reaches the coverage fixed point", async () => {
+test("World Patch persists a new identity without semantic continuation", async () => {
   let patchCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -7488,17 +7488,6 @@ test("World Patch continues after a new identity and reaches the coverage fixed 
     analyzer: {
       async analyzeWorldModelPatchV2(input) {
         patchCalls += 1;
-        if (patchCalls > 1) {
-          return {
-            patch: {schema_version: 2, operations: []},
-            classified: [],
-            fact_delta_summary: {
-              supplement_completeness_complete: true,
-              coverage_dispositions: buildWorldModelSupplementCoverageTargets(input.analysisInput.world_model)
-                .map(target => ({target_id: target.target_id, disposition: "NO_EVIDENCE"})),
-            },
-          };
-        }
         return {
           patch: {
             schema_version: 2,
@@ -7510,21 +7499,21 @@ test("World Patch continues after a new identity and reaches the coverage fixed 
     },
   });
   await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
-  await fixture.runtime.analyzeCurrentWorldModelPatch({
+  const result = await fixture.runtime.analyzeCurrentWorldModelPatch({
     analysisInput: {character: {description: "Species-A 中 Type-B 是少数但稳定存在的 biological type。Species-A 中 Type-C 是少数但稳定存在的 biological type。"}},
     trigger: "manual-patch",
   });
   const persisted = fixture.runtime.store.getFloor(1).world_model;
   const summary = fixture.runtime.getWorldModelDiagnosticState().latest_fact_delta;
-  assert.equal(patchCalls, 2);
+  assert.equal(patchCalls, 1);
   assert.deepEqual(persisted.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
-  assert.equal(summary.coverage_expansion_round_count, 1);
-  assert.equal(summary.coverage_fixed_point_reached, true);
-  assert.equal(summary.unresolved_dynamic_target_count, 0);
+  assert.equal(summary.dynamic_coverage_unresolved_in_single_response, true);
+  assert.equal(summary.coverage_fixed_point_reached, false);
+  assert.equal(result.final_result, "UPDATED");
   fixture.runtime.destroy();
 });
 
-test("World Patch continues through a second new identity before finalizing", async () => {
+test("World Patch accepts multiple new identities in one response", async () => {
   let patchCalls = 0;
   const fixture = createFixture({
     retryCount: 2,
@@ -7535,22 +7524,13 @@ test("World Patch continues through a second new identity before finalizing", as
     analyzer: {
       async analyzeWorldModelPatchV2(input) {
         patchCalls += 1;
-        if (patchCalls === 3) {
-          return {
-            patch: {schema_version: 2, operations: []},
-            classified: [],
-            fact_delta_summary: {
-              supplement_completeness_complete: true,
-              coverage_dispositions: buildWorldModelSupplementCoverageTargets(input.analysisInput.world_model)
-                .map(target => ({target_id: target.target_id, disposition: "NO_EVIDENCE"})),
-            },
-          };
-        }
-        const typeName = patchCalls === 1 ? "Type-B" : "Type-C";
         return {
           patch: {
             schema_version: 2,
-            operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: typeName}}],
+            operations: [
+              {op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-B"}},
+              {op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-C"}},
+            ],
           },
           classified: [],
         };
@@ -7563,98 +7543,12 @@ test("World Patch continues through a second new identity before finalizing", as
     trigger: "manual-patch",
   });
   const diagnostic = fixture.runtime.getWorldModelDiagnosticState();
-  assert.equal(patchCalls, 3);
+  assert.equal(patchCalls, 1);
   assert.ok(fixture.saveFloorCalls() > 0);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B", "Type-C"]);
   assert.equal(diagnostic.latest_fact_delta.failure_code, undefined);
-  assert.equal(diagnostic.latest_fact_delta.coverage_expansion_round_count, 2);
-  assert.equal(diagnostic.latest_fact_delta.coverage_fixed_point_reached, true);
-  fixture.runtime.destroy();
-});
-
-test("World Supplement persists the accumulated snapshot after a later retry fails", async () => {
-  let patchCalls = 0;
-  const fixture = createFixture({
-    retryCount: 1,
-    messages: worldFloorMessages(),
-    analyzer: {
-      async analyzeWorldModelPatchV2() {
-        patchCalls += 1;
-        if (patchCalls === 1) {
-          return {
-            patch: {
-              schema_version: 2,
-              operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-B"}}],
-            },
-            classified: [],
-          };
-        }
-        throw Object.assign(new Error("PATCH_RETRY_FAILED"), {code: "PATCH_RETRY_FAILED"});
-      },
-    },
-  });
-  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
-  const beforeWrites = fixture.saveFloorCalls();
-
-  await assert.rejects(
-    fixture.runtime.analyzeCurrentWorldModelPatch({
-      analysisInput: {character: {description: "Species-A 中 Type-B 是稳定存在的 biological type。"}},
-      trigger: "manual-patch",
-    }),
-    error => error?.code === "PATCH_RETRY_FAILED",
-  );
-  const persisted = fixture.runtime.store.getFloor(1).world_model;
-  const diagnostic = fixture.runtime.getWorldModelDiagnosticState();
-  assert.equal(patchCalls, 2);
-  assert.deepEqual(persisted.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
-  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
-  assert.equal(diagnostic.last_attempt_failed, true);
-  assert.equal(diagnostic.snapshot_preserved, true);
-  assert.equal(diagnostic.execution_snapshot_mutated, true);
-  assert.equal(diagnostic.execution_snapshot_accepted_operation_count, 1);
-  assert.equal(diagnostic.persistence_requested, true);
-  assert.equal(diagnostic.persistence_confirmed, true);
-  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_SNAPSHOT_PERSISTED_AFTER_ATTEMPT_FAILURE"), true);
-  fixture.runtime.destroy();
-});
-
-test("World Supplement accumulates accepted mutations across multiple failed continuation rounds", async () => {
-  let patchCalls = 0;
-  const fixture = createFixture({
-    retryCount: 2,
-    messages: worldFloorMessages(),
-    analyzer: {
-      async analyzeWorldModelPatchV2() {
-        patchCalls += 1;
-        if (patchCalls <= 2) {
-          return {
-            patch: {
-              schema_version: 2,
-              operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: patchCalls === 1 ? "Type-B" : "Type-C"}}],
-            },
-            classified: [],
-          };
-        }
-        throw Object.assign(new Error("FINAL_RETRY_FAILED"), {code: "FINAL_RETRY_FAILED"});
-      },
-    },
-  });
-  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
-  const beforeWrites = fixture.saveFloorCalls();
-
-  await assert.rejects(
-    fixture.runtime.analyzeCurrentWorldModelPatch({
-      analysisInput: {character: {description: "Species-A 中 Type-B 和 Type-C 是稳定存在的 biological type。"}},
-      trigger: "manual-patch",
-    }),
-    error => error?.code === "FINAL_RETRY_FAILED",
-  );
-  const persisted = fixture.runtime.store.getFloor(1).world_model;
-  const typeNames = persisted.species[0].biological_types.map(type => type.name);
-  assert.equal(patchCalls, 3);
-  assert.deepEqual(typeNames, ["Type-A", "Type-B", "Type-C"]);
-  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
-  assert.equal(fixture.runtime.getWorldModelDiagnosticState().execution_snapshot_accepted_operation_count, 2);
+  assert.equal(diagnostic.latest_fact_delta.dynamic_coverage_unresolved_in_single_response, true);
+  assert.equal(diagnostic.latest_fact_delta.coverage_fixed_point_reached, false);
   fixture.runtime.destroy();
 });
 
@@ -7694,84 +7588,6 @@ test("World Supplement keeps accepted siblings and excludes a rejected Fact from
   assert.equal(persisted.species[0].biological_types[0].lifecycle.maturation, "maturation-a");
   assert.equal(persisted.species[0].biological_types[0].lifecycle.aging, "aging-a");
   assert.equal(JSON.stringify(persisted).includes("rejected"), false);
-  fixture.runtime.destroy();
-});
-
-test("World Supplement does not classify the execution as ALL_FACTS_REJECTED after an earlier accepted mutation", async () => {
-  let patchCalls = 0;
-  const fixture = createFixture({
-    retryCount: 1,
-    messages: worldFloorMessages(),
-    analyzer: {
-      async analyzeWorldModelPatchV2(input) {
-        patchCalls += 1;
-        if (patchCalls === 1) {
-          return {
-            patch: {schema_version: 2, operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-B"}}]},
-            classified: [],
-          };
-        }
-        return {
-          patch: {schema_version: 2, operations: []},
-          classified: [],
-          fact_delta_summary: {
-            final_result: "ALL_FACTS_REJECTED",
-            parsed_fact_count: 1,
-            rejected_fact_count: 1,
-            accepted_fact_count: 0,
-            accepted_operation_count: 0,
-            canonical_mutation_occurred: false,
-            coverage_dispositions: buildWorldModelSupplementCoverageTargets(input.analysisInput.world_model)
-              .map(target => ({target_id: target.target_id, disposition: "NO_EVIDENCE"})),
-          },
-        };
-      },
-    },
-  });
-  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
-
-  await fixture.runtime.analyzeCurrentWorldModelPatch({
-    analysisInput: {character: {description: "Species-A 中 Type-B 是稳定存在的 biological type。"}},
-    trigger: "manual-patch",
-  });
-  const persisted = fixture.runtime.store.getFloor(1).world_model;
-  assert.deepEqual(persisted.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
-  assert.notEqual(fixture.runtime.getWorldModelDiagnosticState().final_result, "ALL_FACTS_REJECTED");
-  fixture.runtime.destroy();
-});
-
-test("World Supplement fails closed when the Floor version changes before snapshot recovery", async () => {
-  let patchCalls = 0;
-  const fixture = createFixture({
-    retryCount: 1,
-    messages: worldFloorMessages(),
-    analyzer: {
-      async analyzeWorldModelPatchV2() {
-        patchCalls += 1;
-        if (patchCalls === 1) {
-          return {
-            patch: {schema_version: 2, operations: [{op: "ADD_TYPE", target: {kind: "species", species_name: "Species-A"}, type: {name: "Type-B"}}]},
-            classified: [],
-          };
-        }
-        fixture.context.chat[1].content = "当前楼层已被编辑";
-        throw Object.assign(new Error("RETRY_AFTER_FLOOR_CHANGE"), {code: "RETRY_AFTER_FLOOR_CHANGE"});
-      },
-    },
-  });
-  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A", biological_types: [{name: "Type-A"}]}]}));
-  const beforeWrites = fixture.saveFloorCalls();
-
-  await assert.rejects(
-    fixture.runtime.analyzeCurrentWorldModelPatch({
-      analysisInput: {character: {description: "Species-A 中 Type-B 是稳定存在的 biological type。"}},
-      trigger: "manual-patch",
-    }),
-    error => error?.code === "REQUEST_ABORTED",
-  );
-  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
-  assert.equal(fixture.saveFloorCalls(), beforeWrites);
-  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_SNAPSHOT_PERSISTED_AFTER_ATTEMPT_FAILURE"), false);
   fixture.runtime.destroy();
 });
 
@@ -7845,9 +7661,10 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
   assert.equal(accepted.accepted_operation_count, 0);
   assert.equal(accepted.canonical_mutation_occurred, false);
   assert.equal(accepted.persistence_occurred, false);
-  const confirmed = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "WORLD_PERSISTENCE_CONFIRMED");
-  assert.equal(confirmed.persistence_occurred, true);
-  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
+  const skipped = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "WORLD_PERSISTENCE_SKIPPED");
+  assert.equal(skipped.persistence_occurred, false);
+  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, existing);
   assert.equal(JSON.stringify(fixture.runtime.store.getFloor(1)).includes("WORLD_FACT_DELTA_PARSED"), false);
   fixture.runtime.destroy();
 });
@@ -7992,8 +7809,9 @@ test("World Patch v2 empty operations preserve the complete Existing model", asy
   await seedWorldOwner(fixture, existing);
   const beforeWrites = fixture.saveFloorCalls();
   await fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {}, trigger: "manual-patch" });
-  assert.deepEqual(fixture.runtime.store.getFloor(1).world_model, existing);
-  assert.equal(fixture.saveFloorCalls(), beforeWrites + 1);
+  assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, existing);
+  assert.equal(fixture.saveFloorCalls(), beforeWrites);
   fixture.runtime.destroy();
 });
 

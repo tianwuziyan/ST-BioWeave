@@ -10,11 +10,11 @@ import {
 import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
 import { renderCharacterState } from './character-state.js'
 const capabilityLabels = {
-  can_produce_sperm: '可产生精子',
-  can_produce_ova: '可产生卵子',
-  can_fertilize: '可使对方受精',
-  can_be_fertilized: '可受精',
-  can_cause_pregnancy: '可导致受孕',
+  can_produce_sperm: '产生精子',
+  can_produce_ova: '产生卵子',
+  can_fertilize: '使对方受精',
+  can_be_fertilized: '自身可受精',
+  can_cause_pregnancy: '使对方妊娠',
   can_carry_pregnancy: '可承载妊娠',
 }
 const eventTypeLabels = {
@@ -248,7 +248,8 @@ function renderExposures(subject, activeEvents, currentStoryTime = null, storyTi
 }
 function renderAliasEditor(aliasEditor, displayName) {
   if (!aliasEditor?.open) return ''
-  if (aliasEditor.loading) return '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器"><p class="bioweave-muted">正在读取当前 Floor 昵称…</p></div>'
+  if (aliasEditor.loading)
+    return '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器"><p class="bioweave-muted">正在读取当前 Floor 昵称…</p></div>'
   const aliases = Array.isArray(aliasEditor.draftAliases) ? aliasEditor.draftAliases : []
   return (
     '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器">' +
@@ -257,9 +258,32 @@ function renderAliasEditor(aliasEditor, displayName) {
     ' 个</span></div>' +
     '<div class="bioweave-character-alias-fields">' +
     (aliases.length
-      ? aliases.map((alias, index) => '<label class="bioweave-character-alias-field"><span>别名</span><input class="bioweave-input" type="text" value="' + escapeHtml(alias) + '" data-bioweave-alias-input="' + index + '" aria-label="昵称 ' + (index + 1) + '"><button type="button" data-bioweave-action="remove-character-alias" data-bioweave-alias-index="' + index + '" aria-label="删除昵称' + escapeHtml(alias) + '" title="删除"' + (aliasEditor.saving ? ' disabled' : '') + '>×</button></label>').join('')
+      ? aliases
+          .map(
+            (alias, index) =>
+              '<label class="bioweave-character-alias-field"><span>别名</span><input class="bioweave-input" type="text" value="' +
+              escapeHtml(alias) +
+              '" data-bioweave-alias-input="' +
+              index +
+              '" aria-label="昵称 ' +
+              (index + 1) +
+              '"><button type="button" data-bioweave-action="remove-character-alias" data-bioweave-alias-index="' +
+              index +
+              '" aria-label="删除昵称' +
+              escapeHtml(alias) +
+              '" title="删除"' +
+              (aliasEditor.saving ? ' disabled' : '') +
+              '>×</button></label>',
+          )
+          .join('')
       : '<p class="bioweave-muted">暂无昵称/别名</p>') +
-    '</div><div class="bioweave-character-alias-actions"><button type="button" class="bioweave-button bioweave-character-alias-add" data-bioweave-action="add-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>＋ 添加昵称</button><div class="right"><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-alias"' + (aliasEditor.saving ? ' disabled' : '') + '>取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-aliases"' + (aliasEditor.saving ? ' disabled' : '') + '>保存</button></div></div>' +
+    '</div><div class="bioweave-character-alias-actions"><button type="button" class="bioweave-button bioweave-character-alias-add" data-bioweave-action="add-character-alias"' +
+    (aliasEditor.saving ? ' disabled' : '') +
+    '>＋ 添加昵称</button><div class="right"><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-alias"' +
+    (aliasEditor.saving ? ' disabled' : '') +
+    '>取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-aliases"' +
+    (aliasEditor.saving ? ' disabled' : '') +
+    '>保存</button></div></div>' +
     (aliasEditor.error ? '<p class="bioweave-form-error">' + escapeHtml(aliasEditor.error) + '</p>' : '') +
     '</div>'
   )
@@ -322,7 +346,18 @@ function unavailableDetailPage() {
     '</section>'
   )
 }
-export function charactersPage({ characterId = null, trackingSubjects = [], characterProfiles = {}, activeEvents = [], analysisStatus = null, currentState = null, currentStateStatus = 'NO_CHARACTER_FLOOR', currentStoryTime = null, currentStoryTimeDifferences = {}, aliasEditor = null } = {}) {
+export function charactersPage({
+  characterId = null,
+  trackingSubjects = [],
+  characterProfiles = {},
+  activeEvents = [],
+  analysisStatus = null,
+  currentState = null,
+  currentStateStatus = 'NO_CHARACTER_FLOOR',
+  currentStoryTime = null,
+  currentStoryTimeDifferences = {},
+  aliasEditor = null,
+} = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
   const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events')
@@ -331,9 +366,10 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
       const displayName = subject.display_name ?? '未命名角色'
       const exposureCount = Array.isArray(subject.exposure_event_ids) ? subject.exposure_event_ids.length : 0
       const selected = String(characterId ?? '') === key
-      const statusMarkup = subject.status && subject.status !== 'active'
-        ? '<span class="bioweave-badge ' + trackingSubjectTone(subject.status) + '">' + escapeHtml(subjectStatusLabel(subject.status)) + '</span>'
-        : ''
+      const statusMarkup =
+        subject.status && subject.status !== 'active'
+          ? '<span class="bioweave-badge ' + trackingSubjectTone(subject.status) + '">' + escapeHtml(subjectStatusLabel(subject.status)) + '</span>'
+          : ''
       return (
         '<button type="button" class="bioweave-card bioweave-character-row' +
         (selected ? ' selected' : '') +
@@ -353,37 +389,46 @@ export function charactersPage({ characterId = null, trackingSubjects = [], char
     status.state === 'not_analyzed'
       ? '<div class="bioweave-card bioweave-empty"><b>尚未完成事件分析。</b>' + '<p>完成当前楼层分析后，符合追踪条件的角色会显示在这里。</p></div>'
       : status.state === 'running' && WORLD_ANALYSIS_PHASES.has(status.phase)
-        ? '<div class="bioweave-card bioweave-empty"><b>等待世界分析完成…</b>' +
-          '<p>世界模型就绪后才会开始人物与事件分析。</p></div>'
-      : status.state === 'running'
-        ? '<div class="bioweave-card bioweave-empty"><b>当前楼层正在分析中。</b>' +
-          '<p>分析完成后将更新 BiologicalEvent 与 Tracking Subject。</p></div>'
-        : status.state === 'cancelled'
-          ? '<div class="bioweave-card bioweave-empty"><b>本次事件分析已取消。</b>' +
-            '<p>现有 Tracking Subject 与历史事件仍然保留，可重新分析当前楼层。</p></div>'
-          : status.state === 'failed'
-            ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>' + '<p>请稍后重试。如有旧的成功事件，它们仍然有效。</p></div>'
-            : status.state === 'success' && Number(status.event_count) === 0
-              ? '<div class="bioweave-card bioweave-empty"><b>本楼分析完成，未发现 Biological Event。</b>' +
-                '<p>这是当前楼层的有效空结果；已有的历史人物资料仍按当前有效 Floor 数据显示。</p></div>'
-            : '<div class="bioweave-card bioweave-empty"><b>当前没有需要事件追踪的角色。</b>' +
-              '<p>当前没有进入 Tracking Subject Registry 的角色。</p>' +
-              '<dl class="bioweave-data-list bioweave-tracking-counts">' +
-              '<div><dt>当前有效事件</dt><dd>' +
-              analysisStatusCount(status, 'active_event_count', 0) +
-              '</dd></div>' +
-              '<div><dt>亲密互动事件</dt><dd>' +
-              analysisStatusCount(status, 'sexual_activity_count', 0) +
-              '</dd></div>' +
-              '<div><dt>事件追踪人物</dt><dd>' +
-              analysisStatusCount(status, 'tracking_subject_count', 0) +
-              '</dd></div>' +
-              '</dl></div>'
+        ? '<div class="bioweave-card bioweave-empty"><b>等待世界分析完成…</b>' + '<p>世界模型就绪后才会开始人物与事件分析。</p></div>'
+        : status.state === 'running'
+          ? '<div class="bioweave-card bioweave-empty"><b>当前楼层正在分析中。</b>' +
+            '<p>分析完成后将更新 BiologicalEvent 与 Tracking Subject。</p></div>'
+          : status.state === 'cancelled'
+            ? '<div class="bioweave-card bioweave-empty"><b>本次事件分析已取消。</b>' +
+              '<p>现有 Tracking Subject 与历史事件仍然保留，可重新分析当前楼层。</p></div>'
+            : status.state === 'failed'
+              ? '<div class="bioweave-card bioweave-empty"><b>当前楼层事件分析失败。</b>' +
+                '<p>请稍后重试。如有旧的成功事件，它们仍然有效。</p></div>'
+              : status.state === 'success' && Number(status.event_count) === 0
+                ? '<div class="bioweave-card bioweave-empty"><b>本楼分析完成，未发现 Biological Event。</b>' +
+                  '<p>这是当前楼层的有效空结果；已有的历史人物资料仍按当前有效 Floor 数据显示。</p></div>'
+                : '<div class="bioweave-card bioweave-empty"><b>当前没有需要事件追踪的角色。</b>' +
+                  '<p>当前没有进入 Tracking Subject Registry 的角色。</p>' +
+                  '<dl class="bioweave-data-list bioweave-tracking-counts">' +
+                  '<div><dt>当前有效事件</dt><dd>' +
+                  analysisStatusCount(status, 'active_event_count', 0) +
+                  '</dd></div>' +
+                  '<div><dt>亲密互动事件</dt><dd>' +
+                  analysisStatusCount(status, 'sexual_activity_count', 0) +
+                  '</dd></div>' +
+                  '<div><dt>事件追踪人物</dt><dd>' +
+                  analysisStatusCount(status, 'tracking_subject_count', 0) +
+                  '</dd></div>' +
+                  '</dl></div>'
   const selectedId = String(characterId ?? '').trim()
   const selectedSubject = subjects.find(item => item.key === selectedId)?.value
   const detail = selectedId
     ? selectedSubject
-      ? detailPage({ subject: selectedSubject, profile: profileFor(characterProfiles, selectedId), activeEvents: effectiveEvents, currentStoryTime, storyTimeDifferences: currentStoryTimeDifferences, aliasEditor, currentState, currentStateStatus })
+      ? detailPage({
+          subject: selectedSubject,
+          profile: profileFor(characterProfiles, selectedId),
+          activeEvents: effectiveEvents,
+          currentStoryTime,
+          storyTimeDifferences: currentStoryTimeDifferences,
+          aliasEditor,
+          currentState,
+          currentStateStatus,
+        })
       : unavailableDetailPage()
     : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
   if (selectedId && !subjects.length) {

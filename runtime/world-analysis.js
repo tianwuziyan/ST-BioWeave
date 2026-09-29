@@ -62,40 +62,6 @@ function cloneWorldValue(value) {
   return value;
 }
 
-function supplementCoverageAddress(target) {
-  return [
-    target?.scope ?? '',
-    target?.species ?? '',
-    target?.biological_type ?? '',
-    target?.field ?? '',
-  ].join('\u001f');
-}
-
-function buildSupplementRetryDirective(diagnostics, kind = 'completeness_retry') {
-  const groups = Array.isArray(diagnostics) ? diagnostics : [diagnostics];
-  const items = groups.flatMap(group => [
-    ...(Array.isArray(group?.missing) ? group.missing : []),
-    ...(Array.isArray(group?.invalid) ? group.invalid : []),
-    ...(Array.isArray(group?.dynamic_coverage_target_ids)
-      ? group.dynamic_coverage_target_ids.map(target_id => ({target_id, reason: group.reason ?? 'dynamic_coverage_pending'}))
-      : []),
-    ...(group && !Array.isArray(group?.missing) && !Array.isArray(group?.invalid) && !Array.isArray(group?.dynamic_coverage_target_ids) ? [group] : []),
-  ]);
-  const seen = new Set();
-  const bounded = items.filter(item => item && typeof item === 'object').map(item => ({
-    target_id: typeof item.target_id === 'string' ? item.target_id : null,
-    subject_id: typeof item.subject_id === 'string' ? item.subject_id : null,
-    reason: typeof item.reason === 'string' ? item.reason : 'invalid',
-    code: typeof item.code === 'string' ? item.code : null,
-  })).filter(item => {
-    const key = `${item.target_id ?? ''}|${item.subject_id ?? ''}|${item.reason}|${item.code ?? ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return Boolean(item.target_id || item.subject_id);
-  }).slice(0, 32);
-  return {kind, items: bounded};
-}
-
 export function createWorldAnalysis({
   analyzer,
   isEnabled,
@@ -504,7 +470,6 @@ export function createWorldAnalysis({
       diagnostic_execution_id: `world-fact-delta-${Date.now()}-${++worldFactDeltaDiagnosticSequence}`,
     };
     const persistenceOwner = {key, domain: "world", attempt: null, retryIndex: null, claimed: false};
-    let supplementRetryDirective = null;
     let formatRetryUsed = false;
     let supplementContinuationState = null;
     const publishPhase = phase => {
@@ -629,8 +594,11 @@ export function createWorldAnalysis({
           });
         }
         const currentFloorData = getFloor(target.index, target.swipeId) ?? emptyFloor();
-        const canonicalNoop = sameFloorVersion(floorVersionFromData(currentFloorData), target.version)
-          && canonicalWorldEqual(currentFloorData.world_model, model);
+        const baselineModel = mode === "patch" && supplementContinuationState
+          ? supplementContinuationState.baselineModel
+          : currentFloorData.world_model;
+        const canonicalNoop = canonicalWorldEqual(baselineModel, model)
+          && (mode !== "patch" || Boolean(supplementContinuationState));
         if (canonicalNoop) {
           const noopFingerprint = await fingerprintWorldModel(model);
           emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
@@ -866,10 +834,7 @@ export function createWorldAnalysis({
                 baselineModel: cloneWorldValue(resolved.model),
                 transientModel: cloneWorldValue(resolved.model),
                 meta: cloneWorldValue(resolved.meta ?? {}),
-                baselineTargetKeys: new Set(initialTargets.map(supplementCoverageAddress)),
-                reviewedTargetKeys: new Set(),
                 rounds: [],
-                coverageExpansionRoundCount: 0,
                 initialTargetCount: initialTargets.length,
                 hasAcceptedMutation: false,
                 acceptedOperationCount: 0,
@@ -883,26 +848,23 @@ export function createWorldAnalysis({
               };
             }
             const baselineFingerprint = await fingerprintWorldModel(resolved.model);
-            const baselineSource = supplementContinuationState.rounds.length
-              ? "TRANSIENT_CANDIDATE"
-              : "AUTHORITATIVE_FLOOR";
+            const baselineSource = "AUTHORITATIVE_FLOOR";
             const patchAnalysisInput = {
               ...(analysisInput ?? {}),
               world_model: cloneWorldValue(resolved.model),
               supplement_candidate: cloneWorldValue(resolved.model),
-              supplement_request_mode: supplementRetryDirective?.kind === "coverage_continuation"
-                ? "COVERAGE_CONTINUATION"
-                : supplementRetryDirective?.kind === "format_retry"
-                  ? "FORMAT_RETRY"
-                : supplementRetryDirective
-                  ? "AUTOMATIC_RETRY"
-                  : (supplementContinuationState.rounds.length ? "COVERAGE_CONTINUATION" : "INITIAL"),
-              supplement_request_round: supplementContinuationState.rounds.length + 1,
-              ...(supplementRetryDirective?.kind === "coverage_continuation" || supplementRetryDirective?.kind === "format_retry"
-                ? {supplement_retry_directive: cloneWorldValue(supplementRetryDirective)}
+              supplement_request_mode: "INITIAL",
+              ...(formatRetryUsed
+                ? {supplement_retry_directive: {kind: "format_retry", items: []}}
                 : {}),
             };
             const inputTargets = buildWorldModelSupplementCoverageTargets(resolved.model);
+            const initialTargetKeys = new Set(inputTargets.map(target => [
+              target.scope ?? '',
+              target.species ?? '',
+              target.biological_type ?? '',
+              target.field ?? '',
+            ].join('\u001f')));
             const mergeAcceptedSupplementPatch = async (patch, summary) => {
               const previousSnapshot = supplementContinuationState.transientModel;
               const candidateModel = mergeWorldModelPatchV2(
@@ -984,27 +946,19 @@ export function createWorldAnalysis({
                 (Array.isArray(baseSummary.coverage_dispositions) ? baseSummary.coverage_dispositions : [])
                   .map(item => [item.target_id, item.disposition]),
               );
-              const inputTargetById = new Map(inputTargets.map(item => [item.target_id, item]));
-              for (const [targetId, disposition] of dispositionById) {
-                if (['EMITTED', 'NO_EVIDENCE'].includes(disposition) && inputTargetById.has(targetId))
-                  supplementContinuationState.reviewedTargetKeys.add(supplementCoverageAddress(inputTargetById.get(targetId)));
-              }
-              if (
-                !supplementContinuationState.rounds.length &&
-                baseSummary.supplement_completeness_complete !== false &&
-                dispositionById.size === 0
-              ) {
-                for (const inputTarget of inputTargets)
-                  supplementContinuationState.reviewedTargetKeys.add(supplementCoverageAddress(inputTarget));
-              }
               const candidateTargets = buildWorldModelSupplementCoverageTargets(candidateModel);
-              const dynamicTargets = candidateTargets.filter(target => !supplementContinuationState.baselineTargetKeys.has(supplementCoverageAddress(target)));
-              const unresolvedDynamicTargets = dynamicTargets.filter(target => !supplementContinuationState.reviewedTargetKeys.has(supplementCoverageAddress(target)));
+              const dynamicTargets = candidateTargets.filter(target => !initialTargetKeys.has([
+                target.scope ?? '',
+                target.species ?? '',
+                target.biological_type ?? '',
+                target.field ?? '',
+              ].join('\u001f')));
+              const unresolvedDynamicTargets = dynamicTargets;
               const acceptedNewIdentityCount = Number(baseSummary.accepted_new_type_identity_count) || 0;
               const roundSummary = {
                 round: supplementContinuationState.rounds.length + 1,
                 input_target_count: inputTargets.length,
-                reviewed_target_count: dispositionById.size || inputTargets.length,
+                reviewed_target_count: dispositionById.size,
                 emitted_count: [...dispositionById.values()].filter(value => value === 'EMITTED').length,
                 no_evidence_count: [...dispositionById.values()].filter(value => value === 'NO_EVIDENCE').length,
                 accepted_fact_count: Number(baseSummary.accepted_fact_count) || 0,
@@ -1014,8 +968,6 @@ export function createWorldAnalysis({
                 unresolved_target_count: unresolvedDynamicTargets.length,
               };
               supplementContinuationState.rounds.push(roundSummary);
-              if (unresolvedDynamicTargets.length > 0) supplementContinuationState.coverageExpansionRoundCount += 1;
-              supplementRetryDirective = null;
               factDeltaSummary = {
                 ...baseSummary,
                 baseline_source: baselineSource,
@@ -1030,29 +982,12 @@ export function createWorldAnalysis({
                 dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
                 unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
                 unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
-                coverage_expansion_round_count: supplementContinuationState.coverageExpansionRoundCount,
                 coverage_rounds: cloneWorldValue(supplementContinuationState.rounds.slice(-16)),
                 coverage_fixed_point_reached: unresolvedDynamicTargets.length === 0,
+                dynamic_coverage_unresolved_in_single_response: unresolvedDynamicTargets.length > 0,
               };
               factDeltaSummary.final_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
               supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
-              if (unresolvedDynamicTargets.length > 0) {
-                const error = new Error("WORLD_MODEL_SUPPLEMENT_INCOMPLETE");
-                error.code = "WORLD_MODEL_SUPPLEMENT_INCOMPLETE";
-                error.diagnostic_code = "WORLD_MODEL_SUPPLEMENT_COVERAGE_NOT_AT_FIXED_POINT";
-                error.retry_kind = "coverage_continuation";
-                error.analysis_stage = "supplement_completeness";
-                error.completeness_failure = true;
-                error.diagnostics = [{
-                  reason: "dynamic_coverage_pending",
-                  dynamic_coverage_target_count: dynamicTargets.length,
-                  dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
-                  unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
-                  unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
-                  coverage_expansion_round_count: supplementContinuationState.coverageExpansionRoundCount,
-                }];
-                throw error;
-              }
             } catch (error) {
               if (error?.accepted_patch?.operations?.length) {
                 factDeltaSummary = cloneWorldValue(error.accepted_fact_delta_summary ?? {
@@ -1079,21 +1014,34 @@ export function createWorldAnalysis({
                   unresolved_target_count: 0,
                 });
               }
-              let nextRetryDirective = supplementRetryDirective;
               if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
-                const kind = error?.retry_kind
-                  ?? (error?.diagnostic_code === "WORLD_MODEL_SUPPLEMENT_COVERAGE_NOT_AT_FIXED_POINT"
-                    ? "coverage_continuation"
-                    : "completeness_retry");
-                nextRetryDirective = buildSupplementRetryDirective(error.diagnostics, kind);
-                supplementRetryDirective = nextRetryDirective;
+                const semanticFailureSummary = {
+                  ...(factDeltaSummary ?? {
+                    analysis_stage_succeeded: false,
+                    completeness_required: true,
+                    completeness_satisfied: false,
+                  }),
+                  completeness_satisfied: false,
+                  semantic_incomplete: true,
+                  semantic_failure_code: error?.diagnostic_code ?? error?.code ?? "WORLD_MODEL_SUPPLEMENT_INCOMPLETE",
+                  semantic_diagnostics: error?.diagnostics ? cloneWorldValue(error.diagnostics) : [],
+                  analysis_outcome: "COMPLETED_WITH_SEMANTIC_DIAGNOSTICS",
+                };
+                semanticFailureSummary.final_result = classifyWorldModelFinalResult({summary: semanticFailureSummary});
+                rememberFactDeltaExecution(
+                  factDeltaExecutionId,
+                  target,
+                  mode,
+                  semanticFailureSummary,
+                  supplementContinuationState?.transientModel ?? null,
+                );
+                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(semanticFailureSummary);
+                factDeltaSummary = semanticFailureSummary;
               } else if (error?.format_retryable === true) {
                 if (!formatRetryUsed) {
                   formatRetryUsed = true;
                   error.retry_kind = "format_retry";
                   error.analysis_stage = "supplement_format";
-                  supplementRetryDirective = {kind: "format_retry", items: []};
-                  nextRetryDirective = supplementRetryDirective;
                 } else {
                   error.format_retry_exhausted = true;
                   error.analysis_stage = "supplement_format";
@@ -1110,23 +1058,19 @@ export function createWorldAnalysis({
                 failure_code: error?.diagnostic_code ?? error?.code ?? error?.message ?? "WORLD_MODEL_SUPPLEMENT_FAILED",
                 ...(error?.diagnostic_code ? {diagnostic_code: error.diagnostic_code} : {}),
                 ...(error?.diagnostics ? {completeness_diagnostics: cloneWorldValue(error.diagnostics)} : {}),
-                ...(nextRetryDirective ? {
-                  retry_reason: nextRetryDirective.items?.[0]?.reason ?? error?.diagnostic_code ?? error?.code ?? null,
-                  retry_target_ids: (nextRetryDirective.items ?? []).map(item => item.target_id).filter(Boolean).slice(0, 64),
-                  retry_attempt: retryIndex + 1,
-                  previous_failure_code: error?.diagnostic_code ?? error?.code ?? null,
-                } : {}),
               };
-              failureSummary.final_result = classifyWorldModelFinalResult({summary: failureSummary, error});
-              rememberFactDeltaExecution(
-                factDeltaExecutionId,
-                target,
-                mode,
-                failureSummary,
-                supplementContinuationState?.transientModel ?? null,
-              );
-              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
-              throw error;
+              if (error?.code !== "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
+                failureSummary.final_result = classifyWorldModelFinalResult({summary: failureSummary, error});
+                rememberFactDeltaExecution(
+                  factDeltaExecutionId,
+                  target,
+                  mode,
+                  failureSummary,
+                  supplementContinuationState?.transientModel ?? null,
+                );
+                supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
+                throw error;
+              }
             }
             model = cloneWorldValue(supplementContinuationState.transientModel);
             meta = {
@@ -1200,6 +1144,13 @@ export function createWorldAnalysis({
               persistence_confirmed: snapshot.persistenceConfirmed,
               failure_code: error?.code ?? error?.message ?? "ANALYSIS_FAILED",
             }, "world");
+            return {
+              ...recovered,
+              final_result: "UPDATED",
+              last_attempt_failed: true,
+              snapshot_preserved: true,
+              user_visible_outcome: "SUCCESS",
+            };
           } catch (persistenceError) {
             persistenceError.cause = error;
             throw persistenceError;

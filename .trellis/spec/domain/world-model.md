@@ -86,9 +86,9 @@ create a UI projection mutation.
 World Supplement uses one execution-scoped cumulative snapshot. At execution
 start, Runtime clones the authoritative baseline model from the valid Floor.
 Each guarded accepted Patch v2 delta merges into that snapshot; parser,
-Resolver, or Evidence Guard rejected Facts never enter it. A later retry,
-completeness failure, coverage continuation failure, format failure, or API
-failure cannot roll back an already accepted snapshot mutation.
+Resolver, or Evidence Guard rejected Facts never enter it. A later transport,
+response-format, or API failure cannot roll back an already accepted snapshot
+mutation.
 
 Attempts never write the Floor directly. When the execution ends, Runtime
 compares the accumulated snapshot with the authoritative baseline. A changed,
@@ -1708,8 +1708,8 @@ evidence remains in its historical system/assistant messages and is not
 converted into a JSON AST. The request object is Host control/reference data,
 not an Evidence Guard evidence unit. API role and permitted-evidence
 classification are independent. Root-format retry is a single,
-explicit `FORMAT_RETRY`; it is separate from completeness retry and coverage
-continuation. Native JSON mode is opt-in through an explicit capability and is
+explicit `FORMAT_RETRY`; semantic completeness is handled locally and does not
+create another semantic model request. Native JSON mode is opt-in through an explicit capability and is
 never inferred from provider or model names.
 
 The Supplement analyzer task prompt is intentionally plain-language and
@@ -1718,11 +1718,27 @@ Species/Type identity, how to inspect every Type field and world-level field,
 and when `NO_EVIDENCE` is allowed. It must not expose Host implementation
 stages such as Resolver, Patch v2, Fact IR, Floor, persistence, diagnostics,
 or internal accounting as the model's primary task. JSON response rules are
-kept at the end as a separate output contract. `COMPLETENESS_RETRY` preserves
-evidence-supported discoveries and repairs omissions/counts; it must not delete
-supported Facts or turn every target into `NO_EVIDENCE`. `FORMAT_RETRY` only
-repairs JSON serialization, and `COVERAGE_CONTINUATION` preserves valid
-discoveries while continuing unresolved review.
+kept at the end as a separate output contract. One business execution has one
+semantic model response: discovery of a new Species or Biological Type and
+its supported dependent facts must be completed in that response. Host may
+derive dynamic coverage targets and record local completeness diagnostics,
+but dynamic targets never trigger another semantic model request.
+
+Automatic retry is transport/response-recovery infrastructure, not semantic
+continuation. It may retry API/request failures, response-read failures, and
+unrecoverable root JSON/format failures using the existing plugin retry
+setting. Semantic incompleteness, dynamic coverage, new identities, missing
+semantic fields, fixed-point accounting, and `ALL_FACTS_REJECTED` do not
+consume that retry budget. `FORMAT_RETRY` is the only structured model retry
+control and only repairs root JSON serialization; ordinary API recovery
+replays the same initial semantic request.
+
+User-visible outcome follows the final transaction, not the last model attempt.
+A mutated execution Snapshot with confirmed persistence is `SUCCESS` even when
+the last recovery attempt failed. A canonically unchanged Snapshot is
+`NO_CHANGE` and must not display an update failure. A mutated Snapshot without
+confirmed persistence, or a valid cancellation/abort, remains a failure or
+cancellation according to the existing Runtime UX.
 
 The JSON adapter separates schema/control tokens from semantic value text:
 `scope`, `field`, address identifiers, review identifiers, and review enums

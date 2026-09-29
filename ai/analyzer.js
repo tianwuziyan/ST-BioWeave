@@ -629,7 +629,6 @@ function factDeltaEvidenceSummary(input = {}) {
 function supplementRequestBaseInput(input = {}, existingModel, candidateModel) {
   const {
     supplement_request_mode: _requestMode,
-    supplement_request_round: _requestRound,
     supplement_retry_directive: _retryDirective,
     ...baseInput
   } = input && typeof input === 'object' ? input : {};
@@ -638,12 +637,11 @@ function supplementRequestBaseInput(input = {}, existingModel, candidateModel) {
     world_model: existingModel,
     supplement_candidate: candidateModel,
     supplement_request_mode: undefined,
-    supplement_request_round: undefined,
     supplement_retry_directive: undefined,
   };
 }
 
-async function supplementRequestParity({analysisInput, existingModel, candidateModel, retryDirective, requestMode, requestRound, promptSettings, messages}) {
+async function supplementRequestParity({analysisInput, existingModel, candidateModel, retryDirective, requestMode, promptSettings, messages}) {
   const evidenceUnits = factDeltaEvidenceTraceUnits(analysisInput);
   const evidencePayload = evidenceUnits.map(({source_kind, source_index, line_index, text, parent_context}) => ({
     source_kind,
@@ -671,7 +669,7 @@ async function supplementRequestParity({analysisInput, existingModel, candidateM
     })).sort((left, right) => left.target_id.localeCompare(right.target_id))),
     fingerprint(baseMessages),
     fingerprint(messages),
-    fingerprint({request_mode: requestMode, request_round: requestRound, directive: retryDirective ?? null}),
+    fingerprint({request_mode: requestMode, directive: retryDirective ?? null}),
   ]);
   return {
     permitted_evidence_fingerprint: evidenceFingerprint.fingerprint,
@@ -5103,31 +5101,23 @@ export function createAnalyzer({
       supplement_candidate: candidateModel,
       supplement_retry_directive: retryDirective,
     }, promptSettings)
-    const requestMode = input.supplement_request_mode
-      ?? analysisInput.supplement_request_mode
-      ?? (retryDirective?.kind ?? (retryDirective ? 'completeness_retry' : 'initial'))
-    const requestRound = Number(input.supplement_request_round ?? analysisInput.supplement_request_round) || 1
+    const requestMode = retryDirective?.kind === 'format_retry' ? 'FORMAT_RETRY' : 'INITIAL'
     const requestParity = await supplementRequestParity({
       analysisInput,
       existingModel,
       candidateModel,
       retryDirective,
       requestMode,
-      requestRound,
       promptSettings,
       messages,
     })
     const requestEnvelope = {
       request_mode: requestMode,
-      request_round: requestRound,
       request_total_char_count: messages.reduce((total, message) => total + String(message?.content ?? '').length, 0),
       permitted_evidence_char_count: requestParity.permitted_evidence_char_count,
       existing_reference_char_count: JSON.stringify(existingModel ?? {}).length,
       coverage_target_char_count: JSON.stringify(coverageTargets).length,
       retry_directive_char_count: JSON.stringify(retryDirective ?? '').length,
-      continuation_directive_char_count: String(requestMode).toUpperCase() === 'COVERAGE_CONTINUATION'
-        ? JSON.stringify(retryDirective ?? '').length
-        : 0,
       host_diagnostics_included: false,
       permitted_evidence_fingerprint: requestParity.permitted_evidence_fingerprint,
       existing_reference_fingerprint: requestParity.existing_reference_fingerprint,
