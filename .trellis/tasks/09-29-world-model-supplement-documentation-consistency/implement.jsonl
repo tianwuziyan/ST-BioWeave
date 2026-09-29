@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Normative World Model/Supplement architecture source of truth"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor persistence ownership boundary for documentation accuracy"}
+{"file":"docs/ARCHITECTURE.md","reason":"Developer-facing architecture summary"}
+{"file":"README.md","reason":"Public developer-facing project summary"}

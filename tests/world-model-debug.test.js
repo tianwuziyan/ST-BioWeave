@@ -168,15 +168,15 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
         coverage_disposition_count: 23,
         coverage_target_count: 23,
         supplement_completeness_complete: true,
-        world_model_debug_schema_version: 2,
+        world_model_debug_schema_version: 3,
         first_failed_stage: 'FACT_RESOLUTION',
         type_identity_decisions: [{species: 'Species-A', biological_type: 'Type-B', identity_support_classification: 'LEGITIMATELY_UNSUPPORTED'}],
-        final_result: 'ALL_FACTS_REJECTED',
+        fact_delta_result: 'ALL_FACTS_REJECTED',
       },
       active_world_execution_id: 'exec-last',
       current_execution_candidate_id: null,
       candidate_belongs_to_previous_execution: true,
-      final_result: 'ALL_FACTS_REJECTED',
+      execution_result: 'ALL_FACTS_REJECTED',
       candidate_state: null,
       request_transitions: [{previous_execution_id: 'exec-previous', current_execution_id: 'exec-last', existing_reference: 'CHANGED'}],
       latest_nonempty_fact_delta: {
@@ -199,6 +199,11 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
   assert.match(markup, /TYPE IDENTITY DECISIONS/u);
   assert.match(markup, /FACT_RESOLUTION/u);
   assert.match(markup, /Candidate Belongs to Previous Execution/u);
+  assert.match(markup, /Execution Result/u);
+  assert.match(markup, /Fact Delta Result/u);
+  assert.match(markup, /Fact Delta Analysis Result/u);
+  assert.match(markup, /Derived Target Accounting/u);
+  assert.match(markup, /Persistence Confirmed/u);
   assert.match(markup, /WORLD_UI_RENDERED/u);
   assert.match(markup, /data-bioweave-world-model-live-state/u);
   assert.match(markup, /Raw Fact Blocks/u);

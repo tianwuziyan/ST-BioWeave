@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model diagnostics contract and architecture boundaries"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor ownership and persistence boundary required before cross-layer diagnostics work"}
+{"file":"docs/ARCHITECTURE.md","reason":"Runtime architecture and protected semantic/persistence boundaries"}
+{"file":"docs/ui-framework.config.json","reason":"Debug settings UI contract"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Debug settings UI structure and hooks"}

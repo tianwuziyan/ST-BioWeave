@@ -1,0 +1,2 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify current architecture remains accurately documented after cleanup"}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify no semantic/persistence boundary changed"}

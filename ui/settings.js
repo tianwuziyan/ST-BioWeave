@@ -1136,9 +1136,12 @@ function renderWorldModelLastExecution(liveState = null) {
     ['Candidate Fingerprint', liveState?.candidate_fingerprint],
     ['UI Projection', liveState?.ui_projection_state],
     ['UI Fingerprint', liveState?.ui_state_fingerprint],
+    ['Execution Result', liveState?.execution_result],
+    ['Fact Delta Result', fact?.fact_delta_result],
+    ['Fact Delta Analysis Result', fact?.analysis_outcome],
+    ['Derived Target Accounting', fact?.derived_target_accounting_complete],
     ['Persistence Confirmed', liveState?.persistence_confirmed],
     ['Persisted Fingerprint', liveState?.persisted_fingerprint],
-    ['Final Result', liveState?.final_result ?? fact?.final_result],
   ];
   const transition = Array.isArray(liveState?.request_transitions) ? liveState.request_transitions.at(-1) : null;
   const transitionMarkup = transition
@@ -1147,7 +1150,7 @@ function renderWorldModelLastExecution(liveState = null) {
   const identityMarkup = Array.isArray(fact?.type_identity_decisions)
     ? '<h5>TYPE IDENTITY DECISIONS</h5><pre data-bioweave-world-model-type-identity-decisions>' + escapeHtml(traceValueText(fact.type_identity_decisions.slice(0, 32))) + '</pre>'
     : '';
-  const schemaMismatchMarkup = debugSchemaVersion > 0 && debugSchemaVersion !== 2
+  const schemaMismatchMarkup = debugSchemaVersion > 0 && debugSchemaVersion !== 3
     ? '<p class="bioweave-status-error" data-bioweave-world-model-debug-schema-mismatch>DEBUG_SCHEMA_MISMATCH</p>'
     : '';
   return [

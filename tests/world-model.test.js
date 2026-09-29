@@ -2660,7 +2660,7 @@ test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, 
   assert.equal(parsed.facts[0].species, 'Species-A')
   const resolved = traces.find(trace => trace.stage === 'WORLD_FACT_DELTA_RESOLVED')
   const identityDecision = traces.find(trace => trace.stage === 'WORLD_TYPE_IDENTITY_DECISION')
-  assert.equal(identityDecision.world_model_debug_schema_version, 2)
+  assert.equal(identityDecision.world_model_debug_schema_version, 3)
   assert.equal(identityDecision.identity_support_classification, 'SUPPORTED')
   assert.equal(identityDecision.identity_accepted, true)
   assert.equal(resolved.analysis_stage_succeeded, true)
@@ -2673,7 +2673,7 @@ test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, 
   assert.equal(resolved.rejected_fact_count, 0)
   assert.equal(resolved.accepted_operation_count, 1)
   assert.equal(resolved.canonical_mutation_occurred, true)
-  assert.equal(resolved.persistence_occurred, false)
+  assert.equal(Object.hasOwn(resolved, 'persistence_occurred'), false)
   assert.deepEqual(resolved.fact_mappings[0], {
     fact_index: 0,
     field: 'Type_Identity',

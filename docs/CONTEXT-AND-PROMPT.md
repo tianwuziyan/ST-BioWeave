@@ -192,11 +192,25 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 
 World Analysis 使用相同的首尾边界、选择和来源处理，但不包含 User Persona、Event 角色资料、Target Floor 或 Existing BioWeave reference 等 Event 专属资料。Full World Analysis 的语义是 `permitted evidence → World Fact Discovery / scope / classification → complete World Model`，不消费 Existing World Model baseline；即使调用路径或 `AnalysisInput` 偶然带有旧 `world_model`，Full final messages 也不得包含 `【当前 World Model 参考】`。
 
-Supplement/Patch World Analysis 的语义是 `Existing World Model + evidence → World Fact Discovery / scope / classification → hierarchical Supplement Candidate text → deterministic Candidate → Patch v2`。它必须在最终 API messages 的 Reference Context 中包含完整、已验证的 Existing World Model comparison baseline，并与 Full 使用相同的完整、允许的 World Analysis evidence set。Existing 不是 evidence，不得被 `evidenceUnits()` 收集，也不能证明它自身产生的新 Candidate fact。AI 只输出 evidence-supported Candidate，不输出 Patch、operation 或 ADD/CHANGE/NO-OP；Program 负责 exact comparison、Patch v2、Guard、merge 与 canonical validation。Existing 相同 known fact 省略，null/absent/missing member 可在 evidence 支持时补充，known different value 可提出 correction；omission 不表示 REMOVE。Candidate 不是 canonical model，也不直接进入 Floor/UI。Prompt 必须要求模型先区分 individual fact、world-level rule、world-level exception、world-level unknown、world-level medical context 与 species/type special rule；single-character evidence 不得自动升级为 species/type world rule。
+Supplement/Patch World Analysis 的语义是 `Existing World Model + permitted evidence
+→ one JSON Fact Delta response → Fact validation / canonical address resolution →
+Existing comparison → Fact Delta safety boundary → Host-internal Patch v2 operation
+→ classification / merge`。它必须在最终 API messages 的 Reference Context 中包含
+完整、已验证的 Existing World Model comparison baseline，并与 Full 使用相同的完整、
+允许的 World Analysis evidence set。Existing 和 Coverage Targets 都不是 evidence，
+只有 permitted evidence 可以支持 Fact discovery。AI 输出独立的 evidence-supported
+Facts，不输出 Patch、operation 或 persistence DTO；Program 负责 exact comparison、
+Fact validation、resolver、Fact Delta safety boundary、Patch v2、merge 与 canonical
+validation。一个 Fact 是一个可独立落地的最小 semantic claim；Species /
+Biological_Type 只提供 address/scope，Species_Identity / Type_Identity 才建立
+identity。Existing 相同 known fact 省略，null/absent/missing member 可在 evidence
+支持时补充，known different value 可提出 correction；omission 不表示 REMOVE。
+Fact Delta 不是 canonical model，也不直接进入 Floor/UI。
 
-AI 在 Supplement 中只提出 Candidate；semantic delta、evidence authority、merge、canonical
-validation 和 persistence 仍由 Program/Runtime 负责。Full 的 baseline-free 边界与
-Supplement 的 baseline-aware 边界不得因共享 AnalysisInput DTO 而混淆。
+当前合法的 persistence candidate 仅指 authoritative persistence/readback 确认前的
+transient validated canonical persistence input；它不是 AI hierarchical Candidate、
+Supplement Candidate transport 或 Candidate → Patch v2 adapter。Full 的 baseline-free
+边界与 Supplement 的 baseline-aware 边界不得因共享 AnalysisInput DTO 而混淆。
 
 Protected Core、Task Contract 和 Output Contract 由 BioWeave 代码维护。用户 common prompt 可以补充行为，不能覆盖 schema、业务 invariant 或 validator contract。
 

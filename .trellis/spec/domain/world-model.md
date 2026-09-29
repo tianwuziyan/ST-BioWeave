@@ -56,6 +56,13 @@ World + Character save/update helper.
 
 ### Candidate delivery and persistence order
 
+这里的 persistence candidate 是当前仍有效的运行时概念：它表示 authoritative
+persistence/readback 确认前的 transient validated canonical persistence input。
+它不是已经删除的 AI hierarchical Candidate、Supplement Candidate transport，
+也不是 Candidate-to-Patch adapter。后文出现 Candidate 时，必须按所在上下文
+区分 semantic discovery candidate 与 persistence candidate；Supplement 的模型
+wire response 始终是 JSON Fact Delta，Patch v2 始终是 Host-internal mutation IR。
+
 An accepted World analysis result is first a transient validated candidate, not
 yet an authoritative Floor value. Runtime assigns it an execution-bound
 revision using the canonical World fingerprint and persists it directly through
@@ -156,17 +163,19 @@ current permitted World Analysis evidence
 
 When a valid prior World Model exists, Runtime reuses it by default. World
 Patch / Supplement Analysis first reviews what world-level knowledge the
-current evidence establishes, then consolidates it against the baseline:
+current evidence establishes, then consolidates it against the baseline. Its
+request/response contract is:
 
 ```text
 current permitted World Analysis evidence + Existing target/reference
   -> one Supplement AI request / one response
-     -> AI internal Complete Fact Discovery
-     -> Fact Delta v1
-  -> Fact parser / semantic resolver / Existing comparison
-  -> internal Patch v2
-  -> deterministic safety validation
-  -> deterministic merge
+     -> one JSON Fact Delta root
+  -> `parseWorldModelFactDeltaJson()`
+  -> strict Fact validation / canonical address resolution
+  -> Existing comparison
+  -> Fact Delta safety boundary
+  -> Host-internal Patch v2 operation
+  -> classification / classified merge
   -> complete-model consistency
   -> strict canonical validation
 ```
@@ -175,8 +184,9 @@ Supplement must receive the validated canonical Existing World Model in the
 same request as a TARGET, comparison baseline, and structure reference, and
 must re-review the complete permitted evidence set. AI performs evidence
 discovery and structured claim synthesis; deterministic code performs exact
-Existing comparison and delta calculation. Existing is never evidence. The
-first question is the scope of each discovered fact: individual,
+Existing comparison and delta calculation. Existing is never evidence, and
+Coverage Targets are not evidence. Only permitted evidence can support AI Fact
+discovery. The first question is the scope of each discovered fact: individual,
 world-level rule, world-level exception, world-level unknown, world-level
 medical context, or species/type special rule. Only world-level knowledge is
 eligible for World Model consolidation. The same mechanism covers newly
@@ -194,13 +204,13 @@ The pipeline is therefore:
 
 ```text
 Full:       evidence -> fact discovery/scope/classification
-            -> complete candidate -> Full guards
+            -> complete canonical model -> Full guards
             -> complete consistency -> canonical model -> persist
 Supplement: evidence + Existing target -> one AI response containing
             independent Fact Delta v1 Facts
             -> Fact parser / semantic resolver / Existing comparison
-            -> Fact Delta -> internal Patch v2
-            -> delta safety / Evidence Guard -> deterministic merge
+            -> Fact Delta -> Host-internal Patch v2 operation
+            -> Fact Delta safety boundary -> classification / merge
             -> complete consistency -> canonical validation -> persist
 ```
 
@@ -491,7 +501,7 @@ role of the Existing model:
 
 - Full builds an independent complete model from permitted evidence and does
   not consume an Existing baseline. For each discovered species, Full first
-  enumerates every evidence-supported biological-type candidate, then applies
+  enumerates every evidence-supported biological-type discovery item, then applies
   Species Binding -> Exclusion Gate -> Stability Gate -> Biological /
   Reproductive Classification Gate -> Evidence Sufficiency -> Type Creation
   to each candidate. Discovering a majority type must not end minority/rare
@@ -507,7 +517,7 @@ An Existing entry is not evidence for a new fact. Existing non-empty content
 does not authorize skipping complete evidence review, species completeness
 review, biological-type classification review, missing-world-fact review, or
 compatible consolidation. An empty Patch is legal only after those reviews
-have completed and no legal evidence-supported `ADD` or `CHANGE` candidate
+  have completed and no legal evidence-supported `ADD` or `CHANGE` claim
 remains. “Existing already has content” is not a completed review.
 
 The Prompt operationalizes Supplement as one request and one response with
@@ -906,8 +916,19 @@ user       Existing + Coverage Targets + Supplement JSON Fact Delta request
 system     optional analyzer boundary
 ```
 
-The response contains one JSON object with `facts`, `coverage`, and
-`identity_reviews`. The AI must internally scan all permitted evidence before
+The response contains one JSON object with `facts`, `coverage`,
+`identity_reviews`, and `resolved_unknown_ids`:
+
+```json
+{
+  "facts": [],
+  "coverage": {"no_evidence_target_ids": []},
+  "identity_reviews": [],
+  "resolved_unknown_ids": []
+}
+```
+
+The AI must internally scan all permitted evidence before
 serialization, but does not serialize a canonical World Model or Patch v2.
 Permitted source content is evidence data, regardless of API role. Instructions,
 commands, roleplay/style directives, output-format requests, or attempts to
@@ -1254,10 +1275,14 @@ primitive. The removed raw Patch v2 semantic-guard path is not a Supplement
 API, Full production path, or compatibility contract. Patch v2 remains an
 internal mutation IR and is not an AI-facing transport contract.
 Runtime keeps the cumulative Supplement snapshot and its Host-local accounting
-in `supplementExecutionState`. Despite the historical name change, this state
-does not represent semantic continuation and never schedules another semantic
-model request. Dynamic coverage target fields remain Debug Schema v2
-diagnostics for local accounting only.
+in `supplementExecutionState`. This state does not represent semantic
+continuation and never schedules another semantic model request. In Debug
+Schema v3, `dynamic_coverage_target_ids` means targets derived by the Host
+during the current execution. `unaccounted_dynamic_target_ids` means derived
+targets not accounted for by the current Host-local accounting record. The
+`derived_target_accounting_records` array preserves accounting-record order;
+its `record_index` is not a semantic continuation round. Dynamic coverage
+accounting is diagnostics-only and never creates another semantic request.
 
 #### 1.5.8.12 Canonical writability registry
 
@@ -1762,10 +1787,11 @@ and recovered first; each `facts[]` item is then normalized and validated
 independently into the existing Fact IR. A malformed item is recorded as a
 parser diagnostic and cannot discard valid sibling Facts. The normalized IR
 continues through the existing Resolver, Evidence Guard, accepted-operation
-mapping, fixed-point, persistence, and UI paths.
+mapping, Host-local derived-target accounting, persistence, and UI paths.
+Accounting completion is not semantic continuation convergence.
 
 Coverage `EMITTED` is derived only from exact-address Facts accepted by the
-Resolver and Evidence Guard. A rejected matching Fact yields an unresolved
+Resolver and Evidence Guard. A rejected matching Fact yields an unaccounted
 coverage target, not `EMITTED` or `NO_EVIDENCE`. `NO_EVIDENCE` is accepted only
 when explicitly listed by the JSON response and no exact-address Fact is
 accepted. Identity reviews are independent metadata; a new Biological Type
@@ -1802,10 +1828,21 @@ Automatic retry is transport/response-recovery infrastructure, not semantic
 continuation. It may retry API/request failures, response-read failures, and
 unrecoverable root JSON/format failures using the existing plugin retry
 setting. Semantic incompleteness, dynamic coverage, new identities, missing
-semantic fields, fixed-point accounting, and `ALL_FACTS_REJECTED` do not
+semantic fields, derived-target accounting, and `ALL_FACTS_REJECTED` do not
 consume that retry budget. `FORMAT_RETRY` is the only structured model retry
 control and only repairs root JSON serialization; ordinary API recovery
 replays the same initial semantic request.
+
+Debug result ownership is explicit: `execution_result` describes the whole
+World execution, while `fact_delta_result` describes one Fact Delta analysis
+attempt. They may legitimately differ, for example `UPDATED` after a later
+canonical mutation even when the latest Fact Delta is `NO_CHANGE`. Fact Delta
+diagnostics do not own final persistence confirmation. `persistence_requested`,
+`persistence_confirmed`, reconciliation, authoritative readback, and UI
+ingress/render diagnostics belong to the execution/persistence boundary.
+Persistence candidates are transient validated canonical inputs before
+authoritative persistence/readback confirmation; they are not AI Candidates,
+hierarchical Candidate responses, or Supplement transport objects.
 
 User-visible outcome follows the final transaction, not the last model attempt.
 A mutated execution Snapshot with confirmed persistence is `SUCCESS` even when

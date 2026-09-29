@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model 当前 Fact Delta、Supplement、diagnostics 与执行边界的规范依据。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 Debug/World/Floor 事实 provenance 与只读审计边界。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Runtime Diagnostics、World Analysis、UI 与 Floor Coordinator owner。"}
+{"file":".trellis/tasks/09-27-world-model-debug-live-state/design.md","reason":"读取现有 LIVE STATE、fingerprint、freshness 与 history trace 设计决策。"}
+{"file":".trellis/tasks/09-28-world-model-supplement-phase2-1-retry-contract/implement.md","reason":"读取当前 retry、request envelope 与 coverage diagnostics 的历史契约。"}

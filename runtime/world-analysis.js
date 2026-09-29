@@ -174,14 +174,28 @@ export function createWorldAnalysis({
     return 'NO_CHANGE';
   }
 
-  function rememberFactDeltaExecution(executionId, target, mode, summary, candidateModel) {
+  function normalizeFactDeltaDiagnostic(summary) {
+    if (!summary || typeof summary !== 'object') return summary;
+    const normalized = cloneWorldValue(summary);
+    if (normalized.fact_delta_result === undefined && normalized.final_result !== undefined)
+      normalized.fact_delta_result = normalized.final_result;
+    delete normalized.final_result;
+    delete normalized.persistence_occurred;
+    return normalized;
+  }
+
+  function rememberFactDeltaExecution(executionId, target, mode, summary) {
     if (!executionId || !summary) return;
+    const normalizedSummary = normalizeFactDeltaDiagnostic(summary);
     const entry = {
       execution_id: executionId,
       mode,
       floor_version: cloneWorldValue(target?.version),
-      summary: cloneWorldValue(summary),
-      candidate_model: cloneWorldValue(candidateModel),
+      summary: normalizedSummary,
+      candidate_reference: {
+        execution_id: executionId,
+        fingerprint: normalizedSummary?.mutation_source_candidate_fingerprint ?? null,
+      },
       updated_at: new Date().toISOString(),
     };
     recentFactDeltaExecutions = [
@@ -233,7 +247,6 @@ export function createWorldAnalysis({
       mutation_source_execution_id: current.mutation_source_execution_id ?? null,
       mutation_source_candidate_fingerprint: current.mutation_source_candidate_fingerprint ?? null,
       mutation_persisted: current.mutation_persisted ?? null,
-      mutation_ui_projected: current.mutation_ui_projected ?? null,
     };
   }
 
@@ -490,6 +503,7 @@ export function createWorldAnalysis({
       if (mode === "patch" && typeof analyzer?.analyzeWorldModelPatchV2 !== "function")
         throw worldModelUnavailableError(new Error("WORLD_PATCH_ANALYZER_UNAVAILABLE"), target);
       const completeWorldAnalysis = async ({model, meta, fact_delta_summary: factDeltaSummary, fact_delta_execution_id: factDeltaExecutionId}, {attempt, retryIndex}) => {
+        factDeltaSummary = normalizeFactDeltaDiagnostic(factDeltaSummary);
         const ownerKey = `${key}:${attempt}:${retryIndex}`;
         if (persistenceOwner.attempt !== ownerKey) {
           persistenceOwner.attempt = ownerKey;
@@ -518,7 +532,6 @@ export function createWorldAnalysis({
           execution_snapshot_persistence_eligible: mode === "patch"
             ? Boolean(supplementExecutionState?.hasAcceptedMutation)
             : true,
-          persistence_occurred: false,
         }, "world");
         assertToken(token);
         if (execution && !executionIsCurrent(execution)) {
@@ -584,10 +597,9 @@ export function createWorldAnalysis({
             target,
             mode,
             factDeltaSummary,
-            model,
           );
         }
-        if (factDeltaSummary?.final_result === 'ALL_FACTS_REJECTED' && !supplementExecutionState?.hasAcceptedMutation) {
+        if (factDeltaSummary?.fact_delta_result === 'ALL_FACTS_REJECTED' && !supplementExecutionState?.hasAcceptedMutation) {
           throw candidateError('WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED', {
             analysis_stage: 'world_patch_v2_evidence_guard',
             retryable: false,
@@ -603,7 +615,7 @@ export function createWorldAnalysis({
           const noopFingerprint = await fingerprintWorldModel(model);
           emitPersistenceTrace("WORLD_PERSISTENCE_SKIPPED", execution, target, {
             reason: "canonical_noop",
-            persistence_occurred: false,
+            persistence_confirmed: false,
             canonical_mutation_occurred: false,
             accepted_operation_count: Number(factDeltaSummary?.accepted_operation_count) || 0,
             candidate_fingerprint: noopFingerprint.fingerprint,
@@ -614,14 +626,14 @@ export function createWorldAnalysis({
             candidate_fingerprint: noopFingerprint.fingerprint,
             reconciliation_status: "confirmed",
             reconciliation_fingerprint: noopFingerprint.fingerprint,
-            persistence_occurred: false,
+            persistence_confirmed: false,
           }, "world");
           latestWorldModelDiagnostic = {
             execution_id: execution?.diagnostic_execution_id ?? null,
             candidate_execution_id: null,
             candidate_fingerprint: noopFingerprint.fingerprint,
             candidate_state: "CANONICAL_NOOP",
-            final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+            execution_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
             candidate_created_at: null,
             ui_projection_state: "NOT_REQUIRED",
             persistence_requested: false,
@@ -656,7 +668,7 @@ export function createWorldAnalysis({
             candidate_fingerprint: noopFingerprint.fingerprint,
             candidate_full_hash: noopFingerprint.full_hash,
             canonical_noop: true,
-            final_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
+            execution_result: classifyWorldModelFinalResult({summary: factDeltaSummary, canonicalNoop: true}),
           };
         }
         const candidate = await publishWorldModelCandidate({
@@ -697,7 +709,7 @@ export function createWorldAnalysis({
           candidate_execution_id: candidate.execution_id,
           candidate_fingerprint: candidate.candidate_fingerprint,
           candidate_state: candidate.state,
-          final_result: 'UPDATED',
+          execution_result: 'UPDATED',
           candidate_created_at: candidate.created_at,
           ui_projection_state: "PENDING",
           committed_fingerprint: persistedFingerprint.fingerprint,
@@ -757,7 +769,7 @@ export function createWorldAnalysis({
           world_model_present: Boolean(ready?.model),
           species_count: Array.isArray(ready?.model?.species) ? ready.model.species.length : 0,
           ...(factDeltaSummary ?? {}),
-          persistence_occurred: true,
+          persistence_confirmed: true,
         }, "world");
         if (supplementExecutionState) supplementExecutionState.persistenceConfirmed = true;
         candidate.state = "PERSISTED";
@@ -779,7 +791,6 @@ export function createWorldAnalysis({
           lastIndependentWorldRequest = {
             ...lastIndependentWorldRequest,
             mutation_persisted: true,
-            mutation_ui_projected: null,
             mutation_source_candidate_fingerprint: candidate.candidate_fingerprint,
           };
         }
@@ -957,7 +968,6 @@ export function createWorldAnalysis({
                 mutation_source_execution_id: Number(baseSummary.accepted_operation_count) > 0 ? factDeltaExecutionId : null,
                 mutation_source_candidate_fingerprint: Number(baseSummary.accepted_operation_count) > 0 ? candidateFingerprint.fingerprint : null,
                 mutation_persisted: null,
-                mutation_ui_projected: null,
               };
               const requestTransition = baselineSource === "AUTHORITATIVE_FLOOR"
                 ? buildWorldRequestTransition(requestSnapshot)
@@ -980,7 +990,7 @@ export function createWorldAnalysis({
               const unresolvedDynamicTargets = dynamicTargets;
               const acceptedNewIdentityCount = Number(baseSummary.accepted_new_type_identity_count) || 0;
               const roundSummary = {
-                round: supplementExecutionState.rounds.length + 1,
+                record_index: supplementExecutionState.rounds.length + 1,
                 input_target_count: inputTargets.length,
                 reviewed_target_count: dispositionById.size,
                 emitted_count: [...dispositionById.values()].filter(value => value === 'EMITTED').length,
@@ -989,7 +999,7 @@ export function createWorldAnalysis({
                 accepted_operation_count: Number(baseSummary.accepted_operation_count) || 0,
                 new_identity_count: acceptedNewIdentityCount,
                 expanded_target_count: dynamicTargets.length,
-                unresolved_target_count: unresolvedDynamicTargets.length,
+                unaccounted_target_count: unresolvedDynamicTargets.length,
               };
               supplementExecutionState.rounds.push(roundSummary);
               factDeltaSummary = {
@@ -1004,13 +1014,13 @@ export function createWorldAnalysis({
                 coverage_current_target_count: candidateTargets.length,
                 dynamic_coverage_target_count: dynamicTargets.length,
                 dynamic_coverage_target_ids: dynamicTargets.slice(0, 64).map(item => item.target_id),
-                unresolved_dynamic_target_count: unresolvedDynamicTargets.length,
-                unresolved_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
-                coverage_rounds: cloneWorldValue(supplementExecutionState.rounds.slice(-16)),
-                coverage_fixed_point_reached: unresolvedDynamicTargets.length === 0,
-                dynamic_coverage_unresolved_in_single_response: unresolvedDynamicTargets.length > 0,
+                unaccounted_dynamic_target_count: unresolvedDynamicTargets.length,
+                unaccounted_dynamic_target_ids: unresolvedDynamicTargets.slice(0, 64).map(item => item.target_id),
+                derived_target_accounting_records: cloneWorldValue(supplementExecutionState.rounds.slice(-16)),
+                derived_target_accounting_complete: unresolvedDynamicTargets.length === 0,
+                dynamic_coverage_unaccounted_in_single_response: unresolvedDynamicTargets.length > 0,
               };
-              factDeltaSummary.final_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
+              factDeltaSummary.fact_delta_result = classifyWorldModelFinalResult({summary: factDeltaSummary});
               supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
             } catch (error) {
               if (error?.accepted_patch?.operations?.length) {
@@ -1028,7 +1038,7 @@ export function createWorldAnalysis({
                   factDeltaSummary.fact_mappings = cloneWorldValue(snapshotSummary.fact_mappings);
                 supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
                 supplementExecutionState.rounds.push({
-                  round: supplementExecutionState.rounds.length + 1,
+                  record_index: supplementExecutionState.rounds.length + 1,
                   input_target_count: inputTargets.length,
                   reviewed_target_count: 0,
                   emitted_count: 0,
@@ -1037,7 +1047,7 @@ export function createWorldAnalysis({
                   accepted_operation_count: Number(factDeltaSummary.accepted_operation_count) || error.accepted_patch.operations.length,
                   new_identity_count: Number(factDeltaSummary.accepted_new_type_identity_count) || 0,
                   expanded_target_count: buildWorldModelSupplementCoverageTargets(candidateModel).length,
-                  unresolved_target_count: 0,
+                  unaccounted_target_count: 0,
                 });
               }
               if (error?.code === "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
@@ -1053,13 +1063,12 @@ export function createWorldAnalysis({
                   semantic_diagnostics: error?.diagnostics ? cloneWorldValue(error.diagnostics) : [],
                   analysis_outcome: "COMPLETED_WITH_SEMANTIC_DIAGNOSTICS",
                 };
-                semanticFailureSummary.final_result = classifyWorldModelFinalResult({summary: semanticFailureSummary});
+                semanticFailureSummary.fact_delta_result = classifyWorldModelFinalResult({summary: semanticFailureSummary});
                 rememberFactDeltaExecution(
                   factDeltaExecutionId,
                   target,
                   mode,
                   semanticFailureSummary,
-                  supplementExecutionState?.transientModel ?? null,
                 );
                 supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(semanticFailureSummary);
                 factDeltaSummary = semanticFailureSummary;
@@ -1086,13 +1095,12 @@ export function createWorldAnalysis({
                 ...(error?.diagnostics ? {completeness_diagnostics: cloneWorldValue(error.diagnostics)} : {}),
               };
               if (error?.code !== "WORLD_MODEL_SUPPLEMENT_INCOMPLETE") {
-                failureSummary.final_result = classifyWorldModelFinalResult({summary: failureSummary, error});
+                failureSummary.fact_delta_result = classifyWorldModelFinalResult({summary: failureSummary, error});
                 rememberFactDeltaExecution(
                   factDeltaExecutionId,
                   target,
                   mode,
                   failureSummary,
-                  supplementExecutionState?.transientModel ?? null,
                 );
                 supplementExecutionState.lastFactDeltaSummary = cloneWorldValue(failureSummary);
                 throw error;
@@ -1151,7 +1159,7 @@ export function createWorldAnalysis({
               execution_snapshot_persistence_eligible: true,
               persistence_requested: true,
               persistence_confirmed: snapshot.persistenceConfirmed,
-              final_result: snapshot.persistenceConfirmed ? "UPDATED_AFTER_RETRY_FAILURE" : "PERSISTENCE_FAILED",
+              execution_result: snapshot.persistenceConfirmed ? "UPDATED_AFTER_RETRY_FAILURE" : "PERSISTENCE_FAILED",
               last_attempt_failure_code: error?.code ?? error?.message ?? "ANALYSIS_FAILED",
               candidate_model: cloneWorldValue(snapshot.transientModel),
               runtime_model: cloneWorldValue(recovered?.model ?? snapshot.transientModel),
@@ -1212,7 +1220,7 @@ export function createWorldAnalysis({
             execution_id: job.diagnostic_execution_id,
             latest_world_fact_delta_execution_id: latestFactDelta.execution_id,
             latest_fact_delta: cloneWorldValue(latestFactDelta.summary),
-            final_result: classifyWorldModelFinalResult({summary: latestFactDelta.summary, error}),
+            execution_result: classifyWorldModelFinalResult({summary: latestFactDelta.summary, error}),
             latest_nonempty_fact_delta: [...recentFactDeltaExecutions].reverse().find(item => Number(item.summary?.parsed_fact_count ?? item.summary?.fact_count ?? 0) > 0) ?? null,
             recent_fact_delta_executions: cloneWorldValue(recentFactDeltaExecutions),
             request_transitions: cloneWorldValue(recentWorldRequestTransitions),

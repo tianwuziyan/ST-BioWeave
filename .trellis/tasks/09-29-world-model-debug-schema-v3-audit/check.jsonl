@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/world-model.md","reason":"复核审计结论不得越过当前 World Model 语义边界。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"复核 persistence/readback/Floor ownership 语义。"}
+{"file":"docs/ARCHITECTURE.md","reason":"复核诊断、World、UI 与持久化 owner 的模块边界。"}
+{"file":".trellis/tasks/09-27-world-model-debug-live-state/prd.md","reason":"复核现有 Debug LIVE STATE 的验收与非目标。"}
+{"file":".trellis/tasks/09-27-world-model-debug-live-state/implement.md","reason":"复核现有 focused tests、静态边界与 real-host 限制。"}

@@ -7507,8 +7507,18 @@ test("World Patch persists a new identity without semantic continuation", async 
   const summary = fixture.runtime.getWorldModelDiagnosticState().latest_fact_delta;
   assert.equal(patchCalls, 1);
   assert.deepEqual(persisted.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B"]);
-  assert.equal(summary.dynamic_coverage_unresolved_in_single_response, true);
-  assert.equal(summary.coverage_fixed_point_reached, false);
+  assert.equal(summary.unaccounted_dynamic_target_count, summary.unaccounted_dynamic_target_ids.length);
+  assert.ok(summary.dynamic_coverage_target_ids.includes(summary.unaccounted_dynamic_target_ids[0]));
+  assert.equal(summary.derived_target_accounting_records.length, 1);
+  assert.equal(summary.derived_target_accounting_records[0].record_index, 1);
+  assert.equal(summary.derived_target_accounting_records[0].round, undefined);
+  assert.equal(summary.dynamic_coverage_unaccounted_in_single_response, true);
+  assert.equal(summary.derived_target_accounting_complete, false);
+  assert.equal(summary.fact_delta_result, "NO_CHANGE");
+  assert.equal(Object.hasOwn(summary, "persistence_occurred"), false);
+  const liveState = fixture.runtime.getWorldModelDiagnosticState();
+  assert.equal(liveState.execution_result, "UPDATED");
+  assert.equal(liveState.persistence_confirmed, true);
   assert.equal(result.final_result, "UPDATED");
   fixture.runtime.destroy();
 });
@@ -7547,8 +7557,8 @@ test("World Patch accepts multiple new identities in one response", async () => 
   assert.ok(fixture.saveFloorCalls() > 0);
   assert.deepEqual(fixture.runtime.store.getFloor(1).world_model.species[0].biological_types.map(type => type.name), ["Type-A", "Type-B", "Type-C"]);
   assert.equal(diagnostic.latest_fact_delta.failure_code, undefined);
-  assert.equal(diagnostic.latest_fact_delta.dynamic_coverage_unresolved_in_single_response, true);
-  assert.equal(diagnostic.latest_fact_delta.coverage_fixed_point_reached, false);
+  assert.equal(diagnostic.latest_fact_delta.dynamic_coverage_unaccounted_in_single_response, true);
+  assert.equal(diagnostic.latest_fact_delta.derived_target_accounting_complete, false);
   fixture.runtime.destroy();
 });
 
@@ -7621,7 +7631,6 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
           rejected_fact_count: 0,
           accepted_operation_count: 0,
           canonical_mutation_occurred: false,
-          persistence_occurred: false,
           fact_mappings: [],
         });
         return {
@@ -7633,7 +7642,6 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
             rejected_fact_count: 0,
             accepted_operation_count: 0,
             canonical_mutation_occurred: false,
-            persistence_occurred: false,
           },
         };
       },
@@ -7660,9 +7668,9 @@ test("Supplement Fact Delta diagnostic callbacks carry patch retry correlation w
   assert.equal(accepted.rejected_fact_count, 0);
   assert.equal(accepted.accepted_operation_count, 0);
   assert.equal(accepted.canonical_mutation_occurred, false);
-  assert.equal(accepted.persistence_occurred, false);
+  assert.equal(Object.hasOwn(accepted, 'persistence_occurred'), false);
   const skipped = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "WORLD_PERSISTENCE_SKIPPED");
-  assert.equal(skipped.persistence_occurred, false);
+  assert.equal(skipped.persistence_confirmed, false);
   assert.equal(fixture.runtime.store.getFloor(1).world_model, null);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, existing);
   assert.equal(JSON.stringify(fixture.runtime.store.getFloor(1)).includes("WORLD_FACT_DELTA_PARSED"), false);
@@ -7969,7 +7977,6 @@ test("World Patch distinguishes all Guard-rejected Facts from a true no-op", asy
             accepted_fact_count: 0,
             accepted_operation_count: 0,
             canonical_mutation_occurred: false,
-            persistence_occurred: false,
           },
         };
       },
@@ -7982,9 +7989,9 @@ test("World Patch distinguishes all Guard-rejected Facts from a true no-op", asy
     error => error.code === "WORLD_MODEL_SUPPLEMENT_ALL_FACTS_REJECTED",
   );
   const diagnostic = fixture.runtime.getWorldModelDiagnosticState();
-  assert.equal(diagnostic.final_result, "ALL_FACTS_REJECTED");
+  assert.equal(diagnostic.execution_result, "ALL_FACTS_REJECTED");
   assert.equal(diagnostic.candidate_execution_id, undefined);
-  assert.equal(diagnostic.latest_fact_delta.final_result, "ALL_FACTS_REJECTED");
+  assert.equal(diagnostic.latest_fact_delta.fact_delta_result, "ALL_FACTS_REJECTED");
   fixture.runtime.destroy();
 });
 
@@ -8002,12 +8009,12 @@ test("World Fact Delta diagnostics retain the latest non-empty execution after a
           ? {
               patch: {schema_version: 2, operations: []},
               classified: [],
-              fact_delta_summary: {raw_fact_block_count: 1, parsed_fact_count: 1, parse_rejected_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 1, accepted_operation_count: 1, canonical_mutation_occurred: true, persistence_occurred: false},
+              fact_delta_summary: {raw_fact_block_count: 1, parsed_fact_count: 1, parse_rejected_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 1, accepted_operation_count: 1, canonical_mutation_occurred: true},
             }
           : {
               patch: {schema_version: 2, operations: []},
               classified: [],
-              fact_delta_summary: {raw_fact_block_count: 0, parsed_fact_count: 0, parse_rejected_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 0, accepted_operation_count: 0, canonical_mutation_occurred: false, persistence_occurred: false},
+              fact_delta_summary: {raw_fact_block_count: 0, parsed_fact_count: 0, resolution_rejected_fact_count: 0, evidence_guard_rejected_fact_count: 0, accepted_fact_count: 0, accepted_operation_count: 0, canonical_mutation_occurred: false},
             };
       },
     },
@@ -8020,6 +8027,8 @@ test("World Fact Delta diagnostics retain the latest non-empty execution after a
   assert.equal(patchCalls, 2);
   assert.equal(diagnostic.latest_fact_delta.raw_fact_block_count, 0);
   assert.equal(diagnostic.latest_nonempty_fact_delta.summary.raw_fact_block_count, 1);
+  assert.equal(Object.hasOwn(diagnostic.latest_nonempty_fact_delta, "candidate_model"), false);
+  assert.ok(Object.hasOwn(diagnostic.latest_nonempty_fact_delta, "candidate_reference"));
   assert.equal(diagnostic.recent_fact_delta_executions.length, 2);
   fixture.runtime.destroy();
 });

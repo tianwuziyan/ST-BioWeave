@@ -112,18 +112,41 @@ World Full/Patch 在当前 Floor read-back 与共享 World canonical view-model 
 World Model / World Analysis 的完整 canonical 规则见
 [`../.trellis/spec/domain/world-model.md`](../.trellis/spec/domain/world-model.md)。
 Full 是 `permitted evidence → World Fact Discovery / scope / classification → complete
-canonical model`，不消费 Existing World Model baseline；Supplement 是 `Existing
-canonical model + 同一 permitted evidence set → hierarchical Candidate text →
-deterministic Candidate → internal Patch v2 → Guard → merge → complete canonical
-validation`。Existing baseline 只是 comparison baseline，不是 evidence；Supplement
-eligibility 不由事实是否首次出现在 current Floor 决定。
+canonical model`，不消费 Existing World Model baseline。Supplement 是：
 
-Supplement 只产生 presence-sensitive Candidate；deterministic Candidate →
-internal Patch v2 负责字段比较、分类与 mutation IR。Candidate 的 omission
-不表示 REMOVE，canonical null/boolean/`"无"` 语义仍由现有 validator 与 merge
-边界维护。不得借此重写 Full evidence collector、Human baseline、Fact
-Discovery、UI read model 或既有 World canonicalizer。单一 character evidence
-也不得自动提升为 species/type world rule；具体执行合同以 canonical spec 为准。
+```text
+permitted evidence
+  → buildWorldModelPatchMessagesV2()
+  → one JSON Fact Delta response
+  → parseWorldModelFactDeltaJson()
+  → strict Fact validation / canonical address resolution
+  → Existing comparison
+  → applyWorldModelFactDeltaEvidenceGuard()
+  → Host-internal Patch v2 operation
+  → classification / classified merge
+  → complete canonical validation
+```
+
+Supplement 的 wire format 是 JSON Fact Delta，不是 AI Candidate、Patch v2
+输出或 persistence DTO。Existing baseline 只用于 comparison、identity context
+和 canonical structure context，不是 evidence；Coverage Targets 也不是
+evidence。每个 Fact 是一个可独立落地的最小 semantic claim，Species /
+Biological_Type 只提供 address/scope，不能单独建立 identity；identity 只能
+由 Species_Identity / Type_Identity Fact 建立。
+
+当前合法的 persistence candidate 仅表示 authoritative persistence/readback
+之前的 transient validated canonical persistence input。它与已删除的 AI
+hierarchical Candidate、Supplement Candidate transport 和 Candidate → Patch v2
+adapter 不是同一概念。Fact 的 omission 不表示 REMOVE，canonical
+null/boolean/`"无"` 语义仍由现有 validator 与 merge 边界维护。单一 character
+evidence 也不得自动提升为 species/type world rule；具体执行合同以 canonical
+spec 为准。
+
+Supplement 没有 semantic continuation。Dynamic coverage 只是 Host-local
+accounting；`derived_target_accounting_records` 是 accounting records，不是
+semantic rounds，也不会触发 coverage continuation 或 completeness retry。
+额外请求只属于 transport/request failure、response-read failure、不可恢复的
+root JSON/format failure 或 `FORMAT_RETRY`。
 
 World Analysis 只有两套底层能力：Full World Analysis 与 World Supplement Analysis。Initial Full、Manual“开始分析”和 Auto 在没有有效 World 时都调用同一个 Full 能力；Manual“补充分析”和 Auto 在存在 world-relevant 新证据信号时都调用同一个 Supplement 能力。该触发信号不改变 Supplement 的事实 eligibility：Supplement 仍重新审阅完整允许的 World Analysis evidence，既可补充较早资料中已存在但之前遗漏的事实，也可处理新近 evidence。已有 World 且没有 world-relevant 新证据触发信号时，Auto 不调用 World AI，直接 Reuse 已验证的 World 后再进行 Character/Event Analysis。Scheduler 只负责调用时机和 Reuse 路由，不拥有 Full/Supplement 的业务语义。
 

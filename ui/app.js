@@ -950,7 +950,7 @@ export function createApp(runtime, options = {}) {
         unrendered_canonical_field_count: lastWorldRenderDiagnostic?.unrendered_canonical_field_count ?? null,
         canonical_mutation_occurred: runtimeDiagnostic?.latest_fact_delta?.canonical_mutation_occurred ?? null,
         accepted_operation_count: runtimeDiagnostic?.latest_fact_delta?.accepted_operation_count ?? null,
-        final_result: runtimeDiagnostic?.final_result ?? runtimeDiagnostic?.latest_fact_delta?.final_result ?? null,
+        execution_result: runtimeDiagnostic?.execution_result ?? null,
         request_transitions: Array.isArray(runtimeDiagnostic?.request_transitions)
           ? runtimeDiagnostic.request_transitions
           : [],

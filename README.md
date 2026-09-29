@@ -231,6 +231,26 @@ unknowns[]
 - “双性”需要固定存在的明确证据；临时变化、可能性、模糊描述不会被当作固定类型。
 - AI 重新分析是整份 World Model 的重建；人工编辑只修改当前模块，不进入整个 JSON 大表单。
 
+World Model Supplement 使用独立的 JSON Fact Delta 请求/响应契约：
+
+```text
+Permitted Evidence
+  → AI semantic discovery
+  → JSON Fact Delta
+  → strict Fact validation / canonical address resolution
+  → Existing comparison
+  → Fact Delta safety boundary
+  → Host-internal Patch v2 operation
+  → classification / canonical mutation
+  → Execution Snapshot / Floor persistence / authoritative readback
+```
+
+JSON Fact Delta 不是 canonical World Model、persistence DTO 或 Patch v2。
+Existing 和 Coverage Targets 只提供 comparison/reference context，不是
+evidence；Species / Biological_Type 是 address/scope 信息，只有
+Species_Identity / Type_Identity Fact 才能建立 identity。Supplement 不使用
+semantic continuation；dynamic coverage 只是 Host-local accounting。
+
 ### 4. 其他页面与当前边界
 
 当前 UI 路由包括总览、人物、事件、推演、家系、世界模型和设置。World Model 与设置是当前 Chat 作用域下的页面；World Model 历史仍按当前有效 Floor/Swipe 读取，人物详情的焦点不会改变 Chat 作用域。

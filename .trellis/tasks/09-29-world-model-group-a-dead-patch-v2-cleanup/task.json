@@ -1,0 +1,28 @@
+{
+  "id": "world-model-group-a-dead-patch-v2-cleanup",
+  "name": "world-model-group-a-dead-patch-v2-cleanup",
+  "title": "Phase 5 清理 Group A Dead Patch V2 Compatibility Surface",
+  "description": "审计并在全部 gate 通过时清理 mergeWorldModelPatchV2 与 applyWorldModelPatchV2EvidenceGuard；保持 current Fact Delta/ Patch V2/ persistence architecture 不变。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-29",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-29-world-model-supplement-documentation-consistency"
+  ],
+  "parent": "09-29-world-model-debug-schema-v3-audit",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

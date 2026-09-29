@@ -23,7 +23,7 @@ import {
 } from './world-supplement-protocol.js';
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
 
-const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 2;
+const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 3;
 
 const CAPABILITY_KEYS = Object.freeze([
   'can_produce_sperm',
@@ -4993,7 +4993,6 @@ export function createAnalyzer({
               accepted_fact_count: guarded.factResults.filter(item => ['accepted', 'no-op', 'deduplicated'].includes(item.status)).length,
               accepted_operation_count: guarded.patch.operations.length,
               canonical_mutation_occurred: true,
-              persistence_occurred: false,
               completeness_required: true,
               completeness_satisfied: false,
               supplement_completeness_complete: false,
@@ -5126,7 +5125,6 @@ export function createAnalyzer({
         accepted_fact_count: acceptedFactCount,
         accepted_operation_count: guarded.patch.operations.length,
         canonical_mutation_occurred: guarded.patch.operations.length > 0,
-        persistence_occurred: false,
         completeness_required: input.require_supplement_completeness === true,
         ...(completenessSummary ?? {
           supplement_completeness_complete: input.require_supplement_completeness !== true,

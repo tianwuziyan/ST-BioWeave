@@ -1,0 +1,29 @@
+{
+  "id": "world-model-debug-schema-v3-audit",
+  "name": "world-model-debug-schema-v3-audit",
+  "title": "World Model Debug Schema v3 审计",
+  "description": "只读审计 World Model Debug Schema v2 的字段 ownership、命名、cardinality、兼容性与 v3 必要性，不修改生产架构。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-09-29",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-29-world-model-debug-schema-v3-implementation",
+    "09-29-world-model-group-a-dead-patch-v2-cleanup"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
