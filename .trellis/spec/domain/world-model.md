@@ -278,21 +278,32 @@ require zero exact-address Facts. This is coverage accounting only: Fact
 identity, semantic deduplication, resolver validation, and Evidence Guard
 decisions remain owned by their existing validators.
 
-For Supplement Patch v2 evidence binding, structured permitted-evidence lines
-may be split into local units only when their explicit Species and
-Biological_Type labels, or their structurally preserved parent headings, are
-retained as transient provenance on each descendant unit. This provenance is
-context from the same permitted source, not a new evidence source and not
-Existing/Coverage Target data. It must never authorize a claim without an
-independently matching semantic value; Full Analysis keeps its existing
-evidence-unit path.
+For Supplement JSON Fact Delta Patch v2 evidence binding, structured
+permitted-evidence lines may be split into local units while retaining their
+explicit Species and Biological_Type labels, or their structurally preserved
+parent headings, as transient provenance on each descendant unit. This
+provenance is context from the same permitted source, not a new evidence
+source and not Existing/Coverage Target data. Full Analysis keeps its existing
+complete-model evidence-unit path.
 
-The Fact Delta Evidence Guard must consume that transient provenance at the
-scope-binding edge. A structured `parent_context` containing Species and
-Biological_Type is an exact scope constraint for Type-scoped operations; a
-missing Type context cannot be replaced by a later text heuristic, and a
-different Species or sibling Type cannot inherit the unit. After scope binds,
-the existing value-support and Evidence Guard thresholds still apply.
+The JSON Fact Delta has already performed semantic field classification. Its
+Evidence Guard must therefore enforce permitted-evidence membership and
+address safety, but must not independently reclassify a valid `field` with a
+second field-specific NLP heuristic when the proposed value is directly
+anchored in a permitted unit. The Guard still rejects an unbound value, an
+individual-only statement, or a value whose unit belongs to another Species
+or sibling Biological Type.
+
+Some canonical nested fields have no Species-level storage slot even when a
+stable rule is stated for the whole Species. For a Supplement Type-scoped Fact,
+the Guard may bind a directly anchored value to Species-wide evidence and
+store it at the addressed Type, provided the evidence is not explicitly bound
+to a different sibling Type. This is scope-preserving canonical storage, not
+automatic keyword inheritance. A Type-A-specific unit can never authorize a
+Type-B Fact, and a Species-A unit can never authorize a Species-B Fact.
+
+Full Analysis is unchanged and continues to use its existing complete-model
+semantic evidence checks.
 
 ## 1.3 World Knowledge Scope and canonical outlets
 
@@ -948,6 +959,32 @@ World-scoped Facts use no dummy Species. JSON Fact Delta output must not emit
 payload. The root is JSON only and must not be a canonical DTO, Full World
 Model, or Patch v2. A Projection_Rule Fact may carry only its field-specific
 structured `projection_rule` payload.
+
+The wire Fact field is intentionally flat; the deterministic resolver restores
+the canonical hierarchy. The current nested scalar mapping is:
+
+| JSON Fact Field | Canonical path below the addressed Type |
+| --- | --- |
+| `Can_Produce_Sperm` | `capabilities.can_produce_sperm` |
+| `Can_Produce_Ova` | `capabilities.can_produce_ova` |
+| `Can_Be_Fertilized` | `capabilities.can_be_fertilized` |
+| `Can_Fertilize` | `capabilities.can_fertilize` |
+| `Can_Cause_Pregnancy` | `capabilities.can_cause_pregnancy` |
+| `Can_Carry_Pregnancy` | `capabilities.can_carry_pregnancy` |
+| `Fertilization` | `reproduction_rules.fertilization` |
+| `Pregnancy_Or_Carrying` | `reproduction_rules.pregnancy_or_carrying` |
+| `Cycle` | `reproduction_rules.cycle` |
+| `Ovulation` | `reproduction_rules.ovulation` |
+| `Gestation` | `reproduction_rules.gestation` |
+| `Labor` | `reproduction_rules.labor` |
+| `Maturation` | `lifecycle.maturation` |
+| `Aging` | `lifecycle.aging` |
+
+`Type_Description` maps to `description`, while `Special_Rule` and
+`Reproductive_Mechanism` use their dedicated type collections. The JSON Fact
+does not repeat `Capabilities`, `Reproduction_Rules`, or `Lifecycle`; the
+resolver owns this flat-to-hierarchical mapping and Patch v2 owns the
+canonical mutation.
 
 Reproductive mechanism payload types are field-specific and must stay aligned
 with the canonical mechanism shape: `Mechanism_Key`, `Mechanism_Label`, and
@@ -1621,7 +1658,10 @@ The Supplement analyzer may emit the following structured stages:
 - `WORLD_FACT_DELTA_PARSED`: fact count, fields, scopes, and addresses; full
   canonicalized Fact payload is allowed only in explicit debug mode.
 - `WORLD_FACT_DELTA_RESOLVED`: per-Fact canonical address, Existing comparison,
-  and Patch v2 operation/no-op mapping.
+  resolver status, resolved canonical path, Guard status, and Patch v2
+  operation/no-op mapping. A rejected Fact includes its failure stage/code;
+  an accepted Fact includes the operation that can be applied to the execution
+  snapshot.
 - `WORLD_PATCH_EVIDENCE_REJECTED`: rejected operation/path, semantic address,
   proposed value, classification, Guard failure, and evidence candidate summary.
 

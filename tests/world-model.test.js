@@ -3388,6 +3388,8 @@ test('Supplement Fact Delta diagnostics expose response, parsed facts, mapping, 
     patch_operation_type: 'ADD_TYPE',
     patch_path: 'species.Species-A.biological_types.Type-B',
     classification: 'ADD',
+    resolver_status: 'resolved',
+    guard_status: 'accepted',
   })
   assert.equal(JSON.stringify(traces).includes('Existing species.'), false)
 })
@@ -3663,6 +3665,114 @@ function guardV2(operation, existing = v2ExistingModel(), evidence = '') {
 function mergeV2(operations, existing = v2ExistingModel(), evidence = '') {
   return mergeWorldModelPatchV2(existing, { schema_version: 2, operations }, v2Evidence(evidence))
 }
+
+test('Supplement JSON Facts map nested scalar fields through the guarded canonical pipeline', async () => {
+  const fields = [
+    ['Can_Produce_Sperm', true, ['capabilities', 'can_produce_sperm']],
+    ['Can_Produce_Ova', true, ['capabilities', 'can_produce_ova']],
+    ['Can_Be_Fertilized', true, ['capabilities', 'can_be_fertilized']],
+    ['Can_Fertilize', true, ['capabilities', 'can_fertilize']],
+    ['Can_Cause_Pregnancy', true, ['capabilities', 'can_cause_pregnancy']],
+    ['Can_Carry_Pregnancy', true, ['capabilities', 'can_carry_pregnancy']],
+    ['Fertilization', 'Fertilization-Rule-A', ['reproduction_rules', 'fertilization']],
+    ['Pregnancy_Or_Carrying', 'Carrying-Rule-A', ['reproduction_rules', 'pregnancy_or_carrying']],
+    ['Cycle', 'Cycle-Rule-A', ['reproduction_rules', 'cycle']],
+    ['Ovulation', 'Ovulation-Rule-A', ['reproduction_rules', 'ovulation']],
+    ['Gestation', 'Gestation-Rule-A', ['reproduction_rules', 'gestation']],
+    ['Labor', 'Labor-Rule-A', ['reproduction_rules', 'labor']],
+    ['Maturation', 'Maturation-Rule-A', ['lifecycle', 'maturation']],
+    ['Aging', 'Aging-Rule-A', ['lifecycle', 'aging']],
+  ]
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: 'Species-A', biological_types: [{ name: 'Type-A' }, { name: 'Type-B' }] }],
+  })
+  const response = factDeltaJson({
+    facts: fields.map(([field, value]) => ({
+      scope: 'type',
+      species: 'Species-A',
+      biological_type: 'Type-A',
+      field,
+      value,
+    })),
+  })
+  const capabilityEvidence = {
+    Can_Produce_Sperm: 'Species-A Type-A 产生精子。',
+    Can_Produce_Ova: 'Species-A Type-A 产生卵子。',
+    Can_Be_Fertilized: 'Species-A Type-A 可以被受精。',
+    Can_Fertilize: 'Species-A Type-A 可以使另一方受精。',
+    Can_Cause_Pregnancy: 'Species-A Type-A 可以使另一方怀孕。',
+    Can_Carry_Pregnancy: 'Species-A Type-A 可以承载妊娠。',
+  }
+  const evidence = fields.map(([field, value]) =>
+    capabilityEvidence[field] ?? `Species-A Type-A ${field} ${String(value)}`,
+  ).join('\n')
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({ generateRaw: () => response }),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: { world_model: existing, character: { description: evidence } },
+  })
+
+  assert.equal(result.patch.operations.length, fields.length)
+  assert.deepEqual(
+    result.patch.operations.map(operation => operation.path.join('.')).sort(),
+    fields.map(([, , path]) => path.join('.')).sort(),
+  )
+  const merged = mergeWorldModelPatchV2(existing, result.patch, v2Evidence(evidence))
+  const type = merged.species[0].biological_types.find(item => item.name === 'Type-A')
+  for (const [field, value, path] of fields) {
+    const [group, key] = path
+    assert.equal(type[group][key], value, field)
+  }
+})
+
+test('Supplement JSON Cycle Fact accepts Species-wide evidence without crossing Type or Species scope', async () => {
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [
+      { name: 'Species-A', biological_types: [{ name: 'Type-A' }, { name: 'Type-B' }] },
+      { name: 'Species-B', biological_types: [{ name: 'Type-A' }] },
+    ],
+  })
+  const fact = (species, type) => ({
+    scope: 'type',
+    species,
+    biological_type: type,
+    field: 'Cycle',
+    value: 'Species-A-Cycle-Rule-A',
+  })
+  const response = factDeltaJson({ facts: [fact('Species-A', 'Type-A')] })
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({ generateRaw: () => response }),
+  })
+  const result = await analyzer.analyzeWorldModelPatchV2({
+    analysisInput: {
+      world_model: existing,
+      character: { description: 'Species-A 的稳定规则是 Species-A-Cycle-Rule-A。' },
+    },
+  })
+  assert.equal(result.patch.operations.length, 1)
+  assert.deepEqual(result.patch.operations[0].path, ['reproduction_rules', 'cycle'])
+  assert.equal(result.patch.operations[0].target.type_name, 'Type-A')
+
+  for (const invalidFact of [fact('Species-A', 'Type-B'), fact('Species-B', 'Type-A')]) {
+    const invalidAnalyzer = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({ generateRaw: () => factDeltaJson({ facts: [invalidFact] }) }),
+    })
+    const invalid = await invalidAnalyzer.analyzeWorldModelPatchV2({
+      analysisInput: {
+        world_model: existing,
+        character: { description: 'Species-A Type-A 的专属规则是 Species-A-Cycle-Rule-A。' },
+      },
+    })
+    assert.equal(invalid.patch.operations.length, 0)
+    assert.equal(invalid.rejectedFacts.length, 1)
+  }
+})
 
 test('World Model Patch v2 structurally rejects non-v2 and non-contract DTOs', () => {
   assert.throws(

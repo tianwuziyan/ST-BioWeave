@@ -871,6 +871,18 @@ function factDeltaResolutionDiagnostics(facts, patch, existing, factResults = []
     const operation = operationIndex >= 0 ? patch.operations[operationIndex] : null;
     const classification = operationIndex >= 0 ? classified[operationIndex]?.classification ?? null : null;
     const lifecycle = factResults.find(item => item.fact_index === (fact.fact_index ?? fact_index))
+    const resolverStatus = lifecycle?.guardError
+      ? 'resolved'
+      : lifecycle?.status === 'accepted'
+        ? 'resolved'
+        : ['resolved', 'no-op', 'deduplicated', 'rejected'].includes(lifecycle?.status)
+          ? lifecycle.status
+        : null
+    const guardStatus = lifecycle?.guardError
+      ? 'rejected'
+      : ['accepted', 'no-op', 'deduplicated'].includes(lifecycle?.status)
+        ? lifecycle.status === 'accepted' ? 'accepted' : 'not_required'
+        : lifecycle?.status === 'resolved' ? 'pending' : 'not_run'
     return {
       fact_index: fact.fact_index ?? fact_index,
       field: fact.field,
@@ -881,6 +893,8 @@ function factDeltaResolutionDiagnostics(facts, patch, existing, factResults = []
       patch_operation_type: operation?.op ?? null,
       patch_path: operation ? v2CanonicalTargetPath(operation) : null,
       classification,
+      resolver_status: resolverStatus,
+      guard_status: guardStatus,
       ...(lifecycle?.status === 'rejected' ? {
         status: 'rejected',
         failure_stage: lifecycle.guardError?.validation_stage ?? 'fact_resolution',
@@ -1927,7 +1941,32 @@ function patchMechanismSemanticValue(value) {
 function scopeCompatiblePatchUnits(units, delta) {
   const individualOnlyPattern = /某(?:个|位|名)?(?:角色|人物|NPC)|这个角色|该角色|单个(?:角色|人物|个体)/u
   if (delta.typeName) {
-    return units.filter((unit) => hasGenericScopedTypeEvidence(unit, delta.speciesName, delta.typeName))
+    const exactTypeUnits = units.filter((unit) =>
+      hasGenericScopedTypeEvidence(unit, delta.speciesName, delta.typeName),
+    )
+    if (!delta.structuredFactDelta) return exactTypeUnits
+
+    // JSON Fact Delta has already performed semantic field classification. A
+    // stable Species-wide statement may still be stored under each applicable
+    // Type because the canonical schema has no Species-level slot for these
+    // nested fields. Permit that evidence only when it is not explicitly
+    // scoped to a sibling Type; never broaden Type-A evidence to Type-B.
+    const siblingTypeNames = new Set(
+      (delta.siblingTypeNames ?? [])
+        .map((name) => compactEvidenceText(name))
+        .filter((name) => name && name !== compactEvidenceText(delta.typeName)),
+    )
+    const speciesWideUnits = units.filter((unit) => {
+      if (individualOnlyPattern.test(String(unit))) return false
+      if (!hasGenericDirectLabelEvidence(unit, delta.speciesName)) return false
+      const structured = structuredScopeMatches(unit, {
+        speciesName: delta.speciesName,
+      })
+      if (structured?.biological_type && structured.biological_type !== delta.typeName)
+        return false
+      return ![...siblingTypeNames].some((name) => hasGenericDirectLabelEvidence(unit, name))
+    })
+    return [...new Set([...exactTypeUnits, ...speciesWideUnits])]
   }
   if (delta.speciesName) {
     return units
@@ -1940,6 +1979,13 @@ function scopeCompatiblePatchUnits(units, delta) {
 function patchFactEvidence(fact, units, delta) {
   const scopedUnits = scopeCompatiblePatchUnits(units, delta)
   if (delta.typeName && scopedUnits.length === 0) return false
+  if (delta.structuredFactDelta && typeof fact.value === 'string') {
+    // The model has already classified a validated JSON Fact as Cycle,
+    // Gestation, Maturation, etc. For Supplement JSON Facts, direct evidence
+    // membership is the safety check; do not re-run the old field-specific
+    // NLP classifier and reject a faithful paraphrase.
+    if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
+  }
   if (delta.nested === 'special_rules') {
     if (hasDirectTextEvidence(fact.value, scopedUnits)) return true
     const sourceText = scopedUnits.join('\n')
@@ -3924,7 +3970,9 @@ function v2ScopedEvidenceUnits(units, context = {}) {
 }
 
 function v2EvidenceSupportsFact(value, units, context = {}) {
-  const scopedUnits = v2ScopedEvidenceUnits(units, context);
+  const scopedUnits = context.structuredFactDelta
+    ? scopeCompatiblePatchUnits(units, context).map(evidenceUnitText)
+    : v2ScopedEvidenceUnits(units, context);
   if (!scopedUnits.length) return false;
   if (context.nested === 'capabilities')
     return patchFactEvidence({ value }, scopedUnits, context);
@@ -4214,7 +4262,7 @@ function v2ValidateProjectionRuleEvidence(rule, units) {
   }
 }
 
-function v2ValidateOperationEvidence(operation, classification, units, existing) {
+function v2ValidateOperationEvidence(operation, classification, units, existing, options = {}) {
   if (classification === 'NO-OP') return;
   if (classification === 'REJECT') v2EvidenceError('operation');
   if (operation.op === 'ADD_SPECIES') {
@@ -4228,14 +4276,30 @@ function v2ValidateOperationEvidence(operation, classification, units, existing)
     return;
   }
   if (operation.op === 'SET_FIELD') {
-    const context = { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: operation.path[0], key: operation.path[1] };
+    const species = v2Species(existing, operation.target.species_name)
+    const context = {
+      speciesName: operation.target.species_name,
+      typeName: operation.target.type_name,
+      nested: operation.path[0],
+      key: operation.path[1],
+      ...options,
+      siblingTypeNames: species?.biological_types?.map((type) => type.name) ?? [],
+    };
     if (operation.target.kind === 'species') delete context.typeName;
     if (operation.target.kind === 'world') delete context.speciesName;
     if (!v2EvidenceSupportsFact(v2NormalizeField(operation), units, context)) v2EvidenceError(`operation.${operation.path.join('.')}`);
     return;
   }
   if (operation.op === 'ADD_SPECIAL_RULE') {
-    if (!v2EvidenceSupportsFact(operation.value, units, { speciesName: operation.target.species_name, typeName: operation.target.type_name, nested: 'special_rules', key: operation.value })) v2EvidenceError('operation.value');
+    const species = v2Species(existing, operation.target.species_name)
+    if (!v2EvidenceSupportsFact(operation.value, units, {
+      speciesName: operation.target.species_name,
+      typeName: operation.target.type_name,
+      nested: 'special_rules',
+      key: operation.value,
+      ...options,
+      siblingTypeNames: species?.biological_types?.map((type) => type.name) ?? [],
+    })) v2EvidenceError('operation.value');
     return;
   }
   if (operation.op === 'ADD_MECHANISM') {
@@ -4313,7 +4377,9 @@ export function applyWorldModelPatchV2EvidenceGuard(patch, existingModel, analys
   const units = factDeltaEvidenceGuardUnits(analysisInput);
   for (const [operationIndex, result] of classified.entries()) {
     try {
-      v2ValidateOperationEvidence(result.operation, result.classification, units, existing);
+      v2ValidateOperationEvidence(result.operation, result.classification, units, existing, {
+        structuredFactDelta: analysisInput?.structured_fact_delta === true,
+      });
     } catch (error) {
       throw annotateV2GuardFailure(error, result, operationIndex);
     }
@@ -4496,7 +4562,7 @@ function applyWorldModelFactDeltaEvidenceGuard(resolution, analysisInput) {
       const classified = applyWorldModelPatchV2EvidenceGuard(
         {schema_version: 2, operations: [result.operation]},
         working,
-        analysisInput,
+        {...analysisInput, structured_fact_delta: true},
       )
       const classifiedResult = classified[0]
       if (classifiedResult.classification !== 'NO-OP') {

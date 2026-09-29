@@ -870,11 +870,24 @@ export function createWorldAnalysis({
               const candidateModel = mergeWorldModelPatchV2(
                 previousSnapshot,
                 patch,
-                patchAnalysisInput,
+                {...patchAnalysisInput, structured_fact_delta: true},
               );
               const snapshotChanged = !canonicalWorldEqual(previousSnapshot, candidateModel);
               supplementContinuationState.transientModel = cloneWorldValue(candidateModel);
-              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(summary ?? null);
+              const snapshotSummary = summary && typeof summary === "object"
+                ? {
+                    ...summary,
+                    ...(Array.isArray(summary.fact_mappings)
+                      ? {
+                          fact_mappings: summary.fact_mappings.map(mapping => ({
+                            ...mapping,
+                            snapshot_applied: snapshotChanged && mapping.guard_status === "accepted",
+                          })),
+                        }
+                      : {}),
+                  }
+                : summary;
+              supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(snapshotSummary ?? null);
               if (snapshotChanged) {
                 supplementContinuationState.hasAcceptedMutation = true;
                 supplementContinuationState.acceptedOperationCount += Number(summary?.accepted_operation_count)
@@ -884,7 +897,7 @@ export function createWorldAnalysis({
                 supplementContinuationState.lastSuccessfulRound = supplementContinuationState.rounds.length + 1;
                 supplementContinuationState.snapshotFingerprint = (await fingerprintWorldModel(candidateModel)).fingerprint;
               }
-              return {candidateModel, snapshotChanged};
+              return {candidateModel, snapshotChanged, snapshotSummary};
             };
             let patchResult;
             let factDeltaSummary = null;
@@ -914,12 +927,17 @@ export function createWorldAnalysis({
                 ? {
                     ...cloneWorldValue(patchResult.fact_delta_summary ?? {}),
                     fact_count: Array.isArray(patchResult.facts) ? patchResult.facts.length : null,
+                    ...(Array.isArray(factDeltaSummary?.fact_mappings)
+                      ? {fact_mappings: cloneWorldValue(factDeltaSummary.fact_mappings)}
+                      : {}),
                   }
                 : {};
-              const {candidateModel} = await mergeAcceptedSupplementPatch(
+              const {candidateModel, snapshotSummary} = await mergeAcceptedSupplementPatch(
                 patchResult?.patch ?? patchResult,
                 baseSummary,
               );
+              if (Array.isArray(snapshotSummary?.fact_mappings))
+                baseSummary.fact_mappings = cloneWorldValue(snapshotSummary.fact_mappings);
               const candidateFingerprint = await fingerprintWorldModel(candidateModel);
               const requestEnvelope = baseSummary.request_envelope ?? {};
               const requestSnapshot = {
@@ -996,10 +1014,12 @@ export function createWorldAnalysis({
                   completeness_required: true,
                   completeness_satisfied: false,
                 });
-                const {candidateModel} = await mergeAcceptedSupplementPatch(
+                const {candidateModel, snapshotSummary} = await mergeAcceptedSupplementPatch(
                   error.accepted_patch,
                   factDeltaSummary,
                 );
+                if (Array.isArray(snapshotSummary?.fact_mappings))
+                  factDeltaSummary.fact_mappings = cloneWorldValue(snapshotSummary.fact_mappings);
                 supplementContinuationState.lastFactDeltaSummary = cloneWorldValue(factDeltaSummary);
                 supplementContinuationState.rounds.push({
                   round: supplementContinuationState.rounds.length + 1,

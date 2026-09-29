@@ -7789,6 +7789,61 @@ test("World Patch v2 sparse SET_FIELD preserves untouched Existing data and writ
   fixture.runtime.destroy();
 });
 
+test("World Patch v2 persists a guarded Cycle mutation at the canonical nested path", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
+      { message_id: "current-floor", floor: 6, content: "Species-A 的稳定规则是 Species-A-Cycle-Rule-A", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeWorldModelPatchV2() {
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{
+              op: "SET_FIELD",
+              target: { kind: "biological_type", species_name: "Species-A", type_name: "Type-A" },
+              path: ["reproduction_rules", "cycle"],
+              value: "Species-A-Cycle-Rule-A",
+            }],
+          },
+          classified: [],
+          fact_delta_summary: {
+            raw_fact_block_count: 1,
+            parsed_fact_count: 1,
+            resolution_rejected_fact_count: 0,
+            evidence_guard_rejected_fact_count: 0,
+            accepted_fact_count: 1,
+            accepted_operation_count: 1,
+            canonical_mutation_occurred: true,
+            fact_mappings: [{
+              fact_index: 0,
+              field: "Cycle",
+              resolver_status: "resolved",
+              guard_status: "accepted",
+              patch_operation_type: "SET_FIELD",
+            }],
+          },
+        };
+      },
+    },
+  });
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "Species-A", biological_types: [{ name: "Type-A" }] }],
+  });
+  await seedWorldOwner(fixture, existing);
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: { character: { description: "Species-A 的稳定规则是 Species-A-Cycle-Rule-A" } },
+    trigger: "manual-patch",
+  });
+  const persisted = fixture.runtime.store.getFloor(1).world_model;
+  assert.equal(persisted.species[0].biological_types[0].reproduction_rules.cycle, "Species-A-Cycle-Rule-A");
+  assert.equal(fixture.runtime.getWorldModelDiagnosticState().latest_fact_delta.fact_mappings[0].snapshot_applied, true);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED"), true);
+  fixture.runtime.destroy();
+});
+
 test("World Patch v2 empty operations preserve the complete Existing model", async () => {
   const fixture = createFixture({
     messages: [
