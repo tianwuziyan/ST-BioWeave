@@ -44,6 +44,7 @@ import {
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import {
   archiveWorldModelSpecies,
+  deleteArchivedWorldModelSpecies,
   restoreWorldModelSpecies,
   buildArchivedSpeciesReference,
   filterArchivedWorldModelSpecies,
@@ -7980,6 +7981,9 @@ test('World UI keeps archive and read-only projections within the approved bound
   assert.match(html, /已归档种族/)
   assert.doesNotMatch(html, /2026-09-29T00:00:00/)
   assert.match(html, /data-bioweave-action="world-model-restore-species"/)
+  assert.match(html, /data-bioweave-action="world-model-delete-archived-species" data-bioweave-world-archive-index="0"/)
+  const busyHtml = worldPage({worldModel: model, worldModelMeta: {archived_species: [{species: {name: '已归档种族'}}]}, worldModelArchiveOpen: true, worldModelBusy: true})
+  assert.match(busyHtml, /data-bioweave-action="world-model-delete-archived-species"[^>]*disabled/)
   assert.match(html, /data-canonical-field="reproductive_mechanisms"/)
   assert.match(html, /生殖机制/)
   const mechanismModule = html.match(/<section[^>]*data-canonical-field="reproductive_mechanisms"[\s\S]*?<\/section>/)?.[0] ?? ''
@@ -8189,6 +8193,41 @@ test('World Model Species Archive keeps canonical case-sensitive Species identit
   const restored = restoreWorldModelSpecies(archived.model, archived.meta, 0)
   assert.equal(restored.changed, true)
   assert.deepEqual(restored.model.species.map(item => item.name), ['species-a', 'Species-A'])
+})
+
+test('World Model Species Archive permanently deletes only the selected snapshot', () => {
+  const speciesA = {name: 'Species-A', description: 'A', biological_types: [{name: 'Type-A'}]}
+  const speciesC = {name: 'Species-C', description: 'C', biological_types: [{name: 'Type-C'}]}
+  const sourceModel = {schema_version: 1, species: [{name: 'Species-B', biological_types: []}]}
+  const sourceMeta = {archived_species: [{species: speciesA, archived_at: 'a'}, {species: speciesC, archived_at: 'c'}]}
+  const deleted = deleteArchivedWorldModelSpecies(sourceModel, sourceMeta, 0)
+  assert.equal(deleted.changed, true)
+  assert.deepEqual(deleted.model, sourceModel)
+  assert.deepEqual(deleted.meta.archived_species, [{species: speciesC, archived_at: 'c', archived_by: 'manual'}])
+  assert.deepEqual(sourceMeta.archived_species, [{species: speciesA, archived_at: 'a'}, {species: speciesC, archived_at: 'c'}])
+  const missing = deleteArchivedWorldModelSpecies(sourceModel, sourceMeta, 4)
+  assert.equal(missing.changed, false)
+  assert.strictEqual(missing.model, sourceModel)
+  assert.strictEqual(missing.meta, sourceMeta)
+  assert.equal(missing.reason, 'ARCHIVED_SPECIES_NOT_FOUND')
+  const lower = deleteArchivedWorldModelSpecies(sourceModel, {archived_species: [{species: speciesA}]}, 'species-a')
+  assert.equal(lower.changed, false)
+  const caseDistinct = deleteArchivedWorldModelSpecies(sourceModel, {archived_species: [{species: speciesA}, {species: {name: 'species-a', marker: 'lower'}}]}, 0)
+  assert.equal(caseDistinct.changed, true)
+  assert.deepEqual(caseDistinct.meta.archived_species, [{species: {name: 'species-a', marker: 'lower'}, archived_at: null, archived_by: 'manual'}])
+  const humanAlias = deleteArchivedWorldModelSpecies(sourceModel, {archived_species: [{species: {name: '人类', marker: 'human'}}]}, 'human')
+  assert.equal(humanAlias.changed, true)
+  assert.deepEqual(buildArchivedSpeciesReference(sourceMeta), [{name: 'Species-A'}, {name: 'Species-C'}])
+  assert.equal(rejectArchivedSpeciesOperation({op: 'ADD_SPECIES', species: speciesA}, sourceMeta)?.code, 'ARCHIVED_SPECIES_EXCLUDED')
+  assert.equal(rejectArchivedSpeciesFact({scope: 'species', species: 'Species-A', field: 'Species_Identity'}, sourceMeta)?.code, 'ARCHIVED_SPECIES_EXCLUDED')
+  const afterDeleteReference = buildArchivedSpeciesReference(deleted.meta)
+  assert.deepEqual(afterDeleteReference, [{name: 'Species-C'}])
+  assert.equal(rejectArchivedSpeciesOperation({op: 'ADD_SPECIES', species: speciesA}, deleted.meta), null)
+  assert.equal(rejectArchivedSpeciesFact({scope: 'species', species: 'Species-A', field: 'Species_Identity'}, deleted.meta), null)
+  assert.deepEqual(filterArchivedWorldModelSpecies({species: [speciesA, speciesC]}, deleted.meta).species, [speciesA])
+  const restored = restoreWorldModelSpecies(deleted.model, deleted.meta, 0)
+  assert.deepEqual(restored.model.species.at(-1), speciesC)
+  assert.deepEqual(restored.meta.archived_species, [])
 })
 
 test('World Model Species Archive filters Full output and rejects the whole Supplement subtree', () => {

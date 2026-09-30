@@ -876,7 +876,10 @@ export function renderSpeciesArchive(meta, {open = false, busy = false} = {}) {
     ? entries.map((entry, index) => [
         '<li class="bioweave-world-model-archive-item">',
         `<div><strong>${escapeHtml(entry.species?.name ?? '')}</strong></div>`,
+        '<div class="bioweave-world-model-archive-actions">',
         `<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-restore-species" data-bioweave-world-archive-index="${index}"${busy ? ' disabled' : ''}>还原</button>`,
+        `<button type="button" class="bioweave-danger-action" data-bioweave-action="world-model-delete-archived-species" data-bioweave-world-archive-index="${index}" title="永久删除归档 Species" aria-label="永久删除归档 Species"${busy ? ' disabled' : ''}>永久删除</button>`,
+        '</div>',
         '</li>',
       ].join('')).join('')
     : '<li class="bioweave-empty">暂无已归档 Species。</li>'

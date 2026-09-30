@@ -403,7 +403,12 @@ metadata normalizes to an empty collection. Archive and Restore replace
 `world_model` and `world_model_meta` together in one owner-scoped World save;
 World/All clear removes the collection with `world_model_meta`, and Floor/Swipe
 version and owner guards apply exactly as they do to the surrounding World
-fields. Restore removes the dynamic analysis exclusion immediately.
+fields. Restore removes the dynamic analysis exclusion immediately. Permanent
+Delete removes only the selected archived snapshot through the same World save,
+leaving active `world_model.species[]` unchanged. It creates no tombstone or
+blacklist; the exclusion disappears with the entry, so later evidence may
+rediscover the Species. The ordinary World owner/epoch/Floor-Version guard and
+persistence-failure behavior continue to apply without a second writer.
 
 The canonical `events[]` field set from `core/events.js` is:
 

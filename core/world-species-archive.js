@@ -89,6 +89,19 @@ export function restoreWorldModelSpecies(model = {}, meta = {}, speciesOrIndex) 
   return {model: nextModel, meta: normalizedMeta, changed: true}
 }
 
+export function deleteArchivedWorldModelSpecies(model = {}, meta = {}, speciesOrIndex) {
+  const nextModel = clone(model ?? {})
+  const normalizedMeta = normalizeArchivedSpecies(meta)
+  const index = Number.isInteger(speciesOrIndex)
+    ? speciesOrIndex
+    : normalizedMeta.archived_species.findIndex(entry => normalizeWorldSpeciesIdentity(entry.species) === normalizeWorldSpeciesIdentity(speciesOrIndex))
+  if (index < 0 || index >= normalizedMeta.archived_species.length || !normalizedMeta.archived_species[index]?.species) {
+    return {model, meta, changed: false, reason: 'ARCHIVED_SPECIES_NOT_FOUND'}
+  }
+  normalizedMeta.archived_species.splice(index, 1)
+  return {model: nextModel, meta: normalizedMeta, changed: true}
+}
+
 export function filterArchivedWorldModelSpecies(model = {}, meta = {}) {
   const next = clone(model ?? {})
   const archived = new Set(buildArchivedSpeciesReference(meta).map(item => normalizeWorldSpeciesIdentity(item)))
@@ -126,6 +139,11 @@ export function archiveWorldSpecies(model, meta, speciesOrIndex, options = {}) {
 
 export function restoreWorldSpecies(model, meta, speciesOrIndex) {
   const result = restoreWorldModelSpecies(model, meta, speciesOrIndex)
+  return result.changed ? result : {...result, code: result.reason}
+}
+
+export function deleteArchivedWorldSpecies(model, meta, speciesOrIndex) {
+  const result = deleteArchivedWorldModelSpecies(model, meta, speciesOrIndex)
   return result.changed ? result : {...result, code: result.reason}
 }
 

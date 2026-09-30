@@ -1255,6 +1255,14 @@
   min-width: 0;
 }
 
+.bioweave-world-model-archive-item > .bioweave-world-model-archive-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .bioweave-world-model-archive-item strong,
 .bioweave-world-model-archive-item small {
   overflow-wrap: anywhere;

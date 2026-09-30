@@ -2669,6 +2669,9 @@ test('World Model view ignores stale reloads after a Chat change', async () => {
 test('World Model collection edits persist on the current resolver and preserve metadata', async () => {
   const documentRef = new AppFakeDocument()
   const toastCalls = []
+  let confirmResult = 'negative'
+  const confirmCalls = []
+  let refreshCalls = 0
   documentRef.defaultView.toastr = {
     success(message) { toastCalls.push(['success', message]) },
     error(message) { toastCalls.push(['error', message]) },
@@ -2690,6 +2693,7 @@ test('World Model collection edits persist on the current resolver and preserve 
   let currentMeta = structuredClone(meta)
   let failSave = false
   let saveCalls = 0
+  const savePayloads = []
   const profileStore = {
     getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
     getApiRequestSettings: () => ({}),
@@ -2705,6 +2709,7 @@ test('World Model collection edits persist on the current resolver and preserve 
     resolveWorldModelAtOrBefore: async () => ({model: currentModel, meta: currentMeta}),
     saveWorldModel: async ({model, meta: nextMeta}) => {
       saveCalls += 1
+      savePayloads.push({model: structuredClone(model), meta: structuredClone(nextMeta)})
       if (failSave) {
         const error = new Error('WORLD_MODEL_SAVE_FAILED')
         error.code = 'WORLD_MODEL_SAVE_FAILED'
@@ -2713,9 +2718,14 @@ test('World Model collection edits persist on the current resolver and preserve 
       currentModel = structuredClone(model)
       currentMeta = structuredClone(nextMeta)
     },
-    refreshTrackingRegistry: async () => {},
+    refreshTrackingRegistry: async () => { refreshCalls += 1 },
     st: {
-      getContext: () => ({chatId: 'chat-world-collections', characters: []}),
+      getContext: () => ({
+        chatId: 'chat-world-collections',
+        characters: [],
+        Popup: {show: {async confirm(title, message) { confirmCalls.push([title, message]); return confirmResult }}},
+        POPUP_RESULT: {AFFIRMATIVE: 'affirmative', NEGATIVE: 'negative'},
+      }),
       fetch: async () => ({ok: true, json: async () => []}),
       getRequestHeaders: () => ({}),
     },
@@ -2839,9 +2849,48 @@ test('World Model collection edits persist on the current resolver and preserve 
   assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A', '高等种族 B'])
   assert.deepEqual(currentMeta.archived_species, [])
 
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '1'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-delete-species'), preventDefault() {}})
+  assert.equal(currentMeta.archived_species.length, 1)
+  const permanentDeleteSaveCalls = saveCalls
+  const refreshBeforePermanentDelete = refreshCalls
+  const cancelHtml = root.querySelector('.bioweave-main').innerHTML
+  await click({target: nestedActionTarget('world-model-delete-archived-species', {bioweaveWorldArchiveIndex: '0'}), preventDefault() {}})
+  assert.equal(saveCalls, permanentDeleteSaveCalls)
+  assert.equal(currentMeta.archived_species.length, 1)
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, cancelHtml)
+  assert.match(confirmCalls.at(-1)[1], /后续世界分析仍可能根据证据重新发现该 Species/)
+  const activeModelBeforePermanentDelete = structuredClone(currentModel)
+  confirmResult = 'affirmative'
+  await click({target: nestedActionTarget('world-model-delete-archived-species', {bioweaveWorldArchiveIndex: '0'}), preventDefault() {}})
+  assert.equal(saveCalls, permanentDeleteSaveCalls + 1)
+  assert.deepEqual(currentModel, activeModelBeforePermanentDelete)
+  assert.deepEqual(currentMeta.archived_species, [])
+  assert.equal(refreshCalls, refreshBeforePermanentDelete)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /bioweave-world-model-archive-popover/)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
+  assert.deepEqual(savePayloads.at(-1).model, activeModelBeforePermanentDelete)
+  assert.deepEqual(savePayloads.at(-1).meta.archived_species, [])
+
+  await click({target: nestedActionTarget('world-model-add-species'), preventDefault() {}})
+  await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '种族 C')
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '0'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-delete-species'), preventDefault() {}})
+  const permanentDeleteFailureSaveCalls = saveCalls
+  failSave = true
+  await click({target: nestedActionTarget('world-model-delete-archived-species', {bioweaveWorldArchiveIndex: '0'}), preventDefault() {}})
+  assert.equal(saveCalls, permanentDeleteFailureSaveCalls + 1)
+  assert.equal(currentMeta.archived_species.length, 1)
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 C'])
+  assert.notEqual(toastCalls.at(-1)[0], 'success')
+  failSave = false
+  await click({target: nestedActionTarget('world-model-restore-species', {bioweaveWorldArchiveIndex: '0'}), preventDefault() {}})
+
+  await click({target: nestedActionTarget('world-model-select-species', {bioweaveWorldSpeciesIndex: '0'}), preventDefault() {}})
+  await click({target: nestedActionTarget('world-model-delete-species'), preventDefault() {}})
   failSave = true
   await clickCollection('world-model-save-species', {bioweaveWorldModelCollectionKind: 'species'}, '失败后不应显示')
-  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A', '高等种族 B'])
+  assert.deepEqual(currentModel.species.map(item => item.name), ['种族 A'])
   assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /失败后不应显示/)
   assert.equal(toastCalls.at(-1)[0], 'error')
 
@@ -2851,7 +2900,7 @@ test('World Model collection edits persist on the current resolver and preserve 
   reloaded.go('world')
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.match(reloadedRoot.querySelector('.bioweave-main').innerHTML, /种族 A/)
-  assert.match(reloadedRoot.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
+  assert.doesNotMatch(reloadedRoot.querySelector('.bioweave-main').innerHTML, /高等种族 B/)
   reloaded.destroyBioWeave()
 })
 test('worldbook source checkbox updates immediately and saves with a success Toast without a page notice', async () => {

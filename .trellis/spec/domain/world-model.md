@@ -62,6 +62,10 @@ analysis; they are neither Existing World Model nor permitted evidence. A
 deterministic identity gate rejects archived Species subtree Facts, and Full
 results are filtered before persistence. Explicit Restore atomically puts the
 original subtree back and removes its exclusion; no separate blacklist exists.
+Permanent Delete removes only one archived snapshot from `world_model_meta`
+through the existing World save, without changing active `world_model.species[]`
+or creating a tombstone. With the entry gone, Full/Supplement no longer derive
+an Archive exclusion for that identity; later valid evidence may rediscover it.
 
 ### Candidate delivery and persistence order
 

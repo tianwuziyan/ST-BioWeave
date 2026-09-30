@@ -30,6 +30,7 @@ import {
 import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import {
   archiveWorldSpecies,
+  deleteArchivedWorldSpecies,
   isSpeciesArchived,
   normalizeSpeciesIdentity,
   normalizeWorldSpeciesArchiveMeta,
@@ -2864,6 +2865,70 @@ export function createApp(runtime, options = {}) {
     }
     render()
   }
+  async function deleteArchivedWorldModelSpecies(archiveIndex) {
+    if (worldModelState.busy || !Number.isInteger(archiveIndex)) return
+    const {token} = currentAnalysisChatToken()
+    if (worldModelState.sectionDirty) captureWorldModelSectionDraft()
+    if (!(await canDiscardWorldModelSectionDraft())) return
+    const currentMeta = normalizeWorldSpeciesArchiveMeta(worldModelState.meta)
+    const entry = currentMeta.archived_species?.[archiveIndex]
+    if (!entry?.species) {
+      notify('归档名单中没有找到该 Species。', 'warning', documentRef)
+      return
+    }
+    const speciesName = String(entry.species.name ?? '').trim() || '该 Species'
+    if (!(await confirmWithPopup('永久删除归档 Species', `确定永久删除归档中的「${speciesName}」吗？删除后无法从归档中还原；后续世界分析仍可能根据证据重新发现该 Species。`))) return
+    try {
+      assertAnalysisChatToken(token)
+    } catch {
+      return
+    }
+    if (worldModelState.busy) return
+    const latestModel = normalizeStoredWorldModel(worldModelState.model ?? {schema_version: 1, species: [], medical_context: {}, exceptions: [], unknowns: []})
+    const latestMeta = normalizeWorldSpeciesArchiveMeta(worldModelState.meta)
+    const latestEntry = latestMeta.archived_species?.[archiveIndex]
+    if (!latestEntry?.species || normalizeSpeciesIdentity(latestEntry.species) !== normalizeSpeciesIdentity(entry.species)) return
+    const result = deleteArchivedWorldSpecies(latestModel, latestMeta, archiveIndex)
+    if (!result.changed) {
+      notify('归档名单中没有找到该 Species。', 'warning', documentRef)
+      return
+    }
+    let model
+    let meta
+    try {
+      model = normalizeStoredWorldModel(result.model)
+      meta = normalizeWorldSpeciesArchiveMeta(result.meta)
+    } catch (error) {
+      notify(worldModelOperationError(error), 'error', documentRef)
+      return
+    }
+    worldModelState = {...worldModelState, busy: true, notice: null}
+    render()
+    try {
+      if (typeof runtime.saveWorldModel !== 'function') throw new Error('ST_FLOOR_STORAGE_UNAVAILABLE')
+      await runtime.saveWorldModel({model, meta})
+      assertAnalysisChatToken(token)
+      worldModelState = {
+        ...worldModelState,
+        loaded: true,
+        busy: false,
+        model,
+        meta,
+        archiveOpen: true,
+        notice: null,
+      }
+      notify('归档 Species 已永久删除；后续分析可根据证据重新发现它。', 'success', documentRef)
+    } catch (error) {
+      try {
+        assertAnalysisChatToken(token)
+      } catch {
+        return
+      }
+      worldModelState = {...worldModelState, busy: false, notice: null}
+      notify(worldModelOperationError(error), 'error', documentRef)
+    }
+    render()
+  }
   async function saveWorldModelCollectionInput(actionTarget) {
     const form = actionTarget.closest?.('[data-bioweave-world-model-collection-form]')
     const name = form?.querySelector?.('[data-bioweave-world-model-collection-input]')?.value ?? ''
@@ -5091,6 +5156,11 @@ export function createApp(runtime, options = {}) {
     if (action === 'world-model-restore-species') {
       event.preventDefault()
       await restoreWorldModelSpecies(Number(target.dataset.bioweaveWorldArchiveIndex))
+      return
+    }
+    if (action === 'world-model-delete-archived-species') {
+      event.preventDefault()
+      await deleteArchivedWorldModelSpecies(Number(target.dataset.bioweaveWorldArchiveIndex))
       return
     }
     if (action === 'world-model-add-species') {
