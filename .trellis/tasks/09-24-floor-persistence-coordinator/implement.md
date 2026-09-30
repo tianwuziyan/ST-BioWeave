@@ -53,7 +53,7 @@ Inventory classification:
 - [x] `node --check` every modified JS file
 - [x] `git diff --check`
 - [x] Review `git diff` for no Chat metadata migration, no message.extra bypass, no timing workaround, and no whole-slot replacement in normal owner patches.
-- [x] Report real-ST validation still required for F5 durability and late host writers.
+- [x] Record real-ST validation complete for F5 durability and late host writers; keep it explicitly separate from automated test evidence.
 
 ## Rollback points
 

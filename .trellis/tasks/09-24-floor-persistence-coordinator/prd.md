@@ -37,7 +37,9 @@
 
 - transaction 至少有 created、queued、dispatch、owner check、latest slot、patch validation、host sync、official save resolved、readback、sibling audit、confirmed/failed/superseded 状态。
 - 只有 owner identity 仍匹配、official readback 成功、owner patch 正确存在且 sibling 未被错误删除，才报告 confirmed。
-- `saveChat()`/Promise resolve 不得单独被标记为永久 durable；保留真实 ST late-writer/F5 未证实的限制。
+- `saveChat()`/Promise resolve 不得单独被标记为永久 durable；当前 host-memory
+  sync + official readback + 后续 SillyTavern final-save/F5 reload durability
+  已通过真实宿主验收。
 
 ### R5. Preserve lifecycle and retry boundaries
 
@@ -63,7 +65,7 @@
 - [ ] Generation barrier、Auto prerequisite、Stage retry、Manual cancel、Swipe 0/no-Swipe、UI refresh loop 与现有生命周期测试保持通过。
 - [ ] 新增 direct-writer gate，证明普通业务模块不能绕过 Coordinator。
 - [ ] `npm test`、`npm run check`、修改 JS 的 `node --check`、`git diff --check` 全部通过。
-- [ ] 真实 SillyTavern F5 durability 仍单独标记为待验收，不把 immediate readback 或 Promise resolve 夸大成永久 durable。
+- [x] 真实 SillyTavern F5/reload durability 已人工验证通过；该人工验收不替代自动化测试，也不把 immediate readback 或 Promise resolve 单独夸大成永久 durable。
 
 ## Out of scope
 

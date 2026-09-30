@@ -57,13 +57,15 @@ before every commit. Disabled lifecycle refreshes clear/fail closed rather than
 reinjecting context. Re-enabling restores future normal triggers and reads but
 does not replay disabled-period Floors or create backlog API calls.
 
-Phase 2D-3 generation is currently a transient, fail-closed domain operation. Its
-AI response is not a persistent owner or fact source: only the current Character
-Floor Version may later own a persisted Projection, and persistence is outside
-this wave. A generation request is bounded by its Chat, current Character Floor,
-active Swipe, complete Floor Version, rule binding and Eligibility fingerprint;
-results whose owner or rule has changed are discarded. No generation result is
-written to Chat metadata, Snapshot, StateReducer or BiologicalEvent storage.
+Projection generation remains a separate, fail-closed domain operation. Its AI
+response is not a persistent owner or fact source: only the current Character
+Floor Version may own a persisted Projection. The current code has Projection
+pure eligibility/generation support, persistence, and Context injection, but the
+main Runtime does not automatically call the eligibility/generation functions.
+A generation request is bounded by its Chat, current Character Floor, active
+Swipe, complete Floor Version, rule binding and Eligibility fingerprint; results
+whose owner or rule has changed are discarded. No Projection result is written
+to Chat metadata, Snapshot, StateReducer or BiologicalEvent storage.
 
 ## 1. Scope and audit status
 
@@ -112,10 +114,23 @@ The Coordinator owns the following invariants:
 - `commitState: "confirmed"` only after owner patch, authoritative readback,
   Floor Version, and sibling audit all succeed.
 
-`saveChat()`/`saveChatConditional()` resolution is not durable confirmation.
-Immediate readback is the confirmation boundary used by the ordinary Floor
-write path; future SillyTavern late-writer behavior remains a separate host
-acceptance concern and MUST NOT be hidden by retries or timing delays.
+Implementation status is `IMPLEMENTED`; automated tests cover the persistence
+mechanism; real SillyTavern World persistence final-save + F5/reload durability
+is `REAL-HOST VERIFIED`. The host result is manual acceptance evidence, not an
+automated test result. The issue is closed and is not a release blocker.
+
+The adapter also emits `HOST_MEMORY_SLOT_BEFORE_SYNC`,
+`HOST_MEMORY_SLOT_AFTER_SYNC`, and `FINAL_FLOOR_SLOT_AUDIT` diagnostics for the
+host-memory and authoritative-slot checks.
+
+`saveChat()`/`saveChatConditional()` resolution is not, by itself, durable
+confirmation. Immediate authoritative readback remains the confirmation
+boundary used by the ordinary Floor write path. The subsequent SillyTavern
+generation final-save and F5/reload durability path has also been verified in
+the real host: host-memory Floor slot synchronization keeps the authoritative
+slot available to the later host save, and the slot remains readable after
+reload. This real-host result is separate from, and must not be described as,
+an automated test.
 
 The Generation Settle Barrier and Analysis Input Ready boundary are adjacent
 lifecycle contracts, not alternate persistence implementations. They remain
@@ -209,9 +224,27 @@ never written to Chat metadata. Character and All clear operations remove it;
 World clear preserves it. Deleting its owning Character Floor or Swipe naturally
 removes it, while deleting the Snapshot itself leaves Events intact. A missing,
 invalid, stale, wrong-Chat, wrong-Swipe, wrong-content-hash, or wrong-message-
-version Snapshot is rejected and permits full replay. Wave 1 does not implement
-automatic Runtime Snapshot creation/restoration or historical dependency
-cascade invalidation.
+version Snapshot is rejected and permits full replay. The current Runtime creates
+Snapshots after successful Character/Event analysis according to the configured
+checkpoint interval, persists them under the owning Character Floor/active Swipe,
+and uses the nearest valid Snapshot for `getCurrentBiologicalState()` when one is
+available. `restoreFromSnapshot()` restores the checkpoint and replays later
+Events; the invalid/missing case performs a full Event replay. Reading Current
+State does not create or rewrite a Snapshot, and historical dependency cascade
+invalidation remains out of scope.
+
+`core/state.js::reduceState()` and the Runtime current-state path are connected
+production code. The reducer receives `baseState`, `events`, `currentStoryTime`,
+and `characterFacts`, and returns derived Current Biological State. A later
+`currentStoryTime` with no new Event can transiently update `elapsed_story_days`
+after Snapshot restore or full replay; Story Time progression does not invent an
+Event, conception, pregnancy, or confirmation.
+
+Character Registry, Character Facts/Profile, Tracking Subject/Candidate, and
+Current Biological State remain separate concepts. Registry is canonical identity
+history; `character_profiles` / `characterFacts` are Runtime-derived facts;
+Tracking is an Event-derived index; Current State is replay output. There is no
+independent authoritative persisted Character Profile root.
 
 The Floor `projection_timeline` root is separate from `snapshot` and is cleared
 with the Character domain. It contains only `creations`, `evidence_records`, and
@@ -494,8 +527,11 @@ conflicts instead of applying arbitrary precedence.
 `ReproductiveSourceCandidate` is derived from exposure history and World Model
 compatibility. `ContributorAttribution` may contain multiple confirmed or excluded
 relationships; only a factual `reproductive_source_attribution` Event supplies those
-confirmed/excluded facts. No Candidate is persisted as an Event, and no attribution
-contract is wired to Runtime, StateReducer, Snapshot, or UI in this wave.
+confirmed/excluded facts. No Candidate is persisted as an Event. The reducer can
+consume confirmed/excluded attribution for an already existing episode, but the
+current Event production path does not expose a separate attribution UI or an
+independent persisted attribution root; orphan attribution remains diagnostic and
+does not create an episode.
 
 ### 4.4 Runtime transient state
 
@@ -1098,6 +1134,18 @@ evidence for this checkout. Phase H also records real SillyTavern validation
 of the core persistence, generation and Swipe baseline. Desktop/Tablet/Mobile
 and broader product acceptance remains separate because Node fixtures cannot
 prove every installed host lifecycle or UI behavior.
+
+For the current release baseline, the persistence issue is closed, but the
+checkout is not a full-check pass: `npm run check` reports `1098` tests, with
+`1063` passing, `35` failing, and `0` skipped. The failures are `32` World
+Model prompt/debug/fixture contract regressions and `3` Phase 2A UI contract
+regressions. The two previously identified failures remain among them:
+`tests/world-model.test.js:7021` expects an obsolete core prompt phrase, while
+`tests/world-model.test.js:8035` detects the fixture-specific term `妖修` in
+`ai/prompts.js`. The first is not yet shown to be a production runtime
+failure; the second is a current fixture-isolation violation in production
+prompt text. All `35` remain release-validation blockers until resolved. This
+does not reopen the verified World Persistence F5/reload issue.
 
 When the final code differs from a planned name or path, update the registry
 and this document to the actual path. When the host lifecycle differs from the

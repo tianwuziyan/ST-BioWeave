@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"最终检查审计结论是否遵守当前 Floor provenance 与 derived-state 规范边界。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"最终检查 Event/Identity/Character Evidence/Tracking 结论的概念分离。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"最终检查 Window NOT_IMPLEMENTED 与当前 Tracking 结论。"}
+{"file":"docs/ARCHITECTURE.md","reason":"最终检查生产 owner 与文档/代码不一致项。"}

@@ -8,8 +8,8 @@
 - `core/events.js`：BiologicalEvent 类型、固定结构、normalize / validate / sort；统一拥有 Event 边界，不让 UI 或其它消费者各自解析原始 payload。
 - `core/identity.js`：Floor-owned canonical Character Registry invariants、Runtime canonical character ID allocation、existing/new/unresolved identity resolution 和 alias candidate policy；不按姓名建立键，不执行 destructive merge。
 - Tracking Registry 领域逻辑：从已验证的 Floor-bound Event 建立/重建 Runtime Tracking Subject 派生索引；只保存稳定人物信息和 `event_id` 引用，不访问 DOM、AI 或宿主。
-- `core/state.js`：纯程序 State Reducer，不调用 AI；Phase 2A 不接通完整妊娠状态归约。
-- `core/snapshot.js`：检查点与删除楼层后的局部恢复。
+- `core/state.js`：纯程序 State Reducer，不调用 AI；由 Runtime 以 `baseState`、Events、`currentStoryTime` 和 `characterFacts` 计算 derived Current Biological State。
+- `core/snapshot.js`：Floor-owned 检查点、校验、最近有效 Snapshot 恢复和后续 Event replay；无效或缺失时回退完整 replay。
 - `core/projection.js`：未来软推演数据；不是事实。
 - Pregnancy Exposure Tracking Window：规范见 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)；当前 `core/tracking.js` 只有按有效 exposure 派生 Subject/Candidate，尚未实现独立 Window lifecycle。
 - `core/genealogy.js`：家系查询、世代与排序。
@@ -25,6 +25,51 @@
 - `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
+
+## Current Implementation Status
+
+以下是当前生产代码与 Runtime 调用链的状态基线；`PRODUCTION` 只表示该范围已经进入当前生产链，不表示所有未来语义都已完成。
+
+| Domain | Current status |
+| --- | --- |
+| World Model | PRODUCTION / current implemented scope |
+| Character Identity | PRODUCTION |
+| Character Registry | PRODUCTION |
+| BiologicalEvent | PRODUCTION |
+| Tracking Subject | PRODUCTION |
+| Tracking Candidate | PRODUCTION |
+| Tracking Window | NOT_IMPLEMENTED |
+| StateReducer | PRODUCTION |
+| Current Biological State | PRODUCTION |
+| Snapshot Runtime | PRODUCTION |
+| Characters UI | PRODUCTION within current scope |
+| Overview | PARTIAL |
+| Projection | PARTIAL |
+| Genealogy | PARTIAL: core query support and placeholder UI; no relation-data production chain |
+
+当前 derived state 链路为：
+
+```text
+active valid Character Floors
+  → authoritative BiologicalEvents
+  → Tracking rebuild
+  → buildCharacterFacts()
+  → valid Snapshot restore or full Event replay
+  → reduceState({baseState, events, currentStoryTime, characterFacts})
+  → Current Biological State
+```
+
+Current Biological State 是 Runtime derived state，不是新的 authoritative fact
+store。Snapshot 是同一 derived state 的可校验 checkpoint；不存在有效 Snapshot
+时使用完整 replay。较早 Snapshot 配合较晚 `currentStoryTime`、且没有新增 Event
+时，只会 transient 更新 `elapsed_story_days`，不会创造 conception、pregnancy
+或 confirmation Event。
+
+人物领域也必须保持分层：Character Registry 是 canonical identity history；
+`character_profiles` / `characterFacts` 是 Runtime derived biological/profile
+facts；Tracking Subject/Candidate 是由有效 Event 派生的追踪索引；Current
+Biological State 是 Event replay、characterFacts 与 Story Time 的结果。当前没有
+独立 authoritative persisted Character Profile root。
 
 ### Analysis Context / Prompt Contract
 
@@ -67,9 +112,11 @@ isolation、sanitization、module extraction 或 AnalysisInput narrowing 时，�
 
 只有文件稳定超过约 500–800 行、出现两个独立职责、或独立测试明显更清楚时才拆。不要建立 event-store / event-validator / event-factory / event-interface 这类碎片目录。
 
-## Phase 2A Event / Tracking 实施契约
+## Historical Phase 2A Event / Tracking 实施契约
 
-Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎。跨层数据流保持轻量：
+以下保留原 Phase 2A 的事实提取和追踪索引边界，作为历史契约参考；当前实现状态以本文前面的 Current Implementation Status 为准。它不是完整妊娠状态引擎的语义定义。
+
+历史 Phase 2A 的跨层数据流为：
 
 ```text
 当前 Chat / Floor / Recent Story discovery window / World Model / Story Time
@@ -96,7 +143,9 @@ Phase 2A 只新增事实提取和追踪索引，不是完整妊娠状态引擎�
 - `counterpart_ids[]` 只保存该 Event 的 `participants[]` 中最终实际造成该 gestational subject pregnancy-relevant exposure 的 source ID；不能跨 subject 或跨 Event 借用 source。对于 pregnancy-related `sexual_activity`，subject 数组严格一个、counterpart 至少一个、participants ID 集合严格等于 subject + counterpart 且各自去重；`relevant=true` 必须有 pregnancy-relevant exposure evidence、participant-backed 的数组和 `source_evidence` 中 kind 为 `pregnancy_relevant_exposure` 的 marker。无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
 - `existing_bioweave` 保持最近合法前置 Floor snapshot 语义；`existing_events` 额外覆盖 Recent Story discovery window 内的合法 active canonical Events，用于 semantic dedupe，不扫描无界 Chat 历史，不读取 Chat metadata/cache，不包含 target 自身旧结果、删除/失效 Swipe 或 stale Floor。去重要求 Event type、structured story_time、canonical participant/subject/counterpart 集合、机制、关键 source evidence 与 state fact 完全匹配；缺字段、不同 type、不同 subject/source、不同机制或不同事实 evidence 时保留两个 Event。不得使用模糊 AI 相似度 dedupe。
 - `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
-- StateReducer、Snapshot、Projection、Genealogy、完整妊娠计算、Gestational Age 和预计分娩日不在本阶段接通；对应页面/领域模块保持空状态或兼容骨架。
+- StateReducer、Snapshot Runtime 和 Current Biological State 已进入当前生产链；但 conception、labor、postpartum 的 episode transition 语义仍为 PARTIAL，完整妊娠计算、Gestational Age 和预计分娩日不在当前范围。
+- Projection 仍为 PARTIAL：pure eligibility/generation、persistence 和 Context injection 已存在，但主 Runtime 没有自动调用 Projection eligibility/generation；Context 读取 persisted Projection views，不直接从 Current Biological State 生成。
+- Genealogy 当前只有 core 查询基础与空状态 UI，没有关系数据生产链。
 - Tracking Window 尚未实现：当前 exposure 聚合没有 round identity、open/closed/expired 状态、Story Time horizon 或关闭后过滤；`core/state.js` 的 `elapsed_story_days` 只描述 State 派生值，不能冒充 Window expiration。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
 
 ### Floor / Swipe / Version 生命周期
@@ -179,6 +228,9 @@ UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` �
 
 当前已经通过真实 SillyTavern World/Event 与 F5 durability 验证的普通
 Floor persistence mainline 必须视为冻结行为，而不是可顺手重构的基础设施。
+当前状态：`IMPLEMENTED`；自动化测试覆盖 persistence mechanism；真实
+SillyTavern World persistence 的 generation final-save + F5/reload durability
+已人工验证通过。人工宿主验收不等同于自动化测试。
 普通 World、Event/Character、Projection、Manual World 和获准的 Terminal
 写入统一遵循：
 
@@ -221,8 +273,8 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 4. BiologicalEvent schema、normalize / validate、结构化 Story Time 与 Tracking Registry 纯逻辑。
 5. 固定 Event Analyzer、Floor-bound Event 持久化与 Character counter / Floor Version 生命周期。
 6. Event CRUD 和 Characters / Events / Overview 真实 DTO 接线。
-7. State Reducer。
-8. Snapshot restore、Projection 和 Genealogy。
+7. Current Biological State semantic contract（单独设计任务；不在本基线同步中施工）。
+8. Pregnancy Exposure Tracking Window、Projection 主 Runtime generation 与 Genealogy 各自独立评估。
 9. Worldbook + Prompt Pipeline 与后续分析任务。
 10. Tavern Context。
 
@@ -259,3 +311,12 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 实现波次完成后，自动检查至少应覆盖固定 Event JSON 的拒绝/写入边界、每个 Target Floor Version 的 0/1/N Event、Current Target Floor + Recent Story discovery、历史 Event 保留自身 story_time、当前 Floor source ownership、bounded existing_events 聚合、semantic duplicate guard、不同 source 的同时间 exposure 不误合并、不同 type 不互相去重、pregnancy-related `sexual_activity` 每个 Event 恰好一个 subject 及 1/N actual counterpart、不同 subject 分 Event、同 subject 重复 Event、gender 不决定能力、`can_carry_pregnancy` 的 eligible/pending/ineligible 三态、`can_be_fertilized` 不能单独授权、无受孕暴露、Event 编辑/删除、Floor 删除、Swipe 切换、Floor Version 替换以及手动刷新成功/失败。文档波次不把这些待实现回归写成已经通过的测试。
 
 自动检查不能证明全部 SillyTavern 行为。Phase H 已在真实宿主验证核心 EventEmitter、Character counter、reroll/Swipe 分类、官方持久化、F5 durability、new Swipe 和 existing Swipe 切换；仍需单独完成 Event 编辑/真删除、Story Time 以及 Desktop / Tablet / Mobile UI 验收。完成人工验收前不应把 Phase 2A 描述为完整妊娠状态能力。
+
+### Current Release Stabilization Baseline
+
+当前 checkout 的 release stabilization 状态必须与 feature roadmap 分开记录：
+
+- World Persistence：Floor-owned persistence、official save/readback、host-memory slot synchronization、Floor Version/active Swipe guards 均已实现；persistence mechanism 为 automated verified，SillyTavern final-save + F5/reload durability 已真实宿主验证，World reload persistence issue 为 `CLOSED`，不再是 blocker。
+- Character/Event validation：pregnancy-relevant `source_evidence`、strict domain validation 和 canonical typed `physical_symptom` payload 均有当前回归测试覆盖；本轮定向 Event/Core/Runtime/Snapshot/Floor persistence 测试通过。
+- 当前 `npm run check` **尚未通过**：全量 `1098` 个测试中 `1063` 通过、`35` 失败、`0` skipped。失败包括 `tests/world-model.test.js` 的 `32` 项 World prompt/debug/fixture contract 回归，以及 `tests/phase2a-ui.test.js` 的 `3` 项 UI contract 回归。用户点名的两个旧 failure 仍在其中：`tests/world-model.test.js:7021` 的 debug preview 断言寻找已被当前 prompt 重构替换的旧核心文本；`tests/world-model.test.js:8035` 检出 `ai/prompts.js` 仍包含 fixture-specific 词“妖修”。7021 尚未证明生产运行时错误；8035 是当前生产 Prompt 仍违反 fixture-isolation regression 的证据。全部 `35` 项在修复或明确调整前都属于当前 release validation blockers。
+- 以上 automated test 结果与真实 SillyTavern 人工验收分别记录，不互相替代。

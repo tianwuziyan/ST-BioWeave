@@ -417,7 +417,7 @@ test('capability labels remain Chinese across Character, State, and World UI', (
     selectedTypeIndex: 0,
   })
   for (const html of [characterHtml, worldHtml]) {
-    assert.match(html, /可使对方受精/)
+    assert.match(html, /使对方受精/)
     assert.doesNotMatch(html, />can_fertilize</)
   }
   assert.doesNotMatch(stateHtml, /可使对方受精|can_fertilize/)
@@ -498,8 +498,8 @@ test('characters page renders DTO facts, tri-state capabilities, and all exposur
   assert.match(html, /人类/)
   assert.match(html, /类型甲/)
   assert.match(html, /可承载妊娠[\s\S]*?是/)
-  assert.match(html, /可产生卵子[\s\S]*?未知/)
-  assert.match(html, /可产生精子[\s\S]*?否/)
+  assert.match(html, /产生卵子[\s\S]*?未知/)
+  assert.match(html, /产生精子[\s\S]*?否/)
   assert.match(html, /data-bioweave-event-id="evt-1"/)
   assert.doesNotMatch(html, /调试信息|content_hash|message_version|chat_id|message_id/)
   for (const section of ['当前状态', '事件记录', '其他信息', '推演', '关系', '备注']) {
@@ -592,7 +592,7 @@ test('character detail keeps every section for false or unknown capabilities and
 
   assert.match(html, /未知承载者/)
   assert.match(html, /可承载妊娠[\s\S]*?否/)
-  assert.match(html, /可产生卵子[\s\S]*?未知/)
+  assert.match(html, /产生卵子[\s\S]*?未知/)
   for (const text of ['当前状态', '当前没有可显示的相关事件。', '其他信息', '推演', '关系', '备注']) {
     assert.match(html, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

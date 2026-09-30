@@ -30,6 +30,33 @@ The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
 
+## 1.1 Current production pipeline
+
+The current Runtime path is:
+
+```text
+AI response
+  → parse / identity resolution
+  → semantic dedupe / deterministic Event ID
+  → state_fact materialization
+  → normalize / domain validation
+  → Floor persistence / authoritative readback
+  → Tracking rebuild
+  → Current Biological State replay
+```
+
+Event edit and delete also rebuild the derived Tracking and Current State inputs;
+they do not create a second Chat-level fact source. `reduceState()` is connected
+to the Runtime current-state path and consumes `baseState`, Events,
+`currentStoryTime`, and derived `characterFacts`. Its output is derived Current
+Biological State, not an authoritative persisted Character Profile or fact store.
+
+The domain layers remain separate: `character_registry` is canonical identity
+history; `character_profiles` / `characterFacts` are Runtime-derived biological
+facts; `tracking_subjects` and `tracking_candidates` are Event-derived tracking
+indexes; Current State is replay output. There is no independent authoritative
+persisted Character Profile root.
+
 Floor/active-Swipe ownership, lifecycle invalidation, previous resolution, and
 provenance are defined by [Floor State Ownership](./floor-state.md). This
 document owns the BiologicalEvent contract and only points to that shared
@@ -392,8 +419,11 @@ and persist a newly discovered Event to the current active Floor Swipe.
 ## Projection generation boundary
 
 Projection generation is downstream of deterministic Eligibility and remains
-outside the factual Event pipeline. Only an `eligible` decision may be sent to
-the dedicated Projection Generation prompt. The raw AI DTO contains future
+outside the factual Event pipeline. Pure eligibility/generation code,
+persistence, and Context injection exist, but the audited main Runtime does not
+call `evaluateProjectionEligibility()` / `generateProjectionCandidate()` as an
+automatic production chain. Only an `eligible` decision may be sent to the
+dedicated Projection Generation prompt. The raw AI DTO contains future
 development content only; it cannot create a BiologicalEvent, attribution,
 identity, owner, probability, or state. BioWeave assembles and validates the
 Projection candidate from the decision and current Floor Version. A stale Chat,
@@ -414,6 +444,10 @@ business fields, and renders a short future-direction prompt through the
 Event and cannot update StateReducer; Event Analysis treats only the actual
 target Character message as direct factual evidence. Clearing or changing the
 current Chat/Floor/Swipe/Version clears or replaces the same slot.
+
+This is a PARTIAL Projection implementation. Context injection reads persisted
+Projection Views; it does not automatically generate a Projection from Current
+Biological State.
 
 ## 3. Contracts
 
@@ -491,8 +525,30 @@ kind. `possible_conception` never creates a conception fact.
 
 `state_fact` reuses the Event's normalized `story_time`; it does not create a
 second effective-time source. `confirmed`, `probable`, `ambiguous`, `negated`,
-and `fictional` remain separate status values. Only factual statuses are
-transition candidates; negated and fictional facts do not change factual state.
+and `fictional` remain separate status values. Only `confirmed` Events may
+transition factual Pregnancy Episode status. `probable` and `ambiguous` Events
+remain historical/uncertain records and may populate `uncertain_event_ids` or
+uncertain records, but cannot upgrade, downgrade, or reactivate an Episode.
+Negated and fictional facts do not change factual state.
+
+The current Pregnancy Episode semantic boundary is explicit:
+
+- confirmed `conception` may create or reference its `pregnancy_id` Episode with
+  status `unknown`, record `conception_event_ids`, and update the conception
+  summary; it is not pregnancy confirmation and cannot reactivate an ended
+  Episode;
+- `pregnancy_confirmation` is the explicit source for the confirmed Episode
+  state;
+- `labor` records an independent lifecycle fact and does not imply confirmation,
+  delivery, or termination;
+- `postpartum` records an independent factual Event and does not infer delivery,
+  loss, abortion, confirmation, or Episode closure;
+- valid labor/postpartum history is retained even when the related lifecycle
+  history is incomplete. Reducer replay does not manufacture missing Events.
+
+These rules preserve the invariant that exposure, conception, confirmation,
+labor, delivery, postpartum, and termination are distinct factual layers. A
+Reducer may modify only the state explicitly authorized by the Event contract.
 
 For pregnancy-related `sexual_activity`, Event granularity is per gestational
 subject: first identify all subjects with actual pregnancy-relevant exposure,

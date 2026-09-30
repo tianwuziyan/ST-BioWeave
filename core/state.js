@@ -443,7 +443,7 @@ function applyStateFact(state, event, characterFacts) {
       const episode = episodeFor(character, pregnancyId);
       uniquePush(episode.suspicion_event_ids, event.event_id);
       if (uncertain) recordUncertainEpisode(episode, event.event_id);
-      if (episode.status === 'unknown') episode.status = 'suspected';
+      if (!uncertain && episode.status === 'unknown') episode.status = 'suspected';
       addPregnancyId(character, pregnancyId);
       return;
     }
@@ -453,7 +453,6 @@ function applyStateFact(state, event, characterFacts) {
       if (uncertain) {
         recordUncertainEpisode(episode, event.event_id);
         addPregnancyId(character, pregnancyId);
-        if (episode.status === 'unknown') episode.status = 'suspected';
       } else if (episode.status === 'ended') {
         addDiagnostic(state, {
           code: 'pregnancy_episode_conflict',

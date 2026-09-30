@@ -75,8 +75,8 @@ flowchart TD
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
 | Pregnancy Exposure Tracking lifecycle | `.trellis/spec/domain/pregnancy-tracking.md` | Proposed Window lifecycle contract；当前尚未有独立 Runtime owner |
-| Snapshot domain | `core/snapshot.js` | snapshot candidate、检查点和恢复相关 domain logic |
-| State domain | `core/state.js` | derived state reducer/domain state logic |
+| Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
+| State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
 | Characters UI | `ui/characters.js` | Characters 页面渲染；当前主要枚举 `tracking_subjects` |
 
@@ -101,10 +101,11 @@ flowchart TD
 | AI input construction | `ai/input-builder.js` | `runtime/event-analysis.js` caller | Persistence |
 | World prompt | `ai/prompts.js` | `ai/analyzer.js` | Event runtime |
 | Event prompt | `ai/prompts.js` | `ai/input-builder.js` | World runtime |
-| Snapshot | `core/snapshot.js`、`core/state.js` | pipeline snapshot bridge | Adapter |
-| Projection | `storage/projection.js`、`core/projection.js` | `ui/projection.js` | World/Event direct writes |
+| Snapshot | `core/snapshot.js`、`core/state.js` | `runtime/event-analysis.js` checkpoint bridge | Adapter |
+| Current Biological State | `core/state.js` | `runtime/event-analysis.js` replay/read API | UI business logic |
+| Projection | `storage/projection.js`、`core/projection.js` | `ui/projection.js`、Context injection | World/Event direct writes |
 | Floor persistence | `storage/floor-persistence-coordinator.js` | owner caller、`storage/store.js` | direct host save |
-| F5 durability | Coordinator + `storage/store.js` + Adapter bridge | real ST validation | analysis modules |
+| F5 durability | Coordinator + `storage/store.js` + Adapter bridge | `REAL-HOST VERIFIED` after automated mechanism tests | analysis modules |
 | Swipe ownership | `runtime/floor.js`、`storage/store.js` | Coordinator/Adapter raw slot access | UI-only code |
 | ST HTTP transport | `runtime/sillytavern-adapter.js` | `runtime/events.js` compatibility bridge | business feature |
 | ST lifecycle listener registration | Adapter subscribe API | `runtime/events.js` callback wiring | Generation module |
@@ -222,7 +223,9 @@ Owner whitelist：
 - `runtime/floor.js`
 - `runtime/events.js` 中的 owner inspection/acquisition、host-ahead bootstrap、official save、readback/confirmed 路径
 
-这些路径已通过自动化测试和真实 SillyTavern + F5 durability + Swipe 验证。与产品行为无关的问题不得顺手触碰它们。
+这些路径的当前状态为：`IMPLEMENTED`；自动化测试已覆盖 persistence mechanism；真实
+SillyTavern World persistence 的 final-save + F5/reload durability 与 Swipe 行为已人工验证。
+人工宿主验收不等同于自动化测试。与产品行为无关的问题不得顺手触碰它们。
 
 ## World 与 Character/Event
 
@@ -269,6 +272,12 @@ Character Evidence 只提供 mention identity context、已有 World Model speci
 - `tracking_subjects`：runtime-derived Tracking projection。
 - Characters UI 当前主要枚举 `tracking_subjects`。
 
+`character_profiles` / `characterFacts` 也不是 Registry 或 Tracking Subject 的
+别名：它们是 Runtime 为 StateReducer 构建的 derived biological/profile facts，
+当前没有独立 authoritative persisted Character Profile root。Current Biological
+State 则是 Events replay、characterFacts 与 Story Time 的 derived 输出；它不是
+事实存储。
+
 人物身份的 canonical pipeline 是：
 
 ```text
@@ -303,6 +312,10 @@ owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可�
 Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Floor/Swipe 持久化。
 
 未来改变 Characters UI 产品定义应作为独立产品任务，不应偷偷改变 Event persistence schema。
+
+当前生产状态的完整矩阵维护在 [DEVELOPMENT.md](./DEVELOPMENT.md)。其中
+StateReducer、Current Biological State 和 Snapshot Runtime 已接通；Tracking
+Window 仍是 NOT_IMPLEMENTED；Projection 与 Genealogy 仍为 PARTIAL。
 
 ## Safe modification guardrails
 

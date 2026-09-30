@@ -201,6 +201,14 @@ not currently close or filter Tracking. Its `pregnancy.episodes` structure is
 the Pregnancy Episode layer, not a Window substitute, and it has no generic
 `resolved_not_pregnant` Window state.
 
+The Runtime current-state path is connected: valid active Floor Events and the
+derived `characterFacts` are replayed through `reduceState()`, using a valid
+Snapshot checkpoint when available. Advancing `currentStoryTime` without a new
+Event can update `elapsed_story_days` transiently, but it does not create an
+Event or implement Window expiration. The Window remains NOT_IMPLEMENTED: there
+is no window identity, open/closed/expired lifecycle, Story Time horizon,
+exposure aggregation boundary, or closure semantics.
+
 `runtime/tracking-runtime.js` is an orchestration wrapper around
 `rebuildTrackingRegistry()`. `runtime/event-analysis.js` exposes the resulting
 Tracking DTO to UI/runtime consumers. `ui/characters.js` consumes active

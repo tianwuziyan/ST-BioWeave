@@ -317,6 +317,14 @@ host synchronization, direct official save/readback, confirmed commit
 semantics, host-ahead bootstrap, true-stale fail-closed handling, terminal
 supersede, cancellation/supersede protection, and Swipe 0 ownership.
 
+This persistence boundary is `IMPLEMENTED`. Automated tests cover the
+mechanism, and real SillyTavern World persistence final-save + F5/reload
+durability is `REAL-HOST VERIFIED`. The manual host acceptance is separate from
+automated test evidence, and the previously reported World reload persistence
+issue is closed rather than a release blocker. The host adapter diagnostics
+include `HOST_MEMORY_SLOT_BEFORE_SYNC`, `HOST_MEMORY_SLOT_AFTER_SYNC`, and
+`FINAL_FLOOR_SLOT_AUDIT`.
+
 World, Event/Character, Projection, Manual World, and approved Terminal paths
 are ordinary writers only when they submit an owner-scoped patch to the
 Coordinator. Chat/source clear, lifecycle root invalidation, migration/restore,
@@ -540,6 +548,22 @@ structured Swipe including `swipe_id = 0`. Chat metadata and User messages can
 never own this field. The default checkpoint interval is three valid Character
 Floors after the previous checkpoint; it is not based on `floor % interval`.
 Missing or rejected Snapshot data leaves full replay available.
+
+### 12.3.1 Current Runtime implementation
+
+The current Runtime uses this contract in production. After successful
+Character/Event analysis, the checkpoint bridge may persist a Snapshot at the
+configured interval. `getCurrentBiologicalState()` searches for the nearest
+valid Snapshot owned by the active valid Character Floor/Swipe, restores its
+state with `restoreFromSnapshot()`, and replays later valid Events. If no valid
+Snapshot is available, it calls `reduceState()` with the complete active Event
+set. The read path does not create or rewrite a Snapshot.
+
+`reduceState()` is a derived-state reducer, not an authoritative fact store. Its
+input includes `baseState`, `events`, `currentStoryTime`, and `characterFacts`.
+When `currentStoryTime` advances without a new Event, replay can update the
+transient `elapsed_story_days` value without creating a conception, pregnancy,
+confirmation, or other biological Event.
 
 ### 12.4 Validation & Error Matrix
 

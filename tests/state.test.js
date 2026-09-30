@@ -231,6 +231,35 @@ test('conception is factual only for confirmed typed conception events', () => {
   assert.equal(conception.status, 'confirmed');
   assert.deepEqual(conception.confirmed_event_ids, ['confirmed-conception']);
   assert.deepEqual(conception.uncertain_event_ids, ['probable-conception']);
+  assert.equal(state.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'unknown');
+  assert.deepEqual(
+    state.characters[SUBJECT].pregnancy.episodes['preg-a'].conception_event_ids,
+    ['confirmed-conception', 'probable-conception'],
+  );
+});
+
+test('conception can append historical fact to an ended episode without reactivating it', () => {
+  const state = reduce([
+    event({
+      event_id: 'confirm-ended-conception',
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'end-before-conception',
+      type: 'pregnancy_loss',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'historical-conception',
+      type: 'conception',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+  ]);
+  const episode = state.characters[SUBJECT].pregnancy.episodes['preg-a'];
+  assert.equal(episode.status, 'ended');
+  assert.deepEqual(episode.conception_event_ids, ['historical-conception']);
+  assert.deepEqual(state.characters[SUBJECT].conception.confirmed_event_ids, ['historical-conception']);
 });
 
 test('suspicion does not confirm pregnancy and unresolved suspicion gets no artificial ID', () => {
@@ -252,6 +281,98 @@ test('suspicion does not confirm pregnancy and unresolved suspicion gets no arti
   assert.equal(Object.keys(character.pregnancy.episodes).length, 1);
   assert.equal(character.conception.status, 'unknown');
   assert.equal(state.diagnostics.some((item) => item.code === 'unresolved_pregnancy_suspicion'), true);
+});
+
+test('probable and ambiguous suspicion or confirmation do not transition an unknown episode', () => {
+  for (const status of ['probable', 'ambiguous']) {
+    const suspicion = reduce([event({
+      event_id: `uncertain-suspicion-${status}`,
+      type: 'pregnancy_suspicion',
+      status,
+      payload: { pregnancy_id: 'preg-a', observation: { kind: 'test' } },
+    })]);
+    assert.equal(suspicion.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'unknown');
+    assert.deepEqual(
+      suspicion.characters[SUBJECT].pregnancy.episodes['preg-a'].uncertain_event_ids,
+      [`uncertain-suspicion-${status}`],
+    );
+
+    const confirmation = reduce([event({
+      event_id: `uncertain-confirmation-${status}`,
+      type: 'pregnancy_confirmation',
+      status,
+      payload: { pregnancy_id: 'preg-a' },
+    })]);
+    assert.equal(confirmation.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'unknown');
+    assert.deepEqual(
+      confirmation.characters[SUBJECT].pregnancy.episodes['preg-a'].uncertain_event_ids,
+      [`uncertain-confirmation-${status}`],
+    );
+  }
+});
+
+test('uncertain suspicion and confirmation preserve suspected, confirmed, and ended episodes', () => {
+  const suspected = reduce([
+    event({
+      event_id: 'suspicion-confirmed',
+      type: 'pregnancy_suspicion',
+      payload: { pregnancy_id: 'preg-a', observation: { kind: 'test' } },
+    }),
+    event({
+      event_id: 'confirmation-uncertain',
+      type: 'pregnancy_confirmation',
+      status: 'ambiguous',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+  ]);
+  assert.equal(suspected.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'suspected');
+
+  const confirmed = reduce([
+    event({
+      event_id: 'confirmation-confirmed',
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'suspicion-uncertain',
+      type: 'pregnancy_suspicion',
+      status: 'probable',
+      payload: { pregnancy_id: 'preg-a', observation: { kind: 'test' } },
+    }),
+    event({
+      event_id: 'confirmation-uncertain-2',
+      type: 'pregnancy_confirmation',
+      status: 'ambiguous',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+  ]);
+  assert.equal(confirmed.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'confirmed');
+
+  const ended = reduce([
+    event({
+      event_id: 'confirmation-before-ended',
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'loss-before-uncertain',
+      type: 'pregnancy_loss',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'suspicion-after-ended',
+      type: 'pregnancy_suspicion',
+      status: 'probable',
+      payload: { pregnancy_id: 'preg-a', observation: { kind: 'test' } },
+    }),
+    event({
+      event_id: 'confirmation-after-ended',
+      type: 'pregnancy_confirmation',
+      status: 'ambiguous',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+  ]);
+  assert.equal(ended.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'ended');
 });
 
 test('pregnancy episodes are isolated and termination preserves history', () => {
@@ -378,6 +499,24 @@ test('postpartum is factual only when an explicit postpartum Event exists', () =
   ]);
   assert.deepEqual(state.characters[SUBJECT].postpartum.factual_event_ids, ['postpartum-a']);
   assert.equal(state.characters[SUBJECT].postpartum.episodes['preg-a'].postpartum_id, 'post-a');
+});
+
+test('postpartum does not infer delivery or end an active pregnancy', () => {
+  const state = reduce([
+    event({
+      event_id: 'active-pregnancy',
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event({
+      event_id: 'postpartum-without-delivery',
+      type: 'postpartum',
+      payload: { pregnancy_id: 'preg-a', postpartum_id: 'post-a' },
+    }),
+  ]);
+  assert.equal(state.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'confirmed');
+  assert.deepEqual(state.characters[SUBJECT].pregnancy.episodes['preg-a'].delivery_event_ids, []);
+  assert.deepEqual(state.characters[SUBJECT].pregnancy.episodes['preg-a'].termination_event_ids, []);
 });
 
 test('cycle and fertility facts do not infer future cycle or capability aliases', () => {

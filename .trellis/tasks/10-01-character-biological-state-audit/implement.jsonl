@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"审计 Floor/Swipe/Version 所有权、previous resolution、derived state 与 provenance 边界。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"审计 Character Evidence、Identity、BiologicalEvent、StateReducer 和 Tracking 的领域边界。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"核验 Tracking Subject/Candidate 与未实现 Tracking Window 的当前实现契约。"}
+{"file":"docs/ARCHITECTURE.md","reason":"核验当前 feature owner、Runtime 边界、Persistence canonical path 与 Character/Event/World 分离。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"核验 Floor persistence、Snapshot、Projection 和 derived state 的生命周期所有权。"}

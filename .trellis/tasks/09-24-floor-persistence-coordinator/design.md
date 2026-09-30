@@ -62,7 +62,7 @@ The coordinator clones the latest slot, applies only the selected owner patch, a
 
 `FLOOR_TX_CREATED/QUEUED/DISPATCH_BEGIN/OWNER_CHECK/LATEST_SLOT_RESOLVED/PATCH_VALIDATED/HOST_SYNCED/OFFICIAL_SAVE_RESOLVED/READBACK/SIBLING_AUDIT/CONFIRMED/FAILED/SUPERSEDED` are implementation diagnostics, not business-state events. They must not trigger UI rendering.
 
-`CONFIRMED` means current owner identity still matches, official readback contains the expected owner patch, and sibling audit proves this transaction did not delete unrelated owner data. It does not claim that an unknown future SillyTavern writer can never overwrite the slot.
+`CONFIRMED` means current owner identity still matches, official readback contains the expected owner patch, and sibling audit proves this transaction did not delete unrelated owner data. It does not make `saveChat()`/Promise resolution a standalone durability proof. The current host-memory synchronization path and the subsequent SillyTavern final-save/F5 reload durability have been verified in the real host.
 
 ## 6. Migration strategy
 
@@ -74,4 +74,4 @@ The coordinator clones the latest slot, applies only the selected owner patch, a
 
 ## 7. Risk and rollback
 
-The working tree is already dirty. Changes must be surgical and limited to coordinator migration plus its tests/docs; unrelated existing modifications are not to be reverted. If a migration step cannot preserve the current owner/version contract, stop that path rather than adding a fallback storage domain. Real ST F5 durability remains a separate acceptance item.
+The working tree is already dirty. Changes must be surgical and limited to coordinator migration plus its tests/docs; unrelated existing modifications are not to be reverted. If a migration step cannot preserve the current owner/version contract, stop that path rather than adding a fallback storage domain. Real ST F5 durability is now a completed acceptance item, independently verified from the automated test suite.

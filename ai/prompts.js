@@ -10,7 +10,11 @@ import {
 import { PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KINDS } from '../core/projection.js'
 import { buildWorldSpeciesArchiveReferences } from '../core/world-species-archive.js'
 import { normalizeEventAnalysisInput } from './input-builder.js'
-import { buildWorldModelSupplementCoverageTargets, buildWorldModelSupplementIdentityReviewSubjects, buildWorldModelSupplementUnknownContext } from './world-supplement-protocol.js'
+import {
+  buildWorldModelSupplementCoverageTargets,
+  buildWorldModelSupplementIdentityReviewSubjects,
+  buildWorldModelSupplementUnknownContext,
+} from './world-supplement-protocol.js'
 export { WORLD_MODEL_SCHEMA }
 export const CORE_PROMPTS = {
   world: 'Analyze world rules into the required JSON schema. Unknown facts remain unknown.',
@@ -307,7 +311,7 @@ function worldSpeciesArchiveReferences(input) {
   if (Array.isArray(input?.archived_species_exclusions)) {
     return buildWorldSpeciesArchiveReferences({
       archived_species: input.archived_species_exclusions.map(item => ({
-        species: {name: item?.name},
+        species: { name: item?.name },
       })),
     })
   }
@@ -727,13 +731,21 @@ Exception
   Applies_To：这个例外明确适用于谁、什么群体或什么条件。范围必须有资料依据，不能自己扩大。
   Evidence：支持这个例外的实际证据。不要拿模型自己的推测当 Evidence。
 Unknowns：只记录“资料已经提到了这个问题，但目前还是无法确定答案，而且这个问题会影响 World Model”的重要未知信息。资料根本没提过的内容不要写进 Unknowns 。
-Reproductive_Mechanisms：只有普通 Capabilities 和 Reproduction_Rules 已经不够表达，而且资料明确存在一套独立生殖机制时才使用。普通性交、受精、怀孕、分娩等正常生殖描述本身不会自动产生 Mechanism。
-    Key：这个生殖机制稳定使用的机器 key。只有确认存在独立机制时才需要。
+
+Reproductive_Mechanisms：只有资料明确存在一套独立的“繁殖、产生后代或妊娠形成”机制，而且普通 Capabilities 和 Reproduction_Rules 无法完整表达时才使用。
+  判断核心不是机制是否涉及性、体液、性器官、双修或生命体，而是该机制本身是否直接负责生殖意义上的受精、形成妊娠、承载孕育、分娩或产生后代。
+
+  生命的觉醒、化形、召唤、制造、炼制、转化、寄宿、温养、补充能量、恢复灵力、修炼、羁绊成长等过程，即使涉及性交、体液、精液、爱液、子宫、前列腺或双修，也不因此成为 Reproductive_Mechanism。应根据实际含义放入 Maturation、Special_Rules 或其它适合字段。
+
+  特别注意区分“产生一个生命体”和“生殖产生后代”。例如某生命由武器、法器、灵魂、能量或其它非繁殖来源觉醒/化形而成，如果资料没有明确把该过程定义为繁殖、生育或产生后代，不得建立 Reproductive_Mechanism。
+
+    Key：这个生殖机制稳定使用的机器 key。只有确认存在独立生殖机制时才需要。
     Label：这个生殖机制方便人阅读的名称。
-    Pathway：这个独立生殖机制实际是怎么运作的。普通性交、受精或怀孕过程不要为了填字段而写成 Mechanism。
-    Carrying_Compatibility：这个机制是否明确支持某种承载兼容性。只有资料明确给出 true/false 时才写，没说就省略。
+    Pathway：描述该独立生殖机制实际如何完成繁殖、产生后代或妊娠形成；不要把普通性交、修炼、温养、觉醒、化形或能量交换包装成 Pathway。
+    Carrying_Compatibility：这个机制是否明确支持当前 Biological_Type 作为妊娠/承载方。只有资料明确给出 true/false 时才写，没说就省略。
     World_Model_Rule_Refs：这个机制明确关联的已有 rule reference。只能引用资料明确关联、实际存在的 reference，不要自己创造。
-    Evidence：支持这个独立生殖机制的实际证据。只放和这个机制直接有关的证据。
+    Evidence：只放直接证明该机制属于生殖/繁殖机制的证据；仅证明性交、体液交换、温养、觉醒、化形或能量恢复的内容不足以作为 Reproductive_Mechanism Evidence。
+
 Projection_Rules：描述可被程序消费的明确投影规则。保持单 JSON object representation。不要让模型自己生成 projection_rule_id，也不要为了填这个字段而自己创造投影规则。`
 export const WORLD_MODEL_FACT_DELTA_TASK_PROMPT = `
 【你的任务】
@@ -794,7 +806,11 @@ Existing 为空、暂时没看到答案、当前没有输出 Fact、某字段不
 
 同一段 evidence 可以同时支持多个不同字段。把其中一个事实放入某个字段后，仍要继续判断这段 evidence 是否还明确支持其它字段，不要因为“这段内容已经处理过”就跳过剩余信息。
 
-特别检查 Reproductive_Mechanism：发现与生殖有关的特殊设定时，不能因为已经能够写入 Capability、Fertilization、Pregnancy_Or_Carrying、Gestation、Labor 或 Special_Rule 就停止分析，还要继续判断这些信息是否共同建立了一套普通字段无法完整表达的独立生殖机制。
+特别检查 Reproductive_Mechanism：只有当 evidence 涉及繁殖、产生后代、受精、妊娠形成、孕育或分娩时，才进一步检查是否存在独立 Reproductive_Mechanism。
+
+性交、双修、体液交换、性器官参与、生命觉醒、化形、制造、召唤、寄宿、温养、补灵、修炼或羁绊成长本身，不触发 Reproductive_Mechanism 判断。
+
+只有资料明确建立了一套独立的繁殖/产生后代路径，并且普通 Capabilities 与 Reproduction_Rules 无法完整表达时，才输出 Reproductive_Mechanism。
 
 只有资料明确存在一套独立运作的生殖路径或机制，而且仅靠普通 Capabilities 和 Reproduction_Rules 无法完整表达时，才输出 Reproductive_Mechanism。特殊受精条件、特殊妊娠条件、特殊承载规则或其它单独规则，如果普通字段已经能够完整表达，就只放入对应普通字段，不额外创建 Mechanism。
 

@@ -39,11 +39,15 @@ function facts() {
   };
 }
 
-function event(eventId, day) {
+function event(eventId, day, {
+  type = 'physical_symptom',
+  status = 'confirmed',
+  payload = { symptom: { kind: 'observed', description: eventId } },
+} = {}) {
   return {
     event_id: eventId,
-    type: 'physical_symptom',
-    status: 'confirmed',
+    type,
+    status,
     source: {
       chat_id: 'chat-1',
       message_id: `message-${eventId}`,
@@ -63,7 +67,7 @@ function event(eventId, day) {
     },
     state_fact: {
       subject_id: SUBJECT,
-      payload: { symptom: { kind: 'observed', description: eventId } },
+      payload,
     },
   };
 }
@@ -103,6 +107,76 @@ test('Snapshot replay through baseState matches full replay', () => {
     currentStoryTime: storyTime(4),
   });
   assert.deepEqual(stateB, stateC);
+});
+
+test('Snapshot replay preserves semantic Episode transitions and uncertain history', () => {
+  const first = [
+    event('suspicion-a', 1, {
+      type: 'pregnancy_suspicion',
+      payload: { pregnancy_id: 'preg-a', observation: { kind: 'test' } },
+    }),
+    event('conception-b', 2, {
+      type: 'conception',
+      payload: { pregnancy_id: 'preg-b' },
+    }),
+    event('confirmation-a', 3, {
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+  ];
+  const later = [
+    event('uncertain-confirmation-a', 4, {
+      type: 'pregnancy_confirmation',
+      status: 'ambiguous',
+      payload: { pregnancy_id: 'preg-a' },
+    }),
+    event('labor-a', 5, {
+      type: 'labor',
+      payload: { pregnancy_id: 'preg-a', labor_id: 'labor-a' },
+    }),
+    event('postpartum-a', 6, {
+      type: 'postpartum',
+      payload: { pregnancy_id: 'preg-a', postpartum_id: 'post-a' },
+    }),
+    event('confirmation-ended', 7, {
+      type: 'pregnancy_confirmation',
+      payload: { pregnancy_id: 'preg-b' },
+    }),
+    event('loss-ended', 8, {
+      type: 'pregnancy_loss',
+      payload: { pregnancy_id: 'preg-b' },
+    }),
+    event('historical-conception-ended', 9, {
+      type: 'conception',
+      payload: { pregnancy_id: 'preg-b' },
+    }),
+  ];
+  const stateA = reduceState({
+    events: first,
+    characterFacts: facts(),
+    currentStoryTime: storyTime(9),
+  });
+  const snapshot = createSnapshot({ checkpoint: checkpoint({ floor: 3 }), state: stateA });
+  const restored = restoreFromSnapshot({
+    snapshot,
+    events: later,
+    characterFacts: facts(),
+    currentStoryTime: storyTime(10),
+  });
+  const full = reduceState({
+    events: [...first, ...later],
+    characterFacts: facts(),
+    currentStoryTime: storyTime(10),
+  });
+  assert.deepEqual(restored, full);
+  const episodeA = restored.characters[SUBJECT].pregnancy.episodes['preg-a'];
+  const episodeB = restored.characters[SUBJECT].pregnancy.episodes['preg-b'];
+  assert.equal(episodeA.status, 'confirmed');
+  assert.deepEqual(episodeA.uncertain_event_ids, ['uncertain-confirmation-a']);
+  assert.deepEqual(episodeA.labor_event_ids, ['labor-a']);
+  assert.deepEqual(restored.characters[SUBJECT].postpartum.factual_event_ids, ['postpartum-a']);
+  assert.equal(episodeB.status, 'ended');
+  assert.deepEqual(episodeB.conception_event_ids, ['conception-b', 'historical-conception-ended']);
 });
 
 test('Snapshot creation and restore isolate Current State and Snapshot state', () => {
