@@ -13,6 +13,7 @@ import {
   normalizeWorldModelBiologicalTypeSelection,
   normalizeWorldModelSpeciesSelection,
   summarizeWorldModelUiProjection,
+  hasWorldModelData,
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
 } from './world.js'
@@ -5143,6 +5144,13 @@ export function createApp(runtime, options = {}) {
       if (worldModelState.busy) {
         if (worldModelState.operation === operation) await requestAbortWorldModelAnalysis()
       } else {
+        if (operation === 'full' && hasWorldModelData(worldModelState.model)) {
+          const confirmed = await confirmWithPopup(
+            '重新分析世界资料',
+            '重新分析会清理当前已有的全部世界分析数据，并根据当前资料重新进行完整分析。此操作会替换现有分析结果，是否继续？',
+          )
+          if (!confirmed) return
+        }
         await analyzeWorldModel(operation)
       }
       return

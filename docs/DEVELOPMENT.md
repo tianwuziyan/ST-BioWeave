@@ -150,7 +150,7 @@ root JSON/format failure 或 `FORMAT_RETRY`。
 
 World Analysis 只有两套底层能力：Full World Analysis 与 World Supplement Analysis。Initial Full、Manual“开始分析”和 Auto 在没有有效 World 时都调用同一个 Full 能力；Manual“补充分析”和 Auto 在存在 world-relevant 新证据信号时都调用同一个 Supplement 能力。该触发信号不改变 Supplement 的事实 eligibility：Supplement 仍重新审阅完整允许的 World Analysis evidence，既可补充较早资料中已存在但之前遗漏的事实，也可处理新近 evidence。已有 World 且没有 world-relevant 新证据触发信号时，Auto 不调用 World AI，直接 Reuse 已验证的 World 后再进行 Character/Event Analysis。Scheduler 只负责调用时机和 Reuse 路由，不拥有 Full/Supplement 的业务语义。
 
-世界页的“开始分析”始终强制 Full，“补充分析”始终强制 Patch；两种手动操作只保存 World，不继续 Character/Event。Manual/Auto Full/Patch 共享 Runtime World-specific Floor-Version single-flight，避免同一 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version` 发出第二个 World API 请求或产生并发 World persistence。所有结果仍只能 forward-only 写入当前有效 Character Floor，经过 canonical validation 与 stale guard；历史 Floor、User message 和 Chat-level World fallback 不可修改或持有事实。
+世界页的 Full CTA 根据 active canonical World Model 派生：没有实际 active 世界资料时显示“开始分析”并直接进入 Full；已有实际 active 世界资料时显示“重新分析”，先通过宿主确认弹窗，确认后才进入同一 Full 流程，取消不产生分析或持久化副作用。“补充分析”始终强制 Patch；两种手动操作只保存 World，不继续 Character/Event。Manual/Auto Full/Patch 共享 Runtime World-specific Floor-Version single-flight，避免同一 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version` 发出第二个 World API 请求或产生并发 World persistence。所有结果仍只能 forward-only 写入当前有效 Character Floor，经过 canonical validation 与 stale guard；历史 Floor、User message 和 Chat-level World fallback 不可修改或持有事实。
 
 ### Event Analysis Runtime API
 

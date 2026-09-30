@@ -2043,12 +2043,14 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
   const documentRef = new AppFakeDocument()
   const confirmCalls = []
   let analyzeCalls = 0
+  let confirmCount = 0
   const context = {
     Popup: {
       show: {
         async confirm(title, message) {
           confirmCalls.push([title, message])
-          return 'negative'
+          confirmCount += 1
+          return confirmCount === 1 ? 'affirmative' : 'negative'
         },
       },
     },
@@ -2151,10 +2153,102 @@ test('dirty World Model drafts use Popup confirmation and do not analyze after c
     target: actionTarget('world-model-full'),
     preventDefault() {},
   })
-  assert.deepEqual(confirmCalls, [['放弃未保存修改', '当前修改尚未保存，是否放弃？']])
+  assert.deepEqual(confirmCalls, [
+    ['重新分析世界资料', '重新分析会清理当前已有的全部世界分析数据，并根据当前资料重新进行完整分析。此操作会替换现有分析结果，是否继续？'],
+    ['放弃未保存修改', '当前修改尚未保存，是否放弃？'],
+  ])
   assert.equal(analyzeCalls, 0)
   app.destroyBioWeave()
 })
+test('World Model Full CTA gates only populated active data and leaves cancellation side-effect free', async () => {
+  const model = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: '潮汐生物', biological_types: []}],
+  })
+  const scenarios = [
+    {name: 'empty', resolved: null, confirmed: false, expectedConfirmCalls: 0, expectedFullCalls: 1},
+    {name: 'cancel', resolved: {model, meta: {archived_species: [{species: {name: '归档种族'}}]}}, confirmed: false, expectedConfirmCalls: 1, expectedFullCalls: 0},
+    {name: 'confirm', resolved: {model, meta: null}, confirmed: true, expectedConfirmCalls: 1, expectedFullCalls: 1},
+  ]
+  for (const scenario of scenarios) {
+    const documentRef = new AppFakeDocument()
+    const confirmCalls = []
+    let fullCalls = 0
+    let startActivityCalls = 0
+    let saveCalls = 0
+    const hostContext = {
+      chatId: `chat-world-cta-${scenario.name}`,
+      characters: [],
+      POPUP_RESULT: {AFFIRMATIVE: 'affirmative'},
+      Popup: {
+        show: {
+          async confirm(title, message) {
+            confirmCalls.push([title, message])
+            return scenario.confirmed ? 'affirmative' : 'negative'
+          },
+        },
+      },
+    }
+    const profileStore = {
+      getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+      getApiRequestSettings: () => ({}),
+      getWorldAnalysisPrompt: () => ({}),
+      getRecentStoryGlobal: () => ({regex_rules: []}),
+    }
+    const runtime = {
+      chat: {
+        current: () => hostContext.chatId,
+        token: () => ({chatId: hostContext.chatId, epoch: 0}),
+        assert: () => {},
+      },
+      store: {getChat: () => ({settings: {}})},
+      resolveWorldModelAtOrBefore: async () => scenario.resolved,
+      analyzeCurrentWorldModelFull: async () => {
+        fullCalls += 1
+        return {model, meta: null}
+      },
+      saveWorldModel: async () => { saveCalls += 1 },
+      startActivity: () => { startActivityCalls += 1 },
+      finishActivity: () => {},
+      assertBioWeaveEnabled: () => {},
+      st: {
+        getContext: () => hostContext,
+        fetch: async () => ({ok: true, json: async () => []}),
+        getRequestHeaders: () => ({}),
+      },
+      subscribe: () => () => {},
+    }
+    const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+    const root = app.openBioWeave()
+    app.go('world')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const click = [...root.listeners.get('click')][0]
+    const target = {
+      __root: root,
+      dataset: {bioweaveAction: 'world-model-full'},
+      closest(selector) {
+        return selector.includes('[data-bioweave-action]') ? this : null
+      },
+    }
+    const markup = root.querySelector('.bioweave-main').innerHTML
+    assert.match(markup, new RegExp(`>${scenario.resolved ? '重新分析' : '开始分析'}<\\/button>`))
+    await click({target, preventDefault() {}})
+    assert.equal(confirmCalls.length, scenario.expectedConfirmCalls, scenario.name)
+    assert.equal(fullCalls, scenario.expectedFullCalls, scenario.name)
+    assert.equal(saveCalls, 0, scenario.name)
+    if (scenario.name === 'cancel') assert.equal(startActivityCalls, 0)
+    if (scenario.name === 'cancel') {
+      assert.deepEqual(confirmCalls[0], [
+        '重新分析世界资料',
+        '重新分析会清理当前已有的全部世界分析数据，并根据当前资料重新进行完整分析。此操作会替换现有分析结果，是否继续？',
+      ])
+      assert.deepEqual(scenario.resolved.model, model)
+      assert.deepEqual(scenario.resolved.meta, {archived_species: [{species: {name: '归档种族'}}]})
+    }
+    app.destroyBioWeave()
+  }
+})
+
 test('World Model analysis routes success and failure feedback through semantic Toasts', async () => {
   const previousModel = {
     schema_version: 1,
@@ -2198,6 +2292,12 @@ test('World Model analysis routes success and failure feedback through semantic 
   for (const scenario of scenarios) {
     const documentRef = new AppFakeDocument()
     const toastCalls = []
+    const hostContext = {
+      chatId: 'chat-world-feedback',
+      characters: [],
+      POPUP_RESULT: { AFFIRMATIVE: 'affirmative' },
+      Popup: { show: { confirm: async () => 'affirmative' } },
+    }
     documentRef.defaultView.toastr = {
       success(message) {
         toastCalls.push(['success', message])
@@ -2249,7 +2349,7 @@ test('World Model analysis routes success and failure feedback through semantic 
         return { model, meta: null }
       },
       st: {
-        getContext: () => ({ chatId: 'chat-world-feedback', characters: [] }),
+        getContext: () => hostContext,
         fetch: async () => ({ ok: true, json: async () => [] }),
         getRequestHeaders: () => ({}),
       },

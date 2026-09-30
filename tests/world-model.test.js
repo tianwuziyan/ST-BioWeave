@@ -63,6 +63,7 @@ import {
   normalizeWorldModelSpeciesSelection,
   resolveWorldModelSelection,
   WORLD_MODEL_SECTION_KEYS,
+  hasWorldModelData,
   worldPage,
   renderWorldModelView,
 } from '../ui/world.js'
@@ -7251,9 +7252,9 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
     },
   })
   assert.match(html, /世界模型/)
-  assert.match(html, /data-bioweave-action="world-model-full"[^>]*>开始分析<\/button>/)
+  assert.match(html, /data-bioweave-action="world-model-full"[^>]*>重新分析<\/button>/)
   assert.match(html, /data-bioweave-action="world-model-patch"[^>]*>补充分析<\/button>/)
-  assert.match(html, /title="重新分析当前上下文，构建完整的世界模型。"/)
+  assert.match(html, /title="清理当前世界分析数据，并根据当前上下文重新构建完整的世界模型。"/)
   assert.match(html, /title="基于现有世界模型查漏补缺，补充或修正遗漏的世界信息。"/)
   assert.match(html, /bioweave-world-model-top/)
   assert.match(html, /最后分析：<\/strong>\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/)
@@ -7319,6 +7320,36 @@ test('World Model page uses Chinese labels and shows null as 未知', () => {
   for (const typeName of ['潮汐生物型', '甲型', '穗核型', 'Alpha', 'Beta', 'Omega']) {
     assert.match(visibleTypesHtml, new RegExp(`<b>${typeName}</b>`))
   }
+})
+
+test('hasWorldModelData uses normalized active World Model facts and ignores metadata', () => {
+  const empty = normalizeWorldModel({schema_version: 1})
+  assert.equal(hasWorldModelData(empty), false)
+  assert.equal(hasWorldModelData({schema_version: 1, medical_context: {childbirth_difficulty: '   '}}), false)
+  assert.equal(hasWorldModelData({schema_version: 1, world_model_meta: {archived_species: [{species: {name: '归档种族'}}]}}), false)
+
+  assert.equal(hasWorldModelData({...empty, species: [{name: '人类', biological_types: []}]}), true)
+  assert.equal(hasWorldModelData({...empty, medical_context: {care_level: '有明确医疗体系'}}), true)
+  assert.equal(hasWorldModelData({...empty, exceptions: [{statement: '特殊规则'}]}), true)
+  assert.equal(hasWorldModelData({...empty, unknowns: ['尚未确定']}), true)
+  assert.equal(hasWorldModelData({
+    ...empty,
+    projection_rules: [{
+      schema_version: 1,
+      mechanism_key: 'natural_conception',
+      development_concern_key: 'pregnancy_confirmation',
+      development_kind: 'possible_biological_change',
+      trigger: {kind: 'story_time_reached', target_story_time: {day_index: 10}},
+    }],
+  }), true)
+  assert.equal(hasWorldModelData({
+    ...empty,
+    debug: {world_model: {species: [{name: '调试种族'}]}},
+    analysis: {status: 'success'},
+    updated_at: '2026-09-30T00:00:00.000Z',
+  }), false)
+  const worldOnlyHtml = worldPage({worldModel: {...empty, medical_context: {care_level: '有明确医疗体系'}}})
+  assert.match(worldOnlyHtml, /data-bioweave-action="world-model-full"[^>]*>重新分析<\/button>/)
 })
 
 test('World Model page keeps Patch visible but disabled before the first World Model', () => {

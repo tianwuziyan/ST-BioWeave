@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required test/static verification conventions for the UI change."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Production UI CTA, host Popup, and selector compatibility constraints."}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"Required UI framework example comparison for button structure and responsive conventions."}

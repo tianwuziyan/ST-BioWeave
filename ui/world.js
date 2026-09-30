@@ -1,4 +1,4 @@
-import { buildWorldModelViewModel } from '../ai/analyzer.js'
+import { buildWorldModelViewModel, normalizeStoredWorldModel } from '../ai/analyzer.js'
 import { listArchivedSpecies } from '../core/world-species-archive.js'
 const CAPABILITY_LABELS = Object.freeze({
   can_produce_sperm: '产生精子',
@@ -46,6 +46,23 @@ const SECTION_ICONS = Object.freeze({
 const TYPE_SECTION_KEYS = Object.freeze(['capabilities', 'reproduction_rules', 'lifecycle', 'special_rules'])
 const WORLD_SECTION_KEYS = Object.freeze(['medical_context', 'exceptions', 'unknowns'])
 export const WORLD_MODEL_SECTION_KEYS = Object.freeze([...TYPE_SECTION_KEYS, ...WORLD_SECTION_KEYS])
+function hasNonEmptyText(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+export function hasWorldModelData(rawModel) {
+  let model
+  try {
+    model = normalizeStoredWorldModel(rawModel)
+  } catch {
+    return false
+  }
+  if (model.species.length > 0) return true
+  if (Object.values(model.medical_context).some(hasNonEmptyText)) return true
+  if (model.exceptions.some(exception =>
+    [exception.statement, exception.applies_to, exception.evidence].some(hasNonEmptyText))) return true
+  if (model.unknowns.length > 0 || model.projection_rules.length > 0) return true
+  return false
+}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -953,19 +970,29 @@ export function worldPage({
   worldModelArchiveOpen = false,
 } = {}) {
   const model = worldModel ?? null
+  const renderableModel = model && Array.isArray(model.species) && model.species.length > 0 ? model : null
+  const hasActiveWorldModelData = hasWorldModelData(model)
   const phaseBusy = new Set(['world_full', 'world_patch', 'world_readback', 'world_ui_ready']).has(worldModelPhase)
   const effectiveBusy = worldModelBusy || phaseBusy
   const effectiveOperation = worldModelOperation ?? (worldModelPhase === 'world_patch' ? 'patch' : worldModelPhase ? 'full' : null)
   const notice = worldModelNotice ? '<p class="bioweave-settings-notice" role="status">' + escapeHtml(worldModelNotice) + '</p>' : ''
+  const fullActionLabel = effectiveOperation === 'full'
+    ? '分析中…'
+    : hasActiveWorldModelData ? '重新分析' : '开始分析'
+  const fullActionDescription = effectiveOperation === 'full'
+    ? '再次点击终止当前完整世界分析。'
+    : hasActiveWorldModelData
+      ? '清理当前世界分析数据，并根据当前上下文重新构建完整的世界模型。'
+      : '根据当前上下文构建完整的世界模型。'
   const actions = [
     '<button type="button" class="bioweave-primary-action" data-bioweave-action="world-model-full" title="' +
-      (effectiveOperation === 'full' ? '再次点击终止当前完整世界分析。' : '重新分析当前上下文，构建完整的世界模型。') +
+      fullActionDescription +
       '" aria-label="' +
-      (effectiveOperation === 'full' ? '再次点击终止当前完整世界分析。' : '重新分析当前上下文，构建完整的世界模型。') +
+      fullActionDescription +
       '"' +
       (effectiveBusy && effectiveOperation !== 'full' ? ' disabled' : '') +
       '>' +
-      (effectiveOperation === 'full' ? '分析中…' : '开始分析') +
+      fullActionLabel +
       '</button>',
     '<button type="button" class="bioweave-secondary-action" data-bioweave-action="world-model-patch" title="' +
       (effectiveOperation === 'patch'
@@ -985,7 +1012,7 @@ export function worldPage({
       (effectiveOperation === 'patch' ? '补充中…' : '补充分析') +
       '</button>',
   ].join('')
-  const metadata = model
+  const metadata = renderableModel
     ? [
         '<div class="bioweave-world-model-meta" aria-label="世界模型摘要">',
         '<span><strong>最后分析：</strong>' + formatAnalysisTime(worldModelMeta?.last_analyzed_at) + '</span>',
@@ -993,8 +1020,8 @@ export function worldPage({
         '</div>',
       ].join('')
     : ''
-  const body = model
-    ? renderWorldModelView(model, {
+  const body = renderableModel
+    ? renderWorldModelView(renderableModel, {
         worldModelMeta,
         worldModelArchiveOpen,
         selectedSpecies,
