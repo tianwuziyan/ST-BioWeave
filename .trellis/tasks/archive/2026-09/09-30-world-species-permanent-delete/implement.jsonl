@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify World metadata ownership and Floor/Swipe safety boundaries."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify Archive/Restore and Full/Supplement exclusion contracts."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify archived_species lifecycle and documentation update."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Preserve World archive UI structure and action hooks."}

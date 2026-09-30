@@ -831,3 +831,39 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 38: 归档 Species 永久删除与 GitHub 同步
+<!-- trellis-session: v=2 fp=f6137b6efd4dc3c7 -->
+
+**Date**: 2026-09-30
+**Task**: 归档 Species 永久删除与 GitHub 同步
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+归档资料增加永久删除快照，保持 active World Model 与后续证据重新发现能力。
+
+### Main Changes
+
+- 新增归档删除纯函数与确认保存 UI，沿用唯一 World Model writer，不刷新 Tracking。
+- 同步 UI 框架和 World 生命周期文档，补充归档排除生命周期及保存路径测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1ea3032a4392c165a7bc189ca870dd4eb6ae9411` | 实现归档 Species 快照的永久删除 |
+
+### Testing
+
+- [OK] npm test：1091 项，1056 通过，35 个既存失败；与基线失败身份完全一致。
+- [OK] tests/ui.test.js：55/55 通过；归档定向测试：6/6 通过；node --check 与 git diff --check 通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在真实 SillyTavern 中完成归档永久删除与重载 smoke。
