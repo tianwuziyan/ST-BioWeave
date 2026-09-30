@@ -413,8 +413,6 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   ├── input-builder.js     # AnalysisInput、来源清洗、最近剧情
 │   ├── prompts.js           # 核心提示词、四段 World Model 消息
 │   └── worldbook.js         # Worldbook/角色卡来源、选择与缓存
-├── context/
-│   └── builder.js           # Context DTO 与序列化
 ├── business/
 │   └── calendar/
 │       └── date.js          # CalendarDate、合法性、序号与日期计算
@@ -432,6 +430,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   ├── generation-lifecycle.js # generation intent、settle、exactly-once
 │   ├── tracking-runtime.js  # Tracking Registry refresh orchestration
 │   ├── world-analysis.js    # World Analysis feature
+│   ├── projection-context.js # Projection Context DTO/Prompt 与宿主注入协调
 │   ├── sillytavern-adapter.js # raw SillyTavern I/O boundary
 │   ├── runtime.js           # lightweight feature composition root
 │   ├── events.js            # ST integration shell、lifecycle orchestration、compatibility facade
@@ -440,6 +439,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 ├── storage/
 │   ├── schema.js            # Global/Chat/Floor 默认值与规范化
 │   ├── store.js              # Profile、Secret、Chat、Floor 存储边界
+│   ├── projection.js         # Projection owner workflow 与 Context 输入
 │   ├── lifecycle.js          # 持久化字段 ownership/domain registry
 │   └── clear.js              # Registry 驱动的手动/source-targeted Clear Service
 ├── story/
@@ -457,8 +457,7 @@ Anima 与柏宝书适配器只探测宿主公开接口，并把可读取的公�
 │   └── world.js             # World Model 浏览和模块级编辑
 ├── utils/
 │   ├── cn-date.js           # BioWeave 中文日期、月份/节日 alias 与 day key
-│   ├── hash.js              # 通用 hash 工具
-│   └── helpers.js           # 通用 DOM/值处理
+│   └── hash.js              # 通用 hash 工具
 ├── tests/                   # API、Runtime、UI、World Model、Worldbook 与 Core 测试
 ├── docs/                    # 数据模型、开发规范、UI 设计与参考实现
 ├── index.js                 # 扩展入口与 SillyTavern 生命周期 hooks
