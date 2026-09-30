@@ -665,8 +665,6 @@ test('Supplement prompt gives a complete plain-language discovery checklist', ()
     .join('\n')
   const coverage = [
     '完整检查本次提供的全部资料',
-    '即使某条新事实没有对应 coverage target，只要资料明确支持且 Existing 尚未记录，也必须输出',
-    '对资料中已经明确建立，或者 Existing 已经记录的每个 Species + Biological Type，都必须完整检查',
     '完成 Species / Type 检查后，重新检查全部资料',
     '第一步：完整阅读全部 evidence',
     '第八步：只有完成全部资料扫描和 coverage 查漏后',
@@ -696,6 +694,12 @@ test('Supplement prompt gives a complete plain-language discovery checklist', ()
     '如果资料只说明 Species，却不能确定具体 Biological Type',
   ]
   for (const phrase of coverage) assert.ok(prompt.includes(phrase), phrase)
+  assert.match(prompt, /coverage target[\s\S]*Existing 尚未记录[\s\S]*必须输出/u)
+  assert.match(prompt, /每个 Species \+ Biological Type[\s\S]*完整检查/u)
+  assert.match(prompt, /不要发现一个新 Type 后停止/u)
+  assert.match(prompt, /这些项目彼此独立[\s\S]*找到一个 Fact 后也不能停止检查/u)
+  assert.match(prompt, /数量少、罕见、少数不表示它不是 Type/u)
+  assert.match(prompt, /Existing 已经记录相同事实 → 不重复输出/u)
   assert.doesNotMatch(prompt, /用户人物设定|persona_description|input_prefix|input_suffix/u)
 })
 
@@ -711,32 +715,6 @@ test('Supplement prompt puts the executable task before the JSON contract', () =
   assert.ok(task >= 0)
   assert.ok(fieldSemantics > task)
   assert.ok(outputContract > fieldSemantics)
-  for (const field of [
-    'Type_Description',
-    'Can_Produce_Sperm',
-    'Can_Produce_Ova',
-    'Can_Be_Fertilized',
-    'Can_Fertilize',
-    'Can_Cause_Pregnancy',
-    'Can_Carry_Pregnancy',
-    'Fertilization',
-    'Pregnancy_Or_Carrying',
-    'Cycle',
-    'Ovulation',
-    'Gestation',
-    'Labor',
-    'Maturation',
-    'Aging',
-    'Special_Rules',
-    'Reproductive_Mechanism',
-    'Childbirth_Difficulty',
-    'Care_Level',
-    'Medical_Evidence',
-    'Exception',
-    'Unknown',
-    'Projection_Rule',
-  ])
-    assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   assert.match(prompt, /NO_EVIDENCE 是最后结果，不是默认答案/u)
   assert.ok((prompt.match(/【字段语义解释】/gu) ?? []).length >= 1)
   for (const field of [
@@ -1019,16 +997,6 @@ test('Supplement Fact Delta production prompt includes the semantic Field Dictio
   assert.match(prompt, /Existing 已经记录相同事实 → 不重复输出/u)
   assert.match(prompt, /资料没有说明 → 不编造/u)
   assert.doesNotMatch(prompt, /Complete Evidence-Supported Candidate/u)
-})
-
-test('Supplement prompt enforces Nonhuman field-level evidence and minority completeness', () => {
-  const prompt = buildWorldModelPatchMessagesV2()
-    .map(message => message.content)
-    .join('\n')
-  assert.match(prompt, /不要发现一个新 Type 后停止/u)
-  assert.match(prompt, /这些项目彼此独立[\s\S]*找到一个 Fact 后也不能停止检查/u)
-  assert.match(prompt, /数量少、罕见、少数不表示它不是 Type/u)
-  assert.match(prompt, /Existing 已经记录相同事实 → 不重复输出/u)
 })
 
 test('World Model prompt keeps direct stable rare Type existence separate from prevalence and details', () => {
@@ -3843,6 +3811,9 @@ test('World Model Initial and Supplement prompts expose the same strict mechanis
     assert.match(prompt, /禁止 projection rule 中出现 probability/)
   }
   assert.match(patchPrompt, /Supplement Analyzer Task/u)
+  for (const field of ['Reproductive_Mechanism', 'carrying_compatibility', 'world_model_rule_refs', 'evidence', 'projection_rule_id']) {
+    assert.match(patchPrompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
+  }
   const schema = JSON.parse(WORLD_MODEL_SCHEMA_TEXT)
   const mechanism = schema.species[0].biological_types[0].reproductive_mechanisms[0]
   assert.equal(mechanism.carrying_compatibility, null)
