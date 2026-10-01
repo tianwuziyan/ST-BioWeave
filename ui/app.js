@@ -615,6 +615,9 @@ export function createApp(runtime, options = {}) {
     currentStoryTime: null,
     currentStoryTimeStatus: null,
     currentStoryTimeDifferences: {},
+    projections: [],
+    projectionSummary: { active_count: 0, recent: [] },
+    projectionStatus: null,
     lastAnalysis: null,
     analysisStatus: { state: 'not_analyzed', busy: false },
     error: null,
@@ -3443,6 +3446,9 @@ export function createApp(runtime, options = {}) {
             currentStoryTime: null,
             currentStoryTimeStatus: null,
             currentStoryTimeDifferences: {},
+            projections: [],
+            projectionSummary: {active_count: 0, recent: []},
+            projectionStatus: null,
             lastAnalysis: null,
             analysisStatus: {state: 'not_analyzed', busy: false},
           }
@@ -3583,6 +3589,9 @@ export function createApp(runtime, options = {}) {
           currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
           currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
           currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
+          projections: collected.projections ?? [],
+          projectionSummary: collected.projection_summary ?? collected.projectionSummary ?? {active_count: 0, recent: []},
+          projectionStatus: collected.projection_status ?? collected.projectionStatus ?? businessState.projectionStatus ?? null,
           lastAnalysis: collected.last_success ?? collected.lastAnalysis ?? null,
           analysisStatus: collected.analysis_status ?? collected.analysisStatus ?? collected,
           error: null,
@@ -3909,6 +3918,9 @@ export function createApp(runtime, options = {}) {
       aliasEditor: aliasEditorState,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
+      projections: businessState.projections,
+      projectionSummary: businessState.projectionSummary,
+      projectionStatus: businessState.projectionStatus,
       editingEventId: eventEditingId,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
@@ -4787,6 +4799,9 @@ export function createApp(runtime, options = {}) {
         currentStoryTime: null,
         currentStoryTimeStatus: null,
         currentStoryTimeDifferences: {},
+        projections: [],
+        projectionSummary: {active_count: 0, recent: []},
+        projectionStatus: null,
         lastAnalysis: null,
         analysisStatus: { state: 'not_analyzed', busy: false },
         error: null,
@@ -4836,6 +4851,13 @@ export function createApp(runtime, options = {}) {
           last_error: payload.state === 'success' ? null : (payload.error_code ?? businessState.analysisStatus?.last_error ?? null),
         },
       }
+    }
+    if (event?.type === 'PROJECTION_ANALYSIS_STATUS_CHANGED') {
+      businessState = {
+        ...businessState,
+        projectionStatus: event.payload ?? null,
+      }
+      if (route === 'projection' || route === 'overview') render()
     }
     if (event?.type === 'WORLD_PERSISTENCE_CONFIRMED') {
       void projectCommittedWorldModel(event.payload ?? {}).catch(error => {
@@ -4977,6 +4999,33 @@ export function createApp(runtime, options = {}) {
     if (action === 'toggle-bioweave-enabled') {
       event.preventDefault()
       await toggleBioWeaveEnabled()
+      return
+    }
+    if (action === 'refresh-projection') {
+      event.preventDefault()
+      try {
+        if (typeof runtime.refreshProjection !== 'function') throw new Error('PROJECTION_RUNTIME_UNAVAILABLE')
+        const result = await runtime.refreshProjection()
+        if (result?.status === 'failed' || result?.status === 'stale') {
+          throw new Error(result.status === 'stale' ? 'PROJECTION_STALE' : 'PROJECTION_REFRESH_FAILED')
+        }
+        await refreshBusinessState({reason: 'projection-refresh', force: true})
+        notify('推演已刷新。', 'success', documentRef)
+      } catch (error) {
+        notify('推演刷新失败。', 'error', documentRef)
+      }
+      return
+    }
+    if (action === 'delete-projection') {
+      event.preventDefault()
+      try {
+        if (typeof runtime.deleteProjection !== 'function') throw new Error('PROJECTION_RUNTIME_UNAVAILABLE')
+        await runtime.deleteProjection({projectionId: target.dataset.projectionId})
+        await refreshBusinessState({reason: 'projection-delete', force: true})
+        notify('推演已删除。', 'success', documentRef)
+      } catch (error) {
+        notify('推演删除失败。', 'error', documentRef)
+      }
       return
     }
     if (action === 'toggle-story-time-debug') {

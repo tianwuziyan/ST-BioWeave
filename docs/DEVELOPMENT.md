@@ -44,7 +44,7 @@
 | Snapshot Runtime | PRODUCTION |
 | Characters UI | PRODUCTION within current scope |
 | Overview | PARTIAL |
-| Projection | PARTIAL |
+| Projection | PRODUCTION within current single-identity scope |
 | Genealogy | PARTIAL: core query support and placeholder UI; no relation-data production chain |
 
 当前 derived state 链路为：
@@ -144,7 +144,7 @@ isolation、sanitization、module extraction 或 AnalysisInput narrowing 时，�
 - `existing_bioweave` 保持最近合法前置 Floor snapshot 语义；`existing_events` 额外覆盖 Recent Story discovery window 内的合法 active canonical Events，用于 semantic dedupe，不扫描无界 Chat 历史，不读取 Chat metadata/cache，不包含 target 自身旧结果、删除/失效 Swipe 或 stale Floor。去重要求 Event type、structured story_time、canonical participant/subject/counterpart 集合、机制、关键 source evidence 与 state fact 完全匹配；缺字段、不同 type、不同 subject/source、不同机制或不同事实 evidence 时保留两个 Event。不得使用模糊 AI 相似度 dedupe。
 - `true`、`false`、`null` capability 三态不可压缩；当前解析不得把 `null` 当作 `true` 或 `false`，后续可信 World Model/profile/narrative 更新可以重评 pending candidate；`can_be_fertilized` 不能单独授权承孕追踪。不以 gender、receiver、攻受、姓名或 NSFW 单独推导 Subject。
 - StateReducer、Snapshot Runtime 和 Current Biological State 已进入当前生产链；但 conception、labor、postpartum 的 episode transition 语义仍为 PARTIAL，完整妊娠计算、Gestational Age 和预计分娩日不在当前范围。
-- Projection 仍为 PARTIAL：pure eligibility/generation、persistence 和 Context injection 已存在，但主 Runtime 没有自动调用 Projection eligibility/generation；Context 读取 persisted Projection views，不直接从 Current Biological State 生成。
+- Projection Runtime 已接入：factual Event persistence/readback、Tracking、StateReducer 和 Snapshot 成功后独立执行 evolution → eligibility → serial generation → Floor-owned persistence → readback；Projection failure 不影响 factual pipeline。Runtime 使用独立 execution identity/single-flight 与 stale guard，`collectActiveBusinessData()` 只读取 DTO，不触发 AI；Context 继续只读取 persisted Projection views，并保持同一次 factual execution 的 temporal boundary。
 - Genealogy 当前只有 core 查询基础与空状态 UI，没有关系数据生产链。
 - Tracking Window 尚未实现：当前 exposure 聚合没有 round identity、open/closed/expired 状态、Story Time horizon 或关闭后过滤；`core/state.js` 的 `elapsed_story_days` 只描述 State 派生值，不能冒充 Window expiration。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
 

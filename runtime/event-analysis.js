@@ -433,6 +433,7 @@ export function createEventAnalysisCoordinator({
   let diagnostics;
   let trackingRefresh;
   let generationLifecycle;
+  let projectionPostProcessor = null;
   const persistence = floorPersistence ?? createFloorPersistenceCoordinator({
     store,
     enabledResolver,
@@ -2783,6 +2784,20 @@ export function createEventAnalysisCoordinator({
         },
       });
       terminalState = "success";
+      if (typeof projectionPostProcessor === "function") {
+        void projectionPostProcessor({target, execution}).catch((error) => {
+          notify({
+            type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
+            payload: {
+              state: "failed",
+              phase: "post_processing",
+              error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+              floor_version: target.version,
+            },
+            chatId: target.version.chat_id,
+          });
+        });
+      }
       return {
         events: eventStage.events,
         version: target.version,
@@ -3250,6 +3265,9 @@ export function createEventAnalysisCoordinator({
         ? { ...schedulerState.lastFailure }
         : null,
     }),
+    setProjectionPostProcessor: handler => {
+      projectionPostProcessor = typeof handler === "function" ? handler : null;
+    },
     getCurrentFloorEvents: async () =>
       (await statusForCurrentFloor()).current_floor_events,
     resolveWorldModelAtOrBefore,

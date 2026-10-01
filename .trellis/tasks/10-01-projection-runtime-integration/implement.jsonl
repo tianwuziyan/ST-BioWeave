@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, stale guards, provenance, and append-only Projection timeline rules."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Factual Event pipeline boundary, disabled behavior, StateReducer separation, and Projection downstream semantics."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent/derived lifecycle ownership, invalidation, retry, and async stale-result requirements."}
+{"file":"docs/ARCHITECTURE.md","reason":"Current module ownership and Runtime composition boundaries."}
+{"file":"docs/DEVELOPMENT.md","reason":"Repository implementation and verification conventions."}

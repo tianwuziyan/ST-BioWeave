@@ -12,8 +12,9 @@ factual Event always takes precedence. Projection lifecycle and evidence records
 are append-only derived operations and cannot mutate Event facts or StateReducer
 state. A `reproductive_source_attribution` Event may factually confirm or exclude
 a contributor relationship; candidate sources and unresolved attribution are read
-models, not Events. Phase 2D-1.1 defines these contracts without Runtime,
-persistence, AI generation, Context Injection, Probability, or RNG integration.
+models, not Events. The Runtime integration uses these contracts without adding
+Probability or RNG; Runtime orchestration, Floor-owned persistence, AI
+generation, and Context Injection are implemented by their separate owners.
 
 The StateReducer stores only confirmed/excluded attribution relationships inside
 an already existing Pregnancy Episode. It never creates an episode from an
@@ -419,11 +420,11 @@ and persist a newly discovered Event to the current active Floor Swipe.
 ## Projection generation boundary
 
 Projection generation is downstream of deterministic Eligibility and remains
-outside the factual Event pipeline. Pure eligibility/generation code,
-persistence, and Context injection exist, but the audited main Runtime does not
-call `evaluateProjectionEligibility()` / `generateProjectionCandidate()` as an
-automatic production chain. Only an `eligible` decision may be sent to the
-dedicated Projection Generation prompt. The raw AI DTO contains future
+outside the factual Event pipeline. `runtime/projection-runtime.js` calls
+`evaluateProjectionEvolution()` before `evaluateProjectionEligibility()` after a
+successful factual Floor pipeline, then calls
+`generateProjectionCandidate()` only for missing eligible identities. Only an
+`eligible` decision may be sent to the dedicated Projection Generation prompt. The raw AI DTO contains future
 development content only; it cannot create a BiologicalEvent, attribution,
 identity, owner, probability, or state. BioWeave assembles and validates the
 Projection candidate from the decision and current Floor Version. A stale Chat,
@@ -445,9 +446,9 @@ Event and cannot update StateReducer; Event Analysis treats only the actual
 target Character message as direct factual evidence. Clearing or changing the
 current Chat/Floor/Swipe/Version clears or replaces the same slot.
 
-This is a PARTIAL Projection implementation. Context injection reads persisted
-Projection Views; it does not automatically generate a Projection from Current
-Biological State.
+Projection Runtime is production-connected within the single-identity contract.
+Context injection still reads only persisted Projection Views and never feeds a
+Projection generated after a factual execution back into that same execution.
 
 ## 3. Contracts
 

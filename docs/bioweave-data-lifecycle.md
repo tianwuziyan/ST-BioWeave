@@ -59,13 +59,13 @@ does not replay disabled-period Floors or create backlog API calls.
 
 Projection generation remains a separate, fail-closed domain operation. Its AI
 response is not a persistent owner or fact source: only the current Character
-Floor Version may own a persisted Projection. The current code has Projection
-pure eligibility/generation support, persistence, and Context injection, but the
-main Runtime does not automatically call the eligibility/generation functions.
-A generation request is bounded by its Chat, current Character Floor, active
-Swipe, complete Floor Version, rule binding and Eligibility fingerprint; results
-whose owner or rule has changed are discarded. No Projection result is written
-to Chat metadata, Snapshot, StateReducer or BiologicalEvent storage.
+Floor Version may own a persisted Projection. The Projection Runtime now calls
+evolution/eligibility/generation after factual success and exposes an explicit
+Projection Refresh; reads never call AI. A generation request is bounded by its
+Chat, current Character Floor, active Swipe, complete Floor Version, execution
+identity, rule binding and factual-basis fingerprint; results whose owner, rule,
+Swipe, or facts have changed are discarded. No Projection result is written to
+Chat metadata, Snapshot, StateReducer or BiologicalEvent storage.
 
 ## 1. Scope and audit status
 

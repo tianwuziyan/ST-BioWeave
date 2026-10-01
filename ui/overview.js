@@ -235,6 +235,7 @@ export function overviewPage({
   currentFloor = null,
   lastAnalysis = null,
   analysisStatus = null,
+  projectionSummary = null,
 } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = entriesOf(trackingSubjects)
@@ -249,6 +250,8 @@ export function overviewPage({
   const activeEventCount = analysisStatusCount(status, 'active_event_count', biologicalEvents.length)
   const subjectCount = analysisStatusCount(status, 'tracking_subject_count', subjects.length)
   const lastSuccess = Object.prototype.hasOwnProperty.call(status, 'last_success') ? status.last_success : lastAnalysis
+  const activeProjectionCount = Number(projectionSummary?.active_count ?? 0)
+  const recentProjection = projectionSummary?.recent?.[0] ?? null
   return (
     '<section class="bioweave-page bioweave-overview-page" data-bioweave-page="overview"><div class="bioweave-page-title bioweave-page-head"><div><h2>总览</h2><p>' +
     '<strong class="bioweave-chat-name">' +
@@ -268,7 +271,7 @@ export function overviewPage({
     '<div><strong>' +
     activeEventCount +
     '</strong><span>事件</span></div>' +
-    '<div><strong>—</strong><span>推演</span></div><div><strong>—</strong><span>家系代数</span></div></div>' +
+    '<div><strong>' + activeProjectionCount + '</strong><span>推演</span></div><div><strong>—</strong><span>家系代数</span></div></div>' +
     '<div class="bioweave-overview-grid"><section class="bioweave-card bioweave-characters"><header><b>人物总览</b>' +
     '<button type="button" class="bioweave-text-button" data-route="characters">查看全部</button></header>' +
     renderSubjectList(trackingSubjects) +
@@ -276,7 +279,7 @@ export function overviewPage({
     renderRecentEvents(biologicalEvents) +
     '</section>' +
     '<section class="bioweave-card"><header><b>当前推演</b><button type="button" class="bioweave-text-button" data-route="projection">查看全部</button></header>' +
-    '<div class="bioweave-empty">当前没有需要展示的生理推演。推演并非已发生事实。</div></section>' +
+    (recentProjection ? '<div class="bioweave-empty">' + escapeHtml(recentProjection.generated_statement ?? '') + '</div>' : '<div class="bioweave-empty">当前没有需要展示的生理推演。推演并非已发生事实。</div>') + '</section>' +
     '<section class="bioweave-card"><header><b>家系概览</b><button type="button" class="bioweave-text-button" data-route="genealogy">查看图谱</button></header>' +
     '<div class="bioweave-empty">尚未建立已确认的亲子关系。</div></section>' +
     '<section class="bioweave-card"><header><b>世界概览</b><button type="button" class="bioweave-text-button" data-route="world">查看详情</button></header>' +

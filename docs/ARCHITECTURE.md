@@ -59,13 +59,14 @@ flowchart TD
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
+| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、generation、stale guard、Floor persistence readback、Runtime DTO 和 Projection Refresh |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
 | SillyTavern Adapter | `runtime/sillytavern-adapter.js` | 原始 Host context、Chat/Floor slot I/O、HTTP transport、listener subscribe |
 | Runtime Composition | `runtime/runtime.js` | create / inject / assemble / return；不拥有业务状态 |
 | Analysis Pipeline Coordinator | `runtime/event-analysis.js` | execution ownership、runAnalysis、generic retry、scheduler、World→Event pipeline、terminal 和 shared bridges |
 | ST integration / compatibility facade | `runtime/events.js` | 顶层 bootstrap、public facade、lifecycle orchestration、source cleanup 和冻结的 persistence-policy bridge |
 | Floor Persistence Coordinator | `storage/floor-persistence-coordinator.js` | ordinary owner-scoped Floor transaction、merge、save、readback、confirmed decision |
-| Projection | `storage/projection.js` | `snapshot` / `projection_timeline` 的 Projection owner workflow |
+| Projection | `storage/projection.js`、`runtime/projection-runtime.js` | `projection_timeline` 的 Floor-owned owner workflow；Runtime post-processing 与 readback |
 | Storage primitives | `storage/store.js` | Floor/Chat storage abstraction 与 host-store compatibility |
 | Clear / special lifecycle | `storage/clear.js` | explicit clear、restore/migration 和特殊生命周期操作 |
 | AI input construction | `ai/input-builder.js` | AnalysisInput 收集、选择、清洗和规范化 |
@@ -103,7 +104,7 @@ flowchart TD
 | Event prompt | `ai/prompts.js` | `ai/input-builder.js` | World runtime |
 | Snapshot | `core/snapshot.js`、`core/state.js` | `runtime/event-analysis.js` checkpoint bridge | Adapter |
 | Current Biological State | `core/state.js` | `runtime/event-analysis.js` replay/read API | UI business logic |
-| Projection | `storage/projection.js`、`core/projection.js` | `ui/projection.js`、Context injection | World/Event direct writes |
+| Projection | `runtime/projection-runtime.js`、`storage/projection.js`、`core/projection.js` | `ui/projection.js`、Context injection | World/Event direct writes |
 | Floor persistence | `storage/floor-persistence-coordinator.js` | owner caller、`storage/store.js` | direct host save |
 | F5 durability | Coordinator + `storage/store.js` + Adapter bridge | `REAL-HOST VERIFIED` after automated mechanism tests | analysis modules |
 | Swipe ownership | `runtime/floor.js`、`storage/store.js` | Coordinator/Adapter raw slot access | UI-only code |
@@ -314,8 +315,8 @@ Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Fl
 未来改变 Characters UI 产品定义应作为独立产品任务，不应偷偷改变 Event persistence schema。
 
 当前生产状态的完整矩阵维护在 [DEVELOPMENT.md](./DEVELOPMENT.md)。其中
-StateReducer、Current Biological State 和 Snapshot Runtime 已接通；Tracking
-Window 仍是 NOT_IMPLEMENTED；Projection 与 Genealogy 仍为 PARTIAL。
+StateReducer、Current Biological State、Snapshot Runtime 和 Projection Runtime
+已接通；Tracking Window 仍是 NOT_IMPLEMENTED；Genealogy 仍为 PARTIAL。
 
 ## Safe modification guardrails
 

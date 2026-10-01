@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify implementation preserves Floor/Swipe ownership, stale guards, provenance, and timeline immutability."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify factual Event/StateReducer boundaries and Projection failure isolation."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify lifecycle clear/invalidation and persistence outcomes for new Runtime integration."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify feature owner, wiring boundaries, and no accidental core refactor."}
+{"file":"docs/DEVELOPMENT.md","reason":"Verify required checks and repository conventions."}

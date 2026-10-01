@@ -187,9 +187,9 @@ Snapshot 只能写在拥有该 checkpoint 的 Character/assistant Floor：无 Sw
 
 Projection 是基于有效 BiologicalEvent、Current State、Story Time、World Model
 mechanism 和 Character Facts 产生的未来可能生物发展方向，不是事实、Current
-State 或 Snapshot。Phase 2D-1 只定义纯 Core DTO 和 timeline reducer；尚未把
-Projection 已接入 Floor timeline read path 与只读 Runtime Context Injection；仍不进入
-StateReducer、Snapshot 或 UI 持久化。
+State 或 Snapshot。Phase 2D-1 定义纯 Core DTO 和 timeline reducer；当前
+Projection Runtime 已接入 Floor timeline read path、只读 Runtime Context Injection
+和最小 Runtime/UI consumer，但仍不进入 StateReducer、Snapshot 或事实层持久化。
 
 第一版 development kind 只有 `possible_biological_change`、`possible_detection`、
 `mechanism_progression`、`no_obvious_change` 和 `monitoring_signal`。Projection identity
@@ -518,7 +518,7 @@ Phase 2A 的闭环为：
          → Tracking Subject Registry → Characters / Events / Overview
 ```
 
-Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
+Genealogy、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。StateReducer、Current Biological State 和 Snapshot 已进入当前 production chain。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
 
 ## Floor Level
 `message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、derived `snapshot`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。
@@ -526,7 +526,7 @@ Genealogy、完整 StateReducer、Gestational Age、预计分娩日和完整妊�
 ## 核心链
 `Character/assistant BioWeave Floor → Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
 
-用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Phase 2A 不提前接通 StateReducer/Genealogy。
+用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Event edit/delete 成功后会独立触发 Projection evolution/eligibility post-processing，但不会改变 StateReducer/Genealogy 的 ownership。
 
 ## Data lifecycle contract pointer
 
@@ -535,8 +535,8 @@ The normative clear and lifecycle rules live in [BioWeave Data Lifecycle](./biow
 The current field ownership remains: `extensionSettings.bioweave` is global and preserved; `chatMetadata.bioweave` owns only Chat-local configuration/control state; `message.extra.bioweave` owns a Character/assistant message without Swipe structure; and `message.swipe_info[*].extra.bioweave` owns every structured Character/assistant Swipe, including inactive and historical slots. User messages are not BioWeave Floors and must never receive a BioWeave payload. Runtime/UI maps are transient and disposable. Any new field must be classified in the lifecycle registry before it is persisted, then this document and the lifecycle contract must be re-audited against the final path. In particular, Manual Clear All and the destructive source cleanup attached to SillyTavern Start New Chat use the same registry-driven coverage.
 ## Phase 2D-3 Projection Generation Contract
 
-Phase 2D-3 的生成边界是 `eligible` Eligibility Decision 到内存中的 Projection
-candidate。AI 原始 DTO 与领域 Projection DTO 分离：
+Projection Runtime 的生成边界是 `eligible` Eligibility Decision 到已持久化的
+Floor-owned Projection candidate。AI 原始 DTO 与领域 Projection DTO 分离：
 
 ```json
 {
@@ -555,9 +555,12 @@ eligible decision 完全一致。BioWeave 使用 decision、已验证的 World M
 
 只有 `eligibility === "eligible"` 的 decision 才能进入生成；`not_eligible` 和
 `unresolved` 不调用 AI。AI 失败、结构或语义校验失败、或 generation context 过期时，
-不创建半成品、不修改旧 Projection、Current State 或 Snapshot。此 wave 不持久化
-candidate 的持久化由 Phase 2D-4 独立负责；Phase 2E 只读取聚合 View 进行 transient
-Context Injection。
+不创建半成品、不修改旧 Projection、Current State 或 Snapshot。Runtime 每条 eligible
+decision 最多发起一次 AI request，按 canonical identity 去重，使用 execution
+identity/single-flight 和请求前后 stale guard；有效 candidate 通过现有
+`storage/projection.js` 写入当前 Character Floor/active Swipe 的 append-only
+timeline。AI/校验/持久化失败属于 Projection-only failure，并允许 sibling candidate
+保留已确认的 partial success。
 
 ## Phase 2E Projection Context Injection
 

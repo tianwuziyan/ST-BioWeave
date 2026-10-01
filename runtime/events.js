@@ -24,6 +24,7 @@ import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
 import { createProjectionContextCoordinator } from "./projection-context.js";
+import { createProjectionRuntime } from "./projection-runtime.js";
 import { createRuntimeActivity } from "./activity.js";
 import { createRuntimeDiagnostics } from "./diagnostics.js";
 import { createSillyTavernAdapter as createSillyTavernIoAdapter } from "./sillytavern-adapter.js";
@@ -1682,6 +1683,54 @@ export function createRuntime({
     setExtensionPrompt: st.setExtensionPrompt,
     enabledResolver: isBioWeaveEnabled,
   });
+  const projectionRuntime = createProjectionRuntime({
+    analyzer: eventAnalyzer,
+    enabledResolver: isBioWeaveEnabled,
+    getChatId: () => chat.current(),
+    collectInputs: async () => {
+      const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
+      const business = await eventAnalysis.collectActiveBusinessData();
+      const world = await eventAnalysis.resolveWorldModelAtOrBefore({
+        __messageIndex: true,
+        index: floor.index,
+      });
+      return {
+        floor,
+        currentState: business.current_state,
+        currentStateStatus: business.current_state_status,
+        events: business.active_events ?? [],
+        sourceCandidates: Object.values(business.tracking_candidates ?? {}),
+        worldModel: world?.model ?? {},
+        currentStoryTime: business.current_story_time ?? null,
+        storyContext: [],
+        deleteProjection: projectionPersistence.deleteProjection,
+      };
+    },
+    resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
+    getProjectionViews: projectionPersistence.getProjectionViews,
+    saveGeneratedProjection: projectionPersistence.saveGeneratedProjection,
+    saveProjectionEvidence: projectionPersistence.saveProjectionEvidence,
+    saveEvolutionDecision: projectionPersistence.saveEvolutionDecision,
+    refreshProjectionContext: projectionContext.refreshProjectionContext,
+    notify,
+    activity,
+  });
+  eventAnalysis.setProjectionPostProcessor?.(({target}) => projectionRuntime.process({
+    reason: "factual-success",
+    target,
+  }));
+
+  async function updateEventWithProjection(...args) {
+    const result = await eventAnalysis.updateEvent(...args);
+    void projectionRuntime.process({reason: "event-edit"}).catch(() => null);
+    return result;
+  }
+
+  async function deleteEventWithProjection(...args) {
+    const result = await eventAnalysis.deleteEvent(...args);
+    void projectionRuntime.process({reason: "event-delete"}).catch(() => null);
+    return result;
+  }
 
   async function setBioWeaveEnabled(enabled) {
     const chatId = chat.current();
@@ -2328,6 +2377,7 @@ export function createRuntime({
 
   function destroy() {
     if (destroyed) return;
+    projectionRuntime.destroy();
     projectionContext.destroy();
     storyTimeCoordinator.destroy();
     eventAnalysis.destroy();
@@ -2379,14 +2429,19 @@ export function createRuntime({
     analyzeCurrentWorldModelFull: eventAnalysis.analyzeCurrentWorldModelFull,
     analyzeCurrentWorldModelPatch: eventAnalysis.analyzeCurrentWorldModelPatch,
     getTrackingRegistry: eventAnalysis.getTrackingRegistry,
-    collectActiveBusinessData: eventAnalysis.collectActiveBusinessData,
+    collectActiveBusinessData: async (...args) => ({
+      ...(await eventAnalysis.collectActiveBusinessData(...args)),
+      ...(await projectionRuntime.getBusinessData()),
+    }),
     getCurrentBiologicalState: eventAnalysis.getCurrentBiologicalState,
     getProjectionViews: projectionPersistence.getProjectionViews,
     refreshProjectionContext: projectionContext.refreshProjectionContext,
     clearProjectionContext: projectionContext.clearProjectionContext,
+    refreshProjection: projectionRuntime.refreshProjection,
+    deleteProjection: projectionRuntime.deleteProjection,
     refreshTrackingRegistry: eventAnalysis.refreshTrackingRegistry,
-    updateEvent: eventAnalysis.updateEvent,
-    deleteEvent: eventAnalysis.deleteEvent,
+    updateEvent: updateEventWithProjection,
+    deleteEvent: deleteEventWithProjection,
     clearCharacterData,
     clearWorldData,
     clearAllBioWeaveData,
