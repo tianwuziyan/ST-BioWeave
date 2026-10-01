@@ -493,7 +493,10 @@ explicit current evidence
 Human baseline is limited to an already-established ordinary Human Male or
 Female. It fills only canonical null fields; explicit false, explicit
 absence, and explicit known values win. Nonhuman species never use Human
-baseline. This section does not redesign the Human baseline.
+baseline. This section does not redesign the Human baseline. The separate
+pre-confirmation Human narrative timing preset is a Product Policy for
+character timing configuration; it does not create a `projection_rule`, does
+not replace World Rule eligibility, and must not be used as a Runtime fallback.
 
 For each of the six capability fields:
 

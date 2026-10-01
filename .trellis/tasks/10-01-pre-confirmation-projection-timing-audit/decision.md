@@ -24,7 +24,8 @@ production code, tests, UI, or existing schema.
    effective_max` is open; `elapsed > effective_max` is missed. The max boundary
    is inclusive. A missed window is never backfilled.
 7. Randomness is outside World `projection_rule`. v1 samples once at creation
-   and persists the result. No medical timing numbers are selected here.
+   and persists the result. No medical-derived timing numbers are selected
+   here; any approved narrative preset remains explicitly Product Policy.
 8. A State modifier can consume only factual Current Biological State. If the
    current World Model contract cannot supply a reliable modifier, v1 uses zero.
 9. Factual pregnancy confirmation exits this responsibility immediately.
@@ -671,7 +672,9 @@ WORLD_PROJECTION_RULE_OVERRIDE:
 - RUNTIME_DISABLED_RULE_BLACKLIST: None; Runtime consumes only the final validated active `projection_rules[]`.
 - HISTORICAL_FLOOR_BEHAVIOR: Historical World snapshots and existing Projection records remain immutable; only the new active Floor authority changes.
 - IMPLEMENTED: YES.
-- VERIFIED: Focused override/timing tests, syntax checks, diff check, and `npm run check` executed; Phase 1 full check is 1106 total, 1090 pass, 16 fail. The remaining failures are the existing World Model prompt-baseline assertions.
+- VERIFIED: Focused override/timing tests, syntax checks, diff check, and
+  `npm run check` executed. The current implementation checkpoint is 1113 total,
+  1096 pass, 17 fail; the current ledger below records the exact failure set.
 
 ## Phase 1 implementation decisions
 
@@ -694,10 +697,22 @@ WORLD_PROJECTION_RULE_OVERRIDE:
   remains realization → contradiction → expiration. Source invalidation is
   derived fail-closed; no Event/State/Snapshot fact is created by timing.
 
+## Approved Human narrative preset and UI follow-up
+
+The approved v1 Human preset is `human-narrative-v1`: base 14/42 Story days,
+10% variance, 3 Story-day variance cap, and 3 Story-day total adjustment cap.
+Its classification is `PRODUCT_POLICY`, `CONSERVATIVE_NARRATIVE_PRESET`, and
+`NOT_MEDICAL_SOURCE_DERIVED`. It is a future-cycle Chat-local config baseline,
+not a World Rule or Runtime fallback. The Characters detail timing editor uses
+the formal Runtime config API, keeps the Human preset as an unsaved draft until
+Save, and reads any current Timing Instance from its frozen persisted fields.
+Config changes never mutate an existing Timing Instance.
+
 ## Phase 1 verification ledger
 
-Focused timing/lifecycle/Projection tests pass 27/27. Full `npm run check`
-after implementation is 1106 total, 1090 pass, 16 fail. Compared with the
-recorded pre-Phase-1 baseline of 1102 total, 1085 pass, 17 fail, there are no
-new failures; the prior Manual Full/Patch persistence failure is resolved and
-the remaining 16 are the existing World Model prompt-baseline assertions.
+The current focused preset/config/UI/timing run passes 67/67. The current full
+`npm run check` checkpoint is 1113 total, 1096 pass, 17 fail. Sixteen failures
+are the known World Model prompt-baseline assertions and one is the unresolved
+Runtime concurrency/persistence signature currently reported by
+`start-new-chat-lifecycle.test.js`. This ledger does not attribute that failure
+to Timing; it also does not claim the failure is proven unrelated.

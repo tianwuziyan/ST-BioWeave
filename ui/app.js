@@ -631,6 +631,18 @@ export function createApp(runtime, options = {}) {
     draftAliases: [],
     error: null,
   }
+  let timingEditorState = {
+    open: false,
+    loading: false,
+    saving: false,
+    characterId: null,
+    chatId: null,
+    config: null,
+    draft: null,
+    timingInstance: null,
+    humanPresetApplicable: false,
+    error: null,
+  }
   let businessRefreshSequence = 0
   let businessRefreshInFlight = null
   let businessRefreshQueued = null
@@ -3712,6 +3724,67 @@ export function createApp(runtime, options = {}) {
     }
     render()
   }
+  function timingEditorErrorMessage(error) {
+    const code = String(error?.code ?? error?.message ?? '').toLowerCase()
+    if (code.includes('unknown_character') || code.includes('character_id_not_found')) return '当前人物不在有效 Floor 身份快照中。'
+    if (code.includes('stale') || code.includes('chat')) return '当前 Chat 或人物身份已变化，请重新打开设置。'
+    if (code.includes('before_min')) return '最大时间不能小于最短时间。'
+    if (code.includes('invalid')) return '推演周期设置无效，请检查输入值。'
+    return '推演周期保存失败，请重新读取当前人物信息。'
+  }
+  function closeCharacterTiming() {
+    timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    render()
+  }
+  async function openCharacterTiming(characterId) {
+    const id = String(characterId ?? '').trim()
+    if (!id || typeof runtime.getCharacterTimingEditorData !== 'function') return
+    const chatId = runtime.chat.current()
+    timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    render()
+    try {
+      const data = await runtime.getCharacterTimingEditorData({characterId: id})
+      if (runtime.chat.current() !== chatId || String(focusedCharacterId ?? '') !== id) return
+      timingEditorState = {...timingEditorState, open: true, loading: false, config: data?.config ?? null, draft: data?.config ? {...data.config} : null, timingInstance: data?.timing_instance ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
+    } catch (error) {
+      timingEditorState = {...timingEditorState, loading: false, error: timingEditorErrorMessage(error)}
+    }
+    render()
+  }
+  function updateCharacterTimingDraft(target) {
+    if (!timingEditorState.draft) return
+    const field = target?.dataset?.bioweaveTimingField
+    if (!['base_min_story_days', 'base_max_story_days', 'variance_ratio', 'variance_cap_story_days', 'total_adjustment_cap_story_days'].includes(field)) return
+    const value = Number(target.value)
+    timingEditorState = {...timingEditorState, draft: {...timingEditorState.draft, [field]: field === 'variance_ratio' ? value / 100 : value}, error: null}
+  }
+  function restoreHumanTimingPreset() {
+    if (!timingEditorState.humanPresetApplicable || !timingEditorState.draft) return
+    timingEditorState = {...timingEditorState, draft: {...timingEditorState.draft, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.10, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3}, error: null}
+    render()
+  }
+  async function saveCharacterTiming() {
+    const state = timingEditorState
+    if (state.saving || !state.characterId || !state.draft || typeof runtime.saveCharacterTimingConfig !== 'function') return
+    if (runtime.chat.current() !== state.chatId || String(focusedCharacterId ?? '') !== String(state.characterId)) {
+      timingEditorState = {...state, error: '当前 Chat 或人物身份已变化，请重新打开设置。'}
+      render()
+      return
+    }
+    timingEditorState = {...state, saving: true, error: null}
+    render()
+    try {
+      await runtime.saveCharacterTimingConfig({characterId: state.characterId, config: state.draft})
+      const data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
+      if (runtime.chat.current() !== state.chatId || String(focusedCharacterId ?? '') !== String(state.characterId)) throw Object.assign(new Error('STALE_CHAT'), {code: 'STALE_CHAT'})
+      timingEditorState = {...timingEditorState, saving: false, loading: false, config: data?.config ?? null, draft: data?.config ? {...data.config} : null, timingInstance: data?.timing_instance ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
+      notify('推演周期设置已保存。', 'success', documentRef)
+    } catch (error) {
+      timingEditorState = {...timingEditorState, saving: false, error: timingEditorErrorMessage(error)}
+      notify(timingEditorErrorMessage(error), 'error', documentRef)
+    }
+    render()
+  }
   async function refreshStoryTimeDebug({renderAfter = true} = {}) {
     if (!storyTimeDebugState.enabled || typeof runtime.getStoryTimeDebugInfo !== 'function') return null
     const requestId = ++storyTimeDebugSequence
@@ -3916,6 +3989,7 @@ export function createApp(runtime, options = {}) {
       chatId: businessState.chatId,
       worldModelMeta: route === 'state' ? worldModelState.meta : null,
       aliasEditor: aliasEditorState,
+      timingEditor: timingEditorState,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
       projections: businessState.projections,
@@ -4014,7 +4088,10 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure()
     route = nextRoute
     focusedCharacterId = null
-    if (nextRoute !== 'characters') aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+    if (nextRoute !== 'characters') {
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    }
     if (nextRoute !== 'events') setEventFilter()
     render()
     return true
@@ -4025,6 +4102,7 @@ export function createApp(runtime, options = {}) {
     route = 'characters'
     focusedCharacterId = nextId
     if (aliasEditorState.characterId !== nextId) aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+    if (timingEditorState.characterId !== nextId) timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
   }
   function settingsOperationError(error) {
@@ -4719,6 +4797,10 @@ export function createApp(runtime, options = {}) {
       updateCharacterAliasDraft(target)
       return
     }
+    if (target?.dataset?.bioweaveTimingField !== undefined) {
+      updateCharacterTimingDraft(target)
+      return
+    }
     if (assignmentControlForEvent(target)) return
     if (target.closest?.('[data-bioweave-world-section-form]')) {
       captureWorldModelSectionDraft()
@@ -4781,6 +4863,7 @@ export function createApp(runtime, options = {}) {
       storyTimeDebugSequence += 1
       storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: null}
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       route = 'overview'
       focusedCharacterId = null
       businessRefreshSequence += 1
@@ -4904,6 +4987,7 @@ export function createApp(runtime, options = {}) {
     ) {
       if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+        timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       }
       businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
@@ -5053,6 +5137,26 @@ export function createApp(runtime, options = {}) {
     if (action === 'open-character-aliases') {
       event.preventDefault()
       await openCharacterAliases(target.dataset.characterId)
+      return
+    }
+    if (action === 'open-character-timing') {
+      event.preventDefault()
+      await openCharacterTiming(target.dataset.characterId)
+      return
+    }
+    if (action === 'restore-human-timing-preset') {
+      event.preventDefault()
+      restoreHumanTimingPreset()
+      return
+    }
+    if (action === 'cancel-character-timing') {
+      event.preventDefault()
+      closeCharacterTiming()
+      return
+    }
+    if (action === 'save-character-timing') {
+      event.preventDefault()
+      await saveCharacterTiming()
       return
     }
     if (action === 'add-character-alias') {

@@ -195,7 +195,10 @@ stale-owner guards as `projection_timeline`, but it is not a Projection,
 BiologicalEvent, Snapshot, Current State, or Tracking Window. Chat-local
 `settings.character_timing_configs` is authoritative configuration and is not a
 Floor-derived fact. Timing records never become a fallback source when their
-Floor/Swipe/version is inactive.
+Floor/Swipe/version is inactive. The built-in Human narrative preset is a Core
+configuration baseline, not a Floor fact or World Rule; the formal Characters
+UI writes only through the Chat-local timing-config API and never through the
+debug facade.
 
 ## 5. Derived State
 

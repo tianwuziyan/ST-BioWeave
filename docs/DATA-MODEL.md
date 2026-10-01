@@ -594,3 +594,9 @@ config snapshot、一次 variance、effective min/max、Story Time anchor、Worl
 rule binding 及完整 Floor Version。它不是 Event、Projection、Exposure Tracking
 Window 或 Current State；`effective_max` 只阻止首次迟到生成，已有 Projection
 仍使用原有 realization → contradiction → expiration 生命周期。
+内置 Human narrative preset 是版本化 Product Policy（14/42 Story days、10%
+variance、3/3 Story-day caps），不是医学标准，也不是 World Rule。它仅在
+authoritative World/character context 明确为普通 Human 时作为 future-cycle
+config baseline；显式 Chat-local config 保存为 character override。保存或恢复
+preset 不会创建 World Rule、Timing Instance、Projection、Event 或 State，也不
+会改写已有 Timing Instance 的 frozen snapshot/offset/effective window。

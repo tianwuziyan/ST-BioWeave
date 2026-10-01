@@ -7339,6 +7339,20 @@
 .bioweave-main .bioweave-character-summary-actions .bioweave-button:focus-visible { border-color: var(--bioweave-accent) !important; color: var(--bioweave-text) !important; background: var(--bioweave-surface-raised) !important; }
 .bioweave-character-alias-editor { margin-top: 6px !important; padding: 10px !important; border: 1px solid var(--bioweave-border) !important; border-radius: var(--bioweave-radius-small) !important; background: var(--bioweave-surface-raised) !important; }
 .bioweave-character-alias-editor { overflow: hidden !important; border-color: color-mix(in srgb, var(--bioweave-accent) 46%, var(--bioweave-border)) !important; }
+.bioweave-character-detail-actions { display: inline-flex !important; align-items: center !important; gap: 6px !important; flex-wrap: wrap !important; justify-content: flex-end !important; }
+.bioweave-character-timing-editor { grid-column: 1 / -1 !important; margin-top: 6px !important; border-color: color-mix(in srgb, var(--bioweave-accent) 46%, var(--bioweave-border)) !important; }
+.bioweave-character-timing-editor-head h3 { margin: 0 !important; color: var(--bioweave-text) !important; font-size: 13px !important; }
+.bioweave-character-timing-editor-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-timing-section + .bioweave-character-timing-section { margin-top: 10px !important; padding-top: 9px !important; border-top: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-timing-section h4 { margin: 0 0 7px !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; }
+.bioweave-character-timing-fields { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 6px 10px !important; }
+.bioweave-character-timing-fields label { display: grid !important; grid-template-columns: minmax(72px, max-content) minmax(0, 1fr) max-content !important; align-items: center !important; gap: 5px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-timing-fields input { min-width: 0 !important; min-height: 29px !important; padding: 4px 7px !important; }
+.bioweave-character-timing-fields em { color: var(--bioweave-text-muted) !important; font-size: 10px !important; font-style: normal !important; }
+.bioweave-character-timing-current-list { margin-top: 0 !important; }
+.bioweave-character-timing-current-list dd { color: var(--bioweave-text) !important; }
+.bioweave-character-timing-actions { display: flex !important; align-items: center !important; gap: 6px !important; margin-top: 10px !important; }
+.bioweave-character-timing-actions .bioweave-spacer { flex: 1 1 auto !important; }
 .bioweave-character-alias-editor-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 12px !important; margin: -10px -10px 0 !important; padding: 11px 12px 9px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
 .bioweave-character-alias-editor-head h3 { color: var(--bioweave-text) !important; font-size: 13px !important; }
 .bioweave-character-alias-editor-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
@@ -7538,6 +7552,11 @@
 .bioweave-character-detail-title { display: flex !important; align-items: baseline !important; gap: 8px !important; min-width: 0 !important; }
 .bioweave-character-detail-title span { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
 .bioweave-character-alias-editor { margin: 0 12px 10px !important; overflow: hidden !important; border: 1px solid color-mix(in srgb, var(--bioweave-accent) 65%, var(--bioweave-border)) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-timing-editor { margin: 0 12px 10px !important; padding: 10px !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-timing-fields { grid-template-columns: 1fr !important; gap: 7px !important; }
+.bioweave-character-timing-fields label { grid-template-columns: 88px minmax(0, 1fr) max-content !important; font-size: 12px !important; }
+.bioweave-character-timing-fields input { min-height: 32px !important; }
+.bioweave-character-timing-actions { flex-wrap: wrap !important; }
 .bioweave-character-alias-head,
 .bioweave-character-alias-actions { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 8px 10px !important; }
 .bioweave-character-alias-head { border-bottom: 1px solid var(--bioweave-border-soft) !important; }

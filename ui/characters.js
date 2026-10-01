@@ -288,6 +288,48 @@ function renderAliasEditor(aliasEditor, displayName) {
     '</div>'
   )
 }
+function timingNumber(value, digits = 1) {
+  if (!Number.isFinite(Number(value))) return '—'
+  return Number(value).toFixed(digits).replace(/\.0+$/u, '')
+}
+function timingRange(instance, minKey, maxKey, fallback = '—') {
+  if (!instance || !Number.isFinite(Number(instance[minKey])) || !Number.isFinite(Number(instance[maxKey]))) return fallback
+  return `${timingNumber(instance[minKey])} ～ ${timingNumber(instance[maxKey])} 天`
+}
+function renderTimingInstanceSummary(instance) {
+  if (!instance) return '<p class="bioweave-muted">尚未建立观察周期。</p>'
+  const offset = Number(instance.sampled_individual_offset_story_days)
+  const offsetText = Number.isFinite(offset) ? `${offset >= 0 ? '+' : ''}${timingNumber(offset)} 天` : '—'
+  return (
+    '<dl class="bioweave-data-list bioweave-character-timing-current-list">' +
+    '<div><dt>基础周期</dt><dd>' + escapeHtml(timingRange(instance, 'base_min_story_days', 'base_max_story_days')) + '</dd></div>' +
+    '<div><dt>本次偏移</dt><dd>' + escapeHtml(offsetText) + '</dd></div>' +
+    '<div><dt>实际周期</dt><dd>' + escapeHtml(timingRange(instance, 'effective_min_story_days', 'effective_max_story_days')) + '</dd></div>' +
+    '</dl>'
+  )
+}
+function renderCharacterTimingEditor(editor, characterId) {
+  if (!editor?.open || editor.characterId !== characterId) return ''
+  if (editor.loading) return '<section class="bioweave-card bioweave-character-timing-editor" role="dialog" aria-label="未确认妊娠推演周期"><p class="bioweave-muted">正在读取当前推演周期设置…</p></section>'
+  const config = editor.draft ?? editor.config ?? {}
+  const presetLabel = editor.humanPresetApplicable ? '恢复人类默认' : '恢复默认'
+  const current = editor.timingInstance
+  return (
+    '<section class="bioweave-card bioweave-character-timing-editor" role="dialog" aria-label="未确认妊娠推演周期">' +
+    '<header class="bioweave-character-timing-editor-head"><div><h3>未确认妊娠推演周期</h3><p>只影响之后新建立的观察周期，不重新计算当前周期。</p></div></header>' +
+    '<div class="bioweave-character-timing-section"><h4>之后新周期的设置</h4><div class="bioweave-character-timing-fields">' +
+    '<label><span>最短时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_min_story_days" value="' + escapeHtml(config.base_min_story_days) + '"> <em>天</em></label>' +
+    '<label><span>最大时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_max_story_days" value="' + escapeHtml(config.base_max_story_days) + '"> <em>天</em></label>' +
+    '<label><span>个体浮动</span><input class="bioweave-input" type="number" min="0" step="0.01" data-bioweave-timing-field="variance_ratio" value="' + escapeHtml(Number(config.variance_ratio) * 100) + '"> <em>%</em></label>' +
+    '<label><span>最大浮动</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="variance_cap_story_days" value="' + escapeHtml(config.variance_cap_story_days) + '"> <em>天</em></label>' +
+    '<label><span>总调整上限</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="total_adjustment_cap_story_days" value="' + escapeHtml(config.total_adjustment_cap_story_days) + '"> <em>天</em></label>' +
+    '</div></div>' +
+    '<div class="bioweave-character-timing-section"><h4>当前已经采用的周期</h4>' + renderTimingInstanceSummary(current) + '</div>' +
+    '<div class="bioweave-character-timing-actions"><button type="button" class="bioweave-button" data-bioweave-action="restore-human-timing-preset">' + presetLabel + '</button><span class="bioweave-spacer"></span><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-timing">取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-timing"' + (editor.saving ? ' disabled' : '') + '>保存</button></div>' +
+    (editor.error ? '<p class="bioweave-form-error">' + escapeHtml(editor.error) + '</p>' : '') +
+    '</section>'
+  )
+}
 function renderExposuresSection(subject, activeEvents, currentStoryTime = null, storyTimeDifferences = {}) {
   const exposureCount = Array.isArray(subject?.exposure_event_ids) ? new Set(subject.exposure_event_ids).size : 0
   return (
@@ -304,7 +346,7 @@ function renderOtherSection() {
     '<div class="bioweave-character-other-list"><div class="bioweave-character-other-item"><strong>推演</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>关系</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>备注</strong><span>暂无</span></div></div></section>'
   )
 }
-function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, currentState, currentStateStatus }) {
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, timingEditor, currentState, currentStateStatus }) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
   const selectedCharacterId = characterIdOf(subject)
   const characterState = currentState?.characters?.[selectedCharacterId] ?? null
@@ -326,10 +368,13 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     exposureCount +
     ' 条相关事件 · 当前状态' +
     (stateReady ? '已就绪' : '待读取') +
-    '</p></div><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
+    '</p></div><div class="bioweave-character-detail-actions"><button type="button" class="bioweave-button" data-bioweave-action="open-character-timing" data-character-id="' +
     escapeHtml(characterIdOf(subject)) +
-    '">编辑昵称</button></header>' +
+    '">推演周期</button><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
+    escapeHtml(characterIdOf(subject)) +
+    '">编辑昵称</button></div></header>' +
     renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +
+    renderCharacterTimingEditor(timingEditor, characterIdOf(subject)) +
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
@@ -357,6 +402,7 @@ export function charactersPage({
   currentStoryTime = null,
   currentStoryTimeDifferences = {},
   aliasEditor = null,
+  timingEditor = null,
 } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
@@ -426,6 +472,7 @@ export function charactersPage({
           currentStoryTime,
           storyTimeDifferences: currentStoryTimeDifferences,
           aliasEditor,
+          timingEditor,
           currentState,
           currentStateStatus,
         })

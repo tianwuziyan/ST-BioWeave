@@ -14,7 +14,7 @@ replacement for the domain specifications, implementation, or test suite.
 | Working tree | Contains uncommitted Pre-confirmation Projection Timing Phase 1 implementation and related task work. |
 | Major milestone | Phase 1 timing implementation is present and automated verification is complete. Behavioral timing acceptance in a real SillyTavern lifecycle is still pending. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
-| Current host status | The remote SillyTavern copy has been verified to load the current Phase 1 entry; `__BIOWEAVE_DEBUG__` is visible and the timing/config read APIs are callable and read-only. Host build/load identity is VERIFIED. Behavioral timing smoke remains pending. |
+| Current host status | The remote SillyTavern copy has been verified to load the current Phase 1 entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing smoke remains pending. |
 
 When this checkpoint conflicts with a concrete implementation or an
 authoritative domain document, verify the current checkout and update this
@@ -187,6 +187,14 @@ Phase 1 currently includes:
 - Floor, Swipe, and stale-owner guards;
 - authoritative persistence readback.
 
+The built-in Human narrative preset is a versioned Product Policy preset,
+not a medical-derived universal interval: `14 / 42` Story days, `10%`
+variance, `3` Story-day variance cap, and `3` Story-day total adjustment cap.
+It applies only when authoritative World/character context establishes
+ordinary Human applicability, and only as the default for future cycles. The
+Characters detail now exposes the formal Chat-local timing-config editor beside
+the nickname action; existing Timing Instances remain frozen.
+
 The Current Biological State modifier is `ZERO_V1` by intent. This is an
 intentional boundary, not an omitted feature: no weak narrative signal is
 allowed to alter timing.
@@ -275,8 +283,8 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Projection Context Injection | IMPLEMENTED / AUTOMATED VERIFIED; host context acceptance pending |
 | Pre-confirmation Timing Config | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
 | Observation Timing Instance | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
-| Human medical timing defaults | NOT_IMPLEMENTED |
-| Characters timing config UI | NOT_IMPLEMENTED |
+| Human narrative timing preset | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
+| Characters timing config UI | IMPLEMENTED / AUTOMATED VERIFIED; host UI acceptance pending |
 | Events UI | IMPLEMENTED / PRODUCTION consumer of validated data |
 | Projection UI | PARTIAL |
 | Overview | PARTIAL |
@@ -305,8 +313,6 @@ regression, or an explicit contract change.
 ## Known Open Items
 
 - Pre-confirmation Timing real-host behavioral smoke;
-- Human baseline medical timing values, requiring source-grounded research;
-- Characters timing-config UI;
 - Tracking Window;
 - completion of Contributor Attribution;
 - GA/EDD;
@@ -314,26 +320,32 @@ regression, or an explicit contract change.
 - Overview completion;
 - remaining real-host Projection verification.
 
-Human medical defaults must not be filled from model general knowledge. They
-must preserve the distinction between possible development and factual
-pregnancy, and must enter through the World Model authority boundary rather
-than a Runtime fallback.
+The Human preset is intentionally a conservative narrative Product Policy, not
+a medical standard, pregnancy-confirmation interval, symptom guarantee, or
+universal exposure-anchored medical value. The research note preserves the
+medical evidence and its anchor limitations. The preset does not create a World
+Rule, infer capability, or provide a Runtime fallback when World Rules are
+missing.
 
 ## Current Test Baseline
 
 This is a checkpoint, not a permanent number:
 
 ```text
-1106 total
-1089 pass
+1113 total
+1096 pass
 17 fail
 ```
 
 Sixteen failures are the known World Model prompt-baseline failures. One
-additional unresolved Runtime concurrency/persistence flaky failure has had a
-varying signature between two related tests. It cannot currently be attributed
-to Timing, but it also cannot be claimed proven unrelated to Timing. Future
-verification must compare failure sets and signatures, not only failure counts.
+additional unresolved Runtime concurrency/persistence failure is present in the
+current run. The seven-test increase is from the Human preset, config-facade,
+and Characters timing UI coverage added in this implementation. The current
+Runtime failure signature is the `start-new-chat-lifecycle` case; the prior
+checkpoint had two related Runtime signatures. This cannot currently be
+attributed to Timing, but it also cannot be claimed proven unrelated to Timing.
+Future verification must compare failure sets and signatures, not only failure
+counts.
 
 ## Real Host Status
 
@@ -341,8 +353,12 @@ The current host model is SillyTavern direct source loading through the
 manifest and `index.js`, using the remote third-party/BioWeave copy. No build is
 required by the extension loading path.
 
-The current source checkout contains a read-only diagnostic surface for timing
-and character timing configuration. A dedicated build/load audit verified that
+The current source checkout contains a diagnostic surface for timing and
+character timing configuration. Diagnostic reads are read-only. Controlled
+fixture save/reset methods are explicit current-Chat configuration writes that
+delegate to the official Chat-local persistence API; they do not expose
+arbitrary Floor, World, Timing, Projection, or storage mutation. A dedicated
+build/load audit verified that
 the remote direct copy loads the current Phase 1 entry and that the diagnostic
 surface is available after initialization and reload:
 
@@ -351,7 +367,8 @@ surface is available after initialization and reload:
 | Source-side diagnostic API present | VERIFIED |
 | Live remote copy loading the current Phase 1 entry | VERIFIED |
 | `__BIOWEAVE_DEBUG__` visible after init/reload | VERIFIED |
-| Timing/config debug reads callable and read-only | VERIFIED |
+| Diagnostic timing/config reads callable and read-only | VERIFIED |
+| Controlled timing-config fixture save/reset path | VERIFIED in source; host fixture use remains separate from product UI acceptance |
 | Host build/load identity | VERIFIED |
 | Timing behavioral smoke | PENDING |
 | Host acceptance | PARTIAL / PENDING |
@@ -362,9 +379,9 @@ Projection lifecycle behavior separately.
 
 ## Documentation Conflicts and Evidence Notes
 
-- `docs/DEVELOPMENT.md` contains an older checkpoint of `1106 total / 1090
-  pass / 16 fail`; the current checkpoint requested for this handoff is
-  `1106 / 1089 / 17`. Use the current test run/failure signatures as the
+- `docs/DEVELOPMENT.md` contains older checkpoints. The current checkout
+  checkpoint is `1113 / 1096 / 17` after adding seven focused tests. Use the
+  current test run/failure signatures as the
   operational baseline and update the authoritative development document in a
   separately authorized documentation task if needed.
 - Historical Timing task artifacts describe earlier design-only or pre-host
@@ -397,8 +414,8 @@ Prioritize:
 12. confirmation/loss/abortion exit.
 
 Until Timing Host Acceptance is closed, do not enter Tracking Window work.
-Human medical baseline research and Characters UI work must not be mixed into
-the host-smoke debugging step.
+Human preset source research is complete as a documented Product Policy
+boundary; real-host timing and Characters UI acceptance remain separate gates.
 
 ## Authoritative Reading Order
 

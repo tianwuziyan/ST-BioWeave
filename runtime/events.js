@@ -26,6 +26,8 @@ import { createProjectionTimingPersistence } from "../storage/projection-timing.
 import { evaluateProjectionTiming, resolveProjectionTimingInstance } from "../core/projection-timing.js";
 import { evaluateProjectionEligibility } from "../core/projection-eligibility.js";
 import { readCharacterTimingConfig, resolveCharacterTimingConfig } from "../core/character-timing-config.js";
+import { getHumanPreconfirmationTimingPreset, HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION } from "../core/human-timing-preset.js";
+import { isCanonicalWorldHumanSpecies } from "../core/world-species-identity.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
 import { createProjectionContextCoordinator } from "./projection-context.js";
 import { createCharacterTimingConfigStore } from "../storage/character-timing.js";
@@ -1705,6 +1707,19 @@ export function createRuntime({
     store,
     getChatId: () => chat.current(),
   });
+  const humanTimingBaselineResolver = projectionTimingBaselineResolver ?? (async ({subjectId, inputs}) => {
+    const character = inputs?.currentState?.characters?.[subjectId];
+    const profile = inputs?.characterProfiles?.[subjectId] ?? inputs?.character_profiles?.[subjectId];
+    const characterSpecies = profile?.biological_context?.species
+      ?? profile?.species
+      ?? character?.biological_context?.species
+      ?? character?.species;
+    const worldSpecies = Array.isArray(inputs?.worldModel?.species) ? inputs.worldModel.species : [];
+    const humanWorld = worldSpecies.some(species => isCanonicalWorldHumanSpecies(species?.name));
+    return humanWorld && isCanonicalWorldHumanSpecies(characterSpecies)
+      ? getHumanPreconfirmationTimingPreset()
+      : null;
+  });
   const projectionContext = createProjectionContextCoordinator({
     getProjectionViews: projectionPersistence.getProjectionViews,
     resolveCurrentFloor: () => eventAnalysis.resolveCurrentBioWeaveFloor(),
@@ -1726,6 +1741,7 @@ export function createRuntime({
       return {
         floor,
         currentState: business.current_state,
+        characterProfiles: business.character_profiles,
         currentStateStatus: business.current_state_status,
         events: business.active_events ?? [],
         sourceCandidates: Object.values(business.tracking_candidates ?? {}),
@@ -1774,8 +1790,8 @@ export function createRuntime({
             const override = typeof projectionTimingConfigResolver === 'function'
               ? await projectionTimingConfigResolver({subjectId, inputs, rule, event})
               : readCharacterTimingConfig(store.getChat(inputs.floor.version.chat_id), subjectId).config;
-            const baseline = typeof projectionTimingBaselineResolver === 'function'
-              ? await projectionTimingBaselineResolver({subjectId, inputs, rule, event})
+            const baseline = typeof humanTimingBaselineResolver === 'function'
+              ? await humanTimingBaselineResolver({subjectId, inputs, rule, event})
               : null;
             const resolvedConfig = resolveCharacterTimingConfig({override, baseline});
             if (!resolvedConfig.config) continue;
@@ -2491,6 +2507,38 @@ export function createRuntime({
     };
   }
 
+  async function getCharacterTimingEditorData({characterId} = {}) {
+    const id = String(characterId ?? '').trim();
+    if (!id) throw Object.assign(new TypeError('character_id:required'), {code: 'CHARACTER_ID_REQUIRED'});
+    const business = await eventAnalysis.collectActiveBusinessData();
+    const profile = business.character_profiles?.[id] ?? null;
+    const character = business.current_state?.characters?.[id] ?? null;
+    const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
+    const world = floor?.index === undefined
+      ? null
+      : await eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index});
+    const worldSpecies = Array.isArray(world?.model?.species) ? world.model.species : [];
+    const profileSpecies = profile?.biological_context?.species ?? profile?.species ?? character?.biological_context?.species ?? character?.species;
+    const humanApplicable = worldSpecies.some(species => isCanonicalWorldHumanSpecies(species?.name))
+      && isCanonicalWorldHumanSpecies(profileSpecies);
+    const override = readCharacterTimingConfig(store.getChat(chat.current()), id).config;
+    const resolved = resolveCharacterTimingConfig({
+      override,
+      baseline: humanApplicable ? getHumanPreconfirmationTimingPreset() : null,
+    });
+    const timingDebug = await getProjectionTimingDebug();
+    const timingInstance = timingDebug?.timing_instances?.find(instance => instance.subject_id === id) ?? null;
+    return {
+      character_id: id,
+      config: resolved.config,
+      overridden: Boolean(override),
+      human_preset_applicable: humanApplicable,
+      human_preset_version: HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION,
+      timing_instance: timingInstance,
+      chat_id: chat.current(),
+    };
+  }
+
   const dataLifecycle = {
     clearCharacterData,
     clearWorldData,
@@ -2547,6 +2595,7 @@ export function createRuntime({
     getStoryTimeDebugTrace: storyTimeCoordinator.getDebugTrace,
     getStoryTimeDebugInfo,
     getProjectionTimingDebug,
+    getCharacterTimingEditorData,
     getCharacterTimingConfig: characterTimingConfigStore.getConfig,
     saveCharacterTimingConfig: characterTimingConfigStore.saveConfig,
     resetCharacterTimingConfig: characterTimingConfigStore.resetConfig,

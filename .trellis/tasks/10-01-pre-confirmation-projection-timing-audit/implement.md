@@ -1,7 +1,8 @@
 # Phase 1 Implementation Plan: Pre-confirmation Projection Timing
 
 This phase implements only the frozen Core, persistence, and eligibility
-contract. It does not implement Characters UI, medical Human defaults,
+contract. It now includes the approved Characters timing-config UI and the
+versioned Human narrative preset; it does not implement medical Human defaults,
 Tracking Window, GA/EDD, Genealogy, Event schema changes, or StateReducer
 semantic changes. Do not commit or push.
 

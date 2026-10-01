@@ -332,8 +332,13 @@ Chat metadata 读写，timing instance 通过 `storage/projection-timing.js` 复
 Floor Persistence Coordinator、active Swipe、完整 Floor Version、官方保存与
 权威 readback。Runtime 只把 timing eligibility 与现有 World Rule eligibility
 组合；不向 World projection rule 加入 probability/random/seed，也不在 Runtime
-使用 Human 常识 fallback。v1 state modifier 固定为 0；没有明确有效 config 时
-timing integration 保持 disabled，不改变既有 Projection 行为。
+使用缺少 World authority 的 Human 常识 fallback。内置 Human narrative preset
+位于单一 Core preset module，只有在 World species 与 canonical character
+species 都明确为普通 Human 时作为未来周期 config baseline；它不创建或替代
+World projection rule。Characters UI 通过正式 Runtime config API 读取/保存
+Chat-local override，不能调用 debug facade。v1 state modifier 固定为 0；没有
+明确有效 config 时 timing integration 保持 disabled，不改变既有 Projection
+行为。
 
 - 普通产品修复优先限于对应 feature owner。
 - 不为产品行为问题修改 Coordinator、Adapter raw transport、Generation settle 或 Floor Version policy。

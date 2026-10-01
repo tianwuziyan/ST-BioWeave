@@ -48,6 +48,51 @@ test('Character UI distinguishes a successful empty Event result from an unanaly
   assert.match(html, /本楼分析完成，未发现 Biological Event/u)
   assert.doesNotMatch(html, /尚未完成事件分析/u)
 })
+
+test('Character detail exposes timing config entry and separates future config from frozen current timing', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: { 'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []} },
+    characterProfiles: { 'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}} },
+    activeEvents: [],
+    analysisStatus: {state: 'success', event_count: 0},
+    timingEditor: {
+      open: true,
+      characterId: 'char-a',
+      humanPresetApplicable: true,
+      draft: {base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.1, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3},
+      timingInstance: {base_min_story_days: 10, base_max_story_days: 20, sampled_individual_offset_story_days: 1.2, effective_min_story_days: 11.2, effective_max_story_days: 21.2},
+    },
+  })
+  assert.ok(html.indexOf('推演周期') < html.indexOf('编辑昵称'))
+  assert.match(html, /之后新周期的设置/u)
+  assert.match(html, /当前已经采用的周期/u)
+  assert.match(html, /14/)
+  assert.match(html, /42/)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
+  assert.match(html, />%<\/em>/)
+  assert.match(html, /\+1\.2 天/u)
+  assert.match(html, /11\.2 ～ 21\.2 天/u)
+  assert.doesNotMatch(UI_SOURCE, /__BIOWEAVE_DEBUG__/u)
+})
+
+test('Character timing editor shows no current cycle before a Timing Instance exists', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: { 'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []} },
+    characterProfiles: { 'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}} },
+    analysisStatus: {state: 'success', event_count: 0},
+    timingEditor: {
+      open: true,
+      characterId: 'char-a',
+      humanPresetApplicable: true,
+      draft: {base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.1, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3},
+      timingInstance: null,
+    },
+  })
+  assert.match(html, /尚未建立观察周期/u)
+  assert.doesNotMatch(html, /本次偏移/u)
+})
 test('BioWeave overlay stays between ordinary host UI and host modal layers', () => {
   const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/)
   assert.ok(match, 'expected the BioWeave overlay to declare a numeric z-index')

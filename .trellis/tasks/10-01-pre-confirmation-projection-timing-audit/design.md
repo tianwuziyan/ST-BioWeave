@@ -6,8 +6,10 @@ Inspect the current implementation directly, beginning with the requested
 Projection Core/Runtime/Storage/UI files, then follow imports and callers into
 World Model, Floor ownership, Tracking, Current State, identity, and tests.
 Use the Floor State Ownership, Event Pipeline, Pregnancy Tracking, and World
-Model specs as authoritative constraints. Do not implement the proposed
-feature and do not edit repository docs or code.
+Model specs as authoritative constraints. The original audit was read-only;
+its implementation handoff has since been extended by the approved Human
+narrative preset and Characters timing editor. Current implementation status is
+recorded in `implement.md` and `docs/PROJECT-STATE.md`.
 
 ## Analysis axes
 
@@ -44,6 +46,7 @@ The audit findings have been converted into the implementation contract in
 decisions, defines the Chat-owned character config and Floor-owned timing
 instance boundary, specifies cycle identity and lifecycle derivation, and lists
 the future implementation/test/doc surface. Phase 1 has now implemented the
-approved Core, Chat config storage service, Floor timing timeline, and
-eligibility integration; UI, medical defaults, and Tracking Window remain out
-of scope.
+approved Core, Chat config storage service, Floor timing timeline, eligibility
+integration, the versioned Human narrative preset, and the Characters
+timing-config editor. Medical-derived universal defaults and Tracking Window
+remain out of scope.

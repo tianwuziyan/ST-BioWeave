@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import {resetCharacterTimingConfig, resolveCharacterTimingConfig, validateCharacterTimingConfig, withCharacterTimingConfig} from '../core/character-timing-config.js';
 import {evaluateProjectionTiming, resolveProjectionTimingInstance} from '../core/projection-timing.js';
 import {buildProjectionRuleId, evaluateProjectionEligibility} from '../core/projection-eligibility.js';
+import {getHumanPreconfirmationTimingPreset, HUMAN_PRECONFIRMATION_TIMING_PRESET_CLASSIFICATION, HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION} from '../core/human-timing-preset.js';
 
 const config = {schema_version: 1, config_version: 1, base_min_story_days: 10, base_max_story_days: 20, variance_ratio: 0.2, variance_cap_story_days: 3, total_adjustment_cap_story_days: 2};
 const floorVersion = {chat_id: 'chat-timing', message_id: 'message-1', floor: 1, swipe_id: 0, content_hash: 'hash', message_version: 'v1'};
 const event = {event_id: 'event-1', type: 'sexual_activity', status: 'confirmed', story_time: {day_index: 100}, pregnancy_relevance: {relevant: true, gestational_subject_ids: ['char_000001'], reproductive_mechanism: {kind: 'fertilization'}}};
+
+test('Human pre-confirmation timing preset is a versioned product narrative policy', () => {
+  assert.equal(HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION, 'human-narrative-v1');
+  assert.equal(HUMAN_PRECONFIRMATION_TIMING_PRESET_CLASSIFICATION, 'PRODUCT_POLICY_CONSERVATIVE_NARRATIVE_PRESET');
+  assert.deepEqual(getHumanPreconfirmationTimingPreset(), {
+    schema_version: 1,
+    config_version: 1,
+    base_min_story_days: 14,
+    base_max_story_days: 42,
+    variance_ratio: 0.1,
+    variance_cap_story_days: 3,
+    total_adjustment_cap_story_days: 3,
+  });
+  assert.equal(Object.hasOwn(getHumanPreconfirmationTimingPreset(), 'projection_rule_id'), false);
+  assert.equal(Object.hasOwn(getHumanPreconfirmationTimingPreset(), 'timing_instance_id'), false);
+});
 
 test('character timing config rejects invalid numeric values and preserves Chat-local override/reset semantics', () => {
   assert.equal(validateCharacterTimingConfig({...config, variance_ratio: Infinity}).ok, false);
