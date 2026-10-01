@@ -259,6 +259,8 @@ AI 原始返回只在当前分析调用中存在；若启用开发调试 trace�
 
 World Model v1 的顶层也正式包含 `projection_rules: []`。它是当前 Floor 所有的声明式机制规则集合，不是 Projection 实例。AI/raw rule content 不输出 `projection_rule_id`；每条 raw rule 只包含业务内容，由 BioWeave 在规范化阶段生成 ID 后形成完整 domain DTO。每条最终规则包含 `schema_version`、`projection_rule_id`、`mechanism_key`、`development_concern_key`、`development_kind`、`trigger`、`requirements`、`realization`、`contradiction` 和 `expiration`；规则必须先通过 `validateProjectionRuleContent()`、`normalizeProjectionRules()` 与 final validation，再随 `world_model` 保存。规则不得包含概率、RNG、Prompt、AI 原文、妊娠结果或可执行代码。没有可验证规则时保存空数组，Eligibility 保持无可用规则，不使用现实人类 timing fallback。`projection_rule_id` 由规范化规则材料稳定生成，source Event 证据属于 Projection provenance，不属于 World Model rule identity。
 
+World Model Patch v2 还支持显式的 `Projection_Rule_Override` Fact，并在 Host 内部转换为 `DISABLE_PROJECTION_RULE`。它只能针对 Existing 中已存在的 deterministic rule，且必须绑定当前 World evidence 与明确的 contradiction/non-applicability reason；omission、uncertainty、no-evidence 和空 `projection_rules` 都不会禁用旧 rule。替换由 disable 加新的 `ADD_PROJECTION_RULE` 组成。历史 Floor 的 World snapshot 与既有 Projection 不回写，Runtime 只消费新 authoritative `projection_rules[]`，不维护 disabled-rule blacklist。
+
 World Model 规则字段使用统一三态语义：`null` 表示未知、未提及、证据不足或无法判断；`"无"` 表示已经知道机制不存在、能力不具备或规则不适用；非空字符串表示已知存在对应机制。没有资料不能写成 `"无"`。普通 Human Male/Female 已建立后可以使用现实 baseline：Male 的 `pregnancy_or_carrying`、`cycle`、`ovulation`、`gestation`、`labor` 为 `"无"`，Female 的 `cycle`、`ovulation`、`gestation`、`labor` 使用简洁的普通 Human 描述；明确世界/个体规则按 Baseline + Delta 逐字段覆盖，Human baseline 只在当前字段为 `null` 时补值，不覆盖 `true`、`false`、`"无"` 或非空描述。独立的明确结构冲突仍可由 Final Consistency Guard 修正为已知 absence。Human species 的显示 canonical name 为“人类”，仅合并明确的 Human 显示别名，不建立其它 species 的同义词 registry。schema 不因该语义扩展，仍使用现有 `string | null` 字段。
 
 ## Phase 2A：BiologicalEvent 与 Tracking Subject
@@ -580,3 +582,15 @@ slot，无有效 Projection 时写入空内容清理旧 prompt。
 Chat 切换、active Swipe 切换、Character edit/reroll、Floor 删除和只有 User
 message 的 endpoint 都重新 resolve；没有有效 Character Floor 或读取失败时清空
 该 slot。Event Analysis 继续只读取实际正文，Projection prompt 不属于事实证据。
+
+## Pre-confirmation timing Phase 1
+
+人物 timing config 是 Chat-local authoritative configuration，位于
+`bioweave.settings.character_timing_configs[canonical_character_id]`，不属于
+`character_registry`、Tracking、Profile、Current State 或 Snapshot。一次有效
+observation cycle 的 timing instance 位于当前 Character Floor/active Swipe 的
+`projection_timing_timeline`，以 append-only creation/basis 记录保存 frozen
+config snapshot、一次 variance、effective min/max、Story Time anchor、World
+rule binding 及完整 Floor Version。它不是 Event、Projection、Exposure Tracking
+Window 或 Current State；`effective_max` 只阻止首次迟到生成，已有 Projection
+仍使用原有 realization → contradiction → expiration 生命周期。

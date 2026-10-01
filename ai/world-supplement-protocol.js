@@ -34,6 +34,7 @@ const WRITABLE_FACTS = [
   {field: 'Exception', wireScope: 'world', owner: 'world', path: ['exceptions'], container: 'structured_collection', mutation: 'ADD_EXCEPTION', payload: 'exception', createWritable: true, correctionWritable: false, identity: 'statement+applies_to', uiOutlet: 'exceptions'},
   {field: 'Unknown', wireScope: 'world', owner: 'world', path: ['unknowns'], container: 'lifecycle_collection', mutation: 'ADD_UNKNOWN', payload: 'string', createWritable: true, correctionWritable: false, identity: 'normalized_text', uiOutlet: 'unknowns'},
   {field: 'Projection_Rule', wireScope: 'world', owner: 'world', path: ['projection_rules'], container: 'structured_collection', mutation: 'ADD_PROJECTION_RULE', payload: 'projection_rule', createWritable: true, correctionWritable: false, identity: 'projection_rule_id', uiOutlet: 'projection_rules'},
+  {field: 'Projection_Rule_Override', wireScope: 'world', owner: 'world', path: ['projection_rules'], container: 'structured_collection', mutation: 'DISABLE_PROJECTION_RULE', payload: 'projection_rule_override', createWritable: false, correctionWritable: true, identity: 'projection_rule_content', uiOutlet: 'projection_rules'},
 ]
 
 export const SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY = Object.freeze(
@@ -604,6 +605,22 @@ function normalizeJsonFact(item, index) {
     if (!item.projection_rule || typeof item.projection_rule !== 'object' || Array.isArray(item.projection_rule) || Object.hasOwn(item.projection_rule, 'projection_rule_id'))
       throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_PAYLOAD_INVALID', index)
     return {...base, projection_rule: item.projection_rule}
+  }
+  if (descriptor?.field === 'Projection_Rule_Override') {
+    assertJsonKeys(item, new Set(['scope', 'field', 'action', 'projection_rule', 'reason', 'evidence']), index)
+    if (item.action !== 'disable') throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_ACTION_INVALID', index)
+    if (!item.projection_rule || typeof item.projection_rule !== 'object' || Array.isArray(item.projection_rule) || Object.hasOwn(item.projection_rule, 'projection_rule_id'))
+      throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_PAYLOAD_INVALID', index)
+    if (typeof item.reason !== 'string' || !item.reason.trim()) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_REASON_INVALID', index)
+    if (!Array.isArray(item.evidence) || item.evidence.length === 0 || item.evidence.some(value => typeof value !== 'string' || !value.trim()))
+      throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_EVIDENCE_INVALID', index)
+    return {
+      ...base,
+      action: 'disable',
+      projection_rule: item.projection_rule,
+      reason: item.reason.trim(),
+      evidence: item.evidence.map(value => value.trim()),
+    }
   }
   throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_FIELD_UNSUPPORTED', index, {field})
 }

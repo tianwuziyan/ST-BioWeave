@@ -2913,12 +2913,8 @@ test('Supplement writability registry covers every legal Fact with a determinist
     [...SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS],
     Object.keys(SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY),
   )
-  assert.equal(SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS.length, 26)
+  assert.equal(SUPPLEMENT_CANONICAL_WRITABILITY_FIELDS.length, 27)
 
-  const existing = normalizeWorldModel({
-    schema_version: 1,
-    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
-  })
   const projectionRule = {
     schema_version: 1,
     mechanism_key: 'Mechanism-A',
@@ -2926,6 +2922,11 @@ test('Supplement writability registry covers every legal Fact with a determinist
     development_kind: 'possible_detection',
     trigger: {kind: 'story_time_reached', target_story_time: {day_index: 1}},
   }
+  const existing = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-A', biological_types: [{name: 'Type-A'}]}],
+    projection_rules: [projectionRule],
+  })
   const factFor = field => {
     const descriptor = SUPPLEMENT_CANONICAL_WRITABILITY_REGISTRY[field]
     if (field === 'Species_Identity') return {scope: 'species', species: 'Species-B', field}
@@ -2951,6 +2952,7 @@ test('Supplement writability registry covers every legal Fact with a determinist
       exception: {statement: 'Exception-A', applies_to: 'Species-A', evidence: 'Evidence-A'},
     }
     if (field === 'Projection_Rule') return {scope: 'world', field, projection_rule: projectionRule}
+    if (field === 'Projection_Rule_Override') return {scope: 'world', field, action: 'disable', projection_rule: projectionRule, reason: 'World evidence contradicts this rule and it is not applicable.', evidence: ['World evidence contradicts this rule and it is not applicable.']}
     throw new Error(`missing fixture for ${field}`)
   }
 
@@ -3257,6 +3259,74 @@ test('World Model Patch v2 structurally rejects non-v2 and non-contract DTOs', (
         operations: [{ op: 'ADD_PROJECTION_RULE', projection_rule: { projection_rule_id: 'ai-supplied' } }],
       }),
     error => error?.path?.endsWith('.projection_rule_id'),
+  )
+})
+
+test('World Model projection override is disable-only, evidence-bound, and host-identified', () => {
+  const rule = {
+    schema_version: 1,
+    mechanism_key: 'mechanism:baseline',
+    development_concern_key: 'concern:baseline',
+    development_kind: 'possible_detection',
+    trigger: { kind: 'immediate_after_event' },
+  }
+  const existing = normalizeWorldModel({ schema_version: 1, species: [], exceptions: [], unknowns: [], projection_rules: [rule] })
+  const evidence = 'World evidence explicitly contradicts this baseline rule; it is not applicable here.'
+  const fact = {
+    scope: 'world',
+    field: 'Projection_Rule_Override',
+    action: 'disable',
+    projection_rule: rule,
+    reason: evidence,
+    evidence: [evidence],
+  }
+  const parsed = parseWorldModelFactDeltaJson(factDeltaJson({ facts: [fact] }))
+  assert.equal(Object.hasOwn(parsed.facts[0].projection_rule, 'projection_rule_id'), false)
+  const idRejected = parseWorldModelFactDeltaJson(factDeltaJson({ facts: [{ ...fact, projection_rule: { ...rule, projection_rule_id: 'ai-guessed' } }] }))
+  assert.equal(idRejected.facts.length, 0)
+  assert.equal(idRejected.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_PAYLOAD_INVALID')
+  const evidenceRejected = parseWorldModelFactDeltaJson(factDeltaJson({ facts: [{ ...fact, evidence: [] }] }))
+  assert.equal(evidenceRejected.facts.length, 0)
+  assert.equal(evidenceRejected.rejectedFacts[0].code, 'WORLD_MODEL_FACT_DELTA_JSON_PROJECTION_OVERRIDE_EVIDENCE_INVALID')
+
+  const resolution = resolveWorldModelFactDelta(parsed.facts, existing)
+  assert.equal(resolution.patch.operations[0].op, 'DISABLE_PROJECTION_RULE')
+  assert.equal(resolution.patch.operations[0].projection_rule_id, existing.projection_rules[0].projection_rule_id)
+  const guarded = applyWorldModelFactDeltaEvidenceGuard(resolution, { character: { description: evidence } })
+  assert.equal(guarded.patch.operations.length, 1)
+  assert.deepEqual(guarded.model.projection_rules, [])
+  assert.deepEqual(existing.projection_rules.length, 1)
+
+  const noEvidence = applyWorldModelFactDeltaEvidenceGuard(
+    resolveWorldModelFactDelta(parsed.facts, existing),
+    { character: { description: 'unrelated world text' } },
+  )
+  assert.equal(noEvidence.patch.operations.length, 0)
+  assert.equal(noEvidence.rejectedFacts[0].reason, 'WORLD_MODEL_PATCH_V2_EVIDENCE_UNSUPPORTED')
+
+  const replacement = {
+    ...rule,
+    development_concern_key: 'concern:replacement',
+  }
+  const replacementPatch = {
+    schema_version: 2,
+    operations: [
+      ...guarded.patch.operations,
+      { op: 'ADD_PROJECTION_RULE', projection_rule: replacement },
+    ],
+  }
+  const replaced = mergeWorldModelSupplementPatch(existing, replacementPatch, { character: { description: evidence } })
+  assert.deepEqual(replaced.projection_rules.map(item => item.development_concern_key), ['concern:replacement'])
+
+  assert.throws(
+    () => classifyWorldModelPatchV2({
+      schema_version: 2,
+      operations: [
+        guarded.patch.operations[0],
+        {op: 'ADD_PROJECTION_RULE', projection_rule: rule},
+      ],
+    }, existing),
+    /WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT/u,
   )
 })
 

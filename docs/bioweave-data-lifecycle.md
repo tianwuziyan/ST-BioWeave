@@ -390,6 +390,13 @@ or a Chat-level fallback. Invalid rules fail closed and are not persisted;
 historical World Model/Floor owners are never rewritten when a later Floor
 introduces a changed rule.
 
+World Model Patch v2 may explicitly disable an Existing projection rule only
+through an evidence-bound `Projection_Rule_Override` Fact. The new authoritative
+Floor snapshot omits that disabled rule, while historical Floors and existing
+Projection records remain immutable. Patch omission, uncertainty, no-evidence,
+and empty rule arrays do not disable Existing rules; Runtime consumes the final
+validated rule set and does not maintain a separate blacklist.
+
 World Model scalar capability and rule values retain the existing `null`,
 known absence, or known-text semantics. Lifecycle clearing does not alter
 those domain meanings.
@@ -1163,3 +1170,16 @@ Related contracts:
   Tracking semantics; and
 - [World Model](../.trellis/spec/domain/world-model.md) for World evidence and
   configuration boundaries.
+
+## Pre-confirmation timing lifecycle
+
+`settings.character_timing_configs` is Chat-local authoritative configuration
+and is isolated by Chat scope. `projection_timing_timeline` is a separate
+Floor-owned append-only root under the existing Projection coordinator owner;
+it is cleared with Character/All Floor facts, filtered by active Swipe and exact
+Floor Version, and never becomes a Chat-level fact mirror. A timing creation
+freezes config, variance, state modifier, effective min/max, basis, and owner
+version. Later config/World/State changes do not rewrite it. Source Event edit or
+delete is handled on derived read by basis validation; when no basis remains the
+timing is fail-closed. Timing never enters Event, Current State, Snapshot, or
+Projection Context evidence.

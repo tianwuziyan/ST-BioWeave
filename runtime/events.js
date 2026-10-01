@@ -22,8 +22,13 @@ import { floorVersion, hashText, sameFloorVersion } from "./floor.js";
 import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
+import { createProjectionTimingPersistence } from "../storage/projection-timing.js";
+import { evaluateProjectionTiming, resolveProjectionTimingInstance } from "../core/projection-timing.js";
+import { evaluateProjectionEligibility } from "../core/projection-eligibility.js";
+import { readCharacterTimingConfig, resolveCharacterTimingConfig } from "../core/character-timing-config.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
 import { createProjectionContextCoordinator } from "./projection-context.js";
+import { createCharacterTimingConfigStore } from "../storage/character-timing.js";
 import { createProjectionRuntime } from "./projection-runtime.js";
 import { createRuntimeActivity } from "./activity.js";
 import { createRuntimeDiagnostics } from "./diagnostics.js";
@@ -62,6 +67,14 @@ function chatIdKey(value) {
 
 function cloneOwnerValue(value) {
   return cloneValue(value);
+}
+
+function floorOwnerForProjection(floor) {
+  return {
+    message_index: floor?.index ?? floor?.message_index,
+    message_id: floor?.version?.message_id ?? floor?.message_id,
+    swipe_id: floor?.swipeId ?? floor?.version?.swipe_id,
+  };
 }
 
 function stableOwnerValue(value) {
@@ -1482,6 +1495,8 @@ export function createRuntime({
   analysisSourceLoaderOptions = {},
   externalMemoryProviderLoader = null,
   analysisSourceCache = null,
+  projectionTimingConfigResolver = null,
+  projectionTimingBaselineResolver = null,
 } = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
@@ -1676,6 +1691,20 @@ export function createRuntime({
       })).version;
     },
   });
+  const projectionTimingPersistence = createProjectionTimingPersistence({
+    store,
+    enabledResolver: isBioWeaveEnabled,
+    floorPersistence,
+    resolveCurrentFloorVersion: async ({ownerFloor}) => {
+      const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
+      if (!Number.isInteger(Number(index))) return null;
+      return (await eventAnalysis.resolveCurrentBioWeaveFloor({__messageIndex: true, index: Number(index)})).version;
+    },
+  });
+  const characterTimingConfigStore = createCharacterTimingConfigStore({
+    store,
+    getChatId: () => chat.current(),
+  });
   const projectionContext = createProjectionContextCoordinator({
     getProjectionViews: projectionPersistence.getProjectionViews,
     resolveCurrentFloor: () => eventAnalysis.resolveCurrentBioWeaveFloor(),
@@ -1711,6 +1740,62 @@ export function createRuntime({
     saveGeneratedProjection: projectionPersistence.saveGeneratedProjection,
     saveProjectionEvidence: projectionPersistence.saveProjectionEvidence,
     saveEvolutionDecision: projectionPersistence.saveEvolutionDecision,
+    resolvePreConfirmationTiming: async ({inputs}) => {
+      const timeline = await projectionTimingPersistence.getTimingInstances({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor});
+      const rules = Array.isArray(inputs.worldModel?.projection_rules) ? inputs.worldModel.projection_rules : [];
+      const events = Array.isArray(inputs.events) ? inputs.events : [];
+      const timingInstances = [...timeline.creations];
+      let timingEnabled = timingInstances.length > 0;
+      const confirmedSubjects = events.filter(event => event?.type === 'pregnancy_confirmation' && event.status === 'confirmed').flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
+      const terminatedSubjects = events.filter(event => ['pregnancy_loss', 'abortion'].includes(event?.type) && event.status === 'confirmed').flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
+      const ownerFloor = floorOwnerForProjection(inputs.floor);
+      for (const rule of rules) {
+        for (const event of events) {
+          const subjectIds = event?.pregnancy_relevance?.gestational_subject_ids ?? [];
+          if (!event?.pregnancy_relevance?.relevant || event?.pregnancy_relevance?.reproductive_mechanism?.kind !== rule.mechanism_key) continue;
+          for (const subjectId of subjectIds) {
+            const existing = timingInstances.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && !confirmedSubjects.includes(subjectId) && !terminatedSubjects.includes(subjectId) && item.source_event_ids.some(sourceId => events.some(candidate => candidate.event_id === sourceId && candidate.pregnancy_relevance?.relevant === true && candidate.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId) && candidate.pregnancy_relevance?.reproductive_mechanism?.kind === rule.mechanism_key)));
+            const changedHistoricalBasis = timingInstances.some(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.source_event_ids.includes(event.event_id) && JSON.stringify(item.source_basis_refs?.[event.event_id]?.event_version ?? null) !== JSON.stringify(event.version ?? event.event_version ?? null));
+            if (changedHistoricalBasis) continue;
+            if (existing) {
+              if (!existing.source_event_ids.includes(event.event_id)) {
+                await projectionTimingPersistence.appendTimingBasis({
+                  chatId: inputs.floor.version.chat_id,
+                  ownerFloor,
+                  floorVersion: inputs.floor.version,
+                  timingInstanceId: existing.timing_instance_id,
+                  sourceEventIds: [event.event_id],
+                  sourceBasisRefs: {[event.event_id]: {event_id: event.event_id, story_time: event.story_time ?? null}},
+                });
+                existing.source_event_ids = [...new Set([...existing.source_event_ids, event.event_id])].sort();
+              }
+              continue;
+            }
+            const override = typeof projectionTimingConfigResolver === 'function'
+              ? await projectionTimingConfigResolver({subjectId, inputs, rule, event})
+              : readCharacterTimingConfig(store.getChat(inputs.floor.version.chat_id), subjectId).config;
+            const baseline = typeof projectionTimingBaselineResolver === 'function'
+              ? await projectionTimingBaselineResolver({subjectId, inputs, rule, event})
+              : null;
+            const resolvedConfig = resolveCharacterTimingConfig({override, baseline});
+            if (!resolvedConfig.config) continue;
+            timingEnabled = true;
+            const instance = resolveProjectionTimingInstance({
+              chatId: inputs.floor.version.chat_id,
+              subjectId,
+              mechanismKey: rule.mechanism_key,
+              firstEvent: event,
+              config: resolvedConfig.config,
+              floorVersion: inputs.floor.version,
+              worldRuleBinding: {projection_rule_id: rule.projection_rule_id, mechanism_key: rule.mechanism_key},
+            });
+            await projectionTimingPersistence.saveTimingInstance({chatId: inputs.floor.version.chat_id, ownerFloor, floorVersion: inputs.floor.version, timingInstance: instance});
+            timingInstances.push(instance);
+          }
+        }
+      }
+      return {enabled: timingEnabled, instances: timingInstances, confirmedSubjects, terminatedSubjects};
+    },
     refreshProjectionContext: projectionContext.refreshProjectionContext,
     notify,
     activity,
@@ -2367,6 +2452,45 @@ export function createRuntime({
     });
   }
 
+  async function getProjectionTimingDebug() {
+    const chatId = chat.current();
+    const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
+    if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) {
+      return {status: "unavailable", reason: "NO_CHARACTER_FLOOR", chat_id: chatId, timing_instances: [], authoritative_readback: {timing_timeline_present: false, timing_instance_count: 0}};
+    }
+    const timeline = await projectionTimingPersistence.getTimingInstances({chatId, endpointFloor: floor.version.floor});
+    const business = await eventAnalysis.collectActiveBusinessData();
+    const world = await eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index});
+    const events = business.active_events ?? [];
+    const confirmedSubjects = events.filter(event => event?.type === "pregnancy_confirmation" && event.status === "confirmed").flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
+    const terminatedSubjects = events.filter(event => ["pregnancy_loss", "abortion"].includes(event?.type) && event.status === "confirmed").flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
+    const instances = timeline.creations.map(instance => ({
+      ...instance,
+      derived_timing: evaluateProjectionTiming({timingInstance: instance, currentStoryTime: business.current_story_time ?? null, events, subjectId: instance.subject_id, pregnancyConfirmed: confirmedSubjects.includes(instance.subject_id), terminated: terminatedSubjects.includes(instance.subject_id)}),
+    }));
+    const projections = await projectionPersistence.getProjectionViews({chatId, endpointFloor: floor.version.floor});
+    const eligibility = instances.length ? evaluateProjectionEligibility({
+      currentState: business.current_state ?? {},
+      events,
+      sourceCandidates: Object.values(business.tracking_candidates ?? {}),
+      worldModel: world?.model ?? {},
+      currentStoryTime: business.current_story_time ?? null,
+      existingProjections: projections?.all ?? [],
+      preConfirmationTiming: {enabled: true, instances, confirmedSubjects, terminatedSubjects},
+    }) : {decisions: [], diagnostics: []};
+    return {
+      status: "ok",
+      chat_id: chatId,
+      floor_version: floor.version,
+      current_story_time: business.current_story_time ?? null,
+      timing_instances: instances,
+      projection_rule_ids: (world?.model?.projection_rules ?? []).map(rule => rule.projection_rule_id).filter(Boolean),
+      projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, timing_instance_id: decision.timing_instance_id ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null})),
+      projection_ids: (projections?.all ?? []).map(item => item.projection_id).filter(Boolean),
+      authoritative_readback: {timing_timeline_present: timeline.creations.length > 0, timing_instance_count: timeline.creations.length, basis_record_count: timeline.basis_records?.length ?? 0},
+    };
+  }
+
   const dataLifecycle = {
     clearCharacterData,
     clearWorldData,
@@ -2422,6 +2546,10 @@ export function createRuntime({
     getCurrentStoryTimeInfo: storyTimeCoordinator.getCurrentStoryTimeInfo,
     getStoryTimeDebugTrace: storyTimeCoordinator.getDebugTrace,
     getStoryTimeDebugInfo,
+    getProjectionTimingDebug,
+    getCharacterTimingConfig: characterTimingConfigStore.getConfig,
+    saveCharacterTimingConfig: characterTimingConfigStore.saveConfig,
+    resetCharacterTimingConfig: characterTimingConfigStore.resetConfig,
     resolveWorldModelAtOrBefore: eventAnalysis.resolveWorldModelAtOrBefore,
     resolveWorldModelStrictlyBefore: eventAnalysis.resolveWorldModelStrictlyBefore,
     saveWorldModel: eventAnalysis.saveWorldModel,

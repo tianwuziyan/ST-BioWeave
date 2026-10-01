@@ -8,7 +8,7 @@ import {
 export const FLOOR_OWNER_FIELDS = Object.freeze({
   world: Object.freeze(["world_model", "world_model_meta"]),
   event: Object.freeze(["analysis", "events", "character_registry"]),
-  projection: Object.freeze(["snapshot", "projection_timeline"]),
+  projection: Object.freeze(["snapshot", "projection_timeline", "projection_timing_timeline"]),
   // Terminal attempts persist only the analysis status record. Existing
   // Events/registry are latest-state siblings and are never terminal-owned.
   terminal: Object.freeze(["analysis"]),

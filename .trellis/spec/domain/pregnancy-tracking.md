@@ -13,6 +13,12 @@ object or its lifecycle. Sections marked **Target Contract** are the design
 baseline for a later implementation task. Sections marked **Current
 Implementation** describe the audited code as it exists now.
 
+Pre-confirmation Projection Timing Phase 1 does not implement this Window. Its
+`projection_timing_timeline` is only a lightweight observation timing record:
+same subject + same explicit mechanism may attach additional valid Event refs,
+but it must not be treated as a complete exposure Window, Tracking Subject
+owner, or Window expiration implementation.
+
 This contract is deliberately generic. Human examples, fixed day counts,
 names, IDs, Floor numbers, and particular reproductive mechanisms are not
 production rules.

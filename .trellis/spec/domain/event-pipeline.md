@@ -31,6 +31,13 @@ The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
 
+Pre-confirmation timing may consume currently valid pregnancy-relevant Event
+references, but it does not extend the BiologicalEvent contract. A timing
+instance is a separate Floor-owned derived timing record; its variance cannot
+create an Event, pregnancy, conception, symptom, or Current State fact. Event
+edit/delete invalidates the relevant factual basis on the next derived read and
+must fail closed when no valid basis remains.
+
 ## 1.1 Current production pipeline
 
 The current Runtime path is:

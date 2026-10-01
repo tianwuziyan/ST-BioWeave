@@ -40,6 +40,16 @@ export async function init({
       if (instance?.runtime === runtime) instance = null;
     },
   };
+  const debugHandle = Object.freeze({
+    getProjectionTimingDebug: () => runtime.getProjectionTimingDebug?.(),
+    getCharacterTimingConfig: (...args) => runtime.getCharacterTimingConfig?.(...args),
+  });
+  globalThis.__BIOWEAVE_DEBUG__ = debugHandle;
+  const destroyInstance = nextInstance.destroy.bind(nextInstance);
+  nextInstance.destroy = () => {
+    destroyInstance();
+    if (globalThis.__BIOWEAVE_DEBUG__ === debugHandle) delete globalThis.__BIOWEAVE_DEBUG__;
+  };
   instance = nextInstance;
 
   try {

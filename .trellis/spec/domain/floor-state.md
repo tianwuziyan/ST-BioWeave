@@ -186,6 +186,17 @@ no valid candidate remains, the initial empty Registry is used.
 The same rule applies during reanalysis, after message or Swipe deletion,
 after edit/regeneration, after history truncation, and after reload.
 
+### Pre-confirmation timing owner
+
+`projection_timing_timeline` is a sibling Floor-owned append-only root under the
+Projection persistence owner. It uses the same active Character Swipe, complete
+six-field Floor Version, coordinator transaction, authoritative readback, and
+stale-owner guards as `projection_timeline`, but it is not a Projection,
+BiologicalEvent, Snapshot, Current State, or Tracking Window. Chat-local
+`settings.character_timing_configs` is authoritative configuration and is not a
+Floor-derived fact. Timing records never become a fallback source when their
+Floor/Swipe/version is inactive.
+
 ## 5. Derived State
 
 Current valid Floor facts are the only input for materialized runtime state:

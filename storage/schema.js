@@ -87,6 +87,7 @@ export const DEFAULT_SETTINGS = {
     database_memory: false,
   },
   prompts: { prefix: '', suffix: '', task: {} },
+  character_timing_configs: {},
 };
 
 // Chat-local runtime control. Missing legacy values are enabled by default;
@@ -96,6 +97,11 @@ export function normalizeChatSettings(raw = {}) {
   return {
     ...source,
     enabled: source.enabled !== false,
+    character_timing_configs:
+      source.character_timing_configs && typeof source.character_timing_configs === 'object'
+        && !Array.isArray(source.character_timing_configs)
+        ? cloneValue(source.character_timing_configs)
+        : {},
   };
 }
 
@@ -722,6 +728,12 @@ export function emptyFloor() {
       schema_version: 1,
       creations: [],
       evidence_records: [],
+      lifecycle_records: [],
+    },
+    projection_timing_timeline: {
+      schema_version: 1,
+      creations: [],
+      basis_records: [],
       lifecycle_records: [],
     },
     world_model: null,

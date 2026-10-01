@@ -84,6 +84,7 @@ export function createProjectionRuntime({
   saveGeneratedProjection,
   saveProjectionEvidence,
   saveEvolutionDecision,
+  resolvePreConfirmationTiming = null,
   refreshProjectionContext = null,
   notify = () => {},
   activity = null,
@@ -197,6 +198,9 @@ export function createProjectionRuntime({
         chatId: identity.chat_id,
         endpointFloor: identity.floor_version.floor,
       });
+      const preConfirmationTiming = typeof resolvePreConfirmationTiming === "function"
+        ? await resolvePreConfirmationTiming({inputs, views, execution: identity})
+        : null;
       const eligibility = evaluateProjectionEligibility({
         currentState: inputs.currentState,
         events: inputs.events,
@@ -204,6 +208,7 @@ export function createProjectionRuntime({
         worldModel: inputs.worldModel,
         currentStoryTime: inputs.currentStoryTime,
         existingProjections: views?.all ?? [],
+        preConfirmationTiming,
       });
       if (eligibility.diagnostics?.some(item => item.code === "projection_rule_conflict")) {
         throw Object.assign(new Error("PROJECTION_ELIGIBILITY_FAILED"), {code: "PROJECTION_ELIGIBILITY_FAILED"});

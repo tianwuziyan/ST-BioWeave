@@ -239,6 +239,11 @@ deterministic code 生成 Host-internal Patch v2 operation、classification 与
 classified merge，经过 shared complete-model consistency 与 strict canonical
 validation 后持久化。Supplement 的 wire format 是 JSON Fact Delta；Patch v2
 不是 AI output format、Supplement wire format 或 raw model response contract。
+Projection rule 的世界级修正使用同一 Fact Delta 边界：明确的
+`Projection_Rule_Override` 才能生成 `DISABLE_PROJECTION_RULE`；缺少证据、
+不确定性或 omission 不会移除 Existing rule。最终 active World snapshot
+直接成为 Runtime authority，Runtime 不维护 disabled-rule blacklist；历史
+Floor 与已有 Projection 不回写。
 本文只保留模块导航，不复制该领域算法；Floor/Swipe ownership 仍以 Floor State
 Ownership Contract 为准。
 
@@ -319,6 +324,16 @@ StateReducer、Current Biological State、Snapshot Runtime 和 Projection Runtim
 已接通；Tracking Window 仍是 NOT_IMPLEMENTED；Genealogy 仍为 PARTIAL。
 
 ## Safe modification guardrails
+
+### Pre-confirmation Projection Timing
+
+Phase 1 的 timing resolver 位于 Core，Chat config 通过 `storage/store.js` 的
+Chat metadata 读写，timing instance 通过 `storage/projection-timing.js` 复用
+Floor Persistence Coordinator、active Swipe、完整 Floor Version、官方保存与
+权威 readback。Runtime 只把 timing eligibility 与现有 World Rule eligibility
+组合；不向 World projection rule 加入 probability/random/seed，也不在 Runtime
+使用 Human 常识 fallback。v1 state modifier 固定为 0；没有明确有效 config 时
+timing integration 保持 disabled，不改变既有 Projection 行为。
 
 - 普通产品修复优先限于对应 feature owner。
 - 不为产品行为问题修改 Coordinator、Adapter raw transport、Generation settle 或 Floor Version policy。

@@ -176,6 +176,15 @@ permitted evidence
   → complete canonical validation
 ```
 
+Projection rule correction remains inside this same pipeline. A
+`Projection_Rule_Override` Fact must contain `action: "disable"`, the raw rule
+content without an AI-supplied ID, an explicit contradiction/non-applicability
+reason, and permitted current World evidence. The Host derives the existing
+deterministic ID and emits `DISABLE_PROJECTION_RULE`; replacement is disable
+plus a distinct `ADD_PROJECTION_RULE`. Omission, uncertainty, no evidence, and
+empty arrays preserve the Existing rule set. Do not add a Runtime fallback or
+disabled-rule blacklist.
+
 Supplement 的 wire format 是 JSON Fact Delta，不是 AI Candidate、Patch v2
 输出或 persistence DTO。Existing baseline 只用于 comparison、identity context
 和 canonical structure context，不是 evidence；Coverage Targets 也不是
@@ -318,5 +327,5 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 
 - World Persistence：Floor-owned persistence、official save/readback、host-memory slot synchronization、Floor Version/active Swipe guards 均已实现；persistence mechanism 为 automated verified，SillyTavern final-save + F5/reload durability 已真实宿主验证，World reload persistence issue 为 `CLOSED`，不再是 blocker。
 - Character/Event validation：pregnancy-relevant `source_evidence`、strict domain validation 和 canonical typed `physical_symptom` payload 均有当前回归测试覆盖；本轮定向 Event/Core/Runtime/Snapshot/Floor persistence 测试通过。
-- 当前 `npm run check` **尚未通过**：全量 `1098` 个测试中 `1063` 通过、`35` 失败、`0` skipped。失败包括 `tests/world-model.test.js` 的 `32` 项 World prompt/debug/fixture contract 回归，以及 `tests/phase2a-ui.test.js` 的 `3` 项 UI contract 回归。用户点名的两个旧 failure 仍在其中：`tests/world-model.test.js:7021` 的 debug preview 断言寻找已被当前 prompt 重构替换的旧核心文本；`tests/world-model.test.js:8035` 检出 `ai/prompts.js` 仍包含 fixture-specific 词“妖修”。7021 尚未证明生产运行时错误；8035 是当前生产 Prompt 仍违反 fixture-isolation regression 的证据。全部 `35` 项在修复或明确调整前都属于当前 release validation blockers。
+- 当前 `npm run check` **尚未通过**：Phase 1 后全量 `1106` 个测试中 `1090` 通过、`16` 失败、`0` skipped。与 Phase 1 前的 `1102/1085/17` 基线相比，没有新增失败；原先的 Manual Full/Patch persistence failure 已不再出现。剩余 16 项均为既有 `tests/world-model.test.js` prompt-baseline 断言集合，仍需单独处理，不归因于本阶段 timing 改动。
 - 以上 automated test 结果与真实 SillyTavern 人工验收分别记录，不互相替代。

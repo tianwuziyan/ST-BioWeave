@@ -803,6 +803,7 @@ function factDeltaFieldForOperation(operation) {
   if (operation.op === 'ADD_EXCEPTION') return 'Exception';
   if (operation.op === 'ADD_UNKNOWN') return 'Unknown';
   if (operation.op === 'ADD_PROJECTION_RULE') return 'Projection_Rule';
+  if (operation.op === 'DISABLE_PROJECTION_RULE') return 'Projection_Rule_Override';
   if (operation.op !== 'SET_FIELD') return null;
   const path = operation.path?.join('.') ?? '';
   const match = Object.entries(FACT_DELTA_SCALAR_PATHS).find(([, candidate]) => {
@@ -822,6 +823,7 @@ function factDeltaOperationMatchesFact(fact, operation) {
   if (fact?.field === 'Exception') return v2Equal(operation.exception, fact.exception);
   if (fact?.field === 'Unknown') return v2TextIdentity(operation.unknown) === v2TextIdentity(fact.value);
   if (fact?.field === 'Projection_Rule') return v2Equal(operation.projection_rule, fact.projection_rule);
+  if (fact?.field === 'Projection_Rule_Override') return operation.projection_rule_id === factDeltaCanonicalProjection(fact.projection_rule).projection_rule_id;
   if (fact?.field === 'Special_Rule') return target.species_name === fact.species && target.type_name === fact.biological_type && v2TextIdentity(operation.value) === v2TextIdentity(fact.value);
   if (fact?.field === 'Reproductive_Mechanism') return target.species_name === fact.species && target.type_name === fact.biological_type && operation.mechanism?.key === fact.mechanism?.key;
   if (operation.target?.kind === 'species') return target.species_name === fact.species && v2Equal(operation.value, fact.value);
@@ -843,6 +845,10 @@ function factDeltaExistingComparison(fact, existing) {
   else if (fact?.field === 'Exception') return existing.exceptions?.some(value => v2Equal(value, fact.exception)) ? 'same' : 'missing';
   else if (fact?.field === 'Unknown') return existing.unknowns?.some(value => v2TextIdentity(value) === v2TextIdentity(fact.value)) ? 'same' : 'missing';
   else if (fact?.field === 'Projection_Rule') return existing.projection_rules?.some(value => v2Equal(value, fact.projection_rule)) ? 'same' : 'missing';
+  else if (fact?.field === 'Projection_Rule_Override') {
+    const targetId = factDeltaCanonicalProjection(fact.projection_rule).projection_rule_id
+    return existing.projection_rules?.some(value => value.projection_rule_id === targetId) ? 'correction' : 'missing'
+  }
   else return 'missing';
   if (current === null || current === undefined) return 'missing';
   return v2Equal(current, fact.value) ? 'same' : 'correction';
@@ -3514,6 +3520,7 @@ const WORLD_MODEL_PATCH_V2_OPERATIONS = Object.freeze([
   'ADD_EXCEPTION',
   'ADD_UNKNOWN',
   'ADD_PROJECTION_RULE',
+  'DISABLE_PROJECTION_RULE',
 ]);
 const WORLD_MODEL_PATCH_V2_SET_PATHS = Object.freeze({
   biological_type: Object.freeze([
@@ -3684,6 +3691,12 @@ function validateV2Operation(operation, index) {
     if (Object.hasOwn(value.projection_rule ?? {}, 'projection_rule_id')) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.projection_rule.projection_rule_id` });
     const validation = validateProjectionRuleContent(value.projection_rule);
     if (!validation.ok) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.projection_rule`, details: validation.errors });
+  } else if (value.op === 'DISABLE_PROJECTION_RULE') {
+    v2ExactKeys(value, ['op', 'projection_rule_id', 'reason', 'source_evidence'], path);
+    v2RequiredText(value.projection_rule_id, `${path}.projection_rule_id`);
+    v2RequiredText(value.reason, `${path}.reason`);
+    if (!Array.isArray(value.source_evidence) || value.source_evidence.length === 0 || !value.source_evidence.every(item => typeof item === 'string' && item.trim()))
+      throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.source_evidence`, expected: 'non-empty string[]' });
   }
   return value;
 }
@@ -3789,7 +3802,7 @@ export function classifyWorldModelPatchV2(raw, existingModel) {
   const working = clonePatchValue(existing);
   const pending = new Map();
   const finalize = result => {
-    if (result.classification === 'ADD' || result.classification === 'CHANGE') v2ApplyClassifiedOperations(working, [result]);
+    if (result.classification === 'ADD' || result.classification === 'CHANGE' || result.classification === 'DISABLE') v2ApplyClassifiedOperations(working, [result]);
     return result;
   };
   return patch.operations.map((rawOperation) => {
@@ -3842,6 +3855,14 @@ export function classifyWorldModelPatchV2(raw, existingModel) {
     if (operation.op === 'ADD_UNKNOWN') {
       const candidate = v2TextIdentity(operation.unknown);
       return finalize({ operation, classification: v2PendingClassification(pending, `unknown:${candidate}`, candidate, working.unknowns.some((item) => v2TextIdentity(item) === candidate) ? 'NO-OP' : 'ADD') });
+    }
+    if (operation.op === 'DISABLE_PROJECTION_RULE') {
+      const current = working.projection_rules.find(item => item.projection_rule_id === operation.projection_rule_id)
+      if (!current) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.projection_rule_id' })
+      const pendingKey = `projection_rule:${operation.projection_rule_id}`
+      if (pending.has(pendingKey)) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operations' })
+      pending.set(pendingKey, {content: null, classification: 'DISABLE'})
+      return finalize({ operation, classification: 'DISABLE', target: { kind: 'projection_rule', projection_rule_id: operation.projection_rule_id } })
     }
     const candidate = normalizeProjectionRules([operation.projection_rule], { allowGeneratedIdentity: true })[0];
     const classification = v2PendingClassification(pending, `projection_rule:${candidate.projection_rule_id}`, candidate, v2CollectionClassification(working.projection_rules, candidate, (item) => item.projection_rule_id, (item) => item));
@@ -3990,6 +4011,18 @@ function v2StructuredOperationEvidenceUnits(operation, units, existing) {
 function v2ValidateStructuredOperationEvidence(operation, classification, units, existing) {
   if (classification === 'NO-OP') return
   if (classification === 'REJECT') v2EvidenceError(v2StructuredOperationEvidencePath(operation))
+  if (operation?.op === 'DISABLE_PROJECTION_RULE') {
+    if (!/(?:contradict|conflict|inapplicable|not applicable|unsupported|does not apply|矛盾|冲突|不适用|不支持|不成立|无法适用)/iu.test(operation.reason ?? ''))
+      v2EvidenceError('operation.reason')
+    const references = Array.isArray(operation.source_evidence) ? operation.source_evidence : []
+    if (!references.length || !references.some(reference => units.some(unit => {
+      const evidence = compactEvidenceText(evidenceUnitText(unit))
+      const cited = compactEvidenceText(reference)
+      return evidence.includes(cited) || cited.includes(evidence)
+    })))
+      v2EvidenceError('operation.source_evidence')
+    return
+  }
   // The JSON contract already carries the model's field classification. Host
   // validation must only establish permitted, correctly scoped evidence; it
   // must not compare the proposed value with text or run field-specific NLP.
@@ -4014,6 +4047,7 @@ function v2CanonicalTargetPath(operation) {
   if (operation?.op === 'ADD_EXCEPTION') return 'world.exceptions';
   if (operation?.op === 'ADD_UNKNOWN') return 'world.unknowns';
   if (operation?.op === 'ADD_PROJECTION_RULE') return 'world.projection_rules';
+  if (operation?.op === 'DISABLE_PROJECTION_RULE') return `world.projection_rules.${operation.projection_rule_id ?? '<unknown>'}`;
   if (operation?.op === 'ADD_SPECIAL_RULE') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.special_rules`;
   if (operation?.op === 'ADD_MECHANISM') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.reproductive_mechanisms`;
   if (target.kind === 'world') return `world.${(operation.path ?? []).join('.')}`;
@@ -4179,10 +4213,16 @@ function v2ApplyAddProjectionRule(model, operation) {
   model.projection_rules.push(rule);
 }
 
+function v2ApplyDisableProjectionRule(model, operation) {
+  const index = model.projection_rules.findIndex(item => item.projection_rule_id === operation.projection_rule_id)
+  if (index < 0) v2MergeError('operation.projection_rule_id', 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND')
+  model.projection_rules.splice(index, 1)
+}
+
 function v2ApplyClassifiedOperations(model, classified) {
   for (const result of classified) {
     if (result.classification === 'NO-OP') continue;
-    if (result.classification !== 'ADD' && result.classification !== 'CHANGE')
+    if (result.classification !== 'ADD' && result.classification !== 'CHANGE' && result.classification !== 'DISABLE')
       v2MergeError('operations', 'WORLD_MODEL_PATCH_V2_CLASSIFICATION_INVALID');
     const operation = result.operation;
     if (operation.op === 'ADD_SPECIES') v2ApplyAddSpecies(model, operation);
@@ -4193,6 +4233,7 @@ function v2ApplyClassifiedOperations(model, classified) {
     else if (operation.op === 'ADD_EXCEPTION') v2ApplyAddException(model, operation);
     else if (operation.op === 'ADD_UNKNOWN') v2ApplyAddUnknown(model, operation);
     else if (operation.op === 'ADD_PROJECTION_RULE') v2ApplyAddProjectionRule(model, operation);
+    else if (operation.op === 'DISABLE_PROJECTION_RULE') v2ApplyDisableProjectionRule(model, operation);
     else v2MergeError('operations', 'WORLD_MODEL_PATCH_V2_OPERATION_UNSUPPORTED');
   }
 }
@@ -4556,6 +4597,10 @@ function factDeltaFactKey(fact) {
   if (fact.field === 'Exception') return `exception:${v2TextIdentity(fact.exception?.statement)}:${v2TextIdentity(fact.exception?.applies_to)}`
   if (fact.field === 'Unknown') return `unknown:${v2TextIdentity(fact.value)}`
   if (fact.field === 'Projection_Rule') return `projection:${fact.projection_rule?.projection_rule_id ?? JSON.stringify(v2Canonical(fact.projection_rule))}`
+  if (fact.field === 'Projection_Rule_Override') {
+    const rule = factDeltaCanonicalProjection(fact.projection_rule)
+    return `projection-disable:${rule.projection_rule_id}`
+  }
   return `fact:${JSON.stringify(v2Canonical(fact))}`
 }
 
@@ -4564,6 +4609,7 @@ function factDeltaFactContent(fact) {
   if (fact.field === 'Reproductive_Mechanism') return fact.mechanism
   if (fact.field === 'Exception') return fact.exception
   if (fact.field === 'Projection_Rule') return fact.projection_rule
+  if (fact.field === 'Projection_Rule_Override') return {action: fact.action, projection_rule: fact.projection_rule, reason: fact.reason, evidence: fact.evidence}
   return fact.value
 }
 
@@ -4601,6 +4647,15 @@ function factDeltaOperationForFact(fact, existing) {
     const {projection_rule_id, ...projection_rule} = factDeltaCanonicalProjection(fact.projection_rule)
     return {op: 'ADD_PROJECTION_RULE', projection_rule}
   }
+  if (fact.field === 'Projection_Rule_Override') {
+    const rule = factDeltaCanonicalProjection(fact.projection_rule)
+    return {
+      op: 'DISABLE_PROJECTION_RULE',
+      projection_rule_id: rule.projection_rule_id,
+      reason: fact.reason,
+      source_evidence: [...fact.evidence],
+    }
+  }
   throw factDeltaError('WORLD_MODEL_FACT_DELTA_FIELD_UNSUPPORTED', {field: fact.field})
 }
 
@@ -4628,7 +4683,7 @@ function factDeltaFactPriority(fact) {
 }
 
 function factDeltaIsAppendOnlyCollection(fact) {
-  return fact?.field === 'Special_Rule' || fact?.field === 'Exception' || fact?.field === 'Unknown'
+  return fact?.field === 'Special_Rule' || fact?.field === 'Exception' || fact?.field === 'Unknown' || fact?.field === 'Projection_Rule_Override'
 }
 
 export function resolveWorldModelFactDelta(facts, existingModel, archiveMeta = null) {
@@ -4695,6 +4750,16 @@ export function resolveWorldModelFactDelta(facts, existingModel, archiveMeta = n
         if (current && !v2Equal(current, candidate)) {
           result.code = 'FACT_DELTA_EXISTING_PROJECTION_UPDATE_UNSUPPORTED'
           result.reason = 'existing projection rule correction has no Patch v2 outlet'
+          factResults.push(result)
+          continue
+        }
+      }
+      if (fact.field === 'Projection_Rule_Override') {
+        const candidate = factDeltaCanonicalProjection(fact.projection_rule)
+        const current = existing.projection_rules.find(item => item.projection_rule_id === candidate.projection_rule_id)
+        if (!current) {
+          result.code = 'WORLD_MODEL_FACT_DELTA_PROJECTION_RULE_TARGET_NOT_FOUND'
+          result.reason = 'projection rule disable target is not present in Existing'
           factResults.push(result)
           continue
         }

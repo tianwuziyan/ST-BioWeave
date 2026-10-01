@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, provenance, invalidation, and projection persistence boundary"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"BiologicalEvent versus Projection and Current State separation"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Pregnancy tracking subject and proposed timing/window lifecycle context"}
+{"file":".trellis/spec/domain/world-model.md","reason":"World Model projection rule and deterministic rule boundary"}

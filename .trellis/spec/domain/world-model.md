@@ -1110,13 +1110,23 @@ The frozen operation set is:
 | `ADD_EXCEPTION` | Add one world exception | canonical exception value |
 | `ADD_UNKNOWN` | Add one triggered world unknown | canonical unknown value |
 | `ADD_PROJECTION_RULE` | Add a new projection rule | existing raw new-rule fields; generated identity is deterministic and not AI-supplied |
+| `DISABLE_PROJECTION_RULE` | Disable one Existing projection rule | Host-derived deterministic `projection_rule_id`, explicit reason, and permitted current World evidence |
 
 `medical_context` uses constrained `SET_FIELD` rather than a dedicated
 operation. It is already a world-scoped field object, and the same
 old-value/proposed-value/presence semantics apply without creating a
 single-use operation type. Only allowlisted `medical_context` keys are legal.
 
-No operation is defined for updating projection rules. `ADD_PROJECTION_RULE`
+Projection rule replacement is disable-only in Patch v2. `DISABLE_PROJECTION_RULE`
+is created only from the world-scoped `Projection_Rule_Override` Fact, whose raw
+rule content has no `projection_rule_id`; the Host derives the deterministic ID,
+requires that the target exists in Existing, and requires an explicit
+contradiction/non-applicability reason bound to permitted current World evidence.
+Unknown targets, omission, uncertainty, empty projection rule content, empty
+evidence, and no-evidence claims fail closed. Replacement is expressed as one
+disable operation plus one ordinary `ADD_PROJECTION_RULE` operation.
+
+No operation is defined for arbitrary projection rule updates. `ADD_PROJECTION_RULE`
 retains the current raw AI new-rule contract: `schema_version`,
 `mechanism_key`, `development_concern_key`, `development_kind`, `trigger`, and
 the optional validated `requirements`, `realization`, `contradiction`, and
@@ -1870,3 +1880,15 @@ use exact control-token or enum validation, while Fact payload values retain
 the semantic sentinel rejection rules. `Unknown` is therefore a legal
 `field` enum member but remains invalid as a semantic scalar value where the
 current Fact contract rejects that sentinel.
+
+## Pre-confirmation timing baseline boundary
+
+World Model remains the only authority for validated declarative
+`projection_rules[]` and mechanism binding. Character-specific timing config and
+the Floor-owned frozen observation timing instance are separate layers. Runtime
+MUST NOT add a real-world Human timing fallback when `projection_rules[]` is
+empty, and projection rules MUST NOT contain probability, weight, random, rng,
+or seed fields. A future Human baseline composition may create a validated
+World-owned rule before Runtime consumption; this Phase 1 deliberately supplies
+no medical default day values. Nonhuman types must not inherit that baseline
+without an explicit World Model composition decision.

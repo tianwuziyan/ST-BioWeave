@@ -1,0 +1,5 @@
+{"file":"tests/projection-eligibility.test.js","reason":"Eligibility evaluator behavior evidence"}
+{"file":"tests/projection.test.js","reason":"Projection rule and lifecycle behavior evidence"}
+{"file":"tests/projection-runtime.test.js","reason":"Runtime projection evolution and context behavior evidence"}
+{"file":"tests/projection-persistence.test.js","reason":"Projection timeline persistence and invalidation evidence"}
+{"file":"tests/projection-rules-world-model.test.js","reason":"World Model projection_rules schema/validator evidence"}
