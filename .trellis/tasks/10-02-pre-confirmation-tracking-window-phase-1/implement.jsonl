@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe/version ownership, derived-state rebuild, stale guards, and historical immutability for the new Window timeline."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "BiologicalEvent validity, terminal factual semantics, capability tri-state, and edit/delete rebuild boundary."}
+{"file": ".trellis/spec/domain/pregnancy-tracking.md", "reason": "Existing Tracking Window target contract and explicit Phase 1/Phase 2 boundaries to update precisely."}
+{"file": "docs/ARCHITECTURE.md", "reason": "Feature owner/dependency direction and narrow module integration rules."}

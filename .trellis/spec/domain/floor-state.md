@@ -200,6 +200,13 @@ configuration baseline, not a Floor fact or World Rule; the formal Characters
 UI writes only through the Chat-local timing-config API and never through the
 debug facade.
 
+`tracking_window_timeline` is a separate sibling Floor-owned append-only root
+under the Tracking owner. It follows the same active Swipe, complete Floor
+Version, coordinator transaction, authoritative readback, and historical Floor
+immutability rules. It is a derived lifecycle record, not a BiologicalEvent or
+Current State fact; active Tracking rebuilds still validate the surviving Event
+basis before using an open Window.
+
 ## 5. Derived State
 
 Current valid Floor facts are the only input for materialized runtime state:

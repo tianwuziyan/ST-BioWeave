@@ -3,6 +3,7 @@ import {createCharacterEventAnalysis} from "./character-event-analysis.js";
 import {createEventEditing} from "./event-editing.js";
 import {createGenerationLifecycle} from "./generation-lifecycle.js";
 import {createTrackingRuntime} from "./tracking-runtime.js";
+import {createTrackingWindowRuntime} from "./tracking-window-runtime.js";
 import {createWorldAnalysis} from "./world-analysis.js";
 
 // Composition root for the runtime feature modules.  The pipeline and its
@@ -17,7 +18,10 @@ export function createRuntime({
   eventEditing,
 } = {}) {
   const diagnostics = createRuntimeDiagnostics(diagnosticsOptions);
-  const trackingRuntime = createTrackingRuntime(tracking);
+  const trackingWindowRuntime = tracking?.trackingWindowRuntime ?? createTrackingWindowRuntime({
+    getChatId: tracking?.getChatId ?? (() => null),
+  });
+  const trackingRuntime = createTrackingRuntime({...tracking, trackingWindowRuntime});
   const generationLifecycle = createGenerationLifecycle(generation);
   const worldAnalysis = createWorldAnalysis({
     ...world,
@@ -31,6 +35,7 @@ export function createRuntime({
     diagnostics,
     generationLifecycle,
     trackingRuntime,
+    trackingWindowRuntime,
     worldAnalysis,
     characterEventAnalysis,
     eventEditing: editing,

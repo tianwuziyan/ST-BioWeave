@@ -28,6 +28,7 @@ Character Floor
   → World Model resolve
   → Character/Event Analysis
   → BiologicalEvent
+  → Tracking Window (open / terminal factual lifecycle)
   → Character Registry
   → Tracking Subjects / Candidates
   → Character Facts
@@ -63,7 +64,7 @@ have separate contracts and failure boundaries.
 | Projection Context | Runtime view of context-visible Projections | Runtime/read model; prompt slot is refreshed | Inject possible developments into the ST prompt | Event evidence; authoritative factual storage |
 | Character Timing Config | Chat-local character configuration | Yes, Chat-local | Base pre-confirmation timing policy for future cycles | Character Registry/Profile; World Rule |
 | Observation Timing Instance | Floor-owned Timing-domain record | Yes, `projection_timing_timeline` | Freeze one cycle's basis, variance, effective min/max, and provenance | Tracking Window; Projection; BiologicalEvent |
-| Tracking Window | Reserved broader exposure-tracking concept | **Not implemented** | Future complete exposure-window lifecycle | Current lightweight Timing Instance |
+| Tracking Window | Floor-owned Tracking Window Phase 1 | Yes, `tracking_window_timeline` | Deterministic exposure round lifecycle and active pre-confirmation filtering | Timing Instance; Pregnancy Episode; Projection |
 | Snapshot | Factual state optimization/bridge | Yes where the current lifecycle requires it | Avoid rebuilding factual state unnecessarily | Projection persistence; Timing persistence |
 
 Important identity boundaries:
@@ -172,6 +173,11 @@ Projection is available. It is not a factual source and cannot create a
 self-evidence loop.
 
 ## Pre-confirmation Projection Timing Phase 1
+
+Tracking Window Phase 1 is now implemented as a separate lifecycle boundary.
+It owns deterministic Window/cycle binding, compatible exposure grouping,
+`open` / `resolved_pregnant` / `terminated`, and active Tracking filtering.
+It does not implement a Story-Time horizon, `expired`, or negative resolution.
 
 Phase 1 currently includes:
 
@@ -283,7 +289,7 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Character Facts/Profile | IMPLEMENTED; derived Floor/runtime data, not an independent authoritative root |
 | BiologicalEvent | PRODUCTION / AUTOMATED VERIFIED |
 | Tracking Subject/Candidate | IMPLEMENTED / AUTOMATED VERIFIED |
-| Tracking Window | NOT_IMPLEMENTED |
+| Tracking Window | PARTIAL / PHASE 1 IMPLEMENTED; horizon/expired and negative resolution remain deferred |
 | StateReducer | PRODUCTION; lifecycle coverage remains bounded by implemented Event contracts |
 | Pregnancy Episode | PARTIAL |
 | Contributor Attribution | PARTIAL |
@@ -325,7 +331,7 @@ regression, or an explicit contract change.
 ## Known Open Items
 
 - Pre-confirmation Timing real-host behavioral smoke;
-- Tracking Window;
+- Tracking Window Phase 2 horizon/expired semantics;
 - completion of Contributor Attribution;
 - GA/EDD;
 - Genealogy;
@@ -351,13 +357,17 @@ This is a checkpoint, not a permanent number:
 
 The ten-test increase is from the Human preset, config-facade, Characters
 timing UI/performance coverage, nickname popup coverage, and Runtime lifecycle
-test synchronization added in this implementation. The current full-check
-signature contains the 16 known World Model prompt-baseline failures plus one
-unresolved `start-new-chat-lifecycle` failure that appears in the complete
-parallel suite but passes when isolated, grouped with the related Runtime file,
-or run with test concurrency set to 1. It is not attributed to Popup or
-Timing. Future verification must compare failure sets and signatures, not only
-failure counts.
+test synchronization added in this implementation. The
+`start-new-chat-lifecycle` unknown-source assertion was identified as a test
+timing assumption: it now waits for the Runtime's deterministic
+`BIOWEAVE_LIFECYCLE_SETTLED` signal instead of a fixed `setImmediate` count.
+It is not attributed to Popup or Timing. Subsequent full-suite runs have also
+shown that scheduler assertion with the same test-timing cause: it now waits
+for `BIOWEAVE_LIFECYCLE_SETTLED` after each Character Floor. The scheduler's
+production semantics were unchanged. A later parallel run showed a separate
+intermittent stale World-analysis test failure; that is outside this Runtime
+scheduler task and remains unresolved. Future verification must compare failure
+sets and signatures, not only failure counts.
 
 ## Real Host Status
 
@@ -426,7 +436,9 @@ Prioritize:
 11. source invalidation;
 12. confirmation/loss/abortion exit.
 
-Until Timing Host Acceptance is closed, do not enter Tracking Window work.
+Tracking Window Phase 1 is implemented independently of pending real-host Timing
+acceptance. Timing host acceptance remains a separate verification item; it does
+not authorize horizon or medical fallback semantics.
 Human preset source research is complete as a documented Product Policy
 boundary; real-host timing and Characters UI acceptance remain separate gates.
 

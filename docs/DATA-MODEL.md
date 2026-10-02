@@ -438,12 +438,11 @@ Calendar Engine。
 - Projection 是未来可能性，拥有独立的 `realized` / `contradicted` /
   `expired` lifecycle。
 
-当前项目尚未冻结 Window DTO/schema。目标语义要求 Window 支持多次
-exposure、多个 Story Time、多个 counterpart/source、按 subject 的多轮
-生命周期，以及 `open` / `resolved_pregnant` /
-`resolved_not_pregnant` / `expired` 状态。字段名、确定性 ID、Floor-bound
-或 Runtime-derived ownership、horizon 字段均属于后续设计，不应从本段
-推导出最终 JSON。
+当前 Phase 1 已冻结并实现最小 Window DTO/schema：Window 是独立
+`tracking_window_timeline` Floor root，支持多次 compatible exposure、确定性
+cycle/window ID、`open` / `resolved_pregnant` / `terminated`，并按 active
+Swipe 与 Floor Version 过滤。`resolved_not_pregnant`、`expired`、horizon
+字段仍属于后续 Phase 2，不应由 Phase 1 推导。
 
 `expired` 不删除 BiologicalEvent，不等于 confirmed-not-pregnant，不创建
 medical/state fact，也不修改 `reproductive_source_attribution`。只有 open
@@ -497,6 +496,10 @@ Registry rebuild 必须先 exhaustive scan 当前全部有效 Floor Event，收�
 ```
 
 没有有效 exposure Event 且没有后续 pregnancy/delivery 等状态时，Subject 从 active 人物列表移除；必要的无事件 profile 可作为非展示历史保留，直到后续任务定义清理策略。Floor 删除、Swipe 切换、Event 编辑/删除、Chat 切换或手动刷新后，都必须依据当前有效 Event 集合重建 Registry。
+
+Phase 1 增加 Characters read-model 兼容：open Window 的 eligible Subject 或
+active factual Pregnancy Episode 均可保持人物可见；关闭 pre-confirmation
+Window 不会删除 Registry、Event 或 Episode，也不改变 Characters UI 产品设计。
 
 `BiologicalEvent.participants[]` 与 Tracking Subject 是两个不同层次的业务对象。前者在 `sexual_activity` 中只记录 actual reproductive exposure chain 的直接参与者，其中 `counterpart_ids[]` 标记实际 exposure source；后者只表示 Core 根据受孕暴露、事件相关性和 `can_carry_pregnancy` 三态能力解析后正式进入追踪流程的 eligible 角色。pending recipient 只进入 `tracking_candidates`，参与者的 profile 存在也不代表该角色是 Tracking Subject。
 

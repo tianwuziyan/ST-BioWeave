@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify storage authority, active Swipe, Floor Version, readback, and invalidation compliance."}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify factual Event/state boundaries and no inference from Projection/Window."}

@@ -1183,3 +1183,18 @@ version. Later config/World/State changes do not rewrite it. Source Event edit o
 delete is handled on derived read by basis validation; when no basis remains the
 timing is fail-closed. Timing never enters Event, Current State, Snapshot, or
 Projection Context evidence.
+
+## Pre-confirmation Tracking Window Phase 1
+
+`tracking_window_timeline` is an independent Floor-owned, active-Swipe-owned
+append-only root under the Tracking owner. It uses the same complete six-field
+Floor Version and authoritative coordinator readback contract as other Floor
+roots. Window records are rebuilt from surviving valid Events and therefore do
+not become a Chat-level cache or a second factual source. Phase 1 supports
+`open`, `resolved_pregnant`, and `terminated`; source edit/delete, Swipe changes,
+and stale versions fail closed during derived reads.
+
+The Window does not create pregnancy or negative-pregnancy facts, does not enter
+Projection Context, and does not modify Current State. `resolved_not_pregnant`,
+Story-Time horizon, and `expired` remain unimplemented. Character clear and All
+clear include the Window root; ordinary Chat changes remain non-destructive.

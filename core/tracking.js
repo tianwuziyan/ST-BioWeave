@@ -5,6 +5,7 @@ import {
   sortEvents,
   validateEvent,
 } from "./events.js";
+import { openWindowExposureIds } from './tracking-window.js';
 
 function recordValue(value) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -463,14 +464,18 @@ function addExposureRecord(candidate, event) {
   });
 }
 
-function collectExposureCandidates(events) {
+function collectExposureCandidates(events, trackingWindows = null) {
   const candidates = new Map();
   const activeEventIds = new Set();
   const validEvents = uniqueEventList(events);
+  const openExposureIds = Array.isArray(trackingWindows)
+    ? openWindowExposureIds(trackingWindows)
+    : null;
   for (const event of validEvents) {
     const relevance = event.pregnancy_relevance;
     const isExposure = isPregnancyRelevantExposure(event);
     if (!isExposure) continue;
+    if (openExposureIds && !openExposureIds.has(event.event_id)) continue;
     activeEventIds.add(event.event_id);
     const participants = new Map(
       event.participants
@@ -516,7 +521,10 @@ export function rebuildTrackingRegistry(events = [], previousChat = null) {
   const subjects = {};
   const context = trackingContext(previousChat);
   const profiles = {};
-  const { candidates, activeEventIds } = collectExposureCandidates(events);
+  const { candidates, activeEventIds } = collectExposureCandidates(
+    events,
+    previousChat?.trackingWindows ?? null,
+  );
   const trackingCandidates = {};
 
   for (const candidate of candidates.values()) {

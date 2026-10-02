@@ -736,6 +736,11 @@ export function emptyFloor() {
       basis_records: [],
       lifecycle_records: [],
     },
+    tracking_window_timeline: {
+      schema_version: 1,
+      creations: [],
+      lifecycle_records: [],
+    },
     world_model: null,
     world_model_meta: null,
   };

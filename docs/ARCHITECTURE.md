@@ -75,7 +75,7 @@ flowchart TD
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
-| Pregnancy Exposure Tracking lifecycle | `.trellis/spec/domain/pregnancy-tracking.md` | Proposed Window lifecycle contract；当前尚未有独立 Runtime owner |
+| Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 Window identity/grouping/lifecycle and Floor persistence; horizon remains deferred |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
@@ -305,13 +305,14 @@ Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracki
 只负责 presentation。AI 不拥有 canonical ID authority，Registry 不直接成为 UI
 人物列表，Tracking 也不负责修复人物识别。
 
-Pregnancy Exposure Tracking Window 目前只有 Proposed Contract，没有独立的
-代码 owner、round identity、horizon 或 expiration implementation。不要把
-`core/tracking.js` 当前按 subject 聚合的 `tracking_subjects` 当作 Window；也
-不要把 `core/state.js` 的 Pregnancy Episode 或 `core/projection.js` 的
-Projection lifecycle 当作 Window。后续实现必须继续遵守 Floor/Swipe/Version
-authority，并由 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)
-指导设计。
+Pregnancy Exposure Tracking Window Phase 1 已有独立的
+`core/tracking-window.js`、`runtime/tracking-window-runtime.js` 和
+`storage/tracking-window.js` owner。Window 使用独立
+`tracking_window_timeline`，复用 Timing cycle identity，支持
+`open`、`resolved_pregnant`、`terminated`，并由 Tracking 消费 open view。
+不要把 `core/tracking.js` 的 Subject registry、`core/state.js` 的 Pregnancy
+Episode 或 `core/projection.js` 的 Projection lifecycle 当作 Window。Story-Time
+horizon、`expired`、negative resolution 和 advanced Episode orchestration 仍未实现。
 
 Event discovery window、identity authority、Event occurrence time 和 persistence
 owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现
@@ -321,7 +322,8 @@ Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Fl
 
 当前生产状态的完整矩阵维护在 [DEVELOPMENT.md](./DEVELOPMENT.md)。其中
 StateReducer、Current Biological State、Snapshot Runtime 和 Projection Runtime
-已接通；Tracking Window 仍是 NOT_IMPLEMENTED；Genealogy 仍为 PARTIAL。
+已接通；Tracking Window 为 PARTIAL / PHASE 1 IMPLEMENTED；Genealogy 仍为
+PARTIAL。
 
 ## Safe modification guardrails
 

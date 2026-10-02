@@ -260,6 +260,21 @@ async function settleLifecycle() {
   }
 }
 
+function waitForLifecycleSettled(fixture, mutationType) {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = fixture.runtime.subscribe((event) => {
+      if (
+        event?.type === "BIOWEAVE_LIFECYCLE_SETTLED" &&
+        (!mutationType || event.mutationType === mutationType)
+      ) {
+        unsubscribe();
+        resolve(event);
+      }
+    });
+  });
+}
+
 function bioWeaveRoots(owner) {
   return owner.messages.flatMap((message) => [
     message.extra?.bioweave,
@@ -563,9 +578,10 @@ test("an unknown source save is reported as failure and never redirected to Chat
   await settleLifecycle();
   const sourceBefore = cloneValue(fixture.owners["chat-a"]);
   fixture.setCurrent("chat-b");
+  const lifecycleSettled = waitForLifecycleSettled(fixture, "CHAT_CREATED");
   fixture.emit("chat-changed", "chat-b");
   fixture.emit("chat-created");
-  await settleLifecycle();
+  await lifecycleSettled;
 
   assert.ok(fixture.runtime.getFailedSourceClear("chat-a"));
   assert.deepEqual(fixture.owners["chat-a"], sourceBefore);

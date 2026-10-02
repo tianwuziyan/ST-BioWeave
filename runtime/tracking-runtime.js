@@ -1,4 +1,5 @@
 import {rebuildTrackingRegistry} from "../core/tracking.js";
+import {createTrackingWindowRuntime} from './tracking-window-runtime.js';
 
 export function createTrackingRuntime({
   collectTrackingInputs,
@@ -8,11 +9,22 @@ export function createTrackingRuntime({
   assertToken,
   notify,
   enqueueRefresh,
+  trackingWindowRuntime = createTrackingWindowRuntime(),
 } = {}) {
-  function buildTrackingRegistry({activeEvents = [], worldModel = null} = {}) {
-    return rebuildTrackingRegistry(activeEvents, {
+  function buildTrackingWindows({activeEvents = [], chatId = null} = {}) {
+    return trackingWindowRuntime?.buildTrackingWindows
+      ? trackingWindowRuntime.buildTrackingWindows({activeEvents, chatId})
+      : [];
+  }
+
+  function buildTrackingRegistry({activeEvents = [], worldModel = null, trackingWindows = null, chatId = null} = {}) {
+    const registry = rebuildTrackingRegistry(activeEvents, {
       world_model: worldModel,
+      trackingWindows: trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId}) : null),
     });
+    const resolvedWindows = trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId}) : null);
+    if (resolvedWindows) Object.defineProperty(registry, 'tracking_windows', {enumerable: false, get: () => resolvedWindows});
+    return registry;
   }
 
   function refreshTrackingRegistry(reason = "runtime") {
@@ -21,7 +33,8 @@ export function createTrackingRuntime({
       if (!hasMessageCollection()) return null;
       const token = getToken();
       const inputs = await collectTrackingInputs(token);
-      const registry = buildTrackingRegistry(inputs);
+      const trackingWindows = inputs.trackingWindows ?? buildTrackingWindows({activeEvents: inputs.activeEvents, chatId: token.chatId});
+      const registry = buildTrackingRegistry({...inputs, trackingWindows, chatId: token.chatId});
       assertToken(token);
       notify({
         type: "TRACKING_REGISTRY_REFRESHED",
@@ -30,6 +43,7 @@ export function createTrackingRuntime({
       });
       return {
         ...registry,
+        tracking_windows: trackingWindows,
         character_registry: inputs.characterRegistry,
         active_events: inputs.activeEvents,
       };
@@ -37,5 +51,5 @@ export function createTrackingRuntime({
     return enqueueRefresh(refresh);
   }
 
-  return {buildTrackingRegistry, refreshTrackingRegistry};
+  return {buildTrackingWindows, buildTrackingRegistry, refreshTrackingRegistry};
 }

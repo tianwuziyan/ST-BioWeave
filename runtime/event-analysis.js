@@ -32,6 +32,7 @@ import {
 import {
   explainTrackingDecision,
 } from "../core/tracking.js";
+import { mergeTrackingSubjectsWithActivePregnancies } from "../core/tracking-window.js";
 import {
   cloneValue,
   DEFAULT_API_REQUEST_SETTINGS,
@@ -59,6 +60,7 @@ import {
   shouldAnalyze,
 } from "./floor.js";
 import { createRuntime as createRuntimeComposition } from "./runtime.js";
+import { createTrackingWindowRuntime } from "./tracking-window-runtime.js";
 const LIFECYCLE_ONLY_EVENTS = new Set([
   // Deletion only invalidates the downstream active path; it never analyzes
   // the message collection after the owner has been removed.
@@ -419,6 +421,7 @@ export function createEventAnalysisCoordinator({
   enabledResolver = () => true,
   notify = () => {},
   floorPersistence = null,
+  trackingWindowPersistence = null,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -1696,6 +1699,22 @@ export function createEventAnalysisCoordinator({
       getToken: () => chat.token(),
       assertToken: token => chat.assert(token),
       notify,
+      ...(trackingWindowPersistence ? {
+        trackingWindowRuntime: createTrackingWindowRuntime({
+          getChatId: () => chat.current(),
+          persist: async ({chatId, windows, assertCurrent}) => {
+            const target = await resolveCurrentBioWeaveFloor();
+            if (typeof assertCurrent === "function") await assertCurrent();
+            await trackingWindowPersistence.saveTrackingWindowTimeline({
+              chatId,
+              ownerFloor: {message_index: target.index, message_id: target.version.message_id},
+              floorVersion: target.version,
+              timeline: {schema_version: 1, creations: windows, lifecycle_records: []},
+            });
+            if (typeof assertCurrent === "function") await assertCurrent();
+          },
+        }),
+      } : {}),
       enqueueRefresh: refresh => {
         const result = registryRefreshChain.then(refresh, refresh);
         registryRefreshChain = result.catch(() => null);
@@ -2223,7 +2242,10 @@ export function createEventAnalysisCoordinator({
     registry = null,
     stateInfo = null,
   ) {
-    const trackingSubjects = registry?.tracking_subjects ?? {};
+    const trackingSubjects = mergeTrackingSubjectsWithActivePregnancies(
+      registry?.tracking_subjects ?? {},
+      stateInfo?.current_state ?? {},
+    );
     const trackingCandidates = registry?.tracking_candidates ?? {};
     const characterProfiles = registry?.character_profiles ?? {};
     const trackingDecisions = activeEvents.flatMap((event) =>
@@ -2277,6 +2299,7 @@ export function createEventAnalysisCoordinator({
     return {
       tracking_subjects: trackingSubjects,
       tracking_candidates: trackingCandidates,
+      tracking_windows: registry?.tracking_windows ?? [],
       character_profiles: characterProfiles,
       active_events: activeEvents,
       current_state: stateInfo?.current_state ?? reduceState({}),

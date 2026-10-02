@@ -2,22 +2,34 @@
 
 ## 1. Scope and status
 
-This document is the canonical owner for the planned Pregnancy Exposure
+This document is the canonical owner for the Pregnancy Exposure
 Tracking Window lifecycle. It freezes the semantic boundaries between factual
-Events, exposure tracking, Pregnancy Episodes, and Projections; it does not
-claim that the Window lifecycle is implemented.
+Events, exposure tracking, Pregnancy Episodes, and Projections.
 
-The current branch implements Tracking Subjects/Candidates derived from valid
-pregnancy-relevant Events. It does not yet implement the independent Window
-object or its lifecycle. Sections marked **Target Contract** are the design
-baseline for a later implementation task. Sections marked **Current
-Implementation** describe the audited code as it exists now.
+The current branch implements Tracking Subjects/Candidates and the independent
+Phase 1 Window object/lifecycle derived from valid pregnancy-relevant Events.
+Phase 1 is `PARTIAL / PHASE 1 IMPLEMENTED`: it deliberately excludes
+Story-Time horizon/`expired` and `resolved_not_pregnant`. Sections marked
+**Target Contract** remain the design baseline for later phases. Sections
+marked **Current Implementation** describe the current checkout.
 
-Pre-confirmation Projection Timing Phase 1 does not implement this Window. Its
+Pre-confirmation Projection Timing remains separate from this Window. Its
 `projection_timing_timeline` is only a lightweight observation timing record:
 same subject + same explicit mechanism may attach additional valid Event refs,
-but it must not be treated as a complete exposure Window, Tracking Subject
-owner, or Window expiration implementation.
+but it must not be treated as the Window owner or as Window expiration.
+
+### Current Implementation: Phase 1
+
+Phase 1 owns deterministic Window/cycle identity, compatible exposure grouping,
+Floor persistence/readback, `open` / `resolved_pregnant` / `terminated`, active
+Tracking filtering, Timing cycle binding, and the pre-confirmation Projection
+Eligibility bridge. `pregnancy_confirmation` resolves an open Window;
+`pregnancy_loss` and `abortion` terminate it. Conception, suspicion, symptoms,
+Timing `window_missed`, elapsed Story Time, and Projection do not close it.
+
+The independent owner is `core/tracking-window.js` with Runtime/storage adapters
+and `tracking_window_timeline`. Historical Floors remain immutable and active
+Windows are rebuilt only from surviving valid Event facts.
 
 This contract is deliberately generic. Human examples, fixed day counts,
 names, IDs, Floor numbers, and particular reproductive mechanisms are not
@@ -191,15 +203,19 @@ valid Floor-bound Events
   → tracking_subjects / tracking_candidates
 ```
 
-`rebuildTrackingRegistry()` uses all currently valid active Events supplied by
-Runtime. It accumulates `exposure_event_ids[]` and `exposure_records[]` per
-subject. `can_carry_pregnancy === true` creates an active Subject, `false`
-creates neither an active Subject nor a pending Candidate, and `null` creates a
-pending Candidate. The implementation has no Story Time expiration gate, no
-Window round identity, no Window status, no grouping/detection/maximum horizon,
-and no filter that removes an otherwise valid exposure because its Window has
-closed. Therefore an exposure remains eligible for rebuild as long as the
-canonical Event remains valid and the capability path still resolves eligible.
+`rebuildTrackingRegistry()` now receives the Phase 1 Window view from Runtime.
+It accumulates valid exposure provenance per subject only while the source
+Event belongs to an `open` Window. `can_carry_pregnancy === true` creates an
+active Subject, `false` creates neither an active Subject nor a pending
+Candidate, and `null` creates a pending Candidate. A Window may therefore keep
+factual exposure basis while the same subject remains a Candidate. Terminal
+Window statuses do not delete Events, Registry identity, or Pregnancy Episodes.
+
+`core/tracking-window.js` derives deterministic identity and compatible grouping
+from surviving valid Events. Its Phase 1 terminal transitions are limited to
+confirmed `pregnancy_confirmation`, `pregnancy_loss`, and `abortion`. There is
+still no Story-Time expiration gate: no `expired` state is produced, and elapsed
+time cannot remove an otherwise valid exposure in this phase.
 
 `core/state.js` separately records exposure history and derives
 `last_exposure_story_time` plus `elapsed_story_days`; that derived value does
@@ -207,13 +223,13 @@ not currently close or filter Tracking. Its `pregnancy.episodes` structure is
 the Pregnancy Episode layer, not a Window substitute, and it has no generic
 `resolved_not_pregnant` Window state.
 
-The Runtime current-state path is connected: valid active Floor Events and the
-derived `characterFacts` are replayed through `reduceState()`, using a valid
+The Runtime current-state path remains connected: valid active Floor Events and
+the derived `characterFacts` are replayed through `reduceState()`, using a valid
 Snapshot checkpoint when available. Advancing `currentStoryTime` without a new
 Event can update `elapsed_story_days` transiently, but it does not create an
-Event or implement Window expiration. The Window remains NOT_IMPLEMENTED: there
-is no window identity, open/closed/expired lifecycle, Story Time horizon,
-exposure aggregation boundary, or closure semantics.
+Event or implement Window expiration. The active Window view is persisted under
+the current Floor/active Swipe with stale guards and is rebuilt from surviving
+facts after reload or Event edit/delete.
 
 `runtime/tracking-runtime.js` is an orchestration wrapper around
 `rebuildTrackingRegistry()`. `runtime/event-analysis.js` exposes the resulting
@@ -276,13 +292,12 @@ Historical Events remain unchanged throughout.
 The following decisions belong to a later design task and must not be implied
 by this contract:
 
-1. deterministic Window ID materials;
-2. Runtime-derived versus Floor-bound Window ownership;
-3. final World Model horizon fields and JSON shape;
-4. exact time/mechanism grouping rule for adding an exposure to an open Window;
-5. the generic factual schema for `resolved_not_pregnant`;
-6. the exact bridge between Window closure and Projection lifecycle;
-7. the Context DTO and persistence shape for active Window signals.
+1. final World Model horizon fields and JSON shape;
+2. the generic factual schema for `resolved_not_pregnant`;
+3. the future bridge between Window closure and pregnancy-stage Projection
+   lifecycle;
+4. the Context DTO for active Window summaries;
+5. advanced Pregnancy Episode orchestration.
 
 ## 12. Regression guardrails
 
@@ -303,8 +318,8 @@ unresolved exposure tracking horizons.
 
 Wrong: every new exposure indefinitely resets one Window.
 
-Correct: compatible exposures join a bounded open round; a maximum horizon
-prevents indefinite renewal and closed rounds do not reopen.
+Correct: compatible exposures join the same open Phase 1 round, and closed
+rounds do not reopen. A World-authoritative maximum horizon remains Phase 2.
 
 Wrong: pregnancy confirmation automatically chooses the nearest counterpart.
 
@@ -320,4 +335,6 @@ Wrong: `character_registry` or `can_carry_pregnancy` directly creates a
 Characters UI entry.
 
 Correct: only valid pregnancy-relevant exposure plus resolved Tracking
-eligibility produces `tracking_subjects`; UI consumes that Runtime DTO.
+eligibility and an open Window produces pre-confirmation `tracking_subjects`;
+UI consumes that Runtime DTO. Active factual Pregnancy State remains a
+separate Characters read-model compatibility source.

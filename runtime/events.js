@@ -23,6 +23,7 @@ import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
 import { createProjectionTimingPersistence } from "../storage/projection-timing.js";
+import { createTrackingWindowPersistence } from "../storage/tracking-window.js";
 import { evaluateProjectionTiming, resolveProjectionTimingInstance } from "../core/projection-timing.js";
 import { evaluateProjectionEligibility } from "../core/projection-eligibility.js";
 import { readCharacterTimingConfig, resolveCharacterTimingConfig } from "../core/character-timing-config.js";
@@ -1678,6 +1679,16 @@ export function createRuntime({
     enabledResolver: isBioWeaveEnabled,
     notify,
     floorPersistence,
+    trackingWindowPersistence: createTrackingWindowPersistence({
+      store,
+      enabledResolver: isBioWeaveEnabled,
+      floorPersistence,
+      resolveCurrentFloorVersion: async ({ownerFloor}) => {
+        const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
+        if (!Number.isInteger(Number(index)) || !eventAnalysis?.resolveCurrentBioWeaveFloor) return null;
+        return (await eventAnalysis.resolveCurrentBioWeaveFloor({__messageIndex: true, index: Number(index)})).version;
+      },
+    }),
   });
   const projectionPersistence = createProjectionPersistence({
     store,
@@ -1745,6 +1756,7 @@ export function createRuntime({
         currentStateStatus: business.current_state_status,
         events: business.active_events ?? [],
         sourceCandidates: Object.values(business.tracking_candidates ?? {}),
+        trackingWindows: business.tracking_windows ?? [],
         worldModel: world?.model ?? {},
         currentStoryTime: business.current_story_time ?? null,
         storyContext: [],
@@ -1810,7 +1822,7 @@ export function createRuntime({
           }
         }
       }
-      return {enabled: timingEnabled, instances: timingInstances, confirmedSubjects, terminatedSubjects};
+      return {enabled: timingEnabled, instances: timingInstances, windows: inputs.trackingWindows ?? [], confirmedSubjects, terminatedSubjects};
     },
     refreshProjectionContext: projectionContext.refreshProjectionContext,
     notify,
@@ -2492,7 +2504,7 @@ export function createRuntime({
       worldModel: world?.model ?? {},
       currentStoryTime: business.current_story_time ?? null,
       existingProjections: projections?.all ?? [],
-      preConfirmationTiming: {enabled: true, instances, confirmedSubjects, terminatedSubjects},
+      preConfirmationTiming: {enabled: true, instances, windows: business.tracking_windows ?? [], confirmedSubjects, terminatedSubjects},
     }) : {decisions: [], diagnostics: []};
     return {
       status: "ok",

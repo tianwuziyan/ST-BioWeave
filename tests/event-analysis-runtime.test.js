@@ -534,6 +534,21 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
+function waitForLifecycleSettled(fixture, mutationType) {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = fixture.runtime.subscribe((event) => {
+      if (
+        event?.type === "BIOWEAVE_LIFECYCLE_SETTLED" &&
+        (!mutationType || event.mutationType === mutationType)
+      ) {
+        unsubscribe();
+        resolve(event);
+      }
+    });
+  });
+}
+
 async function withGlobalCrypto(value, callback) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   Object.defineProperty(globalThis, "crypto", {
@@ -3873,13 +3888,21 @@ test("retry=true keeps counter full and retries on the next Character Floor", as
   });
   configureScheduler(fixture, { interval: 1, retry: true });
   await fixture.runtime.init();
+  const firstLifecycleSettled = waitForLifecycleSettled(
+    fixture,
+    "CHARACTER_MESSAGE_RENDERED",
+  );
   fixture.emit("character-message-rendered", { message_id: "retry-1" });
-  await settle();
+  await firstLifecycleSettled;
   assert.equal(calls, 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, false);
+  const secondLifecycleSettled = waitForLifecycleSettled(
+    fixture,
+    "CHARACTER_MESSAGE_RENDERED",
+  );
   appendCharacter(fixture, "retry-2", 2);
-  await settle();
+  await secondLifecycleSettled;
   assert.equal(calls, 2);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
   fixture.runtime.destroy();
