@@ -23,6 +23,7 @@ import {
   getActiveFloorEvents as filterActiveFloorEvents,
 } from "../runtime/floor.js";
 import { isCompleteCharacterRegistrySnapshot } from "../core/identity.js";
+import { isCharacterMessageRole } from "../core/message-role.js";
 
 function staleChatError() {
   return new Error("STALE_CHAT");
@@ -72,10 +73,7 @@ function hasOwn(value, key) {
 }
 
 export function isCharacterMessage(message) {
-  const role = String(message?.role ?? '').trim().toLowerCase();
-  if (role === 'user' || message?.is_user === true) return false;
-  if (role === 'system' || message?.is_system === true) return false;
-  return true;
+  return isCharacterMessageRole(message);
 }
 
 function profileIdFrom(value) {

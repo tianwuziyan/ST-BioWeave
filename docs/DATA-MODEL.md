@@ -391,9 +391,14 @@ Event 的 `source` 必须由当前分析目标的 authoritative Floor Version �
 没有 swipe 结构时，Event 保存到 `message.extra.bioweave`；存在 swipe 结构时，包括 swipe `0`，只能保存到对应 `message.swipe_info[swipe_id].extra.bioweave`。Floor `events[]` 是该消息/版本的 Floor-bound 事实集合，不是 Chat-level 历史事件账本。删除 Floor 后其 Event 必须消失；切换到没有事件的 Swipe 后旧 Swipe Event 不得参与当前有效状态。
 
 失败的 force refresh（包括重复 subject 或 subject-local contract failure）只记录
-失败尝试，不覆盖同一 Floor Version 的上一份成功分析。已存在的历史数据不在本轮
+失败尝试，不覆盖同一 Floor Version 的上一份成功分析。跨 Floor 的已存在历史数据不在本轮
 自动迁移或语义合并；本轮保证新 AI response 在保存边界前满足 0/1/N，并通过
 subject-local consistency validation。
+
+成功的 manual supplement 在同一 Floor Version 内按稳定事实连续性更新已有 Event：
+本轮未再次出现的有效 Event 不因 omission 被删除，匹配事实保留原 canonical Event
+ID 和 participant identity；只有真正新增的 Event 才追加。消息编辑、Floor/Swipe 删除
+或版本失效仍按现有 authoritative Floor 规则使旧事实退出 active read。
 
 自动分析的 Character Floor counter、Floor Version 去重、reroll/Swipe 分类和 retryPaused 规则见唯一权威文档 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。本数据模型只保留 Floor/Swipe owner、版本和事实持久化规则；User、编辑、删除和 lifecycle update 不创建新的 Floor 事实。
 

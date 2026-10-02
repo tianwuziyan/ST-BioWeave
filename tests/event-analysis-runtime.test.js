@@ -292,6 +292,73 @@ test('Runtime updates aliases only in the current Character Floor without re-run
   fixture.runtime.destroy();
 });
 
+test("manual supplement preserves current Floor facts omitted by the new AI result", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analysisCount += 1;
+        if (analysisCount === 1) {
+          return {
+            events: [
+              identityEventForCharacters(
+                analysisInput.character_registry,
+                "角色A",
+                "来源A",
+                "a-first",
+              ),
+              identityEventForCharacters(
+                analysisInput.character_registry,
+                "角色B",
+                "来源B",
+                "b-first",
+              ),
+            ],
+          };
+        }
+        return {
+          events: [
+            identityEventForCharacters(
+              analysisInput.character_registry,
+              "角色B",
+              "来源B",
+              "b-supplement",
+            ),
+          ],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const floor = fixture.runtime.store.getFloor(0, 0);
+  assert.equal(analysisCount, 2);
+  assert.deepEqual(
+    floor.events.map((event) => event.participants[0].display_name).sort(),
+    ["角色A", "角色B"],
+  );
+  assert.deepEqual(
+    Object.values(floor.character_registry.entities)
+      .map((entry) => entry.display_name)
+      .sort(),
+    ["来源A", "来源B", "角色A", "角色B"],
+  );
+
+  const business = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(Object.keys(business.tracking_subjects).sort(), [
+    "char_000001",
+    "char_000003",
+  ]);
+  assert.deepEqual(
+    business.active_events.map((event) => event.participants[0].display_name).sort(),
+    ["角色A", "角色B"],
+  );
+  fixture.runtime.destroy();
+});
+
 function canonicalApiEvent({
   type = "sexual_activity",
   pregnancyRelevance,
@@ -619,6 +686,77 @@ test("Character-only current Floor ignores a trailing User message and writes on
   assert.equal(fixture.context.chat[0].extra?.bioweave, undefined);
   assert.equal(fixture.context.chat[2].extra?.bioweave, undefined);
   assert.equal(fixture.context.chat[2].swipe_info?.[0]?.extra?.bioweave, undefined);
+  fixture.runtime.destroy();
+});
+
+test("real SillyTavern hidden Character messages remain Floor owners across append and delete", async () => {
+  const messages = [
+    {
+      message_id: "floor-58",
+      floor: 58,
+      content: "已保存 World Model 的角色正文",
+      is_user: false,
+      is_system: true,
+      extra: {},
+      swipe_id: 0,
+      swipes: ["已保存 World Model 的角色正文"],
+      swipe_info: [{ extra: {} }],
+    },
+  ];
+  const fixture = createFixture({ messages });
+  await fixture.runtime.init();
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: "floor-58",
+    floor: 58,
+    text: messages[0].content,
+  });
+  const worldModel = { schema_version: 1, species: [{ name: "W" }] };
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: version,
+    world_model: worldModel,
+  });
+
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).world_model, worldModel);
+  assert.equal((await fixture.runtime.resolveCurrentBioWeaveFloor()).index, 0);
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore()).model,
+    worldModel,
+  );
+
+  messages.push({
+    message_id: "floor-59",
+    floor: 59,
+    content: "新增角色正文",
+    is_user: false,
+    is_system: true,
+    extra: {},
+  });
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore()).model,
+    worldModel,
+  );
+
+  messages.push({
+    message_id: "floor-60",
+    floor: 60,
+    content: "再次新增角色正文",
+    is_user: false,
+    is_system: true,
+    extra: {},
+  });
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore()).model,
+    worldModel,
+  );
+
+  messages.splice(1, 2);
+  assert.equal((await fixture.runtime.resolveCurrentBioWeaveFloor()).index, 0);
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore()).model,
+    worldModel,
+  );
   fixture.runtime.destroy();
 });
 

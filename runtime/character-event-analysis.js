@@ -84,6 +84,34 @@ async function materializeStateFact(event, version, ordinal) {
   return { ...event, state_fact: stateFact };
 }
 
+// Supplement output may omit prior facts. Match only the same Floor's stable
+// event shape so an updated fact can retain its canonical IDs without turning
+// a different participant or mechanism into the same Event.
+function eventContinuityKey(event) {
+  const storyTime = event?.story_time ?? {};
+  const mechanism = event?.pregnancy_relevance?.reproductive_mechanism ?? {};
+  return JSON.stringify({
+    type: event?.type ?? null,
+    location: event?.location ?? null,
+    story_time: {
+      normalized: storyTime.normalized ?? null,
+      day_index: storyTime.day_index ?? null,
+      display: storyTime.display ?? null,
+    },
+    participants: (event?.participants ?? [])
+      .map((participant) => ({
+        display_name: participant?.display_name ?? null,
+        event_role: participant?.event_role ?? null,
+      }))
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+    mechanism: {
+      kind: mechanism.kind ?? null,
+      pathway: mechanism.pathway ?? null,
+      world_model_rule_refs: [...(mechanism.world_model_rule_refs ?? [])].sort(),
+    },
+  });
+}
+
 function identityResolutionError(result) {
   const first = Array.isArray(result?.errors)
     ? result.errors.find((item) => item && typeof item === "object")
@@ -328,20 +356,38 @@ export function createCharacterEventAnalysis({
       removed_event_count: identityResolvedEvents.length - dedupedEvents.length,
     }, "event");
     execution.stage = "normalization";
+    const currentFloorEvents = execution.reason === "manual-refresh"
+      ? (getFloor(target.index, target.swipeId)?.events ?? []).filter((event) =>
+        sameFloorVersion(event?.source, target.version),
+      ).map((event) => normalizeEvent(event))
+      : [];
+    const currentEventIndexes = new Map(
+      currentFloorEvents.map((event, index) => [eventContinuityKey(event), index]),
+    );
+    let appendedEventOrdinal = 0;
     const enrichedEvents = await Promise.all(
       dedupedEvents.map(
-        async (event, ordinal) => {
+        async (event) => {
           const facts = event && typeof event === "object" && !Array.isArray(event)
             ? Object.fromEntries(Object.entries(event).filter(
               ([key]) => key !== "event_id" && key !== "source",
             ))
             : event;
           if (!facts || typeof facts !== "object" || Array.isArray(facts)) return facts;
-          return materializeStateFact({
+          const continuityIndex = currentEventIndexes.get(eventContinuityKey(facts));
+          const eventOrdinal = continuityIndex ?? currentFloorEvents.length + appendedEventOrdinal++;
+          const materialized = await materializeStateFact({
             ...facts,
-            event_id: await deterministicEventId(target.version, ordinal),
+            event_id: await deterministicEventId(
+              target.version,
+              eventOrdinal,
+            ),
             source: target.version,
-          }, target.version, ordinal);
+          }, target.version, eventOrdinal);
+          if (continuityIndex !== undefined) {
+            materialized.event_id = currentFloorEvents[continuityIndex].event_id;
+          }
+          return materialized;
         },
       ),
     );
@@ -381,7 +427,57 @@ export function createCharacterEventAnalysis({
       schema_valid: true,
       domain_valid: true,
     }, "event");
-    const events = dedupeEvents(enrichedEvents).map((event) => normalizeEvent(event));
+    const updatedByCurrentIndex = new Map(
+      enrichedEvents
+        .map((event) => {
+          const index = currentEventIndexes.get(eventContinuityKey(event));
+          if (index === undefined) return [index, event];
+          const current = currentFloorEvents[index];
+          return [index, {
+            ...event,
+            pregnancy_relevance: {
+              ...(event.pregnancy_relevance ?? {}),
+              gestational_subject_ids: [
+                ...(current.pregnancy_relevance?.gestational_subject_ids ?? []),
+              ],
+              counterpart_ids: [
+                ...(current.pregnancy_relevance?.counterpart_ids ?? []),
+              ],
+            },
+            participants: (event.participants ?? []).map((participant) => {
+              const currentParticipant = (current.participants ?? []).find(
+                (candidate) => candidate.event_role === participant.event_role &&
+                  candidate.display_name === participant.display_name,
+              );
+              return currentParticipant?.character_id
+                ? {...participant, character_id: currentParticipant.character_id}
+                : participant;
+            }),
+          }];
+        })
+        .filter(([index]) => index !== undefined),
+    );
+    const events = dedupeEvents([
+      ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
+      ...enrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
+    ]).map((event) => normalizeEvent(event));
+    const characterRegistry = normalizeCharacterRegistry(
+      execution.reason === "manual-refresh"
+        ? getFloor(target.index, target.swipeId)?.character_registry
+        : identityResult.character_registry,
+    );
+    if (execution.reason === "manual-refresh") {
+      const referencedCharacterIds = new Set(
+        events.flatMap((event) => (event.participants ?? [])
+          .map((participant) => participant?.character_id)
+          .filter(Boolean)),
+      );
+      for (const [characterId, entry] of Object.entries(identityResult.character_registry.entities ?? {})) {
+        if (referencedCharacterIds.has(characterId) &&
+            !characterRegistry.entities[characterId])
+          characterRegistry.entities[characterId] = entry;
+      }
+    }
 
     const analyzedAt = new Date().toISOString();
     const analysis = commitAnalysis(savedAnalysis, {
@@ -410,7 +506,7 @@ export function createCharacterEventAnalysis({
       await commitFloorPatch(target, "event", {
         analysis,
         events,
-        character_registry: identityResult.character_registry,
+        character_registry: characterRegistry,
       }, {
         operation_type: "event-analysis-patch",
         execution,

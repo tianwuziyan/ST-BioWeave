@@ -44,6 +44,7 @@ import {
   hasSwipeStructure,
   isCharacterMessage,
 } from "../storage/store.js";
+import { normalizeHostMessageRole } from "../core/message-role.js";
 import {
   differenceStoryTime,
   normalizeStoryTime,
@@ -108,12 +109,9 @@ function messageText(message, swipeId = 0) {
   return messagePartText(message.mes ?? message.content ?? message.message);
 }
 function messageRole(message) {
-  const role = String(message?.role ?? "")
-    .trim()
-    .toLowerCase();
-  if (["user", "assistant", "system"].includes(role)) return role;
-  if (message?.is_system === true) return "system";
-  if (message?.is_user === true) return "user";
+  const role = normalizeHostMessageRole(message);
+  if (role === "user") return "user";
+  if (role === "system") return "system";
   return "assistant";
 }
 function messageFloor(message, index, storedVersion = null) {
@@ -2602,7 +2600,11 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
-  async function buildFloorAnalysisInput(target, token) {
+  async function buildFloorAnalysisInput(
+    target,
+    token,
+    { preserveCurrentFloorState = false } = {},
+  ) {
     const chatData = store.getChat(token.chatId);
     const derived = await collectCurrentDerivedState(token, chatData);
     const previous = await findPreviousSuccessfulBioWeave(target);
@@ -2610,6 +2612,14 @@ export function createEventAnalysisCoordinator({
       analysis: previous.analysis,
       events: previous.events,
     };
+    const currentFloorData = preserveCurrentFloorState
+      ? store.getFloor?.(target.index, target.swipeId)
+      : null;
+    const currentFloorVersion = floorVersionFromData(currentFloorData);
+    const currentFloorMatches = Boolean(
+      currentFloorData &&
+      sameFloorVersion(currentFloorVersion, target.version),
+    );
     const characterRegistry = normalizeCharacterRegistry(
       previous.character_registry,
     );
@@ -2691,6 +2701,9 @@ export function createEventAnalysisCoordinator({
     const existingEvents = dedupeEvents([
       ...(Array.isArray(previous.events) ? previous.events : []),
       ...discoveryWindowEvents,
+      ...(currentFloorMatches && Array.isArray(currentFloorData.events)
+        ? currentFloorData.events
+        : []),
     ]);
     const characterContext = characterContextResolver(
       context,
@@ -2790,7 +2803,9 @@ export function createEventAnalysisCoordinator({
             ? "persisted-reuse"
             : "reuse";
       await assertExecutionTargetCurrent(execution, target, token);
-      const analysisInput = await buildFloorAnalysisInput(target, token);
+      const analysisInput = await buildFloorAnalysisInput(target, token, {
+        preserveCurrentFloorState: execution.reason === "manual-refresh",
+      });
       analysisInput.world_model = cloneWorldValue(finalWorldModel);
       notify({
         type: "EVENT_ANALYSIS_STATUS_CHANGED",

@@ -212,6 +212,28 @@ test('Snapshot validation rejects wrong Chat, Swipe, Floor Version, and User own
   assert.equal(validateSnapshot(snapshot, { owner: { role: 'assistant', swipe_id: 0, floor_version: version } }).ok, true);
 });
 
+test('Snapshot validation accepts a hidden SillyTavern Character owner', () => {
+  const snapshot = validSnapshot({ swipe_id: 0 });
+  assert.equal(validateSnapshot(snapshot, {
+    owner: {
+      is_user: false,
+      is_system: true,
+      extra: {},
+      swipe_id: 0,
+      floor_version: snapshot.checkpoint,
+    },
+  }).ok, true);
+  assert.equal(validateSnapshot(snapshot, {
+    owner: {
+      is_user: false,
+      is_system: true,
+      extra: { type: 'narrator' },
+      swipe_id: 0,
+      floor_version: snapshot.checkpoint,
+    },
+  }).ok, false);
+});
+
 test('Swipe 0 is a real owner and User entries never count as Character Floors', () => {
   const floors = [
     { role: 'assistant', checkpoint: checkpoint({ floor: 1, swipe_id: 0 }) },

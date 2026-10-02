@@ -993,7 +993,7 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 | Analysis failure after prior success | Keep the prior successful Events and record the failed attempt |
 | Analysis is cancelled or the Chat becomes stale | Release execution resources; preserve the previous success and ignore late results |
 | Successful current Floor, non-force request | Skip without another AI call |
-| Manual force succeeds | Replace that Floor Version's prior successful Events |
+| Manual force succeeds | Update that Floor Version in place; a manual supplement preserves valid current-Floor Events omitted by the response and keeps matching canonical Event IDs |
 | Manual force fails | Record `failed`/`last_error`; keep prior successful Events active |
 | Lifecycle payload has a stable message ID | Resolve by message identity before numeric array index |
 | UI mount/open/reopen | Read Runtime DTO only; never request Event Analysis |
@@ -1085,7 +1085,8 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
   Floor supplies `existing_bioweave` and its own `character_registry` snapshot,
   no prior valid Floor yields an empty previous bundle, stale candidates are
   skipped, the target Floor never self-references, repeated force analysis
-  replaces rather than accumulates its Events or identity snapshot, and the
+  manual supplement preserves valid same-Version Events omitted by the response
+  while matching facts retain their Event and identity IDs; the
   final Prompt/request contains no deleted or Chat-only identity.
 - Runtime integration assertions that lifecycle analysis requires no UI
   subscriber, UI reopen causes no AI call, stable message IDs and active Swipes

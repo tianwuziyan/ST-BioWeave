@@ -4,6 +4,7 @@ import {
   sameFloorVersion,
 } from '../runtime/floor.js';
 import { reduceState, STATE_SCHEMA_VERSION } from './state.js';
+import { isCharacterMessageRole } from './message-role.js';
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -102,9 +103,7 @@ function ownerMessage(owner) {
 
 function isCharacterFloorOwner(owner) {
   const message = ownerMessage(owner);
-  if (!message || message.is_user === true || message.is_system === true) return false;
-  const role = String(message.role ?? '').trim().toLowerCase();
-  return role !== 'user' && role !== 'system';
+  return isCharacterMessageRole(message);
 }
 
 function ownerSwipeId(owner) {
@@ -196,9 +195,10 @@ function floorEntry(entry) {
 }
 
 function isValidCharacterFloorEntry(entry) {
-  if (!entry || entry.is_user === true || entry.is_system === true) return false;
-  const role = String(entry.role ?? entry.message?.role ?? '').trim().toLowerCase();
-  if (role === 'user' || role === 'system') return false;
+  const message = entry?.message && typeof entry.message === 'object'
+    ? entry.message
+    : entry;
+  if (!entry || !isCharacterMessageRole(message)) return false;
   const errors = [];
   return validateCheckpoint(floorEntry(entry), errors) && errors.length === 0;
 }
