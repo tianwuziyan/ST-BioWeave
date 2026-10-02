@@ -1,4 +1,4 @@
-import { compareStoryTime } from '../story/time.js';
+import { compareStoryTime, differenceStoryTime } from '../story/time.js';
 import { deterministicDigest } from './projection.js';
 import { buildProjectionTimingCycleId } from './projection-timing.js';
 import {
@@ -13,6 +13,7 @@ export const TRACKING_WINDOW_STATUSES = Object.freeze([
   'open',
   'resolved_pregnant',
   'terminated',
+  'expired',
 ]);
 export const TRACKING_WINDOW_TERMINAL_REASONS = Object.freeze({
   pregnancy_confirmation: 'resolved_pregnant',
@@ -27,6 +28,8 @@ const WINDOW_FIELDS = new Set([
   'terminal_reason', 'terminal_story_time', 'terminal_at_floor_version',
   'created_at', 'updated_at',
 ]);
+
+export const TRACKING_WINDOW_EXPIRATION_REASON = 'tracking_window_horizon_reached';
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -130,7 +133,8 @@ export function validateTrackingWindow(value) {
   if (value.terminal_event_id !== null && value.terminal_event_id !== undefined && !text(value.terminal_event_id)) errors.push('tracking_window.terminal_event_id:invalid');
   if (value.terminal_reason !== null && value.terminal_reason !== undefined && !text(value.terminal_reason)) errors.push('tracking_window.terminal_reason:invalid');
   if (value.status === 'open' && (value.terminal_event_id || value.terminal_reason)) errors.push('tracking_window.open_terminal_fields:invalid');
-  if (value.status !== 'open' && (!text(value.terminal_event_id) || !text(value.terminal_reason))) errors.push('tracking_window.terminal_fields:required');
+  if (value.status !== 'open' && value.status !== 'expired' && (!text(value.terminal_event_id) || !text(value.terminal_reason))) errors.push('tracking_window.terminal_fields:required');
+  if (value.status === 'expired' && (!text(value.terminal_reason) || value.terminal_event_id)) errors.push('tracking_window.expired_terminal_fields:invalid');
   return {ok: errors.length === 0, errors};
 }
 
@@ -157,6 +161,61 @@ export function normalizeTrackingWindow(value = {}) {
   const validation = validateTrackingWindow(normalized);
   if (!validation.ok) throw new TypeError(validation.errors.join(', '));
   return normalized;
+}
+
+function profileIdentity(profile) {
+  return {
+    species: text(profile?.species ?? profile?.biological_context?.species),
+    biologicalType: text(profile?.biological_type ?? profile?.biological_context?.biological_type),
+  };
+}
+
+/** Resolve only an exact World mechanism declaration. Missing or ambiguous
+ * identity is intentionally indistinguishable from an unavailable horizon. */
+export function resolveTrackingWindowHorizon({worldModel = {}, subjectProfile = null, mechanismKey: requestedMechanism} = {}) {
+  const identity = profileIdentity(subjectProfile);
+  const mechanism = text(requestedMechanism)?.toLowerCase();
+  if (!identity.species || !identity.biologicalType || !mechanism) return null;
+  const species = (Array.isArray(worldModel?.species) ? worldModel.species : [])
+    .filter(item => text(item?.name) === identity.species);
+  if (species.length !== 1) return null;
+  const types = (Array.isArray(species[0].biological_types) ? species[0].biological_types : [])
+    .filter(item => text(item?.name) === identity.biologicalType);
+  if (types.length !== 1) return null;
+  const mechanisms = (Array.isArray(types[0].reproductive_mechanisms) ? types[0].reproductive_mechanisms : [])
+    .filter(item => text(item?.key)?.toLowerCase() === mechanism);
+  if (mechanisms.length !== 1) return null;
+  const horizon = mechanisms[0].tracking_window_horizon;
+  const maxDays = Number(horizon?.max_story_days);
+  return horizon?.schema_version === 1 && Number.isInteger(maxDays) && maxDays >= 0
+    ? {schema_version: 1, max_story_days: maxDays}
+    : null;
+}
+
+export function evaluateTrackingWindowHorizon(window, {worldModel = {}, subjectProfile = null, currentStoryTime = null, now = () => new Date().toISOString(), floorVersion = null} = {}) {
+  if (!window || window.status !== 'open') return window;
+  const horizon = resolveTrackingWindowHorizon({worldModel, subjectProfile, mechanismKey: window.mechanism_key});
+  if (!horizon || !currentStoryTime || !window.opened_story_time) return window;
+  const difference = differenceStoryTime(currentStoryTime, window.opened_story_time);
+  if (!difference || difference.unit !== 'day' || !Number.isFinite(Number(difference.value)) || Number(difference.value) < horizon.max_story_days) return window;
+  return normalizeTrackingWindow({
+    ...window,
+    status: 'expired',
+    terminal_event_id: null,
+    terminal_reason: TRACKING_WINDOW_EXPIRATION_REASON,
+    terminal_story_time: clone(currentStoryTime),
+    terminal_at_floor_version: clone(floorVersion),
+    updated_at: typeof now === 'function' ? now() : window.updated_at,
+  });
+}
+
+export function evaluateTrackingWindowLifecycles(windows = [], options = {}) {
+  return (Array.isArray(windows) ? windows : [])
+    .map(window => evaluateTrackingWindowHorizon(window, {
+      ...options,
+      subjectProfile: options.subjectProfiles?.[window.subject_id] ?? options.subjectProfile,
+    }))
+    .sort((left, right) => String(left?.tracking_window_id ?? '').localeCompare(String(right?.tracking_window_id ?? '')));
 }
 
 function createWindow({chatId, subjectId, mechanism, event, now}) {
@@ -215,7 +274,7 @@ function closeWindow(window, event, now) {
   window.updated_at = typeof now === 'function' ? now() : window.updated_at;
 }
 
-export function deriveTrackingWindows(events = [], {chatId, now = () => new Date().toISOString()} = {}) {
+export function deriveTrackingWindows(events = [], {chatId, now = () => null} = {}) {
   const normalizedEvents = [...new Map(
     (Array.isArray(events) ? events : [])
       .map(validEvent)

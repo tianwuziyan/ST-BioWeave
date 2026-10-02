@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify Floor/Swipe ownership, lifecycle invalidation, stale guards, and readback for Phase 2 lifecycle records."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Verify World Model authority, Full/Supplement canonicalization, evidence boundaries, and Patch behavior."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Story Time, Event Analysis lifecycle, and no factual inference from Window/Projection."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Preserve Phase 1 Window identity/grouping/status boundaries while designing expiration."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace World, Window, Tracking, Projection, scheduler, and persistence ownership across layers."}

@@ -234,7 +234,7 @@ function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false
       `${path}.reproductive_mechanisms[${mechanismIndex}]`,
     ),
   );
-  return {
+  const normalized = {
     name: normalizeBiologicalTypeName(raw.name, parentSpeciesName),
     description: localizedWorldModelText(raw.description),
     capabilities: Object.fromEntries(
@@ -252,6 +252,7 @@ function normalizeBiologicalType(raw, index, parentSpeciesName, { strict = false
     reproductive_mechanisms: reproductiveMechanisms,
     special_rules: stringList(raw.special_rules, localizedWorldModelText, { path: `${path}.special_rules` }),
   };
+  return normalized;
 }
 
 function normalizeReproductiveMechanism(raw, path) {
@@ -278,7 +279,7 @@ function normalizeReproductiveMechanism(raw, path) {
       received: typeof evidence,
       validator: 'normalizeReproductiveMechanism',
     });
-  return {
+  const normalized = {
     key: nullableText(raw.key),
     label: nullableText(raw.label),
     pathway: nullableText(raw.pathway),
@@ -295,6 +296,21 @@ function normalizeReproductiveMechanism(raw, path) {
       path: `${path}.evidence`,
     }),
   };
+  const horizon = normalizeTrackingWindowHorizon(raw.tracking_window_horizon, `${path}.tracking_window_horizon`);
+  if (horizon) normalized.tracking_window_horizon = horizon;
+  return normalized;
+}
+
+function normalizeTrackingWindowHorizon(raw, path) {
+  if (raw === undefined || raw === null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {path, expected: 'object|null'});
+  const unknown = Object.keys(raw).find(key => !['schema_version', 'max_story_days'].includes(key));
+  if (unknown) throw invalidWorldModel('WORLD_MODEL_INVALID', {path: `${path}.${unknown}`});
+  const maxDays = Number(raw.max_story_days);
+  if (raw.schema_version !== 1 || !Number.isInteger(maxDays) || maxDays < 0)
+    throw invalidWorldModel('WORLD_MODEL_INVALID', {path, expected: '{schema_version:1,max_story_days:integer>=0}'});
+  return {schema_version: 1, max_story_days: maxDays};
 }
 
 function canonicalSpeciesName(value) {
@@ -800,6 +816,7 @@ function factDeltaFieldForOperation(operation) {
   if (operation.op === 'ADD_TYPE') return 'Type_Identity';
   if (operation.op === 'ADD_SPECIAL_RULE') return 'Special_Rule';
   if (operation.op === 'ADD_MECHANISM') return 'Reproductive_Mechanism';
+  if (operation.op === 'SET_MECHANISM_HORIZON') return 'Tracking_Window_Horizon';
   if (operation.op === 'ADD_EXCEPTION') return 'Exception';
   if (operation.op === 'ADD_UNKNOWN') return 'Unknown';
   if (operation.op === 'ADD_PROJECTION_RULE') return 'Projection_Rule';
@@ -1924,13 +1941,15 @@ function semanticPatchValueEqual(left, right) {
 }
 
 function patchMechanismSemanticValue(value) {
-  return {
+  const result = {
     key: value?.key ?? null,
     label: value?.label ?? null,
     pathway: value?.pathway ?? null,
     carrying_compatibility: value?.carrying_compatibility ?? null,
     world_model_rule_refs: [...new Set(value?.world_model_rule_refs ?? [])].sort(),
   }
+  if (Object.hasOwn(value ?? {}, 'tracking_window_horizon')) result.tracking_window_horizon = value.tracking_window_horizon ?? null;
+  return result;
 }
 
 function scopeCompatiblePatchUnits(units, delta) {
@@ -3517,6 +3536,7 @@ const WORLD_MODEL_PATCH_V2_OPERATIONS = Object.freeze([
   'SET_FIELD',
   'ADD_SPECIAL_RULE',
   'ADD_MECHANISM',
+  'SET_MECHANISM_HORIZON',
   'ADD_EXCEPTION',
   'ADD_UNKNOWN',
   'ADD_PROJECTION_RULE',
@@ -3550,7 +3570,7 @@ const WORLD_MODEL_PATCH_V2_SET_PATHS = Object.freeze({
 const V2_ENTITY_FIELDS = Object.freeze({
   species: Object.freeze(['name', 'description', 'biological_types']),
   type: Object.freeze(['name', 'description', 'capabilities', 'reproduction_rules', 'lifecycle', 'reproductive_mechanisms', 'special_rules']),
-  mechanism: Object.freeze(['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence']),
+  mechanism: Object.freeze(['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence', 'tracking_window_horizon']),
   exception: Object.freeze(['statement', 'applies_to', 'evidence']),
 });
 
@@ -3629,6 +3649,7 @@ function validateV2Mechanism(value, path) {
     if (mechanism[field] !== undefined && (!Array.isArray(mechanism[field]) || !mechanism[field].every((item) => typeof item === 'string')))
       throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_INVALID', { path: `${path}.${field}`, expected: 'array<string>' });
   }
+  if (mechanism.tracking_window_horizon !== undefined) normalizeTrackingWindowHorizon(mechanism.tracking_window_horizon, `${path}.tracking_window_horizon`);
   return mechanism;
 }
 
@@ -3677,6 +3698,11 @@ function validateV2Operation(operation, index) {
     v2ExactKeys(value, ['op', 'target', 'mechanism'], path);
     validateV2Target(value.target, 'biological_type');
     validateV2Mechanism(value.mechanism, `${path}.mechanism`);
+  } else if (value.op === 'SET_MECHANISM_HORIZON') {
+    v2ExactKeys(value, ['op', 'target', 'mechanism_key', 'tracking_window_horizon'], path);
+    validateV2Target(value.target, 'biological_type');
+    v2RequiredText(value.mechanism_key, `${path}.mechanism_key`);
+    normalizeTrackingWindowHorizon(value.tracking_window_horizon, `${path}.tracking_window_horizon`);
   } else if (value.op === 'ADD_EXCEPTION') {
     v2ExactKeys(value, ['op', 'exception'], path);
     const exception = v2Record(value.exception, `${path}.exception`);
@@ -3741,7 +3767,7 @@ function v2CanonicalOperation(operation) {
   if (operation.op === 'ADD_TYPE') {
     return { ...operation, target: resolveWorldModelPatchV2Target(operation.target) };
   }
-  if (['SET_FIELD', 'ADD_SPECIAL_RULE', 'ADD_MECHANISM'].includes(operation.op)) {
+  if (['SET_FIELD', 'ADD_SPECIAL_RULE', 'ADD_MECHANISM', 'SET_MECHANISM_HORIZON'].includes(operation.op)) {
     return { ...operation, target: resolveWorldModelPatchV2Target(operation.target) };
   }
   return operation;
@@ -3842,6 +3868,15 @@ export function classifyWorldModelPatchV2(raw, existingModel) {
       const classification = v2PendingClassification(pending, `mechanism:${canonicalSpeciesName(operation.target.species_name)}:${type.name}:${candidate.key}`, candidate, v2CollectionClassification(type.reproductive_mechanisms, candidate, (item) => item.key, v2MechanismContent));
       if (classification === 'REJECT') throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_IDENTITY_CONFLICT', { path: 'operation.mechanism.key' });
       return finalize({ operation, classification, target: { kind: 'biological_type', species_name: canonicalSpeciesName(operation.target.species_name), type_name: type.name, mechanism_key: candidate.key } });
+    }
+    if (operation.op === 'SET_MECHANISM_HORIZON') {
+      const type = v2Type(working, canonicalSpeciesName(operation.target.species_name), normalizeBiologicalTypeName(operation.target.type_name, operation.target.species_name));
+      if (!type) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.target' });
+      const mechanism = type.reproductive_mechanisms.find(item => item.key === operation.mechanism_key);
+      if (!mechanism) throw invalidWorldModelPatchV2('WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND', { path: 'operation.mechanism_key' });
+      const value = normalizeTrackingWindowHorizon(operation.tracking_window_horizon, 'operation.tracking_window_horizon');
+      const classification = v2Equal(mechanism.tracking_window_horizon ?? null, value) ? 'NO-OP' : 'CHANGE';
+      return finalize({ operation, classification, target: { kind: 'biological_type', species_name: canonicalSpeciesName(operation.target.species_name), type_name: type.name, mechanism_key: mechanism.key } });
     }
     if (operation.op === 'ADD_EXCEPTION') {
       const candidate = v2NormalizeException(operation.exception);
@@ -4036,6 +4071,7 @@ function v2StructuredOperationEvidencePath(operation) {
   if (operation?.op === 'SET_FIELD') return 'operation.value'
   if (operation?.op === 'ADD_SPECIAL_RULE') return 'operation.value'
   if (operation?.op === 'ADD_EXCEPTION') return 'operation.exception.statement'
+  if (operation?.op === 'SET_MECHANISM_HORIZON') return 'operation.tracking_window_horizon'
   if (operation?.op === 'ADD_UNKNOWN') return 'operation.unknown'
   return 'operation'
 }
@@ -4050,6 +4086,7 @@ function v2CanonicalTargetPath(operation) {
   if (operation?.op === 'DISABLE_PROJECTION_RULE') return `world.projection_rules.${operation.projection_rule_id ?? '<unknown>'}`;
   if (operation?.op === 'ADD_SPECIAL_RULE') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.special_rules`;
   if (operation?.op === 'ADD_MECHANISM') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.reproductive_mechanisms`;
+  if (operation?.op === 'SET_MECHANISM_HORIZON') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.reproductive_mechanisms.${operation.mechanism_key ?? '<unknown>'}.tracking_window_horizon`;
   if (target.kind === 'world') return `world.${(operation.path ?? []).join('.')}`;
   if (target.kind === 'species') return `species.${target.species_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
   if (target.kind === 'biological_type') return `species.${target.species_name ?? '<unknown>'}.biological_types.${target.type_name ?? '<unknown>'}.${(operation.path ?? []).join('.')}`;
@@ -4180,6 +4217,13 @@ function v2ApplyAddMechanism(model, operation) {
   type.reproductive_mechanisms.push(mechanism);
 }
 
+function v2ApplySetMechanismHorizon(model, operation) {
+  const type = v2MutableTarget(model, operation.target);
+  const mechanism = type.reproductive_mechanisms.find(item => item.key === operation.mechanism_key);
+  if (!mechanism) v2MergeError('operation.mechanism_key', 'WORLD_MODEL_PATCH_V2_TARGET_NOT_FOUND');
+  mechanism.tracking_window_horizon = normalizeTrackingWindowHorizon(operation.tracking_window_horizon, 'operation.tracking_window_horizon');
+}
+
 function v2ExceptionIdentity(exception) {
   return `${v2TextIdentity(exception.statement)}|${v2TextIdentity(exception.applies_to)}`;
 }
@@ -4230,6 +4274,7 @@ function v2ApplyClassifiedOperations(model, classified) {
     else if (operation.op === 'SET_FIELD') v2ApplySetField(model, operation);
     else if (operation.op === 'ADD_SPECIAL_RULE') v2ApplyAddSpecialRule(model, operation);
     else if (operation.op === 'ADD_MECHANISM') v2ApplyAddMechanism(model, operation);
+    else if (operation.op === 'SET_MECHANISM_HORIZON') v2ApplySetMechanismHorizon(model, operation);
     else if (operation.op === 'ADD_EXCEPTION') v2ApplyAddException(model, operation);
     else if (operation.op === 'ADD_UNKNOWN') v2ApplyAddUnknown(model, operation);
     else if (operation.op === 'ADD_PROJECTION_RULE') v2ApplyAddProjectionRule(model, operation);

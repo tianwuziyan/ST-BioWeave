@@ -40,6 +40,7 @@ export const WORLD_MODEL_SCHEMA = Object.freeze({
               carrying_compatibility: null,
               world_model_rule_refs: [],
               evidence: [],
+              tracking_window_horizon: null,
             },
           ],
           lifecycle: {

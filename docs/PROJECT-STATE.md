@@ -174,10 +174,11 @@ self-evidence loop.
 
 ## Pre-confirmation Projection Timing Phase 1
 
-Tracking Window Phase 1 is now implemented as a separate lifecycle boundary.
+Tracking Window Phase 1 is now implemented as a separate lifecycle boundary;
+Phase 2 adds the World-authoritative horizon and deterministic expiration.
 It owns deterministic Window/cycle binding, compatible exposure grouping,
-`open` / `resolved_pregnant` / `terminated`, and active Tracking filtering.
-It does not implement a Story-Time horizon, `expired`, or negative resolution.
+`open` / `resolved_pregnant` / `terminated` / `expired`, and active Tracking
+filtering. It still does not implement negative resolution.
 
 Phase 1 currently includes:
 
@@ -289,10 +290,10 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Character Facts/Profile | IMPLEMENTED; derived Floor/runtime data, not an independent authoritative root |
 | BiologicalEvent | PRODUCTION / AUTOMATED VERIFIED |
 | Tracking Subject/Candidate | IMPLEMENTED / AUTOMATED VERIFIED |
-| Tracking Window | PARTIAL / PHASE 1 IMPLEMENTED; horizon/expired and negative resolution remain deferred |
+| Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; horizon/expired implemented, negative resolution remains deferred |
 | StateReducer | PRODUCTION; lifecycle coverage remains bounded by implemented Event contracts |
 | Pregnancy Episode | PARTIAL |
-| Contributor Attribution | PARTIAL |
+| Contributor Attribution | PARTIAL; factual Event/State contracts and Projection Context read-model bridge implemented; full orchestration/UI remains deferred |
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |
@@ -331,7 +332,7 @@ regression, or an explicit contract change.
 ## Known Open Items
 
 - Pre-confirmation Timing real-host behavioral smoke;
-- Tracking Window Phase 2 horizon/expired semantics;
+- Tracking Window Phase 2 advanced Episode orchestration and negative resolution;
 - completion of Contributor Attribution;
 - GA/EDD;
 - Genealogy;

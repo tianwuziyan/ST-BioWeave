@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Check lifecycle-only persistence against authoritative Floor/Swipe/version rules."}
+{"file":".trellis/spec/domain/world-model.md","reason":"Check horizon contract and Full/Patch fail-closed behavior against World authority."}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Check that ordinary Story-Time ticks do not trigger Event Analysis or factual Event creation."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Check Phase 2 design does not alter frozen Phase 1 semantics."}

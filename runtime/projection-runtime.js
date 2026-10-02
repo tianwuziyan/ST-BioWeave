@@ -96,6 +96,7 @@ export function createProjectionRuntime({
   if (typeof saveEvolutionDecision !== "function") throw new TypeError("PROJECTION_EVOLUTION_SAVE_REQUIRED");
 
   const inFlight = new Map();
+  const lifecycleInFlight = new Map();
   let destroyed = false;
 
   async function executionIdentity(inputs) {
@@ -314,6 +315,40 @@ export function createProjectionRuntime({
     return promise;
   }
 
+  /** Deterministic lifecycle-only path. It may append Projection lifecycle
+   * records and refresh context, but it never evaluates eligibility, calls
+   * process(), or reaches the analyzer/generation boundary. */
+  async function tickLifecycleOnly({reason = 'story-time-lifecycle'} = {}) {
+    if (destroyed) return {status: 'destroyed'};
+    if (enabledResolver() === false) return {status: 'disabled'};
+    const inputs = await collectInputs();
+    if (!inputs?.floor?.version || inputs.currentStateStatus === 'STATE_ERROR') return {status: 'unavailable'};
+    const execution_id = await executionIdentity(inputs);
+    if (lifecycleInFlight.has(execution_id)) return lifecycleInFlight.get(execution_id);
+    const work = (async () => {
+      const views = await getProjectionViews({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor});
+      const expiredWindows = new Map((inputs.trackingWindows ?? []).filter(window => window.status === 'expired').map(window => [window.tracking_window_id, window]));
+      let expired = 0;
+      for (const view of views?.all ?? []) {
+        const window = expiredWindows.get(view.tracking_window_id);
+        if (!window || view.tracking_scope !== 'pre_confirmation' || view.deleted || ['realized', 'contradicted', 'expired'].includes(view.factual_status)) continue;
+        await saveEvolutionDecision({
+          chatId: inputs.floor.version.chat_id,
+          ownerFloor: floorOwner(inputs.floor),
+          floorVersion: inputs.floor.version,
+          projectionId: view.projection_id,
+          decision: 'expired',
+          evidenceRefs: [`tracking_window:${window.tracking_window_id}`],
+        });
+        expired += 1;
+      }
+      await refreshProjectionContext?.({chatId: inputs.floor.version.chat_id});
+      return {status: 'success', execution_id, expired_projections: expired};
+    })().finally(() => lifecycleInFlight.delete(execution_id));
+    lifecycleInFlight.set(execution_id, work);
+    return work;
+  }
+
   async function getBusinessData() {
     let floor;
     try {
@@ -352,6 +387,7 @@ export function createProjectionRuntime({
 
   return {
     process,
+    tickLifecycleOnly,
     refreshProjection: () => process({reason: "projection-refresh"}),
     getBusinessData,
     deleteProjection,

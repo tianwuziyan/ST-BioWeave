@@ -38,3 +38,37 @@ export function aggregateContributorAttribution({pregnancy_id, subject_id, candi
   const unresolved = conflicts.length > 0 || normalizedCandidates.some(candidate => candidate.compatibility === null) || [...candidateKeys].some(key => !confirmed.has(key) && !excluded.has(key));
   return createContributorAttribution({pregnancy_id, subject_id, confirmed: [...confirmed.values()], excluded: [...excluded.values()], candidates: normalizedCandidates, unresolved, conflicts});
 }
+
+export function attributionBySubjectFromCurrentState(currentState = {}) {
+  const result = {};
+  const characters = isRecord(currentState?.characters) ? currentState.characters : {};
+  for (const [subjectId, character] of Object.entries(characters)) {
+    const episodes = isRecord(character?.pregnancy?.episodes) ? character.pregnancy.episodes : {};
+    for (const episode of Object.values(episodes)) {
+      const contributors = episode?.contributors;
+      if (!isRecord(contributors)) continue;
+      const confirmed = Array.isArray(contributors.confirmed) ? contributors.confirmed : [];
+      const excluded = Array.isArray(contributors.excluded) ? contributors.excluded : [];
+      const conflicts = Array.isArray(contributors.conflicts) ? contributors.conflicts : [];
+      if (!confirmed.length && !excluded.length && !conflicts.length) continue;
+      const current = result[subjectId] ?? {
+        pregnancy_id: episode?.pregnancy_id ?? null,
+        subject_id: subjectId,
+        confirmed: [],
+        excluded: [],
+        candidates: [],
+        unresolved: false,
+        conflicts: [],
+      };
+      current.confirmed.push(...confirmed.map(clone));
+      current.excluded.push(...excluded.map(clone));
+      current.conflicts.push(...conflicts.map(clone));
+      current.unresolved = current.unresolved || conflicts.length > 0;
+      result[subjectId] = current;
+    }
+  }
+  for (const attribution of Object.values(result)) {
+    attribution.unresolved = attribution.unresolved || attribution.confirmed.length === 0;
+  }
+  return result;
+}

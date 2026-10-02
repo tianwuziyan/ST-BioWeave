@@ -8,8 +8,10 @@ Events, exposure tracking, Pregnancy Episodes, and Projections.
 
 The current branch implements Tracking Subjects/Candidates and the independent
 Phase 1 Window object/lifecycle derived from valid pregnancy-relevant Events.
-Phase 1 is `PARTIAL / PHASE 1 IMPLEMENTED`: it deliberately excludes
-Story-Time horizon/`expired` and `resolved_not_pregnant`. Sections marked
+Phase 2 adds the World-authoritative mechanism horizon and deterministic
+Story-Time-only `expired` lifecycle. The overall feature remains
+`PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED`; `resolved_not_pregnant` remains
+unimplemented. Sections marked
 **Target Contract** remain the design baseline for later phases. Sections
 marked **Current Implementation** describe the current checkout.
 
@@ -21,7 +23,7 @@ but it must not be treated as the Window owner or as Window expiration.
 ### Current Implementation: Phase 1
 
 Phase 1 owns deterministic Window/cycle identity, compatible exposure grouping,
-Floor persistence/readback, `open` / `resolved_pregnant` / `terminated`, active
+Floor persistence/readback, `open` / `resolved_pregnant` / `terminated` / `expired`, active
 Tracking filtering, Timing cycle binding, and the pre-confirmation Projection
 Eligibility bridge. `pregnancy_confirmation` resolves an open Window;
 `pregnancy_loss` and `abortion` terminate it. Conception, suspicion, symptoms,
@@ -241,15 +243,14 @@ Tracking DTO to UI/runtime consumers. `ui/characters.js` consumes active
 The Projection domain already has its own `realized`, `contradicted`, and
 `expired` lifecycle records, append-only timeline, Story Time eligibility, and
 Floor ownership. Projection expiration is not Pregnancy Exposure Tracking
-Window expiration. A Projection may use exposure Events as provenance and may
-eventually react to Window state, but it cannot be used as evidence that a
-Window expired, and a Window expiration cannot mutate a Projection or Event
-without an explicit future contract.
+Window expiration. In Phase 2, only a Projection with explicit
+`tracking_scope: pre_confirmation` and `tracking_window_id` may receive a
+Projection-owner lifecycle record when that Window expires; an unbound
+Projection remains active. Window Runtime never writes the Projection timeline.
 
 The existing `projection_rules[]` supports generic elapsed-event and
-story-time triggers. This is reusable timing infrastructure, not an already
-implemented exposure Window horizon. Any future bridge between the two
-lifecycles must be explicit and preserve their separate owners.
+story-time triggers. This is reusable timing infrastructure; the Phase 2 bridge
+is explicit and preserves the separate owners.
 
 ## 9. World Model schema audit
 
@@ -261,10 +262,15 @@ Rules. It does not expose a frozen, dedicated schema for:
 - pregnancy detection/resolution horizon;
 - maximum Tracking Window horizon.
 
-The exact future field names, JSON shape, mechanism compatibility rule, and
-source of each horizon remain open design decisions. Do not equate existing
+Phase 2 freezes the canonical field
+`reproductive_mechanisms[].tracking_window_horizon` with
+`{schema_version: 1, max_story_days: non-negative integer}`. Exact subject
+species/type/mechanism binding is required; missing or ambiguous data keeps a
+Window open. Do not equate existing
 gestation duration or generic Projection trigger thresholds with these
-semantics, and do not add fields in this documentation-only task.
+semantics. Full omission is unavailable and Patch omission preserves the
+existing declaration. Horizon correction never reopens an expired or factual
+terminal Window.
 
 ## 10. Target derivation, without freezing an implementation schema
 
@@ -318,8 +324,9 @@ unresolved exposure tracking horizons.
 
 Wrong: every new exposure indefinitely resets one Window.
 
-Correct: compatible exposures join the same open Phase 1 round, and closed
-rounds do not reopen. A World-authoritative maximum horizon remains Phase 2.
+Correct: compatible exposures join the same open round, and closed rounds do
+not reopen. A World-authoritative mechanism horizon is required for expiration;
+missing/ambiguous horizon or Story Time remains open.
 
 Wrong: pregnancy confirmation automatically chooses the nearest counterpart.
 

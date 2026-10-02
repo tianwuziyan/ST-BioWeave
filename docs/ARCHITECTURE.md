@@ -75,7 +75,7 @@ flowchart TD
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
-| Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 Window identity/grouping/lifecycle and Floor persistence; horizon remains deferred |
+| Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 World-authoritative horizon lifecycle and Floor persistence |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
@@ -309,10 +309,12 @@ Pregnancy Exposure Tracking Window Phase 1 已有独立的
 `core/tracking-window.js`、`runtime/tracking-window-runtime.js` 和
 `storage/tracking-window.js` owner。Window 使用独立
 `tracking_window_timeline`，复用 Timing cycle identity，支持
-`open`、`resolved_pregnant`、`terminated`，并由 Tracking 消费 open view。
-不要把 `core/tracking.js` 的 Subject registry、`core/state.js` 的 Pregnancy
-Episode 或 `core/projection.js` 的 Projection lifecycle 当作 Window。Story-Time
-horizon、`expired`、negative resolution 和 advanced Episode orchestration 仍未实现。
+`open`、`resolved_pregnant`、`terminated`、`expired`，并由 Tracking 消费 open
+view。Phase 2 的生命周期 tick 只做 deterministic Window/Projection lifecycle；
+Projection Runtime 仍是 Projection lifecycle owner。不要把 `core/tracking.js`
+的 Subject registry、`core/state.js` 的 Pregnancy Episode 或 `core/projection.js`
+的 Projection lifecycle 当作 Window。negative resolution、Window Context
+injection 和 advanced Episode orchestration 仍未实现。
 
 Event discovery window、identity authority、Event occurrence time 和 persistence
 owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现

@@ -589,7 +589,7 @@ function normalizeJsonFact(item, index) {
     assertJsonKeys(item, new Set(['scope', 'species', 'biological_type', 'field', 'mechanism']), index)
     const mechanism = item.mechanism
     if (!mechanism || typeof mechanism !== 'object' || Array.isArray(mechanism)) throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_MECHANISM_PAYLOAD_INVALID', index)
-    assertJsonKeys(mechanism, new Set(['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence']), index)
+    assertJsonKeys(mechanism, new Set(['key', 'label', 'pathway', 'carrying_compatibility', 'world_model_rule_refs', 'evidence', 'tracking_window_horizon']), index)
     const normalized = {key: jsonFactText(mechanism.key, 'key', index)}
     for (const key of ['label', 'pathway']) if (mechanism[key] !== undefined) normalized[key] = jsonFactText(mechanism[key], key, index)
     if (mechanism.carrying_compatibility !== undefined) normalized.carrying_compatibility = jsonFactBoolean(mechanism.carrying_compatibility, 'carrying_compatibility', index)
@@ -597,6 +597,12 @@ function normalizeJsonFact(item, index) {
       if (!Array.isArray(mechanism[key]) || mechanism[key].some(value => typeof value !== 'string' || !value.trim()))
         throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_COLLECTION_INVALID', index, {field: key})
       normalized[key] = mechanism[key].map(value => value.trim())
+    }
+    if (mechanism.tracking_window_horizon !== undefined) {
+      const horizon = mechanism.tracking_window_horizon
+      if (!horizon || typeof horizon !== 'object' || Array.isArray(horizon) || horizon.schema_version !== 1 || !Number.isInteger(Number(horizon.max_story_days)) || Number(horizon.max_story_days) < 0 || Object.keys(horizon).some(key => !['schema_version', 'max_story_days'].includes(key)))
+        throw jsonFactError('WORLD_MODEL_FACT_DELTA_JSON_HORIZON_INVALID', index)
+      normalized.tracking_window_horizon = {schema_version: 1, max_story_days: Number(horizon.max_story_days)}
     }
     return {...base, mechanism: normalized}
   }

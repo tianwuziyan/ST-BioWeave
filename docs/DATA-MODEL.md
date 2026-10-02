@@ -440,9 +440,10 @@ Calendar Engine。
 
 当前 Phase 1 已冻结并实现最小 Window DTO/schema：Window 是独立
 `tracking_window_timeline` Floor root，支持多次 compatible exposure、确定性
-cycle/window ID、`open` / `resolved_pregnant` / `terminated`，并按 active
-Swipe 与 Floor Version 过滤。`resolved_not_pregnant`、`expired`、horizon
-字段仍属于后续 Phase 2，不应由 Phase 1 推导。
+cycle/window ID、`open` / `resolved_pregnant` / `terminated` / `expired`，并按 active
+Swipe 与 Floor Version 过滤。Phase 2 的 `expired` 只由 World mechanism-level
+`tracking_window_horizon` 与可比较 Story Time 触发；缺失 horizon fail closed，
+且 terminal Window 不因 horizon correction 复活。`resolved_not_pregnant` 仍未实现。
 
 `expired` 不删除 BiologicalEvent，不等于 confirmed-not-pregnant，不创建
 medical/state fact，也不修改 `reproductive_source_attribution`。只有 open
@@ -581,6 +582,12 @@ Version、hash、message version、生命周期记录、diagnostics 或存储字
 SillyTavern 的 `setExtensionPrompt()` 使用固定 key
 `bioweave_projection_context`、`IN_CHAT`、depth 4、SYSTEM role；更新覆盖同一
 slot，无有效 Projection 时写入空内容清理旧 prompt。
+
+Contributor attribution 摘要由当前 authoritative Floor/active Swipe 重建的
+`Current State → pregnancy.episodes[*].contributors` 只读映射提供给
+`attributionBySubject`。它复用现有 confirmed/excluded/conflict 语义，不推断来源、
+不创建 Event、不写入 Projection timeline，也不建立新的 persistence root；Chat、
+Floor 或 Swipe 不匹配时 fail closed。
 
 Chat 切换、active Swipe 切换、Character edit/reroll、Floor 删除和只有 User
 message 的 endpoint 都重新 resolve；没有有效 Character Floor 或读取失败时清空

@@ -93,7 +93,7 @@ isolation、sanitization、module extraction 或 AnalysisInput narrowing 时，�
 保留等价或更严格的 Character Evidence projection，并用最终
 `buildEventAnalysisMessages()` 回归验证，而不能只验证 Prompt 文案。
 - `story/*`：StoryTimeCoordinator、BioWeave 本地 canonical parser、era-aware 标准月份算术，以及独立的外部记忆适配。`story/time.js` 负责本地 Story Time 归一化、Calendar Engine 接线和 display formatter；`formatStoryTime()` 不从 display 反向推导日期。
-- Projection Context 注入：`storage/projection.js` 读取当前有效 Projection，`core/projection-context.js` 构建 DTO/Prompt，`runtime/projection-context.js` 通过 `runtime/events.js` 接入 SillyTavern `setExtensionPrompt()`；这是当前唯一的 Context injection implementation。
+- Projection Context 注入：`storage/projection.js` 读取当前有效 Projection，`core/projection-context.js` 构建 DTO/Prompt，`runtime/projection-context.js` 通过 `runtime/events.js` 接入 SillyTavern `setExtensionPrompt()`；Contributor summary 只读地从当前 authoritative Current State 的 Pregnancy Episode attribution 映射到 `attributionBySubject`，不创建事实或持久化记录。这是当前唯一的 Context injection implementation。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。
 
 普通 UI editor/popup 遵守 `UI_OPEN_FAST_PATH`：点击先同步显示可见 shell，之后

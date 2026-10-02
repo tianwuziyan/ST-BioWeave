@@ -15,7 +15,7 @@ export const PROJECTION_FACTUAL_ACTIONS = Object.freeze(['realized', 'contradict
 export const PROJECTION_LIFECYCLE_ACTIONS = Object.freeze([...PROJECTION_FACTUAL_ACTIONS, 'deleted']);
 
 const FLOOR_VERSION_FIELDS = Object.freeze(['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']);
-const PROJECTION_FIELDS = new Set(['schema_version', 'projection_id', 'owner_type', 'subject_id', 'projection_rule_id', 'development_concern_key', 'mechanism', 'source_event_ids', 'development', 'timing', 'created_at_floor_version', 'evidence_refs']);
+const PROJECTION_FIELDS = new Set(['schema_version', 'projection_id', 'owner_type', 'subject_id', 'projection_rule_id', 'development_concern_key', 'mechanism', 'source_event_ids', 'development', 'timing', 'created_at_floor_version', 'evidence_refs', 'tracking_scope', 'tracking_window_id']);
 const MECHANISM_FIELDS = new Set(['key', 'world_model_rule_refs']);
 const BASIS_FIELDS = new Set(['event_ids', 'state_refs', 'mechanism_rule_refs']);
 const DEVELOPMENT_FIELDS = new Set(['kind', 'current_basis', 'next_signal']);
@@ -112,6 +112,7 @@ export function normalizeProjection(value = {}) {
     development: {kind: source.development?.kind ?? null, current_basis: {event_ids: [...(source.development?.current_basis?.event_ids ?? [])].sort(), state_refs: [...(source.development?.current_basis?.state_refs ?? [])].sort(), mechanism_rule_refs: [...(source.development?.current_basis?.mechanism_rule_refs ?? [])].sort()}, next_signal: source.development?.next_signal ?? null},
     timing: {trigger_kind: source.timing?.trigger_kind ?? null, reference_event_id: source.timing?.reference_event_id ?? null, reference_story_time: cloneValue(source.timing?.reference_story_time ?? null), current_story_time: cloneValue(source.timing?.current_story_time ?? null), elapsed_story_days: source.timing?.elapsed_story_days ?? null},
     created_at_floor_version: cloneValue(source.created_at_floor_version ?? null), evidence_refs: [...(source.evidence_refs ?? [])].sort(),
+    tracking_scope: source.tracking_scope ?? null, tracking_window_id: source.tracking_window_id ?? null,
   };
 }
 export function createProjection(value = {}) { const normalized = normalizeProjection(value); normalized.projection_id = buildProjectionId(normalized); const result = validateProjection(normalized); if (!result.ok) throw new TypeError(result.errors.join(', ')); return cloneValue(normalized); }
@@ -125,6 +126,9 @@ export function validateProjection(value, {expectedChatId = null} = {}) {
   if (!nonEmptyText(value.subject_id)) errors.push('projection.subject_id:required');
   if (!nonEmptyText(value.projection_rule_id)) errors.push('projection.projection_rule_id:required');
   if (!nonEmptyText(value.development_concern_key)) errors.push('projection.development_concern_key:required');
+  if (value.tracking_scope !== null && value.tracking_scope !== undefined && !['pre_confirmation', 'pregnancy_stage'].includes(value.tracking_scope)) errors.push('projection.tracking_scope:invalid');
+  if (value.tracking_window_id !== null && value.tracking_window_id !== undefined && !nonEmptyText(value.tracking_window_id)) errors.push('projection.tracking_window_id:invalid');
+  if (value.tracking_scope === 'pre_confirmation' && !nonEmptyText(value.tracking_window_id)) errors.push('projection.tracking_window_id:required');
   validateMechanism(value.mechanism, 'projection.mechanism', errors); if (!uniqueTextArray(value.source_event_ids, true)) errors.push('projection.source_event_ids:invalid'); validateDevelopment(value.development, 'projection.development', errors); validateTiming(value.timing, 'projection.timing', errors); validateFloorVersion(value.created_at_floor_version, 'projection.created_at_floor_version', errors); validateEvidenceRefs(value.evidence_refs, 'projection.evidence_refs', errors, true);
   if (expectedChatId !== null && value.created_at_floor_version?.chat_id !== expectedChatId) errors.push('projection.created_at_floor_version:wrong_chat');
   if (completeFloorVersion(value.created_at_floor_version) && nonEmptyText(value.projection_id) && value.projection_id !== buildProjectionId(value)) errors.push('projection.projection_id:not_deterministic');

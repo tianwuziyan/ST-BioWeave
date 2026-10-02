@@ -225,6 +225,8 @@ export function assembleProjectionCandidate({raw, decision, rule, generationCont
     },
     created_at_floor_version: floorVersion,
     evidence_refs: evidenceRefs,
+    tracking_scope: decision.tracking_window_id ? 'pre_confirmation' : null,
+    tracking_window_id: decision.tracking_window_id ?? null,
   })
   const validation = validateProjection(candidate, {expectedChatId: floorVersion?.chat_id ?? null})
   if (!validation.ok) throw new TypeError(validation.errors.join(', '))

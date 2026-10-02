@@ -21,6 +21,12 @@ an already existing Pregnancy Episode. It never creates an episode from an
 attribution Event, never stores Candidate values, and records orphan or
 confirmed-vs-excluded conflicts as deterministic diagnostics.
 
+The Projection Context runtime may expose a read-only subject-indexed summary of
+those existing Episode contributor relationships. It must be rebuilt from the
+current authoritative Floor/active Swipe Current State, fail closed on Chat or
+Floor-Version mismatch, and must not create Events, mutate State, or persist a
+separate attribution root.
+
 Projection eligibility/evolution is a downstream pure rule layer. Its World Model
 rules may mark a future concern eligible or evaluate a later factual realization,
 contradiction, or explicit expiration, but it cannot emit or mutate a

@@ -1429,7 +1429,20 @@ export function createEventAnalysisCoordinator({
       states: validStates,
       activeEvents,
       worldModel: world?.model ?? null,
+      persistedWindows: trackingWindowPersistence
+        ? (await trackingWindowPersistence.getTrackingWindowTimeline({chatId: token.chatId})).creations
+        : [],
       characterRegistry: currentCharacterRegistryFromStates(validStates),
+      currentStoryTime: storyTimeCoordinator && validStates.length
+        ? await storyTimeCoordinator.resolveFloorStoryTime(validStates.at(-1))
+        : null,
+      subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
+        participant.character_id,
+        {
+          species: participant.biological_context?.species ?? null,
+          biological_type: participant.biological_context?.biological_type ?? null,
+        },
+      ]))),
     };
   }
   async function collectActiveEvents(token = chat.token()) {
@@ -1610,7 +1623,7 @@ export function createEventAnalysisCoordinator({
       activeEvents,
       characterRegistry,
     } = trackingInputs;
-    const registry = trackingRuntime.buildTrackingRegistry(trackingInputs);
+    const registry = trackingRuntime.buildTrackingRegistry({...trackingInputs, chatId: token.chatId});
     let currentFloor = null;
     try {
       currentFloor = await resolveCurrentBioWeaveFloor();
@@ -1702,6 +1715,7 @@ export function createEventAnalysisCoordinator({
       ...(trackingWindowPersistence ? {
         trackingWindowRuntime: createTrackingWindowRuntime({
           getChatId: () => chat.current(),
+          getPersisted: async ({chatId}) => (await trackingWindowPersistence.getTrackingWindowTimeline({chatId})).creations,
           persist: async ({chatId, windows, assertCurrent}) => {
             const target = await resolveCurrentBioWeaveFloor();
             if (typeof assertCurrent === "function") await assertCurrent();
@@ -1709,7 +1723,7 @@ export function createEventAnalysisCoordinator({
               chatId,
               ownerFloor: {message_index: target.index, message_id: target.version.message_id},
               floorVersion: target.version,
-              timeline: {schema_version: 1, creations: windows, lifecycle_records: []},
+            timeline: {schema_version: 1, creations: windows, lifecycle_records: windows.filter(window => window.status === 'expired').map(window => ({tracking_window_id: window.tracking_window_id, action: 'expired', reason: window.terminal_reason, terminal_story_time: window.terminal_story_time, terminal_at_floor_version: window.terminal_at_floor_version}))},
             });
             if (typeof assertCurrent === "function") await assertCurrent();
           },

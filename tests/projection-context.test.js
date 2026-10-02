@@ -5,7 +5,7 @@ import {
   buildProjectionContext,
   buildProjectionContextDTO,
 } from '../core/projection-context.js';
-import {createProjectionContextCoordinator} from '../runtime/projection-context.js';
+import {createCurrentStateAttributionResolver, createProjectionContextCoordinator} from '../runtime/projection-context.js';
 import {EVENT_ANALYZER_CORE_CONTRACT} from '../ai/prompts.js';
 
 function view(overrides = {}) {
@@ -101,6 +101,56 @@ test('coordinator updates one injection slot and clears when no visible projecti
   const cleared = await coordinator.refreshProjectionContext();
   assert.equal(cleared.status, 'cleared');
   assert.equal(writes.at(-1).content, '');
+});
+
+test('coordinator refresh reads attribution through the resolver and updates the context summary', async () => {
+  const writes = [];
+  let attribution = {
+    char_000002: {
+      confirmed: [{source_character_id: 'char_000003', contribution_kind: 'genetic'}],
+    },
+  };
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    attributionResolver: async ({chatId, floor}) => {
+      assert.equal(chatId, 'chat-a');
+      assert.equal(floor.version.floor, 2);
+      return attribution;
+    },
+    setExtensionPrompt: payload => writes.push(payload),
+  });
+  const first = await coordinator.refreshProjectionContext();
+  assert.match(first.prompt, /已确认的生殖贡献者/);
+  attribution = {char_000002: {unresolved: true, conflicts: [{relationship_key: 'conflict'}]}};
+  const second = await coordinator.refreshProjectionContext();
+  assert.match(second.prompt, /存在冲突/);
+  assert.equal(writes.length, 2);
+});
+
+test('current State attribution resolver fails closed for chat, Floor, Swipe, and state mismatches', async () => {
+  const version = {chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 1, content_hash: 'hash-a', message_version: 'v1'};
+  let business = {
+    current_state_status: 'ready',
+    current_floor: {version},
+    current_state: {characters: {}},
+  };
+  let reads = 0;
+  const resolver = createCurrentStateAttributionResolver({
+    collectActiveBusinessData: async () => {
+      reads += 1;
+      return business;
+    },
+  });
+  assert.deepEqual(await resolver({chatId: 'chat-b', floor: {version}}), {});
+  assert.equal(reads, 0);
+  assert.deepEqual(await resolver({chatId: 'chat-a', floor: {version: {...version, swipe_id: 0}}}), {});
+  assert.equal(reads, 1);
+  business = {...business, current_floor: {version: {...version, message_version: 'v2'}}};
+  assert.deepEqual(await resolver({chatId: 'chat-a', floor: {version}}), {});
+  business = {...business, current_floor: {version}, current_state_status: 'STATE_ERROR'};
+  assert.deepEqual(await resolver({chatId: 'chat-a', floor: {version}}), {});
 });
 
 test('disabled coordinator clears immediately and never reinjects on refresh', async () => {

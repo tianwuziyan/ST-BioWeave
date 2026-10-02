@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {aggregateContributorAttribution, createContributorAttribution, createReproductiveSourceCandidate, validateContributorAttribution} from '../core/reproductive-attribution.js';
+import {aggregateContributorAttribution, attributionBySubjectFromCurrentState, createContributorAttribution, createReproductiveSourceCandidate, validateContributorAttribution} from '../core/reproductive-attribution.js';
 import {normalizeEvent, validateEvent} from '../core/events.js';
 
 function candidate(source_character_id, compatibility = true, contribution_kind = 'genetic') { return createReproductiveSourceCandidate({subject_id: 'char_000001', source_character_id, source_event_ids: [`event-${source_character_id}`], mechanism_key: 'mechanism:a', contribution_kind, compatibility}); }
@@ -41,6 +41,41 @@ test('candidate and attribution DTOs reject single father fields and remain immu
   const value = {subject_id: 'char_000001', source_character_id: 'char_000002', source_event_ids: ['e1'], mechanism_key: 'm', contribution_kind: 'genetic', compatibility: true};
   const before = structuredClone(value); createReproductiveSourceCandidate(value); assert.deepEqual(value, before);
   assert.equal(validateContributorAttribution({schema_version: 1, pregnancy_id: 'p1', subject_id: 'char_000001', father_id: 'char_000002', confirmed: [], excluded: [], candidates: [], unresolved: true, conflicts: []}).ok, false);
+});
+
+test('current State attribution read model preserves subject isolation and unresolved conflicts', () => {
+  const state = {
+    characters: {
+      char_000001: {
+        pregnancy: {
+          episodes: {
+            pregnancy_a: {
+              pregnancy_id: 'pregnancy_a',
+              contributors: {
+                confirmed: [{relationship_key: 'pregnancy_a|char_000001|char_000002|genetic', subject_id: 'char_000001', source_character_id: 'char_000002', contribution_kind: 'genetic'}],
+                excluded: [{relationship_key: 'pregnancy_a|char_000001|char_000003|genetic', subject_id: 'char_000001', source_character_id: 'char_000003', contribution_kind: 'genetic'}],
+                conflicts: [],
+              },
+            },
+            pregnancy_b: {
+              pregnancy_id: 'pregnancy_b',
+              contributors: {confirmed: [], excluded: [], conflicts: [{relationship_key: 'conflict'}]},
+            },
+          },
+        },
+      },
+      char_000004: {
+        pregnancy: {episodes: {pregnancy_c: {pregnancy_id: 'pregnancy_c', contributors: {confirmed: [], excluded: [], conflicts: []}}}},
+      },
+    },
+  };
+  const before = structuredClone(state);
+  const result = attributionBySubjectFromCurrentState(state);
+  assert.deepEqual(result.char_000001.confirmed.map(item => item.source_character_id), ['char_000002']);
+  assert.deepEqual(result.char_000001.excluded.map(item => item.source_character_id), ['char_000003']);
+  assert.equal(result.char_000001.unresolved, true);
+  assert.equal(result.char_000004, undefined);
+  assert.deepEqual(state, before);
 });
 
 test('factual attribution Event accepts confirmed/excluded relationships but not candidates', () => {

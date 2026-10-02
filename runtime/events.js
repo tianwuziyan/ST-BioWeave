@@ -30,7 +30,7 @@ import { readCharacterTimingConfig, resolveCharacterTimingConfig } from "../core
 import { getHumanPreconfirmationTimingPreset, HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION } from "../core/human-timing-preset.js";
 import { isCanonicalWorldHumanSpecies } from "../core/world-species-identity.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
-import { createProjectionContextCoordinator } from "./projection-context.js";
+import { createCurrentStateAttributionResolver, createProjectionContextCoordinator } from "./projection-context.js";
 import { createCharacterTimingConfigStore } from "../storage/character-timing.js";
 import { createProjectionRuntime } from "./projection-runtime.js";
 import { createRuntimeActivity } from "./activity.js";
@@ -1737,6 +1737,9 @@ export function createRuntime({
     getChatId: () => chat.current(),
     setExtensionPrompt: st.setExtensionPrompt,
     enabledResolver: isBioWeaveEnabled,
+    attributionResolver: createCurrentStateAttributionResolver({
+      collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
+    }),
   });
   const projectionRuntime = createProjectionRuntime({
     analyzer: eventAnalyzer,
@@ -2315,6 +2318,12 @@ export function createRuntime({
         } catch (error) {
           if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
             console.error("[BioWeave] event analysis lifecycle failed", error);
+        }
+        try {
+          await projectionRuntime.tickLifecycleOnly({reason: `story-time:${key}`});
+        } catch (error) {
+          if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
+            console.error("[BioWeave] projection lifecycle tick failed", error);
         }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());

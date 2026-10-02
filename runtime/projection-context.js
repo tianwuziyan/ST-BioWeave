@@ -5,6 +5,19 @@ import {
   PROJECTION_CONTEXT_ROLE,
   buildProjectionContext,
 } from '../core/projection-context.js';
+import {attributionBySubjectFromCurrentState} from '../core/reproductive-attribution.js';
+import {sameFloorVersion} from './floor.js';
+
+export function createCurrentStateAttributionResolver({collectActiveBusinessData} = {}) {
+  if (typeof collectActiveBusinessData !== 'function') throw new TypeError('CURRENT_STATE_REQUIRED');
+  return async ({chatId, floor} = {}) => {
+    if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) return {};
+    const business = await collectActiveBusinessData();
+    if (business?.current_state_status !== 'ready') return {};
+    if (!business?.current_floor?.version || !sameFloorVersion(business.current_floor.version, floor.version)) return {};
+    return attributionBySubjectFromCurrentState(business.current_state);
+  };
+}
 
 export function createProjectionContextCoordinator({
   getProjectionViews,
