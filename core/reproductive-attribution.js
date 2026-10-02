@@ -10,6 +10,7 @@ function clone(value) { return typeof structuredClone === 'function' ? structure
 function text(value) { return typeof value === 'string' && value.trim() !== ''; }
 function ids(value, required = true) { return Array.isArray(value) && (!required || value.length > 0) && value.every(text) && new Set(value).size === value.length; }
 function relationshipKey({subject_id, source_character_id, contribution_kind}) { return `${subject_id}|${source_character_id}|${contribution_kind}`; }
+function candidateKey({subject_id, source_character_id, mechanism_key}) { return `${subject_id}|${source_character_id}|${mechanism_key}`; }
 function validateCommon(value, fields, path, errors) { if (!isRecord(value)) { errors.push(`${path}:invalid`); return; } for (const key of Object.keys(value)) if (!fields.has(key)) errors.push(`${path}.${key}:unexpected_field`); }
 
 export function createReproductiveSourceCandidate(value = {}) {
@@ -17,7 +18,7 @@ export function createReproductiveSourceCandidate(value = {}) {
   const validation = validateReproductiveSourceCandidate(result); if (!validation.ok) throw new TypeError(validation.errors.join(', ')); return clone(result);
 }
 export function validateReproductiveSourceCandidate(value) {
-  const errors = []; validateCommon(value, CANDIDATE_FIELDS, 'candidate', errors); if (value?.schema_version !== REPRODUCTIVE_ATTRIBUTION_SCHEMA_VERSION) errors.push('candidate.schema_version:invalid'); if (!text(value?.subject_id)) errors.push('candidate.subject_id:required'); if (!text(value?.source_character_id)) errors.push('candidate.source_character_id:required'); if (!ids(value?.source_event_ids)) errors.push('candidate.source_event_ids:required'); if (!text(value?.mechanism_key)) errors.push('candidate.mechanism_key:required'); if (!text(value?.contribution_kind)) errors.push('candidate.contribution_kind:required'); if (![true, false, null].includes(value?.compatibility)) errors.push('candidate.compatibility:invalid'); return {ok: errors.length === 0, errors};
+  const errors = []; validateCommon(value, CANDIDATE_FIELDS, 'candidate', errors); if (value?.schema_version !== REPRODUCTIVE_ATTRIBUTION_SCHEMA_VERSION) errors.push('candidate.schema_version:invalid'); if (!text(value?.subject_id)) errors.push('candidate.subject_id:required'); if (!text(value?.source_character_id)) errors.push('candidate.source_character_id:required'); if (!ids(value?.source_event_ids)) errors.push('candidate.source_event_ids:required'); if (!text(value?.mechanism_key)) errors.push('candidate.mechanism_key:required'); if (value?.contribution_kind !== null && !text(value?.contribution_kind)) errors.push('candidate.contribution_kind:invalid'); if (![true, false, null].includes(value?.compatibility)) errors.push('candidate.compatibility:invalid'); return {ok: errors.length === 0, errors};
 }
 export function buildContributorRelationship(value) { const result = {relationship_key: relationshipKey(value), subject_id: value.subject_id, source_character_id: value.source_character_id, contribution_kind: value.contribution_kind}; const errors = []; validateCommon(result, RELATIONSHIP_FIELDS, 'relationship', errors); if (!text(result.subject_id) || !text(result.source_character_id) || !text(result.contribution_kind)) errors.push('relationship:incomplete'); if (errors.length) throw new TypeError(errors.join(', ')); return result; }
 function validateRelationship(value, path, errors) { validateCommon(value, RELATIONSHIP_FIELDS, path, errors); if (!text(value?.relationship_key) || !text(value?.subject_id) || !text(value?.source_character_id) || !text(value?.contribution_kind)) errors.push(`${path}:incomplete`); if (value?.relationship_key !== relationshipKey(value ?? {})) errors.push(`${path}.relationship_key:not_deterministic`); }
@@ -37,6 +38,53 @@ export function aggregateContributorAttribution({pregnancy_id, subject_id, candi
   const candidateKeys = new Set(normalizedCandidates.map(candidate => relationshipKey(candidate)));
   const unresolved = conflicts.length > 0 || normalizedCandidates.some(candidate => candidate.compatibility === null) || [...candidateKeys].some(key => !confirmed.has(key) && !excluded.has(key));
   return createContributorAttribution({pregnancy_id, subject_id, confirmed: [...confirmed.values()], excluded: [...excluded.values()], candidates: normalizedCandidates, unresolved, conflicts});
+}
+
+export function deriveReproductiveSourceCandidates({trackingWindows = [], events = []} = {}) {
+  const eventById = new Map((Array.isArray(events) ? events : []).map(clone).filter(event => text(event?.event_id)).map(event => [event.event_id, event]));
+  const candidates = new Map();
+  for (const window of Array.isArray(trackingWindows) ? trackingWindows : []) {
+    if (window?.status !== 'resolved_pregnant' || window?.terminal_reason !== 'pregnancy_confirmation') continue;
+    const confirmation = eventById.get(window.terminal_event_id);
+    const pregnancyId = confirmation?.state_fact?.payload?.pregnancy_id;
+    if (confirmation?.type !== 'pregnancy_confirmation' || !text(pregnancyId)) continue;
+    const eventIds = [...new Set(window.source_event_ids ?? [])].sort();
+    for (const eventId of eventIds) {
+      const event = eventById.get(eventId);
+      if (!event || !exposureForCandidate(event, window.subject_id)) continue;
+      const mechanism = candidateMechanism(event, window.mechanism_key);
+      for (const sourceCharacterId of [...new Set(event.pregnancy_relevance.counterpart_ids ?? [])].sort()) {
+        const value = {
+          subject_id: window.subject_id,
+          source_character_id: sourceCharacterId,
+          source_event_ids: [eventId],
+          mechanism_key: mechanism,
+          contribution_kind: null,
+          compatibility: null,
+        };
+        const key = `${pregnancyId}|${candidateKey(value)}`;
+        const existing = candidates.get(key);
+        candidates.set(key, existing
+          ? {...existing, source_event_ids: [...new Set([...existing.source_event_ids, eventId])].sort()}
+          : {pregnancy_id: pregnancyId, ...value});
+      }
+    }
+  }
+  return [...candidates.values()]
+    .sort((left, right) => `${left.pregnancy_id}|${candidateKey(left)}`.localeCompare(`${right.pregnancy_id}|${candidateKey(right)}`))
+    .map(({pregnancy_id, ...candidate}) => ({pregnancy_id, candidate: createReproductiveSourceCandidate(candidate)}));
+}
+
+function exposureForCandidate(event, subjectId) {
+  return isRecord(event?.pregnancy_relevance)
+    && event.pregnancy_relevance.gestational_subject_ids?.includes(subjectId)
+    && Array.isArray(event.pregnancy_relevance.counterpart_ids);
+}
+
+function candidateMechanism(event, fallback) {
+  const mechanism = event?.pregnancy_relevance?.reproductive_mechanism;
+  return [mechanism?.kind, mechanism?.key, mechanism?.label, mechanism?.pathway, fallback]
+    .map(value => typeof value === 'string' ? value.trim().toLowerCase() : null).find(Boolean) ?? null;
 }
 
 export function attributionBySubjectFromCurrentState(currentState = {}) {

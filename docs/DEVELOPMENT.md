@@ -11,7 +11,7 @@
 - `core/state.js`：纯程序 State Reducer，不调用 AI；由 Runtime 以 `baseState`、Events、`currentStoryTime` 和 `characterFacts` 计算 derived Current Biological State。
 - `core/snapshot.js`：Floor-owned 检查点、校验、最近有效 Snapshot 恢复和后续 Event replay；无效或缺失时回退完整 replay。
 - `core/projection.js`：未来软推演数据；不是事实。
-- Pregnancy Exposure Tracking Window：规范见 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)；当前 `core/tracking.js` 只有按有效 exposure 派生 Subject/Candidate，尚未实现独立 Window lifecycle。
+- Pregnancy Exposure Tracking Window：规范见 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)；`core/tracking-window.js`、Runtime/storage owner 已实现 Phase 1 + Phase 2 的独立 Window lifecycle，`core/tracking.js` 只消费其 active view 派生 Subject/Candidate。
 - `core/genealogy.js`：家系查询、世代与排序。
 - `ai/client.js`：API Profile 的校验、SillyTavern Secret 引用和宿主代理测试请求；不在浏览器或 Chat 数据中保存明文 API Key。
 - `ai/prompts.js`：受保护 Core Prompt + 公共 `analysis_prompt` + 各 Analyzer 的任务/输出 Contract Pipeline。
@@ -38,7 +38,7 @@
 | BiologicalEvent | PRODUCTION |
 | Tracking Subject | PRODUCTION |
 | Tracking Candidate | PRODUCTION |
-| Tracking Window | NOT_IMPLEMENTED |
+| Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; resolved Window candidate handoff and confirmed-pregnancy guard implemented |
 | StateReducer | PRODUCTION |
 | Current Biological State | PRODUCTION |
 | Snapshot Runtime | PRODUCTION |
@@ -152,7 +152,7 @@ readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
 - StateReducer、Snapshot Runtime 和 Current Biological State 已进入当前生产链；但 conception、labor、postpartum 的 episode transition 语义仍为 PARTIAL，完整妊娠计算、Gestational Age 和预计分娩日不在当前范围。
 - Projection Runtime 已接入：factual Event persistence/readback、Tracking、StateReducer 和 Snapshot 成功后独立执行 evolution → eligibility → serial generation → Floor-owned persistence → readback；Projection failure 不影响 factual pipeline。Runtime 使用独立 execution identity/single-flight 与 stale guard，`collectActiveBusinessData()` 只读取 DTO，不触发 AI；Context 继续只读取 persisted Projection views，并保持同一次 factual execution 的 temporal boundary。
 - Genealogy 当前只有 core 查询基础与空状态 UI，没有关系数据生产链。
-- Tracking Window 尚未实现：当前 exposure 聚合没有 round identity、open/closed/expired 状态、Story Time horizon 或关闭后过滤；`core/state.js` 的 `elapsed_story_days` 只描述 State 派生值，不能冒充 Window expiration。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
+- Tracking Window Phase 1 + Phase 2 已实现 round identity、compatible grouping、`open` / `resolved_pregnant` / `terminated` / `expired`、World-authoritative Story-Time horizon、关闭后过滤、confirmed-pregnancy guard、resolved Window → reproductive-source candidate read model 与独立 persistence/readback；`core/state.js` 的 `elapsed_story_days` 仍不能冒充 Window expiration。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
 
 ### Floor / Swipe / Version 生命周期
 
@@ -333,5 +333,5 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 
 - World Persistence：Floor-owned persistence、official save/readback、host-memory slot synchronization、Floor Version/active Swipe guards 均已实现；persistence mechanism 为 automated verified，SillyTavern final-save + F5/reload durability 已真实宿主验证，World reload persistence issue 为 `CLOSED`，不再是 blocker。
 - Character/Event validation：pregnancy-relevant `source_evidence`、strict domain validation 和 canonical typed `physical_symptom` payload 均有当前回归测试覆盖；本轮定向 Event/Core/Runtime/Snapshot/Floor persistence 测试通过。
-- 当前 `npm run check` **尚未通过**：Phase 1 后全量 `1106` 个测试中 `1090` 通过、`16` 失败、`0` skipped。与 Phase 1 前的 `1102/1085/17` 基线相比，没有新增失败；原先的 Manual Full/Patch persistence failure 已不再出现。剩余 16 项均为既有 `tests/world-model.test.js` prompt-baseline 断言集合，仍需单独处理，不归因于本阶段 timing 改动。
+- 本轮全量结果为 `1140` 个测试、`1119` 通过、`21` 失败；其中 16 项是 World prompt contract 断言失败，另 5 项是 StoryTime/Start New Chat/source isolation lifecycle failures。它们均未触及本轮 Window/candidate 修改范围。
 - 以上 automated test 结果与真实 SillyTavern 人工验收分别记录，不互相替代。

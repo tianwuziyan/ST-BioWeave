@@ -1184,17 +1184,25 @@ delete is handled on derived read by basis validation; when no basis remains the
 timing is fail-closed. Timing never enters Event, Current State, Snapshot, or
 Projection Context evidence.
 
-## Pre-confirmation Tracking Window Phase 1
+## Pre-confirmation Tracking Window Phase 1 + Phase 2
 
 `tracking_window_timeline` is an independent Floor-owned, active-Swipe-owned
 append-only root under the Tracking owner. It uses the same complete six-field
 Floor Version and authoritative coordinator readback contract as other Floor
 roots. Window records are rebuilt from surviving valid Events and therefore do
-not become a Chat-level cache or a second factual source. Phase 1 supports
-`open`, `resolved_pregnant`, and `terminated`; source edit/delete, Swipe changes,
-and stale versions fail closed during derived reads.
+not become a Chat-level cache or a second factual source. Phase 1 + Phase 2
+supports `open`, `resolved_pregnant`, `terminated`, and World-authoritative
+Story-Time `expired`; source edit/delete, Swipe changes, and stale versions fail
+closed during derived reads. Missing, ambiguous, or incomparable horizon/time
+data also fails closed, and horizon correction never resurrects an expired or
+factual terminal Window.
 
 The Window does not create pregnancy or negative-pregnancy facts, does not enter
-Projection Context, and does not modify Current State. `resolved_not_pregnant`,
-Story-Time horizon, and `expired` remain unimplemented. Character clear and All
-clear include the Window root; ordinary Chat changes remain non-destructive.
+Projection Context, and does not modify Current State. `resolved_not_pregnant`
+remains unimplemented. Resolved Window provenance is now handed off read-only
+to the existing reproductive-attribution candidate DTO, and the
+confirmed-pregnancy guard prevents later exposure from opening a new
+pre-confirmation Window while preserving historical exposure. Candidate sources
+are not contributors; only a factual `reproductive_source_attribution` Event
+can confirm or exclude one. Character clear and All clear include the Window
+root; ordinary Chat changes remain non-destructive.

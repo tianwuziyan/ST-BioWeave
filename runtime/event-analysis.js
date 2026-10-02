@@ -32,6 +32,7 @@ import {
 import {
   explainTrackingDecision,
 } from "../core/tracking.js";
+import {deriveReproductiveSourceCandidates} from "../core/reproductive-attribution.js";
 import { mergeTrackingSubjectsWithActivePregnancies } from "../core/tracking-window.js";
 import {
   cloneValue,
@@ -2261,6 +2262,11 @@ export function createEventAnalysisCoordinator({
       stateInfo?.current_state ?? {},
     );
     const trackingCandidates = registry?.tracking_candidates ?? {};
+    const trackingWindows = registry?.tracking_windows ?? [];
+    const reproductiveSourceCandidates = deriveReproductiveSourceCandidates({
+      trackingWindows,
+      events: activeEvents,
+    });
     const characterProfiles = registry?.character_profiles ?? {};
     const trackingDecisions = activeEvents.flatMap((event) =>
       explainTrackingDecision(event, { ...chatData, ...registry }).map(
@@ -2313,7 +2319,8 @@ export function createEventAnalysisCoordinator({
     return {
       tracking_subjects: trackingSubjects,
       tracking_candidates: trackingCandidates,
-      tracking_windows: registry?.tracking_windows ?? [],
+      tracking_windows: trackingWindows,
+      reproductive_source_candidates: reproductiveSourceCandidates,
       character_profiles: characterProfiles,
       active_events: activeEvents,
       current_state: stateInfo?.current_state ?? reduceState({}),

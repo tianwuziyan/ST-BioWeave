@@ -7,9 +7,9 @@ Tracking Window lifecycle. It freezes the semantic boundaries between factual
 Events, exposure tracking, Pregnancy Episodes, and Projections.
 
 The current branch implements Tracking Subjects/Candidates and the independent
-Phase 1 Window object/lifecycle derived from valid pregnancy-relevant Events.
-Phase 2 adds the World-authoritative mechanism horizon and deterministic
-Story-Time-only `expired` lifecycle. The overall feature remains
+Phase 1 + Phase 2 Window object/lifecycle derived from valid
+pregnancy-relevant Events. Phase 2 adds the World-authoritative mechanism
+horizon and deterministic Story-Time-only `expired` lifecycle. The overall feature remains
 `PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED`; `resolved_not_pregnant` remains
 unimplemented. Sections marked
 **Target Contract** remain the design baseline for later phases. Sections
@@ -20,10 +20,12 @@ Pre-confirmation Projection Timing remains separate from this Window. Its
 same subject + same explicit mechanism may attach additional valid Event refs,
 but it must not be treated as the Window owner or as Window expiration.
 
-### Current Implementation: Phase 1
+### Current Implementation: Phase 1 + Phase 2
 
 Phase 1 owns deterministic Window/cycle identity, compatible exposure grouping,
-Floor persistence/readback, `open` / `resolved_pregnant` / `terminated` / `expired`, active
+and Floor persistence/readback. Phase 2 adds the World-authoritative horizon and
+Story-Time-only expiration. Together they provide `open` / `resolved_pregnant` /
+`terminated` / `expired`, active
 Tracking filtering, Timing cycle binding, and the pre-confirmation Projection
 Eligibility bridge. `pregnancy_confirmation` resolves an open Window;
 `pregnancy_loss` and `abortion` terminate it. Conception, suspicion, symptoms,
@@ -136,8 +138,13 @@ The semantic model distinguishes, without freezing final field names or JSON:
 - a resolution/detection horizon;
 - a maximum Window horizon that prevents indefinite renewal.
 
-The grouping rule for accepting an exposure into an open Window and the exact
-materials of a deterministic Window ID remain unresolved design decisions.
+`buildTrackingWindowCycleId()` reuses the deterministic Timing cycle identity
+material: Chat identity, canonical subject, reproductive mechanism, first
+factual pregnancy-relevant Event ID, and first Event Story Time. The Window ID
+is a deterministic digest of that cycle ID. Compatible attachment requires the
+same canonical subject, mechanism, and valid pregnancy-relevant factual basis.
+Grouping and identity are implemented; cross-mechanism Episode binding remains
+outside this contract.
 
 ## 4. Resolution and attribution boundaries
 
@@ -205,7 +212,7 @@ valid Floor-bound Events
   → tracking_subjects / tracking_candidates
 ```
 
-`rebuildTrackingRegistry()` now receives the Phase 1 Window view from Runtime.
+`rebuildTrackingRegistry()` now receives the Phase 1 + Phase 2 Window view from Runtime.
 It accumulates valid exposure provenance per subject only while the source
 Event belongs to an `open` Window. `can_carry_pregnancy === true` creates an
 active Subject, `false` creates neither an active Subject nor a pending
@@ -213,11 +220,12 @@ Candidate, and `null` creates a pending Candidate. A Window may therefore keep
 factual exposure basis while the same subject remains a Candidate. Terminal
 Window statuses do not delete Events, Registry identity, or Pregnancy Episodes.
 
-`core/tracking-window.js` derives deterministic identity and compatible grouping
-from surviving valid Events. Its Phase 1 terminal transitions are limited to
-confirmed `pregnancy_confirmation`, `pregnancy_loss`, and `abortion`. There is
-still no Story-Time expiration gate: no `expired` state is produced, and elapsed
-time cannot remove an otherwise valid exposure in this phase.
+`core/tracking-window.js` derives deterministic identity, compatible grouping,
+and factual terminal transitions from surviving valid Events. Runtime evaluates
+the World mechanism-level `tracking_window_horizon`; a comparable Story-Time
+value at or beyond the authoritative maximum produces `expired`. Missing,
+ambiguous, or incomparable horizon/time data fails closed and leaves the Window
+open. Terminal Windows never reopen from horizon correction.
 
 `core/state.js` separately records exposure history and derives
 `last_exposure_story_time` plus `elapsed_story_days`; that derived value does
@@ -256,13 +264,7 @@ is explicit and preserves the separate owners.
 
 The current World Model v1 contains species/types, capabilities,
 reproductive mechanisms, lifecycle/special rules, and declarative Projection
-Rules. It does not expose a frozen, dedicated schema for:
-
-- exposure grouping horizon;
-- pregnancy detection/resolution horizon;
-- maximum Tracking Window horizon.
-
-Phase 2 freezes the canonical field
+Rules. Phase 2 implements the canonical field
 `reproductive_mechanisms[].tracking_window_horizon` with
 `{schema_version: 1, max_story_days: non-negative integer}`. Exact subject
 species/type/mechanism binding is required; missing or ambiguous data keeps a
@@ -272,7 +274,7 @@ semantics. Full omission is unavailable and Patch omission preserves the
 existing declaration. Horizon correction never reopens an expired or factual
 terminal Window.
 
-## 10. Target derivation, without freezing an implementation schema
+## 10. Current derivation and deferred boundaries
 
 The planned deterministic flow is:
 
@@ -283,7 +285,7 @@ surviving valid Events + canonical identities + persisted World Model
   → build or rebuild Window rounds
   → attach compatible Event IDs and source sets
   → inspect later factual resolution Events
-  → resolve pregnant / not pregnant when facts support it
+  → resolve pregnant only when an authorized factual Event supports it
   → expire only when a reliable World Model horizon and Story Time elapsed value support it
   → feed open Windows to active Tracking / current unresolved-exposure tracking signal
 ```
@@ -291,19 +293,25 @@ surviving valid Events + canonical identities + persisted World Model
 If the elapsed value is `null`, the Window remains open; unresolved is
 descriptive language only, not a separate lifecycle state. Closed Windows do
 not revive from future exposures; new exposures may start a new round.
-Historical Events remain unchanged throughout.
+Historical Events remain unchanged throughout. Resolved Window provenance now
+feeds a pure read-only contributor-candidate view, bound to the terminal
+`pregnancy_confirmation` `pregnancy_id`; candidate sources are not contributors
+and are never auto-confirmed or excluded. After confirmed pregnancy, later
+exposure Events are still recorded, but exposures after the confirmation Story
+Time do not open a new pre-confirmation Window. Historical exposures at or
+before that Story Time remain part of the resolved Window. After factual
+`pregnancy_loss`, `abortion`, or `delivery`, future exposures may open a new
+round; mechanism-specific Windows remain independent.
 
-## 11. Explicitly unfrozen decisions
+## 11. Explicitly deferred decisions and open gaps
 
 The following decisions belong to a later design task and must not be implied
 by this contract:
 
-1. final World Model horizon fields and JSON shape;
-2. the generic factual schema for `resolved_not_pregnant`;
-3. the future bridge between Window closure and pregnancy-stage Projection
-   lifecycle;
-4. the Context DTO for active Window summaries;
-5. advanced Pregnancy Episode orchestration.
+1. the generic factual authority for `resolved_not_pregnant` (product-contract
+   required; not implemented);
+2. cross-mechanism Window-to-Episode binding and advanced Pregnancy Episode
+   orchestration.
 
 ## 12. Regression guardrails
 

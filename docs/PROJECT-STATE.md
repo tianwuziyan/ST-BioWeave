@@ -11,10 +11,10 @@ replacement for the domain specifications, implementation, or test suite.
 | Project | ST-BioWeave |
 | Development branch | `fix/world-model-prompt-baseline` |
 | Checkpoint | Observed at 2026-10-02; HEAD is checkpoint information, not a permanent architectural contract. |
-| Working tree | Contains uncommitted Pre-confirmation Projection Timing Phase 1 implementation and related task work. |
-| Major milestone | Phase 1 timing implementation is present and automated verification is complete. Behavioral timing acceptance in a real SillyTavern lifecycle is still pending. |
+| Working tree | Contains the uncommitted resolved-Window candidate handoff and confirmed-pregnancy Window guard implementation plus synchronized docs/tests. |
+| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, and read-only contributor summary Context bridge are implemented and automated-verified. Real-host behavioral acceptance remains separate. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
-| Current host status | The remote SillyTavern copy has been verified to load the current Phase 1 entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing smoke remains pending. |
+| Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
 
 When this checkpoint conflicts with a concrete implementation or an
 authoritative domain document, verify the current checkout and update this
@@ -64,7 +64,7 @@ have separate contracts and failure boundaries.
 | Projection Context | Runtime view of context-visible Projections | Runtime/read model; prompt slot is refreshed | Inject possible developments into the ST prompt | Event evidence; authoritative factual storage |
 | Character Timing Config | Chat-local character configuration | Yes, Chat-local | Base pre-confirmation timing policy for future cycles | Character Registry/Profile; World Rule |
 | Observation Timing Instance | Floor-owned Timing-domain record | Yes, `projection_timing_timeline` | Freeze one cycle's basis, variance, effective min/max, and provenance | Tracking Window; Projection; BiologicalEvent |
-| Tracking Window | Floor-owned Tracking Window Phase 1 | Yes, `tracking_window_timeline` | Deterministic exposure round lifecycle and active pre-confirmation filtering | Timing Instance; Pregnancy Episode; Projection |
+| Tracking Window | Floor-owned Tracking Window Phase 1 + Phase 2 | Yes, `tracking_window_timeline` | Deterministic exposure round, World-authoritative horizon lifecycle, and active pre-confirmation filtering | Timing Instance; Pregnancy Episode; Projection |
 | Snapshot | Factual state optimization/bridge | Yes where the current lifecycle requires it | Avoid rebuilding factual state unnecessarily | Projection persistence; Timing persistence |
 
 Important identity boundaries:
@@ -172,15 +172,16 @@ contains only context-visible Projection Views and is cleared when no valid
 Projection is available. It is not a factual source and cannot create a
 self-evidence loop.
 
-## Pre-confirmation Projection Timing Phase 1
+## Pre-confirmation Tracking Window and Projection Timing
 
-Tracking Window Phase 1 is now implemented as a separate lifecycle boundary;
-Phase 2 adds the World-authoritative horizon and deterministic expiration.
+Tracking Window Phase 1 + Phase 2 is implemented as a separate lifecycle
+boundary. Phase 2 adds the World-authoritative horizon and deterministic
+expiration.
 It owns deterministic Window/cycle binding, compatible exposure grouping,
 `open` / `resolved_pregnant` / `terminated` / `expired`, and active Tracking
 filtering. It still does not implement negative resolution.
 
-Phase 1 currently includes:
+The current implementation includes:
 
 - Chat-local `character_timing_configs`, including reset and versioning;
 - Floor-owned `projection_timing_timeline`;
@@ -193,6 +194,10 @@ Phase 1 currently includes:
 - timing plus World Rule eligibility composition;
 - Floor, Swipe, and stale-owner guards;
 - authoritative persistence readback.
+- World mechanism-level Tracking Window horizon evaluation and scheduler-independent
+  lifecycle-only expiration;
+- Projection-owner lifecycle bridge for bound pre-confirmation Projections;
+- read-only Current State contributor summary in Projection Context.
 
 The built-in Human narrative preset is a versioned Product Policy preset,
 not a medical-derived universal interval: `14 / 42` Story days, `10%`
@@ -293,7 +298,7 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; horizon/expired implemented, negative resolution remains deferred |
 | StateReducer | PRODUCTION; lifecycle coverage remains bounded by implemented Event contracts |
 | Pregnancy Episode | PARTIAL |
-| Contributor Attribution | PARTIAL; factual Event/State contracts and Projection Context read-model bridge implemented; full orchestration/UI remains deferred |
+| Contributor Attribution | PARTIAL; factual Event/State contracts, resolved Window → candidate derived read model, and read-only Projection Context bridge implemented; UI remains deferred |
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |
@@ -332,8 +337,7 @@ regression, or an explicit contract change.
 ## Known Open Items
 
 - Pre-confirmation Timing real-host behavioral smoke;
-- Tracking Window Phase 2 advanced Episode orchestration and negative resolution;
-- completion of Contributor Attribution;
+- `resolved_not_pregnant` remains PRODUCT_CONTRACT_REQUIRED / deferred;
 - GA/EDD;
 - Genealogy;
 - Overview completion;
@@ -351,24 +355,16 @@ missing.
 This is a checkpoint, not a permanent number:
 
 ```text
-1116 total
-1099 pass
-17 fail
+1140 total
+1119 pass
+21 fail
 ```
 
-The ten-test increase is from the Human preset, config-facade, Characters
-timing UI/performance coverage, nickname popup coverage, and Runtime lifecycle
-test synchronization added in this implementation. The
-`start-new-chat-lifecycle` unknown-source assertion was identified as a test
-timing assumption: it now waits for the Runtime's deterministic
-`BIOWEAVE_LIFECYCLE_SETTLED` signal instead of a fixed `setImmediate` count.
-It is not attributed to Popup or Timing. Subsequent full-suite runs have also
-shown that scheduler assertion with the same test-timing cause: it now waits
-for `BIOWEAVE_LIFECYCLE_SETTLED` after each Character Floor. The scheduler's
-production semantics were unchanged. A later parallel run showed a separate
-intermittent stale World-analysis test failure; that is outside this Runtime
-scheduler task and remains unresolved. Future verification must compare failure
-sets and signatures, not only failure counts.
+The known failures are not being chased in this task: 16 are World prompt
+contract assertion failures; 5 are Story-Time coordinator, Start New Chat
+one-shot cleanup, pending source-A cleanup, and source-A persistence-isolation
+failures. Their signatures are outside the Window/candidate change scope.
+Future verification must compare failure sets and signatures, not only counts.
 
 ## Real Host Status
 
@@ -382,7 +378,7 @@ fixture save/reset methods are explicit current-Chat configuration writes that
 delegate to the official Chat-local persistence API; they do not expose
 arbitrary Floor, World, Timing, Projection, or storage mutation. A dedicated
 build/load audit verified that
-the remote direct copy loads the current Phase 1 entry and that the diagnostic
+the remote direct copy loads the current timing diagnostic entry and that the diagnostic
 surface is available after initialization and reload:
 
 | Area | Status |
@@ -420,7 +416,7 @@ Projection lifecycle behavior separately.
 
 ## Current Next Step
 
-**NEXT STEP: Resume Pre-confirmation Timing real-host behavioral smoke.**
+**NEXT STEP: define the next independently authorized product slice.**
 
 Prioritize:
 
@@ -437,9 +433,10 @@ Prioritize:
 11. source invalidation;
 12. confirmation/loss/abortion exit.
 
-Tracking Window Phase 1 is implemented independently of pending real-host Timing
-acceptance. Timing host acceptance remains a separate verification item; it does
-not authorize horizon or medical fallback semantics.
+Tracking Window Phase 1 + Phase 2 is implemented independently of pending
+real-host Timing/Projection acceptance. Timing host acceptance remains a
+separate verification item; it does not authorize horizon or medical fallback
+semantics.
 Human preset source research is complete as a documented Product Policy
 boundary; real-host timing and Characters UI acceptance remain separate gates.
 

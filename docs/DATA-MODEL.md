@@ -451,6 +451,15 @@ Window 可以作为当前 pregnancy Tracking signal；已关闭 Window 的历史
 仍按普通 bounded history 规则存在。详见 [Pregnancy Exposure Tracking
 Lifecycle Contract](../.trellis/spec/domain/pregnancy-tracking.md)。
 
+`resolved_pregnant` Window 的 source provenance 现已通过纯 read-model handoff
+映射到现有 reproductive-attribution candidate DTO，并绑定 terminal
+`pregnancy_confirmation` 的 `pregnancy_id`；candidate source 仍不是
+contributor，只有 `reproductive_source_attribution` factual Event 才能
+confirmed/excluded contributor。confirmed pregnancy 后新的 exposure Event
+仍正常保留，但 confirmation Story Time 之后的 exposure 不再创建新的
+pre-confirmation Window；loss、abortion 或 delivery 后的未来 exposure 可以
+开启新 round。
+
 ### Tracking Subject Registry
 
 Runtime 从当前有效 Floor Events、World Model 和 Floor `character_registry` 重建 Tracking Registry，人物列表只消费其中的 `tracking_subjects`。`tracking_subjects` 只保存当前已确认具备承孕能力的 eligible Subject；能力未知的 exposure recipient 不进入人物列表，而保存在 Runtime `tracking_candidates`。Subject 的索引形状如下：

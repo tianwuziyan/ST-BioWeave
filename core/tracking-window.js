@@ -19,6 +19,7 @@ export const TRACKING_WINDOW_TERMINAL_REASONS = Object.freeze({
   pregnancy_confirmation: 'resolved_pregnant',
   pregnancy_loss: 'terminated',
   abortion: 'terminated',
+  delivery: 'terminated',
 });
 
 const WINDOW_FIELDS = new Set([
@@ -80,6 +81,15 @@ function terminalForSubject(event, subjectId) {
   return event?.status === 'confirmed'
     && Object.hasOwn(TRACKING_WINDOW_TERMINAL_REASONS, event.type)
     && event?.state_fact?.subject_id === subjectId;
+}
+
+function confirmationForSubject(event, subjectId) {
+  return event?.type === 'pregnancy_confirmation'
+    && event?.status === 'confirmed'
+    && event?.state_fact?.subject_id === subjectId
+    && text(event?.state_fact?.payload?.pregnancy_id)
+    ? event
+    : null;
 }
 function bindingMaterial({chatId, subjectId, mechanismKeyValue, firstEvent}) {
   return {
@@ -283,6 +293,7 @@ export function deriveTrackingWindows(events = [], {chatId, now = () => null} = 
       .map(event => [event.event_id, event]),
   ).values()].sort(eventSort);
   const windows = new Map();
+  const confirmedPregnancies = new Map();
   for (const event of normalizedEvents) {
     const subjects = [...new Set([
       ...(event.pregnancy_relevance?.gestational_subject_ids ?? []),
@@ -290,6 +301,11 @@ export function deriveTrackingWindows(events = [], {chatId, now = () => null} = 
     ])];
     for (const subjectId of subjects) {
       if (exposureForSubject(event, subjectId)) {
+        const confirmation = confirmedPregnancies.get(subjectId);
+        const afterConfirmation = confirmation
+          && compareStoryTime(event.story_time, confirmation.story_time) !== null
+          && compareStoryTime(event.story_time, confirmation.story_time) > 0;
+        if (afterConfirmation) continue;
         const mechanism = mechanismKey(event);
         const open = [...windows.values()].find(window =>
           window.status === 'open'
@@ -298,11 +314,28 @@ export function deriveTrackingWindows(events = [], {chatId, now = () => null} = 
         );
         if (open) attachExposure(open, event, now);
         else {
-          const created = createWindow({chatId, subjectId, mechanism, event, now});
-          if (created.tracking_window_id) windows.set(created.tracking_window_id, created);
+          const historicalResolved = [...windows.values()].find(window => {
+            if (window.status !== 'resolved_pregnant' || window.subject_id !== subjectId || window.mechanism_key !== mechanism) return false;
+            const order = compareStoryTime(event.story_time, window.terminal_story_time);
+            return order !== null && order <= 0;
+          });
+          if (historicalResolved) attachExposure(historicalResolved, event, now);
+          else {
+            const created = createWindow({chatId, subjectId, mechanism, event, now});
+            if (created.tracking_window_id) windows.set(created.tracking_window_id, created);
+          }
         }
       }
+      const confirmation = confirmationForSubject(event, subjectId);
+      if (confirmation) confirmedPregnancies.set(subjectId, confirmation);
       if (terminalForSubject(event, subjectId)) {
+        if (event.type !== 'pregnancy_confirmation') {
+          const confirmation = confirmedPregnancies.get(subjectId);
+          const afterConfirmation = confirmation
+            && compareStoryTime(event.story_time, confirmation.story_time) !== null
+            && compareStoryTime(event.story_time, confirmation.story_time) >= 0;
+          if (afterConfirmation) confirmedPregnancies.delete(subjectId);
+        }
         for (const window of windows.values()) {
           if (window.status !== 'open' || window.subject_id !== subjectId) continue;
           const order = compareStoryTime(event.story_time, window.opened_story_time);

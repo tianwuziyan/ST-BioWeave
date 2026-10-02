@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {aggregateContributorAttribution, attributionBySubjectFromCurrentState, createContributorAttribution, createReproductiveSourceCandidate, validateContributorAttribution} from '../core/reproductive-attribution.js';
-import {normalizeEvent, validateEvent} from '../core/events.js';
+import {aggregateContributorAttribution, attributionBySubjectFromCurrentState, createContributorAttribution, createReproductiveSourceCandidate, deriveReproductiveSourceCandidates, validateContributorAttribution} from '../core/reproductive-attribution.js';
+import {normalizeEvent, PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, validateEvent} from '../core/events.js';
 
 function candidate(source_character_id, compatibility = true, contribution_kind = 'genetic') { return createReproductiveSourceCandidate({subject_id: 'char_000001', source_character_id, source_event_ids: [`event-${source_character_id}`], mechanism_key: 'mechanism:a', contribution_kind, compatibility}); }
 
@@ -15,6 +15,49 @@ test('false compatibility is excluded while null remains unresolved', () => {
   const result = aggregateContributorAttribution({pregnancy_id: 'p1', subject_id: 'char_000001', candidates: [candidate('char_000002', false), candidate('char_000003', null)]});
   assert.deepEqual(result.candidates.map(item => item.source_character_id), ['char_000003']);
   assert.equal(result.unresolved, true);
+});
+test('derived candidates aggregate multiple sources and mechanisms without inferring contribution kind', () => {
+  const exposureEvent = (event_id, counterpart_ids, mechanism) => normalizeEvent({
+    event_id, type: 'sexual_activity', status: 'confirmed', story_time: {day_index: Number(event_id.slice(-1))},
+    source: {chat_id: 'chat-a', message_id: event_id, floor: 1, swipe_id: 0, content_hash: event_id, message_version: event_id},
+    participants: [{character_id: 'char_000001', event_role: 'potential_gestational_subject'}],
+    pregnancy_relevance: {relevant: true, possible_conception: true, gestational_subject_ids: ['char_000001'], counterpart_ids, reproductive_mechanism: {kind: mechanism}},
+    source_evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'exposure'}],
+  });
+  const events = [exposureEvent('event-1', ['char_000002', 'char_000003'], 'genetic'), exposureEvent('event-2', ['char_000002'], 'genetic'), exposureEvent('event-3', ['char_000002'], 'magical'), normalizeEvent({
+    event_id: 'confirmation-1', type: 'pregnancy_confirmation', status: 'confirmed', story_time: {day_index: 4},
+    source: {chat_id: 'chat-a', message_id: 'confirmation-1', floor: 4, swipe_id: 0, content_hash: 'confirmation-1', message_version: 'confirmation-1'},
+    participants: [{character_id: 'char_000001', event_role: 'potential_gestational_subject'}],
+    state_fact: {subject_id: 'char_000001', payload: {pregnancy_id: 'pregnancy-1'}},
+  })];
+  const windows = [{status: 'resolved_pregnant', terminal_reason: 'pregnancy_confirmation', terminal_event_id: 'confirmation-1', subject_id: 'char_000001', mechanism_key: 'genetic', source_event_ids: ['event-2', 'event-1']}, {status: 'resolved_pregnant', terminal_reason: 'pregnancy_confirmation', terminal_event_id: 'confirmation-1', subject_id: 'char_000001', mechanism_key: 'magical', source_event_ids: ['event-3']}];
+  const result = deriveReproductiveSourceCandidates({trackingWindows: windows, events});
+  assert.deepEqual(result.map(item => [item.pregnancy_id, item.candidate.source_character_id, item.candidate.mechanism_key, item.candidate.source_event_ids, item.candidate.contribution_kind]), [
+    ['pregnancy-1', 'char_000002', 'genetic', ['event-1', 'event-2'], null],
+    ['pregnancy-1', 'char_000002', 'magical', ['event-3'], null],
+    ['pregnancy-1', 'char_000003', 'genetic', ['event-1'], null],
+  ]);
+  assert.equal(result.every(item => item.candidate.compatibility === null), true);
+});
+
+test('candidate handoff rebuild drops deleted source or confirmation facts', () => {
+  const exposureEvent = normalizeEvent({
+    event_id: 'surviving-exposure', type: 'sexual_activity', status: 'confirmed', story_time: {day_index: 1},
+    source: {chat_id: 'chat-a', message_id: 'm1', floor: 1, swipe_id: 0, content_hash: 'h1', message_version: 'v1'},
+    participants: [{character_id: 'char_000001', event_role: 'potential_gestational_subject'}],
+    pregnancy_relevance: {relevant: true, possible_conception: true, gestational_subject_ids: ['char_000001'], counterpart_ids: ['char_000002'], reproductive_mechanism: {kind: 'fertilization'}},
+    source_evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'exposure'}],
+  });
+  const confirmationEvent = normalizeEvent({
+    event_id: 'surviving-confirmation', type: 'pregnancy_confirmation', status: 'confirmed', story_time: {day_index: 2},
+    source: {chat_id: 'chat-a', message_id: 'm2', floor: 2, swipe_id: 0, content_hash: 'h2', message_version: 'v2'},
+    participants: [{character_id: 'char_000001', event_role: 'potential_gestational_subject'}],
+    state_fact: {subject_id: 'char_000001', payload: {pregnancy_id: 'pregnancy-1'}},
+  });
+  const window = {status: 'resolved_pregnant', terminal_reason: 'pregnancy_confirmation', terminal_event_id: 'surviving-confirmation', subject_id: 'char_000001', mechanism_key: 'fertilization', source_event_ids: ['surviving-exposure']};
+  assert.equal(deriveReproductiveSourceCandidates({trackingWindows: [window], events: [exposureEvent, confirmationEvent]}).length, 1);
+  assert.equal(deriveReproductiveSourceCandidates({trackingWindows: [window], events: [confirmationEvent]}).length, 0);
+  assert.equal(deriveReproductiveSourceCandidates({trackingWindows: [window], events: [exposureEvent]}).length, 0);
 });
 test('confirmed and excluded relationships are factual event inputs and support multiple contributors', () => {
   const result = aggregateContributorAttribution({pregnancy_id: 'p1', subject_id: 'char_000001', candidates: [candidate('char_000002', true, 'genetic'), candidate('char_000003', true, 'magical')], attributionEvents: [

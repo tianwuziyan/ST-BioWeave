@@ -305,7 +305,7 @@ Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracki
 只负责 presentation。AI 不拥有 canonical ID authority，Registry 不直接成为 UI
 人物列表，Tracking 也不负责修复人物识别。
 
-Pregnancy Exposure Tracking Window Phase 1 已有独立的
+Pregnancy Exposure Tracking Window Phase 1 + Phase 2 已有独立的
 `core/tracking-window.js`、`runtime/tracking-window-runtime.js` 和
 `storage/tracking-window.js` owner。Window 使用独立
 `tracking_window_timeline`，复用 Timing cycle identity，支持
@@ -314,7 +314,10 @@ view。Phase 2 的生命周期 tick 只做 deterministic Window/Projection lifec
 Projection Runtime 仍是 Projection lifecycle owner。不要把 `core/tracking.js`
 的 Subject registry、`core/state.js` 的 Pregnancy Episode 或 `core/projection.js`
 的 Projection lifecycle 当作 Window。negative resolution、Window Context
-injection 和 advanced Episode orchestration 仍未实现。
+injection 和 advanced Episode orchestration 仍未实现。resolved Window 到
+现有 reproductive-attribution candidate DTO 的 handoff，以及 confirmed
+pregnancy 后阻止新的 pre-confirmation Window 已实现，均保持只读、derived、
+Floor 重建语义。`resolved_not_pregnant` 仍需明确 factual authority。
 
 Event discovery window、identity authority、Event occurrence time 和 persistence
 owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现
@@ -324,7 +327,7 @@ Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Fl
 
 当前生产状态的完整矩阵维护在 [DEVELOPMENT.md](./DEVELOPMENT.md)。其中
 StateReducer、Current Biological State、Snapshot Runtime 和 Projection Runtime
-已接通；Tracking Window 为 PARTIAL / PHASE 1 IMPLEMENTED；Genealogy 仍为
+已接通；Tracking Window 为 PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED；Genealogy 仍为
 PARTIAL。
 
 ## Safe modification guardrails

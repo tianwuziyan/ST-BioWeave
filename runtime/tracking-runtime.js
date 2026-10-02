@@ -1,4 +1,5 @@
 import {rebuildTrackingRegistry} from "../core/tracking.js";
+import {deriveReproductiveSourceCandidates} from '../core/reproductive-attribution.js';
 import {createTrackingWindowRuntime} from './tracking-window-runtime.js';
 
 export function createTrackingRuntime({
@@ -44,6 +45,10 @@ export function createTrackingRuntime({
       return {
         ...registry,
         tracking_windows: trackingWindows,
+        reproductive_source_candidates: deriveReproductiveSourceCandidates({
+          trackingWindows,
+          events: inputs.activeEvents,
+        }),
         character_registry: inputs.characterRegistry,
         active_events: inputs.activeEvents,
       };

@@ -12,6 +12,7 @@ import {
 import { rebuildTrackingRegistry } from '../core/tracking.js';
 import { resolveProjectionTimingInstance } from '../core/projection-timing.js';
 import { buildProjectionRuleId, evaluateProjectionEligibility } from '../core/projection-eligibility.js';
+import { createTrackingRuntime } from '../runtime/tracking-runtime.js';
 
 function exposure({eventId, subjectId = 'char-subject', mechanism = 'fertilization', day = 1, carry = true} = {}) {
   return {
@@ -30,6 +31,8 @@ function exposure({eventId, subjectId = 'char-subject', mechanism = 'fertilizati
 }
 
 function terminal({eventId, type = 'pregnancy_confirmation', subjectId = 'char-subject', day = 3, pregnancyId = 'pregnancy-1'} = {}) {
+  const payload = {pregnancy_id: pregnancyId};
+  if (type === 'delivery') payload.delivery_id = eventId;
   return {
     event_id: eventId,
     type,
@@ -38,7 +41,7 @@ function terminal({eventId, type = 'pregnancy_confirmation', subjectId = 'char-s
     source: {chat_id: 'chat-window', message_id: `message-${eventId}`, floor: day, swipe_id: 0, content_hash: `hash-${eventId}`, message_version: `v-${eventId}`},
     participants: [{character_id: subjectId, event_role: 'potential_gestational_subject'}],
     pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []},
-    state_fact: {subject_id: subjectId, payload: {pregnancy_id: pregnancyId}},
+    state_fact: {subject_id: subjectId, payload},
   };
 }
 
@@ -71,14 +74,56 @@ test('confirmation resolves, conception does not, loss and abortion terminate, a
     terminal({eventId: 'confirmation', day: 3}),
     exposure({eventId: 'future-exposure', day: 4}),
   ], {chatId: 'chat-window'});
-  assert.deepEqual(new Set(confirmed.map(window => window.status)), new Set(['resolved_pregnant', 'open']));
-  assert.notEqual(confirmed.find(window => window.status === 'resolved_pregnant').tracking_window_id, confirmed.find(window => window.status === 'open').tracking_window_id);
+  assert.deepEqual(new Set(confirmed.map(window => window.status)), new Set(['resolved_pregnant']));
   const conception = deriveTrackingWindows([exposure({eventId: 'exposure-a', day: 1}), terminal({eventId: 'conception', type: 'conception', day: 3})], {chatId: 'chat-window'});
   assert.equal(conception[0].status, 'open');
   for (const type of ['pregnancy_loss', 'abortion']) {
     const result = deriveTrackingWindows([exposure({eventId: 'exposure-a', day: 1}), terminal({eventId: type, type, day: 3})], {chatId: 'chat-window'});
     assert.equal(result[0].status, 'terminated');
   }
+  const delivery = deriveTrackingWindows([
+    exposure({eventId: 'exposure-a', day: 1}),
+    terminal({eventId: 'confirmation', day: 3}),
+    terminal({eventId: 'delivery', type: 'delivery', day: 4}),
+    exposure({eventId: 'new-round', day: 5}),
+  ], {chatId: 'chat-window'});
+  assert.deepEqual(new Set(delivery.map(window => window.status)), new Set(['resolved_pregnant', 'open']));
+});
+
+test('confirmed-pregnancy guard retains historical exposures and rebuilds deterministically', () => {
+  const events = [
+    exposure({eventId: 'before-confirmation', day: 1}),
+    exposure({eventId: 'same-story-time', day: 3}),
+    terminal({eventId: 'confirmation', day: 3}),
+    exposure({eventId: 'after-confirmation', day: 4}),
+  ];
+  const result = deriveTrackingWindows(events, {chatId: 'chat-window'});
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0].source_event_ids, ['before-confirmation', 'same-story-time']);
+  assert.equal(result[0].status, 'resolved_pregnant');
+  assert.deepEqual(deriveTrackingWindows([...events].reverse(), {chatId: 'chat-window'}), result);
+});
+
+test('Tracking Runtime exposes resolved Window source candidates without factual attribution', async () => {
+  const events = [
+    normalizeEvent(exposure({eventId: 'candidate-exposure', day: 1})),
+    normalizeEvent(terminal({eventId: 'candidate-confirmation', day: 3, pregnancyId: 'pregnancy-candidate'})),
+  ];
+  const windows = deriveTrackingWindows(events, {chatId: 'chat-window'});
+  const runtime = createTrackingRuntime({
+    collectTrackingInputs: async () => ({activeEvents: events, trackingWindows: windows, worldModel: null}),
+    getToken: () => ({chatId: 'chat-window'}),
+    assertToken: () => {},
+    enqueueRefresh: refresh => refresh(),
+    notify: () => {},
+  });
+  const result = await runtime.refreshTrackingRegistry();
+  assert.deepEqual(result.reproductive_source_candidates.map(item => ({
+    pregnancy_id: item.pregnancy_id,
+    source_character_id: item.candidate.source_character_id,
+    contribution_kind: item.candidate.contribution_kind,
+  })), [{pregnancy_id: 'pregnancy-candidate', source_character_id: 'counterpart-candidate-exposure', contribution_kind: null}]);
+  assert.equal(result.reproductive_source_candidates[0].candidate.compatibility, null);
 });
 
 test('surviving factual basis rebuilds deterministically after source edit or deletion', () => {
