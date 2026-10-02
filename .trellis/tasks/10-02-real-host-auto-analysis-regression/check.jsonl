@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/domain/index.md", "reason": "跨层检查范围与领域契约索引"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "验证 Floor ownership 与 hidden/system 边界"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "验证自动 Event analysis 管线不越界"}

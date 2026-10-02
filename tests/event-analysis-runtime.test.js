@@ -3700,6 +3700,41 @@ test("normal generation also waits for the settle barrier", async () => {
   fixture.runtime.destroy();
 });
 
+test("real SillyTavern assistant_message Character Floors enter automatic analysis", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [{
+      message_id: "real-assistant-message",
+      floor: 60,
+      content: "真实 Character reply",
+      is_user: false,
+      is_system: false,
+      extra: {type: "assistant_message", swipeable: true, gouhua_snapshot: {}},
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        eventCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  fixture.emit("generation-started", "normal");
+  fixture.context.chat[0].content = "真实 Character reply 已完成";
+  fixture.emit("character-message-rendered", {message_id: "real-assistant-message"});
+  await settle();
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
+  assert.equal(eventCalls, 0);
+  fixture.emit("generation-ended", {message_id: "real-assistant-message"});
+  await settle();
+  assert.equal(eventCalls, 1);
+  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(
+    entry => entry.stage === "AUTO_ANALYSIS_TRIGGERED" && entry.message_id === "real-assistant-message",
+  ));
+  fixture.runtime.destroy();
+});
+
 test("real ST reroll order uses positional generation type and renders after GENERATION_ENDED", async () => {
   const analysisStarted = deferredSignal();
   const analysisFinished = deferredSignal();

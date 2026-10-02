@@ -15,10 +15,13 @@ test("normalizes real SillyTavern hidden Character messages as character", () =>
 
 test("normalizes native and explicit host roles deterministically", () => {
   assert.equal(normalizeHostMessageRole({ is_user: false, is_system: false, extra: {} }), "character");
+  assert.equal(normalizeHostMessageRole({ is_user: false, is_system: false, extra: { type: "assistant_message" } }), "character");
+  assert.equal(normalizeHostMessageRole({ is_user: false, is_system: true, extra: { type: "assistant_message" } }), "other");
   assert.equal(normalizeHostMessageRole({ is_user: true, is_system: false }), "user");
   assert.equal(normalizeHostMessageRole({ is_user: true, is_system: true }), "user");
   assert.equal(normalizeHostMessageRole({ is_user: false, is_system: true, extra: { type: "narrator" } }), "system");
   assert.equal(normalizeHostMessageRole({ is_user: false, is_system: true, extra: { type: "comment" } }), "other");
+  assert.equal(normalizeHostMessageRole({ is_user: false, is_system: true, extra: { type: "extension_system" } }), "other");
 });
 
 test("uses legacy role only for synthetic messages without host-native role fields", () => {

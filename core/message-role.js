@@ -1,5 +1,6 @@
 const NARRATOR_TYPE = "narrator";
 const COMMENT_TYPE = "comment";
+const CHARACTER_MESSAGE_TYPE = "assistant_message";
 
 function normalizedRole(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -23,6 +24,10 @@ export function normalizeHostMessageRole(message) {
   if (message.is_user === true) return "user";
 
   const type = normalizedExtraType(message);
+  // SillyTavern's generated assistant messages may carry this explicit host
+  // marker even though they are not system/narrative extension messages.
+  if (type === CHARACTER_MESSAGE_TYPE && message.is_system !== true)
+    return "character";
   if (type === NARRATOR_TYPE) return "system";
   if (type === COMMENT_TYPE) return "other";
   if (type) return "other";
