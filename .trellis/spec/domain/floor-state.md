@@ -42,7 +42,16 @@ missing or changes, the slot is refreshed or explicitly cleared.
 
 ## 1. Source of Truth
 
-A BioWeave Floor is a Character/assistant message. User messages are narrative
+Host message semantic role MUST be normalized before any Floor ownership
+decision. Under the current SillyTavern semantics, `is_user === true`
+identifies a User; `extra.type` distinguishes narrator, comment, and other
+system-like non-Character entries; and `is_system` is a hidden/display-state
+flag that MUST NOT independently determine semantic role. Character Floor
+eligibility derives from the normalized host role. The legacy `message.role`
+field is a compatibility fallback only when native host role fields are absent.
+
+A BioWeave Floor is a Character/assistant message after that normalization.
+User messages are narrative
 context only: they never create a BioWeave Floor, Floor Version, or
 authoritative payload. Runtime resolves the current BioWeave Floor as the
 nearest Character/assistant message at or before the current host message.
@@ -593,7 +602,7 @@ confirmation, or other biological Event.
 | Wrong Snapshot or State schema | Return validation failure; do not restore |
 | Incomplete or extra checkpoint fields | Return validation failure |
 | Wrong Chat, Swipe, content hash, message version, or owner Floor Version | Return validation failure |
-| User/system message owner | Return `snapshot_owner_not_character_floor` |
+| Normalized user/system/other message owner | Return `snapshot_owner_not_character_floor` |
 | Checkpoint after current endpoint | Return `snapshot_checkpoint_in_future` |
 | Missing/deleted/corrupt Snapshot | Use full replay; never alter Events |
 

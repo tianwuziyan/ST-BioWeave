@@ -15,7 +15,7 @@ function normalizedExtraType(message) {
  * `is_system` is a hidden/rendering flag in the host, not the authoritative
  * assistant-vs-system role field. Explicit host role markers therefore take
  * precedence, while the legacy `role` field is only a compatibility fallback
- * for synthetic messages that do not contain host-native role fields.
+ * for synthetic/test messages that do not contain host-native role fields.
  */
 export function normalizeHostMessageRole(message) {
   if (!message || typeof message !== "object") return "other";

@@ -7,6 +7,7 @@ import {
   normalizeWorldbookSettings,
 } from '../storage/schema.js'
 import { normalizeStoryTime } from '../story/time.js'
+import { normalizeHostMessageRole } from '../core/message-role.js'
 
 const EXTERNAL_MEMORY_DEFINITIONS = Object.freeze([
   { key: 'anima', label: 'Anima' },
@@ -335,13 +336,8 @@ function messageContent(message, swipeIdOverride = undefined) {
 }
 
 function messageRole(message) {
-  const explicitRole = String(message?.role ?? '')
-    .trim()
-    .toLowerCase()
-  if (['user', 'assistant', 'system'].includes(explicitRole))
-    return explicitRole
-  if (message?.is_system === true) return 'system'
-  if (message?.is_user === true) return 'user'
+  const role = normalizeHostMessageRole(message)
+  if (role === 'user' || role === 'system' || role === 'other') return role
   return 'assistant'
 }
 
@@ -378,6 +374,7 @@ export function processNarrativeFloor({
       ? fallbackFloor
       : numericFloor(floor, fallbackFloor)
   const resolvedRole = role ?? messageRole(message)
+  if (resolvedRole === 'system' || resolvedRole === 'other') return null
   const resolvedSwipeId = Number.isInteger(swipeId)
     ? swipeId
     : Number.isInteger(message?.swipe_id)

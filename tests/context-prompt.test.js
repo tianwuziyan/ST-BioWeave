@@ -405,6 +405,52 @@ test('shared floor processing resolves the active swipe before regex and applies
   }).content, 'USER_PROCESSED');
 });
 
+test('Recent Story normalizes host roles before projecting narrative DTO roles', () => {
+  const settings = {enabled: true, floor_count: 10};
+  const hiddenCharacter = processNarrativeFloor({
+    message: {floor: 58, is_user: false, is_system: true, extra: {}, mes: 'HIDDEN_CHARACTER'},
+    settings,
+  });
+  assert.equal(hiddenCharacter.role, 'assistant');
+  assert.equal(hiddenCharacter.content, 'HIDDEN_CHARACTER');
+
+  const normalCharacter = processNarrativeFloor({
+    message: {floor: 59, is_user: false, is_system: false, extra: {}, mes: 'CHARACTER'},
+    settings,
+  });
+  assert.equal(normalCharacter.role, 'assistant');
+
+  const user = processNarrativeFloor({
+    message: {floor: 60, is_user: true, is_system: true, extra: {}, mes: 'USER'},
+    settings,
+  });
+  assert.equal(user.role, 'user');
+
+  const narrator = processNarrativeFloor({
+    message: {floor: 61, is_user: false, is_system: true, extra: {type: 'narrator'}, mes: 'NARRATOR'},
+    settings,
+  });
+  assert.equal(narrator, null);
+
+  const comment = processNarrativeFloor({
+    message: {floor: 62, is_user: false, is_system: true, extra: {type: 'comment'}, mes: 'COMMENT'},
+    settings,
+  });
+  assert.equal(comment, null);
+
+  const unknownHostType = processNarrativeFloor({
+    message: {floor: 62, is_user: false, is_system: true, extra: {type: 'extension_system'}, mes: 'UNKNOWN_TYPE'},
+    settings,
+  });
+  assert.equal(unknownHostType, null);
+
+  const nativeRoleWins = processNarrativeFloor({
+    message: {floor: 63, role: 'system', is_user: false, is_system: true, extra: {}, mes: 'NATIVE_CHARACTER'},
+    settings,
+  });
+  assert.equal(nativeRoleWins.role, 'assistant');
+});
+
 test('Event narrative formatter removes a target floor even when only one side has a message id', () => {
   const input = buildEventAnalysisInput({
     chatId: 'chat_fixture',

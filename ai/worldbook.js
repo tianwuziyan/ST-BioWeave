@@ -1,3 +1,5 @@
+import { isCharacterMessageRole } from '../core/message-role.js'
+
 export const ANALYSIS_SOURCE_TYPES = Object.freeze({
   CHARACTER_CARD: 'character_card',
   WORLDBOOK: 'worldbook',
@@ -326,7 +328,7 @@ export function detectCurrentCharacterGreetingField(character, context) {
   const alternateGreetings = Array.isArray(card.alternate_greetings) ? card.alternate_greetings : [card.alternate_greetings]
   const hasAlternates = alternateGreetings.some(greeting => Boolean(sourceChildText(greeting)))
   const firstMessage = Array.isArray(context?.chat) ? context.chat[0] : null
-  if (!firstMessage || firstMessage.is_user === true || firstMessage.is_system === true) return ''
+  if (!firstMessage || !isCharacterMessageRole(firstMessage)) return ''
   const cardName = textValue(card.name ?? character?.name)
   const messageName = textValue(firstMessage.name)
   if (cardName && messageName && cardName !== messageName) return ''

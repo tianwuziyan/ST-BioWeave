@@ -161,7 +161,7 @@ test('analysis sources expose character fields and worldbook entries only', asyn
   assert.equal(sources.some(source => source.source_type === 'sevendayscal'), false);
 });
 
-test('current greeting is identified from the first chat message swipe', async () => {
+test('current greeting is identified from a hidden Character first chat message swipe', async () => {
   const context = {
     characterId: 0,
     characters: [{
@@ -176,7 +176,8 @@ test('current greeting is identified from the first chat message swipe', async (
     chat: [{
       name: '爱丽丝',
       is_user: false,
-      is_system: false,
+      is_system: true,
+      extra: {},
       swipe_id: 2,
       swipes: ['主开场白', '备用开场白一', '备用开场白二'],
     }],
@@ -190,6 +191,32 @@ test('current greeting is identified from the first chat message swipe', async (
   const card = result.sources.find(source => source.source_type === 'character_card');
   assert.equal(card.fields.find(field => field.field_key === 'opening:alternate:1').is_current, true);
   assert.equal(card.fields.find(field => field.field_key === 'opening:main').is_current, false);
+});
+
+test('current greeting rejects User, Narrator, and Comment first messages', () => {
+  const character = {
+    name: '爱丽丝',
+    data: {first_mes: '主开场白', alternate_greetings: ['备用开场白']},
+  };
+  const baseMessage = {
+    name: '爱丽丝',
+    is_user: false,
+    is_system: true,
+    extra: {},
+    swipe_id: 0,
+    swipes: ['主开场白', '备用开场白'],
+  };
+
+  assert.equal(detectCurrentCharacterGreetingField(character, {chat: [{...baseMessage}]}), 'opening:main');
+  assert.equal(detectCurrentCharacterGreetingField(character, {
+    chat: [{...baseMessage, is_user: true}],
+  }), '');
+  assert.equal(detectCurrentCharacterGreetingField(character, {
+    chat: [{...baseMessage, extra: {type: 'narrator'}}],
+  }), '');
+  assert.equal(detectCurrentCharacterGreetingField(character, {
+    chat: [{...baseMessage, extra: {type: 'comment'}}],
+  }), '');
 });
 
 test('runtime worldbook groups prioritize enabled global, merge character books, and hide chat books', async () => {
