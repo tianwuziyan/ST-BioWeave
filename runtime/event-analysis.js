@@ -62,6 +62,9 @@ import {
   shouldAnalyze,
 } from "./floor.js";
 import { createRuntime as createRuntimeComposition } from "./runtime.js";
+import { createAutomaticAnalysisPort } from "./automatic-analysis.js";
+import { createAnalysisExecutionPort } from "./analysis-execution.js";
+import { createManualAnalysisPort } from "./manual-analysis.js";
 import { createTrackingWindowRuntime } from "./tracking-window-runtime.js";
 const LIFECYCLE_ONLY_EVENTS = new Set([
   // Deletion only invalidates the downstream active path; it never analyzes
@@ -529,6 +532,19 @@ export function createEventAnalysisCoordinator({
     schedulerState.observedFloorKeys.clear();
     generationLifecycle?.clear();
     schedulerState.lastFailure = null;
+  }
+
+  function getSchedulerState() {
+    return {
+      counter: schedulerState.counter,
+      retryPaused: schedulerState.retryPaused,
+      countedFloorKeys: [...schedulerState.countedFloorKeys],
+      observedFloorKeys: [...schedulerState.observedFloorKeys],
+      ...generationLifecycle.getState(),
+      lastFailure: schedulerState.lastFailure
+        ? { ...schedulerState.lastFailure }
+        : null,
+    };
   }
 
   function schedulerSettings() {
@@ -1702,7 +1718,7 @@ export function createEventAnalysisCoordinator({
         execution?.version?.chat_id === chat.current() && !execution.released
       )?.attempt ?? null,
       onGenerationSettled: (target, options) =>
-        scheduleRenderedCharacter(target, options),
+        automaticAnalysis.observeSettledCharacterFloor(target, options),
     },
     tracking: {
       collectTrackingInputs,
@@ -3012,9 +3028,14 @@ export function createEventAnalysisCoordinator({
   async function runScheduledAnalysis(target, { force, reason, generation = null }) {
     const settings = schedulerSettings();
     try {
-      const result = await analyzeFloor(
-        { __messageIndex: true, index: target.index },
-        { force, reason, generation },
+      const result = await analysisExecution.run(
+        {
+          target: { __messageIndex: true, index: target.index },
+          force,
+          reason,
+          generation,
+          trigger: force ? "reroll" : "automatic",
+        },
       );
       if (result?.status === "success") recordSchedulerSuccess();
       return result;
@@ -3023,8 +3044,9 @@ export function createEventAnalysisCoordinator({
       throw error;
     }
   }
+  const analysisExecution = createAnalysisExecutionPort({run: analyzeFloor});
   function analyzeCurrentFloor(options = {}) {
-    const result = analyzeFloor(null, options);
+    const result = analysisExecution.run({...options, target: null});
     if (options.force !== true) return result;
     const settings = schedulerSettings();
     return result.then((value) => {
@@ -3040,10 +3062,12 @@ export function createEventAnalysisCoordinator({
   }
 
   function analyzeCurrentCharacterEvents() {
-    return analyzeFloor(null, {
+    return analysisExecution.run({
+      target: null,
       force: false,
       reason: "manual-character",
       intent: "manual-character",
+      trigger: "manual-character",
     });
   }
   async function scheduleRenderedCharacter(
@@ -3070,6 +3094,16 @@ export function createEventAnalysisCoordinator({
       };
     return runScheduledAnalysis(target, { force: false, reason, generation });
   }
+  const automaticAnalysis = createAutomaticAnalysisPort({
+    observeSettledCharacterFloor: scheduleRenderedCharacter,
+    getState: getSchedulerState,
+    reset: resetSchedulerState,
+  });
+  const manualAnalysis = createManualAnalysisPort({
+    refreshCurrentFloor: refreshCurrentFloorAnalysis,
+    analyzeCurrentCharacterEvents,
+    analyzeCurrentFloor,
+  });
   async function getCurrentFloorAnalysisInput() {
     const target = await resolveFloor();
     const token = chat.token();
@@ -3219,9 +3253,10 @@ export function createEventAnalysisCoordinator({
       if (type !== "CHARACTER_MESSAGE_RENDERED")
         return { skipped: true, reason: "not-a-character-render" };
       const generationResult = await generationLifecycle.onCharacterMessageRendered(target);
-      if (generationResult) return generationResult;
+      if (generationResult)
+        return generationResult;
       try {
-        return await scheduleRenderedCharacter(target, { reason: type });
+        return await automaticAnalysis.observeSettledCharacterFloor(target, { reason: type });
       } catch (error) {
         if (error?.message === "SWIPE_NOT_FOUND")
           return { skipped: true, reason: "swipe-not-found" };
@@ -3283,7 +3318,7 @@ export function createEventAnalysisCoordinator({
       lastTerminal.clear();
       invalidatedFloors.clear();
       lifecycleSnapshot = null;
-      resetSchedulerState();
+      automaticAnalysis.reset(signal?.reason ?? "chat-boundary");
     }
   }
   function destroy() {
@@ -3299,7 +3334,7 @@ export function createEventAnalysisCoordinator({
     }
     inFlight.clear();
     worldAnalysis.clear();
-    resetSchedulerState();
+    automaticAnalysis.reset("destroy");
   }
   if (typeof chat.subscribe === "function")
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
@@ -3314,16 +3349,10 @@ export function createEventAnalysisCoordinator({
     getCurrentFloorAnalysisInput,
     requestAbortCurrentFloorAnalysis,
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
-    getAutoAnalysisSchedulerState: () => ({
-      counter: schedulerState.counter,
-      retryPaused: schedulerState.retryPaused,
-      countedFloorKeys: [...schedulerState.countedFloorKeys],
-      observedFloorKeys: [...schedulerState.observedFloorKeys],
-      ...generationLifecycle.getState(),
-      lastFailure: schedulerState.lastFailure
-        ? { ...schedulerState.lastFailure }
-        : null,
-    }),
+    automaticAnalysis,
+    analysisExecution,
+    manualAnalysis,
+    getAutoAnalysisSchedulerState: automaticAnalysis.getState,
     setProjectionPostProcessor: handler => {
       projectionPostProcessor = typeof handler === "function" ? handler : null;
     },

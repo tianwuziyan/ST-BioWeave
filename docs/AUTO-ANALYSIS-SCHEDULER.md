@@ -1,6 +1,8 @@
 # BioWeave Auto Analysis Scheduler Architecture
 
-当前模块 ownership 以 [ARCHITECTURE.md](./ARCHITECTURE.md) 为准：
+当前 scheduler 的行为语义以本文为准；自动分析模块的职责边界、公开 ports 和禁止
+跨层访问以 [Automatic Analysis Isolation Contract](../.trellis/spec/domain/automatic-analysis.md)
+为准。当前模块 ownership 仍以 [ARCHITECTURE.md](./ARCHITECTURE.md) 为准：
 `runtime/generation-lifecycle.js` 拥有 generation intent、settle barrier 和
 exactly-once state machine；`runtime/sillytavern-adapter.js` 只负责 ST listener
 subscribe/unsubscribe；`runtime/events.js` 负责 lifecycle orchestration；

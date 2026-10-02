@@ -13,6 +13,9 @@ flowchart TD
     Adapter[runtime/sillytavern-adapter.js\nraw ST I/O]
     Compose[runtime/runtime.js\nlightweight composition root]
     Pipeline[runtime/event-analysis.js\nanalysis pipeline coordinator]
+    AutoPort[runtime/automatic-analysis.js\nautomatic trigger port]
+    ExecPort[runtime/analysis-execution.js\nshared execution port]
+    ManualPort[runtime/manual-analysis.js\nmanual trigger port]
     Gen[runtime/generation-lifecycle.js]
     World[runtime/world-analysis.js]
     Event[runtime/character-event-analysis.js]
@@ -36,6 +39,9 @@ flowchart TD
     Compose --> Diag
     Pipeline --> World
     Pipeline --> Event
+    Pipeline --> AutoPort
+    Pipeline --> ExecPort
+    Pipeline --> ManualPort
     World --> AI
     Event --> AI
     World --> Coord
@@ -48,7 +54,7 @@ flowchart TD
     Event --> Core
 ```
 
-依赖方向的硬规则：Adapter 不依赖业务 feature；feature 不直接依赖 UI 或 SillyTavern transport；Storage 不依赖 runtime feature；Generation Lifecycle 不反向导入 `events.js`；普通 Floor 写入不绕过 Coordinator。
+依赖方向的硬规则：Adapter 不依赖业务 feature；feature 不直接依赖 UI 或 SillyTavern transport；Storage 不依赖 runtime feature；Generation Lifecycle 不反向导入 `events.js`；普通 Floor 写入不绕过 Coordinator；Host/Floor Recognition 不依赖 Automatic Scheduler；Automatic Scheduler 只依赖 Shared Analysis Execution port，不依赖 World/Event/Tracking/Projection 具体实现；Shared Analysis Execution 不依赖 Automatic Scheduler；Manual Analysis 不修改 Automatic Scheduler 内部状态。
 
 ## Feature-to-file map
 
@@ -61,6 +67,9 @@ flowchart TD
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
 | Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、generation、stale guard、Floor persistence readback、Runtime DTO 和 Projection Refresh |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
+| Automatic Analysis Port | `runtime/automatic-analysis.js` | settled Character Floor 的自动观察入口、只读 scheduler state 和 lifecycle reset；不拥有 scheduler implementation |
+| Shared Analysis Execution Port | `runtime/analysis-execution.js` | automatic/manual 共用的单一 execution seam；不拥有 scheduler state |
+| Manual Analysis Port | `runtime/manual-analysis.js` | 用户主动 refresh、Character/Event 和 current-floor 分析入口；不修改 scheduler state |
 | SillyTavern Adapter | `runtime/sillytavern-adapter.js` | 原始 Host context、Chat/Floor slot I/O、HTTP transport、listener subscribe |
 | Runtime Composition | `runtime/runtime.js` | create / inject / assemble / return；不拥有业务状态 |
 | Analysis Pipeline Coordinator | `runtime/event-analysis.js` | execution ownership、runAnalysis、generic retry、scheduler、World→Event pipeline、terminal 和 shared bridges |
@@ -94,10 +103,10 @@ flowchart TD
 | Character identity | `core/identity.js` | `runtime/character-event-analysis.js` | `core/tracking.js` |
 | Tracking behavior | `core/tracking.js` | `runtime/tracking-runtime.js` | `character_registry` persistence |
 | Characters UI | `ui/characters.js` | `ui/app.js`、business DTO bridge | Event persistence schema |
-| Generation auto-trigger | `runtime/generation-lifecycle.js` | `runtime/events.js` host forwarding、`runtime/event-analysis.js` handoff | World/Event implementation |
+| Generation auto-trigger | `runtime/generation-lifecycle.js` | `runtime/events.js` host forwarding、`runtime/automatic-analysis.js` port、`runtime/event-analysis.js` compatibility wiring | World/Event implementation |
 | Generation settle | `runtime/generation-lifecycle.js` | lifecycle tests | Persistence |
 | Retry behavior | `runtime/event-analysis.js` | World/Event attempt modules | Generation state |
-| Scheduler | `runtime/event-analysis.js` | settings/runtime wiring | Adapter |
+| Scheduler | `runtime/automatic-analysis.js` port + `runtime/event-analysis.js` current implementation | settings/runtime wiring | Adapter、World/Event/Tracking/Projection implementation |
 | Diagnostics | `runtime/diagnostics.js`、`utils/world-model-debug.js` | caller-specific trace emission、World LIVE STATE fingerprint/diff | General event bus、Floor writers |
 | AI input construction | `ai/input-builder.js` | `runtime/event-analysis.js` caller | Persistence |
 | World prompt | `ai/prompts.js` | `ai/analyzer.js` | Event runtime |

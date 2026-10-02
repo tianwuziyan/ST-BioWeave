@@ -3960,11 +3960,14 @@ export function createApp(runtime, options = {}) {
   async function manualRefreshEventAnalysis() {
     try {
       runtime.assertBioWeaveEnabled?.()
-      if (typeof runtime.analyzeCurrentCharacterEvents !== 'function') {
+      const manualAnalysis = runtime.manualAnalysis
+      if (typeof manualAnalysis?.analyzeCurrentCharacterEvents !== 'function' &&
+          typeof runtime.analyzeCurrentCharacterEvents !== 'function') {
         throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
       render()
-      const result = await runtime.analyzeCurrentCharacterEvents()
+      const result = await (manualAnalysis?.analyzeCurrentCharacterEvents ??
+        runtime.analyzeCurrentCharacterEvents)()
       notify('BioWeave：人物分析完成', 'success', documentRef)
       return result
     } catch (error) {

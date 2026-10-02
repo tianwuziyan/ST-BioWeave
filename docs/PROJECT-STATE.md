@@ -10,9 +10,9 @@ replacement for the domain specifications, implementation, or test suite.
 | --- | --- |
 | Project | ST-BioWeave |
 | Development branch | `fix/world-model-prompt-baseline` |
-| Checkpoint | Observed at 2026-10-02; HEAD is checkpoint information, not a permanent architectural contract. |
+| Checkpoint | Observed at 2026-10-03; HEAD is checkpoint information, not a permanent architectural contract. |
 | Working tree | Contains the uncommitted resolved-Window candidate handoff and confirmed-pregnancy Window guard implementation plus synchronized docs/tests. |
-| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, and read-only contributor summary Context bridge are implemented and automated-verified. Real-host behavioral acceptance remains separate. |
+| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis Isolation Ports (automatic/shared/manual) are implemented and automated-verified. Real-host behavioral acceptance remains separate. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
 | Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
 
@@ -41,6 +41,14 @@ Character Floor
   → Projection Views
   → Projection Context
   → SillyTavern extension prompt
+```
+
+Automatic analysis now has explicit runtime ports without moving the existing
+pipeline implementation:
+
+```text
+SillyTavern lifecycle → automaticAnalysis → analysisExecution → World → Character/Event → Floor
+Manual UI → manualAnalysis → analysisExecution
 ```
 
 `Snapshot` is a factual-state optimization boundary. It does not contain
