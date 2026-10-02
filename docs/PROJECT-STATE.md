@@ -193,7 +193,19 @@ variance, `3` Story-day variance cap, and `3` Story-day total adjustment cap.
 It applies only when authoritative World/character context establishes
 ordinary Human applicability, and only as the default for future cycles. The
 Characters detail now exposes the formal Chat-local timing-config editor beside
-the nickname action; existing Timing Instances remain frozen.
+the nickname action as a compact popup; opening it displays the shell before the
+lightweight async view read completes. Existing Timing Instances remain frozen.
+
+The UI now has an explicit `UI_OPEN_FAST_PATH` contract: ordinary editors and
+popups render a visible shell before lightweight async reads, discard stale
+results, and keep authoritative validation/persistence on SAVE. Characters
+Timing, nickname, and World archive surfaces use the same compact popup
+presentation family; the Timing
+popup's open response and compact presentation have been verified manually in
+the real host. The latest real-host UI acceptance also verified the Timing,
+nickname, and World archive popup surfaces and their compact presentation.
+This records popup open/presentation acceptance only, not full Timing
+persistence or F5 behavioral acceptance.
 
 The Current Biological State modifier is `ZERO_V1` by intent. This is an
 intentional boundary, not an omitted feature: no weak narrative signal is
@@ -284,7 +296,7 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Pre-confirmation Timing Config | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
 | Observation Timing Instance | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
 | Human narrative timing preset | IMPLEMENTED / AUTOMATED VERIFIED; host behavior pending |
-| Characters timing config UI | IMPLEMENTED / AUTOMATED VERIFIED; host UI acceptance pending |
+| Characters timing config UI | IMPLEMENTED / AUTOMATED VERIFIED; compact popup host UI acceptance pending |
 | Events UI | IMPLEMENTED / PRODUCTION consumer of validated data |
 | Projection UI | PARTIAL |
 | Overview | PARTIAL |
@@ -332,20 +344,20 @@ missing.
 This is a checkpoint, not a permanent number:
 
 ```text
-1113 total
-1096 pass
+1116 total
+1099 pass
 17 fail
 ```
 
-Sixteen failures are the known World Model prompt-baseline failures. One
-additional unresolved Runtime concurrency/persistence failure is present in the
-current run. The seven-test increase is from the Human preset, config-facade,
-and Characters timing UI coverage added in this implementation. The current
-Runtime failure signature is the `start-new-chat-lifecycle` case; the prior
-checkpoint had two related Runtime signatures. This cannot currently be
-attributed to Timing, but it also cannot be claimed proven unrelated to Timing.
-Future verification must compare failure sets and signatures, not only failure
-counts.
+The ten-test increase is from the Human preset, config-facade, Characters
+timing UI/performance coverage, nickname popup coverage, and Runtime lifecycle
+test synchronization added in this implementation. The current full-check
+signature contains the 16 known World Model prompt-baseline failures plus one
+unresolved `start-new-chat-lifecycle` failure that appears in the complete
+parallel suite but passes when isolated, grouped with the related Runtime file,
+or run with test concurrency set to 1. It is not attributed to Popup or
+Timing. Future verification must compare failure sets and signatures, not only
+failure counts.
 
 ## Real Host Status
 
@@ -369,6 +381,7 @@ surface is available after initialization and reload:
 | `__BIOWEAVE_DEBUG__` visible after init/reload | VERIFIED |
 | Diagnostic timing/config reads callable and read-only | VERIFIED |
 | Controlled timing-config fixture save/reset path | VERIFIED in source; host fixture use remains separate from product UI acceptance |
+| Timing, nickname, and World archive popup Host presentation | VERIFIED by user acceptance |
 | Host build/load identity | VERIFIED |
 | Timing behavioral smoke | PENDING |
 | Host acceptance | PARTIAL / PENDING |
@@ -380,7 +393,7 @@ Projection lifecycle behavior separately.
 ## Documentation Conflicts and Evidence Notes
 
 - `docs/DEVELOPMENT.md` contains older checkpoints. The current checkout
-  checkpoint is `1113 / 1096 / 17` after adding seven focused tests. Use the
+  checkpoint is `1116 / 1099 / 17` after adding ten focused tests. Use the
   current test run/failure signatures as the
   operational baseline and update the authoritative development document in a
   separately authorized documentation task if needed.

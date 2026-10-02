@@ -3548,21 +3548,36 @@ test("normal generation also waits for the settle barrier", async () => {
 });
 
 test("real ST reroll order uses positional generation type and renders after GENERATION_ENDED", async () => {
+  const analysisStarted = deferredSignal();
+  const analysisFinished = deferredSignal();
+  let eventCalls = 0;
   const fixture = createFixture({
     messages: [{ message_id: "real-reroll", floor: 1, content: "原文", role: "assistant" }],
+    analyzer: {
+      async analyzeFloor() {
+        eventCalls += 1;
+        analysisStarted.resolve();
+        return { events: [] };
+      },
+    },
+    notify(event) {
+      if (event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "success")
+        analysisFinished.resolve();
+    },
   });
   configureScheduler(fixture, { interval: 99 });
   await fixture.runtime.init();
 
   fixture.emit("generation-started", "regenerate");
   fixture.emit("generation-ended", 1);
-  await settle();
-  assert.equal(fixture.calls(), 0);
+  await Promise.resolve();
+  assert.equal(eventCalls, 0);
   fixture.context.chat[0].content = "真实重新生成后的正文";
   fixture.emit("character-message-rendered", 0, "regenerate");
-  await settle();
+  await analysisStarted.promise;
+  await analysisFinished.promise;
 
-  assert.equal(fixture.calls(), 1);
+  assert.equal(eventCalls, 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
   fixture.runtime.destroy();
 });
@@ -8160,6 +8175,12 @@ function deferredWorldRequest() {
   return { pending, release };
 }
 
+function deferredSignal() {
+  let resolve;
+  const promise = new Promise(value => { resolve = value; });
+  return { promise, resolve };
+}
+
 function worldFloorMessages() {
   return [
     { message_id: "world-owner", floor: 3, content: "已有世界规则", role: "assistant" },
@@ -8246,6 +8267,7 @@ test("World single-flight deduplicates Auto World and Manual Patch API requests"
 
 test("Auto Analysis reuses an in-flight Manual Full request without a second World API call", async () => {
   const gate = deferredWorldRequest();
+  const worldStarted = deferredSignal();
   const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "手动完整世界" }] });
   let worldCalls = 0;
   const fixture = createFixture({
@@ -8253,6 +8275,7 @@ test("Auto Analysis reuses an in-flight Manual Full request without a second Wor
     analyzer: {
       async analyzeWorldModel() {
         worldCalls += 1;
+        worldStarted.resolve();
         await gate.pending;
         return worldModel;
       },
@@ -8261,9 +8284,8 @@ test("Auto Analysis reuses an in-flight Manual Full request without a second Wor
   });
   await fixture.runtime.init();
   const manual = fixture.runtime.analyzeCurrentWorldModelFull({ analysisInput: {} });
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await worldStarted.promise;
   const automatic = fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(worldCalls, 1);
   gate.release();
   await Promise.all([manual, automatic]);
@@ -8298,6 +8320,7 @@ test("Auto Analysis reuses an in-flight Manual Patch request without a second Wo
 
 test("Manual Full and Manual Patch share one World persistence job", async () => {
   const gate = deferredWorldRequest();
+  const worldStarted = deferredSignal();
   const worldA = normalizeWorldModel({ schema_version: 1, species: [{ name: "已有世界" }] });
   const worldB = normalizeWorldModel({ schema_version: 1, species: [{ name: "完整新世界" }] });
   let fullCalls = 0;
@@ -8307,6 +8330,7 @@ test("Manual Full and Manual Patch share one World persistence job", async () =>
     analyzer: {
       async analyzeWorldModel() {
         fullCalls += 1;
+        worldStarted.resolve();
         await gate.pending;
         return worldB;
       },
@@ -8319,9 +8343,8 @@ test("Manual Full and Manual Patch share one World persistence job", async () =>
   });
   await seedWorldOwner(fixture, worldA);
   const full = fixture.runtime.analyzeCurrentWorldModelFull({ analysisInput: {} });
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await worldStarted.promise;
   const patch = fixture.runtime.analyzeCurrentWorldModelPatch({ analysisInput: {} });
-  await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(fullCalls, 1);
   assert.equal(patchCalls, 0);
   gate.release();

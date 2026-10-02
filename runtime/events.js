@@ -2507,27 +2507,27 @@ export function createRuntime({
     };
   }
 
-  async function getCharacterTimingEditorData({characterId} = {}) {
+  async function getCharacterTimingEditorData({characterId, characterProfile = null} = {}) {
     const id = String(characterId ?? '').trim();
     if (!id) throw Object.assign(new TypeError('character_id:required'), {code: 'CHARACTER_ID_REQUIRED'});
-    const business = await eventAnalysis.collectActiveBusinessData();
-    const profile = business.character_profiles?.[id] ?? null;
-    const character = business.current_state?.characters?.[id] ?? null;
+    const chatId = chat.current();
     const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
-    const world = floor?.index === undefined
-      ? null
-      : await eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index});
+    const [world, timeline] = await Promise.all([
+      floor?.index === undefined
+        ? Promise.resolve(null)
+        : eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index}),
+      projectionTimingPersistence.getTimingInstances({chatId, endpointFloor: floor?.version?.floor}),
+    ]);
     const worldSpecies = Array.isArray(world?.model?.species) ? world.model.species : [];
-    const profileSpecies = profile?.biological_context?.species ?? profile?.species ?? character?.biological_context?.species ?? character?.species;
+    const profileSpecies = characterProfile?.biological_context?.species ?? characterProfile?.species;
     const humanApplicable = worldSpecies.some(species => isCanonicalWorldHumanSpecies(species?.name))
       && isCanonicalWorldHumanSpecies(profileSpecies);
-    const override = readCharacterTimingConfig(store.getChat(chat.current()), id).config;
+    const override = readCharacterTimingConfig(store.getChat(chatId), id).config;
     const resolved = resolveCharacterTimingConfig({
       override,
       baseline: humanApplicable ? getHumanPreconfirmationTimingPreset() : null,
     });
-    const timingDebug = await getProjectionTimingDebug();
-    const timingInstance = timingDebug?.timing_instances?.find(instance => instance.subject_id === id) ?? null;
+    const timingInstance = [...(timeline?.creations ?? [])].reverse().find(instance => instance.subject_id === id) ?? null;
     return {
       character_id: id,
       config: resolved.config,
@@ -2535,7 +2535,7 @@ export function createRuntime({
       human_preset_applicable: humanApplicable,
       human_preset_version: HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION,
       timing_instance: timingInstance,
-      chat_id: chat.current(),
+      chat_id: chatId,
     };
   }
 

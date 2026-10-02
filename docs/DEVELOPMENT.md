@@ -96,6 +96,12 @@ isolation、sanitization、module extraction 或 AnalysisInput narrowing 时，�
 - Projection Context 注入：`storage/projection.js` 读取当前有效 Projection，`core/projection-context.js` 构建 DTO/Prompt，`runtime/projection-context.js` 通过 `runtime/events.js` 接入 SillyTavern `setExtensionPrompt()`；这是当前唯一的 Context injection implementation。
 - `ui/*`：一个一级页面一个文件；页面只消费 Runtime 传入的 Tracking Registry / BiologicalEvent DTO，不判断生殖资格。
 
+普通 UI editor/popup 遵守 `UI_OPEN_FAST_PATH`：点击先同步显示可见 shell，之后
+才读取必要的轻量 DTO；异步结果必须经过 Chat/canonical entity/editor-request
+stale guard。OPEN 不得为显示字段触发分析、Projection/State/Tracking 重建、
+debug aggregation 或持久化；SAVE 仍走正式 Runtime API、校验、权威持久化和
+readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
+
 ### Data Lifecycle Contract
 
 凡新增或修改 BioWeave 的持久化字段、Floor/Swipe 派生结果或 Runtime

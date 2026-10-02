@@ -325,6 +325,38 @@ StateReducer、Current Biological State、Snapshot Runtime 和 Projection Runtim
 
 ## Safe modification guardrails
 
+### UI_OPEN_FAST_PATH
+
+普通 settings editor、Character editor、popup、modal、详情辅助窗口等轻量
+查看/编辑 surface 遵守 `UI_OPEN_FAST_PATH`：用户点击后必须先同步设置 open
+state 并渲染可见 shell，再读取必要的轻量 DTO；异步结果返回时必须重新确认
+Chat identity、canonical entity identity、editor 仍然打开且请求仍为当前请求，
+通过后最多进行一次必要的内容填充 rerender。关闭或 stale 的结果必须丢弃，
+不得复活已关闭的 editor。
+
+普通 OPEN 默认是 read-only、无副作用的轻量操作。除非该操作本身明确是开始
+分析、刷新分析、执行推演、保存或重建，否则不得为了显示 editor 触发 AI、
+World Full/Patch、Event Analysis、Projection generation/eligibility、事实
+State/Tracking rebuild、exhaustive Floor scan、heavy debug aggregation、
+persistence transaction、saveChat、official save/readback、Timeline rebuild，
+或无关的 World/Projection aggregation。已有 UI DTO、identity-valid Runtime
+read DTO 和 scoped config/store read 优先；不能因为已有 getter 恰好能返回某
+字段，就复用返回大量无关业务数据的诊断聚合 API。正式产品 UI 不调用
+`window.__BIOWEAVE_DEBUG__`，debug surface 只服务 diagnostics、development、
+fixture 和人工验证。
+
+多个确实必要且互不依赖的轻量异步读取可以并行；有依赖时保持正确顺序。可见
+shell 不得等待 heavyweight async work：`FAST OPEN, AUTHORITATIVE SAVE`。保存
+仍必须使用对应正式 Runtime API、校验、canonical identity 与 Chat/Floor stale
+guard、权威持久化/readback 和结果 rerender，不能为了打开速度削弱保存正确性。
+
+当前 Characters 的 Timing、昵称 editor 与 World 的归档资料都采用该边界：
+compact popup/popover 不展开主页面；Timing 使用轻量正式 view read，昵称只读取
+当前身份 DTO，归档资料只读取已经加载的 World metadata。三者均不通过 debug
+facade 打开，也不在 OPEN 阶段创建 Event、State、Timing Instance、Projection
+或 World Rule。三者共享 `bioweave-compact-popup` 的紧凑 presentation 基础，
+业务专属内容、定位上下文和动作保留在各自 owner。
+
 ### Pre-confirmation Projection Timing
 
 Phase 1 的 timing resolver 位于 Core，Chat config 通过 `storage/store.js` 的
@@ -336,9 +368,11 @@ Floor Persistence Coordinator、active Swipe、完整 Floor Version、官方保�
 位于单一 Core preset module，只有在 World species 与 canonical character
 species 都明确为普通 Human 时作为未来周期 config baseline；它不创建或替代
 World projection rule。Characters UI 通过正式 Runtime config API 读取/保存
-Chat-local override，不能调用 debug facade。v1 state modifier 固定为 0；没有
-明确有效 config 时 timing integration 保持 disabled，不改变既有 Projection
-行为。
+Chat-local override，不能调用 debug facade。Timing editor 的正式 view read
+只读取当前 Chat 的 World applicability、Chat config 和 Floor timing timeline，
+不调用 debug aggregation、Event analysis 或 Projection eligibility；打开先显示
+popup shell，再异步填充 read projection。v1 state modifier 固定为 0；没有明确
+有效 config 时 timing integration 保持 disabled，不改变既有 Projection 行为。
 
 - 普通产品修复优先限于对应 feature owner。
 - 不为产品行为问题修改 Coordinator、Adapter raw transport、Generation settle 或 Floor Version policy。

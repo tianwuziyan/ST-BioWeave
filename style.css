@@ -7353,19 +7353,7 @@
 .bioweave-character-timing-current-list dd { color: var(--bioweave-text) !important; }
 .bioweave-character-timing-actions { display: flex !important; align-items: center !important; gap: 6px !important; margin-top: 10px !important; }
 .bioweave-character-timing-actions .bioweave-spacer { flex: 1 1 auto !important; }
-.bioweave-character-alias-editor-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 12px !important; margin: -10px -10px 0 !important; padding: 11px 12px 9px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
-.bioweave-character-alias-editor-head h3 { color: var(--bioweave-text) !important; font-size: 13px !important; }
-.bioweave-character-alias-editor-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
-.bioweave-character-alias-count { flex: 0 0 auto !important; padding: 2px 6px !important; border-radius: 99px !important; color: var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; font-size: 10px !important; line-height: 18px !important; }
-.bioweave-character-alias-list { display: grid !important; gap: 6px !important; padding: 10px 2px 4px !important; }
-.bioweave-character-alias-row { display: grid !important; grid-template-columns: minmax(0, 1fr) 28px !important; align-items: center !important; gap: 6px !important; }
 .bioweave-character-alias-field { position: relative !important; min-width: 0 !important; }
-.bioweave-character-alias-field::before { content: "别名" !important; position: absolute !important; top: 50% !important; left: 9px !important; z-index: 1 !important; padding-right: 8px !important; border-right: 1px solid var(--bioweave-border-soft) !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 16px !important; transform: translateY(-50%) !important; pointer-events: none !important; }
-.bioweave-character-alias-row .bioweave-input { display: block !important; width: 100% !important; min-width: 0 !important; min-height: 30px !important; padding: 4px 8px 4px 44px !important; border: 1px solid var(--bioweave-border) !important; border-radius: 7px !important; color: var(--bioweave-text) !important; background: var(--bioweave-input-bg) !important; font-size: 12px !important; }
-.bioweave-character-alias-row .bioweave-input:hover { border-color: color-mix(in srgb, var(--bioweave-accent) 55%, var(--bioweave-border)) !important; }
-.bioweave-main .bioweave-character-alias-remove { display: grid !important; width: 28px !important; min-width: 28px !important; min-height: 28px !important; padding: 0 !important; place-items: center !important; border: 0 !important; color: var(--bioweave-text-muted) !important; background: transparent !important; font-size: 16px !important; line-height: 1 !important; }
-.bioweave-main .bioweave-character-alias-remove:hover,
-.bioweave-main .bioweave-character-alias-remove:focus-visible { border: 0 !important; color: var(--bioweave-danger) !important; background: color-mix(in srgb, var(--bioweave-danger) 8%, transparent) !important; }
 .bioweave-character-alias-actions { display: flex !important; align-items: center !important; gap: 6px !important; margin: 0 -10px -10px !important; padding: 8px 12px 10px !important; }
 .bioweave-character-alias-actions .bioweave-spacer { flex: 1 1 auto !important; }
 .bioweave-main .bioweave-character-alias-actions > .bioweave-button { min-height: 28px !important; padding: 3px 8px !important; font-size: 11px !important; }
@@ -7545,7 +7533,9 @@
 .bioweave-character-list-pane { position: sticky !important; top: 8px !important; }
 .bioweave-character-row { display: grid !important; grid-template-columns: minmax(0, 1fr) max-content !important; min-height: 42px !important; padding: 7px 9px !important; }
 .bioweave-character-row-state { color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
-.bioweave-character-detail-pane { padding: 0 !important; overflow: hidden !important; }
+.bioweave-character-detail-pane { position: relative !important; padding: 0 !important; overflow: visible !important; }
+.bioweave-compact-popup { max-width: calc(100vw - 32px) !important; box-shadow: 0 12px 28px rgb(0 0 0 / 28%) !important; }
+.bioweave-character-editor-popover { position: absolute !important; z-index: 6 !important; top: 63px !important; right: 12px !important; width: min(320px, calc(100% - 24px)) !important; max-height: min(70vh, 520px) !important; margin: 0 !important; overflow-y: auto !important; box-shadow: 0 12px 28px rgb(0 0 0 / 28%) !important; }
 .bioweave-character-detail-head { align-items: center !important; min-height: 58px !important; padding: 10px 12px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
 .bioweave-character-detail-head h2 { font-size: 17px !important; }
 .bioweave-character-detail-head p { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
@@ -7553,13 +7543,18 @@
 .bioweave-character-detail-title span { min-width: 0 !important; overflow: hidden !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
 .bioweave-character-alias-editor { margin: 0 12px 10px !important; overflow: hidden !important; border: 1px solid color-mix(in srgb, var(--bioweave-accent) 65%, var(--bioweave-border)) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
 .bioweave-character-timing-editor { margin: 0 12px 10px !important; padding: 10px !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
+.bioweave-character-timing-popover { width: min(320px, calc(100% - 24px)) !important; }
+.bioweave-character-timing-editor-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 10px !important; margin: -10px -10px 0 !important; padding: 11px 12px 9px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-timing-close { flex: 0 0 auto !important; min-width: 27px !important; min-height: 27px !important; padding: 0 6px !important; line-height: 1 !important; }
 .bioweave-character-timing-fields { grid-template-columns: 1fr !important; gap: 7px !important; }
-.bioweave-character-timing-fields label { grid-template-columns: 88px minmax(0, 1fr) max-content !important; font-size: 12px !important; }
-.bioweave-character-timing-fields input { min-height: 32px !important; }
+.bioweave-character-timing-fields label { grid-template-columns: 88px 8ch max-content !important; font-size: 12px !important; }
+.bioweave-character-timing-fields input { width: 8ch !important; min-width: 8ch !important; max-width: 8ch !important; min-height: 32px !important; box-sizing: border-box !important; }
 .bioweave-character-timing-actions { flex-wrap: wrap !important; }
 .bioweave-character-alias-head,
 .bioweave-character-alias-actions { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 8px 10px !important; }
 .bioweave-character-alias-head { border-bottom: 1px solid var(--bioweave-border-soft) !important; }
+.bioweave-character-alias-head-actions { display: flex !important; align-items: center !important; gap: 6px !important; }
+.bioweave-character-alias-close { min-width: 27px !important; min-height: 27px !important; padding: 0 6px !important; line-height: 1 !important; }
 .bioweave-character-alias-head h3 { margin: 0 !important; color: var(--bioweave-text) !important; font-size: 13px !important; line-height: 1.35 !important; }
 .bioweave-character-alias-head p { color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
 .bioweave-character-alias-fields { padding: 8px 10px !important; }
@@ -7575,6 +7570,7 @@
 .bioweave-character-alias-actions > .right { display: flex !important; gap: 6px !important; }
 .bioweave-main .bioweave-character-alias-actions > .bioweave-button { min-height: 32px !important; padding: 5px 10px !important; font-size: 14px !important; line-height: 1.5 !important; }
 .bioweave-main .bioweave-character-alias-add { min-height: 0 !important; padding: 5px 0 !important; font-size: 14px !important; line-height: 1.5 !important; }
+.bioweave-character-alias-editor.bioweave-character-editor-popover { margin: 0 !important; padding: 10px !important; }
 .bioweave-character-detail-sections { display: block !important; margin-top: 0 !important; }
 .bioweave-character-detail-section { padding: 11px 12px !important; border: 0 !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; border-radius: 0 !important; background: transparent !important; }
 .bioweave-character-detail-section:last-child { border-bottom: 0 !important; }
@@ -7606,6 +7602,7 @@
 @media (max-width: 767px) {
   .bioweave-character-list-pane { position: static !important; }
   .bioweave-character-detail-pane { padding: 0 !important; }
+  .bioweave-character-editor-popover { top: 58px !important; right: 8px !important; width: calc(100% - 16px) !important; max-height: min(76vh, 560px) !important; }
   .bioweave-character-detail-placeholder { min-height: 98px !important; padding: 16px !important; }
   .bioweave-character-detail-head { min-height: 54px !important; padding: 9px 10px !important; }
   .bioweave-character-detail-head h2 { font-size: 15px !important; }

@@ -901,7 +901,7 @@ export function renderSpeciesArchive(meta, {open = false, busy = false} = {}) {
       ].join('')).join('')
     : '<li class="bioweave-empty">暂无已归档 Species。</li>'
   return [
-    `<div class="bioweave-world-model-archive">${toggle}<div class="bioweave-world-model-archive-popover" id="bioweave-world-model-archive-popover" role="dialog" aria-label="归档名单"><header><h3>归档名单</h3><p>归档只移出 active World Model，完整 subtree 会在还原时恢复。</p></header><ul class="bioweave-world-model-archive-list">${items}</ul></div></div>`,
+    `<div class="bioweave-world-model-archive">${toggle}<div class="bioweave-world-model-archive-popover bioweave-compact-popup" id="bioweave-world-model-archive-popover" role="dialog" aria-modal="true" aria-label="归档名单"><header><h3>归档名单</h3><p>归档只移出 active World Model，完整 subtree 会在还原时恢复。</p></header><ul class="bioweave-world-model-archive-list">${items}</ul></div></div>`,
   ].join('')
 }
 export function renderWorldModelView(

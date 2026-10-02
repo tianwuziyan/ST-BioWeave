@@ -21,6 +21,8 @@ const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), '
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
 const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
+const RUNTIME_EVENTS_SOURCE = fs.readFileSync(new URL('../runtime/events.js', import.meta.url), 'utf8')
+const WORLD_SOURCE = fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8')
 const HOST_ENTRY_SOURCE = fs.readFileSync(new URL('../host-entry.js', import.meta.url), 'utf8')
 const UI_SOURCE = [
   APP_SOURCE,
@@ -67,6 +69,9 @@ test('Character detail exposes timing config entry and separates future config f
   assert.ok(html.indexOf('推演周期') < html.indexOf('编辑昵称'))
   assert.match(html, /之后新周期的设置/u)
   assert.match(html, /当前已经采用的周期/u)
+  assert.match(html, /bioweave-character-timing-popover/u)
+  assert.match(html, /aria-modal="true"/u)
+  assert.match(html, /data-bioweave-action="cancel-character-timing"/u)
   assert.match(html, /14/)
   assert.match(html, /42/)
   assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
@@ -74,6 +79,8 @@ test('Character detail exposes timing config entry and separates future config f
   assert.match(html, /\+1\.2 天/u)
   assert.match(html, /11\.2 ～ 21\.2 天/u)
   assert.doesNotMatch(UI_SOURCE, /__BIOWEAVE_DEBUG__/u)
+  assert.match(FINAL_STYLE_SOURCE, /bioweave-character-timing-popover[\s\S]*width: min\(320px/u)
+  assert.match(FINAL_STYLE_SOURCE, /character-timing-fields input[\s\S]*width: 8ch/u)
 })
 
 test('Character timing editor shows no current cycle before a Timing Instance exists', () => {
@@ -92,6 +99,57 @@ test('Character timing editor shows no current cycle before a Timing Instance ex
   })
   assert.match(html, /尚未建立观察周期/u)
   assert.doesNotMatch(html, /本次偏移/u)
+})
+
+test('Character timing open renders before async data and avoids debug aggregation', () => {
+  const openStart = APP_SOURCE.indexOf('function openCharacterTiming(')
+  const loadStart = APP_SOURCE.indexOf('async function loadCharacterTimingData(')
+  const openSource = APP_SOURCE.slice(openStart, loadStart)
+  const editorStart = RUNTIME_EVENTS_SOURCE.indexOf('async function getCharacterTimingEditorData(')
+  const editorSource = RUNTIME_EVENTS_SOURCE.slice(editorStart, RUNTIME_EVENTS_SOURCE.indexOf('\n  const dataLifecycle', editorStart))
+  assert.ok(openStart >= 0)
+  assert.ok(loadStart > openStart)
+  assert.match(openSource, /timingEditorState = \{[\s\S]*open: true[\s\S]*loading: true/u)
+  assert.match(openSource, /render\(\)[\s\S]*void loadCharacterTimingData/u)
+  assert.doesNotMatch(openSource, /await\s+runtime\.getCharacterTimingEditorData/u)
+  assert.doesNotMatch(editorSource, /getProjectionTimingDebug/u)
+  assert.match(editorSource, /Promise\.all\(\[/u)
+})
+
+test('Nickname editor uses the compact shell-first popup path', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: 'Alice'}},
+    aliasEditor: {open: true, loading: true, characterId: 'char-a', draftAliases: [], saving: false},
+  })
+  const openStart = APP_SOURCE.indexOf('function openCharacterAliases(')
+  const loadStart = APP_SOURCE.indexOf('function loadCharacterAliases(')
+  const closeStart = APP_SOURCE.indexOf('function closeCharacterAliases(', openStart)
+  const openSource = APP_SOURCE.slice(openStart, closeStart)
+  assert.match(html, /bioweave-character-editor-popover/u)
+  assert.match(html, /aria-modal="true"/u)
+  assert.match(html, /正在读取当前 Floor 昵称/u)
+  assert.match(html, /data-bioweave-action="cancel-character-alias"/u)
+  assert.ok(openStart >= 0)
+  assert.ok(loadStart >= 0)
+  assert.ok(closeStart > openStart)
+  assert.match(openSource, /aliasEditorState = \{[\s\S]*open: true[\s\S]*loading: true/u)
+  assert.match(openSource, /render\(\)[\s\S]*loadCharacterAliases/u)
+  assert.doesNotMatch(openSource, /await\s+runtime\.getCurrentCharacterIdentity/u)
+  assert.doesNotMatch(UI_SOURCE, /__BIOWEAVE_DEBUG__/u)
+  assert.match(FINAL_STYLE_SOURCE, /bioweave-character-editor-popover[\s\S]*width: min\(320px/u)
+})
+
+test('World archive uses the shared compact popup family and synchronous open path', () => {
+  const toggleStart = APP_SOURCE.indexOf("if (action === 'world-model-toggle-archive')")
+  const toggleEnd = APP_SOURCE.indexOf("if (action === 'world-model-restore-species')", toggleStart)
+  const toggleSource = APP_SOURCE.slice(toggleStart, toggleEnd)
+  assert.match(WORLD_SOURCE, /bioweave-world-model-archive-popover bioweave-compact-popup/u)
+  assert.match(toggleSource, /archiveOpen: !worldModelState\.archiveOpen/u)
+  assert.match(toggleSource, /render\(\)/u)
+  assert.doesNotMatch(toggleSource, /await\s+/u)
+  assert.match(FINAL_STYLE_SOURCE, /bioweave-compact-popup[\s\S]*max-width: calc\(100vw - 32px\)/u)
 })
 test('BioWeave overlay stays between ordinary host UI and host modal layers', () => {
   const match = STYLE_SOURCE.match(/\.bioweave-overlay\s*\{[\s\S]*?z-index:\s*(\d+)\s*;/)

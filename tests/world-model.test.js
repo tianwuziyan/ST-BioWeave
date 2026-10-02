@@ -7992,6 +7992,7 @@ test('World UI keeps archive and read-only projections within the approved bound
     selectedTypeIndex: 0,
   })
   assert.match(html, /bioweave-world-model-archive-popover/)
+  assert.match(html, /bioweave-world-model-archive-popover bioweave-compact-popup/)
   assert.match(html, /bioweave-secondary-action bioweave-world-model-archive-toggle/)
   assert.match(html, /归档资料 <span class="bioweave-world-model-archive-count">1<\/span>/)
   assert.match(html, /已归档种族/)

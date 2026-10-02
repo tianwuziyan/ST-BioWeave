@@ -627,10 +627,12 @@ export function createApp(runtime, options = {}) {
     loading: false,
     saving: false,
     characterId: null,
+    chatId: null,
     canonicalName: null,
     draftAliases: [],
     error: null,
   }
+  let aliasEditorRequestSequence = 0
   let timingEditorState = {
     open: false,
     loading: false,
@@ -3673,22 +3675,43 @@ export function createApp(runtime, options = {}) {
     if (code === 'bioweave_user_floor_write_forbidden') return '当前不是可写入的 Character Floor。'
     return '昵称保存失败，请重新读取当前人物信息。'
   }
-  async function openCharacterAliases(characterId) {
+  function loadCharacterAliases({id, chatId, requestId}) {
+    void (async () => {
+      try {
+        const identity = await runtime.getCurrentCharacterIdentity(id)
+        if (
+          requestId !== aliasEditorRequestSequence ||
+          runtime.chat.current() !== chatId ||
+          route !== 'characters' ||
+          String(focusedCharacterId ?? '') !== id ||
+          !aliasEditorState.open ||
+          aliasEditorState.characterId !== id
+        ) return
+        aliasEditorState = { ...aliasEditorState, open: true, loading: false, characterId: id, canonicalName: identity.display_name, draftAliases: [...(identity.aliases ?? [])], error: null }
+      } catch (error) {
+        if (requestId !== aliasEditorRequestSequence || !aliasEditorState.open || aliasEditorState.characterId !== id) return
+        aliasEditorState = { ...aliasEditorState, loading: false, error: aliasErrorMessage(error) }
+      }
+      render()
+    })()
+  }
+  function openCharacterAliases(characterId) {
     const id = String(characterId ?? '').trim()
     if (!id || typeof runtime.getCurrentCharacterIdentity !== 'function') return
-    aliasEditorState = { ...aliasEditorState, open: true, loading: true, saving: false, characterId: id, canonicalName: null, draftAliases: [], error: null }
-    render()
-    try {
-      const identity = await runtime.getCurrentCharacterIdentity(id)
-      if (String(focusedCharacterId ?? '') !== id) return
-      aliasEditorState = { ...aliasEditorState, open: true, loading: false, characterId: id, canonicalName: identity.display_name, draftAliases: [...(identity.aliases ?? [])], error: null }
-    } catch (error) {
-      aliasEditorState = { ...aliasEditorState, loading: false, error: aliasErrorMessage(error) }
+    if (aliasEditorState.open && aliasEditorState.characterId === id) {
+      closeCharacterAliases()
+      return
     }
+    const chatId = runtime.chat.current()
+    const requestId = ++aliasEditorRequestSequence
+    if (timingEditorState.open) closeCharacterTiming()
+    aliasEditorState = { ...aliasEditorState, open: true, loading: true, saving: false, characterId: id, chatId, canonicalName: null, draftAliases: [], error: null }
     render()
+    loadCharacterAliases({id, chatId, requestId})
   }
   function closeCharacterAliases() {
-    aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+    aliasEditorRequestSequence += 1
+    aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
     render()
   }
   function addCharacterAlias() {
@@ -3709,6 +3732,14 @@ export function createApp(runtime, options = {}) {
   }
   async function saveCharacterAliases() {
     if (aliasEditorState.saving || !aliasEditorState.characterId || typeof runtime.updateCharacterAliases !== 'function') return
+    if (
+      aliasEditorState.chatId !== runtime.chat.current() ||
+      route !== 'characters' ||
+      String(focusedCharacterId ?? '') !== String(aliasEditorState.characterId)
+    ) {
+      closeCharacterAliases()
+      return
+    }
     aliasEditorState = { ...aliasEditorState, saving: true, error: null }
     render()
     try {
@@ -3736,14 +3767,21 @@ export function createApp(runtime, options = {}) {
     timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
   }
-  async function openCharacterTiming(characterId) {
+  function openCharacterTiming(characterId) {
     const id = String(characterId ?? '').trim()
     if (!id || typeof runtime.getCharacterTimingEditorData !== 'function') return
+    if (timingEditorState.open && timingEditorState.characterId === id) {
+      closeCharacterTiming()
+      return
+    }
     const chatId = runtime.chat.current()
     timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
+    void loadCharacterTimingData({id, chatId})
+  }
+  async function loadCharacterTimingData({id, chatId}) {
     try {
-      const data = await runtime.getCharacterTimingEditorData({characterId: id})
+      const data = await runtime.getCharacterTimingEditorData({characterId: id, characterProfile: businessState.characterProfiles?.[id] ?? null})
       if (runtime.chat.current() !== chatId || String(focusedCharacterId ?? '') !== id) return
       timingEditorState = {...timingEditorState, open: true, loading: false, config: data?.config ?? null, draft: data?.config ? {...data.config} : null, timingInstance: data?.timing_instance ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
     } catch (error) {
@@ -4089,7 +4127,8 @@ export function createApp(runtime, options = {}) {
     route = nextRoute
     focusedCharacterId = null
     if (nextRoute !== 'characters') {
-      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+      aliasEditorRequestSequence += 1
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     }
     if (nextRoute !== 'events') setEventFilter()
@@ -4101,7 +4140,10 @@ export function createApp(runtime, options = {}) {
     if (!nextId) return
     route = 'characters'
     focusedCharacterId = nextId
-    if (aliasEditorState.characterId !== nextId) aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+    if (aliasEditorState.characterId !== nextId) {
+      aliasEditorRequestSequence += 1
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
+    }
     if (timingEditorState.characterId !== nextId) timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
   }
@@ -4862,7 +4904,8 @@ export function createApp(runtime, options = {}) {
       clearAnalysisPreview()
       storyTimeDebugSequence += 1
       storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: null}
-      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+      aliasEditorRequestSequence += 1
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       route = 'overview'
       focusedCharacterId = null
@@ -4986,7 +5029,8 @@ export function createApp(runtime, options = {}) {
       event?.type === 'MESSAGE_SWIPE_DELETED'
     ) {
       if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
-        aliasEditorState = { open: false, loading: false, saving: false, characterId: null, canonicalName: null, draftAliases: [], error: null }
+        aliasEditorRequestSequence += 1
+        aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
         timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       }
       businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
@@ -5030,6 +5074,21 @@ export function createApp(runtime, options = {}) {
       const archiveToggle = root.querySelector?.('.bioweave-world-model-archive-toggle')
       archiveToggle?.setAttribute?.('aria-expanded', 'false')
       archiveToggle?.removeAttribute?.('aria-controls')
+    }
+    if (
+      timingEditorState.open &&
+      route === 'characters' &&
+      !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
+    ) {
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+      render()
+    }
+    if (
+      aliasEditorState.open &&
+      route === 'characters' &&
+      !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
+    ) {
+      closeCharacterAliases()
     }
     captureAnalysisSourceDisclosure()
     if (handleAnalysisParentToggleClick(event)) return
@@ -5141,7 +5200,7 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'open-character-timing') {
       event.preventDefault()
-      await openCharacterTiming(target.dataset.characterId)
+      openCharacterTiming(target.dataset.characterId)
       return
     }
     if (action === 'restore-human-timing-preset') {
@@ -5575,6 +5634,16 @@ export function createApp(runtime, options = {}) {
   }
   function handleKeydown(event) {
     if (event.key !== 'Escape' || root?.dataset.open !== 'true') return
+    if (aliasEditorState.open && route === 'characters') {
+      event.preventDefault()
+      closeCharacterAliases()
+      return
+    }
+    if (timingEditorState.open && route === 'characters') {
+      event.preventDefault()
+      closeCharacterTiming()
+      return
+    }
     if (worldModelState.archiveOpen && route === 'world') {
       event.preventDefault()
       worldModelState = {...worldModelState, archiveOpen: false}

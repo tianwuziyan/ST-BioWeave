@@ -249,13 +249,13 @@ function renderExposures(subject, activeEvents, currentStoryTime = null, storyTi
 function renderAliasEditor(aliasEditor, displayName) {
   if (!aliasEditor?.open) return ''
   if (aliasEditor.loading)
-    return '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器"><p class="bioweave-muted">正在读取当前 Floor 昵称…</p></div>'
+    return '<section class="bioweave-card bioweave-character-alias-editor bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-alias-popover" role="dialog" aria-modal="true" aria-label="昵称 / 别名编辑器"><div class="bioweave-character-alias-head"><h3>昵称 / 别名</h3><button type="button" class="bioweave-button bioweave-character-alias-close" data-bioweave-action="cancel-character-alias" aria-label="关闭昵称 / 别名编辑器">×</button></div><p class="bioweave-muted">正在读取当前 Floor 昵称…</p></section>'
   const aliases = Array.isArray(aliasEditor.draftAliases) ? aliasEditor.draftAliases : []
   return (
-    '<div class="bioweave-character-alias-editor" role="dialog" aria-label="昵称 / 别名编辑器">' +
-    '<div class="bioweave-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="bioweave-badge good" aria-live="polite">' +
+    '<section class="bioweave-card bioweave-character-alias-editor bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-alias-popover" role="dialog" aria-modal="true" aria-label="昵称 / 别名编辑器">' +
+    '<div class="bioweave-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><div class="bioweave-character-alias-head-actions"><span class="bioweave-badge good" aria-live="polite">' +
     aliases.length +
-    ' 个</span></div>' +
+    ' 个</span><button type="button" class="bioweave-button bioweave-character-alias-close" data-bioweave-action="cancel-character-alias" aria-label="关闭昵称 / 别名编辑器">×</button></div></div>' +
     '<div class="bioweave-character-alias-fields">' +
     (aliases.length
       ? aliases
@@ -285,7 +285,7 @@ function renderAliasEditor(aliasEditor, displayName) {
     (aliasEditor.saving ? ' disabled' : '') +
     '>保存</button></div></div>' +
     (aliasEditor.error ? '<p class="bioweave-form-error">' + escapeHtml(aliasEditor.error) + '</p>' : '') +
-    '</div>'
+    '</section>'
   )
 }
 function timingNumber(value, digits = 1) {
@@ -310,13 +310,13 @@ function renderTimingInstanceSummary(instance) {
 }
 function renderCharacterTimingEditor(editor, characterId) {
   if (!editor?.open || editor.characterId !== characterId) return ''
-  if (editor.loading) return '<section class="bioweave-card bioweave-character-timing-editor" role="dialog" aria-label="未确认妊娠推演周期"><p class="bioweave-muted">正在读取当前推演周期设置…</p></section>'
+  if (editor.loading) return '<section class="bioweave-card bioweave-character-timing-editor bioweave-character-timing-popover bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-timing-popover" role="dialog" aria-modal="true" aria-label="未确认妊娠推演周期"><p class="bioweave-muted">正在读取当前推演周期设置…</p></section>'
   const config = editor.draft ?? editor.config ?? {}
   const presetLabel = editor.humanPresetApplicable ? '恢复人类默认' : '恢复默认'
   const current = editor.timingInstance
   return (
-    '<section class="bioweave-card bioweave-character-timing-editor" role="dialog" aria-label="未确认妊娠推演周期">' +
-    '<header class="bioweave-character-timing-editor-head"><div><h3>未确认妊娠推演周期</h3><p>只影响之后新建立的观察周期，不重新计算当前周期。</p></div></header>' +
+    '<section class="bioweave-card bioweave-character-timing-editor bioweave-character-timing-popover bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-timing-popover" role="dialog" aria-modal="true" aria-label="未确认妊娠推演周期">' +
+    '<header class="bioweave-character-timing-editor-head"><div><h3>未确认妊娠推演周期</h3><p>只影响之后新建立的观察周期，不重新计算当前周期。</p></div><button type="button" class="bioweave-button bioweave-character-timing-close" data-bioweave-action="cancel-character-timing" aria-label="关闭未确认妊娠推演周期">×</button></header>' +
     '<div class="bioweave-character-timing-section"><h4>之后新周期的设置</h4><div class="bioweave-character-timing-fields">' +
     '<label><span>最短时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_min_story_days" value="' + escapeHtml(config.base_min_story_days) + '"> <em>天</em></label>' +
     '<label><span>最大时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_max_story_days" value="' + escapeHtml(config.base_max_story_days) + '"> <em>天</em></label>' +
@@ -355,6 +355,7 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
   const species = profile?.species ?? biologicalContext.species
   const type = profile?.biological_type ?? profile?.type ?? biologicalContext.biological_type
   const stateReady = currentStateStatus === 'ready' && characterState
+  const timingOpen = timingEditor?.open && timingEditor.characterId === selectedCharacterId
   return (
     '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-enter" data-character-detail-id="' +
     escapeHtml(characterIdOf(subject)) +
@@ -370,7 +371,7 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     (stateReady ? '已就绪' : '待读取') +
     '</p></div><div class="bioweave-character-detail-actions"><button type="button" class="bioweave-button" data-bioweave-action="open-character-timing" data-character-id="' +
     escapeHtml(characterIdOf(subject)) +
-    '">推演周期</button><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
+    '" aria-expanded="' + String(Boolean(timingOpen)) + '"' + (timingOpen ? ' aria-controls="bioweave-character-timing-popover"' : '') + '>推演周期</button><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
     escapeHtml(characterIdOf(subject)) +
     '">编辑昵称</button></div></header>' +
     renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +

@@ -115,6 +115,34 @@ For registration ownership, keep one unregister function per document:
 - Use empty states for unfinished business layers. Do not create mock storage
   or write demo DTOs into Chat metadata or Floor data.
 
+## UI_OPEN_FAST_PATH
+
+普通 settings editor、Character editor、popup、modal 和详情辅助窗口必须先同步
+设置 open state 并渲染 visible shell，再进行必要的轻量 read。Visible shell must
+not wait for heavy async work。读取结果返回时重新确认 Chat identity、canonical
+entity identity、editor 仍打开以及 request identity；stale 结果必须丢弃，关闭后
+不得复活 editor。
+
+OPEN 默认是 read-only、无持久化、无业务副作用的操作。除非动作本身就是开始
+分析、刷新分析、执行推演、保存或重建，不得触发 AI、World Full/Patch、Event
+Analysis、Projection generation/eligibility、事实 State/Tracking rebuild、
+exhaustive Floor scan、heavy debug aggregation、persistence transaction、
+saveChat、official readback 或无关 World/Projection aggregation。优先复用
+identity-valid UI/Runtime DTO，其次使用 scoped lightweight read API；不得因已有
+getter 恰好包含目标字段而复用 heavyweight diagnostic aggregation。Production UI
+不得调用 `window.__BIOWEAVE_DEBUG__`。
+
+多个互不依赖的轻量异步 reads 可以并行；有依赖时保持顺序。SAVE 不属于 Fast
+Open：保存必须继续使用正式 Runtime API、验证、canonical identity 与
+Chat/Floor stale guard、authoritative persistence/readback 和 rerender，即
+`FAST OPEN, AUTHORITATIVE SAVE`。
+
+当前 conforming popup family 包括 Characters 的 Timing editor、Characters 的
+昵称 editor 和 World 的归档资料 popover。三者使用 `bioweave-compact-popup`
+作为共享紧凑 presentation 基础；业务内容和定位上下文仍由各自页面 owner
+负责。Archive 的 toggle 同时承担打开/关闭控制，因此不要求额外的独立 close
+button，但仍遵守 outside click 与 Escape 的现有页面 contract。
+
 ## SillyTavern host feedback and Popup conventions
 
 ### 1. Scope / Trigger
