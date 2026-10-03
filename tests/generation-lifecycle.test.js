@@ -143,9 +143,7 @@ test("an ownerless completed marker only consumes its settled Floor index", asyn
 });
 
 test("a completed marker does not claim scheduler observed ownership", async () => {
-  const observedKeys = [];
   const fixture = createFixture({
-    rememberObservedKey: key => observedKeys.push(key),
     onGenerationSettled: async () => ({ skipped: true, reason: "test-settled" }),
   });
   fixture.lifecycle.onGenerationStarted("normal");
@@ -154,5 +152,4 @@ test("a completed marker does not claim scheduler observed ownership", async () 
   const result = await fixture.lifecycle.onCharacterMessageRendered(target(66));
 
   assert.deepEqual(result, { skipped: true, reason: "generation-already-consumed" });
-  assert.equal(observedKeys.length, 0);
 });

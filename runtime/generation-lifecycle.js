@@ -15,7 +15,6 @@ export function createGenerationLifecycle({
   isReusableFloor,
   isTargetNew,
   floorExecutionKey,
-  rememberObservedKey,
   emitTrace,
   getCurrentExecutionId,
   isSettledTargetCurrent,
@@ -82,6 +81,7 @@ export function createGenerationLifecycle({
   }
 
   function clearPending(payload = null, currentEntry = null) {
+    const nonCountableFloorVersions = [];
     const messageId = typeof payload === "object"
       ? payload?.message_id ?? payload?.messageId
       : payload;
@@ -95,22 +95,29 @@ export function createGenerationLifecycle({
         String(messageId) === String(pending.messageId)) &&
       (swipeId == null || pending.swipeId == null ||
         String(swipeId) === String(pending.swipeId));
+    const rememberNonCountableVersion = version => {
+      if (!version || typeof version !== "object") return;
+      if (version.chat_id == null || version.message_id == null ||
+          version.content_hash == null || version.message_version == null) return;
+      if (!nonCountableFloorVersions.some(item => floorExecutionKey(item) === floorExecutionKey(version)))
+        nonCountableFloorVersions.push({...version});
+    };
     for (const key of ["pendingGeneration", "pendingSwipeGeneration"]) {
       const pending = state[key];
       if (!matches(pending)) continue;
-      if (pending.baselineVersion)
-        rememberObservedKey?.(floorExecutionKey(pending.baselineVersion));
+      rememberNonCountableVersion(pending.baselineVersion);
       if (currentEntry?.content_hash != null && currentEntry?.message_version != null)
-        rememberObservedKey?.(floorExecutionKey({
+        rememberNonCountableVersion({
           chat_id: getChatId?.(),
           message_id: currentEntry.message_id,
           floor: currentEntry.floor,
           swipe_id: currentEntry.swipe_id ?? 0,
           content_hash: currentEntry.content_hash,
           message_version: currentEntry.message_version,
-        }));
+        });
       state[key] = null;
     }
+    return nonCountableFloorVersions;
   }
 
   async function settle(pending, target) {
@@ -149,8 +156,11 @@ export function createGenerationLifecycle({
     state.pendingSwipeGeneration = null;
     markCompleted(kind, pending, target);
     if (force && !isNewFloor) {
-      rememberObservedKey?.(floorExecutionKey(target.version));
-      return {skipped: true, reason: "generation-without-new-floor"};
+      return {
+        skipped: true,
+        reason: "generation-without-new-floor",
+        non_countable_floor_versions: [{...target.version}],
+      };
     }
     return onGenerationSettled?.(target, {
       // Generation intent remains lifecycle metadata. Automatic scheduling is
@@ -314,10 +324,17 @@ export function createGenerationLifecycle({
     if (!pendingGeneration) {
       try {
         const existing = await resolveExistingSwipe?.(payload);
-        rememberObservedKey?.(floorExecutionKey(existing.version));
         if (isReusableFloor?.(existing.index, existing.swipeId, existing.version))
-          return {skipped: true, reason: "existing-swipe-reused"};
-        return {skipped: true, reason: "existing-swipe-unavailable"};
+          return {
+            skipped: true,
+            reason: "existing-swipe-reused",
+            non_countable_floor_versions: [{...existing.version}],
+          };
+        return {
+          skipped: true,
+          reason: "existing-swipe-unavailable",
+          non_countable_floor_versions: [{...existing.version}],
+        };
       } catch (error) {
         if (error?.message === "SWIPE_NOT_FOUND")
           return {skipped: true, reason: "swipe-not-found"};
@@ -386,8 +403,14 @@ export function createGenerationLifecycle({
     onGenerationStopped(payload, currentEntry) {
       const pending = state.pendingSwipeGeneration ?? state.pendingGeneration;
       if (pending) markCompleted(generationKind(pending), pending);
-      clearPending(payload, currentEntry);
-      return {skipped: true, reason: "generation-not-rendered"};
+      const nonCountableFloorVersions = clearPending(payload, currentEntry);
+      return {
+        skipped: true,
+        reason: "generation-not-rendered",
+        ...(nonCountableFloorVersions.length
+          ? {non_countable_floor_versions: nonCountableFloorVersions}
+          : {}),
+      };
     },
     getState,
     isGenerationOwnerCurrent(generation, target) {

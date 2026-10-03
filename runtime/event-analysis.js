@@ -944,6 +944,20 @@ export function createEventAnalysisCoordinator({
       set.delete(set.values().next().value);
   }
 
+  function applySchedulerLifecycleOutcome(outcome) {
+    const versions = outcome?.non_countable_floor_versions;
+    if (!Array.isArray(versions)) return outcome;
+    for (const version of versions) {
+      if (!version || version.chat_id == null || version.message_id == null ||
+          version.content_hash == null || version.message_version == null) continue;
+      rememberSchedulerKey(
+        schedulerState.observedFloorKeys,
+        floorExecutionKey(version),
+      );
+    }
+    return outcome;
+  }
+
   function lifecycleVersionForPayload(payload, entries = lifecycleSnapshot?.entries) {
     const messageId = typeof payload === "object"
       ? payload?.message_id ?? payload?.messageId
@@ -1763,8 +1777,6 @@ export function createEventAnalysisCoordinator({
       isReusableFloor: currentFloorDataIsReusable,
       isTargetNew: (baseline, target) => !sameFloorVersion(baseline, target),
       floorExecutionKey,
-      rememberObservedKey: key =>
-        rememberSchedulerKey(schedulerState.observedFloorKeys, key),
       emitTrace: (stage, pending, target, details = {}) =>
         emitPersistenceTrace(stage, null, target, {
           generation_id: pending?.generation_id ?? null,
@@ -1792,7 +1804,10 @@ export function createEventAnalysisCoordinator({
         }
       },
       onGenerationSettled: (target, options) =>
-        automaticAnalysis.observeSettledCharacterFloor(target, options),
+        handoffSettledCharacterFloor(target, {
+          ...options,
+          lifecycleOutcome: {status: "generation-settled"},
+        }),
     },
     tracking: {
       collectTrackingInputs,
@@ -3207,7 +3222,12 @@ export function createEventAnalysisCoordinator({
   }
   async function scheduleRenderedCharacter(
     target,
-    { force = false, reason = "automatic", generation = null } = {},
+    {
+      force = false,
+      reason = "automatic",
+      generation = null,
+      lifecycleOutcome = null,
+    } = {},
   ) {
     const generationReplacedVersion = Boolean(
       generation?.baselineVersion &&
@@ -3241,6 +3261,7 @@ export function createEventAnalysisCoordinator({
       already_observed: alreadyObserved,
       already_counted: alreadyCounted,
       reason,
+      lifecycle_outcome: lifecycleOutcome,
     }, "scheduler");
     if (alreadyObserved && !force) {
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
@@ -3322,6 +3343,17 @@ export function createEventAnalysisCoordinator({
       reason,
     }, "scheduler");
     return runScheduledAnalysis(target, { force: false, reason, generation });
+  }
+  function handoffSettledCharacterFloor(
+    target,
+    {reason = "automatic", generation = null, lifecycleOutcome = null} = {},
+  ) {
+    return automaticAnalysis.observeSettledCharacterFloor(target, {
+      force: false,
+      reason,
+      generation,
+      lifecycleOutcome,
+    });
   }
   const automaticAnalysis = createAutomaticAnalysisPort({
     observeSettledCharacterFloor: scheduleRenderedCharacter,
@@ -3461,20 +3493,26 @@ export function createEventAnalysisCoordinator({
         return { skipped: true, reason: type };
       }
       if (type === "GENERATION_STOPPED" || type === "GENERATION_CANCELLED") {
-        return generationLifecycle.onGenerationStopped(
+        const result = generationLifecycle.onGenerationStopped(
           event?.payload ?? null,
           currentSnapshot.entries[targetIndex] ?? null,
         );
+        return applySchedulerLifecycleOutcome(result);
       }
       if (type === "GENERATION_ENDED") {
-        return generationLifecycle.onGenerationEnded();
+        const result = await generationLifecycle.onGenerationEnded();
+        return applySchedulerLifecycleOutcome(result);
       }
       if (type === "MESSAGE_UPDATED" || type === "MESSAGE_EDITED" ||
           type === "MESSAGE_RECEIVED") {
         return { skipped: true, reason: "lifecycle-baseline-only" };
       }
       if (type === "MESSAGE_SWIPED") {
-        return generationLifecycle.onSwipe(event?.payload, previousLifecycleEntry);
+        const result = await generationLifecycle.onSwipe(
+          event?.payload,
+          previousLifecycleEntry,
+        );
+        return applySchedulerLifecycleOutcome(result);
       }
       let target;
       try {
@@ -3493,6 +3531,7 @@ export function createEventAnalysisCoordinator({
         floor_version_key: floorExecutionKey(target.version),
       }, "scheduler");
       const generationResult = await generationLifecycle.onCharacterMessageRendered(target);
+      applySchedulerLifecycleOutcome(generationResult);
       const generationState = generationLifecycle.getState();
       emitPersistenceTrace("GENERATION_LIFECYCLE_RESULT", null, target, {
         result: generationResult,
@@ -3517,7 +3556,10 @@ export function createEventAnalysisCoordinator({
         floor_version_key: floorExecutionKey(target.version),
       }, "scheduler");
       try {
-        return await automaticAnalysis.observeSettledCharacterFloor(target, { reason: type });
+        return await handoffSettledCharacterFloor(target, {
+          reason: type,
+          lifecycleOutcome: {status: "rendered"},
+        });
       } catch (error) {
         if (error?.message === "SWIPE_NOT_FOUND")
           return { skipped: true, reason: "swipe-not-found" };

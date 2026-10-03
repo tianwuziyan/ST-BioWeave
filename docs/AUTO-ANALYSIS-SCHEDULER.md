@@ -221,7 +221,9 @@ completed marker 缺少明确 message/Swipe owner 时，只能按已消费的同
 Character Floor。只有未被 completed marker 认领的新 Character Floor 才进入 normal
 automatic-analysis handoff；同一 generation 的重复通知由 generation marker 截断，
 而已进入 scheduler 的 Floor 由 `observedFloorKeys` 幂等拦截。generation lifecycle
-不得代替 scheduler 写入 `observedFloorKeys`。
+不得代替 scheduler 写入 `observedFloorKeys`；它只能返回 stopped、cancelled、
+same-version 或 existing-Swipe 等 lifecycle outcome，由 scheduler handoff 统一决定
+是否记录不可计数版本。
 
 #### 后台延迟与 owner 防线
 

@@ -4381,6 +4381,41 @@ test("stopped or cancelled generation clears an unrendered reroll intent", async
   swipeFixture.runtime.destroy();
 });
 
+test("stopped or cancelled lifecycle outcomes do not consume the next valid Floor Version", async () => {
+  for (const terminalType of ["generation-stopped", "generation-cancelled"]) {
+    const message = {
+      message_id: `cancelled-owner-${terminalType}`,
+      floor: 1,
+      content: "旧版本",
+      role: "assistant",
+    };
+    const fixture = createFixture({ messages: [message] });
+    configureScheduler(fixture, { interval: 2 });
+    await fixture.runtime.init();
+
+    fixture.emit("generation-started", {
+      genType: "regenerate",
+      message_id: message.message_id,
+    });
+    await settle();
+    fixture.emit(terminalType, { message_id: message.message_id });
+    await settle();
+
+    message.content = "新版本定型";
+    fixture.emit("generation-started", {
+      genType: "normal",
+      message_id: message.message_id,
+    });
+    fixture.emit("generation-ended", { message_id: message.message_id });
+    fixture.emit("character-message-rendered", { message_id: message.message_id });
+    await settle();
+
+    assert.equal(fixture.calls(), 0);
+    assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+    fixture.runtime.destroy();
+  }
+});
+
 test("retry=true keeps counter full and retries on the next Character Floor", async () => {
   let calls = 0;
   const fixture = createFixture({

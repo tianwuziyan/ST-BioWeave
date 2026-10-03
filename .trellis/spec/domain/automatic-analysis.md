@@ -150,6 +150,8 @@ counter、due、World 分析或 Floor 写入。
 继续由 `runtime/generation-lifecycle.js` 管理 generation intent、pending
 generation、pending new Swipe、settled/completed marker 和 stopped/cancelled
 清理。它只在 Floor target 定型后向 Automatic Analysis Port 发出 settled target。
+它不得写入 Automatic Analysis Gate 的 `observedFloorKeys`、`countedFloorKeys`、
+counter 或 retry 状态；不可计数的 lifecycle outcome 由 scheduler handoff 统一处理。
 
 ### Automatic Analysis Gate/Scheduler
 
