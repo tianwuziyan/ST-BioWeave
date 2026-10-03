@@ -12,13 +12,32 @@ replacement for the domain specifications, implementation, or test suite.
 | Development branch | `fix/world-model-prompt-baseline` |
 | Checkpoint | Observed at 2026-10-03; HEAD is checkpoint information, not a permanent architectural contract. |
 | Working tree | Contains the uncommitted resolved-Window candidate handoff and confirmed-pregnancy Window guard implementation plus synchronized docs/tests. |
-| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis Isolation Ports (automatic/shared/manual) are implemented and automated-verified. Real-host behavioral acceptance remains separate. |
+| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis / Floor Counting CLOSED. Real-host behavioral acceptance remains separate by feature. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
 | Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
 
 When this checkpoint conflicts with a concrete implementation or an
 authoritative domain document, verify the current checkout and update this
 navigation document rather than reviving historical task conclusions.
+
+## Closed Stage: Automatic Analysis / Floor Counting
+
+状态：`CLOSED` / 已完成。
+
+- Automatic trigger 已与 shared analysis execution 隔离；automatic scheduler 是
+  automatic Floor countability 的唯一 owner。
+- Generation lifecycle 不写入 `observedFloorKeys`、`countedFloorKeys`、counter 或
+  retry 状态；automatic reroll/new Swipe 的旧 force-analysis 语义和旧接口已清理。
+- `interval=N` 只统计当前有效 timeline 中新的 Character Floors；User 不计数，
+  也不使用 Floor number 或原始 message index 差值。
+- Runtime counter/cache 不是持久化事实；rollback、delete、Swipe replacement、
+  reload 和 manual success 都从当前有效 timeline reconciliation。
+- 普通连续 Character generation 已在真实宿主验证：`interval=3` 正常到期，
+  automatic exactly once，analysis success；UI current Floor refresh 也已验证正常。
+- Swipe/reroll/cancel/stop 等特殊路径主要由自动化回归覆盖，尚未全部完成真实宿主
+  人工验收。这是 remaining acceptance coverage，不阻塞本阶段 `CLOSED`。
+
+没有新的真实宿主证据时，不重新打开本阶段，也不继续重构 scheduler。
 
 ## Architecture at a Glance
 

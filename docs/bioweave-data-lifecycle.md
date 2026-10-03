@@ -963,6 +963,8 @@ replacement, or successful manual reanalysis can make that cache stale, Runtime
 reconciles it from surviving valid Character Floors and the nearest valid
 successful analysis baseline. The complete scheduler state
 machine and rationale are defined in [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md).
+Generation lifecycle outcomes are inputs to that scheduler handoff only;
+generation lifecycle does not write these scheduler-owned keys or counters.
 
 ### 9.2 Mutation invalidation matrix
 

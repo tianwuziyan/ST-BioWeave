@@ -1,6 +1,7 @@
 # 自动分析隔离边界契约
 
-状态：Phase 1 facade、Phase 2 shared execution port 与 Phase 3 manual port 已实现。
+状态：`CLOSED` / 已完成。Phase 1 facade、Phase 2 shared execution port 与
+Phase 3 manual port 已实现；automatic Floor counting ownership 已收口。
 Host lifecycle 仍由 `runtime/events.js` 内部拥有。本文件定义边界、公开入口、禁止依赖和迁移验收；
 各阶段均不改变自动分析规则、Floor ownership
 或持久化行为。
@@ -9,6 +10,13 @@ Host lifecycle 仍由 `runtime/events.js` 内部拥有。本文件定义边界�
 [Auto Analysis Scheduler Architecture](../../../docs/AUTO-ANALYSIS-SCHEDULER.md) 为准；
 Floor/active Swipe/version 的事实所有权仍以
 [Floor State Ownership Contract](./floor-state.md) 为准。
+
+本阶段已完成并关闭：automatic trigger 与 shared analysis execution 已隔离；
+scheduler 是 automatic Floor countability 的唯一 owner；generation lifecycle 不写
+observed/counted/counter/retry。普通连续 Character generation 的 `interval=3`
+到期、automatic exactly once、analysis success，以及 UI current Floor refresh 已
+真实宿主验证。Swipe/reroll/cancel/stop 特殊路径主要由自动化回归覆盖，尚未全部
+真实宿主验收；该 remaining acceptance coverage 不阻塞 `CLOSED`。
 
 ## 1. CURRENT_BOUNDARIES：当前职责位置
 
@@ -156,7 +164,7 @@ counter 或 retry 状态；不可计数的 lifecycle outcome 由 scheduler hando
 ### Automatic Analysis Gate/Scheduler
 
 只拥有自动触发状态：`counter`、`retryPaused`、有限 Floor key dedupe、due
-判断、pending/force handoff、retry outcome 和只读诊断。它不拥有 World/Event/
+判断、pending handoff、retry outcome 和只读诊断。它不拥有 World/Event/
 Tracking/Floor persistence，也不判断 host message role，不直接写 Store。
 
 ### Shared Analysis Execution
@@ -229,7 +237,7 @@ manual actions 仍由现有 World runtime entry points 拥有，尚未纳入本 
 ```js
 analysisExecution.run({
   target,
-  trigger: "automatic" | "manual-refresh" | "manual-character" | "reroll",
+  trigger: "automatic" | "manual-refresh" | "manual-character",
   generation,
 })
 ```

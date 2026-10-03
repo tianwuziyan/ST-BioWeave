@@ -4193,7 +4193,7 @@ test("automatic analysis trace preserves real lifecycle order and one execution 
   fixture.runtime.destroy();
 });
 
-test("automatic failure trace separates reroll trigger from the actual failure", async () => {
+test("automatic failure trace separates scheduler trigger from the actual failure", async () => {
   const fixture = createFixture({saveFloorError: "ST_FLOOR_STORAGE_UNAVAILABLE"});
   configureScheduler(fixture, {interval: 1});
   await fixture.runtime.init();

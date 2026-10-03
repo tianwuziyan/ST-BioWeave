@@ -150,12 +150,12 @@ export function createGenerationLifecycle({
       return {skipped: true, reason: "generation-already-settled"};
     pending.settled = true;
     trace("GENERATION_SETTLED", pending, target);
-    const force = pending.force === true;
+    const rerollIntent = pending.rerollIntent === true;
     const isNewFloor = pendingIsNewFloor(pending, target);
     state.pendingGeneration = null;
     state.pendingSwipeGeneration = null;
     markCompleted(kind, pending, target);
-    if (force && !isNewFloor) {
+    if (rerollIntent && !isNewFloor) {
       return {
         skipped: true,
         reason: "generation-without-new-floor",
@@ -165,7 +165,6 @@ export function createGenerationLifecycle({
     return onGenerationSettled?.(target, {
       // Generation intent remains lifecycle metadata. Automatic scheduling is
       // always decided by the Character Floor timeline and interval.
-      force: false,
       reason: "automatic",
       generation: pending,
     });
@@ -224,9 +223,9 @@ export function createGenerationLifecycle({
     });
     if (!isReroll && !isSwipeGeneration &&
         (state.pendingGeneration || state.pendingSwipeGeneration)) {
-      const staleForce = previousPending?.force === true ||
+      const staleRerollIntent = previousPending?.rerollIntent === true ||
         previousPending?.generation_type === "regenerate";
-      if (!staleForce)
+      if (!staleRerollIntent)
         return {skipped: true, reason: "generation-intent-already-pending"};
       previousPending.superseded = true;
       trace("GENERATION_INTENT_SUPERSEDED", previousPending, null, {
@@ -259,7 +258,7 @@ export function createGenerationLifecycle({
         ? payload?.generation_id ?? payload?.generationId ?? payload?.request_id ?? null
         : null,
       generation_type: generationTypeName,
-      force: isReroll || isSwipeGeneration,
+      rerollIntent: isReroll || isSwipeGeneration,
       ended: false,
       finalFloorSeen: false,
       settled: false,

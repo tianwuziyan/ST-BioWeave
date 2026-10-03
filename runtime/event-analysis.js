@@ -3175,16 +3175,16 @@ export function createEventAnalysisCoordinator({
     });
     return execution.promise;
   }
-  async function runScheduledAnalysis(target, { force, reason, generation = null }) {
+  async function runScheduledAnalysis(target, { reason, generation = null }) {
     const settings = schedulerSettings();
     try {
       const result = await analysisExecution.run(
         {
           target: { __messageIndex: true, index: target.index },
-          force,
+          force: false,
           reason,
           generation,
-          trigger: force ? "reroll" : "automatic",
+          trigger: "automatic",
         },
       );
       if (result?.status === "success") recordSchedulerSuccess();
@@ -3223,7 +3223,6 @@ export function createEventAnalysisCoordinator({
   async function scheduleRenderedCharacter(
     target,
     {
-      force = false,
       reason = "automatic",
       generation = null,
       lifecycleOutcome = null,
@@ -3234,7 +3233,7 @@ export function createEventAnalysisCoordinator({
       generation?.finalFloorVersion &&
       !sameFloorVersion(generation.baselineVersion, generation.finalFloorVersion),
     );
-    if (generation?.force === true || generationReplacedVersion) {
+    if (generation?.rerollIntent === true || generationReplacedVersion) {
       try {
         await reconcileSchedulerState({
           target,
@@ -3253,7 +3252,7 @@ export function createEventAnalysisCoordinator({
     const { interval } = schedulerSettings();
     emitPersistenceTrace("AUTO_SCHEDULER_ENTER", null, target, {
       floor_version_key: key,
-      force,
+      force: false,
       counter_before: counterBefore,
       counter_after: counterBefore,
       interval,
@@ -3263,10 +3262,10 @@ export function createEventAnalysisCoordinator({
       reason,
       lifecycle_outcome: lifecycleOutcome,
     }, "scheduler");
-    if (alreadyObserved && !force) {
+    if (alreadyObserved) {
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
-        force,
+        force: false,
         counter_before: counterBefore,
         counter_after: schedulerState.counter,
         interval,
@@ -3279,25 +3278,10 @@ export function createEventAnalysisCoordinator({
       return { skipped: true, reason: "floor-already-observed" };
     }
     rememberSchedulerKey(schedulerState.observedFloorKeys, key);
-    if (force) {
-      emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
-        floor_version_key: key,
-        force,
-        counter_before: counterBefore,
-        counter_after: schedulerState.counter,
-        interval,
-        retry_paused: schedulerState.retryPaused,
-        already_observed: alreadyObserved,
-        already_counted: alreadyCounted,
-        decision: "force-analysis",
-        reason,
-      }, "scheduler");
-      return runScheduledAnalysis(target, { force: true, reason, generation });
-    }
     if (schedulerState.retryPaused) {
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
-        force,
+        force: false,
         counter_before: counterBefore,
         counter_after: schedulerState.counter,
         interval,
@@ -3314,7 +3298,7 @@ export function createEventAnalysisCoordinator({
     if (schedulerState.counter < interval) {
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
-        force,
+        force: false,
         counter_before: counterBefore,
         counter_after: schedulerState.counter,
         interval,
@@ -3332,7 +3316,7 @@ export function createEventAnalysisCoordinator({
     }
     emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
       floor_version_key: key,
-      force,
+      force: false,
       counter_before: counterBefore,
       counter_after: schedulerState.counter,
       interval,
@@ -3342,7 +3326,7 @@ export function createEventAnalysisCoordinator({
       decision: "interval-due",
       reason,
     }, "scheduler");
-    return runScheduledAnalysis(target, { force: false, reason, generation });
+    return runScheduledAnalysis(target, { reason, generation });
   }
   function handoffSettledCharacterFloor(
     target,

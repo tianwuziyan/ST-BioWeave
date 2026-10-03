@@ -79,7 +79,7 @@ test("a settled callback fails closed when its target is no longer the current o
   assert.equal(fixture.lifecycle.getState().pendingGeneration, null);
 });
 
-test("a new normal generation supersedes an older force intent", () => {
+test("a new normal generation supersedes an older reroll intent", () => {
   const fixture = createFixture();
   fixture.lifecycle.onGenerationStarted({
     generation_type: "regenerate",

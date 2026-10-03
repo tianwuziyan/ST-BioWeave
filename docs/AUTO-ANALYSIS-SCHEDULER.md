@@ -14,10 +14,16 @@ canonical-ready 的 at-or-before World；缺少 World 时返回 `WORLD_MODEL_REQ
 并 fail closed。该路径的 World AI 调用数为 0，不改变下方 Generation settled
 到 AUTO World → Event 的状态机。
 
-状态：规范性设计说明。本文档是 BioWeave Auto Analysis Scheduler 的唯一
+状态：`CLOSED` / 已完成。本文档是 BioWeave Auto Analysis Scheduler 的唯一
 权威说明。其它文档只描述摘要并链接到本文档；Floor ownership、持久化位置和
 清除生命周期仍以 [Floor State Ownership Contract](../.trellis/spec/domain/floor-state.md)
 与 [BioWeave Data Lifecycle](./bioweave-data-lifecycle.md) 为准。
+
+当前阶段验收范围：普通连续 Character generation 已在真实宿主验证
+`interval=3` 到期、automatic exactly once、analysis success，以及 UI current
+Floor refresh。Swipe、reroll、cancel、stop 等特殊路径主要由自动化回归覆盖，尚未
+全部完成真实宿主人工验收；该 remaining acceptance coverage 不阻塞本阶段
+`CLOSED`。没有新的真实宿主证据时，不重新打开本阶段或继续重构 scheduler。
 
 ## 1. 核心定义
 

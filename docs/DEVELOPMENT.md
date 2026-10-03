@@ -46,6 +46,7 @@
 | Overview | PARTIAL |
 | Projection | PRODUCTION within current single-identity scope |
 | Genealogy | PARTIAL: core query support and placeholder UI; no relation-data production chain |
+| Automatic Analysis / Floor Counting | CLOSED / automatic/shared execution isolated; scheduler owns automatic Floor countability; ordinary Character interval and UI current-Floor refresh real-host verified |
 
 当前 derived state 链路为：
 
