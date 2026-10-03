@@ -156,7 +156,7 @@ readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
 
 ### Floor / Swipe / Version 生命周期
 
-自动分析按新的有效 Character Floor counter 运行；User、编辑、删除、普通 update/received/ended 和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 只有在真实 intent 形成新 Floor Version 后才进入 force path。完整状态机、失败欠账语义、World retry 和 Runtime state 生命周期见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。
+自动分析按新的有效 Character Floor counter 运行；`interval=N` 的 N 是 N 个新的有效 Character Floor，不是 SillyTavern 原始 message index、Floor 编号差值或消息总数。User、编辑、删除、普通 update/received/ended 和 existing Swipe 切换不推进或强制请求；指向 User Floor 的 `MESSAGE_SENT`、`MESSAGE_RECEIVED`、`GENERATION_ENDED` 等宿主事件也不得增加 counter。reroll/new Swipe generation 只有在真实 intent 形成新 Floor Version 后才进入独立的 force path。完整状态机、失败欠账语义、World retry 和 Runtime state 生命周期见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。
 
 World Full/Patch 在当前 Floor read-back 与共享 World canonical view-model 未达到 `WORLD_READY` 前，不得调用 Character/Event。Runtime 发布 World/Event 阶段状态，UI 据此分别显示 World Full/Patch/read-back busy 或人物等待/分析状态；最终 terminal status 由 `ui/app.js` 统一转为 SillyTavern toastr。面板关闭不影响通知，插件关闭后忽略迟到结果。
 

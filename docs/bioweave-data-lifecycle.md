@@ -1016,6 +1016,15 @@ epoch. It MUST also assert the target's current six-field Floor Version for a
 Floor operation, or the immutable source identity/revision for a source
 operation.
 
+For automatic analysis, the execution also binds one complete Floor Version and,
+when created from generation lifecycle, one generation identity. Background or
+foreground transitions do not change that owner. A delayed generation callback
+must be superseded or discarded and may not revive an older Floor; immediately
+before AI, a changed Chat, active Swipe, Floor Version, or generation owner fails
+closed. The Analysis Context is atomic at that boundary: Current Target Floor,
+Recent Story, `existing_events`, and Character Registry must all be read for the
+same Analysis Job boundary.
+
 Clear, Chat changes, message edits/deletions, and Swipe changes abort in-flight
 work where possible, advance the relevant epoch, remove stale terminal/cache
 entries, and rebuild from current storage. A host that ignores abort is still
@@ -1050,6 +1059,12 @@ Analysis cancellation and stale-owner exits preserve a prior successful
 Floor result for diagnostics when it remains stored, but the old result is
 inactive after a Floor Version change. A failed force refresh does not replace
 the previous success with partial Events.
+
+Event duplicate prevention is a Runtime correctness contract. Prompt guidance is
+not sufficient: historical rediscovery is suppressed only when the existing
+canonical semantic facts match; a genuinely later repeated event remains
+persistable when its factual time, participants/counterpart, mechanism, or
+evidence identifies a distinct occurrence.
 
 ## 12. Lifecycle flow summary
 

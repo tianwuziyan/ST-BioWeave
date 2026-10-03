@@ -3635,6 +3635,56 @@ test("Character counter ignores User Floors and ordinary edits", async () => {
   fixture.runtime.destroy();
 });
 
+test("interval counts only new Character Floors and ignores User lifecycle events", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "interval-user-0", floor: 0, content: "用户", role: "user" }],
+  });
+  configureScheduler(fixture, { interval: 3 });
+  await fixture.runtime.init();
+
+  const assertCounter = expected => {
+    assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, expected);
+  };
+
+  fixture.emit("message-received", { message_id: "interval-user-0" });
+  fixture.emit("generation-ended", { message_id: "interval-user-0" });
+  await settle();
+  assertCounter(0);
+
+  appendCharacter(fixture, "interval-character-a", 1, "Character A");
+  await settle();
+  assertCounter(1);
+
+  fixture.context.chat.push({ message_id: "interval-user-1", floor: 2, content: "用户 1", role: "user" });
+  fixture.emit("message-received", { message_id: "interval-user-1" });
+  fixture.emit("generation-ended", { message_id: "interval-user-1" });
+  await settle();
+  assertCounter(1);
+
+  appendCharacter(fixture, "interval-character-b", 3, "Character B");
+  await settle();
+  assertCounter(2);
+
+  fixture.context.chat.push({ message_id: "interval-user-2", floor: 4, content: "用户 2", role: "user" });
+  fixture.emit("message-received", { message_id: "interval-user-2" });
+  fixture.emit("generation-ended", { message_id: "interval-user-2" });
+  await settle();
+  assertCounter(2);
+
+  appendCharacter(fixture, "interval-character-c", 5, "Character C");
+  await settle();
+  const state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 3);
+  assert.equal(fixture.calls(), 1);
+  const decision = fixture.runtime.getPersistenceTrace().sequence
+    .filter(entry => entry.stage === "AUTO_SCHEDULER_DECISION")
+    .at(-1);
+  assert.equal(decision.counter_before, 2);
+  assert.equal(decision.counter_after, 3);
+  assert.equal(decision.decision, "interval-due");
+  fixture.runtime.destroy();
+});
+
 test("ordinary MESSAGE_UPDATED never forces analysis", async () => {
   const fixture = createFixture({
     messages: [{ message_id: "updated-character", floor: 1, content: "原文", role: "assistant" }],
@@ -3670,6 +3720,79 @@ test("normal generation uses Character counter, while regenerate forces once", a
   fixture.emit("character-message-rendered", { message_id: "generation-character" });
   await settle();
   assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("a completed normal generation hands one Floor to the scheduler only once", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "normal-floor-66", floor: 66, content: "Floor 66", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", "normal");
+  fixture.emit("character-message-rendered", { message_id: "normal-floor-66" });
+  fixture.emit("generation-ended", { message_id: "normal-floor-66" });
+  await settle();
+
+  let state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(fixture.calls(), 1);
+  assert.equal(state.counter, 1);
+  assert.equal(state.countedFloorKeys.length, 1);
+
+  fixture.emit("character-message-rendered", { message_id: "normal-floor-66" });
+  await settle();
+  state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(fixture.calls(), 1);
+  assert.equal(state.counter, 1);
+  assert.equal(state.countedFloorKeys.length, 1);
+  fixture.runtime.destroy();
+});
+
+test("automatic analysis trace exposes the Character handoff and scheduler decision", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "trace-floor-66", floor: 66, content: "Floor 66", role: "assistant" }],
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+  fixture.emit("character-message-rendered", { message_id: "trace-floor-66" });
+  await settle();
+
+  const entries = fixture.runtime.getPersistenceTrace().sequence;
+  const received = entries.find(entry => entry.stage === "CHARACTER_MESSAGE_RENDERED_RECEIVED");
+  const lifecycle = entries.find(entry => entry.stage === "GENERATION_LIFECYCLE_RESULT");
+  const schedulerEnter = entries.find(entry => entry.stage === "AUTO_SCHEDULER_ENTER");
+  const schedulerDecision = entries.find(entry => entry.stage === "AUTO_SCHEDULER_DECISION");
+  assert.equal(received.message_index, 0);
+  assert.equal(received.floor, 66);
+  assert.equal(received.message_id, "trace-floor-66");
+  assert.ok(received.floor_version_key);
+  assert.equal(lifecycle.result, null);
+  assert.ok(schedulerEnter);
+  assert.equal(schedulerEnter.floor_version_key, received.floor_version_key);
+  assert.equal(schedulerDecision.counter_before, 0);
+  assert.equal(schedulerDecision.counter_after, 1);
+  assert.equal(schedulerDecision.decision, "interval-due");
+  fixture.runtime.destroy();
+});
+
+test("host event diagnostics export even when automatic analysis does not start", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  fixture.emit("generation-started", { generation_type: "normal", message_id: "host-only" });
+  await settle();
+
+  const entries = fixture.runtime.getPersistenceTrace().sequence;
+  const received = entries.find(entry => entry.stage === "HOST_EVENT_RECEIVED");
+  const forwarded = entries.find(entry => entry.stage === "HOST_EVENT_FORWARD_RESULT");
+  assert.ok(received);
+  assert.equal(received.host_event_key, "GENERATION_STARTED");
+  assert.equal(received.host_generation_type, "normal");
+  assert.equal(received.runtime_handler_present, true);
+  assert.ok(forwarded);
+  assert.equal(forwarded.forwarded, true);
+  assert.equal(forwarded.forward_result?.reason, "generation-pending");
+  assert.equal(entries.some(entry => entry.stage === "AUTO_ANALYSIS_TRIGGERED"), false);
   fixture.runtime.destroy();
 });
 
@@ -3808,6 +3931,80 @@ test("generation settle barrier supports CMR before ENDED without World AI or te
     "GENERATION_END_SEEN",
     "GENERATION_SETTLED",
   ]) assert.ok(stages.includes(stage), stage);
+  fixture.runtime.destroy();
+});
+
+test("a delayed reroll callback after Floor 66 cannot analyze Floor 56, while Floor 66 still analyzes", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      { message_id: "floor-56", floor: 56, content: "Floor 56", role: "assistant" },
+      { message_id: "floor-66", floor: 66, content: "Floor 66", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(analysisInput);
+        return { events: [] };
+      },
+    },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {
+    generation_type: "regenerate",
+    message_id: "floor-56",
+  });
+  fixture.emit("character-message-rendered", { message_id: "floor-56" });
+  await settle();
+  assert.equal(inputs.length, 0);
+
+  fixture.emit("character-message-rendered", { message_id: "floor-66" });
+  await settle();
+  fixture.emit("generation-ended", { message_id: "floor-56" });
+  await settle();
+
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].floor_version.message_id, "floor-66");
+  assert.equal(inputs[0].current_floor.floor, 66);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(entry =>
+      entry.stage === "AUTO_ANALYSIS_TRIGGERED" &&
+      entry.message_id === "floor-56",
+    ),
+    false,
+  );
+  fixture.runtime.destroy();
+});
+
+test("automatic reroll uses the target slot as comparison state without treating it as previous Floor", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [{ message_id: "reroll-context", floor: 1, content: "旧正文", role: "assistant" }],
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        inputs.push(structuredClone(analysisInput));
+        return inputs.length === 1 ? { events: [eventResult("reroll-history")] } : { events: [] };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  fixture.context.chat[0].content = "新正文";
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 0 },
+    { force: true, reason: "reroll" },
+  );
+
+  const rerollInput = inputs[1];
+  assert.equal(rerollInput.current_floor.narrative, "新正文");
+  assert.equal(rerollInput.existing_bioweave.events.length, 0);
+  assert.equal(rerollInput.existing_events.length, 1);
+  assert.equal(Object.keys(rerollInput.character_registry.entities).length, 2);
+  assert.notEqual(
+    rerollInput.existing_events[0].source.content_hash,
+    rerollInput.floor_version.content_hash,
+  );
   fixture.runtime.destroy();
 });
 

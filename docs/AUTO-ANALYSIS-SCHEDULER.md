@@ -29,6 +29,11 @@ Supplement 的事实语义；完整规则以 [World Model and World Analysis Con
 `analysis_interval` 表示“每 N 个新的有效 Character Floor 执行一次正常
 Auto Analysis”，不是 SillyTavern 的物理 message floor 差值。
 
+因此 `interval=N` 的 N 只统计新的、有效的 Character Floor：User 消息不计数；
+`MESSAGE_SENT`、`MESSAGE_RECEIVED`、`GENERATION_ENDED` 等指向 User Floor 的宿主
+事件不得增加 counter；N 也不是原始 SillyTavern message index、Floor 编号，或
+两个物理楼号之间的差值。
+
 原因是 ST message floor 同时包含 User 和 Character 消息，也会受到编辑、
 删除、Swipe 和宿主生命周期通知影响。物理楼号不能回答“已经出现了多少个新的
 有效 Character 回复”。BioWeave 的业务单位是有效 Character Floor，因此
@@ -178,6 +183,13 @@ force path 必须同时满足：
 变化时，不分析、不推进 counter。成功的 reroll 是一次成功建立当前 BioWeave
 分析基线的强制操作，因此清 counter 并清除 due/paused。
 
+reroll/regenerate/new Swipe 的 force path 与普通 interval counter 独立：它们在真实
+generation intent 形成新的 Floor Version 后可以立即执行一次 force analysis，不要求
+先达到 `analysis_interval`。`AUTO_SCHEDULER_ENTER` 中的 `force=true` 与
+`decision=force-analysis` 表示走了该路径，不表示 counter 达到了 interval；此时
+`counter_before/after` 可以保持不变。日志中的 `generation_type=regenerate` 只能证明
+宿主发出了 regenerate intent，不能单独证明用户是否实际点击了 reroll UI。
+
 ### existing Swipe switch
 
 切换到已有 Swipe 不等于重新生成：
@@ -195,6 +207,31 @@ force path。同一次生成可能产生多个 ST events，但相同 Floor Versi
 有限的 completed marker；后续同一 generation 的重复 CMR，即使正文继续流式变化并
 形成新的签名，也不会被当成新的自动 Character Floor 或再次 force。下一次真实
 `GENERATION_STARTED` 才开启新的 generation 生命周期。
+
+completed marker 缺少明确 message/Swipe owner 时，只能按已消费的同一消息槽
+（同一 message index）匹配；不得把缺失 owner 字段当成 wildcard，从而吞掉后续新的
+Character Floor。只有未被 completed marker 认领的新 Character Floor 才进入 normal
+automatic-analysis handoff；同一 generation 的重复通知由 generation marker 截断，
+而已进入 scheduler 的 Floor 由 `observedFloorKeys` 幂等拦截。generation lifecycle
+不得代替 scheduler 写入 `observedFloorKeys`。
+
+#### 后台延迟与 owner 防线
+
+手机前后台切换可能延迟 host event、Promise continuation 或 timer，但不改变
+Analysis owner。pending generation 在新的 Character Floor 定型时必须被旧 owner
+supersede；迟到的 `GENERATION_ENDED`、settle callback 或 scheduler callback 不得
+复活 stale Floor。Analysis execution 在首次 AI 调用前仍须验证 Chat、active Swipe、
+完整六字段 Floor Version 与 generation identity；验证失败即 fail closed。该防线不依赖
+`visibilitychange`，也不把前台 timer 当作任务队列。
+
+#### 宿主事件入口诊断
+
+SillyTavern `eventSource` listener 在转交 Runtime lifecycle handler 之前记录
+`HOST_EVENT_RECEIVED`，并在转交完成或异常后记录 `HOST_EVENT_FORWARD_RESULT`。
+这些诊断不依赖 `AUTO_ANALYSIS_TRIGGERED`、Analysis execution 或 AI 请求，因此即使
+自动分析完全没有启动，也能从 Runtime 调试信息导出中确认宿主事件是否到达 BioWeave。
+进入 `event-analysis` 之后的 `CHARACTER_MESSAGE_RENDERED_RECEIVED` 只能证明 Runtime
+已经收到 target，不能替代宿主入口诊断。
 
 ## 5. World retry 不是 API 重放
 

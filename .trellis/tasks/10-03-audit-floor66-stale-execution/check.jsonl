@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify Floor authority and stale write guards"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify Event dedupe and repeated-event boundary"}
+{"file": "docs/AUTO-ANALYSIS-SCHEDULER.md", "reason": "Verify scheduler docs match delayed callback behavior"}
+{"file": "docs/DATA-MODEL.md", "reason": "Verify analysis boundary and Event data model docs"}

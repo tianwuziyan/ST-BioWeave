@@ -204,11 +204,11 @@ export function createSillyTavernAdapter() {
     try {
       const allowed = new Set([
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
-        "message_version", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "path", "reason",
+        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
-        "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason",
+        "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name",
         "cancel_stage", "cancel_reason", "cancel_code",
         "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
         "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
@@ -2261,11 +2261,41 @@ export function createRuntime({
     return result;
   }
 
+  function hostEventDiagnosticPayload(key, eventType, payload, chatId, runtimeHandlerPresent) {
+    const objectPayload = payload && typeof payload === "object" ? payload : null;
+    const messageIndex = Number.isInteger(payload)
+      ? payload
+      : objectPayload?.message_index ?? objectPayload?.messageIndex ?? objectPayload?.index ?? null;
+    return {
+      host_event_key: key,
+      host_event_type: eventType,
+      received_at: new Date().toISOString(),
+      host_chat_id: chatId,
+      message_index: Number.isInteger(messageIndex) ? messageIndex : null,
+      host_message_id: objectPayload?.message_id ?? objectPayload?.messageId ?? null,
+      host_swipe_id: objectPayload?.swipe_id ?? objectPayload?.swipeId ?? null,
+      host_generation_type: typeof payload === "string"
+        ? payload
+        : objectPayload?.generation_type ?? objectPayload?.generationType ?? objectPayload?.genType ?? null,
+      forward_to_runtime: true,
+      runtime_handler_present: runtimeHandlerPresent,
+    };
+  }
+
   function handleLifecycleEvent(key, eventType, payload) {
     const sequence = ++lifecycleSequence;
     const epochBefore = chat.getEpoch();
     const previousOwner = activeOwner;
     const chatId = chat.current();
+    const runtimeHandlerPresent = typeof eventAnalysis?.handleLifecycleEvent === "function";
+    const hostEventDiagnostic = hostEventDiagnosticPayload(
+      key,
+      eventType,
+      payload,
+      chatId,
+      runtimeHandlerPresent,
+    );
+    recordPersistenceTrace({stage: "HOST_EVENT_RECEIVED", ...hostEventDiagnostic});
     const lifecycleTraceStage = {
       GENERATION_STARTED: "GENERATION_STARTED",
       GENERATION_ENDED: "GENERATION_ENDED",
@@ -2308,16 +2338,39 @@ export function createRuntime({
           chatId,
         });
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
-        try {
-          await eventAnalysis.handleLifecycleEvent({
-            type: key,
-            eventType,
-            payload,
-            chatId,
+        if (!runtimeHandlerPresent) {
+          recordPersistenceTrace({
+            stage: "HOST_EVENT_FORWARD_RESULT",
+            ...hostEventDiagnostic,
+            forwarded: false,
+            forward_result: "runtime-handler-missing",
           });
-        } catch (error) {
-          if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
-            console.error("[BioWeave] event analysis lifecycle failed", error);
+        } else {
+          try {
+            const runtimeResult = await eventAnalysis.handleLifecycleEvent({
+              type: key,
+              eventType,
+              payload,
+              chatId,
+            });
+            recordPersistenceTrace({
+              stage: "HOST_EVENT_FORWARD_RESULT",
+              ...hostEventDiagnostic,
+              forwarded: true,
+              forward_result: runtimeResult ?? null,
+            });
+          } catch (error) {
+            recordPersistenceTrace({
+              stage: "HOST_EVENT_FORWARD_RESULT",
+              ...hostEventDiagnostic,
+              forwarded: true,
+              forward_result: "runtime-handler-error",
+              forward_error: error?.message ?? String(error),
+              forward_error_name: error?.name ?? "Error",
+            });
+            if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
+              console.error("[BioWeave] event analysis lifecycle failed", error);
+          }
         }
         try {
           await projectionRuntime.tickLifecycleOnly({reason: `story-time:${key}`});

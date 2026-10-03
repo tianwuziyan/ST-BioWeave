@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe/version authority, current owner validation, previous resolution and stale async result contract"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "BiologicalEvent canonical identity, historical rediscovery, genuine repeated event and persistence semantics"}
+{"file": ".trellis/spec/domain/automatic-analysis.md", "reason": "Automatic trigger, scheduler, shared execution port and forbidden cross-layer access"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle owner/epoch/stale result/persistence failure contract"}

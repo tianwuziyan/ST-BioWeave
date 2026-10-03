@@ -18,6 +18,7 @@ export function createGenerationLifecycle({
   rememberObservedKey,
   emitTrace,
   getCurrentExecutionId,
+  isSettledTargetCurrent,
   onGenerationSettled,
 } = {}) {
   const state = {
@@ -38,6 +39,20 @@ export function createGenerationLifecycle({
 
   function pendingMatchesTarget(pending, target) {
     return sameOwner(pending, target, getChatId?.());
+  }
+
+  function completedMatchesTarget(completed, target) {
+    if (!sameOwner(completed, target, getChatId?.())) return false;
+    // Missing message/swipe fields are acceptable for repeated renders of the
+    // same message slot, including streaming Version changes, but not for a
+    // later Character Floor.
+    if (completed.messageId != null || completed.swipeId != null) return true;
+    const settledVersion = completed.finalFloorVersion ?? completed.floorVersion;
+    if (settledVersion?.message_id != null && target?.version?.message_id != null)
+      return String(settledVersion.message_id) === String(target.version.message_id) &&
+        String(settledVersion.swipe_id ?? 0) === String(target.version.swipe_id ?? 0);
+    return Number.isInteger(completed.finalFloorIndex) &&
+      completed.finalFloorIndex === target?.index;
   }
 
   function pendingIsNewFloor(pending, target) {
@@ -101,6 +116,16 @@ export function createGenerationLifecycle({
   async function settle(pending, target) {
     if (!pending || !target)
       return {skipped: true, reason: "generation-awaiting-target"};
+    if (typeof isSettledTargetCurrent === "function" &&
+        !(await isSettledTargetCurrent(pending, target))) {
+      pending.superseded = true;
+      trace("GENERATION_INTENT_SUPERSEDED", pending, target, {
+        supersede_reason: "settled_target_is_not_current_owner",
+      });
+      if (generationKind(pending) === "swipe") state.pendingSwipeGeneration = null;
+      else state.pendingGeneration = null;
+      return {skipped: true, reason: "generation-stale-owner"};
+    }
     const kind = generationKind(pending);
     if (!pending.finalFloorSeen) {
       pending.finalFloorSeen = true;
@@ -154,6 +179,7 @@ export function createGenerationLifecycle({
       ? "swipe"
       : isReroll ? "regenerate" : "normal";
     const previousPending = state.pendingSwipeGeneration ?? state.pendingGeneration;
+    let previousWasSuperseded = false;
     const payloadMessageId = typeof payload === "object"
       ? payload?.message_id ?? payload?.messageId ?? null
       : null;
@@ -185,10 +211,21 @@ export function createGenerationLifecycle({
         : "no_pending_intent",
     });
     if (!isReroll && !isSwipeGeneration &&
-        (state.pendingGeneration || state.pendingSwipeGeneration))
-      return {skipped: true, reason: "generation-intent-already-pending"};
+        (state.pendingGeneration || state.pendingSwipeGeneration)) {
+      const staleForce = previousPending?.force === true ||
+        previousPending?.generation_type === "regenerate";
+      if (!staleForce)
+        return {skipped: true, reason: "generation-intent-already-pending"};
+      previousPending.superseded = true;
+      trace("GENERATION_INTENT_SUPERSEDED", previousPending, null, {
+        supersede_reason: "new_generation_started",
+      });
+      previousWasSuperseded = true;
+      state.pendingGeneration = null;
+      state.pendingSwipeGeneration = null;
+    }
     const kind = isSwipeGeneration ? "swipe" : "generation";
-    if (previousPending) {
+    if (previousPending && !previousWasSuperseded) {
       previousPending.superseded = true;
       trace("GENERATION_INTENT_SUPERSEDED", previousPending, null, {
         superseded_by_generation_type: kind,
@@ -241,12 +278,24 @@ export function createGenerationLifecycle({
   }
 
   async function onCharacterMessageRendered(target) {
+    const pendingCandidate = state.pendingGeneration ?? state.pendingSwipeGeneration;
+    if (pendingCandidate && pendingCandidate.finalFloorSeen &&
+        Number.isInteger(pendingCandidate.finalFloorIndex) &&
+        Number.isInteger(target?.index) &&
+        target.index > pendingCandidate.finalFloorIndex &&
+        pendingCandidate.chatId === getChatId?.()) {
+      pendingCandidate.superseded = true;
+      trace("GENERATION_INTENT_SUPERSEDED", pendingCandidate, target, {
+        supersede_reason: "newer_character_floor_rendered",
+      });
+      state.pendingGeneration = null;
+      state.pendingSwipeGeneration = null;
+    }
     const pending = [state.pendingGeneration, state.pendingSwipeGeneration]
       .find(item => pendingMatchesTarget(item, target));
     const completed = [state.completedGeneration, state.completedSwipeGeneration]
-      .find(item => sameOwner(item, target, getChatId?.()));
+      .find(item => completedMatchesTarget(item, target));
     if (completed) {
-      rememberObservedKey?.(floorExecutionKey(target.version));
       return {skipped: true, reason: "generation-already-consumed"};
     }
     if (pending) return settle(pending, target);
@@ -339,6 +388,17 @@ export function createGenerationLifecycle({
       return {skipped: true, reason: "generation-not-rendered"};
     },
     getState,
+    isGenerationOwnerCurrent(generation, target) {
+      const completed = [state.completedGeneration, state.completedSwipeGeneration]
+        .find(item => item?.intent_id === generation?.intent_id);
+      return Boolean(
+        completed &&
+        sameOwner(completed, target, getChatId?.()) &&
+        completed.floorVersion &&
+        target?.version &&
+        floorExecutionKey(completed.floorVersion) === floorExecutionKey(target.version),
+      );
+    },
     clear,
     destroy,
   };

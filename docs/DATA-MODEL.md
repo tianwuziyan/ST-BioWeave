@@ -303,6 +303,13 @@ structured story_time、canonical participant/subject/counterpart 集合、mecha
 source evidence 和 state fact。缺少高置信字段时保留 candidate；不得使用姓名、固定
 ID、Floor 编号、Event 顺序或模糊文本相似度吞掉可能独立的 Event。
 
+Analysis Job 的 `Current Target Floor`、bounded `Recent Story`、`existing_events` 与
+`Character Registry` 是同一明确 Floor Version boundary 的四部分 Context；不得把
+当前 live Floor 与旧 execution owner 混合。`existing_events` 是 Runtime correctness
+contract 的比较输入，不只是 prompt instruction。相同历史事实再次被 discovery 时，
+Runtime 必须按现有 canonical semantic key 去重；后来不同 story time、counterpart、
+mechanism 或 evidence 的同类型事实仍是新的 Event，不能按 type 或人物粗暴删除。
+
 对于 pregnancy-related `sexual_activity`，Event 的粒度是一个 gestational subject
 在本 Floor Version 中的一组实际 pregnancy-relevant exposure。先识别所有实际
 发生暴露的 subject，再按 subject 分组：每个 Event 的

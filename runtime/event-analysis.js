@@ -462,10 +462,12 @@ export function createEventAnalysisCoordinator({
       active_character_floor_message_id: target?.version?.message_id ?? null,
       active_swipe_id: target?.version?.swipe_id ?? target?.swipeId ?? 0,
       message_id: target?.version?.message_id ?? null,
+      message_index: Number.isInteger(target?.index) ? target.index : null,
       floor: target?.version?.floor ?? null,
       swipe_id: target?.version?.swipe_id ?? target?.swipeId ?? 0,
       content_hash: target?.version?.content_hash ?? null,
       message_version: target?.version?.message_version ?? null,
+      floor_version_key: target?.version ? floorExecutionKey(target.version) : null,
       attempt: execution?.attempt ?? null,
       execution_attempt: execution?.attempt ?? null,
       stage_attempt: execution?.stage_attempt ?? null,
@@ -753,6 +755,7 @@ export function createEventAnalysisCoordinator({
     trigger = "automatic",
     invoke,
     complete = null,
+    assertBeforeInvoke = null,
   }) {
     const failureDiagnostics = (error) => ({
       error_message: (() => {
@@ -829,6 +832,8 @@ export function createEventAnalysisCoordinator({
       }, domain === "world" ? "world" : "analysis");
       let aiSucceeded = false;
       try {
+        if (typeof assertBeforeInvoke === "function")
+          await assertBeforeInvoke();
         emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_BEGIN`, execution, target, {
           domain,
           attempt,
@@ -1717,6 +1722,19 @@ export function createEventAnalysisCoordinator({
       getCurrentExecutionId: () => [...inFlight.values()].find(execution =>
         execution?.version?.chat_id === chat.current() && !execution.released
       )?.attempt ?? null,
+      isSettledTargetCurrent: async (pending, target) => {
+        if (!pending || !target || pending.chatId !== chat.current()) return false;
+        try {
+          const current = await resolveFloorAtIndex({
+            __messageIndex: true,
+            index: target.index,
+          });
+          return current.swipeId === target.swipeId &&
+            sameFloorVersion(current.version, target.version);
+        } catch {
+          return false;
+        }
+      },
       onGenerationSettled: (target, options) =>
         automaticAnalysis.observeSettledCharacterFloor(target, options),
     },
@@ -2616,10 +2634,55 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
+  async function assertAnalysisOwnerCurrent(execution, target, token) {
+    const targetCurrent = await assertExecutionTargetCurrent(execution, target, token);
+    const isManual = execution.analysis_intent === "manual-character" ||
+      execution.analysis_intent === "manual-refresh" ||
+      execution.reason === "manual-refresh";
+    if (isManual) return targetCurrent;
+    // A render-triggered execution is already owned by the rendered Floor.
+    // The additional live-owner check is required for generation-bound work:
+    // that is the only path where a delayed callback can carry an older intent
+    // after a newer Character Floor has become the owner.
+    if (!execution.generation) return targetCurrent;
+    let current;
+    try {
+      current = await resolveCurrentBioWeaveFloor();
+    } catch {
+      invalidateExecution(execution, {
+        reason: "analysis-owner-unavailable",
+        code: "STALE_ANALYSIS_OWNER",
+      });
+      throw requestAbortedError();
+    }
+    if (current.index !== target.index || !sameFloorVersion(current.version, target.version)) {
+      invalidateExecution(execution, {
+        reason: "analysis-owner-changed",
+        code: "STALE_ANALYSIS_OWNER",
+        currentVersion: current.version,
+      });
+      throw requestAbortedError();
+    }
+    if (execution.generation &&
+        !generationLifecycle?.isGenerationOwnerCurrent(execution.generation, target)) {
+      invalidateExecution(execution, {
+        reason: "generation-owner-changed",
+        code: "STALE_GENERATION_OWNER",
+        currentVersion: current.version,
+        generation_intent_id: execution.generation.intent_id ?? null,
+      });
+      throw requestAbortedError();
+    }
+    return current;
+  }
   async function buildFloorAnalysisInput(
     target,
     token,
-    { preserveCurrentFloorState = false } = {},
+    {
+      preserveCurrentFloorState = false,
+      useCurrentCharacterRegistry = false,
+      includeCurrentFloorComparison = false,
+    } = {},
   ) {
     const chatData = store.getChat(token.chatId);
     const derived = await collectCurrentDerivedState(token, chatData);
@@ -2636,8 +2699,14 @@ export function createEventAnalysisCoordinator({
       currentFloorData &&
       sameFloorVersion(currentFloorVersion, target.version),
     );
+    const currentFloorIsComparisonReference = Boolean(
+      currentFloorData &&
+      (currentFloorMatches || includeCurrentFloorComparison),
+    );
     const characterRegistry = normalizeCharacterRegistry(
-      previous.character_registry,
+      useCurrentCharacterRegistry && currentFloorIsComparisonReference
+        ? currentFloorData.character_registry
+        : previous.character_registry,
     );
     const causalEvents = sortEvents(
       derived.states
@@ -2717,7 +2786,7 @@ export function createEventAnalysisCoordinator({
     const existingEvents = dedupeEvents([
       ...(Array.isArray(previous.events) ? previous.events : []),
       ...discoveryWindowEvents,
-      ...(currentFloorMatches && Array.isArray(currentFloorData.events)
+      ...(currentFloorIsComparisonReference && Array.isArray(currentFloorData.events)
         ? currentFloorData.events
         : []),
     ]);
@@ -2781,13 +2850,19 @@ export function createEventAnalysisCoordinator({
       token = chat.token();
       execution.stage = "request_build";
       execution.source_provenance = { ...target.version };
-      await assertExecutionTargetCurrent(execution, target, token);
+      await assertAnalysisOwnerCurrent(execution, target, token);
       const manualCharacter = execution.analysis_intent === "manual-character";
       const persistedWorld = manualCharacter
         ? await resolvePersistedWorldModelForAnalysis(target)
         : null;
-      const preWorldInput = await buildFloorAnalysisInput(target, token);
-      await assertExecutionTargetCurrent(execution, target, token);
+      const preserveCurrentFloorState = execution.reason === "reroll" ||
+        execution.reason === "manual-refresh";
+      const preWorldInput = await buildFloorAnalysisInput(target, token, {
+        preserveCurrentFloorState,
+        useCurrentCharacterRegistry: execution.reason === "reroll",
+        includeCurrentFloorComparison: execution.reason === "reroll",
+      });
+      await assertAnalysisOwnerCurrent(execution, target, token);
       if (execution.reason !== "manual-refresh") {
         emitPersistenceTrace("ANALYSIS_INPUT_READY", execution, target, {
           generation_settled: execution.generation_settled,
@@ -2818,9 +2893,11 @@ export function createEventAnalysisCoordinator({
           : execution.world_resolution === "persisted-reuse"
             ? "persisted-reuse"
             : "reuse";
-      await assertExecutionTargetCurrent(execution, target, token);
+      await assertAnalysisOwnerCurrent(execution, target, token);
       const analysisInput = await buildFloorAnalysisInput(target, token, {
-        preserveCurrentFloorState: execution.reason === "manual-refresh",
+        preserveCurrentFloorState,
+        useCurrentCharacterRegistry: execution.reason === "reroll",
+        includeCurrentFloorComparison: execution.reason === "reroll",
       });
       analysisInput.world_model = cloneWorldValue(finalWorldModel);
       notify({
@@ -2835,7 +2912,7 @@ export function createEventAnalysisCoordinator({
         chatId: execution.version.chat_id,
       });
       execution.dependency_hash = await dependencyHashForTarget(target, token);
-      await assertExecutionTargetCurrent(execution, target, token);
+      await assertAnalysisOwnerCurrent(execution, target, token);
       if (typeof analyzer?.analyzeFloor !== "function")
         throw new Error("EVENT_ANALYZER_UNAVAILABLE");
       const eventStage = await runAnalysisStageWithRetry({
@@ -2845,6 +2922,7 @@ export function createEventAnalysisCoordinator({
         execution,
         signal: execution.controller.signal,
         trigger: execution.reason,
+        assertBeforeInvoke: () => assertAnalysisOwnerCurrent(execution, target, token),
         invoke: async () => {
           execution.stage = "api_request";
           return characterEventAnalysis.runEventAttempt({
@@ -3006,6 +3084,7 @@ export function createEventAnalysisCoordinator({
       generation_id: generation?.generation_id ?? null,
       generation_type: generation?.generation_type ?? null,
       generation_settled: generation ? generation.settled === true : null,
+      generation: generation ?? null,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -3075,23 +3154,100 @@ export function createEventAnalysisCoordinator({
     { force = false, reason = "automatic", generation = null } = {},
   ) {
     const key = floorExecutionKey(target.version);
-    if (schedulerState.observedFloorKeys.has(key) && !force)
-      return { skipped: true, reason: "floor-already-observed" };
-    rememberSchedulerKey(schedulerState.observedFloorKeys, key);
-    if (force)
-      return runScheduledAnalysis(target, { force: true, reason, generation });
-
+    const counterBefore = schedulerState.counter;
+    const alreadyObserved = schedulerState.observedFloorKeys.has(key);
+    const alreadyCounted = schedulerState.countedFloorKeys.has(key);
     const { interval } = schedulerSettings();
-    if (schedulerState.retryPaused)
+    emitPersistenceTrace("AUTO_SCHEDULER_ENTER", null, target, {
+      floor_version_key: key,
+      force,
+      counter_before: counterBefore,
+      counter_after: counterBefore,
+      interval,
+      retry_paused: schedulerState.retryPaused,
+      already_observed: alreadyObserved,
+      already_counted: alreadyCounted,
+      reason,
+    }, "scheduler");
+    if (alreadyObserved && !force) {
+      emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
+        floor_version_key: key,
+        force,
+        counter_before: counterBefore,
+        counter_after: schedulerState.counter,
+        interval,
+        retry_paused: schedulerState.retryPaused,
+        already_observed: alreadyObserved,
+        already_counted: alreadyCounted,
+        decision: "floor-already-observed",
+        reason,
+      }, "scheduler");
+      return { skipped: true, reason: "floor-already-observed" };
+    }
+    rememberSchedulerKey(schedulerState.observedFloorKeys, key);
+    if (force) {
+      emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
+        floor_version_key: key,
+        force,
+        counter_before: counterBefore,
+        counter_after: schedulerState.counter,
+        interval,
+        retry_paused: schedulerState.retryPaused,
+        already_observed: alreadyObserved,
+        already_counted: alreadyCounted,
+        decision: "force-analysis",
+        reason,
+      }, "scheduler");
+      return runScheduledAnalysis(target, { force: true, reason, generation });
+    }
+    if (schedulerState.retryPaused) {
+      emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
+        floor_version_key: key,
+        force,
+        counter_before: counterBefore,
+        counter_after: schedulerState.counter,
+        interval,
+        retry_paused: schedulerState.retryPaused,
+        already_observed: alreadyObserved,
+        already_counted: alreadyCounted,
+        decision: "retry-paused",
+        reason,
+      }, "scheduler");
       return { skipped: true, reason: "retry-paused" };
+    }
     schedulerState.counter = Math.min(interval, schedulerState.counter + 1);
     rememberSchedulerKey(schedulerState.countedFloorKeys, key);
-    if (schedulerState.counter < interval)
+    if (schedulerState.counter < interval) {
+      emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
+        floor_version_key: key,
+        force,
+        counter_before: counterBefore,
+        counter_after: schedulerState.counter,
+        interval,
+        retry_paused: schedulerState.retryPaused,
+        already_observed: alreadyObserved,
+        already_counted: alreadyCounted,
+        decision: "character-interval",
+        reason,
+      }, "scheduler");
       return {
         skipped: true,
         reason: "character-interval",
         counter: schedulerState.counter,
       };
+    }
+    emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
+      floor_version_key: key,
+      force,
+      counter_before: counterBefore,
+      counter_after: schedulerState.counter,
+      interval,
+      retry_paused: schedulerState.retryPaused,
+      already_observed: alreadyObserved,
+      already_counted: alreadyCounted,
+      decision: "interval-due",
+      reason,
+    }, "scheduler");
     return runScheduledAnalysis(target, { force: false, reason, generation });
   }
   const automaticAnalysis = createAutomaticAnalysisPort({
@@ -3252,9 +3408,35 @@ export function createEventAnalysisCoordinator({
       }
       if (type !== "CHARACTER_MESSAGE_RENDERED")
         return { skipped: true, reason: "not-a-character-render" };
+      emitPersistenceTrace("CHARACTER_MESSAGE_RENDERED_RECEIVED", null, target, {
+        event_type: type,
+        event_payload_type: typeof event?.payload,
+        floor_version_key: floorExecutionKey(target.version),
+      }, "scheduler");
       const generationResult = await generationLifecycle.onCharacterMessageRendered(target);
-      if (generationResult)
+      const generationState = generationLifecycle.getState();
+      emitPersistenceTrace("GENERATION_LIFECYCLE_RESULT", null, target, {
+        result: generationResult,
+        result_reason: generationResult?.reason ?? null,
+        pending_generation: generationState.pendingGeneration ?? null,
+        pending_swipe_generation: generationState.pendingSwipeGeneration ?? null,
+        completed_generation: generationState.completedGeneration ?? null,
+        completed_swipe_generation: generationState.completedSwipeGeneration ?? null,
+      }, "scheduler");
+      if (generationResult) {
+        emitPersistenceTrace("AUTO_HANDOFF_BLOCKED", null, target, {
+          reason: generationResult.reason ?? "generation-lifecycle-result",
+          generation_result: generationResult,
+          pending_generation: generationState.pendingGeneration ?? null,
+          pending_swipe_generation: generationState.pendingSwipeGeneration ?? null,
+          completed_generation: generationState.completedGeneration ?? null,
+          completed_swipe_generation: generationState.completedSwipeGeneration ?? null,
+        }, "scheduler");
         return generationResult;
+      }
+      emitPersistenceTrace("AUTO_HANDOFF_TO_SCHEDULER", null, target, {
+        floor_version_key: floorExecutionKey(target.version),
+      }, "scheduler");
       try {
         return await automaticAnalysis.observeSettledCharacterFloor(target, { reason: type });
       } catch (error) {

@@ -193,9 +193,11 @@ successful previous Floor snapshot used for profile/identity continuity. The
 separate `existing_events` projection is the bounded dedupe reference for the
 narrative discovery window. It contains valid canonical Events from the
 nearest previous snapshot plus older valid Floors represented in the selected
-Recent Story window; it never scans an unbounded Chat cache, includes the
-target's old result, or includes deleted, inactive-Swipe, stale, or invalidated
-owners.
+Recent Story window; it never scans an unbounded Chat cache or includes deleted,
+inactive-Swipe, or invalidated owners. An automatic reroll may additionally use
+the target slot's prior result as a comparison-only reference when its Floor
+Version changed; this does not make that result the strict previous Floor,
+active fact, or persistence owner.
 
 After Runtime identity resolution, a newly returned Event is compared with
 `existing_events` using a deterministic semantic key. The key requires a
@@ -207,6 +209,16 @@ subjects, counterpart sources, mechanisms, story times, or key factual
 evidence are never merged by fuzzy similarity. Same-time independent
 exposures therefore remain separate when their source set or evidence differs;
 `physical_symptom` and `sexual_activity` can never dedupe each other.
+
+This comparison is a Runtime correctness contract, not merely a prompt rule.
+The four Analysis Context parts—Current Target Floor, bounded Recent Story,
+`existing_events`, and Character Registry—must belong to one explicit Floor
+boundary. Historical rediscovery is the same factual occurrence and is not a
+second canonical Event; a genuinely later repeated Event remains distinct when
+its structured story time, canonical counterpart/participants, reproductive
+mechanism, or source evidence differs. Do not use display name, fuzzy text,
+type/person-only matching, response order, or persistence owner as a substitute
+for this contract.
 
 Three projections remain distinct: `identity_context` answers which person a
 mention names and contains canonical ID/display name/aliases only;

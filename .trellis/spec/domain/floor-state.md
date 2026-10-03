@@ -74,6 +74,13 @@ is:
 - an Event is active only when its complete `source` matches the current
   Floor Version.
 
+An automatic Analysis Job captures one complete Floor Version boundary. Its
+Current Target Floor, bounded Recent Story, `existing_events`, and Character
+Registry must be resolved from that same boundary. A delayed background/foreground
+callback cannot change the owner or revive a stale Floor; generation-bound work
+must revalidate Chat, active Swipe, Floor Version, and generation identity before
+AI and fail closed on any mismatch.
+
 The active-message `extra` projection that a host may maintain while changing
 Swipes is a host mirror. It does not create a second owner. A Chat-level map
 such as `chatMetadata.floors[mesId]`, a registry, or an in-memory cache is not
