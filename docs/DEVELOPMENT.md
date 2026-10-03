@@ -156,7 +156,9 @@ readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
 
 ### Floor / Swipe / Version 生命周期
 
-自动分析按新的有效 Character Floor counter 运行；`interval=N` 的 N 是 N 个新的有效 Character Floor，不是 SillyTavern 原始 message index、Floor 编号差值或消息总数。User、编辑、删除、普通 update/received/ended 和 existing Swipe 切换不推进或强制请求；指向 User Floor 的 `MESSAGE_SENT`、`MESSAGE_RECEIVED`、`GENERATION_ENDED` 等宿主事件也不得增加 counter。reroll/new Swipe generation 只有在真实 intent 形成新 Floor Version 后才进入独立的 force path。完整状态机、失败欠账语义、World retry 和 Runtime state 生命周期见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。
+自动分析按当前有效时间线上的 Character Floor counter 运行；`interval=N` 的 N 是从最近仍有效的成功 Character/Event Analysis Floor baseline 之后累计的 N 个新的有效 Character Floor，不是 SillyTavern 原始 message index、Floor 编号差值或消息总数。User、编辑、删除、普通 update/received/ended 和 existing Swipe 切换不推进或强制请求；指向 User Floor 的 `MESSAGE_SENT`、`MESSAGE_RECEIVED`、`GENERATION_ENDED` 等宿主事件也不得增加 counter。reroll/regenerate/new Swipe 形成最终有效 Floor Version 后仍走普通 interval，不再自动 force；只有 manual reanalysis 是独立的立即执行入口。Runtime counter/observed keys 只是可重建缓存，删除、回滚、Swipe/version 替换、reload 或 manual success 后按当前有效 Floor/active Swipe/version 重新校准，不新增 persisted counter 或 Chat-level scheduler truth。完整状态机、失败欠账语义、World retry 和 Runtime state 生命周期见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。
+
+UI 中的“当前 Floor”来自 `collectActiveBusinessData().current_floor`，表示当前 Chat 仍然有效的 Character Floor/active Swipe；它不等同于最近一次成功的 BioWeave analysis Floor。正常 `CHARACTER_MESSAGE_RENDERED` 生命周期完成后，UI 通过 Runtime subscription 重新读取该 DTO，即使 interval 尚未到期、没有 AI 请求，也必须显示新的当前 Floor。重复的同一 Floor render 只允许一次 UI business refresh；该 refresh 只读 Runtime DTO，不启动 Character/Event Analysis。
 
 World Full/Patch 在当前 Floor read-back 与共享 World canonical view-model 未达到 `WORLD_READY` 前，不得调用 Character/Event。Runtime 发布 World/Event 阶段状态，UI 据此分别显示 World Full/Patch/read-back busy 或人物等待/分析状态；最终 terminal status 由 `ui/app.js` 统一转为 SillyTavern toastr。面板关闭不影响通知，插件关闭后忽略迟到结果。
 

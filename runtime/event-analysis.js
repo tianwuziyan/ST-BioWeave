@@ -986,6 +986,62 @@ export function createEventAnalysisCoordinator({
     schedulerState.counter = 0;
     schedulerState.retryPaused = false;
     schedulerState.lastFailure = null;
+    schedulerState.countedFloorKeys.clear();
+  }
+
+  async function reconcileSchedulerState({
+    target = null,
+    excludeTarget = false,
+    reason = "boundary",
+  } = {}) {
+    const token = chat.token();
+    const states = await collectCurrentFloorStates(token, {includeEmpty: true});
+    chat.assert(token);
+    const validStates = states
+      .filter(state => !isFloorInvalidated(state))
+      .sort((left, right) => left.index - right.index);
+    const excludedKey = excludeTarget && target?.version
+      ? floorExecutionKey(target.version)
+      : null;
+    const baseline = validStates
+      .filter(state =>
+        state.floorData?.analysis?.status === "success" &&
+        persistedValidFloorState(state),
+      )
+      .at(-1) ?? null;
+    const baselineIndex = baseline?.index ?? -1;
+    const currentStates = validStates.filter(state =>
+      !excludedKey || floorExecutionKey(state.version) !== excludedKey,
+    );
+    const countedStates = currentStates.filter(state => state.index > baselineIndex);
+    const deferUnbaselinedExistingFloors =
+      !baseline && (reason === "runtime-init" || reason === "chat-changed");
+    const observedStates = deferUnbaselinedExistingFloors ? [] : currentStates;
+    const rebasedCountedStates = deferUnbaselinedExistingFloors ? [] : countedStates;
+
+    schedulerState.observedFloorKeys.clear();
+    schedulerState.countedFloorKeys.clear();
+    for (const state of observedStates)
+      rememberSchedulerKey(schedulerState.observedFloorKeys, floorExecutionKey(state.version));
+    for (const state of rebasedCountedStates)
+      rememberSchedulerKey(schedulerState.countedFloorKeys, floorExecutionKey(state.version));
+
+    const { interval } = schedulerSettings();
+    const timelineCount = rebasedCountedStates.length;
+    schedulerState.counter = schedulerState.lastFailure
+      ? interval
+      : Math.min(interval, timelineCount);
+    return {
+      reason,
+      baseline: baseline
+        ? {index: baseline.index, version: {...baseline.version}}
+        : null,
+      count: timelineCount,
+      due: schedulerState.counter >= interval,
+      interval,
+      countedFloorKeys: [...schedulerState.countedFloorKeys],
+      observedFloorKeys: [...schedulerState.observedFloorKeys],
+    };
   }
 
   function isEnabled() {
@@ -1396,7 +1452,7 @@ export function createEventAnalysisCoordinator({
       character_registry: normalizeCharacterRegistry(null),
     };
   }
-  async function collectCurrentFloorStates(token = chat.token()) {
+  async function collectCurrentFloorStates(token = chat.token(), {includeEmpty = false} = {}) {
     const states = [];
     const all = messages();
     for (let index = 0; index < all.length; index += 1) {
@@ -1404,7 +1460,7 @@ export function createEventAnalysisCoordinator({
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       const floorData = store.getFloor?.(index, swipeId);
-      if (!floorData) continue;
+      if (!floorData && !includeEmpty) continue;
       const storedVersion = floorVersionFromData(floorData);
       let version;
       try {
@@ -1424,7 +1480,7 @@ export function createEventAnalysisCoordinator({
         index,
         message: all[index],
         swipeId,
-        floorData,
+        floorData: floorData ?? {},
         version,
         events: store.getActiveFloorEvents?.(index, version) ?? [],
       });
@@ -3153,6 +3209,23 @@ export function createEventAnalysisCoordinator({
     target,
     { force = false, reason = "automatic", generation = null } = {},
   ) {
+    const generationReplacedVersion = Boolean(
+      generation?.baselineVersion &&
+      generation?.finalFloorVersion &&
+      !sameFloorVersion(generation.baselineVersion, generation.finalFloorVersion),
+    );
+    if (generation?.force === true || generationReplacedVersion) {
+      try {
+        await reconcileSchedulerState({
+          target,
+          excludeTarget: true,
+          reason: "generation-floor-version-boundary",
+        });
+      } catch {
+        // Preserve the existing incremental path if a boundary read cannot be
+        // completed; the next lifecycle boundary can reconcile again.
+      }
+    }
     const key = floorExecutionKey(target.version);
     const counterBefore = schedulerState.counter;
     const alreadyObserved = schedulerState.observedFloorKeys.has(key);
@@ -3303,6 +3376,7 @@ export function createEventAnalysisCoordinator({
       const type = event?.type;
       if (type === "CHAT_CHANGED") {
         await primeLifecycleSnapshot();
+        await reconcileSchedulerState({reason: "chat-changed"});
         await refreshTrackingRegistry(type);
         return { skipped: true, reason: type };
       }
@@ -3368,12 +3442,17 @@ export function createEventAnalysisCoordinator({
         lifecycleSnapshot,
         currentSnapshot,
       );
-      if (isSourceMutation && mutationChanged) {
+      const requiresSchedulerReconciliation =
+        isSourceMutation &&
+        (mutationChanged || type === "MESSAGE_DELETED" ||
+          type === "MESSAGE_SWIPE_DELETED");
+      if (requiresSchedulerReconciliation) {
         await invalidateMutation(event, targetIndex, {
           preserveTarget: isSwipeBoundaryEvent,
           clearRoots: true,
           currentSnapshot,
         });
+        await reconcileSchedulerState({reason: `mutation:${type}`});
       }
       lifecycleSnapshot = await primeLifecycleSnapshot();
       if (isSwipeBoundaryEvent) await refreshTrackingRegistry(type);
@@ -3535,6 +3614,7 @@ export function createEventAnalysisCoordinator({
     analysisExecution,
     manualAnalysis,
     getAutoAnalysisSchedulerState: automaticAnalysis.getState,
+    reconcileSchedulerState,
     setProjectionPostProcessor: handler => {
       projectionPostProcessor = typeof handler === "function" ? handler : null;
     },

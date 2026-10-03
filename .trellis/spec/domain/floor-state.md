@@ -81,6 +81,15 @@ callback cannot change the owner or revive a stale Floor; generation-bound work
 must revalidate Chat, active Swipe, Floor Version, and generation identity before
 AI and fail closed on any mismatch.
 
+Automatic interval scheduling uses the current surviving Character Floor timeline,
+not a persisted counter or a message-index difference. Its baseline is the nearest
+still-valid successful Character/Event Analysis Floor; User messages never count.
+Runtime counter and observed/counted keys may accelerate the forward path, but after
+reload, deletion/rollback, active Swipe or version replacement, and successful manual
+reanalysis they are rebuilt from the current active Floor/Swipe/version owners.
+Reroll, regenerate, and new Swipe identity do not by themselves force automatic AI;
+after the final Floor Version settles they enter the ordinary interval path.
+
 The active-message `extra` projection that a host may maintain while changing
 Swipes is a host mirror. It does not create a second owner. A Chat-level map
 such as `chatMetadata.floors[mesId]`, a registry, or an in-memory cache is not

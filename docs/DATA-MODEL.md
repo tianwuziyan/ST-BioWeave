@@ -535,6 +535,8 @@ Debug/Prompt inspection 只属于 Settings 的 Advanced/Debug 工具；隐藏这
 
 Event Analysis 的运行状态由 Runtime coordinator 组合为 transient/read DTO，而不是第二套事实存储。DTO 同时区分当前 Floor 的 `event_count/current_floor_events` 与当前 Chat 的 `active_event_count/active_events`，并带有 Floor Version、attempt、last success/error、Tracking 数量、decision diagnostics 和脱敏 Registry 摘要。`running` 只表示当前 transient execution；持久分析记录保存成功结果或最后一次失败/取消尝试，失败刷新不覆盖 `last_success`。Runtime 以完整 Floor Version 持有 `AbortController` 和 in-flight Promise；取消、超时、stale Chat、保存失败或 Registry 失败都必须释放执行资源，迟到结果不得提交。Raw AI Response、API Secret、Authorization header 与请求正文不为可观察性写入 Chat。
 
+其中 `current_floor` 是当前 Chat 的有效 Character Floor/active Swipe 读取结果，不是 `last_success` 所代表的最近成功分析 Floor。UI 展示当前 Floor 时必须读取 `current_floor`；当前 Floor 尚未达到 automatic interval 或尚未分析，不得回退显示旧的成功分析 Floor。该 UI refresh 只读取现有权威 DTO，不产生新的分析结果。
+
 ### 本阶段的空状态边界
 
 Phase 2A 的闭环为：

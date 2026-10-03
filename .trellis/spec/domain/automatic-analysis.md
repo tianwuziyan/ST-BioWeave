@@ -198,7 +198,6 @@ Host port 只接收 host signal，不暴露 scheduler 内部 Map 或 Floor 写�
 
 ```js
 autoAnalysis.observeSettledCharacterFloor(target, {
-  force,
   reason,
   generation,
 })
@@ -206,9 +205,11 @@ autoAnalysis.getState()
 autoAnalysis.reset(reason)
 ```
 
-`observeSettledCharacterFloor` 是唯一推进自动 counter/due 的写入口；`getState`
-是只读诊断；`reset` 只由 Chat lifecycle/destroy 等已授权 owner 调用。外部模块
-不得设置 counter、retryPaused、dedupe key、pending 或任何其它 scheduler 内部状态。
+`observeSettledCharacterFloor` 是唯一推进自动 counter/due 的写入口；generation 的
+reroll/new Swipe intent 只作为 owner/version lifecycle metadata，不能通过该 port
+强制绕过 interval。`getState` 是只读诊断；`reset` 只由 Chat lifecycle/destroy
+等已授权 owner 调用。外部模块不得设置 counter、retryPaused、dedupe key、pending
+或任何其它 scheduler 内部状态。
 
 ### Manual port
 
@@ -261,8 +262,9 @@ trigger 和 validated target，通过此入口连接，不得直接调用 `store
 - Character/Event canonical read-back、manual supplement A+B preservation；
 - Floor persistence、Tracking rebuild 和 Projection refresh。
 
-自动 scheduler 的 `counter=0` 只能由完整成功结果触发；手动成功是否清 counter
-以及 force/reroll 的当前行为必须在迁移测试中锁定，不得因拆分而改变。
+自动 scheduler 的 `counter=0` 只能由完整成功结果触发；manual reanalysis 成功
+也按现有合同清理自动周期状态，而 reroll/new Swipe 不得绕过 interval。上述行为
+必须在迁移测试中锁定，不得因拆分而改变。
 
 ## 7. MIGRATION_PLAN：小步迁移
 
@@ -308,7 +310,7 @@ StoryTime failures 合并处理。
 
 - generation start/end/render 的 settle 顺序；
 - stopped/cancelled 未成 Floor 时清理 pending；
-- reroll/new Swipe force 规则；
+- reroll/new Swipe 形成新 Floor Version 后仍走普通 interval、不自动 force；
 - 同一 generation/同一 Floor Version 的重复 CMR 不重入。
 
 ### Automatic gate
@@ -316,7 +318,7 @@ StoryTime failures 合并处理。
 - 每个新的有效 Character Floor 只计数一次；
 - interval 未到不执行，达到才 due；
 - success 清 counter，failure 按 retry 配置保持 due 或 paused；
-- force/reroll、pending、dedupe、Chat switch/destroy 清理；
+- pending generation、normal interval、dedupe、Chat switch/destroy 清理；
 - scheduler 不直接触碰 World/Event/Tracking/Floor persistence。
 
 ### Shared execution

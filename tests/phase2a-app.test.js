@@ -173,7 +173,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -209,8 +209,10 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     }} : {};
   let floor = floorData;
   let chat = chatData;
+  let currentFloor = initialCurrentFloor ?? {floor: 10, message_id: 0, swipe_id: 0, version};
   let runtimeListener = null;
   let refreshCalls = 0;
+  let businessDataCalls = 0;
   let characterAnalysisCalls = 0;
   let abortCalls = 0;
   let currentBusy = analysisBusy;
@@ -224,13 +226,13 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     tracking_subjects: trackingSubjects,
     character_profiles: event ? {'char-a': {character_id: 'char-a', display_name: 'Alice'}} : {},
     active_events: floor.events,
-    current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
+    current_floor: currentFloor,
     last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
     analysis_status: {
       state: currentBusy ? 'running' : analysisState,
       busy: currentBusy,
       phase: analysisPhase,
-      current_floor: {floor: 10, message_id: 0, swipe_id: 0, version},
+      current_floor: currentFloor,
       floor_version: version,
       last_success: analysisState === 'success' ? '2026-08-20T00:00:00.000Z' : null,
       last_error: analysisState === 'failed' ? 'JSON_SCHEMA_INVALID' : null,
@@ -269,7 +271,10 @@ async function createFixture({event = null, analysisState = 'success', analysisB
         payload: structuredClone(entry),
       });
     },
-    collectActiveBusinessData: async () => structuredClone(businessData()),
+    collectActiveBusinessData: async () => {
+      businessDataCalls += 1;
+      return structuredClone(businessData());
+    },
     async refreshCurrentFloorAnalysis() {
       refreshCalls += 1;
       if (onRefresh) await onRefresh({floor, chat, version, context});
@@ -336,6 +341,8 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     emit: event => runtimeListener?.(event),
     toasts: () => [...toastCalls],
     calls: () => ({refresh: refreshCalls, characterAnalysis: characterAnalysisCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
+    businessDataCalls: () => businessDataCalls,
+    setCurrentFloor: value => { currentFloor = value; },
     worldResolveCalls: () => worldResolveCalls,
     persistenceTrace: () => [...persistenceTrace],
   };
@@ -478,6 +485,38 @@ test('background Event Analysis failures update UI state with one top error Toas
   });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(fixture.toasts(), [['error', 'BioWeave：分析失败：请求超时。']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('normal Character render refreshes the current Floor without starting analysis or repeating on duplicate render', async () => {
+  const fixture = await createFixture({
+    currentFloor: {floor: 60, message_id: 60, swipe_id: 0},
+    analysisState: 'success',
+  });
+  fixture.app.go('state');
+  await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('当前楼层 60'), 'Floor 60 UI');
+
+  fixture.setCurrentFloor({floor: 62, message_id: 62, swipe_id: 0});
+  fixture.emit({
+    type: 'BIOWEAVE_LIFECYCLE_SETTLED',
+    mutationType: 'CHARACTER_MESSAGE_RENDERED',
+    payload: {message_id: 62, swipe_id: 0},
+  });
+  await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('当前楼层 62'), 'Floor 62 UI');
+
+  const readsAfterFirstRender = fixture.businessDataCalls();
+  assert.equal(fixture.calls().refresh, 0);
+  assert.equal(fixture.calls().characterAnalysis, 0);
+  assert.equal(fixture.persistenceTrace().filter(entry => entry.stage === 'CHARACTER_UI_REFRESH_REQUESTED').length, 2);
+
+  fixture.emit({
+    type: 'BIOWEAVE_LIFECYCLE_SETTLED',
+    mutationType: 'CHARACTER_MESSAGE_RENDERED',
+    payload: {message_id: 62, swipe_id: 0},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.businessDataCalls(), readsAfterFirstRender);
+  assert.equal(fixture.calls().refresh, 0);
   fixture.app.destroyBioWeave();
 });
 

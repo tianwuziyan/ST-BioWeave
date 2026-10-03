@@ -2452,6 +2452,7 @@ export function createRuntime({
     await refreshActiveOwner(currentChatId);
     storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
     await eventAnalysis.primeLifecycleSnapshot?.();
+    await eventAnalysis.reconcileSchedulerState?.({reason: "runtime-init"});
     await recordReloadFloorSlotAudit("runtime-init");
     try {
       await projectionContext.refreshProjectionContext({chatId: currentChatId});
@@ -2661,6 +2662,7 @@ export function createRuntime({
     analysisExecution: eventAnalysis.analysisExecution,
     manualAnalysis: eventAnalysis.manualAnalysis,
     getAutoAnalysisSchedulerState: eventAnalysis.getAutoAnalysisSchedulerState,
+    reconcileSchedulerState: eventAnalysis.reconcileSchedulerState,
     getPersistenceTrace: diagnostics.getPersistenceTrace,
     recordPersistenceTrace,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,

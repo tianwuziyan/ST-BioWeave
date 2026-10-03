@@ -955,9 +955,13 @@ When no candidate passes, the API receives the exact empty previous shape:
 
 The target's old analysis, a stale Runtime DTO, a deleted registry entry,
 another Swipe, and a Runtime cache are never previous state. The automatic
-analysis counter and `retryPaused` flag are disposable Runtime state keyed by
-complete Character Floor Versions; they are not Floor fields, historical
-state, or persisted scheduling checkpoints. The complete scheduler state
+analysis counter, `observedFloorKeys`, `countedFloorKeys`, and `retryPaused` flag
+are disposable Runtime state keyed by complete Character Floor Versions; they are
+not Floor fields, historical state, or persisted scheduling checkpoints. When
+Chat/runtime initialization, deletion/rollback, active Swipe or version
+replacement, or successful manual reanalysis can make that cache stale, Runtime
+reconciles it from surviving valid Character Floors and the nearest valid
+successful analysis baseline. The complete scheduler state
 machine and rationale are defined in [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md).
 
 ### 9.2 Mutation invalidation matrix

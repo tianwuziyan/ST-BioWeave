@@ -153,8 +153,10 @@ export function createGenerationLifecycle({
       return {skipped: true, reason: "generation-without-new-floor"};
     }
     return onGenerationSettled?.(target, {
-      force,
-      reason: force ? "reroll" : "automatic",
+      // Generation intent remains lifecycle metadata. Automatic scheduling is
+      // always decided by the Character Floor timeline and interval.
+      force: false,
+      reason: "automatic",
       generation: pending,
     });
   }

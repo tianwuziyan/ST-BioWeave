@@ -49,6 +49,15 @@ counter 的精确定义是：
 它不是 ST message count、message_id、floor number，也不是与上次成功分析之间的
 物理楼号差。
 
+当前有效时间线是 scheduler 的事实来源：baseline 是当前 Chat 中仍存在、active
+Swipe 与完整 Floor Version 均有效的最近成功 Character/Event Analysis Floor。
+Runtime 会在 reload、删除/回滚、active Swipe/version replacement 或 manual
+reanalysis success 等缓存可能失真的边界重新计算 baseline、baseline 后的有效
+Character Floor 成员和 due 状态。`counter`、`observedFloorKeys`、
+`countedFloorKeys` 只是可重建的 Runtime cache / execution state，不是第二套
+历史时间线，也不新增 persisted counter 或 Chat-level scheduler truth。正常向前
+生成仍走轻量增量路径。
+
 ## 2. Lifecycle event 只是观察信号
 
 SillyTavern event 不直接等价于业务结论。Runtime 必须先结合当前消息集合、
@@ -99,7 +108,7 @@ Character/Event API。它们只允许 Runtime 正确更新当前正文签名、F
                               └─────┴──────┐       │
                                            │       │
                                       force attempt
-                                 Manual Refresh / reroll
+                                 Manual Refresh only
                                            │       │
                                   ┌────────┴───────┐
                                   │                │
@@ -160,8 +169,10 @@ Promise resolve 只表示某个保存调用完成，不自动等于 SillyTavern 
 
 失败后保持 `due` 并进入 `retryPaused`。后续新的 Character Floor 不自动请求。
 ordinary edit、User、delete、普通 update 不能解除 paused、清 counter 或触发
-retry。Manual Refresh 或真正 reroll 可以 force attempt；成功清 counter 并退出
-paused，失败继续保持 due/paused。
+retry。只有 Manual Refresh / manual reanalysis 可以 force attempt；成功清 counter
+并退出 paused，失败继续保持 due/paused。Reroll、regenerate 和 new Swipe 不是
+automatic force 入口，最终有效 Floor Version 形成后仍按普通 Character interval
+计数。
 
 ## 4. Floor、edit、reroll 和 Swipe
 
@@ -173,22 +184,19 @@ paused，失败继续保持 due/paused。
 
 ### true reroll/regenerate
 
-force path 必须同时满足：
+generation lifecycle 仍负责识别真实 generation、等待 settle、确认最终完整
+Floor Version、处理 active Swipe、supersede/cancel 和迟到 callback，但这些 intent
+属性不再决定 automatic scheduler 是否立即调用 AI。新的有效 Floor Version 只进入
+普通 Character interval：
 
 1. 真实 generation intent；
 2. 新的完整 Floor Version，至少 content hash、message version 或 Swipe owner
    发生有效变化。
 
-只有新 Floor Version 定型后才强制分析。相同 generation intent 但正文和版本未
-变化时，不分析、不推进 counter。成功的 reroll 是一次成功建立当前 BioWeave
-分析基线的强制操作，因此清 counter 并清除 due/paused。
-
-reroll/regenerate/new Swipe 的 force path 与普通 interval counter 独立：它们在真实
-generation intent 形成新的 Floor Version 后可以立即执行一次 force analysis，不要求
-先达到 `analysis_interval`。`AUTO_SCHEDULER_ENTER` 中的 `force=true` 与
-`decision=force-analysis` 表示走了该路径，不表示 counter 达到了 interval；此时
-`counter_before/after` 可以保持不变。日志中的 `generation_type=regenerate` 只能证明
-宿主发出了 regenerate intent，不能单独证明用户是否实际点击了 reroll UI。
+只有新 Floor Version 定型后才进入普通 interval。相同 generation intent 但正文和
+版本未变化时，不分析、不推进 counter。日志中的 `generation_type=regenerate` 只
+说明宿主发出了 regenerate intent；它不再产生 automatic `force-analysis`，也不能
+单独证明用户是否实际点击了 reroll UI。
 
 ### existing Swipe switch
 
@@ -201,8 +209,8 @@ generation intent 形成新的 Floor Version 后可以立即执行一次 force a
 
 ### new Swipe generation
 
-pending new Swipe generation 等待正文定型并形成新 Floor Version，然后进入
-force path。同一次生成可能产生多个 ST events，但相同 Floor Version 只能得到
+pending new Swipe generation 等待正文定型并形成新 Floor Version，然后进入普通
+interval。同一次生成可能产生多个 ST events，但相同 Floor Version 只能得到
 一个实际 Analysis Job。Runtime 还会在一次 generation intent 首次消费后保留一个
 有限的 completed marker；后续同一 generation 的重复 CMR，即使正文继续流式变化并
 形成新的签名，也不会被当成新的自动 Character Floor 或再次 force。下一次真实

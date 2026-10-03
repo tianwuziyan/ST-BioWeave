@@ -546,6 +546,7 @@ export function createApp(runtime, options = {}) {
   let worldModelRefreshInFlight = null
   let worldModelQueuedRefresh = null
   let worldModelLastRefreshKey = null
+  let lastCharacterLifecycleRefreshKey = null
   let uiRefreshCycleSequence = 0
   let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
@@ -4903,6 +4904,7 @@ export function createApp(runtime, options = {}) {
       focusedCharacterId = null
       businessRefreshSequence += 1
       businessRefreshQueued = null
+      lastCharacterLifecycleRefreshKey = null
       businessState = {
         ...businessState,
         loaded: false,
@@ -5010,6 +5012,24 @@ export function createApp(runtime, options = {}) {
       }
       if (route === 'world') render()
     }
+    const lifecycleRefreshType =
+      event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED'
+        ? event?.mutationType
+        : event?.type
+    const isCharacterFloorLifecycleRefresh =
+      event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED' &&
+      lifecycleRefreshType === 'CHARACTER_MESSAGE_RENDERED'
+    const refreshPayload = event?.payload ?? {}
+    const refreshFloorVersion = refreshPayload?.floor_version ?? refreshPayload?.floorVersion ?? {}
+    const refreshMessageId = refreshFloorVersion?.message_id ?? refreshPayload?.message_id ?? refreshPayload?.messageId ?? null
+    const refreshMessageIndex = refreshPayload?.message_index ?? refreshPayload?.messageIndex ?? refreshPayload?.index ?? null
+    const refreshSwipeId = refreshFloorVersion?.swipe_id ?? refreshPayload?.swipe_id ?? refreshPayload?.swipeId ?? null
+    const characterLifecycleRefreshKey = isCharacterFloorLifecycleRefresh &&
+      (refreshMessageId !== null || refreshMessageIndex !== null)
+      ? `${runtime.chat.current()}|${refreshMessageId ?? refreshMessageIndex}|${refreshSwipeId ?? 0}`
+      : null
+    const shouldRefreshCharacterFloor =
+      !characterLifecycleRefreshKey || characterLifecycleRefreshKey !== lastCharacterLifecycleRefreshKey
     if (
       event?.type === 'TRACKING_REGISTRY_REFRESHED' ||
       event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' ||
@@ -5018,13 +5038,15 @@ export function createApp(runtime, options = {}) {
       event?.type === 'MESSAGE_UPDATED' ||
       event?.type === 'MESSAGE_EDITED' ||
       event?.type === 'MESSAGE_SWIPED' ||
-      event?.type === 'MESSAGE_SWIPE_DELETED'
+      event?.type === 'MESSAGE_SWIPE_DELETED' ||
+      (isCharacterFloorLifecycleRefresh && shouldRefreshCharacterFloor)
     ) {
       if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorRequestSequence += 1
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
         timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       }
+      if (characterLifecycleRefreshKey) lastCharacterLifecycleRefreshKey = characterLifecycleRefreshKey
       businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }

@@ -282,8 +282,9 @@ feature.
 
 The auto-analysis scheduler counts valid Character Floor progression, not a
 physical difference between Floor numbers. User message/edit/delete actions do
-not count. Switching an existing Swipe does not count. A true reroll/new Swipe
-is considered through generation intent and a genuinely new Floor Version.
+not count. Switching an existing Swipe does not count. A true reroll/new Swipe is
+resolved through generation intent and a genuinely new Floor Version, then enters
+the ordinary Character interval; it is not an automatic force path.
 
 Successful analysis resets the counter. Failure keeps analysis due, subject to
 the existing `retryPaused` contract. Do not replace this scheduler with a new
