@@ -686,6 +686,58 @@ test('events ordinary card does not expose participant identifiers or inferred e
   assert.doesNotMatch(html, /来源与调试信息|结构化标识|chat-1|message-1|hash-1/)
 })
 
+test('events page projects a non-exposure state fact subject from Current State identity', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      event_id: 'evt-symptom',
+      type: 'physical_symptom',
+      status: 'confirmed',
+      story_time: { display: '第七十日', normalized: null, day_index: 70 },
+      location: '房间',
+      participants: [
+        { character_id: 'char_000099', display_name: '不应读取的人物', event_role: 'unknown' },
+        { character_id: 'char_000001', display_name: '参与者副本', event_role: 'unknown' },
+      ],
+      pregnancy_relevance: {
+        relevant: false,
+        possible_conception: false,
+        gestational_subject_ids: [],
+        counterpart_ids: [],
+      },
+      state_fact: {
+        subject_id: 'char_000001',
+        payload: { symptom: { kind: 'pelvic_and_muscle_soreness', description: '事实描述' } },
+      },
+    }],
+    currentState: {
+      characters: {
+        char_000001: { identity: { character_id: 'char_000001', display_name: '祁鸢' } },
+      },
+    },
+  })
+  assert.match(html, /事实归属：祁鸢/)
+  assert.match(html, /<dt>事实归属<\/dt><dd>祁鸢<\/dd>/)
+  assert.doesNotMatch(html, /未关联追踪人物/)
+  assert.doesNotMatch(html, /不应读取的人物|参与者副本/)
+})
+
+test('events page uses an explicit fallback when the identity projection has no display name', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      ...event,
+      event_id: 'evt-symptom-fallback',
+      type: 'physical_symptom',
+      participants: [{ character_id: 'char_000001', display_name: '参与者姓名', event_role: 'unknown' }],
+      pregnancy_relevance: { relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: [] },
+      state_fact: { subject_id: 'char_000001', payload: { symptom: { kind: 'soreness', description: '事实描述' } } },
+    }],
+    currentState: { characters: { char_000001: { identity: { character_id: 'char_000001', display_name: null } } } },
+  })
+  assert.match(html, /事实归属：未命名事实人物/)
+  assert.doesNotMatch(html, /参与者姓名/)
+  assert.doesNotMatch(html, /未关联追踪人物/)
+})
+
 test('event page projects pregnancy objects without rendering participant roles or provenance', () => {
   const html = eventsPage({
     activeEvents: [

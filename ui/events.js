@@ -110,6 +110,18 @@ function participantNamesForIds(event, value) {
   return value.map(id => escapeHtml(displayValue(participants.get(String(id))?.display_name, '未命名对象'))).join('、')
 }
 
+function stateFactSubjectId(event) {
+  if (event?.pregnancy_relevance?.relevant === true) return ''
+  return String(event?.state_fact?.subject_id ?? '').trim()
+}
+
+function stateFactSubjectName(event, currentState = null) {
+  const subjectId = stateFactSubjectId(event)
+  if (!subjectId) return ''
+  const displayName = currentState?.characters?.[subjectId]?.identity?.display_name
+  return typeof displayName === 'string' && displayName.trim() ? displayName.trim() : '未命名事实人物'
+}
+
 function eventTypeLabel(value) {
   return eventTypeLabels[value] ?? displayValue(value, '生理事件')
 }
@@ -118,7 +130,7 @@ function eventStatusLabel(value) {
   return eventStatusLabels[value] ?? displayValue(value)
 }
 
-function eventReviewPeople(event) {
+function eventReviewPeople(event, currentState = null) {
   const relevance = event?.pregnancy_relevance
   const ids = [
     ...(Array.isArray(relevance?.gestational_subject_ids) ? relevance.gestational_subject_ids : []),
@@ -126,7 +138,10 @@ function eventReviewPeople(event) {
   ]
     .map(value => String(value ?? '').trim())
     .filter(Boolean)
-  if (!ids.length) return '未关联追踪人物'
+  if (!ids.length) {
+    const subjectName = stateFactSubjectName(event, currentState)
+    return subjectName ? `事实归属：${subjectName}` : '未关联追踪人物'
+  }
   const participants = new Map(
     (Array.isArray(event?.participants) ? event.participants : []).map(participant => [String(participant?.character_id ?? ''), participant]),
   )
@@ -138,19 +153,22 @@ function eventReviewCount(event) {
   return Array.isArray(ids) && ids.length ? `${ids.length} 个追踪对象` : '仅作事件索引'
 }
 
-function renderPregnancyRelevance(event) {
+function renderPregnancyRelevance(event, currentState = null) {
   const relevance = event?.pregnancy_relevance
   if (!relevance || typeof relevance !== 'object') {
     return '<div class="bioweave-empty">—</div>'
   }
-  return renderDefinitionList(
-    [
+  const rows = [
       ['与妊娠相关', `__html__${renderTriState(relevance.relevant)}`],
       ['存在受孕可能', `__html__${renderTriState(relevance.possible_conception)}`],
       ['妊娠追踪对象', `__html__${participantNamesForIds(event, relevance.gestational_subject_ids)}`],
       ['相关对象', `__html__${participantNamesForIds(event, relevance.counterpart_ids)}`],
       ['判断置信度', `__html__${renderValue(relevance.confidence)}`],
-    ],
+    ]
+  const subjectName = stateFactSubjectName(event, currentState)
+  if (subjectName) rows.unshift(['事实归属', `__html__${escapeHtml(subjectName)}`])
+  return renderDefinitionList(
+    rows,
     'bioweave-pregnancy-relevance',
   )
 }
@@ -206,14 +224,14 @@ function renderEditForm(event) {
   )
 }
 
-function renderEventCard(event, editingEventId, currentStoryTime = null, storyTimeDifferences = {}) {
+function renderEventCard(event, editingEventId, currentStoryTime = null, storyTimeDifferences = {}, currentState = null) {
   const eventId = eventIdOf(event)
   const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence
   const open = editingEventId === eventId
   const type = eventTypeLabel(event.type)
   const time = formatStoryTime(event?.story_time)
   const relative = formatStoryTimeRelative(resolveStoryTimeDifference(storyTimeDifferences, eventId))
-  const people = eventReviewPeople(event)
+  const people = eventReviewPeople(event, currentState)
   return (
     '<details class="bioweave-card bioweave-event-card bioweave-event-review-item" data-bioweave-event-id="' +
     escapeHtml(eventId) +
@@ -246,7 +264,7 @@ function renderEventCard(event, editingEventId, currentStoryTime = null, storyTi
     '<div class="bioweave-event-fact"><span>地点</span><strong>' + renderValue(event.location) + '</strong></div>' +
     '<div class="bioweave-event-fact"><span>判断置信度</span><strong>' + renderValue(confidence) + '</strong></div>' +
     '</div><div class="bioweave-event-detail-grid"><section class="bioweave-event-detail-section"><h4>妊娠相关性</h4>' +
-    renderPregnancyRelevance(event) +
+    renderPregnancyRelevance(event, currentState) +
     '</section><section class="bioweave-event-detail-section"><h4>事件证据</h4>' +
     renderEvidence(event) +
     '</section></div>' +
@@ -260,7 +278,7 @@ function renderEventCard(event, editingEventId, currentStoryTime = null, storyTi
   )
 }
 
-export function eventsPage({ activeEvents, events, editingEventId = null, analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {} } = {}) {
+export function eventsPage({ activeEvents, events, editingEventId = null, analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {}, currentState = null } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const fallbackEvents = Array.isArray(activeEvents) ? activeEvents : entriesOf(events)
   const biologicalEvents = analysisStatusEvents(status, fallbackEvents, 'active_events')
@@ -285,7 +303,7 @@ export function eventsPage({ activeEvents, events, editingEventId = null, analys
         : status.state === 'not_analyzed' && biologicalEvents.length
           ? '<p class="bioweave-muted">当前楼层尚未完成分析；下方为当前 Chat 已保存的历史事件。</p>'
           : ''
-  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId, currentStoryTime, currentStoryTimeDifferences)).join('')
+  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId, currentStoryTime, currentStoryTimeDifferences, currentState)).join('')
   const firstSubjectId =
     visibleEvents
       .flatMap(event => (Array.isArray(event?.pregnancy_relevance?.gestational_subject_ids) ? event.pregnancy_relevance.gestational_subject_ids : []))
