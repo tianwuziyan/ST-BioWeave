@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认本轮 device-local UI preference 审计不越过 Floor ownership 边界。"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"确认 Theme 与 Floating Launcher 的现有 UI/device-local contract。"}
+{"file":"docs/ui-framework.config.json","reason":"确认 theme storage key、viewport bucket 与 UI contract。"}

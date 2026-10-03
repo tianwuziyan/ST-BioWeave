@@ -292,10 +292,11 @@ The canonical normalized global fields in `storage/schema.js` are:
 saves use `analysis_prompt`; neither name becomes Chat-local data.
 
 Floating Launcher geometry is deliberately outside this registry: the device-
-local browser key `bioweave-floating-launcher-position` stores only UI position
-(`x`/`y`). It is not Chat metadata and is never copied into Floor, Snapshot,
-Current State, BiologicalEvent, Projection, World Model, or Runtime business
-data.
+local browser key `bioweave-floating-launcher-position` stores only the user's
+durable UI position (`x`/`y`). Window and visualViewport changes may transiently
+clamp the displayed position, but must not overwrite that durable value. It is
+not Chat metadata and is never copied into Floor, Snapshot, Current State,
+BiologicalEvent, Projection, World Model, or Runtime business data.
 
 API Profile `secret_ref` is an opaque reference only. The API key value is
 owned by the host Secret Store and is never copied into Chat metadata, a

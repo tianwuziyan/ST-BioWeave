@@ -44,7 +44,9 @@ entry，以及页面内的 `#bioweave-floating-launcher`。两者都只调用同
 shell 仍然保留。
 
 Floating Launcher 是 UI preference 和 Runtime Activity 的视图，不是业务
-状态。位置使用设备本地 key `bioweave-floating-launcher-position`，不写入
+状态。位置使用设备本地 key `bioweave-floating-launcher-position`，用户主动
+拖动后写入 durable position；window 或 visualViewport resize 只做 transient
+display clamp，不覆盖 durable position，不写入
 Chat、Floor、Snapshot、Current State、BiologicalEvent、Projection 或
 World Model。它使用 Pointer Events、键盘 Enter/Space、44px 以上命中区域、
 viewport clamp，并在 disable/destroy 时清理自身 DOM、

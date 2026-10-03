@@ -20,6 +20,7 @@ import {
 import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
 import { statePage } from './state.js'
 import { DEFAULT_FLOATING_LAUNCHER_THEME } from '../floating-launcher-theme.js'
+import { resolveDeviceLocalStorage } from '../core/device-local-preference.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
 import {
@@ -342,14 +343,19 @@ function readTheme(storageRef) {
     const value = storageRef?.getItem?.(THEME_KEY)
     return THEME_VALUES.has(value) ? value : 'tavern'
   } catch {
+    console.warn('[BioWeave] THEME_STORAGE_READ_FAILED')
     return 'tavern'
   }
 }
 function writeTheme(storageRef, value) {
+  if (typeof storageRef?.setItem !== 'function') return
   try {
     storageRef?.setItem?.(THEME_KEY, value)
+    if (typeof storageRef?.getItem !== 'function') return
+    const readback = storageRef.getItem(THEME_KEY)
+    if (readback !== value) console.warn('[BioWeave] THEME_STORAGE_VERIFY_FAILED')
   } catch {
-    // 隐私模式或宿主禁用 localStorage 时仍允许本次会话切换主题。
+    console.warn('[BioWeave] THEME_STORAGE_WRITE_FAILED')
   }
 }
 export function closeModelPicker(target) {
@@ -528,7 +534,8 @@ export function createOverlayLifecycle({
 export function createApp(runtime, options = {}) {
   if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED')
   const documentRef = options.documentRef ?? globalThis.document
-  const storageRef = options.storageRef ?? globalThis.localStorage
+  const windowRef = options.windowRef ?? documentRef?.defaultView ?? globalThis
+  const storageRef = resolveDeviceLocalStorage({documentRef, windowRef, storageRef: options.storageRef})
   const onUiPreferencesChanged = options.onUiPreferencesChanged ?? (() => {})
   const profileStore = options.profileStore ?? runtime.store?.profileStore ?? createApiProfileStore(runtime.st ?? {})
   const apiClient = options.apiClient ?? defaultApiClient

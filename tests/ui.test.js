@@ -17,6 +17,7 @@ import { createApiProfileStore } from '../storage/store.js'
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 import { charactersPage } from '../ui/characters.js'
+import { resolveDeviceLocalStorage } from '../core/device-local-preference.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
@@ -392,6 +393,57 @@ test('production shell uses the unified top routebar on every viewport', () => {
     STYLE_SOURCE,
     /\.bioweave-world-model-page \.bioweave-world-model-species-grid\s*\{[\s\S]*?display:\s*grid\s*!important[\s\S]*?overflow:\s*visible\s*!important/,
   )
+})
+
+test('device-local storage resolver prefers explicit and host Window storage', () => {
+  const explicit = {}
+  const hostStorage = {}
+  const documentRef = {defaultView: {localStorage: hostStorage}}
+  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: documentRef.defaultView, storageRef: explicit}), explicit)
+  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: documentRef.defaultView}), hostStorage)
+  const otherWindow = {localStorage: {}}
+  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: otherWindow}), otherWindow.localStorage)
+})
+
+test('Theme persists across App destroy and remount through the host Window storage', () => {
+  const storage = new Map()
+  const hostWindow = {
+    localStorage: {
+      getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, String(value)),
+    },
+  }
+  const createThemeApp = documentRef => createApp(apiProfileRuntime('chat-theme-persistence'), {
+    documentRef,
+    windowRef: hostWindow,
+    profileStore: {getSettings: () => ({})},
+  })
+  const firstDocument = new AppFakeDocument()
+  firstDocument.defaultView = hostWindow
+  const firstApp = createThemeApp(firstDocument)
+  firstApp.openBioWeave()
+  firstApp.setTheme('dark')
+  assert.equal(storage.get('bioweave_ui_theme'), 'dark')
+  firstApp.destroyBioWeave()
+  const secondDocument = new AppFakeDocument()
+  secondDocument.defaultView = hostWindow
+  const secondApp = createThemeApp(secondDocument)
+  const root = secondApp.openBioWeave()
+  assert.equal(root.dataset.theme, 'dark')
+  secondApp.destroyBioWeave()
+})
+
+test('Theme storage failures do not roll back the current UI theme', () => {
+  const documentRef = new AppFakeDocument()
+  const storageRef = {
+    getItem: () => { throw new Error('STORAGE_DISABLED') },
+    setItem: () => { throw new Error('STORAGE_DISABLED') },
+  }
+  const app = createApp(apiProfileRuntime('chat-theme-failure'), {documentRef, storageRef})
+  const root = app.openBioWeave()
+  assert.doesNotThrow(() => app.setTheme('dark'))
+  assert.equal(root.dataset.theme, 'dark')
+  app.destroyBioWeave()
 })
 test('theme control is icon-only and keeps the configured day and Tavern palettes', () => {
   assert.match(APP_SOURCE, /data-bioweave-theme-icon/)
@@ -3675,6 +3727,36 @@ test('extension menu registration survives Runtime false and throw outcomes', as
     assert.equal(documentRef.getElementById('bioweave-extensions-menu-entry'), null, outcome)
     assert.equal(destroyCalls, 1, outcome)
   }
+})
+
+test('extension bootstrap passes the host document and Window context to App', async () => {
+  onDisable()
+  const {documentRef} = createMenuDocument()
+  documentRef.defaultView = {}
+  let appOptions = null
+  const runtime = {
+    chat: {current: () => 'chat-bootstrap-context'},
+    init: async () => true,
+    destroy() {},
+    store: {profileStore: {getUiPreferences: () => ({})}},
+  }
+  const app = {
+    mountBioWeave() {},
+    openBioWeave() {},
+    destroyBioWeave() {},
+  }
+  await init({
+    runtimeFactory: () => runtime,
+    appFactory: (_runtime, options) => {
+      appOptions = options
+      return app
+    },
+    documentRef,
+    observerCtor: null,
+  })
+  assert.equal(appOptions.documentRef, documentRef)
+  assert.equal(appOptions.windowRef, documentRef.defaultView)
+  onDisable()
 })
 
 test('settings data management uses three distinct confirmations and the Runtime clear facade', async () => {

@@ -92,6 +92,11 @@ class FakeWindow {
     this.innerWidth = 800;
     this.innerHeight = 600;
     this.listeners = new Map();
+    const values = new Map();
+    this.localStorage = {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    };
     this.visualViewport = {width: 800, height: 600, listeners: new Map(), addEventListener: (type, fn) => this.visualViewport.listeners.set(type, fn), removeEventListener: (type, fn) => this.visualViewport.listeners.get(type) === fn && this.visualViewport.listeners.delete(type)};
   }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
@@ -237,6 +242,60 @@ test('Floating Launcher drag release keeps the exact in-viewport position withou
   node.dispatch('pointermove', {clientX: 30, clientY: 30});
   node.dispatch('pointerup', {clientX: 30, clientY: 30});
   assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 320, y: 120});
+  handle.destroy();
+});
+
+test('Floating Launcher resize reclamps from durable position without overwriting it', () => {
+  const documentRef = createLauncherDocument();
+  const storage = new Map([[FLOATING_LAUNCHER_POSITION_KEY, JSON.stringify({x: 300, y: 500})]]);
+  const storageRef = {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)};
+  const handle = registerFloatingLauncher({openBioWeave() {}, documentRef, storageRef});
+  const node = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  const windowRef = documentRef.defaultView;
+  windowRef.visualViewport.height = 300;
+  windowRef.visualViewport.listeners.get('resize')();
+  assert.equal(node.style.top, '244px');
+  assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 300, y: 500});
+  windowRef.visualViewport.height = 600;
+  windowRef.visualViewport.listeners.get('resize')();
+  assert.equal(node.style.top, '500px');
+  assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 300, y: 500});
+  windowRef.visualViewport.height = 300;
+  windowRef.innerHeight = 300;
+  windowRef.listeners.get('resize')();
+  assert.equal(node.style.top, '244px');
+  windowRef.visualViewport.height = 600;
+  windowRef.innerHeight = 600;
+  windowRef.listeners.get('resize')();
+  assert.equal(node.style.top, '500px');
+  assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 300, y: 500});
+  handle.destroy();
+});
+
+test('Floating Launcher pointercancel preserves the previous durable position', () => {
+  const documentRef = createLauncherDocument();
+  const storage = new Map([[FLOATING_LAUNCHER_POSITION_KEY, JSON.stringify({x: 120, y: 140})]]);
+  const storageRef = {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)};
+  const handle = registerFloatingLauncher({openBioWeave() {}, documentRef, storageRef});
+  const node = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  node.dispatch('pointerdown', {clientX: 10, clientY: 10});
+  node.dispatch('pointermove', {clientX: 100, clientY: 120});
+  node.dispatch('pointercancel', {clientX: 100, clientY: 120});
+  assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 120, y: 140});
+  handle.destroy();
+});
+
+test('Floating Launcher remains usable when position storage cannot be written', () => {
+  const documentRef = createLauncherDocument();
+  const storageRef = {getItem: () => null, setItem: () => { throw new Error('STORAGE_DISABLED'); }};
+  const handle = registerFloatingLauncher({openBioWeave() {}, documentRef, storageRef});
+  const node = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  assert.doesNotThrow(() => {
+    node.dispatch('pointerdown', {clientX: 10, clientY: 10});
+    node.dispatch('pointermove', {clientX: 100, clientY: 120});
+    node.dispatch('pointerup', {clientX: 100, clientY: 120});
+  });
+  assert.equal(node.style.left, '744px');
   handle.destroy();
 });
 

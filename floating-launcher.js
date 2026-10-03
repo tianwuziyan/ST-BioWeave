@@ -1,6 +1,7 @@
 export const FLOATING_LAUNCHER_ID = 'bioweave-floating-launcher';
 export const FLOATING_LAUNCHER_POSITION_KEY = 'bioweave-floating-launcher-position';
 import {DEFAULT_FLOATING_LAUNCHER_THEME, normalizeFloatingLauncherTheme} from './floating-launcher-theme.js';
+import {resolveDeviceLocalStorage} from './core/device-local-preference.js';
 
 const DEFAULT_PREFERENCES = Object.freeze({
   show_floating_launcher: true,
@@ -34,6 +35,7 @@ function readPosition(storageRef) {
   try {
     return normalizePosition(JSON.parse(storageRef?.getItem?.(FLOATING_LAUNCHER_POSITION_KEY) ?? 'null'));
   } catch {
+    console.warn('[BioWeave] FLOATING_LAUNCHER_POSITION_READ_FAILED');
     return null;
   }
 }
@@ -42,7 +44,7 @@ function writePosition(storageRef, position) {
   try {
     storageRef?.setItem?.(FLOATING_LAUNCHER_POSITION_KEY, JSON.stringify(position));
   } catch {
-    // Device-local preferences are best effort and must never block the UI.
+    console.warn('[BioWeave] FLOATING_LAUNCHER_POSITION_WRITE_FAILED');
   }
 }
 
@@ -72,11 +74,13 @@ export function registerFloatingLauncher({
   subscribeActivity = () => () => {},
   getPreferences = () => DEFAULT_PREFERENCES,
   documentRef = globalThis.document,
-  windowRef = documentRef?.defaultView ?? globalThis,
-  storageRef = windowRef?.localStorage ?? globalThis.localStorage,
+  windowRef,
+  storageRef,
 } = {}) {
   if (typeof openBioWeave !== 'function') throw new TypeError('FLOATING_LAUNCHER_OPEN_REQUIRED');
   if (!documentRef || !documentRef.body) return createFallbackHandle();
+  windowRef ??= documentRef?.defaultView ?? globalThis;
+  storageRef = resolveDeviceLocalStorage({documentRef, windowRef, storageRef});
   activeRegistrations.get(documentRef)?.destroy?.();
 
   let node = null;
@@ -102,6 +106,7 @@ export function registerFloatingLauncher({
   let startY = 0;
   let originalX = 0;
   let originalY = 0;
+  let durablePosition = null;
 
   function removeListeners() {
     node?.removeEventListener?.('pointerdown', onPointerDown);
@@ -125,14 +130,20 @@ export function registerFloatingLauncher({
     };
   }
 
-  function applyPosition(position, save = false) {
+  function applyPosition(position) {
     if (!node) return;
     const clamped = clampPosition(position?.x, position?.y);
     node.style.left = `${clamped.x}px`;
     node.style.top = `${clamped.y}px`;
     node.style.right = 'auto';
     node.style.bottom = 'auto';
-    if (save) writePosition(storageRef, clamped);
+  }
+
+  function persistPosition(position) {
+    const clamped = clampPosition(position?.x, position?.y);
+    durablePosition = clamped;
+    applyPosition(clamped);
+    writePosition(storageRef, clamped);
   }
 
   function defaultPosition() {
@@ -220,7 +231,7 @@ export function registerFloatingLauncher({
     if (pointerId === null || event?.pointerId !== pointerId) return;
     if (dragging && !cancelled) {
       const rect = node.getBoundingClientRect();
-      applyPosition({x: rect.left, y: rect.top}, true);
+      persistPosition({x: rect.left, y: rect.top});
     }
     node.releasePointerCapture?.(pointerId);
     pointerId = null;
@@ -253,7 +264,8 @@ export function registerFloatingLauncher({
 
   function reclamp() {
     if (!node) return;
-    applyPosition({x: node.getBoundingClientRect().left, y: node.getBoundingClientRect().top}, true);
+    const source = durablePosition ?? node.getBoundingClientRect();
+    applyPosition({x: source.left ?? source.x, y: source.top ?? source.y});
   }
 
   function mount() {
@@ -271,8 +283,8 @@ export function registerFloatingLauncher({
     node.innerHTML = '<svg class="bioweave-floating-launcher-icon" data-bioweave-floating-icon viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle class="bioweave-floating-launcher-icon-center" cx="24" cy="24" r="6"></circle><path class="bioweave-floating-launcher-icon-arc" d="M 10 27 A 15 15 0 0 1 30 10"></path><path class="bioweave-floating-launcher-icon-arc" d="M 38 21 A 15 15 0 0 1 18 38"></path><circle class="bioweave-floating-launcher-icon-dot" cx="34" cy="14" r="3.5"></circle><circle class="bioweave-floating-launcher-icon-dot" cx="14" cy="34" r="3.5"></circle></svg><span class="bioweave-floating-launcher-status" aria-hidden="true"></span>';
     node.dataset.theme = preferences.floating_launcher_theme;
     documentRef.body.append(node);
-    const stored = readPosition(storageRef);
-    applyPosition(stored ?? defaultPosition(), false);
+    durablePosition = readPosition(storageRef) ?? defaultPosition();
+    applyPosition(durablePosition);
     node.addEventListener('pointerdown', onPointerDown);
     node.addEventListener('pointermove', onPointerMove);
     node.addEventListener('pointerup', onPointerUp);

@@ -48,9 +48,12 @@ export async function init({
   if (instance) return instance;
 
   const runtime = runtimeFactory();
+  const windowRef = documentRef?.defaultView ?? globalThis;
   let floatingLauncher = null;
   const app = appFactory(runtime, {
     onUiPreferencesChanged: preferences => floatingLauncher?.updatePreferences?.(preferences),
+    documentRef,
+    windowRef,
   });
   app.mountBioWeave();
   const unregisterMenu = registerHostEntry(() => app.openBioWeave(), documentRef, observerCtor);
@@ -61,6 +64,7 @@ export async function init({
     subscribeActivity: listener => runtime.subscribeActivity?.(listener) ?? (() => {}),
     getPreferences: () => profileStore?.getUiPreferences?.() ?? {},
     documentRef,
+    windowRef,
   });
   const nextInstance = {
     runtime,
