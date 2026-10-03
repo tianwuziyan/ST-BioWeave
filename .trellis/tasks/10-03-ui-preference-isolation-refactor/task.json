@@ -3,7 +3,7 @@
   "name": "ui-preference-isolation-refactor",
   "title": "UI Preference Isolation Refactor",
   "description": "将 Theme 与 Floating Launcher 的 device-local persistence 收口到共享 preference port，保持现有 key、数据格式与 durable/transient 行为不变。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": "UI preference port, bootstrap injection, focused tests, UI preference contract docs",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "ll",
   "assignee": "ll",
   "createdAt": "2026-10-03",
-  "completedAt": null,
+  "completedAt": "2026-10-03",
   "branch": "fix/world-model-prompt-baseline",
   "base_branch": "fix/world-model-prompt-baseline",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "10-03-audit-mobile-ui-preference-persistence",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Completed. Focused tests pass; full-suite failure identity is unchanged from baseline. Desktop, Mobile, and iPad real-host smoke tests pass. Post-refactor residue audit passed. No production cleanup or data migration required. Deferred low-priority duplicate THEME_STORAGE_VERIFY_FAILED diagnostic remains non-functional.",
   "meta": {}
 }

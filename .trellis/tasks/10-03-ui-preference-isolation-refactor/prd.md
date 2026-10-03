@@ -21,7 +21,7 @@
 - [x] Production scan shows raw UI preference storage IO only inside the preference implementation.
 - [x] Existing keys and data format remain backward compatible without migration.
 - [x] `node --check`, focused tests, full suite, and `git diff --check` are run and recorded.
-- [ ] Real-host smoke status is reported; no production behavior redesign is introduced. Code-side validation is complete; real-host re-smoke remains pending.
+- [x] Real-host smoke status is reported; Desktop, Mobile, and iPad smoke tests pass. No production behavior redesign is introduced.
 
 ## Notes
 
