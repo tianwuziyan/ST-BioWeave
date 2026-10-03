@@ -1,7 +1,5 @@
 export const FLOATING_LAUNCHER_ID = 'bioweave-floating-launcher';
-export const FLOATING_LAUNCHER_POSITION_KEY = 'bioweave-floating-launcher-position';
 import {DEFAULT_FLOATING_LAUNCHER_THEME, normalizeFloatingLauncherTheme} from './floating-launcher-theme.js';
-import {resolveDeviceLocalStorage} from './core/device-local-preference.js';
 
 const DEFAULT_PREFERENCES = Object.freeze({
   show_floating_launcher: true,
@@ -31,23 +29,6 @@ function normalizePosition(raw) {
   return x === null || y === null ? null : {x, y};
 }
 
-function readPosition(storageRef) {
-  try {
-    return normalizePosition(JSON.parse(storageRef?.getItem?.(FLOATING_LAUNCHER_POSITION_KEY) ?? 'null'));
-  } catch {
-    console.warn('[BioWeave] FLOATING_LAUNCHER_POSITION_READ_FAILED');
-    return null;
-  }
-}
-
-function writePosition(storageRef, position) {
-  try {
-    storageRef?.setItem?.(FLOATING_LAUNCHER_POSITION_KEY, JSON.stringify(position));
-  } catch {
-    console.warn('[BioWeave] FLOATING_LAUNCHER_POSITION_WRITE_FAILED');
-  }
-}
-
 function viewport(windowRef) {
   const visual = windowRef?.visualViewport;
   const width = finiteNumber(visual?.width) ?? finiteNumber(windowRef?.innerWidth) ?? 0;
@@ -75,12 +56,12 @@ export function registerFloatingLauncher({
   getPreferences = () => DEFAULT_PREFERENCES,
   documentRef = globalThis.document,
   windowRef,
-  storageRef,
+  preferences: preferencePort,
 } = {}) {
   if (typeof openBioWeave !== 'function') throw new TypeError('FLOATING_LAUNCHER_OPEN_REQUIRED');
   if (!documentRef || !documentRef.body) return createFallbackHandle();
+  if (!preferencePort) throw new TypeError('FLOATING_LAUNCHER_PREFERENCES_REQUIRED');
   windowRef ??= documentRef?.defaultView ?? globalThis;
-  storageRef = resolveDeviceLocalStorage({documentRef, windowRef, storageRef});
   activeRegistrations.get(documentRef)?.destroy?.();
 
   let node = null;
@@ -143,7 +124,7 @@ export function registerFloatingLauncher({
     const clamped = clampPosition(position?.x, position?.y);
     durablePosition = clamped;
     applyPosition(clamped);
-    writePosition(storageRef, clamped);
+    preferencePort.writeLauncherPosition(clamped);
   }
 
   function defaultPosition() {
@@ -283,7 +264,7 @@ export function registerFloatingLauncher({
     node.innerHTML = '<svg class="bioweave-floating-launcher-icon" data-bioweave-floating-icon viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle class="bioweave-floating-launcher-icon-center" cx="24" cy="24" r="6"></circle><path class="bioweave-floating-launcher-icon-arc" d="M 10 27 A 15 15 0 0 1 30 10"></path><path class="bioweave-floating-launcher-icon-arc" d="M 38 21 A 15 15 0 0 1 18 38"></path><circle class="bioweave-floating-launcher-icon-dot" cx="34" cy="14" r="3.5"></circle><circle class="bioweave-floating-launcher-icon-dot" cx="14" cy="34" r="3.5"></circle></svg><span class="bioweave-floating-launcher-status" aria-hidden="true"></span>';
     node.dataset.theme = preferences.floating_launcher_theme;
     documentRef.body.append(node);
-    durablePosition = readPosition(storageRef) ?? defaultPosition();
+    durablePosition = normalizePosition(preferencePort.readLauncherPosition()) ?? defaultPosition();
     applyPosition(durablePosition);
     node.addEventListener('pointerdown', onPointerDown);
     node.addEventListener('pointermove', onPointerMove);

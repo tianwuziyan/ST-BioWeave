@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "10-03-ui-preference-isolation-refactor"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

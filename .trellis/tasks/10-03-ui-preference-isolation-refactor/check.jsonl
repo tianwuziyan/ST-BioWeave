@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按 frontend quality checklist 验证小型 port、依赖方向与测试。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"确认 UI feature 保留交互/render 职责，persistence boundary 不承担产品 UI。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"复核最终文档与 device-local preference contract 一致。"}

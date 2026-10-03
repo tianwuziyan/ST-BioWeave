@@ -51,6 +51,8 @@ Chat、Floor、Snapshot、Current State、BiologicalEvent、Projection 或
 World Model。它使用 Pointer Events、键盘 Enter/Space、44px 以上命中区域、
 viewport clamp，并在 disable/destroy 时清理自身 DOM、
 listener、subscription、timer 和 pointer capture。
+Theme 与 Launcher 的 device-local durable preference 通过 dedicated preference
+boundary 访问；UI feature 不直接拥有 host storage IO。
 按钮图形使用同一份内联 SVG（中央圆、两段等粗圆弧和两个圆点），主题由全局
 `floating_launcher_theme` 选择：`midnight-indigo`（默认夜幕靛）、`mist-violet`
 （雾境紫）和 `deep-teal`（深海青）。主题只改变按钮底色变量，不改变入口行为或

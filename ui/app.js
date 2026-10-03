@@ -20,7 +20,7 @@ import {
 import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
 import { statePage } from './state.js'
 import { DEFAULT_FLOATING_LAUNCHER_THEME } from '../floating-launcher-theme.js'
-import { resolveDeviceLocalStorage } from '../core/device-local-preference.js'
+import { createDeviceLocalPreferences } from '../core/device-local-preferences.js'
 import { createApiProfileStore } from '../storage/store.js'
 import * as defaultApiClient from '../ai/client.js'
 import {
@@ -101,7 +101,6 @@ const WORLD_MODEL_OWNER_MUTATIONS = new Set([
   'MESSAGE_EDITED',
   'MESSAGE_UPDATED',
 ])
-const THEME_KEY = 'bioweave_ui_theme'
 const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown'
 const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe'
 const APP_RUNTIME_DESTROY_PROPERTY = '__bioweaveRuntimeDestroy'
@@ -338,25 +337,8 @@ function themeLabel(value) {
 function themeIcon(value) {
   return value === 'light' ? 'fa-solid fa-sun' : value === 'dark' ? 'fa-solid fa-moon' : 'fa-solid fa-circle-half-stroke'
 }
-function readTheme(storageRef) {
-  try {
-    const value = storageRef?.getItem?.(THEME_KEY)
-    return THEME_VALUES.has(value) ? value : 'tavern'
-  } catch {
-    console.warn('[BioWeave] THEME_STORAGE_READ_FAILED')
-    return 'tavern'
-  }
-}
-function writeTheme(storageRef, value) {
-  if (typeof storageRef?.setItem !== 'function') return
-  try {
-    storageRef?.setItem?.(THEME_KEY, value)
-    if (typeof storageRef?.getItem !== 'function') return
-    const readback = storageRef.getItem(THEME_KEY)
-    if (readback !== value) console.warn('[BioWeave] THEME_STORAGE_VERIFY_FAILED')
-  } catch {
-    console.warn('[BioWeave] THEME_STORAGE_WRITE_FAILED')
-  }
+function normalizeTheme(value) {
+  return THEME_VALUES.has(value) ? value : 'tavern'
 }
 export function closeModelPicker(target) {
   const picker = target?.closest?.('[data-bioweave-model-picker]') ?? (target?.matches?.('[data-bioweave-model-picker]') ? target : null)
@@ -535,7 +517,7 @@ export function createApp(runtime, options = {}) {
   if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED')
   const documentRef = options.documentRef ?? globalThis.document
   const windowRef = options.windowRef ?? documentRef?.defaultView ?? globalThis
-  const storageRef = resolveDeviceLocalStorage({documentRef, windowRef, storageRef: options.storageRef})
+  const preferences = options.preferences ?? createDeviceLocalPreferences({documentRef, windowRef, storageRef: options.storageRef})
   const onUiPreferencesChanged = options.onUiPreferencesChanged ?? (() => {})
   const profileStore = options.profileStore ?? runtime.store?.profileStore ?? createApiProfileStore(runtime.st ?? {})
   const apiClient = options.apiClient ?? defaultApiClient
@@ -3297,7 +3279,7 @@ export function createApp(runtime, options = {}) {
   }
   function setTheme(value) {
     const nextTheme = THEME_VALUES.has(value) ? value : 'tavern'
-    writeTheme(storageRef, nextTheme)
+    preferences.writeTheme(nextTheme)
     if (!root) return nextTheme
     root.dataset.theme = nextTheme
     const button = root.querySelector('[data-bioweave-theme-button]')
@@ -3314,7 +3296,7 @@ export function createApp(runtime, options = {}) {
   }
   function cycleTheme() {
     const values = ['tavern', 'light', 'dark']
-    const current = root?.dataset?.theme ?? readTheme(storageRef)
+    const current = root?.dataset?.theme ?? normalizeTheme(preferences.readTheme())
     const index = values.indexOf(current)
     return setTheme(values[(index + 1) % values.length])
   }
@@ -5742,7 +5724,7 @@ export function createApp(runtime, options = {}) {
       unsubscribeRuntime = runtime.subscribe(handleRuntimeEvent)
       if (typeof unsubscribeRuntime === 'function') root[APP_RUNTIME_UNSUBSCRIBE_PROPERTY] = unsubscribeRuntime
     }
-    setTheme(readTheme(storageRef))
+    setTheme(normalizeTheme(preferences.readTheme()))
     render()
   }
   const lifecycle = createOverlayLifecycle({

@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import {
   captureScrollPositions,
   createOverlayLifecycle,
-  createApp,
+  createApp as createAppWithPreferences,
   createPanelDragController,
   handleAnalysisParentToggleClick,
   isConnectedToDocument,
@@ -17,7 +17,7 @@ import { createApiProfileStore } from '../storage/store.js'
 import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 import { charactersPage } from '../ui/characters.js'
-import { resolveDeviceLocalStorage } from '../core/device-local-preference.js'
+import { createDeviceLocalPreferences } from '../core/device-local-preferences.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
@@ -36,6 +36,18 @@ const UI_SOURCE = [
 ].join('\n')
 const CUSTOM_ABORT_UI_PATTERN =
   /(?:showAbortConfirmDialog|openAbortModal|renderAbortConfirm|worldModelAbortDialogOpen|worldModelAbortModalOpen|worldModelAbortOverlayOpen|bioweave[-_]abort[-_](?:modal|dialog|overlay)|bioweave[-_]world[-_]model[-_](?:abort|confirm)[-_](?:modal|dialog|overlay)|world[-_]model[-_]confirm[-_]modal)/i
+
+function createApp(runtime, options = {}) {
+  const {storageRef, ...rest} = options
+  return createAppWithPreferences(runtime, {
+    ...rest,
+    preferences: options.preferences ?? createDeviceLocalPreferences({
+      documentRef: options.documentRef,
+      windowRef: options.windowRef,
+      storageRef,
+    }),
+  })
+}
 
 test('Character UI distinguishes a successful empty Event result from an unanalyzed state', () => {
   const html = charactersPage({
@@ -395,16 +407,6 @@ test('production shell uses the unified top routebar on every viewport', () => {
   )
 })
 
-test('device-local storage resolver prefers explicit and host Window storage', () => {
-  const explicit = {}
-  const hostStorage = {}
-  const documentRef = {defaultView: {localStorage: hostStorage}}
-  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: documentRef.defaultView, storageRef: explicit}), explicit)
-  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: documentRef.defaultView}), hostStorage)
-  const otherWindow = {localStorage: {}}
-  assert.equal(resolveDeviceLocalStorage({documentRef, windowRef: otherWindow}), otherWindow.localStorage)
-})
-
 test('Theme persists across App destroy and remount through the host Window storage', () => {
   const storage = new Map()
   const hostWindow = {
@@ -442,6 +444,20 @@ test('Theme storage failures do not roll back the current UI theme', () => {
   const app = createApp(apiProfileRuntime('chat-theme-failure'), {documentRef, storageRef})
   const root = app.openBioWeave()
   assert.doesNotThrow(() => app.setTheme('dark'))
+  assert.equal(root.dataset.theme, 'dark')
+  app.destroyBioWeave()
+})
+test('App consumes the preference port for Theme persistence', () => {
+  const calls = []
+  const preferences = {
+    readTheme: () => 'tavern',
+    writeTheme: value => calls.push(value),
+  }
+  const app = createApp(apiProfileRuntime('chat-theme-preference-port'), {documentRef: new AppFakeDocument(), preferences})
+  const root = app.openBioWeave()
+  calls.length = 0
+  app.setTheme('dark')
+  assert.deepEqual(calls, ['dark'])
   assert.equal(root.dataset.theme, 'dark')
   app.destroyBioWeave()
 })

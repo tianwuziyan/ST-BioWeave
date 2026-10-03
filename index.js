@@ -2,6 +2,7 @@ import {createRuntime} from './runtime/events.js';
 import {createApp, notify} from './ui/app.js';
 import {registerHostEntry} from './host-entry.js';
 import {registerFloatingLauncher} from './floating-launcher.js';
+import {createDeviceLocalPreferences} from './core/device-local-preferences.js';
 import {hasCharacterId, isCanonicalCharacterId} from './core/identity.js';
 
 let instance = null;
@@ -44,16 +45,19 @@ export async function init({
   appFactory = createApp,
   documentRef = globalThis.document,
   observerCtor = globalThis.MutationObserver,
+  storageRef,
 } = {}) {
   if (instance) return instance;
 
   const runtime = runtimeFactory();
   const windowRef = documentRef?.defaultView ?? globalThis;
+  const preferences = createDeviceLocalPreferences({documentRef, windowRef, storageRef});
   let floatingLauncher = null;
   const app = appFactory(runtime, {
     onUiPreferencesChanged: preferences => floatingLauncher?.updatePreferences?.(preferences),
     documentRef,
     windowRef,
+    preferences,
   });
   app.mountBioWeave();
   const unregisterMenu = registerHostEntry(() => app.openBioWeave(), documentRef, observerCtor);
@@ -65,6 +69,7 @@ export async function init({
     getPreferences: () => profileStore?.getUiPreferences?.() ?? {},
     documentRef,
     windowRef,
+    preferences,
   });
   const nextInstance = {
     runtime,

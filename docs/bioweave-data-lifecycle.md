@@ -297,6 +297,8 @@ durable UI position (`x`/`y`). Window and visualViewport changes may transiently
 clamp the displayed position, but must not overwrite that durable value. It is
 not Chat metadata and is never copied into Floor, Snapshot, Current State,
 BiologicalEvent, Projection, World Model, or Runtime business data.
+Theme and Launcher device-local durable preferences are accessed through a
+dedicated preference boundary; UI features do not directly own host storage IO.
 
 API Profile `secret_ref` is an opaque reference only. The API key value is
 owned by the host Secret Store and is never copied into Chat metadata, a

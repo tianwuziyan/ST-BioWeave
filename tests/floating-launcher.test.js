@@ -3,13 +3,25 @@ import assert from 'node:assert/strict';
 import {createRuntimeActivity} from '../runtime/activity.js';
 import {
   FLOATING_LAUNCHER_ID,
-  FLOATING_LAUNCHER_POSITION_KEY,
-  registerFloatingLauncher,
+  registerFloatingLauncher as registerFloatingLauncherWithPreferences,
 } from '../floating-launcher.js';
+import {createDeviceLocalPreferences, FLOATING_LAUNCHER_POSITION_KEY} from '../core/device-local-preferences.js';
 import {normalizeExtensionSettings} from '../storage/schema.js';
 import {createApiProfileStore} from '../storage/store.js';
 import {DEFAULT_FLOATING_LAUNCHER_THEME} from '../floating-launcher-theme.js';
 import {settingsPage} from '../ui/settings.js';
+
+function registerFloatingLauncher(options = {}) {
+  const {storageRef, ...rest} = options;
+  return registerFloatingLauncherWithPreferences({
+    ...rest,
+    preferences: options.preferences ?? createDeviceLocalPreferences({
+      documentRef: options.documentRef,
+      windowRef: options.windowRef,
+      storageRef,
+    }),
+  });
+}
 
 class FakeNode {
   constructor(documentRef, tagName = 'div') {
@@ -242,6 +254,22 @@ test('Floating Launcher drag release keeps the exact in-viewport position withou
   node.dispatch('pointermove', {clientX: 30, clientY: 30});
   node.dispatch('pointerup', {clientX: 30, clientY: 30});
   assert.deepEqual(JSON.parse(storage.get(FLOATING_LAUNCHER_POSITION_KEY)), {x: 320, y: 120});
+  handle.destroy();
+});
+
+test('Floating Launcher consumes the preference port for durable position writes', () => {
+  const documentRef = createLauncherDocument();
+  const writes = [];
+  const preferences = {
+    readLauncherPosition: () => ({x: 300, y: 100}),
+    writeLauncherPosition: value => writes.push(value),
+  };
+  const handle = registerFloatingLauncher({openBioWeave() {}, documentRef, preferences});
+  const node = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  node.dispatch('pointerdown', {clientX: 10, clientY: 10});
+  node.dispatch('pointermove', {clientX: 30, clientY: 30});
+  node.dispatch('pointerup', {clientX: 30, clientY: 30});
+  assert.deepEqual(writes, [{x: 320, y: 120}]);
   handle.destroy();
 });
 
