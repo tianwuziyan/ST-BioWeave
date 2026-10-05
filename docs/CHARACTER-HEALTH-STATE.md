@@ -1419,13 +1419,18 @@ grouped_issues，使用 read model 提供的 display_site、laterality 与 factu
 UI 不推导 overall severity，不消费或显示 active_observations 的生命周期字段，
 不显示 Assessment ID、Floor Version、fingerprint、raw timing 或 recovery countdown。
 current_health_summary 只有在 Runtime 提供非空摘要时才直接显示；缺少摘要时不额外
-渲染摘要行，状态由健康按钮与“总体状态”徽标表达。缺失 Health State、人物不存在或
-grouped_issues 为空时保持安全空状态。
+渲染摘要行，状态由健康按钮与“总体状态”徽标表达。Health read model 已 ready 但人物
+不存在于 `characters` 或 `grouped_issues` 为空时，保持正常状态的安全空状态；read model
+缺失、未 ready 或失败时，保持不可用状态。
 
 Phase 5A 只实现 Character Details read-model consumption；不新增顶级 Health 页面、
 不触发 AI/Analysis/Projection/persistence，不实现 recovery stage、Context injection
 或 UI 侧 Health lifecycle。Phase 5B 随后通过既有 Projection Context 槽位提供
 Health Recovery Guidance；Phase 5A UI 本身不显示 recovery stage 或倒计时。
+
+健康按钮的“健康 · 正常”只表示成功就绪的 Health read model 中没有已知 active health
+issue；人物没有 `characters[character_id]` entry 也可以合法表示该状态。Read model 未就绪、
+失败或不可用时使用“健康 · 暂不可用”，不把它解释成正常，也不创建任何健康事实。
 
 Phase 5A 的来源导航使用 `grouped_issues[].source_observation_ids` 中已有的 canonical
 Event ID。单个来源显示“查看来源事件”，多个来源逐个提供定位入口；Character UI 只依据

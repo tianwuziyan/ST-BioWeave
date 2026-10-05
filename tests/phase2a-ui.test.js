@@ -926,6 +926,7 @@ test('character details consume grouped Health State issues without rebuilding l
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     characterProfiles: { 'char-a': { character_id: 'char-a', display_name: '角色甲' } },
     currentHealthState: healthState,
+    currentStateStatus: 'ready',
     healthPopoverOpen: true,
   })
   assert.match(html, /data-bioweave-action="toggle-character-health"/)
@@ -957,16 +958,17 @@ test('character Health State is scoped by canonical character id and supports co
       'char-b': { character_id: 'char-b', display_name: '角色乙' },
     },
     currentHealthState: healthState,
+    currentStateStatus: 'ready',
   }
-  const htmlA = charactersPage({ ...base, characterId: 'char-a', healthPopoverOpen: true })
-  const htmlB = charactersPage({ ...base, characterId: 'char-b' })
-  const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null, healthPopoverOpen: true })
+  const htmlA = charactersPage({ ...base, characterId: 'char-a', currentStateStatus: 'ready', healthPopoverOpen: true })
+  const htmlB = charactersPage({ ...base, characterId: 'char-b', currentStateStatus: 'ready' })
+  const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null, currentStateStatus: 'STATE_ERROR', healthPopoverOpen: true })
   assert.match(htmlA, /未标明部位/)
   assert.doesNotMatch(htmlA, /全身/)
   assert.match(htmlA, /发热/)
   assert.doesNotMatch(htmlB, /发热/)
-  assert.match(htmlB, /健康 · 无记录/)
-  assert.match(missing, /健康 · 无记录/)
+  assert.match(htmlB, /健康 · 正常/)
+  assert.match(missing, /健康 · 暂不可用/)
 })
 
 test('Character Health UI prefers factual descriptions and never exposes machine kind', () => {
@@ -986,6 +988,7 @@ test('Character Health UI prefers factual descriptions and never exposes machine
         },
       },
     },
+    currentStateStatus: 'ready',
     healthPopoverOpen: true,
   })
   assert.match(html, /大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力/)
@@ -1011,6 +1014,7 @@ test('Character Health source actions use current canonical Event ids and isolat
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     currentHealthState: healthState,
+    currentStateStatus: 'ready',
     healthPopoverOpen: true,
     activeEvents: [
       { event_id: 'event-a', state_fact: { subject_id: 'char-a' } },
@@ -1028,6 +1032,7 @@ test('Character Health stays out of the detail body until the status popover is 
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentStateStatus: 'ready',
     currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: 'wrist', description: '疼痛'}]}}},
   })
   assert.match(html, /健康 · 有异常/)
@@ -1039,6 +1044,7 @@ test('Character Health popover follows the compact A layout without an extra car
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentStateStatus: 'ready',
     currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: '左手腕', description: '疼痛'}]}}},
     healthPopoverOpen: true,
   })
@@ -1047,17 +1053,19 @@ test('Character Health popover follows the compact A layout without an extra car
   assert.match(html, /bioweave-character-health-dot warning/)
 })
 
-test('Character Health status button uses warning, good, and neutral Runtime states', () => {
+test('Character Health status button uses warning, good, and unavailable Runtime states', () => {
   const base = {
     characterId: 'char-a',
     trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
   }
-  const warning = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: [{description: '疼痛'}]}}}})
-  const good = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
-  const neutral = charactersPage({...base, currentHealthState: null})
+  const warning = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {characters: {'char-a': {grouped_issues: [{description: '疼痛'}]}}}})
+  const good = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
+  const normalWithoutEntry = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {schema_version: 1, characters: {}}})
+  const neutral = charactersPage({...base, currentStateStatus: 'STATE_ERROR', currentHealthState: null})
   assert.match(warning, /class="bioweave-button bioweave-character-health-button warning"[\s\S]*健康 · 有异常/)
   assert.match(good, /class="bioweave-button bioweave-character-health-button good"[\s\S]*健康 · 正常/)
-  assert.match(neutral, /class="bioweave-button bioweave-character-health-button neutral"[\s\S]*健康 · 无记录/)
+  assert.match(normalWithoutEntry, /class="bioweave-button bioweave-character-health-button good"[\s\S]*健康 · 正常/)
+  assert.match(neutral, /class="bioweave-button bioweave-character-health-button neutral"[\s\S]*健康 · 暂不可用/)
   assert.ok(warning.indexOf('健康 · 有异常') < warning.indexOf('推演周期'))
   assert.ok(warning.indexOf('推演周期') < warning.indexOf('编辑昵称'))
 })

@@ -33,9 +33,12 @@ description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI �
 不显示内部 provenance 或 recovery timing。当前健康问题可以通过 read model 提供的
 `grouped_issues[].source_observation_ids` 按 canonical Event ID 跳转到当前 Events 页面；
 UI 不通过描述、部位、kind 或人物文本匹配来源，且失效/不存在的 Event 不生成来源入口。
-健康按钮只显示稳定短文案“健康 · 有异常 / 健康 · 正常 / 健康 · 无记录”，完整摘要只在
+健康按钮只显示稳定短文案“健康 · 有异常 / 健康 · 正常 / 健康 · 暂不可用”，完整摘要只在
 浮层中显示；人物正文不重复渲染健康区块。浮层支持再次点击、外侧点击和 Escape 关闭，
 Escape 优先关闭健康浮层，不直接关闭 BioWeave 面板。
+“健康 · 正常”只表示 Health read model 已成功就绪且当前人物没有已知 active health issue，
+不表示正文明确声明人物医学意义上的完全健康；read model 未就绪或不可用时显示
+“健康 · 暂不可用”。
 Health Recovery Guidance / Projection Context
 已实现 Phase 5B 的窄范围 deterministic guidance，但不属于 UI 展示；完整 Health Projection
 仍为 DESIGN / PLANNED。健康设计不把 `physical_symptom` 作为唯一事实入口。

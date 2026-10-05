@@ -395,7 +395,8 @@ function renderHealthSourceActions(sourceEventIds) {
     '</div></details>'
 }
 
-function healthViewModel(currentHealthState, characterId, activeEvents = []) {
+function healthViewModel(currentHealthState, characterId, activeEvents = [], currentStateStatus = 'NO_CHARACTER_FLOOR') {
+  const readModelReady = currentStateStatus === 'ready' && currentHealthState && typeof currentHealthState === 'object'
   const characterHealth = currentHealthState?.characters?.[characterId] ?? null
   const groupedIssues = Array.isArray(characterHealth?.grouped_issues) ? characterHealth.grouped_issues : []
   const summary = typeof characterHealth?.current_health_summary === 'string' && characterHealth.current_health_summary.trim()
@@ -410,20 +411,20 @@ function healthViewModel(currentHealthState, characterId, activeEvents = []) {
         : issue?.description,
     }))
     .filter(issue => String(issue?.display_description ?? issue?.factual_kind ?? '').trim())
-  return {summary, validIssues, state: !characterHealth ? 'neutral' : validIssues.length ? 'warning' : 'good'}
+  return {summary, validIssues, state: !readModelReady ? 'neutral' : validIssues.length ? 'warning' : 'good'}
 }
 
-function renderHealthStatusButton(currentHealthState, characterId, activeEvents = [], open = false) {
-  const view = healthViewModel(currentHealthState, characterId, activeEvents)
-  const label = view.state === 'warning' ? '健康 · 有异常' : view.state === 'good' ? '健康 · 正常' : '健康 · 无记录'
+function renderHealthStatusButton(currentHealthState, characterId, activeEvents = [], currentStateStatus = 'NO_CHARACTER_FLOOR', open = false) {
+  const view = healthViewModel(currentHealthState, characterId, activeEvents, currentStateStatus)
+  const label = view.state === 'warning' ? '健康 · 有异常' : view.state === 'good' ? '健康 · 正常' : '健康 · 暂不可用'
   return '<button type="button" class="bioweave-button bioweave-character-health-button ' + view.state + '" data-bioweave-action="toggle-character-health" data-character-id="' + escapeHtml(characterId) + '" aria-expanded="' + String(open) + '" aria-controls="bioweave-character-health-popover" aria-haspopup="dialog"><span class="bioweave-character-health-dot ' + view.state + '" aria-hidden="true"></span><span>' + label + '</span></button>'
 }
 
-function renderHealthPopover(currentHealthState, characterId, activeEvents = [], open = false) {
+function renderHealthPopover(currentHealthState, characterId, activeEvents = [], currentStateStatus = 'NO_CHARACTER_FLOOR', open = false) {
   if (!open) return ''
-  const view = healthViewModel(currentHealthState, characterId, activeEvents)
+  const view = healthViewModel(currentHealthState, characterId, activeEvents, currentStateStatus)
   const issueCount = view.validIssues.length
-  const badge = view.state === 'warning' ? '当前有健康问题' : view.state === 'good' ? '当前正常' : '暂无可用记录'
+  const badge = view.state === 'warning' ? '当前有健康问题' : view.state === 'good' ? '当前正常' : '健康状态暂不可用'
   const content = issueCount
     ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' + view.validIssues.map(issue => '<article class="bioweave-character-health-issue"><strong class="bioweave-character-health-issue-site">' + escapeHtml(healthDisplaySite(issue)) + '</strong><p>' + escapeHtml(healthDisplayLabel(issue.display_description, '当前健康问题')) + '</p><div class="bioweave-character-health-issue-source">' + renderHealthSourceActions(issue.source_event_ids) + '</div></article>').join('') + '</div>'
     : '<div class="bioweave-empty bioweave-character-health-empty">当前没有可显示的健康问题。</div>'
@@ -453,14 +454,14 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     exposureCount +
     ' 条相关事件 · 当前状态' +
     (stateReady ? '已就绪' : '待读取') +
-    '</p></div><div class="bioweave-character-detail-actions">' + renderHealthStatusButton(currentHealthState, selectedCharacterId, activeEvents, healthPopoverOpen) + '<button type="button" class="bioweave-button" data-bioweave-action="open-character-timing" data-character-id="' +
+    '</p></div><div class="bioweave-character-detail-actions">' + renderHealthStatusButton(currentHealthState, selectedCharacterId, activeEvents, currentStateStatus, healthPopoverOpen) + '<button type="button" class="bioweave-button" data-bioweave-action="open-character-timing" data-character-id="' +
     escapeHtml(characterIdOf(subject)) +
     '" aria-expanded="' + String(Boolean(timingOpen)) + '"' + (timingOpen ? ' aria-controls="bioweave-character-timing-popover"' : '') + '>推演周期</button><button type="button" class="bioweave-button" data-bioweave-action="open-character-aliases" data-character-id="' +
     escapeHtml(characterIdOf(subject)) +
     '">编辑昵称</button></div></header>' +
     renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +
     renderCharacterTimingEditor(timingEditor, characterIdOf(subject)) +
-    renderHealthPopover(currentHealthState, selectedCharacterId, activeEvents, healthPopoverOpen) +
+    renderHealthPopover(currentHealthState, selectedCharacterId, activeEvents, currentStateStatus, healthPopoverOpen) +
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
