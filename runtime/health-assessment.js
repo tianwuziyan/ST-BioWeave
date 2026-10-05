@@ -1,4 +1,5 @@
 import {
+  HEALTH_ASSESSMENT_SCHEMA_VERSION,
   healthAssessmentEligibility,
   healthAssessmentRequestKey,
   healthObservationFingerprint,
@@ -97,6 +98,7 @@ export function createHealthAssessmentCoordinator({
           }
           const next = {
             ...latestTimeline,
+            schema_version: HEALTH_ASSESSMENT_SCHEMA_VERSION,
             assessments: [...latestTimeline.assessments, validation.value],
           };
           await commitFloorPatch(target, 'health', {health_assessment_timeline: next}, {

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify no source binding, replay, or Floor ownership regression"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify Event factual payload and identity invariants remain unchanged"}

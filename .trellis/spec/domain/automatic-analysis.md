@@ -269,12 +269,45 @@ trigger 和 validated target，通过此入口连接，不得直接调用 `store
 - single-flight 和 stale/abort guard；
 - World hard dependency（Manual Character 继续复用合法已持久化 World，不发起
   World AI）；
-- Character/Event canonical read-back、manual supplement A+B preservation；
+- Character/Event canonical read-back 与各 trigger 自己声明的 target-slot
+  comparison/supplement preservation；
 - Floor persistence、Tracking rebuild 和 Projection refresh。
 
 自动 scheduler 的 `counter=0` 只能由完整成功结果触发；manual reanalysis 成功
 也按现有合同清理自动周期状态，而 reroll/new Swipe 不得绕过 interval。上述行为
 必须在迁移测试中锁定，不得因拆分而改变。
+
+### Manual Character and Manual Refresh are different triggers
+
+当前 Characters UI 的“重新分析当前楼层”实际使用 `manual-character`，而不是
+`manual-refresh`：
+
+```text
+manualRefreshEventAnalysis()
+  → runtime.manualAnalysis.analyzeCurrentCharacterEvents()
+  → analysisExecution.run({
+       reason: "manual-character",
+       intent: "manual-character"
+     })
+```
+
+该路径不启用 `preserveCurrentFloorState`，并复用已经持久化且 canonical-ready
+的 World；它仍通过同一个 target-external previous resolver，不把 target 自己的
+旧结果当作 previous baseline。
+
+另一条兼容入口是：
+
+```text
+refreshCurrentFloorAnalysis()
+  → analyzeCurrentFloor({force: true, reason: "manual-refresh"})
+```
+
+`manual-refresh` 会启用 `preserveCurrentFloorState`。因此 target-slot existing
+Events 可以为 comparison-only、dedupe 或 manual supplement preservation 参与输入，
+但绝不能进入 `existing_bioweave` previous baseline。`force=true` 只改变执行资格、
+manual scheduler outcome 和 manual-refresh 的 World routing；它不授权把当前 Floor
+旧数据当作历史基础。两条 manual 路径都禁止回退到 target、target Snapshot、Chat
+cache、`last_processed_floor` 或 target registry。
 
 ## 7. MIGRATION_PLAN：小步迁移
 
@@ -337,7 +370,7 @@ StoryTime failures 合并处理。
 - UI Character manual entry 使用 `manualAnalysis` port；World-specific manual entry
   仍使用现有 World runtime owner；
 - World hard dependency 和 World=0 的 Manual Character contract；
-- manual supplement A+B preservation；
+- trigger-specific target-slot comparison/supplement preservation；
 - Floor save/read-back、active Swipe/version stale guard；
 - Tracking/Projection 只在 canonical Floor facts 之后刷新。
 

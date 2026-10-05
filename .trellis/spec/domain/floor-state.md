@@ -261,6 +261,10 @@ source_observation_fingerprint)` 做 source-observation scoped lookup；这是�
 editing 在同一版本保留 Event ID 但修改 factual payload 的 binding guard。source Event
 不再 surviving 或 fingerprint 不匹配时必须过滤 Assessment，不能依赖物理删除或跨版本
 复用。
+当前 Assessment schema v2 仅增加 observation-level `severity`（`unknown`、`mild`、
+`moderate`、`severe`）。severity 是 Assessment metadata，不是 Event factual payload、
+Snapshot 或 Projection authority；旧 v1 缺字段按 `unknown` 消费且不自动回写/backfill，
+也不改变上述 source binding、fingerprint 或 request key。
 
 Health Recovery Guidance Phase 5B 是 derived non-factual guidance：它可将每条 active
 observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段，但不得把具体 duration、
@@ -361,6 +365,40 @@ deleted message/Swipe, a stale Floor Version, an orphan registry entry, or a
 cache that cannot be traced to a current valid Floor. The target's
 `floor_version` and `current_floor` describe the current input; they do not
 authorize historical fallback.
+
+### Reanalysis and target-slot comparison boundary
+
+Reanalyzing the current Floor always separates three kinds of input:
+
+1. **Target** — the current active Swipe's current正文, bound to the current
+   complete Floor Version.
+2. **Previous baseline** — the nearest legal successful BioWeave Floor before
+   the target. This is strictly target-external. When no candidate passes the
+   previous-state checks, the exact empty previous shape is used.
+3. **Target-slot existing data** — the target's own existing Events or
+   registry, only on explicitly supported comparison paths such as reroll or
+   `manual-refresh`. It is comparison-only for dedupe, manual supplement, or
+   same-target continuity; it must never be placed into `existing_bioweave` or
+   presented to the AI as a historical previous Floor.
+
+The visible Characters UI action “重新分析当前楼层” currently enters the
+`manual-character` path:
+
+```text
+manualRefreshEventAnalysis()
+  → manualAnalysis.analyzeCurrentCharacterEvents()
+  → analysisExecution.run({reason: "manual-character", intent: "manual-character"})
+```
+
+That path does not enable `preserveCurrentFloorState`. The separate compatibility
+entry `refreshCurrentFloorAnalysis()` calls
+`analyzeCurrentFloor({force: true, reason: "manual-refresh"})`; that path enables
+`preserveCurrentFloorState`, so target-slot Events may participate only as
+comparison-only input. Both paths use the same target-external previous resolver;
+`force=true` changes execution eligibility and the manual-refresh World routing,
+not the historical baseline rule. Neither path may fall back to the target,
+target Snapshot, Chat cache, `last_processed_floor`, or target registry as
+previous history.
 
 ## 8. `last_processed_floor`
 

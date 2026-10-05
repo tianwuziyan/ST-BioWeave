@@ -2,7 +2,10 @@ import {normalizeEvent} from './events.js';
 import {normalizeStoryTime} from '../story/time.js';
 import {hashText} from '../runtime/floor.js';
 
-export const HEALTH_ASSESSMENT_SCHEMA_VERSION = 1;
+export const HEALTH_ASSESSMENT_SCHEMA_VERSION = 2;
+export const HEALTH_ASSESSMENT_SEVERITY = Object.freeze([
+  'unknown', 'mild', 'moderate', 'severe',
+]);
 export const HEALTH_ASSESSMENT_PERSISTENCE = Object.freeze([
   'short_term', 'long_term', 'permanent', 'unknown',
 ]);
@@ -21,6 +24,10 @@ const HEALTH_EVENT_TYPES = new Set(['physical_symptom', 'medical_event', 'other_
 
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function stable(value) {
@@ -95,6 +102,7 @@ function normalizeDuration(value) {
 
 export function normalizeHealthAssessment(raw = {}) {
   const source = record(raw);
+  const legacy = Number(source.schema_version) === 1;
   const earliest = record(source.earliest_recovery);
   const expected = record(source.expected_recovery);
   const persistence = HEALTH_ASSESSMENT_PERSISTENCE.includes(source.persistence)
@@ -103,8 +111,8 @@ export function normalizeHealthAssessment(raw = {}) {
     ? source.natural_recovery : 'unknown';
   const assessmentSource = HEALTH_ASSESSMENT_SOURCES.includes(source.assessment_source)
     ? source.assessment_source : 'unknown';
-  return {
-    schema_version: HEALTH_ASSESSMENT_SCHEMA_VERSION,
+  const normalized = {
+    schema_version: legacy ? 1 : HEALTH_ASSESSMENT_SCHEMA_VERSION,
     assessment_id: typeof source.assessment_id === 'string' ? source.assessment_id : null,
     request_key: typeof source.request_key === 'string' ? source.request_key : null,
     source_event_id: typeof source.source_event_id === 'string' ? source.source_event_id : null,
@@ -124,12 +132,20 @@ export function normalizeHealthAssessment(raw = {}) {
     },
     assessment_source: assessmentSource,
   };
+  // Preserve the persisted distinction between a v1 Assessment with no field
+  // and a v2 Assessment explicitly normalized to unknown.
+  if (!legacy || hasOwn(source, 'severity')) {
+    normalized.severity = HEALTH_ASSESSMENT_SEVERITY.includes(source.severity)
+      ? source.severity : 'unknown';
+  }
+  return normalized;
 }
 
 export function validateHealthAssessment(raw = {}) {
   const source = record(raw);
   const value = normalizeHealthAssessment(raw);
   const errors = [];
+  if (source.schema_version !== undefined && ![1, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))) errors.push('schema_version');
   if (source.persistence !== undefined && !HEALTH_ASSESSMENT_PERSISTENCE.includes(source.persistence)) errors.push('persistence');
   if (source.natural_recovery !== undefined && !HEALTH_ASSESSMENT_RECOVERY.includes(source.natural_recovery)) errors.push('natural_recovery');
   if (source.assessment_source !== undefined && !HEALTH_ASSESSMENT_SOURCES.includes(source.assessment_source)) errors.push('assessment_source');
@@ -151,12 +167,19 @@ export function emptyHealthAssessmentTimeline() {
 
 export function normalizeHealthAssessmentTimeline(raw) {
   const source = record(raw);
+  const legacyTimeline = Number(source.schema_version) === 1;
   const assessments = Array.isArray(source.assessments)
-    ? source.assessments.map(normalizeHealthAssessment).filter(item => validateHealthAssessment(item).ok)
+    ? source.assessments
+      .map(item => normalizeHealthAssessment(
+        legacyTimeline && record(item).schema_version === undefined
+          ? {...record(item), schema_version: 1}
+          : item,
+      ))
+      .filter(item => validateHealthAssessment(item).ok)
     : [];
   const seen = new Set();
   return {
-    schema_version: HEALTH_ASSESSMENT_SCHEMA_VERSION,
+    schema_version: Number(source.schema_version) === 1 ? 1 : HEALTH_ASSESSMENT_SCHEMA_VERSION,
     assessments: assessments.filter(item => {
       if (seen.has(item.request_key)) return false;
       seen.add(item.request_key);

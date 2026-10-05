@@ -46,6 +46,7 @@ function buildObservation(event, assessment, currentStoryTime) {
   return {
     source_event_id: event.event_id,
     assessment_id: assessment?.assessment_id ?? null,
+    severity: assessment?.severity ?? 'unknown',
     factual_kind: identity.factual_kind,
     description: event.state_fact?.payload?.symptom?.description
       ?? event.state_fact?.payload?.fact?.description

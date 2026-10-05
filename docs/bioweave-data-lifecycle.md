@@ -249,10 +249,12 @@ read model；expected boundary 到达只影响该 read model，不能写入新�
 新的 authoritative factual Event 不会自动 supersede 旧 observation；long-term/permanent 也
 不能因沉默或 Story Time 跳跃自动清除。
 
-当前已实现 Phase 1 Health Assessment 与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
+当前已实现 Phase 1 Health Assessment（schema v2 observation-level severity）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
 它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，
 在源 Event/owner 失效时一同失效，并在 replay/reload 时消费已保存结果而不是重新调用
-AI。这里的保存稳定性针对同一 source factual observation；新的 authoritative health
+AI。v1 Assessment 缺少 severity 时运行时按 `unknown` 消费，不会因为 schema v2 缺字段而
+重跑或自动 backfill；非法 severity 只在 Assessment normalization 中降级为 `unknown`。
+这里的保存稳定性针对同一 source factual observation；新的 authoritative health
 observation 可以产生新的 Assessment，形成时间序列而不是原地改写旧记录。它不能写入
 BiologicalEvent factual payload、Snapshot-only、runtime-only cache 或 Chat-level Health
 ledger；active read 必须先验证 source Event 仍 surviving 且完整 Floor Version 匹配。失效

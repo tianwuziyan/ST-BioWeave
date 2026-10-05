@@ -161,7 +161,11 @@ Character Health State 的领域设计见 [CHARACTER-HEALTH-STATE.md](./CHARACTE
 设计上允许 `short_term`、`long_term`、`permanent` persistence class；只有明确属于
 short-term 且未来 policy 认可 natural recovery eligible 的 condition 才能由 Story Time
 驱动 derived natural evolution，且自然演化不得创建恢复 Event。具体 duration、severity、
-World/AI/Product fallback 和 factual ingress 仍未实现或冻结。当前已实现 Phase 1 的
+World/AI/Product fallback 和 factual ingress 仍未实现或冻结。当前已实现 schema v2 的
+observation-level `severity`（`unknown` / `mild` / `moderate` / `severe`）；它是
+Health Assessment 派生 metadata，不是 Event factual 字段，也不代表 persistence、recovery
+duration、permanent、functional impact 或 overall health。旧 v1 缺字段按 `unknown` 消费且
+不自动回写/backfill。当前已实现 Phase 1 的
 `health_assessment_timeline` Floor-owned derived collection：它绑定源 BiologicalEvent、
 完整六字段 Floor Version 与 source observation fingerprint；首次成功结果供 replay/reload
 消费，不得写入 Event factual payload、仅保存在 Snapshot 或 runtime cache。Assessment 不等于

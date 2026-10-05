@@ -46,7 +46,7 @@
 | Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; resolved Window candidate handoff and confirmed-pregnancy guard implemented |
 | StateReducer | PRODUCTION |
 | Current Biological State | PRODUCTION |
-| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse and invalidation |
+| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse/invalidation plus schema v2 observation-level severity |
 | Minimal Health Evolution / Current Health State | PARTIAL / PHASE 4 IMPLEMENTED; independent observation lifecycle and presentation aggregation |
 | Character Health UI | PARTIAL / PHASE 5A IMPLEMENTED; Character Details consumes grouped current-health read model only |
 | Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic recovery-stage guidance in Projection Context only |
@@ -77,13 +77,15 @@ store。Snapshot 是同一 derived state 的可校验 checkpoint；不存在有�
 时，只会 transient 更新 `elapsed_story_days`，不会创造 conception、pregnancy
 或 confirmation Event。
 
-完整 Character Health State 仍不是当前 production UI/domain capability。`short_term`、
-`long_term`、`permanent` 是已冻结的粗粒度 persistence class 方向；仅未来 policy
-认可的 short-term condition 才能进行 derived natural evolution，而且不能创建
-recovery Event。不要把 `physical_symptom` 当作唯一入口，也不要冻结 Condition identity、
-duration、severity 或完整 currentness/silence-over-time policy。Phase 2 的最小 read model
-已实现 expected boundary closure 与 Story Time jump comparison，但不持久化 Health State、
-不创建 recovery Event，也不实现 advanced Condition identity。
+完整 Health capability 尚未完成，但以下窄范围链路已进入当前生产代码：Persisted Health
+Assessment lifecycle → independent observation lifecycle / Evolution → presentation-only
+Aggregation → Character Health UI → canonical source Event navigation，以及 non-factual
+Recovery Guidance。`short_term`、`long_term`、`permanent` 是已冻结的粗粒度 persistence class
+方向；仅未来 policy 认可的 short-term condition 才能进行 derived natural evolution，而且
+不能创建 recovery Event。不要把 `physical_symptom` 当作唯一入口，也不要冻结 Condition
+identity、duration、overall health summary、functional impact、severity aggregation 或完整
+currentness/silence-over-time policy。当前不实现 advanced Condition identity、generic Health
+Projection、explicit recovery reference resolution 或 long-term disease progression。
 
 人物领域也必须保持分层：Character Registry 是 canonical identity history；
 `character_profiles` / `characterFacts` 是 Runtime derived biological/profile

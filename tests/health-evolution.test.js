@@ -31,11 +31,12 @@ function event({id = 'event-a', subject = 'char-a', kind = 'abrasion', descripti
   };
 }
 
-function assessment({eventId = 'event-a', day = 1, persistence = 'short_term', expectedDay = null, expectedDuration = null, id = `assessment-${eventId}`} = {}) {
+function assessment({eventId = 'event-a', day = 1, persistence = 'short_term', severity, expectedDay = null, expectedDuration = null, id = `assessment-${eventId}`} = {}) {
   return {
     assessment_id: id,
     source_event_id: eventId,
     persistence,
+    ...(severity === undefined ? {} : {severity}),
     natural_recovery: persistence === 'short_term' ? 'eligible' : 'not_eligible',
     reference_story_time: story(day),
     earliest_recovery: {duration: null, boundary: null},
@@ -132,6 +133,22 @@ test('legacy health observations without Assessments remain represented without 
   const result = deriveCurrentHealthState({events: [event()], assessments: [], currentStoryTime: story(100)});
   assert.equal(activeObservations(result)[0].assessment_id, null);
   assert.equal(activeObservations(result)[0].expected_recovery, null);
+});
+
+test('Evolution transparently forwards Assessment severity and defaults legacy data to unknown', () => {
+  const assessed = deriveCurrentHealthState({
+    events: [event({id: 'severe-event'})],
+    assessments: [assessment({eventId: 'severe-event', severity: 'severe', expectedDay: 100})],
+    currentStoryTime: story(2),
+  });
+  assert.equal(activeObservations(assessed)[0].severity, 'severe');
+
+  const legacy = deriveCurrentHealthState({
+    events: [event({id: 'legacy-event'})],
+    assessments: [assessment({eventId: 'legacy-event', expectedDay: 100})],
+    currentStoryTime: story(2),
+  });
+  assert.equal(activeObservations(legacy)[0].severity, 'unknown');
 });
 
 test('different characters do not share observations', () => {

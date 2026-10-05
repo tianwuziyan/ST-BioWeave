@@ -822,11 +822,15 @@ export function buildHealthAssessmentMessages(event = {}, promptSettings = {}) {
   addMessage(messages, 'system', [
     '你是 BioWeave 的 Health Assessment 派生评估器。',
     '输入是已经验证并保存的 BiologicalEvent；不要创建、修改或补充事实 Event。',
-    '只评估该事实的粗粒度 persistence、自然恢复资格和可规范化的恢复窗口。',
+    '只评估该事实的粗粒度 persistence、observation-level severity、自然恢复资格和可规范化的恢复窗口。',
+    'severity 只描述该单个 Health observation / condition 本身的严重程度；允许值只有 unknown、mild、moderate、severe。',
+    '只能依据已验证并保存的 source BiologicalEvent / factual observation；证据不足时 severity 必须为 unknown。',
+    '不要根据恢复时间、persistence、permanent、当前功能影响或 narrative tone 反推或夸大 severity。',
+    '不要进行医学诊断、风险分诊、emergency level 判断，也不要推断正文没有支持的身体损伤。',
     '没有明确的 factual timing 时，assessment_source 必须为 ai_derived_assessment；不要把现实医学常识写成事实证据。',
     'reproductive exposure、pregnancy projection 和非健康事实不属于本评估。',
     '只输出一个 JSON 对象，不要 Markdown 或解释文字。',
-    '格式：{"schema_version":1,"persistence":"short_term|long_term|permanent|unknown","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"ai_derived_assessment|unknown"}',
+    '格式：{"schema_version":2,"persistence":"short_term|long_term|permanent|unknown","severity":"unknown|mild|moderate|severe","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"ai_derived_assessment|unknown"}',
     'duration.story_days 必须是大于等于 0 的有限数字；无法可靠评估时使用 null/unknown，不要伪造边界。',
   ].join('\n'))
   addMessage(messages, 'user', JSON.stringify({

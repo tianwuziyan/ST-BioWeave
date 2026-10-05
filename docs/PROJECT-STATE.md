@@ -10,8 +10,8 @@ replacement for the domain specifications, implementation, or test suite.
 | --- | --- |
 | Project | ST-BioWeave |
 | Development branch | `fix/world-model-prompt-baseline` |
-| Checkpoint | Observed at 2026-10-03; HEAD is checkpoint information, not a permanent architectural contract. |
-| Working tree | Contains the uncommitted resolved-Window candidate handoff and confirmed-pregnancy Window guard implementation plus synchronized docs/tests. |
+| Checkpoint | Observed at 2026-10-05; HEAD is checkpoint information, not a permanent architectural contract. |
+| Working tree | Contains the uncommitted Health Assessment severity v1 implementation, focused tests, synchronized Health/domain docs, and the earlier audited baseline documentation changes; no commit has been created. |
 | Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis / Floor Counting CLOSED. Real-host behavioral acceptance remains separate by feature. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
 | Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
@@ -39,6 +39,34 @@ navigation document rather than reviving historical task conclusions.
 
 没有新的真实宿主证据时，不重新打开本阶段，也不继续重构 scheduler。
 
+### VERSION_CHAIN diagnostics
+
+`VERSION_CHAIN` diagnostics 已完成并保留在当前 Runtime/Debug contract 中，用于追踪
+完整 Floor Version 从 request、API result 到 persistence/readback 的边界转换。当前仍等待
+真实宿主中的 stale execution sample，以补充 stale completion 的人工证据；这不改变现有
+VERSION_CHAIN 实现，也不重新打开 Automatic Analysis scheduler。
+
+### Health Assessment Severity v1
+
+状态：`CLOSED`。
+
+- 已实现 observation-level `severity`，Assessment schema v2，enum 为
+  `unknown`、`mild`、`moderate`、`severe`。
+- legacy v1 缺少 severity 时运行时按 `unknown` 消费；legacy 缺字段与 v2 explicit
+  `severity: "unknown"` 在持久化表示上保持可区分；malformed severity 只字段级降级。
+- 保持 BiologicalEvent、fingerprint、Assessment request key、one-time reuse、source
+  binding/invalidation、Snapshot、Projection、UI、Recovery Guidance、Scheduler 和
+  VERSION_CHAIN 不变。
+- Health focused tests：28 passed；broader controlled tests：106 passed；`node --check`
+  与 `git diff --check` 通过。
+- Full suite 未获得 clean pass。`DIGEST_BROKE` 与 World prompt fixture failure 可由 HEAD
+  baseline 复现；reroll/scheduler 单独运行在 baseline 与当前版本均通过；
+  `event-analysis-runtime.test.js` 的长时间不结束/长驻问题不归因于 severity v1。
+- 当前没有证据表明上述 full-suite 观察失败由 severity v1 引入；不要因此重新打开该实现。
+
+后续 severity UI、functional impact、overall health、severity aggregation、Recovery Guidance
+联动、confidence、rationale、critical/triage semantics 均属于独立未来任务。
+
 ## Architecture at a Glance
 
 ```text
@@ -53,7 +81,11 @@ Character Floor
   → Tracking Subjects / Candidates
   → Character Facts
   → Current Biological State
-  → minimal Current Health State read model (PHASE 2 IMPLEMENTED; read model only)
+  → Health Assessment / independent observation lifecycle
+  → minimal Current Health State read model
+  → presentation-only Health Aggregation
+  → Character Health UI / canonical source Event navigation
+  → non-factual Health Recovery Guidance / Projection Context
   → Projection Evolution
   → Projection Eligibility
   → Pre-confirmation Timing eligibility
@@ -342,9 +374,9 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Contributor Attribution | PARTIAL; factual Event/State contracts, resolved Window → candidate derived read model, and read-only Projection Context bridge implemented; UI remains deferred |
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
-| Character Health State | PARTIAL / PHASE 5A independent observation read model with presentation aggregation and Character Details consumption; Projection and advanced identity remain DESIGN / NOT IMPLEMENTED |
-| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic coarse recovery-stage guidance in the existing Projection Context slot; no generic Health Projection or UI recovery stage |
-| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse and invalidation |
+| Character Health State | PARTIAL / persisted Assessment → independent observation lifecycle → Evolution → presentation aggregation → Character Details UI and canonical source Event navigation; advanced Health remains Deferred |
+| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic non-factual coarse recovery-stage guidance in the existing Projection Context slot; no generic Health Projection or UI recovery stage |
+| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse/invalidation plus schema v2 observation-level severity |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Core | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Runtime Integration | IMPLEMENTED / AUTOMATED VERIFIED; eligible Projection host smoke pending |

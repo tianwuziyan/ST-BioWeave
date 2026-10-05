@@ -428,7 +428,13 @@ provenance，但不能无条件控制新的 current condition。
   `world_model_rule`、`product_policy_fallback`、`unknown`；
 - factual onset/reference Story Time：恢复 duration 相对于哪个事实时间计算。
 
-字段名、边界的具体编码、confidence、severity 和 Condition identity 均保持 Deferred。
+当前生产 Assessment schema 为 v2，并增加 observation-level `severity`：
+`unknown`、`mild`、`moderate`、`severe`。它只描述单个 observation / condition 本身的
+严重程度；不能被解释为 persistence、recovery duration、permanent、current functional
+impact 或 overall health。v1 / legacy Assessment 缺少该字段时，运行时按 `unknown` 消费，
+不回写、不自动 backfill，也不因缺字段重新调用 AI。非法 severity 只降级为 `unknown`，
+其它合法 Assessment 字段仍保留。confidence、rationale、functional impact、severity
+aggregation、overall health 与 Condition identity 仍保持 Deferred。
 
 ### 10.5 Earliest versus expected recovery
 
@@ -897,8 +903,11 @@ Health State 不重新设计 pregnancy schema、妊娠计算或 tracking lifecyc
 
 Phase 5A 已将当前 `current_health_state` 的 `grouped_issues` 接入现有 Character
 Details 页面。该 UI 只展示当前 active read model，不扫描历史 Event、不重算
-lifecycle/aggregation、不显示内部 ID、Floor Version 或恢复时间。Health Recovery
-Guidance、Projection 与 Context injection 仍未实现。
+lifecycle/aggregation、不显示内部 ID、Floor Version 或恢复时间。Phase 5B 已实现
+窄范围 deterministic Health Recovery Guidance：它复用唯一
+`bioweave_projection_context` 槽位，属于 non-factual guidance，不创建 Event、不修改
+Assessment、不修改 Current Health State，也不成为 factual evidence。完整 Health
+Projection 仍为 Deferred。
 
 如果人物设定明确写出长期或永久健康事实，未来产品可以支持它进入 factual pipeline。
 但当前项目没有已验证的 Worldbook/Character Card → Health Event authoritative ingress；
@@ -962,11 +971,11 @@ Health State injection
 
 ## 21. Deferred decisions / Open decisions
 
-以下问题在本轮保持开放：
+以下仍属 Deferred / Open decisions；其中已 withdrawn 的旧路线不应重新解释为当前架构：
 
-1. Condition identity 的最小字段与轨迹/episode 语义。
-2. 同 kind、不同部位/伤情和并发问题的拆分规则。
-3. 跨 Event continuity evidence 与无法合并时的 unresolved 行为。
+1. 高级 Condition identity、轨迹/episode 语义与 condition auto-merge（当前路线 withdrawn）。
+2. 同 kind、不同部位/伤情和并发问题的展示拆分规则；不恢复 Condition authority。
+3. 跨 Event continuity evidence 与无法合并时的 unresolved 行为；不恢复 reference graph。
 4. `current_conditions`、`long_term_conditions` 与 `permanent` projection 的互斥、重叠和迁移规则。
 5. overall severity 的 enum、排序、聚合和冲突策略。
 6. 哪些 condition 允许 natural recovery、恢复边界如何确定，以及 severity 的影响。
@@ -974,13 +983,18 @@ Health State injection
 8. World Model、AI candidate duration 与 Product Policy fallback 的职责。
 9. improving/resolved/treated 的 factual payload 与 reducer transition contract。
 10. Story Time 不可比较、正文沉默和 information currentness 的表示。
-11. 是否需要独立 confidence/currentness 概念；不预设 TTL、freshness 或医学恢复时间。
+11. 是否需要独立 confidence/currentness 概念；不预设 TTL、freshness 或医学恢复时间；
+    freshness/currentness TTL 路线当前 Deferred。
 12. Worldbook/Character Card factual ingress 的具体 authoritative path。
 13. 哪些 facts 可以进入 compressed Context，以及如何阻断 Context → Event evidence 回流。
 14. Health State 是否进入未来 Snapshot derived checkpoint，以及校验/失效策略。
 15. 现有 Event payload 是否需要最小兼容扩展；在此之前不增加 Event 类型或 schema。
 
-## 22. Implementation phases (future, not implemented)
+## 22. Implementation phases (historical planning record)
+
+本节保留早期规划记录。Phase 1、Phase 2、Phase 4、Phase 5A 与 Phase 5B 的已实现范围
+以本文件的 Status reminder 和对应实现章节为准；本节未完成项不能覆盖后续阶段已实现
+内容，也不授权恢复 withdrawn 的 trajectory、Condition identity 或 generic Projection。
 
 1. **Vocabulary and contract audit**：冻结术语、authority、provenance、replay 与
    pregnancy boundary；解决上述 Open Decisions。
@@ -1062,7 +1076,11 @@ record collection，与 Event 共享 exact message/Swipe owner 和 Floor Version
 它不是新的 Chat-level Health ledger，也不是 BiologicalEvent factual payload。
 
 这里的“独立”表示领域记录和生命周期独立。Phase 1 已在现有 Floor owner 下增加受
-lifecycle registry 管理的 `health_assessment_timeline` collection，schema version 为 1：
+lifecycle registry 管理的 `health_assessment_timeline` collection，当前 schema version 为 2：
+
+- v2 Assessment 增加 observation-level `severity`：`unknown`、`mild`、`moderate`、`severe`；
+- 旧 v1 Assessment 缺少 severity 时仍可读取，运行时按 `unknown` 消费，不因缺字段重跑或
+  自动 backfill；legacy item 不被回写为 v2 unknown；
 
 - `storage/schema.js` 的默认结构；
 - `storage/lifecycle.js` 的 ownership/clear registry；
@@ -1371,6 +1389,8 @@ Phase 1 已打通：
 8. 对 legacy Chat 保持 lazy/no-auto-backfill；
 9. 只提供最小 read DTO 或内部 read path 验证 lifecycle，不实现完整 Health UI。
 
+以下列表描述的是 Phase 1 当时的历史 scope，不代表当前仓库的最终实现状态：
+
 Phase 1 明确不包括：
 
 - 完整 Health State reducer/evolution runtime；
@@ -1400,14 +1420,15 @@ Phase 2 新增 `core/health-evolution.js` 与 `runtime/health-evolution.js`。�
 - derived closure 不创建 recovery Event、不改写原 Event、不改写 Assessment；
 - Phase 4 不再执行 trajectory grouping 或 latest-observation supersede；每条 observation
   独立消费自己的 Assessment，`body_site`/`laterality` 只用于 presentation grouping；
-- 没有 Assessment 的 legacy health Event 不会被自动补评估，也不会凭空进入 active
-  Health State。
+- 没有 Assessment 的 legacy health Event 不会被自动补评估；它仍可按现有 lifecycle 进入
+  active read model，severity 按 unknown 消费，且没有 Assessment recovery deadline。
 
 主 Event Analysis 只保留 commit/read path 上的窄 Health hook；候选选择、Assessment、
-observation evolution 与 presentation aggregation 分别由 Health-owned modules 负责。Phase 4
-仍不实现 UI、
-Projection、World Model health rules、Snapshot Health migration、historical backfill、
-复杂 Condition identity、reference resolver、recurrence graph 或 pregnancy redesign。
+observation evolution 与 presentation aggregation 分别由 Health-owned modules 负责。
+本段中“Phase 4 仍不实现 UI、Projection……”是该阶段的 historical phase scope，后续
+Phase 5A/5B 已分别实现 Character Health UI 与窄范围 Health Recovery Guidance。World
+Model health rules、Snapshot Health migration、historical backfill、复杂 Condition
+identity、reference resolver、recurrence graph 与 pregnancy redesign 仍不属于当前实现。
 
 ### 23.13 Phase 5A Character Health UI (implemented, narrow scope)
 
@@ -1445,10 +1466,65 @@ advanced Health Condition identity、currentness policy 在当前仓库仍为 **
 IMPLEMENTED**。Character Health UI 已实现 Phase 5A；Health Recovery Guidance / recovery-stage
 Projection Context 已实现 Phase 5B 的窄范围 deterministic guidance。Character Health UI 目前仅
 实现 Phase 5A 的 Character Details read-model presentation，不代表完整 Health UI。
-当前已实现的是 BiologicalEvent、Persisted Health Assessment Lifecycle
-Phase 1、minimal derived Health Evolution / Current Health State read model、Phase 4
-independent observation lifecycle and presentation aggregation、Current
-Biological State、Snapshot、既有 Characters/Events consumers 与独立 Projection boundary；
-不能将 Phase 5B 写成完整 Health Projection、explicit recovery resolution、long-term disease
-progression engine 或医疗系统。Recovery Guidance 仍不生成 Event、不修改 Health State，且
-Context injection 不成为 Event evidence。
+当前已实现的是 BiologicalEvent、Persisted Health Assessment Lifecycle Phase 1、minimal
+derived Health Evolution / Current Health State read model、Phase 4 independent observation
+lifecycle and presentation aggregation、Current Biological State、Snapshot、既有
+Characters/Events consumers、Health → source Event navigation，以及 Phase 5B 的窄范围
+Health Recovery Guidance / Projection Context boundary。
+
+```text
+BiologicalEvent
+  → Health Assessment
+  → Health Evolution
+  → Health Aggregation（presentation-only）
+  → Current Health State
+  → Character Health UI
+
+Current Health State
+  → Health Recovery Guidance
+  → Projection Context
+```
+
+Health Recovery Guidance 是 deterministic、non-factual guidance：不生成 Event、不修改
+Assessment、不修改 Current Health State，也不成为 Event evidence。不能将 Phase 5B 写成
+完整 Health Projection、explicit recovery resolution、long-term disease progression engine
+或医疗系统。
+
+健康按钮的“健康 · 正常”只表示当前已成功就绪的 derived Health read model 中没有已知
+active health issue；它不是 authoritative healthy fact、BiologicalEvent、Health Assessment、
+persistence state，也不是医学意义上的完全健康声明。read model ready 且人物没有
+`characters[character_id]` entry，或已有 entry 但 `grouped_issues=[]` 时，都可以显示“健康 ·
+正常”；active issues 显示“健康 · 有异常”；unavailable、error 或 not ready 显示“健康 ·
+暂不可用”。人物没有 entry 不代表 Health 无数据，因为当前 entry 由 active health
+observation 驱动产生。
+
+`grouped_issues[].source_observation_ids` 当前实际保存 canonical `BiologicalEvent.event_id`，
+用于 Character Health → source Event navigation；它是 presentation/read-model provenance
+linkage，不是新的 observation authority。
+
+generic runtime 只允许提供 narrow orchestration hooks：调用、DTO forwarding、lifecycle/
+stale guard 和 persistence coordination。eligibility、assessment semantics（包括 severity）、evolution、
+aggregation、recovery guidance，以及未来 health summary 均由 Health-owned modules
+负责；UI 只负责 presentation。未来新增能力应遵循：small pure core module → explicit DTO
+→ narrow runtime coordinator/hook → presentation-only UI。禁止创建 Health Manager / God
+module，也不得把 Health 规则塞进 `runtime/event-analysis.js`、`runtime/events.js`、
+`ui/app.js`、`ui/characters.js` 或 generic StateReducer。
+
+以下能力保持 Deferred：current functional impact、overall health summary、severity aggregation、
+long-term disease progression、explicit recovery reference resolution、
+以及 chronic/permanent 的 advanced presentation。`severity ≠ persistence`、`severity ≠
+recovery duration`、`severity ≠ permanent`、`severity ≠ current functional impact`、
+`severity ≠ overall health`。当前不实现 `critical`、confidence、rationale、medical risk、
+triage 或 emergency-level semantics。
+
+Health Assessment Severity v1 当前为 **CLOSED**。实现与 regression attribution 已完成：
+Health focused tests 28 passed，broader controlled tests 106 passed，`node --check` 与
+`git diff --check` 通过。Full suite 未获得 clean pass；已确认的 `DIGEST_BROKE` 与 World
+prompt fixture failure 可由 HEAD baseline 复现，reroll/scheduler 仅在长文件/长驻运行环境中
+出现过非稳定观察，`event-analysis-runtime.test.js` 的长时间不结束问题也不归因于 severity。
+这些结果不构成 severity regression，不重新打开本实现。
+
+以下旧设计已 withdrawn 或明确不属于 current architecture，不得恢复：trajectory identity、
+`core/health-condition-identity.js`、latest-observation supersede、condition auto-merge、
+recurrence graph、reference graph、freshness/currentness TTL、implicit explicit-recovery
+resolver、generic Health Projection、medical ontology 与 body-region ontology。
