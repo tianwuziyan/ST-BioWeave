@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对 factual body_site 到 read-model/UI 的跨层边界"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "保持 Character Health UI 的 presentation-only 责任"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "遵循 UI 测试与质量约束"}

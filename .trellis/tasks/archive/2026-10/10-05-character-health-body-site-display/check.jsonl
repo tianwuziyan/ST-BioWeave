@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "审查 body_site/laterality 数据边界"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证 presentation bug 修复与回归测试"}

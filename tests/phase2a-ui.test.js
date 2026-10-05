@@ -932,11 +932,43 @@ test('character details consume grouped Health State issues without rebuilding l
   assert.match(html, /data-bioweave-action="toggle-character-health"/)
   assert.match(html, /id="bioweave-character-health-popover"/)
   assert.match(html, /有健康问题/)
-  assert.match(html, /左手腕/)
+  assert.match(html, />wrist<\/strong>/)
   assert.match(html, /疼痛/)
   assert.match(html, /擦伤/)
   assert.equal((html.match(/>疼痛<\/p>/g) ?? []).length, 1)
   assert.doesNotMatch(html, /active-pain|duplicate-pain|expected_recovery|day_index/)
+})
+
+test('Character Health displays factual body sites without laterality or localization rewrites', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [
+            { group_key: '右臂外侧|right|pain', display_site: '右臂外侧', body_site: '右臂外侧', laterality: 'right', description: '疼痛' },
+            { group_key: '左膝|left|pain', display_site: '左膝', body_site: '左膝', laterality: 'left', description: '酸痛' },
+            { group_key: 'upper-arm|right|pain', display_site: '上臂外侧', body_site: '上臂外侧', laterality: 'right', description: '不补方向' },
+            { group_key: 'full-body|unspecified|fever', display_site: '全身', body_site: '全身', laterality: null, description: '发热' },
+            { group_key: 'general|unspecified|cough', display_site: 'general', body_site: null, laterality: 'right', description: '咳嗽' },
+          ],
+        },
+      },
+    },
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  })
+  assert.match(html, />右臂外侧<\/strong>/)
+  assert.match(html, />左膝<\/strong>/)
+  assert.match(html, />上臂外侧<\/strong>/)
+  assert.match(html, />全身<\/strong>/)
+  assert.match(html, />未标明部位<\/strong>/)
+  assert.doesNotMatch(html, /右右臂外侧|左左膝|右上臂外侧/)
+
+  const source = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8')
+  const displaySiteSource = source.slice(source.indexOf('function healthDisplaySite'), source.indexOf('function healthSourceEventIds'))
+  assert.doesNotMatch(displaySiteSource, /startsWith|\.replace\(/)
 })
 
 test('character Health State is scoped by canonical character id and supports conservative empty states', () => {

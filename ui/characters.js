@@ -346,18 +346,6 @@ function renderOtherSection() {
     '<div class="bioweave-character-other-list"><div class="bioweave-character-other-item"><strong>推演</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>关系</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>备注</strong><span>暂无</span></div></div></section>'
   )
 }
-const healthSiteLabels = {
-  wrist: '手腕',
-  ankle: '脚踝',
-  hand: '手',
-  arm: '手臂',
-  leg: '腿',
-  head: '头部',
-  chest: '胸部',
-  abdomen: '腹部',
-}
-const healthLateralityLabels = { left: '左', right: '右', bilateral: '双侧', midline: '中线' }
-
 function healthDisplayLabel(value, fallback = '当前健康问题') {
   const text = String(value ?? '').trim()
   if (!text) return fallback
@@ -365,10 +353,11 @@ function healthDisplayLabel(value, fallback = '当前健康问题') {
 }
 
 function healthDisplaySite(issue) {
-  const site = String(issue?.display_site ?? issue?.body_site ?? '').trim()
-  if (!site || site === 'general') return '未标明部位'
-  const laterality = healthLateralityLabels[String(issue?.laterality ?? '').trim().toLowerCase()] ?? ''
-  return laterality + (healthSiteLabels[site.toLowerCase()] ?? healthDisplayLabel(site, '相关部位'))
+  const bodySite = String(issue?.body_site ?? '').trim()
+  const displaySite = String(issue?.display_site ?? '').trim()
+  const site = bodySite || displaySite
+  if (!site || (site === 'general' && !bodySite)) return '未标明部位'
+  return site
 }
 
 function healthSourceEventIds(issue, activeEvents, characterId) {
