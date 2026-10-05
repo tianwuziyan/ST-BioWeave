@@ -931,7 +931,7 @@ test('character details consume grouped Health State issues without rebuilding l
   })
   assert.match(html, /data-bioweave-action="toggle-character-health"/)
   assert.match(html, /id="bioweave-character-health-popover"/)
-  assert.match(html, /当前有健康问题/)
+  assert.match(html, /有健康问题/)
   assert.match(html, /左手腕/)
   assert.match(html, /疼痛/)
   assert.match(html, /擦伤/)
@@ -1068,6 +1068,25 @@ test('Character Health status button uses warning, good, and unavailable Runtime
   assert.match(neutral, /class="bioweave-button bioweave-character-health-button neutral"[\s\S]*健康 · 暂不可用/)
   assert.ok(warning.indexOf('健康 · 有异常') < warning.indexOf('推演周期'))
   assert.ok(warning.indexOf('推演周期') < warning.indexOf('编辑昵称'))
+})
+
+test('Character Health overview maps the read-model severity summary without exposing machine values', () => {
+  const base = {
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  }
+  for (const [severitySummary, label] of [['mild', '轻微'], ['moderate', '中度'], ['severe', '严重'], ['unknown', '有健康问题']]) {
+    const html = charactersPage({...base, currentHealthState: {characters: {'char-a': {
+      severity_summary: severitySummary,
+      grouped_issues: [{description: '疼痛'}],
+    }}}})
+    assert.match(html, new RegExp('>总体状态</span><strong[^>]*>' + label + '<'))
+    assert.doesNotMatch(html, new RegExp('>' + severitySummary + '<'))
+  }
+  const normal = charactersPage({...base, currentHealthState: {characters: {'char-a': {severity_summary: 'normal', grouped_issues: []}}}})
+  assert.match(normal, />总体状态<\/span><strong[^>]*>正常</)
 })
 
 test('Character Health source action is omitted when its Event is not in the current read model', () => {

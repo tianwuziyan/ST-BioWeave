@@ -3,6 +3,7 @@ import {healthAssessmentEligibility} from './health-assessment.js';
 import {
   aggregateActiveHealthObservations,
   healthObservationPresentationIdentity,
+  summarizeActiveHealthSeverity,
 } from './health-aggregation.js';
 
 function clone(value) {
@@ -87,6 +88,7 @@ export function deriveCurrentHealthState({events = [], assessments = [], current
   for (const character of Object.values(characters)) {
     character.active_observations.sort(observationSort);
     character.grouped_issues = aggregateActiveHealthObservations(character.active_observations);
+    character.severity_summary = summarizeActiveHealthSeverity(character.active_observations);
   }
   return {schema_version: 1, characters};
 }

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check complete data flow and read-model boundary after implementation."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review UI changes for presentation-only behavior and project test conventions."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify no Health ownership or generic-runtime boundary regression."}
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"Verify documentation states presentation summary without claiming overall health."}

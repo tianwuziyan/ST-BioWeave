@@ -7,6 +7,7 @@
 > **Minimal Health Evolution / Current Health State Phase 2: IMPLEMENTED (read model only)**
 > **Active Observation Lifecycle / Presentation Aggregation Phase 4: IMPLEMENTED (derived read model only)**
 > **Character Health UI Phase 5A: IMPLEMENTED (Character Details read-model presentation only; A compact popover)**
+> **Character Health Severity UI v1: CLOSED (presentation-only `severity_summary` in the existing overall-status badge)**
 > **Health Recovery Guidance Phase 5B: IMPLEMENTED (deterministic Projection Context guidance only)**
 >
 > 本文是 Character Health State 的领域设计与实现边界说明，不是完整医疗系统或完整
@@ -161,7 +162,8 @@ Character Health State
 ### 6.1 overall_health
 
 这是给 UI 和 Context 的总体摘要。候选展示可以包含“正常、轻微不适、生病、受伤、
-严重受伤、危重”，但最终 enum、标签和排序尚未冻结。
+严重受伤、危重”，但完整 overall health 的医学 enum、标签和排序尚未冻结；这不影响当前
+read model 的 presentation-only `severity_summary` 固定排序。
 
 总体状态应由具体有效 Health Conditions 按透明、可测试的汇总规则得到，而不是让 AI
 额外生成一个脱离事实的 `severely_injured` authority。轻微擦伤与严重骨折并存时，
@@ -174,8 +176,8 @@ Character Health State
 `long_term_conditions` / persistence class 的独立区域展示；不能因为存在稳定心脏病
 就机械地把当前摘要永久显示为“生病”。例如当前只有轻微擦伤与稳定心脏病时，摘要可以
 显示“轻微受伤”；擦伤 derived natural evolution 结束后，摘要的当前影响可以回到正常，
-同时长期心脏病仍保留在长期健康状况中。最终 severity enum 和 aggregation rule 仍为
-Deferred。
+同时长期心脏病仍保留在长期健康状况中。完整 overall health 的医学 severity enum 和
+aggregation rule 仍为 Deferred；当前 `severity_summary` 仅是固定排序的展示摘要。
 
 ### 6.2 current_conditions
 
@@ -433,8 +435,11 @@ provenance，但不能无条件控制新的 current condition。
 严重程度；不能被解释为 persistence、recovery duration、permanent、current functional
 impact 或 overall health。v1 / legacy Assessment 缺少该字段时，运行时按 `unknown` 消费，
 不回写、不自动 backfill，也不因缺字段重新调用 AI。非法 severity 只降级为 `unknown`，
-其它合法 Assessment 字段仍保留。confidence、rationale、functional impact、severity
-aggregation、overall health 与 Condition identity 仍保持 Deferred。
+其它合法 Assessment 字段仍保留。confidence、rationale、functional impact、overall health
+与 Condition identity 仍保持 Deferred。当前 read model 另提供 presentation-only
+`severity_summary`：仅对 surviving active observations 按 `severe > moderate > mild > unknown`
+聚合；无 active observation 时为 `normal`。它不是 Assessment 字段、医学判断或完整
+`overall_health`，也不改变 observation lifecycle。
 
 ### 10.5 Earliest versus expected recovery
 
@@ -1437,10 +1442,13 @@ current_health_state。人物详情按 canonical character_id 读取对应人物
 grouped_issues，使用 read model 提供的 display_site、laterality 与 factual_kind
 做用户可读呈现；缺少部位时显示为展示层的“未标明部位”，不回写 Event。
 
-UI 不推导 overall severity，不消费或显示 active_observations 的生命周期字段，
+UI 不推导 overall severity，只消费 read model 提供的 presentation-only `severity_summary`，
+不消费或显示 active_observations 的生命周期字段，
 不显示 Assessment ID、Floor Version、fingerprint、raw timing 或 recovery countdown。
 current_health_summary 只有在 Runtime 提供非空摘要时才直接显示；缺少摘要时不额外
-渲染摘要行，状态由健康按钮与“总体状态”徽标表达。Health read model 已 ready 但人物
+渲染摘要行，状态由健康按钮与“总体状态”徽标表达；徽标将 `normal` 显示为“正常”，
+`unknown` 显示为“有健康问题”，`mild`/`moderate`/`severe` 显示为“轻微”/“中度”/“严重”。
+缺少该字段的 legacy read model 在存在有效问题时回退为“有健康问题”。Health read model 已 ready 但人物
 不存在于 `characters` 或 `grouped_issues` 为空时，保持正常状态的安全空状态；read model
 缺失、未 ready 或失败时，保持不可用状态。
 
@@ -1510,7 +1518,7 @@ aggregation、recovery guidance，以及未来 health summary 均由 Health-owne
 module，也不得把 Health 规则塞进 `runtime/event-analysis.js`、`runtime/events.js`、
 `ui/app.js`、`ui/characters.js` 或 generic StateReducer。
 
-以下能力保持 Deferred：current functional impact、overall health summary、severity aggregation、
+以下能力保持 Deferred：current functional impact、完整 overall health summary、完整医学意义的 severity aggregation、
 long-term disease progression、explicit recovery reference resolution、
 以及 chronic/permanent 的 advanced presentation。`severity ≠ persistence`、`severity ≠
 recovery duration`、`severity ≠ permanent`、`severity ≠ current functional impact`、

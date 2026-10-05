@@ -1,0 +1,8 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Required cross-layer data-flow and DTO-boundary checks for core-to-read-model-to-UI change."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Plain DOM UI ownership, rendering boundary, and Character Health presentation rules."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend validation and forbidden UI business-rule patterns."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor-derived read-model provenance and lifecycle ownership red lines."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent/derived state lifecycle contract; confirms this is read-model-only."}
+{"file":"docs/ARCHITECTURE.md","reason":"Existing Health module ownership and extension boundary to preserve."}
+{"file":"docs/UI.md","reason":"Current Character Health UI semantics and unavailable/normal mapping."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Production Character UI structure and existing status control boundary."}

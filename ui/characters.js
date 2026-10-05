@@ -402,6 +402,9 @@ function healthViewModel(currentHealthState, characterId, activeEvents = [], cur
   const summary = typeof characterHealth?.current_health_summary === 'string' && characterHealth.current_health_summary.trim()
     ? characterHealth.current_health_summary.trim()
     : ''
+  const severitySummary = typeof characterHealth?.severity_summary === 'string'
+    ? characterHealth.severity_summary.trim().toLowerCase()
+    : ''
   const validIssues = groupedIssues
     .map(issue => ({
       ...issue,
@@ -411,7 +414,20 @@ function healthViewModel(currentHealthState, characterId, activeEvents = [], cur
         : issue?.description,
     }))
     .filter(issue => String(issue?.display_description ?? issue?.factual_kind ?? '').trim())
-  return {summary, validIssues, state: !readModelReady ? 'neutral' : validIssues.length ? 'warning' : 'good'}
+  return {
+    summary,
+    validIssues,
+    severityLabel: healthSeverityLabel(severitySummary, validIssues.length > 0),
+    state: !readModelReady ? 'neutral' : validIssues.length ? 'warning' : 'good',
+  }
+}
+
+function healthSeverityLabel(severitySummary, hasIssues) {
+  if (severitySummary === 'severe') return '严重'
+  if (severitySummary === 'moderate') return '中度'
+  if (severitySummary === 'mild') return '轻微'
+  if (severitySummary === 'unknown' || hasIssues) return '有健康问题'
+  return '正常'
 }
 
 function renderHealthStatusButton(currentHealthState, characterId, activeEvents = [], currentStateStatus = 'NO_CHARACTER_FLOOR', open = false) {
@@ -424,7 +440,7 @@ function renderHealthPopover(currentHealthState, characterId, activeEvents = [],
   if (!open) return ''
   const view = healthViewModel(currentHealthState, characterId, activeEvents, currentStateStatus)
   const issueCount = view.validIssues.length
-  const badge = view.state === 'warning' ? '当前有健康问题' : view.state === 'good' ? '当前正常' : '健康状态暂不可用'
+  const badge = view.state === 'neutral' ? '健康状态暂不可用' : view.severityLabel
   const content = issueCount
     ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' + view.validIssues.map(issue => '<article class="bioweave-character-health-issue"><strong class="bioweave-character-health-issue-site">' + escapeHtml(healthDisplaySite(issue)) + '</strong><p>' + escapeHtml(healthDisplayLabel(issue.display_description, '当前健康问题')) + '</p><div class="bioweave-character-health-issue-source">' + renderHealthSourceActions(issue.source_event_ids) + '</div></article>').join('') + '</div>'
     : '<div class="bioweave-empty bioweave-character-health-empty">当前没有可显示的健康问题。</div>'

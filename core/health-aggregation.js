@@ -19,6 +19,20 @@ function aggregationKey(observation) {
   ].join('|');
 }
 
+const severityRank = {unknown: 0, mild: 1, moderate: 2, severe: 3};
+
+/** Presentation-only summary of the supplied active observations. */
+export function summarizeActiveHealthSeverity(observations = []) {
+  const active = Array.isArray(observations) ? observations : [];
+  if (!active.length) return 'normal';
+  let highest = 'unknown';
+  for (const observation of active) {
+    const severity = normalized(observation?.severity);
+    if (severityRank[severity] > severityRank[highest]) highest = severity;
+  }
+  return highest;
+}
+
 /** Presentation-only grouping. It never changes observation lifecycle or authority. */
 export function aggregateActiveHealthObservations(observations = []) {
   const groups = new Map();

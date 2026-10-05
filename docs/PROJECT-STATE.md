@@ -64,8 +64,14 @@ VERSION_CHAIN 实现，也不重新打开 Automatic Analysis scheduler。
   `event-analysis-runtime.test.js` 的长时间不结束/长驻问题不归因于 severity v1。
 - 当前没有证据表明上述 full-suite 观察失败由 severity v1 引入；不要因此重新打开该实现。
 
-后续 severity UI、functional impact、overall health、severity aggregation、Recovery Guidance
-联动、confidence、rationale、critical/triage semantics 均属于独立未来任务。
+当前 Character Health 已补充 presentation-only `severity_summary` UI：由 active observations
+在 Health Aggregation 中按 `severe > moderate > mild > unknown` 派生，并在 Character Details
+既有“总体状态”徽标显示；它不是完整 `overall_health`，不改变 lifecycle、Assessment 或 UI
+按钮/问题列表/source navigation。functional impact、完整 overall health、超出该固定排序的
+severity aggregation、Recovery Guidance 联动、confidence、rationale、critical/triage semantics
+仍属于独立未来任务。Character Health Severity UI v1 已 **CLOSED**；controlled Health/UI
+tests 90 passed，`node --check` 与 `git diff --check` 通过。Full `npm test` 未获得 clean pass，
+但已完成 regression attribution，当前观察到的既有失败没有证据由 `severity_summary` 引入。
 
 ## Architecture at a Glance
 
@@ -374,7 +380,7 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Contributor Attribution | PARTIAL; factual Event/State contracts, resolved Window → candidate derived read model, and read-only Projection Context bridge implemented; UI remains deferred |
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
-| Character Health State | PARTIAL / persisted Assessment → independent observation lifecycle → Evolution → presentation aggregation → Character Details UI and canonical source Event navigation; advanced Health remains Deferred |
+| Character Health State | PARTIAL / persisted Assessment → independent observation lifecycle → Evolution → presentation aggregation + severity_summary → Character Details UI and canonical source Event navigation; full overall Health remains Deferred |
 | Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic non-factual coarse recovery-stage guidance in the existing Projection Context slot; no generic Health Projection or UI recovery stage |
 | Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse/invalidation plus schema v2 observation-level severity |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |

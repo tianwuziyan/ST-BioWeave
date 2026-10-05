@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {deriveCurrentHealthState} from '../core/health-evolution.js';
+import {summarizeActiveHealthSeverity} from '../core/health-aggregation.js';
 import {activeHealthAssessments, healthObservationFingerprint} from '../core/health-assessment.js';
 
 const version = {
@@ -149,6 +150,41 @@ test('Evolution transparently forwards Assessment severity and defaults legacy d
     currentStoryTime: story(2),
   });
   assert.equal(activeObservations(legacy)[0].severity, 'unknown');
+});
+
+test('presentation severity summary ranks active observations without mutating them', () => {
+  const observations = [
+    {severity: 'mild'},
+    {severity: 'MODERATE'},
+    {severity: 'invalid'},
+    {severity: 'severe'},
+  ];
+  const before = structuredClone(observations);
+  assert.equal(summarizeActiveHealthSeverity(observations), 'severe');
+  assert.deepEqual(observations, before);
+  assert.equal(summarizeActiveHealthSeverity([{severity: 'unknown'}, {severity: 'invalid'}]), 'unknown');
+  assert.equal(summarizeActiveHealthSeverity([{severity: 'unknown'}, {severity: 'mild'}]), 'mild');
+  assert.equal(summarizeActiveHealthSeverity([{severity: 'mild'}, {severity: 'moderate'}]), 'moderate');
+  assert.equal(summarizeActiveHealthSeverity([{severity: 'moderate'}, {severity: 'severe'}]), 'severe');
+  assert.equal(summarizeActiveHealthSeverity([{severity: 'mild'}, {severity: 'severe'}]), 'severe');
+  assert.equal(summarizeActiveHealthSeverity([]), 'normal');
+});
+
+test('Evolution exposes severity summary only for surviving active observations', () => {
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'mild-active'}), event({id: 'severe-closed'})],
+    assessments: [
+      assessment({eventId: 'mild-active', severity: 'mild', expectedDay: 100}),
+      assessment({eventId: 'severe-closed', severity: 'severe', expectedDay: 2}),
+    ],
+    currentStoryTime: story(3),
+  });
+  assert.equal(result.characters['char-a'].severity_summary, 'mild');
+  assert.equal(deriveCurrentHealthState({
+    events: [event({id: 'closed-only'})],
+    assessments: [assessment({eventId: 'closed-only', severity: 'severe', expectedDay: 2})],
+    currentStoryTime: story(3),
+  }).characters['char-a'], undefined);
 });
 
 test('different characters do not share observations', () => {

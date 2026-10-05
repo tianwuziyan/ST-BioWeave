@@ -89,7 +89,7 @@ flowchart TD
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 负责 eligibility、fingerprint、schema v2 normalize/validate、observation-level severity 与 source-bound active filtering；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写入 BiologicalEvent factual payload；v1 缺 severity 运行时按 `unknown` 消费且不自动重跑 |
 | Health Evolution | `core/health-evolution.js` + `runtime/health-evolution.js` | 从 surviving Events、valid Assessments 与 Story Time 派生 Current Health State；不调用 AI 或写 storage |
-| Health Aggregation | `core/health-aggregation.js` | active observation 的 presentation-only 精确分组与 canonical source Event ID linkage；不拥有 lifecycle 或 Assessment authority |
+| Health Aggregation | `core/health-aggregation.js` | active observation 的 presentation-only 精确分组、severity_summary 固定排序与 canonical source Event ID linkage；不拥有 lifecycle 或 Assessment authority |
 | Health Recovery Guidance | `core/health-recovery-guidance.js` + `runtime/projection-context.js` | 计算粗粒度、非事实的恢复阶段指导，并组合进唯一 `bioweave_projection_context` 槽位 |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
 | Characters UI | `ui/characters.js` | Characters 页面渲染；当前主要枚举 `tracking_subjects` |
@@ -104,8 +104,10 @@ narrow hooks：调用、DTO forwarding、persistence/lifecycle/stale guard 和�
 Health business rules。`ui/characters.js` 只做 presentation，不重算 lifecycle、severity
 或 recovery；`ui/app.js` 只做页面 orchestration。
 
-当前 observation-level severity 属于 Health Assessment contract；它不扩展到 Event、
-Snapshot、Projection、Aggregation 或 UI。未来新增 Health 能力应优先采用：
+当前 observation-level severity 属于 Health Assessment contract；由 active observations 派生的
+`severity_summary` 是 Health read model 的 presentation-only 字段，不是完整 `overall_health`，
+也不改变 Event、Snapshot、Projection 或 Assessment。UI 只消费该字段，不维护排序。未来新增
+Health 能力应优先采用：
 
 ```text
 small pure core module
@@ -116,8 +118,8 @@ small pure core module
 
 禁止创建 Health Manager / God module，也不得把 Health 规则塞入
 `runtime/event-analysis.js`、`runtime/events.js`、`ui/app.js`、`ui/characters.js` 或
-generic StateReducer。functional impact、overall health summary、severity aggregation、long-term
-progression 与 explicit recovery reference resolution 均需独立的真实产品 contract 后再设计，
+generic StateReducer。functional impact、完整 overall health summary、超出固定展示排序的
+severity aggregation、long-term progression 与 explicit recovery reference resolution 均需独立的真实产品 contract 后再设计，
 不能通过预留空模块提前冻结。
 
 ## Where do I change this?
