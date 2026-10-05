@@ -7369,6 +7369,12 @@
 .bioweave-character-detail-section { min-width: 0 !important; margin: 0 !important; padding: 8px 9px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 7px !important; background: var(--bioweave-card) !important; }
 .bioweave-character-detail-section h3 { margin: 0 !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; }
 .bioweave-character-detail-section > p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-health-issues { display: grid !important; gap: 5px !important; margin-top: 6px !important; }
+.bioweave-character-health-issue { min-width: 0 !important; padding: 6px 7px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-surface-raised) !important; }
+.bioweave-character-health-issue header { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 8px !important; min-width: 0 !important; }
+.bioweave-character-health-issue header strong { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
+.bioweave-character-health-issue p { margin: 3px 0 0 !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
+.bioweave-character-health-empty { margin-top: 5px !important; padding: 6px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
 .bioweave-character-exposure-section { grid-column: 1 / -1 !important; }
 .bioweave-character-capabilities,
 .bioweave-character-exposure-fields,

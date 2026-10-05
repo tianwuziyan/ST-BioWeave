@@ -240,6 +240,36 @@ and `characterFacts`, and returns derived Current Biological State. A later
 after Snapshot restore or full replay; Story Time progression does not invent an
 Event, conception, pregnancy, or confirmation.
 
+Character Health State is currently **PARTIAL / Phase 4 active observation read model**; see
+[CHARACTER-HEALTH-STATE.md](./CHARACTER-HEALTH-STATE.md). Any future health read model
+must remain derived from the same surviving Floor Events and Current State path. It must
+not create a Chat-level health authority, freshness TTL, or a second lifecycle registry.
+Phase 2 已在同一 derived Current State path 中提供最小 short-term natural evolution
+read model；expected boundary 到达只影响该 read model，不能写入新的 recovery Event。
+新的 authoritative factual Event 不会自动 supersede 旧 observation；long-term/permanent 也
+不能因沉默或 Story Time 跳跃自动清除。
+
+当前已实现 Phase 1 Health Assessment 与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
+它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，
+在源 Event/owner 失效时一同失效，并在 replay/reload 时消费已保存结果而不是重新调用
+AI。这里的保存稳定性针对同一 source factual observation；新的 authoritative health
+observation 可以产生新的 Assessment，形成时间序列而不是原地改写旧记录。它不能写入
+BiologicalEvent factual payload、Snapshot-only、runtime-only cache 或 Chat-level Health
+ledger；active read 必须先验证 source Event 仍 surviving 且完整 Floor Version 匹配。失效
+记录可以在安全 owner mutation/rebuild 中回收，但物理 GC 不能替代 source-bound filtering；
+`health_assessment_timeline` 已登记为 Character Floor owner root。旧 Chat 不因缺少
+Assessment 而自动批量调用 AI。
+
+Health Recovery Guidance Phase 5B 把每条 active observation
+的 Story Time elapsed 与 Assessment recovery window 转换为粗粒度身体表现阶段。具体 duration、
+remaining time、deadline、Assessment 字段属于内部推演参数，不应作为剧情输出内容注入；
+Guidance 不是强制提及，也不是 factual source。它不能写 Event、改变 Assessment、关闭
+observation 或回流 Event Analysis。只有真实 narrative 再次出现的身体变化，才能沿既有
+factual Event pipeline 进入系统。Recovery Guidance 与 recovery-stage Context injection
+已通过唯一 `bioweave_projection_context` 槽位提供 deterministic、non-factual guidance；
+它不创建 Event、不修改 Assessment/Health State、不成为 Event evidence。完整 Health
+Projection、long-term progression 与 recovery-stage UI 当前均未实现。
+
 Character Registry, Character Facts/Profile, Tracking Subject/Candidate, and
 Current Biological State remain separate concepts. Registry is canonical identity
 history; `character_profiles` / `characterFacts` are Runtime-derived facts;

@@ -905,6 +905,117 @@ test('character page keeps profile and Event data when Current State is unavaila
   assert.match(html, /可承载妊娠[\s\S]*是/)
 })
 
+test('character details consume grouped Health State issues without rebuilding lifecycle', () => {
+  const healthState = {
+    schema_version: 1,
+    characters: {
+      'char-a': {
+        current_health_summary: null,
+        active_observations: [
+          { source_event_id: 'active-pain', expected_recovery: { boundary: { day_index: 10 } } },
+        ],
+        grouped_issues: [
+          { group_key: 'wrist|left|pain', display_site: 'wrist', laterality: 'left', factual_kind: 'pain', description: '疼痛', source_observation_ids: ['active-pain', 'duplicate-pain'] },
+          { group_key: 'wrist|left|abrasion', display_site: 'wrist', laterality: 'left', factual_kind: 'abrasion', description: '擦伤', source_observation_ids: ['active-abrasion'] },
+        ],
+      },
+    },
+  }
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    characterProfiles: { 'char-a': { character_id: 'char-a', display_name: '角色甲' } },
+    currentHealthState: healthState,
+  })
+  assert.match(html, /健康状态/)
+  assert.match(html, /当前有健康问题/)
+  assert.match(html, /左手腕/)
+  assert.match(html, /疼痛/)
+  assert.match(html, /擦伤/)
+  assert.equal((html.match(/>疼痛<\/p>/g) ?? []).length, 1)
+  assert.doesNotMatch(html, /active-pain|duplicate-pain|expected_recovery|day_index/)
+})
+
+test('character Health State is scoped by canonical character id and supports conservative empty states', () => {
+  const healthState = {
+    schema_version: 1,
+    characters: {
+      'char-a': {
+      grouped_issues: [{ group_key: 'general|unspecified|fever', display_site: 'general', factual_kind: 'fever', description: '发热', source_observation_ids: ['fever-a'] }],
+      },
+    },
+  }
+  const base = {
+    trackingSubjects: [
+      { character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] },
+      { character_id: 'char-b', display_name: '角色乙', exposure_event_ids: [] },
+    ],
+    characterProfiles: {
+      'char-a': { character_id: 'char-a', display_name: '角色甲' },
+      'char-b': { character_id: 'char-b', display_name: '角色乙' },
+    },
+    currentHealthState: healthState,
+  }
+  const htmlA = charactersPage({ ...base, characterId: 'char-a' })
+  const htmlB = charactersPage({ ...base, characterId: 'char-b' })
+  const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null })
+  assert.match(htmlA, /未标明部位/)
+  assert.doesNotMatch(htmlA, /全身/)
+  assert.match(htmlA, /发热/)
+  assert.doesNotMatch(htmlB, /发热/)
+  assert.match(htmlB, /当前无记录的健康问题/)
+  assert.match(missing, /当前无记录的健康问题/)
+})
+
+test('Character Health UI prefers factual descriptions and never exposes machine kind', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            group_key: 'unspecified|unspecified|pain_and_soreness',
+            display_site: 'general',
+            factual_kind: 'pain_and_soreness',
+            description: '大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力',
+            source_observation_ids: ['health-event'],
+          }],
+        },
+      },
+    },
+  })
+  assert.match(html, /大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力/)
+  assert.doesNotMatch(html, /pain_and_soreness|pain and soreness/)
+  assert.match(html, /未标明部位/)
+  assert.doesNotMatch(html, /全身/)
+})
+
+test('Character UI forwards current Health State without exposing internal assessment fields', () => {
+  const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
+  assert.match(appSource, /currentHealthState: collected\.current_health_state/)
+  assert.match(appSource, /currentHealthState: businessState\.currentHealthState/)
+  assert.doesNotMatch(charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            display_site: 'wrist',
+            laterality: 'left',
+            factual_kind: 'pain',
+            source_event_ids: ['evt'],
+            assessment_id: 'assessment-secret',
+            source_floor_version: { floor: 1 },
+            expected_recovery: { boundary: { day_index: 10 } },
+          }],
+        },
+      },
+    },
+  }), /assessment-secret|source_floor_version|day_index/)
+})
+
 test('state selector event hook is removed while Character focus remains', () => {
   const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
   const stateSource = readFileSync(new URL('../ui/state.js', import.meta.url), 'utf8')

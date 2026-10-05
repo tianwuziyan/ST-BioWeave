@@ -971,7 +971,6 @@ test('Event message roles and ordered blocks are stable, with narrative only in 
     '你是 BioWeave 的 BiologicalEvent 事实提取器',
     '【公共分析提示词】',
     '【Event Analysis 任务】',
-    '【本次分析边界】',
     '【Event 输出契约】',
     '【当前 World Model 参考】',
     '【剧情上下文】',

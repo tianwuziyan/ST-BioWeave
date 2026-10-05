@@ -68,6 +68,7 @@ test('user Floor clear operations are explicit allowlists and never include owne
     'projection_timeline',
     'projection_timing_timeline',
     'tracking_window_timeline',
+    'health_assessment_timeline',
   ]);
   assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.world, [
     'world_model',

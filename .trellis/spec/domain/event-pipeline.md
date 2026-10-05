@@ -475,6 +475,36 @@ Projection Runtime is production-connected within the single-identity contract.
 Context injection still reads only persisted Projection Views and never feeds a
 Projection generated after a factual execution back into that same execution.
 
+### Character Health State design pointer
+
+Character Health State remains **PARTIAL / Phase 4 active observation read model**. Its proposed boundary,
+condition identity deferrals, currentness boundary, and UI/Context separation are documented
+in [CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md). This design does not
+change the existing Event contract: `physical_symptom` is only one candidate fact source;
+`medical_event`, `other_biological`, reproductive facts, and other validated Events remain
+eligible inputs according to their own contracts. Phase 4 evaluates each observation independently
+and only performs presentation-only grouping by exact structured site/laterality/kind values;
+when the narrative explicitly states a symptom or injury site, Event Analysis must preserve it as
+the optional factual `body_site` string; the UI does not infer a site from description or kind.
+advanced Condition identity and silence-over-time policy are not frozen here. The current read
+model does not add a Health State authority, UI, Projection, or medical ontology.
+产品设计另行确认：Health Condition 可具有 `short_term`、`long_term`、`permanent`
+persistence class；只有明确 short-term 且未来 policy 认可自然恢复的 condition 才能由
+Story Time 驱动 derived evolution。该演化不得创建 recovery Event；新的 factual Event
+优先，Projection 仍不能成为 Event evidence。
+
+### Health Recovery Guidance boundary (Phase 5B implemented narrow scope)
+
+Health Recovery Guidance 是 Projection/Context 的 non-factual presentation guidance，
+不是 Event Analysis 输入事实。它可以根据每个 observation 自身的 Assessment 与 Story Time
+计算粗粒度 `early` / `recovering` / `near_recovery` 阶段，帮助剧情在相关动作、刺激或环境
+出现时自然表现身体反应；不要求每轮提及健康问题，也不得注入具体恢复倒计时、日期、百分比、
+deadline 或 Assessment 内部字段供剧情复述。Guidance 不创建 Event、不关闭 observation、不
+修改 Assessment，且 Projection Context 不得回流成为 Event evidence。该 Guidance 与其
+recovery-stage Context injection 已实现为现有 `bioweave_projection_context` 槽位中的
+deterministic guidance；不新增 persistence、Assessment AI pass 或第二个 prompt slot。
+完整 Health Projection、long-term progression 与 recovery-stage UI 仍未实现。
+
 ## 3. Contracts
 
 ### Input

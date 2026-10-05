@@ -10,18 +10,23 @@
 - Tracking Registry 领域逻辑：从已验证的 Floor-bound Event 建立/重建 Runtime Tracking Subject 派生索引；只保存稳定人物信息和 `event_id` 引用，不访问 DOM、AI 或宿主。
 - `core/state.js`：纯程序 State Reducer，不调用 AI；由 Runtime 以 `baseState`、Events、`currentStoryTime` 和 `characterFacts` 计算 derived Current Biological State。
 - `core/snapshot.js`：Floor-owned 检查点、校验、最近有效 Snapshot 恢复和后续 Event replay；无效或缺失时回退完整 replay。
+- Character Health State：已实现 Phase 1 persisted Assessment lifecycle、Phase 2 minimal derived read model、Phase 4 independent observation lifecycle / presentation aggregation 与 Phase 5A Character Details read-model presentation；Phase 3 trajectory identity 已撤回，Recovery Guidance、Projection、advanced Condition identity 与医疗规则仍见 [领域设计文档](./CHARACTER-HEALTH-STATE.md)，并非完整生产能力。
+- `core/health-evolution.js`：纯 Health Evolution read-model calculation；只消费 surviving Events、valid persisted Assessments 与 Story Time，不调用 AI 或写 storage。
+- `core/health-aggregation.js`：只做 active observation 的 presentation-only 精确分组，不参与 observation lifecycle 或 Assessment authority。
+- Health Recovery Guidance / health-related Projection：PARTIAL / PHASE 5B IMPLEMENTED；由 Health-owned deterministic stage calculator 生成粗粒度身体表现指导，并复用唯一 `bioweave_projection_context` 槽位；不把具体倒计时、Assessment 字段或 Guidance Context 当作剧情事实。完整 Health Projection、long-term progression 与 explicit recovery resolution 仍未实现。
 - `core/projection.js`：未来软推演数据；不是事实。
 - Pregnancy Exposure Tracking Window：规范见 [Pregnancy Exposure Tracking Lifecycle](../.trellis/spec/domain/pregnancy-tracking.md)；`core/tracking-window.js`、Runtime/storage owner 已实现 Phase 1 + Phase 2 的独立 Window lifecycle，`core/tracking.js` 只消费其 active view 派生 Subject/Candidate。
 - `core/genealogy.js`：家系查询、世代与排序。
 - `ai/client.js`：API Profile 的校验、SillyTavern Secret 引用和宿主代理测试请求；不在浏览器或 Chat 数据中保存明文 API Key。
 - `ai/prompts.js`：受保护 Core Prompt + 公共 `analysis_prompt` + 各 Analyzer 的任务/输出 Contract Pipeline。
 - `ai/worldbook.js`：世界书枚举/选择/Token 估算。
-- `ai/analyzer.js`：World / Floor / Projection 三类 AI 任务；Phase 2A 的 Floor Event 分析必须使用固定 JSON 解析和统一 Event 校验，不能以自由文本作为成功结果。
+- `ai/analyzer.js`：World / Floor / Projection 与独立 Health Assessment AI 任务；Health Assessment 只消费已提交的 factual Event，不能以自由文本作为成功结果。
 - `runtime/chat.js`：ChatBoundary。
 - `runtime/floor.js`：Floor Version、内容签名与成功版本去重基础设施；自动调度状态由 Runtime 持有。
 - `runtime/event-analysis.js`：Event Analysis coordinator；拥有目标 Floor 解析、生产输入构建（含 `getCurrentFloorAnalysisInput()`）、自动/手动调度、去重、提交、状态 DTO、Event CRUD 与 Registry 重建。Prompt Preview 复用该 Runtime 输入，不在 UI 重建 Floor Version。
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
 - `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
+- `runtime/health-evolution.js`：收集当前 Floor 的 active source-bound Assessments，并调用纯 Health Evolution core；通过窄接口向主 derived-state path 提供 `current_health_state`。
 - `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
@@ -41,6 +46,11 @@
 | Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; resolved Window candidate handoff and confirmed-pregnancy guard implemented |
 | StateReducer | PRODUCTION |
 | Current Biological State | PRODUCTION |
+| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse and invalidation |
+| Minimal Health Evolution / Current Health State | PARTIAL / PHASE 4 IMPLEMENTED; independent observation lifecycle and presentation aggregation |
+| Character Health UI | PARTIAL / PHASE 5A IMPLEMENTED; Character Details consumes grouped current-health read model only |
+| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic recovery-stage guidance in Projection Context only |
+| Health Recovery Guidance / health-related Projection | PARTIAL / PHASE 5B IMPLEMENTED; deterministic recovery-stage guidance uses the existing Projection Context slot; generic Health Projection remains DESIGN / PLANNED |
 | Snapshot Runtime | PRODUCTION |
 | Characters UI | PRODUCTION within current scope |
 | Overview | PARTIAL |
@@ -58,6 +68,7 @@ active valid Character Floors
   → valid Snapshot restore or full Event replay
   → reduceState({baseState, events, currentStoryTime, characterFacts})
   → Current Biological State
+  → minimal derived Current Health State (PHASE 2 IMPLEMENTED; read model only)
 ```
 
 Current Biological State 是 Runtime derived state，不是新的 authoritative fact
@@ -65,6 +76,14 @@ store。Snapshot 是同一 derived state 的可校验 checkpoint；不存在有�
 时使用完整 replay。较早 Snapshot 配合较晚 `currentStoryTime`、且没有新增 Event
 时，只会 transient 更新 `elapsed_story_days`，不会创造 conception、pregnancy
 或 confirmation Event。
+
+完整 Character Health State 仍不是当前 production UI/domain capability。`short_term`、
+`long_term`、`permanent` 是已冻结的粗粒度 persistence class 方向；仅未来 policy
+认可的 short-term condition 才能进行 derived natural evolution，而且不能创建
+recovery Event。不要把 `physical_symptom` 当作唯一入口，也不要冻结 Condition identity、
+duration、severity 或完整 currentness/silence-over-time policy。Phase 2 的最小 read model
+已实现 expected boundary closure 与 Story Time jump comparison，但不持久化 Health State、
+不创建 recovery Event，也不实现 advanced Condition identity。
 
 人物领域也必须保持分层：Character Registry 是 canonical identity history；
 `character_profiles` / `characterFacts` 是 Runtime derived biological/profile

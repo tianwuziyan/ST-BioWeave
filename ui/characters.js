@@ -346,7 +346,58 @@ function renderOtherSection() {
     '<div class="bioweave-character-other-list"><div class="bioweave-character-other-item"><strong>推演</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>关系</strong><span>暂无</span></div><div class="bioweave-character-other-item"><strong>备注</strong><span>暂无</span></div></div></section>'
   )
 }
-function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, timingEditor, currentState, currentStateStatus }) {
+const healthSiteLabels = {
+  wrist: '手腕',
+  ankle: '脚踝',
+  hand: '手',
+  arm: '手臂',
+  leg: '腿',
+  head: '头部',
+  chest: '胸部',
+  abdomen: '腹部',
+}
+const healthLateralityLabels = { left: '左', right: '右', bilateral: '双侧', midline: '中线' }
+
+function healthDisplayLabel(value, fallback = '当前健康问题') {
+  const text = String(value ?? '').trim()
+  if (!text) return fallback
+  return text
+}
+
+function healthDisplaySite(issue) {
+  const site = String(issue?.display_site ?? issue?.body_site ?? '').trim()
+  if (!site || site === 'general') return '未标明部位'
+  const laterality = healthLateralityLabels[String(issue?.laterality ?? '').trim().toLowerCase()] ?? ''
+  return laterality + (healthSiteLabels[site.toLowerCase()] ?? healthDisplayLabel(site, '相关部位'))
+}
+
+function renderHealthStateSection(currentHealthState, characterId) {
+  const characterHealth = currentHealthState?.characters?.[characterId] ?? null
+  const groupedIssues = Array.isArray(characterHealth?.grouped_issues) ? characterHealth.grouped_issues : []
+  const summary = typeof characterHealth?.current_health_summary === 'string' && characterHealth.current_health_summary.trim()
+    ? characterHealth.current_health_summary.trim()
+    : groupedIssues.length
+      ? '当前有健康问题'
+      : '当前无记录的健康问题'
+  const validIssues = groupedIssues
+    .map(issue => ({
+      ...issue,
+      display_description: Array.isArray(issue?.descriptions) && issue.descriptions.length
+        ? issue.descriptions.join('；')
+        : issue?.description,
+    }))
+    .filter(issue => String(issue?.display_description ?? issue?.factual_kind ?? '').trim())
+  const content = validIssues.length
+    ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' +
+      validIssues
+        .map(issue => '<article class="bioweave-character-health-issue"><header><strong>' + escapeHtml(healthDisplaySite(issue)) + '</strong></header><p>' + escapeHtml(healthDisplayLabel(issue.display_description, '当前健康问题')) + '</p></article>')
+        .join('') +
+      '</div>'
+    : '<div class="bioweave-empty bioweave-character-health-empty">当前没有可显示的健康问题。</div>'
+  return '<section class="bioweave-card bioweave-character-detail-section bioweave-character-health" aria-label="人物健康状态"><header class="bioweave-character-section-head"><div><h3>健康状态</h3><small>当前身体问题</small></div><strong>' + escapeHtml(summary) + '</strong></header>' + content + '</section>'
+}
+
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, timingEditor, currentState, currentStateStatus, currentHealthState }) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
   const selectedCharacterId = characterIdOf(subject)
   const characterState = currentState?.characters?.[selectedCharacterId] ?? null
@@ -379,6 +430,7 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
+    renderHealthStateSection(currentHealthState, selectedCharacterId) +
     renderCharacterState({ characterState, currentState, currentStateStatus }) +
     renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     renderOtherSection() +
@@ -400,6 +452,7 @@ export function charactersPage({
   analysisStatus = null,
   currentState = null,
   currentStateStatus = 'NO_CHARACTER_FLOOR',
+  currentHealthState = null,
   currentStoryTime = null,
   currentStoryTimeDifferences = {},
   aliasEditor = null,
@@ -476,6 +529,7 @@ export function charactersPage({
           timingEditor,
           currentState,
           currentStateStatus,
+          currentHealthState,
         })
       : unavailableDetailPage()
     : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'

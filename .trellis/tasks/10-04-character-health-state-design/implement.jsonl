@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe/version ownership and derived-state rebuild boundary"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"BiologicalEvent contract, state_fact, story_time, location, and Projection separation"}
+{"file":"docs/PROJECT-STATE.md","reason":"Current production status and architecture navigation"}
+{"file":"docs/DATA-MODEL.md","reason":"Current Event, State, Snapshot, and Projection data boundaries"}
+{"file":"docs/UI.md","reason":"Characters/Events product UI and current-state display boundary"}

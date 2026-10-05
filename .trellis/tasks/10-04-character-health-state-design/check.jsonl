@@ -1,0 +1,5 @@
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"Verify required sections, full path diagram, deferred decisions, and DESIGN/NOT IMPLEMENTED status"}
+{"file":"docs/UI.md","reason":"Verify stale state description is corrected without changing UI implementation"}
+{"file":"docs/PROJECT-STATE.md","reason":"Verify navigation status labels distinguish Current Biological State from proposed Health State"}
+{"file":"docs/DEVELOPMENT.md","reason":"Verify module/navigation note does not imply runtime implementation"}
+{"file":"docs/DATA-MODEL.md","reason":"Verify data model pointer does not add production schema"}

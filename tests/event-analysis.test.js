@@ -184,6 +184,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /明确的?生理性别.*biological_type.*映射/);
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
+  assert.match(prompt, /正文明确给出症状或伤势所在身体部位时，必须提取该 factual body_site/);
   assert.match(prompt, /individual evidence/);
   assert.match(prompt, /完整 narrative discovery window exhaustive scan/);
   assert.match(prompt, /临时.*candidate/);
@@ -191,8 +192,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /现实.*生殖机制/);
   assert.match(prompt, new RegExp(PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND));
   assert.doesNotMatch(prompt, /全部实际参与者/);
-  assert.match(prompt, /目标楼层：12/);
-  assert.match(prompt, /Event source 由 Runtime 绑定/);
+  assert.doesNotMatch(prompt, /【本次分析边界】|目标楼层：|目标消息：|目标 Swipe：/);
   assert.doesNotMatch(prompt, /Chat ID:/);
   assert.equal(JSON.stringify(messages).includes('DO-NOT-SEND'), false);
 });
@@ -767,6 +767,7 @@ test('physical_symptom requires the canonical typed symptom payload', () => {
   canonical.state_fact.payload.symptom = {
     kind: 'observed',
     description: '大腿内侧酸痛',
+    body_site: '大腿内侧',
   };
   const parsed = parseEventAnalysisResponse(response([canonical]), floorVersion);
   assert.deepEqual(parsed.events[0].state_fact.payload.symptom, canonical.state_fact.payload.symptom);
@@ -1501,7 +1502,6 @@ test('Event messages use deterministic ordered text blocks instead of serialized
     '【当前 World Model 参考】',
     '【剧情上下文】',
     '【本次分析内容】',
-    '【本次分析边界】',
     '【Event 输出契约】',
   ])
     assert.match(
@@ -1511,7 +1511,6 @@ test('Event messages use deterministic ordered text blocks instead of serialized
   const prompt = messages.map((message) => message.content).join('\n');
   assert.doesNotMatch(prompt, /CHARACTER_CONTEXT_MARKER|PERSONA_CONTEXT_MARKER/u);
   const order = [
-    '【本次分析边界】',
     '【Event 输出契约】',
     '【当前 World Model 参考】',
     '【剧情上下文】',

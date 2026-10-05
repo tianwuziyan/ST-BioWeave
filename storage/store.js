@@ -24,6 +24,7 @@ import {
 } from "../runtime/floor.js";
 import { isCompleteCharacterRegistrySnapshot } from "../core/identity.js";
 import { isCharacterMessageRole } from "../core/message-role.js";
+import { emptyHealthAssessmentTimeline, normalizeHealthAssessmentTimeline } from "../core/health-assessment.js";
 
 function staleChatError() {
   return new Error("STALE_CHAT");
@@ -627,6 +628,9 @@ function normalizeFloorData(data) {
       ? normalizeCharacterRegistry(source.character_registry)
       : cloneValue(source.character_registry);
   }
+  normalized.health_assessment_timeline = hasOwn(source, "health_assessment_timeline")
+    ? normalizeHealthAssessmentTimeline(source.health_assessment_timeline)
+    : emptyHealthAssessmentTimeline();
   return normalized;
 }
 

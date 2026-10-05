@@ -115,6 +115,16 @@ For registration ownership, keep one unregister function per document:
 - Use empty states for unfinished business layers. Do not create mock storage
   or write demo DTOs into Chat metadata or Floor data.
 
+### Character Health Phase 5A
+
+The existing Character Details page may consume the Runtime-provided
+`current_health_state` read model. It must use canonical `character_id` lookup and
+the supplied `grouped_issues`; it must not recompute observation lifecycle,
+Story Time boundaries, aggregation, or recovery guidance. Ordinary UI must omit
+Assessment/Floor provenance, raw timing, internal IDs, and raw JSON. Missing Health
+State or an absent character entry must render a safe empty state. Recovery Guidance,
+Projection, and Context injection remain outside the implemented UI scope.
+
 ## UI_OPEN_FAST_PATH
 
 普通 settings editor、Character editor、popup、modal 和详情辅助窗口必须先同步

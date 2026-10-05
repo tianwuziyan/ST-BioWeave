@@ -3,6 +3,44 @@ import {
   statusFromError as clientStatusFromError,
 } from "../ai/client.js";
 
+export const FAILURE_CATEGORIES = Object.freeze({
+  STALE_FLOOR_OWNER: "stale_floor_owner",
+});
+
+const STALE_FLOOR_OWNER_CODES = new Set([
+  "FLOOR_TX_STALE_VERSION",
+  "STALE_FLOOR_VERSION",
+]);
+const STALE_FLOOR_OWNER_CLASSIFICATIONS = new Set([
+  "TRUE_STALE_OWNER_CHANGE",
+  "TRUE_OWNER_CHANGE",
+  "STALE_OWNER_CHANGE",
+]);
+
+function normalizedDiagnosticToken(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+export function canonicalFailureCategory(error = {}) {
+  const code = normalizedDiagnosticToken(
+    error?.code ?? error?.error_code ?? error?.diagnostic_code ?? error?.diagnosticCode,
+  );
+  if (STALE_FLOOR_OWNER_CODES.has(code)) return FAILURE_CATEGORIES.STALE_FLOOR_OWNER;
+  const classifications = [
+    error?.classification,
+    error?.retry_classification,
+    error?.cause?.classification,
+    error?.cause?.retry_classification,
+  ].map(normalizedDiagnosticToken);
+  if (classifications.some(value => STALE_FLOOR_OWNER_CLASSIFICATIONS.has(value))) {
+    return FAILURE_CATEGORIES.STALE_FLOOR_OWNER;
+  }
+  return null;
+}
+
 function cloneSafeTraceValue(value) {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(cloneSafeTraceValue);
@@ -72,8 +110,10 @@ function diagnosticCode(error) {
   return String(error?.code ?? error?.message ?? "EVENT_ANALYSIS_FAILED");
 }
 
-function safeDiagnosticSummary(error, stage = null) {
+export function safeDiagnosticSummary(error, stage = null) {
   const code = diagnosticCode(error);
+  if (canonicalFailureCategory(error) === FAILURE_CATEGORIES.STALE_FLOOR_OWNER)
+    return "当前楼层状态已发生变化，本次分析结果未写入。";
   const timeoutCode = code === "REQUEST_TIMEOUT" || code === "timeout" ||
     error?.code === "REQUEST_TIMEOUT";
   const httpStatus = Number(error?.status ?? error?.http_status);
@@ -91,16 +131,12 @@ function safeDiagnosticSummary(error, stage = null) {
   ).toLowerCase();
   if (retryClassification === "temporary_server_convergence")
     return "当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。";
-  if (retryClassification === "true_owner_change")
-    return "当前楼层状态发生变化，本次世界分析结果未写入。";
   if (error?.analysis_stage === "floor_owner_convergence" ||
       code === "AUTO_ANALYSIS_FLOOR_PREREQUISITE_UNAVAILABLE" ||
       code === "HOST_CONVERGENCE_FAILED" ||
       code === "HOST_CONVERGENCE_UNAVAILABLE") {
     if (code === "HOST_CONVERGENCE_FAILED" || error?.version_check_source === "host_authoritative_save")
       return "宿主聊天保存失败，自动分析未开始。";
-    if (retryClassification === "true_owner_change")
-      return "当前楼层状态已变化，本次分析已取消。";
     return "当前楼层尚未完成宿主保存，自动分析未开始。";
   }
   if (code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED")

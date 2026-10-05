@@ -2,6 +2,7 @@ import { callOpenAICompatible, traceApi } from './client.js';
 import * as eventDomain from '../core/events.js';
 import {
   buildEventAnalysisMessages,
+  buildHealthAssessmentMessages,
   buildPrompt,
   buildWorldModelMessages,
   buildWorldModelPatchMessagesV2,
@@ -24,6 +25,7 @@ import {
   worldModelUnknownId,
 } from './world-supplement-protocol.js';
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
+import {normalizeHealthAssessment, validateHealthAssessment} from '../core/health-assessment.js';
 
 const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 3;
 
@@ -2866,12 +2868,29 @@ function validateRawStateFactReference(value, path, {allowNew = false} = {}) {
   }
 }
 
-function validateRawStateFactRecord(value, path) {
+function validateRawStateFactRecord(value, path, {allowHealthIdentity = false} = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !stateFactText(value.kind)) {
     throw eventDiagnostic('invalid_state_fact_payload', path, 'EVENT_STATE_FACT_RECORD_INVALID');
   }
   if (value.description !== undefined && value.description !== null && !stateFactText(value.description)) {
     throw eventDiagnostic('invalid_state_fact_payload', `${path}.description`, 'EVENT_STATE_FACT_DESCRIPTION_INVALID');
+  }
+  if (!allowHealthIdentity) return;
+  const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation']);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw eventDiagnostic('invalid_state_fact_payload', `${path}.${key}`, 'EVENT_HEALTH_IDENTITY_FIELD_INVALID');
+    }
+  }
+  if (value.body_site !== undefined && value.body_site !== null && !stateFactText(value.body_site)) {
+    throw eventDiagnostic('invalid_state_fact_payload', `${path}.body_site`, 'EVENT_HEALTH_BODY_SITE_INVALID');
+  }
+  if (value.laterality !== undefined && value.laterality !== null &&
+      !eventDomain.HEALTH_LATERALITY.includes(value.laterality)) {
+    throw eventDiagnostic('invalid_state_fact_payload', `${path}.laterality`, 'EVENT_HEALTH_LATERALITY_INVALID');
+  }
+  if (value.continuation !== undefined && typeof value.continuation !== 'boolean') {
+    throw eventDiagnostic('invalid_state_fact_payload', `${path}.continuation`, 'EVENT_HEALTH_CONTINUATION_INVALID');
   }
 }
 
@@ -2958,12 +2977,12 @@ function validateRawStateFactShape(raw, eventIndex) {
     }
     case 'physical_symptom':
       if (!only('symptom')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_SYMPTOM_PAYLOAD_INVALID');
-      validateRawStateFactRecord(payload.symptom, `${eventPath(eventIndex)}.state_fact.payload.symptom`);
+      validateRawStateFactRecord(payload.symptom, `${eventPath(eventIndex)}.state_fact.payload.symptom`, {allowHealthIdentity: true});
       break;
     case 'medical_event':
     case 'other_biological':
       if (!only('fact')) throw eventDiagnostic('invalid_state_fact_payload', `${eventPath(eventIndex)}.state_fact.payload`, 'EVENT_FACT_PAYLOAD_INVALID');
-      validateRawStateFactRecord(payload.fact, `${eventPath(eventIndex)}.state_fact.payload.fact`);
+      validateRawStateFactRecord(payload.fact, `${eventPath(eventIndex)}.state_fact.payload.fact`, {allowHealthIdentity: true});
       break;
     default:
       throw eventDiagnostic('state_fact_type_invalid', `${eventPath(eventIndex)}.state_fact`, 'EVENT_STATE_FACT_TYPE_INVALID');
@@ -5468,11 +5487,54 @@ export function createAnalyzer({
     }
   }
 
+  async function analyzeHealthAssessment(input = {}) {
+    const profile = profileResolver?.('health_assessment')
+      ?? profileResolver?.('event_analysis')
+      ?? profileResolver?.('event')
+    if (!profile) {
+      const error = new Error('API_PROFILE_NOT_CONFIGURED')
+      error.code = 'API_PROFILE_NOT_CONFIGURED'
+      throw error
+    }
+    const event = input.event ?? input.source_event ?? input
+    const raw = await callOpenAICompatible(
+      profile,
+      buildHealthAssessmentMessages(event, analysisPromptResolver?.() ?? {}),
+      requestOptions(input),
+    )
+    const response = responseText(raw)
+    let parsed
+    try {
+      parsed = JSON.parse(response)
+    } catch (cause) {
+      const error = new Error('HEALTH_ASSESSMENT_INVALID_JSON')
+      error.code = 'HEALTH_ASSESSMENT_INVALID_JSON'
+      error.cause = cause
+      throw error
+    }
+    const result = validateHealthAssessment({
+      ...parsed,
+      assessment_id: 'pending',
+      request_key: 'pending',
+      source_event_id: 'pending',
+      source_floor_version: {chat_id: 'pending', message_id: 0, floor: 0, swipe_id: 0, content_hash: 'pending', message_version: 0},
+      source_observation_fingerprint: 'pending',
+    })
+    if (!result.ok) {
+      const error = new Error('HEALTH_ASSESSMENT_INVALID')
+      error.code = 'HEALTH_ASSESSMENT_INVALID'
+      error.errors = result.errors
+      throw error
+    }
+    return normalizeHealthAssessment(parsed)
+  }
+
   return {
     analyzeWorldModel,
     analyzeWorldModelPatchV2,
     analyzeWorld: analyzeWorldModel,
     analyzeFloor,
+    analyzeHealthAssessment,
     generateProjection: (input) => run('projection', input),
   };
 }

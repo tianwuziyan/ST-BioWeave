@@ -86,14 +86,34 @@ export function buildProjectionContextDTO(views = [], {attributionBySubject = {}
     });
 }
 
+function healthGuidanceDTO(guidance = []) {
+  return list(guidance)
+    .filter(item => text(item?.subject_id) && text(item?.body_site) && text(item?.guidance))
+    .map(item => ({
+      context_type: 'health_recovery_guidance',
+      subject_id: item.subject_id,
+      body_site: item.body_site,
+      stage: text(item.stage) || null,
+      guidance: item.guidance,
+    }))
+    .sort((left, right) =>
+      String(left.subject_id).localeCompare(String(right.subject_id)) ||
+      String(left.body_site).localeCompare(String(right.body_site)));
+}
+
 export function buildProjectionContextPrompt(context = []) {
   const entries = Array.isArray(context) ? context : [];
   if (!entries.length) return '';
-  const lines = [
-    'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
-    '以下内容描述未来可能的方向；本轮不要求兑现，也不得将其改写成已确认事实。',
-  ];
-  for (const entry of entries) {
+  const projectionEntries = entries.filter(entry => entry?.context_type !== 'health_recovery_guidance');
+  const healthEntries = entries.filter(entry => entry?.context_type === 'health_recovery_guidance');
+  const lines = [];
+  if (projectionEntries.length) {
+    lines.push(
+      'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
+      '以下内容描述未来可能的方向；本轮不要求兑现，也不得将其改写成已确认事实。',
+    );
+  }
+  for (const entry of projectionEntries) {
     lines.push(`- 角色 ${entry.subject_id}：`);
     if (entry.development_kind) lines.push(`  - 发展类型：${entry.development_kind}`);
     if (entry.mechanism?.key) lines.push(`  - 机制背景：${entry.mechanism.key}`);
@@ -109,11 +129,22 @@ export function buildProjectionContextPrompt(context = []) {
       lines.push('  - 已确认的生殖贡献者是当前事实背景；不要据此新增未确认归因。');
     }
   }
-  lines.push('如果正文自然写出新的生物事实，BioWeave 将在后续 Event Analysis 中单独判断；Projection 注入本身不会产生 Event。');
+  if (healthEntries.length) {
+    lines.push(
+      'BioWeave 恢复阶段身体表现指导（仅供剧情表现参考，不是新的事实）：',
+      '这些信息只用于在当前动作、环境或剧情与相关身体问题有关时保持身体反应一致；无关场景可以完全不提。',
+      '不要机械重复健康问题，也不要输出剩余天数、预计恢复日期、恢复百分比、deadline 或任何内部 Assessment 字段。',
+    );
+    for (const entry of healthEntries) {
+      lines.push(`- 角色 ${entry.subject_id} 的${entry.body_site}：${entry.guidance}`);
+    }
+  }
+  lines.push('Context 中的 Projection 与恢复指导都不是 Event evidence；只有正文真正写出的新内容，才由后续 Event Analysis 单独判断。');
   return lines.join('\n');
 }
 
 export function buildProjectionContext(views, options = {}) {
-  const dto = buildProjectionContextDTO(views, options);
+  const projectionDTO = buildProjectionContextDTO(views, options);
+  const dto = [...projectionDTO, ...healthGuidanceDTO(options.healthGuidance)];
   return {dto: clone(dto), prompt: buildProjectionContextPrompt(dto)};
 }

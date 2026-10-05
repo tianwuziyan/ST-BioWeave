@@ -87,6 +87,8 @@ flowchart TD
 | Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 World-authoritative horizon lifecycle and Floor persistence |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
+| Health Evolution | `core/health-evolution.js` + `runtime/health-evolution.js` | 从 surviving Events、valid Assessments 与 Story Time 派生 Current Health State；不调用 AI 或写 storage |
+| Health Recovery Guidance | `core/health-recovery-guidance.js` + `runtime/projection-context.js` | 计算粗粒度、非事实的恢复阶段指导，并组合进唯一 `bioweave_projection_context` 槽位 |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
 | Characters UI | `ui/characters.js` | Characters 页面渲染；当前主要枚举 `tracking_subjects` |
 

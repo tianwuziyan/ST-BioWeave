@@ -424,6 +424,8 @@ export function createEventAnalysisCoordinator({
   notify = () => {},
   floorPersistence = null,
   trackingWindowPersistence = null,
+  healthAssessment = null,
+  healthEvolution = null,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -452,6 +454,7 @@ export function createEventAnalysisCoordinator({
     countedFloorKeys: new Set(),
     observedFloorKeys: new Set(),
     lastFailure: null,
+    schedulerRevision: 0,
   };
 
   function persistenceTraceContext(execution, target, domain) {
@@ -528,6 +531,7 @@ export function createEventAnalysisCoordinator({
   }
 
   function resetSchedulerState() {
+    schedulerState.schedulerRevision += 1;
     schedulerState.counter = 0;
     schedulerState.retryPaused = false;
     schedulerState.countedFloorKeys.clear();
@@ -1008,6 +1012,7 @@ export function createEventAnalysisCoordinator({
     excludeTarget = false,
     reason = "boundary",
   } = {}) {
+    schedulerState.schedulerRevision += 1;
     const token = chat.token();
     const states = await collectCurrentFloorStates(token, {includeEmpty: true});
     chat.assert(token);
@@ -1729,6 +1734,9 @@ export function createEventAnalysisCoordinator({
       registry,
       characterRegistry,
     );
+    const currentHealthState = healthEvolution?.deriveFromFloorStates
+      ? healthEvolution.deriveFromFloorStates({states: validStates, currentStoryTime})
+      : {schema_version: 1, characters: {}};
     let currentState;
     let currentStateStatus = currentFloor ? "ready" : "NO_CHARACTER_FLOOR";
     try {
@@ -1762,6 +1770,7 @@ export function createEventAnalysisCoordinator({
       currentStoryTimeDifferences: currentStoryTimeDifferences(activeEvents, currentStoryTime),
       currentState,
       currentStateStatus,
+      currentHealthState,
       chatData: currentChat,
     };
   }
@@ -1903,6 +1912,7 @@ export function createEventAnalysisCoordinator({
       nextPersistenceInvocationId: domain => `${domain}-${Date.now()}-${++attemptSequence}`,
       domainValidationError,
       isStaleChat,
+      healthAssessment,
     },
     eventEditing: {
       getMessages: messages,
@@ -2137,6 +2147,7 @@ export function createEventAnalysisCoordinator({
         current_story_time: null,
         current_story_time_status: "NO_CHARACTER_FLOOR",
         current_story_time_differences: {},
+        current_health_state: {schema_version: 1, characters: {}},
       });
     }
     let derived;
@@ -2155,6 +2166,7 @@ export function createEventAnalysisCoordinator({
           current_story_time: null,
           current_story_time_status: "STATE_ERROR",
           current_story_time_differences: {},
+          current_health_state: {schema_version: 1, characters: {}},
         },
       );
     }
@@ -2170,6 +2182,7 @@ export function createEventAnalysisCoordinator({
         current_story_time: derived.currentStoryTime,
         current_story_time_status: derived.currentStoryTimeStatus,
         current_story_time_differences: derived.currentStoryTimeDifferences,
+        current_health_state: derived.currentHealthState,
       },
     );
   }
@@ -2338,6 +2351,7 @@ export function createEventAnalysisCoordinator({
         current_story_time: derived.currentStoryTime,
         current_story_time_status: derived.currentStoryTimeStatus,
         current_story_time_differences: derived.currentStoryTimeDifferences,
+        current_health_state: derived.currentHealthState,
         status: derived.currentStateStatus,
       };
     } catch (error) {
@@ -2349,6 +2363,7 @@ export function createEventAnalysisCoordinator({
         current_story_time: null,
         current_story_time_status: "NO_CHARACTER_FLOOR",
         current_story_time_differences: {},
+        current_health_state: {schema_version: 1, characters: {}},
         status: "NO_CHARACTER_FLOOR",
       };
     }
@@ -2431,6 +2446,7 @@ export function createEventAnalysisCoordinator({
       current_story_time: stateInfo?.current_story_time ?? null,
       current_story_time_status: stateInfo?.current_story_time_status ?? "NO_CHARACTER_FLOOR",
       current_story_time_differences: stateInfo?.current_story_time_differences ?? {},
+      current_health_state: stateInfo?.current_health_state ?? {schema_version: 1, characters: {}},
       current_floor: status.current_floor,
       last_success: status.last_success,
       analysis_status: analysisStatus,
@@ -2644,6 +2660,32 @@ export function createEventAnalysisCoordinator({
     } catch {
       return false;
     }
+  }
+  async function schedulerRunIsCurrent(run, target) {
+    if (!run || !target?.version) return false;
+    if (schedulerState.schedulerRevision !== run.revision) return false;
+    try {
+      chat.assert(run.token);
+      if (invalidatedFloors.has(floorExecutionKey(run.floorVersion))) return false;
+      const current = await resolveFloorAtIndex({
+        __messageIndex: true,
+        index: target.index,
+      });
+      if (schedulerState.schedulerRevision !== run.revision) return false;
+      return sameFloorVersion(current.version, run.floorVersion);
+    } catch {
+      return false;
+    }
+  }
+  function recordStaleSchedulerCompletion(target, run, outcome, error = null) {
+    emitPersistenceTrace("AUTO_SCHEDULER_COMPLETION_DISCARDED", null, target, {
+      completion: outcome,
+      reason: "stale-scheduler-owner",
+      scheduler_revision: run?.revision ?? null,
+      current_scheduler_revision: schedulerState.schedulerRevision,
+      error_code: error?.code ?? error?.message ?? null,
+      analysis_stage: error?.analysis_stage ?? null,
+    }, "scheduler");
   }
   async function rollbackLateFloorCommit(execution, target) {
     if (!execution.floorSaveStarted || !store.getFloor) return;
@@ -3177,6 +3219,11 @@ export function createEventAnalysisCoordinator({
   }
   async function runScheduledAnalysis(target, { reason, generation = null }) {
     const settings = schedulerSettings();
+    const schedulerRun = {
+      revision: schedulerState.schedulerRevision,
+      token: chat.token(),
+      floorVersion: target?.version ?? null,
+    };
     try {
       const result = await analysisExecution.run(
         {
@@ -3187,9 +3234,17 @@ export function createEventAnalysisCoordinator({
           trigger: "automatic",
         },
       );
+      if (!(await schedulerRunIsCurrent(schedulerRun, target))) {
+        recordStaleSchedulerCompletion(target, schedulerRun, "success");
+        return {skipped: true, reason: "stale-scheduler-completion"};
+      }
       if (result?.status === "success") recordSchedulerSuccess();
       return result;
     } catch (error) {
+      if (!(await schedulerRunIsCurrent(schedulerRun, target))) {
+        recordStaleSchedulerCompletion(target, schedulerRun, "failure", error);
+        return {skipped: true, reason: "stale-scheduler-completion"};
+      }
       recordSchedulerFailure(error, settings.retryFailed);
       throw error;
     }
@@ -3635,6 +3690,7 @@ export function createEventAnalysisCoordinator({
     analyzeCurrentCharacterEvents,
     getCurrentFloorAnalysisInput,
     requestAbortCurrentFloorAnalysis,
+    assertExecutionTargetCurrent,
     getCurrentFloorAnalysisStatus: statusForCurrentFloor,
     automaticAnalysis,
     analysisExecution,

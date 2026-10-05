@@ -3780,6 +3780,74 @@ test("scheduler reconciliation removes deleted Floor keys and restores the inter
   fixture.runtime.destroy();
 });
 
+test("stale scheduled success cannot overwrite a reconciled scheduler state", async () => {
+  let calls = 0;
+  let release;
+  let markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        calls += 1;
+        if (calls === 1) return {events: []};
+        markStarted();
+        await pending;
+        return {events: []};
+      },
+    },
+    messages: [{ message_id: "stale-success-58", floor: 58, content: "Floor 58", role: "assistant" }],
+  });
+  configureScheduler(fixture, {interval: 2});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  appendCharacter(fixture, "stale-success-60", 60, "Floor 60");
+  appendCharacter(fixture, "stale-success-62", 62, "Floor 62");
+  await started;
+
+  await fixture.runtime.reconcileSchedulerState({reason: "test-reconciliation"});
+  let state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 2);
+  assert.equal(state.countedFloorKeys.length, 2);
+
+  release();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 2);
+  assert.equal(state.countedFloorKeys.length, 2);
+  assert.equal(state.lastFailure, null);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(
+      entry => entry.stage === "AUTO_SCHEDULER_COMPLETION_DISCARDED" &&
+        entry.reason === "stale-scheduler-owner",
+    ),
+    true,
+  );
+  fixture.runtime.destroy();
+});
+
+test("authoritative scheduler MESSAGE_NOT_FOUND still enters the failure latch", async () => {
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        throw new Error("MESSAGE_NOT_FOUND");
+      },
+    },
+    messages: [{ message_id: "authoritative-failure-58", floor: 58, content: "Floor 58", role: "assistant" }],
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+
+  appendCharacter(fixture, "authoritative-failure-60", 60, "Floor 60");
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const state = fixture.runtime.getAutoAnalysisSchedulerState();
+  assert.equal(state.counter, 1);
+  assert.equal(state.lastFailure?.code, "MESSAGE_NOT_FOUND");
+  assert.equal(state.retryPaused, false);
+  fixture.runtime.destroy();
+});
+
 test("scheduler rebase restores the baseline and count after runtime state is reset", async () => {
   const fixture = createFixture({
     messages: [

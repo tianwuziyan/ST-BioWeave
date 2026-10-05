@@ -47,11 +47,13 @@ Character Floor
   → World Model resolve
   → Character/Event Analysis
   → BiologicalEvent
+  → Persisted Health Assessment (Phase 1 lifecycle)
   → Tracking Window (open / terminal factual lifecycle)
   → Character Registry
   → Tracking Subjects / Candidates
   → Character Facts
   → Current Biological State
+  → minimal Current Health State read model (PHASE 2 IMPLEMENTED; read model only)
   → Projection Evolution
   → Projection Eligibility
   → Pre-confirmation Timing eligibility
@@ -199,6 +201,17 @@ contains only context-visible Projection Views and is cleared when no valid
 Projection is available. It is not a factual source and cannot create a
 self-evidence loop.
 
+### Health Recovery Guidance boundary (Phase 5B implemented narrow scope)
+
+当前 Health Recovery Guidance 消费 Current Health State、active observations、saved
+Assessments 与 Story Time，把 elapsed recovery 转换为 `early`、`recovering`、
+`near_recovery` 等粗粒度身体表现指导，并复用唯一的
+`bioweave_projection_context` 槽位。内部 recovery duration/boundary 只用于阶段判断，
+不得注入要求剧情输出具体剩余天数、日期、百分比、deadline 或 Assessment 字段。
+Guidance 不是强制剧情点；只有当前动作、环境或情境相关时，剧情才需要自然体现身体反应。
+它不创建 Event、不修改 Health State、不成为 Event evidence。generic Health Projection、
+long-term progression、explicit recovery resolution 与 recovery-stage UI 仍未实现。
+
 ## Pre-confirmation Tracking Window and Projection Timing
 
 Tracking Window Phase 1 + Phase 2 is implemented as a separate lifecycle
@@ -329,6 +342,9 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Contributor Attribution | PARTIAL; factual Event/State contracts, resolved Window → candidate derived read model, and read-only Projection Context bridge implemented; UI remains deferred |
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
+| Character Health State | PARTIAL / PHASE 5A independent observation read model with presentation aggregation and Character Details consumption; Projection and advanced identity remain DESIGN / NOT IMPLEMENTED |
+| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic coarse recovery-stage guidance in the existing Projection Context slot; no generic Health Projection or UI recovery stage |
+| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse and invalidation |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Core | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Runtime Integration | IMPLEMENTED / AUTOMATED VERIFIED; eligible Projection host smoke pending |

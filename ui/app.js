@@ -29,6 +29,10 @@ import {
   statusFromError as sharedStatusFromError,
   traceApi,
 } from '../ai/client.js'
+import {
+  canonicalFailureCategory,
+  FAILURE_CATEGORIES,
+} from '../runtime/diagnostics.js'
 import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import {
   archiveWorldSpecies,
@@ -513,6 +517,28 @@ export function createOverlayLifecycle({
     getOverlay: () => overlay,
   }
 }
+export function runtimeAnalysisFailureMessage(payload = {}, domain = 'analysis') {
+  const code = String(payload.error_code ?? payload.code ?? '').toUpperCase()
+  const retryClassification = String(payload.retry_classification ?? payload.classification ?? '').toLowerCase()
+  if (canonicalFailureCategory(payload) === FAILURE_CATEGORIES.STALE_FLOOR_OWNER)
+    return '当前楼层状态已发生变化，本次分析结果未写入。'
+  if (code === 'WORLD_MODEL_REQUIRED') return '需要先完成世界分析。'
+  if (code === 'WORLD_MODEL_UI_NOT_READY')
+    return domain === 'world' ? '世界数据未能正常显示，已停止人物分析' : '世界数据未能正常显示，已停止人物分析'
+  if (retryClassification === 'temporary_server_convergence')
+    return '当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。'
+  if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED')
+    return '世界数据保存后校验失败，已停止人物分析'
+  if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED')
+    return '世界数据保存失败，已停止人物分析'
+  if (domain === 'world') return '世界分析失败，已停止人物分析'
+  if (code === 'REQUEST_TIMEOUT' || code.startsWith('REQUEST_TIMEOUT_')) return '分析失败：请求超时。'
+  if (code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')) return '分析已取消。'
+  if (code === 'WORLD_MODEL_INVALID' || code === 'EVENT_ANALYSIS_INVALID') return '分析失败：AI 返回结果无法通过校验。'
+  if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED' || code === 'SWIPE_NOT_FOUND') return '世界数据保存失败，已停止人物分析'
+  if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED') return '世界数据保存后校验失败，已停止人物分析'
+  return '分析失败：请检查分析结果与 API 配置。'
+}
 export function createApp(runtime, options = {}) {
   if (!runtime?.chat?.current) throw new TypeError('BIOWEAVE_RUNTIME_REQUIRED')
   const documentRef = options.documentRef ?? globalThis.document
@@ -602,6 +628,7 @@ export function createApp(runtime, options = {}) {
     currentFloor: null,
     currentState: null,
     currentStateStatus: 'NO_CHARACTER_FLOOR',
+    currentHealthState: null,
     currentStoryTime: null,
     currentStoryTimeStatus: null,
     currentStoryTimeDifferences: {},
@@ -684,30 +711,6 @@ export function createApp(runtime, options = {}) {
   function isAutomaticRuntimeResult(payload = {}) {
     const value = String(payload.reason ?? payload.trigger ?? '').toLowerCase()
     return value !== 'manual-refresh' && value !== 'manual-character' && value !== 'manual-full' && value !== 'manual-patch'
-  }
-  function runtimeAnalysisFailureMessage(payload = {}, domain = 'analysis') {
-    const code = String(payload.error_code ?? payload.code ?? '').toUpperCase()
-    const retryClassification = String(payload.retry_classification ?? payload.classification ?? '').toLowerCase()
-    if (code === 'WORLD_MODEL_REQUIRED') return '需要先完成世界分析。'
-    if (code === 'WORLD_MODEL_UI_NOT_READY')
-      return domain === 'world' ? '世界数据未能正常显示，已停止人物分析' : '世界数据未能正常显示，已停止人物分析'
-    if (retryClassification === 'temporary_server_convergence')
-      return '当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。'
-    if (retryClassification === 'true_owner_change')
-      return '当前楼层状态发生变化，本次世界分析结果未写入。'
-    if (code === 'STALE_FLOOR_VERSION')
-      return '当前楼层状态发生变化，本次世界分析结果未写入。'
-    if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED')
-      return '世界数据保存后校验失败，已停止人物分析'
-    if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED')
-      return '世界数据保存失败，已停止人物分析'
-    if (domain === 'world') return '世界分析失败，已停止人物分析'
-    if (code === 'REQUEST_TIMEOUT' || code.startsWith('REQUEST_TIMEOUT_')) return '分析失败：请求超时。'
-    if (code === 'REQUEST_ABORTED' || code.startsWith('REQUEST_ABORTED_')) return '分析已取消。'
-    if (code === 'WORLD_MODEL_INVALID' || code === 'EVENT_ANALYSIS_INVALID') return '分析失败：AI 返回结果无法通过校验。'
-    if (code === 'WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED' || code === 'SWIPE_NOT_FOUND' || code === 'STALE_FLOOR_VERSION') return '世界数据保存失败，已停止人物分析'
-    if (code === 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED' || code === 'FLOOR_PERSISTENCE_READBACK_FAILED') return '世界数据保存后校验失败，已停止人物分析'
-    return '分析失败：请检查分析结果与 API 配置。'
   }
   function notifyRuntimeTerminal(event, domain, message, type) {
     if (!runtimeNotificationsEnabled()) return
@@ -2381,6 +2384,8 @@ export function createApp(runtime, options = {}) {
   }
   function worldModelOperationError(error) {
     const code = String(error?.code ?? error?.message ?? '')
+    if (canonicalFailureCategory(error) === FAILURE_CATEGORIES.STALE_FLOOR_OWNER)
+      return '当前楼层状态已发生变化，本次分析结果未写入。'
     const diagnostic = String(error?.diagnostic_code ?? error?.diagnosticCode ?? error?.error_code ?? '')
       .trim()
       .toLowerCase()
@@ -2398,14 +2403,11 @@ export function createApp(runtime, options = {}) {
     const retryClassification = String(error?.retry_classification ?? error?.cause?.retry_classification ?? '').toLowerCase()
     const persistenceFailure =
       retryClassification === 'temporary_server_convergence' ||
-      retryClassification === 'true_owner_change' ||
-      ['WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED', 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED', 'FLOOR_PERSISTENCE_READBACK_FAILED', 'STALE_FLOOR_VERSION'].includes(code)
+      ['WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED', 'WORLD_MODEL_PERSISTENCE_READBACK_FAILED', 'FLOOR_PERSISTENCE_READBACK_FAILED'].includes(code)
     const transportMessage = preservesLegacyTransportCopy || persistenceFailure ? '' : sharedTransportErrorMessage(error)
     if (transportMessage) return `${transportMessage} 上一份模型已保留。`
     if (retryClassification === 'temporary_server_convergence')
       return '当前楼层数据暂未与宿主保存状态同步，本次世界分析未能完成。'
-    if (retryClassification === 'true_owner_change')
-      return '当前楼层状态发生变化，本次世界分析结果未写入。'
     const messages = {
       API_PROFILE_NOT_CONFIGURED: '世界分析尚未配置 API，请在设置的任务分配中选择可用配置。',
       API_PROFILE_INVALID: '世界分析 API 配置无效，请检查 URL 和模型。',
@@ -2420,7 +2422,6 @@ export function createApp(runtime, options = {}) {
       WORLD_MODEL_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
       WORLD_STAGE_PERSISTENCE_OWNER_INVALID: '世界分析阶段状态无效，本次世界分析未完成。',
       SWIPE_NOT_FOUND: '世界数据保存失败，已停止人物分析。',
-      STALE_FLOOR_VERSION: '世界数据保存失败，已停止人物分析。',
       FLOOR_PERSISTENCE_READBACK_FAILED: '世界数据保存后校验失败，已停止人物分析。',
       WORLD_MODEL_INVALID: 'AI 返回的世界模型格式不符合要求，上一份模型已保留。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，当前模块草稿仍保留。',
@@ -3447,6 +3448,7 @@ export function createApp(runtime, options = {}) {
             currentFloor: null,
             currentState: null,
             currentStateStatus: 'NO_CHARACTER_FLOOR',
+            currentHealthState: null,
             currentStoryTime: null,
             currentStoryTimeStatus: null,
             currentStoryTimeDifferences: {},
@@ -3458,7 +3460,7 @@ export function createApp(runtime, options = {}) {
           }
         : {}),
       ...(operation.key === 'character' || operation.key === 'world'
-        ? {currentState: null, currentStateStatus: 'NO_CHARACTER_FLOOR'}
+        ? {currentState: null, currentStateStatus: 'NO_CHARACTER_FLOOR', currentHealthState: null}
         : {}),
     }
   }
@@ -3590,6 +3592,7 @@ export function createApp(runtime, options = {}) {
           currentFloor,
           currentState: collected.current_state ?? collected.currentState ?? null,
           currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
+          currentHealthState: collected.current_health_state ?? collected.currentHealthState ?? null,
           currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
           currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
           currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
@@ -3625,6 +3628,7 @@ export function createApp(runtime, options = {}) {
           chatId,
           currentState: null,
           currentStateStatus: 'STATE_ERROR',
+          currentHealthState: null,
           currentStoryTime: null,
           currentStoryTimeStatus: 'error',
           currentStoryTimeDifferences: {},
@@ -4014,6 +4018,7 @@ export function createApp(runtime, options = {}) {
       currentFloor: businessState.currentFloor,
       currentState: businessState.currentState,
       currentStateStatus: businessState.currentStateStatus,
+      currentHealthState: businessState.currentHealthState,
       currentStoryTime: businessState.currentStoryTime,
       currentStoryTimeStatus: businessState.currentStoryTimeStatus,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
@@ -4916,6 +4921,7 @@ export function createApp(runtime, options = {}) {
         currentFloor: null,
         currentState: null,
         currentStateStatus: 'NO_CHARACTER_FLOOR',
+        currentHealthState: null,
         currentStoryTime: null,
         currentStoryTimeStatus: null,
         currentStoryTimeDifferences: {},
@@ -5047,7 +5053,7 @@ export function createApp(runtime, options = {}) {
         timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       }
       if (characterLifecycleRefreshKey) lastCharacterLifecycleRefreshKey = characterLifecycleRefreshKey
-      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
+      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentHealthState: null, currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
@@ -5826,6 +5832,7 @@ export function createApp(runtime, options = {}) {
       currentFloor: null,
       currentState: null,
       currentStateStatus: 'NO_CHARACTER_FLOOR',
+      currentHealthState: null,
       currentStoryTime: null,
       currentStoryTimeStatus: null,
       currentStoryTimeDifferences: {},

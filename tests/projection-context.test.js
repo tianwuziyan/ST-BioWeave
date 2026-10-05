@@ -66,6 +66,23 @@ test('context ordering is stable and input views remain unchanged', () => {
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
 });
 
+test('health recovery guidance shares the projection context slot without exposing timing internals', () => {
+  const result = buildProjectionContext([], {
+    healthGuidance: [{
+      subject_id: 'char_000002',
+      body_site: '左手腕',
+      stage: 'recovering',
+      guidance: '疼痛已比早期减轻，日常活动有所恢复，但用力时仍可能引起不适。',
+    }],
+  });
+  assert.equal(result.dto.length, 1);
+  assert.equal(result.dto[0].context_type, 'health_recovery_guidance');
+  assert.match(result.prompt, /恢复阶段身体表现指导/);
+  assert.match(result.prompt, /无关场景可以完全不提/);
+  assert.match(result.prompt, /不要机械重复健康问题/);
+  assert.doesNotMatch(result.prompt, /remaining_days\s*=|deadline\s*=|story_days\s*=|assessment_id\s*=|event_id\s*=|recovering/);
+});
+
 test('multiple unresolved source candidates are not selected or ranked', () => {
   const {prompt} = buildProjectionContext([view()], {
     attributionBySubject: {
@@ -101,6 +118,52 @@ test('coordinator updates one injection slot and clears when no visible projecti
   const cleared = await coordinator.refreshProjectionContext();
   assert.equal(cleared.status, 'cleared');
   assert.equal(writes.at(-1).content, '');
+});
+
+test('coordinator combines Health Guidance with projections and clears both from the same slot', async () => {
+  const writes = [];
+  let guidance = [{
+    subject_id: 'char_000002',
+    body_site: '左手腕',
+    stage: 'near_recovery',
+    guidance: '大部分普通活动不再明显受影响。',
+  }];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    healthGuidanceResolver: async () => guidance,
+    resolveCurrentFloor: async () => ({version: {
+      chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+      content_hash: 'hash-a', message_version: 'v1',
+    }}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+  });
+  const result = await coordinator.refreshProjectionContext();
+  assert.equal(result.status, 'updated');
+  assert.equal(result.dto.length, 2);
+  assert.match(result.prompt, /生物发展方向/);
+  assert.match(result.prompt, /恢复阶段身体表现指导/);
+  guidance = [];
+  const clearedHealth = await coordinator.refreshProjectionContext();
+  assert.equal(clearedHealth.dto.length, 1);
+  assert.doesNotMatch(clearedHealth.prompt, /左手腕/);
+});
+
+test('Health Guidance read failure does not clear a valid Projection Context', async () => {
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    healthGuidanceResolver: async () => { throw new Error('HEALTH_READ_FAILED'); },
+    resolveCurrentFloor: async () => ({version: {
+      chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+      content_hash: 'hash-a', message_version: 'v1',
+    }}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+  });
+  const result = await coordinator.refreshProjectionContext();
+  assert.equal(result.status, 'updated');
+  assert.equal(result.dto.length, 1);
+  assert.match(result.prompt, /生物发展方向/);
 });
 
 test('coordinator refresh reads attribution through the resolver and updates the context summary', async () => {

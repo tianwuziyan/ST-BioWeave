@@ -24,6 +24,15 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
 
+Character Health State 目前完成 Phase 1/2/4 与 Phase 5A 的窄范围产品接入：Character
+Analysis / Character Details 消费 Runtime 提供的 grouped current-health read model。
+健康问题优先展示 factual `description`；`kind` 仅作为内部稳定语义，不能直接成为普通用户
+文案。缺少 `body_site` 时使用“未标明部位”，不把缺失部位解释为“全身”；UI 不从
+description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI 重算 lifecycle/aggregation，
+不显示内部 provenance 或 recovery timing。Health Recovery Guidance / Projection Context
+已实现 Phase 5B 的窄范围 deterministic guidance，但不属于 UI 展示；完整 Health Projection
+仍为 DESIGN / PLANNED。健康设计不把 `physical_symptom` 作为唯一事实入口。
+
 人物事件记录只展示用户可读的事件事实与详情，不额外显示 Event Registry 的内部说明文字。
 
 人物页未选择人物时的详情占位提示使用更高特异性的组合样式覆盖移动端详情面板的零内边距，三端统一保持参考页的 16px 内边距，文字组不会贴住详情面板边框。
@@ -90,7 +99,7 @@ source。不同 subject 的 Event 已由 AI/Domain 分开，同一 subject 的�
 `counterpart_ids` 重建 Event，也不推导 State、Projection、Relations、Tracking
 eligibility 或 actual exposure。
 
-Projection、Genealogy、StateReducer、Snapshot 和完整妊娠计算在本阶段保持 Empty State 或兼容骨架。页面可以显示“等待后续状态引擎”类说明，但不得生成 mock 业务 DTO、概率、妊娠天数或亲子关系。
+Projection、StateReducer 和 Snapshot 已有当前生产链；Projection/Genealogy 的产品范围仍按各自状态矩阵处理，完整妊娠计算仍未完成。Character Health UI 仅在 Phase 5A 范围内消费真实 `current_health_state`；Health Recovery Guidance 由 Phase 5B 的 Projection Context 窄范围提供，UI 不显示恢复阶段或倒计时；完整 Health Projection 与 advanced Condition identity 仍为 `DESIGN / NOT IMPLEMENTED`，页面不得生成 mock Health DTO、概率、妊娠天数、亲子关系或医疗推断。
 
 ### 生命周期与刷新
 

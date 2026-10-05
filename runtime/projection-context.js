@@ -26,6 +26,7 @@ export function createProjectionContextCoordinator({
   setExtensionPrompt,
   enabledResolver = () => true,
   attributionResolver = null,
+  healthGuidanceResolver = null,
   injection = {},
 } = {}) {
   if (typeof getProjectionViews !== 'function') throw new TypeError('PROJECTION_VIEWS_REQUIRED');
@@ -43,7 +44,7 @@ export function createProjectionContextCoordinator({
     }
   }
 
-  function unavailableResult(error = null) {
+function unavailableResult(error = null) {
     return {
       ok: false,
       status: 'unavailable',
@@ -68,8 +69,16 @@ export function createProjectionContextCoordinator({
       return {ok: true, status: 'available'};
     } catch (error) {
       return unavailableResult(error);
-    }
   }
+}
+
+function floorReadStillMatches(left, right) {
+  if (sameFloorVersion(left, right)) return true;
+  if (!left || !right) return false;
+  return String(left.chat_id ?? '') === String(right.chat_id ?? '')
+    && Number(left.floor) === Number(right.floor)
+    && (left.swipe_id === undefined || right.swipe_id === undefined || Number(left.swipe_id) === Number(right.swipe_id));
+}
 
   function clearProjectionContext() {
     if (destroyed) return {status: 'destroyed'};
@@ -105,7 +114,22 @@ export function createProjectionContextCoordinator({
       const attributionBySubject = typeof attributionResolver === 'function'
         ? await attributionResolver({chatId, floor, views})
         : {};
-      const context = buildProjectionContext(views?.all ?? views, {attributionBySubject});
+      let healthGuidance = [];
+      if (typeof healthGuidanceResolver === 'function') {
+        try {
+          healthGuidance = await healthGuidanceResolver({chatId, floor, views});
+        } catch {
+          healthGuidance = [];
+        }
+      }
+      if (String(getChatId?.() ?? chatId) !== String(chatId)) {
+        return {ok: false, status: 'stale', reason: 'CHAT_CHANGED', dto: [], prompt: ''};
+      }
+      const currentFloor = await resolveCurrentFloor();
+      if (!currentFloor?.version || !floorReadStillMatches(currentFloor.version, floor.version)) {
+        return {ok: false, status: 'stale', reason: 'FLOOR_CHANGED', dto: [], prompt: ''};
+      }
+      const context = buildProjectionContext(views?.all ?? views, {attributionBySubject, healthGuidance});
       const result = write(context.prompt);
       if (result.ok === false) return {...result, dto: context.dto, prompt: ''};
       return {ok: true, status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt};

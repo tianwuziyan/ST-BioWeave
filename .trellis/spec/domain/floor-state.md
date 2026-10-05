@@ -243,6 +243,31 @@ Current valid Floor facts are the only input for materialized runtime state:
 - current biological state, including a future disease tracker; and
 - historical biological context sent to an API.
 
+Character Health State is currently **PARTIAL / Phase 4 active observation read model**. See
+[CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md) for the future
+derived read-model direction. Phase 1 Health Assessment adds only the narrowly scoped
+`health_assessment_timeline` Character Floor derived root; it is not a Chat-level authority
+or alternative provenance path.
+Phase 2 已提供最小 derived Current Health State read model，Phase 4 增加 observation lifecycle
+与 presentation-only grouping；它仍从同一 surviving Floor
+Event、active Assessment 与 Story Time 路径派生，不新增 Health State Floor root，也不把
+derived closure 写回 Floor facts。long-term/permanent 不因沉默或 Story Time 跳跃自动删除。
+
+Health Assessment Phase 1 属于同一 Character Floor owner 下、绑定源 Event、完整六字段
+Floor Version 与 observation fingerprint 的 derived assessment record；它不是
+BiologicalEvent、Snapshot-only 数据、runtime cache 或新的 Chat-level authority。推荐以
+`(source_event_id, source_floor_version,
+source_observation_fingerprint)` 做 source-observation scoped lookup；这是对当前 Event
+editing 在同一版本保留 Event ID 但修改 factual payload 的 binding guard。source Event
+不再 surviving 或 fingerprint 不匹配时必须过滤 Assessment，不能依赖物理删除或跨版本
+复用。
+
+Health Recovery Guidance Phase 5B 是 derived non-factual guidance：它可将每条 active
+observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段，但不得把具体 duration、
+deadline、百分比或 Assessment 字段当作剧情事实，也不得写回 Floor、关闭 observation 或
+成为 Event evidence。它复用现有 `bioweave_projection_context` 槽位，不新增 persistence root
+或第二套 Context framework。完整 Health Projection 与 recovery-stage UI 仍为 DESIGN / PLANNED。
+
 `core/tracking.js` rebuilds its active projection from the current valid Event
 collection. It may retain sanitized historical profile/configuration data when
 the existing schema allows it, but such data is not an active subject and

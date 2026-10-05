@@ -240,6 +240,11 @@ supersede；迟到的 `GENERATION_ENDED`、settle callback 或 scheduler callbac
 完整六字段 Floor Version 与 generation identity；验证失败即 fail closed。该防线不依赖
 `visibilitychange`，也不把前台 timer 当作任务队列。
 
+Scheduled-analysis 的 success/failure completion 在修改 counter、retry/due state 或
+failure latch 前，必须重新校验 captured Chat、完整 Floor Version、active Swipe 与
+当前 scheduler reconciliation revision；旧 owner 的 completion 统一丢弃，不得覆盖
+reconciliation 后的 scheduler state。
+
 #### 宿主事件入口诊断
 
 SillyTavern `eventSource` listener 在转交 Runtime lifecycle handler 之前记录

@@ -33,6 +33,8 @@ import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-
 import { createCurrentStateAttributionResolver, createProjectionContextCoordinator } from "./projection-context.js";
 import { createCharacterTimingConfigStore } from "../storage/character-timing.js";
 import { createProjectionRuntime } from "./projection-runtime.js";
+import { createHealthAssessmentCoordinator } from "./health-assessment.js";
+import { createHealthEvolutionRuntime } from "./health-evolution.js";
 import { createRuntimeActivity } from "./activity.js";
 import { createRuntimeDiagnostics } from "./diagnostics.js";
 import { createSillyTavernAdapter as createSillyTavernIoAdapter } from "./sillytavern-adapter.js";
@@ -1653,6 +1655,24 @@ export function createRuntime({
       })).version;
     },
   });
+  const healthAssessment = createHealthAssessmentCoordinator({
+    analyzer: eventAnalyzer,
+    getFloor: (index, swipeId) => store.getFloor?.(index, swipeId),
+    commitFloorPatch: (target, owner, patch, input = {}) => floorPersistence.commitFloorPatch({
+      owner,
+      chatId: target?.version?.chat_id ?? chat.current(),
+      ownerFloor: {message_index: target?.index, message_id: target?.version?.message_id},
+      swipeId: target?.swipeId ?? target?.version?.swipe_id ?? 0,
+      floorVersion: target?.version,
+      patch,
+      operation_type: input.operation_type ?? `${owner}-patch`,
+      execution: input.execution,
+      assertCurrent: input.assertCurrent,
+    }),
+    assertExecutionTargetCurrent: (...args) => eventAnalysis?.assertExecutionTargetCurrent?.(...args),
+    trace: payload => recordPersistenceTrace(payload),
+  });
+  const healthEvolution = createHealthEvolutionRuntime();
   eventAnalysis = createEventAnalysisCoordinator({
     st,
     chat,
@@ -1679,6 +1699,8 @@ export function createRuntime({
     enabledResolver: isBioWeaveEnabled,
     notify,
     floorPersistence,
+    healthAssessment,
+    healthEvolution,
     trackingWindowPersistence: createTrackingWindowPersistence({
       store,
       enabledResolver: isBioWeaveEnabled,
@@ -1740,6 +1762,18 @@ export function createRuntime({
     attributionResolver: createCurrentStateAttributionResolver({
       collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
     }),
+    healthGuidanceResolver: async ({chatId, floor}) => {
+      const business = await eventAnalysis.collectActiveBusinessData();
+      if (
+        business?.current_state_status === "STATE_ERROR" ||
+        !business?.current_floor?.version ||
+        !sameFloorVersion(business.current_floor.version, floor?.version)
+      ) return [];
+      return healthEvolution.buildRecoveryGuidance({
+        currentHealthState: business.current_health_state,
+        currentStoryTime: business.current_story_time,
+      });
+    },
   });
   const projectionRuntime = createProjectionRuntime({
     analyzer: eventAnalyzer,

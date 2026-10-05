@@ -75,7 +75,7 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   '不要把 UI 显示、人物列表或其它后续层的判断写入结果；UI 不会也不应二次判断生殖资格。输出的是完整事实 DTO。',
   '除非 Event 是非 exposure 的 sexual_activity，否则会改变角色 Biological State 的 Event 必须包含 state_fact：{subject_id, payload}。subject_id 必须是 participants 中的 canonical character_id 或 response-local mention_id，不能使用 display_name、gender、event_role 或 participants[0] 位置猜测。state_fact 是 factual contract，不是 Current State，也不是 Projection；不要输出概率、未来结果或阶段推演。',
   'state_fact 不重复保存 story_time；其 effective Story Time 始终引用同一 Event 的 story_time。非 exposure sexual_activity 不输出 state_fact；有效 pregnancy-relevant exposure 继续只使用 pregnancy_relevance 作为 authoritative exposure fact。',
-  'conception 使用 pregnancy_ref 绑定同一 reproductive episode；menstrual_event、ovulation_event 的 state_fact.payload 必须是空对象；pregnancy_suspicion 使用 observation 与可选 pregnancy_ref；pregnancy_confirmation 使用 pregnancy_ref；pregnancy_loss、abortion、labor、delivery、postpartum 只能引用 existing pregnancy_ref；fertility_change 只允许六个 capability keys 的 true/false/null；physical_symptom 的 state_fact.payload 必须严格为 {"symptom":{"kind":"...","description":"..."}}，其中 symptom 是对象而不是字符串，kind 与 description 都是非空字符串；medical_event 与 other_biological 的 state_fact.payload 必须严格使用同形状的 {"fact":{"kind":"...","description":"..."}} 对象。不要添加概率、duration、projection 或 UI 字段。pregnancy_ref.kind=new 只表示 Runtime 应创建新 episode identity，不是模型生成随机 ID。',
+  'conception 使用 pregnancy_ref 绑定同一 reproductive episode；menstrual_event、ovulation_event 的 state_fact.payload 必须是空对象；pregnancy_suspicion 使用 observation 与可选 pregnancy_ref；pregnancy_confirmation 使用 pregnancy_ref；pregnancy_loss、abortion、labor、delivery、postpartum 只能引用 existing pregnancy_ref；fertility_change 只允许六个 capability keys 的 true/false/null；physical_symptom 的 state_fact.payload 必须严格为 {"symptom":{"kind":"...","description":"..."}}，medical_event 与 other_biological 的 state_fact.payload 必须严格使用同形状的 {"fact":{"kind":"...","description":"..."}} 对象。健康 fact 可在正文明确支持时附带 body_site（原文事实部位字符串）、laterality（left|right|bilateral|midline|unknown）和 continuation=true；当正文明确给出症状或伤势所在身体部位时，必须提取该 factual body_site，不得因字段可选而省略；不得从常识、自由文本关键词或地点推测这些字段，缺失时不要补齐。不要添加概率、duration、projection 或 UI 字段。pregnancy_ref.kind=new 只表示 Runtime 应创建新 episode identity，不是模型生成随机 ID。',
 ].join('\n')
 export const EVENT_ANALYZER_TASK_CONTRACT = [
   '任务：分析 narrative discovery window（Current Target Floor 与 Recent Story）中实际发生或有可靠事实证据支持的 BiologicalEvent，并返回完整 events 数组；events[] 允许为空、包含一个或包含多个彼此独立的 Event。每个已确认 participant 都要执行完整的人物生物学分析，不能以 pregnancy_relevance.relevant === true 作为前提；明确生理性别事实可以映射到当前 World Model 已存在的 biological_type；只有映射到匹配 species/type 后，才可读取该 World Model baseline 的 capability，gender/sex 不能直接推出 capability、创建 type 或替代 World Model。',
@@ -526,18 +526,6 @@ function formatEventExistingEvents(events) {
     formatPromptValue(events),
   ].join('\n')
 }
-function formatEventFloorMetadata(input) {
-  const scope = input.chat_scope && typeof input.chat_scope === 'object' ? input.chat_scope : {}
-  const version = input.floor_version && typeof input.floor_version === 'object' ? input.floor_version : {}
-  return [
-    '【本次分析边界】',
-    `目标楼层：${formatPromptValue(version.floor)}`,
-    `目标消息：${formatPromptValue(version.message_id)}`,
-    `目标 Swipe：${formatPromptValue(version.swipe_id)}`,
-    scope.chat_id ? '当前 Chat 边界已由 Runtime 校验。' : '',
-    '以上字段仅用于限定本次输入边界，不要复制到 Event 输出；Event source 由 Runtime 绑定。',
-  ].join('\n')
-}
 function joinPromptSections(sections) {
   return sections.filter(Boolean).join('\n\n')
 }
@@ -612,7 +600,6 @@ function formatEventAnalysisRules(input, settings, names) {
     `【BioWeave Event Analysis 核心规则】\n${EVENT_ANALYZER_CORE_CONTRACT}`,
     formatCommonAnalysisPrompt(settings, names),
     `【Event Analysis 任务】\n${EVENT_ANALYZER_TASK_CONTRACT}`,
-    formatEventFloorMetadata(input),
     formatAnalysisPromptTail(settings, names),
     `【Event 输出契约】\n${EVENT_ANALYZER_OUTPUT_CONTRACT}`,
   ])
@@ -825,6 +812,28 @@ export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = 
     '请根据以上资料分析 narrative discovery window（Current Target Floor 与 Recent Story），只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。',
   )
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
+  return messages
+}
+
+export function buildHealthAssessmentMessages(event = {}, promptSettings = {}) {
+  const settings = normalizeAnalysisPrompt(promptSettings)
+  const messages = []
+  addMessage(messages, 'system', expandPlaceholders(settings.system_top, inputNames({})))
+  addMessage(messages, 'system', [
+    '你是 BioWeave 的 Health Assessment 派生评估器。',
+    '输入是已经验证并保存的 BiologicalEvent；不要创建、修改或补充事实 Event。',
+    '只评估该事实的粗粒度 persistence、自然恢复资格和可规范化的恢复窗口。',
+    '没有明确的 factual timing 时，assessment_source 必须为 ai_derived_assessment；不要把现实医学常识写成事实证据。',
+    'reproductive exposure、pregnancy projection 和非健康事实不属于本评估。',
+    '只输出一个 JSON 对象，不要 Markdown 或解释文字。',
+    '格式：{"schema_version":1,"persistence":"short_term|long_term|permanent|unknown","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"ai_derived_assessment|unknown"}',
+    'duration.story_days 必须是大于等于 0 的有限数字；无法可靠评估时使用 null/unknown，不要伪造边界。',
+  ].join('\n'))
+  addMessage(messages, 'user', JSON.stringify({
+    source_event: event,
+    instruction: '评估这个已保存的健康事实；不要输出 source_event_id、Floor Version 或事实证据。',
+  }, null, 2))
+  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, inputNames({})))
   return messages
 }
 export function buildPrompt({

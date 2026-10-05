@@ -164,6 +164,7 @@ export function createCharacterEventAnalysis({
   nextPersistenceInvocationId,
   domainValidationError,
   isStaleChat = () => false,
+  healthAssessment = null,
 } = {}) {
   async function verifyCharacterCanonicalReady(target, execution, token, expectedEvents) {
     emitPersistenceTrace("CHARACTER_CANONICAL_READ_BEGIN", execution, target, {
@@ -461,6 +462,9 @@ export function createCharacterEventAnalysis({
       ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
       ...enrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
     ]).map((event) => normalizeEvent(event));
+    const assessmentCandidates = healthAssessment?.selectCandidates
+      ? healthAssessment.selectCandidates({events, currentEvents: currentFloorEvents})
+      : events;
     const characterRegistry = normalizeCharacterRegistry(
       execution.reason === "manual-refresh"
         ? getFloor(target.index, target.swipeId)?.character_registry
@@ -542,6 +546,23 @@ export function createCharacterEventAnalysis({
       event_slot_present: Array.isArray(finalFloor.events),
     }, "event");
     await assertExecutionTargetCurrent(execution, target, token);
+    // Assessment is downstream derived data; it must not roll back factual
+    // Event persistence when its own AI or storage path fails.
+    if (healthAssessment?.assessFloor && typeof analyzer?.analyzeHealthAssessment === "function") {
+      try {
+        await healthAssessment.assessFloor({
+          target,
+          execution,
+          token,
+          events: assessmentCandidates,
+          signal: execution.controller.signal,
+        });
+      } catch (assessmentError) {
+        emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
+          code: assessmentError?.code ?? assessmentError?.message ?? "HEALTH_ASSESSMENT_FAILED",
+        }, "health");
+      }
+    }
     clearInvalidatedFloor(target.version);
     execution.stage = "snapshot_checkpoint";
     try {

@@ -45,6 +45,10 @@ export const CAPABILITY_KEYS = Object.freeze([
   'can_cause_pregnancy',
 ]);
 
+export const HEALTH_LATERALITY = Object.freeze([
+  'left', 'right', 'bilateral', 'midline', 'unknown',
+]);
+
 export const STATE_FACT_EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
@@ -374,13 +378,28 @@ function validateStateFactPayload(type, payload, errors, path) {
   const keys = Object.keys(payload);
   const only = (...allowed) => keys.every((key) => allowed.includes(key));
   const text = (value) => typeof value === 'string' && value.trim() !== '';
-  const factRecord = (value, field) => {
+  const factRecord = (value, field, {allowHealthIdentity = false} = {}) => {
     if (!isRecord(value) || !text(value.kind)) {
       addError(errors, `${path}.${field}`);
       return;
     }
     if (value.description !== undefined && value.description !== null && !text(value.description)) {
       addError(errors, `${path}.${field}.description`);
+    }
+    if (!allowHealthIdentity) return;
+    const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation']);
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) addError(errors, `${path}.${field}.${key}`);
+    }
+    if (value.body_site !== undefined && value.body_site !== null && !text(value.body_site)) {
+      addError(errors, `${path}.${field}.body_site`);
+    }
+    if (value.laterality !== undefined && value.laterality !== null &&
+        !HEALTH_LATERALITY.includes(value.laterality)) {
+      addError(errors, `${path}.${field}.laterality`);
+    }
+    if (value.continuation !== undefined && typeof value.continuation !== 'boolean') {
+      addError(errors, `${path}.${field}.continuation`);
     }
   };
 
@@ -439,15 +458,15 @@ function validateStateFactPayload(type, payload, errors, path) {
     }
     case 'physical_symptom':
       if (!only('symptom')) addError(errors, path);
-      factRecord(payload.symptom, 'symptom');
+      factRecord(payload.symptom, 'symptom', {allowHealthIdentity: true});
       return;
     case 'medical_event':
       if (!only('fact')) addError(errors, path);
-      factRecord(payload.fact, 'fact');
+      factRecord(payload.fact, 'fact', {allowHealthIdentity: true});
       return;
     case 'other_biological':
       if (!only('fact')) addError(errors, path);
-      factRecord(payload.fact, 'fact');
+      factRecord(payload.fact, 'fact', {allowHealthIdentity: true});
       return;
     default:
       addError(errors, path);
