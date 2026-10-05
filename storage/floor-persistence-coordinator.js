@@ -126,6 +126,7 @@ export function createFloorPersistenceCoordinator({
 
   function emit(stage, transaction, details = {}) {
     try {
+      const traceContext = transaction.traceContext ?? {};
       trace({
         type: "FLOOR_TX_TRACE",
         stage,
@@ -137,6 +138,15 @@ export function createFloorPersistenceCoordinator({
         execution_attempt: transaction.execution_attempt ?? null,
         stage_attempt: transaction.stage_attempt ?? null,
         retry_index: transaction.retry_index ?? null,
+        analysis_execution_id: traceContext.analysis_execution_id ?? null,
+        generation_id: traceContext.generation_id ?? null,
+        generation_intent_id: traceContext.generation_intent_id ?? null,
+        generation_type: traceContext.generation_type ?? null,
+        generation_ended: traceContext.generation_ended ?? null,
+        generation_settled: traceContext.generation_settled ?? null,
+        scheduler_revision: traceContext.scheduler_revision ?? null,
+        source_text_length: traceContext.source_text_length ?? null,
+        message_index: traceContext.message_index ?? null,
         ...details,
       });
     } catch { /* diagnostics never change persistence */ }
@@ -256,6 +266,10 @@ export function createFloorPersistenceCoordinator({
         actual_floor_version: safeVersion(currentVersion),
       });
     }
+    emit("FLOOR_TX_AUTHORITATIVE_SOURCE_READ", transaction, {
+      actual_floor_version: safeVersion(currentVersion ?? storedVersion),
+      version_check_source: "official_owner",
+    });
     emit("FLOOR_TX_LATEST_SLOT_RESOLVED", transaction, {
       before_presence: presence(latest),
       actual_floor_version: safeVersion(storedVersion),

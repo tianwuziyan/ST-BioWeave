@@ -3,6 +3,90 @@ import {
   statusFromError as clientStatusFromError,
 } from "../ai/client.js";
 
+export const VERSION_CHAIN_FIELDS = Object.freeze([
+  "chat_id",
+  "message_id",
+  "floor",
+  "message_index",
+  "swipe_id",
+  "content_hash",
+  "message_version",
+]);
+
+function versionChainValue(value) {
+  return value === undefined || value === null ? null : value;
+}
+
+export function buildVersionChainDiagnostic({
+  boundary = null,
+  source_kind: sourceKind = null,
+  version = null,
+  message_index: messageIndex = null,
+  generation_id: generationId = null,
+  generation_intent_id: generationIntentId = null,
+  generation_type: generationType = null,
+  generation_ended: generationEnded = null,
+  generation_settled: generationSettled = null,
+  final_floor_index: finalFloorIndex = null,
+  final_floor_version: finalFloorVersion = null,
+  scheduler_revision: schedulerRevision = null,
+  analysis_execution_id: analysisExecutionId = null,
+  source_text_length: sourceTextLength = null,
+  host_save_state: hostSaveState = "unavailable",
+} = {}) {
+  const normalizedVersion = version && typeof version === "object" ? version : {};
+  const normalizeVersion = value => {
+    const source = value && typeof value === "object" ? value : {};
+    return Object.fromEntries(VERSION_CHAIN_FIELDS
+      .filter(field => field !== "message_index")
+      .map(field => [field, versionChainValue(source[field])]));
+  };
+  return {
+    stage: "VERSION_CHAIN",
+    boundary: versionChainValue(boundary),
+    source_kind: versionChainValue(sourceKind),
+    chat_id: versionChainValue(normalizedVersion.chat_id),
+    message_id: versionChainValue(normalizedVersion.message_id),
+    floor: versionChainValue(normalizedVersion.floor),
+    message_index: Number.isInteger(messageIndex) ? messageIndex : null,
+    swipe_id: versionChainValue(normalizedVersion.swipe_id),
+    content_hash: versionChainValue(normalizedVersion.content_hash),
+    message_version: versionChainValue(normalizedVersion.message_version),
+    generation_id: versionChainValue(generationId),
+    generation_intent_id: versionChainValue(generationIntentId),
+    generation_type: versionChainValue(generationType),
+    generation_ended: generationEnded === null ? null : generationEnded === true,
+    generation_settled: generationSettled === null ? null : generationSettled === true,
+    final_floor_index: Number.isInteger(finalFloorIndex) ? finalFloorIndex : null,
+    final_floor_version: finalFloorVersion ? normalizeVersion(finalFloorVersion) : null,
+    scheduler_revision: Number.isFinite(Number(schedulerRevision)) ? Number(schedulerRevision) : null,
+    analysis_execution_id: versionChainValue(analysisExecutionId),
+    source_text_length: Number.isFinite(Number(sourceTextLength)) ? Number(sourceTextLength) : null,
+    host_save_state: versionChainValue(hostSaveState) ?? "unavailable",
+    host_post_save_hook: "NO_PUBLIC_POST_SAVE_HOOK",
+  };
+}
+
+export function versionChainTransition(previous, current) {
+  if (!previous || !current || previous.analysis_execution_id !== current.analysis_execution_id)
+    return null;
+  if (previous.content_hash === current.content_hash) return null;
+  return {
+    stage: "VERSION_CHAIN_TRANSITION",
+    analysis_execution_id: current.analysis_execution_id,
+    from_boundary: previous.boundary ?? null,
+    to_boundary: current.boundary ?? null,
+    from_content_hash: previous.content_hash ?? null,
+    to_content_hash: current.content_hash ?? null,
+    from_swipe_id: previous.swipe_id ?? null,
+    to_swipe_id: current.swipe_id ?? null,
+    from_message_version: previous.message_version ?? null,
+    to_message_version: current.message_version ?? null,
+    from_source_kind: previous.source_kind ?? null,
+    to_source_kind: current.source_kind ?? null,
+  };
+}
+
 export const FAILURE_CATEGORIES = Object.freeze({
   STALE_FLOOR_OWNER: "stale_floor_owner",
 });
@@ -52,7 +136,7 @@ function cloneSafeTraceValue(value) {
 function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
-    "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "domain", "state", "path",
+    "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "domain", "state", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path",
     "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
     "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
     "retry_index", "max_retries", "failure_stage", "failure_code",

@@ -66,6 +66,7 @@ import { createAutomaticAnalysisPort } from "./automatic-analysis.js";
 import { createAnalysisExecutionPort } from "./analysis-execution.js";
 import { createManualAnalysisPort } from "./manual-analysis.js";
 import { createTrackingWindowRuntime } from "./tracking-window-runtime.js";
+import { buildVersionChainDiagnostic } from "./diagnostics.js";
 const LIFECYCLE_ONLY_EVENTS = new Set([
   // Deletion only invalidates the downstream active path; it never analyzes
   // the message collection after the owner has been removed.
@@ -432,6 +433,7 @@ export function createEventAnalysisCoordinator({
   const inFlight = new Map();
   const lastTerminal = new Map();
   let attemptSequence = 0;
+  let analysisExecutionSequence = 0;
   let registryRefreshChain = Promise.resolve();
   let lifecycleMutationChain = Promise.resolve();
   let destroyed = false;
@@ -457,6 +459,48 @@ export function createEventAnalysisCoordinator({
     schedulerRevision: 0,
   };
 
+  function createAnalysisExecutionId() {
+    return `analysis-${chat.current() ?? "unknown"}-${++analysisExecutionSequence}`;
+  }
+
+  function analysisExecutionIdFor(generation = null) {
+    const identity = generation?.analysis_execution_id ?? generation?.intent_id;
+    return identity ? `analysis-${identity}` : createAnalysisExecutionId();
+  }
+
+  function versionChainSourceTextLength(target) {
+    if (!target?.message) return null;
+    return messageText(target.message, target.swipeId).length;
+  }
+
+  function emitVersionChain(boundary, {
+    execution = null,
+    target = null,
+    version = null,
+    sourceKind = null,
+    analysisExecutionId = null,
+    finalFloorIndex = null,
+    finalFloorVersion = null,
+    schedulerRevision = null,
+  } = {}) {
+    emitPersistenceTrace("VERSION_CHAIN", execution, target, buildVersionChainDiagnostic({
+      boundary,
+      source_kind: sourceKind,
+      version: version ?? target?.version,
+      message_index: target?.index ?? null,
+      generation_id: execution?.generation_id ?? null,
+      generation_intent_id: execution?.generation?.intent_id ?? null,
+      generation_type: execution?.generation_type ?? execution?.generation?.generation_type ?? null,
+      generation_ended: execution?.generation?.ended ?? null,
+      generation_settled: execution?.generation?.settled ?? null,
+      final_floor_index: finalFloorIndex ?? execution?.generation?.finalFloorIndex ?? null,
+      final_floor_version: finalFloorVersion ?? execution?.generation?.finalFloorVersion ?? null,
+      scheduler_revision: schedulerRevision ?? execution?.scheduler_revision ?? schedulerState.schedulerRevision,
+      analysis_execution_id: analysisExecutionId ?? execution?.analysis_execution_id ?? null,
+      source_text_length: version ? null : versionChainSourceTextLength(target),
+    }));
+  }
+
   function persistenceTraceContext(execution, target, domain) {
     return {
       domain,
@@ -480,6 +524,9 @@ export function createEventAnalysisCoordinator({
       generation_id: execution?.generation_id ?? null,
       generation_type: execution?.generation_type ?? null,
       generation_settled: execution?.generation_settled ?? null,
+      analysis_execution_id: execution?.analysis_execution_id ?? null,
+      scheduler_revision: execution?.scheduler_revision ?? schedulerState.schedulerRevision,
+      source_text_length: execution?.source_text_length ?? null,
       execution_active: execution ? !execution.released && !execution.cancelRequested : null,
       cancel_stage: execution?.cancel_stage ?? null,
       cancel_reason: execution?.cancel_reason ?? null,
@@ -2982,6 +3029,11 @@ export function createEventAnalysisCoordinator({
           host_floor_version_match: true,
           active_swipe_match: true,
         }, "analysis");
+        emitVersionChain("ANALYSIS_INPUT_READY", {
+          execution,
+          target,
+          sourceKind: "analysis_target",
+        });
         emitPersistenceTrace("AUTO_ANALYSIS_TRIGGERED", execution, target, {
           prerequisite: "analysis_input_ready",
         }, "analysis");
@@ -3155,7 +3207,7 @@ export function createEventAnalysisCoordinator({
   }
   async function analyzeFloor(
     selector = null,
-    { force = false, reason = "automatic", generation = null, intent = null } = {},
+    { force = false, reason = "automatic", generation = null, analysisExecutionId = null, intent = null } = {},
   ) {
     if (!isEnabled())
       return { skipped: true, status: "disabled", reason: "disabled" };
@@ -3197,6 +3249,9 @@ export function createEventAnalysisCoordinator({
       generation_id: generation?.generation_id ?? null,
       generation_type: generation?.generation_type ?? null,
       generation_settled: generation ? generation.settled === true : null,
+      analysis_execution_id: analysisExecutionId ?? analysisExecutionIdFor(generation),
+      scheduler_revision: schedulerState.schedulerRevision,
+      source_text_length: messageText(target.message, target.swipeId).length,
       generation: generation ?? null,
       promise: null,
     };
@@ -3217,12 +3272,14 @@ export function createEventAnalysisCoordinator({
     });
     return execution.promise;
   }
-  async function runScheduledAnalysis(target, { reason, generation = null }) {
+  async function runScheduledAnalysis(target, { reason, generation = null, analysisExecutionId = null }) {
     const settings = schedulerSettings();
+    const resolvedAnalysisExecutionId = analysisExecutionId ?? analysisExecutionIdFor(generation);
     const schedulerRun = {
       revision: schedulerState.schedulerRevision,
       token: chat.token(),
       floorVersion: target?.version ?? null,
+      analysisExecutionId: resolvedAnalysisExecutionId,
     };
     try {
       const result = await analysisExecution.run(
@@ -3231,6 +3288,7 @@ export function createEventAnalysisCoordinator({
           force: false,
           reason,
           generation,
+          analysisExecutionId: resolvedAnalysisExecutionId,
           trigger: "automatic",
         },
       );
@@ -3280,9 +3338,44 @@ export function createEventAnalysisCoordinator({
     {
       reason = "automatic",
       generation = null,
+      analysisExecutionId = null,
       lifecycleOutcome = null,
     } = {},
   ) {
+    const resolvedAnalysisExecutionId = analysisExecutionId ?? analysisExecutionIdFor(generation);
+    if (lifecycleOutcome?.status === "generation-settled") {
+      const settledVersion = generation?.finalFloorVersion ?? target?.version ?? null;
+      const settledIndex = generation?.finalFloorIndex ?? target?.index ?? null;
+      emitPersistenceTrace("GENERATION_LIFECYCLE_RESULT", null, target, {
+        result_reason: "generation-settled",
+        generation_id: generation?.generation_id ?? null,
+        generation_type: generation?.generation_type ?? null,
+        generation_intent_id: generation?.intent_id ?? null,
+        generation_ended: generation?.ended === true,
+        generation_settled: generation?.settled === true,
+        analysis_execution_id: resolvedAnalysisExecutionId,
+      }, "scheduler");
+      emitVersionChain("GENERATION_LIFECYCLE_RESULT", {
+        target,
+        version: settledVersion,
+        sourceKind: "generation_final_floor",
+        analysisExecutionId: resolvedAnalysisExecutionId,
+        finalFloorIndex: settledIndex,
+        finalFloorVersion: settledVersion,
+      });
+      emitPersistenceTrace("AUTO_HANDOFF_TO_SCHEDULER", null, target, {
+        floor_version_key: target?.version ? floorExecutionKey(target.version) : null,
+        analysis_execution_id: resolvedAnalysisExecutionId,
+      }, "scheduler");
+      emitVersionChain("AUTO_HANDOFF_TO_SCHEDULER", {
+        target,
+        version: settledVersion,
+        sourceKind: "scheduler_target",
+        analysisExecutionId: resolvedAnalysisExecutionId,
+        finalFloorIndex: settledIndex,
+        finalFloorVersion: settledVersion,
+      });
+    }
     const generationReplacedVersion = Boolean(
       generation?.baselineVersion &&
       generation?.finalFloorVersion &&
@@ -3316,7 +3409,13 @@ export function createEventAnalysisCoordinator({
       already_counted: alreadyCounted,
       reason,
       lifecycle_outcome: lifecycleOutcome,
+      analysis_execution_id: resolvedAnalysisExecutionId,
     }, "scheduler");
+    emitVersionChain("AUTO_SCHEDULER_ENTER", {
+      target,
+      sourceKind: "scheduler_target",
+      analysisExecutionId: resolvedAnalysisExecutionId,
+    });
     if (alreadyObserved) {
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
@@ -3329,6 +3428,7 @@ export function createEventAnalysisCoordinator({
         already_counted: alreadyCounted,
         decision: "floor-already-observed",
         reason,
+        analysis_execution_id: resolvedAnalysisExecutionId,
       }, "scheduler");
       return { skipped: true, reason: "floor-already-observed" };
     }
@@ -3345,6 +3445,7 @@ export function createEventAnalysisCoordinator({
         already_counted: alreadyCounted,
         decision: "retry-paused",
         reason,
+        analysis_execution_id: resolvedAnalysisExecutionId,
       }, "scheduler");
       return { skipped: true, reason: "retry-paused" };
     }
@@ -3362,6 +3463,7 @@ export function createEventAnalysisCoordinator({
         already_counted: alreadyCounted,
         decision: "character-interval",
         reason,
+        analysis_execution_id: resolvedAnalysisExecutionId,
       }, "scheduler");
       return {
         skipped: true,
@@ -3380,17 +3482,24 @@ export function createEventAnalysisCoordinator({
       already_counted: alreadyCounted,
       decision: "interval-due",
       reason,
+      analysis_execution_id: resolvedAnalysisExecutionId,
     }, "scheduler");
-    return runScheduledAnalysis(target, { reason, generation });
+    emitVersionChain("AUTO_SCHEDULER_DECISION", {
+      target,
+      sourceKind: "scheduler_target",
+      analysisExecutionId: resolvedAnalysisExecutionId,
+    });
+    return runScheduledAnalysis(target, { reason, generation, analysisExecutionId: resolvedAnalysisExecutionId });
   }
   function handoffSettledCharacterFloor(
     target,
-    {reason = "automatic", generation = null, lifecycleOutcome = null} = {},
+    {reason = "automatic", generation = null, analysisExecutionId = null, lifecycleOutcome = null} = {},
   ) {
     return automaticAnalysis.observeSettledCharacterFloor(target, {
       force: false,
       reason,
       generation,
+      analysisExecutionId,
       lifecycleOutcome,
     });
   }
@@ -3564,11 +3673,25 @@ export function createEventAnalysisCoordinator({
       }
       if (type !== "CHARACTER_MESSAGE_RENDERED")
         return { skipped: true, reason: "not-a-character-render" };
+      const lifecycleStateBefore = generationLifecycle.getState();
+      const lifecycleGeneration = lifecycleStateBefore.pendingGeneration
+        ?? lifecycleStateBefore.pendingSwipeGeneration
+        ?? lifecycleStateBefore.completedGeneration
+        ?? lifecycleStateBefore.completedSwipeGeneration
+        ?? null;
+      const analysisExecutionId = analysisExecutionIdFor(lifecycleGeneration);
       emitPersistenceTrace("CHARACTER_MESSAGE_RENDERED_RECEIVED", null, target, {
         event_type: type,
         event_payload_type: typeof event?.payload,
         floor_version_key: floorExecutionKey(target.version),
       }, "scheduler");
+      emitVersionChain("CHARACTER_MESSAGE_RENDERED_RECEIVED", {
+        target,
+        sourceKind: "runtime_chat",
+        analysisExecutionId,
+        finalFloorIndex: lifecycleGeneration?.finalFloorIndex ?? target.index,
+        finalFloorVersion: lifecycleGeneration?.finalFloorVersion ?? target.version,
+      });
       const generationResult = await generationLifecycle.onCharacterMessageRendered(target);
       applySchedulerLifecycleOutcome(generationResult);
       const generationState = generationLifecycle.getState();
@@ -3579,7 +3702,19 @@ export function createEventAnalysisCoordinator({
         pending_swipe_generation: generationState.pendingSwipeGeneration ?? null,
         completed_generation: generationState.completedGeneration ?? null,
         completed_swipe_generation: generationState.completedSwipeGeneration ?? null,
+        analysis_execution_id: analysisExecutionId,
       }, "scheduler");
+      emitVersionChain("GENERATION_LIFECYCLE_RESULT", {
+        target,
+        sourceKind: "generation_final_floor",
+        analysisExecutionId,
+        finalFloorIndex: generationState.completedGeneration?.finalFloorIndex
+          ?? generationState.completedSwipeGeneration?.finalFloorIndex
+          ?? target.index,
+        finalFloorVersion: generationState.completedGeneration?.finalFloorVersion
+          ?? generationState.completedSwipeGeneration?.finalFloorVersion
+          ?? target.version,
+      });
       if (generationResult) {
         emitPersistenceTrace("AUTO_HANDOFF_BLOCKED", null, target, {
           reason: generationResult.reason ?? "generation-lifecycle-result",
@@ -3593,10 +3728,17 @@ export function createEventAnalysisCoordinator({
       }
       emitPersistenceTrace("AUTO_HANDOFF_TO_SCHEDULER", null, target, {
         floor_version_key: floorExecutionKey(target.version),
+        analysis_execution_id: analysisExecutionId,
       }, "scheduler");
+      emitVersionChain("AUTO_HANDOFF_TO_SCHEDULER", {
+        target,
+        sourceKind: "scheduler_target",
+        analysisExecutionId,
+      });
       try {
         return await handoffSettledCharacterFloor(target, {
           reason: type,
+          analysisExecutionId,
           lifecycleOutcome: {status: "rendered"},
         });
       } catch (error) {

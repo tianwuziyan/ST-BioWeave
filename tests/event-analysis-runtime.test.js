@@ -3974,6 +3974,25 @@ test("automatic analysis trace exposes the Character handoff and scheduler decis
   assert.equal(schedulerDecision.counter_before, 0);
   assert.equal(schedulerDecision.counter_after, 1);
   assert.equal(schedulerDecision.decision, "interval-due");
+  const versionChain = entries.filter(entry => entry.stage === "VERSION_CHAIN");
+  const versionChainBoundaries = new Set(versionChain.map(entry => entry.boundary));
+  for (const boundary of [
+    "CHARACTER_MESSAGE_RENDERED_RECEIVED",
+    "GENERATION_LIFECYCLE_RESULT",
+    "AUTO_HANDOFF_TO_SCHEDULER",
+    "AUTO_SCHEDULER_ENTER",
+    "AUTO_SCHEDULER_DECISION",
+    "ANALYSIS_INPUT_READY",
+    "API_REQUEST_STARTED",
+    "API_RESULT_RECEIVED",
+    "FLOOR_TX_CREATED",
+    "AUTHORITATIVE_SOURCE_READ_BEFORE_WRITE",
+  ]) {
+    assert.equal(versionChainBoundaries.has(boundary), true, boundary);
+  }
+  assert.equal(new Set(versionChain.map(entry => entry.analysis_execution_id)).size, 1);
+  assert.equal(new Set(versionChain.map(entry => entry.content_hash)).size, 1);
+  assert.equal(entries.some(entry => entry.stage === "VERSION_CHAIN_TRANSITION"), false);
   fixture.runtime.destroy();
 });
 

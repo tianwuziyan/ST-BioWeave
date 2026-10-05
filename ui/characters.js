@@ -371,7 +371,31 @@ function healthDisplaySite(issue) {
   return laterality + (healthSiteLabels[site.toLowerCase()] ?? healthDisplayLabel(site, '相关部位'))
 }
 
-function renderHealthStateSection(currentHealthState, characterId) {
+function healthSourceEventIds(issue, activeEvents, characterId) {
+  const sourceIds = Array.isArray(issue?.source_observation_ids)
+    ? [...new Set(issue.source_observation_ids.map(value => String(value ?? '').trim()).filter(Boolean))]
+    : []
+  if (!sourceIds.length || !Array.isArray(activeEvents)) return []
+  const validEventIds = new Set(
+    activeEvents
+      .filter(event => String(event?.state_fact?.subject_id ?? '').trim() === String(characterId ?? '').trim())
+      .map(event => String(event?.event_id ?? '').trim())
+      .filter(Boolean),
+  )
+  return sourceIds.filter(eventId => validEventIds.has(eventId))
+}
+
+function renderHealthSourceActions(sourceEventIds) {
+  if (!sourceEventIds.length) return ''
+  if (sourceEventIds.length === 1) {
+    return '<button type="button" class="bioweave-text-button bioweave-character-health-source-action" data-bioweave-action="view-health-source-event" data-bioweave-event-id="' + escapeHtml(sourceEventIds[0]) + '">查看来源事件</button>'
+  }
+  return '<details class="bioweave-character-health-sources"><summary class="bioweave-text-button">查看 ' + sourceEventIds.length + ' 条来源事件</summary><div class="bioweave-character-health-source-list">' +
+    sourceEventIds.map(eventId => '<button type="button" class="bioweave-text-button bioweave-character-health-source-action" data-bioweave-action="view-health-source-event" data-bioweave-event-id="' + escapeHtml(eventId) + '">定位来源事件</button>').join('') +
+    '</div></details>'
+}
+
+function renderHealthStateSection(currentHealthState, characterId, activeEvents = []) {
   const characterHealth = currentHealthState?.characters?.[characterId] ?? null
   const groupedIssues = Array.isArray(characterHealth?.grouped_issues) ? characterHealth.grouped_issues : []
   const summary = typeof characterHealth?.current_health_summary === 'string' && characterHealth.current_health_summary.trim()
@@ -382,6 +406,7 @@ function renderHealthStateSection(currentHealthState, characterId) {
   const validIssues = groupedIssues
     .map(issue => ({
       ...issue,
+      source_event_ids: healthSourceEventIds(issue, activeEvents, characterId),
       display_description: Array.isArray(issue?.descriptions) && issue.descriptions.length
         ? issue.descriptions.join('；')
         : issue?.description,
@@ -390,7 +415,7 @@ function renderHealthStateSection(currentHealthState, characterId) {
   const content = validIssues.length
     ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' +
       validIssues
-        .map(issue => '<article class="bioweave-character-health-issue"><header><strong>' + escapeHtml(healthDisplaySite(issue)) + '</strong></header><p>' + escapeHtml(healthDisplayLabel(issue.display_description, '当前健康问题')) + '</p></article>')
+        .map(issue => '<article class="bioweave-character-health-issue"><header><strong>' + escapeHtml(healthDisplaySite(issue)) + '</strong></header><p>' + escapeHtml(healthDisplayLabel(issue.display_description, '当前健康问题')) + '</p>' + renderHealthSourceActions(issue.source_event_ids) + '</article>')
         .join('') +
       '</div>'
     : '<div class="bioweave-empty bioweave-character-health-empty">当前没有可显示的健康问题。</div>'
@@ -430,7 +455,7 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
-    renderHealthStateSection(currentHealthState, selectedCharacterId) +
+    renderHealthStateSection(currentHealthState, selectedCharacterId, activeEvents) +
     renderCharacterState({ characterState, currentState, currentStateStatus }) +
     renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     renderOtherSection() +

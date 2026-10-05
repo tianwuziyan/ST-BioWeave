@@ -1,6 +1,6 @@
 import { overviewPage } from './overview.js'
 import { charactersPage } from './characters.js'
-import { eventsPage, setEventFilter } from './events.js'
+import { eventsPage, focusEventById, setEventFilter } from './events.js'
 import { projectionPage } from './projection.js'
 import { genealogyPage } from './genealogy.js'
 import {
@@ -3866,6 +3866,17 @@ export function createApp(runtime, options = {}) {
   function activeEventById(eventId) {
     return businessState.activeEvents.find(event => String(event?.event_id) === String(eventId)) ?? null
   }
+  function navigateToHealthSourceEvent(eventId) {
+    const normalizedId = String(eventId ?? '').trim()
+    if (!normalizedId || !activeEventById(normalizedId)) {
+      notify('来源事件当前不可用。', 'info', documentRef)
+      return false
+    }
+    if (!go('events')) return false
+    const result = focusEventById(normalizedId, documentRef)
+    if (!result.ok) notify('来源事件当前不可用。', 'info', documentRef)
+    return result.ok
+  }
   function eventAnalysisError(error) {
     const transportMessage = sharedTransportErrorMessage(error)
     if (transportMessage) return `事件分析失败（${transportMessage}），上一份有效事件已保留。`
@@ -5368,6 +5379,11 @@ export function createApp(runtime, options = {}) {
         notify(eventAnalysisError(error), 'error', documentRef)
         render()
       }
+      return
+    }
+    if (action === 'view-health-source-event') {
+      event.preventDefault()
+      navigateToHealthSourceEvent(target.dataset.bioweaveEventId)
       return
     }
     if (action === 'world-model-full' || action === 'world-model-patch') {

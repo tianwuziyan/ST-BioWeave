@@ -29,7 +29,10 @@ Analysis / Character Details 消费 Runtime 提供的 grouped current-health rea
 健康问题优先展示 factual `description`；`kind` 仅作为内部稳定语义，不能直接成为普通用户
 文案。缺少 `body_site` 时使用“未标明部位”，不把缺失部位解释为“全身”；UI 不从
 description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI 重算 lifecycle/aggregation，
-不显示内部 provenance 或 recovery timing。Health Recovery Guidance / Projection Context
+不显示内部 provenance 或 recovery timing。当前健康问题可以通过 read model 提供的
+`grouped_issues[].source_observation_ids` 按 canonical Event ID 跳转到当前 Events 页面；
+UI 不通过描述、部位、kind 或人物文本匹配来源，且失效/不存在的 Event 不生成来源入口。
+Health Recovery Guidance / Projection Context
 已实现 Phase 5B 的窄范围 deterministic guidance，但不属于 UI 展示；完整 Health Projection
 仍为 DESIGN / PLANNED。健康设计不把 `physical_symptom` 作为唯一事实入口。
 

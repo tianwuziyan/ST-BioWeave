@@ -36,7 +36,11 @@ import { createProjectionRuntime } from "./projection-runtime.js";
 import { createHealthAssessmentCoordinator } from "./health-assessment.js";
 import { createHealthEvolutionRuntime } from "./health-evolution.js";
 import { createRuntimeActivity } from "./activity.js";
-import { createRuntimeDiagnostics } from "./diagnostics.js";
+import {
+  buildVersionChainDiagnostic,
+  createRuntimeDiagnostics,
+  versionChainTransition,
+} from "./diagnostics.js";
 import { createSillyTavernAdapter as createSillyTavernIoAdapter } from "./sillytavern-adapter.js";
 
 const LIFECYCLE_EVENTS = [
@@ -206,7 +210,7 @@ export function createSillyTavernAdapter() {
     try {
       const allowed = new Set([
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
-        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "path", "reason",
+        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
@@ -1511,6 +1515,7 @@ export function createRuntime({
   });
   const subscriptions = new Set();
   const unbind = [];
+  const versionChainByExecution = new Map();
   const activity = createRuntimeActivity();
   let initialized = false;
   let destroyed = false;
@@ -1540,11 +1545,96 @@ export function createRuntime({
   }
 
   function recordPersistenceTrace(payload = {}) {
-    notify({
+    let versionChain = payload?.stage === "VERSION_CHAIN"
+      ? buildVersionChainDiagnostic(payload)
+      : null;
+    if (!versionChain && payload?.stage === "FLOOR_TX_CREATED") {
+      versionChain = buildVersionChainDiagnostic({
+        boundary: "FLOOR_TX_CREATED",
+        source_kind: "floor_transaction_expected",
+        version: payload,
+        message_index: payload.message_index,
+        generation_id: payload.generation_id,
+        generation_intent_id: payload.generation_intent_id,
+        generation_type: payload.generation_type,
+        generation_ended: payload.generation_ended,
+        generation_settled: payload.generation_settled,
+        scheduler_revision: payload.scheduler_revision,
+        analysis_execution_id: payload.analysis_execution_id,
+      });
+    }
+    if (!versionChain && payload?.stage === "FLOOR_TX_AUTHORITATIVE_SOURCE_READ" &&
+        payload?.actual_floor_version && typeof payload.actual_floor_version === "object") {
+      versionChain = buildVersionChainDiagnostic({
+        boundary: "AUTHORITATIVE_SOURCE_READ_BEFORE_WRITE",
+        source_kind: "official_chat_read",
+        version: payload.actual_floor_version,
+        message_index: payload.message_index,
+        generation_id: payload.generation_id,
+        generation_intent_id: payload.generation_intent_id,
+        generation_type: payload.generation_type,
+        generation_ended: payload.generation_ended,
+        generation_settled: payload.generation_settled,
+        scheduler_revision: payload.scheduler_revision,
+        analysis_execution_id: payload.analysis_execution_id,
+        source_text_length: payload.source_text_length,
+      });
+    }
+    if (!versionChain && payload?.stage === "FLOOR_TX_LATEST_SLOT_RESOLVED" &&
+        payload?.actual_floor_version && typeof payload.actual_floor_version === "object") {
+      versionChain = buildVersionChainDiagnostic({
+        boundary: "FLOOR_TX_LATEST_SLOT_RESOLVED",
+        source_kind: "store",
+        version: payload.actual_floor_version,
+        message_index: payload.message_index,
+        generation_id: payload.generation_id,
+        generation_intent_id: payload.generation_intent_id,
+        generation_type: payload.generation_type,
+        generation_ended: payload.generation_ended,
+        generation_settled: payload.generation_settled,
+        scheduler_revision: payload.scheduler_revision,
+        analysis_execution_id: payload.analysis_execution_id,
+        source_text_length: payload.source_text_length,
+      });
+    }
+    if (!versionChain &&
+        (payload?.stage === "EVENT_OWNER_VERSION_CHECK" || payload?.stage === "WORLD_OWNER_VERSION_CHECK") &&
+        payload?.version_check_source === "official_owner" &&
+        payload?.actual && typeof payload.actual === "object") {
+      versionChain = buildVersionChainDiagnostic({
+        boundary: "AUTHORITATIVE_SOURCE_READ_BEFORE_WRITE",
+        source_kind: "official_chat_read",
+        version: payload.actual,
+        message_index: payload.message_index,
+        generation_id: payload.generation_id,
+        generation_intent_id: payload.generation_intent_id,
+        generation_type: payload.generation_type,
+        generation_ended: payload.generation_ended,
+        generation_settled: payload.generation_settled,
+        scheduler_revision: payload.scheduler_revision,
+        analysis_execution_id: payload.analysis_execution_id,
+      });
+    }
+    versionChain ??= payload;
+    const emitTrace = tracePayload => notify({
       type: "BIOWEAVE_PERSISTENCE_TRACE",
-      payload,
-      chatId: payload?.chat_id ?? chat.current(),
+      payload: tracePayload,
+      chatId: tracePayload?.chat_id ?? chat.current(),
     });
+    if (payload?.stage !== "VERSION_CHAIN")
+      emitTrace(payload);
+    emitTrace(versionChain);
+    if (versionChain?.stage !== "VERSION_CHAIN" || !versionChain.analysis_execution_id) return;
+    const previous = versionChainByExecution.get(versionChain.analysis_execution_id) ?? null;
+    versionChainByExecution.set(versionChain.analysis_execution_id, versionChain);
+    const transition = versionChainTransition(previous, versionChain);
+    if (transition) {
+      notify({
+        type: "BIOWEAVE_PERSISTENCE_TRACE",
+        payload: transition,
+        chatId: versionChain.chat_id ?? chat.current(),
+      });
+    }
   }
 
   async function recordReloadFloorSlotAudit(reason = "runtime-init") {
@@ -1580,11 +1670,7 @@ export function createRuntime({
     });
   }
 
-  st.setPersistenceTraceSink?.((payload) => notify({
-    type: "BIOWEAVE_PERSISTENCE_TRACE",
-    payload,
-    chatId: payload?.chat_id ?? chat.current(),
-  }));
+  st.setPersistenceTraceSink?.((payload) => recordPersistenceTrace(payload));
 
   function resolveEventAnalysisProfile() {
     const settings = store.profileStore?.getSettings?.() ?? {};
@@ -2317,6 +2403,7 @@ export function createRuntime({
   }
 
   function handleLifecycleEvent(key, eventType, payload) {
+    if (key === "CHAT_CHANGED") versionChainByExecution.clear();
     const sequence = ++lifecycleSequence;
     const epochBefore = chat.getEpoch();
     const previousOwner = activeOwner;
@@ -2658,6 +2745,7 @@ export function createRuntime({
 
   function destroy() {
     if (destroyed) return;
+    versionChainByExecution.clear();
     projectionRuntime.destroy();
     projectionContext.destroy();
     storyTimeCoordinator.destroy();

@@ -7375,6 +7375,12 @@
 .bioweave-character-health-issue header strong { color: var(--bioweave-text-secondary) !important; font-size: 11px !important; }
 .bioweave-character-health-issue p { margin: 3px 0 0 !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
 .bioweave-character-health-empty { margin-top: 5px !important; padding: 6px !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
+.bioweave-character-health-source-action { margin-top: 5px !important; }
+.bioweave-character-health-sources { margin-top: 5px !important; }
+.bioweave-character-health-sources > summary { cursor: pointer; list-style: none; }
+.bioweave-character-health-sources > summary::-webkit-details-marker { display: none; }
+.bioweave-character-health-source-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.bioweave-event-source-focus { border-color: var(--bioweave-accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--bioweave-accent) 30%, transparent) !important; }
 .bioweave-character-exposure-section { grid-column: 1 / -1 !important; }
 .bioweave-character-capabilities,
 .bioweave-character-exposure-fields,

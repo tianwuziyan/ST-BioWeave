@@ -83,6 +83,23 @@ function eventIdOf(event, fallback = '') {
   return String(event?.event_id ?? fallback ?? '').trim()
 }
 
+export function focusEventById(eventId, documentRef = globalThis.document) {
+  const normalizedId = String(eventId ?? '').trim()
+  if (!normalizedId || typeof documentRef?.querySelectorAll !== 'function') {
+    return {ok: false, reason: 'INVALID_EVENT_ID'}
+  }
+  const target = [...documentRef.querySelectorAll('[data-bioweave-event-id]')].find(
+    node => String(node?.dataset?.bioweaveEventId ?? '').trim() === normalizedId,
+  )
+  if (!target) return {ok: false, reason: 'EVENT_NOT_FOUND', event_id: normalizedId}
+  if ('open' in target) target.open = true
+  target.classList?.add?.('bioweave-event-source-focus')
+  target.scrollIntoView?.({behavior: 'smooth', block: 'center'})
+  const timer = documentRef?.defaultView?.setTimeout ?? globalThis.setTimeout
+  if (typeof timer === 'function') timer(() => target.classList?.remove?.('bioweave-event-source-focus'), 1400)
+  return {ok: true, event_id: normalizedId}
+}
+
 function renderDefinitionList(rows, className = '') {
   return (
     '<dl class="bioweave-data-list ' +

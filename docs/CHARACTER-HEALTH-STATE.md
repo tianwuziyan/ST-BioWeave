@@ -1414,7 +1414,7 @@ Projection、World Model health rules、Snapshot Health migration、historical b
 Phase 5A 在既有 Character Analysis / Character Details 页面展示 Runtime 已提供的
 current_health_state。人物详情按 canonical character_id 读取对应人物的
 grouped_issues，使用 read model 提供的 display_site、laterality 与 factual_kind
-做用户可读呈现；缺少部位时显示为展示层的“全身”，不回写 Event。
+做用户可读呈现；缺少部位时显示为展示层的“未标明部位”，不回写 Event。
 
 UI 不推导 overall severity，不消费或显示 active_observations 的生命周期字段，
 不显示 Assessment ID、Floor Version、fingerprint、raw timing 或 recovery countdown。
@@ -1426,6 +1426,13 @@ Phase 5A 只实现 Character Details read-model consumption；不新增顶级 He
 不触发 AI/Analysis/Projection/persistence，不实现 recovery stage、Context injection
 或 UI 侧 Health lifecycle。Phase 5B 随后通过既有 Projection Context 槽位提供
 Health Recovery Guidance；Phase 5A UI 本身不显示 recovery stage 或倒计时。
+
+Phase 5A 的来源导航使用 `grouped_issues[].source_observation_ids` 中已有的 canonical
+Event ID。单个来源显示“查看来源事件”，多个来源逐个提供定位入口；Character UI 只依据
+当前有效 Event read model 校验来源，不通过 description、body_site、factual_kind 或人物
+文本匹配。Events 页面按 `data-bioweave-event-id` 展开、滚动并短暂聚焦目标 Event。
+来源 Event 已删除、失效或不属于当前人物时，不生成来源入口；这项交互不改变 Event、
+Assessment、Health Evolution、Aggregation 或 Floor authority。
 
 ## Status reminder
 

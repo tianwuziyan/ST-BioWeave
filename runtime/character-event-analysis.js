@@ -315,6 +315,12 @@ export function createCharacterEventAnalysis({
   }) {
     if (typeof analyzer?.analyzeFloor !== "function")
       throw new Error("EVENT_ANALYZER_UNAVAILABLE");
+    emitPersistenceTrace("VERSION_CHAIN", execution, target, {
+      boundary: "API_REQUEST_STARTED",
+      source_kind: "analysis_target",
+      analysis_execution_id: execution?.analysis_execution_id ?? null,
+      source_text_length: execution?.source_text_length ?? null,
+    }, "event");
     const result = await analyzer.analyzeFloor({
       analysisInput,
       world_model: finalWorldModel,
@@ -329,6 +335,13 @@ export function createCharacterEventAnalysis({
         "event",
       ),
     });
+    emitPersistenceTrace("VERSION_CHAIN", execution, target, {
+      boundary: "API_RESULT_RECEIVED",
+      source_kind: "analysis_target",
+      analysis_execution_id: execution?.analysis_execution_id ?? null,
+      source_text_length: execution?.source_text_length ?? null,
+      result: "received",
+    }, "event");
     emitPersistenceTrace("EVENT_VALIDATION_RESULT", execution, target, {
       schema_valid: true,
       domain_valid: null,

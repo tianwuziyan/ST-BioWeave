@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { charactersPage } from '../ui/characters.js'
-import { eventsPage } from '../ui/events.js'
+import { eventsPage, focusEventById } from '../ui/events.js'
 import { overviewPage } from '../ui/overview.js'
 import { statePage } from '../ui/state.js'
 import { summarizeWorldModelUiProjection, worldPage } from '../ui/world.js'
@@ -989,6 +989,78 @@ test('Character Health UI prefers factual descriptions and never exposes machine
   assert.doesNotMatch(html, /pain_and_soreness|pain and soreness/)
   assert.match(html, /未标明部位/)
   assert.doesNotMatch(html, /全身/)
+})
+
+test('Character Health source actions use current canonical Event ids and isolate characters', () => {
+  const healthState = {
+    characters: {
+      'char-a': {
+        grouped_issues: [{
+          display_site: 'wrist',
+          factual_kind: 'pain',
+          description: '疼痛',
+          source_observation_ids: ['event-a', 'event-a-2', 'event-b'],
+        }],
+      },
+    },
+  }
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: healthState,
+    activeEvents: [
+      { event_id: 'event-a', state_fact: { subject_id: 'char-a' } },
+      { event_id: 'event-a-2', state_fact: { subject_id: 'char-a' } },
+      { event_id: 'event-b', state_fact: { subject_id: 'char-b' } },
+    ],
+  })
+  assert.match(html, /查看 2 条来源事件/)
+  assert.match(html, /data-bioweave-event-id="event-a"/)
+  assert.match(html, /data-bioweave-event-id="event-a-2"/)
+  assert.doesNotMatch(html, /data-bioweave-event-id="event-b"/)
+})
+
+test('Character Health source action is omitted when its Event is not in the current read model', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{ display_site: 'wrist', description: '疼痛', source_observation_ids: ['deleted-event'] }],
+        },
+      },
+    },
+    activeEvents: [],
+  })
+  assert.doesNotMatch(html, /查看来源事件|定位来源事件/)
+})
+
+test('Events source navigation helper locates only the canonical Event DOM identity', () => {
+  const classes = new Set()
+  const target = {
+    dataset: { bioweaveEventId: 'event-a' },
+    open: false,
+    classList: { add: value => classes.add(value), remove: value => classes.delete(value) },
+    scrollIntoViewOptions: null,
+    scrollIntoView(options) { this.scrollIntoViewOptions = options },
+  }
+  const documentRef = {
+    defaultView: { setTimeout(callback) { callback(); return 1 } },
+    querySelectorAll() { return [target] },
+  }
+  assert.deepEqual(focusEventById('event-a', documentRef), { ok: true, event_id: 'event-a' })
+  assert.equal(target.open, true)
+  assert.deepEqual(target.scrollIntoViewOptions, { behavior: 'smooth', block: 'center' })
+  assert.equal(classes.has('bioweave-event-source-focus'), false)
+  assert.deepEqual(focusEventById('missing-event', documentRef), { ok: false, reason: 'EVENT_NOT_FOUND', event_id: 'missing-event' })
+})
+
+test('Character Health source navigation is a narrow App action', () => {
+  const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
+  assert.match(appSource, /focusEventById/)
+  assert.match(appSource, /view-health-source-event/)
+  assert.match(appSource, /activeEventById\(normalizedId\)/)
 })
 
 test('Character UI forwards current Health State without exposing internal assessment fields', () => {

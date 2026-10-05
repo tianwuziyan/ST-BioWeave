@@ -16,12 +16,15 @@ export function createAnalysisExecutionPort({run} = {}) {
         force = false,
         reason = "automatic",
         generation,
+        analysisExecutionId,
         intent,
         trigger,
       } = request;
       const options = {force, reason};
       if (Object.prototype.hasOwnProperty.call(request, "generation"))
         options.generation = generation;
+      if (Object.prototype.hasOwnProperty.call(request, "analysisExecutionId"))
+        options.analysisExecutionId = analysisExecutionId;
       if (Object.prototype.hasOwnProperty.call(request, "intent"))
         options.intent = intent;
       if (Object.prototype.hasOwnProperty.call(request, "trigger"))
