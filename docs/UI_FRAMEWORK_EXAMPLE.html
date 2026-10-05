@@ -790,6 +790,14 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .bw-character-detail-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+      .bw-character-health-button { min-height: 32px; padding: 5px 10px; border: 1px solid #75623e; border-radius: 7px; background: #41331d; color: var(--bw-warn); font-size: 12px; font-weight: 600; white-space: nowrap; }
+      .bw-character-health-popover { position: absolute; z-index: 7; top: 63px; right: 12px; width: min(440px, calc(100% - 24px)); border: 1px solid #526671; border-radius: 8px; background: var(--bw-soft); box-shadow: 0 15px 36px #0009; }
+      .bw-character-health-body { padding: 0 12px 8px; }
+      .bw-character-health-overview { min-height: 30px; height: 30px; margin-bottom: 6px; padding: 0; align-items: center; }
+      .bw-character-health-overview strong { padding: 2px 8px; line-height: 1.2; }
+      .bw-character-health-issue { display: grid; grid-template-columns: 82px minmax(0, 1fr) max-content; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--bw-line); }
+      .bw-character-health-issue-site { min-width: 0; padding-right: 10px; overflow-wrap: anywhere; border-right: 1px solid var(--bw-line); white-space: normal; }
       .bw-character-alias-editor {
         margin: 0 12px 10px;
         overflow: hidden;
@@ -1921,6 +1929,9 @@
           width: 100%;
           padding: 0;
         }
+        .bw-character-health-popover { position: fixed; top: auto; right: 10px; bottom: 10px; left: 10px; width: auto; max-height: 72vh; border-radius: 10px; }
+        .bw-character-health-issue { grid-template-columns: 70px minmax(0, 1fr) max-content; gap: 7px; }
+        .bw-character-health-issue-site { padding-right: 7px; }
         body[data-device='mobile'][data-view='characters'] .bw-character-toolbar,
         body[data-device='mobile'][data-view='characters'] .bw-character-workspace,
         body[data-device='mobile'][data-view='characters'] .bw-character-list-pane,
@@ -2168,8 +2179,13 @@
                     <div class="bw-character-detail-title"><h2>Runtime display_name</h2><span>Runtime 物种 · 生理类型</span></div>
                     <p>n 条相关事件 · 当前状态已就绪</p>
                   </div>
-                  <button class="bw-button" type="button">编辑昵称</button>
+                  <div class="bw-character-detail-actions">
+                    <button class="bw-character-health-button" type="button" aria-expanded="false" aria-controls="bw-character-health-popover">健康 · 有异常</button>
+                    <button class="bw-button" type="button">推演周期</button>
+                    <button class="bw-button" type="button">编辑昵称</button>
+                  </div>
                 </header>
+                <!-- A 方案：按钮下方的只读紧凑浮层；生产内容来自 Runtime，不使用此示例数据。 -->
                 <section class="bw-character-alias-editor" aria-label="昵称编辑器">
                   <div class="bw-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="bw-badge good">1 个</span></div>
                   <div class="bw-character-alias-fields"><label class="bw-character-alias-field"><span>别名</span><input value="Runtime alias" aria-label="昵称 1" /><button type="button" aria-label="删除昵称">×</button></label></div>

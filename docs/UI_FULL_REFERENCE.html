@@ -740,6 +740,14 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .character-detail-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+      .character-health-button { min-height: 32px; padding: 5px 10px; border: 1px solid #785f34; border-radius: 7px; background: #41331d; color: var(--warn); font-size: 12px; font-weight: 600; white-space: nowrap; }
+      .character-health-popover { position: absolute; z-index: 7; top: 63px; right: 12px; width: min(440px, calc(100% - 24px)); border: 1px solid #526671; border-radius: 8px; background: var(--soft); box-shadow: 0 15px 36px #0009; }
+      .character-health-body { padding: 0 12px 8px; }
+      .character-health-overview { min-height: 30px; height: 30px; margin-bottom: 6px; padding: 0; align-items: center; }
+      .character-health-overview .health-status-badge { padding: 2px 8px; line-height: 1.2; }
+      .character-health-issue { display: grid; grid-template-columns: 82px minmax(0, 1fr) max-content; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+      .character-health-issue-site { min-width: 0; padding-right: 10px; overflow-wrap: anywhere; border-right: 1px solid var(--border-soft); white-space: normal; }
       .character-alias-editor {
         margin: 0 12px 10px;
         overflow: hidden;
@@ -2443,6 +2451,9 @@
         width: 100%;
         padding: 0;
       }
+      body[data-device='mobile'] .character-health-popover { position: fixed; top: auto; right: 10px; bottom: 10px; left: 10px; width: auto; max-height: 72vh; border-radius: 10px; }
+      body[data-device='mobile'] .character-health-issue { grid-template-columns: 70px minmax(0, 1fr) max-content; gap: 7px; }
+      body[data-device='mobile'] .character-health-issue-site { padding-right: 7px; }
       body[data-device='mobile'][data-view='characters'] .character-toolbar,
       body[data-device='mobile'][data-view='characters'] .character-workspace,
       body[data-device='mobile'][data-view='characters'] .character-list-pane,
@@ -3060,7 +3071,7 @@
           <button class="character-row" type="button"><span class="character-row-main"><b>镜生体 07</b></span><span class="character-row-state"><span>1 条事件</span><span class="character-row-chevron">›</span></span></button>
           <button class="character-row" type="button"><span class="character-row-main"><b>未命名对象</b></span><span class="character-row-state"><span class="badge">未知</span><span>0 条事件</span><span class="character-row-chevron">›</span></span></button>
         </div></section>
-        <section class="surface character-detail-pane"><header class="character-detail-head"><div><div class="character-detail-title"><h2>爱丽丝</h2><span>人类 · 潮汐生物型</span></div><p>2 条相关事件 · 当前状态已就绪</p></div><button class="button" type="button" data-character-alias-toggle>编辑昵称</button></header>${aliasEditor}<div class="character-detail-sections">
+        <section class="surface character-detail-pane"><header class="character-detail-head"><div><div class="character-detail-title"><h2>爱丽丝</h2><span>人类 · 潮汐生物型</span></div><p>2 条相关事件 · 当前状态已就绪</p></div><div class="character-detail-actions"><button class="character-health-button" type="button" aria-expanded="false" aria-controls="character-health-popover">健康 · 有异常</button><button class="button" type="button">推演周期</button><button class="button" type="button" data-character-alias-toggle>编辑昵称</button></div></header>${aliasEditor}<div class="character-detail-sections">
           <section class="character-detail-section"><header class="character-section-head"><h3>生殖能力</h3><small>6 项</small></header><dl class="character-capabilities"><div><dt>可产生精子</dt><dd>否</dd></div><div><dt>可产生卵子</dt><dd class="row-value good">是</dd></div><div><dt>可受精</dt><dd class="row-value good">是</dd></div><div><dt>可使对方受精</dt><dd>否</dd></div><div><dt>可承担妊娠</dt><dd class="row-value good">是</dd></div><div><dt>可导致受孕</dt><dd>否</dd></div></dl></section>
           <section class="character-detail-section"><header class="character-section-head"><h3>当前状态</h3><span class="badge good">已就绪</span></header><div class="character-state-strip"><div class="character-state-cell"><span>生殖暴露</span><strong>2 条已确认记录</strong></div><div class="character-state-cell"><span>受孕事实</span><strong>当前状态未知</strong></div><div class="character-state-cell"><span>妊娠状态</span><strong>暂无记录</strong></div></div><p class="character-state-empty-summary">周期、产后、身体表现、医疗事实暂无记录</p></section>
           <section class="character-detail-section exposure-section"><header class="character-section-head"><div><h3>事件记录</h3><small>按时间顺序</small></div><strong>2 条</strong></header><div class="character-exposure-list">

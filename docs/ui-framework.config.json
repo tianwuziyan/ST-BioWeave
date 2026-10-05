@@ -351,7 +351,19 @@
         "placeholder": "bioweave-character-detail-placeholder",
         "sections": "bioweave-character-detail-sections",
         "sectionColumns": "single continuous column",
-        "identityHeader": "display name, species/type, related-event count, state readiness, and alias edit action",
+        "identityHeader": "display name, species/type, related-event count, state readiness, and ordered health/timing/alias actions",
+        "healthStatusPopover": {
+          "variant": "A compact popover only",
+          "buttonOrder": ["healthStatus", "characterTiming", "characterAliases"],
+          "buttonStates": {"warning": "健康 · 有异常", "good": "健康 · 正常", "neutral": "健康 · 无记录"},
+          "runtimeFields": ["current_health_state", "current_health_summary", "grouped_issues"],
+          "desktopPlacement": "below identity action area",
+          "mobilePlacement": "fixed bottom surface",
+          "issueColumns": ["body site", "content", "canonical source action"],
+          "closeBehavior": ["toggle button", "outside click", "Escape before panel close"],
+          "sourceLabels": {"single": "查看来源", "multiple": "N 条来源"},
+          "forbidden": ["B/C variants", "prototype switcher", "static demo data", "URL variant parameter", "health inference", "debug fields"]
+        },
         "sectionOrder": ["capabilities", "currentState", "eventRecords", "otherInformation"],
         "otherInformation": ["projection", "relations", "notes"],
         "empty": {

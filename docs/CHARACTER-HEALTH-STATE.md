@@ -6,7 +6,7 @@
 > **Persisted Health Assessment Lifecycle Phase 1: IMPLEMENTED**
 > **Minimal Health Evolution / Current Health State Phase 2: IMPLEMENTED (read model only)**
 > **Active Observation Lifecycle / Presentation Aggregation Phase 4: IMPLEMENTED (derived read model only)**
-> **Character Health UI Phase 5A: IMPLEMENTED (Character Details read-model presentation only)**
+> **Character Health UI Phase 5A: IMPLEMENTED (Character Details read-model presentation only; A compact popover)**
 > **Health Recovery Guidance Phase 5B: IMPLEMENTED (deterministic Projection Context guidance only)**
 >
 > 本文是 Character Health State 的领域设计与实现边界说明，不是完整医疗系统或完整
@@ -1418,8 +1418,8 @@ grouped_issues，使用 read model 提供的 display_site、laterality 与 factu
 
 UI 不推导 overall severity，不消费或显示 active_observations 的生命周期字段，
 不显示 Assessment ID、Floor Version、fingerprint、raw timing 或 recovery countdown。
-current_health_summary 只有在 Runtime 提供非空摘要时才直接显示；否则使用中性
-“当前有健康问题”或“当前无记录的健康问题”。缺失 Health State、人物不存在或
+current_health_summary 只有在 Runtime 提供非空摘要时才直接显示；缺少摘要时不额外
+渲染摘要行，状态由健康按钮与“总体状态”徽标表达。缺失 Health State、人物不存在或
 grouped_issues 为空时保持安全空状态。
 
 Phase 5A 只实现 Character Details read-model consumption；不新增顶级 Health 页面、

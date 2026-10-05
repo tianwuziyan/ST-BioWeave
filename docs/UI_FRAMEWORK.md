@@ -245,7 +245,9 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 人物详情中的“当前 Biological State”是人物页的一个只读详情区域，直接消费 `currentState.characters[characterId]` 与 `currentStateStatus`；人物页不得重新计算 State。`ui/state.js` 只负责插件级状态，不维护第二个 Character Selector，也不因 Focus Character 改变人物 Biological State 展示。
 
-工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板只保留一个外层 surface；人物姓名、物种/类型、事件数量、状态就绪信息和昵称入口合并到 `10px 12px` 的身份标题栏，不再额外渲染“人物详情”标题、人物摘要卡或“事件追踪”徽标。能力、当前状态、事件记录和其他信息按连续纵向区块排列，以 `border-soft` 分隔，不再层层嵌套卡片。
+工具栏右侧的“全部状态”是普通 `bioweave-button`，不是输入框或 `bioweave-select`：最小宽度 `96px`、最小高度 `32px`、内边距 `5px 10px`、圆角 `7px`，使用 `surface-raised` 背景和 `text-secondary` 文字。左侧搜索框使用 `input-bg` 背景、`text` 文字、`8px 9px` 内边距和 `7px` 圆角。详情面板只保留一个外层 surface；人物姓名、物种/类型、事件数量、状态就绪信息和操作入口合并到 `10px 12px` 的身份标题栏，不再额外渲染“人物详情”标题、人物摘要卡或“事件追踪”徽标。能力、当前状态、事件记录和其他信息按连续纵向区块排列，以 `border-soft` 分隔，不再层层嵌套卡片。
+
+身份标题栏操作区固定按“健康状态、推演周期、编辑昵称”排列。健康按钮只消费 Runtime 的 `current_health_state`、`current_health_summary` 和 `grouped_issues`：有问题显示黄色“健康 · 有异常”，无问题显示绿色“健康 · 正常”，缺少或无法读取 Health State 显示中性“健康 · 无记录”。点击按钮打开 A 方案 `bioweave-character-health-popover` 紧凑浮层；Desktop/iPad 位于按钮下方，Mobile 固定在底部。浮层使用 `role="dialog"`、`aria-labelledby`、稳定 `aria-controls`，支持再次点击、外侧点击和 Escape 关闭；Escape 优先关闭健康浮层。问题行固定为“部位｜内容｜来源”三列，单来源为“查看来源”，多来源为“N 条来源”并在右侧展开现有 canonical Event 跳转。健康状态不再作为人物正文区块重复渲染，也不显示 Assessment、Floor Version 或其它调试字段。
 
 能力区 Desktop 使用三列、Mobile 使用两列，每行最小高度 `29px`，标签使用 `text-secondary`、值默认使用 `text-muted`。当前状态优先展示生殖暴露、受孕事实和妊娠状态三个摘要；周期、产后、身体表现、医疗事实等相邻空状态合并成一行 `11px` 辅助文字，不为每个空模块生成完整卡片。推演、关系和备注合并到“其他信息”区，但继续保留三个明确的空状态。Mobile 人物工具栏、工作区、列表 pane、详情 pane 都必须 `width: 100%` 且取消左右外边距，避免内容被缩窄或产生页面横向滚动。
 
@@ -269,8 +271,13 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
   <section class="bioweave-card bioweave-character-detail-pane">
     <header class="bioweave-character-detail-head">
       <div><h2>Runtime display_name</h2><p>物种 · 生理类型 · n 条相关事件</p></div>
-      <button data-bioweave-action="open-character-aliases">编辑昵称</button>
+      <div class="bioweave-character-detail-actions">
+        <button class="bioweave-button bioweave-character-health-button warning" data-bioweave-action="toggle-character-health" aria-expanded="false" aria-controls="bioweave-character-health-popover">健康 · 有异常</button>
+        <button data-bioweave-action="open-character-timing">推演周期</button>
+        <button data-bioweave-action="open-character-aliases">编辑昵称</button>
+      </div>
     </header>
+    <!-- A 方案：打开后在标题栏下方渲染 bioweave-character-health-popover；Mobile 改为底部浮层。 -->
     <!-- capabilities / current state summary / event records / compact projection-relations-notes -->
   </section>
 </div>

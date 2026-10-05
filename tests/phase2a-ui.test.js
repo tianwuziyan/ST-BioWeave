@@ -926,8 +926,10 @@ test('character details consume grouped Health State issues without rebuilding l
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     characterProfiles: { 'char-a': { character_id: 'char-a', display_name: '角色甲' } },
     currentHealthState: healthState,
+    healthPopoverOpen: true,
   })
-  assert.match(html, /健康状态/)
+  assert.match(html, /data-bioweave-action="toggle-character-health"/)
+  assert.match(html, /id="bioweave-character-health-popover"/)
   assert.match(html, /当前有健康问题/)
   assert.match(html, /左手腕/)
   assert.match(html, /疼痛/)
@@ -956,15 +958,15 @@ test('character Health State is scoped by canonical character id and supports co
     },
     currentHealthState: healthState,
   }
-  const htmlA = charactersPage({ ...base, characterId: 'char-a' })
+  const htmlA = charactersPage({ ...base, characterId: 'char-a', healthPopoverOpen: true })
   const htmlB = charactersPage({ ...base, characterId: 'char-b' })
-  const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null })
+  const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null, healthPopoverOpen: true })
   assert.match(htmlA, /未标明部位/)
   assert.doesNotMatch(htmlA, /全身/)
   assert.match(htmlA, /发热/)
   assert.doesNotMatch(htmlB, /发热/)
-  assert.match(htmlB, /当前无记录的健康问题/)
-  assert.match(missing, /当前无记录的健康问题/)
+  assert.match(htmlB, /健康 · 无记录/)
+  assert.match(missing, /健康 · 无记录/)
 })
 
 test('Character Health UI prefers factual descriptions and never exposes machine kind', () => {
@@ -984,6 +986,7 @@ test('Character Health UI prefers factual descriptions and never exposes machine
         },
       },
     },
+    healthPopoverOpen: true,
   })
   assert.match(html, /大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力/)
   assert.doesNotMatch(html, /pain_and_soreness|pain and soreness/)
@@ -1008,16 +1011,55 @@ test('Character Health source actions use current canonical Event ids and isolat
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     currentHealthState: healthState,
+    healthPopoverOpen: true,
     activeEvents: [
       { event_id: 'event-a', state_fact: { subject_id: 'char-a' } },
       { event_id: 'event-a-2', state_fact: { subject_id: 'char-a' } },
       { event_id: 'event-b', state_fact: { subject_id: 'char-b' } },
     ],
   })
-  assert.match(html, /查看 2 条来源事件/)
+  assert.match(html, /2 条来源/)
   assert.match(html, /data-bioweave-event-id="event-a"/)
   assert.match(html, /data-bioweave-event-id="event-a-2"/)
   assert.doesNotMatch(html, /data-bioweave-event-id="event-b"/)
+})
+
+test('Character Health stays out of the detail body until the status popover is opened', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: 'wrist', description: '疼痛'}]}}},
+  })
+  assert.match(html, /健康 · 有异常/)
+  assert.doesNotMatch(html, /<section[^>]+bioweave-character-health-popover/)
+  assert.doesNotMatch(html, /bioweave-character-health-detail-section/)
+})
+
+test('Character Health popover follows the compact A layout without an extra card or summary row', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: '左手腕', description: '疼痛'}]}}},
+    healthPopoverOpen: true,
+  })
+  assert.match(html, /<section class="bioweave-character-health-popover"/)
+  assert.doesNotMatch(html, /bioweave-card bioweave-character-health-popover|当前有健康问题<\/p>/)
+  assert.match(html, /bioweave-character-health-dot warning/)
+})
+
+test('Character Health status button uses warning, good, and neutral Runtime states', () => {
+  const base = {
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+  }
+  const warning = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: [{description: '疼痛'}]}}}})
+  const good = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
+  const neutral = charactersPage({...base, currentHealthState: null})
+  assert.match(warning, /class="bioweave-button bioweave-character-health-button warning"[\s\S]*健康 · 有异常/)
+  assert.match(good, /class="bioweave-button bioweave-character-health-button good"[\s\S]*健康 · 正常/)
+  assert.match(neutral, /class="bioweave-button bioweave-character-health-button neutral"[\s\S]*健康 · 无记录/)
+  assert.ok(warning.indexOf('健康 · 有异常') < warning.indexOf('推演周期'))
+  assert.ok(warning.indexOf('推演周期') < warning.indexOf('编辑昵称'))
 })
 
 test('Character Health source action is omitted when its Event is not in the current read model', () => {

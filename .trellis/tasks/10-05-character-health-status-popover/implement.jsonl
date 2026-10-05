@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Confirm UI remains a consumer of current valid Floor-derived Runtime facts and does not create a second source of truth"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Follow plain DOM page ownership, compact popup, UI_OPEN_FAST_PATH, and lifecycle conventions"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Apply host-integration, responsive, token, and test requirements"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Preserve character page structure, button conventions, responsive breakpoints, and accessibility hooks"}
+{"file":"docs/ui-framework.config.json","reason":"Reuse existing theme tokens and UI dimensions"}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"Compare production markup and three-viewport reference structure"}
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"Respect the implemented Phase 5A read-model consumption boundary"}

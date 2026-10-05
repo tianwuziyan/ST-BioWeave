@@ -114,6 +114,26 @@ test('Character timing editor shows no current cycle before a Timing Instance ex
   assert.doesNotMatch(html, /本次偏移/u)
 })
 
+test('Character Health popover keeps the A-variant interaction contract', () => {
+  const keydownStart = APP_SOURCE.indexOf('function handleKeydown(')
+  const keydownEnd = APP_SOURCE.indexOf('function teardownRootListeners(', keydownStart)
+  const keydownSource = APP_SOURCE.slice(keydownStart, keydownEnd)
+  const outsideStart = APP_SOURCE.indexOf('healthPopoverState.open &&', APP_SOURCE.indexOf('async function handleClick('))
+  const outsideEnd = APP_SOURCE.indexOf('captureAnalysisSourceDisclosure()', outsideStart)
+  const outsideSource = APP_SOURCE.slice(outsideStart, outsideEnd)
+  assert.ok(keydownStart >= 0)
+  assert.ok(outsideStart >= 0)
+  assert.ok(keydownSource.indexOf('healthPopoverState.open') < keydownSource.indexOf('aliasEditorState.open'))
+  assert.match(keydownSource, /closeCharacterHealth\(\)[\s\S]*return/u)
+  assert.match(outsideSource, /\.bioweave-character-health-popover, \[data-bioweave-action="toggle-character-health"\]/u)
+  assert.match(APP_SOURCE, /healthPopoverState = \{open: false, characterId: null\}/u)
+  assert.match(APP_SOURCE, /healthPopoverState\.open && healthPopoverState\.characterId === focusedCharacterId/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-issue \{[\s\S]*border: 0 !important;[\s\S]*background: transparent !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview \{[\s\S]*height: 30px !important;[\s\S]*margin-bottom: 6px !important;[\s\S]*align-items: center !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-button\.warning \{[\s\S]*border-color: #75623e !important;[\s\S]*background: var\(--bioweave-warn-soft\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview\[data-health-state="warning"\] \.bioweave-badge \{[\s\S]*border-color: #785f34 !important;[\s\S]*background: var\(--bioweave-warn-soft\) !important;/u)
+})
+
 test('Character timing open renders before async data and avoids debug aggregation', () => {
   const openStart = APP_SOURCE.indexOf('function openCharacterTiming(')
   const loadStart = APP_SOURCE.indexOf('async function loadCharacterTimingData(')

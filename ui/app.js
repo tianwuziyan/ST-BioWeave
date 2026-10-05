@@ -662,6 +662,7 @@ export function createApp(runtime, options = {}) {
     humanPresetApplicable: false,
     error: null,
   }
+  let healthPopoverState = {open: false, characterId: null}
   let businessRefreshSequence = 0
   let businessRefreshInFlight = null
   let businessRefreshQueued = null
@@ -3698,6 +3699,7 @@ export function createApp(runtime, options = {}) {
     }
     const chatId = runtime.chat.current()
     const requestId = ++aliasEditorRequestSequence
+    if (healthPopoverState.open) healthPopoverState = {open: false, characterId: null}
     if (timingEditorState.open) closeCharacterTiming()
     aliasEditorState = { ...aliasEditorState, open: true, loading: true, saving: false, characterId: id, chatId, canonicalName: null, draftAliases: [], error: null }
     render()
@@ -3761,6 +3763,29 @@ export function createApp(runtime, options = {}) {
     timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
   }
+  function closeCharacterHealth({restoreFocus = true} = {}) {
+    const characterId = healthPopoverState.characterId
+    healthPopoverState = {open: false, characterId: null}
+    render()
+    if (restoreFocus && characterId) {
+      const button = [...(root?.querySelectorAll?.('[data-bioweave-action="toggle-character-health"]') ?? [])]
+        .find(node => String(node.dataset?.characterId ?? '') === String(characterId))
+      button?.focus?.()
+    }
+  }
+  function toggleCharacterHealth(characterId) {
+    const id = String(characterId ?? '').trim()
+    if (!id || id !== String(focusedCharacterId ?? '').trim()) return
+    if (healthPopoverState.open && healthPopoverState.characterId === id) {
+      closeCharacterHealth()
+      return
+    }
+    if (aliasEditorState.open) closeCharacterAliases()
+    if (timingEditorState.open) closeCharacterTiming()
+    healthPopoverState = {open: true, characterId: id}
+    render()
+    root?.querySelector?.('#bioweave-character-health-popover [data-bioweave-action="close-character-health"]')?.focus?.()
+  }
   function openCharacterTiming(characterId) {
     const id = String(characterId ?? '').trim()
     if (!id || typeof runtime.getCharacterTimingEditorData !== 'function') return
@@ -3769,6 +3794,7 @@ export function createApp(runtime, options = {}) {
       return
     }
     const chatId = runtime.chat.current()
+    if (healthPopoverState.open) healthPopoverState = {open: false, characterId: null}
     timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     render()
     void loadCharacterTimingData({id, chatId})
@@ -4037,6 +4063,7 @@ export function createApp(runtime, options = {}) {
       worldModelMeta: route === 'state' ? worldModelState.meta : null,
       aliasEditor: aliasEditorState,
       timingEditor: timingEditorState,
+      healthPopoverOpen: healthPopoverState.open && healthPopoverState.characterId === focusedCharacterId,
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
       projections: businessState.projections,
@@ -4135,6 +4162,7 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure()
     route = nextRoute
     focusedCharacterId = null
+    healthPopoverState = {open: false, characterId: null}
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
@@ -4149,6 +4177,7 @@ export function createApp(runtime, options = {}) {
     if (!nextId) return
     route = 'characters'
     focusedCharacterId = nextId
+    healthPopoverState = {open: false, characterId: null}
     if (aliasEditorState.characterId !== nextId) {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
@@ -4916,6 +4945,7 @@ export function createApp(runtime, options = {}) {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+      healthPopoverState = {open: false, characterId: null}
       route = 'overview'
       focusedCharacterId = null
       businessRefreshSequence += 1
@@ -5107,6 +5137,14 @@ export function createApp(runtime, options = {}) {
       archiveToggle?.removeAttribute?.('aria-controls')
     }
     if (
+      healthPopoverState.open &&
+      route === 'characters' &&
+      !event.target.closest?.('.bioweave-character-health-popover, [data-bioweave-action="toggle-character-health"]')
+    ) {
+      closeCharacterHealth({restoreFocus: false})
+      return
+    }
+    if (
       timingEditorState.open &&
       route === 'characters' &&
       !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
@@ -5227,6 +5265,16 @@ export function createApp(runtime, options = {}) {
     if (action === 'open-character-aliases') {
       event.preventDefault()
       await openCharacterAliases(target.dataset.characterId)
+      return
+    }
+    if (action === 'toggle-character-health') {
+      event.preventDefault()
+      toggleCharacterHealth(target.dataset.characterId)
+      return
+    }
+    if (action === 'close-character-health') {
+      event.preventDefault()
+      closeCharacterHealth()
       return
     }
     if (action === 'open-character-timing') {
@@ -5670,6 +5718,11 @@ export function createApp(runtime, options = {}) {
   }
   function handleKeydown(event) {
     if (event.key !== 'Escape' || root?.dataset.open !== 'true') return
+    if (healthPopoverState.open && route === 'characters') {
+      event.preventDefault()
+      closeCharacterHealth()
+      return
+    }
     if (aliasEditorState.open && route === 'characters') {
       event.preventDefault()
       closeCharacterAliases()
@@ -5808,6 +5861,7 @@ export function createApp(runtime, options = {}) {
   }
   function closeBioWeave() {
     clearAnalysisPreview()
+    healthPopoverState = {open: false, characterId: null}
     lifecycle.close()
   }
   function destroyBioWeave() {
