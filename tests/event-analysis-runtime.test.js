@@ -76,6 +76,7 @@ function createFixture({
   storyTimeTrace = null,
   characterContextResolver = null,
   rawApiResponse = null,
+  setExtensionPromptHook = null,
   saveFloorError = null,
   saveFloorHook = null,
   saveChatMetadataHook = null,
@@ -141,6 +142,11 @@ function createFixture({
     getExtensionSettings: () => context.extensionSettings,
     getGlobalSettings: () => context.extensionSettings.bioweave,
     getMessage: (index) => context.chat[index] ?? null,
+    setExtensionPrompt(payload) {
+      if (typeof setExtensionPromptHook === "function")
+        return setExtensionPromptHook(payload);
+      return true;
+    },
     async saveChatMetadata(key, value) {
       saveChatMetadataCalls += 1;
       if (typeof saveChatMetadataHook === "function")
@@ -262,6 +268,82 @@ function createFixture({
     },
   };
 }
+
+test("GENERATION_STARTED awaits projection context refresh before prompt read", async () => {
+  const order = [];
+  const fixture = createFixture({
+    setExtensionPromptHook: payload => {
+      if (payload?.key === "bioweave_projection_context") order.push("projection-refresh");
+    },
+  });
+  await fixture.runtime.init();
+  order.length = 0;
+
+  const listener = fixture.listeners.get("generation-started");
+  const lifecycle = listener({generation_type: "normal"});
+  assert.equal(typeof lifecycle?.then, "function");
+  await lifecycle;
+  order.push("prompt-read");
+
+  assert.deepEqual(order, ["projection-refresh", "projection-refresh", "prompt-read"]);
+  assert.equal(fixture.calls(), 0);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const started = sequence.findIndex(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED');
+  const settled = sequence.findIndex(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED');
+  assert.ok(started >= 0);
+  assert.ok(settled > started);
+  assert.equal(sequence[settled].settled_before_listener_resolve, true);
+  assert.equal(sequence[settled].context_ready_before_prompt_read, true);
+  fixture.runtime.destroy();
+});
+
+test("GENERATION_STARTED refresh failure is handled without an unhandled rejection", async () => {
+  const fixture = createFixture({
+    setExtensionPromptHook: () => {
+      throw new Error("PROMPT_WRITE_FAILED");
+    },
+  });
+  await fixture.runtime.init();
+  const listener = fixture.listeners.get("generation-started");
+
+  await assert.doesNotReject(() => listener({generation_type: "normal"}));
+  assert.equal(fixture.calls(), 0);
+  const settled = fixture.runtime.getPersistenceTrace().sequence.find(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED');
+  assert.equal(settled.refresh_outcome, 'unavailable');
+  assert.equal(settled.context_ready_before_prompt_read, false);
+  fixture.runtime.destroy();
+});
+
+test("repeated GENERATION_STARTED refreshes preserve queue ordering", async () => {
+  const writes = [];
+  const fixture = createFixture({
+    setExtensionPromptHook: payload => {
+      if (payload?.key === "bioweave_projection_context") writes.push(payload.content);
+    },
+  });
+  await fixture.runtime.init();
+  writes.length = 0;
+  const listener = fixture.listeners.get("generation-started");
+
+  await Promise.all([
+    listener({generation_type: "normal"}),
+    listener({generation_type: "regenerate"}),
+  ]);
+
+  assert.equal(writes.length, 4);
+  assert.equal(fixture.calls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("non-GENERATION_STARTED lifecycle remains background orchestration", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  const listener = fixture.listeners.get("generation-ended");
+
+  assert.equal(listener({generation_type: "normal"}), undefined);
+  await new Promise(resolve => setImmediate(resolve));
+  fixture.runtime.destroy();
+});
 
 test('Runtime updates aliases only in the current Character Floor without re-running analysis', async () => {
   const fixture = createFixture({

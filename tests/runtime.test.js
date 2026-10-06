@@ -89,6 +89,38 @@ test("Runtime init survives missing or unavailable extension prompt adapters", a
   }
 });
 
+test("runtime diagnostics records ordinary persistence traces once", () => {
+  const runtime = createRuntime({adapter: createAdapter()});
+  runtime.recordPersistenceTrace({stage: "DIAGNOSTIC_ONCE"});
+  const entries = runtime.getPersistenceTrace().sequence.filter(item => item.stage === "DIAGNOSTIC_ONCE");
+  assert.equal(entries.length, 1);
+  runtime.destroy();
+});
+
+test("SillyTavern adapter uses official extension prompt constants when context omits module exports", () => {
+  const calls = [];
+  const previous = globalThis.SillyTavern;
+  globalThis.SillyTavern = {getContext: () => ({
+    setExtensionPrompt: (...args) => calls.push(args),
+  })};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const result = adapter.setExtensionPrompt({
+      key: "bioweave_projection_context",
+      content: "HEALTH_GUIDANCE",
+      position: "IN_CHAT",
+      depth: 4,
+      role: "SYSTEM",
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], ["bioweave_projection_context", "HEALTH_GUIDANCE", 1, 4, false, 0]);
+    assert.notEqual(result, false);
+  } finally {
+    if (previous === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previous;
+  }
+});
+
 test("Store rejects every BioWeave write targeting a User message", async () => {
   const message = { message_id: "user-only", role: "user", content: "用户正文" };
   const adapter = {

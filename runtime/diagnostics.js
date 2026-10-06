@@ -133,6 +133,22 @@ function cloneSafeTraceValue(value) {
   );
 }
 
+function stableDiagnosticValue(value) {
+  if (Array.isArray(value)) return value.map(stableDiagnosticValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableDiagnosticValue(value[key])]));
+}
+
+export function diagnosticFingerprint(value) {
+  const text = JSON.stringify(stableDiagnosticValue(value ?? null));
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `diag_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
 function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
@@ -171,6 +187,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "valid_empty", "empty_reason", "expected_event_count",
     "expected_character_count", "expected_character_ids", "actual_event_count",
     "actual_character_count", "actual_registry_character_count",
+    "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
   ];
   return Object.fromEntries(
     allowed
@@ -517,9 +534,50 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
       if (!Number.isFinite(Number(entry?.seq))) continue;
       bySequence.set(entry.seq, entry);
     }
+    const sequence = [...bySequence.values()].sort((left, right) => left.seq - right.seq);
+    const assessmentGroups = new Map();
+    for (const entry of sequence) {
+      if (!String(entry.stage ?? '').startsWith('HEALTH_ASSESSMENT_')) continue;
+      const key = entry.request_key ?? entry.source_event_id ?? 'unknown';
+      const current = assessmentGroups.get(key) ?? {
+        source_event_id: entry.source_event_id ?? null,
+        request_key: entry.request_key ?? null,
+        lookup_count: 0,
+        ai_request_started_count: 0,
+        ai_request_completed_count: 0,
+        ai_request_failed_count: 0,
+        reuse_count: 0,
+        inflight_reuse_count: 0,
+      };
+      if (entry.stage === 'HEALTH_ASSESSMENT_LOOKUP') current.lookup_count += 1;
+      if (entry.stage === 'HEALTH_ASSESSMENT_REQUEST_STARTED') current.ai_request_started_count += 1;
+      if (entry.stage === 'HEALTH_ASSESSMENT_REQUEST_COMPLETED') current.ai_request_completed_count += 1;
+      if (entry.stage === 'HEALTH_ASSESSMENT_REQUEST_FAILED') current.ai_request_failed_count += 1;
+      if (entry.stage === 'HEALTH_ASSESSMENT_REUSED') current.reuse_count += 1;
+      if (entry.stage === 'HEALTH_ASSESSMENT_INFLIGHT_REUSED') current.inflight_reuse_count += 1;
+      assessmentGroups.set(key, current);
+    }
+    const latestGeneration = [...sequence].reverse().find(entry => entry.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED') ?? null;
+    const latestSlot = [...sequence].reverse().find(entry => entry.stage === 'PROJECTION_CONTEXT_SLOT_WRITTEN' || entry.stage === 'PROJECTION_CONTEXT_SLOT_CLEARED') ?? null;
     return cloneSafeTraceValue({
       ...persistenceTrace,
-      sequence: [...bySequence.values()].sort((left, right) => left.seq - right.seq),
+      sequence,
+      summary: {
+        health_assessments: [...assessmentGroups.values()],
+        projection_context: latestSlot ? {
+          slot: latestSlot.slot ?? 'bioweave_projection_context',
+          context_nonempty: latestSlot.context_nonempty ?? latestSlot.slot_nonempty ?? false,
+          context_fingerprint: latestSlot.context_fingerprint ?? null,
+          health_guidance_count: latestSlot.health_guidance_count ?? 0,
+        } : null,
+        generation: latestGeneration ? {
+          generation_id: latestGeneration.generation_id ?? null,
+          generation_intent_id: latestGeneration.generation_intent_id ?? null,
+          projection_refresh_awaited: latestGeneration.settled_before_listener_resolve === true,
+          context_ready_before_listener_resolve: latestGeneration.context_ready_before_prompt_read === true,
+          refresh_outcome: latestGeneration.refresh_outcome ?? null,
+        } : null,
+      },
     });
   }
 
@@ -529,6 +587,7 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
     getPersistenceTrace,
     sanitizePersistenceTracePayload,
     cloneSafeTraceValue,
+    diagnosticFingerprint,
     formatExecutionDiagnostic: executionError,
     buildFloorPreflightStatus,
     buildReloadFloorSlotAudit,

@@ -240,15 +240,17 @@ evolution 的做法。产品问题是“人物现在身体有什么问题”，�
 
 当前 read model 是 `active_observations[]` 加 `grouped_issues[]`。前者保留 source Event、
 Assessment、factual kind/content（包括 factual description）、body_site、laterality、persistence、Story Time 与 recovery
-window；后者只按 `body_site + laterality + factual kind` 做确定性精确展示分组，并保留
-factual description 与 `source_observation_ids`。普通 UI 优先展示 factual description，不把 machine
-kind 直接当成用户文案。展示分组不能合并 Assessment、共享 deadline、supersede observation
-或创建 Condition authority。
+window；后者只按 `body_site + laterality` 做确定性 presentation grouping，并保留
+factual description 与 `source_observation_ids`。如果 `body_site` 缺失，当前实现使用该
+observation 自身的 source Event ID 做 per-event fallback，不把多个无部位 observation 合并成一个
+全局 `general` lifecycle/group。普通 UI 优先展示 factual description，不把 machine kind 直接当成用户
+文案。展示分组不能合并 Assessment、共享 deadline、supersede observation 或创建 Condition authority。
 
 左手腕疼痛 Day 3 到期、左手腕擦伤 Day 5 到期时，Day 2 两者都 active，Day 3 只保留擦伤，
-Day 5 两者都 inactive。重复的 active pain 可以显示为一项，但最后一个 source observation
-inactive 后该 display issue 才消失。没有 body site 的事实进入 read-model `general` 展示组，
-不会把 `general` 写回 Event。
+Day 5 两者都 inactive。相同 `body_site + laterality` 的 active observation 可以在 presentation
+层显示为一项，但最后一个 source observation inactive 后该 display issue 才消失。没有 body site
+的事实保留 neutral `general` display label，但使用 source Event ID 的 per-event fallback，
+不会与其它无部位事实共享 group，也不会把 `general` 写回 Event。
 
 `body_site` 与 `laterality` 仍是可选 factual metadata，只能来自正文明确支持，不发展为
 body-region ontology。`continuation` 保留在 Event contract 作为 provenance metadata，但不再
@@ -564,17 +566,20 @@ analysis 可以提取其 evidence，但它不等于未来一定恢复，也不�
 AI/规则产生的 `+N` / `+M` 是 derived biological estimate，不是 narrative factual
 evidence。
 
-概念 precedence 为：
+当前 Assessment timing precedence 为：
 
 ```text
 explicit narrative timing
   > saved derived Health Assessment
-  > Product Policy fallback
+  > genuinely unresolved/null
 ```
 
-其中 explicit timing 只优先提供 Assessment 的 timing input；实际 recovery 仍需正文
-明确 Event 或 derived Health Evolution closure，不能把“医生预计三天”直接变成三天后
-必然发生的 factual Event。
+其中 explicit timing 只优先提供 Assessment 的 timing input。正文没有明确 timing 时，
+如果 observation 信息充分且属于可合理评估的普通短期事实，Health Assessment 会在这次
+调用中生成一次 `ai_derived_assessment` 的粗粒度 expected recovery estimate；只有证据
+不足、事实含混或无法可靠评估时才保留 null。该 estimate 是 persisted derived assessment，
+不是 factual Event，也不会在后续 Story Time 推进时重新调用 AI。实际 recovery 仍由
+Health Evolution 根据已保存 timing deterministic 派生，不能生成 recovery Event。
 
 ### 10.10 Assessment production boundary
 
@@ -780,15 +785,18 @@ Projection 可以提出“可能继续疼痛、恢复或恶化”等未来可能
 
 当前实现的 Health Recovery Guidance / health-related Projection 的目的不是反复提醒剧情模型
 “某人仍然受伤”，而是让它在剧情相关时知道当前身体问题处于怎样的粗粒度恢复阶段，并
-自然改变身体反应的表现：
+读取该 observation 的 persisted non-factual profile，自然改变身体反应的表现。下面只是阶段
+语义示例，不是插件硬编码的 Guidance 文本：
 
 - 早期：疼痛明显、活动可能受限、相关动作容易引发明显反应；
 - 恢复中：不适减轻、功能影响下降、用力或特定动作仍可能引发反应；
 - 接近恢复：大部分活动不再明显受影响，只在特定动作、刺激或环境下出现轻微/偶发反应。
 
-Assessment 的 `reference_story_time`、earliest/expected boundary、persistence 和
-natural-recovery eligibility 可以供 Health Evolution / future Guidance 计算 elapsed time、
-remaining expectation 与粗粒度 recovery stage。具体时间是 BioWeave 内部推演参数，不是
+schema v3 Assessment 还保存由同一次 AI 生成的 `recovery_stage_guidance.early`、
+`.recovering`、`.near_recovery`。Health Evolution / Guidance 只使用
+`reference_story_time`、earliest/expected boundary、persistence 和 natural-recovery
+eligibility 计算 elapsed time 与当前粗粒度 recovery stage，再读取对应 persisted profile。
+具体时间是 BioWeave 内部推演参数，不是
 应该复述给用户的剧情内容。注入给剧情 AI 的 Guidance 禁止要求或诱导输出：具体剩余天数、
 恢复日期、百分比、deadline、elapsed/remaining day count、Assessment 字段或内部预测参数，
 例如“还有 3 天恢复”“预计第 15 天恢复”“恢复进度 60%”。
@@ -842,7 +850,19 @@ Character Health UI 回答“这个人物现在身体有什么问题”；Recove
 active observations，但 UI 不负责 Projection，Projection 也不成为 factual authority。Phase
 5B 复用唯一的 `bioweave_projection_context` 槽位；不新增 Health persistence、Assessment
 AI pass、第二个 Context 槽位或 UI recovery countdown。Guidance read failure 不清除同槽位中
-仍有效的 Projection；Context 每次按当前 Projection 与 Health Guidance 全量重建。
+仍有效的 Projection；Context 每次按当前 Projection 与 Health Guidance 全量重建。普通
+Projection 为空但 Health Guidance 非空时仍注入 Guidance；只有两者都为空时才清除槽位。
+并发的 lifecycle、Projection 和初始化刷新按顺序写入同一槽位，避免较旧的空结果覆盖较新的
+Guidance。
+
+调试证据复用现有 Runtime diagnostics buffer/export，而不是建立 Health 专属日志。它可以按
+source observation 记录 Assessment lookup、persisted/in-flight reuse 和真实 analyzer/API
+request boundary；也可以记录 deterministic stage、persisted profile guidance selection、
+`bioweave_projection_context` slot 写入/清除，以及 `GENERATION_STARTED` listener resolve
+前的 context-ready boundary。该 boundary 只证明 BioWeave 已在 Host 读取 extension prompt
+之前完成自身 refresh；没有可观察的 Host request-payload hook 时，不把它表述为模型已消费
+该 context。Diagnostics 是 transient read-only evidence，不是 Assessment、Event 或 Projection
+authority。
 
 ## 17. Pregnancy boundary
 
@@ -912,7 +932,10 @@ lifecycle/aggregation、不显示内部 ID、Floor Version 或恢复时间。Pha
 窄范围 deterministic Health Recovery Guidance：它复用唯一
 `bioweave_projection_context` 槽位，属于 non-factual guidance，不创建 Event、不修改
 Assessment、不修改 Current Health State，也不成为 factual evidence。完整 Health
-Projection 仍为 Deferred。
+Projection 仍为 Deferred。Native SillyTavern `GENERATION_STARTED` 到达时，BioWeave
+会等待既有 Projection Context refresh queue 完成，再由 Host 读取该 generation 的
+extension prompt；这只是现有 context injection 的 freshness guarantee，不是新的
+Health feature。
 
 如果人物设定明确写出长期或永久健康事实，未来产品可以支持它进入 factual pipeline。
 但当前项目没有已验证的 Worldbook/Character Card → Health Event authoritative ingress；
@@ -1080,12 +1103,25 @@ Assessment 应作为同一 Character Floor owner 下的独立 derived assessment
 record collection，与 Event 共享 exact message/Swipe owner 和 Floor Version boundary。
 它不是新的 Chat-level Health ledger，也不是 BiologicalEvent factual payload。
 
-这里的“独立”表示领域记录和生命周期独立。Phase 1 已在现有 Floor owner 下增加受
-lifecycle registry 管理的 `health_assessment_timeline` collection，当前 schema version 为 2：
+这里的“独立”表示领域记录和生命周期独立。当前在现有 Floor owner 下由 lifecycle
+registry 管理 `health_assessment_timeline` collection，当前新生成 Assessment 的 schema
+version 为 3：
 
-- v2 Assessment 增加 observation-level `severity`：`unknown`、`mild`、`moderate`、`severe`；
-- 旧 v1 Assessment 缺少 severity 时仍可读取，运行时按 `unknown` 消费，不因缺字段重跑或
-  自动 backfill；legacy item 不被回写为 v2 unknown；
+- v3 Assessment 增加 observation-level `severity` 与适用于 eligible short-term observation
+  的 `recovery_stage_guidance`，包含 `early`、`recovering`、`near_recovery` 三个阶段文本；
+- 旧 v1/v2 Assessment 不因缺少 profile 重跑、迁移或自动 backfill；它们仍可参与既有
+  lifecycle，但不产生 staged Guidance，也不回退到 generic template；
+
+Character Details 消费 Current Health State 提供的 `grouped_issues[].recovery_stage` 与
+`health_observations[].current_description`。后者由 Health read model 从当前阶段对应的
+persisted `recovery_stage_guidance` 选择；没有合法 selected guidance 时回退 factual Event
+description。Event description 仍只代表历史事实，不会被修改或作为 Character Health 永远不变
+的当前文案。多个 observation 的 current description 不一致时保留 observation 级文本，不
+arbitrary first-wins。
+当组内 active observations 能无歧义映射到单一 `early`、`recovering` 或 `near_recovery`
+时，UI 显示三阶段 presentation-only 指示器；阶段缺失或组内阶段不一致时不显示。UI 不
+读取或计算 elapsed、duration、boundary、deadline 或 recovery percentage，也不增加
+`recovered` 第四阶段。
 
 - `storage/schema.js` 的默认结构；
 - `storage/lifecycle.js` 的 ownership/clear registry；
@@ -1120,6 +1156,8 @@ payload。因此仅使用 `(source_event_id, source_floor_version)` 还不足以
 - `source_floor_version` 是完整六字段版本，而不是只保存 `floor` 或 `message_id`；
 - `source_observation_fingerprint` 是对规范化 factual Event observation 的一致性 guard，
   不包含 `event_id`、`source` 或 Assessment 自身字段。
+- `reference_story_time` 是该 Assessment 的 timing context，并随 source-bound record 保存，供
+  recovery duration/boundary 与 Story Time 演化比较；它不能替代前三项 identity/binding guard。
 
 Phase 1 fingerprint 是 key-order-independent 的规范化字符串，覆盖 type/status、
 state_fact.subject_id 与 payload、participants 的 canonical identity/context、
@@ -1146,8 +1184,8 @@ Event ID，也不改变现有 Event identity 系统。
 
 - 只用 `source_event_id`：未来迁移或异常数据中可能把旧版本结果错误复用到新 owner，
   也无法防护同版本 direct Event edit；
-- 只用 `source_event_id + source_floor_version`：无法防护当前 Event editing API 保留
-  Event ID/source 但修改 factual payload 的情况；
+- 省略 `source_observation_fingerprint`：无法防护当前 Event editing API 保留 Event ID/source
+  但修改 factual payload 的情况；
 - `Floor Version + array index`：Event ordinal/index 会因分析结果变化而移动；
 - canonical factual observation identity：当前 Condition/observation identity 尚未冻结；
 - `subject_id + symptom.kind`：不能区分同 kind 并发问题；
@@ -1211,7 +1249,7 @@ Event + analysis + registry authoritative Floor commit/readback
   ↓
 identify health facts that need Assessment
   ↓
-lookup (source_event_id + source_floor_version)
+lookup `(source_event_id, complete_six_field_floor_version, source_observation_fingerprint)`
   ├─ found valid Assessment → reuse, no AI
   └─ missing → independent Health Assessment pass
                   ↓
@@ -1279,10 +1317,13 @@ no valid Assessment saved
 - Floor persistence coordinator 按版本 transaction key 串行化；
 - owner、active Swipe、版本和 authoritative readback 检查。
 
-未来 Assessment 不需要分布式锁。建议增加的最小 source-level protection 是：
+Assessment 不需要分布式锁。当前 source-level protection 使用完整 binding material；
+`reference_story_time` 作为 timing context 保存，但不削弱 source binding：
 
 ```text
-assessment_request_key = source_event_id + source_floor_version
+assessment_request_key = hash(
+  source_event_id + complete_six_field_floor_version + source_observation_fingerprint
+)
 ```
 
 同一 key 的并发 caller 应共享/复用同一 in-flight pass，或在持久化前再次 lookup。若
@@ -1472,7 +1513,8 @@ Assessment、Health Evolution、Aggregation 或 Floor authority。
 
 advanced Health Condition identity、currentness policy 在当前仓库仍为 **DESIGN / NOT
 IMPLEMENTED**。Character Health UI 已实现 Phase 5A；Health Recovery Guidance / recovery-stage
-Projection Context 已实现 Phase 5B 的窄范围 deterministic guidance。Character Health UI 目前仅
+Projection Context 已实现 Phase 5B 的窄范围 deterministic stage selection，并消费 schema v3
+Assessment 保存的 observation-specific profile。Character Health UI 目前仅
 实现 Phase 5A 的 Character Details read-model presentation，不代表完整 Health UI。
 当前已实现的是 BiologicalEvent、Persisted Health Assessment Lifecycle Phase 1、minimal
 derived Health Evolution / Current Health State read model、Phase 4 independent observation

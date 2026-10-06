@@ -28,6 +28,7 @@
 - `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
 - `runtime/health-evolution.js`：收集当前 Floor 的 active source-bound Assessments，并调用纯 Health Evolution core；通过窄接口向主 derived-state path 提供 `current_health_state`。
 - `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
+- Health diagnostics 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` 与 Debug export：Assessment trace 区分真实 analyzer/API invocation、persisted reuse 和 in-flight reuse；stage/guidance trace 观察 deterministic selection 与 persisted profile；Projection/generation trace 记录 `bioweave_projection_context` 写入及 `GENERATION_STARTED` listener resolve 前的 ready boundary；Health Assessment parser failure 仅记录 raw shape、extracted-text fingerprint、边界字符、fence 检测和 parse error，不保存完整响应，也不做 JSON repair。它们不改变 Health/Projection/generation 语义，也不证明 Host 最终 request payload 已消费 slot。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
 
@@ -46,11 +47,11 @@
 | Tracking Window | PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED; resolved Window candidate handoff and confirmed-pregnancy guard implemented |
 | StateReducer | PRODUCTION |
 | Current Biological State | PRODUCTION |
-| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse/invalidation plus schema v2 observation-level severity |
+| Persisted Health Assessment Lifecycle | PARTIAL / schema v3 implemented; stable source-bound reuse/invalidation plus one-time observation-specific recovery profile |
 | Minimal Health Evolution / Current Health State | PARTIAL / PHASE 4 IMPLEMENTED; independent observation lifecycle and presentation aggregation |
 | Character Health UI | PARTIAL / PHASE 5A IMPLEMENTED; Character Details consumes grouped current-health read model only |
-| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic recovery-stage guidance in Projection Context only |
-| Health Recovery Guidance / health-related Projection | PARTIAL / PHASE 5B IMPLEMENTED; deterministic recovery-stage guidance uses the existing Projection Context slot; generic Health Projection remains DESIGN / PLANNED |
+| Health Recovery Guidance | PARTIAL / deterministic Story Time stage selection consuming persisted observation-specific profile in Projection Context |
+| Health Recovery Guidance / health-related Projection | PARTIAL / phase 5B uses persisted recovery-stage profile through the existing Projection Context slot; generic Health Projection remains DESIGN / PLANNED |
 | Snapshot Runtime | PRODUCTION |
 | Characters UI | PRODUCTION within current scope |
 | Overview | PARTIAL |

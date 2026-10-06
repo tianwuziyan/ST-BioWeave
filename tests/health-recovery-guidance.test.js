@@ -19,6 +19,11 @@ function observation(overrides = {}) {
     natural_recovery: 'eligible',
     reference_story_time: story(0),
     expected_recovery: {duration: {story_days: 9}, boundary: story(9)},
+    recovery_stage_guidance: {
+      early: 'EARLY_OBSERVATION_GUIDANCE',
+      recovering: 'RECOVERING_OBSERVATION_GUIDANCE',
+      near_recovery: 'NEAR_RECOVERY_OBSERVATION_GUIDANCE',
+    },
     ...overrides,
   };
 }
@@ -30,13 +35,48 @@ test('recovery stages use deterministic elapsed Story Time thresholds', () => {
   assert.equal(evaluateHealthRecoveryStage(item, story(7)), 'near_recovery');
 });
 
+test('guidance reads the persisted string for each deterministic stage', () => {
+  for (const [day, expected] of [
+    [1, 'EARLY_OBSERVATION_GUIDANCE'],
+    [4, 'RECOVERING_OBSERVATION_GUIDANCE'],
+    [7, 'NEAR_RECOVERY_OBSERVATION_GUIDANCE'],
+  ]) {
+    const result = buildHealthRecoveryGuidance({
+      currentHealthState: {characters: {char_a: {active_observations: [observation()]}}},
+      currentStoryTime: story(day),
+    });
+    assert.equal(result[0].guidance, expected);
+  }
+  assert.deepEqual(buildHealthRecoveryGuidance({
+    currentHealthState: {characters: {char_a: {active_observations: [observation()]}}},
+    currentStoryTime: story(9),
+  }), []);
+});
+
+test('guidance diagnostics observe deterministic stage and persisted profile selection', () => {
+  const diagnostics = [];
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {characters: {char_a: {active_observations: [observation()]}}},
+    currentStoryTime: story(4),
+    trace: item => diagnostics.push(item),
+  });
+  assert.equal(result[0].guidance, 'RECOVERING_OBSERVATION_GUIDANCE');
+  assert.deepEqual(
+    diagnostics.map(item => item.stage),
+    ['HEALTH_RECOVERY_STAGE_SELECTED', 'HEALTH_RECOVERY_GUIDANCE_SELECTED'],
+  );
+  assert.equal(diagnostics[0].recovery_stage, 'recovering');
+  assert.equal(diagnostics[1].guidance_present, true);
+  assert.match(diagnostics[1].guidance_fingerprint, /^guidance_/);
+});
+
 test('expected boundary and large Story Time jumps do not simulate intermediate days', () => {
   const result = buildHealthRecoveryGuidance({
     currentHealthState: {characters: {char_a: {active_observations: [observation()]}}},
     currentStoryTime: story(8),
   });
   assert.equal(result[0].stage, 'near_recovery');
-  assert.match(result[0].guidance, /较高负荷|轻微不适/);
+  assert.equal(result[0].guidance, 'NEAR_RECOVERY_OBSERVATION_GUIDANCE');
   assert.doesNotMatch(JSON.stringify(result), /remaining|deadline|day_index|story_days|event-a/);
 });
 
@@ -81,6 +121,20 @@ test('long-term, permanent, and earliest-only observations do not enter automati
   assert.deepEqual(result, []);
 });
 
+test('missing recovery profile produces no guidance without generic fallback', () => {
+  const diagnostics = [];
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {characters: {char_a: {active_observations: [observation({recovery_stage_guidance: null})]}}},
+    currentStoryTime: story(1),
+    trace: item => diagnostics.push(item),
+  });
+  assert.deepEqual(result, []);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].stage, 'HEALTH_RECOVERY_STAGE_SELECTED');
+  assert.equal(diagnostics[0].recovery_stage, 'early');
+  assert.equal(diagnostics[0].profile_available, false);
+});
+
 test('independent observations keep their own stage while presentation compresses exact issues', () => {
   const result = buildHealthRecoveryGuidance({
     currentHealthState: {
@@ -97,7 +151,30 @@ test('independent observations keep their own stage while presentation compresse
     currentStoryTime: story(4),
   });
   assert.equal(result.length, 1);
-  assert.match(result[0].guidance, /疼痛/);
+  assert.match(result[0].guidance, /EARLY_OBSERVATION_GUIDANCE|RECOVERING_OBSERVATION_GUIDANCE/);
   assert.doesNotMatch(result[0].guidance, /pain-a|pain-b|abrasion/);
   assert.equal(result[0].body_site, '左手腕');
+});
+
+test('same presentation group preserves distinct persisted guidance strings', () => {
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {
+      characters: {
+        char_a: {
+          active_observations: [
+            observation({source_event_id: 'one'}),
+            observation({source_event_id: 'two', recovery_stage_guidance: {
+              early: 'SECOND_EARLY',
+              recovering: 'SECOND_RECOVERING',
+              near_recovery: 'SECOND_NEAR',
+            }}),
+          ],
+        },
+      },
+    },
+    currentStoryTime: story(1),
+  });
+  assert.equal(result.length, 1);
+  assert.match(result[0].guidance, /EARLY_OBSERVATION_GUIDANCE/);
+  assert.match(result[0].guidance, /SECOND_EARLY/);
 });

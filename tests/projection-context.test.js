@@ -6,6 +6,7 @@ import {
   buildProjectionContextDTO,
 } from '../core/projection-context.js';
 import {createCurrentStateAttributionResolver, createProjectionContextCoordinator} from '../runtime/projection-context.js';
+import {createSillyTavernAdapter} from '../runtime/sillytavern-adapter.js';
 import {EVENT_ANALYZER_CORE_CONTRACT} from '../ai/prompts.js';
 
 function view(overrides = {}) {
@@ -149,6 +150,119 @@ test('coordinator combines Health Guidance with projections and clears both from
   assert.doesNotMatch(clearedHealth.prompt, /左手腕/);
 });
 
+test('coordinator keeps Health Guidance when Projection views are empty', async () => {
+  const writes = [];
+  const diagnostics = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    healthGuidanceResolver: async () => [{
+      subject_id: 'char_000002',
+      body_site: '右肩',
+      stage: 'early',
+      guidance: '右肩在受到刺激时可能出现明显身体反应。',
+    }],
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    trace: item => diagnostics.push(item),
+  });
+
+  const result = await coordinator.refreshProjectionContext();
+
+  assert.equal(result.status, 'updated');
+  assert.equal(result.dto.length, 1);
+  assert.match(writes.at(-1).content, /右肩/);
+  assert.equal(diagnostics.some(item => item.stage === 'PROJECTION_CONTEXT_HEALTH_INPUT' && item.health_guidance_count === 1), true);
+  assert.equal(diagnostics.some(item => item.stage === 'PROJECTION_CONTEXT_SLOT_WRITTEN' && item.health_guidance_count === 1), true);
+  assert.equal(diagnostics.some(item => item.stage === 'PROJECTION_CONTEXT_SLOT_CLEARED'), false);
+});
+
+test('Health-only context writes through the SillyTavern adapter without exported constants on context', async () => {
+  const calls = [];
+  const previous = globalThis.SillyTavern;
+  globalThis.SillyTavern = {getContext: () => ({
+    chatId: 'chat-a',
+    setExtensionPrompt: (...args) => calls.push(args),
+  })};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const coordinator = createProjectionContextCoordinator({
+      getProjectionViews: async () => ({all: []}),
+      healthGuidanceResolver: async () => [{
+        subject_id: 'char_000002', body_site: '右肩', stage: 'early', guidance: 'HEALTH_ONLY',
+      }],
+      resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+      getChatId: () => 'chat-a',
+      setExtensionPrompt: adapter.setExtensionPrompt,
+    });
+    const result = await coordinator.refreshProjectionContext();
+    assert.equal(result.status, 'updated');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].slice(0, 1), ['bioweave_projection_context']);
+    assert.equal(calls[0][2], 1);
+    assert.equal(calls[0][5], 0);
+    coordinator.destroy();
+  } finally {
+    if (previous === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previous;
+  }
+});
+
+test('coordinator clears the shared slot only when Projection and Health Guidance are both empty', async () => {
+  const writes = [];
+  const diagnostics = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    healthGuidanceResolver: async () => [],
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    trace: item => diagnostics.push(item),
+  });
+
+  const result = await coordinator.refreshProjectionContext();
+
+  assert.equal(result.status, 'cleared');
+  assert.equal(writes.at(-1).content, '');
+  assert.equal(diagnostics.some(item => item.stage === 'PROJECTION_CONTEXT_SLOT_CLEARED' && item.clear_reason === 'both_context_inputs_empty'), true);
+});
+
+test('serialized refreshes prevent an older empty result from clearing newer Health Guidance', async () => {
+  const writes = [];
+  let releaseFirstRead;
+  const firstRead = new Promise(resolve => { releaseFirstRead = resolve; });
+  let reads = 0;
+  let guidanceReads = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => {
+      reads += 1;
+      if (reads === 1) await firstRead;
+      return {all: []};
+    },
+    healthGuidanceResolver: async () => {
+      guidanceReads += 1;
+      return guidanceReads === 1 ? [] : [{
+        subject_id: 'char_000002',
+        body_site: '右肩',
+        stage: 'early',
+        guidance: '右肩在受到刺激时可能出现明显身体反应。',
+      }];
+    },
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+  });
+
+  const first = coordinator.refreshProjectionContext();
+  const second = coordinator.refreshProjectionContext();
+  releaseFirstRead();
+  await Promise.all([first, second]);
+
+  assert.equal(reads, 2);
+  assert.equal(guidanceReads, 2);
+  assert.match(writes.at(-1).content, /右肩/);
+});
+
 test('Health Guidance read failure does not clear a valid Projection Context', async () => {
   const coordinator = createProjectionContextCoordinator({
     getProjectionViews: async () => ({all: [view()]}),
@@ -257,17 +371,16 @@ test('coordinator fails closed when extension prompt injection is unavailable', 
     getChatId: () => 'chat-a',
   });
   const result = await coordinator.refreshProjectionContext();
-  assert.deepEqual(result, {
-    ok: false,
-    status: 'unavailable',
-    reason: 'ST_EXTENSION_PROMPT_UNAVAILABLE',
-    dto: [],
-    prompt: '',
-  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'ST_EXTENSION_PROMPT_UNAVAILABLE');
+  assert.deepEqual(result.dto, []);
+  assert.equal(result.prompt, '');
   assert.doesNotThrow(() => coordinator.destroy());
 });
 
 test('coordinator converts a throwing extension prompt setter into unavailable', async () => {
+  const diagnostics = [];
   const coordinator = createProjectionContextCoordinator({
     getProjectionViews: async () => ({all: []}),
     resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
@@ -277,6 +390,7 @@ test('coordinator converts a throwing extension prompt setter into unavailable',
       error.code = 'ST_EXTENSION_PROMPT_UNAVAILABLE';
       throw error;
     },
+    trace: item => diagnostics.push(item),
   });
   const result = await coordinator.refreshProjectionContext();
   assert.equal(result.ok, false);
@@ -284,6 +398,11 @@ test('coordinator converts a throwing extension prompt setter into unavailable',
   assert.equal(result.reason, 'ST_EXTENSION_PROMPT_UNAVAILABLE');
   assert.deepEqual(result.dto, []);
   assert.equal(result.prompt, '');
+  const failure = diagnostics.find(item => item.stage === 'PROJECTION_CONTEXT_SLOT_WRITE_FAILED');
+  assert.equal(failure.reason, 'ST_EXTENSION_PROMPT_UNAVAILABLE');
+  assert.equal(failure.error_name, 'Error');
+  assert.equal(failure.error_code, 'ST_EXTENSION_PROMPT_UNAVAILABLE');
+  assert.equal(failure.error_message, 'prompt unavailable');
   assert.doesNotThrow(() => coordinator.destroy());
 });
 

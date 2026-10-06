@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Check authoritative Floor/Swipe reconstruction and stale-version invalidation claims."}
+{"file":"docs/ARCHITECTURE.md","reason":"Check Health owner boundaries, UI responsibility and projection-context contract."}
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"Check closure audit conclusions against the documented health state contract."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Check persisted/derived lifecycle claims and whether documentation requires synchronization."}

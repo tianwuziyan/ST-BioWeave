@@ -19,6 +19,16 @@ function aggregationKey(item) {
     : `missing|${item.source_event_id}`;
 }
 
+function commonRecoveryStage(observations) {
+  const stages = [...new Set(observations.map(item => item?.recovery_stage ?? null))];
+  return stages.length === 1 && stages[0] ? stages[0] : null;
+}
+
+function commonCurrentDescription(observations) {
+  const descriptions = [...new Set(observations.map(item => text(item?.current_description)).filter(Boolean))];
+  return descriptions.length === 1 ? descriptions[0] : null;
+}
+
 const severityRank = {unknown: 0, mild: 1, moderate: 2, severe: 3};
 
 /** Presentation-only summary of the supplied active observations. */
@@ -47,9 +57,13 @@ export function aggregateActiveHealthObservations(observations = []) {
       existing.health_observations.push({
         description,
         factual_kind: item.factual_kind ?? null,
-        severity: item.severity ?? 'unknown',
-        source_event_id: item.source_event_id,
-      });
+          severity: item.severity ?? 'unknown',
+          source_event_id: item.source_event_id,
+          recovery_stage: item.recovery_stage ?? null,
+          current_description: text(item.current_description ?? item.description),
+        });
+        existing.recovery_stage = commonRecoveryStage(existing.health_observations);
+        existing.current_description = commonCurrentDescription(existing.health_observations);
       return;
     }
     groups.set(key, {
@@ -60,7 +74,9 @@ export function aggregateActiveHealthObservations(observations = []) {
       factual_kind: item.factual_kind ?? null,
       description: text(item.description),
       descriptions: text(item.description) ? [text(item.description)] : [],
-      health_observations: [{description: text(item.description), factual_kind: item.factual_kind ?? null, severity: item.severity ?? 'unknown', source_event_id: item.source_event_id}],
+      health_observations: [{description: text(item.description), current_description: text(item.current_description ?? item.description), factual_kind: item.factual_kind ?? null, severity: item.severity ?? 'unknown', source_event_id: item.source_event_id, recovery_stage: item.recovery_stage ?? null}],
+      recovery_stage: item.recovery_stage ?? null,
+      current_description: text(item.current_description ?? item.description),
       source_observation_ids: [item.source_event_id],
       source_event_ids: [item.source_event_id],
     });

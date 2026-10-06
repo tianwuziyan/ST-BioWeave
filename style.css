@@ -7582,6 +7582,18 @@
 .bioweave-character-health-issue p { min-width: 0 !important; margin: 0 !important; color: var(--bioweave-text) !important; font-size: 12px !important; line-height: 1.5 !important; overflow-wrap: anywhere !important; }
 .bioweave-character-health-observations { display: grid !important; gap: 3px !important; min-width: 0 !important; }
 .bioweave-character-health-subtitle { color: var(--bioweave-text-secondary) !important; font-size: 10px !important; line-height: 1.35 !important; }
+.bioweave-character-health-recovery { display: grid !important; gap: 4px !important; margin-top: 6px !important; min-width: 0 !important; }
+.bioweave-character-health-recovery-title { color: var(--bioweave-text-secondary) !important; font-size: 10px !important; line-height: 1.35 !important; }
+.bioweave-character-health-recovery-track { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(18px, 1fr) minmax(0, 1fr) minmax(18px, 1fr) minmax(0, 1fr) !important; align-items: start !important; min-width: 0 !important; }
+.bioweave-character-health-recovery-step { display: grid !important; justify-items: center !important; gap: 3px !important; min-width: 0 !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.25 !important; text-align: center !important; white-space: nowrap !important; }
+.bioweave-character-health-recovery-step.completed { color: var(--bioweave-accent) !important; }
+.bioweave-character-health-recovery-step.current { font-weight: 600 !important; }
+.bioweave-character-health-recovery-node { width: 9px !important; height: 9px !important; border: 1px solid var(--bioweave-text-muted) !important; border-radius: 50% !important; background: var(--bioweave-surface-soft) !important; }
+.bioweave-character-health-recovery-step.completed .bioweave-character-health-recovery-node { border-color: var(--bioweave-accent) !important; background: var(--bioweave-accent) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-accent) 16%, transparent) !important; }
+.bioweave-character-health-recovery-step.pending .bioweave-character-health-recovery-node { opacity: 0.72 !important; }
+.bioweave-character-health-recovery-connector { align-self: start !important; width: 100% !important; height: 3px !important; margin-top: 3px !important; border-radius: 999px !important; background: var(--bioweave-border-soft) !important; }
+.bioweave-character-health-recovery-connector.completed { background: var(--bioweave-accent) !important; box-shadow: 0 0 0 1px color-mix(in srgb, var(--bioweave-accent) 18%, transparent) !important; }
+.bioweave-character-health-recovery-connector.pending { opacity: 0.72 !important; }
 .bioweave-character-health-issue-source { justify-self: end !important; min-width: max-content !important; }
 .bioweave-character-health-issue-source .bioweave-text-button { margin: 0 !important; padding: 0 !important; color: var(--bioweave-accent) !important; font-size: 10px !important; white-space: nowrap !important; }
 .bioweave-character-health-sources { position: relative !important; margin: 0 !important; }

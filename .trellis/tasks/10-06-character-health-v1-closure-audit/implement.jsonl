@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, six-field version binding, derived invalidation and provenance rules for the health audit."}
+{"file":"docs/ARCHITECTURE.md","reason":"Current Health module ownership, dependency boundaries and forbidden legacy placement."}
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"Character Health v1 domain contract and current phase boundaries."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Lifecycle and invalidation rules relevant to persisted Assessment and derived Health State."}

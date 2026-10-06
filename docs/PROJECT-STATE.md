@@ -50,8 +50,9 @@ VERSION_CHAIN 实现，也不重新打开 Automatic Analysis scheduler。
 
 状态：`CLOSED`。
 
-- 已实现 observation-level `severity`，Assessment schema v2，enum 为
-  `unknown`、`mild`、`moderate`、`severe`。
+- 已实现 observation-level `severity` 与 schema v3 `recovery_stage_guidance`，Assessment
+  enum 为 `unknown`、`mild`、`moderate`、`severe`；eligible short-term observation 的
+  recovery profile 由同一次 Assessment AI 生成并持久化。
 - legacy v1 缺少 severity 时运行时按 `unknown` 消费；legacy 缺字段与 v2 explicit
   `severity: "unknown"` 在持久化表示上保持可区分；malformed severity 只字段级降级。
 - 保持 BiologicalEvent、fingerprint、Assessment request key、one-time reuse、source
@@ -250,9 +251,21 @@ The current lifecycle vocabulary is `active`, `realized`, `contradicted`,
 
 Projection Context uses the fixed extension prompt slot
 `bioweave_projection_context`, as a SYSTEM message in `IN_CHAT` at depth 4. It
-contains only context-visible Projection Views and is cleared when no valid
-Projection is available. It is not a factual source and cannot create a
-self-evidence loop.
+contains the union of context-visible Projection Views and active Health
+Recovery Guidance. A missing ordinary Projection does not clear the slot when
+Health Guidance remains; the slot is cleared only when both inputs are empty.
+Refreshes from initialization, lifecycle and Projection processing are
+serialized before replacing the shared slot. It is not a factual source and
+cannot create a self-evidence loop. At the native SillyTavern
+`GENERATION_STARTED` boundary, BioWeave awaits the existing refresh queue before
+SillyTavern reads extension prompts for that generation.
+
+该链路的 Debug export 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` buffer：Assessment trace
+区分真实 request started/completed、persisted reuse 与 in-flight reuse；Recovery trace
+关联 deterministic stage 和 persisted guidance fingerprint；Projection/generation trace
+记录 shared slot 写入/清除及 listener resolve 前 ready。ready boundary 不等价于 Host 最终
+request payload 已包含该 slot，除非 Host 提供可观察的 request assembly 证据；diagnostics
+不构成新的 persistence authority。
 
 ### Health Recovery Guidance boundary (Phase 5B implemented narrow scope)
 
@@ -263,7 +276,12 @@ Assessments 与 Story Time，把 elapsed recovery 转换为 `early`、`recoverin
 不得注入要求剧情输出具体剩余天数、日期、百分比、deadline 或 Assessment 字段。
 Guidance 不是强制剧情点；只有当前动作、环境或情境相关时，剧情才需要自然体现身体反应。
 它不创建 Event、不修改 Health State、不成为 Event evidence。generic Health Projection、
-long-term progression、explicit recovery resolution 与 recovery-stage UI 仍未实现。
+long-term progression 与 explicit recovery resolution 仍未实现。Character Details 当前可在
+`grouped_issues[].recovery_stage` 非空且组内阶段无歧义时显示 `early`、`recovering`、
+`near_recovery` 三阶段 presentation-only 指示器；Character Health 主文字消费各
+`health_observations[].current_description`，由 Health read model 选择当前 persisted
+guidance，缺失时回退 factual description。UI 不计算 Story Time、duration、deadline 或百分比，
+且不增加第四个 recovered stage；多个 observation 的当前文字不 arbitrary first-wins。
 
 ## Pre-confirmation Tracking Window and Projection Timing
 
@@ -396,8 +414,8 @@ Statuses are checkpoint labels, not permanent API guarantees.
 | Story Time elapsed | IMPLEMENTED |
 | Current Biological State | PRODUCTION / IMPLEMENTED |
 | Character Health State | PARTIAL / persisted Assessment → independent observation lifecycle → Evolution → presentation aggregation + severity_summary → Character Details UI and canonical source Event navigation; full overall Health remains Deferred |
-| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic non-factual coarse recovery-stage guidance in the existing Projection Context slot; no generic Health Projection or UI recovery stage |
-| Persisted Health Assessment Lifecycle | PARTIAL / PHASE 1 IMPLEMENTED; stable source-bound reuse/invalidation plus schema v2 observation-level severity |
+| Health Recovery Guidance | PARTIAL / PHASE 5B IMPLEMENTED; deterministic Story Time stage selection consuming persisted non-factual profile in the existing Projection Context slot; Character Details exposes the Health-owned stage only as a three-stage presentation indicator, with no UI arithmetic or fourth recovered stage |
+| Persisted Health Assessment Lifecycle | PARTIAL / schema v3 implemented; stable source-bound reuse/invalidation plus one-time observation-specific recovery profile |
 | Snapshot | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Core | IMPLEMENTED / AUTOMATED VERIFIED |
 | Projection Runtime Integration | IMPLEMENTED / AUTOMATED VERIFIED; eligible Projection host smoke pending |

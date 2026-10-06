@@ -464,13 +464,27 @@ export function createSillyTavernAdapter() {
     setExtensionPrompt({key, content, position, depth, scan = false, role} = {}) {
       const context = getContext();
       const setter = context?.setExtensionPrompt ?? globalThis.setExtensionPrompt;
-      if (typeof setter !== "function") throw sourceError("ST_EXTENSION_PROMPT_UNAVAILABLE");
+      const metadata = {
+        slot: key ?? null,
+        position_argument: position ?? null,
+        depth_argument: Number.isFinite(Number(depth)) ? Number(depth) : null,
+        role_argument: role ?? null,
+        adapter_available: true,
+        set_extension_prompt_available: typeof setter === "function",
+        setter_bound_to_context: Boolean(context?.setExtensionPrompt),
+      };
+      if (typeof setter !== "function") throw sourceError("ST_EXTENSION_PROMPT_UNAVAILABLE", metadata);
       const types = context?.extension_prompt_types ?? globalThis.extension_prompt_types ?? {};
       const roles = context?.extension_prompt_roles ?? globalThis.extension_prompt_roles ?? {};
-      const resolvedPosition = position === "IN_CHAT" ? types.IN_CHAT : position;
-      const resolvedRole = role === "SYSTEM" ? roles.SYSTEM : role;
+      // SillyTavern exports these constants from its module, but they are not
+      // guaranteed to be copied onto getContext() or globalThis. Keep the
+      // official host values as a narrow adapter fallback.
+      const resolvedPosition = position === "IN_CHAT" ? (types.IN_CHAT ?? 1) : position;
+      const resolvedRole = role === "SYSTEM" ? (roles.SYSTEM ?? 0) : role;
+      metadata.position_constant_available = position !== "IN_CHAT" || types.IN_CHAT !== undefined || globalThis.extension_prompt_types?.IN_CHAT !== undefined;
+      metadata.role_constant_available = role !== "SYSTEM" || roles.SYSTEM !== undefined || globalThis.extension_prompt_roles?.SYSTEM !== undefined;
       if (resolvedPosition === undefined || resolvedRole === undefined)
-        throw sourceError("ST_EXTENSION_PROMPT_API_INVALID");
+        throw sourceError("ST_EXTENSION_PROMPT_API_INVALID", metadata);
       return context?.setExtensionPrompt
         ? setter.call(context, key, content, resolvedPosition, depth, scan, resolvedRole)
         : setter(key, content, resolvedPosition, depth, scan, resolvedRole);

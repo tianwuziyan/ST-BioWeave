@@ -257,6 +257,7 @@ export function createSillyTavernAdapter() {
       "valid_empty", "empty_reason", "expected_event_count",
       "expected_character_count", "expected_character_ids", "actual_event_count",
       "actual_character_count", "actual_registry_character_count",
+      "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
       "status", "phase",
       ]);
       const safe = Object.fromEntries(
@@ -1623,7 +1624,8 @@ export function createRuntime({
     });
     if (payload?.stage !== "VERSION_CHAIN")
       emitTrace(payload);
-    emitTrace(versionChain);
+    if (versionChain !== payload)
+      emitTrace(versionChain);
     if (versionChain?.stage !== "VERSION_CHAIN" || !versionChain.analysis_execution_id) return;
     const previous = versionChainByExecution.get(versionChain.analysis_execution_id) ?? null;
     versionChainByExecution.set(versionChain.analysis_execution_id, versionChain);
@@ -1858,8 +1860,16 @@ export function createRuntime({
       return healthEvolution.buildRecoveryGuidance({
         currentHealthState: business.current_health_state,
         currentStoryTime: business.current_story_time,
+        trace: payload => recordPersistenceTrace({
+          ...payload,
+          chat_id: chatId,
+          floor: floor?.version?.floor ?? null,
+          message_id: floor?.version?.message_id ?? null,
+          swipe_id: floor?.version?.swipe_id ?? floor?.swipeId ?? null,
+        }),
       });
     },
+    trace: recordPersistenceTrace,
   });
   const projectionRuntime = createProjectionRuntime({
     analyzer: eventAnalyzer,
@@ -2450,6 +2460,58 @@ export function createRuntime({
       epoch: chat.getEpoch(),
       chatChanged,
     });
+    const generationIdentity = {
+      generation_id: payload?.generation_id ?? payload?.generationId ?? null,
+      generation_intent_id: payload?.generation_intent_id ?? payload?.generationIntentId ?? null,
+      generation_type: payload?.generation_type ?? payload?.generationType ?? payload?.genType ?? null,
+    };
+    const refreshGenerationProjectionContext = async () => {
+      if (key === "GENERATION_STARTED") {
+        recordPersistenceTrace({
+          stage: "GENERATION_PROJECTION_REFRESH_STARTED",
+          ...generationIdentity,
+          listener_resolve_policy: "awaited",
+        });
+      }
+      try {
+        const result = await projectionContext.refreshProjectionContext({
+          chatId: chat.current(),
+          generation: key === "GENERATION_STARTED" ? payload : null,
+        });
+        if (key === "GENERATION_STARTED") {
+          const refreshSucceeded = result?.ok !== false && !["unavailable", "failed"].includes(result?.status);
+          recordPersistenceTrace({
+            stage: "GENERATION_PROJECTION_REFRESH_SETTLED",
+            ...generationIdentity,
+            refresh_outcome: result?.status ?? null,
+            slot_nonempty: result?.slot_nonempty ?? Boolean(result?.prompt),
+            context_nonempty: result?.context_nonempty ?? Boolean(result?.prompt),
+            context_fingerprint: result?.context_fingerprint ?? null,
+            health_guidance_count: result?.health_guidance_count ?? 0,
+            selected_stage_summary: result?.selected_stage_summary ?? null,
+            settled_before_listener_resolve: true,
+            context_ready_before_prompt_read: refreshSucceeded,
+          });
+        }
+        return result;
+      } catch (error) {
+        if (key === "GENERATION_STARTED") {
+          recordPersistenceTrace({
+            stage: "GENERATION_PROJECTION_REFRESH_SETTLED",
+            ...generationIdentity,
+            refresh_outcome: "failed_open",
+            context_nonempty: null,
+            slot_nonempty: null,
+            context_fingerprint: null,
+            health_guidance_count: null,
+            settled_before_listener_resolve: true,
+            context_ready_before_prompt_read: false,
+            reason: error?.code ?? error?.message ?? "PROJECTION_REFRESH_FAILED",
+          });
+        }
+        throw error;
+      }
+    };
     const work = lifecycleTail.then(
       async () => {
         storyTimeCoordinator.handleLifecycleEvent({
@@ -2501,17 +2563,30 @@ export function createRuntime({
         }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());
-        await projectionContext.refreshProjectionContext({chatId: chat.current()});
+        await refreshGenerationProjectionContext();
         notifyLifecycleSettled(key, eventType, payload);
       },
       async () => {
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
         await refreshActiveOwner(chat.current());
-        await projectionContext.refreshProjectionContext({chatId: chat.current()});
+        await refreshGenerationProjectionContext();
         notifyLifecycleSettled(key, eventType, payload);
       },
     );
-    lifecycleTail = work.catch(() => null);
+    const settledWork = work.catch((error) => {
+      if (
+        key === "GENERATION_STARTED" &&
+        !["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message)
+      ) {
+        console.error("[BioWeave] generation-boundary projection refresh failed", error);
+      }
+      return null;
+    });
+    lifecycleTail = settledWork;
+    // SillyTavern awaits eventSource listeners. Return this lifecycle promise
+    // only for the pre-generation boundary; other lifecycle events retain the
+    // existing background orchestration semantics.
+    if (key === "GENERATION_STARTED") return settledWork;
   }
 
   function bindLifecycleEvents() {

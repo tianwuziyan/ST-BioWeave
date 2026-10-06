@@ -496,7 +496,9 @@ in [CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md). This desig
 change the existing Event contract: `physical_symptom` is only one candidate fact source;
 `medical_event`, `other_biological`, reproductive facts, and other validated Events remain
 eligible inputs according to their own contracts. Phase 4 evaluates each observation independently
-and only performs presentation-only grouping by exact structured site/laterality/kind values;
+and only performs presentation-only grouping by structured `body_site + laterality` values;
+when `body_site` is absent, the implementation uses a per-event source Event ID fallback while
+retaining a neutral `general` display label, so unrelated no-site observations are not globally merged;
 when the narrative explicitly states a symptom or injury site, Event Analysis must preserve it as
 the optional factual `body_site` string; the UI does not infer a site from description or kind.
 advanced Condition identity and silence-over-time policy are not frozen here. The current read
@@ -508,7 +510,7 @@ Story Time 驱动 derived evolution。该演化不得创建 recovery Event；新
 
 ### Health Recovery Guidance boundary (Phase 5B implemented narrow scope)
 
-Health Recovery Guidance 是 Projection/Context 的 non-factual presentation guidance，
+Health Recovery Guidance 是 Projection/Context 的 non-factual future/recovery portrayal guidance，
 不是 Event Analysis 输入事实。它可以根据每个 observation 自身的 Assessment 与 Story Time
 计算粗粒度 `early` / `recovering` / `near_recovery` 阶段，帮助剧情在相关动作、刺激或环境
 出现时自然表现身体反应；不要求每轮提及健康问题，也不得注入具体恢复倒计时、日期、百分比、
@@ -516,7 +518,15 @@ deadline 或 Assessment 内部字段供剧情复述。Guidance 不创建 Event�
 修改 Assessment，且 Projection Context 不得回流成为 Event evidence。该 Guidance 与其
 recovery-stage Context injection 已实现为现有 `bioweave_projection_context` 槽位中的
 deterministic guidance；不新增 persistence、Assessment AI pass 或第二个 prompt slot。
-完整 Health Projection、long-term progression 与 recovery-stage UI 仍未实现。
+它已通过现有 `bioweave_projection_context` 槽位提供；不写入 Event、Assessment 或
+Current Health State，也不成为 factual authority。完整 Health Projection、long-term progression
+与 recovery-stage UI 仍未实现。
+
+Health Assessment 对每个新 factual health observation 只执行一次恢复周期评估。恢复 timing
+的优先级为：已保存 factual evidence 中的明确 timing → 一次性 AI-derived 粗粒度估计 →
+确实无法可靠评估时的 null。AI-derived timing 是 persisted derived Assessment，不是
+BiologicalEvent factual truth；Story Time 后续推进只消费已保存 Assessment，不重新调用
+Health Assessment AI。
 
 ## 3. Contracts
 

@@ -2205,6 +2205,48 @@ function traceAnalyzerReceived(raw) {
   return text.length;
 }
 
+function diagnosticTextFingerprint(value) {
+  const text = String(value ?? '');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `diag_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function diagnosticRawFingerprint(raw) {
+  try {
+    return diagnosticTextFingerprint(JSON.stringify(raw));
+  } catch {
+    return diagnosticTextFingerprint(`${typeof raw}:${eventResponseShape(raw)}`);
+  }
+}
+
+function diagnosticEdge(value, fromStart) {
+  const text = String(value ?? '').trim();
+  const edge = fromStart ? text.slice(0, 48) : text.slice(-48);
+  return JSON.stringify(edge);
+}
+
+function healthAssessmentParserDiagnostics(raw, response) {
+  const text = String(response ?? '');
+  const trimmed = text.trim();
+  return {
+    parser: 'health-assessment',
+    rawType: typeof raw,
+    rawResponseShape: eventResponseShape(raw),
+    responseFingerprint: diagnosticRawFingerprint(raw),
+    extractedTextFingerprint: diagnosticTextFingerprint(text),
+    extractedTextLength: text.length,
+    codeFenceDetected: /```/u.test(text),
+    firstNonWhitespaceChar: trimmed[0] ?? null,
+    lastNonWhitespaceChar: trimmed.at(-1) ?? null,
+    extractedPrefix: diagnosticEdge(text, true),
+    extractedSuffix: diagnosticEdge(text, false),
+  };
+}
+
 function traceParserError(error) {
   return {
     code: typeof error?.code === 'string' ? error.code : null,
@@ -5506,10 +5548,17 @@ export function createAnalyzer({
       requestOptions(input),
     )
     const response = responseText(raw)
+    const parserDiagnostics = healthAssessmentParserDiagnostics(raw, response)
+    traceApi('health-assessment-parser-start', parserDiagnostics)
     let parsed
     try {
       parsed = JSON.parse(response)
     } catch (cause) {
+      traceApi('health-assessment-parser-error', {
+        ...parserDiagnostics,
+        parseErrorName: cause?.name ?? null,
+        parseErrorMessage: cause?.message ?? null,
+      })
       const error = new Error('HEALTH_ASSESSMENT_INVALID_JSON')
       error.code = 'HEALTH_ASSESSMENT_INVALID_JSON'
       error.cause = cause

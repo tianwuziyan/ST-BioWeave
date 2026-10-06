@@ -47,6 +47,11 @@ function assessment({eventId = 'event-a', day = 1, persistence = 'short_term', s
       duration: expectedDuration === null ? null : {story_days: expectedDuration},
       boundary: expectedDay === null ? null : story(expectedDay),
     },
+    recovery_stage_guidance: {
+      early: `early-${eventId}`,
+      recovering: `recovering-${eventId}`,
+      near_recovery: `near-${eventId}`,
+    },
   };
 }
 
@@ -184,6 +189,7 @@ test('Evolution transparently forwards Assessment severity and defaults legacy d
     currentStoryTime: story(2),
   });
   assert.equal(activeObservations(assessed)[0].severity, 'severe');
+  assert.equal(assessed.characters['char-a'].active_observations[0].recovery_stage_guidance.early, 'early-severe-event');
 
   const legacy = deriveCurrentHealthState({
     events: [event({id: 'legacy-event'})],
@@ -191,6 +197,101 @@ test('Evolution transparently forwards Assessment severity and defaults legacy d
     currentStoryTime: story(2),
   });
   assert.equal(activeObservations(legacy)[0].severity, 'unknown');
+});
+
+test('Evolution forwards the source-bound recovery profile without changing lifecycle semantics', () => {
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'profiled'})],
+    assessments: [assessment({eventId: 'profiled', expectedDay: 10})],
+    currentStoryTime: story(2),
+  });
+  assert.deepEqual(result.characters['char-a'].active_observations[0].recovery_stage_guidance, {
+    early: 'early-profiled',
+    recovering: 'recovering-profiled',
+    near_recovery: 'near-profiled',
+  });
+  assert.equal(result.characters['char-a'].active_observations[0].recovery_stage, 'early');
+  assert.equal(result.characters['char-a'].active_observations[0].current_description, 'early-profiled');
+  assert.equal(result.characters['char-a'].grouped_issues[0].recovery_stage, 'early');
+  assert.equal(result.characters['char-a'].grouped_issues[0].current_description, 'early-profiled');
+  assert.equal(deriveCurrentHealthState({
+    events: [event({id: 'profiled'})],
+    assessments: [assessment({eventId: 'profiled', expectedDay: 2})],
+    currentStoryTime: story(2),
+  }).characters['char-a'], undefined);
+});
+
+test('Current Health display description follows the persisted guidance for each stage', () => {
+  const events = [event({id: 'stage-event', description: '原始伤口事实'})];
+  const assessments = [assessment({eventId: 'stage-event', expectedDuration: 9})];
+  const stages = [
+    [1, 'early', 'early-stage-event'],
+    [4, 'recovering', 'recovering-stage-event'],
+    [7, 'near_recovery', 'near-stage-event'],
+  ];
+  for (const [day, stage, description] of stages) {
+    const result = deriveCurrentHealthState({events, assessments, currentStoryTime: story(day)});
+    const observation = result.characters['char-a'].active_observations[0];
+    assert.equal(observation.recovery_stage, stage);
+    assert.equal(observation.description, '原始伤口事实');
+    assert.equal(observation.current_description, description);
+    assert.equal(result.characters['char-a'].grouped_issues[0].health_observations[0].current_description, description);
+  }
+});
+
+test('Current Health falls back to factual description without valid staged guidance', () => {
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'fallback-event', description: '原始事实描述'})],
+    assessments: [assessment({eventId: 'fallback-event', expectedDuration: 9, persistence: 'long_term'})],
+    currentStoryTime: story(4),
+  });
+  const observation = result.characters['char-a'].active_observations[0];
+  assert.equal(observation.recovery_stage, null);
+  assert.equal(observation.current_description, '原始事实描述');
+});
+
+test('Grouped observations keep different current descriptions instead of first-wins', () => {
+  const result = deriveCurrentHealthState({
+    events: [
+      event({id: 'first', bodySite: 'wrist', laterality: 'left'}),
+      event({id: 'second', bodySite: 'wrist', laterality: 'left'}),
+    ],
+    assessments: [
+      assessment({eventId: 'first', expectedDuration: 9}),
+      assessment({eventId: 'second', expectedDuration: 9, id: 'assessment-second'}),
+    ],
+    currentStoryTime: story(1),
+  });
+  const group = result.characters['char-a'].grouped_issues[0];
+  assert.equal(group.current_description, null);
+  assert.deepEqual(group.health_observations.map(item => item.current_description), ['early-first', 'early-second']);
+});
+
+test('grouped issues omit recovery stage when independent observations disagree', () => {
+  const result = deriveCurrentHealthState({
+    events: [
+      event({id: 'early-event', bodySite: 'wrist', laterality: 'left'}),
+      event({id: 'recovering-event', bodySite: 'wrist', laterality: 'left'}),
+    ],
+    assessments: [
+      assessment({eventId: 'early-event', expectedDuration: 9}),
+      assessment({eventId: 'recovering-event', expectedDuration: 15}),
+    ],
+    currentStoryTime: story(4),
+  });
+  const group = result.characters['char-a'].grouped_issues[0];
+  assert.equal(group.recovery_stage, null);
+  assert.deepEqual(group.health_observations.map(item => item.recovery_stage), ['recovering', 'early']);
+});
+
+test('legacy or unresolved observations do not expose a recovery stage', () => {
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'legacy-profile'})],
+    assessments: [assessment({eventId: 'legacy-profile', expectedRecovery: null})],
+    currentStoryTime: story(2),
+  });
+  assert.equal(activeObservations(result)[0].recovery_stage, null);
+  assert.equal(result.characters['char-a'].grouped_issues[0].recovery_stage, null);
 });
 
 test('legacy Event without health_role is excluded even with an existing source Assessment', () => {

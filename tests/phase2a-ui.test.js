@@ -1003,6 +1003,90 @@ test('character Health State is scoped by canonical character id and supports co
   assert.match(missing, /健康 · 暂不可用/)
 })
 
+test('Character Health renders the Health-owned three-stage recovery indicator', () => {
+  const stages = [
+    ['early', '早期', 1, 0],
+    ['recovering', '恢复中', 2, 1],
+    ['near_recovery', '接近恢复', 3, 2],
+  ]
+  for (const [stage, label, completedNodes, completedConnectors] of stages) {
+    const html = charactersPage({
+      characterId: 'char-a',
+      trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+      currentHealthState: {
+        characters: {
+          'char-a': {
+            grouped_issues: [{
+              body_site: '右手腕',
+              description: '疼痛',
+              recovery_stage: stage,
+              health_observations: [{description: '疼痛', current_description: stage + '-guidance', source_event_id: 'health-event', recovery_stage: stage}],
+            }],
+          },
+        },
+      },
+      currentStateStatus: 'ready',
+      healthPopoverOpen: true,
+    })
+    assert.match(html, /恢复阶段/)
+    assert.match(html, new RegExp('data-recovery-stage="' + stage + '"[^>]*>[\\s\\S]*' + label))
+    assert.equal((html.match(/bioweave-character-health-recovery-step completed/g) || []).length, completedNodes)
+    assert.equal((html.match(/bioweave-character-health-recovery-connector completed/g) || []).length, completedConnectors)
+    assert.equal((html.match(/bioweave-character-health-recovery-connector pending/g) || []).length, 2 - completedConnectors)
+    assert.doesNotMatch(html, /33%|66%|100%|剩余|expected_recovery|story_days|deadline/)
+  }
+})
+
+test('Character Health omits recovery indicator without an unambiguous derived stage', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            body_site: '右手腕',
+            description: '疼痛',
+            recovery_stage: null,
+            health_observations: [{description: '疼痛', source_event_id: 'health-event', recovery_stage: null}],
+          }],
+        },
+      },
+    },
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  })
+  assert.doesNotMatch(html, /bioweave-character-health-recovery/)
+  assert.match(html, /疼痛/)
+})
+
+test('Character Health renders current derived description instead of the historical Event description', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            body_site: '右肩',
+            recovery_stage: 'near_recovery',
+            health_observations: [{
+              description: '右肩刚结痂的伤口开裂并渗出鲜血',
+              current_description: '右肩表皮逐步修复，日常活动基本无痛，仅有轻微紧绷感',
+              recovery_stage: 'near_recovery',
+              source_event_id: 'health-event',
+            }],
+          }],
+        },
+      },
+    },
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  })
+  assert.match(html, /右肩表皮逐步修复，日常活动基本无痛，仅有轻微紧绷感/)
+  assert.doesNotMatch(html, /右肩刚结痂的伤口开裂并渗出鲜血/)
+})
+
 test('Character Health UI prefers factual descriptions and never exposes machine kind', () => {
   const html = charactersPage({
     characterId: 'char-a',

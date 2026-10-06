@@ -743,7 +743,7 @@ export function emptyFloor() {
       lifecycle_records: [],
     },
     health_assessment_timeline: {
-      schema_version: 2,
+      schema_version: 3,
       assessments: [],
     },
     world_model: null,

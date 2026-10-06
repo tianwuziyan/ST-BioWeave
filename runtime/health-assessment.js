@@ -6,6 +6,7 @@ import {
   normalizeHealthAssessmentTimeline,
   validateHealthAssessment,
 } from '../core/health-assessment.js';
+import {diagnosticFingerprint} from './diagnostics.js';
 
 function clone(value) {
   return value === undefined ? value : structuredClone(value);
@@ -38,10 +39,20 @@ export function createHealthAssessmentCoordinator({
     try { trace({type: 'HEALTH_ASSESSMENT_TRACE', stage, ...details}); } catch { /* diagnostics never affect facts */ }
   }
 
+  function correlation({event, version, fingerprint, requestKey, execution} = {}) {
+    return {
+      source_event_id: event?.event_id ?? null,
+      source_floor_version: clone(version),
+      source_observation_fingerprint_hash: diagnosticFingerprint(fingerprint),
+      request_key: requestKey ?? null,
+      invocation_id: execution?.execution_id ?? execution?.id ?? null,
+    };
+  }
+
   async function assessFloor({target, execution, token, events, signal} = {}) {
     const version = versionOf(target);
     const floor = getFloor?.(target?.index, target?.swipeId) ?? null;
-    const timeline = normalizeHealthAssessmentTimeline(floor?.health_assessment_timeline);
+    let timeline = normalizeHealthAssessmentTimeline(floor?.health_assessment_timeline);
     const results = [];
     for (const event of Array.isArray(events) ? events : []) {
       const eligibility = healthAssessmentEligibility(event);
@@ -53,9 +64,18 @@ export function createHealthAssessmentCoordinator({
         observationFingerprint: fingerprint,
       });
       const existing = timeline.assessments.find(item => item.request_key === requestKey);
+      diagnostic('HEALTH_ASSESSMENT_LOOKUP', {
+        ...correlation({event: eligibility.event, version, fingerprint, requestKey, execution}),
+        assessment_present: Boolean(existing),
+        assessment_valid: Boolean(existing && validateHealthAssessment(existing).ok),
+      });
       if (existing && validateHealthAssessment(existing).ok) {
         results.push(existing);
-        diagnostic('HEALTH_ASSESSMENT_REUSED', {request_key: requestKey, source_event_id: event.event_id});
+        diagnostic('HEALTH_ASSESSMENT_REUSED', {
+          ...correlation({event: eligibility.event, version, fingerprint, requestKey, execution}),
+          assessment_id: existing.assessment_id ?? null,
+          assessment_valid: true,
+        });
         continue;
       }
 
@@ -69,7 +89,14 @@ export function createHealthAssessmentCoordinator({
             diagnostic('HEALTH_ASSESSMENT_STALE_BEFORE_REQUEST', {request_key: requestKey});
             return null;
           }
+          diagnostic('HEALTH_ASSESSMENT_REQUEST_STARTED', {
+            ...correlation({event: liveEvent, version, fingerprint, requestKey, execution}),
+          });
           const response = await analyzer.analyzeHealthAssessment({event: liveEvent, signal});
+          diagnostic('HEALTH_ASSESSMENT_REQUEST_COMPLETED', {
+            ...correlation({event: liveEvent, version, fingerprint, requestKey, execution}),
+            response_schema_version: response?.schema_version ?? null,
+          });
           if (typeof assertExecutionTargetCurrent === 'function')
             await assertExecutionTargetCurrent(execution, target, token);
           const after = getFloor?.(target?.index, target?.swipeId) ?? null;
@@ -80,7 +107,10 @@ export function createHealthAssessmentCoordinator({
           }
           const latestTimeline = normalizeHealthAssessmentTimeline(after?.health_assessment_timeline);
           const accepted = latestTimeline.assessments.find(item => item.request_key === requestKey);
-          if (accepted && validateHealthAssessment(accepted).ok) return accepted;
+          if (accepted && validateHealthAssessment(accepted).ok) {
+            timeline = latestTimeline;
+            return accepted;
+          }
           const candidate = {
             ...response,
             assessment_id: `${requestKey}_v1`,
@@ -113,14 +143,29 @@ export function createHealthAssessmentCoordinator({
             diagnostic('HEALTH_ASSESSMENT_READBACK_FAILED', {request_key: requestKey});
             return null;
           }
-          diagnostic('HEALTH_ASSESSMENT_ACCEPTED', {request_key: requestKey, source_event_id: currentEvent.event_id});
+          timeline = normalizeHealthAssessmentTimeline(readback?.health_assessment_timeline);
+          diagnostic('HEALTH_ASSESSMENT_ACCEPTED', {
+            ...correlation({event: currentEvent, version, fingerprint, requestKey, execution}),
+            assessment_id: acceptedReadback.assessment_id ?? null,
+            assessment_valid: true,
+          });
           return acceptedReadback;
         } catch (error) {
+          diagnostic('HEALTH_ASSESSMENT_REQUEST_FAILED', {
+            ...correlation({event, version, fingerprint, requestKey, execution}),
+            reason: error?.code ?? error?.message,
+          });
           diagnostic('HEALTH_ASSESSMENT_FAILED', {request_key: requestKey, code: error?.code ?? error?.message});
           return null;
         }
       };
-      const pending = inFlight.get(requestKey) ?? request();
+      const inFlightRequest = inFlight.get(requestKey);
+      if (inFlightRequest) {
+        diagnostic('HEALTH_ASSESSMENT_INFLIGHT_REUSED', {
+          ...correlation({event: eligibility.event, version, fingerprint, requestKey, execution}),
+        });
+      }
+      const pending = inFlightRequest ?? request();
       inFlight.set(requestKey, pending);
       try {
         const result = await pending;

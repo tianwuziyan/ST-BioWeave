@@ -60,7 +60,7 @@ flowchart TD
 
 | Feature | Primary owner | 负责什么 |
 | --- | --- | --- |
-| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询 |
+| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment invocation/reuse、recovery stage/profile selection、Projection slot 与 generation-boundary trace 复用同一 buffer/export |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
@@ -87,10 +87,10 @@ flowchart TD
 | Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 World-authoritative horizon lifecycle and Floor persistence |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
-| Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 只对 factual `health_role: observation` 做 eligibility、fingerprint、schema v2 normalize/validate、observation-level severity 与 source-bound active filtering；`intervention` 不触发 Assessment；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写回 BiologicalEvent factual payload；v1 缺 severity 运行时按 `unknown` 消费且不自动重跑 |
+| Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 只对 factual `health_role: observation` 做 eligibility、fingerprint、schema v3 normalize/validate、observation-level severity、one-time recovery profile 与 source-bound active filtering；`intervention` 不触发 Assessment；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写回 BiologicalEvent factual payload；旧 v1/v2 记录不补评估，缺少 v3 profile 时不产生 staged Guidance |
 | Health Evolution | `core/health-evolution.js` + `runtime/health-evolution.js` | 从 surviving Events、valid Assessments 与 Story Time 派生 Current Health State；不调用 AI 或写 storage |
 | Health Aggregation | `core/health-aggregation.js` | 仅按 factual `body_site + laterality` 构建 active observation site-oriented presentation group，保留 `health_observations[]` 与 canonical source Event IDs；intervention 仅保留在 Event history，不进入 Current Health DTO；不拥有 lifecycle、Assessment 或 treatment authority |
-| Health Recovery Guidance | `core/health-recovery-guidance.js` + `runtime/projection-context.js` | 计算粗粒度、非事实的恢复阶段指导，并组合进唯一 `bioweave_projection_context` 槽位 |
+| Health Recovery Guidance | `core/health-recovery-guidance.js` + `runtime/projection-context.js` | 根据 Story Time deterministic 选择阶段并消费 persisted observation-specific recovery profile，组合进唯一 `bioweave_projection_context` 槽位；不生成通用医学文本 |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
 | Characters UI | `ui/characters.js` | Characters 页面渲染；当前主要枚举 `tracking_subjects` |
 
@@ -179,6 +179,16 @@ substitute for current Runtime, Floor, UI, or renderer state. The collector has
 no Floor writer, does not call analysis or repair, and does not alter the
 canonical `saveWorldModel → commitFloorPatch(owner="world") →
 FloorPersistenceCoordinator` path.
+
+Health/Recovery diagnostics 也只进入同一 `BIOWEAVE_PERSISTENCE_TRACE` buffer 和现有
+Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSESSMENT_REQUEST_STARTED`
+只在真正调用 Assessment analyzer/API 前记录；`REUSED` 与 `INFLIGHT_REUSED` 分别表示已
+复用 persisted Assessment 或同进程请求。Recovery stage 与 Guidance trace 观察 Health-owned
+deterministic 结果和 persisted profile selection，不重新计算 lifecycle 或调用 AI。Projection
+trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除和 fingerprint；
+`GENERATION_PROJECTION_REFRESH_SETTLED` 只能证明 slot 在 BioWeave 的
+`GENERATION_STARTED` listener resolve 前 ready，不能在没有 Host request-payload hook 时声称
+最终模型已经消费该 slot。
 
 ## Feature module creation rule
 

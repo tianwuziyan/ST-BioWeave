@@ -8,6 +8,16 @@ function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function guidanceFingerprint(value) {
+  const source = text(value);
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `guidance_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
 function finiteNonNegative(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
@@ -51,6 +61,12 @@ export function evaluateHealthRecoveryStage(observation, currentStoryTime) {
   return stageForRatio(Math.max(0, Math.min(1, elapsed / duration)));
 }
 
+export function selectHealthRecoveryGuidance(observation, currentStoryTime) {
+  const stage = evaluateHealthRecoveryStage(observation, currentStoryTime);
+  const guidance = text(observation?.recovery_stage_guidance?.[stage]);
+  return {stage, guidance: guidance || null};
+}
+
 function siteLabel(observation) {
   const site = text(observation?.body_site);
   if (!site || site === 'general') return '全身';
@@ -90,21 +106,34 @@ function presentationKey(observation) {
   ].join('|');
 }
 
-function stageSentence(stage, issue) {
-  if (stage === 'early') {
-    return `${issue}仍较明显，相关部位在使用或受到刺激时可能出现明显身体反应。`;
-  }
-  if (stage === 'recovering') {
-    return `${issue}已比早期减轻，日常活动有所恢复，但用力、刺激或重复动作仍可能引起不适。`;
-  }
-  return `${issue}接近恢复，大部分普通活动不再明显受影响，仅在直接刺激或较高负荷时可能偶发轻微不适。`;
-}
-
-function groupGuidance(observations, currentStoryTime) {
+function groupGuidance(observations, currentStoryTime, subjectId, trace) {
   const groups = new Map();
   for (const observation of observations) {
-    const stage = evaluateHealthRecoveryStage(observation, currentStoryTime);
-    if (!stage || !text(observation?.factual_kind)) continue;
+    const selection = selectHealthRecoveryGuidance(observation, currentStoryTime);
+    const stage = selection.stage;
+    const profileAvailable = Boolean(observation?.recovery_stage_guidance);
+    trace?.({
+      stage: 'HEALTH_RECOVERY_STAGE_SELECTED',
+      source_event_id: observation?.source_event_id ?? null,
+      character_id: subjectId,
+      assessment_id: observation?.assessment_id ?? null,
+      recovery_stage: stage,
+      stage_selection_outcome: stage ? 'selected' : 'not_selected',
+      stage_selection_reason: stage ? 'stage_selected' : 'not_selected_by_existing_health_rules',
+      profile_available: profileAvailable,
+      active: true,
+    });
+    const guidance = selection.guidance;
+    if (!stage || !guidance || !text(observation?.factual_kind)) continue;
+    trace?.({
+      stage: 'HEALTH_RECOVERY_GUIDANCE_SELECTED',
+      source_event_id: observation?.source_event_id ?? null,
+      character_id: subjectId,
+      assessment_id: observation?.assessment_id ?? null,
+      recovery_stage: stage,
+      guidance_present: true,
+      guidance_fingerprint: guidanceFingerprint(guidance),
+    });
     const key = presentationKey(observation);
     const current = groups.get(key);
     if (!current || stageRank[stage] < stageRank[current.stage]) {
@@ -112,7 +141,15 @@ function groupGuidance(observations, currentStoryTime) {
         site: siteLabel(observation),
         issue: issueLabel(observation),
         stage,
+        guidance: [guidance],
+        guidance_fingerprints: [guidanceFingerprint(guidance)],
       });
+    } else {
+      if (stageRank[stage] < stageRank[current.stage]) current.stage = stage;
+      if (!current.guidance.includes(guidance)) {
+        current.guidance.push(guidance);
+        current.guidance_fingerprints.push(guidanceFingerprint(guidance));
+      }
     }
   }
   return [...groups.values()].sort((left, right) =>
@@ -124,7 +161,7 @@ function groupGuidance(observations, currentStoryTime) {
  * Build non-factual recovery guidance from the already-derived active Health
  * State. No AI, storage, Event, Assessment, or lifecycle mutation belongs here.
  */
-export function buildHealthRecoveryGuidance({currentHealthState = null, currentStoryTime = null} = {}) {
+export function buildHealthRecoveryGuidance({currentHealthState = null, currentStoryTime = null, trace = null} = {}) {
   const result = [];
   const characters = currentHealthState?.characters;
   if (!characters || typeof characters !== 'object' || Array.isArray(characters)) return result;
@@ -132,7 +169,7 @@ export function buildHealthRecoveryGuidance({currentHealthState = null, currentS
   for (const [subjectId, character] of Object.entries(characters)) {
     const active = Array.isArray(character?.active_observations) ? character.active_observations : [];
     const observations = active.map(item => ({...item}));
-    const groups = groupGuidance(observations, currentStoryTime);
+    const groups = groupGuidance(observations, currentStoryTime, subjectId, trace);
     if (!groups.length) continue;
     const bySite = new Map();
     for (const group of groups) {
@@ -146,7 +183,8 @@ export function buildHealthRecoveryGuidance({currentHealthState = null, currentS
         body_site: site,
         stage: issues.reduce((earliest, item) =>
           stageRank[item.stage] < stageRank[earliest] ? item.stage : earliest, issues[0].stage),
-        guidance: issues.map(item => stageSentence(item.stage, item.issue)).join(' '),
+        guidance: issues.flatMap(item => item.guidance).join(' '),
+        guidance_fingerprints: issues.flatMap(item => item.guidance_fingerprints),
       });
     }
   }

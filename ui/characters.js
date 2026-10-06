@@ -386,6 +386,24 @@ function renderHealthSourceActions(sourceEventIds) {
     '</div></details>'
 }
 
+const HEALTH_RECOVERY_STAGES = [
+  ['early', '早期'],
+  ['recovering', '恢复中'],
+  ['near_recovery', '接近恢复'],
+]
+
+function renderHealthRecoveryStage(recoveryStage) {
+  const activeIndex = HEALTH_RECOVERY_STAGES.findIndex(([stage]) => stage === recoveryStage)
+  if (activeIndex < 0) return ''
+  const ariaLabel = '恢复阶段：' + HEALTH_RECOVERY_STAGES[activeIndex][1]
+  const nodes = HEALTH_RECOVERY_STAGES.map(([stage, label], index) =>
+    '<span class="bioweave-character-health-recovery-step ' + (index <= activeIndex ? 'completed' : 'pending') + (index === activeIndex ? ' current' : '') + '" data-recovery-stage="' + stage + '"><span class="bioweave-character-health-recovery-node" aria-hidden="true"></span><span>' + label + '</span></span>'
+  )
+  const connectors = [0, 1].map(index => '<span class="bioweave-character-health-recovery-connector ' + (index < activeIndex ? 'completed' : 'pending') + '" aria-hidden="true"></span>')
+  const track = nodes.reduce((markup, node, index) => markup + (index ? connectors[index - 1] : '') + node, '')
+  return '<div class="bioweave-character-health-recovery stage-' + recoveryStage.replace('_', '-') + '" role="img" aria-label="' + escapeHtml(ariaLabel) + '"><span class="bioweave-character-health-recovery-title">恢复阶段</span><div class="bioweave-character-health-recovery-track">' + track + '</div></div>'
+}
+
 function healthViewModel(currentHealthState, characterId, activeEvents = [], currentStateStatus = 'NO_CHARACTER_FLOOR') {
   const readModelReady = currentStateStatus === 'ready' && currentHealthState && typeof currentHealthState === 'object'
   const characterHealth = currentHealthState?.characters?.[characterId] ?? null
@@ -401,7 +419,7 @@ function healthViewModel(currentHealthState, characterId, activeEvents = [], cur
       const observations = Array.isArray(issue?.health_observations)
         ? issue.health_observations
         : String(issue?.display_description ?? issue?.description ?? issue?.factual_kind ?? '').trim()
-          ? [{description: issue.display_description ?? issue.description, factual_kind: issue.factual_kind, source_event_id: issue.source_observation_ids?.[0]}]
+          ? [{description: issue.display_description ?? issue.description, current_description: issue.current_description ?? issue.description, factual_kind: issue.factual_kind, source_event_id: issue.source_observation_ids?.[0]}]
           : []
       return {
         ...issue,
@@ -440,7 +458,7 @@ function renderHealthPopover(currentHealthState, characterId, activeEvents = [],
   const issueCount = view.observationCount
   const badge = view.state === 'neutral' ? '健康状态暂不可用' : view.severityLabel
   const content = issueCount
-    ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' + view.validIssues.map(issue => '<article class="bioweave-character-health-issue"><strong class="bioweave-character-health-issue-site">' + escapeHtml(healthDisplaySite(issue)) + '</strong><div class="bioweave-character-health-observations"><span class="bioweave-character-health-subtitle">当前身体问题</span>' + issue.health_observations.map(item => '<p>' + escapeHtml(healthDisplayLabel(item.description, item.factual_kind || '当前健康问题')) + '</p>').join('') + '</div><div class="bioweave-character-health-issue-source">' + renderHealthSourceActions(issue.source_event_ids) + '</div></article>').join('') + '</div>'
+    ? '<div class="bioweave-character-health-issues" aria-label="当前健康问题">' + view.validIssues.map(issue => '<article class="bioweave-character-health-issue"><strong class="bioweave-character-health-issue-site">' + escapeHtml(healthDisplaySite(issue)) + '</strong><div class="bioweave-character-health-observations"><span class="bioweave-character-health-subtitle">当前身体状态</span>' + issue.health_observations.map(item => '<p>' + escapeHtml(healthDisplayLabel(item.current_description ?? item.description, item.factual_kind || '当前健康问题')) + '</p>').join('') + renderHealthRecoveryStage(issue.recovery_stage) + '</div><div class="bioweave-character-health-issue-source">' + renderHealthSourceActions(issue.source_event_ids) + '</div></article>').join('') + '</div>'
     : '<div class="bioweave-empty bioweave-character-health-empty">当前没有可显示的健康问题。</div>'
   return '<section class="bioweave-character-health-popover" id="bioweave-character-health-popover" role="dialog" aria-modal="false" aria-labelledby="bioweave-character-health-title"><header class="bioweave-character-health-popover-head"><div><div class="bioweave-character-health-popover-title"><span class="bioweave-character-health-dot ' + view.state + '" aria-hidden="true"></span><h3 id="bioweave-character-health-title">健康状态</h3></div><p>当前身体问题 · ' + issueCount + ' 项</p>' + (view.summary ? '<p class="bioweave-character-health-summary">' + escapeHtml(view.summary) + '</p>' : '') + '</div><button type="button" class="bioweave-button bioweave-character-health-close" data-bioweave-action="close-character-health" aria-label="关闭健康状态详情">×</button></header><div class="bioweave-character-health-body"><div class="bioweave-character-health-overview" data-health-state="' + view.state + '"><span>总体状态</span><strong class="bioweave-badge ' + (view.state === 'warning' ? 'warn' : view.state === 'good' ? 'good' : '') + '">' + escapeHtml(badge) + '</strong></div>' + content + '</div></section>'
 }

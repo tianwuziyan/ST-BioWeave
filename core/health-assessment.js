@@ -5,7 +5,11 @@ import {hashText} from '../runtime/floor.js';
 
 const HEALTH_EVENT_TYPES = new Set(['physical_symptom', 'medical_event', 'other_biological']);
 
-export const HEALTH_ASSESSMENT_SCHEMA_VERSION = 2;
+export const HEALTH_ASSESSMENT_SCHEMA_VERSION = 3;
+export const HEALTH_ASSESSMENT_RECOVERY_STAGES = Object.freeze([
+  'early', 'recovering', 'near_recovery',
+]);
+export const HEALTH_ASSESSMENT_GUIDANCE_MAX_LENGTH = 600;
 export const HEALTH_ASSESSMENT_SEVERITY = Object.freeze([
   'unknown', 'mild', 'moderate', 'severe',
 ]);
@@ -118,9 +122,48 @@ function normalizeDuration(value) {
   return Number.isFinite(days) && days >= 0 ? {story_days: days} : null;
 }
 
+function normalizeRecoveryStageGuidance(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const normalized = {};
+  for (const stage of HEALTH_ASSESSMENT_RECOVERY_STAGES) {
+    const text = typeof value[stage] === 'string' ? value[stage].trim() : '';
+    normalized[stage] = text || null;
+  }
+  return normalized;
+}
+
+function recoveryStageGuidanceErrors(source, normalized) {
+  if (Number(source.schema_version) !== HEALTH_ASSESSMENT_SCHEMA_VERSION) return [];
+  if (!Object.prototype.hasOwnProperty.call(source, 'recovery_stage_guidance')) {
+    return ['recovery_stage_guidance'];
+  }
+  const raw = source.recovery_stage_guidance;
+  if (raw === null) return [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return ['recovery_stage_guidance'];
+  }
+  const errors = [];
+  const allowed = new Set(HEALTH_ASSESSMENT_RECOVERY_STAGES);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) errors.push(`recovery_stage_guidance.${key}`);
+  }
+  for (const stage of HEALTH_ASSESSMENT_RECOVERY_STAGES) {
+    const value = raw[stage];
+    if (typeof value !== 'string' || !value.trim() || value.trim().length > HEALTH_ASSESSMENT_GUIDANCE_MAX_LENGTH) {
+      errors.push(`recovery_stage_guidance.${stage}`);
+    }
+  }
+  if (normalized.recovery_stage_guidance === null) errors.push('recovery_stage_guidance');
+  return errors;
+}
+
 export function normalizeHealthAssessment(raw = {}) {
   const source = record(raw);
-  const legacy = Number(source.schema_version) === 1;
+  const sourceSchemaVersion = [1, 2, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))
+    ? Number(source.schema_version)
+    : HEALTH_ASSESSMENT_SCHEMA_VERSION;
+  const legacy = sourceSchemaVersion === 1;
   const earliest = record(source.earliest_recovery);
   const expected = record(source.expected_recovery);
   const persistence = HEALTH_ASSESSMENT_PERSISTENCE.includes(source.persistence)
@@ -130,7 +173,7 @@ export function normalizeHealthAssessment(raw = {}) {
   const assessmentSource = HEALTH_ASSESSMENT_SOURCES.includes(source.assessment_source)
     ? source.assessment_source : 'unknown';
   const normalized = {
-    schema_version: legacy ? 1 : HEALTH_ASSESSMENT_SCHEMA_VERSION,
+    schema_version: sourceSchemaVersion,
     assessment_id: typeof source.assessment_id === 'string' ? source.assessment_id : null,
     request_key: typeof source.request_key === 'string' ? source.request_key : null,
     source_event_id: typeof source.source_event_id === 'string' ? source.source_event_id : null,
@@ -149,9 +192,10 @@ export function normalizeHealthAssessment(raw = {}) {
       boundary: expected.boundary ? normalizeStoryTime(expected.boundary) : null,
     },
     assessment_source: assessmentSource,
+    recovery_stage_guidance: normalizeRecoveryStageGuidance(source.recovery_stage_guidance),
   };
   // Preserve the persisted distinction between a v1 Assessment with no field
-  // and a v2 Assessment explicitly normalized to unknown.
+  // and v2/v3 Assessments explicitly normalized to unknown.
   if (!legacy || hasOwn(source, 'severity')) {
     normalized.severity = HEALTH_ASSESSMENT_SEVERITY.includes(source.severity)
       ? source.severity : 'unknown';
@@ -163,7 +207,7 @@ export function validateHealthAssessment(raw = {}) {
   const source = record(raw);
   const value = normalizeHealthAssessment(raw);
   const errors = [];
-  if (source.schema_version !== undefined && ![1, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))) errors.push('schema_version');
+  if (source.schema_version !== undefined && ![1, 2, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))) errors.push('schema_version');
   if (source.persistence !== undefined && !HEALTH_ASSESSMENT_PERSISTENCE.includes(source.persistence)) errors.push('persistence');
   if (source.natural_recovery !== undefined && !HEALTH_ASSESSMENT_RECOVERY.includes(source.natural_recovery)) errors.push('natural_recovery');
   if (source.assessment_source !== undefined && !HEALTH_ASSESSMENT_SOURCES.includes(source.assessment_source)) errors.push('assessment_source');
@@ -176,6 +220,17 @@ export function validateHealthAssessment(raw = {}) {
       !value.source_floor_version.content_hash || value.source_floor_version.message_version === null) {
     errors.push('source_floor_version');
   }
+  errors.push(...recoveryStageGuidanceErrors(source, value));
+  if (value.schema_version === HEALTH_ASSESSMENT_SCHEMA_VERSION) {
+    const hasExpectedRecovery = Boolean(
+      value.expected_recovery.duration || value.expected_recovery.boundary,
+    );
+    const profileRequired = value.persistence === 'short_term'
+      && value.natural_recovery === 'eligible'
+      && hasExpectedRecovery;
+    if (profileRequired && !value.recovery_stage_guidance) errors.push('recovery_stage_guidance');
+    if (!profileRequired && value.recovery_stage_guidance) errors.push('recovery_stage_guidance_not_eligible');
+  }
   return {ok: errors.length === 0, value, errors};
 }
 
@@ -185,19 +240,21 @@ export function emptyHealthAssessmentTimeline() {
 
 export function normalizeHealthAssessmentTimeline(raw) {
   const source = record(raw);
-  const legacyTimeline = Number(source.schema_version) === 1;
+  const timelineVersion = [1, 2, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))
+    ? Number(source.schema_version)
+    : HEALTH_ASSESSMENT_SCHEMA_VERSION;
   const assessments = Array.isArray(source.assessments)
     ? source.assessments
       .map(item => normalizeHealthAssessment(
-        legacyTimeline && record(item).schema_version === undefined
-          ? {...record(item), schema_version: 1}
+        record(item).schema_version === undefined
+          ? {...record(item), schema_version: timelineVersion}
           : item,
       ))
       .filter(item => validateHealthAssessment(item).ok)
     : [];
   const seen = new Set();
   return {
-    schema_version: Number(source.schema_version) === 1 ? 1 : HEALTH_ASSESSMENT_SCHEMA_VERSION,
+    schema_version: timelineVersion,
     assessments: assessments.filter(item => {
       if (seen.has(item.request_key)) return false;
       seen.add(item.request_key);

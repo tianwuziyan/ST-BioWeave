@@ -249,11 +249,12 @@ read model；expected boundary 到达只影响该 read model，不能写入新�
 新的 authoritative factual Event 不会自动 supersede 旧 observation；long-term/permanent 也
 不能因沉默或 Story Time 跳跃自动清除。
 
-当前已实现 Phase 1 Health Assessment（schema v2 observation-level severity）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
+当前已实现 Health Assessment schema v3（observation-level severity 与一次性 recovery-stage profile）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
 它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，
 在源 Event/owner 失效时一同失效，并在 replay/reload 时消费已保存结果而不是重新调用
-AI。v1 Assessment 缺少 severity 时运行时按 `unknown` 消费，不会因为 schema v2 缺字段而
-重跑或自动 backfill；非法 severity 只在 Assessment normalization 中降级为 `unknown`。
+AI。旧 v1/v2 Assessment 缺少 severity 或 recovery profile 时，运行时不重跑、不自动 backfill；
+缺少 profile 的旧记录仍可参与既有 lifecycle，但不产生 staged Guidance。非法 severity 只在
+Assessment normalization 中降级为 `unknown`，非法 v3 recovery profile 则 fail conservative。
 这里的保存稳定性针对同一 source factual observation；新的 authoritative health
 observation 可以产生新的 Assessment，形成时间序列而不是原地改写旧记录。它不能写入
 BiologicalEvent factual payload、Snapshot-only、runtime-only cache 或 Chat-level Health
@@ -271,7 +272,9 @@ legacy roles do not trigger backfill or historical reanalysis; an already valid 
 legacy Assessment remains persisted but is not consumed by the Current Health derived read model.
 
 Health Recovery Guidance Phase 5B 把每条 active observation
-的 Story Time elapsed 与 Assessment recovery window 转换为粗粒度身体表现阶段。具体 duration、
+的 Story Time elapsed 与 Assessment recovery window 转换为粗粒度身体表现阶段，再读取同一
+Assessment 中 persisted 的 observation-specific `early` / `recovering` / `near_recovery`
+profile。具体 duration、
 remaining time、deadline、Assessment 字段属于内部推演参数，不应作为剧情输出内容注入；
 Guidance 不是强制提及，也不是 factual source。它不能写 Event、改变 Assessment、关闭
 observation 或回流 Event Analysis。只有真实 narrative 再次出现的身体变化，才能沿既有
@@ -293,12 +296,20 @@ active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
 
-The transient Projection Context is a separate Runtime read projection. It is
-built only from `getProjectionViews()` results whose `context_visible` is true;
-it never scans the raw timeline and never becomes a persistent Chat field. The
+The transient Projection Context is a separate Runtime read projection. Its
+ordinary Projection input comes only from `getProjectionViews()` results whose
+`context_visible` is true; Health Recovery Guidance is read from the current
+derived Health State. It never scans the raw timeline and never becomes a
+persistent Chat field. The
 fixed SillyTavern extension slot is `bioweave_projection_context`, injected with
 `setExtensionPrompt()` at `IN_CHAT`, depth 4, SYSTEM role. Updating the slot
-replaces its previous value, and an empty current view explicitly clears it.
+replaces its previous value. The current context is rebuilt from the union of
+visible Projection Views and active Health Recovery Guidance; an empty
+Projection view alone does not clear the slot when Health Guidance remains.
+Only when both inputs are empty is the slot explicitly cleared. Concurrent
+refreshes are serialized before replacing the shared slot.
+At native `GENERATION_STARTED`, the runtime awaits that existing refresh queue
+before SillyTavern reads extension prompts for the generation.
 Chat changes, active Swipe changes, Floor Version changes, Floor deletion, no
 Character Floor, or a read failure all resolve again or clear the slot. The
 prompt is transient narrative guidance, not factual evidence; Event Analysis

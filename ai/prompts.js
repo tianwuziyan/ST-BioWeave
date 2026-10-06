@@ -822,15 +822,17 @@ export function buildHealthAssessmentMessages(event = {}, promptSettings = {}) {
   addMessage(messages, 'system', [
     '你是 BioWeave 的 Health Assessment 派生评估器。',
     '输入是已经验证并保存的 BiologicalEvent；不要创建、修改或补充事实 Event。',
-    '只评估该事实的粗粒度 persistence、observation-level severity、自然恢复资格和可规范化的恢复窗口。',
+    '只评估该事实的粗粒度 persistence、observation-level severity、自然恢复资格和可规范化的恢复窗口，并在适用时一次性生成该 observation 专属的恢复阶段指导。恢复窗口是这次一次性 Assessment 的职责：优先采用 source_event/source_evidence 中明确的 factual timing；如果没有明确 timing，但这是信息充分、可合理评估的普通 short_term observation，应给出一次粗粒度 expected_recovery.duration 估计，并将 assessment_source 设为 ai_derived_assessment。',
     'severity 只描述该单个 Health observation / condition 本身的严重程度；允许值只有 unknown、mild、moderate、severe。',
     '只能依据已验证并保存的 source BiologicalEvent / factual observation；证据不足时 severity 必须为 unknown。',
     '不要根据恢复时间、persistence、permanent、当前功能影响或 narrative tone 反推或夸大 severity。',
     '不要进行医学诊断、风险分诊、emergency level 判断，也不要推断正文没有支持的身体损伤。',
-    '没有明确的 factual timing 时，assessment_source 必须为 ai_derived_assessment；不要把现实医学常识写成事实证据。',
+    '没有明确的 factual timing 时，如果事实仍足以支持合理的粗粒度恢复周期，应使用 ai_derived_assessment 生成 expected_recovery；只有证据不足、事实含混或无法可靠评估时才将 expected_recovery 保持为 null。不要把现实医学常识写成事实证据，也不要为了避免估计而默认返回 null。',
+    '当 persistence=short_term、natural_recovery=eligible 且 expected_recovery 可计算时，recovery_stage_guidance 必须为 early、recovering、near_recovery 各生成一条该 observation 专属的 non-factual、conditional story portrayal guidance。它只描述相关部位在后续剧情涉及动作、刺激、负荷或环境时可能如何表现；不要写成当前已经发生的事实。若 expected_recovery 无法可靠计算，recovery_stage_guidance 必须为 null。',
+    'recovery_stage_guidance 只能是粗粒度阶段表现指导，不得包含百分比、每日 Day1/Day2/Day3 timeline、倒计时、剩余天数、deadline、未来 factual Event、未被 source observation 支持的诊断、treatment recommendation、emergency 或 triage classification。不要机械重复 source Event 描述，也不要输出内部 Assessment 字段。',
     'reproductive exposure、pregnancy projection 和非健康事实不属于本评估。',
     '只输出一个 JSON 对象，不要 Markdown 或解释文字。',
-    '格式：{"schema_version":2,"persistence":"short_term|long_term|permanent|unknown","severity":"unknown|mild|moderate|severe","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"ai_derived_assessment|unknown"}',
+    '格式：{"schema_version":3,"persistence":"short_term|long_term|permanent|unknown","severity":"unknown|mild|moderate|severe","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"explicit_narrative_timing|ai_derived_assessment|world_model_rule|product_policy_fallback|unknown","recovery_stage_guidance":{"early":"string","recovering":"string","near_recovery":"string"}|null}',
     'duration.story_days 必须是大于等于 0 的有限数字；无法可靠评估时使用 null/unknown，不要伪造边界。',
   ].join('\n'))
   addMessage(messages, 'user', JSON.stringify({

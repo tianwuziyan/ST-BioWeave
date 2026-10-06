@@ -5,6 +5,7 @@ import {
   healthObservationPresentationIdentity,
   summarizeActiveHealthSeverity,
 } from './health-aggregation.js';
+import {selectHealthRecoveryGuidance} from './health-recovery-guidance.js';
 
 function clone(value) {
   return value === undefined ? value : structuredClone(value);
@@ -44,7 +45,7 @@ function buildObservation(event, assessment, currentStoryTime) {
     && naturalRecovery === 'eligible'
     && isExpectedRecoveryReached(currentStoryTime, assessment);
   if (closed) return null;
-  return {
+  const observation = {
     source_event_id: event.event_id,
     assessment_id: assessment?.assessment_id ?? null,
     severity: assessment?.severity ?? 'unknown',
@@ -59,10 +60,17 @@ function buildObservation(event, assessment, currentStoryTime) {
     reference_story_time: clone(assessment?.reference_story_time ?? event.story_time),
     earliest_recovery: clone(assessment?.earliest_recovery ?? null),
     expected_recovery: clone(assessment?.expected_recovery ?? null),
+    recovery_stage_guidance: clone(assessment?.recovery_stage_guidance ?? null),
     status: hasExpectedRecovery && persistence === 'short_term' && naturalRecovery === 'eligible'
       ? 'active_before_expected_boundary'
       : 'active_or_unresolved',
   };
+  const recoverySelection = observation.recovery_stage_guidance
+    ? selectHealthRecoveryGuidance(observation, currentStoryTime)
+    : {stage: null, guidance: null};
+  observation.recovery_stage = recoverySelection.stage;
+  observation.current_description = recoverySelection.guidance ?? observation.description;
+  return observation;
 }
 
 export function emptyCurrentHealthState() {
