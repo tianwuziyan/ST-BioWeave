@@ -48,6 +48,20 @@ test('incomparable Story Time produces no recovery guidance', () => {
   assert.deepEqual(result, []);
 });
 
+test('intervention-only Current Health state produces no recovery guidance', () => {
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {
+      characters: {
+        char_a: {
+          active_observations: [],
+        },
+      },
+    },
+    currentStoryTime: story(4),
+  });
+  assert.deepEqual(result, []);
+});
+
 test('long-term, permanent, and earliest-only observations do not enter automatic stages', () => {
   const earliestOnly = observation({expected_recovery: null});
   const result = buildHealthRecoveryGuidance({

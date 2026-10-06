@@ -49,6 +49,10 @@ export const HEALTH_LATERALITY = Object.freeze([
   'left', 'right', 'bilateral', 'midline', 'unknown',
 ]);
 
+export const HEALTH_ROLES = Object.freeze([
+  'observation', 'intervention',
+]);
+
 export const STATE_FACT_EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
@@ -387,7 +391,7 @@ function validateStateFactPayload(type, payload, errors, path) {
       addError(errors, `${path}.${field}.description`);
     }
     if (!allowHealthIdentity) return;
-    const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation']);
+    const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation', 'health_role']);
     for (const key of Object.keys(value)) {
       if (!allowed.has(key)) addError(errors, `${path}.${field}.${key}`);
     }
@@ -400,6 +404,9 @@ function validateStateFactPayload(type, payload, errors, path) {
     }
     if (value.continuation !== undefined && typeof value.continuation !== 'boolean') {
       addError(errors, `${path}.${field}.continuation`);
+    }
+    if (value.health_role !== undefined && !HEALTH_ROLES.includes(value.health_role)) {
+      addError(errors, `${path}.${field}.health_role`);
     }
   };
 

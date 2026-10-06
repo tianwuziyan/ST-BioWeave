@@ -243,6 +243,12 @@ Current valid Floor facts are the only input for materialized runtime state:
 - current biological state, including a future disease tracker; and
 - historical biological context sent to an API.
 
+Health factual roles are part of the same Floor-owned BiologicalEvent payload:
+`health_role` does not create a health persistence root. Current observation
+presentation, Event-history source navigation, and derived Assessment reads must
+therefore disappear together when the owning Event, active Swipe, or complete
+Floor Version becomes invalid.
+
 Character Health State is currently **PARTIAL / Phase 4 active observation read model**. See
 [CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md) for the future
 derived read-model direction. Phase 1 Health Assessment adds only the narrowly scoped
@@ -484,6 +490,9 @@ stale. Registry rebuilds occur from the current active collection and drop
 orphan Event IDs, candidates, subjects, and event-derived references.
 
 Event edits validate the complete affected Event collection before saving.
+Event edit/delete is target-Floor-local and must not invalidate independent
+downstream Floors; only destructive Host timeline mutations such as an actual
+message deletion or rollback may clear affected downstream Floor slots.
 Deletion and lifecycle refreshes rebuild from current storage rather than
 depending on one handler to erase every projection. Chat configuration and
 independent identity/configuration semantics remain intact while

@@ -24,7 +24,7 @@ function event(overrides = {}) {
     location: '地点 A',
     participants: [{character_id: 'char_000001', display_name: '祁鸢', event_role: 'unknown', biological_context: {species: null, biological_type: null}}],
     source_evidence: [{kind: 'narrative', text: '手腕有轻微擦伤'}],
-    state_fact: {subject_id: 'char_000001', payload: {symptom: {kind: 'abrasion', description: '轻微擦伤'}}},
+    state_fact: {subject_id: 'char_000001', payload: {symptom: {kind: 'abrasion', description: '轻微擦伤', health_role: 'observation'}}},
     story_time: {display: 'Day 1', normalized: null, day_index: 1, calendar_id: null, precision: 'day'},
     source: version,
     ...overrides,
@@ -111,6 +111,39 @@ test('eligibility is conservative and excludes reproductive exposure', () => {
   assert.equal(healthAssessmentEligibility(event()).eligible, true);
   assert.equal(healthAssessmentEligibility(event({type: 'sexual_activity', state_fact: null})).eligible, false);
   assert.equal(healthAssessmentEligibility(event({status: 'negated'})).eligible, false);
+});
+
+test('medical intervention is not eligible for Health Assessment', async () => {
+  const intervention = event({
+    event_id: 'evt-treatment',
+    type: 'medical_event',
+    state_fact: {subject_id: 'char_000001', payload: {
+      fact: {kind: 'wound_treatment', description: '外敷止血药粉', health_role: 'intervention'},
+    }},
+  });
+  assert.equal(healthAssessmentEligibility(intervention).eligible, false);
+  let calls = 0;
+  let floor = {floor_version: version, events: [intervention], health_assessment_timeline: emptyHealthAssessmentTimeline()};
+  const coordinator = createHealthAssessmentCoordinator({
+    analyzer: {analyzeHealthAssessment: async () => { calls += 1; return response(); }},
+    getFloor: () => structuredClone(floor),
+    commitFloorPatch: async (_target, _owner, patch) => { floor = {...floor, ...structuredClone(patch)}; },
+    assertExecutionTargetCurrent: async () => true,
+  });
+  await coordinator.assessFloor({target: {index: 0, swipeId: 0, version}, execution: {}, token: {}, events: floor.events});
+  assert.equal(calls, 0);
+  assert.equal(floor.health_assessment_timeline.assessments.length, 0);
+});
+
+test('legacy treatment Assessment cannot authorize a missing health role', () => {
+  const legacyTreatment = event({
+    event_id: 'evt-legacy-treatment',
+    type: 'medical_event',
+    state_fact: {subject_id: 'char_000001', payload: {
+      fact: {kind: 'wound_treatment', description: '旧治疗记录'},
+    }},
+  });
+  assert.equal(healthAssessmentEligibility(legacyTreatment).eligible, false);
 });
 
 test('persisted assessment is reused and active filtering invalidates changed source facts', async () => {

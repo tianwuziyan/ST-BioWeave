@@ -184,6 +184,8 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /明确的?生理性别.*biological_type.*映射/);
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
+  assert.match(prompt, /health_role.*observation\|intervention/);
+  assert.match(prompt, /检查\/治疗行为与其发现的独立身体状态必须拆成多个 Event/);
   assert.match(prompt, /正文明确给出症状或伤势所在身体部位时，必须提取该 factual body_site/);
   assert.match(prompt, /individual evidence/);
   assert.match(prompt, /完整 narrative discovery window exhaustive scan/);
@@ -739,6 +741,43 @@ test('Event parser accepts a non-sexual BiologicalEvent with the same fixed enve
   assert.deepEqual(parsed.events[0].pregnancy_relevance.counterpart_ids, []);
 });
 
+test('Event parser preserves independent observation and intervention roles', () => {
+  const base = {
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: 1,
+    },
+    participants: [participant('character_subject')],
+  };
+  const parsed = parseEventAnalysisResponse(
+    response([
+      event({
+        ...base,
+        event_id: 'medical-intervention-1',
+        type: 'medical_event',
+        state_fact: {subject_id: 'character_subject', payload: {
+          fact: {kind: 'examination', description: '检查右臂', health_role: 'intervention'},
+        }},
+      }),
+      event({
+        ...base,
+        event_id: 'health-observation-1',
+        type: 'other_biological',
+        state_fact: {subject_id: 'character_subject', payload: {
+          fact: {kind: 'fracture', description: '右臂骨折', body_site: '右臂', health_role: 'observation'},
+        }},
+      }),
+    ]),
+    floorVersion,
+  );
+  assert.equal(parsed.events.length, 2);
+  assert.equal(parsed.events[0].state_fact.payload.fact.health_role, 'intervention');
+  assert.equal(parsed.events[1].state_fact.payload.fact.health_role, 'observation');
+});
+
 test('physical_symptom requires the canonical typed symptom payload', () => {
   const base = event({
     event_id: 'physical-symptom-contract',
@@ -768,6 +807,7 @@ test('physical_symptom requires the canonical typed symptom payload', () => {
     kind: 'observed',
     description: '大腿内侧酸痛',
     body_site: '大腿内侧',
+    health_role: 'observation',
   };
   const parsed = parseEventAnalysisResponse(response([canonical]), floorVersion);
   assert.deepEqual(parsed.events[0].state_fact.payload.symptom, canonical.state_fact.payload.symptom);

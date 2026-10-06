@@ -262,6 +262,14 @@ ledger；active read 必须先验证 source Event 仍 surviving 且完整 Floor 
 `health_assessment_timeline` 已登记为 Character Floor owner root。旧 Chat 不因缺少
 Assessment 而自动批量调用 AI。
 
+Health-related factual records may carry `health_role` inside the existing
+`state_fact.payload.symptom|fact` contract. This is not a new lifecycle root:
+`observation` may create a source-bound Assessment, while `intervention` remains
+an Event-history-only medical action and has no Assessment, severity, persistence,
+natural-recovery, recovery-boundary, or Current Health presentation lifecycle. Missing
+legacy roles do not trigger backfill or historical reanalysis; an already valid source-bound
+legacy Assessment remains persisted but is not consumed by the Current Health derived read model.
+
 Health Recovery Guidance Phase 5B 把每条 active observation
 的 Story Time elapsed 与 Assessment recovery window 转换为粗粒度身体表现阶段。具体 duration、
 remaining time、deadline、Assessment 字段属于内部推演参数，不应作为剧情输出内容注入；

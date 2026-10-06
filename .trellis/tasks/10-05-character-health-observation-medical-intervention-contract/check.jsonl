@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"独立检查设计是否保持 Floor/Swipe/version provenance、derived rebuild 与无旁路事实源。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"独立检查 Event contract、analysis split、dedupe、manual supplement 与 reroll 边界。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"独立检查是否错误引入 persistent root、migration、backfill 或未回答 lifecycle field。"}
+{"file":"core/health-assessment.js","reason":"核对当前 broad eligibility 与 observation-only eligibility 迁移点。"}
+{"file":"core/health-evolution.js","reason":"核对 Evolution 是否可以只消费 eligibility 结果而不引入第二套分类。"}
+{"file":"core/health-aggregation.js","reason":"核对现有 body_site/laterality/factual_kind grouping 与新 site-group DTO 影响。"}
+{"file":"core/health-recovery-guidance.js","reason":"核对 intervention 排除后 Guidance 无需新增 kind/description filter。"}

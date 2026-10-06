@@ -1536,3 +1536,32 @@ prompt fixture failure 可由 HEAD baseline 复现，reroll/scheduler 仅在长�
 `core/health-condition-identity.js`、latest-observation supersede、condition auto-merge、
 recurrence graph、reference graph、freshness/currentness TTL、implicit explicit-recovery
 resolver、generic Health Projection、medical ontology 与 body-region ontology。
+
+## 26. Observation / Medical Intervention Contract (implemented)
+
+Health-related factual records in `state_fact.payload.symptom` or
+`state_fact.payload.fact` may carry `health_role: observation | intervention`.
+The field describes the semantic role of that factual Event record and is not an
+alias for Event `type`.
+
+- `observation` is the only role eligible for new Health Assessment, Health Evolution,
+  observation severity, `severity_summary`, and Recovery Guidance.
+- `intervention` remains an independent BiologicalEvent with its original factual
+  description, body site, provenance, and canonical `event_id`; it does not receive
+  Assessment severity/persistence/recovery data and cannot affect `severity_summary`.
+- Event Analysis must split a medical action and a newly discovered physical state into
+  separate Events. No Condition/reference/effect graph is created.
+- Character Health current presentation groups active observations by factual `body_site + laterality`,
+  retains `factual_kind` on each item, and exposes `health_observations[]` with canonical Event IDs.
+  Medical interventions are not consumed by the current-state DTO/UI; they remain available in
+  Event history for later navigation.
+- Missing body sites use per-Event presentation fallback rather than a single global
+  “未标明部位” group. No description-based body-site inference occurs.
+- Intervention display lifecycle remains `DEFERRED / UNRESOLVED`: v1 does not display intervention
+  facts in Character Health current state and introduces no treatment TTL, Assessment, expiry,
+  synthetic state, or “recent N days” rule.
+
+Legacy Events without `health_role` remain readable and are not rewritten or reanalyzed. They
+do not trigger new Assessment AI and cannot enter the Current Health observation read model, even
+when an old source-bound Assessment remains in the historical timeline. The role is stored inside
+the existing Floor-owned Event payload and introduces no independent persistence root.

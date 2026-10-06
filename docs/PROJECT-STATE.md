@@ -73,6 +73,21 @@ severity aggregation、Recovery Guidance 联动、confidence、rationale、criti
 tests 90 passed，`node --check` 与 `git diff --check` 通过。Full `npm test` 未获得 clean pass，
 但已完成 regression attribution，当前观察到的既有失败没有证据由 `severity_summary` 引入。
 
+### Character Health Observation / Medical Intervention Contract
+
+状态：`IMPLEMENTED / focused regression verified`。
+
+- Factual health records now support `health_role: observation | intervention` inside the
+  existing `state_fact.payload.symptom|fact` contract; no Event type aliasing is used.
+- Only explicit observations trigger new Health Assessment. Interventions remain independent
+  Floor-owned BiologicalEvents and are excluded from Assessment, active observations,
+  `severity_summary`, and Recovery Guidance.
+- Current Health presentation grouping is observation-only and site-oriented by factual
+  `body_site + laterality`; each group keeps `health_observations[]` with canonical source Event IDs.
+- Medical interventions remain in Event history but are not consumed by the Character Health
+  current-state DTO/UI. Treatment display lifecycle remains `DEFERRED / UNRESOLVED`; no TTL,
+  treatment Assessment, synthetic state, or historical backfill.
+
 ## Architecture at a Glance
 
 ```text

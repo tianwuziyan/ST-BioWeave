@@ -1209,3 +1209,36 @@ test('state page follows the reference task queue and security summary visual co
   assert.match(style, /\.bioweave-plugin-status-entity-row \{[^}]*padding: 7px 9px/)
   assert.match(style, /\.bioweave-plugin-status-row \{[^}]*border-top: 1px solid var\(--bioweave-border-soft\)/)
 })
+
+test('Character Health does not render deferred medical intervention presentation', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+    activeEvents: [
+      {event_id: 'obs-event', state_fact: {subject_id: 'char-a'}},
+      {event_id: 'int-event', state_fact: {subject_id: 'char-a'}},
+    ],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          severity_summary: 'mild',
+          grouped_issues: [{
+            body_site: '右臂外侧',
+            laterality: 'right',
+            health_observations: [{description: '右臂外侧被划开长约三寸的血口', source_event_id: 'obs-event'}],
+            source_event_ids: ['obs-event'],
+          }],
+        },
+      },
+    },
+  })
+  assert.equal((html.match(/class="bioweave-character-health-issue-site">右臂外侧/g) || []).length, 1)
+  assert.match(html, /当前身体问题/)
+  assert.doesNotMatch(html, /医疗处理/)
+  assert.match(html, /右臂外侧被划开长约三寸的血口/)
+  assert.doesNotMatch(html, /外敷解毒止血药粉进行急救止血/)
+  assert.match(html, /obs-event/)
+  assert.doesNotMatch(html, /int-event/)
+})

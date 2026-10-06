@@ -1,6 +1,9 @@
 import {normalizeEvent} from './events.js';
+import {HEALTH_ROLES} from './events.js';
 import {normalizeStoryTime} from '../story/time.js';
 import {hashText} from '../runtime/floor.js';
+
+const HEALTH_EVENT_TYPES = new Set(['physical_symptom', 'medical_event', 'other_biological']);
 
 export const HEALTH_ASSESSMENT_SCHEMA_VERSION = 2;
 export const HEALTH_ASSESSMENT_SEVERITY = Object.freeze([
@@ -20,8 +23,6 @@ export const HEALTH_ASSESSMENT_SOURCES = Object.freeze([
   'unknown',
 ]);
 
-const HEALTH_EVENT_TYPES = new Set(['physical_symptom', 'medical_event', 'other_biological']);
-
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -40,16 +41,33 @@ export function stableHealthAssessmentString(value) {
   return JSON.stringify(stable(value));
 }
 
+function healthFact(event) {
+  const payload = record(event?.state_fact?.payload);
+  return record(payload.symptom ?? payload.fact);
+}
+
+export function healthRoleOfEvent(rawEvent) {
+  const event = normalizeEvent(rawEvent);
+  const role = healthFact(event).health_role;
+  return HEALTH_ROLES.includes(role) ? role : null;
+}
+
 export function healthAssessmentEligibility(rawEvent) {
   const event = normalizeEvent(rawEvent);
-  const eligible = HEALTH_EVENT_TYPES.has(event.type)
+  const role = healthRoleOfEvent(event);
+  const factualValid = HEALTH_EVENT_TYPES.has(event.type)
     && !['negated', 'fictional'].includes(event.status)
     && Boolean(event.state_fact?.subject_id)
     && Array.isArray(event.source_evidence)
     && event.source_evidence.length > 0;
+  const eligibleRole = factualValid && role === 'observation';
   return {
-    eligible,
-    reason: eligible ? 'eligible_health_event' : 'not_health_assessment_eligible',
+    eligible: eligibleRole,
+    reason: eligibleRole
+      ? 'eligible_health_observation'
+      : role === 'intervention'
+        ? 'health_intervention_not_assessment_eligible'
+        : 'health_role_observation_required',
     event,
   };
 }

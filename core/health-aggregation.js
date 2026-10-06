@@ -11,12 +11,12 @@ function normalized(value) {
   return result ? result.normalize('NFKC').toLocaleLowerCase() : null;
 }
 
-function aggregationKey(observation) {
-  return [
-    observation.body_site ?? 'general',
-    observation.laterality ?? 'unspecified',
-    observation.factual_kind ?? 'unknown',
-  ].join('|');
+function aggregationKey(item) {
+  const site = normalized(item.body_site);
+  const laterality = item.laterality ?? 'unspecified';
+  return site
+    ? `site|${site}|${laterality}`
+    : `missing|${item.source_event_id}`;
 }
 
 const severityRank = {unknown: 0, mild: 1, moderate: 2, severe: 3};
@@ -36,26 +36,36 @@ export function summarizeActiveHealthSeverity(observations = []) {
 /** Presentation-only grouping. It never changes observation lifecycle or authority. */
 export function aggregateActiveHealthObservations(observations = []) {
   const groups = new Map();
-  for (const observation of Array.isArray(observations) ? observations : []) {
-    const key = aggregationKey(observation);
+  const add = (item) => {
+    const key = aggregationKey(item);
     const existing = groups.get(key);
     if (existing) {
-      existing.source_observation_ids.push(observation.source_event_id);
-      const description = text(observation.description);
+      existing.source_event_ids.push(item.source_event_id);
+      existing.source_observation_ids.push(item.source_event_id);
+      const description = text(item.description);
       if (description && !existing.descriptions.includes(description)) existing.descriptions.push(description);
-      continue;
+      existing.health_observations.push({
+        description,
+        factual_kind: item.factual_kind ?? null,
+        severity: item.severity ?? 'unknown',
+        source_event_id: item.source_event_id,
+      });
+      return;
     }
     groups.set(key, {
       group_key: key,
-      body_site: observation.body_site ?? null,
-      display_site: observation.body_site ?? 'general',
-      laterality: observation.laterality ?? null,
-      factual_kind: observation.factual_kind ?? null,
-      description: text(observation.description),
-      descriptions: text(observation.description) ? [text(observation.description)] : [],
-      source_observation_ids: [observation.source_event_id],
+      body_site: item.body_site ?? null,
+      display_site: item.body_site ?? 'general',
+      laterality: item.laterality ?? null,
+      factual_kind: item.factual_kind ?? null,
+      description: text(item.description),
+      descriptions: text(item.description) ? [text(item.description)] : [],
+      health_observations: [{description: text(item.description), factual_kind: item.factual_kind ?? null, severity: item.severity ?? 'unknown', source_event_id: item.source_event_id}],
+      source_observation_ids: [item.source_event_id],
+      source_event_ids: [item.source_event_id],
     });
-  }
+  };
+  for (const observation of Array.isArray(observations) ? observations : []) add(observation);
   return [...groups.values()].sort((left, right) =>
     String(left.group_key).localeCompare(String(right.group_key)));
 }
@@ -65,7 +75,7 @@ export function healthObservationPresentationIdentity(event) {
   const fact = record(payload.symptom ?? payload.fact);
   return {
     factual_kind: normalized(fact.kind) ?? text(event?.type) ?? 'unknown',
-    body_site: normalized(fact.body_site),
+    body_site: text(fact.body_site),
     laterality: text(fact.laterality),
   };
 }

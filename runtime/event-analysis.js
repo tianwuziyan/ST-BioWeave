@@ -1252,10 +1252,17 @@ export function createEventAnalysisCoordinator({
   async function invalidateMutation(
     event,
     targetIndex,
-    { preserveTarget = false, clearRoots = true, currentSnapshot = null } = {},
+    {
+      preserveTarget = false,
+      clearRoots = true,
+      currentSnapshot = null,
+      mutationScope = "downstream-destructive",
+    } = {},
   ) {
+    const targetLocalMutation = mutationScope === "target-local";
     const affectedExecutions = invalidateInFlightExecutions({
-      fromIndex: targetIndex,
+      fromIndex: targetLocalMutation ? null : targetIndex,
+      exactIndex: targetLocalMutation ? targetIndex : null,
       currentSnapshot,
       reason: `mutation:${event?.type ?? "unknown"}`,
     });
@@ -1265,7 +1272,7 @@ export function createEventAnalysisCoordinator({
     invalidatedFloors.clear();
     clearWorldbookCache(sourceCache);
     const token = chat.token();
-    if (!clearRoots) return chat.token();
+    if (!clearRoots || targetLocalMutation) return chat.token();
     const all = messages();
     const start = Number.isInteger(targetIndex) && targetIndex >= 0 ? targetIndex : 0;
     for (let index = start; index < all.length; index += 1) {
@@ -2612,6 +2619,7 @@ export function createEventAnalysisCoordinator({
   }
   function invalidateInFlightExecutions({
     fromIndex = null,
+    exactIndex = null,
     currentSnapshot = null,
     reason = "stale-floor-version",
   } = {}) {
@@ -2621,6 +2629,12 @@ export function createEventAnalysisCoordinator({
         Number.isInteger(fromIndex) &&
         Number.isInteger(execution.index) &&
         execution.index < fromIndex
+      ) {
+        continue;
+      }
+      if (
+        Number.isInteger(exactIndex) &&
+        execution.index !== exactIndex
       ) {
         continue;
       }

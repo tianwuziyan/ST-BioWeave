@@ -798,6 +798,8 @@
       .bw-character-health-overview strong { padding: 2px 8px; line-height: 1.2; }
       .bw-character-health-issue { display: grid; grid-template-columns: 82px minmax(0, 1fr) max-content; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--bw-line); }
       .bw-character-health-issue-site { min-width: 0; padding-right: 10px; overflow-wrap: anywhere; border-right: 1px solid var(--bw-line); white-space: normal; }
+      .bw-character-health-observations { display: grid; gap: 3px; min-width: 0; }
+      .bw-character-health-subtitle { color: var(--bw-text-2); font-size: 10px; line-height: 1.35; }
       .bw-character-alias-editor {
         margin: 0 12px 10px;
         overflow: hidden;
@@ -2185,7 +2187,7 @@
                     <button class="bw-button" type="button">编辑昵称</button>
                   </div>
                 </header>
-                <!-- A 方案：按钮下方的只读紧凑浮层；生产内容来自 Runtime，不使用此示例数据。 -->
+                <!-- A 方案：按钮下方的只读紧凑浮层；生产内容来自 Runtime，不使用此示例数据。site group 按 body_site + laterality 分组，仅展示 active observation。 -->
                 <section class="bw-character-alias-editor" aria-label="昵称编辑器">
                   <div class="bw-character-alias-head"><div><h3>昵称 / 别名</h3><p>仅用于识别，不改变正式名称</p></div><span class="bw-badge good">1 个</span></div>
                   <div class="bw-character-alias-fields"><label class="bw-character-alias-field"><span>别名</span><input value="Runtime alias" aria-label="昵称 1" /><button type="button" aria-label="删除昵称">×</button></label></div>

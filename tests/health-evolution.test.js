@@ -13,12 +13,14 @@ function story(day, calendar_id = null) {
   return {display: `Day ${day}`, normalized: null, day_index: day, calendar_id, precision: 'day'};
 }
 
-function event({id = 'event-a', subject = 'char-a', kind = 'abrasion', description = null, day = 1, type = 'physical_symptom', source = version, bodySite = null, laterality = null, continuation} = {}) {
+function event({id = 'event-a', subject = 'char-a', kind = 'abrasion', description = null, day = 1, type = 'physical_symptom', source = version, bodySite = null, laterality = null, continuation, healthRole = 'observation'} = {}) {
   const symptom = {kind};
   if (description !== null) symptom.description = description;
   if (bodySite !== null) symptom.body_site = bodySite;
   if (laterality !== null) symptom.laterality = laterality;
   if (continuation !== undefined) symptom.continuation = continuation;
+  if (healthRole !== null) symptom.health_role = healthRole;
+  const factualKey = type === 'physical_symptom' ? 'symptom' : 'fact';
   return {
     event_id: id,
     type,
@@ -28,7 +30,7 @@ function event({id = 'event-a', subject = 'char-a', kind = 'abrasion', descripti
     story_time: story(day),
     source_evidence: [{kind: 'narrative', text: `${kind} observed`}],
     participants: [{character_id: subject, event_role: 'unknown'}],
-    state_fact: {subject_id: subject, payload: {symptom}},
+    state_fact: {subject_id: subject, payload: {[factualKey]: symptom}},
   };
 }
 
@@ -89,6 +91,45 @@ test('different site and laterality remain separate presentation groups', () => 
   assert.equal(result.characters['char-a'].grouped_issues.length, 3);
 });
 
+test('interventions do not enter Current Health presentation or severity', () => {
+  const observation = event({id: 'laceration', kind: 'laceration', description: '右臂外侧有血口', bodySite: '右臂外侧', laterality: 'right'});
+  const intervention = event({id: 'treatment', type: 'medical_event', kind: 'wound_treatment', description: '外敷止血药粉', bodySite: '右臂外侧', laterality: 'right', healthRole: 'intervention'});
+  const result = deriveCurrentHealthState({
+    events: [observation, intervention],
+    assessments: [assessment({eventId: 'laceration', severity: 'mild', expectedDay: 100})],
+    currentStoryTime: story(2),
+  });
+  const character = result.characters['char-a'];
+  assert.equal(character.grouped_issues.length, 1);
+  assert.equal(character.grouped_issues[0].health_observations.length, 1);
+  assert.equal('medical_interventions' in character, false);
+  assert.deepEqual(character.grouped_issues[0].source_event_ids, ['laceration']);
+  assert.deepEqual(character.active_observations.map(item => item.source_event_id), ['laceration']);
+  assert.equal(character.severity_summary, 'mild');
+});
+
+test('same site observations with different factual kinds remain one site group', () => {
+  const result = deriveCurrentHealthState({
+    events: [
+      event({id: 'wound', kind: 'laceration', bodySite: '右臂外侧', laterality: 'right'}),
+      event({id: 'pain', kind: 'pain', bodySite: '右臂外侧', laterality: 'right'}),
+    ],
+    assessments: [assessment({eventId: 'wound', expectedDay: 100}), assessment({eventId: 'pain', expectedDay: 100})],
+    currentStoryTime: story(2),
+  });
+  assert.equal(result.characters['char-a'].grouped_issues.length, 1);
+  assert.deepEqual(result.characters['char-a'].grouped_issues[0].source_observation_ids.sort(), ['pain', 'wound']);
+});
+
+test('intervention-only health data does not create Current Health state', () => {
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'treatment', type: 'medical_event', kind: 'wound_treatment', healthRole: 'intervention'})],
+    assessments: [],
+    currentStoryTime: story(2),
+  });
+  assert.deepEqual(result.characters, {});
+});
+
 test('missing body site remains active in a general read-model group without mutating Event', () => {
   const source = event({id: 'fever', kind: 'fever', description: '全身发热，但正文没有结构化部位字段'});
   const before = structuredClone(source);
@@ -130,7 +171,7 @@ test('incomparable Story Time stays conservatively active', () => {
   assert.equal(activeObservations(result).length, 1);
 });
 
-test('legacy health observations without Assessments remain represented without a deadline', () => {
+test('explicit observations without Assessments remain represented without a deadline', () => {
   const result = deriveCurrentHealthState({events: [event()], assessments: [], currentStoryTime: story(100)});
   assert.equal(activeObservations(result)[0].assessment_id, null);
   assert.equal(activeObservations(result)[0].expected_recovery, null);
@@ -150,6 +191,37 @@ test('Evolution transparently forwards Assessment severity and defaults legacy d
     currentStoryTime: story(2),
   });
   assert.equal(activeObservations(legacy)[0].severity, 'unknown');
+});
+
+test('legacy Event without health_role is excluded even with an existing source Assessment', () => {
+  const legacyEvent = event({id: 'legacy-event', healthRole: null});
+  const withoutAssessment = deriveCurrentHealthState({
+    events: [legacyEvent],
+    assessments: [],
+    currentStoryTime: story(2),
+  });
+  assert.deepEqual(withoutAssessment.characters, {});
+
+  const withAssessment = deriveCurrentHealthState({
+    events: [legacyEvent],
+    assessments: [assessment({eventId: 'legacy-event', expectedDay: 100})],
+    currentStoryTime: story(2),
+  });
+  assert.deepEqual(withAssessment.characters, {});
+});
+
+test('legacy treatment Assessment cannot raise explicit observation severity summary', () => {
+  const legacyTreatment = event({id: 'legacy-treatment', type: 'medical_event', kind: 'wound_treatment', healthRole: null, bodySite: '右臂外侧', laterality: 'right'});
+  const observation = event({id: 'mild-wound', kind: 'laceration', healthRole: 'observation', bodySite: '右臂外侧', laterality: 'right'});
+  const result = deriveCurrentHealthState({
+    events: [legacyTreatment, observation],
+    assessments: [
+      assessment({eventId: 'legacy-treatment', severity: 'moderate', expectedDay: 100}),
+      assessment({eventId: 'mild-wound', severity: 'mild', expectedDay: 100}),
+    ],
+    currentStoryTime: story(2),
+  });
+  assert.equal(result.characters['char-a'].severity_summary, 'mild');
 });
 
 test('presentation severity summary ranks active observations without mutating them', () => {

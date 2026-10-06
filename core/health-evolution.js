@@ -77,18 +77,25 @@ export function deriveCurrentHealthState({events = [], assessments = [], current
   const assessmentMap = assessmentByEvent(assessments);
   const characters = {};
   for (const event of Array.isArray(events) ? events : []) {
-    if (!healthAssessmentEligibility(event).eligible) continue;
     const subject = event?.state_fact?.subject_id;
     if (!subject) continue;
-    const observation = buildObservation(event, assessmentMap.get(event.event_id), currentStoryTime);
-    if (!observation) continue;
+    const assessment = assessmentMap.get(event.event_id);
+    const eligibility = healthAssessmentEligibility(event);
+    if (!eligibility.eligible) continue;
     characters[subject] ??= {active_observations: [], grouped_issues: [], current_health_summary: null};
+    const observation = buildObservation(event, assessment, currentStoryTime);
+    if (!observation) continue;
     characters[subject].active_observations.push(observation);
   }
   for (const character of Object.values(characters)) {
     character.active_observations.sort(observationSort);
     character.grouped_issues = aggregateActiveHealthObservations(character.active_observations);
     character.severity_summary = summarizeActiveHealthSeverity(character.active_observations);
+  }
+  for (const [subject, character] of Object.entries(characters)) {
+    if (!character.active_observations.length) {
+      delete characters[subject];
+    }
   }
   return {schema_version: 1, characters};
 }

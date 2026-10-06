@@ -6275,6 +6275,127 @@ test("event edit updates the Floor fact and delete rebuilds Registry without dan
   fixture.runtime.destroy();
 });
 
+test("deleting an Event does not clear surviving later Floor Event slots", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-old-event",
+        floor: 70,
+        content: "旧测试事件所在楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-later-event",
+        floor: 75,
+        content: "删除旧事件后仍应保留的楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        return {
+          events: [
+            eventResult(`event-floor-${analysisInput.current_floor.floor}`),
+          ],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const deletedEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
+  const survivingEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
+  await fixture.runtime.deleteEvent(deletedEventId);
+
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1).events.map(event => event.event_id),
+    [survivingEventId],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.collectActiveBusinessData()).active_events.map(
+      event => event.event_id,
+    ),
+    [survivingEventId],
+  );
+  fixture.runtime.destroy();
+});
+
+test("deleting one Event preserves same-Floor sibling Events", async () => {
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        return {
+          events: [eventResult("event-sibling-a"), eventResult("event-sibling-b")],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const siblingEvents = fixture.runtime.store.getFloor(0).events;
+  const siblingA = siblingEvents.find(event => event.event_id !== "event-sibling-b");
+  const siblingB = siblingEvents.find(event => event.event_id !== siblingA?.event_id);
+  await fixture.runtime.deleteEvent(siblingA.event_id);
+
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(0).events.map(event => event.event_id),
+    [siblingB.event_id],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.collectActiveBusinessData()).active_events.map(
+      event => event.event_id,
+    ),
+    [siblingB.event_id],
+  );
+  fixture.runtime.destroy();
+});
+
+test("editing a historical Event preserves later Floor slots and Events", async () => {
+  const fixture = createFixture({
+    messages: [
+      {
+        message_id: "message-historical-edit",
+        floor: 70,
+        content: "待编辑的历史楼层",
+        role: "assistant",
+      },
+      {
+        message_id: "message-later-edit",
+        floor: 75,
+        content: "编辑历史事件后仍应保留的楼层",
+        role: "assistant",
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        return {events: [eventResult(`event-floor-${analysisInput.current_floor.floor}`)]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const historicalEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
+  const laterEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
+  await fixture.runtime.updateEvent(historicalEventId, {location: "编辑后的地点"});
+
+  assert.equal(fixture.runtime.store.getFloor(0).events[0].location, "编辑后的地点");
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1).events.map(event => event.event_id),
+    [laterEventId],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.collectActiveBusinessData()).active_events.map(
+      event => event.event_id,
+    ),
+    [historicalEventId, laterEventId],
+  );
+  fixture.runtime.destroy();
+});
+
 test("event edit validates the complete Floor collection before saving or rebuilding Registry", async () => {
   const subjectEvent = (eventId, subjectId, sourceId) =>
     eventResult(eventId, {

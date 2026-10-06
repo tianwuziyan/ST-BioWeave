@@ -62,6 +62,20 @@ test('normalizeEvent formats narrative StoryTime dates without changing structur
   );
 });
 
+test('normalizeEvent preserves intervention factual history', () => {
+  const event = normalizeEvent({
+    event_id: 'evt-treatment-history',
+    type: 'medical_event',
+    status: 'confirmed',
+    state_fact: {
+      subject_id: 'char_000001',
+      payload: {fact: {kind: 'wound_treatment', description: '外敷止血药粉', health_role: 'intervention'}},
+    },
+  });
+  assert.equal(event.state_fact.payload.fact.health_role, 'intervention');
+  assert.equal(event.state_fact.payload.fact.description, '外敷止血药粉');
+});
+
 test('capability facts keep fertilization and pregnancy causation independent', () => {
   const event = normalizeEvent({
     type: 'physical_symptom',
@@ -830,6 +844,28 @@ test('state fact contracts validate each state-changing event type', () => {
       type,
     );
   }
+});
+
+test('health_role is an optional factual record contract with strict values', () => {
+  const base = {
+    event_id: 'health-role-event',
+    type: 'medical_event',
+    status: 'confirmed',
+    source: {chat_id: 'chat-1'},
+    participants: [{character_id: 'char-a', event_role: 'unknown'}],
+    state_fact: {
+      subject_id: 'char-a',
+      payload: {fact: {kind: 'wound_treatment', health_role: 'intervention'}},
+    },
+  };
+  assert.equal(validateEvent(base).ok, true);
+  assert.equal(validateEvent({...base, state_fact: {
+    ...base.state_fact,
+    payload: {fact: {kind: 'wound_treatment', health_role: 'diagnosis'}},
+  }}).ok, false);
+  assert.equal(validateEvent({...base, type: 'pregnancy_confirmation', state_fact: {
+    subject_id: 'char-a', payload: {pregnancy_id: 'preg-1', health_role: 'observation'},
+  }}).ok, false);
 });
 
 test('state fact subject must be a participant and pregnancy identity is type-specific', () => {

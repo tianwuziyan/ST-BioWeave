@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 BiologicalEvent、derived Health、Assessment、active Swipe、六字段 Floor Version、edit/delete/reroll/manual supplement 的 authority 与失效边界。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event Analysis 输出、独立 Event、semantic dedupe、Floor persistence owner 与 mixed narrative 约束。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Health Assessment、Evolution、Aggregation、Guidance 的模块 owner 与跨层职责。"}
+{"file":"docs/CHARACTER-HEALTH-STATE.md","reason":"确认现有 Health Assessment/Evolution/UI/Guidance 设计状态与兼容语境。"}

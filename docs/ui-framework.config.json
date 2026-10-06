@@ -357,6 +357,12 @@
           "buttonOrder": ["healthStatus", "characterTiming", "characterAliases"],
           "buttonStates": {"warning": "健康 · 有异常", "good": "健康 · 正常", "neutral": "健康 · 无记录"},
           "runtimeFields": ["current_health_state", "current_health_summary", "grouped_issues"],
+          "siteGroup": {
+            "groupingKey": "factual body_site + laterality",
+            "observationItems": "health_observations[]",
+            "kindRole": "factual_kind remains item metadata and does not split a site card",
+            "missingBodySite": "per-Event fallback; never one global missing-site group"
+          },
           "desktopPlacement": "below identity action area",
           "mobilePlacement": "fixed bottom surface",
           "issueColumns": ["body site", "content", "canonical source action"],

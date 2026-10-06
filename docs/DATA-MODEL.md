@@ -398,6 +398,8 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 
 `state_fact` 是事实契约，不是 Current State，也不是 Projection。其有效时间直接引用同一 Event 的结构化 `story_time`，不复制第二份时间字段；缺少可靠 `day_index` 时不得进行时间数学。`conception`、`pregnancy_confirmation`、终止、分娩和产后事实通过最小类型 payload 引用稳定的 Chat-local `pregnancy_id`；conception 与后续 pregnancy facts 共用该 episode identity，不另建 `conception_id`。AI 只声明 `new` / `existing` reference，Runtime 以 Floor Version、Event ordinal、subject 和 fact kind 生成确定性 ID。不得使用随机数、系统时间或 UUID。
 
+对于 `physical_symptom` 的 `state_fact.payload.symptom` 以及 `medical_event` / `other_biological` 的 `state_fact.payload.fact`，health-related factual record 可声明同级 `health_role: observation | intervention`。`observation` 表示当前身体状态，才可进入 Health Assessment；`intervention` 表示已经发生的医疗行为，仍是独立 BiologicalEvent，但不产生 Assessment、severity、persistence、natural recovery、Health Evolution、Recovery Guidance 或 Character Health current presentation。health_role 不是 Event type 别名；缺失的 legacy role 不触发新的 Assessment，也不能由已有 Assessment 反向赋予 observation 身份。intervention 继续保留在 Event history。检查/治疗与发现的独立身体状态必须拆成独立 Event，不建立 Event reference graph。
+
 `pregnancy_suspicion` 保留 suspicion fact，不等价于 confirmed pregnancy；`possible_conception: true` 也不创建 conception fact。`confirmed`、`probable`、`ambiguous`、`negated`、`fictional` 保持独立的 Event status 维度，后两者不能改变 factual Current State。相同 `event_id` 的完全相同事实可以去重；同 ID 不同事实必须报告 conflict，禁止 last-write-wins。
 
 `reproductive_source_attribution` 是独立的 factual state fact，只表达已有 Pregnancy

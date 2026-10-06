@@ -44,6 +44,19 @@ create an Event, pregnancy, conception, symptom, or Current State fact. Event
 edit/delete invalidates the relevant factual basis on the next derived read and
 must fail closed when no valid basis remains.
 
+### Health factual role contract
+
+Health-related records inside `state_fact.payload.symptom` or
+`state_fact.payload.fact` may carry `health_role: observation | intervention`.
+This is the semantic role of the factual record, not an alias for Event `type`.
+Only an explicit `observation` can enter Health Assessment. An `intervention`
+remains an independent BiologicalEvent for Event history and source navigation,
+but does not create Assessment severity/persistence/recovery data, Current Health
+State observation, current Character Health presentation, severity summary contribution,
+or Recovery Guidance input.
+Medical behavior and a newly discovered physical condition are separate Events;
+the Event Analysis response may produce both without creating a reference graph.
+
 ## 1.1 Current production pipeline
 
 The current Runtime path is:

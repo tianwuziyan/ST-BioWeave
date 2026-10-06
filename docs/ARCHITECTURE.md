@@ -87,9 +87,9 @@ flowchart TD
 | Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 World-authoritative horizon lifecycle and Floor persistence |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence、nearest valid restore、later Event replay 与 full replay fallback |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
-| Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 负责 eligibility、fingerprint、schema v2 normalize/validate、observation-level severity 与 source-bound active filtering；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写入 BiologicalEvent factual payload；v1 缺 severity 运行时按 `unknown` 消费且不自动重跑 |
+| Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 只对 factual `health_role: observation` 做 eligibility、fingerprint、schema v2 normalize/validate、observation-level severity 与 source-bound active filtering；`intervention` 不触发 Assessment；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写回 BiologicalEvent factual payload；v1 缺 severity 运行时按 `unknown` 消费且不自动重跑 |
 | Health Evolution | `core/health-evolution.js` + `runtime/health-evolution.js` | 从 surviving Events、valid Assessments 与 Story Time 派生 Current Health State；不调用 AI 或写 storage |
-| Health Aggregation | `core/health-aggregation.js` | active observation 的 presentation-only 精确分组、severity_summary 固定排序与 canonical source Event ID linkage；不拥有 lifecycle 或 Assessment authority |
+| Health Aggregation | `core/health-aggregation.js` | 仅按 factual `body_site + laterality` 构建 active observation site-oriented presentation group，保留 `health_observations[]` 与 canonical source Event IDs；intervention 仅保留在 Event history，不进入 Current Health DTO；不拥有 lifecycle、Assessment 或 treatment authority |
 | Health Recovery Guidance | `core/health-recovery-guidance.js` + `runtime/projection-context.js` | 计算粗粒度、非事实的恢复阶段指导，并组合进唯一 `bioweave_projection_context` 槽位 |
 | UI orchestration | `ui/app.js` | overlay、页面动作和 Runtime API 调用 |
 | Characters UI | `ui/characters.js` | Characters 页面渲染；当前主要枚举 `tracking_subjects` |

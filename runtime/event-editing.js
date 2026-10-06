@@ -70,7 +70,7 @@ export function createEventEditing({
     const mutationToken = await invalidateMutation(
       {type: "MESSAGE_EDITED", payload: {message_id: target.version.message_id}},
       target.index,
-      {preserveTarget: true},
+      {mutationScope: "target-local"},
     );
     await commitFloorPatch(target, "event", {events}, {
       operation_type: "event-edit-patch",
@@ -90,7 +90,7 @@ export function createEventEditing({
     const mutationToken = await invalidateMutation(
       {type: "MESSAGE_DELETED", payload: {message_id: target.version.message_id}},
       target.index,
-      {preserveTarget: true},
+      {mutationScope: "target-local"},
     );
     await commitFloorPatch(target, "event", {events}, {
       operation_type: "event-delete-patch",

@@ -2876,7 +2876,7 @@ function validateRawStateFactRecord(value, path, {allowHealthIdentity = false} =
     throw eventDiagnostic('invalid_state_fact_payload', `${path}.description`, 'EVENT_STATE_FACT_DESCRIPTION_INVALID');
   }
   if (!allowHealthIdentity) return;
-  const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation']);
+  const allowed = new Set(['kind', 'description', 'body_site', 'laterality', 'continuation', 'health_role']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw eventDiagnostic('invalid_state_fact_payload', `${path}.${key}`, 'EVENT_HEALTH_IDENTITY_FIELD_INVALID');
@@ -2891,6 +2891,9 @@ function validateRawStateFactRecord(value, path, {allowHealthIdentity = false} =
   }
   if (value.continuation !== undefined && typeof value.continuation !== 'boolean') {
     throw eventDiagnostic('invalid_state_fact_payload', `${path}.continuation`, 'EVENT_HEALTH_CONTINUATION_INVALID');
+  }
+  if (value.health_role !== undefined && !eventDomain.HEALTH_ROLES.includes(value.health_role)) {
+    throw eventDiagnostic('invalid_state_fact_payload', `${path}.health_role`, 'EVENT_HEALTH_ROLE_INVALID');
   }
 }
 
