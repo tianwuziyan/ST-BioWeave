@@ -915,8 +915,8 @@ test('character details consume grouped Health State issues without rebuilding l
           { source_event_id: 'active-pain', expected_recovery: { boundary: { day_index: 10 } } },
         ],
         grouped_issues: [
-          { group_key: 'wrist|left|pain', display_site: 'wrist', laterality: 'left', factual_kind: 'pain', description: '疼痛', source_observation_ids: ['active-pain', 'duplicate-pain'] },
-          { group_key: 'wrist|left|abrasion', display_site: 'wrist', laterality: 'left', factual_kind: 'abrasion', description: '擦伤', source_observation_ids: ['active-abrasion'] },
+          { group_key: 'wrist|left|pain', display_site: 'wrist', laterality: 'left', factual_kind: 'pain', description: '疼痛', source_observation_ids: ['active-pain', 'duplicate-pain'], health_observations: [{description: '疼痛', source_event_id: 'active-pain'}] },
+          { group_key: 'wrist|left|abrasion', display_site: 'wrist', laterality: 'left', factual_kind: 'abrasion', description: '擦伤', source_observation_ids: ['active-abrasion'], health_observations: [{description: '擦伤', source_event_id: 'active-abrasion'}] },
         ],
       },
     },
@@ -947,11 +947,11 @@ test('Character Health displays factual body sites without laterality or localiz
       characters: {
         'char-a': {
           grouped_issues: [
-            { group_key: '右臂外侧|right|pain', display_site: '右臂外侧', body_site: '右臂外侧', laterality: 'right', description: '疼痛' },
-            { group_key: '左膝|left|pain', display_site: '左膝', body_site: '左膝', laterality: 'left', description: '酸痛' },
-            { group_key: 'upper-arm|right|pain', display_site: '上臂外侧', body_site: '上臂外侧', laterality: 'right', description: '不补方向' },
-            { group_key: 'full-body|unspecified|fever', display_site: '全身', body_site: '全身', laterality: null, description: '发热' },
-            { group_key: 'general|unspecified|cough', display_site: 'general', body_site: null, laterality: 'right', description: '咳嗽' },
+            { group_key: '右臂外侧|right|pain', display_site: '右臂外侧', body_site: '右臂外侧', laterality: 'right', description: '疼痛', health_observations: [{description: '疼痛'}] },
+            { group_key: '左膝|left|pain', display_site: '左膝', body_site: '左膝', laterality: 'left', description: '酸痛', health_observations: [{description: '酸痛'}] },
+            { group_key: 'upper-arm|right|pain', display_site: '上臂外侧', body_site: '上臂外侧', laterality: 'right', description: '不补方向', health_observations: [{description: '不补方向'}] },
+            { group_key: 'full-body|unspecified|fever', display_site: '全身', body_site: '全身', laterality: null, description: '发热', health_observations: [{description: '发热'}] },
+            { group_key: 'general|unspecified|cough', display_site: 'general', body_site: null, laterality: 'right', description: '咳嗽', health_observations: [{description: '咳嗽'}] },
           ],
         },
       },
@@ -976,7 +976,7 @@ test('character Health State is scoped by canonical character id and supports co
     schema_version: 1,
     characters: {
       'char-a': {
-      grouped_issues: [{ group_key: 'general|unspecified|fever', display_site: 'general', factual_kind: 'fever', description: '发热', source_observation_ids: ['fever-a'] }],
+      grouped_issues: [{ group_key: 'general|unspecified|fever', display_site: 'general', factual_kind: 'fever', description: '发热', source_observation_ids: ['fever-a'], health_observations: [{description: '发热', source_event_id: 'fever-a'}] }],
       },
     },
   }
@@ -1037,7 +1037,7 @@ test('Character Health renders the Health-owned three-stage recovery indicator',
   }
 })
 
-test('Character Health omits recovery indicator without an unambiguous derived stage', () => {
+test('Character Health omits recovery indicator without a derived stage', () => {
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
@@ -1087,7 +1087,54 @@ test('Character Health renders current derived description instead of the histor
   assert.doesNotMatch(html, /右肩刚结痂的伤口开裂并渗出鲜血/)
 })
 
-test('Character Health UI prefers factual descriptions and never exposes machine kind', () => {
+test('Character Health renders independent stages for observations in one site group', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            body_site: '右手腕',
+            health_observations: [
+              {description: '擦伤', current_description: '擦伤正在收口', recovery_stage: 'near_recovery', source_event_id: 'abrasion'},
+              {description: '疼痛', current_description: '活动时仍有疼痛', recovery_stage: 'recovering', source_event_id: 'pain'},
+            ],
+          }],
+        },
+      },
+    },
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  })
+  assert.match(html, /data-recovery-stage="near_recovery"/)
+  assert.match(html, /data-recovery-stage="recovering"/)
+  assert.match(html, /擦伤正在收口/)
+  assert.match(html, /活动时仍有疼痛/)
+})
+
+test('Character Health falls back to factual description when current guidance is absent', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
+    currentHealthState: {
+      characters: {
+        'char-a': {
+          grouped_issues: [{
+            body_site: '右肩',
+            health_observations: [{description: '历史事实描述', source_event_id: 'health-event'}],
+          }],
+        },
+      },
+    },
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  })
+  assert.match(html, /历史事实描述/)
+  assert.doesNotMatch(html, /当前恢复表现|generic recovery/)
+})
+
+test('Character Health UI consumes canonical observations and never exposes machine kind', () => {
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
@@ -1100,6 +1147,7 @@ test('Character Health UI prefers factual descriptions and never exposes machine
             factual_kind: 'pain_and_soreness',
             description: '大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力',
             source_observation_ids: ['health-event'],
+            health_observations: [{description: '大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力', source_event_id: 'health-event'}],
           }],
         },
       },
@@ -1122,6 +1170,7 @@ test('Character Health source actions use current canonical Event ids and isolat
           factual_kind: 'pain',
           description: '疼痛',
           source_observation_ids: ['event-a', 'event-a-2', 'event-b'],
+          health_observations: [{description: '疼痛', source_event_id: 'event-a'}],
         }],
       },
     },
@@ -1149,7 +1198,7 @@ test('Character Health stays out of the detail body until the status popover is 
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     currentStateStatus: 'ready',
-    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: 'wrist', description: '疼痛'}]}}},
+    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: 'wrist', description: '疼痛', health_observations: [{description: '疼痛'}]}]}}},
   })
   assert.match(html, /健康 · 有异常/)
   assert.doesNotMatch(html, /<section[^>]+bioweave-character-health-popover/)
@@ -1161,7 +1210,7 @@ test('Character Health popover follows the compact A layout without an extra car
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
     currentStateStatus: 'ready',
-    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: '左手腕', description: '疼痛'}]}}},
+    currentHealthState: {characters: {'char-a': {grouped_issues: [{display_site: '左手腕', description: '疼痛', health_observations: [{description: '疼痛'}]}]}}},
     healthPopoverOpen: true,
   })
   assert.match(html, /<section class="bioweave-character-health-popover"/)
@@ -1209,6 +1258,7 @@ test('Character Health summary counts a recovery-less group and uses zero for an
     grouped_issues: [{body_site: '右肩', laterality: 'right', health_observations: [{description: '疼痛', recovery_stage: null}]}],
   }}}})
   assert.match(oneGroup, /当前有 1 个身体部位需要留意/u)
+  assert.match(oneGroup, /当前身体问题 · 1 项/u)
   const empty = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
   assert.match(empty, /当前没有需要留意的身体部位/u)
 })
@@ -1218,7 +1268,7 @@ test('Character Health status button uses warning, good, and unavailable Runtime
     characterId: 'char-a',
     trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
   }
-  const warning = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {characters: {'char-a': {grouped_issues: [{description: '疼痛'}]}}}})
+  const warning = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {characters: {'char-a': {grouped_issues: [{description: '疼痛', health_observations: [{description: '疼痛'}]}]}}}})
   const good = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
   const normalWithoutEntry = charactersPage({...base, currentStateStatus: 'ready', currentHealthState: {schema_version: 1, characters: {}}})
   const neutral = charactersPage({...base, currentStateStatus: 'STATE_ERROR', currentHealthState: null})
@@ -1240,7 +1290,7 @@ test('Character Health overview maps the read-model severity summary without exp
   for (const [severitySummary, label] of [['mild', '轻微'], ['moderate', '中度'], ['severe', '严重'], ['unknown', '有健康问题']]) {
     const html = charactersPage({...base, currentHealthState: {characters: {'char-a': {
       severity_summary: severitySummary,
-      grouped_issues: [{description: '疼痛'}],
+      grouped_issues: [{description: '疼痛', health_observations: [{description: '疼痛'}]}],
     }}}})
     assert.match(html, new RegExp('>总体状态</span><strong[^>]*>' + label + '<'))
     assert.doesNotMatch(html, new RegExp('>' + severitySummary + '<'))
@@ -1256,7 +1306,7 @@ test('Character Health source action is omitted when its Event is not in the cur
     currentHealthState: {
       characters: {
         'char-a': {
-          grouped_issues: [{ display_site: 'wrist', description: '疼痛', source_observation_ids: ['deleted-event'] }],
+          grouped_issues: [{ display_site: 'wrist', description: '疼痛', source_observation_ids: ['deleted-event'], health_observations: [{description: '疼痛', source_event_id: 'deleted-event'}] }],
         },
       },
     },
@@ -1310,6 +1360,7 @@ test('Character UI forwards current Health State without exposing internal asses
             assessment_id: 'assessment-secret',
             source_floor_version: { floor: 1 },
             expected_recovery: { boundary: { day_index: 10 } },
+            health_observations: [{description: '疼痛', source_event_id: 'evt'}],
           }],
         },
       },

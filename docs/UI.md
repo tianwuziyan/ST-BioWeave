@@ -27,8 +27,9 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 Character Health State 目前完成 Phase 1/2/4 与 Phase 5A 的窄范围产品接入：Character
 Details 在身份标题栏以 A 方案只读紧凑浮层消费 Runtime 提供的 grouped current-health
 read model；Desktop/iPad 浮层位于按钮下方，Mobile 使用底部浮层。
-健康问题优先展示 factual `description`；`kind` 仅作为内部稳定语义，不能直接成为普通用户
-文案。缺少 `body_site` 时使用“未标明部位”，不把缺失部位解释为“全身”；UI 不从
+健康问题逐 observation 展示 read model 提供的 `current_description`；有合法当前阶段
+guidance 时使用对应的 persisted guidance，否则回退 factual Event `description`。
+`kind` 仅作为内部稳定语义，不能直接成为普通用户文案。缺少 `body_site` 时使用“未标明部位”，不把缺失部位解释为“全身”；UI 不从
 description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI 重算 lifecycle/aggregation，
 不显示内部 provenance 或 recovery timing。当前健康问题可以通过 read model 提供的
 `grouped_issues[].source_observation_ids` 按 canonical Event ID 跳转到当前 Events 页面；
@@ -113,7 +114,7 @@ source。不同 subject 的 Event 已由 AI/Domain 分开，同一 subject 的�
 `counterpart_ids` 重建 Event，也不推导 State、Projection、Relations、Tracking
 eligibility 或 actual exposure。
 
-Projection、StateReducer 和 Snapshot 已有当前生产链；Projection/Genealogy 的产品范围仍按各自状态矩阵处理，完整妊娠计算仍未完成。Character Health UI 仅在 Phase 5A 范围内消费真实 `current_health_state`；Health Recovery Guidance 由 Phase 5B 的 Projection Context 窄范围提供，UI 不显示恢复阶段或倒计时；完整 Health Projection 与 advanced Condition identity 仍为 `DESIGN / NOT IMPLEMENTED`，页面不得生成 mock Health DTO、概率、妊娠天数、亲子关系或医疗推断。
+Projection、StateReducer 和 Snapshot 已有当前生产链；Projection/Genealogy 的产品范围仍按各自状态矩阵处理，完整妊娠计算仍未完成。Character Health UI 在 Phase 5A 范围内消费真实 `current_health_state`，并逐 observation 展示 Health-owned `recovery_stage` 三阶段指示器；Health Recovery Guidance 由 Phase 5B 的 Projection Context 窄范围提供，UI 不计算恢复阶段或倒计时；完整 Health Projection 与 advanced Condition identity 仍为 `DESIGN / NOT IMPLEMENTED`，页面不得生成 mock Health DTO、概率、妊娠天数、亲子关系或医疗推断。
 
 ### 生命周期与刷新
 

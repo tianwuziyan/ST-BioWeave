@@ -249,9 +249,9 @@ presentation, Event-history source navigation, and derived Assessment reads must
 therefore disappear together when the owning Event, active Swipe, or complete
 Floor Version becomes invalid.
 
-Character Health State is currently **PARTIAL / Phase 4 active observation read model**. See
-[CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md) for the future
-derived read-model direction. Phase 1 Health Assessment adds only the narrowly scoped
+Character Health State v1 production chain is implemented within the current narrow scope. See
+[CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md) for the current contract and
+deferred advanced features. Phase 1 Health Assessment adds only the narrowly scoped
 `health_assessment_timeline` Character Floor derived root; it is not a Chat-level authority
 or alternative provenance path.
 Phase 2 已提供最小 derived Current Health State read model，Phase 4 增加 observation lifecycle
@@ -261,22 +261,27 @@ derived closure 写回 Floor facts。long-term/permanent 不因沉默或 Story T
 
 Health Assessment Phase 1 属于同一 Character Floor owner 下、绑定源 Event、完整六字段
 Floor Version 与 observation fingerprint 的 derived assessment record；它不是
-BiologicalEvent、Snapshot-only 数据、runtime cache 或新的 Chat-level authority。推荐以
+BiologicalEvent、Snapshot-only 数据、runtime cache 或新的 Chat-level authority。当前以
 `(source_event_id, source_floor_version,
 source_observation_fingerprint)` 做 source-observation scoped lookup；这是对当前 Event
 editing 在同一版本保留 Event ID 但修改 factual payload 的 binding guard。source Event
 不再 surviving 或 fingerprint 不匹配时必须过滤 Assessment，不能依赖物理删除或跨版本
 复用。
-当前 Assessment schema v2 仅增加 observation-level `severity`（`unknown`、`mild`、
-`moderate`、`severe`）。severity 是 Assessment metadata，不是 Event factual payload、
-Snapshot 或 Projection authority；旧 v1 缺字段按 `unknown` 消费且不自动回写/backfill，
-也不改变上述 source binding、fingerprint 或 request key。
+当前 Assessment schema v3 包含 observation-level `severity`（`unknown`、`mild`、
+`moderate`、`severe`），并可为 eligible short-term observation 保存一次性生成的
+`recovery_stage_guidance.early`、`.recovering`、`.near_recovery`。severity 与 staged
+guidance 都是 Assessment metadata，不是 Event factual payload、Snapshot 或 Projection
+authority；缺少 v3 新字段的 v1/v2 legacy Assessment 按现有 lifecycle 消费，不产生 staged
+Guidance、不自动回写/backfill，也不因缺字段重新调用 AI。上述行为不改变 source binding、
+fingerprint 或 request key。
 
 Health Recovery Guidance Phase 5B 是 derived non-factual guidance：它可将每条 active
 observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段，但不得把具体 duration、
 deadline、百分比或 Assessment 字段当作剧情事实，也不得写回 Floor、关闭 observation 或
 成为 Event evidence。它复用现有 `bioweave_projection_context` 槽位，不新增 persistence root
-或第二套 Context framework。完整 Health Projection 与 recovery-stage UI 仍为 DESIGN / PLANNED。
+或第二套 Context framework。完整 Health Projection 仍为 DESIGN / PLANNED；recovery-stage UI
+已实现为 Character Details 对 `health_observations[].recovery_stage` 的逐 observation
+presentation，不改变 Floor ownership 或 Health lifecycle authority。
 
 `core/tracking.js` rebuilds its active projection from the current valid Event
 collection. It may retain sanitized historical profile/configuration data when

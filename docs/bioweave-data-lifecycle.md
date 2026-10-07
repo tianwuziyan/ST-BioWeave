@@ -281,7 +281,8 @@ observation 或回流 Event Analysis。只有真实 narrative 再次出现的身
 factual Event pipeline 进入系统。Recovery Guidance 与 recovery-stage Context injection
 已通过唯一 `bioweave_projection_context` 槽位提供 deterministic、non-factual guidance；
 它不创建 Event、不修改 Assessment/Health State、不成为 Event evidence。完整 Health
-Projection、long-term progression 与 recovery-stage UI 当前均未实现。
+Projection 与 long-term progression 仍未实现；recovery-stage UI 已在 Character Details
+中逐 observation 消费 Health read model 提供的离散阶段。
 
 Character Registry, Character Facts/Profile, Tracking Subject/Candidate, and
 Current Biological State remain separate concepts. Registry is canonical identity

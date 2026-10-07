@@ -520,7 +520,8 @@ recovery-stage Context injection 已实现为现有 `bioweave_projection_context
 deterministic guidance；不新增 persistence、Assessment AI pass 或第二个 prompt slot。
 它已通过现有 `bioweave_projection_context` 槽位提供；不写入 Event、Assessment 或
 Current Health State，也不成为 factual authority。完整 Health Projection、long-term progression
-与 recovery-stage UI 仍未实现。
+仍未实现；Character Details 已逐 observation 展示 `early`、`recovering`、`near_recovery` 三阶段
+presentation-only 指示器；UI 不计算阶段，Projection Guidance 仍保持 non-factual 边界。
 
 Health Assessment 对每个新 factual health observation 只执行一次恢复周期评估。恢复 timing
 的优先级为：已保存 factual evidence 中的明确 timing → 一次性 AI-derived 粗粒度估计 →

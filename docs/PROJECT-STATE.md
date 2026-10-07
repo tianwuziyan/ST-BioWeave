@@ -11,7 +11,7 @@ replacement for the domain specifications, implementation, or test suite.
 | Project | ST-BioWeave |
 | Development branch | `fix/world-model-prompt-baseline` |
 | Checkpoint | Observed at 2026-10-05; HEAD is checkpoint information, not a permanent architectural contract. |
-| Working tree | Contains the uncommitted Health Assessment severity v1 implementation, focused tests, synchronized Health/domain docs, and the earlier audited baseline documentation changes; no commit has been created. |
+| Working tree | Current checkpoint includes the committed Health Assessment schema v3, deterministic Health State/Guidance chain, Character Health read-model UI, and synchronized recovery-stage presentation contract. |
 | Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis / Floor Counting CLOSED. Real-host behavioral acceptance remains separate by feature. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
 | Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
@@ -277,11 +277,11 @@ Assessments 与 Story Time，把 elapsed recovery 转换为 `early`、`recoverin
 Guidance 不是强制剧情点；只有当前动作、环境或情境相关时，剧情才需要自然体现身体反应。
 它不创建 Event、不修改 Health State、不成为 Event evidence。generic Health Projection、
 long-term progression 与 explicit recovery resolution 仍未实现。Character Details 当前可在
-`grouped_issues[].recovery_stage` 非空且组内阶段无歧义时显示 `early`、`recovering`、
+按每个 `health_observations[].recovery_stage` 独立显示 `early`、`recovering`、
 `near_recovery` 三阶段 presentation-only 指示器；Character Health 主文字消费各
-`health_observations[].current_description`，由 Health read model 选择当前 persisted
-guidance，缺失时回退 factual description。UI 不计算 Story Time、duration、deadline 或百分比，
-且不增加第四个 recovered stage；多个 observation 的当前文字不 arbitrary first-wins。
+`health_observations[].current_description`，由 Health read model 选择当前 persisted guidance，
+缺失时回退 factual description。UI 不计算 Story Time、duration、deadline 或百分比，且不增加
+第四个 recovered stage；多个 observation 的阶段和当前文字不 arbitrary first-wins。
 
 ## Pre-confirmation Tracking Window and Projection Timing
 
