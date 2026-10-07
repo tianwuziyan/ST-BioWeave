@@ -30,10 +30,11 @@ git diff --check
 
 ## Verification record
 
-- focused Character Health UI：66 passed，0 failed。
-- Health Assessment / Evolution / Recovery Guidance / Character UI / UI：194 passed，0 failed。
+- focused Character Health UI：67 passed，0 failed。
+- Health Assessment / Evolution / Recovery Guidance / Character UI / UI：196 passed，0 failed。
 - `node --check ui/characters.js`、`node --check index.js`：通过。
 - `git diff --check`：通过。
 - 最近一次修正已覆盖：Health Read Model 摘要位于总体状态行下方、严重度右对齐警示色边框徽标、关闭按钮无额外外框；对应回归断言通过。
+- Character Health 摘要已改为从过滤后的 `grouped_issues` site group 数量动态生成；`observationCount` 仍独立统计组内 `health_observations[]`，不读取或解析 `current_health_summary`。
 - `npm run check` / `npm test`：全量运行进入既有长时 `tests/event-analysis-runtime.test.js`，未获得 clean completion；该测试此前已有长时间无终态与独立失败记录，未将其归因于本次 UI 修改。全量运行中同时观察到既有 World Model fixture 与 Floor Version preflight 失败。
 - 真实 SillyTavern Desktop / Tablet / Mobile host 视觉验收：尚未执行，留待人工 review。

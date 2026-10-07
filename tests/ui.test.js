@@ -134,6 +134,7 @@ test('Character Health popover keeps the A-variant interaction contract', () => 
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-button\.warning \{[\s\S]*border-color: #75623e !important;[\s\S]*background: var\(--bioweave-warn-soft\) !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview\[data-health-state="warning"\] \.bioweave-badge \{[\s\S]*border-color: #77613a !important;[\s\S]*background: #3b301f !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-issue-severity \{[\s\S]*justify-self: end !important;[\s\S]*border: 1px solid #6f5a35 !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-issue-source \.bioweave-text-button \{[\s\S]*text-decoration: underline !important;[\s\S]*text-underline-offset: 3px !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-character-health-close:hover[\s\S]*border-color: transparent !important;/u)
 })
 

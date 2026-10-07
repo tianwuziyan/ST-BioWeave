@@ -416,9 +416,6 @@ function healthViewModel(currentHealthState, characterId, activeEvents = [], cur
   const readModelReady = currentStateStatus === 'ready' && currentHealthState && typeof currentHealthState === 'object'
   const characterHealth = currentHealthState?.characters?.[characterId] ?? null
   const groupedIssues = Array.isArray(characterHealth?.grouped_issues) ? characterHealth.grouped_issues : []
-  const summary = typeof characterHealth?.current_health_summary === 'string' && characterHealth.current_health_summary.trim()
-    ? characterHealth.current_health_summary.trim()
-    : ''
   const severitySummary = typeof characterHealth?.severity_summary === 'string'
     ? characterHealth.severity_summary.trim().toLowerCase()
     : ''
@@ -437,10 +434,17 @@ function healthViewModel(currentHealthState, characterId, activeEvents = [], cur
     })
     .filter(issue => issue.health_observations.length)
   const observationCount = validIssues.reduce((count, issue) => count + issue.health_observations.length, 0)
+  const bodySiteCount = validIssues.length
+  const summary = readModelReady
+    ? (bodySiteCount > 0
+      ? '当前有 ' + bodySiteCount + ' 个身体部位需要留意。严重度只来自仍有效的身体观察。'
+      : '当前没有需要留意的身体部位。严重度只来自仍有效的身体观察。')
+    : ''
   return {
     summary,
     validIssues,
     observationCount,
+    bodySiteCount,
     severityLabel: healthSeverityLabel(severitySummary, observationCount > 0),
     state: !readModelReady ? 'neutral' : observationCount ? 'warning' : 'good',
   }

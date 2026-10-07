@@ -1169,7 +1169,7 @@ test('Character Health popover follows the compact A layout without an extra car
   assert.match(html, /bioweave-character-health-dot warning/)
 })
 
-test('Character Health renders the read-model summary below the overview row', () => {
+test('Character Health derives the summary site count from grouped read-model issues', () => {
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
@@ -1177,10 +1177,40 @@ test('Character Health renders the read-model summary below the overview row', (
     healthPopoverOpen: true,
     currentHealthState: {characters: {'char-a': {
       current_health_summary: '当前有 2 个身体部位需要留意。严重度只来自仍有效的身体观察。',
-      grouped_issues: [{description: '疼痛'}],
+      grouped_issues: [{
+        body_site: '右臂外侧',
+        laterality: 'right',
+        description: '血口',
+        health_observations: [
+          {description: '血口', current_description: '血口'},
+          {description: '疼痛', current_description: '疼痛'},
+        ],
+      }, {
+        body_site: '左腿',
+        laterality: 'left',
+        description: '擦伤',
+        health_observations: [{description: '擦伤', current_description: '擦伤'}],
+      }],
     }}},
   })
+  assert.match(html, /当前身体问题 · 3 项/u)
   assert.match(html, /bioweave-character-health-overview[\s\S]*bioweave-character-health-summary[\s\S]*当前有 2 个身体部位需要留意/u)
+  assert.doesNotMatch(html, /当前有 3 个身体部位需要留意/u)
+})
+
+test('Character Health summary counts a recovery-less group and uses zero for an empty ready read model', () => {
+  const base = {
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+  }
+  const oneGroup = charactersPage({...base, currentHealthState: {characters: {'char-a': {
+    grouped_issues: [{body_site: '右肩', laterality: 'right', health_observations: [{description: '疼痛', recovery_stage: null}]}],
+  }}}})
+  assert.match(oneGroup, /当前有 1 个身体部位需要留意/u)
+  const empty = charactersPage({...base, currentHealthState: {characters: {'char-a': {grouped_issues: []}}}})
+  assert.match(empty, /当前没有需要留意的身体部位/u)
 })
 
 test('Character Health status button uses warning, good, and unavailable Runtime states', () => {

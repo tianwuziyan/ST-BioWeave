@@ -1486,8 +1486,9 @@ grouped_issues，使用 read model 提供的 display_site、laterality 与 factu
 UI 不推导 overall severity，只消费 read model 提供的 presentation-only `severity_summary`，
 不消费或显示 active_observations 的生命周期字段，
 不显示 Assessment ID、Floor Version、fingerprint、raw timing 或 recovery countdown。
-current_health_summary 只有在 Runtime 提供非空摘要时才直接显示；缺少摘要时不额外
-渲染摘要行，状态由健康按钮与“总体状态”徽标表达；徽标将 `normal` 显示为“正常”，
+浮层摘要中的身体部位数量由过滤后的 presentation `grouped_issues` 数量动态生成，
+不读取或解析 `current_health_summary` 文本；没有有效 site group 时显示“当前没有需要留意的身体部位”。
+状态由健康按钮与“总体状态”徽标表达；徽标将 `normal` 显示为“正常”，
 `unknown` 显示为“有健康问题”，`mild`/`moderate`/`severe` 显示为“轻微”/“中度”/“严重”。
 缺少该字段的 legacy read model 在存在有效问题时回退为“有健康问题”。Health read model 已 ready 但人物
 不存在于 `characters` 或 `grouped_issues` 为空时，保持正常状态的安全空状态；read model

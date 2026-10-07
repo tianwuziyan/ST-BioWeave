@@ -36,7 +36,8 @@ UI 不通过描述、部位、kind 或人物文本匹配来源，且失效/不�
 健康按钮继续显示稳定短文案“健康 · 有异常 / 健康 · 正常 / 健康 · 暂不可用”；浮层现有
 “总体状态”徽标消费 presentation-only `severity_summary`，将 `normal`/`unknown`/`mild`/
 `moderate`/`severe` 映射为“正常”/“有健康问题”/“轻微”/“中度”/“严重”，完整摘要只在
-浮层中显示；人物正文不重复渲染健康区块。浮层支持再次点击、外侧点击和 Escape 关闭，
+浮层中显示；摘要中的身体部位数量由当前 read model 的有效 `grouped_issues` 数量动态生成，
+不读取或解析 `current_health_summary` 文本；人物正文不重复渲染健康区块。浮层支持再次点击、外侧点击和 Escape 关闭，
 Escape 优先关闭健康浮层，不直接关闭 BioWeave 面板。
 “健康 · 正常”只表示 Health read model 已成功就绪且当前人物没有已知 active health issue，
 不表示正文明确声明人物医学意义上的完全健康；该摘要不是完整 `overall_health`，也不改变
