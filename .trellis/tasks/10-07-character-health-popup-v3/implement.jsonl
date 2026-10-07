@@ -1,0 +1,3 @@
+{"file": "docs/ARCHITECTURE.md", "reason": "确认 Characters UI 与 Health domain/runtime ownership 边界"}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "确认人物页与健康弹窗的现有 UI contract"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "遵循前端组件结构与事件 hook 约定"}

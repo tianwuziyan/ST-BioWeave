@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>人物健康弹窗 · v3</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --host: #0a1117;
+        --panel: #172229;
+        --panel-soft: #202e36;
+        --panel-raised: #1c2b33;
+        --text: #edf4f6;
+        --text-2: #c3d0d4;
+        --muted: #82939b;
+        --line: #344852;
+        --line-soft: #293b44;
+        --accent: #8acde0;
+        --accent-soft: #203f4b;
+        --good: #7bd3ae;
+        --warn: #efc078;
+        --shadow: 0 22px 50px rgb(0 0 0 / 42%);
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; margin: 0; }
+      body {
+        background: radial-gradient(circle at 75% 8%, rgb(64 123 137 / 12%), transparent 26rem), var(--host);
+        color: var(--text);
+        font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      button { color: inherit; font: inherit; }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      p, h1, h2, h3 { margin: 0; }
+
+      .demo-shell {
+        position: relative;
+        width: min(930px, calc(100% - 32px));
+        min-height: 650px;
+        margin: 32px auto;
+        overflow: visible;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+        box-shadow: 0 28px 80px rgb(0 0 0 / 38%);
+      }
+      .detail-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 70px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line-soft);
+        background: #19262d;
+      }
+      .character-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 1px solid #527783;
+        border-radius: 50%;
+        color: var(--accent);
+        background: #12262d;
+        font-size: 15px;
+      }
+      .character-title h1 { font-size: 17px; font-weight: 650; }
+      .character-title p { margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .detail-actions { position: relative; display: flex; align-items: center; gap: 7px; }
+      .ghost-button { min-height: 31px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: transparent; font-size: 11px; }
+      .health-button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 5px 10px; border: 1px solid #76613b; border-radius: 7px; color: var(--warn); background: #3b301e; cursor: pointer; font-size: 12px; font-weight: 600; }
+      .health-button[aria-expanded="true"] { border-color: #9a8150; background: #4a3a23; }
+      .health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px rgb(239 192 120 / 15%); }
+
+      .detail-body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr); gap: 9px; padding: 14px; }
+      .fake-section { min-height: 155px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: #1a282f; }
+      .fake-section.wide { grid-row: span 2; min-height: 340px; }
+      .fake-section h2 { color: var(--text-2); font-size: 13px; font-weight: 600; }
+      .fake-section small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+      .fake-lines { display: grid; gap: 9px; margin-top: 20px; }
+      .fake-line { height: 9px; border-radius: 999px; background: #2b3d46; }
+      .fake-line.short { width: 58%; }
+      .fake-line.medium { width: 78%; }
+
+      .health-popover {
+        position: absolute;
+        z-index: 4;
+        top: 59px;
+        right: 12px;
+        width: min(450px, calc(100vw - 48px));
+        max-height: min(76vh, 570px);
+        overflow: auto;
+        border: 1px solid #526a74;
+        border-radius: 10px;
+        background: var(--panel-soft);
+        box-shadow: var(--shadow);
+      }
+      .health-popover[hidden] { display: none; }
+      .popover-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 13px 14px 11px; border-bottom: 1px solid var(--line); }
+      .popover-title { display: flex; align-items: center; gap: 8px; }
+      .popover-title h2 { font-size: 15px; font-weight: 650; }
+      .popover-head p { margin-top: 3px; color: var(--muted); font-size: 11px; }
+      .close-button { display: grid; place-items: center; width: 27px; height: 27px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; font-size: 18px; line-height: 1; }
+      .close-button:hover { color: var(--text); background: var(--panel-raised); }
+      .popover-body { padding: 0 14px 12px; }
+      .overview-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; color: var(--muted); font-size: 11px; }
+      .overview-badge { padding: 3px 9px; border: 1px solid #77613a; border-radius: 999px; color: var(--warn); background: #3b301f; font-size: 11px; }
+      .health-summary { margin: 0 0 8px; padding: 9px 10px; border-left: 2px solid var(--accent); color: var(--text-2); background: #1a343d; font-size: 11px; line-height: 1.55; }
+      .issue-list { display: grid; gap: 0; }
+      .issue { display: grid; grid-template-columns: 94px minmax(0, 1fr) 48px; column-gap: 12px; align-items: stretch; min-width: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+      .issue-site { display: flex; flex-direction: column; min-height: 100%; padding-right: 9px; border-right: 1px solid var(--line-soft); color: var(--text-2); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+      .issue-site span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+      .issue-site .site-source { display: block; margin-top: auto; padding: 0; border: 0; color: var(--accent); background: transparent; cursor: pointer; font-size: 10px; font-weight: 400; line-height: 1.35; text-align: left; text-decoration: underline; text-decoration-color: #4a737c; text-underline-offset: 3px; white-space: nowrap; }
+      .issue-content { min-width: 0; }
+      .issue-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); font-size: 10px; }
+      .issue-kind { color: var(--accent); }
+      .description-line { display: block; margin-top: 5px; min-width: 0; }
+      .description-line p { min-width: 0; margin: 0; color: var(--text); font-size: 12px; line-height: 1.58; overflow-wrap: anywhere; }
+      .severity { align-self: start; padding: 2px 7px; border: 1px solid #6f5a35; border-radius: 999px; color: var(--warn); font-size: 10px; white-space: nowrap; }
+      .issue-side { display: grid; justify-items: end; align-content: start; gap: 8px; min-width: max-content; }
+      .source-detail { margin-top: 7px; padding: 7px 8px; border-left: 1px solid #47747c; color: var(--muted); background: #14272e; font-size: 10px; }
+      .source-detail[hidden] { display: none; }
+
+      .recovery { display: grid; gap: 5px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line-soft); }
+      .recovery-thermometer { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: 9px; overflow: hidden; border: 1px solid #3b4e56; border-radius: 999px; background: linear-gradient(90deg, #559eae 0%, var(--accent) 100%); box-shadow: 0 0 10px rgb(138 205 224 / 28%); }
+      .recovery-thermometer::after { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 33.333%; background: #2b3d46; content: ""; }
+      .recovery-thermometer.stage-early::after { width: 66.666%; }
+      .recovery-thermometer.stage-near::after { width: 0; }
+      .recovery-segment { position: relative; z-index: 2; border-right: 2px solid rgb(10 17 23 / 52%); background: transparent; }
+      .recovery-segment:last-child { border-right: 0; }
+      .recovery-steps { display: flex; justify-content: space-between; gap: 6px; color: var(--muted); font-size: 9px; }
+      .recovery-steps .active { color: var(--accent); }
+      .scope-note { display: flex; gap: 7px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; line-height: 1.5; }
+      .scope-note strong { color: var(--warn); font-weight: 600; }
+
+      .prototype-note { padding: 10px 14px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; text-align: right; }
+      @media (max-width: 620px) {
+        .demo-shell { width: 100%; min-height: 100vh; margin: 0; border: 0; border-radius: 0; }
+        .detail-head { align-items: flex-start; padding: 12px; }
+        .ghost-button { display: none; }
+        .detail-body { grid-template-columns: 1fr; padding: 10px; }
+        .fake-section.wide { min-height: 240px; }
+        .health-popover { position: fixed; top: auto; right: 10px; bottom: 10px; left: 10px; width: auto; max-height: min(78vh, 620px); }
+        .prototype-note { text-align: left; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+    </style>
+  </head>
+  <body>
+    <main class="demo-shell" data-health-demo>
+      <header class="detail-head">
+        <div class="character-title"><span class="avatar" aria-hidden="true">祁</span><div><h1>祁鸢</h1><p>人物详情 · 当前角色资料与状态</p></div></div>
+        <div class="detail-actions"><button class="ghost-button" type="button">编辑资料</button><button class="health-button" type="button" aria-expanded="true" aria-controls="health-popover" data-health-toggle><span class="health-dot" aria-hidden="true"></span>健康 · 有异常</button>
+          <section class="health-popover" id="health-popover" role="dialog" aria-modal="false" aria-labelledby="health-title" data-health-popover>
+            <header class="popover-head"><div><div class="popover-title"><span class="health-dot" aria-hidden="true"></span><h2 id="health-title">健康状态</h2></div><p>当前身体问题 · 3 项</p></div><button class="close-button" type="button" aria-label="关闭健康状态详情" data-health-close>×</button></header>
+            <div class="popover-body">
+              <div class="overview-row"><span>总体状态</span><strong class="overview-badge">轻微</strong></div>
+              <p class="health-summary">当前有 2 个身体部位需要留意。严重度只来自仍有效的身体观察。</p>
+              <div class="issue-list" aria-label="当前健康问题">
+                <article class="issue">
+                  <strong class="issue-site">右臂外侧<span>右侧 · 上肢</span><button class="site-source" type="button" data-source-toggle="arm">查看 2 条来源</button></strong>
+                  <div class="issue-content"><div class="issue-label"><span class="issue-kind">当前身体问题 · 伤口</span></div><div class="description-line"><p>右臂外侧被划开长约三寸的血口，边缘不齐，仍有少量渗血。</p></div><div class="source-detail" data-source-panel="arm" hidden>伤口事实 · 场景 08　/　身体观察 · 场景 09</div><div class="recovery"><div class="recovery-thermometer stage-recovering" role="img" aria-label="右臂外侧当前恢复状态：恢复中"><span class="recovery-segment"></span><span class="recovery-segment"></span><span class="recovery-segment"></span></div><div class="recovery-steps"><span class="active">早期</span><span class="active">恢复中</span><span>接近恢复</span></div></div></div>
+                  <div class="issue-side"><span class="severity">轻微</span></div>
+                </article>
+                <article class="issue">
+                  <strong class="issue-site">右臂外侧<span>右侧 · 上肢</span><button class="site-source" type="button" data-source-toggle="pain">查看来源</button></strong>
+                  <div class="issue-content"><div class="issue-label"><span class="issue-kind">当前身体问题 · 疼痛</span></div><div class="description-line"><p>伤口周围有轻微肿胀，活动右臂时牵扯感明显。</p></div><div class="source-detail" data-source-panel="pain" hidden>疼痛观察 · 场景 09</div></div>
+                  <div class="issue-side"><span class="severity">轻微</span></div>
+                </article>
+                <article class="issue">
+                  <strong class="issue-site">左腿<span>左侧 · 下肢</span><button class="site-source" type="button" data-source-toggle="leg">查看来源</button></strong>
+                  <div class="issue-content"><div class="issue-label"><span class="issue-kind">当前身体问题 · 擦伤</span></div><div class="description-line"><p>左腿外侧有一处擦伤，已结痂，走动时未见明显受限。</p></div><div class="source-detail" data-source-panel="leg" hidden>擦伤事实 · 场景 07</div><div class="recovery"><div class="recovery-thermometer stage-near" role="img" aria-label="左腿当前恢复状态：接近恢复"><span class="recovery-segment"></span><span class="recovery-segment"></span><span class="recovery-segment"></span></div><div class="recovery-steps"><span class="active">早期</span><span class="active">恢复中</span><span class="active">接近恢复</span></div></div></div>
+                  <div class="issue-side"><span class="severity">轻微</span></div>
+                </article>
+              </div>
+              <p class="scope-note"><strong>医疗处理</strong><span>仍保留为独立事件事实；当前不进入健康弹窗，也不参与严重度或恢复进度。</span></p>
+            </div>
+          </section>
+        </div>
+      </header>
+
+      <div class="detail-body">
+        <section class="fake-section wide"><h2>生物状态</h2><small>当前角色的可读状态摘要</small><div class="fake-lines"><span class="fake-line medium"></span><span class="fake-line"></span><span class="fake-line short"></span><span class="fake-line medium"></span><span class="fake-line"></span></div></section>
+        <section class="fake-section"><h2>关系与背景</h2><small>详情页其它内容保持安静</small><div class="fake-lines"><span class="fake-line"></span><span class="fake-line short"></span></div></section>
+        <section class="fake-section"><h2>事件记录</h2><small>按时间顺序查看事实来源</small><div class="fake-lines"><span class="fake-line medium"></span><span class="fake-line short"></span></div></section>
+      </div>
+      <p class="prototype-note">健康弹窗视觉原型 v3 · 恢复进度条属于健康状态读模型，不代表医疗处理生命周期</p>
+    </main>
+
+    <script>
+      const demo = document.querySelector('[data-health-demo]')
+      const toggle = demo.querySelector('[data-health-toggle]')
+      const popover = demo.querySelector('[data-health-popover]')
+      const close = demo.querySelector('[data-health-close]')
+
+      function setOpen(open) {
+        popover.hidden = !open
+        toggle.setAttribute('aria-expanded', String(open))
+      }
+
+      demo.addEventListener('click', event => {
+        if (event.target.closest('[data-health-toggle]')) setOpen(popover.hidden)
+        if (event.target.closest('[data-health-close]')) setOpen(false)
+        const sourceToggle = event.target.closest('[data-source-toggle]')
+        if (sourceToggle) {
+          const panel = demo.querySelector('[data-source-panel="' + sourceToggle.dataset.sourceToggle + '"]')
+          if (panel) panel.hidden = !panel.hidden
+        }
+      })
+    </script>
+  </body>
+</html>

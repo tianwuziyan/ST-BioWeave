@@ -1005,11 +1005,11 @@ test('character Health State is scoped by canonical character id and supports co
 
 test('Character Health renders the Health-owned three-stage recovery indicator', () => {
   const stages = [
-    ['early', '早期', 1, 0],
-    ['recovering', '恢复中', 2, 1],
-    ['near_recovery', '接近恢复', 3, 2],
+    ['early', '早期', 1],
+    ['recovering', '恢复中', 2],
+    ['near_recovery', '接近恢复', 3],
   ]
-  for (const [stage, label, completedNodes, completedConnectors] of stages) {
+  for (const [stage, label, completedSegments] of stages) {
     const html = charactersPage({
       characterId: 'char-a',
       trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
@@ -1028,11 +1028,11 @@ test('Character Health renders the Health-owned three-stage recovery indicator',
       currentStateStatus: 'ready',
       healthPopoverOpen: true,
     })
-    assert.match(html, /恢复阶段/)
-    assert.match(html, new RegExp('data-recovery-stage="' + stage + '"[^>]*>[\\s\\S]*' + label))
-    assert.equal((html.match(/bioweave-character-health-recovery-step completed/g) || []).length, completedNodes)
-    assert.equal((html.match(/bioweave-character-health-recovery-connector completed/g) || []).length, completedConnectors)
-    assert.equal((html.match(/bioweave-character-health-recovery-connector pending/g) || []).length, 2 - completedConnectors)
+    assert.doesNotMatch(html, /bioweave-character-health-recovery-title/)
+    assert.match(html, new RegExp('data-recovery-stage="' + stage + '"'))
+    assert.match(html, new RegExp('bioweave-character-health-recovery-labels[\\s\\S]*' + label))
+    assert.equal((html.match(/bioweave-character-health-recovery-segment completed/g) || []).length, completedSegments)
+    assert.equal((html.match(/bioweave-character-health-recovery-segment pending/g) || []).length, 3 - completedSegments)
     assert.doesNotMatch(html, /33%|66%|100%|剩余|expected_recovery|story_days|deadline/)
   }
 })
@@ -1167,6 +1167,20 @@ test('Character Health popover follows the compact A layout without an extra car
   assert.match(html, /<section class="bioweave-character-health-popover"/)
   assert.doesNotMatch(html, /bioweave-card bioweave-character-health-popover|当前有健康问题<\/p>/)
   assert.match(html, /bioweave-character-health-dot warning/)
+})
+
+test('Character Health renders the read-model summary below the overview row', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: [{character_id: 'char-a', display_name: '角色甲', exposure_event_ids: []}],
+    currentStateStatus: 'ready',
+    healthPopoverOpen: true,
+    currentHealthState: {characters: {'char-a': {
+      current_health_summary: '当前有 2 个身体部位需要留意。严重度只来自仍有效的身体观察。',
+      grouped_issues: [{description: '疼痛'}],
+    }}},
+  })
+  assert.match(html, /bioweave-character-health-overview[\s\S]*bioweave-character-health-summary[\s\S]*当前有 2 个身体部位需要留意/u)
 })
 
 test('Character Health status button uses warning, good, and unavailable Runtime states', () => {
@@ -1318,9 +1332,9 @@ test('Character Health does not render deferred medical intervention presentatio
       },
     },
   })
-  assert.equal((html.match(/class="bioweave-character-health-issue-site">右臂外侧/g) || []).length, 1)
+  assert.equal((html.match(/class="bioweave-character-health-issue-site"><strong>右臂外侧/g) || []).length, 1)
   assert.match(html, /当前身体问题/)
-  assert.doesNotMatch(html, /医疗处理/)
+  assert.match(html, /医疗处理[\s\S]*仍保留为独立事件事实/u)
   assert.match(html, /右臂外侧被划开长约三寸的血口/)
   assert.doesNotMatch(html, /外敷解毒止血药粉进行急救止血/)
   assert.match(html, /obs-event/)

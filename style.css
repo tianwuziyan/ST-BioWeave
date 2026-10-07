@@ -7520,9 +7520,9 @@
   .bioweave-character-detail-actions { width: 100% !important; justify-content: flex-start !important; }
   .bioweave-character-health-button { height: 32px !important; padding: 5px 8px !important; font-size: 11px !important; }
   .bioweave-character-health-popover { position: fixed !important; top: auto !important; right: 10px !important; bottom: 10px !important; left: 10px !important; width: auto !important; max-height: min(72vh, 560px) !important; border-radius: 10px !important; }
-  .bioweave-character-health-issue { grid-template-columns: 70px minmax(0, 1fr) max-content !important; gap: 7px !important; padding: 9px 0 !important; }
-  .bioweave-character-health-issue-site { padding-right: 7px !important; }
-  .bioweave-character-health-body { padding-left: 10px !important; padding-right: 10px !important; }
+  .bioweave-character-health-issue { grid-template-columns: 94px minmax(0, 1fr) 48px !important; column-gap: 12px !important; padding: 12px 0 !important; }
+  .bioweave-character-health-issue-site { padding-right: 9px !important; }
+  .bioweave-character-health-body { padding-left: 14px !important; padding-right: 14px !important; }
   .bioweave-character-detail-section { margin: 0 !important; padding: 7px 8px !important; }
   .bioweave-character-exposure-section { grid-column: auto !important; }
   .bioweave-character-exposure-fields > div { grid-template-columns: minmax(58px, max-content) minmax(0, 1fr) !important; column-gap: 10px !important; padding: 3px 0 !important; }
@@ -7563,39 +7563,44 @@
 .bioweave-character-health-dot { width: 7px !important; height: 7px !important; flex: 0 0 auto !important; border-radius: 50% !important; background: var(--bioweave-text-muted) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-text-muted) 14%, transparent) !important; }
 .bioweave-character-health-dot.warning { background: var(--bioweave-warn) !important; box-shadow: 0 0 0 3px #f1be7220 !important; }
 .bioweave-character-health-dot.good { background: var(--bioweave-success) !important; box-shadow: 0 0 0 3px #7bd5ae20 !important; }
-.bioweave-character-health-popover { position: absolute !important; z-index: 7 !important; top: 63px !important; right: 12px !important; width: min(440px, calc(100% - 24px)) !important; max-height: min(70vh, 520px) !important; margin: 0 !important; overflow-y: auto !important; border: 1px solid color-mix(in srgb, var(--bioweave-text-secondary) 34%, var(--bioweave-border)) !important; border-radius: 8px !important; background: var(--bioweave-surface-soft) !important; box-shadow: 0 15px 36px rgb(0 0 0 / 56%) !important; }
-.bioweave-character-health-popover-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 10px !important; padding: 11px 12px 9px !important; border-bottom: 1px solid var(--bioweave-border) !important; }
+.bioweave-character-health-popover { position: absolute !important; z-index: 7 !important; top: 63px !important; right: 12px !important; width: min(440px, calc(100% - 24px)) !important; max-height: min(70vh, 520px) !important; margin: 0 !important; overflow-y: auto !important; border: 1px solid #526a74 !important; border-radius: 10px !important; background: #202e36 !important; box-shadow: 0 22px 50px rgb(0 0 0 / 42%) !important; font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif !important; }
+.bioweave-character-health-popover-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 10px !important; padding: 13px 14px 11px !important; border-bottom: 1px solid #344852 !important; }
 .bioweave-character-health-popover-title { display: flex !important; align-items: center !important; gap: 8px !important; }
-.bioweave-character-health-popover-title h3 { color: var(--bioweave-text) !important; font-size: 14px !important; }
-.bioweave-character-health-popover-head p { margin-top: 2px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
-.bioweave-character-health-close { flex: 0 0 auto !important; min-width: 28px !important; min-height: 28px !important; padding: 0 6px !important; border: 0 !important; color: var(--bioweave-text-muted) !important; background: transparent !important; font-size: 18px !important; line-height: 1 !important; }
+.bioweave-character-health-popover-title h3 { color: #edf4f6 !important; font-size: 15px !important; font-weight: 650 !important; }
+.bioweave-character-health-popover-head p { margin-top: 3px !important; color: #82939b !important; font-size: 11px !important; }
+.bioweave-main .bioweave-character-health-close { display: grid !important; place-items: center !important; flex: 0 0 auto !important; width: 27px !important; height: 27px !important; min-width: 27px !important; min-height: 27px !important; padding: 0 !important; border: 0 !important; border-color: transparent !important; border-radius: 6px !important; color: #82939b !important; background: transparent !important; box-shadow: none !important; font-size: 18px !important; line-height: 1 !important; }
 .bioweave-character-health-close:hover,
-.bioweave-character-health-close:focus-visible { color: var(--bioweave-text) !important; background: var(--bioweave-surface-raised) !important; }
-.bioweave-character-health-body { padding: 0 12px 8px !important; }
-.bioweave-character-health-overview { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; min-height: 30px !important; height: 30px !important; margin-bottom: 6px !important; padding: 0 !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
-.bioweave-character-health-overview .bioweave-badge { min-height: 0 !important; padding: 2px 8px !important; border: 1px solid transparent !important; border-radius: 999px !important; font-size: 11px !important; line-height: 1.2 !important; }
-.bioweave-character-health-overview[data-health-state="warning"] .bioweave-badge { border-color: #785f34 !important; background: var(--bioweave-warn-soft) !important; color: var(--bioweave-warn) !important; }
+.bioweave-main .bioweave-character-health-close:hover,
+.bioweave-main .bioweave-character-health-close:focus-visible { border-color: transparent !important; color: var(--bioweave-text) !important; background: var(--bioweave-surface-raised) !important; box-shadow: none !important; }
+.bioweave-character-health-body { padding: 0 14px 12px !important; }
+.bioweave-character-health-overview { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 10px !important; min-height: 30px !important; margin-bottom: 0 !important; padding: 0 !important; color: #82939b !important; font-size: 11px !important; }
+.bioweave-character-health-overview .bioweave-badge { min-height: 0 !important; padding: 3px 9px !important; border: 1px solid #77613a !important; border-radius: 999px !important; color: #efc078 !important; background: #3b301f !important; font-size: 11px !important; line-height: 1.5 !important; }
+.bioweave-character-health-overview[data-health-state="warning"] .bioweave-badge { border-color: #77613a !important; background: #3b301f !important; color: #efc078 !important; }
 .bioweave-character-health-overview[data-health-state="good"] .bioweave-badge { border-color: #3f725d !important; background: var(--bioweave-success-soft) !important; color: var(--bioweave-success) !important; }
+.bioweave-character-health-summary { margin: 0 0 8px !important; padding: 9px 10px !important; border-left: 2px solid #8acde0 !important; color: #c3d0d4 !important; background: #1a343d !important; font-size: 11px !important; line-height: 1.55 !important; }
 .bioweave-character-health-issues { display: grid !important; gap: 0 !important; margin-top: 0 !important; }
-.bioweave-character-health-issue { display: grid !important; grid-template-columns: 82px minmax(0, 1fr) max-content !important; align-items: center !important; gap: 10px !important; min-width: 0 !important; padding: 10px 0 !important; border: 0 !important; border-top: 1px solid var(--bioweave-border) !important; border-radius: 0 !important; background: transparent !important; }
-.bioweave-character-health-issue-site { min-width: 0 !important; padding-right: 10px !important; overflow-wrap: anywhere !important; border-right: 1px solid var(--bioweave-border-soft) !important; color: var(--bioweave-text-secondary) !important; font-size: 11px !important; line-height: 1.4 !important; white-space: normal !important; }
-.bioweave-character-health-issue p { min-width: 0 !important; margin: 0 !important; color: var(--bioweave-text) !important; font-size: 12px !important; line-height: 1.5 !important; overflow-wrap: anywhere !important; }
+.bioweave-character-health-issue { display: grid !important; grid-template-columns: 94px minmax(0, 1fr) 48px !important; align-items: stretch !important; column-gap: 12px !important; min-width: 0 !important; padding: 12px 0 !important; border: 0 !important; border-top: 1px solid #344852 !important; border-radius: 0 !important; background: transparent !important; }
+.bioweave-character-health-issue-site { display: flex !important; flex-direction: column !important; min-width: 0 !important; min-height: 100% !important; padding-right: 9px !important; overflow-wrap: anywhere !important; border-right: 1px solid #293b44 !important; color: #c3d0d4 !important; font-size: 11px !important; line-height: 1.4 !important; }
+.bioweave-character-health-issue-site > strong { color: #c3d0d4 !important; font-size: 11px !important; font-weight: 600 !important; }
+.bioweave-character-health-issue-site > span { display: block !important; margin-top: 3px !important; color: #82939b !important; font-size: 10px !important; }
+.bioweave-character-health-issue p { min-width: 0 !important; margin: 5px 0 0 !important; color: #edf4f6 !important; font-size: 12px !important; line-height: 1.58 !important; overflow-wrap: anywhere !important; }
 .bioweave-character-health-observations { display: grid !important; gap: 3px !important; min-width: 0 !important; }
-.bioweave-character-health-subtitle { color: var(--bioweave-text-secondary) !important; font-size: 10px !important; line-height: 1.35 !important; }
-.bioweave-character-health-recovery { display: grid !important; gap: 4px !important; margin-top: 6px !important; min-width: 0 !important; }
-.bioweave-character-health-recovery-title { color: var(--bioweave-text-secondary) !important; font-size: 10px !important; line-height: 1.35 !important; }
-.bioweave-character-health-recovery-track { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(18px, 1fr) minmax(0, 1fr) minmax(18px, 1fr) minmax(0, 1fr) !important; align-items: start !important; min-width: 0 !important; }
-.bioweave-character-health-recovery-step { display: grid !important; justify-items: center !important; gap: 3px !important; min-width: 0 !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; line-height: 1.25 !important; text-align: center !important; white-space: nowrap !important; }
-.bioweave-character-health-recovery-step.completed { color: var(--bioweave-accent) !important; }
-.bioweave-character-health-recovery-step.current { font-weight: 600 !important; }
-.bioweave-character-health-recovery-node { width: 9px !important; height: 9px !important; border: 1px solid var(--bioweave-text-muted) !important; border-radius: 50% !important; background: var(--bioweave-surface-soft) !important; }
-.bioweave-character-health-recovery-step.completed .bioweave-character-health-recovery-node { border-color: var(--bioweave-accent) !important; background: var(--bioweave-accent) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-accent) 16%, transparent) !important; }
-.bioweave-character-health-recovery-step.pending .bioweave-character-health-recovery-node { opacity: 0.72 !important; }
-.bioweave-character-health-recovery-connector { align-self: start !important; width: 100% !important; height: 3px !important; margin-top: 3px !important; border-radius: 999px !important; background: var(--bioweave-border-soft) !important; }
-.bioweave-character-health-recovery-connector.completed { background: var(--bioweave-accent) !important; box-shadow: 0 0 0 1px color-mix(in srgb, var(--bioweave-accent) 18%, transparent) !important; }
-.bioweave-character-health-recovery-connector.pending { opacity: 0.72 !important; }
-.bioweave-character-health-issue-source { justify-self: end !important; min-width: max-content !important; }
-.bioweave-character-health-issue-source .bioweave-text-button { margin: 0 !important; padding: 0 !important; color: var(--bioweave-accent) !important; font-size: 10px !important; white-space: nowrap !important; }
+.bioweave-character-health-subtitle { color: #8acde0 !important; font-size: 10px !important; line-height: 1.35 !important; }
+.bioweave-character-health-recovery { display: grid !important; gap: 5px !important; margin-top: 10px !important; padding-top: 9px !important; border-top: 1px solid #293b44 !important; min-width: 0 !important; }
+.bioweave-character-health-recovery-track { position: relative !important; display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; height: 9px !important; overflow: hidden !important; border: 1px solid #3b4e56 !important; border-radius: 999px !important; background: linear-gradient(90deg, #559eae 0%, #8acde0 100%) !important; }
+.bioweave-character-health-recovery-track::after { position: absolute !important; z-index: 1 !important; inset: 0 0 0 auto !important; width: 33.333% !important; background: #2b3d46 !important; content: "" !important; }
+.bioweave-character-health-recovery.stage-early .bioweave-character-health-recovery-track::after { width: 66.666% !important; }
+.bioweave-character-health-recovery.stage-near-recovery .bioweave-character-health-recovery-track::after { width: 0 !important; }
+.bioweave-character-health-recovery-segment { position: relative !important; z-index: 2 !important; min-width: 0 !important; border-right: 1px solid #293b44 !important; }
+.bioweave-character-health-recovery-segment:last-child { border-right: 0 !important; }
+.bioweave-character-health-recovery-labels { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; color: #82939b !important; font-size: 9px !important; line-height: 1.25 !important; text-align: center !important; }
+.bioweave-character-health-recovery-labels span.completed { color: #8acde0 !important; }
+.bioweave-character-health-recovery-labels span.current { font-weight: 600 !important; }
+.bioweave-character-health-issue-source { margin-top: auto !important; min-width: 0 !important; padding-top: 12px !important; }
+.bioweave-character-health-issue-source .bioweave-text-button { margin: 0 !important; padding: 0 !important; color: #8acde0 !important; font-size: 10px !important; white-space: nowrap !important; }
+.bioweave-character-health-issue-severity { justify-self: end !important; align-self: start !important; padding: 2px 7px !important; border: 1px solid #6f5a35 !important; border-radius: 999px !important; color: #efc078 !important; font-size: 10px !important; line-height: 1.35 !important; text-align: right !important; white-space: nowrap !important; }
+.bioweave-character-health-scope-note { display: flex !important; gap: 7px !important; margin: 8px 0 0 !important; padding-top: 10px !important; border-top: 1px solid #293b44 !important; color: #82939b !important; font-size: 10px !important; line-height: 1.5 !important; }
+.bioweave-character-health-scope-note strong { color: #efc078 !important; font-weight: 600 !important; }
 .bioweave-character-health-sources { position: relative !important; margin: 0 !important; }
 .bioweave-character-health-sources > summary { width: max-content !important; cursor: pointer !important; list-style: none !important; }
 .bioweave-character-health-sources > summary::-webkit-details-marker { display: none !important; }

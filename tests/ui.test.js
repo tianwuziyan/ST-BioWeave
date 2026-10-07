@@ -129,9 +129,12 @@ test('Character Health popover keeps the A-variant interaction contract', () => 
   assert.match(APP_SOURCE, /healthPopoverState = \{open: false, characterId: null\}/u)
   assert.match(APP_SOURCE, /healthPopoverState\.open && healthPopoverState\.characterId === focusedCharacterId/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-issue \{[\s\S]*border: 0 !important;[\s\S]*background: transparent !important;/u)
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview \{[\s\S]*height: 30px !important;[\s\S]*margin-bottom: 6px !important;[\s\S]*align-items: center !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview \{[\s\S]*gap: 10px !important;[\s\S]*min-height: 30px !important;[\s\S]*align-items: center !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview \.bioweave-badge \{[\s\S]*padding: 3px 9px !important;[\s\S]*line-height: 1\.5 !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-button\.warning \{[\s\S]*border-color: #75623e !important;[\s\S]*background: var\(--bioweave-warn-soft\) !important;/u)
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview\[data-health-state="warning"\] \.bioweave-badge \{[\s\S]*border-color: #785f34 !important;[\s\S]*background: var\(--bioweave-warn-soft\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-overview\[data-health-state="warning"\] \.bioweave-badge \{[\s\S]*border-color: #77613a !important;[\s\S]*background: #3b301f !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-character-health-issue-severity \{[\s\S]*justify-self: end !important;[\s\S]*border: 1px solid #6f5a35 !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-character-health-close:hover[\s\S]*border-color: transparent !important;/u)
 })
 
 test('Character timing open renders before async data and avoids debug aggregation', () => {
