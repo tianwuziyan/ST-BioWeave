@@ -20,6 +20,14 @@ Pre-confirmation Projection Timing remains separate from this Window. Its
 same subject + same explicit mechanism may attach additional valid Event refs,
 but it must not be treated as the Window owner or as Window expiration.
 
+When Story Time advances, Runtime re-evaluates active pre-confirmation Timing
+instances even if no new factual Event was discovered. The deterministic
+`before_min` to `window_open` result is derived from the current Timing Instance
+and existing Projection presence; it is not persisted as a second transition
+authority. Entering the window collects all compatible exposure Event refs from
+the current Tracking Window/basis before the Projection Runtime applies its
+existing identity and lifecycle guards.
+
 ### Current Implementation: Phase 1 + Phase 2
 
 Phase 1 owns deterministic Window/cycle identity, compatible exposure grouping,

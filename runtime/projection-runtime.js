@@ -74,6 +74,64 @@ function decisionKey(decision) {
     .join("\u001f");
 }
 
+function projectionViewDiagnostics(views) {
+  const all = Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : [];
+  const active = all.filter(view => !view?.deleted && (view?.factual_status ?? 'active') === 'active');
+  const contextVisible = all.filter(view => view?.context_visible === true && !view?.deleted);
+  return {
+    projection_view_count: all.length,
+    projection_ids: all.map(view => view?.projection_id).filter(Boolean),
+    active_projection_count: active.length,
+    active_projection_ids: active.map(view => view?.projection_id).filter(Boolean),
+    context_visible_projection_count: contextVisible.length,
+    context_visible_projection_ids: contextVisible.map(view => view?.projection_id).filter(Boolean),
+  };
+}
+
+function exposureIdentityDiagnostics(inputs, exposureIds = []) {
+  const wanted = new Set(exposureIds);
+  const sourceParticipantIds = new Set();
+  const sourceIdentityIds = new Set();
+  for (const event of inputs?.events ?? []) {
+    if (!wanted.has(event?.event_id)) continue;
+    for (const participant of event?.participants ?? []) {
+      if (participant?.event_role !== 'potential_conception_source') continue;
+      const participantId = participant?.character_id ?? participant?.mention_id;
+      if (participantId) sourceParticipantIds.add(participantId);
+      if (participant?.character_id) sourceIdentityIds.add(participant.character_id);
+    }
+  }
+  return {
+    source_participant_ids: [...sourceParticipantIds].sort(),
+    source_identity_ids: [...sourceIdentityIds].sort(),
+  };
+}
+
+function timingDecisionDiagnostics(decision, timing, inputs) {
+  const instance = timing?.instances?.find(item => item.timing_instance_id === decision.timing_instance_id) ?? null;
+  const window = timing?.windows?.find(item => item.tracking_window_id === decision.tracking_window_id) ?? null;
+  const exposureIds = decision.exposure_event_ids ?? [];
+  return {
+    reproductive_cycle_id: instance?.cycle_id ?? window?.cycle_id ?? null,
+    cycle_id: instance?.cycle_id ?? window?.cycle_id ?? null,
+    tracking_window_id: decision.tracking_window_id ?? null,
+    timing_instance_id: decision.timing_instance_id ?? null,
+    current_story_time: inputs?.currentStoryTime ?? null,
+    anchor_story_time: instance?.reference_story_time ?? null,
+    elapsed_story_days: decision.timing_elapsed_story_days ?? null,
+    effective_min_story_days: decision.effective_min_story_days ?? instance?.effective_min_story_days ?? null,
+    effective_max_story_days: decision.effective_max_story_days ?? instance?.effective_max_story_days ?? null,
+    timing_state: decision.timing_status ?? null,
+    timing_transition: decision.timing_status === 'window_open'
+      ? decision.existing_projection_id ? 'window_open_existing_projection' : 'window_open_without_existing_projection'
+      : null,
+    compatible_exposure_count: exposureIds.length,
+    compatible_exposure_event_ids: [...exposureIds].sort(),
+    multiple_compatible_exposures: exposureIds.length > 1,
+    ...exposureIdentityDiagnostics(inputs, exposureIds),
+  };
+}
+
 export function createProjectionRuntime({
   analyzer,
   enabledResolver = () => true,
@@ -156,10 +214,10 @@ export function createProjectionRuntime({
     );
   }
 
-  async function runExecution(inputs, identity, reason) {
+  async function runExecution(inputs, identity, reason, trigger) {
     const startedAt = new Date().toISOString();
     startActivity(identity);
-    emitStatus({state: "running", phase: "evolution", reason, ...identity, started_at: startedAt});
+    emitStatus({stage: "PROJECTION_PROCESS_STARTED", state: "running", phase: "process", reason, trigger, current_story_time: inputs.currentStoryTime ?? null, ...identity, started_at: startedAt});
     let partial = false;
     const errors = [];
     try {
@@ -211,18 +269,43 @@ export function createProjectionRuntime({
         existingProjections: views?.all ?? [],
         preConfirmationTiming,
       });
+      emitStatus({
+        stage: "PROJECTION_TIMING_EVALUATED",
+        state: "running",
+        phase: "eligibility",
+        reason,
+        trigger,
+        ...identity,
+        existing_projection_view_count: views?.all?.length ?? 0,
+        existing_projection_ids: (views?.all ?? []).map(view => view?.projection_id).filter(Boolean),
+        timing_evaluations: eligibility.decisions.map(decision => ({
+          subject_id: decision.subject_id,
+          projection_rule_id: decision.projection_rule_id,
+          timing_instance_id: decision.timing_instance_id,
+          tracking_window_id: decision.tracking_window_id,
+          timing_status: decision.timing_status,
+          ...timingDecisionDiagnostics(decision, preConfirmationTiming, inputs),
+          eligibility: decision.eligibility,
+          reason_code: decision.reason_code,
+          existing_projection_id: decision.existing_projection_id,
+          ai_call_will_start: decision.eligibility === 'eligible' && !decision.existing_projection_id,
+        })),
+      });
       if (eligibility.diagnostics?.some(item => item.code === "projection_rule_conflict")) {
         throw Object.assign(new Error("PROJECTION_ELIGIBILITY_FAILED"), {code: "PROJECTION_ELIGIBILITY_FAILED"});
       }
 
-      emitStatus({state: "running", phase: "generation", reason, ...identity, started_at: startedAt});
-      for (const decision of eligibility.decisions.filter(item => item.eligibility === "eligible" && !item.existing_projection_id)) {
+      const generationDecisions = eligibility.decisions.filter(item => item.eligibility === "eligible" && !item.existing_projection_id);
+      emitStatus({stage: "PROJECTION_AI_PLAN", state: "running", phase: "generation", reason, trigger, candidate_count: 0, ai_call_will_start: generationDecisions.length > 0, ...identity, started_at: startedAt});
+      for (const decision of generationDecisions) {
         const rule = ruleByKey.get(`${decision.projection_rule_id}\u001f${decision.development_concern_key}`);
         if (!rule) {
           partial = true;
           errors.push({decision: decisionKey(decision), reason: "projection_rule_missing"});
+          emitStatus({stage: "PROJECTION_AI_SKIPPED", state: "running", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, rejection_reason: "projection_rule_missing", ai_call_will_start: false, ...identity});
           continue;
         }
+        emitStatus({stage: "PROJECTION_AI_REQUEST_STARTED", state: "running", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, ai_request_started: true, ai_call_will_start: true, ...timingDecisionDiagnostics(decision, preConfirmationTiming, inputs), ...identity});
         const result = await generateProjectionCandidate({
           decision,
           rule,
@@ -246,6 +329,13 @@ export function createProjectionRuntime({
             return currentInputsMatch(identity.execution_id);
           },
         });
+        const generatedProjectionIds = result.projection?.projection_id ? [result.projection.projection_id] : [];
+        const validationResult = result.status === 'generated'
+          ? 'passed'
+          : ['validation_failed', 'invalid_json', 'assembly_failed'].includes(result.reason_code)
+            ? 'failed'
+            : null;
+        emitStatus({stage: "PROJECTION_AI_REQUEST_COMPLETED", state: result.status === 'generated' ? "running" : "partial", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, ai_request_completed: true, ai_request_failed: result.status !== 'generated', candidate_count: generatedProjectionIds.length, candidate_validation_result: validationResult, validation_errors: result.errors ?? [], rejection_reason: result.reason_code ?? null, generated_projection_ids: generatedProjectionIds, ...identity});
         if (result.status === "stale") {
           emitStatus({state: "stale", phase: result.reason_code, reason, ...identity, started_at: startedAt});
           return {status: "stale", execution_id: identity.execution_id, results: [result]};
@@ -265,6 +355,12 @@ export function createProjectionRuntime({
             ownerFloor: floorOwner(inputs.floor),
             floorVersion: inputs.floor.version,
             projectionCandidate: result.projection,
+            traceContext: {
+              projection_id: result.projection.projection_id,
+              projection_rule_id: decision.projection_rule_id,
+              development_concern_key: decision.development_concern_key,
+              trigger,
+            },
           });
           if (typeof saveProjectionEvidence === "function") {
             await saveProjectionEvidence({
@@ -277,6 +373,12 @@ export function createProjectionRuntime({
                 created_at_floor_version: inputs.floor.version,
                 evidence_refs: result.projection.evidence_refs,
               },
+              traceContext: {
+                projection_id: result.projection.projection_id,
+                projection_rule_id: decision.projection_rule_id,
+                development_concern_key: decision.development_concern_key,
+                trigger,
+              },
             });
           }
         } catch (error) {
@@ -288,17 +390,17 @@ export function createProjectionRuntime({
       const dto = dtoFromViews(finalViews);
       await refreshProjectionContext?.({chatId: identity.chat_id});
       const status = partial ? "partial" : "success";
-      emitStatus({state: status, phase: "readback", reason, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), errors});
+      emitStatus({stage: "PROJECTION_READBACK", state: status, phase: "readback", reason, trigger, ...projectionViewDiagnostics(finalViews), projection_contribution_count: projectionViewDiagnostics(finalViews).context_visible_projection_count, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), errors});
       finishActivity(identity, status, errors[0]);
       return {status, execution_id: identity.execution_id, ...dto, errors};
     } catch (error) {
-      emitStatus({state: "failed", phase: "projection", reason, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED"});
+      emitStatus({stage: "PROJECTION_PROCESS_FAILED", state: "failed", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED"});
       finishActivity(identity, "failed", error);
       return {status: "failed", execution_id: identity.execution_id, errors: [{reason: error?.code ?? error?.message ?? "PROJECTION_FAILED"}]};
     }
   }
 
-  async function process({reason = "projection-refresh"} = {}) {
+  async function process({reason = "projection-refresh", trigger = "projection-refresh"} = {}) {
     if (destroyed) return {status: "destroyed"};
     if (enabledResolver() === false) return {status: "disabled"};
     const inputs = await collectInputs();
@@ -310,7 +412,7 @@ export function createProjectionRuntime({
       chat_id: inputs.floor.version.chat_id,
       floor_version: inputs.floor.version,
     };
-    const promise = runExecution(inputs, identity, reason).finally(() => inFlight.delete(execution_id));
+    const promise = runExecution(inputs, identity, reason, trigger).finally(() => inFlight.delete(execution_id));
     inFlight.set(execution_id, promise);
     return promise;
   }

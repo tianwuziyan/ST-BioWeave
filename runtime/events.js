@@ -2465,6 +2465,7 @@ export function createRuntime({
       generation_intent_id: payload?.generation_intent_id ?? payload?.generationIntentId ?? null,
       generation_type: payload?.generation_type ?? payload?.generationType ?? payload?.genType ?? null,
     };
+    const isStoryTimeProjectionTrigger = key === "MESSAGE_RECEIVED";
     const refreshGenerationProjectionContext = async () => {
       if (key === "GENERATION_STARTED") {
         recordPersistenceTrace({
@@ -2560,6 +2561,17 @@ export function createRuntime({
         } catch (error) {
           if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
             console.error("[BioWeave] projection lifecycle tick failed", error);
+        }
+        if (isStoryTimeProjectionTrigger) {
+          try {
+            await projectionRuntime.process({
+              reason: `story-time:${key}`,
+              trigger: "story-time-progression",
+            });
+          } catch (error) {
+            if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
+              console.error("[BioWeave] story-time projection processing failed", error);
+          }
         }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());

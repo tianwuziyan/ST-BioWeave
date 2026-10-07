@@ -158,6 +158,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "retry_index", "max_retries", "failure_stage", "failure_code",
     "retry_decision", "retry_reason",
     "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name",
+    "current_story_time", "previous_timing_state", "timing_state", "timing_transition", "anchor_story_time", "elapsed_story_days", "elapsed_story_value", "effective_min_story_days", "effective_max_story_days", "reproductive_cycle_id", "cycle_id", "tracking_window_id", "timing_instance_id", "timing_evaluations", "compatible_exposure_count", "compatible_exposure_event_ids", "source_participant_ids", "source_identity_ids", "multiple_compatible_exposures", "projection_id", "projection_rule_id", "development_concern_key", "eligibility", "ai_call_will_start", "existing_projection_id", "existing_projection_view_count", "existing_projection_ids", "candidate_count", "candidate_validation_result", "validation_errors", "rejection_reason", "generated_projection_ids", "projection_ids", "active_projection_count", "active_projection_ids", "context_visible_projection_count", "context_visible_projection_ids", "projection_view_count", "projection_contribution_count", "ai_request_started", "ai_request_completed", "ai_request_failed", "generation_status",
     "cancel_stage", "cancel_reason", "cancel_code",
     "classification", "retry_classification", "retryable", "version_check_source",
     "expected_floor_version", "actual_floor_version", "expected_content_hash", "actual_content_hash",
@@ -507,6 +508,32 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
         diagnostic_code: event.payload?.state === "failed" ? diagnostic.diagnostic_code ?? event.payload?.diagnostic_code ?? null : undefined,
       });
     }
+    if (event?.type === "PROJECTION_ANALYSIS_STATUS_CHANGED") {
+      const payload = event.payload ?? {};
+      if (!persistenceTrace) {
+        persistenceTrace = {
+          execution: {
+            chat_id: payload.chat_id ?? getChatId(),
+            message_id: payload.floor_version?.message_id ?? null,
+            floor: payload.floor_version?.floor ?? null,
+            swipe_id: payload.floor_version?.swipe_id ?? null,
+            content_hash: payload.floor_version?.content_hash ?? null,
+            message_version: payload.floor_version?.message_version ?? null,
+            attempt: payload.execution_id ?? null,
+            trigger: payload.trigger ?? payload.reason ?? null,
+          },
+          sequence: [],
+          terminal: null,
+          host_post_save_hook: "NO_PUBLIC_POST_SAVE_HOOK",
+        };
+      }
+      persistenceTrace.sequence.push({
+        seq: ++traceSequence,
+        stage: payload.stage ?? `PROJECTION_${String(payload.phase ?? "STATUS").toUpperCase()}`,
+        ...sanitizePersistenceTracePayload(payload),
+      });
+      if (payload.state && payload.state !== "running") persistenceTrace.terminal = payload.state;
+    }
   }
 
   function recordLifecycleTrace(stage, payload, chatId) {
@@ -569,6 +596,7 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
           context_nonempty: latestSlot.context_nonempty ?? latestSlot.slot_nonempty ?? false,
           context_fingerprint: latestSlot.context_fingerprint ?? null,
           health_guidance_count: latestSlot.health_guidance_count ?? 0,
+          projection_ids: latestSlot.context_visible_projection_ids ?? latestSlot.projection_ids ?? [],
         } : null,
         generation: latestGeneration ? {
           generation_id: latestGeneration.generation_id ?? null,
@@ -577,6 +605,14 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
           context_ready_before_listener_resolve: latestGeneration.context_ready_before_prompt_read === true,
           refresh_outcome: latestGeneration.refresh_outcome ?? null,
         } : null,
+        projection: {
+          ai_request_started_count: sequence.filter(entry => entry.stage === 'PROJECTION_AI_REQUEST_STARTED').length,
+          ai_request_completed_count: sequence.filter(entry => entry.stage === 'PROJECTION_AI_REQUEST_COMPLETED').length,
+          ai_request_failed_count: sequence.filter(entry => entry.stage === 'PROJECTION_AI_REQUEST_COMPLETED' && entry.ai_request_failed === true).length,
+          generated_projection_ids: [...new Set(sequence.flatMap(entry => entry.generated_projection_ids ?? []))],
+          latest_view_count: [...sequence].reverse().find(entry => entry.stage === 'PROJECTION_READBACK')?.projection_view_count ?? null,
+          latest_context_visible_count: [...sequence].reverse().find(entry => entry.stage === 'PROJECTION_READBACK')?.context_visible_projection_count ?? null,
+        },
       },
     });
   }

@@ -1846,7 +1846,7 @@ test('analysis debug Popup exposes a safe persistence trace copy entry', () => {
     },
   })
   const html = typeof markup === 'string' ? markup : markup.innerHTML
-  assert.match(html, /复制最近一次分析诊断/)
+  assert.match(html, /复制最近一次运行诊断/)
   assert.match(html, /NO_PUBLIC_POST_SAVE_HOOK/)
   assert.doesNotMatch(html, /should-not-enter|api_key|authorization/i)
   assert.match(STYLE_SOURCE, /bioweave-persistence-trace[\s\S]*text-align:\s*left\s*!important/)

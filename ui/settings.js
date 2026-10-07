@@ -1062,12 +1062,12 @@ export function renderAnalysisInputPreview(preview = {}) {
 
 function renderPersistenceTrace(trace = null) {
   if (!trace || typeof trace !== 'object') {
-    return '<section class="bioweave-card bioweave-persistence-trace" data-bioweave-persistence-trace><h4>最近一次分析诊断</h4><p class="bioweave-muted">尚未收到自动分析 persistence trace。</p></section>';
+    return '<section class="bioweave-card bioweave-persistence-trace" data-bioweave-persistence-trace><h4>最近一次运行诊断</h4><p class="bioweave-muted">尚未收到分析或 Projection persistence trace。</p></section>';
   }
   return [
     '<section class="bioweave-card bioweave-persistence-trace" data-bioweave-persistence-trace>',
-    '<header><div><h4>最近一次分析诊断</h4><p class="bioweave-muted">仅显示 Floor 身份、宿主保存路径、读回结果与阶段顺序；不包含完整输入或凭据。</p></div>',
-    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-persistence-trace">复制最近一次分析诊断</button></header>',
+    '<header><div><h4>最近一次运行诊断</h4><p class="bioweave-muted">包含 Story Time、Projection、Floor persistence、Projection Context 与 generation boundary 的安全阶段数据；不包含完整输入、提示词或凭据。</p></div>',
+    '<button type="button" class="bioweave-secondary-action" data-bioweave-action="copy-persistence-trace">复制最近一次运行诊断</button></header>',
     '<pre data-bioweave-persistence-trace-content>' + escapeHtml(traceValueText(trace)) + '</pre>',
     '</section>',
   ].join('');

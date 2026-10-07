@@ -89,23 +89,24 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
         projection_timeline: result.timeline,
       },
       operation_type: 'projection-timeline-patch',
+      traceContext: input.traceContext ?? {},
     })
     return {status: result.status, timeline: result.timeline}
   }
 
-  async function saveGeneratedProjection({chatId, ownerFloor, floorVersion, projectionCandidate} = {}) {
+  async function saveGeneratedProjection({chatId, ownerFloor, floorVersion, projectionCandidate, traceContext = {}} = {}) {
     const validation = validateProjection(projectionCandidate, {expectedChatId: chatId})
     if (!validation.ok) throw error(validation.errors[0])
     assertRecordVersion(projectionCandidate, floorVersion)
-    return mutateFloor({chatId, ownerFloor, floorVersion}, timeline => appendProjectionCreation(projectionCandidate, {timeline, expectedChatId: chatId}))
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, timeline => appendProjectionCreation(projectionCandidate, {timeline, expectedChatId: chatId}))
   }
 
-  async function saveProjectionEvidence({chatId, ownerFloor, floorVersion, evidenceRecord} = {}) {
+  async function saveProjectionEvidence({chatId, ownerFloor, floorVersion, evidenceRecord, traceContext = {}} = {}) {
     const record = createProjectionEvidenceRecord(evidenceRecord)
     if (evidenceRecord?.evidence_record_id && evidenceRecord.evidence_record_id !== record.evidence_record_id) throw error('evidence_record_id:not_deterministic')
     assertRecordVersion(record, floorVersion)
     const knownProjectionIds = new Set((await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.map(item => item.projection_id))
-    return mutateFloor({chatId, ownerFloor, floorVersion}, timeline => appendProjectionEvidence(record, {timeline, expectedChatId: chatId, knownProjectionIds}))
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, timeline => appendProjectionEvidence(record, {timeline, expectedChatId: chatId, knownProjectionIds}))
   }
 
   async function saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord} = {}) {

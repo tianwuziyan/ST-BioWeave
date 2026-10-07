@@ -60,7 +60,7 @@ flowchart TD
 
 | Feature | Primary owner | 负责什么 |
 | --- | --- | --- |
-| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment invocation/reuse、recovery stage/profile selection、Projection slot 与 generation-boundary trace 复用同一 buffer/export |
+| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，敏感正文不进入 exporter |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
@@ -361,8 +361,13 @@ Pregnancy Exposure Tracking Window Phase 1 + Phase 2 已有独立的
 `storage/tracking-window.js` owner。Window 使用独立
 `tracking_window_timeline`，复用 Timing cycle identity，支持
 `open`、`resolved_pregnant`、`terminated`、`expired`，并由 Tracking 消费 open
-view。Phase 2 的生命周期 tick 只做 deterministic Window/Projection lifecycle；
-Projection Runtime 仍是 Projection lifecycle owner。不要把 `core/tracking.js`
+view。Phase 2 的 lifecycle-only tick 只做 deterministic Window/Projection lifecycle；
+Projection Runtime 仍是 Projection lifecycle owner。Story Time 推进另有独立的
+full Projection processing 路径：它重新读取当前 Timing Instance、以当前 Story
+Time 计算 elapsed，并在 `before_min → window_open` 且没有等价 Projection 时，
+聚合同一 Tracking Window/basis 的全部 compatible exposure 后生成首次非事实
+Projection。该路径复用 Projection identity/dedupe/lifecycle guard，不新增持久化
+transition authority。不要把 `core/tracking.js`
 的 Subject registry、`core/state.js` 的 Pregnancy Episode 或 `core/projection.js`
 的 Projection lifecycle 当作 Window。negative resolution、Window Context
 injection 和 advanced Episode orchestration 仍未实现。resolved Window 到

@@ -58,6 +58,45 @@ test('different concerns produce independent decisions', () => {
   assert.equal(result.decisions.length, 2);
   assert.notEqual(result.decisions[0].development_concern_key, result.decisions[1].development_concern_key);
 });
+test('sibling possibilities share basis without dedupe and resolve through later factual evidence', () => {
+  const possible = rule({
+    projection_rule_id: 'rule:implant-progress-v1',
+    development_concern_key: 'concern:progress',
+    development_kind: 'possible_biological_change',
+    realization: {event_types: ['medical_event']},
+    contradiction: {event_types: ['other_biological']},
+  });
+  const noProgress = rule({
+    projection_rule_id: 'rule:implant-no-progress-v1',
+    development_concern_key: 'concern:no-progress',
+    development_kind: 'no_obvious_change',
+    realization: {event_types: ['other_biological']},
+    contradiction: {event_types: ['medical_event']},
+  });
+  const evaluated = evaluate({worldModel: {projection_rules: [possible, noProgress]}});
+  assert.equal(evaluated.decisions.length, 2);
+  assert.deepEqual(evaluated.decisions[0].source_event_ids, evaluated.decisions[1].source_event_ids);
+  assert.notEqual(evaluated.decisions[0].projection_rule_id, evaluated.decisions[1].projection_rule_id);
+  const base = {currentState: state(), currentStoryTime: story(10), currentView: {factual_status: 'active', deleted: false}};
+  assert.equal(evaluateProjectionEvolution({
+    ...base,
+    projection: {projection_id: 'projection-progress', subject_id: SUBJECT, projection_rule_id: possible.projection_rule_id, development_concern_key: possible.development_concern_key},
+    worldModel: {projection_rules: [possible, noProgress]},
+    events: [],
+  }).decision, 'keep_active');
+  assert.equal(evaluateProjectionEvolution({
+    ...base,
+    projection: {projection_id: 'projection-progress', subject_id: SUBJECT, projection_rule_id: possible.projection_rule_id, development_concern_key: possible.development_concern_key},
+    worldModel: {projection_rules: [possible, noProgress]},
+    events: [factual('medical-1', 'medical_event')],
+  }).decision, 'realized');
+  assert.equal(evaluateProjectionEvolution({
+    ...base,
+    projection: {projection_id: 'projection-no-progress', subject_id: SUBJECT, projection_rule_id: noProgress.projection_rule_id, development_concern_key: noProgress.development_concern_key},
+    worldModel: {projection_rules: [possible, noProgress]},
+    events: [factual('medical-1', 'medical_event')],
+  }).decision, 'contradicted');
+});
 test('all supported trigger kinds remain eligibility-only', () => {
   const immediate = rule({trigger: {kind: 'immediate_after_event', source_event_type: 'sexual_activity'}});
   const reached = rule({trigger: {kind: 'story_time_reached', target_story_time: story(5)}, development_concern_key: 'concern:reached'});

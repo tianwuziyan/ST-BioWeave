@@ -73,3 +73,27 @@ test('health diagnostics export separates invocation counts from persisted reuse
   assert.equal(trace.summary.generation.projection_refresh_awaited, true)
   assert.equal(trace.summary.generation.context_ready_before_listener_resolve, true)
 })
+
+test('Settings debug trace retains Story Time Projection stages and safe IDs', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {
+    stage: 'PROJECTION_TIMING_EVALUATED', state: 'running', trigger: 'story-time-progression',
+    timing_evaluations: [{timing_state: 'window_open', current_story_time: {day_index: 18}, reproductive_cycle_id: 'cycle-a', tracking_window_id: 'window-a', timing_instance_id: 'timing-a', compatible_exposure_event_ids: ['event-a', 'event-b']}],
+    source_identity_ids: ['char-source'],
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'FLOOR_TX_CONFIRMED', floor_transaction_id: 'floor-tx-1', transaction_key: 'chat-debug/3/0/hash/v1', owner: 'projection', operation_type: 'projection-timeline-patch', commit_state: 'confirmed', projection_id: 'projection-a',
+  }})
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {
+    stage: 'PROJECTION_READBACK', state: 'success', projection_view_count: 1, context_visible_projection_count: 1, projection_ids: ['projection-a'], generated_projection_ids: ['projection-a'],
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'PROJECTION_CONTEXT_SLOT_WRITTEN', slot: 'bioweave_projection_context', projection_contribution_count: 1, context_visible_projection_ids: ['projection-a'], context_nonempty: true,
+  }})
+  const trace = diagnostics.getPersistenceTrace()
+  assert.equal(trace.execution.trigger, 'story-time-progression')
+  assert.equal(trace.sequence.find(item => item.stage === 'PROJECTION_TIMING_EVALUATED').timing_evaluations[0].tracking_window_id, 'window-a')
+  assert.deepEqual(trace.sequence.find(item => item.stage === 'FLOOR_TX_CONFIRMED').projection_id, 'projection-a')
+  assert.deepEqual(trace.summary.projection.generated_projection_ids, ['projection-a'])
+  assert.deepEqual(trace.summary.projection_context.projection_ids, ['projection-a'])
+})

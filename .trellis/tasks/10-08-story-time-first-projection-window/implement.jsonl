@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe ownership, provenance, authoritative readback, and forbidden Chat-level authority"}
+{"file": ".trellis/spec/domain/pregnancy-tracking.md", "reason": "Tracking Window cycle, compatible exposure, horizon, and lifecycle contract"}
+{"file": ".trellis/spec/domain/automatic-analysis.md", "reason": "Lifecycle/scheduler boundary and automatic trigger ownership"}

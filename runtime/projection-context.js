@@ -175,6 +175,8 @@ function floorReadStillMatches(left, right) {
         selected_stage_summary: [...new Set((Array.isArray(healthGuidance) ? healthGuidance : []).map(item => item?.stage).filter(Boolean))],
         guidance_fingerprints: (Array.isArray(healthGuidance) ? healthGuidance : []).map(item => item?.guidance_fingerprint).filter(Boolean),
         projection_contribution_count: Array.isArray(views?.all ?? views) ? (views?.all ?? views).filter(item => item?.context_visible === true).length : 0,
+        projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).map(item => item?.projection_id).filter(Boolean),
+        context_visible_projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).filter(item => item?.context_visible === true).map(item => item?.projection_id).filter(Boolean),
       });
       if (String(getChatId?.() ?? chatId) !== String(chatId)) {
         return {ok: false, status: 'stale', reason: 'CHAT_CHANGED', dto: [], prompt: ''};
@@ -197,6 +199,8 @@ function floorReadStillMatches(left, right) {
         context_nonempty: Boolean(context.prompt),
         slot_nonempty: Boolean(context.prompt),
         projection_contribution_count: projectionContributionCount,
+        projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).map(item => item?.projection_id).filter(Boolean),
+        context_visible_projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).filter(item => item?.context_visible === true).map(item => item?.projection_id).filter(Boolean),
         health_guidance_count: healthGuidanceCount,
         selected_stage_summary: selectedStageSummary,
         guidance_fingerprints: guidanceFingerprints,
