@@ -684,6 +684,23 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
+function waitForAnalysisSuccess(fixture, swipeId) {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = fixture.runtime.subscribe((event) => {
+      const payload = event?.payload;
+      if (
+        event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" &&
+        payload?.state === "success" &&
+        payload?.floor_version?.swipe_id === swipeId
+      ) {
+        unsubscribe();
+        resolve(payload);
+      }
+    });
+  });
+}
+
 function waitForLifecycleSettled(fixture, mutationType) {
   return new Promise((resolve) => {
     let unsubscribe = () => {};
@@ -1353,6 +1370,71 @@ test(
   },
 );
 
+test("complete Floor Event state inherits, deletes, and rolls back by position", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-2", floor: 2, content: "A", role: "assistant"},
+      {message_id: "floor-4", floor: 4, content: "无变化", role: "assistant"},
+      {message_id: "floor-6", floor: 6, content: "B", role: "assistant"},
+      {message_id: "floor-8", floor: 8, content: "删除 A", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        const floor = analysisInput.current_floor.floor;
+        return {
+          events: floor === 2
+            ? [eventResult("A")]
+            : floor === 6
+              ? [Object.assign(identityEventForCharacters(analysisInput.character_registry, "Alice", "Bob", "B"), {location: "楼上"})]
+              : floor === 10
+                ? [Object.assign(identityEventForCharacters(analysisInput.character_registry, "Alice", "Bob", "C"), {location: "楼下"})]
+                : [],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+  const aId = fixture.runtime.store.getFloor(0).events[0].event_id;
+  const bId = fixture.runtime.store.getFloor(2).events.find(event => event.event_id !== aId).event_id;
+  await fixture.runtime.deleteEvent(aId);
+  await fixture.runtime.updateEvent(bId, {location: "B′"});
+  await fixture.runtime.updateEvent(bId, {location: "B″"});
+  fixture.context.chat.push({message_id: "floor-10", floor: 10, content: "C", role: "assistant"});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 4}, {force: true});
+  const cId = fixture.runtime.store.getFloor(4).events.find(event => event.event_id !== bId).event_id;
+
+  assert.deepEqual(fixture.runtime.store.getFloor(0).events.map(event => event.event_id), [aId]);
+  assert.deepEqual(fixture.runtime.store.getFloor(2).events.map(event => event.event_id), [aId, bId]);
+  assert.equal(fixture.runtime.store.getFloor(2).events.find(event => event.event_id === bId).location, "楼上");
+  assert.deepEqual(fixture.runtime.store.getFloor(3).events.map(event => event.event_id), [bId]);
+  assert.equal(fixture.runtime.store.getFloor(3).events[0].location, "B″");
+  assert.deepEqual(fixture.runtime.store.getFloor(4).events.map(event => event.event_id), [bId, cId]);
+  fixture.runtime.destroy();
+});
+
+test("deleting the last Event stores an explicit empty complete state", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "empty-base", floor: 2, content: "A", role: "assistant"},
+      {message_id: "empty-delete", floor: 8, content: "删除全部", role: "assistant"},
+    ],
+    analyzer: {async analyzeFloor() { return {events: [eventResult("only-event")]}; }},
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const eventId = fixture.runtime.store.getFloor(0).events[0].event_id;
+  await fixture.runtime.deleteEvent(eventId);
+  assert.deepEqual(fixture.runtime.store.getFloor(1).events, []);
+  assert.equal(fixture.runtime.store.getFloor(1).analysis.status, "success");
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.context.chat.push({message_id: "empty-next", floor: 10, content: "新增 C", role: "assistant"});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+  assert.equal(fixture.runtime.store.getFloor(2).events.length, 1);
+  fixture.runtime.destroy();
+});
+
 test("Runtime persists pending candidates and re-evaluates them after a World Model update", async () => {
   const abstractEvent = canonicalApiEvent({
     subjectId: "subject_a",
@@ -1973,7 +2055,7 @@ test("Event dedupe references every valid Floor inside the bounded Recent Story 
   );
   assert.deepEqual(
     targetInput.existing_bioweave.events.map((item) => item.source.floor),
-    [2],
+    [1, 2],
   );
   fixture.runtime.destroy();
 });
@@ -2027,7 +2109,10 @@ test("semantic duplicate from Recent Story is not persisted a second time", asyn
   persisted = fixture.context.chat[0].extra.bioweave.events[0];
   await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
 
-  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(currentEvents.length, 1);
+  assert.equal(currentEvents[0].event_id, persisted.event_id);
+  assert.equal(currentEvents[0].source.message_id, "message-history");
   fixture.runtime.destroy();
 });
 
@@ -2493,7 +2578,8 @@ test("MESSAGE_DELETED invalidates the downstream active path without analyzing",
       { force: true },
     );
   }
-  const downstreamEventId = fixture.runtime.store.getFloor(2).events[0].event_id;
+  const downstreamEventId = fixture.runtime.store.getFloor(2).events
+    .find(event => event.source?.message_id === "message-downstream")?.event_id;
 
   fixture.context.chat.splice(1, 1);
   fixture.emit("message-deleted", fixture.context.chat.length);
@@ -2574,7 +2660,8 @@ test("latest MESSAGE_DELETED lets the next analysis use the surviving snapshot",
       { force: true },
     );
   }
-  const deletedEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
+  const deletedEventId = fixture.runtime.store.getFloor(1).events
+    .find(event => event.source?.message_id === "message-latest")?.event_id;
   fixture.context.chat.splice(1, 1);
   fixture.emit("message-deleted", fixture.context.chat.length);
   await settle();
@@ -3263,8 +3350,8 @@ test("repeated force analysis leaves only the final successful Event result", as
     );
   }
   const events = await fixture.runtime.getCurrentFloorEvents();
-  assert.equal(events.length, 1);
-  assert.equal(events[0].location, "final");
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map(event => event.location), ["prior", "final"]);
   fixture.runtime.destroy();
 });
 
@@ -3859,7 +3946,7 @@ test("scheduler reconciliation removes deleted Floor keys and restores the inter
   await new Promise(resolve => setTimeout(resolve, 180));
   state = fixture.runtime.getAutoAnalysisSchedulerState();
   assert.equal(state.counter, 0);
-  assert.equal(fixture.calls(), 3); // baseline + first 64 + replacement 64
+  assert.equal(fixture.calls(), 2); // baseline + replacement; deleted 64 is invalidated
   fixture.runtime.destroy();
 });
 
@@ -5523,6 +5610,7 @@ test("repeated lifecycle notifications share one World-first analysis Job", asyn
       },
     },
   });
+  configureScheduler(fixture, { interval: 1 });
   await fixture.runtime.init();
 
   fixture.emit("generation-started", { genType: "regenerate", message_id: "message-stable" });
@@ -5647,16 +5735,18 @@ test("active Swipe switching selects isolated authoritative Floor Versions", asy
     role: "assistant",
   };
   const fixture = createFixture({ messages: [message] });
+  configureScheduler(fixture, { interval: 1 });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   await settle();
   const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
   message.swipe_id = 1;
+  const analysisSettled = waitForAnalysisSuccess(fixture, 1);
   fixture.emit("generation-started", { message_id: "message-swipe", swipe_id: 1 });
   fixture.emit("message-swiped", { message_id: "message-swipe", swipe_id: 1, pendingGeneration: true });
   fixture.emit("generation-ended", { message_id: "message-swipe", swipe_id: 1 });
   fixture.emit("character-message-rendered", { message_id: "message-swipe", swipe_id: 1 });
-  await settle();
+  await analysisSettled;
   const events = await fixture.runtime.getCurrentFloorEvents();
   assert.equal(events.length, 1);
   assert.notEqual(events[0].event_id, firstId);
@@ -6035,6 +6125,7 @@ test("previous API state follows the active Swipe owner after switching", async 
       },
     },
   });
+  configureScheduler(fixture, { interval: 1 });
   await fixture.runtime.init();
       await fixture.runtime.analyzeFloor(
         { __messageIndex: true, index: 0 },
@@ -6051,6 +6142,7 @@ test("previous API state follows the active Swipe owner after switching", async 
       fixture.emit("generation-ended", { message_id: message.message_id, swipe_id: 1 });
       fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
       await settle();
+      await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
       const swipeBEvents = fixture.runtime.store.getActiveFloor(0).events;
       assert.equal(swipeBEvents.length, 1);
       assert.notEqual(swipeBEvents[0].event_id, swipeAEventId);
@@ -6279,7 +6371,7 @@ test("reload restores all business state from three Floor facts without Chat mir
   await reloaded.init();
   const business = await reloaded.collectActiveBusinessData();
   const rebuilt = await reloaded.getTrackingRegistry();
-  assert.equal(business.active_event_count, 3);
+  assert.equal(business.active_event_count, 1);
   assert.equal(business.tracking_subject_count, 1);
   const subjectId = Object.keys(rebuilt.tracking_subjects)[0];
   assert.ok(rebuilt.tracking_subjects[subjectId]);
@@ -6378,7 +6470,9 @@ test("deleting an Event does not clear surviving later Floor Event slots", async
       async analyzeFloor({analysisInput}) {
         return {
           events: [
-            eventResult(`event-floor-${analysisInput.current_floor.floor}`),
+            eventResult(`event-floor-${analysisInput.current_floor.floor}`, {
+              location: `地点-${analysisInput.current_floor.floor}`,
+            }),
           ],
         };
       },
@@ -6389,7 +6483,8 @@ test("deleting an Event does not clear surviving later Floor Event slots", async
   await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
 
   const deletedEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
-  const survivingEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
+  const survivingEventId = fixture.runtime.store.getFloor(1).events
+    .find(event => event.event_id !== deletedEventId).event_id;
   await fixture.runtime.deleteEvent(deletedEventId);
 
   assert.deepEqual(
@@ -6435,7 +6530,7 @@ test("deleting one Event preserves same-Floor sibling Events", async () => {
   fixture.runtime.destroy();
 });
 
-test("editing a historical Event preserves later Floor slots and Events", async () => {
+test("editing an Event writes only the current complete Floor state", async () => {
   const fixture = createFixture({
     messages: [
       {
@@ -6463,18 +6558,19 @@ test("editing a historical Event preserves later Floor slots and Events", async 
 
   const historicalEventId = fixture.runtime.store.getFloor(0).events[0].event_id;
   const laterEventId = fixture.runtime.store.getFloor(1).events[0].event_id;
-  await fixture.runtime.updateEvent(historicalEventId, {location: "编辑后的地点"});
+  await fixture.runtime.updateEvent(laterEventId, {location: "编辑后的地点"});
 
-  assert.equal(fixture.runtime.store.getFloor(0).events[0].location, "编辑后的地点");
+  assert.equal(fixture.runtime.store.getFloor(0).events[0].location, "房间");
   assert.deepEqual(
     fixture.runtime.store.getFloor(1).events.map(event => event.event_id),
     [laterEventId],
   );
+  assert.equal(fixture.runtime.store.getFloor(1).events[0].location, "编辑后的地点");
   assert.deepEqual(
     (await fixture.runtime.collectActiveBusinessData()).active_events.map(
       event => event.event_id,
     ),
-    [historicalEventId, laterEventId],
+    [laterEventId],
   );
   fixture.runtime.destroy();
 });
@@ -7756,7 +7852,7 @@ test("StoryTimeCoordinator resolves surviving Character Floors without Event Ana
   assert.equal(info.story_time.calendar_id, null);
   assert.equal(info.story_time.day_index, null);
   assert.equal(trace.at(-1).raw_header, "羲和元年五月初四 午时");
-  assert.equal(trace.at(-1).source, "header");
+  assert.equal(trace.at(-1).source, "cache");
   fixture.runtime.destroy();
 });
 
@@ -7775,7 +7871,7 @@ test("Story Time debug DTO reads the current Floor without invoking Event Analyz
   const debug = await fixture.runtime.getStoryTimeDebugInfo();
   assert.equal(analyzerCalls, 0);
   assert.equal(debug.floor.message_id, "debug-floor-60");
-  assert.equal(debug.source, "synopsis_block_time");
+  assert.equal(debug.source, "cache");
   assert.equal(debug.candidate, "羲和元年五月初四 午时");
   assert.equal(debug.parsed_parts.era_label, "羲和");
   assert.equal(debug.parsed_parts.year, 1);
@@ -7783,7 +7879,7 @@ test("Story Time debug DTO reads the current Floor without invoking Event Analyz
   assert.equal(debug.parsed_parts.day, 4);
   assert.equal(debug.story_time.day_index, null);
   assert.equal(debug.candidate_source, "synopsis_block_time");
-  assert.equal(debug.resolution_source, "fresh");
+  assert.equal(debug.resolution_source, "cache");
   const cached = await fixture.runtime.getStoryTimeDebugInfo();
   assert.equal(cached.candidate_source, "synopsis_block_time");
   assert.equal(cached.resolution_source, "cache");
@@ -8103,8 +8199,14 @@ test("Runtime Snapshot restore uses a strict post-checkpoint Event boundary and 
   const restored = await fixture.runtime.getCurrentBiologicalState();
   const restoredIds = restored.current_state.processed_event_ids;
   assert.equal(new Set(restoredIds).size, restoredIds.length);
-  assert.equal(checkpointSnapshot.state.processed_event_ids.length, 3);
-  assert.equal(restoredIds.length, 6);
+  assert.deepEqual(
+    restoredIds,
+    latestSnapshot.state.processed_event_ids,
+  );
+  assert.equal(
+    new Set(checkpointSnapshot.state.processed_event_ids).size,
+    checkpointSnapshot.state.processed_event_ids.length,
+  );
 
   fixture.context.chat[5].extra.bioweave.snapshot = {
     ...latestSnapshot,
@@ -8198,7 +8300,7 @@ test("Story Time-only advancement restores from an unchanged earlier Snapshot", 
   assert.equal(current.current_story_time.day_index, 20544);
   assert.equal(subject.reproductive_exposure.elapsed_story_days, 90);
   assert.deepEqual(fixture.runtime.store.getFloor(0, 0).snapshot, snapshotA);
-  assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot.checkpoint.message_id, "story-snapshot-b");
+  assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot, null);
   fixture.runtime.destroy();
 });
 

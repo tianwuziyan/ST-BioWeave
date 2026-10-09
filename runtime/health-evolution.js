@@ -3,16 +3,14 @@ import {deriveCurrentHealthState, emptyCurrentHealthState} from '../core/health-
 import {buildHealthRecoveryGuidance} from '../core/health-recovery-guidance.js';
 
 export function createHealthEvolutionRuntime() {
-  function deriveFromFloorStates({states = [], currentStoryTime = null} = {}) {
-    const events = [];
+  function deriveFromFloorStates({states = [], currentEvents = [], currentStoryTime = null} = {}) {
+    const events = Array.isArray(currentEvents) ? [...currentEvents] : [];
     const assessments = [];
     for (const state of Array.isArray(states) ? states : []) {
       const version = state?.version;
-      const floorEvents = Array.isArray(state?.events) ? state.events : [];
-      events.push(...floorEvents);
       assessments.push(...activeHealthAssessments({
         timeline: state?.floorData?.health_assessment_timeline,
-        events: floorEvents,
+        events,
         floorVersion: version,
       }));
     }

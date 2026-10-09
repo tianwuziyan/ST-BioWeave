@@ -1007,8 +1007,8 @@ baseline, including during force/re-analysis. A candidate is usable only when
 its saved `analysis.status` is `success`, its current authoritative version has
 `version.floor < target.version.floor`, and
 `sameFloorVersion(floorVersionFromData(candidateFloor), version)` is true.
-Candidate Events must come from `getActiveFloorEvents(candidateIndex, version)`
-so inactive Swipes and stale Event sources are excluded. If no candidate
+Candidate Events must come from the nearest valid complete Floor state resolver;
+inactive Swipes, stale Floor Versions, and deleted owners are excluded. If no candidate
 passes, the normalized baseline is exactly `{analysis: null, events: []}`.
 The ownership and API provenance boundary for this input is
 [Floor State Ownership](./floor-state.md).

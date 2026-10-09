@@ -370,11 +370,24 @@ export function createCharacterEventAnalysis({
       removed_event_count: identityResolvedEvents.length - dedupedEvents.length,
     }, "event");
     execution.stage = "normalization";
-    const currentFloorEvents = execution.reason === "manual-refresh"
-      ? (getFloor(target.index, target.swipeId)?.events ?? []).filter((event) =>
-        sameFloorVersion(event?.source, target.version),
-      ).map((event) => normalizeEvent(event))
+    const currentFloorEvents = Array.isArray(analysisInput.existing_events)
+      ? analysisInput.existing_events.map((event) => normalizeEvent(event))
       : [];
+    const hasExistingState = currentFloorEvents.length > 0 ||
+      Boolean(analysisInput.existing_bioweave?.analysis?.status);
+    if (dedupedEvents.length === 0 && hasExistingState) {
+      try {
+        await maybeCreateSnapshot(target, token);
+      } catch (snapshotError) {
+        trace("runtime-snapshot-error", {
+          error: snapshotError,
+          phase: "snapshot_checkpoint",
+          attempt: execution.attempt,
+          staleChat: isStaleChat(snapshotError),
+        });
+      }
+      return {identityResult, events: currentFloorEvents, analysis: null, unchanged: true};
+    }
     const currentEventIndexes = new Map(
       currentFloorEvents.map((event, index) => [eventContinuityKey(event), index]),
     );
@@ -475,6 +488,20 @@ export function createCharacterEventAnalysis({
       ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
       ...enrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
     ]).map((event) => normalizeEvent(event));
+    const unchanged = JSON.stringify(events) === JSON.stringify(currentFloorEvents);
+    if (unchanged && hasExistingState) {
+      try {
+        await maybeCreateSnapshot(target, token);
+      } catch (snapshotError) {
+        trace("runtime-snapshot-error", {
+          error: snapshotError,
+          phase: "snapshot_checkpoint",
+          attempt: execution.attempt,
+          staleChat: isStaleChat(snapshotError),
+        });
+      }
+      return {identityResult, events, analysis: null, unchanged: true};
+    }
     const assessmentCandidates = healthAssessment?.selectCandidates
       ? healthAssessment.selectCandidates({events, currentEvents: currentFloorEvents})
       : events;
@@ -609,7 +636,7 @@ export function createCharacterEventAnalysis({
       persistenceComplete: true,
       registryComplete: true,
     });
-    return { identityResult, events, analysis };
+    return { identityResult, events, analysis, unchanged };
   }
 
   return { runEventAttempt };

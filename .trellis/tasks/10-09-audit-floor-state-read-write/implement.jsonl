@@ -1,0 +1,5 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor owner, active Swipe, six-field Floor Version and historical invalidation rules"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Event source semantics, analysis pipeline, StateReducer and Tracking boundaries"}
+{"file":"docs/ARCHITECTURE.md","reason":"Runtime, storage, event analysis and consumer ownership boundaries"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent field ownership and authoritative Floor persistence"}

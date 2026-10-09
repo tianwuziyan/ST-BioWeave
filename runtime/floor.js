@@ -181,11 +181,23 @@ export function eventSourceMatchesFloorVersion(eventOrSource, version) {
 // Read only facts produced for the authoritative current Floor Version.  A
 // missing/incomplete version intentionally yields no events rather than
 // treating a previous successful result as active.
+export function hasCompleteEventState(floorData, version) {
+  if (!floorData || typeof floorData !== "object" || Array.isArray(floorData)) return false;
+  if (!sameFloorVersion(floorVersionFromData(floorData), version)) return false;
+  const analysis = floorData.analysis;
+  const hasSuccessfulResult = analysis?.status === "success" ||
+    (["failed", "cancelled"].includes(analysis?.status) &&
+      analysis?.last_success?.status === "success" &&
+      sameFloorVersion(analysis.last_success.floor_version, version));
+  return hasSuccessfulResult && Array.isArray(floorData.events);
+}
+
 export function getActiveFloorEvents(floorOrEvents, version) {
   if (!hasCompleteFloorVersion(version)) return [];
-  const events = Array.isArray(floorOrEvents) ? floorOrEvents : floorOrEvents?.events;
+  if (!Array.isArray(floorOrEvents) && !hasCompleteEventState(floorOrEvents, version)) return [];
+  const events = Array.isArray(floorOrEvents) ? floorOrEvents : floorOrEvents.events;
   if (!Array.isArray(events)) return [];
-  return events.filter(event => eventSourceMatchesFloorVersion(event, version));
+  return events;
 }
 
 export const activeFloorEvents = getActiveFloorEvents;

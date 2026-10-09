@@ -2660,7 +2660,14 @@ export function createRuntime({
     await refreshActiveOwner(currentChatId);
     storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
     await eventAnalysis.primeLifecycleSnapshot?.();
-    await eventAnalysis.reconcileSchedulerState?.({reason: "runtime-init"});
+    try {
+      await eventAnalysis.reconcileSchedulerState?.({reason: "runtime-init"});
+    } catch (error) {
+      // Floor Version hashing is a read preflight. A temporary hashing or
+      // version failure must not abort runtime initialization or prevent the
+      // status/business DTO paths from returning their safe diagnostics.
+      if (error?.analysis_stage !== "floor_version") throw error;
+    }
     await recordReloadFloorSlotAudit("runtime-init");
     try {
       await projectionContext.refreshProjectionContext({chatId: currentChatId});

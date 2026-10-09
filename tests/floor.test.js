@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {activeFloorEvents,commitAnalysis,eventSourceMatchesFloorVersion,floorVersion,getActiveFloorEvents,hashText,sameFloorVersion,shouldAnalyze} from '../runtime/floor.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {activeFloorEvents,commitAnalysis,eventSourceMatchesFloorVersion,floorVersion,getActiveFloorEvents,hasCompleteEventState,hashText,sameFloorVersion,shouldAnalyze} from '../runtime/floor.js';
 
 const version={chat_id:'chat-a',message_id:'m1',floor:1,swipe_id:0,content_hash:'hash-1',message_version:'v1'};
 const editedVersion={...version,content_hash:'hash-2',message_version:'v2'};
@@ -45,16 +45,25 @@ test('manual success replaces the previous version result',()=>{
   assert.equal(result.last_success,undefined);
 });
 
-test('active event scan requires every source field to match the current version',()=>{
+test('complete Event state keeps inherited source provenance',()=>{
   const incomplete={event_id:'evt-incomplete',source:{...version,content_hash:undefined}};
   const wrongSwipe={event_id:'evt-wrong-swipe',source:{...version,swipe_id:1}};
   const wrongMessageVersion={event_id:'evt-wrong-version',source:{...version,message_version:'v2'}};
-  const floor={events:[previousEvent,incomplete,wrongSwipe,wrongMessageVersion]};
+  const floor={floor_version:version,analysis:{status:'success',floor_version:version},events:[previousEvent,incomplete,wrongSwipe,wrongMessageVersion]};
   assert.equal(eventSourceMatchesFloorVersion(previousEvent,version),true);
   assert.equal(eventSourceMatchesFloorVersion(incomplete,version),false);
-  assert.deepEqual(getActiveFloorEvents(floor,version).map(event=>event.event_id),['evt-old']);
+  assert.equal(hasCompleteEventState(floor,version),true);
+  assert.deepEqual(getActiveFloorEvents(floor,version).map(event=>event.event_id),['evt-old','evt-incomplete','evt-wrong-swipe','evt-wrong-version']);
   assert.deepEqual(activeFloorEvents(floor,editedVersion),[]);
   assert.deepEqual(getActiveFloorEvents(floor),[]);
+});
+
+test('Event state presence distinguishes missing state from explicit empty state',()=>{
+  const missing={floor_version:version,analysis:null,events:[]};
+  const empty={floor_version:version,analysis:{status:'success',floor_version:version},events:[]};
+  assert.equal(hasCompleteEventState(missing,version),false);
+  assert.equal(hasCompleteEventState(empty,version),true);
+  assert.deepEqual(getActiveFloorEvents(empty,version),[]);
 });
 
 test('HTTP-like crypto without subtle uses UTF-8 SHA-256 fallback compatible with WebCrypto', {concurrency: false}, async()=>{

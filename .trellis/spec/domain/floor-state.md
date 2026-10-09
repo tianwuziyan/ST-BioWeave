@@ -71,8 +71,10 @@ is:
   `message.swipe_info[swipe_id].extra.bioweave`;
 - a User message is rejected as a BioWeave Floor owner;
 - the requested message, Chat, and Swipe must still exist;
-- an Event is active only when its complete `source` matches the current
-  Floor Version.
+- a complete Event state is active when the containing Floor slot has a
+  matching complete six-field Floor Version and a persisted analysis result;
+  inherited Events keep their original `source`, which need not equal the
+  containing Floor slot Version.
 
 An automatic Analysis Job captures one complete Floor Version boundary. Its
 Current Target Floor, bounded Recent Story, `existing_events`, and Character
@@ -118,8 +120,8 @@ deletion callback or a stale cache.
 
 | Lifecycle change                           | Required result                                                                                                                                                                                                                                                                               |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First analysis or successful reanalysis    | Save the complete analysis, Events, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current six-field version.                                                                                                                            |
-| Manual regeneration or force reanalysis    | Update the same current-version slot without creating a second history record. Manual supplement preserves valid current-Floor Events omitted by the new response; matching facts retain their canonical Event/identity IDs. The target is never its own previous historical Floor. |
+| First analysis or successful reanalysis    | Save the complete current Event state, analysis, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current six-field version. The state inherits the nearest valid prior complete state; unchanged Floors do not copy it. |
+| Manual regeneration or force reanalysis    | Update the same current-version slot without creating a second history record. Manual supplement preserves valid current-state Events omitted by the new response; matching facts retain their canonical Event/identity IDs. The target is never its own previous historical Floor. |
 | Edit or regenerated text                   | Recompute `content_hash` and/or `message_version`. The old result is stale and its Events are inactive until a successful result for the new version is saved. A failed attempt may preserve the old stored result for diagnostics, but it cannot make old Events active for the new version. |
 | Character message deletion                 | The message's Floor facts disappear from active reads. Rebuild derived state from the remaining Character messages.                                                                                                                                                                           |
 | User message mutation                      | No BioWeave Floor is created, invalidated, or reanalyzed solely because a User message changed.                                                                                                                                                                                                  |
@@ -676,11 +678,11 @@ Missing or rejected Snapshot data leaves full replay available.
 
 The current Runtime uses this contract in production. After successful
 Character/Event analysis, the checkpoint bridge may persist a Snapshot at the
-configured interval. `getCurrentBiologicalState()` searches for the nearest
-valid Snapshot owned by the active valid Character Floor/Swipe, restores its
-state with `restoreFromSnapshot()`, and replays later valid Events. If no valid
-Snapshot is available, it calls `reduceState()` with the complete active Event
-set. The read path does not create or rewrite a Snapshot.
+configured interval. The current state read path resolves the nearest valid
+complete Event state and calls `reduceState()` once with that complete active
+Event set. It does not replay `events` from multiple complete Floors on top of
+a Snapshot; this prevents unchanged inherited Events from being applied more
+than once. The read path does not create or rewrite a Snapshot.
 
 `reduceState()` is a derived-state reducer, not an authoritative fact store. Its
 input includes `baseState`, `events`, `currentStoryTime`, and `characterFacts`.

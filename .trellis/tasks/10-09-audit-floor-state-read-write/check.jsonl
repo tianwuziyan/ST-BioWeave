@@ -1,0 +1,4 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Chat-level fallback, stale Swipe/version rejection and historical Floor ownership"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Event source, Health, Tracking and StateReducer data flow"}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify changed functions stay within existing feature owners"}

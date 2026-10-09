@@ -2,10 +2,7 @@ import {normalizeEvent, validateEventCollection} from "../core/events.js";
 import {hasCharacterId, normalizeCharacterRegistry} from "../core/identity.js";
 
 export function createEventEditing({
-  getMessages = () => [],
-  isCharacterMessage = () => false,
-  resolveFloorAtIndex,
-  getActiveFloorEvents,
+  resolveCurrentEventState,
   invalidateMutation,
   commitFloorPatch,
   assertMutationToken,
@@ -16,16 +13,11 @@ export function createEventEditing({
   async function findActiveEvent(eventId) {
     const targetId = String(eventId ?? "").trim();
     if (!targetId) throw new Error("EVENT_NOT_FOUND");
-    const all = getMessages();
-    for (let index = 0; index < all.length; index += 1) {
-      if (!isCharacterMessage(all[index])) continue;
-      const target = await resolveFloorAtIndex({__messageIndex: true, index});
-      const events = getActiveFloorEvents(index, target.version) ?? [];
-      const event = events.find(
-        (candidate) => String(candidate?.event_id) === targetId,
-      );
-      if (event) return {...target, event};
-    }
+    const target = await resolveCurrentEventState();
+    const event = (target.events ?? []).find(
+      (candidate) => String(candidate?.event_id) === targetId,
+    );
+    if (event) return {...target, event};
     throw new Error("EVENT_NOT_FOUND");
   }
 
@@ -38,7 +30,7 @@ export function createEventEditing({
       source: target.event.source,
     });
     const characterRegistry = normalizeCharacterRegistry(
-      target.floorData.character_registry,
+      target.inheritedCharacterRegistry ?? target.floorData.character_registry,
     );
     for (const [participantIndex, participant] of nextEvent.participants.entries()) {
       if (hasCharacterId(characterRegistry, participant.character_id)) continue;
@@ -51,9 +43,7 @@ export function createEventEditing({
       error.error_path = error.diagnostic_path;
       throw error;
     }
-    const events = [
-      ...(Array.isArray(target.floorData.events) ? target.floorData.events : []),
-    ];
+    const events = [...(Array.isArray(target.events) ? target.events : [])];
     const index = events.findIndex(
       (event) => String(event?.event_id) === String(eventId),
     );
@@ -72,7 +62,13 @@ export function createEventEditing({
       target.index,
       {mutationScope: "target-local"},
     );
-    await commitFloorPatch(target, "event", {events}, {
+    const analysis = {
+      ...(target.floorData.analysis ?? target.inheritedAnalysis ?? {}),
+      status: "success",
+      floor_version: target.version,
+      event_count: events.length,
+    };
+    await commitFloorPatch(target, "event", {analysis, events, character_registry: characterRegistry}, {
       operation_type: "event-edit-patch",
       assertCurrent: () => assertMutationToken(mutationToken),
     });
@@ -84,15 +80,23 @@ export function createEventEditing({
 
   async function deleteEvent(eventId) {
     const target = await findActiveEvent(eventId);
-    const events = (
-      Array.isArray(target.floorData.events) ? target.floorData.events : []
-    ).filter((event) => String(event?.event_id) !== String(eventId));
+    const events = (Array.isArray(target.events) ? target.events : [])
+      .filter((event) => String(event?.event_id) !== String(eventId));
     const mutationToken = await invalidateMutation(
       {type: "MESSAGE_DELETED", payload: {message_id: target.version.message_id}},
       target.index,
       {mutationScope: "target-local"},
     );
-    await commitFloorPatch(target, "event", {events}, {
+    const analysis = {
+      ...(target.floorData.analysis ?? target.inheritedAnalysis ?? {}),
+      status: "success",
+      floor_version: target.version,
+      event_count: events.length,
+    };
+    const characterRegistry = normalizeCharacterRegistry(
+      target.inheritedCharacterRegistry ?? target.floorData.character_registry,
+    );
+    await commitFloorPatch(target, "event", {analysis, events, character_registry: characterRegistry}, {
       operation_type: "event-delete-patch",
       assertCurrent: () => assertMutationToken(mutationToken),
     });

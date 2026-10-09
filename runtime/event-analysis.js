@@ -20,7 +20,6 @@ import {
 import { reduceState } from "../core/state.js";
 import {
   createSnapshot,
-  restoreFromSnapshot,
   shouldSnapshot,
   validateSnapshot,
 } from "../core/snapshot.js";
@@ -57,6 +56,7 @@ import {
   commitAnalysis,
   floorVersion,
   floorVersionFromData,
+  hasCompleteEventState,
   hashText,
   sameFloorVersion,
   shouldAnalyze,
@@ -1495,29 +1495,51 @@ export function createEventAnalysisCoordinator({
       character: cloneValue(nextRegistry.entities[String(characterId).trim()]),
     };
   }
-  async function findPreviousSuccessfulBioWeave(target) {
-    // Previous/API history comes only from an older current valid Floor; see .trellis/spec/domain/floor-state.md.
-    for (let index = target.index - 1; index >= 0; index -= 1) {
+  async function resolveCompleteEventStateAtOrBefore(target, {strictBefore = false} = {}) {
+    // A complete Event state is authoritative for its slot. Missing analysis
+    // means "no state here"; a successful analysis with events=[] is an
+    // explicit empty state and therefore stops the search.
+    const endIndex = target.index - (strictBefore ? 1 : 0);
+    for (let index = endIndex; index >= 0; index -= 1) {
       if (!isCharacterMessage(messages()[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
       const floorData = store.getFloor?.(index, swipeId);
-      const analysis = floorData?.analysis;
-      if (analysis?.status !== "success") continue;
       const candidate = await resolveFloorAtIndex({ __messageIndex: true, index });
-      if (candidate.version.floor >= target.version.floor) continue;
+      if (candidate.version.floor > target.version.floor ||
+          (strictBefore && candidate.version.floor >= target.version.floor)) continue;
       if (isFloorInvalidated(candidate)) continue;
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version))
         continue;
+      if (!hasCompleteEventState(floorData, candidate.version)) continue;
+      return {
+        index,
+        swipeId,
+        floorData,
+        version: candidate.version,
+        events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
+      };
+    }
+    return null;
+  }
+
+  async function findPreviousSuccessfulBioWeave(target) {
+    let boundary = target;
+    while (boundary) {
+      const state = await resolveCompleteEventStateAtOrBefore(boundary, {strictBefore: true});
+      if (!state) break;
+      const {floorData, events} = state;
       const characterRegistry = normalizedCharacterRegistrySnapshot(
         floorData.character_registry,
       );
-      if (!characterRegistry) continue;
-      return {
-        analysis,
-        events: store.getActiveFloorEvents?.(index, candidate.version) ?? [],
-        character_registry: characterRegistry,
-      };
+      if (characterRegistry) {
+        return {
+          analysis: floorData.analysis,
+          events,
+          character_registry: characterRegistry,
+        };
+      }
+      boundary = {...target, index: state.index, version: state.version};
     }
     return {
       analysis: null,
@@ -1525,6 +1547,7 @@ export function createEventAnalysisCoordinator({
       character_registry: normalizeCharacterRegistry(null),
     };
   }
+
   async function collectCurrentFloorStates(token = chat.token(), {includeEmpty = false} = {}) {
     const states = [];
     const all = messages();
@@ -1565,9 +1588,19 @@ export function createEventAnalysisCoordinator({
     const validStates = states.filter(
       (state) => !isFloorInvalidated(state),
     );
-    const activeEvents = sortEvents(
-      validStates.flatMap((state) => state.events),
-    );
+    let activeEvents = [];
+    try {
+      const current = await resolveCurrentBioWeaveFloor();
+      const currentState = await resolveCompleteEventStateAtOrBefore(current);
+      activeEvents = sortEvents(currentState?.events ?? []);
+    } catch (error) {
+      if (![
+        "NO_CHARACTER_FLOOR",
+        "MESSAGE_NOT_FOUND",
+        "SWIPE_NOT_FOUND",
+      ].includes(error?.message))
+        throw error;
+    }
     let world = null;
     try {
       world = await resolveWorldModelAtOrBefore();
@@ -1595,8 +1628,9 @@ export function createEventAnalysisCoordinator({
     };
   }
   async function collectActiveEvents(token = chat.token()) {
-    const states = await collectCurrentFloorStates(token);
-    return sortEvents(states.flatMap((state) => state.events));
+    const current = await resolveCurrentBioWeaveFloor();
+    const state = await resolveCompleteEventStateAtOrBefore(current);
+    return sortEvents(state?.events ?? []);
   }
   function currentStoryTimeDifferences(activeEvents, currentStoryTime) {
     const differences = {};
@@ -1654,41 +1688,11 @@ export function createEventAnalysisCoordinator({
 
   function snapshotCandidates(states, currentFloor) {
     return states
-      .filter(
-        (state) =>
-          state.index <= currentFloor.index &&
-          state.version.floor <= currentFloor.version.floor,
+      .filter((state) =>
+        state.index <= currentFloor.index &&
+        state.version.floor <= currentFloor.version.floor,
       )
       .sort((left, right) => right.index - left.index);
-  }
-
-  function restoreStateFromNearestSnapshot(states, currentFloor, currentStoryTime, characterFacts) {
-    const candidates = snapshotCandidates(states, currentFloor);
-    for (const candidate of candidates) {
-      const snapshot = validSnapshotForState(candidate, currentFloor.version);
-      if (!snapshot) continue;
-      const laterEvents = sortEvents(
-        states
-          .filter(
-            (state) =>
-              state.index > candidate.index &&
-              state.index <= currentFloor.index,
-          )
-          .flatMap((state) => state.events),
-      );
-      return {
-        snapshot,
-        checkpoint: candidate,
-        events: laterEvents,
-        state: restoreFromSnapshot({
-          snapshot,
-          events: laterEvents,
-          currentStoryTime,
-          characterFacts,
-        }),
-      };
-    }
-    return null;
   }
 
   function validFloorProgression(states, currentFloor) {
@@ -1789,20 +1793,20 @@ export function createEventAnalysisCoordinator({
       characterRegistry,
     );
     const currentHealthState = healthEvolution?.deriveFromFloorStates
-      ? healthEvolution.deriveFromFloorStates({states: validStates, currentStoryTime})
+      ? healthEvolution.deriveFromFloorStates({
+          states: validStates,
+          currentEvents: activeEvents,
+          currentStoryTime,
+        })
       : {schema_version: 1, characters: {}};
     let currentState;
     let currentStateStatus = currentFloor ? "ready" : "NO_CHARACTER_FLOOR";
     try {
-      const restored = currentFloor
-        ? restoreStateFromNearestSnapshot(
-          validStates,
-          currentFloor,
-          currentStoryTime,
-          characterFacts,
-        )
-        : null;
-      currentState = restored?.state ?? reduceState({
+      // floor.events is already the complete current Event state. Replaying
+      // every later Floor on top of a Snapshot would apply unchanged Events
+      // more than once, so Snapshot remains a checkpoint artifact but is not
+      // an Event replay source for this model.
+      currentState = reduceState({
         events: activeEvents,
         currentStoryTime,
         characterFacts,
@@ -1969,11 +1973,16 @@ export function createEventAnalysisCoordinator({
       healthAssessment,
     },
     eventEditing: {
-      getMessages: messages,
-      isCharacterMessage,
-      resolveFloorAtIndex,
-      getActiveFloorEvents: (index, version) =>
-        store.getActiveFloorEvents?.(index, version) ?? [],
+      resolveCurrentEventState: async () => {
+        const target = await resolveCurrentBioWeaveFloor();
+        const state = await resolveCompleteEventStateAtOrBefore(target);
+        return {
+          ...target,
+          events: state?.events ?? [],
+          inheritedAnalysis: state?.floorData?.analysis ?? null,
+          inheritedCharacterRegistry: state?.floorData?.character_registry ?? null,
+        };
+      },
       invalidateMutation,
       commitFloorPatch,
       assertMutationToken: token => chat.assert(token),
@@ -2047,8 +2056,8 @@ export function createEventAnalysisCoordinator({
       !activeAttempt.cancelRequested &&
       activePhase === "event_analysis",
     );
-    const currentFloorEvents =
-      store.getActiveFloorEvents?.(target.index, target.version) ?? [];
+    const currentState = await resolveCompleteEventStateAtOrBefore(target);
+    const currentFloorEvents = currentState?.events ?? [];
     const diagnostic =
       terminal?.diagnostic ??
       (currentAnalysis?.last_attempt &&
@@ -2882,20 +2891,7 @@ export function createEventAnalysisCoordinator({
         ? currentFloorData.character_registry
         : previous.character_registry,
     );
-    const causalEvents = sortEvents(
-      derived.states
-        .filter(
-          (state) =>
-            state.index < target.index &&
-            state.version.floor < target.version.floor &&
-            state.floorData?.analysis?.status === "success" &&
-            sameFloorVersion(
-              floorVersionFromData(state.floorData),
-              state.version,
-            ),
-        )
-        .flatMap((state) => state.events),
-    );
+    const causalEvents = sortEvents(previous.events);
     const causalWorld = await resolveWorldModelAtOrBefore(target, { strictBefore: true });
     const causalRegistry = trackingRuntime.buildTrackingRegistry({
       activeEvents: causalEvents,
@@ -2935,35 +2931,12 @@ export function createEventAnalysisCoordinator({
       externalMemoryProviderLoader: collectExternalMemoryProviders,
       includePersonaInTokenEstimate: true,
     });
-    const recentStoryFloors = new Set(
-      (commonInput.recent_story?.items ?? [])
-        .map((item) => Number(item?.floor))
-        .filter(Number.isFinite),
-    );
-    const discoveryWindowEvents = derived.states
-      .filter(
-        (state) =>
-          state.index < target.index &&
-          state.version.floor < target.version.floor &&
-          recentStoryFloors.has(Number(state.version.floor)) &&
-          state.floorData?.analysis?.status === "success" &&
-          !isFloorInvalidated(state) &&
-          sameFloorVersion(
-            floorVersionFromData(state.floorData),
-            state.version,
-          ),
-      )
-      .flatMap((state) => state.events);
-    // `existing_bioweave` remains the nearest previous Floor snapshot for
-    // identity/profile continuity. Event dedupe additionally receives only
-    // valid canonical Events inside the bounded narrative discovery window.
-    const existingEvents = dedupeEvents([
-      ...(Array.isArray(previous.events) ? previous.events : []),
-      ...discoveryWindowEvents,
-      ...(currentFloorIsComparisonReference && Array.isArray(currentFloorData.events)
-        ? currentFloorData.events
-        : []),
-    ]);
+    // `existing_bioweave` and event dedupe both use the nearest complete state;
+    // complete states must never be replayed by flattening older Floors.
+    const existingEvents = currentFloorIsComparisonReference &&
+      Array.isArray(currentFloorData.events)
+      ? dedupeEvents(currentFloorData.events)
+      : dedupeEvents(previous.events);
     const characterContext = characterContextResolver(
       context,
       derivedState,
@@ -3115,6 +3088,16 @@ export function createEventAnalysisCoordinator({
           });
         },
       });
+      if (eventStage.unchanged === true) {
+        terminalState = "success";
+        return {
+          events: eventStage.events,
+          version: target.version,
+          status: "success",
+          unchanged: true,
+          attempt: execution.attempt,
+        };
+      }
       terminalState = "success";
       if (typeof projectionPostProcessor === "function") {
         void projectionPostProcessor({target, execution}).catch((error) => {
