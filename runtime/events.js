@@ -1507,6 +1507,7 @@ export function createRuntime({
   analysisSourceCache = null,
   projectionTimingConfigResolver = null,
   projectionTimingBaselineResolver = null,
+  healthRecoveryStabilityDelayMs = 2000,
 } = {}) {
   const st = adapter;
   const chat = createChatBoundary(st);
@@ -1789,6 +1790,7 @@ export function createRuntime({
     floorPersistence,
     healthAssessment,
     healthEvolution,
+    healthRecoveryStabilityDelayMs,
     trackingWindowPersistence: createTrackingWindowPersistence({
       store,
       enabledResolver: isBioWeaveEnabled,

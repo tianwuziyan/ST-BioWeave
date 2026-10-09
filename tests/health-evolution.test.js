@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {deriveCurrentHealthState} from '../core/health-evolution.js';
+import {deriveCurrentHealthState, expiredHealthEventIds} from '../core/health-evolution.js';
 import {summarizeActiveHealthSeverity} from '../core/health-aggregation.js';
 import {activeHealthAssessments, healthObservationFingerprint} from '../core/health-assessment.js';
 
@@ -250,6 +250,20 @@ test('Current Health falls back to factual description without valid staged guid
   assert.equal(observation.current_description, '原始事实描述');
 });
 
+test('recovery duration drives the stage when staged guidance is absent', () => {
+  const profileless = assessment({eventId: 'two-day-fever', expectedDuration: 2});
+  profileless.recovery_stage_guidance = null;
+  const result = deriveCurrentHealthState({
+    events: [event({id: 'two-day-fever', kind: 'fever', description: '发热'})],
+    assessments: [profileless],
+    currentStoryTime: story(1),
+  });
+  const observation = result.characters['char-a'].active_observations[0];
+  assert.equal(observation.recovery_stage, 'early');
+  assert.equal(observation.current_description, '发热');
+  assert.equal(observation.recovery_stage_guidance, null);
+});
+
 test('Grouped observations keep different current descriptions instead of first-wins', () => {
   const result = deriveCurrentHealthState({
     events: [
@@ -398,4 +412,32 @@ test('active Assessment filtering remains source-bound', () => {
 test('repeated evaluation is deterministic', () => {
   const input = {events: [event()], assessments: [assessment({expectedDay: 10})], currentStoryTime: story(5)};
   assert.deepEqual(deriveCurrentHealthState(input), deriveCurrentHealthState(structuredClone(input)));
+});
+
+test('expiredHealthEventIds identifies only reached short-term natural recovery boundaries', () => {
+  const fever = event({id: 'fever', kind: 'fever', day: 1});
+  const wound = event({id: 'wound', kind: 'abrasion', day: 1});
+  assert.deepEqual(expiredHealthEventIds({
+    events: [fever, wound],
+    assessments: [
+      assessment({eventId: 'fever', day: 1, expectedDay: 3}),
+      assessment({eventId: 'wound', day: 1, expectedDay: 11}),
+    ],
+    currentStoryTime: story(4),
+  }), ['fever']);
+});
+
+test('expiredHealthEventIds is conservative for missing profiles and current facts', () => {
+  const fever = event({id: 'fever', kind: 'fever'});
+  assert.deepEqual(expiredHealthEventIds({
+    events: [fever],
+    assessments: [assessment({eventId: 'fever', expectedDay: 2})],
+    currentStoryTime: story(3),
+    protectedEventIds: ['fever'],
+  }), []);
+  assert.deepEqual(expiredHealthEventIds({
+    events: [fever],
+    assessments: [assessment({eventId: 'fever', expectedRecovery: null})],
+    currentStoryTime: story(3),
+  }), []);
 });

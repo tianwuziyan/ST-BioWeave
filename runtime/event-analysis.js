@@ -427,6 +427,7 @@ export function createEventAnalysisCoordinator({
   trackingWindowPersistence = null,
   healthAssessment = null,
   healthEvolution = null,
+  healthRecoveryStabilityDelayMs = 2000,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -438,6 +439,8 @@ export function createEventAnalysisCoordinator({
   let lifecycleMutationChain = Promise.resolve();
   let destroyed = false;
   let removeChatBoundaryListener = null;
+  const pendingHealthRecoveryChecks = new Map();
+  let healthRecoveryScheduleRevision = 0;
   const sourceCache = analysisSourceCache ?? createWorldbookCache();
   let diagnostics;
   let trackingRefresh;
@@ -458,6 +461,102 @@ export function createEventAnalysisCoordinator({
     lastFailure: null,
     schedulerRevision: 0,
   };
+
+  function cancelPendingHealthRecoveryChecks() {
+    healthRecoveryScheduleRevision += 1;
+    for (const pending of pendingHealthRecoveryChecks.values()) {
+      clearTimeout(pending.timer);
+    }
+    pendingHealthRecoveryChecks.clear();
+  }
+
+  async function waitForHealthRecoveryStability({target, execution, token} = {}) {
+    const delay = Number.isFinite(Number(healthRecoveryStabilityDelayMs))
+      ? Math.max(0, Number(healthRecoveryStabilityDelayMs))
+      : 2000;
+    if (delay > 0) {
+      await new Promise((resolve, reject) => {
+        const signal = execution?.controller?.signal;
+        let timer = setTimeout(done, delay);
+        function cleanup() {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", aborted);
+        }
+        function done() {
+          cleanup();
+          resolve();
+        }
+        function aborted() {
+          cleanup();
+          reject(requestAbortedError());
+        }
+        if (signal?.aborted) {
+          aborted();
+          return;
+        }
+        signal?.addEventListener("abort", aborted, {once: true});
+      });
+    }
+    await assertExecutionTargetCurrent(execution, target, token);
+  }
+
+  function scheduleHealthRecoveryCheck(target, { reason = "story-time-update" } = {}) {
+    if (!target?.version || destroyed) return false;
+    const key = floorExecutionKey(target.version);
+    const previous = pendingHealthRecoveryChecks.get(key);
+    if (previous) clearTimeout(previous.timer);
+    const revision = ++healthRecoveryScheduleRevision;
+    const delay = Number.isFinite(Number(healthRecoveryStabilityDelayMs))
+      ? Math.max(0, Number(healthRecoveryStabilityDelayMs))
+      : 2000;
+    const timer = setTimeout(() => {
+      pendingHealthRecoveryChecks.delete(key);
+      void (async () => {
+        if (destroyed || revision !== healthRecoveryScheduleRevision) return;
+        const token = chat.token();
+        try {
+          const running = inFlight.get(key);
+          if (running && !running.released) await running.promise;
+          if (destroyed || revision !== healthRecoveryScheduleRevision) return;
+          chat.assert(token);
+          if (invalidatedFloors.has(key)) return;
+          const current = await resolveFloorAtIndex({__messageIndex: true, index: target.index});
+          if (!sameFloorVersion(current.version, target.version)) return;
+          const currentData = store.getFloor?.(current.index, current.swipeId) ?? {};
+          if (currentData.analysis?.status !== "success") return;
+          const trackingInputs = await collectTrackingInputs(token);
+          const storyTimeInfo = storyTimeCoordinator
+            ? await storyTimeCoordinator.getCurrentStoryTimeInfo()
+            : {story_time: null};
+          await expireRecoveredEvents({
+            target: {...current, floorData: currentData},
+            states: trackingInputs.states,
+            activeState: trackingInputs.activeState,
+            currentEvents: trackingInputs.activeEvents,
+            currentStoryTime: storyTimeInfo.story_time,
+            token,
+          });
+          emitPersistenceTrace("HEALTH_RECOVERY_CHECK_COMPLETED", null, current, {
+            trigger: reason,
+            delayed_ms: delay,
+          }, "health");
+        } catch (error) {
+          if (!isStaleChat(error) && error?.code !== "REQUEST_ABORTED") {
+            emitPersistenceTrace("HEALTH_RECOVERY_CHECK_SKIPPED", null, target, {
+              trigger: reason,
+              code: error?.code ?? error?.message ?? "HEALTH_RECOVERY_CHECK_FAILED",
+            }, "health");
+          }
+        }
+      })();
+    }, delay);
+    pendingHealthRecoveryChecks.set(key, {timer, revision});
+    emitPersistenceTrace("HEALTH_RECOVERY_CHECK_SCHEDULED", null, target, {
+      trigger: reason,
+      delayed_ms: delay,
+    }, "health");
+    return true;
+  }
 
   function createAnalysisExecutionId() {
     return `analysis-${chat.current() ?? "unknown"}-${++analysisExecutionSequence}`;
@@ -1259,6 +1358,7 @@ export function createEventAnalysisCoordinator({
       mutationScope = "downstream-destructive",
     } = {},
   ) {
+    cancelPendingHealthRecoveryChecks();
     const targetLocalMutation = mutationScope === "target-local";
     const affectedExecutions = invalidateInFlightExecutions({
       fromIndex: targetLocalMutation ? null : targetIndex,
@@ -1589,10 +1689,11 @@ export function createEventAnalysisCoordinator({
       (state) => !isFloorInvalidated(state),
     );
     let activeEvents = [];
+    let activeState = null;
     try {
       const current = await resolveCurrentBioWeaveFloor();
-      const currentState = await resolveCompleteEventStateAtOrBefore(current);
-      activeEvents = sortEvents(currentState?.events ?? []);
+      activeState = await resolveCompleteEventStateAtOrBefore(current);
+      activeEvents = sortEvents(activeState?.events ?? []);
     } catch (error) {
       if (![
         "NO_CHARACTER_FLOOR",
@@ -1610,6 +1711,7 @@ export function createEventAnalysisCoordinator({
     return {
       states: validStates,
       activeEvents,
+      activeState,
       worldModel: world?.model ?? null,
       persistedWindows: trackingWindowPersistence
         ? (await trackingWindowPersistence.getTrackingWindowTimeline({chatId: token.chatId})).creations
@@ -1658,6 +1760,92 @@ export function createEventAnalysisCoordinator({
       if (difference && Number.isFinite(Number(difference.value))) differences[eventId] = difference;
     }
     return differences;
+  }
+
+  function sameEventCollection(left, right) {
+    return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+  }
+
+  async function expireRecoveredEvents({
+    target,
+    states = [],
+    activeState = null,
+    currentEvents = [],
+    currentStoryTime = null,
+    token,
+    protectedEventIds = [],
+  } = {}) {
+    if (!target || !healthEvolution?.findExpiredEventIds || !Array.isArray(currentEvents)) {
+      return {events: currentEvents, expiredEventIds: [], floorData: target?.floorData ?? null};
+    }
+    const expiredEventIds = healthEvolution.findExpiredEventIds({
+      states,
+      currentEvents,
+      currentStoryTime,
+      protectedEventIds,
+    });
+    if (!expiredEventIds.length) {
+      return {events: currentEvents, expiredEventIds: [], floorData: target.floorData ?? null};
+    }
+
+    const expired = new Set(expiredEventIds);
+    const nextEvents = currentEvents.filter(event => !expired.has(event?.event_id));
+    const currentFloorData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
+    const priorAnalysis = currentFloorData.analysis ?? activeState?.floorData?.analysis ?? null;
+    const analyzedAt = new Date().toISOString();
+    const analysis = commitAnalysis(priorAnalysis, {
+      status: "success",
+      analyzed_at: analyzedAt,
+      last_analyzed_at: analyzedAt,
+      finished_at: analyzedAt,
+      event_count: nextEvents.length,
+      reason: "health-recovery-expiration",
+    }, target.version);
+    analysis.source_provenance = {...target.version};
+    const characterRegistry = normalizeCharacterRegistry(
+      currentFloorData.character_registry ?? activeState?.floorData?.character_registry,
+    );
+    const expectedBefore = Array.isArray(currentFloorData.events)
+      ? currentFloorData.events
+      : currentEvents;
+
+    const assertCurrent = async () => {
+      chat.assert(token);
+      const current = await resolveFloorAtIndex({__messageIndex: true, index: target.index});
+      if (!sameFloorVersion(current.version, target.version)) return false;
+      const latest = store.getFloor?.(target.index, target.swipeId) ?? {};
+      const latestEvents = Array.isArray(latest.events) ? latest.events : expectedBefore;
+      return sameEventCollection(latestEvents, expectedBefore) ||
+        sameEventCollection(latestEvents, nextEvents);
+    };
+
+    let result;
+    try {
+      result = await commitFloorPatch(target, "event", {
+        analysis,
+        events: nextEvents,
+        character_registry: characterRegistry,
+      }, {
+        operation_type: "health-recovery-expiration",
+        assertCurrent,
+      });
+    } catch (error) {
+      if (["FLOOR_TX_SUPERSEDED", "FLOOR_TX_STALE_VERSION", "FLOOR_TX_STALE_SWIPE"].includes(error?.code)) {
+        const latest = store.getFloor?.(target.index, target.swipeId) ?? null;
+        return {
+          events: Array.isArray(latest?.events) ? latest.events : currentEvents,
+          expiredEventIds: [],
+          floorData: latest,
+        };
+      }
+      throw error;
+    }
+    chat.assert(token);
+    return {
+      events: nextEvents,
+      expiredEventIds,
+      floorData: result?.floor ?? store.getFloor?.(target.index, target.swipeId) ?? null,
+    };
   }
 
   function persistedValidFloorState(state) {
@@ -1771,12 +1959,9 @@ export function createEventAnalysisCoordinator({
   async function collectCurrentDerivedState(token, chatData = null) {
     const trackingInputs = await collectTrackingInputs(token);
     const currentChat = chatData ?? store.getChat(token.chatId);
-    const {
-      states: validStates,
-      activeEvents,
-      characterRegistry,
-    } = trackingInputs;
-    const registry = trackingRuntime.buildTrackingRegistry({...trackingInputs, chatId: token.chatId});
+    let validStates = trackingInputs.states;
+    let activeEvents = trackingInputs.activeEvents;
+    let characterRegistry = trackingInputs.characterRegistry;
     let currentFloor = null;
     try {
       currentFloor = await resolveCurrentBioWeaveFloor();
@@ -1787,6 +1972,13 @@ export function createEventAnalysisCoordinator({
       ? await storyTimeCoordinator.getCurrentStoryTimeInfo()
       : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
     const currentStoryTime = storyTimeInfo.story_time;
+    const registry = trackingRuntime.buildTrackingRegistry({
+      ...trackingInputs,
+      states: validStates,
+      activeEvents,
+      characterRegistry,
+      chatId: token.chatId,
+    });
     const characterFacts = buildCharacterFacts(
       activeEvents,
       registry,
@@ -1971,6 +2163,13 @@ export function createEventAnalysisCoordinator({
       domainValidationError,
       isStaleChat,
       healthAssessment,
+      healthEvolution,
+      getCurrentStoryTime: async target => {
+        const current = await resolveCurrentBioWeaveFloor();
+        if (!sameFloorVersion(current?.version, target?.version)) return null;
+        return storyTimeCoordinator.getCurrentStoryTime();
+      },
+      waitForHealthRecoveryStability,
     },
     eventEditing: {
       resolveCurrentEventState: async () => {
@@ -3090,6 +3289,7 @@ export function createEventAnalysisCoordinator({
       });
       if (eventStage.unchanged === true) {
         terminalState = "success";
+        scheduleHealthRecoveryCheck(target, {reason: "event-analysis-complete"});
         return {
           events: eventStage.events,
           version: target.version,
@@ -3650,6 +3850,19 @@ export function createEventAnalysisCoordinator({
       }
       if (type === "MESSAGE_UPDATED" || type === "MESSAGE_EDITED" ||
           type === "MESSAGE_RECEIVED") {
+        if (type !== "MESSAGE_RECEIVED") {
+          try {
+            const current = await resolveCurrentBioWeaveFloor();
+            const key = floorExecutionKey(current.version);
+            const currentData = store.getFloor?.(current.index, current.swipeId) ?? {};
+            if (!invalidatedFloors.has(key) && currentData.analysis?.status === "success") {
+              scheduleHealthRecoveryCheck(current, {reason: `story-time-update:${type}`});
+            }
+          } catch {
+            // A changed or deleted owner will be handled by the existing
+            // analysis lifecycle; it must not create a recovery write here.
+          }
+        }
         return { skipped: true, reason: "lifecycle-baseline-only" };
       }
       if (type === "MESSAGE_SWIPED") {
@@ -3794,6 +4007,7 @@ export function createEventAnalysisCoordinator({
   }
   function handleChatBoundarySignal(signal) {
     invalidateInFlightExecutions();
+    cancelPendingHealthRecoveryChecks();
     clearWorldbookCache(sourceCache);
     if (signal?.changed) {
       lastTerminal.clear();
@@ -3804,6 +4018,7 @@ export function createEventAnalysisCoordinator({
   }
   function destroy() {
     destroyed = true;
+    cancelPendingHealthRecoveryChecks();
     removeChatBoundaryListener?.();
     removeChatBoundaryListener = null;
     for (const execution of inFlight.values()) {

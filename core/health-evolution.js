@@ -30,6 +30,42 @@ function isExpectedRecoveryReached(currentStoryTime, assessment) {
   return elapsed !== null && elapsed >= duration;
 }
 
+/**
+ * Return only observations whose persisted Assessment proves that their
+ * short-term natural-recovery boundary has been reached.  This is a pure
+ * lifecycle decision; the Runtime owns applying the resulting Event removal
+ * to the current Floor.
+ */
+export function expiredHealthEventIds({
+  events = [],
+  assessments = [],
+  currentStoryTime = null,
+  protectedEventIds = [],
+} = {}) {
+  const assessmentMap = assessmentByEvent(assessments);
+  const protectedIds = new Set(
+    (Array.isArray(protectedEventIds) ? protectedEventIds : [...(protectedEventIds ?? [])])
+      .map(value => String(value ?? '').trim())
+      .filter(Boolean),
+  );
+  return (Array.isArray(events) ? events : [])
+    .filter(event => {
+      const eventId = String(event?.event_id ?? '').trim();
+      if (!eventId || protectedIds.has(eventId)) return false;
+      const eligibility = healthAssessmentEligibility(event);
+      if (!eligibility.eligible) return false;
+      const assessment = assessmentMap.get(eventId);
+      if (!assessment || assessment.persistence !== 'short_term' ||
+          assessment.natural_recovery !== 'eligible') return false;
+      const hasExpectedRecovery = Boolean(
+        assessment.expected_recovery?.boundary ||
+        assessment.expected_recovery?.duration,
+      );
+      return hasExpectedRecovery && isExpectedRecoveryReached(currentStoryTime, assessment);
+    })
+    .map(event => event.event_id);
+}
+
 function observationSort(left, right) {
   return String(left.source_event_id).localeCompare(String(right.source_event_id));
 }
@@ -65,9 +101,9 @@ function buildObservation(event, assessment, currentStoryTime) {
       ? 'active_before_expected_boundary'
       : 'active_or_unresolved',
   };
-  const recoverySelection = observation.recovery_stage_guidance
-    ? selectHealthRecoveryGuidance(observation, currentStoryTime)
-    : {stage: null, guidance: null};
+  // Recovery stage is derived from the validated Assessment timing.  Guidance
+  // is optional presentation text and must not gate the progress indicator.
+  const recoverySelection = selectHealthRecoveryGuidance(observation, currentStoryTime);
   observation.recovery_stage = recoverySelection.stage;
   observation.current_description = recoverySelection.guidance ?? observation.description;
   return observation;

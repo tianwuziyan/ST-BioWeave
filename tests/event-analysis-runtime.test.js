@@ -8,6 +8,7 @@ import { floorVersion } from "../runtime/floor.js";
 import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schema.js";
 import { buildWorldModelSupplementCoverageTargets } from "../ai/world-supplement-protocol.js";
 import { archiveWorldModelSpecies } from "../core/world-species-archive.js";
+import { healthObservationFingerprint } from "../core/health-assessment.js";
 
 function eventResult(eventId = "evt-1", overrides = {}) {
   return {
@@ -89,6 +90,7 @@ function createFixture({
   retryCount = 0,
   notify = null,
   onWorldCandidate = null,
+  healthRecoveryStabilityDelayMs = 2000,
 } = {}) {
   const listeners = new Map();
   const context = {
@@ -249,6 +251,7 @@ function createFixture({
     notify: fixtureNotify,
     storyTimeDebug,
     storyTimeTrace,
+    healthRecoveryStabilityDelayMs,
   });
   runtime.subscribe(fixtureNotify);
   runtime.store.profileStore.getApiRequestSettings = () => ({
@@ -1432,6 +1435,112 @@ test("deleting the last Event stores an explicit empty complete state", async ()
   fixture.context.chat.push({message_id: "empty-next", floor: 10, content: "新增 C", role: "assistant"});
   await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
   assert.equal(fixture.runtime.store.getFloor(2).events.length, 1);
+  fixture.runtime.destroy();
+});
+
+test("Health Evolution recovery waits for analysis completion, stays read-only on UI reads, and writes once", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    floor: 4,
+    messages: [{
+      message_id: "health-recovery-floor",
+      floor: 4,
+      content: "第4日 当前剧情",
+      story_time: {
+        display: "第4日",
+        normalized: null,
+        day_index: 4,
+        calendar_id: null,
+        precision: "day",
+      },
+      role: "assistant",
+    }],
+    healthRecoveryStabilityDelayMs: 35,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({schema_version: 1, species: [{name: "人类", biological_types: []}]});
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return eventCalls === 1
+          ? {
+              events: [eventResult("fever", {
+                type: "physical_symptom",
+                story_time: {
+                  display: "第1日",
+                  normalized: null,
+                  day_index: 1,
+                  calendar_id: null,
+                  precision: "day",
+                },
+                pregnancy_relevance: {
+                  relevant: false,
+                  possible_conception: false,
+                  gestational_subject_ids: [],
+                  counterpart_ids: [],
+                },
+                state_fact: {
+                  subject_id: "fever-subject",
+                  payload: {
+                    symptom: {
+                      kind: "fever",
+                      description: "发热",
+                      health_role: "observation",
+                    },
+                  },
+                },
+              })],
+            }
+          : {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const floor = fixture.context.chat[0].extra.bioweave;
+  const fever = floor.events[0];
+  floor.health_assessment_timeline = {
+    schema_version: 1,
+    assessments: [{
+      assessment_id: "assessment-fever",
+      source_event_id: fever.event_id,
+      source_floor_version: structuredClone(floor.analysis.floor_version),
+      source_observation_fingerprint: healthObservationFingerprint(fever),
+      request_key: "assessment-fever-key",
+      reference_story_time: structuredClone(fever.story_time),
+      persistence: "short_term",
+      natural_recovery: "eligible",
+      expected_recovery: {
+        duration: null,
+        boundary: {
+          display: "第3日",
+          normalized: null,
+          day_index: 3,
+          calendar_id: null,
+          precision: "day",
+        },
+      },
+      earliest_recovery: {duration: null, boundary: null},
+      recovery_stage_guidance: {early: "early", recovering: "recovering", near_recovery: "near"},
+      assessment_source: "fixture",
+    }],
+  };
+  await fixture.adapter.saveFloorBioWeave(0, 0, floor);
+
+  const beforeRead = fixture.saveFloorCalls();
+  const read = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(read.active_events.length, 1);
+  assert.equal(fixture.saveFloorCalls(), beforeRead);
+
+  const beforeAnalysis = fixture.saveFloorCalls();
+  const startedAt = Date.now();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const elapsed = Date.now() - startedAt;
+  const saved = fixture.context.chat[0].extra.bioweave;
+  assert.ok(elapsed >= 25);
+  assert.deepEqual(saved.events, []);
+  assert.equal(fixture.saveFloorCalls(), beforeAnalysis + 1);
+  assert.equal(eventCalls, 2);
   fixture.runtime.destroy();
 });
 

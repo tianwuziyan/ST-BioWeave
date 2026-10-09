@@ -165,6 +165,9 @@ export function createCharacterEventAnalysis({
   domainValidationError,
   isStaleChat = () => false,
   healthAssessment = null,
+  healthEvolution = null,
+  getCurrentStoryTime = null,
+  waitForHealthRecoveryStability = null,
 } = {}) {
   async function verifyCharacterCanonicalReady(target, execution, token, expectedEvents) {
     emitPersistenceTrace("CHARACTER_CANONICAL_READ_BEGIN", execution, target, {
@@ -375,19 +378,6 @@ export function createCharacterEventAnalysis({
       : [];
     const hasExistingState = currentFloorEvents.length > 0 ||
       Boolean(analysisInput.existing_bioweave?.analysis?.status);
-    if (dedupedEvents.length === 0 && hasExistingState) {
-      try {
-        await maybeCreateSnapshot(target, token);
-      } catch (snapshotError) {
-        trace("runtime-snapshot-error", {
-          error: snapshotError,
-          phase: "snapshot_checkpoint",
-          attempt: execution.attempt,
-          staleChat: isStaleChat(snapshotError),
-        });
-      }
-      return {identityResult, events: currentFloorEvents, analysis: null, unchanged: true};
-    }
     const currentEventIndexes = new Map(
       currentFloorEvents.map((event, index) => [eventContinuityKey(event), index]),
     );
@@ -484,10 +474,45 @@ export function createCharacterEventAnalysis({
         })
         .filter(([index]) => index !== undefined),
     );
-    const events = dedupeEvents([
+    let events = dedupeEvents([
       ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
       ...enrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
     ]).map((event) => normalizeEvent(event));
+    if (healthEvolution?.findExpiredEventIds) {
+      const currentStoryTime = getCurrentStoryTime
+        ? await getCurrentStoryTime(target)
+        : analysisInput.story_time;
+      const states = await collectCurrentFloorStates(token);
+      const expiredEventIds = healthEvolution.findExpiredEventIds({
+        states,
+        currentEvents: events,
+        currentStoryTime,
+        protectedEventIds: enrichedEvents.map((event) => event?.event_id).filter(Boolean),
+      });
+      if (expiredEventIds.length) {
+        if (typeof waitForHealthRecoveryStability === "function") {
+          await waitForHealthRecoveryStability({target, execution, token});
+        }
+        const stableStoryTime = getCurrentStoryTime
+          ? await getCurrentStoryTime(target)
+          : currentStoryTime;
+        const stableStates = await collectCurrentFloorStates(token);
+        const stableExpiredEventIds = healthEvolution.findExpiredEventIds({
+          states: stableStates,
+          currentEvents: events,
+          currentStoryTime: stableStoryTime,
+          protectedEventIds: enrichedEvents.map((event) => event?.event_id).filter(Boolean),
+        });
+        const stableExpired = new Set(stableExpiredEventIds);
+        events = events.filter((event) => !stableExpired.has(event?.event_id));
+        emitPersistenceTrace("HEALTH_RECOVERY_EVENTS_EXPIRED", execution, target, {
+          expired_event_ids: stableExpiredEventIds,
+          event_count_before: currentFloorEvents.length,
+          event_count_after: events.length,
+          delayed_stability_check: true,
+        }, "health");
+      }
+    }
     const unchanged = JSON.stringify(events) === JSON.stringify(currentFloorEvents);
     if (unchanged && hasExistingState) {
       try {

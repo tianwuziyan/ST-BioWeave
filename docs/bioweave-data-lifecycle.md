@@ -245,9 +245,11 @@ Character Health State is currently **PARTIAL / Phase 4 active observation read 
 must remain derived from the same surviving Floor Events and Current State path. It must
 not create a Chat-level health authority, freshness TTL, or a second lifecycle registry.
 Phase 2 已在同一 derived Current State path 中提供最小 short-term natural evolution
-read model；expected boundary 到达只影响该 read model，不能写入新的 recovery Event。
-新的 authoritative factual Event 不会自动 supersede 旧 observation；long-term/permanent 也
-不能因沉默或 Story Time 跳跃自动清除。
+read model；expected boundary 到达后，运行时仅在当前有效 Floor 将符合条件的现有 Event
+从完整 `floor.events` 中移除并写回当前完整状态。该操作不修改历史 Floor，删除最后一个
+Event 时显式保存 `events: []`；缺少有效 Assessment、恢复时间不可计算或存在当前新事实时
+保持 Event 不变。long-term/permanent 也不能因沉默或 Story Time 跳跃自动清除。
+新的 authoritative factual Event 不会自动 supersede 旧 observation。
 
 当前已实现 Health Assessment schema v3（observation-level severity 与一次性 recovery-stage profile）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
 它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，

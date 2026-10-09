@@ -258,8 +258,11 @@ deferred advanced features. Phase 1 Health Assessment adds only the narrowly sco
 or alternative provenance path.
 Phase 2 已提供最小 derived Current Health State read model，Phase 4 增加 observation lifecycle
 与 presentation-only grouping；它仍从同一 surviving Floor
-Event、active Assessment 与 Story Time 路径派生，不新增 Health State Floor root，也不把
-derived closure 写回 Floor facts。long-term/permanent 不因沉默或 Story Time 跳跃自动删除。
+Event、active Assessment 与 Story Time 路径派生，不新增 Health State Floor root。符合
+short-term natural-recovery 到期条件且没有当前新事实时，Runtime 通过既有 Event owner 在
+当前操作 Floor 写回变化后的完整 `floor.events`；历史 Floor 不变，最后一个 Event 使用明确
+的 `events: []`。缺少有效 Assessment、恢复时间不可计算或 long-term/permanent Event 不自动
+删除。
 
 Health Assessment Phase 1 属于同一 Character Floor owner 下、绑定源 Event、完整六字段
 Floor Version 与 observation fingerprint 的 derived assessment record；它不是
