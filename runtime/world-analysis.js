@@ -336,7 +336,7 @@ export function createWorldAnalysis({
       if (candidate.version.floor > target.version.floor) continue;
       if (!strictBefore && index === target.index && !sameFloorVersion(candidate.version, target.version)) continue;
       if (isFloorInvalidated(candidate)) continue;
-      const floorData = getFloor(index, swipeId) ?? {};
+      const floorData = candidate.floorData ?? {};
       if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
       if (floorData.world_model === null || floorData.world_model === undefined) continue;
       return {

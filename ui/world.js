@@ -907,6 +907,7 @@ export function renderSpeciesArchive(meta, {open = false, busy = false} = {}) {
 export function renderWorldModelView(
   model,
   {
+    viewModel = null,
     worldModelMeta = null,
     worldModelArchiveOpen = false,
     selectedSpecies = null,
@@ -919,7 +920,7 @@ export function renderWorldModelView(
     busy = false,
   } = {},
 ) {
-  model = buildWorldModelViewModel(model).model
+  model = viewModel ?? buildWorldModelViewModel(model).model
   const speciesSelection = selectedSpecies
     ? normalizeWorldModelSpeciesSelection(model, selectedSpecies)
     : selectedSpeciesIndex === null
@@ -955,6 +956,7 @@ export function renderWorldModelView(
 }
 export function worldPage({
   worldModel = null,
+  worldModelViewModel = null,
   worldModelMeta = null,
   worldModelBusy = false,
   worldModelOperation = null,
@@ -1022,6 +1024,7 @@ export function worldPage({
     : ''
   const body = renderableModel
     ? renderWorldModelView(renderableModel, {
+        viewModel: worldModelViewModel,
         worldModelMeta,
         worldModelArchiveOpen,
         selectedSpecies,

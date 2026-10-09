@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查审计结论没有建议绕过 Floor ownership、version、Swipe 或 Chat isolation。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"检查性能建议没有绕过 authoritative readback、archive 或 World persistence contract。"}
+{"file":"docs/ARCHITECTURE.md","reason":"检查涉及文件、模块边界和最小优化方案与当前架构导航一致。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查事件 invalidation 与 lifecycle 结论覆盖现有数据生命周期要求。"}

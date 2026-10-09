@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"审计所有 Floor/Swipe owner-slot 读取、历史解析和生命周期失效边界。"}
+{"file":".trellis/spec/domain/world-model.md","reason":"审计 World resolver、normalization、persistence/readback 与 World-specific ownership。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 World/Event/Storage/Adapter/UI 的模块职责和允许依赖方向。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认 Chat、Message/Swipe、derived/runtime state 的生命周期和 invalidation 约束。"}

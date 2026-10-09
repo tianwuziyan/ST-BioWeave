@@ -483,6 +483,7 @@ export function createOverlayLifecycle({
     return { overlay, root }
   }
   function open() {
+    const initializedBeforeOpen = initialized
     const mounted = mount()
     if (!mounted) return null
     mounted.overlay.hidden = false
@@ -490,7 +491,7 @@ export function createOverlayLifecycle({
     mounted.overlay.setAttribute('aria-hidden', 'false')
     mounted.root.dataset.open = 'true'
     mounted.root.setAttribute('aria-hidden', 'false')
-    return mounted
+    return {...mounted, initializedBeforeOpen}
   }
   function close() {
     if (!overlay || !root) return
@@ -4088,6 +4089,7 @@ export function createApp(runtime, options = {}) {
       ...(route === 'world'
         ? {
             worldModel: worldModelState.model,
+            worldModelViewModel: worldModelState.model,
             worldModelMeta: worldModelState.meta,
             worldModelBusy: worldModelState.busy,
             worldModelOperation: worldModelState.operation,
@@ -4105,9 +4107,10 @@ export function createApp(runtime, options = {}) {
     main.innerHTML = pageMarkup
     if (route === 'world') {
       const model = worldModelState.model
+      const serializedModel = model ? stableWorldModelStringify(model) : null
       lastWorldRenderDiagnostic = {
-        canonicalSerialized: model ? stableWorldModelStringify(model) : null,
-        viewModelSerialized: model ? stableWorldModelStringify(model) : null,
+        canonicalSerialized: serializedModel,
+        viewModelSerialized: serializedModel,
         rendered_revision: worldModelState.committedRevision ?? worldModelState.modelFullHash ?? null,
         model_fingerprint: worldModelState.modelFingerprint ?? null,
         counts: {
@@ -5856,7 +5859,7 @@ export function createApp(runtime, options = {}) {
     overlay = opened.overlay
     root = opened.root
     if (route === 'settings') refreshAnalysisChatSettings()
-    render()
+    if (opened.initializedBeforeOpen) render()
     return root
   }
   function closeBioWeave() {

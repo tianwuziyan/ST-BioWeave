@@ -7,6 +7,7 @@ import { buildProjectionRuleId } from "../core/projection-eligibility.js";
 import { floorVersion } from "../runtime/floor.js";
 import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schema.js";
 import { buildWorldModelSupplementCoverageTargets } from "../ai/world-supplement-protocol.js";
+import { archiveWorldModelSpecies } from "../core/world-species-archive.js";
 
 function eventResult(eventId = "evt-1", overrides = {}) {
   return {
@@ -7295,6 +7296,185 @@ test("World Model resolver follows the nearest valid Floor and naturally rolls b
   assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W20");
   messages.splice(1, 1);
   assert.equal((await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name, "W10");
+  fixture.runtime.destroy();
+});
+
+test("World Model archive creates a historical snapshot and deletion rolls back archive state", async () => {
+  const messages = [
+    { message_id: "m10-history", floor: 10, content: "F10", role: "assistant" },
+    { message_id: "m18-history", floor: 18, content: "F18", role: "assistant" },
+    { message_id: "m20-history", floor: 20, content: "F20", role: "assistant" },
+    { message_id: "m21-history", floor: 21, content: "F21", role: "assistant" },
+  ];
+  const fixture = createFixture({ messages });
+  await fixture.runtime.init();
+  const modelA = {
+    schema_version: 1,
+    species: [{ name: "Species X", biological_types: [] }],
+  };
+  const metaA = { archived_species: [] };
+  await fixture.runtime.saveWorldModel({
+    model: modelA,
+    meta: metaA,
+    selector: { __messageIndex: true, index: 0 },
+  });
+
+  const archived = archiveWorldModelSpecies(modelA, metaA, "Species X", {
+    archivedAt: "floor-20",
+  });
+  assert.equal(archived.changed, true);
+  await fixture.runtime.saveWorldModel({
+    model: archived.model,
+    meta: archived.meta,
+    selector: { __messageIndex: true, index: 2 },
+  });
+
+  assert.equal(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({ __messageIndex: true, index: 1 })).model.species[0].name,
+    "Species X",
+  );
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model.species.map(item => item.name), ["Species X"]);
+  assert.deepEqual(fixture.runtime.store.getFloor(2).world_model.species, []);
+  assert.equal(fixture.runtime.store.getFloor(2).world_model_meta.archived_species[0].species.name, "Species X");
+
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({ __messageIndex: true, index: 2 })).model.species,
+    [],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({ __messageIndex: true, index: 3 })).model.species,
+    [],
+  );
+
+  messages.splice(2);
+  const rolledBack = await fixture.runtime.resolveWorldModelAtOrBefore();
+  assert.deepEqual(rolledBack.model.species.map(item => item.name), ["Species X"]);
+  assert.equal(rolledBack.meta.archived_species.length, 0);
+  assert.deepEqual(fixture.runtime.store.getFloor(0).world_model.species.map(item => item.name), ["Species X"]);
+  fixture.runtime.destroy();
+});
+
+test("World Model history preserves complete Supplement snapshots and Archive state across rollback", async () => {
+  const messages = [
+    { message_id: "m2-evolution", floor: 2, content: "Floor 2 full world", role: "assistant" },
+  ];
+  let patchCalls = 0;
+  const modelA = normalizeWorldModel({
+    schema_version: 1,
+    species: [{ name: "Species-A", biological_types: [] }],
+  });
+  const fixture = createFixture({
+    messages,
+    analyzer: {
+      async analyzeWorldModel() {
+        return modelA;
+      },
+      async analyzeWorldModelPatchV2(input) {
+        patchCalls += 1;
+        const names = input.analysisInput.world_model.species.map(item => item.name);
+        if (patchCalls === 1) {
+          assert.deepEqual(names, ["Species-A"]);
+          assert.deepEqual(input.analysisInput.world_model_meta.archived_species, []);
+          return {
+            patch: {
+              schema_version: 2,
+              operations: [{op: "ADD_SPECIES", species: {name: "Species-B", biological_types: []}}],
+            },
+            classified: [],
+          };
+        }
+        assert.deepEqual(names, ["Species-B"]);
+        assert.equal(input.analysisInput.world_model_meta.archived_species[0].species.name, "Species-A");
+        return {
+          patch: {
+            schema_version: 2,
+            operations: [{op: "ADD_SPECIES", species: {name: "Species-C", biological_types: []}}],
+          },
+          classified: [],
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.analyzeCurrentWorldModelFull({analysisInput: {character: {description: "Floor 2 evidence"}}});
+  const floor2 = fixture.runtime.store.getFloor(0, 0);
+  assert.deepEqual(floor2.world_model.species.map(item => item.name), ["Species-A"]);
+
+  messages.push({message_id: "m4-evolution", floor: 4, content: "Floor 4 no world analysis", role: "assistant"});
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 1})).model.species.map(item => item.name),
+    ["Species-A"],
+  );
+  assert.equal(fixture.runtime.store.getFloor(1, 0).world_model, null);
+
+  messages.push({message_id: "m6-evolution", floor: 6, content: "Floor 6 discovers Species B", role: "assistant"});
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: {
+      worldbooks: [{entries: [{content: "Species: Species-B"}]}],
+    },
+    trigger: "history-supplement-b",
+  });
+  const floor6 = fixture.runtime.store.getFloor(2, 0);
+  assert.deepEqual(floor6.world_model.species.map(item => item.name), ["Species-A", "Species-B"]);
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).world_model.species.map(item => item.name), ["Species-A"]);
+
+  messages.push({message_id: "m8-evolution", floor: 8, content: "Floor 8 archives Species A", role: "assistant"});
+  const floor6Model = await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 2});
+  const archived = archiveWorldModelSpecies(floor6Model.model, floor6Model.meta, "Species-A", {
+    archivedAt: "floor-8",
+  });
+  assert.equal(archived.changed, true);
+  await fixture.runtime.saveWorldModel({model: archived.model, meta: archived.meta});
+  const floor8 = fixture.runtime.store.getFloor(3, 0);
+  assert.deepEqual(floor8.world_model.species.map(item => item.name), ["Species-B"]);
+  assert.equal(floor8.world_model_meta.archived_species[0].species.name, "Species-A");
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 2})).model.species.map(item => item.name),
+    ["Species-A", "Species-B"],
+  );
+
+  messages.push({message_id: "m10-evolution", floor: 10, content: "Floor 10 discovers Species C", role: "assistant"});
+  await fixture.runtime.analyzeCurrentWorldModelPatch({
+    analysisInput: {
+      worldbooks: [{entries: [{content: "Species: Species-C"}]}],
+    },
+    trigger: "history-supplement-c",
+  });
+  const floor10 = fixture.runtime.store.getFloor(4, 0);
+  assert.deepEqual(floor10.world_model.species.map(item => item.name), ["Species-B", "Species-C"]);
+  assert.equal(floor10.world_model_meta.archived_species[0].species.name, "Species-A");
+  assert.equal(floor10.world_model.species.some(item => item.name === "Species-A"), false);
+  assert.deepEqual(fixture.runtime.store.getFloor(3, 0).world_model.species.map(item => item.name), ["Species-B"]);
+  assert.equal(fixture.runtime.store.getFloor(3, 0).world_model_meta.archived_species[0].species.name, "Species-A");
+  assert.equal(patchCalls, 2);
+
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 0})).model.species.map(item => item.name),
+    ["Species-A"],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 1})).model.species.map(item => item.name),
+    ["Species-A"],
+  );
+  assert.deepEqual(
+    (await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 2})).model.species.map(item => item.name),
+    ["Species-A", "Species-B"],
+  );
+  const resolved8 = await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 3});
+  assert.deepEqual(resolved8.model.species.map(item => item.name), ["Species-B"]);
+  assert.equal(resolved8.meta.archived_species[0].species.name, "Species-A");
+  const resolved10 = await fixture.runtime.resolveWorldModelAtOrBefore({__messageIndex: true, index: 4});
+  assert.deepEqual(resolved10.model.species.map(item => item.name), ["Species-B", "Species-C"]);
+  assert.equal(resolved10.meta.archived_species[0].species.name, "Species-A");
+
+  messages.splice(4);
+  const rollback8 = await fixture.runtime.resolveWorldModelAtOrBefore();
+  assert.deepEqual(rollback8.model.species.map(item => item.name), ["Species-B"]);
+  assert.equal(rollback8.meta.archived_species[0].species.name, "Species-A");
+  messages.splice(3);
+  const rollback6 = await fixture.runtime.resolveWorldModelAtOrBefore();
+  assert.deepEqual(rollback6.model.species.map(item => item.name), ["Species-A", "Species-B"]);
+  assert.equal(rollback6.meta.archived_species.length, 0);
   fixture.runtime.destroy();
 });
 
