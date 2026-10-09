@@ -1438,6 +1438,64 @@ test("deleting the last Event stores an explicit empty complete state", async ()
   fixture.runtime.destroy();
 });
 
+test("all BiologicalEvent edits use one complete current-Floor collection and preserve history", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "complete-20", floor: 20, content: "A B", role: "assistant"},
+      {message_id: "complete-26", floor: 26, content: "新增 C", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        return analysisInput.current_floor.floor === 20
+          ? {
+              events: [
+                identityEventForCharacters(analysisInput.character_registry, "A", "A-source", "a"),
+                identityEventForCharacters(analysisInput.character_registry, "B", "B-source", "b"),
+              ],
+            }
+          : {
+              events: [
+                identityEventForCharacters(analysisInput.character_registry, "C", "C-source", "c"),
+              ],
+            };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const floor20 = fixture.runtime.store.getFloor(0, 0);
+  const floor26 = fixture.runtime.store.getFloor(1, 0);
+  const aId = floor20.events[0].event_id;
+  const bId = floor20.events[1].event_id;
+  const cId = floor26.events.find(event => ![aId, bId].includes(event.event_id)).event_id;
+  const originalASource = structuredClone(floor20.events.find(event => event.event_id === aId).source);
+
+  assert.deepEqual(floor20.events.map(event => event.event_id), [aId, bId]);
+  assert.deepEqual(floor26.events.map(event => event.event_id), [aId, bId, cId]);
+  assert.deepEqual(floor26.events.find(event => event.event_id === aId).source, originalASource);
+
+  const updatedA = await fixture.runtime.updateEvent(aId, {location: "A′"});
+  assert.equal(updatedA.location, "A′");
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).events.map(event => event.event_id), [aId, bId]);
+  assert.equal(fixture.runtime.store.getFloor(0, 0).events.find(event => event.event_id === aId).location, "传灯院");
+  assert.deepEqual(fixture.runtime.store.getFloor(1, 0).events.map(event => event.event_id), [aId, bId, cId]);
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.find(event => event.event_id === aId).location, "A′");
+
+  fixture.context.chat.push({message_id: "complete-30", floor: 30, content: "删除 B", role: "assistant"});
+  await fixture.runtime.deleteEvent(bId);
+  assert.deepEqual(fixture.runtime.store.getFloor(2, 0).events.map(event => event.event_id), [aId, cId]);
+  assert.equal(fixture.runtime.store.getFloor(2, 0).events.find(event => event.event_id === aId).source.floor, 20);
+  assert.equal(fixture.runtime.store.getFloor(2, 0).events.find(event => event.event_id === cId).source.floor, 26);
+
+  fixture.context.chat.push({message_id: "complete-34", floor: 34, content: "无变化", role: "assistant"});
+  const current = await fixture.runtime.getCurrentFloorEvents();
+  assert.deepEqual(current.map(event => event.event_id), [aId, cId]);
+  assert.equal(current.some(event => event.event_id === bId), false);
+  fixture.runtime.destroy();
+});
+
 test("Health Evolution recovery waits for analysis completion, stays read-only on UI reads, and writes once", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
@@ -1462,36 +1520,38 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
       },
       async analyzeFloor() {
         eventCalls += 1;
-        return eventCalls === 1
-          ? {
-              events: [eventResult("fever", {
-                type: "physical_symptom",
-                story_time: {
-                  display: "第1日",
-                  normalized: null,
-                  day_index: 1,
-                  calendar_id: null,
-                  precision: "day",
+        if (eventCalls === 1) {
+          const fever = eventResult("fever", {
+            type: "physical_symptom",
+            story_time: {
+              display: "第1日",
+              normalized: null,
+              day_index: 1,
+              calendar_id: null,
+              precision: "day",
+            },
+            pregnancy_relevance: {
+              relevant: false,
+              possible_conception: false,
+              gestational_subject_ids: [],
+              counterpart_ids: [],
+            },
+            state_fact: {
+              subject_id: "fever-subject",
+              payload: {
+                symptom: {
+                  kind: "fever",
+                  description: "发热",
+                  health_role: "observation",
                 },
-                pregnancy_relevance: {
-                  relevant: false,
-                  possible_conception: false,
-                  gestational_subject_ids: [],
-                  counterpart_ids: [],
-                },
-                state_fact: {
-                  subject_id: "fever-subject",
-                  payload: {
-                    symptom: {
-                      kind: "fever",
-                      description: "发热",
-                      health_role: "observation",
-                    },
-                  },
-                },
-              })],
-            }
-          : {events: []};
+              },
+            },
+          });
+          return {
+            events: [fever, eventResult("persistent-non-health")],
+          };
+        }
+        return {events: [eventResult("new-non-health", {type: "other_biological"})]};
       },
     },
   });
@@ -1499,6 +1559,7 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
   await fixture.runtime.refreshCurrentFloorAnalysis();
   const floor = fixture.context.chat[0].extra.bioweave;
   const fever = floor.events[0];
+  const persistentEventId = floor.events[1].event_id;
   floor.health_assessment_timeline = {
     schema_version: 1,
     assessments: [{
@@ -1529,7 +1590,7 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
 
   const beforeRead = fixture.saveFloorCalls();
   const read = await fixture.runtime.collectActiveBusinessData();
-  assert.equal(read.active_events.length, 1);
+  assert.equal(read.active_events.length, 2);
   assert.equal(fixture.saveFloorCalls(), beforeRead);
 
   const beforeAnalysis = fixture.saveFloorCalls();
@@ -1538,7 +1599,9 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
   const elapsed = Date.now() - startedAt;
   const saved = fixture.context.chat[0].extra.bioweave;
   assert.ok(elapsed >= 25);
-  assert.deepEqual(saved.events, []);
+  assert.equal(saved.events.length, 2);
+  assert.equal(saved.events.some(event => event.event_id === fever.event_id), false);
+  assert.equal(saved.events.some(event => event.event_id === persistentEventId), true);
   assert.equal(fixture.saveFloorCalls(), beforeAnalysis + 1);
   assert.equal(eventCalls, 2);
   fixture.runtime.destroy();
