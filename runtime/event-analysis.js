@@ -1721,7 +1721,11 @@ export function createEventAnalysisCoordinator({
     }
     return states;
   }
-  async function collectTrackingInputs(token = chat.token(), {target = undefined} = {}) {
+  async function collectTrackingInputs(token = chat.token(), {
+    target = undefined,
+    currentEventState = undefined,
+    currentEventStateVersion = undefined,
+  } = {}) {
     const states = await collectCurrentFloorStates(token);
     const validStates = states.filter(
       (state) => !isFloorInvalidated(state),
@@ -1731,7 +1735,13 @@ export function createEventAnalysisCoordinator({
     try {
       const current = target === undefined ? await resolveCurrentBioWeaveFloor() : target;
       if (current) {
-        activeState = await resolveCompleteEventStateAtOrBefore(current);
+        const reusableEventState = currentEventStateVersion &&
+          sameFloorVersion(currentEventStateVersion, current.version)
+          ? currentEventState
+          : undefined;
+        activeState = reusableEventState === undefined
+          ? await resolveCompleteEventStateAtOrBefore(current)
+          : reusableEventState;
         activeEvents = sortEvents(activeState?.events ?? []);
       }
     } catch (error) {
@@ -2000,8 +2010,16 @@ export function createEventAnalysisCoordinator({
     }];
     return state;
   }
-  async function collectCurrentDerivedState(token, chatData = null, {target = undefined} = {}) {
-    const trackingInputs = await collectTrackingInputs(token, {target});
+  async function collectCurrentDerivedState(token, chatData = null, {
+    target = undefined,
+    currentEventState = undefined,
+    currentEventStateVersion = undefined,
+  } = {}) {
+    const trackingInputs = await collectTrackingInputs(token, {
+      target,
+      currentEventState,
+      currentEventStateVersion,
+    });
     const currentChat = chatData ?? store.getChat(token.chatId);
     let validStates = trackingInputs.states;
     let activeEvents = trackingInputs.activeEvents;
@@ -2269,7 +2287,11 @@ export function createEventAnalysisCoordinator({
       current_floor_events: [],
     };
   }
-  async function statusForCurrentFloor({target: suppliedTarget = undefined, resolutionError = null} = {}) {
+  async function statusForCurrentFloor({
+    target: suppliedTarget = undefined,
+    resolutionError = null,
+    eventStateCache = null,
+  } = {}) {
     let target = suppliedTarget;
     if (suppliedTarget === undefined) {
       try {
@@ -2314,6 +2336,10 @@ export function createEventAnalysisCoordinator({
       activePhase === "event_analysis",
     );
     const currentState = await resolveCompleteEventStateAtOrBefore(target);
+    if (eventStateCache && typeof eventStateCache === "object") {
+      eventStateCache.targetVersion = target.version;
+      eventStateCache.state = currentState;
+    }
     const currentFloorEvents = currentState?.events ?? [];
     const diagnostic =
       terminal?.diagnostic ??
@@ -2491,7 +2517,12 @@ export function createEventAnalysisCoordinator({
     } catch (error) {
       targetError = error;
     }
-    const status = await statusForCurrentFloor({target, resolutionError: targetError});
+    const eventStateCache = {};
+    const status = await statusForCurrentFloor({
+      target,
+      resolutionError: targetError,
+      eventStateCache,
+    });
     chat.assert(token);
     const chatData = store.getChat(token.chatId);
     if (isFloorPreflightStage(status.error_stage)) {
@@ -2506,7 +2537,11 @@ export function createEventAnalysisCoordinator({
     }
     let derived;
     try {
-      derived = await collectCurrentDerivedState(token, chatData, {target});
+      derived = await collectCurrentDerivedState(token, chatData, {
+        target,
+        currentEventState: eventStateCache.state,
+        currentEventStateVersion: eventStateCache.targetVersion,
+      });
     } catch (error) {
       if (!isFloorPreflightStage(error?.analysis_stage)) throw error;
       return buildBusinessData(

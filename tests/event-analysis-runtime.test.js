@@ -607,6 +607,42 @@ test("business data rejects a deleted target Floor during one refresh", async ()
   fixture.runtime.destroy();
 });
 
+test("business refresh reuses the target complete Event state for derived data", async () => {
+  const message = {
+    message_id: "event-state-reuse",
+    floor: 0,
+    content: "当前剧情",
+    role: "assistant",
+  };
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  message.extra = {
+    bioweave: {
+      ...emptyFloor(),
+      floor_version: version,
+      analysis: {status: "success", floor_version: version},
+      events: [eventResult("reused-event", {source: version})],
+    },
+  };
+  const fixture = createFixture({messages: [message]});
+  const originalGetActiveFloorEvents = fixture.runtime.store.getActiveFloorEvents;
+  let activeEventReads = 0;
+  fixture.runtime.store.getActiveFloorEvents = (...args) => {
+    activeEventReads += 1;
+    return originalGetActiveFloorEvents(...args);
+  };
+
+  await fixture.runtime.collectActiveBusinessData();
+
+  assert.equal(activeEventReads, 2);
+  fixture.runtime.destroy();
+});
+
 test("manual supplement preserves current Floor facts omitted by the new AI result", async () => {
   let analysisCount = 0;
   const fixture = createFixture({
