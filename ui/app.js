@@ -17,7 +17,7 @@ import {
   worldPage,
   WORLD_MODEL_SECTION_KEYS,
 } from './world.js'
-import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, renderAnalysisDebugPopupContent, settingsPage } from './settings.js'
+import { DATA_MANAGEMENT_OPERATIONS, normalizeModelList, settingsPage } from './settings.js'
 import { statePage } from './state.js'
 import { DEFAULT_FLOATING_LAUNCHER_THEME } from '../floating-launcher-theme.js'
 import { createDeviceLocalPreferences } from '../core/device-local-preferences.js'
@@ -142,6 +142,67 @@ function sharedTransportErrorMessage(error) {
   const status = sharedStatusFromError(error)
   if (!isTransportDiagnostic(error, { status })) return ''
   return sharedDiagnosticMessage(error, { status })
+}
+export function debugExportFilename(date = new Date()) {
+  const stamp = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('') + '-' + [String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0'), String(date.getSeconds()).padStart(2, '0')].join('')
+  return `ST-BioWeave-Debug-${stamp}.txt`
+}
+export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, exportedAt = new Date().toISOString()} = {}) {
+  return JSON.stringify({
+    debug_metadata: {
+      format: 'ST-BioWeave-Debug',
+      format_version: 1,
+      exported_at: exportedAt,
+      live_state_source: 'sampled_at_export_time',
+      business_debug_source: 'runtime.collectActiveBusinessData',
+      history_trace_source: 'event_buffer',
+      sensitive_content_excluded: true,
+    },
+    business_debug: businessDebug,
+    world_model_live_state: worldModelLiveState,
+    history_trace: historyTrace,
+    story_time_debug: storyTimeDebug,
+  }, null, 2)
+}
+export function buildStoryTimeDebugExportText(info, exportedAt = new Date().toISOString()) {
+  const {trace: _trace, ...safeInfo} = info && typeof info === 'object' ? info : {}
+  return JSON.stringify({
+    debug_metadata: {
+      format: 'ST-BioWeave-Story-Time-Debug',
+      format_version: 1,
+      exported_at: exportedAt,
+      sensitive_content_excluded: true,
+    },
+    story_time_debug: safeInfo,
+  }, null, 2)
+}
+function downloadUtf8Text({text, filename, documentRef, windowRef}) {
+  if (typeof text !== 'string' || !text.trim()) throw new Error('DEBUG_EXPORT_EMPTY')
+  const BlobCtor = windowRef?.Blob ?? globalThis.Blob
+  const urlApi = windowRef?.URL ?? globalThis.URL
+  if (typeof BlobCtor !== 'function' || typeof urlApi?.createObjectURL !== 'function' || typeof urlApi?.revokeObjectURL !== 'function') {
+    throw new Error('DEBUG_EXPORT_DOWNLOAD_UNAVAILABLE')
+  }
+  const blob = new BlobCtor([text], {type: 'application/json;charset=utf-8'})
+  if (!Number.isFinite(blob.size) || blob.size <= 0) throw new Error('DEBUG_EXPORT_EMPTY')
+  let objectUrl = null
+  let link = null
+  try {
+    objectUrl = urlApi.createObjectURL(blob)
+    link = documentRef?.createElement?.('a')
+    if (!link) throw new Error('DEBUG_EXPORT_DOWNLOAD_UNAVAILABLE')
+    link.href = objectUrl
+    link.download = filename
+    if (link.style) link.style.display = 'none'
+    documentRef.body?.append?.(link)
+    if (typeof link.click !== 'function') throw new Error('DEBUG_EXPORT_DOWNLOAD_UNAVAILABLE')
+    link.click()
+  } finally {
+    link?.remove?.()
+    if (objectUrl) {
+      try { urlApi.revokeObjectURL(objectUrl) } catch { /* cleanup must not affect settings */ }
+    }
+  }
 }
 // render 会重建设置页子树，按稳定选择器保存并恢复可滚动容器的位置。
 export function captureScrollPositions(root, selectors = RENDER_SCROLL_SELECTORS) {
@@ -624,7 +685,6 @@ export function createApp(runtime, options = {}) {
   let storyTimeDebugSequence = 0
   let businessDebugState = null
   let businessDebugSequence = 0
-  let activeBusinessDebugPopupInvalidator = null
   let worldModelTraceChatId = null
   let businessState = {
     loaded: false,
@@ -855,26 +915,6 @@ export function createApp(runtime, options = {}) {
       return null
     }
   }
-  function isPopupContentElement(value) {
-    return Boolean(value && typeof value === 'object' && typeof value.addEventListener === 'function' && 'innerHTML' in value)
-  }
-  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt, worldModelLiveState = null, nextBusinessDebug = businessDebugState) {
-    const nextContent = renderAnalysisDebugPopupContent({
-      analysisPreview: analysisPreviewState,
-      persistenceTrace: runtime.getPersistenceTrace?.() ?? null,
-      worldModelLiveState,
-      businessDebug: nextBusinessDebug,
-      analysisPrompt: promptSettings,
-      openSettingsSections: analysisSourcesState.openSettingsSections,
-      theme: root?.dataset?.theme ?? 'tavern',
-      documentRef,
-    })
-    if (isPopupContentElement(content)) {
-      content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '')
-    }
-    return nextContent
-  }
-
   async function refreshBusinessDebugState() {
     const requestId = ++businessDebugSequence
     const sampledChatId = runtime.chat.current()
@@ -902,7 +942,6 @@ export function createApp(runtime, options = {}) {
   function markBusinessDebugStale(reason = '业务状态已变化') {
     if (!businessDebugState || businessDebugState.status === 'stale') return
     businessDebugState = {...businessDebugState, status: 'stale', reason}
-    activeBusinessDebugPopupInvalidator?.(businessDebugState)
     if (route === 'settings' && root?.dataset.open === 'true') render()
   }
 
@@ -1069,143 +1108,53 @@ export function createApp(runtime, options = {}) {
     }
     return snapshot
   }
-  async function copyPersistenceTrace() {
-    const liveState = await collectWorldModelLiveState()
-    const trace = runtime.getPersistenceTrace?.()
-    const text = JSON.stringify({debug_metadata: {live_state_source: 'sampled_at_export_time', history_trace_source: 'event_buffer'}, world_model_live_state: liveState, history_trace: trace}, null, 2)
-    const clipboard = documentRef?.defaultView?.navigator?.clipboard ?? globalThis.navigator?.clipboard
-    let textarea = null
-    let copied = false
+  async function exportDebugReport() {
     try {
-      if (typeof clipboard?.writeText === 'function') {
-        try {
-          await clipboard.writeText(text)
-          copied = true
-        } catch {
-          // Fall through to the host document fallback when clipboard permission
-          // is unavailable in the Popup context.
-        }
-      }
-      if (!copied) {
-        textarea = documentRef?.createElement?.('textarea')
-        if (!textarea || typeof documentRef?.execCommand !== 'function') throw new Error('CLIPBOARD_UNAVAILABLE')
-        textarea.value = text
-        textarea.setAttribute('readonly', '')
-        textarea.style.position = 'fixed'
-        textarea.style.opacity = '0'
-        documentRef.body?.append?.(textarea)
-        textarea.select?.()
-        if (!documentRef.execCommand('copy')) throw new Error('CLIPBOARD_COPY_FAILED')
-      }
-      if (textarea) textarea.remove?.()
-      notify('World Model LIVE STATE 与历史诊断已复制。', 'success', documentRef)
-      return true
-    } catch {
-      textarea?.remove?.()
-      notify('无法复制最近一次分析诊断。', 'error', documentRef)
-      return false
-    }
-  }
-  function readStoredAnalysisPrompt() {
-    try {
-      return profileStore.getAnalysisPrompt?.() ?? profileStore.getWorldAnalysisPrompt?.() ?? settingsState.analysisPrompt
-    } catch {
-      return settingsState.analysisPrompt
-    }
-  }
-  async function openAnalysisDebugPopup() {
-    // Preview uses the persisted settings because those are the settings read
-    // by both the UI World analyzer and the Runtime Event analyzer. Unsaved
-    // form drafts remain local until the user explicitly saves them.
-    const promptSettings = readStoredAnalysisPrompt()
-    const context = hostPopupContext()
-    const Popup = context?.Popup
-    const popupType = context?.POPUP_TYPE?.DISPLAY
-    if (typeof Popup !== 'function' || popupType === undefined) {
-      notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef)
-      return false
-    }
-    const [liveState, currentBusinessDebug] = await Promise.all([
-      collectWorldModelLiveState(),
-      refreshBusinessDebugState(),
-    ])
-    const content = renderDebugPopupContent(null, promptSettings, liveState, currentBusinessDebug)
-    const localContent = isPopupContentElement(content) ? content : null
-    let popupLiveState = liveState
-    activeBusinessDebugPopupInvalidator = nextState => {
-      renderDebugPopupContent(localContent, promptSettings, popupLiveState, nextState)
-    }
-    const handlePopupClick = async event => {
-      const target = event?.target?.closest?.('[data-bioweave-action]')
-      if (!target) return
-      if (typeof localContent?.contains === 'function' && !localContent.contains(target)) return
-      const action = target.dataset?.bioweaveAction
-      if (action === 'refresh-business-debug') {
-        event.preventDefault?.()
-        const nextBusinessDebug = await refreshBusinessDebugState()
-        popupLiveState = await collectWorldModelLiveState()
-        renderDebugPopupContent(localContent, promptSettings, popupLiveState, nextBusinessDebug)
-        return
-      }
-      if (action === 'refresh-analysis-preview') {
-        event.preventDefault?.()
-        const pending = refreshAnalysisPreview()
-        const [nextLiveState, nextBusinessDebug] = await Promise.all([
-          collectWorldModelLiveState(),
-          refreshBusinessDebugState(),
-        ])
-        renderDebugPopupContent(localContent, promptSettings, nextLiveState, nextBusinessDebug)
-        await pending
-        const [finalLiveState, finalBusinessDebug] = await Promise.all([
-          collectWorldModelLiveState(),
-          refreshBusinessDebugState(),
-        ])
-        renderDebugPopupContent(localContent, promptSettings, finalLiveState, finalBusinessDebug)
-        return
-      }
-      if (action === 'analysis-preview-mode') {
-        event.preventDefault?.()
-        setAnalysisPreviewMode(target.dataset.bioweavePreviewMode)
-        renderDebugPopupContent(localContent, promptSettings, popupLiveState)
-        return
-      }
-      if (action === 'analysis-preview-type') {
-        event.preventDefault?.()
-        setAnalysisPreviewType(target.dataset.bioweavePreviewType)
-        renderDebugPopupContent(localContent, promptSettings)
-        return
-      }
-      if (action === 'copy-persistence-trace') {
-        event.preventDefault?.()
-        event.__bioweavePersistenceTraceHandled = true
-        await copyPersistenceTrace()
-        return
-      }
-    }
-    if (localContent) localContent.addEventListener('click', handlePopupClick)
-    const handlePopupDocumentClick = async event => {
-      const target = event?.target?.closest?.('[data-bioweave-action]')
-      if (!target || localContent?.contains?.(target)) return
-      const action = target.dataset?.bioweaveAction
-      if (action !== 'copy-persistence-trace') return
-      event.preventDefault?.()
-      await copyPersistenceTrace()
-    }
-    documentRef?.addEventListener?.('click', handlePopupDocumentClick, true)
-    try {
-      const popup = new Popup(content, popupType, '', {
-        wide: true,
-        allowVerticalScrolling: true,
+      const [collected, liveState] = await Promise.all([
+        runtime.collectActiveBusinessData?.({includeDebug: true}),
+        collectWorldModelLiveState(),
+      ])
+      const storyTimeDebug = storyTimeDebugState?.info
+          ? {
+              enabled: storyTimeDebugState.enabled === true,
+              status: storyTimeDebugState.info.status ?? null,
+              floor: storyTimeDebugState.info.floor ?? null,
+              story_time: storyTimeDebugState.info.story_time ?? null,
+              parsed_parts: storyTimeDebugState.info.parsed_parts ?? null,
+              calendar: storyTimeDebugState.info.calendar ?? null,
+              recent_event: storyTimeDebugState.info.recent_event ?? null,
+              difference: storyTimeDebugState.info.difference ?? null,
+              failure_reason: storyTimeDebugState.info.failure_reason ?? null,
+            }
+          : null
+      const text = buildDebugExportText({
+        businessDebug: collected?.debug ?? null,
+        worldModelLiveState: liveState,
+        historyTrace: runtime.getPersistenceTrace?.() ?? null,
+        storyTimeDebug,
       })
-      await popup.show()
+      downloadUtf8Text({text, filename: debugExportFilename(), documentRef, windowRef})
+      notify('调试信息已导出为 TXT。', 'success', documentRef)
       return true
-    } catch {
-      notify('高级 / 调试窗口打开失败，请确认 SillyTavern Popup 可用。', 'error', documentRef)
+    } catch (error) {
+      notify(`无法导出调试信息：${error?.code ?? error?.message ?? 'DEBUG_EXPORT_FAILED'}`, 'error', documentRef)
       return false
-    } finally {
-      activeBusinessDebugPopupInvalidator = null
-      localContent?.removeEventListener?.('click', handlePopupClick)
-      documentRef?.removeEventListener?.('click', handlePopupDocumentClick, true)
+    }
+  }
+  async function exportStoryTimeDebug() {
+    const info = storyTimeDebugState.info
+    if (!info) {
+      notify('无法导出 Story Time 调试信息：暂无可用诊断数据。', 'error', documentRef)
+      return false
+    }
+    try {
+      const text = buildStoryTimeDebugExportText(info)
+      downloadUtf8Text({text, filename: `ST-BioWeave-Story-Time-Debug-${debugExportFilename().slice('ST-BioWeave-Debug-'.length)}`, documentRef, windowRef})
+      notify('Story Time 调试信息已导出为 TXT。', 'success', documentRef)
+      return true
+    } catch (error) {
+      notify(`无法导出 Story Time 调试信息：${error?.code ?? error?.message ?? 'STORY_TIME_DEBUG_EXPORT_FAILED'}`, 'error', documentRef)
+      return false
     }
   }
   // 预览需要等待同一 Chat 的来源初次加载完成，不另起一套请求或固定超时。
@@ -4410,7 +4359,7 @@ export function createApp(runtime, options = {}) {
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
-      ...(route === 'settings' ? {analysisPreview: analysisPreviewState, businessDebug: businessDebugState, persistenceTrace: runtime.getPersistenceTrace?.() ?? null, theme: root?.dataset?.theme ?? 'tavern', documentRef} : {}),
+      ...(route === 'settings' ? {analysisPreview: analysisPreviewState, businessDebug: businessDebugState, persistenceTrace: runtime.getPersistenceTrace?.() ?? null} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
         ? {
@@ -5649,9 +5598,29 @@ export function createApp(runtime, options = {}) {
       render()
       return
     }
+    if (action === 'refresh-analysis-preview') {
+      event.preventDefault()
+      await refreshAnalysisPreview()
+      return
+    }
+    if (action === 'analysis-preview-mode') {
+      event.preventDefault()
+      setAnalysisPreviewMode(target.dataset.bioweavePreviewMode)
+      return
+    }
+    if (action === 'analysis-preview-type') {
+      event.preventDefault()
+      setAnalysisPreviewType(target.dataset.bioweavePreviewType)
+      return
+    }
     if (action === 'copy-story-time-debug') {
       event.preventDefault()
       await copyStoryTimeDebug()
+      return
+    }
+    if (action === 'export-story-time-debug') {
+      event.preventDefault()
+      await exportStoryTimeDebug()
       return
     }
     if (action === 'open-character-aliases') {
@@ -5709,14 +5678,9 @@ export function createApp(runtime, options = {}) {
       await saveCharacterAliases()
       return
     }
-    if (action === 'open-analysis-debug') {
+    if (action === 'export-debug-txt') {
       event.preventDefault()
-      await openAnalysisDebugPopup()
-      return
-    }
-    if (action === 'copy-persistence-trace') {
-      event.preventDefault()
-      await copyPersistenceTrace()
+      await exportDebugReport()
       return
     }
     if (action === 'new-profile') {
@@ -6292,7 +6256,6 @@ export function createApp(runtime, options = {}) {
     businessRefreshSequence += 1
     businessDebugSequence += 1
     businessDebugState = null
-    activeBusinessDebugPopupInvalidator = null
     businessRefreshQueued = null
     worldbookCache = createWorldbookCache()
     worldModelTraceChatId = null

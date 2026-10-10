@@ -8,13 +8,16 @@ import {
   createOverlayLifecycle,
   createApp as createAppWithPreferences,
   createPanelDragController,
+  buildDebugExportText,
+  buildStoryTimeDebugExportText,
+  debugExportFilename,
   handleAnalysisParentToggleClick,
   isConnectedToDocument,
   notify,
   restoreScrollPositions,
 } from '../ui/app.js'
 import { createApiProfileStore } from '../storage/store.js'
-import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
+import { settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 import { charactersPage } from '../ui/characters.js'
 import { createDeviceLocalPreferences } from '../core/device-local-preferences.js'
@@ -233,6 +236,16 @@ test('Story Time debug settings stay inside Advanced / Debug and render only the
   assert.match(open, /羲和元年五月初四 午时/);
   assert.match(open, /data-bioweave-action="refresh-story-time-debug"/);
   assert.match(open, /data-bioweave-action="copy-story-time-debug"/);
+  assert.match(open, /data-bioweave-action="export-story-time-debug"/);
+  assert.match(open, /class="bioweave-debug-section-header"[\s\S]*?Story Time 调试[\s\S]*?class="bioweave-debug-section-actions"[\s\S]*?data-bioweave-action="toggle-story-time-debug"[\s\S]*?data-bioweave-action="refresh-story-time-debug"[\s\S]*?data-bioweave-action="copy-story-time-debug"[\s\S]*?data-bioweave-action="export-story-time-debug"/);
+  assert.equal((open.match(/data-bioweave-action="toggle-story-time-debug"/g) ?? []).length, 1);
+  assert.ok(open.indexOf('data-bioweave-action="toggle-story-time-debug"') < open.indexOf('data-bioweave-action="refresh-story-time-debug"'));
+  assert.ok(open.indexOf('data-bioweave-action="refresh-story-time-debug"') < open.indexOf('data-bioweave-action="copy-story-time-debug"'));
+  assert.ok(open.indexOf('data-bioweave-action="copy-story-time-debug"') < open.indexOf('data-bioweave-action="export-story-time-debug"'));
+  assert.match(STYLE_SOURCE, /\.bioweave-debug-preview-scroll\s*\{[\s\S]*?height:\s*240px[\s\S]*?overflow-y:\s*auto/);
+  assert.match(STYLE_SOURCE, /\.bioweave-story-time-debug-content\s*\{[\s\S]*?padding:/);
+  assert.match(STYLE_SOURCE, /\.bioweave-debug-section-actions\s*\{[\s\S]*?display:\s*flex[\s\S]*?gap:\s*8px/);
+  assert.match(STYLE_SOURCE, /\.bioweave-debug-section-actions \.bioweave-checkbox-label\s*\{[\s\S]*?display:\s*inline-flex[\s\S]*?align-items:\s*center[\s\S]*?gap:\s*6px/);
   assert.doesNotMatch(open, /她回忆/);
   const disclosureNames = [...open.matchAll(/data-bioweave-settings-disclosure="([^"]+)"/g)].map(match => match[1]);
   assert.ok(disclosureNames.includes('analysis_debug'));
@@ -1839,7 +1852,7 @@ test('cache migration failure keeps the saved profile editor open without a fals
   assert.deepEqual(warnings, ['设置操作失败，请检查 SillyTavern 状态后重试。'])
   app.destroyBioWeave()
 })
-test('analysis debug Popup exposes a safe persistence trace copy entry', () => {
+test.skip('removed analysis debug Popup exposed a safe persistence trace copy entry', () => {
   const markup = renderAnalysisDebugPopupContent({
     persistenceTrace: {
       execution: {chat_id: 'chat-trace', message_id: 'message-1', swipe_id: 0, attempt: 1, trigger: 'auto-full'},
@@ -1854,7 +1867,7 @@ test('analysis debug Popup exposes a safe persistence trace copy entry', () => {
   assert.match(STYLE_SOURCE, /bioweave-persistence-trace[\s\S]*text-align:\s*left\s*!important/)
 })
 
-test('analysis debug renders production business state sources and derived Tracking Windows', () => {
+test.skip('removed analysis debug Popup rendered production business state sources and derived Tracking Windows', () => {
   const markup = renderAnalysisDebugPopupContent({
     businessDebug: {
       status: 'current',
@@ -1920,7 +1933,7 @@ test('analysis debug renders production business state sources and derived Track
   assert.doesNotMatch(html, /getTrackingWindowTimeline/)
 })
 
-test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview actions local', async () => {
+test.skip('removed analysis debug Popup used the SillyTavern DISPLAY Popup and kept preview actions local', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []
   let resolvePopup
@@ -2058,7 +2071,7 @@ test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview action
   assert.equal(root.dataset.open, 'false')
   app.destroyBioWeave()
 })
-test('settings analysis debug keeps one Popup and the persisted prompt source boundary', async () => {
+test.skip('removed settings analysis debug Popup kept one Popup and the persisted prompt source boundary', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []
   let resolvePopup
@@ -2176,7 +2189,7 @@ test('settings analysis debug keeps one Popup and the persisted prompt source bo
   await settingsOpen
   app.destroyBioWeave()
 })
-test('analysis debug shows a safe Toast and no custom modal when Popup is unavailable', async () => {
+test.skip('removed analysis debug Popup showed a safe Toast and no custom modal when Popup was unavailable', async () => {
   const documentRef = new AppFakeDocument()
   const toastCalls = []
   documentRef.defaultView.toastr = {
@@ -2223,6 +2236,154 @@ test('analysis debug shows a safe Toast and no custom modal when Popup is unavai
   })
   assert.deepEqual(toastCalls, ['高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。'])
   assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /bioweave-analysis-debug-overlay/)
+  app.destroyBioWeave()
+})
+
+test('inline debug refresh actions restore business DTO and analysis preview after Popup removal', async () => {
+  const documentRef = new AppFakeDocument()
+  let businessReads = 0
+  let analysisReads = 0
+  const runtime = {
+    ...apiProfileRuntime('chat-inline-debug'),
+    collectActiveBusinessData: async () => {
+      businessReads += 1
+      return {debug: {
+        sampled_at: '2026-10-11T00:00:00.000Z',
+        target: {chat_id: 'chat-inline-debug', floor: 12, swipe_id: 0, floor_version: {chat_id: 'chat-inline-debug', message_id: 'm-12', floor: 12, swipe_id: 0, content_hash: 'hash-12', message_version: 'v1'}},
+        event_state: {count: 0, events: []},
+        world_model: {model: {species: []}},
+        character_registry: {count: 0, registry: {}},
+        tracking_window: {count: 0, windows: []},
+        tracking_registry: {tracking_subjects: {}},
+        health_state: {state: {}},
+      }}
+    },
+    resolveCurrentBioWeaveFloor: async () => ({version: {chat_id: 'chat-inline-debug', message_id: 'm-12', floor: 12, swipe_id: 0, content_hash: 'hash-12', message_version: 'v1'}}),
+    getCurrentFloorAnalysisInput: async () => {
+      analysisReads += 1
+      return {messages: [{role: 'user', content: 'analysis-input'}], token_estimate: 3}
+    },
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  const root = app.openBioWeave()
+  app.go('settings')
+  let html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /当前生产业务状态/)
+  assert.match(html, /data-bioweave-action="refresh-business-debug"/)
+  const businessReadsBeforeDebugRefresh = businessReads
+  await clickSettingsAction(root, {bioweaveAction: 'refresh-business-debug'})
+  html = root.querySelector('.bioweave-main').innerHTML
+  assert.ok(businessReads > businessReadsBeforeDebugRefresh)
+  assert.match(html, /data-bioweave-business-debug-current/)
+  await clickSettingsAction(root, {bioweaveAction: 'refresh-analysis-preview'})
+  html = root.querySelector('.bioweave-main').innerHTML
+  assert.equal(analysisReads, 1)
+  assert.match(html, /data-bioweave-analysis-preview/)
+  assert.doesNotMatch(html, /分析输入预览读取失败/)
+  await clickSettingsAction(root, {bioweaveAction: 'analysis-preview-mode', bioweavePreviewMode: 'raw'})
+  html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /bioweave-analysis-preview-raw/)
+  app.destroyBioWeave()
+})
+
+test('all settings debug previews use the shared 240px internal scroll container', () => {
+  const html = settingsPage({})
+  const businessContent = html.indexOf('bioweave-business-debug-content')
+  const analysisContent = html.indexOf('bioweave-analysis-preview-content')
+  assert.ok(businessContent >= 0)
+  assert.ok(analysisContent >= 0)
+  assert.match(html, /class="bioweave-debug-preview-scroll bioweave-business-debug-content"/)
+  assert.match(html, /class="bioweave-debug-preview-scroll bioweave-analysis-preview-content"/)
+  assert.ok(html.indexOf('data-bioweave-action="refresh-business-debug"') < businessContent)
+  assert.ok(html.indexOf('data-bioweave-action="refresh-analysis-preview"') < analysisContent)
+  const tracedHtml = settingsPage({analysisPreview: {input: {token_estimate: 1}, worldModelTrace: {rawResponse: {long: true}, canonicalModel: {}}}})
+  const tracedContent = tracedHtml.indexOf('bioweave-analysis-preview-content')
+  assert.ok(tracedContent < tracedHtml.indexOf('data-bioweave-world-model-trace'))
+  assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-analysis-preview-content\s*\{[\s\S]*?max-height:\s*520px/)
+  assert.match(STYLE_SOURCE, /\.bioweave-business-debug-content\s+pre\s*\{[\s\S]*?white-space:\s*pre-wrap/)
+})
+
+test('settings debug keeps the inline preview and directly downloads the complete safe TXT DTO', async () => {
+  const documentRef = new AppFakeDocument()
+  const downloads = []
+  const revoked = []
+  const createdBlobs = []
+  const originalCreateElement = documentRef.createElement.bind(documentRef)
+  documentRef.createElement = tagName => {
+    const node = originalCreateElement(tagName)
+    if (tagName === 'a') node.click = () => downloads.push({href: node.href, download: node.download})
+    return node
+  }
+  const windowRef = {
+    Blob: globalThis.Blob,
+    URL: {
+      createObjectURL: blob => {
+        createdBlobs.push(blob)
+        return `blob:debug-report-${createdBlobs.length}`
+      },
+      revokeObjectURL: value => revoked.push(value),
+    },
+    localStorage: {getItem: () => null, setItem: () => {}},
+  }
+  const profileStore = {getSettings: () => ({})}
+  const runtime = {
+    ...apiProfileRuntime('chat-debug-export'),
+    collectActiveBusinessData: async () => ({debug: {
+      target: {floor_version: {chat_id: 'chat-debug-export', floor: 7, swipe_id: 0}},
+      event_state: {events: [{event_id: 'event-edit', event: {event_edit_operation_id: 'op-7'}}]},
+      tracking_registry: {tracking_subjects: {'char-a': {}}},
+    }}),
+    getPersistenceTrace: () => ({sequence: [{stage: 'EVENT_EDIT_COMPLETED', event_edit_operation_id: 'op-7', duration_ms: 12.5, persistence_confirmed: true, failure_stage: null}]}),
+    getStoryTimeDebugInfo: async () => ({
+      status: 'ready',
+      floor: {floor: 7, swipe_id: 0},
+      story_time: {display: '羲和元年五月初四 午时', normalized: 'cn-1-5-4T11:00'},
+      parsed_parts: {era_label: '羲和', year: 1, month: 5, day: 4},
+      trace: {raw_candidate: 'excluded-from-export'},
+    }),
+  }
+  const app = createApp(runtime, {documentRef, windowRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('settings')
+  const html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /data-bioweave-analysis-preview/)
+  assert.match(html, /data-bioweave-action="export-debug-txt"/)
+  assert.doesNotMatch(html, /open-analysis-debug|高级调试 Popup|bioweave-analysis-debug-popup-content/)
+  await clickSettingsAction(root, {bioweaveAction: 'export-debug-txt'})
+  assert.equal(downloads.length, 1)
+  assert.match(downloads[0].download, /^ST-BioWeave-Debug-\d{8}-\d{6}\.txt$/)
+  assert.deepEqual(revoked, ['blob:debug-report-1'])
+  const text = buildDebugExportText({
+    businessDebug: {event_state: {events: [{event_edit_operation_id: 'op-7'}]}},
+    worldModelLiveState: {history_trace: {nested: [1, 2]}},
+    historyTrace: {sequence: [{event_edit_operation_id: 'op-7', duration_ms: 12.5}]},
+  })
+  const exported = JSON.parse(text)
+  assert.equal(exported.business_debug.event_state.events[0].event_edit_operation_id, 'op-7')
+  assert.equal(exported.history_trace.sequence[0].duration_ms, 12.5)
+  assert.deepEqual(exported.world_model_live_state.history_trace.nested, [1, 2])
+  const storyToggle = actionTarget(root, {bioweaveAction: 'toggle-story-time-debug'})
+  storyToggle.checked = true
+  const click = [...root.listeners.get('click')][0]
+  await click({target: storyToggle, preventDefault() {}})
+  await clickSettingsAction(root, {bioweaveAction: 'export-story-time-debug'})
+  assert.equal(downloads.length, 2)
+  assert.match(downloads[1].download, /^ST-BioWeave-Story-Time-Debug-\d{8}-\d{6}\.txt$/)
+  assert.equal(revoked.length, 2)
+  const storyExported = JSON.parse(await createdBlobs[1].text())
+  assert.equal(storyExported.story_time_debug.story_time.normalized, 'cn-1-5-4T11:00')
+  assert.equal(storyExported.story_time_debug.trace, undefined)
+  assert.equal(storyExported.business_debug, undefined)
+  const storyText = buildStoryTimeDebugExportText({story_time: {normalized: 'cn-1-5-4T11:00'}, trace: {secret: true}})
+  assert.equal(JSON.parse(storyText).story_time_debug.trace, undefined)
+  assert.match(debugExportFilename(new Date('2026-10-11T01:02:03Z')), /^ST-BioWeave-Debug-20261011-\d{6}\.txt$/)
+  const errors = []
+  documentRef.defaultView.toastr = {error: message => errors.push(message)}
+  windowRef.URL.createObjectURL = undefined
+  await clickSettingsAction(root, {bioweaveAction: 'export-debug-txt'})
+  assert.equal(downloads.length, 2)
+  assert.match(errors[0], /无法导出调试信息/)
+  assert.equal(documentRef.listeners.get('click')?.size ?? 0, 0)
   app.destroyBioWeave()
 })
 test('API profile deletion uses Popup.show.confirm and cancels on a negative result', async () => {

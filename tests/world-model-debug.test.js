@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createApp} from '../ui/app.js';
-import {renderAnalysisDebugPopupContent} from '../ui/settings.js';
 import {
   buildRenderedWorldLayerSnapshot,
   buildWorldModelLayerSnapshot,
@@ -150,7 +149,7 @@ test('target change during async collection invalidates the snapshot instead of 
   assert.equal(snapshot.world_consistency.floor_vs_ui, 'UNAVAILABLE');
 });
 
-test('debug output separates LIVE STATE from HISTORY TRACE', () => {
+test.skip('removed debug Popup output separated LIVE STATE from HISTORY TRACE', () => {
   const markup = renderAnalysisDebugPopupContent({
     worldModelLiveState: {
       snapshot_generated_at: 'now',
@@ -217,7 +216,7 @@ test('debug output separates LIVE STATE from HISTORY TRACE', () => {
   assert.doesNotMatch(markup, /"fact_count"/u);
 });
 
-test('Advanced Debug marks an unknown World Model diagnostics schema', () => {
+test.skip('removed Advanced Debug Popup marked an unknown World Model diagnostics schema', () => {
   const markup = renderAnalysisDebugPopupContent({
     worldModelLiveState: {latest_fact_delta: {world_model_debug_schema_version: 99}},
     documentRef: null,

@@ -409,6 +409,96 @@
   line-height: 1.4;
 }
 
+.bioweave-debug-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.bioweave-debug-section-header > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bioweave-debug-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bioweave-debug-section-actions .bioweave-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+.bioweave-debug-section-actions .bioweave-checkbox-label .bioweave-checkbox {
+  flex: 0 0 16px;
+}
+
+.bioweave-debug-section-header .bioweave-secondary-action {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.bioweave-debug-preview-scroll {
+  box-sizing: border-box;
+  height: 240px;
+  min-height: 240px;
+  max-height: 240px;
+  min-width: 0;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 6px;
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-persistence-trace > .bioweave-debug-preview-scroll {
+  padding: 8px;
+  color: var(--bioweave-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bioweave-story-time-debug-content {
+  padding: 8px;
+}
+
+.bioweave-business-debug-content {
+  padding: 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bioweave-business-debug-content pre {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bioweave-story-time-debug-content > .bioweave-settings-notice,
+.bioweave-story-time-debug-content > .bioweave-muted {
+  margin: 0;
+}
+
 .bioweave-button,
 .bioweave-primary-action,
 .bioweave-secondary-action,
@@ -698,6 +788,9 @@
   .bioweave-overview-grid { display: block; }
   .bioweave-overview-grid > .bioweave-card { margin-bottom: 8px; }
   .bioweave-card { padding: 10px; }
+  .bioweave-debug-section-header { align-items: flex-start; flex-wrap: wrap; }
+  .bioweave-debug-section-header > div:first-child { flex-basis: min(100%, 18rem); }
+  .bioweave-debug-section-actions { flex-wrap: wrap; margin-left: auto; }
   .bioweave-summary { gap: 5px; }
   .bioweave-summary > div { padding: 8px 4px; text-align: center; }
   .bioweave-summary strong { font-size: 16px; }
@@ -1810,22 +1903,6 @@
   display: inline-block;
 }
 
-.bioweave-settings-summary .bioweave-analysis-debug-trigger {
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 5px 9px;
-  border: 1px solid var(--bioweave-border);
-  border-radius: 6px;
-  background: var(--bioweave-surface);
-  color: var(--bioweave-accent);
-}
-
-.bioweave-settings-summary .bioweave-analysis-debug-trigger:hover,
-.bioweave-settings-summary .bioweave-analysis-debug-trigger:focus-visible {
-  border-color: var(--bioweave-accent);
-  background: var(--bioweave-accent-soft);
-}
-
 .bioweave-settings-disclosure > .bioweave-card > header,
 .bioweave-settings-disclosure > .bioweave-card > .bioweave-settings-card-header {
   align-items: flex-start;
@@ -2858,11 +2935,6 @@
 
 .bioweave-analysis-preview-content {
   min-width: 0;
-  max-height: 520px;
-  overflow: auto;
-  border: 1px solid var(--bioweave-border);
-  border-radius: 6px;
-  background: var(--bioweave-surface-raised);
   text-align: left;
 }
 
@@ -2901,109 +2973,6 @@
 .bioweave-analysis-preview-message-hint {
   color: var(--bioweave-text-secondary);
   font-size: 12px;
-}
-
-.bioweave-analysis-debug-popup-content {
-  --bioweave-bg: var(--SmartThemeBlurTintColor, #e9f0f6);
-  --bioweave-surface: color-mix(in srgb, var(--bioweave-bg) 90%, var(--SmartThemeBodyColor, #fff) 10%);
-  --bioweave-surface-raised: color-mix(in srgb, var(--bioweave-surface) 84%, var(--SmartThemeBodyColor, #fff) 16%);
-  --bioweave-text: var(--SmartThemeBodyColor, #172a3b);
-  --bioweave-text-secondary: color-mix(in srgb, var(--bioweave-text) 78%, var(--bioweave-bg) 22%);
-  --bioweave-text-muted: color-mix(in srgb, var(--bioweave-text) 66%, var(--bioweave-bg) 34%);
-  --bioweave-border: color-mix(in srgb, var(--bioweave-text) 24%, var(--bioweave-bg) 76%);
-  --bioweave-accent: var(--SmartThemeQuoteColor, #2d76bd);
-  --bioweave-accent-soft: color-mix(in srgb, var(--bioweave-accent) 12%, var(--bioweave-bg) 88%);
-  --bioweave-danger: #a94450;
-  --bioweave-success: #1c7759;
-  --bioweave-warn: #9b6a17;
-  --bioweave-input-bg: var(--SmartThemeBlurTintColor, #fff);
-  --bioweave-on-accent: #fff;
-  --bioweave-success-soft: #e3f2ec;
-  --bioweave-danger-soft: #f8e8eb;
-  --bioweave-warn-soft: #fbf1dc;
-  min-width: 0;
-  color: var(--bioweave-text);
-}
-
-.bioweave-analysis-debug-popup-content[data-theme="light"] {
-  color-scheme: light;
-  --bioweave-bg: #f3f5f7;
-  --bioweave-surface: #fff;
-  --bioweave-surface-raised: #f7f8fa;
-  --bioweave-text: #17232d;
-  --bioweave-text-secondary: #3c4c58;
-  --bioweave-text-muted: #5a6974;
-  --bioweave-border: #b8c2ca;
-  --bioweave-accent: #2b6f9f;
-  --bioweave-accent-soft: #e5eff6;
-  --bioweave-danger: #a6424a;
-  --bioweave-success: #247153;
-  --bioweave-warn: #876116;
-  --bioweave-input-bg: #fff;
-  --bioweave-on-accent: #fff;
-  --bioweave-success-soft: #e8f2ed;
-  --bioweave-danger-soft: #f9e9eb;
-  --bioweave-warn-soft: #f8f1df;
-}
-
-.bioweave-analysis-debug-popup-content[data-theme="dark"] {
-  color-scheme: dark;
-  --bioweave-bg: #14181c;
-  --bioweave-surface: #1e2429;
-  --bioweave-surface-raised: #272e34;
-  --bioweave-text: #eef2f4;
-  --bioweave-text-secondary: #c3cbd1;
-  --bioweave-text-muted: #a8b2b9;
-  --bioweave-border: #56616a;
-  --bioweave-accent: #7eb5d8;
-  --bioweave-accent-soft: #2a3d4b;
-  --bioweave-danger: #df8c94;
-  --bioweave-success: #78c2a2;
-  --bioweave-warn: #e0bb75;
-  --bioweave-input-bg: #1a2126;
-  --bioweave-on-accent: #142029;
-  --bioweave-success-soft: #234238;
-  --bioweave-danger-soft: #452d32;
-  --bioweave-warn-soft: #453923;
-}
-
-.bioweave-analysis-debug-popup-header {
-  margin-bottom: 12px;
-}
-
-.bioweave-analysis-debug-popup-header h3,
-.bioweave-analysis-debug-popup-header p {
-  margin: 0;
-}
-
-.bioweave-analysis-debug-popup-header p {
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-
-.bioweave-analysis-debug-popup-content .bioweave-analysis-preview {
-  min-width: 0;
-}
-
-.bioweave-analysis-debug-popup-content .bioweave-analysis-preview-content {
-  max-height: none;
-}
-
-.bioweave-analysis-debug-popup-content .bioweave-world-model-message-preview {
-  text-align: left;
-}
-
-.bioweave-analysis-debug-popup-content .bioweave-analysis-message-preview {
-  text-align: left;
-}
-
-.bioweave-analysis-debug-popup-content pre:not(.bioweave-world-model-message-content):not(.bioweave-analysis-message-raw) {
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: auto;
-  white-space: pre;
-  overflow-wrap: normal;
 }
 
 .bioweave-primary-action,
@@ -5650,7 +5619,6 @@
 }
 
 .bioweave-main .bioweave-back,
-.bioweave-main .bioweave-analysis-debug-trigger,
 .bioweave-main .bioweave-world-model-page .bioweave-page-actions .bioweave-secondary-action {
   min-height: 0 !important;
   border: 0 !important;
@@ -6012,15 +5980,6 @@
 
 .bioweave-settings-page > .bioweave-settings-disclosure[open] .bioweave-settings-summary-arrow::before {
   content: '−';
-}
-
-.bioweave-settings-page .bioweave-settings-summary .bioweave-analysis-debug-trigger {
-  min-height: 32px !important;
-  border: 1px solid var(--bioweave-border) !important;
-  border-radius: 7px !important;
-  background: var(--bioweave-surface-raised) !important;
-  color: var(--bioweave-text-secondary) !important;
-  padding: 5px 10px !important;
 }
 
 .bioweave-settings-page .bioweave-settings-disclosure > .bioweave-card,
@@ -6431,14 +6390,6 @@
   resize: vertical !important;
 }
 
-.bioweave-settings-page .bioweave-settings-actions .bioweave-analysis-debug-trigger {
-  min-height: 32px !important;
-  border: 1px solid var(--bioweave-border) !important;
-  border-radius: 7px !important;
-  background: var(--bioweave-surface-raised) !important;
-  color: var(--bioweave-text-secondary) !important;
-  padding: 5px 10px !important;
-}
 
 .bioweave-settings-page .bioweave-analysis-source-list {
   gap: 4px !important;
@@ -7229,57 +7180,6 @@
   flex: 0 0 auto !important;
 }
 
-.bioweave-analysis-debug-popup-content[data-theme="dark"] {
-  color-scheme: dark !important;
-  --bioweave-bg: #171f25 !important;
-  --bioweave-surface: #182229 !important;
-  --bioweave-surface-raised: #1d272e !important;
-  --bioweave-text: #edf3f6 !important;
-  --bioweave-text-secondary: #c2cdd2 !important;
-  --bioweave-text-muted: #87959d !important;
-  --bioweave-border: #33444e !important;
-  --bioweave-accent: #83c7ef !important;
-  --bioweave-accent-soft: #203b4b !important;
-  --bioweave-danger: #f08e98 !important;
-  --bioweave-success: #7bd5ae !important;
-  --bioweave-warn: #f1be72 !important;
-  --bioweave-input-bg: #141d23 !important;
-}
-
-.bioweave-analysis-debug-popup-content[data-theme="light"] {
-  color-scheme: light !important;
-  --bioweave-bg: #cbd6db !important;
-  --bioweave-surface: #dbe4e8 !important;
-  --bioweave-surface-raised: #e5ecef !important;
-  --bioweave-text: #1b2a33 !important;
-  --bioweave-text-secondary: #3c4d56 !important;
-  --bioweave-text-muted: #61727c !important;
-  --bioweave-border: #8fa2ac !important;
-  --bioweave-accent: #356f91 !important;
-  --bioweave-accent-soft: #c9dde6 !important;
-  --bioweave-danger: #a44852 !important;
-  --bioweave-success: #2b755d !important;
-  --bioweave-warn: #86651f !important;
-  --bioweave-input-bg: #d9e4e8 !important;
-}
-
-.bioweave-analysis-debug-popup-content[data-theme="tavern"] {
-  color-scheme: light dark !important;
-  --bioweave-bg: var(--SmartThemeBlurTintColor, #202a31) !important;
-  --bioweave-surface: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%) !important;
-  --bioweave-surface-raised: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%) !important;
-  --bioweave-text: var(--SmartThemeBodyColor, #e8eef2) !important;
-  --bioweave-text-secondary: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 78%, var(--SmartThemeBlurTintColor, #202a31) 22%) !important;
-  --bioweave-text-muted: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 62%, var(--SmartThemeBlurTintColor, #202a31) 38%) !important;
-  --bioweave-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 24%, var(--SmartThemeBlurTintColor, #202a31) 76%) !important;
-  --bioweave-accent: var(--SmartThemeQuoteColor, #4f91b6) !important;
-  --bioweave-accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%) !important;
-  --bioweave-danger: #b45d67 !important;
-  --bioweave-success: #3b8b6d !important;
-  --bioweave-warn: #a7792b !important;
-  --bioweave-input-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 82%, var(--SmartThemeBodyColor, #e8eef2) 18%) !important;
-}
-
 @media (max-width: 767px) {
   .bioweave-theme-button {
     display: grid !important;
@@ -7946,13 +7846,6 @@
   .bioweave-floating-launcher.is-running::before,
   .bioweave-floating-launcher.is-running .bioweave-floating-launcher-icon,
   .bioweave-floating-launcher.is-running .bioweave-floating-launcher-status { animation: none; }
-}
-
-.bioweave-analysis-debug-popup-content .bioweave-persistence-trace,
-.bioweave-analysis-debug-popup-content .bioweave-persistence-trace h4,
-.bioweave-analysis-debug-popup-content .bioweave-persistence-trace p,
-.bioweave-analysis-debug-popup-content .bioweave-persistence-trace pre {
-  text-align: left !important;
 }
 
 /* World model page: compact archive popover and read-only content bounds. */

@@ -9,7 +9,6 @@ import {
   processNarrativeFloor,
 } from '../ai/input-builder.js';
 import {buildEventAnalysisMessages, buildWorldModelMessages} from '../ai/prompts.js';
-import {renderAnalysisDebugPopupContent} from '../ui/settings.js';
 
 function decodeHtml(value) {
   return String(value ?? '')
@@ -1030,7 +1029,7 @@ test('Event and World Model keep configured SYSTEM boundaries absolute and aggre
   assert.match(eventMessages.find(message => message.role === 'assistant').content, /【本次分析内容】/);
 });
 
-test('Event Prompt Preview is generated from the exact Event message builder', async () => {
+test.skip('removed Event Prompt Popup was generated from the exact Event message builder', async () => {
   const input = eventInput(await collectAnalysisContext({
     sources: analysisSources(),
     selected: selectedSourceItems(),

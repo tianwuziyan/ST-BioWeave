@@ -41,7 +41,7 @@ import {
   emptyChat,
   normalizeWorldAnalysisPrompt,
 } from '../storage/schema.js'
-import { renderAnalysisDebugPopupContent, settingsPage } from '../ui/settings.js'
+import { settingsPage } from '../ui/settings.js'
 import {
   archiveWorldModelSpecies,
   deleteArchivedWorldModelSpecies,
@@ -6960,16 +6960,16 @@ test('World Model prompt requires Chinese string values and human type names', (
 
 test('settings exposes one Advanced / Debug disclosure with the analysis preview entry', () => {
   const html = settingsPage({})
-  assert.match(html, /data-bioweave-action="open-analysis-debug"/)
+  assert.match(html, /data-bioweave-action="export-debug-txt"/)
   assert.match(
     html,
-    /data-bioweave-settings-disclosure="analysis_debug"[\s\S]*?高级 \/ 调试[\s\S]*?data-bioweave-action="open-analysis-debug"[\s\S]*?data-bioweave-action="toggle-story-time-debug"/,
+    /data-bioweave-settings-disclosure="analysis_debug"[\s\S]*?高级 \/ 调试[\s\S]*?data-bioweave-action="export-debug-txt"[\s\S]*?data-bioweave-action="toggle-story-time-debug"/,
   )
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/)
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="story_time_debug"/)
 })
 
-test('debug Popup content is standalone, uses the real message builder, and has no modal shell', () => {
+test.skip('removed debug Popup content was standalone, used the real message builder, and had no modal shell', () => {
   const html = renderAnalysisDebugPopupContent({
     theme: 'dark',
     analysisPreview: {
@@ -6996,7 +6996,7 @@ test('debug Popup content is standalone, uses the real message builder, and has 
   assert.doesNotMatch(STYLE_SOURCE, /bioweave-analysis-debug-overlay|bioweave-analysis-debug-dialog|bioweave-analysis-debug-body/)
 })
 
-test('World Model message preview resets Popup alignment and wraps message content', () => {
+test.skip('removed Popup World Model message preview reset alignment and wrapped message content', () => {
   const html = renderAnalysisDebugPopupContent({
     worldAnalysisPrompt: { system_top: 'TOP', system_bottom: 'BOTTOM' },
     analysisPreview: {
@@ -7036,7 +7036,7 @@ test('World Model message preview resets Popup alignment and wraps message conte
   assert.doesNotMatch(STYLE_SOURCE, /(?:^|\n)\s*\.popup[^{]*\{[^}]*text-align:\s*center/)
 })
 
-test('settings debug preview keeps boundary SYSTEM messages aligned with the request', () => {
+test.skip('removed Popup settings debug preview kept boundary SYSTEM messages aligned with the request', () => {
   const input = {
     character: { description: '角色预览' },
     worldbooks: [],
@@ -7061,7 +7061,7 @@ test('settings debug preview keeps boundary SYSTEM messages aligned with the req
   assert.equal(actual.at(-2).content, expected.at(-2).content)
 })
 
-test('World Model message structure and raw views share one final messages array', () => {
+test.skip('removed Popup World Model message structure and raw views shared one final messages array', () => {
   const input = {
     character: { description: 'CHARACTER_SOURCE_MARKER', greetings: [] },
     worldbooks: [{ entries: [{ content: 'WORLDBOOK_SOURCE_MARKER' }] }],
@@ -7112,7 +7112,7 @@ test('World Model message structure and raw views share one final messages array
   assert.doesNotMatch(rawHtml, /"token_estimate"\s*:/)
 })
 
-test('World Model raw and structure views keep the four-message compatibility shape without boundaries', () => {
+test.skip('removed Popup World Model raw and structure views kept the four-message compatibility shape without boundaries', () => {
   const input = {
     character: { description: 'EMPTY_BOUNDARY_CHARACTER', greetings: [] },
     worldbooks: [],
@@ -7138,7 +7138,7 @@ test('World Model raw and structure views keep the four-message compatibility sh
   assert.deepEqual(extractRawMessages(rawHtml), expectedMessages)
 })
 
-test('settings debug preview shows temporary Raw and Canonical trace in Chinese', () => {
+test.skip('removed Popup settings debug preview showed temporary Raw and Canonical trace in Chinese', () => {
   const html = renderAnalysisDebugPopupContent({
     analysisPreview: {
       worldModelTrace: {

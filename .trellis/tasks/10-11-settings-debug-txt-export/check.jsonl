@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review the completed UI/export diff against project quality rules."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Check that the export remains a read-only consumer of current safe Floor-derived diagnostics."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify no runtime producer or persistence ownership boundary was changed."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Verify settings layout and responsive UI contract after Popup removal."}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Follow the repository's plain-DOM component and event delegation conventions while changing settings markup."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Apply frontend quality and verification constraints to the direct TXT download path and responsive settings UI."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Preserve Floor/Swipe ownership and provenance when exporting existing diagnostic DTOs."}
+{"file":"docs/ARCHITECTURE.md","reason":"Keep diagnostic ownership and UI/runtime dependency boundaries intact."}
+{"file":"docs/UI_FRAMEWORK.md","reason":"Keep the settings UI structure, tokens, hooks, and desktop/mobile layout aligned with the fixed framework."}

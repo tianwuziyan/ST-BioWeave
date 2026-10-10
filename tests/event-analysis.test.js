@@ -20,7 +20,6 @@ import {
   eventSemanticKey,
   PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
 } from '../core/events.js';
-import { renderAnalysisDebugPopupContent } from '../ui/settings.js';
 import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js';
 
 const floorVersion = {
@@ -1804,7 +1803,7 @@ test('common analysis prompt reaches Event and World builders while Persona stay
   assert.match(JSON.stringify(worldMessages), /整理当前 Chat 的生物学世界规则/);
 });
 
-test('Event Prompt Preview renders the final Event messages and common prompt safely', () => {
+test.skip('removed Event Prompt Popup rendered the final Event messages and common prompt safely', () => {
   const input = buildEventAnalysisInput({
     chatId: floorVersion.chat_id,
     floorVersion,

@@ -33,7 +33,7 @@ import {
 import {createChatBoundary} from '../runtime/chat.js';
 import {createApiProfileStore, createStore} from '../storage/store.js';
 import {detectExternalMemoryProviders, probeExternalMemoryProviders} from '../story/seven-days-cal.js';
-import {renderAnalysisDebugPopupContent, settingsPage} from '../ui/settings.js';
+import {renderAnalysisInputPreview, settingsPage} from '../ui/settings.js';
 import {applyRecentStoryRegex, buildAnalysisInput, mergeRecentStorySettings} from '../ai/input-builder.js';
 
 const STYLE_SOURCE = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
@@ -1161,10 +1161,7 @@ test('settings source operations do not render a page notice, while preview erro
       selected: [],
     },
   });
-  const previewHtml = renderAnalysisDebugPopupContent({
-    analysisPreview: {error: '分析输入预览读取失败。'},
-    documentRef: null,
-  });
+  const previewHtml = renderAnalysisInputPreview({error: '分析输入预览读取失败。'});
 
   assert.match(html, /data-bioweave-analysis-worldbook-toggle="st-worldbook:toast-check"/);
   assert.doesNotMatch(html, /设置页顶部瞬时提示。/);
@@ -1182,7 +1179,7 @@ test('settings categories reuse the compact disclosure shell with left arrows an
     assert.match(html, new RegExp('data-bioweave-settings-disclosure="' + key + '"[^>]* open'));
   }
   assert.doesNotMatch(html, /data-bioweave-settings-disclosure="analysis_preview"/);
-  assert.match(html, /data-bioweave-action="open-analysis-debug"/);
+  assert.match(html, /data-bioweave-action="export-debug-txt"/);
   for (const label of ['世界书来源', '最近剧情', '外部记忆来源', '高级 / 调试', '分析提示词', '数据管理', 'API 来源', '任务分配']) {
     assert.match(html, new RegExp(label));
   }
@@ -1908,7 +1905,7 @@ test('analysis input preview external statuses distinguish disabled, unavailable
   assert.equal(byKey.get('database_memory').status, '未检测到');
 });
 
-test('debug Popup content exposes a temporary analysis input preview without storing raw content', () => {
+test.skip('removed debug Popup content exposed a temporary analysis input preview without storing raw content', () => {
   const html = renderAnalysisDebugPopupContent({
     analysisPreview: {
       mode: 'structure',

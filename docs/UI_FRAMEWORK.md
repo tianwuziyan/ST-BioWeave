@@ -140,7 +140,7 @@ BioWeave 使用低装饰、信息密度适中的生物观测面板。默认夜�
 | 日 | `#cbd6db` | `#e5ecef` | `#1b2a33` | `#356f91` | 雾灰蓝、避免纯白和强眩光 |
 | 跟随酒馆 | `--SmartThemeBlurTintColor` | 宿主色的受控混合 | `--SmartThemeBodyColor` | `--SmartThemeQuoteColor` | 调用酒馆主题但保持 BioWeave 层级 |
 
-日间主题的 surface、input、card 只使用低亮度灰蓝变体；成功、警告和错误仍分别使用绿色、琥珀色和红色，不能因为切换主题而改变语义。跟随酒馆主题必须使用 `--SmartThemeBlurTintColor`、`--SmartThemeBodyColor` 和 `--SmartThemeQuoteColor`，缺失时才使用配置中的低对比 fallback。调试预览 Popup 与主面板共用这三套 token。
+日间主题的 surface、input、card 只使用低亮度灰蓝变体；成功、警告和错误仍分别使用绿色、琥珀色和红色，不能因为切换主题而改变语义。跟随酒馆主题必须使用 `--SmartThemeBlurTintColor`、`--SmartThemeBodyColor` 和 `--SmartThemeQuoteColor`，缺失时才使用配置中的低对比 fallback。设置页内嵌调试预览与主面板共用这三套 token。
 
 ### 字体和尺寸
 
@@ -418,7 +418,7 @@ API 来源 body 的顺序固定为“API 来源单选项 → 超时（秒）/重
 
 下拉框分为两种显示层：默认 API 配置、任务分配、正则类型等使用原生 `bioweave-select`，必须保持 `min-width: 0`、`max-width: 100%`，由字段占满可用宽度，并保留浏览器原生箭头；API 编辑器中的模型选择使用 `bioweave-model-picker` / `bioweave-model-dropdown` 自定义浮层，菜单定位在触发按钮下方，使用配置登记的 `z-index: 30`。设置页的 API 来源折叠栏和模型选择器本身必须 `overflow: visible`，不能让紧凑卡片的裁剪规则截断菜单；菜单内部的模型列表仍可局部滚动。所有其他设置下拉框必须经过同一套宽度和窄屏检查，不能通过放大父级或产生页面级横向滚动来“解决”遮挡。
 
-分析提示词 body 不再重复显示第二个“分析提示词”标题，只保留首层设置栏标题；字段顺序和文字固定为“顶部 SYSTEM、分析任务补充、输入前说明、输入后说明、尾部 SYSTEM”。保存和“高级 / 调试”操作位于 body 底部，字段 key、保存逻辑和调试 Popup 入口不变。
+分析提示词 body 不再重复显示第二个“分析提示词”标题，只保留首层设置栏标题；字段顺序和文字固定为“顶部 SYSTEM、分析任务补充、输入前说明、输入后说明、尾部 SYSTEM”。保存和“高级 / 调试”操作位于 body 底部，字段 key、保存逻辑不变；设置页调试区域保留下拉框和内嵌预览，并提供直接下载完整 TXT 调试报告的按钮，不再使用重复的调试详情 Popup。最近一次运行诊断、当前生产业务状态、分析输入预览和 Story Time 调试各自将操作控件放在标题或工具栏外侧，实际预览区域统一固定为 240px 并在内部滚动。
 
 数据管理是设置页唯一的清除入口，使用独立的 `bioweave-data-management-disclosure` 设置栏，且不出现在人物、世界或其它页面。栏内恰好提供“清除人物数据”“清除世界数据”“清除全部分析数据”三个危险操作；每个操作都明确写出“仅当前聊天”、删除范围，以及 API、世界书、角色卡、插件设置、聊天正文、所有 Swipe 正文和其它插件数据不会被删除。生产按钮只通过 `data-bioweave-action` 委托给 Runtime facade，UI 不读取或删除 Chat、Message、Swipe storage 字段，也不提供“清除并开始新聊天”操作。
 
