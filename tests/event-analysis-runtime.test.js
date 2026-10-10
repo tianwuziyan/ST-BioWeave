@@ -378,6 +378,108 @@ test('Runtime updates aliases only in the current Character Floor without re-run
   fixture.runtime.destroy();
 });
 
+test("Registry identity and alias edits inherit the nearest complete snapshot", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "registry-source-floor", floor: 20, content: "人物来源", role: "assistant" },
+      { message_id: "registry-edit-floor", floor: 26, content: "人物编辑", role: "assistant" },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+
+  const historicalRegistry = structuredClone(
+    fixture.runtime.store.getFloor(0, 0).character_registry,
+  );
+  const characterId = Object.keys(historicalRegistry.entities)[0];
+  const writesBeforeRead = fixture.saveFloorCalls();
+  const inherited = await fixture.runtime.getCurrentCharacterIdentity(characterId);
+  assert.equal(inherited.display_name, "Alice");
+  assert.deepEqual(inherited.aliases, []);
+  assert.equal(fixture.saveFloorCalls(), writesBeforeRead);
+
+  const unchanged = await fixture.runtime.updateCharacterAliases({
+    character_id: characterId,
+    aliases: [],
+  });
+  assert.equal(unchanged.changed, false);
+  assert.equal(fixture.saveFloorCalls(), writesBeforeRead);
+
+  const changed = await fixture.runtime.updateCharacterAliases({
+    character_id: characterId,
+    aliases: ["新别名"],
+  });
+  assert.equal(changed.changed, undefined);
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1, 0).character_registry.entities[characterId].aliases,
+    ["新别名"],
+  );
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(0, 0).character_registry,
+    historicalRegistry,
+  );
+  assert.deepEqual(
+    Object.keys(fixture.runtime.store.getFloor(1, 0).character_registry.entities).sort(),
+    Object.keys(historicalRegistry.entities).sort(),
+  );
+  fixture.runtime.destroy();
+});
+
+test("An explicit empty Registry snapshot stops inheritance", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "registry-empty-source", floor: 20, content: "人物清空", role: "assistant" },
+      { message_id: "registry-empty-target", floor: 35, content: "读取空人物状态", role: "assistant" },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  const source = fixture.runtime.store.getFloor(0, 0);
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...source,
+    character_registry: { schema_version: 1, entities: {} },
+  });
+
+  const target = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  const resolved = await fixture.runtime.resolveCharacterRegistryAtOrBefore(target);
+  assert.equal(resolved.index, 0);
+  assert.deepEqual(resolved.character_registry, {
+    schema_version: 1,
+    entities: {},
+  });
+  await assert.rejects(
+    fixture.runtime.getCurrentCharacterIdentity("char_000001"),
+    error => error.message === "CHARACTER_ID_NOT_FOUND",
+  );
+  fixture.runtime.destroy();
+});
+
+test("manual-refresh saves inherited Registry data when the target Floor has none", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "manual-registry-source", floor: 20, content: "已有完整人物", role: "assistant" },
+      { message_id: "manual-registry-target", floor: 35, content: "手动刷新人物", role: "assistant" },
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  const sourceRegistry = structuredClone(
+    fixture.runtime.store.getFloor(0, 0).character_registry,
+  );
+
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1, 0).character_registry,
+    sourceRegistry,
+  );
+  assert.deepEqual(
+    Object.keys(fixture.runtime.store.getFloor(1, 0).character_registry.entities).sort(),
+    Object.keys(sourceRegistry.entities).sort(),
+  );
+  fixture.runtime.destroy();
+});
+
 test("manual supplement preserves current Floor facts omitted by the new AI result", async () => {
   let analysisCount = 0;
   const fixture = createFixture({

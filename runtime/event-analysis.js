@@ -164,11 +164,7 @@ function defaultCharacterContext(_context, derivedState = {}, analysisInput = {}
 function currentCharacterRegistryFromStates(states) {
   for (let index = states.length - 1; index >= 0; index -= 1) {
     const state = states[index];
-    const analysis = state.floorData?.analysis;
-    if (
-      analysis?.status !== "success" ||
-      !sameFloorVersion(floorVersionFromData(state.floorData), state.version)
-    )
+    if (!sameFloorVersion(floorVersionFromData(state.floorData), state.version))
       continue;
     const snapshot = normalizedCharacterRegistrySnapshot(
       state.floorData.character_registry,
@@ -1538,6 +1534,39 @@ export function createEventAnalysisCoordinator({
     }
     return { index, message, swipeId, floorData, version, chatId };
   }
+  async function resolveCharacterRegistryAtOrBefore(target, {strictBefore = false} = {}) {
+    if (!target?.version || !Number.isInteger(target.index)) return null;
+    const endIndex = target.index - (strictBefore ? 1 : 0);
+    for (let index = endIndex; index >= 0; index -= 1) {
+      if (!isCharacterMessage(messages()[index])) continue;
+      const swipeId = store.getActiveSwipeId?.(index);
+      if (swipeId === null || swipeId === undefined) continue;
+      let candidate;
+      try {
+        candidate = await resolveFloorAtIndex({__messageIndex: true, index});
+      } catch {
+        continue;
+      }
+      if (candidate.version.floor > target.version.floor) continue;
+      if (!strictBefore && index === target.index &&
+          !sameFloorVersion(candidate.version, target.version)) continue;
+      if (isFloorInvalidated(candidate)) continue;
+      const floorData = store.getFloor?.(index, swipeId) ?? candidate.floorData;
+      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
+      const characterRegistry = normalizedCharacterRegistrySnapshot(
+        floorData?.character_registry,
+      );
+      if (!characterRegistry) continue;
+      return {
+        index,
+        swipeId,
+        floorData,
+        version: candidate.version,
+        character_registry: characterRegistry,
+      };
+    }
+    return null;
+  }
   async function resolveCurrentBioWeaveFloor(selector = null) {
     const resolved = resolveMessage(selector);
     for (let index = resolved.index; index >= 0; index -= 1) {
@@ -1555,7 +1584,9 @@ export function createEventAnalysisCoordinator({
     const token = chat.token();
     const target = await resolveCurrentBioWeaveFloor();
     chat.assert(token);
-    const registry = normalizeCharacterRegistry(target.floorData?.character_registry);
+    const resolved = await resolveCharacterRegistryAtOrBefore(target);
+    chat.assert(token);
+    const registry = resolved?.character_registry ?? normalizeCharacterRegistry(null);
     const id = typeof characterId === "string" ? characterId.trim() : "";
     const entry = id ? registry.entities[id] : null;
     if (!entry) throw new Error("CHARACTER_ID_NOT_FOUND");
@@ -1566,10 +1597,9 @@ export function createEventAnalysisCoordinator({
     const token = chat.token();
     const target = await resolveCurrentBioWeaveFloor();
     chat.assert(token);
-    const current = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
-    if (!sameFloorVersion(floorVersionFromData(current), target.version))
-      throw new Error("FLOOR_VERSION_STALE");
-    const registry = normalizeCharacterRegistry(current.character_registry);
+    const resolved = await resolveCharacterRegistryAtOrBefore(target);
+    chat.assert(token);
+    const registry = resolved?.character_registry ?? normalizeCharacterRegistry(null);
     const validation = validateCharacterAliases(registry, characterId, aliases);
     if (!validation.ok) {
       const error = new Error(validation.reason ?? "ALIAS_INVALID");
@@ -1585,6 +1615,14 @@ export function createEventAnalysisCoordinator({
     if (!sameFloorVersion(latest.version, target.version))
       throw new Error("FLOOR_VERSION_STALE");
     chat.assert(token);
+    const currentAliases = registry.entities[String(characterId).trim()].aliases ?? [];
+    if (JSON.stringify(currentAliases) === JSON.stringify(validation.aliases)) {
+      return {
+        ok: true,
+        changed: false,
+        character: cloneValue(registry.entities[String(characterId).trim()]),
+      };
+    }
     await commitFloorPatch(target, "event", {
       character_registry: nextRegistry,
     }, {operation_type: "character-alias-patch", assertCurrent: () => chat.assert(token)});
@@ -2150,6 +2188,7 @@ export function createEventAnalysisCoordinator({
       getFloor: (index, swipeId) => store.getFloor?.(index, swipeId),
       resolveFloorAtIndex,
       resolveCurrentBioWeaveFloor,
+      resolveCharacterRegistryAtOrBefore,
       collectActiveBusinessData,
       collectCurrentFloorStates,
       assertToken: token => chat.assert(token),
@@ -3085,10 +3124,13 @@ export function createEventAnalysisCoordinator({
       currentFloorData &&
       (currentFloorMatches || includeCurrentFloorComparison),
     );
+    const previousRegistry = await resolveCharacterRegistryAtOrBefore(target, {
+      strictBefore: true,
+    });
     const characterRegistry = normalizeCharacterRegistry(
       useCurrentCharacterRegistry && currentFloorIsComparisonReference
         ? currentFloorData.character_registry
-        : previous.character_registry,
+        : previousRegistry?.character_registry ?? previous.character_registry,
     );
     const causalEvents = sortEvents(previous.events);
     const causalWorld = await resolveWorldModelAtOrBefore(target, { strictBefore: true });
@@ -4036,6 +4078,7 @@ export function createEventAnalysisCoordinator({
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
   return {
     resolveCurrentBioWeaveFloor,
+    resolveCharacterRegistryAtOrBefore,
     getCurrentCharacterIdentity,
     updateCharacterAliases,
     analyzeCurrentFloor,

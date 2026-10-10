@@ -152,6 +152,7 @@ export function createCharacterEventAnalysis({
   getFloor,
   resolveFloorAtIndex,
   resolveCurrentBioWeaveFloor,
+  resolveCharacterRegistryAtOrBefore,
   collectActiveBusinessData,
   collectCurrentFloorStates,
   assertToken,
@@ -513,8 +514,32 @@ export function createCharacterEventAnalysis({
         }, "health");
       }
     }
+    let characterRegistry = identityResult.character_registry;
+    if (execution.reason === "manual-refresh") {
+      const resolvedRegistry = typeof resolveCharacterRegistryAtOrBefore === "function"
+        ? await resolveCharacterRegistryAtOrBefore(target)
+        : null;
+      characterRegistry = normalizeCharacterRegistry(
+        resolvedRegistry?.character_registry ?? identityResult.character_registry,
+      );
+      const referencedCharacterIds = new Set(
+        events.flatMap((event) => (event.participants ?? [])
+          .map((participant) => participant?.character_id)
+          .filter(Boolean)),
+      );
+      for (const [characterId, entry] of Object.entries(identityResult.character_registry.entities ?? {})) {
+        if (referencedCharacterIds.has(characterId) &&
+            !characterRegistry.entities[characterId])
+          characterRegistry.entities[characterId] = entry;
+      }
+    }
     const unchanged = JSON.stringify(events) === JSON.stringify(currentFloorEvents);
-    if (unchanged && hasExistingState) {
+    const currentStoredRegistry = normalizeCharacterRegistry(
+      getFloor(target.index, target.swipeId)?.character_registry,
+    );
+    const registryChanged = execution.reason === "manual-refresh" &&
+      JSON.stringify(characterRegistry) !== JSON.stringify(currentStoredRegistry);
+    if (unchanged && hasExistingState && !registryChanged) {
       try {
         await maybeCreateSnapshot(target, token);
       } catch (snapshotError) {
@@ -530,24 +555,6 @@ export function createCharacterEventAnalysis({
     const assessmentCandidates = healthAssessment?.selectCandidates
       ? healthAssessment.selectCandidates({events, currentEvents: currentFloorEvents})
       : events;
-    const characterRegistry = normalizeCharacterRegistry(
-      execution.reason === "manual-refresh"
-        ? getFloor(target.index, target.swipeId)?.character_registry
-        : identityResult.character_registry,
-    );
-    if (execution.reason === "manual-refresh") {
-      const referencedCharacterIds = new Set(
-        events.flatMap((event) => (event.participants ?? [])
-          .map((participant) => participant?.character_id)
-          .filter(Boolean)),
-      );
-      for (const [characterId, entry] of Object.entries(identityResult.character_registry.entities ?? {})) {
-        if (referencedCharacterIds.has(characterId) &&
-            !characterRegistry.entities[characterId])
-          characterRegistry.entities[characterId] = entry;
-      }
-    }
-
     const analyzedAt = new Date().toISOString();
     const analysis = commitAnalysis(savedAnalysis, {
       status: "success",

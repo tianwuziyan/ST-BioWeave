@@ -2885,6 +2885,7 @@ export function createRuntime({
     recordPersistenceTrace,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
+    resolveCharacterRegistryAtOrBefore: eventAnalysis.resolveCharacterRegistryAtOrBefore,
     getCurrentCharacterIdentity: eventAnalysis.getCurrentCharacterIdentity,
     updateCharacterAliases: eventAnalysis.updateCharacterAliases,
     getCurrentStoryTime: storyTimeCoordinator.getCurrentStoryTime,
