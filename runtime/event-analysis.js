@@ -56,6 +56,7 @@ import {
   commitAnalysis,
   floorVersion,
   floorVersionFromData,
+  hasCompleteFloorVersion,
   hasCompleteEventState,
   hashText,
   sameFloorVersion,
@@ -172,6 +173,14 @@ function currentCharacterRegistryFromStates(states) {
     if (snapshot) return snapshot;
   }
   return normalizeCharacterRegistry(null);
+}
+function isStateWithinTargetBoundary(index, version, target) {
+  if (target === undefined || target === null) return true;
+  if (!Number.isInteger(target.index) || !hasCompleteFloorVersion(target.version)) return false;
+  if (!hasCompleteFloorVersion(version)) return false;
+  if (String(version.chat_id) !== String(target.version.chat_id)) return false;
+  if (index > target.index || Number(version.floor) > Number(target.version.floor)) return false;
+  return index !== target.index || sameFloorVersion(version, target.version);
 }
 function analysisTimestamp(analysis) {
   return (
@@ -1686,10 +1695,14 @@ export function createEventAnalysisCoordinator({
     };
   }
 
-  async function collectCurrentFloorStates(token = chat.token(), {includeEmpty = false} = {}) {
+  async function collectCurrentFloorStates(token = chat.token(), {
+    includeEmpty = false,
+    target = undefined,
+  } = {}) {
     const states = [];
     const all = messages();
     for (let index = 0; index < all.length; index += 1) {
+      if (target && Number.isInteger(target.index) && index > target.index) continue;
       if (!isCharacterMessage(all[index])) continue;
       const swipeId = store.getActiveSwipeId?.(index);
       if (swipeId === null || swipeId === undefined) continue;
@@ -1710,6 +1723,7 @@ export function createEventAnalysisCoordinator({
         throw withAnalysisStage(error, "floor_version");
       }
       chat.assert(token);
+      if (!isStateWithinTargetBoundary(index, version, target)) continue;
       states.push({
         index,
         message: all[index],
@@ -1726,7 +1740,10 @@ export function createEventAnalysisCoordinator({
     currentEventState = undefined,
     currentEventStateVersion = undefined,
   } = {}) {
-    const states = await collectCurrentFloorStates(token);
+    const boundedTarget = target?.version && Number.isInteger(target.index)
+      ? target
+      : undefined;
+    const states = await collectCurrentFloorStates(token, {target: boundedTarget});
     const validStates = states.filter(
       (state) => !isFloorInvalidated(state),
     );
@@ -1767,7 +1784,11 @@ export function createEventAnalysisCoordinator({
       activeState,
       worldModel: world?.model ?? null,
       persistedWindows: trackingWindowPersistence
-        ? (await trackingWindowPersistence.getTrackingWindowTimeline({chatId: token.chatId})).creations
+        ? (await trackingWindowPersistence.getTrackingWindowTimeline({
+            chatId: token.chatId,
+            ...(boundedTarget ? {endpointIndex: boundedTarget.index} : {}),
+            ...(boundedTarget ? {endpointFloor: boundedTarget.version.floor} : {}),
+          })).creations
         : [],
       characterRegistry: currentCharacterRegistryFromStates(validStates),
       currentStoryTime: storyTimeCoordinator && target !== null &&

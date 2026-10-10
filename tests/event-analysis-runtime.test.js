@@ -2883,6 +2883,49 @@ test("API input uses 6F when the unanalysed target is 9F", async () => {
   fixture.runtime.destroy();
 });
 
+test("historical target analysis does not inherit a later complete Event or Registry state", async () => {
+  const inputs = [];
+  const fixture = createFixture({
+    messages: [
+      {message_id: "message-100", floor: 100, content: "基线楼层", role: "assistant"},
+      {message_id: "message-250", floor: 250, content: "历史目标楼层", role: "assistant"},
+      {message_id: "message-400", floor: 400, content: "未来楼层", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        inputs.push(analysisInput);
+        return {
+          events: [eventResultForRegistry(
+            analysisInput.character_registry,
+            `event-${inputs.length}`,
+          )],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const historicalInput = inputs.at(-1);
+  assert.equal(historicalInput.current_floor.message_id, "message-250");
+  assert.equal(historicalInput.existing_bioweave.analysis.floor_version.message_id, "message-100");
+  assert.deepEqual(
+    historicalInput.existing_bioweave.events.map(event => event.source.message_id),
+    ["message-100"],
+  );
+  assert.doesNotMatch(JSON.stringify(historicalInput), /message-400/u);
+  const stableHistoricalInput = JSON.stringify(historicalInput);
+  fixture.context.chat[2].content = "未来楼层被编辑";
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(JSON.stringify(inputs.at(-1)), stableHistoricalInput);
+  fixture.context.chat.splice(2, 1);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(JSON.stringify(inputs.at(-1)), stableHistoricalInput);
+  fixture.runtime.destroy();
+});
+
 test("deleted latest Floor falls back to the nearest remaining valid previous Floor", async () => {
   const inputs = [];
   const fixture = createFixture({

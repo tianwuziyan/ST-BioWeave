@@ -60,3 +60,50 @@ test('Tracking Window persistence fails closed for stale active Swipe', async ()
     error => error.code === 'FLOOR_SWIPE_STALE',
   );
 });
+
+test('Tracking Window history respects both message and Floor endpoints', async () => {
+  const current = {
+    chat_id: 'chat-window',
+    message_id: 'message-current',
+    floor: 250,
+    swipe_id: 0,
+    content_hash: 'hash-current',
+    message_version: 'v-current',
+  };
+  const future = {
+    chat_id: 'chat-window',
+    message_id: 'message-future',
+    floor: 400,
+    swipe_id: 0,
+    content_hash: 'hash-future',
+    message_version: 'v-future',
+  };
+  const messages = [{}, {}];
+  const floors = [
+    {...emptyFloor(), floor_version: current, tracking_window_timeline: {
+      schema_version: 1,
+      creations: [{...windowRecord, tracking_window_id: 'window-current', created_at_floor_version: current}],
+      lifecycle_records: [],
+    }},
+    {...emptyFloor(), floor_version: future, tracking_window_timeline: {
+      schema_version: 1,
+      creations: [{...windowRecord, tracking_window_id: 'window-future', created_at_floor_version: future}],
+      lifecycle_records: [],
+    }},
+  ];
+  const persistence = createTrackingWindowPersistence({
+    store: {
+      getActiveSwipeId: () => 0,
+      getFloor: index => floors[index],
+      getCurrentChatOwnerSnapshot: () => ({messages}),
+    },
+    floorPersistence: {commitFloorPatch: async () => ({commitState: 'confirmed'})},
+  });
+
+  const bounded = await persistence.getTrackingWindowTimeline({
+    chatId: 'chat-window',
+    endpointIndex: 0,
+    endpointFloor: 250,
+  });
+  assert.deepEqual(bounded.creations.map(item => item.tracking_window_id), ['window-current']);
+});

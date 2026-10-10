@@ -54,7 +54,11 @@ export function createTrackingWindowPersistence({store, resolveCurrentFloorVersi
     await persistence.commitFloorPatch({owner: 'tracking', chatId: resolved.chatId, ownerFloor: {message_index: resolved.selector, message_id: resolved.version.message_id}, swipeId: resolved.swipeId, floorVersion: resolved.version, patch: {tracking_window_timeline: result.timeline}, operation_type: 'tracking-window-creation-patch'});
     return result;
   }
-  async function getTrackingWindowTimeline({chatId, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
+  async function getTrackingWindowTimeline({
+    chatId,
+    endpointIndex = Number.POSITIVE_INFINITY,
+    endpointFloor = Number.POSITIVE_INFINITY,
+  } = {}) {
     const snapshot = store.getCurrentChatOwnerSnapshot(chatId);
     const entries = [];
     for (let index = 0; index < snapshot.messages.length; index += 1) {
@@ -62,7 +66,7 @@ export function createTrackingWindowPersistence({store, resolveCurrentFloorVersi
       if (swipeId === null || swipeId === undefined) continue;
       const floor = store.getFloor(index, swipeId) ?? emptyFloor();
       const version = floorVersionFromData(floor);
-      if (!hasCompleteFloorVersion(version) || version.chat_id !== chatId || Number(version.floor) > Number(endpointFloor) || version.swipe_id !== swipeId) continue;
+      if (!hasCompleteFloorVersion(version) || version.chat_id !== chatId || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor) || version.swipe_id !== swipeId) continue;
       const normalized = normalizeTrackingWindowTimeline(floor.tracking_window_timeline, {expectedChatId: chatId});
       if (normalized.timeline.creations.length || normalized.timeline.lifecycle_records.length) entries.push(normalized.timeline);
     }
