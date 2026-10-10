@@ -207,6 +207,7 @@ function createFixture({
     };
   }
   let calls = 0;
+  const analysisCalls = [];
   const configuredAnalyzer =
     analyzer ??
     (rawApiResponse !== null
@@ -222,6 +223,18 @@ function createFixture({
         });
   const runtimeAnalyzer = {
     ...configuredAnalyzer,
+    async analyzeFloor(input) {
+      const version = input?.analysisInput?.floor_version ?? input?.floor_version ?? null;
+      analysisCalls.push(version ? {
+        chat_id: version.chat_id ?? null,
+        message_id: version.message_id ?? null,
+        floor: version.floor ?? null,
+        swipe_id: version.swipe_id ?? null,
+        content_hash: version.content_hash ?? null,
+        message_version: version.message_version ?? null,
+      } : null);
+      return configuredAnalyzer.analyzeFloor(input);
+    },
     // Existing Runtime fixtures focus on Character/Event behavior. Their
     // default World result is an explicit empty, validated model so those
     // tests can remain independent from an external World API response.
@@ -264,6 +277,7 @@ function createFixture({
     listeners,
     apiRequests,
     calls: () => calls,
+    analysisCalls: () => structuredClone(analysisCalls),
     saveChatMetadataCalls: () => saveChatMetadataCalls,
     saveFloorCalls: () => saveFloorCalls,
     convergeFloorOwnerCalls: () => convergeFloorOwnerCalls,
@@ -476,6 +490,119 @@ test("manual-refresh saves inherited Registry data when the target Floor has non
   assert.deepEqual(
     Object.keys(fixture.runtime.store.getFloor(1, 0).character_registry.entities).sort(),
     Object.keys(sourceRegistry.entities).sort(),
+  );
+  fixture.runtime.destroy();
+});
+
+test("analysis input keeps its causal state without the discarded derived read", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "analysis-input-source", floor: 20, content: "来源楼层", role: "assistant"},
+      {message_id: "analysis-input-target", floor: 26, content: "当前楼层", role: "assistant"},
+    ],
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const input = await fixture.runtime.getCurrentFloorAnalysisInput();
+  assert.equal(input.floor_version.message_id, "analysis-input-target");
+  assert.equal(input.existing_bioweave.events.length, 1);
+  assert.equal(input.character_registry.schema_version, 1);
+  assert.ok(input.world_model);
+  fixture.runtime.destroy();
+});
+
+test("business data returns one stable target version without persistence side effects", async () => {
+  const fixture = createFixture({
+    messages: [{message_id: "business-stable-target", floor: 35, content: "稳定楼层", role: "assistant"}],
+  });
+  await fixture.runtime.init();
+  const saveFloorCalls = fixture.saveFloorCalls();
+  const business = await fixture.runtime.collectActiveBusinessData();
+  assert.deepEqual(Object.keys(business.current_floor.version).sort(), [
+    "chat_id",
+    "content_hash",
+    "floor",
+    "message_id",
+    "message_version",
+    "swipe_id",
+  ]);
+  assert.equal(business.current_floor.version.message_id, "business-stable-target");
+  assert.equal(fixture.saveFloorCalls(), saveFloorCalls);
+  fixture.runtime.destroy();
+});
+
+test("business data rejects a Swipe change during one refresh", async () => {
+  let mutate;
+  const fixture = createFixture({
+    messages: [{
+      message_id: "business-swipe-target",
+      floor: 35,
+      swipes: ["Swipe A", "Swipe B"],
+      swipe_info: [{}, {}],
+      swipe_id: 0,
+      role: "assistant",
+    }],
+    storyTimeDebug: true,
+    storyTimeTrace: () => mutate?.(),
+  });
+  let changed = false;
+  let armed = false;
+  mutate = () => {
+    if (!armed || changed) return;
+    changed = true;
+    fixture.context.chat[0].swipe_id = 1;
+  };
+  await fixture.runtime.init();
+  armed = true;
+  await assert.rejects(
+    fixture.runtime.collectActiveBusinessData(),
+    error => error.code === "STALE_FLOOR_VERSION",
+  );
+  fixture.runtime.destroy();
+});
+
+test("business data rejects an edited target message during one refresh", async () => {
+  let mutate;
+  const fixture = createFixture({
+    messages: [{message_id: "business-edit-target", floor: 35, content: "旧正文", role: "assistant"}],
+    storyTimeDebug: true,
+    storyTimeTrace: () => mutate?.(),
+  });
+  let changed = false;
+  let armed = false;
+  mutate = () => {
+    if (!armed || changed) return;
+    changed = true;
+    fixture.context.chat[0].content = "新正文";
+  };
+  await fixture.runtime.init();
+  armed = true;
+  await assert.rejects(
+    fixture.runtime.collectActiveBusinessData(),
+    error => error.code === "STALE_FLOOR_VERSION",
+  );
+  fixture.runtime.destroy();
+});
+
+test("business data rejects a deleted target Floor during one refresh", async () => {
+  let mutate;
+  const fixture = createFixture({
+    messages: [{message_id: "business-delete-target", floor: 35, content: "待删除楼层", role: "assistant"}],
+    storyTimeDebug: true,
+    storyTimeTrace: () => mutate?.(),
+  });
+  let changed = false;
+  let armed = false;
+  mutate = () => {
+    if (!armed || changed) return;
+    changed = true;
+    fixture.context.chat.splice(0, 1);
+  };
+  await fixture.runtime.init();
+  armed = true;
+  await assert.rejects(
+    fixture.runtime.collectActiveBusinessData(),
+    error => error.code === "STALE_FLOOR_VERSION",
   );
   fixture.runtime.destroy();
 });
@@ -4196,14 +4323,36 @@ test("scheduler reconciliation removes deleted Floor keys and restores the inter
   const fixture = createFixture({
     messages: [{ message_id: "rollback-58", floor: 58, content: "Floor 58", role: "assistant" }],
   });
-  configureScheduler(fixture, { interval: 3 });
-  await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  try {
+    configureScheduler(fixture, { interval: 3 });
+    await fixture.runtime.init();
+    await fixture.runtime.refreshCurrentFloorAnalysis();
 
-  appendCharacter(fixture, "rollback-60", 60, "Floor 60");
-  appendCharacter(fixture, "rollback-62", 62, "Floor 62");
+  for (const [messageId, floor] of [["rollback-60", 60], ["rollback-62", 62]]) {
+    const rendered = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
+    appendCharacter(fixture, messageId, floor, `Floor ${floor}`);
+    await rendered;
+  }
+  const oldFloorAnalysis = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "rollback-64", 64, "Floor 64");
-  await new Promise(resolve => setTimeout(resolve, 180));
+  await oldFloorAnalysis;
+  assert.deepEqual(
+    fixture.analysisCalls().map(call => call?.message_id),
+    ["rollback-58", "rollback-64"],
+  );
+  assert.deepEqual(Object.keys(fixture.analysisCalls()[1]).sort(), [
+    "chat_id",
+    "content_hash",
+    "floor",
+    "message_id",
+    "message_version",
+    "swipe_id",
+  ]);
+  assert.equal(fixture.analysisCalls()[1].chat_id, "chat-runtime");
+  assert.equal(fixture.analysisCalls()[1].floor, 64);
+  assert.equal(fixture.analysisCalls()[1].swipe_id, 0);
+  assert.ok(fixture.analysisCalls()[1].content_hash);
+  assert.ok(fixture.analysisCalls()[1].message_version);
   fixture.context.chat.push({ message_id: "rollback-66", floor: 66, content: "Floor 66", role: "assistant" });
 
   fixture.context.chat.splice(3, 2);
@@ -4216,12 +4365,19 @@ test("scheduler reconciliation removes deleted Floor keys and restores the inter
   assert.equal(state.observedFloorKeys.some(key => key.includes("rollback-64")), false);
   assert.equal(state.observedFloorKeys.some(key => key.includes("rollback-66")), false);
 
+  const replacementAnalysis = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "rollback-64-new", 64, "Floor 64 new");
-  await new Promise(resolve => setTimeout(resolve, 180));
+  await replacementAnalysis;
   state = fixture.runtime.getAutoAnalysisSchedulerState();
   assert.equal(state.counter, 0);
-  assert.equal(fixture.calls(), 2); // baseline + replacement; deleted 64 is invalidated
-  fixture.runtime.destroy();
+  assert.equal(fixture.calls(), 3); // baseline + already-started deleted 64 + replacement
+  assert.deepEqual(
+    fixture.analysisCalls().map(call => call?.message_id),
+    ["rollback-58", "rollback-64", "rollback-64-new"],
+  );
+  } finally {
+    fixture.runtime.destroy();
+  }
 });
 
 test("stale scheduled success cannot overwrite a reconciled scheduler state", async () => {
@@ -9556,7 +9712,16 @@ test("Chat-local enabled defaults true, pauses automatic analysis, preserves his
 test("disabling an in-flight analysis prevents its late response from committing", async () => {
   let release;
   const started = new Promise(resolve => { release = resolve; });
+  let resolveEventStage;
+  const eventStageStarted = new Promise(resolve => { resolveEventStage = resolve; });
   const fixture = createFixture({
+    notify: event => {
+      if (
+        event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" &&
+        event?.payload?.state === "running" &&
+        event?.payload?.phase === "event_analysis"
+      ) resolveEventStage();
+    },
     analyzer: {
       async analyzeWorldModel() {
         return normalizeWorldModel({schema_version: 1, species: [{ name: "人类", biological_types: [] }]});
@@ -9569,7 +9734,7 @@ test("disabling an in-flight analysis prevents its late response from committing
   });
   await fixture.runtime.init();
   const pending = fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await eventStageStarted;
   await fixture.runtime.setBioWeaveEnabled(false);
   release();
   const result = await pending;

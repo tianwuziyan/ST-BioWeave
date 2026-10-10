@@ -3528,7 +3528,7 @@ export function createApp(runtime, options = {}) {
       ...payload,
     })
   }
-  function refreshBusinessState({ reason = 'ui-read', force = false } = {}) {
+  function refreshBusinessState({ reason = 'ui-read', force = false, staleRetry = 0 } = {}) {
     recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_REQUESTED', {
       request_source: reason,
       panel_open: root?.dataset.open === 'true',
@@ -3621,6 +3621,44 @@ export function createApp(runtime, options = {}) {
             business_refresh_sequence: cycleId,
             reason: 'error-after-newer-sequence',
           })
+          return
+        }
+        if (error?.code === 'STALE_FLOOR_VERSION') {
+          businessState = {
+            ...businessState,
+            loaded: true,
+            loading: false,
+            chatId,
+            trackingSubjects: {},
+            characterProfiles: {},
+            activeEvents: [],
+            currentFloor: null,
+            currentState: null,
+            currentStateStatus: 'STALE_FLOOR_VERSION',
+            currentHealthState: null,
+            currentStoryTime: null,
+            currentStoryTimeStatus: null,
+            currentStoryTimeDifferences: {},
+            projections: [],
+            projectionSummary: {active_count: 0, recent: []},
+            projectionStatus: null,
+            lastAnalysis: null,
+            analysisStatus: {state: 'not_analyzed', busy: false},
+            error: null,
+          }
+          recordCharacterRefreshTrace('CHARACTER_UI_STATE_COMMITTED', {
+            business_refresh_sequence: cycleId,
+            reason: 'stale-floor-version',
+          })
+          if (root?.dataset.open === 'true') {
+            render()
+            recordCharacterRefreshTrace('CHARACTER_UI_RENDERED', {
+              business_refresh_sequence: cycleId,
+              reason: 'stale-floor-version',
+            })
+          }
+          if (!businessRefreshQueued && staleRetry < 1)
+            businessRefreshQueued = {reason: 'stale-floor-version', force, staleRetry: staleRetry + 1}
           return
         }
         businessState = {
@@ -5097,7 +5135,37 @@ export function createApp(runtime, options = {}) {
         timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
       }
       if (characterLifecycleRefreshKey) lastCharacterLifecycleRefreshKey = characterLifecycleRefreshKey
-      businessState = { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentHealthState: null, currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
+      const targetBoundaryChanged = [
+        'MESSAGE_DELETED',
+        'MESSAGE_UPDATED',
+        'MESSAGE_EDITED',
+        'MESSAGE_SWIPED',
+        'MESSAGE_SWIPE_DELETED',
+      ].includes(event?.type) || isCharacterFloorLifecycleRefresh
+      businessState = targetBoundaryChanged
+        ? {
+            ...businessState,
+            loaded: false,
+            loading: true,
+            trackingSubjects: {},
+            characterProfiles: {},
+            activeEvents: [],
+            currentFloor: null,
+            currentState: null,
+            currentStateStatus: 'loading',
+            currentHealthState: null,
+            currentStoryTime: null,
+            currentStoryTimeStatus: 'loading',
+            currentStoryTimeDifferences: {},
+            projections: [],
+            projectionSummary: {active_count: 0, recent: []},
+            projectionStatus: null,
+            lastAnalysis: null,
+            analysisStatus: {state: 'not_analyzed', busy: false},
+            error: null,
+          }
+        : { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentHealthState: null, currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
+      if (targetBoundaryChanged && root?.dataset.open === 'true') render()
       void refreshBusinessState({ reason: event.type })
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {

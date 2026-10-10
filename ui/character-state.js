@@ -80,6 +80,7 @@ function renderDiagnostics(state) {
 
 function stateMessage(status) {
   if (status === 'NO_CHARACTER_FLOOR' || status === 'no_character_floor') return ['暂无可分析的角色楼层', '当前 Chat 尚未提供有效的 Character Floor。']
+  if (status === 'STALE_FLOOR_VERSION') return ['当前楼层已变化', '正在重新读取最新的 Character Floor。']
   if (status === 'STATE_ERROR' || status === 'error') return ['当前状态暂不可读取', '状态归约发生错误；已有 Event 与 Tracking 事实未被清除。']
   if (status === 'loading' || status === 'running') return ['正在读取当前生物状态', '请稍候，页面会在 Runtime 数据更新后刷新。']
   return null

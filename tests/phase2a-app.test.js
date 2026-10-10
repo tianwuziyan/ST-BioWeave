@@ -520,6 +520,95 @@ test('normal Character render refreshes the current Floor without starting analy
   fixture.app.destroyBioWeave();
 });
 
+async function createStaleBusinessRefreshFixture() {
+  const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
+  await waitFor(() => fixture.persistenceTrace().some(entry => entry.stage === 'CHARACTER_UI_STATE_COMMITTED'), 'initial UI business refresh');
+  const normalCollect = fixture.runtime.collectActiveBusinessData;
+  let calls = 0;
+  let releaseLatest;
+  const latest = new Promise(resolve => { releaseLatest = resolve; });
+  fixture.runtime.collectActiveBusinessData = async () => {
+    calls += 1;
+    if (calls === 1)
+      throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'});
+    if (calls === 2) {
+      await latest;
+      return normalCollect();
+    }
+    return normalCollect();
+  };
+  fixture.app.go('state');
+  return {fixture, calls: () => calls, releaseLatest};
+}
+
+for (const mutationType of ['MESSAGE_SWIPED', 'MESSAGE_EDITED', 'MESSAGE_DELETED']) {
+  test(`STALE_FLOOR_VERSION during ${mutationType} clears old UI projections and refreshes once`, async () => {
+    const {fixture, calls, releaseLatest} = await createStaleBusinessRefreshFixture();
+    try {
+      fixture.emit({type: mutationType, payload: {message_id: 0, swipe_id: 0}});
+      fixture.emit({type: 'MESSAGE_UPDATED', payload: {message_id: 0}});
+      await waitFor(() => calls() === 1, `${mutationType} stale refresh start`);
+      await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('正在重新读取'), `${mutationType} stale state`);
+      assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+      assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /状态归约发生错误/);
+      assert.deepEqual(fixture.toasts(), []);
+      releaseLatest();
+      await waitFor(() => calls() === 2 && fixture.root.querySelector('.bioweave-main').innerHTML.includes('当前楼层 10'), `${mutationType} latest refresh`);
+    } finally {
+      releaseLatest();
+      fixture.app.destroyBioWeave();
+    }
+  });
+}
+
+test('连续 STALE_FLOOR_VERSION 最多只触发一次自动重试', async () => {
+  const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
+  let calls = 0;
+  fixture.runtime.collectActiveBusinessData = async () => {
+    calls += 1;
+    throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'});
+  };
+  try {
+    fixture.app.go('state');
+    fixture.emit({type: 'MESSAGE_EDITED', payload: {message_id: 0}});
+    await waitFor(() => calls === 2, 'bounded stale retries');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 2);
+    assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /状态归约发生错误/);
+    assert.deepEqual(fixture.toasts(), []);
+  } finally {
+    fixture.app.destroyBioWeave();
+  }
+});
+
+test('Floor 边界变化在异步 stale 结果返回前也不保留旧 projection', async () => {
+  const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
+  await waitFor(() => fixture.persistenceTrace().some(entry => entry.stage === 'CHARACTER_UI_STATE_COMMITTED'), 'initial UI business refresh');
+  const normalCollect = fixture.runtime.collectActiveBusinessData;
+  let calls = 0;
+  let releaseFirst;
+  const first = new Promise(resolve => { releaseFirst = resolve; });
+  fixture.runtime.collectActiveBusinessData = async () => {
+    calls += 1;
+    if (calls === 1) {
+      await first;
+      throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'});
+    }
+    return normalCollect();
+  };
+  try {
+    fixture.app.go('characters');
+    fixture.emit({type: 'MESSAGE_EDITED', payload: {message_id: 0}});
+    await waitFor(() => calls === 1, 'pending stale read');
+    assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+    releaseFirst();
+    await waitFor(() => calls === 2, 'post-stale refresh');
+  } finally {
+    releaseFirst();
+    fixture.app.destroyBioWeave();
+  }
+});
+
 test('automatic World Full phase owns World busy state before Event Analysis', async () => {
   const fixture = await createFixture({analysisState: 'not_analyzed', analysisBusy: true, analysisPhase: 'world_full'});
   fixture.app.go('world');

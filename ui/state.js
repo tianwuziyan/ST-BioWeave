@@ -21,6 +21,7 @@ function statusMeta(status) {
   const value = String(status ?? '').trim().toLowerCase()
   if (value === 'success' || value === 'ready') return {label: '成功', tone: 'good'}
   if (value === 'running' || value === 'loading') return {label: '分析中', tone: 'warn'}
+  if (value === 'stale_floor_version') return {label: '正在重新读取', tone: 'warn'}
   if (value === 'failed' || value === 'error') return {label: '失败', tone: 'danger'}
   if (value === 'cancelled') return {label: '已取消', tone: 'warn'}
   return {label: '未启用', tone: ''}

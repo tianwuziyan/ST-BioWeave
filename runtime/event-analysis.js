@@ -1721,7 +1721,7 @@ export function createEventAnalysisCoordinator({
     }
     return states;
   }
-  async function collectTrackingInputs(token = chat.token()) {
+  async function collectTrackingInputs(token = chat.token(), {target = undefined} = {}) {
     const states = await collectCurrentFloorStates(token);
     const validStates = states.filter(
       (state) => !isFloorInvalidated(state),
@@ -1729,9 +1729,11 @@ export function createEventAnalysisCoordinator({
     let activeEvents = [];
     let activeState = null;
     try {
-      const current = await resolveCurrentBioWeaveFloor();
-      activeState = await resolveCompleteEventStateAtOrBefore(current);
-      activeEvents = sortEvents(activeState?.events ?? []);
+      const current = target === undefined ? await resolveCurrentBioWeaveFloor() : target;
+      if (current) {
+        activeState = await resolveCompleteEventStateAtOrBefore(current);
+        activeEvents = sortEvents(activeState?.events ?? []);
+      }
     } catch (error) {
       if (![
         "NO_CHARACTER_FLOOR",
@@ -1742,7 +1744,10 @@ export function createEventAnalysisCoordinator({
     }
     let world = null;
     try {
-      world = await resolveWorldModelAtOrBefore();
+      const current = target === undefined ? undefined : target;
+      world = current === null
+        ? null
+        : await resolveWorldModelAtOrBefore(current);
     } catch {
       // An empty Chat has no target Floor and therefore no World Model.
     }
@@ -1755,8 +1760,9 @@ export function createEventAnalysisCoordinator({
         ? (await trackingWindowPersistence.getTrackingWindowTimeline({chatId: token.chatId})).creations
         : [],
       characterRegistry: currentCharacterRegistryFromStates(validStates),
-      currentStoryTime: storyTimeCoordinator && validStates.length
-        ? await storyTimeCoordinator.resolveFloorStoryTime(validStates.at(-1))
+      currentStoryTime: storyTimeCoordinator && target !== null &&
+        (target !== undefined || validStates.length)
+        ? await storyTimeCoordinator.resolveFloorStoryTime(target ?? validStates.at(-1))
         : null,
       subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
         participant.character_id,
@@ -1994,21 +2000,25 @@ export function createEventAnalysisCoordinator({
     }];
     return state;
   }
-  async function collectCurrentDerivedState(token, chatData = null) {
-    const trackingInputs = await collectTrackingInputs(token);
+  async function collectCurrentDerivedState(token, chatData = null, {target = undefined} = {}) {
+    const trackingInputs = await collectTrackingInputs(token, {target});
     const currentChat = chatData ?? store.getChat(token.chatId);
     let validStates = trackingInputs.states;
     let activeEvents = trackingInputs.activeEvents;
     let characterRegistry = trackingInputs.characterRegistry;
-    let currentFloor = null;
-    try {
-      currentFloor = await resolveCurrentBioWeaveFloor();
-    } catch (error) {
-      if (error?.message !== "NO_CHARACTER_FLOOR" && error?.message !== "MESSAGE_NOT_FOUND") throw error;
+    let currentFloor = target;
+    if (target === undefined) {
+      try {
+        currentFloor = await resolveCurrentBioWeaveFloor();
+      } catch (error) {
+        if (error?.message !== "NO_CHARACTER_FLOOR" && error?.message !== "MESSAGE_NOT_FOUND") throw error;
+      }
     }
-    const storyTimeInfo = storyTimeCoordinator
-      ? await storyTimeCoordinator.getCurrentStoryTimeInfo()
-      : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
+    const storyTimeInfo = target === null
+      ? {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"}
+      : storyTimeCoordinator
+        ? await storyTimeCoordinator.getCurrentStoryTimeInfo(target === undefined ? null : target)
+        : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
     const currentStoryTime = storyTimeInfo.story_time;
     const registry = trackingRuntime.buildTrackingRegistry({
       ...trackingInputs,
@@ -2245,30 +2255,39 @@ export function createEventAnalysisCoordinator({
   const resolveFinalWorldModelForAnalysis = worldAnalysis.resolveFinalWorldModelForAnalysis;
   const characterEventAnalysis = featureComposition.characterEventAnalysis;
   const eventEditing = featureComposition.eventEditing;
-  async function statusForCurrentFloor() {
-    let target;
-    try {
-      target = await resolveFloor();
-    } catch (error) {
+  function emptyCurrentFloorStatus() {
+    return {
+      state: "not_analyzed",
+      busy: false,
+      current_floor: null,
+      floor_version: null,
+      attempt: null,
+      last_success: null,
+      last_error: null,
+      event_count: 0,
+      tracking_subject_count: 0,
+      current_floor_events: [],
+    };
+  }
+  async function statusForCurrentFloor({target: suppliedTarget = undefined, resolutionError = null} = {}) {
+    let target = suppliedTarget;
+    if (suppliedTarget === undefined) {
+      try {
+        target = await resolveFloor();
+      } catch (error) {
+        resolutionError = error;
+      }
+    }
+    if (!target) {
+      const error = resolutionError;
       if (
-        error?.message !== "MESSAGE_NOT_FOUND" &&
+        error && error.message !== "MESSAGE_NOT_FOUND" &&
         isFloorPreflightStage(error?.analysis_stage)
       ) {
         return diagnostics.buildFloorPreflightStatus(error, 0);
       }
-      if (error?.message !== "MESSAGE_NOT_FOUND") throw error;
-      return {
-        state: "not_analyzed",
-        busy: false,
-        current_floor: null,
-        floor_version: null,
-        attempt: null,
-        last_success: null,
-        last_error: null,
-        event_count: 0,
-        tracking_subject_count: 0,
-        current_floor_events: [],
-      };
+      if (error && error.message !== "MESSAGE_NOT_FOUND") throw error;
+      return emptyCurrentFloorStatus();
     }
     const analysis = target.floorData?.analysis ?? null;
     const matchesCurrent = sameFloorVersion(
@@ -2436,9 +2455,43 @@ export function createEventAnalysisCoordinator({
       current_floor_events: currentFloorEvents,
     };
   }
+  async function assertBusinessTargetCurrent(target, token) {
+    chat.assert(token);
+    if (!target) return null;
+    let current;
+    try {
+      current = await resolveCurrentBioWeaveFloor();
+    } catch (cause) {
+      const error = new Error("STALE_FLOOR_VERSION");
+      error.code = "STALE_FLOOR_VERSION";
+      error.analysis_stage = "business_state_target";
+      error.cause = cause;
+      throw error;
+    }
+    if (
+      current.index !== target.index ||
+      current.swipeId !== target.swipeId ||
+      !sameFloorVersion(current.version, target.version)
+    ) {
+      const error = new Error("STALE_FLOOR_VERSION");
+      error.code = "STALE_FLOOR_VERSION";
+      error.analysis_stage = "business_state_target";
+      error.floor_version = target.version;
+      error.current_floor_version = current.version;
+      throw error;
+    }
+    return current;
+  }
   async function collectActiveBusinessData() {
     const token = chat.token();
-    const status = await statusForCurrentFloor();
+    let target = null;
+    let targetError = null;
+    try {
+      target = await resolveCurrentBioWeaveFloor();
+    } catch (error) {
+      targetError = error;
+    }
+    const status = await statusForCurrentFloor({target, resolutionError: targetError});
     chat.assert(token);
     const chatData = store.getChat(token.chatId);
     if (isFloorPreflightStage(status.error_stage)) {
@@ -2453,7 +2506,7 @@ export function createEventAnalysisCoordinator({
     }
     let derived;
     try {
-      derived = await collectCurrentDerivedState(token, chatData);
+      derived = await collectCurrentDerivedState(token, chatData, {target});
     } catch (error) {
       if (!isFloorPreflightStage(error?.analysis_stage)) throw error;
       return buildBusinessData(
@@ -2471,7 +2524,7 @@ export function createEventAnalysisCoordinator({
         },
       );
     }
-    chat.assert(token);
+    await assertBusinessTargetCurrent(target, token);
     return buildBusinessData(
       status,
       derived.activeEvents,
@@ -3106,7 +3159,6 @@ export function createEventAnalysisCoordinator({
     } = {},
   ) {
     const chatData = store.getChat(token.chatId);
-    const derived = await collectCurrentDerivedState(token, chatData);
     const previous = await findPreviousSuccessfulBioWeave(target);
     const existingBioWeave = {
       analysis: previous.analysis,
