@@ -323,6 +323,95 @@ test('ordinary short-term observations persist one AI-derived recovery estimate 
   assert.equal(diagnostics.filter(item => item.stage === 'HEALTH_ASSESSMENT_ACCEPTED').length, 1);
 });
 
+test('Assessment coordinator requires Event source to match the target Floor Version', async () => {
+  const targetVersion = {...version, floor: 2, message_id: 'message-b', content_hash: 'hash-b', message_version: 2};
+  let requests = 0;
+  let writes = 0;
+  let floor = {floor_version: targetVersion, events: [], health_assessment_timeline: emptyHealthAssessmentTimeline()};
+  const coordinator = createHealthAssessmentCoordinator({
+    analyzer: {analyzeHealthAssessment: async () => { requests += 1; return response(); }},
+    getFloor: () => structuredClone(floor),
+    commitFloorPatch: async (_target, _owner, patch) => { writes += 1; floor = {...floor, ...structuredClone(patch)}; },
+    assertExecutionTargetCurrent: async () => true,
+  });
+  const validEvent = event({event_id: 'evt-valid', source: targetVersion});
+  floor.events = [validEvent];
+  await coordinator.assessFloor({
+    target: {index: 1, swipeId: 0, version: targetVersion},
+    execution: {}, token: {}, events: [validEvent],
+  });
+  assert.equal(requests, 1);
+  assert.equal(writes, 1);
+  assert.deepEqual(floor.health_assessment_timeline.assessments[0].source_floor_version, targetVersion);
+  assert.equal(
+    floor.health_assessment_timeline.assessments[0].source_observation_fingerprint,
+    healthObservationFingerprint(validEvent),
+  );
+
+  const mismatchFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+  for (const field of mismatchFields) {
+    const mismatched = {...targetVersion, [field]: field === 'floor' || field === 'swipe_id' || field === 'message_version'
+      ? Number(targetVersion[field]) + 1
+      : `${targetVersion[field]}-mismatch`};
+    const before = structuredClone(floor);
+    await assert.rejects(
+      () => coordinator.assessFloor({
+        target: {index: 1, swipeId: 0, version: targetVersion},
+        execution: {}, token: {}, events: [event({event_id: `evt-${field}`, source: mismatched})],
+      }),
+      error => error?.code === 'HEALTH_ASSESSMENT_SOURCE_MISMATCH',
+    );
+    assert.equal(requests, 1);
+    assert.equal(writes, 1);
+    assert.deepEqual(floor, before);
+  }
+});
+
+test('Assessment source preflight rejects a mixed candidate batch before any AI or Floor write', async () => {
+  const targetVersion = {...version, floor: 3, message_id: 'message-c', content_hash: 'hash-c', message_version: 3};
+  let requests = 0;
+  let writes = 0;
+  const floor = {floor_version: targetVersion, events: [], health_assessment_timeline: emptyHealthAssessmentTimeline()};
+  const coordinator = createHealthAssessmentCoordinator({
+    analyzer: {analyzeHealthAssessment: async () => { requests += 1; return response(); }},
+    getFloor: () => structuredClone(floor),
+    commitFloorPatch: async () => { writes += 1; },
+    assertExecutionTargetCurrent: async () => true,
+  });
+  await assert.rejects(
+    () => coordinator.assessFloor({
+      target: {index: 2, swipeId: 0, version: targetVersion},
+      execution: {}, token: {},
+      events: [
+        event({event_id: 'evt-valid-batch', source: targetVersion}),
+        event({event_id: 'evt-invalid-batch', source: {...targetVersion, floor: 2}}),
+      ],
+    }),
+    error => error?.code === 'HEALTH_ASSESSMENT_SOURCE_MISMATCH',
+  );
+  assert.equal(requests, 0);
+  assert.equal(writes, 0);
+  assert.equal(floor.health_assessment_timeline.assessments.length, 0);
+});
+
+test('inherited unchanged Events are not Assessment candidates, while edited Events bind to the new source', async () => {
+  const targetVersion = {...version, floor: 4, message_id: 'message-d', content_hash: 'hash-d', message_version: 4};
+  const inherited = event({event_id: 'evt-inherited'});
+  const coordinator = createHealthAssessmentCoordinator({
+    analyzer: {analyzeHealthAssessment: async () => response()},
+    getFloor: () => ({floor_version: targetVersion, events: [], health_assessment_timeline: emptyHealthAssessmentTimeline()}),
+    commitFloorPatch: async () => {},
+    assertExecutionTargetCurrent: async () => true,
+  });
+  assert.deepEqual(coordinator.selectCandidates({events: [inherited], currentEvents: [inherited]}), []);
+  const edited = event({
+    event_id: inherited.event_id,
+    source: targetVersion,
+    state_fact: {subject_id: 'char_000001', payload: {symptom: {kind: 'infection', health_role: 'observation'}}},
+  });
+  assert.deepEqual(coordinator.selectCandidates({events: [edited], currentEvents: [inherited]}), [edited]);
+});
+
 test('persisted assessment is reused and active filtering invalidates changed source facts', async () => {
   let floor = {floor_version: version, events: [event()], health_assessment_timeline: emptyHealthAssessmentTimeline()};
   let calls = 0;

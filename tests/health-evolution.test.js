@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {deriveCurrentHealthState, expiredHealthEventIds} from '../core/health-evolution.js';
 import {summarizeActiveHealthSeverity} from '../core/health-aggregation.js';
 import {activeHealthAssessments, healthObservationFingerprint} from '../core/health-assessment.js';
+import {createHealthEvolutionRuntime} from '../runtime/health-evolution.js';
 
 const version = {
   chat_id: 'chat-health', message_id: 'message-health', floor: 1,
@@ -440,4 +441,38 @@ test('expiredHealthEventIds is conservative for missing profiles and current fac
     assessments: [assessment({eventId: 'fever', expectedRecovery: null})],
     currentStoryTime: story(3),
   }), []);
+});
+
+test('Recovery input excludes Assessments from invalidated source Floors before lifecycle evaluation', () => {
+  const fever = event({id: 'invalidated-fever', kind: 'fever', day: 1});
+  const saved = {
+    ...assessment({eventId: fever.event_id, expectedDay: 3}),
+    assessment_id: 'assessment-invalidated-fever',
+    request_key: 'request-invalidated-fever',
+    source_floor_version: version,
+    source_observation_fingerprint: healthObservationFingerprint(fever),
+  };
+  const states = [{
+    invalidated: true,
+    version,
+    floorData: {health_assessment_timeline: {schema_version: 3, assessments: [saved]}},
+  }];
+  const healthEvolution = createHealthEvolutionRuntime();
+  const currentStoryTime = story(4);
+  assert.deepEqual(
+    healthEvolution.findExpiredEventIds({
+      states,
+      currentEvents: [fever],
+      currentStoryTime,
+    }),
+    [fever.event_id],
+  );
+  assert.deepEqual(
+    healthEvolution.findExpiredEventIds({
+      states: states.filter(state => !state.invalidated),
+      currentEvents: [fever],
+      currentStoryTime,
+    }),
+    [],
+  );
 });

@@ -1698,6 +1698,7 @@ export function createEventAnalysisCoordinator({
   async function collectCurrentFloorStates(token = chat.token(), {
     includeEmpty = false,
     target = undefined,
+    validOnly = false,
   } = {}) {
     const states = [];
     const all = messages();
@@ -1724,14 +1725,16 @@ export function createEventAnalysisCoordinator({
       }
       chat.assert(token);
       if (!isStateWithinTargetBoundary(index, version, target)) continue;
-      states.push({
+      const state = {
         index,
         message: all[index],
         swipeId,
         floorData: floorData ?? {},
         version,
         events: store.getActiveFloorEvents?.(index, version) ?? [],
-      });
+      };
+      if (validOnly && isFloorInvalidated(state)) continue;
+      states.push(state);
     }
     return states;
   }

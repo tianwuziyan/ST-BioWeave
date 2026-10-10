@@ -483,7 +483,7 @@ export function createCharacterEventAnalysis({
       const currentStoryTime = getCurrentStoryTime
         ? await getCurrentStoryTime(target)
         : analysisInput.story_time;
-      const states = await collectCurrentFloorStates(token);
+      const states = await collectCurrentFloorStates(token, {validOnly: true});
       const expiredEventIds = healthEvolution.findExpiredEventIds({
         states,
         currentEvents: events,
@@ -497,7 +497,7 @@ export function createCharacterEventAnalysis({
         const stableStoryTime = getCurrentStoryTime
           ? await getCurrentStoryTime(target)
           : currentStoryTime;
-        const stableStates = await collectCurrentFloorStates(token);
+        const stableStates = await collectCurrentFloorStates(token, {validOnly: true});
         const stableExpiredEventIds = healthEvolution.findExpiredEventIds({
           states: stableStates,
           currentEvents: events,

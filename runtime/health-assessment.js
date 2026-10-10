@@ -7,6 +7,7 @@ import {
   validateHealthAssessment,
 } from '../core/health-assessment.js';
 import {diagnosticFingerprint} from './diagnostics.js';
+import {sameFloorVersion} from './floor.js';
 
 function clone(value) {
   return value === undefined ? value : structuredClone(value);
@@ -51,10 +52,30 @@ export function createHealthAssessmentCoordinator({
 
   async function assessFloor({target, execution, token, events, signal} = {}) {
     const version = versionOf(target);
+    const candidates = [];
+    for (const event of Array.isArray(events) ? events : []) {
+      const eligibility = healthAssessmentEligibility(event);
+      if (!eligibility.eligible) continue;
+      candidates.push(eligibility.event);
+    }
+    const invalidCandidate = candidates.find(event => !sameFloorVersion(event.source, version));
+    if (invalidCandidate) {
+      const error = new Error('HEALTH_ASSESSMENT_SOURCE_MISMATCH');
+      error.code = 'HEALTH_ASSESSMENT_SOURCE_MISMATCH';
+      error.source_event_id = invalidCandidate.event_id ?? null;
+      error.target_floor_version = clone(version);
+      error.event_source = clone(invalidCandidate.source);
+      diagnostic('HEALTH_ASSESSMENT_SOURCE_MISMATCH', {
+        source_event_id: error.source_event_id,
+        target_floor_version: clone(version),
+        event_source: clone(invalidCandidate.source),
+      });
+      throw error;
+    }
     const floor = getFloor?.(target?.index, target?.swipeId) ?? null;
     let timeline = normalizeHealthAssessmentTimeline(floor?.health_assessment_timeline);
     const results = [];
-    for (const event of Array.isArray(events) ? events : []) {
+    for (const event of candidates) {
       const eligibility = healthAssessmentEligibility(event);
       if (!eligibility.eligible) continue;
       const fingerprint = healthObservationFingerprint(eligibility.event);
