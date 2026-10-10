@@ -305,11 +305,13 @@ function createAnalysisPreviewState() {
 function createWorldModelState() {
   return {
     loaded: false,
+    statusLoaded: false,
     reloadPending: false,
     loading: false,
     busy: false,
     chatId: null,
     model: null,
+    resolvedModel: null,
     meta: null,
     selectedSpecies: null,
     selectedBiologicalType: null,
@@ -1933,7 +1935,7 @@ export function createApp(runtime, options = {}) {
       chatId: runtime.chat.current(),
       reloadPending: deferReload,
     }
-    if (renderView && route === 'world') render()
+    if (renderView && (route === 'world' || route === 'state')) render()
   }
   function worldModelRefreshKey(payload = {}) {
     const version = payload?.floor_version ?? payload?.floorVersion
@@ -1994,8 +1996,10 @@ export function createApp(runtime, options = {}) {
     const nextState = {
       ...createWorldModelState(),
       loaded: true,
+      statusLoaded: true,
       chatId,
       model: viewModel,
+      resolvedModel: null,
       meta,
       committedRevision: committed?.revision ?? null,
       committedFingerprint: committed?.fingerprint ?? null,
@@ -2120,10 +2124,10 @@ export function createApp(runtime, options = {}) {
       assertCurrent: () => assertAnalysisChatToken(token),
     })
   }
-  function reloadWorldModelFromRuntime({key = null, requestSource = 'world-state'} = {}) {
+  function reloadWorldModelFromRuntime({key = null, requestSource = 'world-state', statusOnly = false} = {}) {
     const chatId = runtime.chat.current()
     if (worldModelRefreshInFlight?.chatId === chatId) {
-      worldModelQueuedRefresh = {key, requestSource, chatId}
+      worldModelQueuedRefresh = {key, requestSource, chatId, statusOnly}
       recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
         request_source: requestSource,
         reason: 'refresh_cycle_in_flight',
@@ -2166,7 +2170,7 @@ export function createApp(runtime, options = {}) {
         : null
     if (key) worldModelLastRefreshKey = key
     const cycleId = ++uiRefreshCycleSequence
-    const requestState = {chatId, cycleId, request: null, key, requestSource}
+    const requestState = {chatId, cycleId, request: null, key, requestSource, statusOnly}
     let cycleResult = 'pending'
     let refreshCycleEndedByIngress = false
     worldModelRefreshInFlight = requestState
@@ -2191,12 +2195,17 @@ export function createApp(runtime, options = {}) {
       request_source: requestSource,
     })
     const resolver = runtime.resolveWorldModelAtOrBefore
-    if (typeof resolver !== 'function') {
+    const reusableResolvedModel = !statusOnly &&
+      worldModelState.chatId === chatId &&
+      worldModelState.statusLoaded &&
+      worldModelState.resolvedModel
+    if (!reusableResolvedModel && typeof resolver !== 'function') {
       worldModelState = {
         ...worldModelState,
-        loaded: true,
+        loaded: statusOnly ? worldModelState.loaded : true,
         loading: false,
       }
+      if (statusOnly && route === 'state') notify('世界模型读取失败，请重试。', 'error', documentRef)
       worldModelRefreshInFlight = null
       recordUiRefreshTrace('UI_REFRESH_CYCLE_END', {
         ui_refresh_cycle_id: cycleId,
@@ -2222,7 +2231,7 @@ export function createApp(runtime, options = {}) {
       if (worldModelState.chatId === chatId) {
         worldModelState = {
           ...worldModelState,
-          loaded: true,
+          loaded: statusOnly ? worldModelState.loaded : true,
           reloadPending: false,
           loading: false,
         }
@@ -2238,19 +2247,42 @@ export function createApp(runtime, options = {}) {
       })
     }
     const commitEmptyReloadState = (notice = null) => {
+      if (statusOnly) {
+        worldModelState = {
+          ...worldModelState,
+          statusLoaded: !notice,
+          loading: false,
+          meta: notice ? worldModelState.meta : null,
+          resolvedModel: notice ? worldModelState.resolvedModel : null,
+          committedFloorVersion: notice ? worldModelState.committedFloorVersion : null,
+          notice,
+        }
+        if (!notice && route === 'state') render()
+        return
+      }
       worldModelState = {
         ...createWorldModelState(),
         loaded: true,
+        statusLoaded: !notice,
         chatId,
+        resolvedModel: null,
         notice,
       }
       if (route === 'world') render()
     }
     let request
-    try {
-      request = Promise.resolve(resolver())
-    } catch (error) {
-      request = Promise.reject(error)
+    if (reusableResolvedModel) {
+      request = Promise.resolve({
+        model: reusableResolvedModel,
+        meta: worldModelState.meta,
+        floor_version: worldModelState.committedFloorVersion,
+      })
+    } else {
+      try {
+        request = Promise.resolve(resolver())
+      } catch (error) {
+        request = Promise.reject(error)
+      }
     }
     requestState.request = request
     void request.then(async (resolved) => {
@@ -2260,18 +2292,22 @@ export function createApp(runtime, options = {}) {
         return
       }
       let resolvedModel = null
-      try {
-        resolvedModel = resolved?.model
-          ? normalizeStoredWorldModel(resolved.model)
-          : null
-      } catch (error) {
-        if (committedSnapshot) {
-          suppressReload('candidate_readback_invalid')
-          return
+      if (statusOnly) {
+        resolvedModel = resolved?.model ?? null
+      } else {
+        try {
+          resolvedModel = resolved?.model
+            ? normalizeStoredWorldModel(resolved.model)
+            : null
+        } catch (error) {
+          if (committedSnapshot) {
+            suppressReload('candidate_readback_invalid')
+            return
+          }
+          cycleResult = 'failed'
+          commitEmptyReloadState('已保存的世界模型格式无效，请重新分析。')
+          resolvedModel = null
         }
-        cycleResult = 'failed'
-        commitEmptyReloadState('已保存的世界模型格式无效，请重新分析。')
-        resolvedModel = null
       }
       recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
         ui_refresh_cycle_id: cycleId,
@@ -2288,7 +2324,7 @@ export function createApp(runtime, options = {}) {
         suppressReload('newer_committed_projection')
         return
       }
-      if (committedSnapshot) {
+      if (!statusOnly && committedSnapshot) {
         if (!resolvedModel) {
           suppressReload('candidate_not_yet_authoritative')
           return
@@ -2309,13 +2345,25 @@ export function createApp(runtime, options = {}) {
           return
         }
       }
-      recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
-        ui_refresh_cycle_id: cycleId,
-        world_present: Boolean(resolved?.model),
-        canonical_view_model_present: Boolean(resolvedModel),
-      })
-      recordUiRefreshTrace('UI_STATE_COMMIT_BEGIN', {ui_refresh_cycle_id: cycleId})
-      if (resolvedModel) {
+      if (statusOnly) {
+        worldModelState = {
+          ...worldModelState,
+          statusLoaded: true,
+          loading: false,
+          meta: resolvedModel ? (resolved?.meta ?? null) : null,
+          resolvedModel: resolvedModel ?? null,
+          committedFloorVersion: resolvedModel ? (resolved?.floor_version ?? null) : null,
+          notice: null,
+        }
+        cycleResult = 'success'
+        if (route === 'state') render()
+      } else if (resolvedModel) {
+        recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
+          ui_refresh_cycle_id: cycleId,
+          world_present: Boolean(resolved?.model),
+          canonical_view_model_present: Boolean(resolvedModel),
+        })
+        recordUiRefreshTrace('UI_STATE_COMMIT_BEGIN', {ui_refresh_cycle_id: cycleId})
         await applyWorldModelUiIngress({
           model: resolvedModel,
           meta: resolved?.meta ?? null,
@@ -2372,12 +2420,17 @@ export function createApp(runtime, options = {}) {
         suppressReload('newer_committed_projection')
         return
       }
-      if (committedSnapshot) {
+      if (committedSnapshot && !statusOnly) {
         suppressReload('candidate_resolver_failed')
         return
       }
       cycleResult = 'failed'
-      commitEmptyReloadState('世界模型读取失败，请重试。')
+      if (statusOnly) {
+        worldModelState = {...worldModelState, loading: false}
+        if (route === 'state') notify('世界模型读取失败，请重试。', 'error', documentRef)
+      } else {
+        commitEmptyReloadState('世界模型读取失败，请重试。')
+      }
       recordUiRefreshTrace('UI_FLOOR_SOURCE_RESOLVED', {
         ui_refresh_cycle_id: cycleId,
         floor_version_match: false,
@@ -2385,7 +2438,7 @@ export function createApp(runtime, options = {}) {
         world_present: false,
         resolution_reason: 'resolver_failed',
       })
-      recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
+      if (!statusOnly) recordUiRefreshTrace('WORLD_UI_VIEW_MODEL_BUILT', {
         ui_refresh_cycle_id: cycleId,
         world_present: false,
         canonical_view_model_present: false,
@@ -2402,12 +2455,17 @@ export function createApp(runtime, options = {}) {
         suppressReload('newer_committed_projection')
         return
       }
-      if (committedSnapshot && worldModelState.committedFingerprint) {
+      if (committedSnapshot && worldModelState.committedFingerprint && !statusOnly) {
         suppressReload('committed_readback_failed')
         return
       }
       cycleResult = 'failed'
-      commitEmptyReloadState('世界模型读取失败，请重试。')
+      if (statusOnly) {
+        worldModelState = {...worldModelState, loading: false}
+        if (route === 'state') notify('世界模型读取失败，请重试。', 'error', documentRef)
+      } else {
+        commitEmptyReloadState('世界模型读取失败，请重试。')
+      }
       recordUiRefreshTrace('WORLD_UI_RELOAD_FAILED', {
         ui_refresh_cycle_id: cycleId,
         error_code: error?.code ?? error?.message ?? 'WORLD_UI_RELOAD_FAILED',
@@ -2427,25 +2485,29 @@ export function createApp(runtime, options = {}) {
         reloadWorldModelFromRuntime({
           key: queuedRefresh.key,
           requestSource: queuedRefresh.requestSource,
+          statusOnly: queuedRefresh.statusOnly,
         })
       }
     })
     return true
   }
-  function loadWorldModelState() {
+  function loadWorldModelState({statusOnly = false} = {}) {
     const chatId = runtime.chat.current()
     if (worldModelState.reloadPending) return
     if (worldModelState.loading && worldModelState.chatId === chatId) {
       recordUiRefreshTrace('UI_REFRESH_REQUEST_SKIPPED', {
-        request_source: 'world-route-load',
+        request_source: statusOnly ? 'state-route-load' : 'world-route-load',
         reason: 'world_state_loading',
         refresh_cycle_in_flight: Boolean(worldModelRefreshInFlight),
         same_refresh_key: false,
       })
       return
     }
-    if (worldModelState.loaded && worldModelState.chatId === chatId) return
-    reloadWorldModelFromRuntime()
+    if ((statusOnly ? worldModelState.statusLoaded : worldModelState.loaded) && worldModelState.chatId === chatId) return
+    reloadWorldModelFromRuntime({
+      requestSource: statusOnly ? 'state-route-load' : 'world-route-load',
+      statusOnly,
+    })
   }
   function worldModelOperationError(error) {
     const code = String(error?.code ?? error?.message ?? '')
@@ -4298,6 +4360,22 @@ export function createApp(runtime, options = {}) {
     if (!pages[route]) route = 'overview'
     if (route === 'settings') ensureAnalysisSourcesChat()
     if (route === 'world') loadWorldModelState()
+    if (
+      route === 'state' &&
+      !worldModelState.statusLoaded &&
+      !worldModelState.reloadPending &&
+      typeof runtime.resolveWorldModelAtOrBefore === 'function'
+    ) {
+      loadWorldModelState({statusOnly: true})
+      const pendingMain = root.querySelector('.bioweave-main')
+      if (pendingMain) pendingMain.innerHTML = ''
+      root.querySelectorAll('[data-route]').forEach(button => {
+        const active = button.dataset.route === route && !focusedCharacterId
+        button.classList.toggle('active', active)
+        button.setAttribute('aria-current', active ? 'page' : 'false')
+      })
+      return
+    }
     const main = root.querySelector('.bioweave-main')
     if (!main) return
     const scrollPositions = captureScrollPositions(root)
@@ -4315,7 +4393,9 @@ export function createApp(runtime, options = {}) {
       currentStoryTimeStatus: businessState.currentStoryTimeStatus,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
       chatId: businessState.chatId,
-      worldModelMeta: route === 'state' ? worldModelState.meta : null,
+      worldModelMeta: route === 'state' && Boolean(worldModelState.resolvedModel || worldModelState.model)
+        ? (worldModelState.meta ?? {})
+        : null,
       aliasEditor: aliasEditorState,
       timingEditor: timingEditorState,
       healthPopoverOpen: healthPopoverState.open && healthPopoverState.characterId === focusedCharacterId,
@@ -5260,6 +5340,7 @@ export function createApp(runtime, options = {}) {
     if (WORLD_MODEL_OWNER_MUTATIONS.has(lifecycleMutationType)) {
       if (event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED') {
         if (route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload), requestSource: event.type})
+        else if (route === 'state') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload), requestSource: event.type, statusOnly: true})
         else worldModelState = { ...worldModelState, reloadPending: false }
       } else if (event?.type !== 'CHAT_CHANGED') {
         invalidateWorldModelView()

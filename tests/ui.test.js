@@ -3035,6 +3035,236 @@ test('World Model view ignores stale reloads after a Chat change', async () => {
   app.destroyBioWeave()
 })
 
+test('World Model status resolves from the current history independently of route order', async () => {
+  const documentRef = new AppFakeDocument()
+  const model = {
+    schema_version: 1,
+    species: [{name: '状态页世界', description: '', biological_types: []}],
+    medical_context: {childbirth_difficulty: null, care_level: null, evidence: null},
+    exceptions: [],
+    unknowns: [],
+  }
+  let resolveCalls = 0
+  let fullCalls = 0
+  let currentResolved = {model, meta: {owner_floor: 12}}
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-status-order',
+      token: () => ({chatId: 'chat-world-status-order', epoch: 0}),
+      assert: () => {},
+    },
+    resolveWorldModelAtOrBefore: async () => {
+      resolveCalls += 1
+      return currentResolved
+    },
+    analyzeCurrentWorldModelFull: async () => {
+      fullCalls += 1
+      return currentResolved
+    },
+    analyzeCurrentWorldModelPatch: async () => {
+      fullCalls += 1
+      return currentResolved
+    },
+    st: {
+      getContext: () => ({chatId: 'chat-world-status-order', characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('state')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /成功/)
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /所属楼层 12/)
+  assert.equal(resolveCalls, 1)
+  assert.equal(fullCalls, 0)
+
+  app.go('world')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /状态页世界/)
+  assert.equal(resolveCalls, 1, 'world route should reuse the valid status read')
+  assert.equal(fullCalls, 0)
+
+  app.go('state')
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /成功/)
+  app.closeBioWeave()
+  app.openBioWeave()
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /成功/)
+  assert.equal(resolveCalls, 1, 'reopening should reuse the current valid owner state')
+  app.destroyBioWeave()
+})
+
+test('World Model status keeps the original empty label only after resolver confirms no history', async () => {
+  const documentRef = new AppFakeDocument()
+  let resolveCalls = 0
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-status-empty',
+      token: () => ({chatId: 'chat-world-status-empty', epoch: 0}),
+      assert: () => {},
+    },
+    resolveWorldModelAtOrBefore: async () => {
+      resolveCalls += 1
+      return null
+    },
+    st: {
+      getContext: () => ({chatId: 'chat-world-status-empty', characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('state')
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, '', 'unresolved state must not be rendered as not started')
+  await new Promise(resolve => setImmediate(resolve))
+  const html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /未启用/)
+  assert.equal(resolveCalls, 1)
+  app.destroyBioWeave()
+})
+
+test('World Model status does not turn a resolver failure into the empty-state label', async () => {
+  const documentRef = new AppFakeDocument()
+  const toastCalls = []
+  documentRef.defaultView.toastr = {error: message => toastCalls.push(message)}
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-status-failure',
+      token: () => ({chatId: 'chat-world-status-failure', epoch: 0}),
+      assert: () => {},
+    },
+    resolveWorldModelAtOrBefore: async () => { throw new Error('WORLD_READ_FAILED') },
+    st: {
+      getContext: () => ({chatId: 'chat-world-status-failure', characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: () => () => {},
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('state')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, '')
+  assert.deepEqual(toastCalls, ['世界模型读取失败，请重试。'])
+  app.destroyBioWeave()
+})
+
+test('World Model status ignores a stale Chat result while resolving the new Chat', async () => {
+  const documentRef = new AppFakeDocument()
+  let chatId = 'chat-status-a'
+  let listener = null
+  const pending = []
+  const runtime = {
+    chat: {
+      current: () => chatId,
+      token: () => ({chatId, epoch: 0}),
+      assert: token => { if (token.chatId !== chatId) throw new Error('STALE_CHAT') },
+    },
+    resolveWorldModelAtOrBefore: () => new Promise(resolve => pending.push(resolve)),
+    st: {
+      getContext: () => ({chatId, characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: callback => {
+      listener = callback
+      return () => { listener = null }
+    },
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('state')
+  chatId = 'chat-status-b'
+  listener({type: 'CHAT_CHANGED', chatChanged: true})
+  listener({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'CHAT_CHANGED'})
+  app.go('state')
+  pending[0]({model: {schema_version: 1, species: [{name: '旧 Chat', biological_types: []}]}, meta: {owner_floor: 1}})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, '')
+  pending[1]({model: {schema_version: 1, species: [{name: '新 Chat', biological_types: []}]}, meta: {owner_floor: 2}})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /所属楼层 2/)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /所属楼层 1/)
+  app.destroyBioWeave()
+})
+
+test('World Model status refreshes for a new Floor or Swipe owner without stale state', async () => {
+  const documentRef = new AppFakeDocument()
+  const modelA = {schema_version: 1, species: [{name: '旧历史', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []}
+  const modelB = {schema_version: 1, species: [{name: '新历史', biological_types: []}], medical_context: {}, exceptions: [], unknowns: []}
+  let currentResolved = {model: modelA, meta: {owner_floor: 3}}
+  let resolveCalls = 0
+  let listener = null
+  const runtime = {
+    chat: {
+      current: () => 'chat-world-status-owner',
+      token: () => ({chatId: 'chat-world-status-owner', epoch: 0}),
+      assert: () => {},
+    },
+    resolveWorldModelAtOrBefore: async () => {
+      resolveCalls += 1
+      return currentResolved
+    },
+    st: {
+      getContext: () => ({chatId: 'chat-world-status-owner', characters: []}),
+      fetch: async () => ({ok: true, json: async () => []}),
+      getRequestHeaders: () => ({}),
+    },
+    subscribe: callback => {
+      listener = callback
+      return () => { listener = null }
+    },
+  }
+  const profileStore = {
+    getSettings: () => ({api_source: 'sillytavern', default_profile_id: null, api_profiles: {}, assignments: {}}),
+    getApiRequestSettings: () => ({}),
+    getWorldAnalysisPrompt: () => ({}),
+    getRecentStoryGlobal: () => ({regex_rules: []}),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore})
+  const root = app.openBioWeave()
+  app.go('state')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /所属楼层 3/)
+
+  currentResolved = {model: modelB, meta: {owner_floor: 8}}
+  listener({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'MESSAGE_SWIPE_DELETED'})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.match(root.querySelector('.bioweave-main').innerHTML, /所属楼层 8/)
+  assert.doesNotMatch(root.querySelector('.bioweave-main').innerHTML, /所属楼层 3/)
+  assert.equal(resolveCalls, 2)
+  app.destroyBioWeave()
+})
+
 test('World Model collection edits persist on the current resolver and preserve metadata', async () => {
   const documentRef = new AppFakeDocument()
   const toastCalls = []
