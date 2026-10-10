@@ -303,7 +303,7 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 
 ### 页面职责
 
-`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”；普通 Product UI 不渲染稳定 ID、Source、Floor Version、hash、Registry Summary 或 raw schema/debug 字段。事件页展示真实 Event 的用户可读类型、Story Time、Location、妊娠追踪对象、相关对象、Status、Confidence 和用户可读证据；妊娠相关 `sexual_activity` 不在普通卡片单独重复显示完整 participants，相关对象只由 `counterpart_ids[]` 投影。编辑表单与普通卡片分开，必要的只读 Event ID 可仅用于编辑操作。人物 exposure card 不读取 protection、physical_effect、capability、event_role 做判断；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
+`ui/characters.js`、`ui/events.js` 和 `ui/overview.js` 只负责展示或提交业务 DTO：人物列表只枚举 `tracking_subjects`，人物详情展示可用物种/生理类型、已知 capabilities、受孕相关记录和“等待状态引擎计算”；普通 Product UI 不渲染稳定 ID、Source、Floor Version、hash、Registry Summary 或 raw schema/debug 字段。事件页展示真实 Event 的用户可读类型、Story Time、Location、妊娠追踪对象、相关对象、Status、Confidence 和用户可读证据；妊娠相关 `sexual_activity` 不在普通卡片单独重复显示完整 participants，相关对象只由 `counterpart_ids[]` 投影。编辑仍在同一事件卡片内进行：摘要保持原值，展开详情的原字段行切换为控件；人物字段提交稳定 ID，Runtime 负责正式校验。人物 exposure card 不读取 protection、physical_effect、capability、event_role 做判断；总览统计分别来自 Registry 与当前有效 Event。页面不伪造 probability / gestational age，也不根据文本重新判断资格。
 
 ## 推荐实施顺序
 

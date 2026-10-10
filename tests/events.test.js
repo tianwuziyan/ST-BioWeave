@@ -647,7 +647,7 @@ test('validateEvent checks raw duplicate participant records at their original i
   assert.ok(strictDuplicate.errors.includes('participants[3].character_id'));
 });
 
-test('validateEventCollection rejects duplicate pregnancy subjects without merging Events', () => {
+test('validateEventCollection allows one tracking subject across Events but rejects duplicates within one Event', () => {
   const exposure = ({ eventId, subjectId, counterpartIds }) => ({
     ...validExposureEvent({ event_id: eventId }),
     participants: [
@@ -679,19 +679,29 @@ test('validateEventCollection rejects duplicate pregnancy subjects without mergi
     ok: true,
     errors: [],
   });
+  assert.deepEqual(
+    validateEventCollection([
+      subjectA,
+      exposure({
+        eventId: 'evt-a-follow-up',
+        subjectId: 'subject-a',
+        counterpartIds: ['source-z'],
+      }),
+    ]),
+    {ok: true, errors: []},
+  );
   const duplicate = validateEventCollection([
-    subjectA,
-    exposure({
-      eventId: 'evt-a-duplicate',
-      subjectId: 'subject-a',
-      counterpartIds: ['source-z'],
-    }),
+    {
+      ...subjectA,
+      pregnancy_relevance: {
+        ...subjectA.pregnancy_relevance,
+        gestational_subject_ids: ['subject-a', 'subject-a'],
+      },
+    },
   ]);
   assert.equal(duplicate.ok, false);
   assert.ok(
-    duplicate.errors.includes(
-      'events[1].pregnancy_relevance.gestational_subject_ids[0]',
-    ),
+    duplicate.errors.includes('events[0].pregnancy_relevance.gestational_subject_ids[1]'),
   );
 
   const mutualExposure = validateEventCollection([

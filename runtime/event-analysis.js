@@ -372,20 +372,6 @@ function floorExecutionKey(version) {
     .map((value) => String(value ?? ""))
     .join("\u001f");
 }
-function pregnancyExposureSubjectId(event) {
-  try {
-    const normalized = normalizeEvent(event);
-    const relevance = normalized?.pregnancy_relevance;
-    if (
-      relevance?.relevant !== true ||
-      !Array.isArray(relevance.gestational_subject_ids)
-    )
-      return [];
-    return relevance.gestational_subject_ids;
-  } catch {
-    return [];
-  }
-}
 function domainValidationError(
   validation,
   message = "EVENT_DOMAIN_VALIDATION_FAILED",
@@ -393,22 +379,9 @@ function domainValidationError(
 ) {
   const errors = Array.isArray(validation?.errors) ? validation.errors : [];
   const firstError = errors.find((error) => typeof error === "string") ?? null;
-  const duplicateSubjectError = Array.isArray(events)
-    ? errors.find((error) => {
-        if (typeof error !== "string") return false;
-        const match = error.match(
-          /^events\[(\d+)\]\.pregnancy_relevance\.gestational_subject_ids\[(\d+)\]$/u,
-        );
-        if (!match) return false;
-        const index = Number(match[1]);
-        const subjectIndex = Number(match[2]);
-        const subjectIds = pregnancyExposureSubjectId(events[index]);
-        const subjectId = subjectIds[subjectIndex] ?? null;
-        return subjectId !== null && events
-          .slice(0, index)
-          .some((event) => pregnancyExposureSubjectId(event).includes(subjectId));
-      })
-    : null;
+  const duplicateSubjectError = errors.find(
+    (error) => typeof error === "string" && /^events\[\d+\]\.pregnancy_relevance\.gestational_subject_ids\[\d+\]$/u.test(error),
+  ) ?? null;
   const diagnosticCode = duplicateSubjectError
     ? "duplicate_gestational_subject_event"
     : "domain_validation_failed";
@@ -2308,6 +2281,7 @@ export function createEventAnalysisCoordinator({
       clearInvalidatedFloor: version => invalidatedFloors.delete(floorExecutionKey(version)),
       refreshTrackingRegistry: (...args) => trackingRefresh(...args),
       createCollectionValidationError: domainValidationError,
+      storyTime,
       getCurrentStoryTime: async target => {
         const current = await resolveCurrentBioWeaveFloor();
         if (!sameFloorVersion(current?.version, target?.version)) return null;
@@ -2319,6 +2293,13 @@ export function createEventAnalysisCoordinator({
         {version: details?.target ?? null},
         details,
         "event",
+      ),
+      emitEventEditTrace: (stage, target, details = {}) => emitPersistenceTrace(
+        stage,
+        null,
+        target,
+        details,
+        "event-edit",
       ),
     },
   });

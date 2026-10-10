@@ -60,7 +60,7 @@ Health Recovery Guidance / Projection Context
 
 昵称编辑器的视觉结构与 UI 参考页保持一致：编辑器标题、别名标签、输入框和操作按钮使用紧凑层级；“别名”由实际 DOM 文本节点渲染，不使用伪元素重复生成，避免出现重影。输入框与别名行保持参考页的圆角、边框和固定高度。
 
-事件审阅页按“剧情日期 → 相对时间 → 事件类型 → 地点 · 参与者 → 追踪对象数量 → 状态”显示紧凑事件行。相对时间直接消费 Runtime `current_story_time_differences[event_id]` 与统一 formatter；不可比较时保留事件日期并省略相对时间。展开事件后保留妊娠相关性、证据、编辑和删除操作；“编辑当前有效事件”标题使用 13px 正文色，字段、输入控件和按钮使用紧凑辅助层级，Event ID 仅作为只读编辑字段。
+事件审阅页按“剧情日期 → 相对时间 → 事件类型 → 地点 · 参与者 → 追踪对象数量 → 状态”显示紧凑事件行。相对时间直接消费 Runtime `current_story_time_differences[event_id]` 与统一 formatter；不可比较时保留事件日期并省略相对时间。展开事件后保留妊娠相关性、证据、编辑和删除操作；编辑时摘要保持已保存事实和原布局不变，只在展开详情的原字段行内显示带边界的控件。普通编辑开放类型、状态、地点、`story_time.display` 以及 Schema 允许的妊娠相关性、受孕可能性、追踪对象和相关对象；类型/状态编辑使用详情底部独立的紧凑操作区，标签不折叠、保存/取消另起一行，不插入新的详情分组。人物字段使用收起式多选交互下拉：展开后通过 checkbox 连续勾选或取消，顶部已选名单和草稿数组即时局部更新，面板保持展开；收起时只显示已选名称或人数摘要，底层仍提交稳定 `character_id` 数组。未操作人物字段时完整保留原数组，历史人物缺失时保留原绑定。Event ID、来源、参与者身份、证据及 Story Time 派生字段不作为可编辑控件。Story Time 保存由 Runtime 正式入口重新解析，UI 不维护 JSON。
 
 ## Phase 2A 业务页面契约
 
@@ -78,7 +78,7 @@ Health Recovery Guidance / Projection Context
 
 ### 历史事件页
 
-事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、妊娠追踪对象、相关对象、Confidence 和简短证据；妊娠相关 `sexual_activity` 不再单独显示完整 participant list 或 event role enum，相关对象只由 `counterpart_ids[]` 投影。普通卡片不渲染事件 ID、Source、结构化时间、Floor Version、hash 或其它 raw/provenance 字段。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定；编辑表单与普通卡片分开，编辑操作可使用必要的只读 Event ID。人物 exposure card 不重新计算 actual exposure，只显示 `counterpart_ids[]` 投影出的相关对象。
+事件页消费当前有效的 `BiologicalEvent[]`，不是另建 UI 事件账本。普通卡片默认以用户可读语言显示事件类型、状态、Story Time、Location、妊娠追踪对象、相关对象、Confidence 和简短证据；妊娠相关 `sexual_activity` 不再单独显示完整 participant list 或 event role enum，相关对象只由 `counterpart_ids[]` 投影。普通卡片不渲染事件 ID、Source、结构化时间、Floor Version、hash 或其它 raw/provenance 字段。底层 Source 仍只读，并保留其 Chat、Message、Floor、Swipe、content hash 和 message version 绑定；点击编辑后，同一张事件卡片在原字段位置切换为控件，不新增第二个编辑面板。人物 exposure card 不重新计算 actual exposure，只显示 `counterpart_ids[]` 投影出的相关对象。
 
 当当前 Chat 没有 Event 时，页面必须区分“当前楼层尚未分析”和“当前楼层已分析成功但 0 Event”，并提供调用生产 Runtime pipeline 的“分析当前楼层 / 重新分析当前楼层”入口。
 

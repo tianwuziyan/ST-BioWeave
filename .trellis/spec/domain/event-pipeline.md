@@ -78,6 +78,54 @@ to the Runtime current-state path and consumes `baseState`, Events,
 `currentStoryTime`, and derived `characterFacts`. Its output is derived Current
 Biological State, not an authoritative persisted Character Profile or fact store.
 
+### Direct Event edit contract
+
+The product Event editor accepts only business facts: the existing Event type and
+status enums, location text, `story_time.display`, and explicitly owned
+pregnancy-relevance selectors. Event identity, source provenance, participant
+record bindings, evidence relationships, Floor Version, and Story Time derived
+fields are not ordinary text inputs. Stable pregnancy subject/counterpart IDs
+may be changed only through the Character Registry-backed selectors; they remain
+Runtime-owned facts rather than display-name text fields.
+
+`updateEvent(eventId, patch)` must resolve the current complete Event collection
+from the active valid Floor before editing. When `patch.story_time.display` is
+present, it is the sole time fact: the Runtime calls the injected Story Time
+facade's `parseStoryTimeCandidate()` and `normalize()` and passes a fresh
+Story Time object to Event normalization. It must not shallow-merge the old
+`normalized`, `day_index`, `calendar_id`, `precision`, or parser confidence.
+Formal parser failure rejects the write with `EVENT_EDIT_STORY_TIME_INVALID`.
+Missing `day_index` or incompatible calendar domains retain the existing
+diagnostic-only `EVENT_STORY_TIME_INCOMPARABLE` behavior; they must not be
+converted into a fabricated ordering result.
+
+The edit then uses the same complete-collection validation, six-field Floor
+Version/active-Swipe stale guard, atomic Floor patch, authoritative readback,
+and Tracking/derived refresh path as other Event writes. A failed edit must not
+replace the prior Event collection or report a successful UI refresh.
+Because the product edit does not mutate participant bindings, it does not
+re-resolve every existing participant ID against a possibly missing historical
+registry snapshot. Existing participant bindings remain authoritative and are
+still checked by the formal Event collection validator for shape and domain
+invariants.
+
+#### Direct edit validation matrix
+
+| Case | Required result |
+| --- | --- |
+| Valid comparable time at/before current Story Time | Save complete collection |
+| Comparable future time | Reject with `EVENT_STORY_TIME_AFTER_CURRENT` |
+| Missing day index or incompatible calendar domain | Save only with incomparable diagnostic |
+| Display cannot be parsed | Reject with `EVENT_EDIT_STORY_TIME_INVALID` |
+| Floor/Swipe/version changed before commit | Reject as stale; preserve prior authoritative state |
+
+#### Wrong vs correct
+
+Wrong: `{...oldStoryTime, display: nextDisplay}`.
+
+Correct: parse `nextDisplay`, normalize a new Story Time object, then validate and
+persist the complete Event collection through the Floor Runtime ingress.
+
 The domain layers remain separate: `character_registry` is canonical identity
 history; `character_profiles` / `characterFacts` are Runtime-derived biological
 facts; `tracking_subjects` and `tracking_candidates` are Event-derived tracking
@@ -630,15 +678,15 @@ These rules preserve the invariant that exposure, conception, confirmation,
 labor, delivery, postpartum, and termination are distinct factual layers. A
 Reducer may modify only the state explicitly authorized by the Event contract.
 
-For pregnancy-related `sexual_activity`, Event granularity is per gestational
-subject: first identify all subjects with actual pregnancy-relevant exposure,
-then emit one Event per subject. Each such Event has exactly one
-`gestational_subject_ids` ID, at least one subject-local `counterpart_ids` source,
-and a participant ID set exactly equal to subject plus counterparts. Same-subject
-sources are merged into one Event; different subjects must remain separate even
-when time, location, or type match. A response containing the same pregnancy
-subject twice is rejected with `duplicate_gestational_subject_event`; no Runtime
-or UI semantic merge is allowed.
+For pregnancy-related `sexual_activity`, Event granularity remains per
+gestational subject within each factual Event: each Event has its own
+subject-local `gestational_subject_ids` and `counterpart_ids` participant
+closure. Multiple factual Events may reference the same gestational subject;
+Tracking Window and downstream projections use those Events as separate time
+observations. A repeated subject ID inside one Event is rejected with
+`duplicate_gestational_subject_event`; no Runtime or UI semantic merge is
+allowed. Different Events are not rejected merely because they reference the
+same subject.
 
 The protected Prompt contract still consolidates immediate effects, directly
 associated symptoms, observations, and evidence into the same subject's
@@ -1043,7 +1091,7 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 | Invalid event role, conception flag, evidence shape, or participant reference | Reject with a specific diagnostic code and safe JSON path |
 | AI response contains multiple legal Events for one Target Floor Version | Accept 0/1/N; preserve each Event and do not merge |
 | Pregnancy `sexual_activity` Event has zero or multiple gestational subjects | Reject with `invalid_gestational_subject_cardinality` |
-| Same Floor response repeats a pregnancy gestational subject | Reject with `duplicate_gestational_subject_event`; do not runtime-merge |
+| One Event repeats a pregnancy gestational subject ID | Reject with `duplicate_gestational_subject_event`; do not runtime-merge |
 | Pregnancy Event participants are not exactly subject plus actual counterparts, or counterpart overlaps subject | Reject with subject-local structure diagnostics |
 | Pregnancy `sexual_activity` participant lacks `biological_context`, lacks `species`/`biological_type`, or uses a non-string/non-null value | Reject with `invalid_biological_context` and a safe participant context path |
 | Scalar `counterpart_ids` or `gestational_subject_ids` | Reject; do not coerce names or comma-delimited text |

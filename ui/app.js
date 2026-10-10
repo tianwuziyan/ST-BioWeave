@@ -671,6 +671,8 @@ export function createApp(runtime, options = {}) {
   let businessRefreshInFlight = null
   let businessRefreshQueued = null
   let eventEditingId = null
+  let eventEditDraft = null
+  let eventEditSaving = false
   function receiveWorldModelTrace(trace) {
     if (!trace || typeof trace !== 'object') return
     const currentChatId = runtime.chat.current()
@@ -4016,6 +4018,14 @@ export function createApp(runtime, options = {}) {
       EVENT_RESPONSE_EMPTY: 'AI 响应为空或未能提取正文，上一份有效事件已保留。',
       EVENT_RESPONSE_JSON_INVALID: 'AI 响应不是有效 JSON，上一份有效事件已保留。',
       EVENT_SCHEMA_INVALID: 'AI 返回未通过 Event JSON Schema 校验，上一份有效事件已保留。',
+      EVENT_EDIT_STORY_TIME_INVALID: '发生时间无法按现有 Story Time 规则解析，事件未保存。',
+      EVENT_STORY_TIME_AFTER_CURRENT: '发生时间晚于当前楼层时间，事件未保存。',
+      duplicate_gestational_subject_event: '事件集合中的妊娠追踪对象重复，事件未保存。',
+      unknown_character_id: '事件参与人物无法与当前角色注册表对应，事件未保存。',
+      domain_validation_failed: '完整 Event 集合未通过业务校验，事件未保存。',
+      EVENT_EDIT_REFRESH_FAILED: '事件已保存，但业务视图刷新失败，请刷新页面。',
+      EVENT_EDIT_PERSISTENCE_FAILED: '事件保存失败，上一份有效事件已保留。',
+      STALE_FLOOR_VERSION: '当前楼层已变化，事件未保存，请重新打开编辑。',
       ST_METADATA_STORAGE_UNAVAILABLE: '当前 Chat 存储不可用，事件结果未保存。',
       ST_METADATA_UNAVAILABLE: '当前 Chat 存储不可用，事件结果未保存。',
       ST_CHAT_STORAGE_UNAVAILABLE: '当前 Floor 存储不可用，事件结果未保存。',
@@ -4031,6 +4041,7 @@ export function createApp(runtime, options = {}) {
     }
     const matched = Object.keys(messages).find(key => code === key || code.startsWith(`${key}_`))
     if (messages[matched]) return messages[matched]
+    if (code.startsWith('FLOOR_TX_')) return `事件保存失败（${code}），上一份有效事件已保留。`
     const stage = String(error?.analysis_stage ?? '').trim()
     const safeSummary = String(error?.safe_error_summary ?? '').trim()
     if (stage || safeSummary) {
@@ -4044,36 +4055,114 @@ export function createApp(runtime, options = {}) {
   function parseEventFormValue(form, field, fallback) {
     const node = eventFormField(form, field)
     if (!node) return fallback
-    if (field === 'story_time' || field === 'participants' || field === 'pregnancy_relevance' || field === 'source_evidence') {
-      try {
-        return JSON.parse(String(node.value ?? ''))
-      } catch {
-        throw new Error(`EVENT_EDIT_${field.toUpperCase()}_INVALID`)
+    if (node.querySelectorAll) {
+      const allPersonOptions = [...node.querySelectorAll('[data-bioweave-event-person-option]')]
+      if (allPersonOptions.length) {
+        return allPersonOptions.filter(option => option.getAttribute?.('aria-selected') === 'true' || option.checked === true).map(option => option.dataset?.bioweaveEventPersonOption ?? option.value).filter(Boolean)
       }
     }
+    if (node.multiple && node.selectedOptions) return [...node.selectedOptions].map(option => option.value)
     return node.value
   }
+  function updateEventPersonPicker(event) {
+    const input = event.target.closest?.('[data-bioweave-event-person-option]')
+    const picker = input?.closest?.('.bioweave-event-person-picker')
+    const field = picker?.dataset?.bioweaveEventField
+    if (!input || !picker || (field !== 'gestational_subject_ids' && field !== 'counterpart_ids') || !eventEditDraft || eventEditSaving) return false
+    const options = [...picker.querySelectorAll('[data-bioweave-event-person-option]')]
+    const emptyOption = options.find(option => String(option.dataset?.bioweaveEventPersonOption ?? option.value ?? '') === '')
+    if (String(input.dataset?.bioweaveEventPersonOption ?? input.value ?? '') === '' && input.checked) {
+      options.forEach(option => { option.checked = option === input })
+    } else if (input.checked) {
+      if (emptyOption) emptyOption.checked = false
+    } else if (!options.some(option => option.checked && String(option.dataset?.bioweaveEventPersonOption ?? option.value ?? ''))) {
+      if (emptyOption) emptyOption.checked = true
+    }
+    const selectedIds = options
+      .filter(option => option.checked)
+      .map(option => String(option.dataset?.bioweaveEventPersonOption ?? option.value ?? '').trim())
+      .filter(Boolean)
+    const selectedLabels = options
+      .filter(option => option.checked)
+      .map(option => option.parentElement?.querySelector?.('span')?.textContent?.trim() ?? '')
+      .filter(Boolean)
+    const summary = selectedLabels.length > 1 ? `已选 ${selectedLabels.length} 人：${selectedLabels.join('、')}` : selectedLabels[0] ?? '未选择'
+    picker.querySelector('.bioweave-event-person-picker-selected').textContent = summary
+    eventEditDraft = {
+      ...eventEditDraft,
+      pregnancy_relevance: {
+        ...eventEditDraft.pregnancy_relevance,
+        [field]: [...new Set(selectedIds)],
+      },
+    }
+    return true
+  }
+  function parseEventBooleanValue(value, fallback = null) {
+    if (value === 'true' || value === true) return true
+    if (value === 'false' || value === false) return false
+    if (value === 'null' || value === null) return null
+    return fallback
+  }
+  function sameEventEditTarget(left, right) {
+    if (!left || !right) return false
+    return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+      .every(field => String(left[field] ?? '') === String(right[field] ?? ''))
+  }
   async function saveEventEdit() {
+    if (eventEditSaving) return
     const form = root?.querySelector?.('[data-bioweave-event-form]')
     const eventId = String(form?.dataset?.bioweaveEventId ?? eventEditingId ?? '').trim()
     const currentEvent = activeEventById(eventId)
     if (!currentEvent) throw new Error('EVENT_NOT_FOUND')
+    if (eventEditDraft?.targetVersion && !sameEventEditTarget(eventEditDraft.targetVersion, businessState.currentFloor?.version)) {
+      throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'})
+    }
+    const currentRelevance = currentEvent.pregnancy_relevance ?? {}
     const rawNextEvent = {
       ...currentEvent,
       type: parseEventFormValue(form, 'type', currentEvent.type),
       status: parseEventFormValue(form, 'status', currentEvent.status),
       location: parseEventFormValue(form, 'location', currentEvent.location),
-      story_time: parseEventFormValue(form, 'story_time', currentEvent.story_time),
-      participants: parseEventFormValue(form, 'participants', currentEvent.participants),
-      pregnancy_relevance: parseEventFormValue(form, 'pregnancy_relevance', currentEvent.pregnancy_relevance),
-      source_evidence: parseEventFormValue(form, 'source_evidence', currentEvent.source_evidence),
+      story_time: {display: parseEventFormValue(form, 'story_time', currentEvent.story_time?.display ?? '')},
+      pregnancy_relevance: {
+        ...currentRelevance,
+        relevant: parseEventBooleanValue(parseEventFormValue(form, 'relevant', currentRelevance.relevant), currentRelevance.relevant),
+        possible_conception: parseEventBooleanValue(parseEventFormValue(form, 'possible_conception', currentRelevance.possible_conception), currentRelevance.possible_conception),
+        gestational_subject_ids: parseEventFormValue(form, 'gestational_subject_ids', currentRelevance.gestational_subject_ids ?? []),
+        counterpart_ids: parseEventFormValue(form, 'counterpart_ids', currentRelevance.counterpart_ids ?? []),
+      },
       source: currentEvent.source,
     }
+    eventEditDraft = {
+      type: rawNextEvent.type,
+      status: rawNextEvent.status,
+      location: rawNextEvent.location,
+      story_time: rawNextEvent.story_time.display,
+      pregnancy_relevance: structuredClone(rawNextEvent.pregnancy_relevance),
+      targetVersion: eventEditDraft?.targetVersion ?? businessState.currentFloor?.version ?? null,
+    }
     if (typeof runtime.updateEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
+    eventEditSaving = true
+    render()
     await runtime.updateEvent(eventId, rawNextEvent)
     eventEditingId = null
-    notify('Event 已更新。', 'success', documentRef)
     await refreshBusinessState({ reason: 'event-edit' })
+    eventEditDraft = null
+    if (businessState.error) {
+      eventEditSaving = false
+      runtime.recordPersistenceTrace?.({
+        stage: 'EVENT_EDIT_REFRESH_FAILED',
+        event_id: eventId,
+        persistence_confirmed: true,
+        error_code: businessState.error,
+        safe_error_summary: '业务视图刷新失败',
+        floor_version: businessState.currentFloor?.version ?? null,
+      })
+      notify(eventAnalysisError(Object.assign(new Error('EVENT_EDIT_REFRESH_FAILED'), {code: 'EVENT_EDIT_REFRESH_FAILED'})), 'error', documentRef)
+      return
+    }
+    eventEditSaving = false
+    notify('Event 已更新。', 'success', documentRef)
   }
   async function deleteEvent(eventId) {
     const currentEvent = activeEventById(eventId)
@@ -4151,6 +4240,7 @@ export function createApp(runtime, options = {}) {
       activeEvents: businessState.activeEvents,
       currentFloor: businessState.currentFloor,
       currentState: businessState.currentState,
+      characterProfiles: businessState.characterProfiles,
       currentStateStatus: businessState.currentStateStatus,
       currentHealthState: businessState.currentHealthState,
       currentStoryTime: businessState.currentStoryTime,
@@ -4167,6 +4257,8 @@ export function createApp(runtime, options = {}) {
       projectionSummary: businessState.projectionSummary,
       projectionStatus: businessState.projectionStatus,
       editingEventId: eventEditingId,
+      eventEditDraft,
+      eventEditSaving,
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
@@ -5303,6 +5395,9 @@ export function createApp(runtime, options = {}) {
     }
     captureAnalysisSourceDisclosure()
     if (handleAnalysisParentToggleClick(event)) return
+    if (!event.target.closest?.('.bioweave-event-person-picker')) {
+      root.querySelectorAll?.('.bioweave-event-person-picker[open]')?.forEach(picker => { picker.open = false })
+    }
     if (event.target.closest?.('[data-bioweave-analysis-prompt-settings], [data-bioweave-world-analysis-prompt-settings]')) {
       captureAnalysisPromptDraft()
     }
@@ -5547,13 +5642,26 @@ export function createApp(runtime, options = {}) {
     }
     if (action === 'edit-event') {
       event.preventDefault()
-      eventEditingId = String(target.dataset.bioweaveEventId ?? '').trim() || null
+      const eventId = String(target.dataset.bioweaveEventId ?? '').trim()
+      const eventRecord = activeEventById(eventId)
+      if (!eventRecord || eventEditSaving) return
+      eventEditingId = eventId || null
+      eventEditDraft = {
+        type: eventRecord.type ?? '',
+        status: eventRecord.status ?? '',
+        location: eventRecord.location ?? '',
+        story_time: eventRecord.story_time?.display ?? '',
+        pregnancy_relevance: structuredClone(eventRecord.pregnancy_relevance ?? {}),
+        targetVersion: businessState.currentFloor?.version ?? null,
+      }
       render()
       return
     }
     if (action === 'cancel-event-edit') {
       event.preventDefault()
+      if (eventEditSaving) return
       eventEditingId = null
+      eventEditDraft = null
       render()
       return
     }
@@ -5562,6 +5670,14 @@ export function createApp(runtime, options = {}) {
       try {
         await saveEventEdit()
       } catch (error) {
+        eventEditSaving = false
+        if (error?.persistence_confirmed === true) {
+          eventEditingId = null
+          eventEditDraft = null
+          notify(eventAnalysisError(error), 'error', documentRef)
+          render()
+          return
+        }
         notify(eventAnalysisError(error), 'error', documentRef)
         render()
       }
@@ -5785,6 +5901,10 @@ export function createApp(runtime, options = {}) {
     const assignment = assignmentControlForEvent(event.target)
     if (assignment) {
       await changeAssignment(assignment)
+      return
+    }
+    if (event.target.closest?.('[data-bioweave-event-person-option]')) {
+      updateEventPersonPicker(event)
       return
     }
     captureAnalysisSourceDisclosure()
@@ -6062,6 +6182,8 @@ export function createApp(runtime, options = {}) {
       error: null,
     }
     eventEditingId = null
+    eventEditDraft = null
+    eventEditSaving = false
     setEventFilter()
     globalRecentStory = normalizeRecentStoryGlobalSettings()
     globalRecentStoryLoaded = false

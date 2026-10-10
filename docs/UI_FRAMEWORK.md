@@ -319,19 +319,13 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
           <button class="bioweave-secondary-action" type="button" data-bioweave-action="edit-event">编辑事件</button>
           <button class="bioweave-danger-action" type="button" data-bioweave-action="delete-event">删除事件</button>
         </div>
-        <form class="bioweave-card bioweave-event-form" data-bioweave-event-form>
-          <h3>编辑当前有效事件</h3>
-          <p>事件 ID 为只读；保存由当前页面处理。</p>
-          <div class="bioweave-event-form-grid"><label>事件 ID<input class="bioweave-input" readonly></label><label>类型<input class="bioweave-input"></label></div>
-          <div class="bioweave-event-detail-actions"><button class="bioweave-primary-action" type="button" data-bioweave-action="save-event">保存事件</button><button class="bioweave-secondary-action" type="button" data-bioweave-action="cancel-event-edit">取消</button></div>
-        </form>
       </div>
     </details>
   </div>
 </section>
 ~~~
 
-事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据、编辑表单和删除按钮不能删除，只能放入展开内容。相对时间紧跟剧情日期，由 Runtime 当前 Story Time 与共享 Story Time helper 得出；不可比较时只显示事件自身规范 Story Time，不能解析展示文本或使用系统时间。编辑表单标题“编辑当前有效事件”使用参考页的 13px 正文色层级，说明文字、字段标签、输入控件和操作按钮使用紧凑辅助层级；表单不改变 Event ID，只通过现有 Runtime 更新入口保存。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
+事件索引只显示 Runtime `BiologicalEvent` 的快速摘要；完整的妊娠相关性、证据和删除按钮仍可放入展开内容。点击编辑后，同一张卡片的摘要保持已保存值和原布局不变，控件只出现在展开详情的原字段行，不新增第二个编辑面板，也不重复渲染查看值。查看与编辑详情共用同一事实字段顺序；类型/状态如需编辑只出现在详情底部独立的紧凑操作区，标签使用不换行网格，保存/取消单独成行，不新增“事件信息”分组。相对时间紧跟剧情日期，由 Runtime 当前 Story Time 与共享 Story Time helper 得出；不可比较时只显示事件自身规范 Story Time，不能解析展示文本或使用系统时间。普通表单允许编辑事件类型、状态、地点、`story_time.display`、妊娠相关性、受孕可能性以及 Schema 定义的收起式稳定人物 ID 多选选择器；人物候选使用 checkbox，勾选/取消时局部同步顶部名单和草稿，面板保持展开，点击摘要或外部区域才关闭，底层仍保存数组，未操作时保留多人历史数组。参与者原始身份、证据、Event ID、来源及 Story Time 派生字段只读或不作为控件展示。新的时间文本由 Runtime 通过正式 Story Time 入口重新标准化。不得把参考页的 mock 日期、人物名、地点、事件数组或“查看 alice”之类的固定数据复制到生产页面。所有现有 `data-bioweave-action="edit-event"`、`delete-event`、`save-event`、`cancel-event-edit`、`data-bioweave-event-form` 和字段 hooks 必须保持不变。
 
 状态徽标必须沿用概念页的胶囊形样式：22px 高、`2px 7px` 内边距、999px 圆角、透明背景。成功/已选/有效使用 `good`，处理中/较可能使用 `warn`，失败/否定使用 `danger`；世界书来源的“已选数量”即使处于部分选择也使用绿色 `good`，黄色只表示 checkbox 的 `indeterminate` 状态；没有明确语义时使用中性徽标，不根据文案猜测业务状态。
 

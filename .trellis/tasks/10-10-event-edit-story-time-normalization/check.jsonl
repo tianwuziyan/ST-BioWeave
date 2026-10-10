@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify Floor/Swipe ownership and stale protection"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify Event and Story Time invariants"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify UI contract and responsive behavior"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Verify lifecycle documentation consistency"}

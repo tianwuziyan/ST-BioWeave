@@ -170,16 +170,19 @@ function eventReviewCount(event) {
   return Array.isArray(ids) && ids.length ? `${ids.length} 个追踪对象` : '仅作事件索引'
 }
 
-function renderPregnancyRelevance(event, currentState = null) {
+function renderPregnancyRelevance(event, currentState = null, edit = null) {
   const relevance = event?.pregnancy_relevance
   if (!relevance || typeof relevance !== 'object') {
     return '<div class="bioweave-empty">—</div>'
   }
+  const values = edit?.values?.pregnancy_relevance ?? relevance
+  const personOptions = edit?.personOptions ?? []
+  const valueOrControl = (field, value, control) => edit ? `__html__${control}` : `__html__${renderTriState(value)}`
   const rows = [
-      ['与妊娠相关', `__html__${renderTriState(relevance.relevant)}`],
-      ['存在受孕可能', `__html__${renderTriState(relevance.possible_conception)}`],
-      ['妊娠追踪对象', `__html__${participantNamesForIds(event, relevance.gestational_subject_ids)}`],
-      ['相关对象', `__html__${participantNamesForIds(event, relevance.counterpart_ids)}`],
+      ['与妊娠相关', valueOrControl('relevant', relevance.relevant, renderBooleanSelect('relevant', values.relevant))],
+      ['存在受孕可能', valueOrControl('possible_conception', relevance.possible_conception, renderBooleanSelect('possible_conception', values.possible_conception))],
+      ['妊娠追踪对象', edit ? `__html__${renderCharacterPicker('gestational_subject_ids', values.gestational_subject_ids, personOptions)}` : `__html__${participantNamesForIds(event, relevance.gestational_subject_ids)}`],
+      ['相关对象', edit ? `__html__${renderCharacterPicker('counterpart_ids', values.counterpart_ids, personOptions)}` : `__html__${participantNamesForIds(event, relevance.counterpart_ids)}`],
       ['判断置信度', `__html__${renderValue(relevance.confidence)}`],
     ]
   const subjectName = stateFactSubjectName(event, currentState)
@@ -200,51 +203,119 @@ function renderEvidence(event) {
   )
 }
 
-function renderEditForm(event) {
+function eventEditDraftFor(event, draft = null) {
+  const relevance = draft?.pregnancy_relevance ?? event?.pregnancy_relevance ?? {}
+  return {
+    type: draft?.type ?? event?.type ?? '',
+    status: draft?.status ?? event?.status ?? '',
+    location: draft?.location ?? event?.location ?? '',
+    story_time: draft?.story_time ?? event?.story_time?.display ?? '',
+    pregnancy_relevance: {
+      ...relevance,
+      relevant: relevance.relevant ?? null,
+      possible_conception: relevance.possible_conception ?? null,
+      gestational_subject_ids: Array.isArray(relevance.gestational_subject_ids) ? relevance.gestational_subject_ids : [],
+      counterpart_ids: Array.isArray(relevance.counterpart_ids) ? relevance.counterpart_ids : [],
+    },
+  }
+}
+
+function eventCharacterOptions(event, characterProfiles = {}, trackingSubjects = {}) {
+  const options = new Map()
+  for (const [id, profile] of Object.entries(characterProfiles ?? {})) {
+    const identity = profile?.identity ?? profile
+    options.set(String(id), displayValue(identity?.display_name ?? profile?.display_name, '未命名对象'))
+  }
+  for (const [id, subject] of Object.entries(trackingSubjects ?? {})) {
+    options.set(String(id), displayValue(subject?.display_name, options.get(String(id)) ?? '未命名对象'))
+  }
+  for (const participant of Array.isArray(event?.participants) ? event.participants : []) {
+    const id = String(participant?.character_id ?? '').trim()
+    if (id && !options.has(id)) options.set(id, displayValue(participant?.display_name, '历史人物'))
+  }
+  return [...options.entries()].filter(([id]) => id)
+}
+
+function renderBooleanSelect(field, value) {
+  const current = value === true ? 'true' : value === false ? 'false' : 'null'
+  return '<select class="bioweave-select" data-bioweave-event-field="' + field + '" aria-label="' + escapeHtml(field) + '">' +
+    [['true', '是'], ['false', '否'], ['null', '未知']].map(([key, label]) => '<option value="' + key + '"' + (current === key ? ' selected' : '') + '>' + label + '</option>').join('') +
+    '</select>'
+}
+
+function renderCharacterPicker(field, selectedIds, options) {
+  const selected = new Set((Array.isArray(selectedIds) ? selectedIds : []).map(id => String(id)))
+  const normalizedOptions = [...options]
+  for (const id of selected) {
+    if (!normalizedOptions.some(([optionId]) => optionId === id)) normalizedOptions.push([id, '历史人物'])
+  }
+  const selectedLabels = normalizedOptions.filter(([id]) => selected.has(id)).map(([, label]) => label)
+  const summary = selectedLabels.length > 1 ? `已选 ${selectedLabels.length} 人：${selectedLabels.join('、')}` : selectedLabels[0] ?? '未选择'
+  return '<details class="bioweave-event-person-picker" data-bioweave-event-field="' + field + '"><summary class="bioweave-event-person-picker-summary"><span class="bioweave-event-person-picker-selected">' + escapeHtml(summary) + '</span><span aria-hidden="true">⌄</span></summary><div class="bioweave-event-person-picker-menu" role="listbox" aria-label="' + escapeHtml(field) + '">' +
+    '<label class="bioweave-event-person-option"><input class="bioweave-checkbox" type="checkbox" data-bioweave-event-person-option="" value=""' + (!selected.size ? ' checked' : '') + ' /><span>未选择</span></label>' +
+    normalizedOptions.map(([id, label]) => '<label class="bioweave-event-person-option"><input class="bioweave-checkbox" type="checkbox" data-bioweave-event-person-option="' + escapeHtml(id) + '" value="' + escapeHtml(id) + '"' + (selected.has(id) ? ' checked' : '') + ' /><span>' + escapeHtml(label) + '</span></label>').join('') +
+    '</div></details>'
+}
+
+function renderEventFactStrip(event, mode = 'view', values = null) {
+  const time = formatStoryTime(event?.story_time)
+  const location = displayValue(event?.location)
+  const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence
+  const value = (label, content) => '<div class="bioweave-event-fact"><span>' + label + '</span>' + content + '</div>'
+  return '<div class="bioweave-event-fact-strip">' +
+    value('发生时间', mode === 'edit' ? '<input class="bioweave-input" data-bioweave-event-field="story_time" type="text" value="' + escapeHtml(values.story_time) + '" aria-label="发生时间" autocomplete="off" />' : '<strong>' + renderValue(time) + '</strong>') +
+    value('地点', mode === 'edit' ? '<input class="bioweave-input" data-bioweave-event-field="location" type="text" value="' + escapeHtml(displayValue(values.location, '')) + '" aria-label="地点" />' : '<strong>' + renderValue(location) + '</strong>') +
+    value('判断置信度', '<strong>' + renderValue(confidence) + '</strong>') +
+    '</div>'
+}
+
+function renderEventDetailBody(event, mode = 'view', currentState = null, values = null, characterProfiles = {}, trackingSubjects = {}) {
+  const edit = mode === 'edit'
+  const personOptions = edit ? eventCharacterOptions(event, characterProfiles, trackingSubjects) : []
+  return renderEventFactStrip(event, mode, values) +
+    '<div class="bioweave-event-detail-grid"><section class="bioweave-event-detail-section" data-bioweave-event-field="pregnancy_relevance"><h4>妊娠相关性</h4>' +
+    renderPregnancyRelevance(event, currentState, edit ? {values, personOptions} : null) +
+    '</section><section class="bioweave-event-detail-section" data-bioweave-event-field="source_evidence"><h4>事件证据</h4>' +
+    renderEvidence(event) + '</section></div>'
+}
+
+function renderEventEditDetails(event, values, currentState, characterProfiles, trackingSubjects) {
+  return renderEventDetailBody(event, 'edit', currentState, values, characterProfiles, trackingSubjects)
+}
+
+function renderEventEditMetaControls(values) {
+  const typeOptions = Object.entries(eventTypeLabels).map(([type, label]) => '<option value="' + type + '"' + (values.type === type ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join('')
+  const statusOptions = eventStatuses.map(status => '<option value="' + status + '"' + (values.status === status ? ' selected' : '') + '>' + escapeHtml(eventStatusLabel(status)) + '</option>').join('')
+  return '<label>事件类型<select class="bioweave-select" data-bioweave-event-field="type" aria-label="事件类型">' + typeOptions + '</select></label><label>事件状态<select class="bioweave-select" data-bioweave-event-field="status" aria-label="事件状态">' + statusOptions + '</select></label>'
+}
+
+function renderEventSummary(event, currentState = null, storyTimeDifferences = {}) {
+  const time = formatStoryTime(event?.story_time)
+  const relative = formatStoryTimeRelative(resolveStoryTimeDifference(storyTimeDifferences, eventIdOf(event)))
+  return '<summary class="bioweave-event-review-row">' +
+    '<span class="bioweave-event-review-time" title="' + escapeHtml(time) + '"><b class="bioweave-event-story-time">' + escapeHtml(time) + '</b>' + (relative ? '<small class="bioweave-event-relative-time bioweave-event-review-relative">' + escapeHtml(relative) + '</small>' : '') + '</span>' +
+    '<span class="bioweave-event-review-main"><b class="bioweave-event-review-type">' + escapeHtml(eventTypeLabel(event.type)) + '</b><small class="bioweave-event-review-meta">' + escapeHtml(displayValue(event.location)) + ' · ' + escapeHtml(eventReviewPeople(event, currentState)) + '</small><span class="bioweave-event-review-detail">' + escapeHtml(eventReviewCount(event)) + '</span></span>' +
+    '<span class="bioweave-badge ' + eventStatusTone(event.status) + '">' + escapeHtml(eventStatusLabel(event.status)) + '</span><span class="bioweave-event-review-chevron" aria-hidden="true">⌄</span></summary>'
+}
+
+function renderEventEditCard(event, draft = null, currentState = null, saving = false, characterProfiles = {}, trackingSubjects = {}, storyTimeDifferences = {}) {
   const eventId = eventIdOf(event)
-  const jsonValue = value => escapeHtml(JSON.stringify(value ?? null, null, 2))
+  const values = eventEditDraftFor(event, draft)
   return (
-    '<form class="bioweave-card bioweave-event-form" data-bioweave-event-form data-bioweave-event-id="' +
+    '<details class="bioweave-card bioweave-event-card bioweave-event-review-item bioweave-event-form" data-bioweave-event-form data-bioweave-event-id="' +
+    escapeHtml(eventId) + '" open>' + renderEventSummary(event, currentState, storyTimeDifferences) + '<div class="bioweave-event-review-detail-panel bioweave-event-detail-panel-edit">' +
+    renderEventEditDetails(event, values, currentState, characterProfiles, trackingSubjects) + '<div class="bioweave-event-detail-actions bioweave-event-detail-actions-edit"><div class="bioweave-event-edit-meta-controls" aria-label="事件类型和状态编辑">' + renderEventEditMetaControls(values) + '</div><div class="bioweave-event-edit-meta-actions"><button type="button" class="bioweave-primary-action" data-bioweave-action="save-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '"><h3>编辑当前有效事件</h3>' +
-    '<p class="bioweave-muted">事件 ID 为只读；保存由当前页面处理。</p>' +
-    '<div class="bioweave-event-form-grid"><label>事件 ID<input class="bioweave-input" data-bioweave-event-field="event_id" value="' +
+    '"' + (saving ? ' disabled aria-busy="true"' : '') + '>保存</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="cancel-event-edit" data-bioweave-event-id="' +
     escapeHtml(eventId) +
-    '" readonly></label>' +
-    '<label>类型<input class="bioweave-input" data-bioweave-event-field="type" value="' +
-    escapeHtml(displayValue(event.type, '')) +
-    '" /></label>' +
-    '<label>状态<select class="bioweave-select" data-bioweave-event-field="status">' +
-    eventStatuses
-      .map(status => '<option value="' + status + '"' + (event.status === status ? ' selected' : '') + '>' + status + '</option>')
-      .join('') +
-    '</select></label>' +
-    '<label>地点<input class="bioweave-input" data-bioweave-event-field="location" value="' +
-    escapeHtml(displayValue(event.location, '')) +
-    '" /></label>' +
-    '<label class="full">剧情时间<textarea class="bioweave-input" data-bioweave-event-field="story_time">' +
-    jsonValue(event.story_time) +
-    '</textarea></label>' +
-    '<label class="full">参与者 / 角色<textarea class="bioweave-input" data-bioweave-event-field="participants">' +
-    jsonValue(event.participants) +
-    '</textarea></label>' +
-    '<label class="full">妊娠相关性<textarea class="bioweave-input" data-bioweave-event-field="pregnancy_relevance">' +
-    jsonValue(event.pregnancy_relevance) +
-    '</textarea></label>' +
-    '<label class="full">事件证据<textarea class="bioweave-input" data-bioweave-event-field="source_evidence">' +
-    jsonValue(event.source_evidence) +
-    '</textarea></label></div><div class="bioweave-event-detail-actions"><button type="button" class="bioweave-primary-action" data-bioweave-action="save-event" data-bioweave-event-id="' +
-    escapeHtml(eventId) +
-    '">保存事件</button><button type="button" class="bioweave-secondary-action" data-bioweave-action="cancel-event-edit" data-bioweave-event-id="' +
-    escapeHtml(eventId) +
-    '">取消</button></div></form>'
+    '"' + (saving ? ' disabled' : '') + '>取消</button></div></div></div></details>'
   )
 }
 
-function renderEventCard(event, editingEventId, currentStoryTime = null, storyTimeDifferences = {}, currentState = null) {
+function renderEventCard(event, editingEventId, currentStoryTime = null, storyTimeDifferences = {}, currentState = null, eventEditDraft = null, eventEditSaving = false, characterProfiles = {}, trackingSubjects = {}) {
   const eventId = eventIdOf(event)
-  const confidence = event?.pregnancy_relevance?.confidence ?? event?.confidence
   const open = editingEventId === eventId
+  if (open) return renderEventEditCard(event, eventEditDraft, currentState, eventEditSaving, characterProfiles, trackingSubjects, storyTimeDifferences)
   const type = eventTypeLabel(event.type)
   const time = formatStoryTime(event?.story_time)
   const relative = formatStoryTimeRelative(resolveStoryTimeDifference(storyTimeDifferences, eventId))
@@ -276,26 +347,18 @@ function renderEventCard(event, editingEventId, currentStoryTime = null, storyTi
     '">' +
     escapeHtml(eventStatusLabel(event.status)) +
     '</span><span class="bioweave-event-review-chevron" aria-hidden="true">⌄</span>' +
-    '</summary><div class="bioweave-event-review-detail-panel"><div class="bioweave-event-fact-strip">' +
-    '<div class="bioweave-event-fact"><span>发生时间</span><strong>' + renderValue(time) + '</strong></div>' +
-    '<div class="bioweave-event-fact"><span>地点</span><strong>' + renderValue(event.location) + '</strong></div>' +
-    '<div class="bioweave-event-fact"><span>判断置信度</span><strong>' + renderValue(confidence) + '</strong></div>' +
-    '</div><div class="bioweave-event-detail-grid"><section class="bioweave-event-detail-section"><h4>妊娠相关性</h4>' +
-    renderPregnancyRelevance(event, currentState) +
-    '</section><section class="bioweave-event-detail-section"><h4>事件证据</h4>' +
-    renderEvidence(event) +
-    '</section></div>' +
+    '</summary><div class="bioweave-event-review-detail-panel">' +
+    renderEventDetailBody(event, 'view', currentState) +
     '<div class="bioweave-event-detail-actions"><button type="button" class="bioweave-secondary-action" data-bioweave-action="edit-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
     '">编辑事件</button><button type="button" class="bioweave-danger-action" data-bioweave-action="delete-event" data-bioweave-event-id="' +
     escapeHtml(eventId) +
     '">删除事件</button></div>' +
-    (open ? renderEditForm(event) : '') +
     '</div></details>'
   )
 }
 
-export function eventsPage({ activeEvents, events, editingEventId = null, analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {}, currentState = null } = {}) {
+export function eventsPage({ activeEvents, events, editingEventId = null, eventEditDraft = null, eventEditSaving = false, analysisStatus = null, currentStoryTime = null, currentStoryTimeDifferences = {}, currentState = null, characterProfiles = {}, trackingSubjects = {} } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const fallbackEvents = Array.isArray(activeEvents) ? activeEvents : entriesOf(events)
   const biologicalEvents = analysisStatusEvents(status, fallbackEvents, 'active_events')
@@ -320,7 +383,7 @@ export function eventsPage({ activeEvents, events, editingEventId = null, analys
         : status.state === 'not_analyzed' && biologicalEvents.length
           ? '<p class="bioweave-muted">当前楼层尚未完成分析；下方为当前 Chat 已保存的历史事件。</p>'
           : ''
-  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId, currentStoryTime, currentStoryTimeDifferences, currentState)).join('')
+  const cards = visibleEvents.map(event => renderEventCard(event, editingEventId, currentStoryTime, currentStoryTimeDifferences, currentState, eventEditDraft, eventEditSaving, characterProfiles, trackingSubjects)).join('')
   const firstSubjectId =
     visibleEvents
       .flatMap(event => (Array.isArray(event?.pregnancy_relevance?.gestational_subject_ids) ? event.pregnancy_relevance.gestational_subject_ids : []))

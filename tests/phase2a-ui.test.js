@@ -655,14 +655,179 @@ test('events ordinary cards keep user-readable facts and preserve operation bind
   assert.doesNotMatch(html, /chat-1|message-1|hash-1|content_hash|message_version|normalized|day_index|calendar_id/)
 })
 
-test('event edit form keeps necessary structured fields and readonly Event ID', () => {
+test('event edit form keeps approved business fields and readonly factual sections', () => {
   const html = eventsPage({ activeEvents: [event], editingEventId: 'evt-1' })
   assert.match(html, /data-bioweave-event-form[^>]*data-bioweave-event-id="evt-1"/)
   assert.match(html, /data-bioweave-event-field="location"/)
-  assert.match(html, /data-bioweave-event-field="participants"/)
+  assert.match(html, /data-bioweave-event-field="type"[^>]*>/)
+  assert.match(html, /data-bioweave-event-field="status"[^>]*>/)
+  assert.match(html, /data-bioweave-event-field="story_time"[^>]*>/)
   assert.match(html, /data-bioweave-event-field="pregnancy_relevance"/)
-  assert.match(html, /data-bioweave-event-field="event_id"[^>]*readonly/)
-  assert.match(html, /value="evt-1" readonly/)
+  assert.match(html, /data-bioweave-event-field="relevant"/)
+  assert.match(html, /data-bioweave-event-field="possible_conception"/)
+  assert.match(html, /data-bioweave-event-field="gestational_subject_ids"/)
+  assert.match(html, /data-bioweave-event-field="counterpart_ids"/)
+  assert.match(html, /<details[^>]*bioweave-event-form[^>]*><summary class="bioweave-event-review-row/)
+  assert.match(html, /<summary class="bioweave-event-review-row">[\s\S]*第三日夜间[\s\S]*<\/summary><div class="bioweave-event-review-detail-panel/)
+  const summary = html.slice(html.indexOf('<summary'), html.indexOf('</summary>') + '</summary>'.length)
+  assert.doesNotMatch(summary, /data-bioweave-event-field="(?:type|status|story_time|location)"/)
+  assert.doesNotMatch(html, /data-bioweave-event-field="event_id"[^>]*<input/)
+})
+
+test('event edit form exposes Story Time display as plain text and hides internal fields', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      ...event,
+      story_time: {
+        display: '羲和1年3月15日 酉时末',
+        normalized: 'cn-1-3-15T19:00',
+        day_index: 123,
+        calendar_id: null,
+        precision: 'minute',
+        confidence: 1,
+      },
+    }],
+    editingEventId: 'evt-1',
+  })
+  assert.match(html, /data-bioweave-event-field="story_time"[^>]*value="羲和1年3月15日 酉时末"/)
+  assert.doesNotMatch(html, /data-bioweave-event-field="story_time"[^>]*textarea/)
+  assert.doesNotMatch(html, /data-bioweave-event-field="normalized"|data-bioweave-event-field="day_index"|data-bioweave-event-field="calendar_id"/)
+  assert.doesNotMatch(html, /data-bioweave-event-field="participants"[^>]*textarea[\s\S]*character_id/)
+})
+
+test('event editing is in-place and does not append a second edit panel or duplicate fields', () => {
+  const html = eventsPage({
+    activeEvents: [event],
+    editingEventId: 'evt-1',
+  })
+  assert.equal((html.match(/data-bioweave-event-form/g) ?? []).length, 1)
+  assert.doesNotMatch(html, /bioweave-event-review-detail-panel[\s\S]*<form[^>]*bioweave-event-form/)
+  assert.equal((html.match(/data-bioweave-event-field="story_time"/g) ?? []).length, 1)
+  assert.match(html, /bioweave-event-story-time/)
+  assert.match(html, /data-bioweave-event-field="story_time"[^>]*type="text"|type="text"[^>]*data-bioweave-event-field="story_time"/)
+  assert.match(html, /data-bioweave-action="save-event"/)
+  assert.match(html, /data-bioweave-action="cancel-event-edit"/)
+})
+
+test('event inline edit keeps the review row layout and constrains controls', () => {
+  const html = eventsPage({activeEvents: [event], editingEventId: 'evt-1'})
+  const style = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8')
+  assert.match(html, /<details[^>]*bioweave-event-card[^>]*><summary class="bioweave-event-review-row"/)
+  assert.match(html, /bioweave-event-review-time[\s\S]*bioweave-event-review-main[\s\S]*bioweave-badge/)
+  assert.doesNotMatch(html, /bioweave-event-review-row-edit/)
+  assert.match(style, /bioweave-event-detail-panel-edit[\s\S]*border/)
+  assert.match(style, /bioweave-event-detail-panel-edit[\s\S]*min-width: 0/)
+  assert.match(style, /\.bioweave-event-review-main \{[^}]*min-width: 0/)
+  assert.match(style, /\.bioweave-event-edit-meta-controls \{[^}]*display: flex/)
+  assert.match(style, /\.bioweave-event-edit-meta-controls \{[^}]*flex-wrap: wrap/)
+  assert.match(style, /\.bioweave-event-edit-meta-actions \{[^}]*flex: 0 0 auto/)
+  assert.match(html, /bioweave-event-edit-meta-controls[\s\S]*bioweave-event-edit-meta-actions/)
+})
+
+test('event type and status controls stay compact beside an independent action group', () => {
+  const html = eventsPage({activeEvents: [event], editingEventId: 'evt-1'})
+  const style = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8')
+  assert.match(html, /bioweave-event-edit-meta-controls[\s\S]*<label>事件类型<select[\s\S]*<\/label><label>事件状态<select[\s\S]*<\/label>[\s\S]*bioweave-event-edit-meta-actions/)
+  assert.match(style, /\.bioweave-event-detail-actions-edit \{[^}]*display: flex/)
+  assert.match(style, /\.bioweave-event-edit-meta-controls \{[^}]*display: flex/)
+  assert.match(style, /\.bioweave-event-edit-meta-controls label \{[^}]*white-space: nowrap/)
+  assert.match(style, /\.bioweave-event-edit-meta-controls \.bioweave-select \{[^}]*width: auto/)
+  assert.match(style, /\.bioweave-event-edit-meta-actions \{[^}]*flex: 0 0 auto/)
+})
+
+test('expanded Event cards let the person picker escape the card border with local stacking', () => {
+  const style = readFileSync(fileURLToPath(new URL('../style.css', import.meta.url)), 'utf8')
+  assert.match(style, /\.bioweave-event-review-list \{[^}]*overflow: visible/)
+  assert.match(style, /\.bioweave-event-review-item\[open\] \{[^}]*overflow: visible/)
+  assert.match(style, /\.bioweave-event-review-item\[open\] \{[^}]*z-index: 3/)
+  assert.match(style, /\.bioweave-event-person-picker-menu \{[^}]*z-index: 4/)
+  assert.match(style, /\.bioweave-event-person-picker-menu \{[^}]*max-height: 180px[^}]*overflow-y: auto/)
+})
+
+test('event view and edit details share the same field order and do not add an event information section', () => {
+  const view = eventsPage({activeEvents: [event]})
+  const edit = eventsPage({activeEvents: [event], editingEventId: 'evt-1'})
+  const order = ['发生时间', '地点', '判断置信度', '妊娠相关性', '与妊娠相关', '存在受孕可能', '妊娠追踪对象', '相关对象', '事件证据']
+  const detailMarkup = html => html.slice(html.indexOf('bioweave-event-review-detail-panel'), html.indexOf('bioweave-event-review-foot'))
+  for (const markup of [detailMarkup(view), detailMarkup(edit)]) {
+    let previous = -1
+    for (const label of order) {
+      const current = markup.indexOf(label)
+      assert.ok(current > previous, `${label} order is not stable`)
+      previous = current
+    }
+  }
+  const editDetail = detailMarkup(edit)
+  assert.doesNotMatch(editDetail, />事件信息</)
+  assert.doesNotMatch(editDetail, /data-bioweave-event-field="event_metadata"/)
+})
+
+test('event edit person fields are collapsed multi-select pickers with selected identities visible', () => {
+  const html = eventsPage({
+    activeEvents: [event],
+    editingEventId: 'evt-1',
+    characterProfiles: {
+      'char-a': {character_id: 'char-a', display_name: '阿甲'},
+      'char-b': {character_id: 'char-b', display_name: '阿乙'},
+      'char-c': {character_id: 'char-c', display_name: '阿丙'},
+    },
+  })
+  assert.match(html, /<details class="bioweave-event-person-picker"[^>]*data-bioweave-event-field="gestational_subject_ids"[^>]*>/)
+  assert.ok(html.includes('<details class="bioweave-event-person-picker" data-bioweave-event-field="gestational_subject_ids"><summary class="bioweave-event-person-picker-summary"><span class="bioweave-event-person-picker-selected">阿甲</span><span aria-hidden="true">⌄</span></summary>'))
+  assert.ok(html.includes('<details class="bioweave-event-person-picker" data-bioweave-event-field="counterpart_ids"><summary class="bioweave-event-person-picker-summary"><span class="bioweave-event-person-picker-selected">阿乙</span><span aria-hidden="true">⌄</span></summary>'))
+  assert.match(html, /type="checkbox"[^>]*data-bioweave-event-person-option="char-a"[^>]*checked/)
+  assert.match(html, /type="checkbox"[^>]*data-bioweave-event-person-option="char-b"[^>]*checked/)
+  assert.match(html, /type="checkbox"[^>]*data-bioweave-event-person-option=""/)
+  assert.doesNotMatch(html, /<button[^>]*data-bioweave-event-person-option/)
+  assert.doesNotMatch(html, /data-bioweave-event-field="gestational_subject_ids"[^>]*multiple/)
+  assert.match(html, /role="listbox"/)
+})
+
+test('event person picker summarizes historical multi-person arrays without truncating them', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      ...event,
+      pregnancy_relevance: {
+        ...event.pregnancy_relevance,
+        gestational_subject_ids: ['char-a', 'char-b'],
+        counterpart_ids: ['char-a', 'char-b'],
+      },
+    }],
+    editingEventId: 'evt-1',
+    characterProfiles: {
+      'char-a': {character_id: 'char-a', display_name: '阿甲'},
+      'char-b': {character_id: 'char-b', display_name: '阿乙'},
+    },
+  })
+  assert.match(html, /已选 2 人：阿甲、阿乙/)
+  assert.equal((html.match(/data-bioweave-event-person-option="char-a"/g) ?? []).length, 2)
+  assert.equal((html.match(/data-bioweave-event-person-option="char-b"/g) ?? []).length, 2)
+})
+
+test('event person picker uses one shared multi-select DOM contract for both fields', () => {
+  const html = eventsPage({activeEvents: [event], editingEventId: 'evt-1'})
+  for (const field of ['gestational_subject_ids', 'counterpart_ids']) {
+    const picker = html.slice(html.indexOf(`data-bioweave-event-field="${field}"`), html.indexOf('</details>', html.indexOf(`data-bioweave-event-field="${field}"`)) + '</details>'.length)
+    assert.match(picker, /class="bioweave-event-person-picker-selected"/)
+    assert.match(picker, /type="checkbox"/)
+    assert.doesNotMatch(picker, /<button[^>]*data-bioweave-event-person-option/)
+  }
+})
+
+test('event person picker renders an empty array as an explicitly selected empty option', () => {
+  const html = eventsPage({
+    activeEvents: [{
+      ...event,
+      pregnancy_relevance: {
+        ...event.pregnancy_relevance,
+        gestational_subject_ids: [],
+        counterpart_ids: [],
+      },
+    }],
+    editingEventId: 'evt-1',
+  })
+  assert.match(html, /bioweave-event-person-picker-selected">未选择</)
+  assert.match(html, /data-bioweave-event-person-option=""[^>]*checked/)
 })
 
 test('events page accepts an object-shaped Event collection for compatibility', () => {

@@ -443,6 +443,15 @@
         "fieldLabelFontSize": "10px",
         "controlFontSize": "11px",
         "actionFontSize": "10px",
+        "editableFields": ["type", "status", "location", "story_time.display", "pregnancy_relevance.relevant", "pregnancy_relevance.possible_conception", "pregnancy_relevance.gestational_subject_ids", "pregnancy_relevance.counterpart_ids"],
+        "readonlyFields": ["participants", "source_evidence", "event_id", "source", "story_time.normalized", "story_time.day_index", "story_time.calendar_id", "story_time.precision", "story_time.confidence"],
+        "storyTimeEdit": "plain text display only; Runtime reparses through the formal Story Time facade",
+        "detailLayout": "view and edit share one detail renderer, field order, labels, groups, and containers",
+        "summary": "saved summary remains read-only while the expanded detail draft is being edited",
+        "typeStatus": "compact controls in the existing detail action area; no separate event information section",
+        "personPicker": "collapsed multi-select details picker with visible selected labels; checkbox changes update the draft and summary in place while the menu stays open; empty selection maps to []; historical multi-ID arrays remain intact until user action",
+        "editMode": "in-place within the same expanded Event detail; no separate panel and no duplicate business fields",
+        "draftPolicy": "local draft until save; cancel discards; persistence failure keeps edit mode and draft; refresh failure is reported separately",
         "preserveEventId": true
       }
     },

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, complete state, active Swipe, stale guards, provenance, and derived-state boundaries"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "BiologicalEvent, Story Time, validation, and Tracking input contract"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Plain DOM UI structure, action hooks, responsive form conventions"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Direct Event edit lifecycle and persistence contract"}

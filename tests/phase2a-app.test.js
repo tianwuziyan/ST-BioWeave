@@ -173,7 +173,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, updateEventError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -213,6 +213,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let runtimeListener = null;
   let refreshCalls = 0;
   let businessDataCalls = 0;
+  let businessDataFailure = null;
   let characterAnalysisCalls = 0;
   let abortCalls = 0;
   let currentBusy = analysisBusy;
@@ -273,6 +274,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     },
     collectActiveBusinessData: async () => {
       businessDataCalls += 1;
+      if (businessDataFailure) throw businessDataFailure;
       return structuredClone(businessData());
     },
     async refreshCurrentFloorAnalysis() {
@@ -297,6 +299,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     },
     async updateEvent(eventId, next) {
       updateCalls += 1;
+      if (updateEventError) throw updateEventError;
       const index = floor.events.findIndex(item => item.event_id === eventId);
       if (index < 0) throw new Error('EVENT_NOT_FOUND');
       floor.events[index] = structuredClone({...floor.events[index], ...next, source: floor.events[index].source});
@@ -345,6 +348,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     setCurrentFloor: value => { currentFloor = value; },
     worldResolveCalls: () => worldResolveCalls,
     persistenceTrace: () => [...persistenceTrace],
+    setBusinessDataFailure: error => { businessDataFailure = error; },
   };
 }
 
@@ -1116,10 +1120,11 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
     type: {value: current.type},
     status: {value: current.status},
     location: {value: '编辑后的地点'},
-    story_time: {value: JSON.stringify(current.story_time)},
-    participants: {value: JSON.stringify(current.participants)},
-    pregnancy_relevance: {value: JSON.stringify(current.pregnancy_relevance)},
-    source_evidence: {value: JSON.stringify(current.source_evidence)},
+    story_time: {value: current.story_time.display},
+    relevant: {value: 'false'},
+    possible_conception: {value: 'false'},
+    gestational_subject_ids: {value: ['char-a'], multiple: true, selectedOptions: [{value: 'char-a'}]},
+    counterpart_ids: {value: ['char-b'], multiple: true, selectedOptions: [{value: 'char-b'}]},
   };
   const form = {
     dataset: {bioweaveEventId: current.event_id},
@@ -1136,6 +1141,9 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
   });
   assert.equal(fixture.calls().update, 1);
   assert.equal(fixture.getFloor().events[0].location, '编辑后的地点');
+  assert.equal(fixture.getFloor().events[0].pregnancy_relevance.relevant, false);
+  assert.equal(fixture.getFloor().events[0].pregnancy_relevance.possible_conception, false);
+  assert.deepEqual(fixture.getFloor().events[0].pregnancy_relevance.gestational_subject_ids, ['char-a']);
   assert.deepEqual(fixture.getFloor().events[0].source, version);
 
   fixture.context.Popup = {show: {confirm: async () => 'affirmative'}};
@@ -1147,6 +1155,185 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
   assert.equal(fixture.calls().delete, 1);
   assert.deepEqual(fixture.getFloor().events, []);
   assert.equal(Object.hasOwn(fixture.getChat(), 'tracking_subjects'), false);
+  fixture.app.destroyBioWeave();
+});
+
+test('Event edit reads collapsed person pickers as stable ID arrays', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'})
+  const fixture = await createFixture({event: sourceEvent(version)})
+  fixture.app.go('events')
+  const current = fixture.getFloor().events[0]
+  const picker = (values, selected) => ({
+    dataset: {bioweaveEventField: 'person-picker'},
+    querySelectorAll(selector) {
+      if (selector.includes(':checked')) return selected.map(value => ({value, checked: true}))
+      return values.map(value => ({value, checked: selected.includes(value)}))
+    },
+  })
+  const fields = {
+    type: {value: current.type},
+    status: {value: current.status},
+    location: {value: current.location},
+    story_time: {value: current.story_time.display},
+    relevant: {value: 'true'},
+    possible_conception: {value: 'true'},
+    gestational_subject_ids: picker(['char-a', 'char-c'], ['char-c']),
+    counterpart_ids: picker(['char-a', 'char-b'], ['char-a']),
+  }
+  const form = {
+    dataset: {bioweaveEventId: current.event_id},
+    querySelector(selector) {
+      const match = selector.match(/data-bioweave-event-field="([^"]+)"/)
+      return match ? fields[match[1]] ?? null : null
+    },
+  }
+  fixture.root.selectorNodes.set('[data-bioweave-event-form]', [form])
+  const click = [...fixture.root.listeners.get('click')][0]
+  await click({target: clickTarget('save-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}})
+  assert.deepEqual(fixture.getFloor().events[0].pregnancy_relevance.gestational_subject_ids, ['char-c'])
+  assert.deepEqual(fixture.getFloor().events[0].pregnancy_relevance.counterpart_ids, ['char-a'])
+  fixture.app.destroyBioWeave()
+})
+
+test('Event person picker updates the draft and summary in place while remaining open', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'})
+  const fixture = await createFixture({event: sourceEvent(version)})
+  fixture.app.go('events')
+  const current = fixture.getFloor().events[0]
+  const click = [...fixture.root.listeners.get('click')][0]
+  await click({target: clickTarget('edit-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}})
+  const selectedText = {textContent: 'Alice'}
+  const summary = {querySelector(selector) { return selector.includes('selected') ? selectedText : null }}
+  const optionLabel = label => ({querySelector() { return {textContent: label} }})
+  const charA = {value: 'char-a', checked: true, dataset: {bioweaveEventPersonOption: 'char-a'}, parentElement: optionLabel('Alice')}
+  const charB = {value: 'char-b', checked: true, dataset: {bioweaveEventPersonOption: 'char-b'}, parentElement: optionLabel('B')}
+  const picker = {
+    dataset: {bioweaveEventField: 'gestational_subject_ids'},
+    open: true,
+    querySelector(selector) { return selector.includes('selected') ? selectedText : selector.includes('summary') ? summary : null },
+    querySelectorAll(selector) { return selector.includes('data-bioweave-event-person-option') ? [charA, charB] : [] },
+  }
+  const personTarget = {
+    __root: fixture.root,
+    dataset: {bioweaveEventPersonOption: 'char-b'},
+    checked: true,
+    value: 'char-b',
+    parentElement: charB.parentElement,
+    closest(selector) {
+      if (selector.includes('[data-bioweave-event-person-option]')) return this
+      if (selector.includes('[data-bioweave-event-field]') || selector.includes('.bioweave-event-person-picker')) return picker
+      return null
+    },
+  }
+  const change = [...fixture.root.listeners.get('change')][0]
+  await change({target: personTarget})
+  assert.equal(fixture.calls().update, 0)
+  assert.equal(selectedText.textContent, '已选 2 人：Alice、B')
+  assert.equal(picker.open, true)
+  personTarget.checked = false
+  charB.checked = false
+  await change({target: personTarget})
+  assert.equal(selectedText.textContent, 'Alice')
+  assert.equal(picker.open, true)
+  fixture.root.selectorNodes.set('.bioweave-event-person-picker[open]', [picker])
+  await click({target: {__root: fixture.root, closest() { return null }}, preventDefault() {}})
+  assert.equal(picker.open, false)
+  fixture.app.destroyBioWeave()
+})
+
+test('Event edit keeps persistence success distinct from a later business refresh failure', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  const fixture = await createFixture({event: sourceEvent(version)});
+  fixture.app.go('events');
+  const current = fixture.getFloor().events[0];
+  const fields = {
+    type: {value: current.type},
+    status: {value: current.status},
+    location: {value: current.location},
+    story_time: {value: current.story_time.display},
+  };
+  const form = {
+    dataset: {bioweaveEventId: current.event_id},
+    querySelector(selector) {
+      const match = selector.match(/data-bioweave-event-field="([^"]+)"/);
+      return match ? fields[match[1]] ?? null : null;
+    },
+  };
+  fixture.root.selectorNodes.set('[data-bioweave-event-form]', [form]);
+  fixture.setBusinessDataFailure(Object.assign(new Error('REFRESH_FAILED'), {code: 'REFRESH_FAILED'}));
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({
+    target: clickTarget('save-event', {root: fixture.root, bioweaveEventId: current.event_id}),
+    preventDefault() {},
+  });
+  assert.equal(fixture.calls().update, 1);
+  assert.equal(fixture.getFloor().events[0].location, current.location);
+  assert.deepEqual(fixture.toasts(), [['error', '事件已保存，但业务视图刷新失败，请刷新页面。']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('Event edit failure keeps the same card in edit mode with the draft available for retry', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  const fixture = await createFixture({
+    event: sourceEvent(version),
+    updateEventError: Object.assign(new Error('EVENT_EDIT_PERSISTENCE_FAILED'), {code: 'EVENT_EDIT_PERSISTENCE_FAILED'}),
+  });
+  fixture.app.go('events');
+  const current = fixture.getFloor().events[0];
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({target: clickTarget('edit-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}});
+  const fields = {
+    type: {value: current.type},
+    status: {value: current.status},
+    location: {value: '重试地点'},
+    story_time: {value: current.story_time.display},
+  };
+  const form = {
+    dataset: {bioweaveEventId: current.event_id},
+    querySelector(selector) {
+      const match = selector.match(/data-bioweave-event-field="([^"]+)"/);
+      return match ? fields[match[1]] ?? null : null;
+    },
+  };
+  fixture.root.selectorNodes.set('[data-bioweave-event-form]', [form]);
+  await click({target: clickTarget('save-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}});
+  assert.equal(fixture.calls().update, 1);
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /data-bioweave-event-form/);
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /value="重试地点"/);
+  assert.deepEqual(fixture.toasts(), [['error', '事件保存失败，上一份有效事件已保留。']]);
+  fixture.app.destroyBioWeave();
+});
+
+test('Event edit validation diagnostics are shown as a specific user error', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  const fixture = await createFixture({
+    event: sourceEvent(version),
+    updateEventError: Object.assign(new Error('EVENT_ANALYSIS_INVALID'), {
+      code: 'EVENT_ANALYSIS_INVALID',
+      error_code: 'duplicate_gestational_subject_event',
+      diagnostic_code: 'duplicate_gestational_subject_event',
+      diagnostic_path: '$.events[1].pregnancy_relevance.gestational_subject_ids[0]',
+    }),
+  });
+  fixture.app.go('events');
+  const current = fixture.getFloor().events[0];
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({target: clickTarget('edit-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}});
+  const fields = {
+    type: {value: current.type},
+    status: {value: current.status},
+    location: {value: current.location},
+    story_time: {value: current.story_time.display},
+  };
+  fixture.root.selectorNodes.set('[data-bioweave-event-form]', [{
+    dataset: {bioweaveEventId: current.event_id},
+    querySelector(selector) {
+      const match = selector.match(/data-bioweave-event-field="([^"]+)"/);
+      return match ? fields[match[1]] ?? null : null;
+    },
+  }]);
+  await click({target: clickTarget('save-event', {root: fixture.root, bioweaveEventId: current.event_id}), preventDefault() {}});
+  assert.deepEqual(fixture.toasts(), [['error', '事件集合中的妊娠追踪对象重复，事件未保存。']]);
   fixture.app.destroyBioWeave();
 });
 

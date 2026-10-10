@@ -1411,6 +1411,159 @@ test("manual Event Story Time edit rejects future time and allows equal target t
   fixture.runtime.destroy();
 });
 
+test("manual Event Story Time display edits rebuild all derived fields instead of retaining the old object", async () => {
+  const traces = [];
+  const fixture = createFixture({
+    notify(event) {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") traces.push(event.payload);
+    },
+    messages: [{
+      message_id: "story-time-display-edit",
+      floor: 10,
+      content: "当前剧情",
+      story_time: {display: "羲和1年3月20日 酉时末"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("editable-display-time", {
+          story_time: {
+            display: "羲和1年3月15日 酉时末",
+            normalized: "cn-1-3-15T19:00",
+            day_index: 123,
+            calendar_id: "old-calendar",
+            precision: "minute",
+            confidence: 1,
+          },
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+
+  await fixture.runtime.updateEvent(eventId, {
+    story_time: {
+      display: "羲和1年3月18日 酉时末",
+      normalized: "cn-1-3-15T19:00",
+      day_index: 123,
+      calendar_id: "old-calendar",
+      precision: "minute",
+      confidence: 1,
+    },
+  });
+
+  const updated = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.equal(updated.event_id, eventId);
+  assert.deepEqual(updated.source, fixture.runtime.store.getFloor(0).events[0].source);
+  assert.equal(updated.story_time.display, "羲和1年3月18日 酉时末");
+  assert.equal(updated.story_time.normalized, "cn-1-3-18T19:00");
+  assert.equal(updated.story_time.day_index, null);
+  assert.equal(updated.story_time.calendar_id, null);
+  assert.equal(updated.story_time.precision, "minute");
+  assert.equal(updated.story_time.confidence, null);
+  assert.ok(traces.some(trace => trace.stage === "EVENT_EDIT_SUBMITTED" && trace.event_id === eventId));
+  assert.ok(traces.some(trace => trace.stage === "EVENT_EDIT_PERSISTENCE_CONFIRMED" && trace.persistence_confirmed === true));
+  fixture.runtime.destroy();
+});
+
+test("manual Event Story Time display edits keep incomparable diagnostics without saving contradictory fields", async () => {
+  const traces = [];
+  const fixture = createFixture({
+    notify(event) {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") traces.push(event.payload);
+    },
+    messages: [{
+      message_id: "story-time-incomparable-edit",
+      floor: 10,
+      content: "当前剧情",
+      story_time: {display: "羲和1年3月20日 酉时末"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("incomparable-display-time", {
+          story_time: {display: "羲和1年3月15日 酉时末"},
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  const beforeSaves = fixture.saveFloorCalls();
+
+  await fixture.runtime.updateEvent(eventId, {
+    story_time: {display: "羲和1年3月18日 酉时末"},
+  });
+
+  const updated = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.equal(updated.story_time.normalized, "cn-1-3-18T19:00");
+  assert.equal(updated.story_time.day_index, null);
+  assert.equal(updated.story_time.calendar_id, null);
+  assert.equal(fixture.saveFloorCalls(), beforeSaves + 1);
+  assert.ok(traces.some(trace => trace.stage === "EVENT_STORY_TIME_INCOMPARABLE" && trace.event_ids.includes(eventId)));
+  fixture.runtime.destroy();
+});
+
+test("manual display edit preserves an existing complex Event when its registry snapshot is unavailable", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "story-time-edit-missing-registry",
+      floor: 64,
+      content: "当前剧情",
+      story_time: {display: "羲和1年3月20日 酉时末"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("complex-existing-event", {
+          story_time: {display: "羲和1年3月15日 酉时末"},
+          source_evidence: [
+            {kind: "current_floor", text: "当前楼层"},
+            {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "实际暴露证据"},
+          ],
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const before = structuredClone(fixture.runtime.store.getFloor(0));
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...before,
+    character_registry: {schema_version: 1, entities: {}},
+  });
+  const eventId = before.events[0].event_id;
+
+  await fixture.runtime.updateEvent(eventId, {
+    story_time: {display: "羲和1年3月18日 酉时末"},
+  });
+
+  const updated = fixture.runtime.store.getFloor(0).events[0];
+  assert.equal(updated.event_id, eventId);
+  assert.equal(updated.story_time.display, "羲和1年3月18日 酉时末");
+  assert.equal(updated.story_time.normalized, "cn-1-3-18T19:00");
+  assert.deepEqual(updated.source, before.events[0].source);
+  fixture.runtime.destroy();
+});
+
+test("invalid manual Event Story Time display rejects atomically", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const before = structuredClone(await fixture.runtime.getCurrentFloorEvents());
+  const beforeSaves = fixture.saveFloorCalls();
+  await assert.rejects(
+    fixture.runtime.updateEvent(before[0].event_id, {story_time: {display: "不是可识别日期"}}),
+    error => error?.code === "EVENT_EDIT_STORY_TIME_INVALID",
+  );
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), before);
+  assert.equal(fixture.saveFloorCalls(), beforeSaves);
+  fixture.runtime.destroy();
+});
+
 test(
   "Runtime registers a new identity before pregnancy closure validation and reuses it on the next Floor",
   { concurrency: false },
@@ -7171,6 +7324,7 @@ test("editing an Event writes only the current complete Floor state", async () =
 });
 
 test("event edit validates the complete Floor collection before saving or rebuilding Registry", async () => {
+  const traces = [];
   const subjectEvent = (eventId, subjectId, sourceId) =>
     eventResult(eventId, {
       participants: [
@@ -7198,6 +7352,9 @@ test("event edit validates the complete Floor collection before saving or rebuil
       },
     });
   const fixture = createFixture({
+    notify(event) {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") traces.push(event.payload);
+    },
     analyzer: {
       async analyzeFloor() {
         return {
@@ -7225,8 +7382,7 @@ test("event edit validates the complete Floor collection before saving or rebuil
     firstEvent.pregnancy_relevance.gestational_subject_ids[0];
   const secondSubjectId =
     secondEvent.pregnancy_relevance.gestational_subject_ids[0];
-  await assert.rejects(
-    fixture.runtime.updateEvent(secondEvent.event_id, {
+  await fixture.runtime.updateEvent(secondEvent.event_id, {
       participants: [
         { ...secondEvent.participants[0], character_id: firstSubjectId },
         { ...secondEvent.participants[1] },
@@ -7235,21 +7391,16 @@ test("event edit validates the complete Floor collection before saving or rebuil
         ...secondEvent.pregnancy_relevance,
         gestational_subject_ids: [firstSubjectId],
       },
-    }),
-    (error) =>
-      error?.code === "EVENT_ANALYSIS_INVALID" &&
-      error?.diagnostic_code === "duplicate_gestational_subject_event" &&
-      error?.error_path ===
-        "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
-  );
+    });
 
-  assert.equal(fixture.saveFloorCalls(), beforeFloorSaveCalls);
-  assert.equal(fixture.saveChatMetadataCalls(), beforeRegistrySaveCalls);
+  assert.ok(fixture.saveFloorCalls() > beforeFloorSaveCalls);
+  assert.ok(fixture.saveChatMetadataCalls() >= beforeRegistrySaveCalls);
+  assert.equal(traces.some(trace => trace.stage === "EVENT_EDIT_VALIDATION_FAILED"), false);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.pregnancy_relevance.gestational_subject_ids,
     ),
-    [[firstSubjectId], [secondSubjectId]],
+    [[firstSubjectId], [firstSubjectId]],
   );
   fixture.runtime.destroy();
 });
@@ -7678,7 +7829,7 @@ test("non-empty normalized Event result missing from canonical Floor state retri
   fixture.runtime.destroy();
 });
 
-test("Domain collection duplicate subject keeps its stable diagnostic code and path", async () => {
+test("Domain collection allows the same subject in separate Events", async () => {
   const fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
@@ -7692,21 +7843,9 @@ test("Domain collection duplicate subject keeps its stable diagnostic code and p
     },
   });
   await fixture.runtime.init();
-  await assert.rejects(
-    fixture.runtime.refreshCurrentFloorAnalysis(),
-    (error) =>
-      error?.code === "EVENT_DOMAIN_VALIDATION_FAILED" &&
-      error?.diagnostic_code === "duplicate_gestational_subject_event" &&
-      error?.error_path ===
-        "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
-  );
+  await fixture.runtime.refreshCurrentFloorAnalysis();
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
-  assert.equal(status.state, "failed");
-  assert.equal(status.error_code, "duplicate_gestational_subject_event");
-  assert.equal(
-    status.error_path,
-    "$.events[1].pregnancy_relevance.gestational_subject_ids[0]",
-  );
+  assert.equal(status.state, "success");
   fixture.runtime.destroy();
 });
 

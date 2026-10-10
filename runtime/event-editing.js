@@ -3,7 +3,8 @@ import {
   validateEventCollection,
   validateEventStoryTimesAtOrBefore,
 } from "../core/events.js";
-import {hasCharacterId, normalizeCharacterRegistry} from "../core/identity.js";
+import {normalizeCharacterRegistry} from "../core/identity.js";
+import {parseStoryTimeCandidate} from "../story/time.js";
 
 export function createEventEditing({
   resolveCurrentEventState,
@@ -14,8 +15,66 @@ export function createEventEditing({
   refreshTrackingRegistry,
   createCollectionValidationError,
   getCurrentStoryTime,
+  storyTime,
   emitStoryTimeDiagnostic,
+  emitEventEditTrace,
 } = {}) {
+  function traceEdit(stage, target, eventId, details = {}) {
+    emitEventEditTrace?.(stage, target, {
+      event_id: String(eventId ?? '').trim() || null,
+      persistence_entered: ['EVENT_EDIT_PERSISTENCE_FAILED', 'EVENT_EDIT_PERSISTENCE_CONFIRMED', 'EVENT_EDIT_REFRESH_FAILED'].includes(stage),
+      ...details,
+    });
+  }
+
+  function errorDetails(error) {
+    return {
+      validation_stage: error?.validation_stage ?? error?.analysis_stage ?? null,
+      error_code: error?.error_code ?? error?.diagnostic_code ?? error?.code ?? error?.message ?? 'EVENT_EDIT_FAILED',
+      safe_error_summary: error?.safe_error_summary ?? error?.message ?? 'Event 编辑失败',
+      error_path: error?.diagnostic_path ?? error?.error_path ?? error?.instancePath ?? error?.path ?? null,
+      validation_error_path: error?.diagnostic_path ?? error?.error_path ?? error?.instancePath ?? error?.path ?? null,
+      validator: error?.validator ?? null,
+      keyword: error?.keyword ?? null,
+    };
+  }
+
+  function isStaleError(error) {
+    const code = String(error?.code ?? error?.message ?? '');
+    return code === 'STALE_CHAT' || code.startsWith('FLOOR_TX_STALE') || code.startsWith('FLOOR_TX_SUPERSEDED') || code === 'STALE_FLOOR_VERSION';
+  }
+
+  function normalizeEditedStoryTime(rawStoryTime) {
+    const display = typeof rawStoryTime?.display === "string"
+      ? rawStoryTime.display.trim()
+      : "";
+    if (!display) {
+      return typeof storyTime?.normalize === "function"
+        ? storyTime.normalize(rawStoryTime)
+        : rawStoryTime;
+    }
+    const calendar = typeof storyTime?.getCalendarFor === "function"
+      ? storyTime.getCalendarFor(display)
+      : null;
+    const candidate = parseStoryTimeCandidate(display, {calendar});
+    if (!candidate) {
+      const error = new Error("EVENT_EDIT_STORY_TIME_INVALID");
+      error.code = "EVENT_EDIT_STORY_TIME_INVALID";
+      error.analysis_stage = "event_time_normalization";
+      throw error;
+    }
+    const normalized = typeof storyTime?.normalize === "function"
+      ? storyTime.normalize({display})
+      : candidate;
+    if (!normalized?.display) {
+      const error = new Error("EVENT_EDIT_STORY_TIME_INVALID");
+      error.code = "EVENT_EDIT_STORY_TIME_INVALID";
+      error.analysis_stage = "event_time_normalization";
+      throw error;
+    }
+    return normalized;
+  }
+
   async function findActiveEvent(eventId) {
     const targetId = String(eventId ?? "").trim();
     if (!targetId) throw new Error("EVENT_NOT_FOUND");
@@ -29,26 +88,32 @@ export function createEventEditing({
 
   async function updateEvent(eventId, patch = {}) {
     const target = await findActiveEvent(eventId);
-    const nextEvent = normalizeEvent({
-      ...target.event,
-      ...patch,
-      event_id: target.event.event_id,
-      source: target.event.source,
+    traceEdit('EVENT_EDIT_SUBMITTED', target, eventId, {
+      fields: Object.keys(patch).filter(field => ['type', 'status', 'location', 'story_time'].includes(field)),
     });
+    let nextEvent;
+    try {
+      const editedStoryTime = Object.prototype.hasOwnProperty.call(patch, "story_time")
+        ? normalizeEditedStoryTime(patch.story_time)
+        : target.event.story_time;
+      nextEvent = normalizeEvent({
+        ...target.event,
+        ...patch,
+        story_time: editedStoryTime,
+        event_id: target.event.event_id,
+        source: target.event.source,
+      });
+    } catch (error) {
+      traceEdit('EVENT_EDIT_NORMALIZATION_FAILED', target, eventId, errorDetails(error));
+      throw error;
+    }
     const characterRegistry = normalizeCharacterRegistry(
       target.inheritedCharacterRegistry ?? target.floorData.character_registry,
     );
-    for (const [participantIndex, participant] of nextEvent.participants.entries()) {
-      if (hasCharacterId(characterRegistry, participant.character_id)) continue;
-      const error = new Error("EVENT_IDENTITY_RESOLUTION_FAILED");
-      error.code = "EVENT_IDENTITY_RESOLUTION_FAILED";
-      error.analysis_stage = "identity_resolution";
-      error.diagnostic_code = "unknown_character_id";
-      error.error_code = "unknown_character_id";
-      error.diagnostic_path = `participants[${participantIndex}].character_id`;
-      error.error_path = error.diagnostic_path;
-      throw error;
-    }
+    // A local edit does not change participant identity bindings. Keep the
+    // authoritative Event as read, even when an older Floor lacks the
+    // registry snapshot that originally accompanied it. The formal Event
+    // collection validator still checks participant shape and references.
     const events = [...(Array.isArray(target.events) ? target.events : [])];
     const index = events.findIndex(
       (event) => String(event?.event_id) === String(eventId),
@@ -63,7 +128,9 @@ export function createEventEditing({
       const error = new Error("EVENT_STORY_TIME_AFTER_CURRENT");
       error.code = "EVENT_STORY_TIME_AFTER_CURRENT";
       error.analysis_stage = "event_time_validation";
+      error.validation_stage = "event_time_validation";
       error.event_ids = storyTimeValidation.future_event_ids;
+      traceEdit('EVENT_EDIT_VALIDATION_FAILED', target, eventId, errorDetails(error));
       throw error;
     }
     if (storyTimeValidation.incomparable_event_ids.length && typeof emitStoryTimeDiagnostic === "function") {
@@ -75,30 +142,58 @@ export function createEventEditing({
     }
     const collectionValidation = validateEventCollection(events);
     if (!collectionValidation.ok) {
-      throw createCollectionValidationError(
+      const error = createCollectionValidationError(
         collectionValidation,
         "EVENT_ANALYSIS_INVALID",
         events,
       );
+      error.validation_stage ??= "event_collection_validation";
+      traceEdit('EVENT_EDIT_VALIDATION_FAILED', target, eventId, errorDetails(error));
+      throw error;
     }
-    const mutationToken = await invalidateMutation(
-      {type: "MESSAGE_EDITED", payload: {message_id: target.version.message_id}},
-      target.index,
-      {mutationScope: "target-local"},
-    );
+    let mutationToken;
+    try {
+      mutationToken = await invalidateMutation(
+        {type: "MESSAGE_EDITED", payload: {message_id: target.version.message_id}},
+        target.index,
+        {mutationScope: "target-local"},
+      );
+    } catch (error) {
+      traceEdit(isStaleError(error) ? 'EVENT_EDIT_STALE_REJECTED' : 'EVENT_EDIT_PERSISTENCE_FAILED', target, eventId, errorDetails(error));
+      throw error;
+    }
     const analysis = {
       ...(target.floorData.analysis ?? target.inheritedAnalysis ?? {}),
       status: "success",
       floor_version: target.version,
       event_count: events.length,
     };
-    await commitFloorPatch(target, "event", {analysis, events, character_registry: characterRegistry}, {
-      operation_type: "event-edit-patch",
-      assertCurrent: () => assertMutationToken(mutationToken),
-    });
-    assertMutationToken(mutationToken);
+    try {
+      await commitFloorPatch(target, "event", {analysis, events, character_registry: characterRegistry}, {
+        operation_type: "event-edit-patch",
+        assertCurrent: () => assertMutationToken(mutationToken),
+      });
+      assertMutationToken(mutationToken);
+      traceEdit('EVENT_EDIT_PERSISTENCE_CONFIRMED', target, eventId, {persistence_confirmed: true});
+    } catch (error) {
+      traceEdit(isStaleError(error) ? 'EVENT_EDIT_STALE_REJECTED' : 'EVENT_EDIT_PERSISTENCE_FAILED', target, eventId, errorDetails(error));
+      throw error;
+    }
     clearInvalidatedFloor(target.version);
-    await refreshTrackingRegistry("event-edit");
+    try {
+      await refreshTrackingRegistry("event-edit");
+    } catch (error) {
+      const refreshError = Object.assign(error instanceof Error ? error : new Error(String(error)), {
+        code: 'EVENT_EDIT_REFRESH_FAILED',
+        persistence_confirmed: true,
+        original_code: error?.code ?? error?.message ?? 'REFRESH_FAILED',
+      });
+      traceEdit('EVENT_EDIT_REFRESH_FAILED', target, eventId, {
+        ...errorDetails(error),
+        persistence_confirmed: true,
+      });
+      throw refreshError;
+    }
     return nextEvent;
   }
 

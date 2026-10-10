@@ -966,7 +966,6 @@ export function validateEvent(
 export function validateEventCollection(events = [], options = {}) {
   if (!Array.isArray(events)) return { ok: false, errors: ['events'] };
   const errors = [];
-  const subjectEvents = new Map();
   const seenEventIds = new Map();
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -979,6 +978,17 @@ export function validateEventCollection(events = [], options = {}) {
       continue;
     }
     if (eventId) seenEventIds.set(eventId, event);
+    const rawSubjectIds = event?.pregnancy_relevance?.gestational_subject_ids;
+    if (event?.pregnancy_relevance?.relevant === true && Array.isArray(rawSubjectIds)) {
+      const seenSubjectIds = new Set();
+      rawSubjectIds.forEach((subjectId, subjectIndex) => {
+        if (seenSubjectIds.has(subjectId)) {
+          addError(errors, `events[${index}].pregnancy_relevance.gestational_subject_ids[${subjectIndex}]`);
+        } else {
+          seenSubjectIds.add(subjectId);
+        }
+      });
+    }
     const validation = validateEvent(event, options);
     for (const error of validation.errors) {
       addError(errors, `events[${index}]${error ? `.${error}` : ''}`);
@@ -993,15 +1003,13 @@ export function validateEventCollection(events = [], options = {}) {
     if (relevance?.relevant !== true) {
       continue;
     }
+    const subjectIds = new Set();
     for (const [subjectIndex, subjectId] of relevance.gestational_subject_ids.entries()) {
-      if (subjectEvents.has(subjectId)) {
-        addError(
-          errors,
-          `events[${index}].pregnancy_relevance.gestational_subject_ids[${subjectIndex}]`,
-        );
-        continue;
+      if (subjectIds.has(subjectId)) {
+        addError(errors, `events[${index}].pregnancy_relevance.gestational_subject_ids[${subjectIndex}]`);
+      } else {
+        subjectIds.add(subjectId);
       }
-      subjectEvents.set(subjectId, index);
     }
   }
   return { ok: errors.length === 0, errors };

@@ -182,7 +182,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state", "execution_snapshot_present", "execution_snapshot_mutated", "execution_snapshot_accepted_operation_count", "execution_snapshot_successful_round_count", "execution_snapshot_last_successful_round", "execution_snapshot_persistence_eligible", "snapshot_preserved", "last_attempt_failed", "last_attempt_failure_code",
     "resolution_reason", "request_source", "panel_open", "active_tab",
     "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
-    "error_name", "error_message", "error_path", "diagnostic_code", "analysis_stage", "validation_stage",
+    "event_id", "error_code", "safe_error_summary", "error_name", "error_message", "error_path", "diagnostic_path", "diagnostic_code", "analysis_stage", "validation_stage", "validator", "keyword", "persistence_entered",
     "response_shape", "extraction_mode", "parsed", "events_present",
     "schema_valid", "domain_valid", "validation_error_path",
     "valid_empty", "empty_reason", "expected_event_count",

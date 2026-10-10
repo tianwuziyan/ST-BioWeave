@@ -1122,6 +1122,7 @@
       .bw-event-form .bw-input,
       .bw-event-form .bw-select { min-height: 28px; padding: 4px 7px; font-size: 11px; }
       .bw-event-form textarea.bw-input { min-height: 58px; line-height: 1.4; }
+      .bw-event-form-readonly { display: grid; gap: 4px; color: var(--bw-text-2); font-size: 10px; }
       .bw-event-form .full { grid-column: 1 / -1; }
       .bw-event-review-foot {
         display: flex;
@@ -2258,10 +2259,10 @@
                     ><span class="bw-event-review-main"><b>事件类型</b><small>Runtime 地点 · 参与者摘要</small><span class="bw-event-review-detail">n 个追踪对象</span></span
                     ><span class="bw-badge good">已确认</span><span class="bw-event-review-chevron" aria-hidden="true">⌄</span>
                   </summary>
+                  <!-- Production edit mode keeps this exact detail grid and swaps only editable values for bounded controls; the summary remains read-only. -->
                   <div class="bw-event-review-detail-panel">
                     <div class="bw-event-detail-grid"><section class="bw-event-detail-section"><h4>妊娠相关性</h4><dl class="bw-data-list"><div><dt>与妊娠相关</dt><dd>是</dd></div><div><dt>判断置信度</dt><dd>Runtime DTO</dd></div></dl></section><section class="bw-event-detail-section"><h4>事件证据</h4><ul class="bw-event-evidence"><li>Runtime 事件证据。</li></ul></section></div>
                     <div class="bw-event-detail-actions"><button class="bw-secondary-action" type="button" data-bioweave-action="edit-event">编辑事件</button><button class="bw-danger-action" type="button" data-bioweave-action="delete-event">删除事件</button></div>
-                    <form class="bw-card bw-event-form" data-bioweave-event-form><h3>编辑当前有效事件</h3><p>事件 ID 为只读；保存由当前页面处理。</p><div class="bw-event-form-grid"><label>事件 ID<input class="bw-input" readonly></label><label>类型<input class="bw-input"></label><label>状态<select class="bw-select"><option>已确认</option></select></label><label>地点<input class="bw-input"></label><label class="full">剧情时间<textarea class="bw-input"></textarea></label><label class="full">参与者 / 角色<textarea class="bw-input"></textarea></label><label class="full">事件证据<textarea class="bw-input"></textarea></label></div><div class="bw-event-detail-actions"><button class="bw-primary-action" type="button" data-bioweave-action="save-event">保存事件</button><button class="bw-secondary-action" type="button" data-bioweave-action="cancel-event-edit">取消</button></div></form>
                   </div>
                 </details>
               </div>
