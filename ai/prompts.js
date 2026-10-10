@@ -116,43 +116,15 @@ export const EVENT_ANALYZER_SCHEMA = Object.freeze({
   events: [],
 })
 export const EVENT_ANALYZER_SCHEMA_TEXT = JSON.stringify(EVENT_ANALYZER_SCHEMA, null, 2)
-const WORLD_MODEL_CORE_INSTRUCTIONS = `
-$WORLD_MODEL_SUPPLEMENT_FIELD_SEMANTICS
+const WORLD_MODEL_CORE_INSTRUCTIONS = () => `
 【额外分析规则】
 【1. Fact Discovery】
 在分析和分类前，完整扫描全部 permitted AnalysisInput，先发现所有与生物学、生殖、妊娠、分娩、生理变化和医疗/照护有关的 evidence-supported biological facts，再决定其 outlet。
 事实不能建立 Biological Type 时，不得因此丢弃，应继续检查其它合法 outlet。
 Fact discovery 不等于输出：Full 构建 complete canonical model；Supplement 只输出相对 Existing 的合法 ADD/CHANGE delta。
+${WORLD_MODEL_SUPPLEMENT_FIELD_SEMANTICS}
 【2. Entity Discovery】
-Species existence、Biological Type existence、Type details 和各 outlet completeness 相互独立。
-Type existence != Type details/capabilities。
-Existing 不是 evidence。
-缺少 Type evidence 时保持 biological_types: []。
-对每个 Species 必须检查资料中明确存在的生物性别、生理类型和生殖类型；发现一个 Type 后不能停止继续寻找其它 Type。
-创建 Biological_Type 时必须同时满足两个条件：
-1. Stable：它是稳定分类，不是临时或条件性状态。
-2. Biological：分类依据本身与生物性别、生理结构或生殖差异有关。
-只满足 Stable 不够。职业、修炼者、身份、组织、阵营、社会角色、修炼阶段等即使长期稳定存在，也不能成为 Biological_Type。
-【3. Field Evidence】
-Type existence 与 Type details 分开判断，type existence evidence 与 capability evidence 分离。
-“某 Species 存在某 Type”只证明该 Type 存在，不自动证明它具有任何 capability、reproduction rule、lifecycle、mechanism 或 special_rule。
-每个 fact 必须绑定明确 scope，不得跨 Species/Type 借 evidence。
-【4. Baseline / Origin / Transformation】
-【Human Baseline】
-Human baseline 只用于已经能够确认属于普通 Human 的情况；Human species 与 Human biological_type 分层。
-普通 Human 支持可来自显式 Human/人类或 Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景，不要求字面出现 Human/人类。仅有类人外形、性别称谓、性交行为或社会结构不足以判断为 Human。
-已经确认是普通 Human，且资料没有特殊生理、生殖、身体改造、转化或冲突设定时，可以使用现实人类基础生物学作为默认 Human baseline。普通 Human 的男性/女性可以据此确定基础 reproductive capabilities，不要求资料逐项明确说明。
-Human baseline 只是默认值。资料对 Human 的某项生理或生殖能力有明确特殊设定时，以资料为准并覆盖 baseline；无法确认仍属于普通 Human，或存在冲突证据时，不使用 baseline。
-Human baseline 不能直接用于 Nonhuman。Nonhuman 即使具有男性/女性、雄性/雌性称呼、类人外形或类似器官，也不能仅凭这些特征继承现实 Human 的 reproductive capabilities。
-普通 Human Male/Female baseline 不用于凭空创建资料中不存在的 Biological_Type；它只用于补全已经合法建立的普通 Human Type 的基础能力。
-【Transformation Continuity】
-如果资料能明确确定某个 Species 或 Biological_Type 是由另一 Species/Type 转化而来，默认只继承转化前已经成立且未被改变的基础生理和 reproductive capabilities。
-转化后的新增特征作为变化部分处理。出现新的器官、兽征、魔化特征或其它身体变化，不代表原本未受影响的基础能力自动消失。
-如果来源明确是普通 Human，且目标形态没有冲突设定，可以继续沿用适用的 Human baseline capabilities；目标形态的明确设定优先并逐项覆盖。
-Reproduction_Rules、Lifecycle、Special_Rules 和 Reproductive_Mechanisms 不因转化关系或 Human baseline 自动继承。只有资料明确说明转化后仍继续适用时才能记录。
-Reproductive_Mechanisms 必须由目标 Species/Type 自身的明确资料建立，不能仅因为来源 Species/Type 存在某种机制而继承或创建。
-继承只适用于资料能够确定来源和转化关系的情况，也不能把某个转化个体的继承结果推广到整个目标 Species。
-判断优先级：目标形态明确设定 > 可继承的来源基础生理/Capabilities > 适用的 Human baseline capabilities > Unknown。
+先完成 Species 与 Biological Type 的候选发现，再对每个候选依次执行 shared Species Binding、Exclusion、Stability、Classification 和 Evidence Sufficiency gates；发现一个 Type 后不能停止继续寻找其它 Type。
 【5. Final Completeness Check】
 最终检查：
 是否遗漏 evidence-supported Species；
@@ -531,7 +503,7 @@ function joinPromptSections(sections) {
 }
 function formatWorldModelRules(settings, names) {
   return joinPromptSections([
-    `【BioWeave World Model 分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS}`,
+    `【BioWeave World Model 分析规则】\n${WORLD_MODEL_CORE_INSTRUCTIONS()}`,
     formatCommonAnalysisPrompt(settings, names),
     `【World Model 任务】\n${WORLD_MODEL_TASK_PROMPT}`,
     formatAnalysisPromptTail(settings, names),
@@ -632,23 +604,22 @@ const WORLD_MODEL_SUPPLEMENT_FIELD_SEMANTICS = `【通用抽取原则】
 只提取资料里明确写了，或者根据资料可以直接确定的信息。不要用现实常识、默认生物学知识、性别印象、常见情况或“通常应该如此”来脑补。
 * 资料明确写了，或根据资料只能得出一个结论 → 可以记录。
 * 需要靠常识、猜测、概率、对称关系才能得出 → 不记录。
-* 资料已经提到这个问题，但答案仍然无法确定，而且会影响 World Model → 写入 Unknowns。
-* 资料完全没提 → 直接省略，不写 Unknowns。
+* 资料已经提到这个问题，但答案仍然无法确定，而且会影响 World Model → 写入 Unknowns；资料完全没提 → 直接省略，不写 Unknowns。Full canonical model 对字段未知按现有 schema 保留 null，Supplement Fact Delta 不输出没有证据的新 Fact。
 * 同一信息优先放进最准确的字段，不要为了完整而重复写到多个字段。
 * Species 的规则不要塞给某个 Type；某个 Type 的规则也不要扩大成整个 Species；个体情况不要扩大成普遍规则。
-* true=资料明确说明“能/是”；false=资料明确说明“不能/不是”；没说明就省略，不要把“没说”当成 false。
+* true=资料明确说明“能/是”；false=资料明确说明“不能/不是”；没说明就省略对应的事实主张，按 Full schema 规范化为 null 或在 Supplement 中不输出 Fact，不要把“没说”当成 false。
 * 只提取与生物身体、生殖、妊娠、分娩、生理变化或医疗/照护直接相关的事实。
 * 一条事实提到多个对象时，按“规则属于谁”确定 scope。某对象只是参与者、作用对象、条件或环境，不代表该规则属于它；不要把同一规则复制给所有相关 Species/Type。
 【字段语义解释】
 Species：稳定的生物种类/种族，例如人类、魔族、妖族、仙族、鬼族等。职业、宗门、功法、阵营、身份、修炼阶段、疾病、诅咒、临时状态等都不算 Species。后续资料如果出现新的稳定种族，可以继续新增。
   Species_Description：这个 Species 整体共有的稳定生物特征。只写整个 Species 都适用的内容，不要把某个 Type 或个体的情况扩大到整个 Species，也不要重复其它专用字段已经能表达的信息。
-Biological_Type：同一 Species 内稳定存在的性别/生理/生殖分类，例如男性、女性、雄性、雌性、双性、扶她、Alpha/Beta/Omega等，以及世界资料的其它稳定分类。职业、身份、组织、疾病、怀孕、临时变身等不算 Biological_Type。数量少或很罕见不影响它作为一个 Type 存在。
+Biological_Type：同一 Species 内稳定存在的生物性别、生理类型或生殖类型（即稳定的性别/生理/生殖分类），例如男性、女性、雄性、雌性、双性、扶她、Alpha/Beta/Omega等，以及世界资料的其它稳定分类。职业、身份、组织、疾病、怀孕、临时变身等都不算 Biological_Type。数量少或很罕见不影响它作为一个 Type 存在。
   Type_Description：这个 Species + Type 自身具有的稳定特征。只写属于这个 Type 的内容，不要放整个 Species 都共有的内容，也不要重复下面已有专用字段能表达的信息。
   Capabilities：这个 Type 明确具有或不具有的生殖能力。每项能力单独判断，不要因为一个能力成立就自动推出另一个能力。
     Can_Produce_Sperm：是否能产生精子。明确能=true；明确不能=false；没说就省略。
     Can_Produce_Ova：是否能产生卵子。明确能=true；明确不能=false；没说就省略。
     Can_Be_Fertilized：是否能作为被受精方。明确能=true；明确不能=false；没说就省略。
-    Can_Fertilize：是否能让另一方完成受精。明确能=true；明确不能=false；没说就省略。不能只因为是男性/雄性或能产生精子就判断为 true，需要根据 Species 种族说明结合判定。
+    Can_Fertilize：是否能让另一方完成受精。明确能=true；明确不能=false；没说就省略。不能只因为叫男性/雄性就判断为 true；能产生精子也不能替代该项证据，需要根据 Species 种族说明结合判定。
     Can_Cause_Pregnancy：是否能使另一方进入妊娠。明确能=true；明确不能=false；没说就省略。
     Can_Carry_Pregnancy：是否能实际承载妊娠。明确能=true；明确不能=false；没说就省略。
   Reproduction_Rules：资料明确写出的稳定生殖规则。按实际过程分开放，不要把同一整段内容重复塞进多个字段。
@@ -662,6 +633,26 @@ Biological_Type：同一 Species 内稳定存在的性别/生理/生殖分类，
     Maturation：生物上的成长和成熟，例如身体成熟、性成熟、成年等。修炼升级、境界突破、职业成长、关系成长不算。
     Aging：寿命、衰老、老化速度以及随年龄产生的稳定生物变化。修炼境界变化本身不算 Aging。
   Special_Rules：这个 Biological Type 有明确、稳定、且与生物身体或生殖直接相关的特殊规则，但 Capabilities、Reproduction_Rules、Lifecycle、Mechanism 都放不下时才写这里。每条只描述一个独立规则，只记录尚未记录的新规则，不与已有规则合并。保持 Type scope。
+【候选发现与证据门槛】
+Species existence、Biological Type existence、Type details 和各 outlet completeness 相互独立。Type existence != Type details/capabilities。Existing 不是 evidence。缺少 Type evidence 时保持 biological_types: []。
+对每个 Species 必须检查资料中明确存在的生物性别、生理类型和生殖类型；发现一个 Type 后不能停止继续寻找其它 Type。
+创建 Biological_Type 时必须同时满足两个条件：
+1. Stable：它是稳定分类，不是临时或条件性状态。
+2. Biological：分类依据本身与生物性别、生理结构或生殖差异有关。
+只满足 Stable 不够。职业、修炼者、身份、组织、阵营、社会角色、修炼阶段等即使长期稳定存在，也不能成为 Biological_Type。
+【事实范围与连续性】
+【3. Field Evidence】
+Type existence 与 Type details 分开判断，type existence evidence 与 capability evidence 分离。某 Species 存在某 Type 只证明该 Type 存在，不自动证明它具有任何 capability、reproduction rule、lifecycle、mechanism 或 special_rule。
+每个 fact 必须绑定明确 scope，不得跨 Species/Type 借 evidence。只要资料能证明该 Species 中确实存在这个稳定的生物性别/生理/生殖分类，就可以记录该 Type；不能因此推断整个 Species 都按这套 Type 分类，也不能自动补出资料没有证明的其它 Type。
+女性/雌性、有子宫、能被受精等都不能单独作为 true；每项 capability 必须按自身证据独立判断。
+普通 Human 支持可来自显式 Human/人类或 Character Card、Worldbook、Recent Story、External Memory、当前上下文合并后的可靠背景，不要求字面出现 Human/人类。
+已经确认是普通 Human，且没有特殊生理、生殖、身体改造、转化或冲突设定时，可以使用现实人类基础生物学作为默认 Human baseline；Human baseline 只是默认值，目标形态明确设定优先并逐项覆盖。无法确认仍属于普通 Human，或存在冲突证据时，不使用 baseline。
+如果资料能明确确定某个 Species 或 Biological_Type 是由另一 Species/Type 转化而来，默认只继承转化前已经成立且未被改变的基础生理和 reproductive capabilities；转化后的新增特征作为变化部分处理。Reproduction_Rules、Lifecycle、Special_Rules 和 Reproductive_Mechanisms 不因转化关系或 Human baseline 自动继承，除非资料明确说明转化后仍继续适用。
+判断优先级：目标形态明确设定 > 可继承的来源基础生理/Capabilities > 适用的 Human baseline capabilities > Unknown。
+【Human / Nonhuman 边界】
+Human baseline 只用于已经能够确认属于普通 Human 的情况；Human species 与 Human biological_type 分层。仅有类人外形、性别称谓、性交行为或社会结构不足以判断为 Human。
+普通 Human Male/Female baseline 不用于凭空创建资料中不存在的 Biological_Type；它只补全已经合法建立的普通 Human Type 的 canonical null 字段。Human baseline 不能直接用于 Nonhuman；Nonhuman 的未知能力和规则保持 unknown/null，不能套用 Human 默认值。
+如果资料明确描述转化、临时变身、可逆身体变化或个体异常，只按证据处理，不因此创建稳定 Type；转化后的新增特征不能自动抹除原有已证实能力，也不能把个体结果推广到整个 Species。一个 Type 不自动创造配对 Type；只有同一 Species 内存在两个或更多稳定、相互可区分且能唯一划定边界的生物/生殖分类簇时，才可进行低推断 Type 发现。
 Medical_Context
   Childbirth_Difficulty：整个世界普遍的分娩难度或产科风险。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。
   Care_Level：整个世界普遍的医疗、产科或照护水平。可以根据足够的现有资料综合判断，但不能只根据单一个体或少量特殊案例推断整个世界。

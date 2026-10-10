@@ -3711,7 +3711,7 @@ test('World Model prompt routes discovered facts without relaxing evidence thres
     /事实不能建立 Biological Type 时，不得因此丢弃，应继续检查其它合法 outlet/,
   )
   assert.match(prompt, /事实不能建立 Biological Type 时，不得因此丢弃/)
-  assert.match(prompt, /个体情况不要扩大成普遍规则/)
+  assert.match(prompt, /individual fact 扩大成 Type\/Species\/world rule/)
   assert.match(prompt, /不要拿模型自己的推测当 Evidence/)
   assert.match(prompt, /Unknowns：只记录/u)
   assert.match(prompt, /是否有已经发现但没有放进任何合法字段的 biological fact/)
@@ -6471,7 +6471,7 @@ test('World Analysis prompt blocks can be edited without sending format tags', (
     messages.map(message => message.role),
     ['system', 'system', 'assistant', 'user'],
   )
-  assert.match(messages[0].content, /通用抽取原则/)
+  assert.match(messages[0].content, /只使用资料中的明确证据，不要把推测写成事实/)
   assert.match(messages[0].content, /只提取资料里明确写了/)
   const commonMessage = messages.find(message => message.content.includes('【公共分析提示词】'))?.content ?? ''
   const referenceMessage = messages.find(message => message.content.includes('【角色卡：角色乙 的背景资料】'))?.content ?? ''
@@ -6710,7 +6710,7 @@ test('World Model prompt requires exhaustive Human type recall without baseline 
   assert.match(prompt, /Human baseline 只是默认值/u)
   assert.match(prompt, /不要求字面出现 Human\/人类/u)
   assert.match(prompt, /无法确认仍属于普通 Human，或存在冲突证据时，不使用 baseline/u)
-  assert.match(prompt, /临时变身等都不算 Biological_Type/u)
+  assert.match(prompt, /稳定分类，不是临时或条件性状态/u)
 })
 
 test('World Model prompt requires global species discovery before field analysis', () => {
@@ -6765,9 +6765,36 @@ test('World Model prompts freeze the ordered generic biological type gate for Fu
   }
   assert.match(fullPrompt, /只满足 Stable 不够/u)
   assert.match(fullPrompt, /职业、修炼者、身份、组织、阵营、社会角色/u)
-  assert.match(fullPrompt, /临时变身等都不算 Biological_Type/u)
+  assert.match(fullPrompt, /temporary\/social\/individual classification 错建为 Type/u)
+  assert.match(supplementPrompt, /临时状态不是 Biological Type/u)
   assert.match(supplementPrompt, /不要为了凑数量创造 Type/u)
   assert.match(supplementPrompt, /数量少、罕见、少数不表示它不是 Type/u)
+})
+
+test('World Model Full and Supplement share field semantics without crossing output contracts', () => {
+  const fullPrompt = buildWorldModelMessages()
+    .map(message => message.content)
+    .join('\n')
+  const supplementPrompt = buildWorldModelPatchMessagesV2()
+    .map(message => message.content)
+    .join('\n')
+  const sharedSemanticPatterns = [
+    /资料完全没提 → 直接省略，不写 Unknowns/u,
+    /true=资料明确说明“能\/是”；false=资料明确说明“不能\/不是”；没说明就省略/u,
+    /Biological_Type：同一 Species 内稳定存在的生物性别、生理类型或生殖类型/u,
+    /Human baseline 不能直接用于 Nonhuman/u,
+    /一个 Type 不自动创造配对 Type/u,
+    /Gestation：怀孕之后的孕期/u,
+  ]
+  for (const pattern of sharedSemanticPatterns) {
+    assert.match(fullPrompt, pattern)
+    assert.match(supplementPrompt, pattern)
+  }
+  assert.doesNotMatch(fullPrompt, /\$WORLD_MODEL_SUPPLEMENT_FIELD_SEMANTICS/u)
+  assert.doesNotMatch(fullPrompt, /Supplement Analyzer Task|World Model Supplement JSON Fact Delta 输出契约|coverage_targets|identity_review_subjects/u)
+  assert.match(fullPrompt, /顶层只包含 schema_version、species、medical_context、exceptions、unknowns、projection_rules/u)
+  assert.match(supplementPrompt, /World Model Supplement JSON Fact Delta 输出契约/u)
+  assert.doesNotMatch(supplementPrompt, /顶层只包含 schema_version、species、medical_context、exceptions、unknowns、projection_rules/u)
 })
 
 test('World Model Full and Supplement prompts enumerate minority types and run the shared candidate gates', () => {
