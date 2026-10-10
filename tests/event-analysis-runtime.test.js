@@ -7323,6 +7323,140 @@ test("editing an Event writes only the current complete Floor state", async () =
   fixture.runtime.destroy();
 });
 
+test("Event edit correlates persistence stages with one operation and monotonic durations", async () => {
+  const traces = [];
+  const fixture = createFixture({
+    notify(event) {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") traces.push(event.payload);
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  traces.length = 0;
+
+  const event = (await fixture.runtime.getCurrentFloorEvents())[0];
+  const operationId = "event-edit-test-operation-1";
+  await fixture.runtime.updateEvent(
+    event.event_id,
+    {location: "耗时诊断地点"},
+    {event_edit_operation_id: operationId},
+  );
+
+  const operationTraces = traces.filter(
+    trace => trace.event_edit_operation_id === operationId,
+  );
+  assert.ok(operationTraces.some(trace => trace.stage === "EVENT_EDIT_SUBMITTED"));
+  assert.ok(operationTraces.some(trace => trace.stage === "FLOOR_TX_CREATED"));
+  assert.ok(operationTraces.some(trace => trace.stage === "FLOOR_TX_CONFIRMED"));
+  assert.ok(
+    operationTraces.some(trace => trace.stage === "EVENT_EDIT_PERSISTENCE_CONFIRMED"),
+  );
+  assert.ok(
+    operationTraces.some(trace => trace.stage === "EVENT_EDIT_TRACKING_REFRESH_COMPLETED"),
+  );
+  for (const trace of operationTraces) {
+    if (trace.duration_ms !== null && trace.duration_ms !== undefined)
+      assert.ok(Number.isFinite(trace.duration_ms) && trace.duration_ms >= 0);
+  }
+  const confirmed = operationTraces.find(
+    trace => trace.stage === "EVENT_EDIT_PERSISTENCE_CONFIRMED",
+  );
+  assert.ok(Number.isFinite(confirmed.persistence_duration_ms));
+  fixture.runtime.destroy();
+});
+
+test("Event edit changes only the active Floor and Swipe while preserving historical snapshots", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-10", floor: 10, content: "Floor 10", role: "assistant"},
+      {message_id: "floor-15", floor: 15, content: "Floor 15", role: "assistant"},
+      {
+        message_id: "floor-20",
+        floor: 20,
+        content: "Floor 20 Swipe 0",
+        role: "assistant",
+        swipes: ["Floor 20 Swipe 0", "Floor 20 Swipe 1"],
+        swipe_info: [{}, {}],
+        swipe_id: 0,
+      },
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        const floor = analysisInput.current_floor.floor;
+        if (floor === 10) return {events: [eventResult("event-a")]};
+        if (floor === 15) return {events: [eventResult("event-b", {location: "Floor 15 地点"})]};
+        return {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  const floor10Data = fixture.runtime.store.getFloor(0, 0);
+  const floor15Data = fixture.runtime.store.getFloor(1, 0);
+  const eventAId = "event-a-id";
+  const eventBId = "event-b-id";
+  await fixture.runtime.store.saveFloor(1, 0, {
+    ...structuredClone(floor15Data),
+    events: [
+      {...structuredClone(floor10Data.events[0]), event_id: eventAId},
+      {...structuredClone(floor15Data.events[0]), event_id: eventBId},
+    ],
+  });
+  await fixture.runtime.store.saveFloor(2, 1, {
+    ...structuredClone(floor15Data),
+    floor_version: {
+      ...floor15Data.floor_version,
+      message_id: "floor-20",
+      floor: 20,
+      swipe_id: 1,
+    },
+  });
+  const beforeSwipe1 = structuredClone(fixture.runtime.store.getFloor(2, 1));
+
+  const beforeFloor10 = structuredClone(fixture.runtime.store.getFloor(0, 0));
+  const beforeFloor15 = structuredClone(fixture.runtime.store.getFloor(1, 0));
+  const beforeFloor20 = structuredClone(fixture.runtime.store.getFloor(2, 0));
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  const eventA = currentEvents.find(event => event.event_id === eventAId);
+  const eventB = currentEvents.find(event => event.event_id === eventBId);
+  assert.ok(eventA, JSON.stringify(currentEvents.map(event => event.event_id)));
+  assert.ok(eventB);
+
+  await fixture.runtime.updateEvent(eventA.event_id, {
+    type: eventA.type,
+    status: eventA.status,
+    story_time: {display: "羲和1年3月18日 酉时末"},
+    location: "当前 Floor 修改地点",
+    pregnancy_relevance: {
+      ...eventA.pregnancy_relevance,
+      gestational_subject_ids: [...eventA.pregnancy_relevance.gestational_subject_ids],
+      counterpart_ids: [...eventA.pregnancy_relevance.counterpart_ids],
+    },
+  });
+
+  const afterFloor10 = fixture.runtime.store.getFloor(0, 0);
+  const afterFloor15 = fixture.runtime.store.getFloor(1, 0);
+  const afterFloor20 = fixture.runtime.store.getFloor(2, 0);
+  const afterSwipe1 = fixture.runtime.store.getFloor(2, 1);
+  assert.deepEqual(afterFloor10, beforeFloor10);
+  assert.deepEqual(afterFloor15, beforeFloor15);
+  assert.deepEqual(afterSwipe1, beforeSwipe1);
+  assert.deepEqual(
+    afterFloor20.events.find(event => event.event_id === eventB.event_id),
+    eventB,
+  );
+  const updatedEventA = afterFloor20.events.find(event => event.event_id === eventA.event_id);
+  assert.equal(updatedEventA.location, "当前 Floor 修改地点");
+  assert.equal(updatedEventA.event_id, eventA.event_id);
+  assert.deepEqual(updatedEventA.source, eventA.source);
+  assert.deepEqual(
+    updatedEventA.pregnancy_relevance.gestational_subject_ids,
+    eventA.pregnancy_relevance.gestational_subject_ids,
+  );
+  fixture.runtime.destroy();
+});
+
 test("event edit validates the complete Floor collection before saving or rebuilding Registry", async () => {
   const traces = [];
   const subjectEvent = (eventId, subjectId, sourceId) =>

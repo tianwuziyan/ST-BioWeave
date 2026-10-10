@@ -32,6 +32,8 @@ import {
 import {
   canonicalFailureCategory,
   FAILURE_CATEGORIES,
+  durationMs,
+  monotonicNow,
 } from '../runtime/diagnostics.js'
 import { buildWorldModelViewModel, createAnalyzer, normalizeStoredWorldModel, summarizeAnalysisInput } from '../ai/analyzer.js'
 import {
@@ -673,6 +675,7 @@ export function createApp(runtime, options = {}) {
   let eventEditingId = null
   let eventEditDraft = null
   let eventEditSaving = false
+  let eventEditOperationSequence = 0
   function receiveWorldModelTrace(trace) {
     if (!trace || typeof trace !== 'object') return
     const currentChatId = runtime.chat.current()
@@ -4110,6 +4113,8 @@ export function createApp(runtime, options = {}) {
   }
   async function saveEventEdit() {
     if (eventEditSaving) return
+    const uiStartedAt = monotonicNow()
+    const operationId = `event-edit-ui-${Date.now()}-${++eventEditOperationSequence}`
     const form = root?.querySelector?.('[data-bioweave-event-form]')
     const eventId = String(form?.dataset?.bioweaveEventId ?? eventEditingId ?? '').trim()
     const currentEvent = activeEventById(eventId)
@@ -4144,7 +4149,34 @@ export function createApp(runtime, options = {}) {
     if (typeof runtime.updateEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
     eventEditSaving = true
     render()
-    await runtime.updateEvent(eventId, rawNextEvent)
+    runtime.recordPersistenceTrace?.({
+      stage: 'EVENT_EDIT_UI_SUBMITTED',
+      event_edit_operation_id: operationId,
+      event_id: eventId,
+      floor_version: eventEditDraft?.targetVersion ?? businessState.currentFloor?.version ?? null,
+      success: null,
+    })
+    const runtimeStartedAt = monotonicNow()
+    try {
+      await runtime.updateEvent(eventId, rawNextEvent, {
+        event_edit_operation_id: operationId,
+      })
+    } catch (error) {
+      runtime.recordPersistenceTrace?.({
+        stage: 'EVENT_EDIT_UI_COMPLETED',
+        event_edit_operation_id: operationId,
+        event_id: eventId,
+        floor_version: eventEditDraft?.targetVersion ?? businessState.currentFloor?.version ?? null,
+        success: false,
+        failure_stage: error?.persistence_confirmed === true ? 'post_save_refresh' : 'runtime',
+        persistence_confirmed: error?.persistence_confirmed === true,
+        ui_runtime_call_duration_ms: durationMs(runtimeStartedAt),
+        ui_visible_completion_duration_ms: durationMs(uiStartedAt),
+      })
+      error.event_edit_operation_id ??= operationId
+      throw error
+    }
+    const runtimeReturnedAt = monotonicNow()
     eventEditingId = null
     await refreshBusinessState({ reason: 'event-edit' })
     eventEditDraft = null
@@ -4157,12 +4189,48 @@ export function createApp(runtime, options = {}) {
         error_code: businessState.error,
         safe_error_summary: '业务视图刷新失败',
         floor_version: businessState.currentFloor?.version ?? null,
+        event_edit_operation_id: operationId,
+        failure_stage: 'post_save_refresh',
+        post_save_refresh_duration_ms: durationMs(runtimeReturnedAt),
+        ui_runtime_call_duration_ms: durationMs(runtimeStartedAt),
+        ui_visible_completion_duration_ms: durationMs(uiStartedAt),
       })
       notify(eventAnalysisError(Object.assign(new Error('EVENT_EDIT_REFRESH_FAILED'), {code: 'EVENT_EDIT_REFRESH_FAILED'})), 'error', documentRef)
+      runtime.recordPersistenceTrace?.({
+        stage: 'EVENT_EDIT_UI_COMPLETED',
+        event_edit_operation_id: operationId,
+        event_id: eventId,
+        floor_version: businessState.currentFloor?.version ?? null,
+        success: false,
+        persistence_confirmed: true,
+        failure_stage: 'post_save_refresh',
+        ui_runtime_call_duration_ms: durationMs(runtimeStartedAt),
+        ui_visible_completion_duration_ms: durationMs(uiStartedAt),
+      })
       return
     }
     eventEditSaving = false
+    runtime.recordPersistenceTrace?.({
+      stage: 'EVENT_EDIT_POST_SAVE_REFRESH_COMPLETED',
+      event_edit_operation_id: operationId,
+      event_id: eventId,
+      floor_version: businessState.currentFloor?.version ?? null,
+      success: true,
+      persistence_confirmed: true,
+      post_save_refresh_duration_ms: durationMs(runtimeReturnedAt),
+      ui_runtime_call_duration_ms: durationMs(runtimeStartedAt),
+    })
     notify('Event 已更新。', 'success', documentRef)
+    runtime.recordPersistenceTrace?.({
+      stage: 'EVENT_EDIT_UI_COMPLETED',
+      event_edit_operation_id: operationId,
+      event_id: eventId,
+      floor_version: businessState.currentFloor?.version ?? null,
+      success: true,
+      persistence_confirmed: true,
+      ui_runtime_call_duration_ms: durationMs(runtimeStartedAt),
+      ui_visible_completion_duration_ms: durationMs(uiStartedAt),
+    })
   }
   async function deleteEvent(eventId) {
     const currentEvent = activeEventById(eventId)

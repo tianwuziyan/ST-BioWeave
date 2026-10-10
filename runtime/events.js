@@ -39,6 +39,8 @@ import { createRuntimeActivity } from "./activity.js";
 import {
   buildVersionChainDiagnostic,
   createRuntimeDiagnostics,
+  durationMs,
+  monotonicNow,
   versionChainTransition,
 } from "./diagnostics.js";
 import { createSillyTavernAdapter as createSillyTavernIoAdapter } from "./sillytavern-adapter.js";
@@ -738,6 +740,7 @@ export function createSillyTavernAdapter() {
     expectedVersion,
     traceContext = null,
   ) {
+    const persistenceStartedAt = monotonicNow();
     const traceStage = (worldStage, eventStage = worldStage) => {
       if (traceContext?.domain === "event") return eventStage;
       if (traceContext?.domain === "world") return worldStage;
@@ -807,12 +810,16 @@ export function createSillyTavernAdapter() {
           version_audit: floorVersionAudit(expectedVersion, liveVersion),
         });
     }
+    const beforeSaveReadStartedAt = monotonicNow();
     trace("OFFICIAL_GET_BEFORE_SAVE_BEGIN");
     const latest = await readOfficialChatOwner({
       chatId: expectedChatId,
       characterId: descriptor.characterId,
     });
-    trace("OFFICIAL_GET_BEFORE_SAVE_END", {revision: latest.revision});
+    trace("OFFICIAL_GET_BEFORE_SAVE_END", {
+      revision: latest.revision,
+      official_get_before_save_duration_ms: durationMs(beforeSaveReadStartedAt),
+    });
     let target;
     let targetIndex;
     let targetSwipeId;
@@ -1077,6 +1084,7 @@ export function createSillyTavernAdapter() {
       ...capturedPresence,
     });
     trace(traceStage("OFFICIAL_SAVE_BEGIN", "EVENT_SAVE_BEGIN"));
+    const hostChatSaveStartedAt = monotonicNow();
     trace("BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED", {
       source: "official_clone",
       persistence_transaction_id: persistenceTransactionId,
@@ -1093,6 +1101,7 @@ export function createSillyTavernAdapter() {
         persistence_transaction_id: persistenceTransactionId,
         save_invocation_id: saveInvocationId,
         commit_state: "resolved",
+        host_chat_save_duration_ms: durationMs(hostChatSaveStartedAt),
       });
     } catch (error) {
       trace("BIOWEAVE_FULL_CHAT_SAVE_RESOLVED", {
@@ -1100,17 +1109,22 @@ export function createSillyTavernAdapter() {
         persistence_transaction_id: persistenceTransactionId,
         save_invocation_id: saveInvocationId,
         commit_state: "unknown",
+        host_chat_save_duration_ms: durationMs(hostChatSaveStartedAt),
         ...persistenceTraceError(error, "official_save"),
       });
       throw error;
     }
     trace(traceStage("OFFICIAL_SAVE_END", "EVENT_SAVE_END"));
+    const afterSaveReadStartedAt = monotonicNow();
     trace("OFFICIAL_GET_AFTER_SAVE_BEGIN");
     const committed = await readOfficialChatOwner({
       chatId: expectedChatId,
       characterId: descriptor.characterId,
     });
-    trace("OFFICIAL_GET_AFTER_SAVE_END", {revision: committed.revision});
+    trace("OFFICIAL_GET_AFTER_SAVE_END", {
+      revision: committed.revision,
+      official_get_after_save_duration_ms: durationMs(afterSaveReadStartedAt),
+    });
     const committedMessage = committed.messages.find((message, index) =>
       String(messageIdForFloor(message, index)) === String(expectedMessageId));
     const readbackPresent = Boolean(committedMessage && readFloorSlot(committedMessage, targetSwipeId) !== undefined);
@@ -1125,6 +1139,7 @@ export function createSillyTavernAdapter() {
       present: readbackPresent,
       floor_version_match: Boolean(committedMessage),
       swipe_match: Boolean(committedMessage && (!hasSwipeStructure(committedMessage) || committedMessage.swipe_id === targetSwipeId)),
+      persistence_duration_ms: durationMs(persistenceStartedAt),
     });
     if (!committedMessage || JSON.stringify(readFloorSlot(committedMessage, targetSwipeId)) !== JSON.stringify(mergedValue))
       throw sourceError("FLOOR_PERSISTENCE_READBACK_FAILED");

@@ -1269,6 +1269,16 @@ test('Event edit keeps persistence success distinct from a later business refres
   assert.equal(fixture.calls().update, 1);
   assert.equal(fixture.getFloor().events[0].location, current.location);
   assert.deepEqual(fixture.toasts(), [['error', '事件已保存，但业务视图刷新失败，请刷新页面。']]);
+  const operationIds = fixture.persistenceTrace()
+    .filter(trace => trace.stage.startsWith('EVENT_EDIT_'))
+    .map(trace => trace.event_edit_operation_id)
+    .filter(Boolean);
+  assert.ok(operationIds.length > 0);
+  assert.equal(new Set(operationIds).size, 1);
+  assert.ok(fixture.persistenceTrace().some(trace =>
+    trace.stage === 'EVENT_EDIT_PERSISTENCE_CONFIRMED' ||
+    trace.stage === 'EVENT_EDIT_UI_COMPLETED',
+  ));
   fixture.app.destroyBioWeave();
 });
 

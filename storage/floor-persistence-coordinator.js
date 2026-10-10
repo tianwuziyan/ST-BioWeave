@@ -4,6 +4,7 @@ import {
   hasCompleteFloorVersion,
   sameFloorVersion,
 } from "../runtime/floor.js";
+import {durationMs, monotonicNow} from "../runtime/diagnostics.js";
 
 export const FLOOR_OWNER_FIELDS = Object.freeze({
   world: Object.freeze(["world_model", "world_model_meta"]),
@@ -144,9 +145,13 @@ export function createFloorPersistenceCoordinator({
         generation_type: traceContext.generation_type ?? null,
         generation_ended: traceContext.generation_ended ?? null,
         generation_settled: traceContext.generation_settled ?? null,
+        event_edit_operation_id: traceContext.event_edit_operation_id ?? null,
         scheduler_revision: traceContext.scheduler_revision ?? null,
         source_text_length: traceContext.source_text_length ?? null,
         message_index: traceContext.message_index ?? null,
+        ...(traceContext.event_edit_operation_id
+          ? {duration_ms: durationMs(transaction.started_at)}
+          : {}),
         ...details,
       });
     } catch { /* diagnostics never change persistence */ }
@@ -381,6 +386,7 @@ export function createFloorPersistenceCoordinator({
       stage_attempt: input.stage_attempt ?? input.execution?.stage_attempt ?? null,
       retry_index: input.retry_index ?? input.execution?.retry_index ?? null,
       traceContext: input.traceContext ?? input.trace_context ?? {},
+      started_at: monotonicNow(),
     };
     emit("FLOOR_TX_CREATED", transaction, {patch_fields: Object.keys(patch)});
     const prior = tails.get(transaction.transaction_key) ?? Promise.resolve();
