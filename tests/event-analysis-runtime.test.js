@@ -531,6 +531,37 @@ test("business data returns one stable target version without persistence side e
   fixture.runtime.destroy();
 });
 
+test("business debug samples the current production states and provenance", async () => {
+  const message = {
+    message_id: "business-debug-target",
+    floor: 35,
+    content: "调试目标楼层",
+    role: "assistant",
+  };
+  const fixture = createFixture({messages: [message]});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const beforeWrites = fixture.saveFloorCalls();
+  const business = await fixture.runtime.collectActiveBusinessData({includeDebug: true});
+  const debug = business.debug;
+
+  assert.equal(fixture.saveFloorCalls(), beforeWrites);
+  assert.equal(debug.target.floor, 35);
+  assert.equal(debug.target.source_type, "CURRENT_DERIVED");
+  assert.equal(debug.event_state.source_type, "CURRENT_RESOLVED");
+  assert.equal(debug.event_state.source.floor, 35);
+  assert.equal(debug.event_state.count, 1);
+  assert.match(debug.event_state.events[0].event_id, /^evt_/);
+  assert.equal(debug.event_state.events[0].source.source_type, "CURRENT_DERIVED");
+  assert.equal(debug.character_registry.source.floor, 35);
+  assert.equal(debug.character_registry.count, 2);
+  assert.equal(debug.tracking_window.source_type, "CURRENT_DERIVED");
+  assert.equal(debug.tracking_registry.source_type, "CURRENT_DERIVED");
+  assert.equal(debug.health_state.source_type, "CURRENT_DERIVED");
+  fixture.runtime.destroy();
+});
+
 test("business data rejects a Swipe change during one refresh", async () => {
   let mutate;
   const fixture = createFixture({
@@ -1322,6 +1353,61 @@ test("Runtime owns canonical Event IDs and Floor provenance", async () => {
   );
   await fixture.runtime.deleteEvent(firstId);
   assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("AI Event writes reject comparable future Story Time without dropping legal Events", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "story-time-target",
+      floor: 10,
+      content: "当前剧情",
+      story_time: {normalized: "2026-01-10", day_index: 10, calendar_id: "main", precision: "day"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {
+          events: [
+            eventResult("legal-event", {story_time: {normalized: "2026-01-05", day_index: 5, calendar_id: "main", precision: "day"}}),
+            eventResult("future-event", {story_time: {normalized: "2026-01-20", day_index: 20, calendar_id: "main", precision: "day"}}),
+          ],
+        };
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.deepEqual(events.map(event => event.story_time.day_index), [5]);
+  fixture.runtime.destroy();
+});
+
+test("manual Event Story Time edit rejects future time and allows equal target time", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "story-time-edit",
+      floor: 10,
+      content: "当前剧情",
+      story_time: {normalized: "2026-01-10", day_index: 10, calendar_id: "main", precision: "day"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("editable-time", {story_time: {normalized: "2026-01-05", day_index: 5, calendar_id: "main", precision: "day"}})]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  await assert.rejects(
+    fixture.runtime.updateEvent(eventId, {story_time: {normalized: "2026-01-20", day_index: 20, calendar_id: "main", precision: "day"}}),
+    error => error?.code === "EVENT_STORY_TIME_AFTER_CURRENT",
+  );
+  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].story_time.day_index, 5);
+  await fixture.runtime.updateEvent(eventId, {story_time: {normalized: "2026-01-10", day_index: 10, calendar_id: "main", precision: "day"}});
+  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].story_time.day_index, 10);
   fixture.runtime.destroy();
 });
 

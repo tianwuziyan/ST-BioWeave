@@ -181,6 +181,14 @@ no Floor writer, does not call analysis or repair, and does not alter the
 canonical `saveWorldModel → commitFloorPatch(owner="world") →
 FloorPersistenceCoordinator` path.
 
+Settings Debug 的“当前生产业务状态”通过
+`runtime.collectActiveBusinessData({includeDebug: true})` 采样，不维护第二套业务计算。
+采样 DTO 固定绑定 Chat、目标 Floor、active Swipe 和完整六字段 Floor Version，并分别标记
+`CURRENT_DERIVED`、`CURRENT_RESOLVED` 与 `HISTORICAL_PERSISTED` 数据来源。Event、World Model
+和 Character Registry 显示最近有效完整状态及其来源 Floor；Tracking Window 与 Tracking Registry
+直接显示同一次生产派生结果，不能使用旧 `tracking_window_timeline` 代替当前结果。采样在目标变化
+后标记 stale，调试读取不写入 Floor，也不跨刷新缓存。
+
 Health/Recovery diagnostics 也只进入同一 `BIOWEAVE_PERSISTENCE_TRACE` buffer 和现有
 Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSESSMENT_REQUEST_STARTED`
 只在真正调用 Assessment analyzer/API 前记录；`REUSED` 与 `INFLIGHT_REUSED` 分别表示已
@@ -359,8 +367,10 @@ Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracki
 
 Pregnancy Exposure Tracking Window Phase 1 + Phase 2 已有独立的
 `core/tracking-window.js`、`runtime/tracking-window-runtime.js` 和
-`storage/tracking-window.js` owner。Window 使用独立
-`tracking_window_timeline`，复用 Timing cycle identity，支持
+`storage/tracking-window.js` owner。普通 Tracking 刷新以目标 Floor 的完整
+Event、有效 World Model 和目标 Story Time 重新确定性推导 Window；不再读取
+`tracking_window_timeline` 作为当前 Window 的覆盖状态。Timeline API 仍保留，供
+独立生命周期/持久化兼容路径使用。Window 使用独立 cycle identity，支持
 `open`、`resolved_pregnant`、`terminated`、`expired`，并由 Tracking 消费 open
 view。Phase 2 的 lifecycle-only tick 只做 deterministic Window/Projection lifecycle；
 Projection Runtime 仍是 Projection lifecycle owner。Story Time 推进另有独立的

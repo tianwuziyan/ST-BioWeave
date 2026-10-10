@@ -1268,13 +1268,16 @@ Projection Context evidence.
 `tracking_window_timeline` is an independent Floor-owned, active-Swipe-owned
 append-only root under the Tracking owner. It uses the same complete six-field
 Floor Version and authoritative coordinator readback contract as other Floor
-roots. Window records are rebuilt from surviving valid Events and therefore do
-not become a Chat-level cache or a second factual source. Phase 1 + Phase 2
-supports `open`, `resolved_pregnant`, `terminated`, and World-authoritative
-Story-Time `expired`; source edit/delete, Swipe changes, and stale versions fail
-closed during derived reads. Missing, ambiguous, or incomparable horizon/time
-data also fails closed, and horizon correction never resurrects an expired or
-factual terminal Window.
+roots. The ordinary current Tracking path derives Windows from the target
+Floor's complete valid Events, target Story Time, and effective World Model; it
+does not read persisted Timeline creations as an authority that overrides the
+current facts. The Timeline API and stored data remain available for explicit
+lifecycle/persistence compatibility paths. Phase 1 + Phase 2 supports `open`,
+`resolved_pregnant`, `terminated`, and World-authoritative Story-Time `expired`;
+source edit/delete, Swipe changes, and stale versions fail closed during derived
+reads. Missing, ambiguous, or incomparable horizon/time data also fails closed;
+factual terminal Window states remain terminal, while an `expired` result is
+recomputed from the current complete Events and effective horizon.
 
 The Window does not create pregnancy or negative-pregnancy facts, does not enter
 Projection Context, and does not modify Current State. `resolved_not_pregnant`

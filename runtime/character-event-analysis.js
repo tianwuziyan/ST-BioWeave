@@ -3,6 +3,7 @@ import {
   dedupeEventsAgainstExisting,
   dedupeEvents,
   normalizeEvent,
+  validateEventStoryTimesAtOrBefore,
   validateEventCollection,
 } from "../core/events.js";
 import {
@@ -409,28 +410,52 @@ export function createCharacterEventAnalysis({
         },
       ),
     );
+    const currentStoryTimeForEvents = getCurrentStoryTime
+      ? await getCurrentStoryTime(target)
+      : analysisInput.story_time;
+    const storyTimeValidation = validateEventStoryTimesAtOrBefore(
+      enrichedEvents,
+      currentStoryTimeForEvents,
+    );
+    if (storyTimeValidation.future_event_ids.length) {
+      emitPersistenceTrace("EVENT_STORY_TIME_REJECTED", execution, target, {
+        event_ids: storyTimeValidation.future_event_ids,
+        reason: "event_after_target_story_time",
+      }, "event");
+    }
+    if (storyTimeValidation.incomparable_event_ids.length) {
+      emitPersistenceTrace("EVENT_STORY_TIME_INCOMPARABLE", execution, target, {
+        event_ids: storyTimeValidation.incomparable_event_ids,
+        reason: "story_time_not_comparable",
+      }, "event");
+    }
+    const rejectedFutureEventIds = new Set(storyTimeValidation.future_event_ids);
+    const acceptedEnrichedEvents = enrichedEvents.filter(
+      (event) => !rejectedFutureEventIds.has(event?.event_id),
+    );
     emitPersistenceTrace("EVENT_NORMALIZATION_RESULT", execution, target, {
-      event_count: enrichedEvents.length,
+      event_count: acceptedEnrichedEvents.length,
+      rejected_future_event_count: rejectedFutureEventIds.size,
     }, "event");
     emitPersistenceTrace("EVENT_EMPTY_RESULT_CLASSIFIED", execution, target, {
-      valid_empty: enrichedEvents.length === 0,
-      reason: enrichedEvents.length === 0
+      valid_empty: acceptedEnrichedEvents.length === 0,
+      reason: acceptedEnrichedEvents.length === 0
         ? "normalized_event_array_empty"
         : "normalized_event_array_nonempty",
     }, "event");
-    const expectedCharacterIds = [...new Set(enrichedEvents.flatMap((event) => [
+    const expectedCharacterIds = [...new Set(acceptedEnrichedEvents.flatMap((event) => [
       ...(event?.participants ?? []).map((participant) => participant?.character_id).filter(Boolean),
       ...(event?.pregnancy_relevance?.gestational_subject_ids ?? []),
       ...(event?.pregnancy_relevance?.counterpart_ids ?? []),
       event?.state_fact?.subject_id,
     ].filter(Boolean)))];
     emitPersistenceTrace("CHARACTER_CANONICAL_EXPECTATION", execution, target, {
-      expected_event_count: enrichedEvents.length,
+      expected_event_count: acceptedEnrichedEvents.length,
       expected_character_count: expectedCharacterIds.length,
       expected_character_ids: expectedCharacterIds,
     }, "event");
     execution.stage = "schema_validation";
-    const collectionValidation = validateEventCollection(enrichedEvents, {
+    const collectionValidation = validateEventCollection(acceptedEnrichedEvents, {
       strictCanonicalParticipants: true,
     });
     if (!collectionValidation.ok) {
@@ -439,14 +464,14 @@ export function createCharacterEventAnalysis({
         domain_valid: false,
         validation_error_path: collectionValidation.errors?.[0] ?? "events",
       }, "event");
-      throw domainValidationError(collectionValidation, "EVENT_DOMAIN_VALIDATION_FAILED", enrichedEvents);
+      throw domainValidationError(collectionValidation, "EVENT_DOMAIN_VALIDATION_FAILED", acceptedEnrichedEvents);
     }
     emitPersistenceTrace("EVENT_VALIDATION_RESULT", execution, target, {
       schema_valid: true,
       domain_valid: true,
     }, "event");
     const updatedByCurrentIndex = new Map(
-      enrichedEvents
+      acceptedEnrichedEvents
         .map((event) => {
           const index = currentEventIndexes.get(eventContinuityKey(event));
           if (index === undefined) return [index, event];
@@ -477,7 +502,7 @@ export function createCharacterEventAnalysis({
     );
     let events = dedupeEvents([
       ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
-      ...enrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
+      ...acceptedEnrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
     ]).map((event) => normalizeEvent(event));
     if (healthEvolution?.findExpiredEventIds) {
       const currentStoryTime = getCurrentStoryTime
@@ -488,7 +513,7 @@ export function createCharacterEventAnalysis({
         states,
         currentEvents: events,
         currentStoryTime,
-        protectedEventIds: enrichedEvents.map((event) => event?.event_id).filter(Boolean),
+        protectedEventIds: acceptedEnrichedEvents.map((event) => event?.event_id).filter(Boolean),
       });
       if (expiredEventIds.length) {
         if (typeof waitForHealthRecoveryStability === "function") {
@@ -502,7 +527,7 @@ export function createCharacterEventAnalysis({
           states: stableStates,
           currentEvents: events,
           currentStoryTime: stableStoryTime,
-          protectedEventIds: enrichedEvents.map((event) => event?.event_id).filter(Boolean),
+          protectedEventIds: acceptedEnrichedEvents.map((event) => event?.event_id).filter(Boolean),
         });
         const stableExpired = new Set(stableExpiredEventIds);
         events = events.filter((event) => !stableExpired.has(event?.event_id));

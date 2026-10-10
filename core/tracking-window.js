@@ -83,6 +83,23 @@ function terminalForSubject(event, subjectId) {
     && event?.state_fact?.subject_id === subjectId;
 }
 
+function horizonReachedBeforeExposure(window, event, {worldModel = {}, subjectProfiles = {}} = {}) {
+  if (!window || window.status !== 'open' || !event?.story_time || !window.opened_story_time) return false;
+  const horizon = resolveTrackingWindowHorizon({
+    worldModel,
+    subjectProfile: subjectProfiles?.[window.subject_id] ?? null,
+    mechanismKey: window.mechanism_key,
+  });
+  if (!horizon) return false;
+  const difference = differenceStoryTime(event.story_time, window.opened_story_time);
+  return Boolean(
+    difference &&
+    difference.unit === 'day' &&
+    Number.isFinite(Number(difference.value)) &&
+    Number(difference.value) >= horizon.max_story_days,
+  );
+}
+
 function confirmationForSubject(event, subjectId) {
   return event?.type === 'pregnancy_confirmation'
     && event?.status === 'confirmed'
@@ -284,12 +301,22 @@ function closeWindow(window, event, now) {
   window.updated_at = typeof now === 'function' ? now() : window.updated_at;
 }
 
-export function deriveTrackingWindows(events = [], {chatId, now = () => null} = {}) {
+export function deriveTrackingWindows(events = [], {
+  chatId,
+  now = () => null,
+  worldModel = {},
+  subjectProfiles = {},
+  currentStoryTime = null,
+} = {}) {
   const normalizedEvents = [...new Map(
     (Array.isArray(events) ? events : [])
       .map(validEvent)
       .filter(Boolean)
       .filter(event => event.event_id)
+      .filter(event => {
+        const order = compareStoryTime(event.story_time, currentStoryTime);
+        return order === null || order <= 0;
+      })
       .map(event => [event.event_id, event]),
   ).values()].sort(eventSort);
   const windows = new Map();
@@ -312,7 +339,12 @@ export function deriveTrackingWindows(events = [], {chatId, now = () => null} = 
           && window.subject_id === subjectId
           && window.mechanism_key === mechanism,
         );
-        if (open) attachExposure(open, event, now);
+        if (open && !horizonReachedBeforeExposure(open, event, {worldModel, subjectProfiles})) {
+          attachExposure(open, event, now);
+        } else if (open) {
+          const created = createWindow({chatId, subjectId, mechanism, event, now});
+          if (created.tracking_window_id) windows.set(created.tracking_window_id, created);
+        }
         else {
           const historicalResolved = [...windows.values()].find(window => {
             if (window.status !== 'resolved_pregnant' || window.subject_id !== subjectId || window.mechanism_key !== mechanism) return false;

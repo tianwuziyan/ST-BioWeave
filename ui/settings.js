@@ -1164,10 +1164,80 @@ function renderWorldModelLastExecution(liveState = null) {
   ].join('');
 }
 
+function renderBusinessDebugSource(source) {
+  if (!source) return '<p class="bioweave-muted">来源不可用</p>'
+  const version = source.floor_version ?? null
+  return '<dl class="bioweave-data-list">' + [
+    ['来源类型', source.source_type],
+    ['来源 Floor', source.floor ?? source.index],
+    ['来源 Swipe', source.swipe_id],
+    ['Chat', version?.chat_id],
+    ['message id', version?.message_id],
+    ['floor', version?.floor],
+    ['swipe id', version?.swipe_id],
+    ['content hash', version?.content_hash],
+    ['message version', version?.message_version],
+  ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>'
+}
+
+function renderBusinessDebugState(debugState = null) {
+  if (debugState?.status === 'error') {
+    return '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug><header><div><h4>当前生产业务状态</h4><p class="bioweave-status-error">读取失败：' + escapeHtml(debugState.reason ?? 'BUSINESS_DEBUG_FAILED') + '</p></div><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-business-debug">刷新业务状态</button></header></section>'
+  }
+  const debug = debugState?.data ?? debugState
+  if (!debug || typeof debug !== 'object') {
+    return '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug><h4>当前生产业务状态</h4><p class="bioweave-muted">点击“刷新业务状态”后读取。</p></section>'
+  }
+  const target = debug.target ?? {}
+  const eventState = debug.event_state ?? {}
+  const world = debug.world_model ?? {}
+  const registry = debug.character_registry ?? {}
+  const windows = debug.tracking_window ?? {}
+  const trackingRegistry = debug.tracking_registry ?? {}
+  const healthState = debug.health_state ?? {}
+  const stale = debugState?.status === 'stale'
+  const status = stale
+    ? '<p class="bioweave-status-error" data-bioweave-business-debug-stale>调试采样已过期：' + escapeHtml(debugState.reason ?? '目标已变化，请刷新') + '</p>'
+    : '<p class="bioweave-status-success" data-bioweave-business-debug-current>调试采样对应当前目标。</p>'
+  const eventCards = (eventState.events ?? []).map(event => '<article class="bioweave-business-debug-event"><h5>' + escapeHtml(event.event_id ?? '未知 Event') + '</h5><dl class="bioweave-data-list">' + [
+    ['类型', event.event_type],
+    ['subject', event.subject_ids],
+    ['participants', event.participant_ids],
+    ['Story Time', event.story_time],
+  ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>' + renderBusinessDebugSource(event.source) + '</article>').join('') || '<p class="bioweave-muted">当前没有有效 Event。</p>'
+  const windowCards = (windows.windows ?? []).map(window => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(window.tracking_window_id ?? '未知 Window') + '</h5><dl class="bioweave-data-list">' + [
+    ['cycle_id', window.cycle_id], ['subject_id', window.subject_id], ['mechanism_key', window.mechanism_key],
+    ['source_event_ids', window.source_event_ids], ['source_basis_refs', window.source_basis_refs],
+    ['opened_story_time', window.opened_story_time], ['opened_at_floor_version', window.opened_at_floor_version],
+    ['status', window.status], ['terminal_event_id', window.terminal_event_id], ['terminal_reason', window.terminal_reason],
+    ['terminal_story_time', window.terminal_story_time], ['terminal_at_floor_version', window.terminal_at_floor_version],
+    ['horizon', windows.horizons?.[window.tracking_window_id]],
+  ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl></article>').join('') || '<p class="bioweave-muted">当前没有派生 Tracking Window。</p>'
+  return [
+    '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug>',
+    '<header><div><h4>当前生产业务状态</h4><p class="bioweave-muted">仅显示本次 Runtime 业务刷新产生的只读结果，不读取旧 Tracking Window Timeline。</p></div><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-business-debug">刷新业务状态</button></header>',
+    status,
+    '<dl class="bioweave-data-list">' + [
+      ['采样时间', debug.sampled_at], ['Chat', target.chat_id], ['目标 Floor', target.floor], ['Active Swipe', target.swipe_id],
+      ['目标 Floor Version', target.floor_version], ['目标来源类型', target.source_type],
+    ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>',
+    '<section><h5>BiologicalEvent 完整状态 · ' + escapeHtml(String(eventState.count ?? 0)) + '</h5>' + renderBusinessDebugSource(eventState.source) + eventCards + '</section>',
+    '<section><h5>World Model 当前有效状态</h5>' + renderBusinessDebugSource(world.source) + '<pre>' + escapeHtml(traceValueText(world.model)) + '</pre></section>',
+    '<section><h5>Character Registry 当前有效状态 · ' + escapeHtml(String(registry.count ?? 0)) + '</h5>' + renderBusinessDebugSource(registry.source) + '<pre>' + escapeHtml(traceValueText(registry.registry)) + '</pre></section>',
+    '<section><h5>Tracking Window · 当前 Story Time</h5><dl class="bioweave-data-list">' + [
+      ['Story Time', windows.current_story_time], ['Window 数量', windows.count], ['状态统计', windows.status_counts],
+    ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>' + windowCards + '</section>',
+    '<section><h5>Tracking Registry · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(trackingRegistry)) + '</pre></section>',
+    '<section><h5>Health Evolution · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(healthState.state)) + '</pre></section>',
+    '</section>',
+  ].join('')
+}
+
 export function renderAnalysisDebugPopupContent({
   analysisPreview = {},
   persistenceTrace = null,
   worldModelLiveState = null,
+  businessDebug = null,
   storyTimeDebug = {},
   analysisPrompt = null,
   analysisPromptDraft = null,
@@ -1196,6 +1266,7 @@ export function renderAnalysisDebugPopupContent({
       promptSettings,
       openSettingsSections,
     }),
+    renderBusinessDebugState(businessDebug),
     '<section class="bioweave-analysis-debug-section bioweave-analysis-diagnostic-section">',
     renderWorldModelLastExecution(worldModelLiveState),
     renderWorldModelLiveState(worldModelLiveState),
@@ -1270,12 +1341,13 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
     card + '</details>';
 }
 
-function renderAnalysisDebugSettings({analysisPreview = {}, persistenceTrace = null, storyTimeDebug = {}, analysisPrompt = {}, openSettingsSections = [], theme = 'tavern', documentRef = globalThis.document} = {}) {
+function renderAnalysisDebugSettings({analysisPreview = {}, persistenceTrace = null, businessDebug = null, storyTimeDebug = {}, analysisPrompt = {}, openSettingsSections = [], theme = 'tavern', documentRef = globalThis.document} = {}) {
   const open = Array.isArray(openSettingsSections) && openSettingsSections.includes('analysis_debug');
   return [
     '<details class="bioweave-settings-disclosure bioweave-settings-group bioweave-analysis-debug-disclosure" data-bioweave-settings-disclosure="analysis_debug"' + (open ? ' open' : '') + '>',
     renderSettingsSummary('高级 / 调试', '分析输入、执行诊断与 Story Time 调试'),
     renderAnalysisInputPreview({...analysisPreview, standalone: true, messagePreview: true, promptSettings: analysisPrompt, openSettingsSections}),
+    renderBusinessDebugState(businessDebug),
     '<section class="bioweave-card bioweave-analysis-debug-actions"><div class="bioweave-settings-actions"><button type="button" class="bioweave-secondary-action bioweave-analysis-debug-trigger" data-bioweave-action="open-analysis-debug" aria-label="打开高级调试 Popup">打开高级调试 Popup</button></div></section>',
     renderPersistenceTrace(persistenceTrace),
     renderStoryTimeDebugSettings(storyTimeDebug, openSettingsSections, true),
@@ -1307,6 +1379,7 @@ export function settingsPage({
   dataManagement = {},
   storyTimeDebug = {},
   analysisPreview = {},
+  businessDebug = null,
   persistenceTrace = null,
   theme = 'tavern',
   documentRef = globalThis.document,
@@ -1360,6 +1433,7 @@ export function settingsPage({
     renderAnalysisDebugSettings({
       analysisPreview,
       persistenceTrace,
+      businessDebug,
       storyTimeDebug,
       analysisPrompt: analysisPromptDraft ?? analysisPrompt ?? worldAnalysisPromptDraft ?? worldAnalysisPrompt ?? {},
       openSettingsSections: worldbookSources.openSettingsSections,

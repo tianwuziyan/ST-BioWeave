@@ -12,18 +12,18 @@ export function createTrackingRuntime({
   enqueueRefresh,
   trackingWindowRuntime = createTrackingWindowRuntime(),
 } = {}) {
-  function buildTrackingWindows({activeEvents = [], chatId = null, worldModel = {}, currentStoryTime = null, subjectProfiles = {}, persistedWindows = []} = {}) {
+  function buildTrackingWindows({activeEvents = [], chatId = null, worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = []} = {}) {
     return trackingWindowRuntime?.buildTrackingWindows
-      ? trackingWindowRuntime.buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, subjectProfiles, persistedWindows})
+      ? trackingWindowRuntime.buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, persistedWindows})
       : [];
   }
 
-  function buildTrackingRegistry({activeEvents = [], worldModel = null, trackingWindows = null, chatId = null, currentStoryTime = null, subjectProfiles = {}, persistedWindows = []} = {}) {
+  function buildTrackingRegistry({activeEvents = [], worldModel = null, trackingWindows = null, chatId = null, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = []} = {}) {
     const registry = rebuildTrackingRegistry(activeEvents, {
       world_model: worldModel,
-      trackingWindows: trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, subjectProfiles, persistedWindows}) : null),
+      trackingWindows: trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, persistedWindows}) : null),
     });
-    const resolvedWindows = trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, subjectProfiles, persistedWindows}) : null);
+    const resolvedWindows = trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, persistedWindows}) : null);
     if (resolvedWindows) Object.defineProperty(registry, 'tracking_windows', {enumerable: false, get: () => resolvedWindows});
     return registry;
   }
@@ -34,8 +34,8 @@ export function createTrackingRuntime({
       if (!hasMessageCollection()) return null;
       const token = getToken();
       const inputs = await collectTrackingInputs(token);
-      const trackingWindows = inputs.trackingWindows ?? buildTrackingWindows({...inputs, activeEvents: inputs.activeEvents, chatId: token.chatId});
-      const registry = buildTrackingRegistry({...inputs, trackingWindows, chatId: token.chatId});
+      const trackingWindows = inputs.trackingWindows ?? buildTrackingWindows({...inputs, activeEvents: inputs.activeEvents, chatId: token.chatId, floorVersion: inputs.floorVersion});
+      const registry = buildTrackingRegistry({...inputs, trackingWindows, chatId: token.chatId, floorVersion: inputs.floorVersion});
       assertToken(token);
       notify({
         type: "TRACKING_REGISTRY_REFRESHED",

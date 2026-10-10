@@ -32,7 +32,10 @@ import {
   explainTrackingDecision,
 } from "../core/tracking.js";
 import {deriveReproductiveSourceCandidates} from "../core/reproductive-attribution.js";
-import { mergeTrackingSubjectsWithActivePregnancies } from "../core/tracking-window.js";
+import {
+  mergeTrackingSubjectsWithActivePregnancies,
+  resolveTrackingWindowHorizon,
+} from "../core/tracking-window.js";
 import {
   cloneValue,
   DEFAULT_API_REQUEST_SETTINGS,
@@ -162,7 +165,7 @@ function defaultCharacterContext(_context, derivedState = {}, analysisInput = {}
     profiles: derivedState.character_profiles ?? {},
   };
 }
-function currentCharacterRegistryFromStates(states) {
+function currentCharacterRegistryResolutionFromStates(states) {
   for (let index = states.length - 1; index >= 0; index -= 1) {
     const state = states[index];
     if (!sameFloorVersion(floorVersionFromData(state.floorData), state.version))
@@ -170,9 +173,33 @@ function currentCharacterRegistryFromStates(states) {
     const snapshot = normalizedCharacterRegistrySnapshot(
       state.floorData.character_registry,
     );
-    if (snapshot) return snapshot;
+    if (snapshot) return {registry: snapshot, state};
   }
-  return normalizeCharacterRegistry(null);
+  return {registry: normalizeCharacterRegistry(null), state: null};
+}
+function debugFloorSource(state, sourceType = "CURRENT_RESOLVED") {
+  if (!state?.version) return null;
+  return {
+    source_type: sourceType,
+    index: state.index ?? null,
+    floor: state.version.floor ?? null,
+    swipe_id: state.version.swipe_id ?? state.swipeId ?? null,
+    floor_version: cloneValue(state.version),
+  };
+}
+function debugEventSource(event, targetVersion) {
+  const source = event?.source && typeof event.source === "object"
+    ? cloneValue(event.source)
+    : null;
+  if (!source) return null;
+  return {
+    source_type: targetVersion && sameFloorVersion(source, targetVersion)
+      ? "CURRENT_DERIVED"
+      : "HISTORICAL_PERSISTED",
+    floor: source.floor ?? null,
+    swipe_id: source.swipe_id ?? null,
+    floor_version: source,
+  };
 }
 function isStateWithinTargetBoundary(index, version, target) {
   if (target === undefined || target === null) return true;
@@ -1752,8 +1779,9 @@ export function createEventAnalysisCoordinator({
     );
     let activeEvents = [];
     let activeState = null;
+    let current = null;
     try {
-      const current = target === undefined ? await resolveCurrentBioWeaveFloor() : target;
+      current = target === undefined ? await resolveCurrentBioWeaveFloor() : target;
       if (current) {
         const reusableEventState = currentEventStateVersion &&
           sameFloorVersion(currentEventStateVersion, current.version)
@@ -1781,19 +1809,16 @@ export function createEventAnalysisCoordinator({
     } catch {
       // An empty Chat has no target Floor and therefore no World Model.
     }
+    const characterRegistryResolution = currentCharacterRegistryResolutionFromStates(validStates);
     return {
       states: validStates,
       activeEvents,
       activeState,
       worldModel: world?.model ?? null,
-      persistedWindows: trackingWindowPersistence
-        ? (await trackingWindowPersistence.getTrackingWindowTimeline({
-            chatId: token.chatId,
-            ...(boundedTarget ? {endpointIndex: boundedTarget.index} : {}),
-            ...(boundedTarget ? {endpointFloor: boundedTarget.version.floor} : {}),
-          })).creations
-        : [],
-      characterRegistry: currentCharacterRegistryFromStates(validStates),
+      worldState: world,
+      floorVersion: current?.version ?? null,
+      characterRegistry: characterRegistryResolution.registry,
+      characterRegistryState: characterRegistryResolution.state,
       currentStoryTime: storyTimeCoordinator && target !== null &&
         (target !== undefined || validStates.length)
         ? await storyTimeCoordinator.resolveFloorStoryTime(target ?? validStates.at(-1))
@@ -2104,6 +2129,10 @@ export function createEventAnalysisCoordinator({
       registry,
       characterRegistry,
       characterFacts,
+      eventState: trackingInputs.activeState,
+      worldState: trackingInputs.worldState,
+      characterRegistryState: trackingInputs.characterRegistryState,
+      subjectProfiles: trackingInputs.subjectProfiles,
       currentFloor,
       currentStoryTime,
       currentStoryTimeStatus: storyTimeInfo.status,
@@ -2279,6 +2308,18 @@ export function createEventAnalysisCoordinator({
       clearInvalidatedFloor: version => invalidatedFloors.delete(floorExecutionKey(version)),
       refreshTrackingRegistry: (...args) => trackingRefresh(...args),
       createCollectionValidationError: domainValidationError,
+      getCurrentStoryTime: async target => {
+        const current = await resolveCurrentBioWeaveFloor();
+        if (!sameFloorVersion(current?.version, target?.version)) return null;
+        return storyTimeCoordinator?.getCurrentStoryTime?.() ?? null;
+      },
+      emitStoryTimeDiagnostic: details => emitPersistenceTrace(
+        details?.code ?? "EVENT_STORY_TIME_DIAGNOSTIC",
+        null,
+        {version: details?.target ?? null},
+        details,
+        "event",
+      ),
     },
   });
   diagnostics = featureComposition.diagnostics;
@@ -2532,7 +2573,18 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
-  async function collectActiveBusinessData() {
+  async function collectActiveBusinessData({includeDebug = false} = {}) {
+    const withDebug = (data, statusValue, stateInfo = null) => includeDebug
+      ? {
+          ...data,
+          debug: buildBusinessDebugData({
+            status: statusValue,
+            activeEvents: data.active_events ?? [],
+            registry: stateInfo?.registry ?? null,
+            stateInfo,
+          }),
+        }
+      : data;
     const token = chat.token();
     let target = null;
     let targetError = null;
@@ -2550,14 +2602,14 @@ export function createEventAnalysisCoordinator({
     chat.assert(token);
     const chatData = store.getChat(token.chatId);
     if (isFloorPreflightStage(status.error_stage)) {
-      return buildBusinessData(status, [], chatData, null, {
+      return withDebug(buildBusinessData(status, [], chatData, null, {
         current_state: reduceState({}),
         current_state_status: status.current_floor === null ? "NO_CHARACTER_FLOOR" : "STATE_ERROR",
         current_story_time: null,
         current_story_time_status: "NO_CHARACTER_FLOOR",
         current_story_time_differences: {},
         current_health_state: {schema_version: 1, characters: {}},
-      });
+      }), status);
     }
     let derived;
     try {
@@ -2568,7 +2620,7 @@ export function createEventAnalysisCoordinator({
       });
     } catch (error) {
       if (!isFloorPreflightStage(error?.analysis_stage)) throw error;
-      return buildBusinessData(
+      return withDebug(buildBusinessData(
         diagnostics.buildFloorPreflightStatus(error, 0),
         [],
         chatData,
@@ -2581,23 +2633,31 @@ export function createEventAnalysisCoordinator({
           current_story_time_differences: {},
           current_health_state: {schema_version: 1, characters: {}},
         },
-      );
+      ), diagnostics.buildFloorPreflightStatus(error, 0));
     }
     await assertBusinessTargetCurrent(target, token);
-    return buildBusinessData(
+    return withDebug(buildBusinessData(
       status,
       derived.activeEvents,
       derived.chatData,
       derived.registry,
       {
+        states: derived.states,
+        eventState: derived.eventState,
+        worldState: derived.worldState,
+        characterRegistryState: derived.characterRegistryState,
+        characterRegistry: derived.characterRegistry,
+        registry: derived.registry,
+        subjectProfiles: derived.subjectProfiles,
         current_state: derived.currentState,
         current_state_status: derived.currentStateStatus,
+        currentStoryTime: derived.currentStoryTime,
         current_story_time: derived.currentStoryTime,
         current_story_time_status: derived.currentStoryTimeStatus,
         current_story_time_differences: derived.currentStoryTimeDifferences,
         current_health_state: derived.currentHealthState,
       },
-    );
+    ), status, derived);
   }
 
   async function verifyCharacterCanonicalReady(
@@ -2781,6 +2841,94 @@ export function createEventAnalysisCoordinator({
       };
     }
   }
+  function buildBusinessDebugData({status, activeEvents, registry, stateInfo}) {
+    const targetVersion = status?.floor_version ?? null;
+    const states = Array.isArray(stateInfo?.states) ? stateInfo.states : [];
+    const sourceForVersion = version => {
+      if (!version) return null;
+      const state = states.find(candidate => sameFloorVersion(candidate.version, version));
+      return debugFloorSource(state);
+    };
+    const trackingWindows = Array.isArray(registry?.tracking_windows)
+      ? registry.tracking_windows
+      : [];
+    const subjectProfiles = stateInfo?.subjectProfiles ?? {};
+    const trackingWindowHorizons = Object.fromEntries(
+      trackingWindows.map(window => [
+        window.tracking_window_id,
+        resolveTrackingWindowHorizon({
+          worldModel: stateInfo?.worldState?.model ?? {},
+          subjectProfile: subjectProfiles?.[window.subject_id] ?? null,
+          mechanismKey: window.mechanism_key,
+        }),
+      ]),
+    );
+    const statusCounts = Object.fromEntries(
+      ["open", "expired", "terminated", "resolved_pregnant"].map(statusName => [
+        statusName,
+        trackingWindows.filter(window => window.status === statusName).length,
+      ]),
+    );
+    return {
+      sampled_at: new Date().toISOString(),
+      target: {
+        chat_id: targetVersion?.chat_id ?? null,
+        floor: targetVersion?.floor ?? null,
+        message_id: targetVersion?.message_id ?? null,
+        swipe_id: targetVersion?.swipe_id ?? null,
+        floor_version: cloneValue(targetVersion),
+        source_type: "CURRENT_DERIVED",
+      },
+      event_state: {
+        source_type: stateInfo?.eventState ? "CURRENT_RESOLVED" : "CURRENT_DERIVED",
+        source: debugFloorSource(stateInfo?.eventState),
+        count: activeEvents.length,
+        events: activeEvents.map(event => ({
+          event_id: event?.event_id ?? null,
+          event_type: event?.type ?? null,
+          subject_ids: (event?.pregnancy_relevance?.gestational_subject_ids ?? []).map(String),
+          participant_ids: (event?.participants ?? []).map(participant => participant?.character_id).filter(Boolean),
+          story_time: cloneValue(event?.story_time ?? null),
+          source: debugEventSource(event, targetVersion),
+          event: cloneValue(event),
+        })),
+      },
+      world_model: {
+        source_type: stateInfo?.worldState ? "CURRENT_RESOLVED" : "CURRENT_DERIVED",
+        source: sourceForVersion(stateInfo?.worldState?.floor_version),
+        floor_version: cloneValue(stateInfo?.worldState?.floor_version ?? null),
+        model: cloneValue(stateInfo?.worldState?.model ?? null),
+      },
+      character_registry: {
+        source_type: stateInfo?.characterRegistryState ? "CURRENT_RESOLVED" : "CURRENT_DERIVED",
+        source: debugFloorSource(stateInfo?.characterRegistryState),
+        count: Object.keys(stateInfo?.characterRegistry?.entities ?? {}).length,
+        registry: cloneValue(stateInfo?.characterRegistry ?? normalizeCharacterRegistry(null)),
+      },
+      tracking_window: {
+        source_type: "CURRENT_DERIVED",
+        current_story_time: cloneValue(
+          stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null,
+        ),
+        windows: cloneValue(trackingWindows),
+        count: trackingWindows.length,
+        status_counts: statusCounts,
+        horizons: trackingWindowHorizons,
+      },
+      tracking_registry: {
+        source_type: "CURRENT_DERIVED",
+        tracking_subjects: cloneValue(registry?.tracking_subjects ?? {}),
+        tracking_candidates: cloneValue(registry?.tracking_candidates ?? {}),
+        character_profiles: cloneValue(registry?.character_profiles ?? {}),
+      },
+      health_state: {
+        source_type: "CURRENT_DERIVED",
+        current_story_time: cloneValue(stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null),
+        state: cloneValue(stateInfo?.current_health_state ?? {schema_version: 1, characters: {}}),
+      },
+    };
+  }
+
   function buildBusinessData(
     status,
     activeEvents,

@@ -233,7 +233,9 @@ and factual terminal transitions from surviving valid Events. Runtime evaluates
 the World mechanism-level `tracking_window_horizon`; a comparable Story-Time
 value at or beyond the authoritative maximum produces `expired`. Missing,
 ambiguous, or incomparable horizon/time data fails closed and leaves the Window
-open. Terminal Windows never reopen from horizon correction.
+open. Factual terminal Windows never reopen from horizon correction; an
+`expired` result is recomputed from the current complete Events and effective
+horizon.
 
 `core/state.js` separately records exposure history and derives
 `last_exposure_story_time` plus `elapsed_story_days`; that derived value does
@@ -245,9 +247,10 @@ The Runtime current-state path remains connected: valid active Floor Events and
 the derived `characterFacts` are replayed through `reduceState()`, using a valid
 Snapshot checkpoint when available. Advancing `currentStoryTime` without a new
 Event can update `elapsed_story_days` transiently, but it does not create an
-Event or implement Window expiration. The active Window view is persisted under
-the current Floor/active Swipe with stale guards and is rebuilt from surviving
-facts after reload or Event edit/delete.
+Event or implement Window expiration. The ordinary current Window view is
+re-derived from the target complete Event state, effective World Model, and
+target Story Time; the persisted Timeline remains an independent
+compatibility/lifecycle persistence path and does not override that result.
 
 `runtime/tracking-runtime.js` is an orchestration wrapper around
 `rebuildTrackingRegistry()`. `runtime/event-analysis.js` exposes the resulting

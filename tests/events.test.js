@@ -11,6 +11,7 @@ import {
   validateCharacterFacts,
   validateEvent,
   validateEventCollection,
+  validateEventStoryTimesAtOrBefore,
 } from '../core/events.js';
 
 test('state-changing event types no longer accept the old minimal source shape', () => {
@@ -955,4 +956,16 @@ test('sortEvents uses source floor and canonical day index without parsing displ
     events.map((event) => event.event_id),
     ['b', 'a'],
   );
+});
+
+test('Event Story Time validation rejects only comparable future events', () => {
+  const result = validateEventStoryTimesAtOrBefore([
+    {event_id: 'past', story_time: {day_index: 9}},
+    {event_id: 'equal', story_time: {day_index: 10}},
+    {event_id: 'future', story_time: {day_index: 11}},
+    {event_id: 'unknown', story_time: {display: '未详', day_index: null, precision: 'unknown'}},
+  ], {day_index: 10});
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.future_event_ids, ['future']);
+  assert.deepEqual(result.incomparable_event_ids, ['unknown']);
 });

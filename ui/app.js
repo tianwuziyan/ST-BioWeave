@@ -618,6 +618,9 @@ export function createApp(runtime, options = {}) {
     error: null,
   }
   let storyTimeDebugSequence = 0
+  let businessDebugState = null
+  let businessDebugSequence = 0
+  let activeBusinessDebugPopupInvalidator = null
   let worldModelTraceChatId = null
   let businessState = {
     loaded: false,
@@ -848,11 +851,12 @@ export function createApp(runtime, options = {}) {
   function isPopupContentElement(value) {
     return Boolean(value && typeof value === 'object' && typeof value.addEventListener === 'function' && 'innerHTML' in value)
   }
-  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt, worldModelLiveState = null) {
+  function renderDebugPopupContent(content, promptSettings = settingsState.analysisPrompt, worldModelLiveState = null, nextBusinessDebug = businessDebugState) {
     const nextContent = renderAnalysisDebugPopupContent({
       analysisPreview: analysisPreviewState,
       persistenceTrace: runtime.getPersistenceTrace?.() ?? null,
       worldModelLiveState,
+      businessDebug: nextBusinessDebug,
       analysisPrompt: promptSettings,
       openSettingsSections: analysisSourcesState.openSettingsSections,
       theme: root?.dataset?.theme ?? 'tavern',
@@ -862,6 +866,37 @@ export function createApp(runtime, options = {}) {
       content.innerHTML = isPopupContentElement(nextContent) ? nextContent.innerHTML : String(nextContent ?? '')
     }
     return nextContent
+  }
+
+  async function refreshBusinessDebugState() {
+    const requestId = ++businessDebugSequence
+    const sampledChatId = runtime.chat.current()
+    try {
+      const collected = await runtime.collectActiveBusinessData({includeDebug: true})
+      const sampled = collected?.debug ?? null
+      const current = await runtime.resolveCurrentBioWeaveFloor?.()
+      if (requestId !== businessDebugSequence) return businessDebugState
+      const currentChatId = runtime.chat.current()
+      const sampledTargetVersion = sampled?.target?.floor_version ?? null
+      const stale = String(currentChatId ?? '') !== String(sampled?.target?.chat_id ?? sampledChatId ?? '')
+        || !floorIdentityEqual(current?.version, sampledTargetVersion)
+      businessDebugState = {
+        status: stale ? 'stale' : 'current',
+        reason: stale ? '目标 Chat 或六字段 Floor Version 已变化' : null,
+        data: sampled,
+      }
+    } catch (error) {
+      if (requestId !== businessDebugSequence) return businessDebugState
+      businessDebugState = {status: 'error', reason: error?.code ?? error?.message ?? 'BUSINESS_DEBUG_FAILED', data: null}
+    }
+    return businessDebugState
+  }
+
+  function markBusinessDebugStale(reason = '业务状态已变化') {
+    if (!businessDebugState || businessDebugState.status === 'stale') return
+    businessDebugState = {...businessDebugState, status: 'stale', reason}
+    activeBusinessDebugPopupInvalidator?.(businessDebugState)
+    if (route === 'settings' && root?.dataset.open === 'true') render()
   }
 
   function floorIdentityEqual(left, right) {
@@ -1083,26 +1118,48 @@ export function createApp(runtime, options = {}) {
       notify('高级 / 调试窗口暂不可用，请确认 SillyTavern Popup 已加载。', 'error', documentRef)
       return false
     }
-    const liveState = await collectWorldModelLiveState()
-    const content = renderDebugPopupContent(null, promptSettings, liveState)
+    const [liveState, currentBusinessDebug] = await Promise.all([
+      collectWorldModelLiveState(),
+      refreshBusinessDebugState(),
+    ])
+    const content = renderDebugPopupContent(null, promptSettings, liveState, currentBusinessDebug)
     const localContent = isPopupContentElement(content) ? content : null
+    let popupLiveState = liveState
+    activeBusinessDebugPopupInvalidator = nextState => {
+      renderDebugPopupContent(localContent, promptSettings, popupLiveState, nextState)
+    }
     const handlePopupClick = async event => {
       const target = event?.target?.closest?.('[data-bioweave-action]')
       if (!target) return
       if (typeof localContent?.contains === 'function' && !localContent.contains(target)) return
       const action = target.dataset?.bioweaveAction
+      if (action === 'refresh-business-debug') {
+        event.preventDefault?.()
+        const nextBusinessDebug = await refreshBusinessDebugState()
+        popupLiveState = await collectWorldModelLiveState()
+        renderDebugPopupContent(localContent, promptSettings, popupLiveState, nextBusinessDebug)
+        return
+      }
       if (action === 'refresh-analysis-preview') {
         event.preventDefault?.()
         const pending = refreshAnalysisPreview()
-        renderDebugPopupContent(localContent, promptSettings, await collectWorldModelLiveState())
+        const [nextLiveState, nextBusinessDebug] = await Promise.all([
+          collectWorldModelLiveState(),
+          refreshBusinessDebugState(),
+        ])
+        renderDebugPopupContent(localContent, promptSettings, nextLiveState, nextBusinessDebug)
         await pending
-        renderDebugPopupContent(localContent, promptSettings, await collectWorldModelLiveState())
+        const [finalLiveState, finalBusinessDebug] = await Promise.all([
+          collectWorldModelLiveState(),
+          refreshBusinessDebugState(),
+        ])
+        renderDebugPopupContent(localContent, promptSettings, finalLiveState, finalBusinessDebug)
         return
       }
       if (action === 'analysis-preview-mode') {
         event.preventDefault?.()
         setAnalysisPreviewMode(target.dataset.bioweavePreviewMode)
-        renderDebugPopupContent(localContent, promptSettings)
+        renderDebugPopupContent(localContent, promptSettings, popupLiveState)
         return
       }
       if (action === 'analysis-preview-type') {
@@ -1139,6 +1196,7 @@ export function createApp(runtime, options = {}) {
       notify('高级 / 调试窗口打开失败，请确认 SillyTavern Popup 可用。', 'error', documentRef)
       return false
     } finally {
+      activeBusinessDebugPopupInvalidator = null
       localContent?.removeEventListener?.('click', handlePopupClick)
       documentRef?.removeEventListener?.('click', handlePopupDocumentClick, true)
     }
@@ -4112,7 +4170,7 @@ export function createApp(runtime, options = {}) {
       chatName: currentChatLabel(),
       ...(route === 'settings' ? settingsState : {}),
       ...(route === 'settings' ? {storyTimeDebug: storyTimeDebugState} : {}),
-      ...(route === 'settings' ? {analysisPreview: analysisPreviewState, persistenceTrace: runtime.getPersistenceTrace?.() ?? null, theme: root?.dataset?.theme ?? 'tavern', documentRef} : {}),
+      ...(route === 'settings' ? {analysisPreview: analysisPreviewState, businessDebug: businessDebugState, persistenceTrace: runtime.getPersistenceTrace?.() ?? null, theme: root?.dataset?.theme ?? 'tavern', documentRef} : {}),
       ...(route === 'settings' ? {dataManagement: dataManagementState} : {}),
       ...(route === 'settings'
         ? {
@@ -4971,6 +5029,13 @@ export function createApp(runtime, options = {}) {
     if (target.closest?.('[data-bioweave-settings-form]')) captureSettingsDraft()
   }
   function handleRuntimeEvent(event) {
+    const debugInvalidationTypes = new Set([
+      'CHAT_CHANGED', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED',
+      'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED', 'EVENT_ANALYSIS_COMMITTED',
+      'TRACKING_REGISTRY_REFRESHED', 'WORLD_PERSISTENCE_CONFIRMED',
+    ])
+    if (debugInvalidationTypes.has(event?.type))
+      markBusinessDebugStale(event.type)
     if (event?.chatChanged || event?.type === 'CHAT_CHANGED') {
       clearPendingRecentStorySaves()
       analysisSourceRequestSequence += 1
@@ -4983,6 +5048,10 @@ export function createApp(runtime, options = {}) {
       clearAnalysisPreview()
       storyTimeDebugSequence += 1
       storyTimeDebugState = {...storyTimeDebugState, loading: false, info: null, error: null}
+      businessDebugSequence += 1
+      businessDebugState = businessDebugState
+        ? {...businessDebugState, status: 'stale', reason: 'Chat 已切换'}
+        : null
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
@@ -5068,6 +5137,8 @@ export function createApp(runtime, options = {}) {
       if (route === 'projection' || route === 'overview') render()
     }
     if (event?.type === 'WORLD_PERSISTENCE_CONFIRMED') {
+      if (root?.dataset.open === 'true')
+        void refreshBusinessState({reason: event.type, force: true})
       void projectCommittedWorldModel(event.payload ?? {}).catch(error => {
         recordUiRefreshTrace('WORLD_UI_PROJECTION_FAILED', {
           execution_id: event.payload?.execution_id ?? null,
@@ -5326,6 +5397,12 @@ export function createApp(runtime, options = {}) {
     if (action === 'refresh-story-time-debug') {
       event.preventDefault()
       await refreshStoryTimeDebug()
+      return
+    }
+    if (action === 'refresh-business-debug') {
+      event.preventDefault()
+      await refreshBusinessDebugState()
+      render()
       return
     }
     if (action === 'copy-story-time-debug') {
@@ -5944,6 +6021,9 @@ export function createApp(runtime, options = {}) {
     analysisSourceRequestSequence += 1
     analysisSourceSaveSequence += 1
     businessRefreshSequence += 1
+    businessDebugSequence += 1
+    businessDebugState = null
+    activeBusinessDebugPopupInvalidator = null
     businessRefreshQueued = null
     worldbookCache = createWorldbookCache()
     worldModelTraceChatId = null

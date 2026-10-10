@@ -1,4 +1,8 @@
-import {normalizeEvent, validateEventCollection} from "../core/events.js";
+import {
+  normalizeEvent,
+  validateEventCollection,
+  validateEventStoryTimesAtOrBefore,
+} from "../core/events.js";
 import {hasCharacterId, normalizeCharacterRegistry} from "../core/identity.js";
 
 export function createEventEditing({
@@ -9,6 +13,8 @@ export function createEventEditing({
   clearInvalidatedFloor,
   refreshTrackingRegistry,
   createCollectionValidationError,
+  getCurrentStoryTime,
+  emitStoryTimeDiagnostic,
 } = {}) {
   async function findActiveEvent(eventId) {
     const targetId = String(eventId ?? "").trim();
@@ -49,6 +55,24 @@ export function createEventEditing({
     );
     if (index < 0) throw new Error("EVENT_NOT_FOUND");
     events[index] = nextEvent;
+    const storyTime = typeof getCurrentStoryTime === "function"
+      ? await getCurrentStoryTime(target)
+      : null;
+    const storyTimeValidation = validateEventStoryTimesAtOrBefore([nextEvent], storyTime);
+    if (!storyTimeValidation.ok) {
+      const error = new Error("EVENT_STORY_TIME_AFTER_CURRENT");
+      error.code = "EVENT_STORY_TIME_AFTER_CURRENT";
+      error.analysis_stage = "event_time_validation";
+      error.event_ids = storyTimeValidation.future_event_ids;
+      throw error;
+    }
+    if (storyTimeValidation.incomparable_event_ids.length && typeof emitStoryTimeDiagnostic === "function") {
+      emitStoryTimeDiagnostic({
+        code: "EVENT_STORY_TIME_INCOMPARABLE",
+        event_ids: storyTimeValidation.incomparable_event_ids,
+        target: target.version,
+      });
+    }
     const collectionValidation = validateEventCollection(events);
     if (!collectionValidation.ok) {
       throw createCollectionValidationError(

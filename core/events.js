@@ -1,4 +1,4 @@
-import { normalizeStoryTime } from '../story/time.js';
+import { compareStoryTime, normalizeStoryTime } from '../story/time.js';
 
 export const EVENT_SCHEMA_VERSION = 1;
 
@@ -1142,4 +1142,29 @@ export function sortEvents(events = []) {
       String(right?.event_id ?? ''),
     );
   });
+}
+
+/**
+ * Validate Event story times against the Story Time of the Floor that would
+ * own the write.  Incomparable values are diagnostic only: they are kept as
+ * supplied and are never treated as future events.
+ */
+export function validateEventStoryTimesAtOrBefore(events = [], currentStoryTime = null) {
+  const futureEventIds = [];
+  const incomparableEventIds = [];
+  for (const raw of Array.isArray(events) ? events : []) {
+    const event = normalizeEvent(raw);
+    const eventId = event?.event_id ?? null;
+    const comparison = compareStoryTime(event?.story_time, currentStoryTime);
+    if (comparison === null) {
+      if (eventId) incomparableEventIds.push(eventId);
+      continue;
+    }
+    if (comparison > 0 && eventId) futureEventIds.push(eventId);
+  }
+  return {
+    ok: futureEventIds.length === 0,
+    future_event_ids: futureEventIds,
+    incomparable_event_ids: incomparableEventIds,
+  };
 }

@@ -1854,6 +1854,72 @@ test('analysis debug Popup exposes a safe persistence trace copy entry', () => {
   assert.match(STYLE_SOURCE, /bioweave-persistence-trace[\s\S]*text-align:\s*left\s*!important/)
 })
 
+test('analysis debug renders production business state sources and derived Tracking Windows', () => {
+  const markup = renderAnalysisDebugPopupContent({
+    businessDebug: {
+      status: 'current',
+      data: {
+        sampled_at: '2026-10-10T00:00:00.000Z',
+        target: {
+          chat_id: 'chat-debug',
+          floor: 35,
+          swipe_id: 0,
+          floor_version: {
+            chat_id: 'chat-debug', message_id: 'message-35', floor: 35,
+            swipe_id: 0, content_hash: 'hash-35', message_version: 'v1',
+          },
+          source_type: 'CURRENT_DERIVED',
+        },
+        event_state: {
+          source_type: 'CURRENT_RESOLVED',
+          source: {source_type: 'CURRENT_RESOLVED', floor: 26, swipe_id: 0},
+          count: 1,
+          events: [{
+            event_id: 'event-a', event_type: 'sexual_activity', subject_ids: ['char-a'],
+            participant_ids: ['char-a', 'char-b'], story_time: {day_index: 1},
+            source: {source_type: 'HISTORICAL_PERSISTED', floor: 20, swipe_id: 0},
+          }],
+        },
+        world_model: {
+          source_type: 'CURRENT_RESOLVED',
+          source: {source_type: 'CURRENT_RESOLVED', floor: 28, swipe_id: 0},
+          model: {schema_version: 1, species: []},
+        },
+        character_registry: {
+          source_type: 'CURRENT_RESOLVED',
+          source: {source_type: 'CURRENT_RESOLVED', floor: 26, swipe_id: 0},
+          count: 1,
+          registry: {schema_version: 1, entities: {'char-a': {display_name: 'Alice'}}},
+        },
+        tracking_window: {
+          source_type: 'CURRENT_DERIVED', current_story_time: {day_index: 2}, count: 1,
+          status_counts: {open: 1, expired: 0, terminated: 0, resolved_pregnant: 0},
+          horizons: {'window-a': 7},
+          windows: [{
+            tracking_window_id: 'window-a', cycle_id: 'cycle-a', subject_id: 'char-a',
+            mechanism_key: 'fertilization', source_event_ids: ['event-a'], source_basis_refs: [],
+            opened_story_time: {day_index: 1}, opened_at_floor_version: {floor: 20}, status: 'open',
+            terminal_event_id: null, terminal_reason: null, terminal_story_time: null,
+            terminal_at_floor_version: null,
+          }],
+        },
+        tracking_registry: {source_type: 'CURRENT_DERIVED', tracking_subjects: {'char-a': {}}, tracking_candidates: {}, character_profiles: {}},
+        health_state: {source_type: 'CURRENT_DERIVED', state: {schema_version: 1, characters: {}}},
+      },
+    },
+  })
+  const html = typeof markup === 'string' ? markup : markup.innerHTML
+  assert.match(html, /当前生产业务状态/)
+  assert.match(html, /CURRENT_DERIVED/)
+  assert.match(html, /CURRENT_RESOLVED/)
+  assert.match(html, /HISTORICAL_PERSISTED/)
+  assert.match(html, /目标 Floor Version/)
+  assert.match(html, /window-a/)
+  assert.match(html, /horizon/)
+  assert.match(html, /Health Evolution/)
+  assert.doesNotMatch(html, /getTrackingWindowTimeline/)
+})
+
 test('analysis debug uses the SillyTavern DISPLAY Popup and keeps preview actions local', async () => {
   const documentRef = new AppFakeDocument()
   const popupCalls = []

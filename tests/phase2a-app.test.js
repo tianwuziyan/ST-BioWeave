@@ -686,6 +686,24 @@ test('T11 open World tab renders the committed readback projection', async () =>
   fixture.app.destroyBioWeave();
 });
 
+test('confirmed World persistence refreshes the production business DTO without starting Event Analysis', async () => {
+  const fixture = await createFixture({worldModel: normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: 'Species-Base', biological_types: []}],
+  })});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const before = fixture.businessDataCalls();
+  fixture.emit({
+    type: 'WORLD_PERSISTENCE_CONFIRMED',
+    chatId: 'chat-app',
+    payload: {floor_version: fixture.version, persistence_confirmed: true},
+  });
+  await waitFor(() => fixture.businessDataCalls() > before, 'World persistence business refresh');
+  assert.equal(fixture.calls().refresh, 0);
+  assert.equal(fixture.calls().characterAnalysis, 0);
+  fixture.app.destroyBioWeave();
+});
+
 test('T6/T7 stale Floor N-1 is suppressed after a newer committed projection', async () => {
   let resolveFirst;
   let resolverCall = 0;

@@ -14,6 +14,7 @@ import {classifyWorldModelPatchV2, normalizeWorldModel, validateWorldModelPatchV
 const version = {chat_id: 'phase2-chat', message_id: 'm-1', floor: 1, swipe_id: 0, content_hash: 'h-1', message_version: 'v1'};
 const exposure = {event_id: 'exposure-1', type: 'sexual_activity', status: 'confirmed', story_time: {day_index: 1}, source: version, participants: [{character_id: 'subject', event_role: 'potential_gestational_subject', biological_context: {species: 'Human', biological_type: 'female'}, reproductive_capabilities_used: {can_carry_pregnancy: true}}, {character_id: 'source', event_role: 'potential_conception_source', reproductive_capabilities_used: {can_cause_pregnancy: true}}], pregnancy_relevance: {relevant: true, possible_conception: true, gestational_subject_ids: ['subject'], counterpart_ids: ['source'], reproductive_mechanism: {kind: 'fertilization'}}, source_evidence: [{kind: 'pregnancy_relevant_exposure', text: 'factual exposure'}]};
 const world = {species: [{name: 'Human', biological_types: [{name: 'female', reproductive_mechanisms: [{key: 'fertilization', tracking_window_horizon: {schema_version: 1, max_story_days: 7}}]}]}]};
+const trackingRuntime = createTrackingWindowRuntime();
 
 test('World horizon resolves only through exact subject type and mechanism', () => {
   assert.deepEqual(resolveTrackingWindowHorizon({worldModel: world, subjectProfile: {species: 'Human', biological_type: 'female'}, mechanismKey: 'fertilization'}), {schema_version: 1, max_story_days: 7});
@@ -47,10 +48,69 @@ test('future independent exposure creates a new Window after expiration', () => 
   assert.notEqual(windows.find(window => window.status === 'open').tracking_window_id, expired.tracking_window_id);
 });
 
+test('time-driven cycles split compatible exposures without persisted Window state', () => {
+  const future = {...exposure, event_id: 'exposure-2', story_time: {day_index: 20}, source: {...version, message_id: 'm-20', floor: 20, content_hash: 'h-20', message_version: 'v20'}};
+  const windows = trackingRuntime.buildTrackingWindows({
+    activeEvents: [exposure, future],
+    chatId: version.chat_id,
+    worldModel: world,
+    currentStoryTime: {day_index: 20},
+    floorVersion: {...version, floor: 20, message_id: 'm-20', content_hash: 'h-20', message_version: 'v20'},
+    subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}},
+  });
+  assert.equal(windows.length, 2);
+  assert.deepEqual(windows.map(window => window.source_event_ids), [['exposure-1'], ['exposure-2']]);
+  assert.deepEqual(windows.map(window => window.status), ['expired', 'open']);
+  assert.deepEqual(windows[0].terminal_at_floor_version, {...version, floor: 20, message_id: 'm-20', content_hash: 'h-20', message_version: 'v20'});
+});
+
+test('time-driven cycles keep exposures within the first horizon and split at the boundary', () => {
+  const second = {...exposure, event_id: 'exposure-2', story_time: {day_index: 5}, source: {...version, message_id: 'm-5', floor: 5, content_hash: 'h-5', message_version: 'v5'}};
+  const third = {...exposure, event_id: 'exposure-3', story_time: {day_index: 10}, source: {...version, message_id: 'm-10', floor: 10, content_hash: 'h-10', message_version: 'v10'}};
+  const windows = trackingRuntime.buildTrackingWindows({
+    activeEvents: [exposure, second, third],
+    chatId: version.chat_id,
+    worldModel: world,
+    currentStoryTime: {day_index: 10},
+    floorVersion: {...version, floor: 10, message_id: 'm-10', content_hash: 'h-10', message_version: 'v10'},
+    subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}},
+  });
+  assert.equal(windows.length, 2);
+  const ordered = [...windows].sort((left, right) => left.opened_story_time.day_index - right.opened_story_time.day_index);
+  assert.deepEqual(ordered.map(window => window.source_event_ids), [['exposure-1', 'exposure-2'], ['exposure-3']]);
+  assert.deepEqual(ordered.map(window => window.status), ['expired', 'open']);
+});
+
+test('subject-level terminal behavior remains unchanged across mechanisms', () => {
+  const otherMechanism = {...exposure, event_id: 'exposure-other', story_time: {day_index: 2}, source: {...version, message_id: 'm-2', floor: 2, content_hash: 'h-2', message_version: 'v2'}, pregnancy_relevance: {...exposure.pregnancy_relevance, reproductive_mechanism: {kind: 'other-mechanism'}}};
+  const loss = {...exposure, event_id: 'loss', type: 'pregnancy_loss', story_time: {day_index: 3}, source: {...version, message_id: 'm-3', floor: 3, content_hash: 'h-3', message_version: 'v3'}, participants: [{character_id: 'subject', event_role: 'potential_gestational_subject'}], pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []}, state_fact: {subject_id: 'subject', payload: {pregnancy_id: 'pregnancy-1'}}};
+  const windows = trackingRuntime.buildTrackingWindows({
+    activeEvents: [exposure, otherMechanism, loss],
+    chatId: version.chat_id,
+    worldModel: world,
+    currentStoryTime: {day_index: 3},
+    subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}},
+  });
+  assert.equal(windows.length, 2);
+  assert.deepEqual(windows.map(window => window.status), ['terminated', 'terminated']);
+});
+
 test('unresolved Story Time and missing horizon fail closed', () => {
   const window = deriveTrackingWindows([exposure], {chatId: version.chat_id})[0];
   assert.equal(evaluateTrackingWindowLifecycles([window], {worldModel: world, subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}}, currentStoryTime: {display: 'unknown'}})[0].status, 'open');
   assert.equal(evaluateTrackingWindowLifecycles([window], {worldModel: {}, subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}}, currentStoryTime: {day_index: 100}})[0].status, 'open');
+});
+
+test('defensive derivation excludes a comparable future Event without deleting it', () => {
+  const future = {...exposure, event_id: 'future-exposure', story_time: {day_index: 20}, source: {...version, floor: 20, message_id: 'm-20', content_hash: 'h-20', message_version: 'v20'}};
+  const windows = trackingRuntime.buildTrackingWindows({
+    activeEvents: [exposure, future],
+    chatId: version.chat_id,
+    worldModel: world,
+    currentStoryTime: {day_index: 10},
+    subjectProfiles: {subject: {species: 'Human', biological_type: 'female'}},
+  });
+  assert.deepEqual(windows.flatMap(window => window.source_event_ids), ['exposure-1']);
 });
 
 test('lifecycle-only Projection bridge expires bound pre-confirmation Projection without AI', async () => {
