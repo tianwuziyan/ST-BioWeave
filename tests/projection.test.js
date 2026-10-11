@@ -34,6 +34,9 @@ test('validation rejects User owner, missing identity, factual outcome and State
   assert.ok(result.errors.some(error => error.includes('not_character')));
   assert.ok(result.errors.some(error => error.includes('projection_rule_id:required')));
   assert.ok(result.errors.some(error => error.includes('outcome:forbidden_field')));
+  const missingAggregationEvidence = validateProjection({...value, aggregation_path: 'participant_aggregation'});
+  assert.equal(missingAggregationEvidence.ok, false);
+  assert.ok(missingAggregationEvidence.errors.includes('projection.aggregation_evidence:required_for_aggregation_path'));
 });
 test('evidence evolution is append-only and current view aggregates surviving records', () => {
   const projection = make();

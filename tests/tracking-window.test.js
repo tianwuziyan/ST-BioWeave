@@ -14,13 +14,13 @@ import { resolveProjectionTimingInstance } from '../core/projection-timing.js';
 import { buildProjectionRuleId, evaluateProjectionEligibility } from '../core/projection-eligibility.js';
 import { createTrackingRuntime } from '../runtime/tracking-runtime.js';
 
-function exposure({eventId, subjectId = 'char-subject', mechanism = 'fertilization', day = 1, carry = true} = {}) {
+function exposure({eventId, subjectId = 'char-subject', mechanism = 'fertilization', day = 1, storyTime = null, floor = day, carry = true} = {}) {
   return {
     event_id: eventId,
     type: 'sexual_activity',
     status: 'confirmed',
-    story_time: {day_index: day},
-    source: {chat_id: 'chat-window', message_id: `message-${eventId}`, floor: day, swipe_id: 0, content_hash: `hash-${eventId}`, message_version: `v-${eventId}`},
+    story_time: storyTime ?? {day_index: day},
+    source: {chat_id: 'chat-window', message_id: `message-${eventId}`, floor, swipe_id: 0, content_hash: `hash-${eventId}`, message_version: `v-${eventId}`},
     participants: [
       {character_id: subjectId, display_name: 'Subject', event_role: 'potential_gestational_subject', reproductive_capabilities_used: {can_carry_pregnancy: carry}},
       {character_id: `counterpart-${eventId}`, display_name: 'Counterpart', event_role: 'potential_conception_source', reproductive_capabilities_used: {can_cause_pregnancy: true}},
@@ -56,6 +56,47 @@ test('first exposure creates deterministic open Window and compatible basis atta
   assert.equal(secondBuild.length, 1);
   assert.deepEqual(secondBuild[0].source_event_ids, ['exposure-a', 'exposure-b']);
   assert.equal(secondBuild[0].cycle_id, buildTrackingWindowCycleId({chatId: 'chat-window', subjectId: 'char-subject', mechanismKey: 'fertilization', firstEvent: first}));
+});
+
+test('Story Time, not Event ID, fixes the first Exposure anchor across historical Floors', () => {
+  const events = [
+    normalizeEvent(exposure({eventId: 'z-exposure-c', storyTime: {display: '羲和元年三月二十日'}, floor: 66})),
+    normalizeEvent(exposure({eventId: 'a-exposure-a', storyTime: {display: '羲和元年三月四日'}, floor: 58})),
+    normalizeEvent(exposure({eventId: 'm-exposure-b', storyTime: {display: '羲和元年三月十五日'}, floor: 60})),
+  ];
+  const windows = deriveTrackingWindows(events, {
+    chatId: 'chat-window',
+    currentStoryTime: {display: '羲和元年三月二十日'},
+  });
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].opened_story_time.display, '羲和1年3月4日');
+  assert.equal(windows[0].opened_at_floor_version.floor, 58);
+  assert.deepEqual(windows[0].source_event_ids, ['a-exposure-a', 'm-exposure-b', 'z-exposure-c']);
+  assert.deepEqual(windows[0].source_basis_refs['a-exposure-a'].source, events[1].source);
+});
+
+test('subjects retain independent Exposure cycles and incomparable dates fail closed', () => {
+  const independent = deriveTrackingWindows([
+    normalizeEvent(exposure({eventId: 'q-first', subjectId: 'char_000001', day: 4, floor: 58})),
+    normalizeEvent(exposure({eventId: 'liu-first', subjectId: 'char_000003', day: 4, floor: 58})),
+    normalizeEvent(exposure({eventId: 'q-later', subjectId: 'char_000001', day: 20, floor: 66})),
+    normalizeEvent(exposure({eventId: 'liu-later', subjectId: 'char_000003', day: 20, floor: 66})),
+  ], {chatId: 'chat-window', currentStoryTime: {day_index: 20}});
+  assert.equal(independent.length, 2);
+  assert.deepEqual(independent.map(window => window.subject_id).sort(), ['char_000001', 'char_000003']);
+  assert.deepEqual(independent.map(window => window.source_event_ids.length).sort(), [2, 2]);
+
+  const unresolved = deriveTrackingWindows([
+    normalizeEvent(exposure({eventId: 'known', storyTime: {display: '未知'}, floor: 1})),
+    normalizeEvent(exposure({eventId: 'also-unknown', storyTime: {display: '仍未知'}, floor: 1})),
+  ], {chatId: 'chat-window'});
+  assert.equal(unresolved.length, 0);
+
+  const differentEras = deriveTrackingWindows([
+    normalizeEvent(exposure({eventId: 'xihe', storyTime: {display: '羲和元年三月四日'}, floor: 1})),
+    normalizeEvent(exposure({eventId: 'tianhe', storyTime: {display: '天河元年三月五日'}, floor: 2})),
+  ], {chatId: 'chat-window'});
+  assert.equal(differentEras.length, 0);
 });
 
 test('different mechanism and subject create independent Windows', () => {

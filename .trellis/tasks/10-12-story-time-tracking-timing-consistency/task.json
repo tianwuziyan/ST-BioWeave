@@ -1,0 +1,28 @@
+{
+  "id": "story-time-tracking-timing-consistency",
+  "name": "story-time-tracking-timing-consistency",
+  "title": "修复 Story Time 比较与 Tracking Window 首次 Exposure 锚点",
+  "description": "统一 Story Time 比较语义，修复 Tracking Window 首次 Exposure 锚点，并核查 Projection Timing Instance 与 Debug 可观测性",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-10-12",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-12-event-analysis-check-failures"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -11,6 +11,8 @@ export const FLOOR_OWNER_FIELDS = Object.freeze({
   event: Object.freeze(["analysis", "events", "character_registry"]),
   projection: Object.freeze(["snapshot", "projection_timeline", "projection_timing_timeline"]),
   tracking: Object.freeze(["tracking_window_timeline"]),
+  participant_aggregation: Object.freeze(["participant_aggregation_timeline"]),
+  lifecycle: Object.freeze(["pregnancy_lifecycle_timeline", "events"]),
   health: Object.freeze(["health_assessment_timeline"]),
   // Terminal attempts persist only the analysis status record. Existing
   // Events/registry are latest-state siblings and are never terminal-owned.
@@ -295,7 +297,10 @@ export function createFloorPersistenceCoordinator({
         failure_stage: "terminal_analysis_guard",
       });
     }
-    const patch = assertPatch(transaction.owner, transaction.patch, expected, transaction.operation_type);
+    const resolvedPatch = typeof input.patchResolver === "function"
+      ? await input.patchResolver({latest: clone(latest), expected: clone(expected), transaction})
+      : transaction.patch;
+    const patch = assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type);
     emit("FLOOR_TX_PATCH_VALIDATED", transaction, {patch_fields: Object.keys(patch)});
     const merged = {
       ...clone(latest),
@@ -366,9 +371,13 @@ export function createFloorPersistenceCoordinator({
       return Promise.reject(coordinatorError("FLOOR_TX_VERSION_REQUIRED"));
     const owner = String(input.owner ?? input.domain ?? "").trim().toLowerCase();
     const operationType = input.operation_type ?? input.operationType ?? "patch";
-    let patch;
+    let patch = null;
     try {
-      patch = assertPatch(owner, input.patch, floorVersion, operationType);
+      if (typeof input.patchResolver === "function") {
+        if (!FLOOR_OWNER_FIELDS[owner]) throw coordinatorError("FLOOR_TX_OWNER_INVALID", {owner});
+      } else {
+        patch = assertPatch(owner, input.patch, floorVersion, operationType);
+      }
     } catch (cause) {
       return Promise.reject(cause);
     }
@@ -380,6 +389,7 @@ export function createFloorPersistenceCoordinator({
       transaction_key: transactionKey(floorVersion),
       owner,
       patch,
+      patch_resolver: typeof input.patchResolver === "function",
       floorVersion: clone(floorVersion),
       operation_type: operationType,
       execution_attempt: input.execution_attempt ?? input.execution?.attempt ?? null,
@@ -388,7 +398,7 @@ export function createFloorPersistenceCoordinator({
       traceContext: input.traceContext ?? input.trace_context ?? {},
       started_at: monotonicNow(),
     };
-    emit("FLOOR_TX_CREATED", transaction, {patch_fields: Object.keys(patch)});
+    emit("FLOOR_TX_CREATED", transaction, {patch_fields: Object.keys(patch ?? {})});
     const prior = tails.get(transaction.transaction_key) ?? Promise.resolve();
     emit("FLOOR_TX_QUEUED", transaction, {queued: tails.has(transaction.transaction_key)});
     const run = prior.catch(() => null).then(() => dispatch(input, transaction));

@@ -59,10 +59,22 @@ function mechanismKey(event) {
 function eventVersion(event) {
   return clone(event?.source ?? null);
 }
+
+function eventChronology(left, right) {
+  return compareStoryTime(left?.story_time, right?.story_time);
+}
+
+function hasReliableStoryTime(event) {
+  return compareStoryTime(event?.story_time, event?.story_time) !== null;
+}
+
 function eventSort(left, right) {
-  const comparison = compareStoryTime(left?.story_time, right?.story_time);
-  if (comparison !== null && comparison !== 0) return comparison;
-  return String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''));
+  const storyComparison = compareStoryTime(left?.story_time, right?.story_time);
+  if (storyComparison !== null) {
+    if (storyComparison !== 0) return storyComparison;
+    return String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''));
+  }
+  return 0;
 }
 function validEvent(raw) {
   try {
@@ -319,6 +331,20 @@ export function deriveTrackingWindows(events = [], {
       })
       .map(event => [event.event_id, event]),
   ).values()].sort(eventSort);
+  const ambiguousExposureIds = new Set();
+  for (let leftIndex = 0; leftIndex < normalizedEvents.length; leftIndex += 1) {
+    const left = normalizedEvents[leftIndex];
+    for (let rightIndex = leftIndex + 1; rightIndex < normalizedEvents.length; rightIndex += 1) {
+      const right = normalizedEvents[rightIndex];
+      if (compareStoryTime(left.story_time, right.story_time) !== null) continue;
+      const leftSubjects = left.pregnancy_relevance?.gestational_subject_ids ?? [];
+      const rightSubjects = right.pregnancy_relevance?.gestational_subject_ids ?? [];
+      if (!leftSubjects.some(subjectId => rightSubjects.includes(subjectId))) continue;
+      if (!leftSubjects.some(subjectId => exposureForSubject(left, subjectId) && exposureForSubject(right, subjectId))) continue;
+      ambiguousExposureIds.add(left.event_id);
+      ambiguousExposureIds.add(right.event_id);
+    }
+  }
   const windows = new Map();
   const confirmedPregnancies = new Map();
   for (const event of normalizedEvents) {
@@ -328,6 +354,7 @@ export function deriveTrackingWindows(events = [], {
     ])];
     for (const subjectId of subjects) {
       if (exposureForSubject(event, subjectId)) {
+        if (!hasReliableStoryTime(event) || ambiguousExposureIds.has(event.event_id)) continue;
         const confirmation = confirmedPregnancies.get(subjectId);
         const afterConfirmation = confirmation
           && compareStoryTime(event.story_time, confirmation.story_time) !== null
@@ -339,6 +366,15 @@ export function deriveTrackingWindows(events = [], {
           && window.subject_id === subjectId
           && window.mechanism_key === mechanism,
         );
+        const orderAgainstAnchor = open ? eventChronology(event, {
+          story_time: open.opened_story_time,
+          source: open.opened_at_floor_version,
+        }) : null;
+        if (open && orderAgainstAnchor === null && !open.source_event_ids.includes(event.event_id)) {
+          // An exposure with no comparable Story Time and no distinct trusted
+          // Floor cannot safely become part of this cycle or move its anchor.
+          continue;
+        }
         if (open && !horizonReachedBeforeExposure(open, event, {worldModel, subjectProfiles})) {
           attachExposure(open, event, now);
         } else if (open) {

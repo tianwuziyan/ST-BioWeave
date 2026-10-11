@@ -1179,6 +1179,58 @@ function renderBusinessDebugSource(source) {
   ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>'
 }
 
+function renderBusinessDebugRows(rows = []) {
+  return '<dl class="bioweave-data-list">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>';
+}
+
+function renderLifecycleRuntimeDebug(debug = {}) {
+  if (debug?.status === 'unavailable') return '<section><h5>Pregnancy Lifecycle Runtime</h5><p class="bioweave-status-error">读取失败：' + escapeHtml(debug.reason ?? 'LIFECYCLE_DEBUG_UNAVAILABLE') + '</p></section>';
+  const aggregation = debug.participant_aggregation ?? {};
+  const delivery = debug.projection_delivery ?? {};
+  const lifecycle = debug.pregnancy_lifecycle ?? {};
+  const lock = debug.nsfw_lock ?? {};
+  const projectionTiming = debug.projection_timing ?? {};
+  const timingRuntime = projectionTiming.timing_runtime ?? {};
+  const timingCards = (projectionTiming.timing_instances ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.timing_instance_id ?? '未知 timing instance') + '</h5>' + renderBusinessDebugRows([
+    ['subject_id', item.subject_id], ['cycle_id', item.cycle_id], ['首次 Exposure Story Time', item.reference_story_time],
+    ['首次 Exposure Floor Version', item.created_at_floor_version], ['冻结 effective_min', item.effective_min_story_days],
+    ['冻结 effective_max', item.effective_max_story_days], ['当前 Story Time', projectionTiming.current_story_time],
+    ['elapsed Story Days', item.derived_timing?.elapsed_story_days], ['Timing 状态', item.derived_timing?.status],
+    ['Timing 原因', item.derived_timing?.reason_code], ['当前是否 due', item.aggregation?.due],
+    ['aggregation 状态', item.aggregation?.status], ['aggregation 成功', item.aggregation?.succeeded],
+    ['aggregation 未执行原因', item.aggregation?.reason_code],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 Timing Instance。</p>';
+  const aggregationCards = (aggregation.aggregations ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.aggregation_id ?? '未知 aggregation') + '</h5>' + renderBusinessDebugRows([
+    ['subject_id', item.subject_id], ['pregnancy_id', item.pregnancy_id], ['cycle_id', item.cycle_id], ['状态', item.status],
+    ['accepted Exposure 数量', item.accepted_exposure_count], ['aggregation Story Time', item.aggregation_story_time],
+    ['effective_min', item.effective_min_story_days], ['effective_max', item.effective_max_story_days], ['触发策略', item.aggregation_trigger_strategy],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 aggregation。</p>';
+  const deliveryCards = (delivery.records ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.delivery_id ?? '未知 delivery') + '</h5>' + renderBusinessDebugRows([
+    ['projection_id', item.projection_id], ['projection 是否存在', item.projection_present], ['aggregation_id', item.aggregation_id],
+    ['subject_id', item.subject_id], ['cycle_id', item.cycle_id], ['提交状态', item.status], ['提交 Floor Version', item.submitted_floor_version],
+    ['响应 Floor Version', item.response_floor_version], ['response_id', item.response_id], ['Event Analysis', item.analysis_status],
+    ['明确 lifecycle fact IDs', item.explicit_lifecycle_fact_ids],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 Projection delivery receipt。</p>';
+  const lifecycleRows = [...(lifecycle.facts ?? []), ...(lifecycle.archives ?? []), ...(lifecycle.release_records ?? [])];
+  return [
+    '<section class="bioweave-business-debug-lifecycle"><h5>Projection Timing Runtime</h5>' + renderBusinessDebugRows([
+      ['创建策略', timingRuntime.creation_policy], ['Projection Rule 可用', timingRuntime.projection_rules_available],
+      ['运行状态', timingRuntime.status], ['未执行原因', timingRuntime.reason_code],
+      ['Projection Rule IDs', projectionTiming.projection_rule_ids],
+    ]) + timingCards + '</section>',
+    '<section class="bioweave-business-debug-lifecycle"><h5>Participant Aggregation · ' + escapeHtml(String(aggregation.count ?? 0)) + '</h5>' + aggregationCards + '</section>',
+    '<section class="bioweave-business-debug-lifecycle"><h5>Projection Delivery · ' + escapeHtml(String(delivery.count ?? 0)) + '</h5>' + deliveryCards + '</section>',
+    '<section class="bioweave-business-debug-lifecycle"><h5>Pregnancy Lifecycle</h5>' + renderBusinessDebugRows([
+      ['facts', lifecycle.facts?.length ?? 0], ['archives', lifecycle.archives?.length ?? 0], ['candidate records', lifecycle.candidate_records?.length ?? 0],
+      ['release records', lifecycle.release_records?.length ?? 0], ['最近状态记录', lifecycleRows.at(-1) ?? null],
+    ]) + '</section>',
+    '<section class="bioweave-business-debug-lifecycle"><h5>NSFW Cycle Lock</h5>' + renderBusinessDebugRows([
+      ['Capability enabled', lock.capability_enabled], ['Gate', lock.gate], ['Lifecycle archive/release ready', lock.lifecycle_archive_release_ready],
+      ['Locked cycle keys', lock.locked_cycle_keys],
+    ]) + '</section>',
+  ].join('');
+}
+
 function renderBusinessDebugState(debugState = null) {
   if (debugState?.status === 'error') {
     return '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug><header class="bioweave-debug-section-header"><div><h4>当前生产业务状态</h4></div><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-business-debug">刷新业务状态</button></header><div class="bioweave-debug-preview-scroll bioweave-business-debug-content"><p class="bioweave-status-error">读取失败：' + escapeHtml(debugState.reason ?? 'BUSINESS_DEBUG_FAILED') + '</p></div></section>'
@@ -1194,6 +1246,7 @@ function renderBusinessDebugState(debugState = null) {
   const windows = debug.tracking_window ?? {}
   const trackingRegistry = debug.tracking_registry ?? {}
   const healthState = debug.health_state ?? {}
+  const lifecycleRuntime = debug.lifecycle_runtime ?? {status: 'unavailable', reason: 'LIFECYCLE_DEBUG_NOT_INCLUDED'}
   const stale = debugState?.status === 'stale'
   const status = stale
     ? '<p class="bioweave-status-error" data-bioweave-business-debug-stale>调试采样已过期：' + escapeHtml(debugState.reason ?? '目标已变化，请刷新') + '</p>'
@@ -1229,6 +1282,7 @@ function renderBusinessDebugState(debugState = null) {
     ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>' + windowCards + '</section>',
     '<section><h5>Tracking Registry · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(trackingRegistry)) + '</pre></section>',
     '<section><h5>Health Evolution · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(healthState.state)) + '</pre></section>',
+    renderLifecycleRuntimeDebug(lifecycleRuntime),
     '</div>',
     '</section>',
   ].join('')

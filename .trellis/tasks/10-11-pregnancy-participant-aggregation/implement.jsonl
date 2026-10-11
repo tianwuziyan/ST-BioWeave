@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe ownership, six-field Version provenance, and derived-state invalidation for the new aggregation timeline."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Existing Timing, Tracking Window, Projection boundaries and lifecycle rules that the implementation must preserve or explicitly update."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent-field ownership, clear/invalidation, stale-result and lifecycle obligations for a new Floor-owned state root."}

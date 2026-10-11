@@ -91,6 +91,34 @@ test('Projection Runtime generates one candidate and same identity reread does n
   assert.equal(fixture.saved.length, 1)
 })
 
+test('Projection Runtime does not persist a new aggregation-path Projection when evidence cannot be built', async () => {
+  let calls = 0
+  const timing = {
+    timing_instance_id: 'timing-invalid-evidence',
+    subject_id: subject,
+    mechanism_key: 'fertilization',
+    cycle_id: 'cycle-invalid-evidence',
+    source_event_ids: ['event-1'],
+    reference_story_time: {day_index: 0},
+    effective_min_story_days: 1,
+    effective_max_story_days: 10,
+  }
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => { calls += 1; return {development: {kind: 'possible_detection', description: '不应生成。'}} }},
+    resolvePreConfirmationTiming: async () => ({
+      enabled: true,
+      instances: [timing],
+      windows: [{tracking_window_id: 'window-invalid-evidence', cycle_id: timing.cycle_id, subject_id: subject, mechanism_key: timing.mechanism_key, status: 'open', source_event_ids: ['event-1']}],
+      aggregations: [{aggregation_id: 'aggregation-invalid-evidence', subject_id: subject, mechanism_key: timing.mechanism_key, cycle_id: timing.cycle_id, accepted_exposure_event_ids: ['missing-event']}],
+    }),
+  })
+  fixture.setInputs({...inputs(), currentStoryTime: {day_index: 3, display: '第 3 天'}})
+  const result = await fixture.runtime.process({reason: 'invalid-aggregation-evidence'})
+  assert.equal(result.status, 'success')
+  assert.equal(calls, 0)
+  assert.equal(fixture.saved.length, 0)
+})
+
 test('duplicate Projection execution is single-flight', async () => {
   let calls = 0
   let release
@@ -214,7 +242,7 @@ test('Story Time-only first Projection aggregates every compatible exposure in t
   assert.deepEqual(fixture.saved[0].source_event_ids, sourceEvents.map(event => event.event_id).sort())
 })
 
-test('Story Time-only progression after effective_max does not backfill a missed first Projection', async () => {
+test('Story Time-only progression after effective_max performs overdue aggregation before Projection', async () => {
   let calls = 0
   const timing = {
     timing_instance_id: 'timing-cycle-missed',
@@ -237,13 +265,13 @@ test('Story Time-only progression after effective_max does not backfill a missed
   const fixture = createFixture({
     analyzer: {generateProjection: async () => {
       calls += 1
-      return {development: {kind: 'possible_detection', description: '不应生成。'}}
+      return {development: {kind: 'possible_detection', description: '超期后补做聚合并生成。'}}
     }},
-    resolvePreConfirmationTiming: async () => ({enabled: true, instances: [timing], windows: [window]}),
+    resolvePreConfirmationTiming: async () => ({enabled: true, instances: [timing], windows: [window], aggregations: [{aggregation_id: 'aggregation-cycle-missed', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-missed', accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: []}]}),
   })
   fixture.setInputs({...inputs(), currentStoryTime: {day_index: 11, display: '第 11 天'}})
   const result = await fixture.runtime.process({reason: 'story-time:window-missed', trigger: 'story-time-progression'})
   assert.equal(result.status, 'success')
-  assert.equal(calls, 0)
-  assert.equal(fixture.saved.length, 0)
+  assert.equal(calls, 1)
+  assert.equal(fixture.saved.length, 1)
 })

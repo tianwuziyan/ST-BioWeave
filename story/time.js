@@ -109,6 +109,9 @@ function parseCalendarDateValue(value, calendar) {
 
 function customCalendarDifference(left, right, calendar) {
   if ((isGregorian(calendar) && calendar?.kind !== 'era-standard') || !isGregorian(calendar)) return null;
+  const leftCalendarId = calendarIdentity(sourceStoryTime(left));
+  const rightCalendarId = calendarIdentity(sourceStoryTime(right));
+  if (leftCalendarId !== null && rightCalendarId !== null && leftCalendarId !== rightCalendarId) return null;
   const leftDate = parseCalendarDateValue(left, calendar);
   const rightDate = parseCalendarDateValue(right, calendar);
   if (!leftDate || !rightDate) return null;
@@ -485,22 +488,26 @@ function comparableStoryTimes(left, right) {
     && storyTimeDomain(a) === storyTimeDomain(b);
 }
 
-/**
- * Compare two normalized Story Time values. A null result means that the
- * values belong to different/unknown story-time domains or lack day_index.
- */
-export function compareStoryTime(left, right) {
-  if (!comparableStoryTimes(left, right)) return null;
-  const leftIndex = normalizeStoryTime(left).day_index;
-  const rightIndex = normalizeStoryTime(right).day_index;
-  return leftIndex === rightIndex ? 0 : leftIndex < rightIndex ? -1 : 1;
-}
-
-export function differenceStoryDays(left, right) {
+function storyTimeDateDifference(left, right) {
   const eraDifference = customCalendarDifference(left, right, {kind: 'era-standard'});
   if (eraDifference !== null) return eraDifference;
   if (!comparableStoryTimes(left, right)) return null;
   return normalizeStoryTime(left).day_index - normalizeStoryTime(right).day_index;
+}
+
+/**
+ * Compare two Story Time values. A null result means that the values belong
+ * to different/unknown story-time domains or cannot be resolved by the
+ * existing structured day index / calendar arithmetic.
+ */
+export function compareStoryTime(left, right) {
+  const difference = differenceStoryTime(left, right);
+  if (!difference || !Number.isFinite(Number(difference.value))) return null;
+  return difference.value === 0 ? 0 : difference.value < 0 ? -1 : 1;
+}
+
+export function differenceStoryDays(left, right) {
+  return storyTimeDateDifference(left, right);
 }
 
 function normalizedClockMinutes(value) {
@@ -523,12 +530,11 @@ function normalizedClockMinutes(value) {
  * and refer to the same story day; otherwise the result stays day-based.
  */
 export function differenceStoryTime(left, right) {
-  const eraDifference = customCalendarDifference(left, right, {kind: 'era-standard'});
-  if (eraDifference !== null) return {value: eraDifference, unit: 'day'};
-  if (!comparableStoryTimes(left, right)) return null;
+  const dateDifference = storyTimeDateDifference(left, right);
+  if (dateDifference === null) return null;
   const leftTime = normalizeStoryTime(left);
   const rightTime = normalizeStoryTime(right);
-  const dayDifference = leftTime.day_index - rightTime.day_index;
+  const dayDifference = dateDifference;
   const preciseClock = ['hour', 'minute'].includes(leftTime.precision)
     && ['hour', 'minute'].includes(rightTime.precision)
     && dayDifference === 0;

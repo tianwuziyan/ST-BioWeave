@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify archive/release uses authoritative Floor/Swipe/Version and does not mutate historical snapshots"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify lifecycle facts obey confirmed-only transitions and Event/state_fact boundaries"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Verify cycle/window expiry is not confused with pregnancy outcome or release"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify new lifecycle persistence has owner, clear, stale-write and rollback answers"}
+{"file":".trellis/tasks/10-11-pregnancy-participant-aggregation/design.md","reason":"Verify aggregation evidence and lock gate integration remain scoped and cycle-isolated"}

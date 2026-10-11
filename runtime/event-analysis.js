@@ -433,6 +433,8 @@ export function createEventAnalysisCoordinator({
   healthAssessment = null,
   healthEvolution = null,
   healthRecoveryStabilityDelayMs = 2000,
+  persistPregnancyLifecycleFacts = null,
+  resolveLockedExposureState = null,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -2257,6 +2259,8 @@ export function createEventAnalysisCoordinator({
       isStaleChat,
       healthAssessment,
       healthEvolution,
+      persistPregnancyLifecycleFacts,
+      resolveLockedExposureState,
       getCurrentStoryTime: async target => {
         const current = await resolveCurrentBioWeaveFloor();
         if (!sameFloorVersion(current?.version, target?.version)) return null;
@@ -2301,6 +2305,7 @@ export function createEventAnalysisCoordinator({
         details,
         "event-edit",
       ),
+      resolveLockedExposureState,
     },
   });
   diagnostics = featureComposition.diagnostics;
@@ -3063,6 +3068,20 @@ export function createEventAnalysisCoordinator({
         },
         chatId: execution.version.chat_id,
       });
+      if (typeof projectionPostProcessor === "function") {
+        void projectionPostProcessor({target: execution.target, execution}).catch((error) => {
+          notify({
+            type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
+            payload: {
+              state: "failed",
+              phase: "post_processing",
+              error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+              floor_version: execution.version,
+            },
+            chatId: execution.version.chat_id,
+          });
+        });
+      }
     }
     return terminal;
   }
@@ -3212,7 +3231,6 @@ export function createEventAnalysisCoordinator({
   }
   async function schedulerRunIsCurrent(run, target) {
     if (!run || !target?.version) return false;
-    if (schedulerState.schedulerRevision !== run.revision) return false;
     try {
       chat.assert(run.token);
       if (invalidatedFloors.has(floorExecutionKey(run.floorVersion))) return false;
@@ -3220,8 +3238,15 @@ export function createEventAnalysisCoordinator({
         __messageIndex: true,
         index: target.index,
       });
-      if (schedulerState.schedulerRevision !== run.revision) return false;
-      return sameFloorVersion(current.version, run.floorVersion);
+      const streamingReroll = run.generation?.rerollIntent === true ||
+        String(run.generation?.generation_type ?? '').toLowerCase() === 'regenerate';
+      if (schedulerState.schedulerRevision === run.revision && sameFloorVersion(current.version, run.floorVersion)) return true;
+      if (streamingReroll &&
+          String(current.version.chat_id) === String(run.floorVersion.chat_id) &&
+          String(current.version.message_id) === String(run.floorVersion.message_id) &&
+          Number(current.version.floor) === Number(run.floorVersion.floor) &&
+          Number(current.version.swipe_id) === Number(run.floorVersion.swipe_id)) return true;
+      return false;
     } catch {
       return false;
     }
@@ -3581,20 +3606,6 @@ export function createEventAnalysisCoordinator({
         };
       }
       terminalState = "success";
-      if (typeof projectionPostProcessor === "function") {
-        void projectionPostProcessor({target, execution}).catch((error) => {
-          notify({
-            type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
-            payload: {
-              state: "failed",
-              phase: "post_processing",
-              error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
-              floor_version: target.version,
-            },
-            chatId: target.version.chat_id,
-          });
-        });
-      }
       return {
         events: eventStage.events,
         version: target.version,
@@ -3732,6 +3743,7 @@ export function createEventAnalysisCoordinator({
       scheduler_revision: schedulerState.schedulerRevision,
       source_text_length: messageText(target.message, target.swipeId).length,
       generation: generation ?? null,
+      target,
       promise: null,
     };
     inFlight.set(requestKey, execution);
@@ -3759,6 +3771,7 @@ export function createEventAnalysisCoordinator({
       token: chat.token(),
       floorVersion: target?.version ?? null,
       analysisExecutionId: resolvedAnalysisExecutionId,
+      generation,
     };
     try {
       const result = await analysisExecution.run(

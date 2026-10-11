@@ -4,6 +4,7 @@ import {
   validateEventStoryTimesAtOrBefore,
 } from "../core/events.js";
 import {normalizeCharacterRegistry} from "../core/identity.js";
+import {isCycleExposureLocked} from "../core/participant-aggregation-lock.js";
 import {parseStoryTimeCandidate} from "../story/time.js";
 import {durationMs, monotonicNow} from "./diagnostics.js";
 
@@ -26,6 +27,7 @@ export function createEventEditing({
   storyTime,
   emitStoryTimeDiagnostic,
   emitEventEditTrace,
+  resolveLockedExposureState = null,
 } = {}) {
   function traceEdit(stage, target, eventId, details = {}) {
     emitEventEditTrace?.(stage, target, {
@@ -109,6 +111,20 @@ export function createEventEditing({
       floor_resolution_duration_ms: floorResolutionDuration,
       runtime_duration_ms: durationMs(runtimeStartedAt),
     });
+    const lockState = typeof resolveLockedExposureState === "function"
+      ? await resolveLockedExposureState({target, event: target.event})
+      : {lockedCycleKeys: [], lifecycleArchiveReleaseReady: false};
+    if (isCycleExposureLocked({
+      event: target.event,
+      lockedCycleKeys: lockState?.lockedCycleKeys,
+      lifecycleArchiveReleaseReady: lockState?.lifecycleArchiveReleaseReady,
+    })) {
+      const error = new Error("PARTICIPANT_AGGREGATION_EVENT_LOCKED");
+      error.code = "PARTICIPANT_AGGREGATION_EVENT_LOCKED";
+      error.reason_code = "participant_aggregation_event_locked";
+      trace('EVENT_EDIT_LOCK_REJECTED', {reason_code: error.reason_code});
+      throw error;
+    }
     let nextEvent;
     const normalizationStartedAt = monotonicNow();
     try {
@@ -129,6 +145,17 @@ export function createEventEditing({
         event_normalization_duration_ms: durationMs(normalizationStartedAt),
         runtime_duration_ms: durationMs(runtimeStartedAt),
       });
+      throw error;
+    }
+    if (isCycleExposureLocked({
+      event: nextEvent,
+      lockedCycleKeys: lockState?.lockedCycleKeys,
+      lifecycleArchiveReleaseReady: lockState?.lifecycleArchiveReleaseReady,
+    })) {
+      const error = new Error("PARTICIPANT_AGGREGATION_EVENT_LOCKED");
+      error.code = "PARTICIPANT_AGGREGATION_EVENT_LOCKED";
+      error.reason_code = "participant_aggregation_event_locked";
+      trace('EVENT_EDIT_LOCK_REJECTED', {reason_code: error.reason_code});
       throw error;
     }
     const eventNormalizationDuration = durationMs(normalizationStartedAt);

@@ -1,11 +1,14 @@
 import { traceApi } from "../ai/client.js";
 import {
+  CAPABILITY_KEYS,
   dedupeEventsAgainstExisting,
   dedupeEvents,
   normalizeEvent,
+  splitCompositePregnancyExposureEvent,
   validateEventStoryTimesAtOrBefore,
   validateEventCollection,
 } from "../core/events.js";
+import {isCycleExposureLocked} from "../core/participant-aggregation-lock.js";
 import {
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
@@ -57,7 +60,10 @@ async function materializeStateFact(event, version, ordinal) {
     ? stateFact.payload
     : {};
   const pregnancyRef = payload.pregnancy_ref;
-  if (pregnancyRef?.kind === "new") {
+  if (payload.status === "not_pregnant") {
+    payload.pregnancy_id = null;
+    delete payload.pregnancy_ref;
+  } else if (pregnancyRef?.kind === "new") {
     payload.pregnancy_id = await deterministicStateFactId(
       version,
       ordinal,
@@ -111,6 +117,35 @@ function eventContinuityKey(event) {
       world_model_rule_refs: [...(mechanism.world_model_rule_refs ?? [])].sort(),
     },
   });
+}
+
+function mergeCurrentParticipantEvidence(currentParticipant, nextParticipant) {
+  const current = currentParticipant && typeof currentParticipant === "object"
+    ? currentParticipant
+    : {};
+  const next = nextParticipant && typeof nextParticipant === "object"
+    ? nextParticipant
+    : {};
+  const currentCapabilities = current.reproductive_capabilities_used ?? {};
+  const nextCapabilities = next.reproductive_capabilities_used ?? {};
+  return {
+    ...current,
+    ...next,
+    reproductive_capabilities_used: Object.fromEntries(
+      CAPABILITY_KEYS.map((key) => [
+        key,
+        nextCapabilities[key] === null || nextCapabilities[key] === undefined
+          ? currentCapabilities[key] ?? null
+          : nextCapabilities[key],
+      ]),
+    ),
+    evidence: [
+      ...new Set([
+        ...(Array.isArray(current.evidence) ? current.evidence : []),
+        ...(Array.isArray(next.evidence) ? next.evidence : []),
+      ]),
+    ],
+  };
 }
 
 function identityResolutionError(result) {
@@ -170,6 +205,8 @@ export function createCharacterEventAnalysis({
   healthEvolution = null,
   getCurrentStoryTime = null,
   waitForHealthRecoveryStability = null,
+  persistPregnancyLifecycleFacts = null,
+  resolveLockedExposureState = null,
 } = {}) {
   async function verifyCharacterCanonicalReady(target, execution, token, expectedEvents) {
     emitPersistenceTrace("CHARACTER_CANONICAL_READ_BEGIN", execution, target, {
@@ -353,7 +390,10 @@ export function createCharacterEventAnalysis({
     }, "event");
     assertExecutionCurrent(execution, token);
     execution.stage = "identity_resolution";
-    const identityResult = resolveEventAnalysisIdentities(result, {
+    const rawResultEvents = Array.isArray(result) ? result : (Array.isArray(result?.events) ? result.events : []);
+    const splitResultEvents = rawResultEvents.flatMap(splitCompositePregnancyExposureEvent);
+    const identityInput = Array.isArray(result) ? splitResultEvents : {...result, events: splitResultEvents};
+    const identityResult = resolveEventAnalysisIdentities(identityInput, {
       registry: normalizeCharacterRegistry(analysisInput.character_registry),
       persistAliases: true,
       narrative: analysisNarrative(analysisInput),
@@ -362,9 +402,14 @@ export function createCharacterEventAnalysis({
     const identityResolvedEvents = Array.isArray(identityResult.events)
       ? identityResult.events
       : [];
+    const currentFloorEvents = Array.isArray(analysisInput.existing_events)
+      ? analysisInput.existing_events.map((event) => normalizeEvent(event))
+      : [];
+    const historicalEventsForDedupe = (analysisInput.existing_events ?? [])
+      .filter((event) => !sameFloorVersion(event?.source, target.version));
     const dedupedEvents = dedupeEventsAgainstExisting(
       identityResolvedEvents,
-      analysisInput.existing_events,
+      historicalEventsForDedupe,
     );
     emitPersistenceTrace("EVENT_SEMANTIC_DEDUPE_RESULT", execution, target, {
       input_event_count: identityResolvedEvents.length,
@@ -375,9 +420,6 @@ export function createCharacterEventAnalysis({
       removed_event_count: identityResolvedEvents.length - dedupedEvents.length,
     }, "event");
     execution.stage = "normalization";
-    const currentFloorEvents = Array.isArray(analysisInput.existing_events)
-      ? analysisInput.existing_events.map((event) => normalizeEvent(event))
-      : [];
     const hasExistingState = currentFloorEvents.length > 0 ||
       Boolean(analysisInput.existing_bioweave?.analysis?.status);
     const currentEventIndexes = new Map(
@@ -433,6 +475,22 @@ export function createCharacterEventAnalysis({
     const acceptedEnrichedEvents = enrichedEvents.filter(
       (event) => !rejectedFutureEventIds.has(event?.event_id),
     );
+    const lockState = typeof resolveLockedExposureState === "function"
+      ? await resolveLockedExposureState({target})
+      : {lockedCycleKeys: [], lifecycleArchiveReleaseReady: false};
+    const unlockedEnrichedEvents = acceptedEnrichedEvents.filter(event => !isCycleExposureLocked({
+      event,
+      lockedCycleKeys: lockState?.lockedCycleKeys,
+      lifecycleArchiveReleaseReady: lockState?.lifecycleArchiveReleaseReady,
+    }));
+    if (unlockedEnrichedEvents.length !== acceptedEnrichedEvents.length) {
+      emitPersistenceTrace("PARTICIPANT_AGGREGATION_LOCK_FILTERED", execution, target, {
+        filtered_event_count: acceptedEnrichedEvents.length - unlockedEnrichedEvents.length,
+        retained_event_count: unlockedEnrichedEvents.length,
+        locked_cycle_keys: lockState?.lockedCycleKeys ?? [],
+      }, "event");
+    }
+    acceptedEnrichedEvents.splice(0, acceptedEnrichedEvents.length, ...unlockedEnrichedEvents);
     emitPersistenceTrace("EVENT_NORMALIZATION_RESULT", execution, target, {
       event_count: acceptedEnrichedEvents.length,
       rejected_future_event_count: rejectedFutureEventIds.size,
@@ -493,7 +551,10 @@ export function createCharacterEventAnalysis({
                   candidate.display_name === participant.display_name,
               );
               return currentParticipant?.character_id
-                ? {...participant, character_id: currentParticipant.character_id}
+                ? {
+                    ...mergeCurrentParticipantEvidence(currentParticipant, participant),
+                    character_id: currentParticipant.character_id,
+                  }
                 : participant;
             }),
           }];
@@ -683,6 +744,9 @@ export function createCharacterEventAnalysis({
       throw error;
     }
     await verifyCharacterCanonicalReady(target, execution, token, events);
+    if (typeof persistPregnancyLifecycleFacts === "function") {
+      await persistPregnancyLifecycleFacts({target, events, execution, token});
+    }
     execution.event_count = events.length;
     trace("runtime-success", {
       state: "success",

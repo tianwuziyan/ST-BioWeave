@@ -28,6 +28,8 @@ export function createProjectionContextCoordinator({
   enabledResolver = () => true,
   attributionResolver = null,
   healthGuidanceResolver = null,
+  projectionEvidenceResolver = null,
+  recordProjectionSubmission = null,
   trace = () => {},
   injection = {},
 } = {}) {
@@ -156,7 +158,10 @@ function floorReadStillMatches(left, right) {
       return clearFor('invalid_floor', {dto: [], prompt: ''}, generation);
     }
     try {
-      const views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      let views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      if (typeof projectionEvidenceResolver === 'function') {
+        views = await projectionEvidenceResolver({chatId, floor, views});
+      }
       const attributionBySubject = typeof attributionResolver === 'function'
         ? await attributionResolver({chatId, floor, views})
         : {};
@@ -224,9 +229,34 @@ function floorReadStillMatches(left, right) {
         });
         return {...result, dto: context.dto, prompt: '', ...contextDetails};
       }
+      let submission = null;
+      if (context.prompt && typeof recordProjectionSubmission === 'function') {
+        try {
+          submission = await recordProjectionSubmission({
+            chatId,
+            floor,
+            views,
+            contextFingerprint: context.prompt ? diagnosticFingerprint(context.prompt) : null,
+            generation,
+          });
+        } catch (error) {
+          diagnostic('PROJECTION_DELIVERY_RECEIPT_FAILED', {
+            ...contextDetails,
+            error_code: error?.code ?? error?.message ?? 'PROJECTION_DELIVERY_RECEIPT_FAILED',
+          });
+          return {
+            ok: false,
+            status: 'submission_unverified',
+            reason: error?.code ?? 'PROJECTION_DELIVERY_RECEIPT_FAILED',
+            dto: context.dto,
+            prompt: context.prompt,
+            ...contextDetails,
+          };
+        }
+      }
       if (context.prompt) diagnostic('PROJECTION_CONTEXT_SLOT_WRITTEN', contextDetails);
       else diagnostic('PROJECTION_CONTEXT_SLOT_CLEARED', {...contextDetails, clear_reason: 'both_context_inputs_empty'});
-      return {ok: true, status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt, ...contextDetails};
+      return {ok: true, status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt, submission, ...contextDetails};
     } catch {
       return clearFor('projection_read_failed', {dto: [], prompt: ''}, generation);
     }

@@ -128,6 +128,29 @@ Before implementation:
 After implementation:
 
 - [ ] Tested with edge cases (null, empty, invalid)
+
+### Delivery Completeness Review
+
+Every new feature, Runtime entry, persistence owner, data interface, or changed
+behavior must explicitly review its surrounding delivery surface before the
+task is considered complete:
+
+- [ ] User settings: add or update a setting only when users need configuration;
+  otherwise record why no setting is applicable.
+- [ ] Debug surface: expose safe, read-only state through the existing Settings
+  Debug / Runtime DTO path when operators need to inspect the behavior.
+- [ ] Diagnostics: add bounded trace fields and failure codes without logging
+  full sensitive narrative content.
+- [ ] Status presentation: show unavailable, stale, failed, and successful
+  states without inventing a successful result.
+- [ ] Schema and compatibility: review normalization, lifecycle ownership,
+  readback, migration, and old-data behavior.
+- [ ] Runtime interface, architecture documentation, and tests: keep the
+  owner, call path, contract, and acceptance evidence synchronized.
+
+These are review items, not a requirement to create a new UI control, setting,
+diagnostic root, or state source for every internal function. Existing owner
+and debug/diagnostic paths should be reused first.
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
 - [ ] Checked that consumers import shared decoders / projections instead of

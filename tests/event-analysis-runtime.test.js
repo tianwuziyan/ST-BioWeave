@@ -9,6 +9,8 @@ import { SILLYTAVERN_CURRENT_API, emptyChat, emptyFloor } from "../storage/schem
 import { buildWorldModelSupplementCoverageTargets } from "../ai/world-supplement-protocol.js";
 import { archiveWorldModelSpecies } from "../core/world-species-archive.js";
 import { healthObservationFingerprint } from "../core/health-assessment.js";
+import { normalizeParticipantAggregation } from "../core/participant-aggregation.js";
+import { createProjection } from "../core/projection.js";
 
 function eventResult(eventId = "evt-1", overrides = {}) {
   return {
@@ -91,6 +93,7 @@ function createFixture({
   notify = null,
   onWorldCandidate = null,
   healthRecoveryStabilityDelayMs = 2000,
+  participantAggregationLockCapability = false,
 } = {}) {
   const listeners = new Map();
   const context = {
@@ -265,6 +268,7 @@ function createFixture({
     storyTimeDebug,
     storyTimeTrace,
     healthRecoveryStabilityDelayMs,
+    participantAggregationLockCapability,
   });
   runtime.subscribe(fixtureNotify);
   runtime.store.profileStore.getApiRequestSettings = () => ({
@@ -282,7 +286,7 @@ function createFixture({
     saveFloorCalls: () => saveFloorCalls,
     convergeFloorOwnerCalls: () => convergeFloorOwnerCalls,
     emit(type, payload) {
-      listeners.get(type)?.(payload);
+      return listeners.get(type)?.(payload);
     },
   };
 }
@@ -312,6 +316,53 @@ test("GENERATION_STARTED awaits projection context refresh before prompt read", 
   assert.ok(settled > started);
   assert.equal(sequence[settled].settled_before_listener_resolve, true);
   assert.equal(sequence[settled].context_ready_before_prompt_read, true);
+  fixture.runtime.destroy();
+});
+
+test("real Runtime does not create a Projection submission receipt when setExtensionPrompt fails", async () => {
+  const fixture = createFixture({setExtensionPromptHook: payload => payload?.key === "bioweave_projection_context" ? false : true});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const floor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const event = (await fixture.runtime.getCurrentFloorEvents()).find(item => item.type === "sexual_activity");
+  const subjectId = event.pregnancy_relevance.gestational_subject_ids[0];
+  const aggregation = normalizeParticipantAggregation({
+    aggregation_id: "agg-projection-receipt-failed",
+    subject_id: subjectId,
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: "c1",
+    timing_instance_id: "timing-projection-receipt-failed",
+    reference_story_time: {day_index: 1},
+    aggregation_story_time: {day_index: 14},
+    elapsed_story_days: 13,
+    effective_min_story_days: 14,
+    effective_max_story_days: 42,
+    sampled_individual_offset_story_days: 0,
+    config_snapshot: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0},
+    accepted_exposure_event_ids: [event.event_id],
+    source_basis_refs: {},
+    created_at_floor_version: floor.version,
+  });
+  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: floor.index}, floorVersion: floor.version, aggregation});
+  const projection = createProjection({
+    subject_id: subjectId,
+    projection_rule_id: "rule:projection-receipt-failed",
+    development_concern_key: "concern:pregnancy",
+    mechanism: {key: "mechanism:implant", world_model_rule_refs: []},
+    source_event_ids: [event.event_id],
+    development: {kind: "possible_detection", current_basis: {event_ids: [event.event_id], state_refs: [], mechanism_rule_refs: []}, next_signal: "后续正文反馈"},
+    timing: {trigger_kind: "immediate_after_event", reference_event_id: event.event_id, reference_story_time: null, current_story_time: null, elapsed_story_days: null},
+    created_at_floor_version: floor.version,
+    evidence_refs: [`event:${event.event_id}`],
+    aggregation_path: "participant_aggregation",
+    aggregation_evidence: {subject_id: subjectId, aggregation_id: aggregation.aggregation_id, pregnancy_id: null, cycle_id: aggregation.cycle_id, accepted_exposure_event_ids: aggregation.accepted_exposure_event_ids, participant_exposure_mapping: [{participant_id: event.pregnancy_relevance.counterpart_ids[0], exposure_event_ids: [event.event_id], exposure_count: 1}]},
+  });
+  const current = fixture.runtime.store.getFloor(floor.index, floor.swipeId);
+  await fixture.runtime.store.saveFloor(floor.index, floor.swipeId, {...current, projection_timeline: {schema_version: 1, creations: [projection], evidence_records: [], lifecycle_records: [], delivery_records: []}});
+  const result = await fixture.runtime.refreshProjectionContext();
+  assert.equal(result.ok, false);
+  assert.equal(fixture.runtime.store.getFloor(floor.index, floor.swipeId).projection_timeline.delivery_records.length, 0);
   fixture.runtime.destroy();
 });
 
@@ -559,6 +610,12 @@ test("business debug samples the current production states and provenance", asyn
   assert.equal(debug.tracking_window.source_type, "CURRENT_DERIVED");
   assert.equal(debug.tracking_registry.source_type, "CURRENT_DERIVED");
   assert.equal(debug.health_state.source_type, "CURRENT_DERIVED");
+  assert.equal(debug.lifecycle_runtime.status, "ready");
+  assert.equal(debug.lifecycle_runtime.target.swipe_id, 0);
+  assert.equal(debug.lifecycle_runtime.participant_aggregation.count, 0);
+  assert.equal(debug.lifecycle_runtime.projection_delivery.count, 0);
+  assert.equal(debug.lifecycle_runtime.pregnancy_lifecycle.facts.length, 0);
+  assert.equal(debug.lifecycle_runtime.nsfw_lock.gate, "disabled_until_lifecycle_archive_release");
   fixture.runtime.destroy();
 });
 
@@ -1468,7 +1525,7 @@ test("manual Event Story Time display edits rebuild all derived fields instead o
   fixture.runtime.destroy();
 });
 
-test("manual Event Story Time display edits keep incomparable diagnostics without saving contradictory fields", async () => {
+test("manual Event Story Time display edits compare parsed same-era dates without saving contradictory fields", async () => {
   const traces = [];
   const fixture = createFixture({
     notify(event) {
@@ -1503,7 +1560,7 @@ test("manual Event Story Time display edits keep incomparable diagnostics withou
   assert.equal(updated.story_time.day_index, null);
   assert.equal(updated.story_time.calendar_id, null);
   assert.equal(fixture.saveFloorCalls(), beforeSaves + 1);
-  assert.ok(traces.some(trace => trace.stage === "EVENT_STORY_TIME_INCOMPARABLE" && trace.event_ids.includes(eventId)));
+  assert.equal(traces.some(trace => trace.stage === "EVENT_STORY_TIME_INCOMPARABLE" && trace.event_ids.includes(eventId)), false);
   fixture.runtime.destroy();
 });
 
@@ -2204,6 +2261,14 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
     subjectId: "subject_profile",
     sourceId: "source_profile",
   });
+  abstractEvent.story_time = {
+    display: "Day 1",
+    normalized: "0001-01-01",
+    day_index: 1,
+    calendar_id: "main",
+    precision: "day",
+    confidence: 1,
+  };
   abstractEvent.participants = abstractEvent.participants.map(
     (participant, index) => ({
       ...participant,
@@ -2226,7 +2291,7 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
       async analyzeFloor() {
         analysisCount += 1;
         const event = structuredClone(abstractEvent);
-        if (analysisCount > 1) {
+        if (analysisCount === 2) {
           event.participants[0].reproductive_capabilities_used.can_carry_pregnancy = true;
           event.participants[0].evidence.push({
             kind: "profile",
@@ -2264,6 +2329,13 @@ test("Runtime re-evaluates a pending candidate after Event evidence updates its 
   assert.equal(
     (await fixture.runtime.getCurrentFloorEvents())[0].event_id,
     firstEvent.event_id,
+  );
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const retainedAfterOlderEvidence = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.equal(
+    retainedAfterOlderEvidence.participants[0].reproductive_capabilities_used
+      .can_carry_pregnancy,
+    true,
   );
   fixture.runtime.destroy();
 });
@@ -4614,13 +4686,13 @@ test("reroll creates a normal timeline member instead of bypassing interval", as
     content: "Floor 62 reroll",
     role: "assistant",
   });
-  fixture.emit("generation-started", {
+  await fixture.emit("generation-started", {
     genType: "regenerate",
     message_id: "timeline-62-reroll",
   });
   await settle();
-  fixture.emit("generation-ended", { message_id: "timeline-62-reroll" });
-  fixture.emit("character-message-rendered", { message_id: "timeline-62-reroll" });
+  await fixture.emit("generation-ended", { message_id: "timeline-62-reroll" });
+  await fixture.emit("character-message-rendered", { message_id: "timeline-62-reroll" });
   await new Promise(resolve => setTimeout(resolve, 120));
   assert.equal(fixture.calls(), 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 2);
@@ -5234,17 +5306,19 @@ test("one reroll lifecycle consumes later duplicate CMRs even when streaming cha
   configureScheduler(fixture, { interval: 1, retry: true });
   await fixture.runtime.init();
 
+  const firstAnalysisSuccess = waitForAnalysisSuccess(fixture, 0);
   fixture.emit("generation-started", "regenerate");
   fixture.context.chat[0].content = "重新生成中的正文";
   fixture.emit("generation-ended", 1);
   fixture.emit("character-message-rendered", 0, "regenerate");
-  await settle();
+  await firstAnalysisSuccess;
   assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 1);
 
   fixture.context.chat[0].content = "重新生成最终正文";
+  const duplicateRenderSettled = waitForLifecycleSettled(fixture);
   fixture.emit("character-message-rendered", 0, "regenerate");
-  await settle();
+  await duplicateRenderSettled;
   assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
@@ -7827,6 +7901,7 @@ test("API failure exits running and exposes the real request diagnostic", async 
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(status.busy, false);
   assert.equal(status.state, "failed");
+  assert.equal(fixture.runtime.getActivityState().busy, false);
   assert.equal(status.error_stage, "api_request");
   assert.equal(status.error_code, "REQUEST_TIMEOUT");
   assert.match(status.safe_error_summary, /超时/);
@@ -8102,6 +8177,7 @@ test("confirmed cancellation releases execution and preserves the previous succe
   const cancelled = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(cancelled.state, "cancelled");
   assert.equal(cancelled.busy, false);
+  assert.equal(fixture.runtime.getActivityState().busy, false);
   assert.equal(cancelled.error_code, "REQUEST_ABORTED");
   assert.deepEqual(
     cancelled.current_floor_events.map((event) => event.event_id),
@@ -10436,5 +10512,275 @@ test("T10 authoritative readback mismatch is explicit after the coordinator writ
   );
   const stages = fixture.runtime.getPersistenceTrace().sequence;
   assert.equal(stages.some(item => item.stage === "WORLD_PERSISTENCE_CONFIRMED"), false);
+  fixture.runtime.destroy();
+});
+
+test("participant aggregation lock remains disabled across the production Event save, edit, and delete paths", async () => {
+  const fixture = createFixture({
+    analyzer: {async analyzeFloor() { return {events: [eventResult("lock-disabled-event")]}; }},
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const saved = (await fixture.runtime.getCurrentFloorEvents())[0];
+  await fixture.runtime.updateEvent(saved.event_id, {location: "edited-while-gate-disabled"});
+  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].location, "edited-while-gate-disabled");
+  await fixture.runtime.deleteEvent(saved.event_id);
+  assert.deepEqual(await fixture.runtime.getCurrentFloorEvents(), []);
+  fixture.runtime.destroy();
+});
+
+test("Event Analysis persists confirmed pregnancy_lifecycle facts and runtime release enables a new cycle snapshot", async () => {
+  let analysisPass = 0;
+  const lifecycleEvent = eventResult("c1-life", {
+    type: "pregnancy_lifecycle",
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      confidence: 1,
+    },
+    state_fact: {
+      subject_id: "c1-life-subject",
+      payload: {status: "not_pregnant", cycle_id: "c1"},
+    },
+  });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        analysisPass += 1;
+        return {events: analysisPass === 1 ? [eventResult("c1-exposure"), lifecycleEvent] : [eventResult("c2-exposure")]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const firstFloor = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  const firstEvents = await fixture.runtime.getCurrentFloorEvents();
+  const lifecycle = firstEvents.find(event => event.type === "pregnancy_lifecycle");
+  assert.ok(lifecycle);
+  const persistedTimeline = await fixture.runtime.getPregnancyLifecycleTimeline({chatId: "chat-runtime"});
+  assert.equal(persistedTimeline.facts.some(fact => fact.fact_id === lifecycle.event_id && fact.status === "not_pregnant"), true);
+  const exposure = firstEvents.find(event => event.type === "sexual_activity");
+  const aggregation = normalizeParticipantAggregation({
+    aggregation_id: "agg-c1-runtime",
+    subject_id: lifecycle.state_fact.subject_id,
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: "c1",
+    timing_instance_id: "timing-c1-runtime",
+    reference_story_time: {day_index: 1},
+    aggregation_story_time: {day_index: 20},
+    elapsed_story_days: 19,
+    effective_min_story_days: 14,
+    effective_max_story_days: 42,
+    sampled_individual_offset_story_days: 0,
+    config_snapshot: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0},
+    accepted_exposure_event_ids: [exposure.event_id],
+    source_basis_refs: {},
+    created_at_floor_version: firstFloor.version,
+  });
+  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
+  await fixture.runtime.archiveAndReleasePregnancy({
+    ownerFloor: {message_index: firstFloor.index},
+    floorVersion: firstFloor.version,
+    fact: {fact_id: lifecycle.event_id, subject_id: lifecycle.state_fact.subject_id, pregnancy_id: null, cycle_id: "c1", status: "not_pregnant", source_event_id: lifecycle.event_id},
+    aggregation,
+    operationKey: "runtime-c1-release",
+  });
+  assert.equal((await fixture.runtime.getCurrentFloorEvents()).some(event => event.event_id === exposure.event_id), false);
+  fixture.context.chat[0].content = "C002 新周期";
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const c2Events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(c2Events.some(event => event.type === "sexual_activity"), true);
+  fixture.runtime.destroy();
+});
+
+for (const terminalStatus of ["delivery", "miscarriage", "termination"]) {
+  test(`Runtime ${terminalStatus} release deletes C001 Exposure and permits C002`, async () => {
+    let analysisPass = 0;
+    const lifecycleEvent = eventResult(`c1-${terminalStatus}`, {
+      type: "pregnancy_lifecycle",
+      pregnancy_relevance: {
+        relevant: false,
+        possible_conception: false,
+        gestational_subject_ids: [],
+        counterpart_ids: [],
+        confidence: 1,
+      },
+      state_fact: {
+        subject_id: `c1-${terminalStatus}-subject`,
+        payload: {
+          status: terminalStatus,
+          pregnancy_id: `preg-${terminalStatus}`,
+          cycle_id: "c1",
+        },
+      },
+    });
+    const fixture = createFixture({
+      analyzer: {
+        async analyzeFloor() {
+          analysisPass += 1;
+          return {events: analysisPass === 1
+            ? [eventResult(`c1-${terminalStatus}-exposure`), lifecycleEvent]
+            : [eventResult(`c2-${terminalStatus}-exposure`)]};
+        },
+      },
+    });
+    await fixture.runtime.init();
+    await fixture.runtime.refreshCurrentFloorAnalysis();
+    const firstFloor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+    const firstEvents = await fixture.runtime.getCurrentFloorEvents();
+    const exposure = firstEvents.find(event => event.type === "sexual_activity");
+    const aggregation = normalizeParticipantAggregation({
+      aggregation_id: `agg-c1-${terminalStatus}`,
+      subject_id: `c1-${terminalStatus}-subject`,
+      pregnancy_id: `preg-${terminalStatus}`,
+      mechanism_key: "fertilization",
+      cycle_id: "c1",
+      timing_instance_id: `timing-c1-${terminalStatus}`,
+      reference_story_time: {day_index: 1},
+      aggregation_story_time: {day_index: 20},
+      elapsed_story_days: 19,
+      effective_min_story_days: 14,
+      effective_max_story_days: 42,
+      sampled_individual_offset_story_days: 0,
+      config_snapshot: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0},
+      accepted_exposure_event_ids: [exposure.event_id],
+      source_basis_refs: {},
+      created_at_floor_version: firstFloor.version,
+    });
+    await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
+    await fixture.runtime.archiveAndReleasePregnancy({
+      ownerFloor: {message_index: firstFloor.index},
+      floorVersion: firstFloor.version,
+      fact: {fact_id: lifecycleEvent.event_id, subject_id: `c1-${terminalStatus}-subject`, pregnancy_id: `preg-${terminalStatus}`, cycle_id: "c1", status: terminalStatus, source_event_id: lifecycleEvent.event_id},
+      aggregation,
+      operationKey: `runtime-c1-${terminalStatus}`,
+    });
+    assert.equal((await fixture.runtime.getCurrentFloorEvents()).some(event => event.event_id === exposure.event_id), false);
+    fixture.context.chat[0].content = `C002 after ${terminalStatus}`;
+    await fixture.runtime.refreshCurrentFloorAnalysis();
+    assert.equal((await fixture.runtime.getCurrentFloorEvents()).some(event => event.event_id.startsWith("evt_")), true);
+    const timeline = await fixture.runtime.getPregnancyLifecycleTimeline({chatId: "chat-runtime"});
+    assert.equal(timeline.release_records.some(record => record.action === "cycle-lock-released" && record.cycle_id === "c1"), true);
+    fixture.runtime.destroy();
+  });
+}
+
+test("real Runtime lock capability filters new NSFW Exposure and blocks edit while delete remains allowed", async () => {
+  let analysisPass = 0;
+  const fixture = createFixture({
+    participantAggregationLockCapability: true,
+    analyzer: {
+      async analyzeFloor() {
+        analysisPass += 1;
+        return {events: [eventResult(`runtime-lock-${analysisPass}`, {location: analysisPass === 1 ? "C001" : "C001-new"})]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const firstFloor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const firstEvent = (await fixture.runtime.getCurrentFloorEvents()).find(event => event.type === "sexual_activity");
+  const subjectId = firstEvent.pregnancy_relevance.gestational_subject_ids[0];
+  const aggregation = normalizeParticipantAggregation({
+    aggregation_id: "agg-runtime-lock",
+    subject_id: subjectId,
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: "c1",
+    timing_instance_id: "timing-runtime-lock",
+    reference_story_time: {day_index: 1},
+    aggregation_story_time: {day_index: 14},
+    elapsed_story_days: 13,
+    effective_min_story_days: 14,
+    effective_max_story_days: 42,
+    sampled_individual_offset_story_days: 0,
+    config_snapshot: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0},
+    accepted_exposure_event_ids: [firstEvent.event_id],
+    source_basis_refs: {},
+    created_at_floor_version: firstFloor.version,
+  });
+  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
+  await assert.rejects(fixture.runtime.updateEvent(firstEvent.event_id, {location: "blocked-edit"}), error => error.code === "PARTICIPANT_AGGREGATION_EVENT_LOCKED");
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const afterAnalysis = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(afterAnalysis.some(event => event.location === "C001-new"), false);
+  assert.equal(afterAnalysis.some(event => event.location === "C001"), true);
+  await fixture.runtime.deleteEvent(firstEvent.event_id);
+  assert.equal((await fixture.runtime.getCurrentFloorEvents()).some(event => event.event_id === firstEvent.event_id), false);
+  const releaseFloor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  await fixture.runtime.archiveAndReleasePregnancy({
+    ownerFloor: {message_index: releaseFloor.index},
+    floorVersion: releaseFloor.version,
+    fact: {fact_id: "runtime-lock-not-pregnant", subject_id: subjectId, pregnancy_id: null, cycle_id: "c1", status: "not_pregnant", source_event_id: "runtime-lock-not-pregnant"},
+    aggregation,
+    operationKey: "runtime-lock-release",
+  });
+  fixture.context.chat[0].content = "C002 after lock release";
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal((await fixture.runtime.getCurrentFloorEvents()).some(event => event.location === "C001-new"), true);
+  fixture.runtime.destroy();
+});
+
+test("real Runtime lock capability splits multi-subject output before cycle filtering", async () => {
+  let analysisPass = 0;
+  const makeSubjectEvent = (eventId, displayName, location) => {
+    const source = eventResult(eventId, {location});
+    const participants = source.participants.map((participant, index) => ({
+      ...participant,
+      display_name: index === 0 ? displayName : `${displayName}-source`,
+      mention_id: `${displayName}-${index}`,
+    }));
+    return {
+      ...source,
+      participants,
+      pregnancy_relevance: {
+        ...source.pregnancy_relevance,
+        gestational_subject_ids: [`${displayName}-0`],
+        counterpart_ids: [`${displayName}-1`],
+      },
+    };
+  };
+  const fixture = createFixture({
+    participantAggregationLockCapability: true,
+    analyzer: {
+      async analyzeFloor() {
+        analysisPass += 1;
+        const first = makeSubjectEvent("multi-lock-m", "Alice", analysisPass === 1 ? "M-C001" : "M-new");
+        const second = makeSubjectEvent("multi-lock-n", "Carol", analysisPass === 1 ? "N-C001" : "N-new");
+        return {events: [first, second]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const firstFloor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const firstEvent = (await fixture.runtime.getCurrentFloorEvents()).find(event => event.type === "sexual_activity" && event.location === "M-C001");
+  const subjectId = firstEvent.pregnancy_relevance.gestational_subject_ids[0];
+  const aggregation = normalizeParticipantAggregation({
+    aggregation_id: "agg-runtime-multi-lock",
+    subject_id: subjectId,
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: "c1",
+    timing_instance_id: "timing-runtime-multi-lock",
+    reference_story_time: {day_index: 1},
+    aggregation_story_time: {day_index: 14},
+    elapsed_story_days: 13,
+    effective_min_story_days: 14,
+    effective_max_story_days: 42,
+    sampled_individual_offset_story_days: 0,
+    config_snapshot: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0},
+    accepted_exposure_event_ids: [firstEvent.event_id],
+    source_basis_refs: {},
+    created_at_floor_version: firstFloor.version,
+  });
+  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const events = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(events.some(event => event.location === "M-new"), false);
+  assert.equal(events.some(event => event.location === "N-new"), true);
   fixture.runtime.destroy();
 });

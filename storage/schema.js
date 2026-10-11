@@ -730,6 +730,7 @@ export function emptyFloor() {
       creations: [],
       evidence_records: [],
       lifecycle_records: [],
+      delivery_records: [],
     },
     projection_timing_timeline: {
       schema_version: 1,
@@ -741,6 +742,18 @@ export function emptyFloor() {
       schema_version: 1,
       creations: [],
       lifecycle_records: [],
+    },
+    participant_aggregation_timeline: {
+      schema_version: 1,
+      creations: [],
+      lifecycle_records: [],
+    },
+    pregnancy_lifecycle_timeline: {
+      schema_version: 1,
+      facts: [],
+      candidate_records: [],
+      archives: [],
+      release_records: [],
     },
     health_assessment_timeline: {
       schema_version: 3,

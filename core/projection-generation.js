@@ -4,6 +4,7 @@ import {
   validateProjection,
 } from './projection.js'
 import {validateProjectionRule} from './projection-eligibility.js'
+import {isParticipantAggregationEvidenceComplete} from './participant-aggregation.js'
 
 export const PROJECTION_GENERATION_STATUS = Object.freeze([
   'generated',
@@ -163,6 +164,7 @@ export function buildProjectionGenerationInput({
   generationContext = {},
 } = {}) {
   if (!decisionIsEligible(decision)) throw new TypeError('decision:not_eligible')
+  if (decision.aggregation_path === 'participant_aggregation' && (!isParticipantAggregationEvidenceComplete(decision.aggregation_evidence) || decision.aggregation_evidence.subject_id !== decision.subject_id)) throw new TypeError('decision:aggregation_evidence_invalid')
   if (decision.existing_projection_id) throw new TypeError('decision:existing_projection')
   if (!isRecord(rule) || !validateProjectionRule(rule).ok) throw new TypeError('projection_rule:invalid')
   const ruleBindingErrors = validateDecisionRuleBinding(decision, rule)
@@ -223,6 +225,8 @@ export function assembleProjectionCandidate({raw, decision, rule, generationCont
       current_story_time: contextStoryTime(generationContext),
       elapsed_story_days: generationContext.elapsed_story_days ?? null,
     },
+    aggregation_path: decision.aggregation_path ?? null,
+    aggregation_evidence: decision.aggregation_evidence ?? null,
     created_at_floor_version: floorVersion,
     evidence_refs: evidenceRefs,
     tracking_scope: decision.tracking_window_id ? 'pre_confirmation' : null,
@@ -254,7 +258,12 @@ export async function generateProjectionCandidate({
   if (!decisionIsEligible(decision)) return {status: 'skipped', reason_code: 'decision_not_eligible', projection: null}
   if (decision.existing_projection_id) return {status: 'skipped', reason_code: 'existing_projection', projection: null}
   if (typeof generateRaw !== 'function') return {status: 'failed', reason_code: 'generator_missing', projection: null}
-  const input = buildProjectionGenerationInput({decision, rule, currentState, sourceCandidates, currentStoryTime, storyContext, generationContext})
+  let input
+  try {
+    input = buildProjectionGenerationInput({decision, rule, currentState, sourceCandidates, currentStoryTime, storyContext, generationContext})
+  } catch (error) {
+    return {status: 'failed', reason_code: error?.message === 'decision:aggregation_evidence_invalid' ? 'aggregation_evidence_invalid' : 'input_invalid', errors: [error?.message ?? 'projection_input_invalid'], projection: null}
+  }
   const requestFingerprint = fingerprint({decision, rule, generation_context: generationContext, input})
   if (!(await isStillCurrent({phase: 'before_request', fingerprint: requestFingerprint}))) return {status: 'stale', reason_code: 'stale_before_request', projection: null}
   let response

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "实施前必须保留 Floor/Swipe/version owner contract，不放宽安全边界"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "如确认单一根因，实施最小 Event pipeline 修复并补回归"}

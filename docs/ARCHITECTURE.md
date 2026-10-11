@@ -76,6 +76,8 @@ flowchart TD
 | ST integration / compatibility facade | `runtime/events.js` | 顶层 bootstrap、public facade、lifecycle orchestration、source cleanup 和冻结的 persistence-policy bridge |
 | Floor Persistence Coordinator | `storage/floor-persistence-coordinator.js` | ordinary owner-scoped Floor transaction、merge、save、readback、confirmed decision |
 | Projection | `storage/projection.js`、`runtime/projection-runtime.js` | `projection_timeline` 的 Floor-owned owner workflow；Runtime post-processing 与 readback |
+| Participant aggregation | `core/participant-aggregation.js`、`storage/participant-aggregation.js` | 独立 `participant_aggregation_timeline` 的 frozen Timing 触发、Floor-owned success readback、当前 Event 快照名单派生与 Projection evidence 校验；不拥有 Timing、Tracking Window 或生命周期解锁 |
+| Pregnancy lifecycle archive/release | `core/pregnancy-lifecycle.js`、`storage/pregnancy-lifecycle.js` | 独立 `pregnancy_lifecycle_timeline` 的 confirmed lifecycle fact、父方候选/证据归档、当前 cycle 精确 Exposure 快照删除与 release readback；不改写历史 Floor、不拥有 father UI |
 | Storage primitives | `storage/store.js` | Floor/Chat storage abstraction 与 host-store compatibility |
 | Clear / special lifecycle | `storage/clear.js` | explicit clear、restore/migration 和特殊生命周期操作 |
 | AI input construction | `ai/input-builder.js` | AnalysisInput 收集、选择、清洗和规范化 |
@@ -447,6 +449,15 @@ Chat-local override，不能调用 debug facade。Timing editor 的正式 view r
 不调用 debug aggregation、Event analysis 或 Projection eligibility；打开先显示
 popup shell，再异步填充 read projection。v1 state modifier 固定为 0；没有明确
 有效 config 时 timing integration 保持 disabled，不改变既有 Projection 行为。
+
+### Feature Delivery Completeness
+
+新增或修改功能、Runtime 入口、持久化 owner、数据接口或既有行为时，完成
+审查必须同时覆盖：用户设置适用性、现有 Debug DTO/界面、诊断与安全状态
+展示、Schema/兼容性、Runtime 接口、架构/使用文档和测试。某项不适用时，
+在 task 验收中说明原因。该要求不意味着为内部机制新增设置开关或第二套
+状态源；优先复用现有 Settings、`collectActiveBusinessData({includeDebug})`
+和 Persistence Trace。
 
 - 普通产品修复优先限于对应 feature owner。
 - 不为产品行为问题修改 Coordinator、Adapter raw transport、Generation settle 或 Floor Version policy。

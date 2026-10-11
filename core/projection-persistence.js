@@ -1,13 +1,16 @@
 import {
   PROJECTION_LIFECYCLE_ACTIONS,
   createProjectionEvidenceRecord,
+  createProjectionDeliveryRecord,
   createProjectionLifecycleRecord,
   dedupeProjectionEvidenceRecords,
+  dedupeProjectionDeliveryRecords,
   dedupeProjectionLifecycleRecords,
   dedupeProjections,
   resolveProjectionView,
   validateProjection,
   validateProjectionEvidenceRecord,
+  validateProjectionDeliveryRecord,
   validateProjectionLifecycleRecord,
 } from './projection.js'
 
@@ -23,7 +26,7 @@ function clone(value) {
 function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value) }
 
 export function emptyProjectionTimeline() {
-  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: []}
+  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: []}
 }
 
 function timelineSource(value) {
@@ -38,6 +41,7 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
   for (const projection of projections.projections) allKnownProjectionIds.add(projection.projection_id)
   const evidence = dedupeProjectionEvidenceRecords(source.evidence_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const lifecycle = dedupeProjectionLifecycleRecords(source.lifecycle_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
+  const delivery = dedupeProjectionDeliveryRecords(source.delivery_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const projectionErrors = projections.rejected.flatMap(item => item.errors)
   if (expectedChatId !== null) {
     for (const projection of projections.projections) {
@@ -51,9 +55,10 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
       creations: projections.projections,
       evidence_records: evidence.records,
       lifecycle_records: lifecycle.records,
+      delivery_records: delivery.records,
     },
-    conflicts: [...projections.conflicts, ...evidence.conflicts, ...lifecycle.conflicts],
-    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected],
+    conflicts: [...projections.conflicts, ...evidence.conflicts, ...lifecycle.conflicts, ...delivery.conflicts],
+    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected, ...delivery.rejected],
   }
 }
 
@@ -94,6 +99,12 @@ export function appendProjectionLifecycle(value, {timeline = emptyProjectionTime
   return appendRecord(current, 'lifecycle_records', value, item => validateProjectionLifecycleRecord(item, {knownProjectionIds: knownIds, expectedChatId}), createProjectionLifecycleRecord, 'lifecycle_id', 'lifecycle_id_conflict')
 }
 
+export function appendProjectionDelivery(value, {timeline = emptyProjectionTimeline(), expectedChatId = null, knownProjectionIds = null} = {}) {
+  const current = normalizeProjectionTimeline(timeline, {expectedChatId, knownProjectionIds}).timeline
+  const knownIds = new Set(knownProjectionIds ?? current.creations.map(item => item.projection_id))
+  return appendRecord(current, 'delivery_records', value, item => validateProjectionDeliveryRecord(item, {knownProjectionIds: knownIds, expectedChatId}), createProjectionDeliveryRecord, 'delivery_record_id', 'delivery_record_conflict')
+}
+
 export function evolutionDecisionToLifecycleRecord({projectionId, decision, floorVersion, evidenceRefs = []} = {}) {
   if (!['realized', 'contradicted', 'expired'].includes(decision)) return null
   if (!projectionId) throw new TypeError('projection_id:required')
@@ -109,6 +120,7 @@ export function resolveProjectionTimeline(timelineEntries = []) {
       projections: clone(entry.creations ?? entry.projections ?? []),
       evidence_records: clone(entry.evidence_records ?? []),
       lifecycle_records: clone(entry.lifecycle_records ?? []),
+      delivery_records: clone(entry.delivery_records ?? []),
     }))
     .sort((left, right) => Number(left.floor_version?.floor) - Number(right.floor_version?.floor) || String(left.floor_version?.message_id).localeCompare(String(right.floor_version?.message_id)))
   return resolveProjectionView({timeline: entries})

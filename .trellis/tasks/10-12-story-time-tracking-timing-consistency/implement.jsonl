@@ -1,0 +1,6 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe/version ownership and historical immutability constraints for Tracking, Timing, and Debug persistence."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Canonical Tracking Window, compatible Exposure grouping, timing separation, aggregation, and lifecycle contract."}
+{"file":"docs/ARCHITECTURE.md","reason":"Feature ownership and existing Projection/Tracking/Diagnostics boundaries."}
+{"file":".trellis/tasks/10-08-story-time-first-projection-window/prd.md","reason":"Existing Story Time-driven Projection/Timing requirements and acceptance contract."}
+{"file":".trellis/tasks/10-01-pre-confirmation-projection-timing-audit/decision.md","reason":"Approved Timing Instance ownership, frozen timing parameters, and projection-rule boundary."}

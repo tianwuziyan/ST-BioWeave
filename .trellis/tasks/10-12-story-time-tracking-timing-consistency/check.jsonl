@@ -1,0 +1,9 @@
+
+{"file":".trellis/spec/domain/floor-state.md","reason":"Quality check must verify owner/version/Swipe guards and no historical Floor mutation."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Quality check must verify subject-local Window cycles, source IDs, and aggregation lifecycle."}
+{"file":"docs/ARCHITECTURE.md","reason":"Quality check must verify changes stay within existing feature owners and Debug boundary."}
+{"file":".trellis/tasks/10-08-story-time-first-projection-window/implement.md","reason":"Quality check must verify effective min/max, Story Time-only behavior, and no synthetic Event/Rule."}
+{"verification":"focused-regression","result":"passed","details":"Story Time, Tracking Window, Projection Timing, Projection Runtime, Participant Aggregation, and Settings Debug targeted tests pass; custom era vs missing calendar_id remains incomparable."}
+{"verification":"full-check","result":"incomplete","details":"npm run check: 1433 total, 1402 passed, 15 failed, 16 skipped; do not mark full worktree acceptance as passed."}
+{"verification":"regression-attribution","result":"one-fixed","details":"One confirmed Story Time Gregorian calendar-id regression was fixed; remaining 15 failures are tracked independently under 10-12-event-analysis-check-failures."}
+{"verification":"host-acceptance","result":"not-run","details":"Real SillyTavern Host acceptance was intentionally deferred."}

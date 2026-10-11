@@ -70,6 +70,18 @@ test('existing Projection identity skips duplicate creation', async () => {
   assert.equal(result.reason_code, 'existing_projection')
   assert.equal(called, false)
 })
+test('new aggregation path rejects missing evidence before AI generation', async () => {
+  let called = false
+  const result = await generateProjectionCandidate({
+    decision: decision({aggregation_path: 'participant_aggregation', aggregation_evidence: null}),
+    rule: decision()._rule,
+    generationContext: context(),
+    generateRaw: () => { called = true; return raw() },
+  })
+  assert.equal(result.status, 'failed')
+  assert.equal(result.reason_code, 'aggregation_evidence_invalid')
+  assert.equal(called, false)
+})
 
 test('kind is bound to Eligibility and cannot be corrected', () => {
   const result = validateProjectionGenerationBinding({development: {kind: 'possible_detection', description: '未来可能出现检测信号。'}}, {decision: decision()})

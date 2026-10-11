@@ -26,6 +26,7 @@ const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last 
 const FINAL_RESPONSIVE_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Final responsive correction:'))
 const APP_SOURCE = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
 const RUNTIME_EVENTS_SOURCE = fs.readFileSync(new URL('../runtime/events.js', import.meta.url), 'utf8')
+const SETTINGS_SOURCE = fs.readFileSync(new URL('../ui/settings.js', import.meta.url), 'utf8')
 const WORLD_SOURCE = fs.readFileSync(new URL('../ui/world.js', import.meta.url), 'utf8')
 const HOST_ENTRY_SOURCE = fs.readFileSync(new URL('../host-entry.js', import.meta.url), 'utf8')
 const UI_SOURCE = [
@@ -160,6 +161,16 @@ test('Character timing open renders before async data and avoids debug aggregati
   assert.doesNotMatch(openSource, /await\s+runtime\.getCharacterTimingEditorData/u)
   assert.doesNotMatch(editorSource, /getProjectionTimingDebug/u)
   assert.match(editorSource, /Promise\.all\(\[/u)
+})
+
+test('business debug renders existing Projection Timing diagnostics in lifecycle runtime', () => {
+  const renderStart = SETTINGS_SOURCE.indexOf('function renderLifecycleRuntimeDebug(')
+  const renderEnd = SETTINGS_SOURCE.indexOf('\nfunction renderBusinessDebugState(', renderStart)
+  const source = SETTINGS_SOURCE.slice(renderStart, renderEnd)
+  assert.match(source, /projection_timing/u)
+  assert.match(source, /effective_min/u)
+  assert.match(source, /aggregation 未执行原因/u)
+  assert.doesNotMatch(source, /getProjectionTimingDebug/u)
 })
 
 test('Nickname editor uses the compact shell-first popup path', () => {

@@ -41,6 +41,18 @@ test('explicit incompatibility and unmet trigger are not eligible', () => {
   assert.equal(evaluate({currentStoryTime: story(2)}).decisions[0].eligibility, 'not_eligible');
   assert.equal(evaluate({currentState: state(false)}).decisions[0].eligibility, 'not_eligible');
 });
+test('aggregation path fails closed with a stable reason when evidence cannot be built', () => {
+  const result = evaluate({
+    preConfirmationTiming: {
+      enabled: false,
+      instances: [{subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-1', timing_instance_id: 'timing-1', source_event_ids: ['e1']}],
+      aggregations: [{aggregation_id: 'aggregation-1', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-1', accepted_exposure_event_ids: []}],
+    },
+  });
+  assert.equal(result.decisions[0].eligibility, 'not_eligible');
+  assert.equal(result.decisions[0].reason_code, 'participant_aggregation_evidence_invalid');
+  assert.equal(result.decisions[0].aggregation_path, 'participant_aggregation');
+});
 test('missing World Model rule is unresolved at the rule layer and does not create facts', () => {
   const events = [exposure('e1', 0)]; const before = structuredClone(events); const result = evaluateProjectionEligibility({currentState: state(), events, worldModel: {}, currentStoryTime: story(10)});
   assert.deepEqual(result.decisions, []);

@@ -209,6 +209,69 @@ test('failed, cancelled, and disabled terminals release their execution identity
   activity.destroy();
 });
 
+test('terminal analysis status releases activity when Floor Version field order changes', () => {
+  const activity = createRuntimeActivity();
+  const startedVersion = {
+    chat_id: 'chat-order', message_id: 'message-order', floor: 4,
+    swipe_id: 0, content_hash: 'hash-order', message_version: 'v1:hash-order',
+  };
+  const terminalVersion = {
+    message_version: 'v1:hash-order', content_hash: 'hash-order', swipe_id: 0,
+    floor: 4, message_id: 'message-order', chat_id: 'chat-order',
+  };
+  activity.handleRuntimeEvent({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-order',
+    payload: {state: 'running', attempt: 1, floor_version: startedVersion},
+  });
+  assert.equal(activity.handleRuntimeEvent({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-order',
+    payload: {
+      state: 'failed', attempt: 1, floor_version: terminalVersion,
+      error_code: 'REQUEST_TIMEOUT',
+    },
+  }), true);
+  assert.equal(activity.getActivityState().busy, false);
+  activity.destroy();
+});
+
+test('stale terminal analysis status does not clear a newer execution or its launcher spinner', () => {
+  const activity = createRuntimeActivity();
+  const documentRef = createLauncherDocument();
+  let listener = null;
+  const handle = registerFloatingLauncher({
+    openBioWeave() {},
+    documentRef,
+    getActivityState: activity.getActivityState,
+    subscribeActivity: callback => {
+      listener = activity.subscribe(callback);
+      return () => listener?.();
+    },
+  });
+  const version = {
+    chat_id: 'chat-retry', message_id: 'message-retry', floor: 5,
+    swipe_id: 0, content_hash: 'hash-retry', message_version: 'v1:hash-retry',
+  };
+  const send = (state, attempt) => activity.handleRuntimeEvent({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    chatId: 'chat-retry',
+    payload: {state, attempt, floor_version: version},
+  });
+  send('running', 1);
+  send('running', 2);
+  const node = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  assert.match(node.className, /is-running/);
+  send('failed', 1);
+  assert.equal(activity.getActivityState().busy, true);
+  assert.match(node.className, /is-running/);
+  send('failed', 2);
+  assert.equal(activity.getActivityState().busy, false);
+  assert.doesNotMatch(node.className, /is-running/);
+  handle.destroy();
+  activity.destroy();
+});
+
 test('Floating Launcher opens only on click or keyboard activation', () => {
   const documentRef = createLauncherDocument();
   let opens = 0;

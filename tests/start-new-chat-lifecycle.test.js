@@ -424,9 +424,10 @@ test("the Start New Chat transition is one-shot and duplicate creation events do
   const sourceBefore = cloneValue(fixture.owners["chat-a"]);
 
   fixture.setCurrent("chat-b");
+  const lifecycleSettled = waitForLifecycleSettled(fixture, "CHAT_CREATED");
   fixture.emit("chat-changed", "chat-b");
   fixture.emit("chat-created", "chat-b");
-  await settleLifecycle();
+  await lifecycleSettled;
   fixture.emit("chat-created", "chat-b");
   await settleLifecycle();
 
@@ -533,9 +534,10 @@ test("a pending source-A analysis cannot revive A after Start New Chat cleanup",
 
   const pending = fixture.runtime.refreshCurrentFloorAnalysis().catch(() => null);
   fixture.setCurrent("chat-b");
+  const lifecycleSettled = waitForLifecycleSettled(fixture, "CHAT_CREATED");
   fixture.emit("chat-changed", "chat-b");
   fixture.emit("chat-created", "chat-b");
-  await settleLifecycle();
+  await lifecycleSettled;
   resolveAnalysis({ events: [] });
   await pending;
   await settleLifecycle();
@@ -557,11 +559,11 @@ test("a confirmed source-A persistence failure is surfaced without touching Chat
   const sourceBefore = cloneValue(fixture.owners["chat-a"]);
 
   fixture.setCurrent("chat-b");
+  const lifecycleSettled = waitForLifecycleSettled(fixture, "CHAT_CREATED");
   fixture.emit("chat-changed", "chat-b");
-  await settleLifecycle();
   const bBefore = cloneValue(fixture.owners["chat-b"]);
   fixture.emit("chat-created", "chat-b");
-  await settleLifecycle();
+  await lifecycleSettled;
 
   assert.deepEqual(fixture.owners["chat-a"], sourceBefore);
   assert.deepEqual(fixture.owners["chat-b"], bBefore);

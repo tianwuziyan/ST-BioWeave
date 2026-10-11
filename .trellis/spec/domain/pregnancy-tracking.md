@@ -20,6 +20,14 @@ Pre-confirmation Projection Timing remains separate from this Window. Its
 same subject + same explicit mechanism may attach additional valid Event refs,
 but it must not be treated as the Window owner or as Window expiration.
 
+When a valid Timing Instance reaches its frozen effective minimum, the current
+aggregation strategy may record one independent participant-aggregation
+success. A Story Time value beyond the frozen effective maximum is an overdue
+aggregation opportunity, not a reason to skip the aggregation. The aggregation
+record remains separate from Projection AI success; its participant list is
+re-derived from the accepted Exposure IDs and the current complete valid Floor
+Event snapshot after Event deletion or other permitted changes.
+
 When Story Time advances, Runtime re-evaluates active pre-confirmation Timing
 instances even if no new factual Event was discovered. The deterministic
 `before_min` to `window_open` result is derived from the current Timing Instance
@@ -188,11 +196,14 @@ The audited Story Time API already provides reusable deterministic primitives:
 - `differenceStoryTime(left, right)`;
 - `createStoryTime().diff()` / `getDateDifference()`.
 
-These return `null` when structured day indexes or calendar domains are not
-reliably comparable, including unknown or different eras. A future Window
-implementation must fail closed in that case: no system-clock fallback, no AI
-common-sense fallback, and no interpretation of “a long time” as elapsed Story
-Time.
+These return `null` when structured day indexes and the existing calendar
+arithmetic cannot establish a shared time domain, including unknown or
+different eras. For an era-standard display date, the existing Chinese-date
+parser may recover the date arithmetic even when the persisted `day_index` is
+empty; this does not authorize guessing across eras or unknown calendars. A
+future Window implementation must fail closed in the unresolved case: no
+system-clock fallback, no AI common-sense fallback, and no interpretation of
+“a long time” as elapsed Story Time.
 
 ## 6. Floor, Swipe, and Version authority
 
@@ -364,3 +375,57 @@ Correct: only valid pregnancy-relevant exposure plus resolved Tracking
 eligibility and an open Window produces pre-confirmation `tracking_subjects`;
 UI consumes that Runtime DTO. Active factual Pregnancy State remains a
 separate Characters read-model compatibility source.
+
+## 13. Lifecycle runtime observability contract
+
+### 13.1 Scope / trigger
+
+Changes to participant aggregation, Projection delivery, pregnancy lifecycle
+archive/release, or cycle-scoped NSFW capability must review the existing
+read-only Runtime debug path. It is observability only, not a second state
+owner.
+
+### 13.2 Signature
+
+`runtime.collectActiveBusinessData({includeDebug: true})` returns the normal
+business DTO plus `debug.lifecycle_runtime`, built from the active
+Chat/Floor/Swipe and existing persistence readbacks.
+
+### 13.3 Contract
+
+`lifecycle_runtime` contains the target six-field `floor_version`,
+`participant_aggregation.aggregations[]`, `projection_delivery.records[]`,
+`pregnancy_lifecycle.facts/archives/candidate_records/release_records`, and
+`nsfw_lock`. Aggregations expose identity, accepted Exposure counts/IDs, Story
+Time and frozen min/max. Delivery records expose submission/response versions
+and analysis status. Candidate records expose counts, not narrative payloads.
+
+### 13.4 Validation and error matrix
+
+- missing or stale current Floor → `status: unavailable`, safe reason only;
+- failed readback → `status: unavailable`, never a successful lifecycle state;
+- production capability disabled → gate remains
+  `disabled_until_lifecycle_archive_release`;
+- isolated capability enabled → locks derive from current aggregation and
+  release timelines, never from subject ID alone.
+
+### 13.5 Good / base / bad cases
+
+- Good: C001 aggregation, delivery response, archive and release records show
+  the same cycle identity.
+- Base: empty timelines render zero counts and safe unknown values.
+- Bad: debug code reconstructs candidates from deleted Exposure Events or reads
+  a future Swipe/Floor.
+
+### 13.6 Required tests
+
+Assert read-only debug collection, active Swipe/Floor provenance, default gate
+status, missing-data safety, C001 release/C002 isolation, delivery response
+status, and existing stale/readback/concurrency lifecycle tests.
+
+### 13.7 Wrong vs correct
+
+Wrong: add a user setting or Chat-level mirror for each internal lock state.
+
+Correct: reuse current Timing settings where configuration is needed and expose
+bounded lock/delivery/lifecycle status through the existing debug DTO.

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verification of Floor/Swipe isolation, provenance and current valid Floor reconstruction."}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Verification of separate Timing, Window, aggregation and Projection lifecycles."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verification of feature owners and allowed runtime/storage seams."}

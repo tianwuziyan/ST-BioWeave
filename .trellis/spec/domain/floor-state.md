@@ -234,6 +234,26 @@ immutability rules. It is a derived lifecycle record, not a BiologicalEvent or
 Current State fact; active Tracking rebuilds still validate the surviving Event
 basis before using an open Window.
 
+`participant_aggregation_timeline` is another independent sibling root. It is
+owned by the exact Character Floor and active Swipe that records a successful
+participant aggregation, carries the complete six-field Floor Version, and is
+written/read through the Floor Persistence Coordinator. It is not a Timing
+Instance, Tracking Window, Projection, or Chat-level cache. Its accepted
+Exposure IDs are only a boundary for re-deriving the current participant list
+from the current complete valid Event snapshot; later Floor owners never merge
+Exposure facts across Floors.
+
+`pregnancy_lifecycle_timeline` is an independent sibling root owned by the
+exact Character Floor and active Swipe. It stores normalized confirmed
+lifecycle facts, independent father candidate records, immutable archive
+snapshots, and cycle-scoped release records. A terminal release may submit a
+complete replacement of the current Floor `events[]` through the Floor
+Persistence Coordinator, removing only accepted Exposure Event IDs for the
+target cycle. The resulting `events: []` is authoritative and must not inherit
+Events from an older Floor, Chat cache, or registry; historical Floors remain
+unchanged. Candidate records needed after Exposure deletion are read from this
+root and are never rebuilt from deleted Events.
+
 ## 5. Derived State
 
 Current valid Floor facts are the only input for materialized runtime state:

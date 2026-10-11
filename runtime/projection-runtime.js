@@ -1,6 +1,7 @@
 import {evaluateProjectionEligibility, evaluateProjectionEvolution, normalizeProjectionRules} from "../core/projection-eligibility.js";
 import {generateProjectionCandidate} from "../core/projection-generation.js";
 import {hashText} from "./floor.js";
+import {differenceStoryTime} from "../story/time.js";
 
 function clone(value) {
   if (value === undefined || value === null || typeof value !== "object") return value;
@@ -17,6 +18,41 @@ function stable(value) {
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function sameIdentity(left, right) {
+  return left?.subject_id === right?.subject_id
+    && (left?.pregnancy_id ?? null) === (right?.pregnancy_id ?? null)
+    && left?.cycle_id === right?.cycle_id;
+}
+
+function sameFloorOwner(left, right) {
+  return Boolean(left && right) && ['chat_id', 'message_id', 'floor', 'swipe_id']
+    .every(field => String(left[field] ?? '') === String(right[field] ?? ''));
+}
+
+function lifecycleFactsFor(events, identity) {
+  return (Array.isArray(events) ? events : []).filter(event => {
+    if (event?.status !== 'confirmed') return false;
+    const payload = event?.state_fact?.payload ?? {};
+    const subjectId = event?.state_fact?.subject_id ?? event?.pregnancy_relevance?.gestational_subject_ids?.[0] ?? null;
+    const cycleId = payload.cycle_id ?? null;
+    const pregnancyId = payload.status === 'not_pregnant' ? null : payload.pregnancy_id ?? null;
+    return subjectId === identity.subject_id && cycleId === identity.cycle_id
+      && (pregnancyId === (identity.pregnancy_id ?? null) || payload.status === 'not_pregnant')
+      && (event?.type === 'pregnancy_lifecycle' || ['pregnancy_confirmation', 'pregnancy_loss', 'abortion', 'delivery'].includes(event?.type));
+  });
+}
+
+function deliveryIsBeforeResponse(delivery, target, execution) {
+  if (!delivery || !target?.version) return false;
+  if (Number(delivery.owner_index) < Number(target.index)) return true;
+  if (Number(delivery.owner_index) !== Number(target.index)) return false;
+  const submitted = delivery.submitted_floor_version;
+  if (submitted?.chat_id !== target.version.chat_id || submitted?.message_id !== target.version.message_id || Number(submitted?.swipe_id) !== Number(target.version.swipe_id)) return false;
+  if (submitted.content_hash === target.version.content_hash && submitted.message_version === target.version.message_version) return false;
+  const generationId = execution?.generation_id ?? null;
+  return Boolean(generationId && delivery.generation_id && String(generationId) === String(delivery.generation_id));
 }
 
 function floorOwner(floor) {
@@ -144,6 +180,9 @@ export function createProjectionRuntime({
   saveEvolutionDecision,
   resolvePreConfirmationTiming = null,
   refreshProjectionContext = null,
+  saveProjectionDeliveryResponse = null,
+  getProjectionDeliveryRecords = null,
+  archiveAndReleasePregnancy = null,
   notify = () => {},
   activity = null,
 } = {}) {
@@ -212,6 +251,83 @@ export function createProjectionRuntime({
         domain: "projection_generation",
       },
     );
+  }
+
+  async function recordCompletedResponse({target, execution} = {}) {
+    if (typeof getProjectionDeliveryRecords !== 'function' || typeof saveProjectionDeliveryResponse !== 'function') return {status: 'unsupported', observed: 0};
+    const inputs = await collectInputs();
+    const deliveries = await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor});
+    const existingResponseIds = new Set(deliveries.filter(item => item.response_id).map(item => item.response_id));
+    let observed = 0;
+    for (const delivery of deliveries.filter(item => item.status === 'readback_verified' && !item.response_id)) {
+      if (!deliveryIsBeforeResponse(delivery, target, execution)) continue;
+      const responseId = `projection_response_${await hashText(JSON.stringify({delivery_id: delivery.delivery_id, response_floor_version: target.version}))}`;
+      if (existingResponseIds.has(responseId)) continue;
+      const identity = {subject_id: delivery.subject_id, pregnancy_id: delivery.pregnancy_id ?? null, cycle_id: delivery.cycle_id};
+      const explicitFacts = lifecycleFactsFor(inputs.events, identity).map(event => event.event_id).filter(Boolean).sort();
+      await saveProjectionDeliveryResponse({
+        chatId: target.version.chat_id,
+        ownerFloor: floorOwner(target),
+        floorVersion: target.version,
+        deliveryRecord: {
+          delivery_id: delivery.delivery_id,
+          projection_id: delivery.projection_id,
+          aggregation_id: delivery.aggregation_id,
+          subject_id: delivery.subject_id,
+          pregnancy_id: delivery.pregnancy_id ?? null,
+          cycle_id: delivery.cycle_id,
+          submitted_floor_version: delivery.submitted_floor_version,
+          created_at_floor_version: target.version,
+          context_fingerprint: delivery.context_fingerprint,
+          response_id: responseId,
+          response_floor_version: target.version,
+          generation_id: execution?.generation_id ?? null,
+          generation_intent_id: execution?.generation?.intent_id ?? null,
+          analysis_execution_id: execution?.analysis_execution_id ?? `analysis:${target.version.message_id}:${target.version.message_version}`,
+          analysis_status: 'success',
+          explicit_lifecycle_fact_ids: explicitFacts,
+        },
+      });
+      observed += 1;
+    }
+    return {status: 'observed', observed};
+  }
+
+  async function evaluateTimeoutNoPregnancy(target) {
+    if (typeof getProjectionDeliveryRecords !== 'function' || typeof archiveAndReleasePregnancy !== 'function') return {status: 'unsupported', closed: 0};
+    const inputs = await collectInputs();
+    const deliveries = await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor});
+    const lifecycle = inputs.pregnancyLifecycleTimeline ?? {release_records: []};
+    const released = new Set((lifecycle.release_records ?? []).filter(record => record.action === 'cycle-lock-released').map(record => `${record.subject_id}:${record.pregnancy_id ?? 'none'}:${record.cycle_id}`));
+    let closed = 0;
+    for (const delivery of deliveries.filter(item => item.status === 'response_observed' && item.response_id && item.analysis_status === 'success')) {
+      const identity = {subject_id: delivery.subject_id, pregnancy_id: delivery.pregnancy_id ?? null, cycle_id: delivery.cycle_id};
+      const lockKey = `${identity.subject_id}:${identity.pregnancy_id ?? 'none'}:${identity.cycle_id}`;
+      if (released.has(lockKey) || lifecycleFactsFor(inputs.events, identity).length) continue;
+      const aggregation = (inputs.participantAggregations ?? []).find(item => item.aggregation_id === delivery.aggregation_id && sameIdentity(item, identity) && item.status === 'succeeded');
+      if (!aggregation) continue;
+      const elapsed = differenceStoryTime(inputs.currentStoryTime, aggregation.reference_story_time);
+      if (!elapsed || elapsed.unit !== 'day' || Number(elapsed.value) <= Number(aggregation.effective_max_story_days)) continue;
+      await archiveAndReleasePregnancy({
+        ownerFloor: floorOwner(target),
+        floorVersion: target.version,
+        aggregation,
+        closureReason: 'timeout_no_pregnancy',
+        operationKey: `timeout-no-pregnancy:${delivery.delivery_id}`,
+      });
+      closed += 1;
+    }
+    return {status: 'evaluated', closed};
+  }
+
+  async function handleAnalysisSuccess({target, execution} = {}) {
+    let current = null;
+    try { current = await resolveCurrentFloor?.(); } catch { current = null; }
+    if (!sameFloorOwner(current?.version, target?.version)) return {status: 'stale', response: null, timeout: null, projection: null};
+    const response = await recordCompletedResponse({target, execution});
+    const timeout = await evaluateTimeoutNoPregnancy(target);
+    const projection = await process({reason: 'factual-success', target});
+    return {response, timeout, projection};
   }
 
   async function runExecution(inputs, identity, reason, trigger) {
@@ -493,6 +609,9 @@ export function createProjectionRuntime({
     refreshProjection: () => process({reason: "projection-refresh"}),
     getBusinessData,
     deleteProjection,
+    recordCompletedResponse,
+    evaluateTimeoutNoPregnancy,
+    handleAnalysisSuccess,
     destroy,
   };
 }

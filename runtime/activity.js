@@ -12,6 +12,20 @@ function safeError(error) {
   return text || 'BIOWEAVE_ACTIVITY_FAILED';
 }
 
+function floorVersionKey(value) {
+  if (!value || typeof value !== 'object') return null;
+  const fields = [
+    value.chat_id ?? value.chatId ?? null,
+    value.message_id ?? value.messageId ?? null,
+    value.floor ?? null,
+    value.swipe_id ?? value.swipeId ?? null,
+    value.content_hash ?? value.contentHash ?? null,
+    value.message_version ?? value.messageVersion ?? null,
+  ];
+  if (fields.some(value => value === null || value === undefined)) return null;
+  return fields.map(value => JSON.stringify(value)).join('|');
+}
+
 export function createRuntimeActivity() {
   const activeTasks = new Map();
   let anonymousSequence = 0;
@@ -44,7 +58,7 @@ export function createRuntimeActivity() {
     const floor = identity.floor_version ?? identity.floorVersion ?? null;
     const fields = {
       chat_id: identity.chat_id ?? identity.chatId ?? null,
-      floor_version: floor,
+      floor_version: floorVersionKey(floor),
       attempt: identity.attempt ?? null,
       domain: identity.domain ?? 'event_analysis',
     };

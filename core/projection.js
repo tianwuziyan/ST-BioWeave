@@ -4,6 +4,7 @@ export const PROJECTION_SCHEMA_VERSION = 1;
 export const PROJECTION_TRIGGER_SCHEMA_VERSION = 1;
 export const PROJECTION_LIFECYCLE_SCHEMA_VERSION = 1;
 export const PROJECTION_EVIDENCE_SCHEMA_VERSION = 1;
+export const PROJECTION_DELIVERY_SCHEMA_VERSION = 1;
 export const PROJECTION_DEVELOPMENT_KINDS = Object.freeze([
   'possible_biological_change', 'possible_detection', 'mechanism_progression',
   'no_obvious_change', 'monitoring_signal',
@@ -15,15 +16,16 @@ export const PROJECTION_FACTUAL_ACTIONS = Object.freeze(['realized', 'contradict
 export const PROJECTION_LIFECYCLE_ACTIONS = Object.freeze([...PROJECTION_FACTUAL_ACTIONS, 'deleted']);
 
 const FLOOR_VERSION_FIELDS = Object.freeze(['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']);
-const PROJECTION_FIELDS = new Set(['schema_version', 'projection_id', 'owner_type', 'subject_id', 'projection_rule_id', 'development_concern_key', 'mechanism', 'source_event_ids', 'development', 'timing', 'created_at_floor_version', 'evidence_refs', 'tracking_scope', 'tracking_window_id']);
+const PROJECTION_FIELDS = new Set(['schema_version', 'projection_id', 'owner_type', 'subject_id', 'projection_rule_id', 'development_concern_key', 'mechanism', 'source_event_ids', 'development', 'timing', 'created_at_floor_version', 'evidence_refs', 'tracking_scope', 'tracking_window_id', 'aggregation_path', 'aggregation_evidence']);
 const MECHANISM_FIELDS = new Set(['key', 'world_model_rule_refs']);
 const BASIS_FIELDS = new Set(['event_ids', 'state_refs', 'mechanism_rule_refs']);
 const DEVELOPMENT_FIELDS = new Set(['kind', 'current_basis', 'next_signal']);
 const TIMING_FIELDS = new Set(['trigger_kind', 'reference_event_id', 'reference_story_time', 'current_story_time', 'elapsed_story_days']);
 const LIFECYCLE_FIELDS = new Set(['schema_version', 'lifecycle_id', 'projection_id', 'owner_type', 'record_kind', 'action', 'created_at_floor_version', 'evidence_refs']);
 const EVIDENCE_FIELDS = new Set(['schema_version', 'evidence_record_id', 'projection_id', 'owner_type', 'source_event_ids', 'created_at_floor_version', 'evidence_refs']);
+const DELIVERY_FIELDS = new Set(['schema_version', 'delivery_record_id', 'delivery_id', 'projection_id', 'aggregation_id', 'subject_id', 'pregnancy_id', 'cycle_id', 'submitted_floor_version', 'created_at_floor_version', 'context_fingerprint', 'status', 'response_id', 'response_floor_version', 'generation_id', 'generation_intent_id', 'analysis_execution_id', 'analysis_status', 'explicit_lifecycle_fact_ids']);
 const TRIGGER_FIELDS = new Set(['schema_version', 'kind', 'source_event_type', 'reference_event_id', 'min_elapsed_story_days', 'target_story_time', 'development_kind']);
-const FORBIDDEN_KEYS = new Set(['prompt', 'raw_prompt', 'raw_response', 'raw_ai_response', 'snapshot', 'current_state', 'probability', 'random', 'random_result', 'seed', 'ui', 'formatted_ui', 'pregnancy_id', 'conception_id', 'outcome']);
+const FORBIDDEN_KEYS = new Set(['prompt', 'raw_prompt', 'raw_response', 'raw_ai_response', 'snapshot', 'current_state', 'probability', 'random', 'random_result', 'seed', 'ui', 'formatted_ui', 'conception_id', 'outcome']);
 const UINT64_MASK = (1n << 64n) - 1n;
 
 function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
@@ -68,6 +70,19 @@ function validateStoryTime(value, path, errors) {
   if (value.calendar_id !== undefined && value.calendar_id !== null && !nonEmptyText(value.calendar_id)) errors.push(`${path}.calendar_id:invalid`);
 }
 function validateEvidenceRefs(value, path, errors, required = false) { if (!uniqueTextArray(value, required)) errors.push(`${path}:invalid_refs`); }
+function validateAggregationEvidence(value, path, errors) {
+  if (value === null || value === undefined) return;
+  if (!isRecord(value)) { errors.push(`${path}:invalid`); return; }
+  const allowed = new Set(['subject_id', 'aggregation_id', 'pregnancy_id', 'cycle_id', 'accepted_exposure_event_ids', 'participant_exposure_mapping']);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) errors.push(`${path}.${key}:unexpected_field`);
+  if (!nonEmptyText(value.subject_id) || !nonEmptyText(value.aggregation_id) || !nonEmptyText(value.cycle_id)) errors.push(`${path}:identity_required`);
+  if (value.pregnancy_id !== null && value.pregnancy_id !== undefined && !nonEmptyText(value.pregnancy_id)) errors.push(`${path}.pregnancy_id:invalid`);
+  if (!uniqueTextArray(value.accepted_exposure_event_ids, true)) errors.push(`${path}.accepted_exposure_event_ids:invalid`);
+  if (!Array.isArray(value.participant_exposure_mapping)) errors.push(`${path}.participant_exposure_mapping:invalid`);
+  else for (const item of value.participant_exposure_mapping) {
+    if (!isRecord(item) || !nonEmptyText(item.participant_id) || !uniqueTextArray(item.exposure_event_ids, true)) errors.push(`${path}.participant_exposure_mapping:item_invalid`);
+  }
+}
 function validateBasis(value, path, errors) {
   if (!isRecord(value)) { errors.push(`${path}:invalid`); return; }
   collectUnexpected(errors, value, BASIS_FIELDS, path);
@@ -103,6 +118,10 @@ function lifecycleIdentityMaterial(value) { return {schema_version: PROJECTION_L
 export function buildLifecycleId(value) { return `projection_lifecycle_${deterministicDigest(lifecycleIdentityMaterial(value))}`; }
 function evidenceIdentityMaterial(value) { return {schema_version: PROJECTION_EVIDENCE_SCHEMA_VERSION, projection_id: value.projection_id, source_event_ids: [...value.source_event_ids].sort(), created_at_floor_version: value.created_at_floor_version, evidence_refs: [...value.evidence_refs].sort()}; }
 export function buildProjectionEvidenceRecordId(value) { return `projection_evidence_${deterministicDigest(evidenceIdentityMaterial(value))}`; }
+function deliveryIdentityMaterial(value) { return {schema_version: PROJECTION_DELIVERY_SCHEMA_VERSION, projection_id: value.projection_id, aggregation_id: value.aggregation_id, subject_id: value.subject_id, pregnancy_id: value.pregnancy_id ?? null, cycle_id: value.cycle_id}; }
+function deliveryRecordIdentityMaterial(value) { return {schema_version: PROJECTION_DELIVERY_SCHEMA_VERSION, delivery_id: value.delivery_id, response_id: value.response_id ?? null, submitted_floor_version: value.submitted_floor_version, response_floor_version: value.response_floor_version ?? null, context_fingerprint: value.context_fingerprint ?? null, analysis_execution_id: value.analysis_execution_id ?? null}; }
+export function buildProjectionDeliveryId(value) { return `projection_delivery_${deterministicDigest(deliveryIdentityMaterial(value))}`; }
+export function buildProjectionDeliveryRecordId(value) { return `projection_delivery_record_${deterministicDigest(deliveryRecordIdentityMaterial(value))}`; }
 
 export function normalizeProjection(value = {}) {
   const source = cloneValue(value);
@@ -111,7 +130,7 @@ export function normalizeProjection(value = {}) {
     mechanism: {key: source.mechanism?.key ?? null, world_model_rule_refs: [...(source.mechanism?.world_model_rule_refs ?? [])].sort()}, source_event_ids: [...(source.source_event_ids ?? [])].sort(),
     development: {kind: source.development?.kind ?? null, current_basis: {event_ids: [...(source.development?.current_basis?.event_ids ?? [])].sort(), state_refs: [...(source.development?.current_basis?.state_refs ?? [])].sort(), mechanism_rule_refs: [...(source.development?.current_basis?.mechanism_rule_refs ?? [])].sort()}, next_signal: source.development?.next_signal ?? null},
     timing: {trigger_kind: source.timing?.trigger_kind ?? null, reference_event_id: source.timing?.reference_event_id ?? null, reference_story_time: cloneValue(source.timing?.reference_story_time ?? null), current_story_time: cloneValue(source.timing?.current_story_time ?? null), elapsed_story_days: source.timing?.elapsed_story_days ?? null},
-    created_at_floor_version: cloneValue(source.created_at_floor_version ?? null), evidence_refs: [...(source.evidence_refs ?? [])].sort(),
+    created_at_floor_version: cloneValue(source.created_at_floor_version ?? null), evidence_refs: [...(source.evidence_refs ?? [])].sort(), aggregation_path: source.aggregation_path ?? null, aggregation_evidence: cloneValue(source.aggregation_evidence ?? null),
     tracking_scope: source.tracking_scope ?? null, tracking_window_id: source.tracking_window_id ?? null,
   };
 }
@@ -129,7 +148,8 @@ export function validateProjection(value, {expectedChatId = null} = {}) {
   if (value.tracking_scope !== null && value.tracking_scope !== undefined && !['pre_confirmation', 'pregnancy_stage'].includes(value.tracking_scope)) errors.push('projection.tracking_scope:invalid');
   if (value.tracking_window_id !== null && value.tracking_window_id !== undefined && !nonEmptyText(value.tracking_window_id)) errors.push('projection.tracking_window_id:invalid');
   if (value.tracking_scope === 'pre_confirmation' && !nonEmptyText(value.tracking_window_id)) errors.push('projection.tracking_window_id:required');
-  validateMechanism(value.mechanism, 'projection.mechanism', errors); if (!uniqueTextArray(value.source_event_ids, true)) errors.push('projection.source_event_ids:invalid'); validateDevelopment(value.development, 'projection.development', errors); validateTiming(value.timing, 'projection.timing', errors); validateFloorVersion(value.created_at_floor_version, 'projection.created_at_floor_version', errors); validateEvidenceRefs(value.evidence_refs, 'projection.evidence_refs', errors, true);
+  if (value.aggregation_path !== null && value.aggregation_path !== undefined && value.aggregation_path !== 'participant_aggregation') errors.push('projection.aggregation_path:invalid');
+  validateMechanism(value.mechanism, 'projection.mechanism', errors); if (!uniqueTextArray(value.source_event_ids, true)) errors.push('projection.source_event_ids:invalid'); validateDevelopment(value.development, 'projection.development', errors); validateTiming(value.timing, 'projection.timing', errors); validateFloorVersion(value.created_at_floor_version, 'projection.created_at_floor_version', errors); validateEvidenceRefs(value.evidence_refs, 'projection.evidence_refs', errors, true); validateAggregationEvidence(value.aggregation_evidence, 'projection.aggregation_evidence', errors); if (value.aggregation_path === 'participant_aggregation' && (value.aggregation_evidence === null || value.aggregation_evidence === undefined)) errors.push('projection.aggregation_evidence:required_for_aggregation_path'); if (value.aggregation_path === 'participant_aggregation' && value.aggregation_evidence?.subject_id !== value.subject_id) errors.push('projection.aggregation_evidence:subject_mismatch');
   if (expectedChatId !== null && value.created_at_floor_version?.chat_id !== expectedChatId) errors.push('projection.created_at_floor_version:wrong_chat');
   if (completeFloorVersion(value.created_at_floor_version) && nonEmptyText(value.projection_id) && value.projection_id !== buildProjectionId(value)) errors.push('projection.projection_id:not_deterministic');
   return {ok: errors.length === 0, errors};
@@ -142,12 +162,41 @@ export function validateProjectionLifecycleRecord(value, {knownProjectionIds = n
 function evidenceBase(value) { return {schema_version: PROJECTION_EVIDENCE_SCHEMA_VERSION, evidence_record_id: value.evidence_record_id ?? null, projection_id: value.projection_id ?? null, owner_type: value.owner_type ?? 'character', source_event_ids: [...(value.source_event_ids ?? [])].sort(), created_at_floor_version: cloneValue(value.created_at_floor_version ?? null), evidence_refs: [...(value.evidence_refs ?? [])].sort()}; }
 export function createProjectionEvidenceRecord(value = {}) { const normalized = evidenceBase(value); normalized.evidence_record_id = buildProjectionEvidenceRecordId(normalized); const result = validateProjectionEvidenceRecord(normalized); if (!result.ok) throw new TypeError(result.errors.join(', ')); return cloneValue(normalized); }
 export function validateProjectionEvidenceRecord(value, {knownProjectionIds = null, expectedChatId = null} = {}) { const errors = []; if (!isRecord(value)) return {ok: false, errors: ['evidence:invalid']}; collectUnexpected(errors, value, EVIDENCE_FIELDS, 'evidence'); if (value.schema_version !== PROJECTION_EVIDENCE_SCHEMA_VERSION) errors.push('evidence.schema_version:invalid'); if (!nonEmptyText(value.evidence_record_id)) errors.push('evidence.evidence_record_id:required'); if (!nonEmptyText(value.projection_id)) errors.push('evidence.projection_id:required'); if (knownProjectionIds && !knownProjectionIds.has(value.projection_id)) errors.push('evidence.projection_id:unknown'); if (value.owner_type !== 'character') errors.push('evidence.owner_type:not_character'); if (!uniqueTextArray(value.source_event_ids, true)) errors.push('evidence.source_event_ids:invalid'); validateFloorVersion(value.created_at_floor_version, 'evidence.created_at_floor_version', errors); validateEvidenceRefs(value.evidence_refs, 'evidence.evidence_refs', errors); if (expectedChatId !== null && value.created_at_floor_version?.chat_id !== expectedChatId) errors.push('evidence.created_at_floor_version:wrong_chat'); if (completeFloorVersion(value.created_at_floor_version) && nonEmptyText(value.evidence_record_id) && value.evidence_record_id !== buildProjectionEvidenceRecordId(value)) errors.push('evidence.evidence_record_id:not_deterministic'); return {ok: errors.length === 0, errors}; }
+function deliveryBase(value) { return {schema_version: PROJECTION_DELIVERY_SCHEMA_VERSION, delivery_record_id: value.delivery_record_id ?? null, delivery_id: value.delivery_id ?? null, projection_id: value.projection_id ?? null, aggregation_id: value.aggregation_id ?? null, subject_id: value.subject_id ?? null, pregnancy_id: value.pregnancy_id ?? null, cycle_id: value.cycle_id ?? null, submitted_floor_version: cloneValue(value.submitted_floor_version ?? null), created_at_floor_version: cloneValue(value.created_at_floor_version ?? value.submitted_floor_version ?? null), context_fingerprint: value.context_fingerprint ?? null, status: value.status ?? 'submitted', response_id: value.response_id ?? null, response_floor_version: cloneValue(value.response_floor_version ?? null), generation_id: value.generation_id ?? null, generation_intent_id: value.generation_intent_id ?? null, analysis_execution_id: value.analysis_execution_id ?? null, analysis_status: value.analysis_status ?? null, explicit_lifecycle_fact_ids: [...(value.explicit_lifecycle_fact_ids ?? [])].sort()}; }
+export function createProjectionDeliveryRecord(value = {}) { const normalized = deliveryBase(value); normalized.delivery_id = buildProjectionDeliveryId(normalized); normalized.delivery_record_id = buildProjectionDeliveryRecordId(normalized); const result = validateProjectionDeliveryRecord(normalized); if (!result.ok) throw new TypeError(result.errors.join(', ')); return cloneValue(normalized); }
+export function validateProjectionDeliveryRecord(value, {knownProjectionIds = null, expectedChatId = null} = {}) {
+  const errors = [];
+  if (!isRecord(value)) return {ok: false, errors: ['delivery:invalid']};
+  collectUnexpected(errors, value, DELIVERY_FIELDS, 'delivery');
+  if (value.schema_version !== PROJECTION_DELIVERY_SCHEMA_VERSION) errors.push('delivery.schema_version:invalid');
+  if (!nonEmptyText(value.delivery_record_id) || !nonEmptyText(value.delivery_id)) errors.push('delivery.identity_required');
+  if (!nonEmptyText(value.projection_id)) errors.push('delivery.projection_id:required');
+  if (knownProjectionIds && !knownProjectionIds.has(value.projection_id)) errors.push('delivery.projection_id:unknown');
+  if (!nonEmptyText(value.aggregation_id) || !nonEmptyText(value.subject_id) || !nonEmptyText(value.cycle_id)) errors.push('delivery.binding_required');
+  if (value.pregnancy_id !== null && value.pregnancy_id !== undefined && !nonEmptyText(value.pregnancy_id)) errors.push('delivery.pregnancy_id:invalid');
+  validateFloorVersion(value.submitted_floor_version, 'delivery.submitted_floor_version', errors);
+  validateFloorVersion(value.created_at_floor_version, 'delivery.created_at_floor_version', errors);
+  if (!nonEmptyText(value.context_fingerprint)) errors.push('delivery.context_fingerprint:required');
+  if (!['submitted', 'readback_verified', 'response_observed'].includes(value.status)) errors.push('delivery.status:invalid');
+  if (value.response_id !== null && value.response_id !== undefined) {
+    if (!nonEmptyText(value.response_id) || !['success', 'failed', 'skipped', 'stale'].includes(value.analysis_status)) errors.push('delivery.response:invalid');
+    validateFloorVersion(value.response_floor_version, 'delivery.response_floor_version', errors);
+    if (!nonEmptyText(value.analysis_execution_id)) errors.push('delivery.analysis_execution_id:required');
+    if (!Array.isArray(value.explicit_lifecycle_fact_ids) || !value.explicit_lifecycle_fact_ids.every(nonEmptyText)) errors.push('delivery.explicit_lifecycle_fact_ids:invalid');
+  } else if (value.status !== 'submitted' && value.status !== 'readback_verified') errors.push('delivery.response_id:required');
+  if (expectedChatId !== null && value.submitted_floor_version?.chat_id !== expectedChatId) errors.push('delivery.submitted_floor_version:wrong_chat');
+  if (expectedChatId !== null && value.created_at_floor_version?.chat_id !== expectedChatId) errors.push('delivery.created_at_floor_version:wrong_chat');
+  if (value.delivery_id !== buildProjectionDeliveryId(value)) errors.push('delivery.delivery_id:not_deterministic');
+  if (value.delivery_record_id !== buildProjectionDeliveryRecordId(value)) errors.push('delivery.delivery_record_id:not_deterministic');
+  return {ok: errors.length === 0, errors};
+}
 function dedupeById(values, validate, idKey, conflictCode, options = {}) { const records = [], conflicts = [], rejected = [], byId = new Map(); for (const value of Array.isArray(values) ? values : []) { const id = value?.[idKey]; const duplicate = byId.get(id); if (duplicate) { if (stableFingerprint(duplicate) !== stableFingerprint(value)) conflicts.push({code: conflictCode, [idKey]: id, values: [cloneValue(duplicate), cloneValue(value)]}); continue; } const validation = validate(value, options); if (!validation.ok) { rejected.push({value: cloneValue(value), errors: validation.errors}); continue; } byId.set(id, value); records.push(cloneValue(value)); } return {records, conflicts, rejected}; }
 export function dedupeProjections(values = []) { const result = dedupeById(values, validateProjection, 'projection_id', 'projection_id_conflict'); return {...result, projections: result.records}; }
 export function dedupeProjectionLifecycleRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionLifecycleRecord(value, options), 'lifecycle_id', 'lifecycle_id_conflict'); return {...result, records: result.records}; }
 export function dedupeProjectionEvidenceRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionEvidenceRecord(value, options), 'evidence_record_id', 'evidence_record_id_conflict'); return {...result, records: result.records}; }
+export function dedupeProjectionDeliveryRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionDeliveryRecord(value, options), 'delivery_record_id', 'delivery_record_conflict'); return {...result, records: result.records}; }
 
-function validateTimelineEntry(entry) { const errors = []; if (!isRecord(entry) || entry.owner_type !== 'character') errors.push('timeline_entry:not_character'); validateFloorVersion(entry?.floor_version, 'timeline_entry.floor_version', errors); if (!Array.isArray(entry?.projections) || !Array.isArray(entry?.lifecycle_records) || !Array.isArray(entry?.evidence_records)) errors.push('timeline_entry:collections_required'); return errors; }
+function validateTimelineEntry(entry) { const errors = []; if (!isRecord(entry) || entry.owner_type !== 'character') errors.push('timeline_entry:not_character'); validateFloorVersion(entry?.floor_version, 'timeline_entry.floor_version', errors); if (!Array.isArray(entry?.projections) || !Array.isArray(entry?.lifecycle_records) || !Array.isArray(entry?.evidence_records) || !Array.isArray(entry?.delivery_records ?? [])) errors.push('timeline_entry:collections_required'); return errors; }
 function statusLists(views) { const result = {all: views, active: [], realized: [], contradicted: [], expired: [], deleted: [], conflicts: [], rejected: []}; for (const view of views) { if (view.context_visible) result.active.push(view); if (view.factual_status && result[view.factual_status]) result[view.factual_status].push(view); if (view.deleted) result.deleted.push(view); } return result; }
 export function resolveProjectionView({timeline = []} = {}) {
   const entries = Array.isArray(timeline) ? timeline : []; const errors = entries.flatMap(validateTimelineEntry); const projectionResult = dedupeProjections(entries.flatMap(entry => entry?.projections ?? [])); const knownProjectionIds = new Set(projectionResult.projections.map(item => item.projection_id)); const lifecycleResult = dedupeProjectionLifecycleRecords(entries.flatMap(entry => entry?.lifecycle_records ?? []), {knownProjectionIds}); const evidenceResult = dedupeProjectionEvidenceRecords(entries.flatMap(entry => entry?.evidence_records ?? []), {knownProjectionIds}); const conflicts = [...errors.map(code => ({code})), ...projectionResult.conflicts, ...lifecycleResult.conflicts, ...evidenceResult.conflicts]; const rejected = [...projectionResult.rejected, ...lifecycleResult.rejected, ...evidenceResult.rejected]; const conflictedIds = new Set(projectionResult.conflicts.map(item => item.projection_id)); const recordsById = new Map(); const evidenceById = new Map(); for (const record of lifecycleResult.records) { if (!recordsById.has(record.projection_id)) recordsById.set(record.projection_id, []); recordsById.get(record.projection_id).push(record); } for (const record of evidenceResult.records) { if (!evidenceById.has(record.projection_id)) evidenceById.set(record.projection_id, []); evidenceById.get(record.projection_id).push(record); }

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe/Version ownership, historical immutability, derived-state invalidation and sibling timeline rules"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Canonical Event/state_fact status, pregnancy episode facts, evidence and source restrictions"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"Exposure cycle/window semantics, expiry limits and cross-cycle tracking boundary"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Persistent-field ownership, lifecycle registry and clear/invalidation contract"}
+{"file":".trellis/tasks/10-11-pregnancy-participant-aggregation/prd.md","reason":"Existing aggregation contract, disabled lock gate and dependency boundary"}
+{"file":".trellis/tasks/10-11-pregnancy-participant-aggregation/design.md","reason":"Existing participant aggregation, evidence mapping and Floor persistence design"}

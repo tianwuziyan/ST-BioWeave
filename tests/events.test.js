@@ -4,6 +4,7 @@ import {
   PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
   EVENT_TYPES,
   normalizeEvent,
+  splitCompositePregnancyExposureEvent,
   getStateFactStoryTime,
   dedupeEvents,
   sortEvents,
@@ -13,6 +14,72 @@ import {
   validateEventCollection,
   validateEventStoryTimesAtOrBefore,
 } from '../core/events.js';
+
+test('composite sexual activity is split before canonical single-subject validation', () => {
+  const slices = splitCompositePregnancyExposureEvent({
+    event_id: 'ai-event',
+    type: 'sexual_activity',
+    status: 'confirmed',
+    participants: [
+      {character_id: 'subject-a', event_role: 'potential_gestational_subject'},
+      {character_id: 'subject-b', event_role: 'potential_gestational_subject'},
+      {character_id: 'source-a', event_role: 'potential_conception_source'},
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      gestational_subject_ids: ['subject-a', 'subject-b'],
+      counterpart_ids: ['source-a'],
+    },
+  });
+  assert.equal(slices.length, 2);
+  assert.equal(slices.every(item => item.event_id === undefined), true);
+  assert.deepEqual(slices.map(item => item.pregnancy_relevance.gestational_subject_ids), [['subject-a'], ['subject-b']]);
+  assert.deepEqual(slices[0].participants.map(item => item.character_id), ['subject-a', 'source-a']);
+  assert.deepEqual(slices[1].participants.map(item => item.character_id), ['subject-b', 'source-a']);
+});
+
+test('composite slices preserve local references and pass the unchanged canonical schema', () => {
+  const source = {
+    event_id: 'ai-event-with-evidence',
+    type: 'sexual_activity',
+    status: 'confirmed',
+    location: 'shared-room',
+    participants: [
+      {character_id: 'subject-a', event_role: 'potential_gestational_subject', evidence: [{kind: 'participant', text: 'A'}]},
+      {character_id: 'subject-b', event_role: 'potential_gestational_subject', evidence: [{kind: 'participant', text: 'B'}]},
+      {character_id: 'source-a', event_role: 'potential_conception_source', evidence: [{kind: 'participant', text: 'source'}]},
+    ],
+    pregnancy_relevance: {
+      relevant: true,
+      possible_conception: true,
+      gestational_subject_ids: ['subject-a', 'subject-b'],
+      counterpart_ids: ['source-a'],
+      reproductive_mechanism: {
+        kind: 'fertilization',
+        world_model_rule_refs: ['rule-1'],
+        evidence: [{kind: 'mechanism', text: 'mechanism evidence'}],
+      },
+    },
+    source_evidence: [
+      {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: 'shared exposure'},
+      {kind: 'source-reference', text: 'source ref'},
+    ],
+    source: {chat_id: 'chat-1', message_id: 'message-1', floor: 2, swipe_id: 0},
+    story_time: {day_index: 2, precision: 'day'},
+  };
+  const slices = splitCompositePregnancyExposureEvent(source).map((slice, index) => normalizeEvent({...slice, event_id: `canonical-${index}`}));
+  assert.equal(slices.length, 2);
+  for (const slice of slices) {
+    assert.equal(validateEvent(slice).ok, true);
+    assert.equal(slice.location, source.location);
+    assert.deepEqual(slice.source_evidence, source.source_evidence);
+    assert.deepEqual(slice.source, {...source.source, content_hash: null, message_version: null});
+    assert.deepEqual(slice.pregnancy_relevance.reproductive_mechanism.world_model_rule_refs, ['rule-1']);
+    assert.deepEqual(slice.pregnancy_relevance.reproductive_mechanism.evidence, [{kind: 'mechanism', text: 'mechanism evidence'}]);
+    assert.equal(slice.participants.length, 2);
+    assert.equal(slice.pregnancy_relevance.gestational_subject_ids.length, 1);
+  }
+});
 
 test('state-changing event types no longer accept the old minimal source shape', () => {
   assert.equal(
@@ -823,6 +890,7 @@ test('state fact contracts validate each state-changing event type', () => {
     conception: { pregnancy_id: 'preg_existing' },
     pregnancy_suspicion: { observation: { kind: 'test', description: 'observed' } },
     pregnancy_confirmation: { pregnancy_id: 'preg_existing' },
+    pregnancy_lifecycle: { status: 'outcome_unknown', pregnancy_id: 'preg_existing', cycle_id: 'cycle_existing' },
     reproductive_source_attribution: {
       pregnancy_id: 'preg_existing',
       source_character_id: 'char-source',

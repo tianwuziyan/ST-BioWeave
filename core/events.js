@@ -15,6 +15,7 @@ export const EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
   'pregnancy_confirmation',
+  'pregnancy_lifecycle',
   'reproductive_source_attribution',
   'pregnancy_loss',
   'abortion',
@@ -57,6 +58,7 @@ export const STATE_FACT_EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',
   'pregnancy_confirmation',
+  'pregnancy_lifecycle',
   'reproductive_source_attribution',
   'pregnancy_loss',
   'abortion',
@@ -359,6 +361,36 @@ export function normalizeEvent(raw = {}) {
   };
 }
 
+// AI may describe one sexual activity involving multiple gestational subjects.
+// Split that intermediate result before canonical validation; the canonical
+// Event schema remains one gestational subject per sexual_activity Event.
+export function splitCompositePregnancyExposureEvent(raw = {}) {
+  const source = recordValue(raw);
+  const relevance = recordValue(source.pregnancy_relevance);
+  const subjectIds = Array.isArray(relevance.gestational_subject_ids)
+    ? [...new Set(relevance.gestational_subject_ids.map(identifierValue).filter(Boolean))]
+    : [];
+  if (source.type !== 'sexual_activity' || relevance.relevant !== true || subjectIds.length <= 1) return [raw];
+  const counterpartIds = Array.isArray(relevance.counterpart_ids)
+    ? [...new Set(relevance.counterpart_ids.map(identifierValue).filter(Boolean))]
+    : [];
+  return subjectIds.map(subjectId => {
+    const participantIds = new Set([subjectId, ...counterpartIds]);
+    const participants = Array.isArray(source.participants)
+      ? source.participants.filter(participant => participantIds.has(identifierValue(participant?.character_id ?? participant?.mention_id)))
+      : [];
+    const slice = {...source};
+    delete slice.event_id;
+    slice.participants = participants;
+    slice.pregnancy_relevance = {
+      ...relevance,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: counterpartIds.filter(id => id !== subjectId),
+    };
+    return slice;
+  });
+}
+
 export function hasStateFactContract(eventType) {
   return STATE_FACT_EVENT_TYPE_SET.has(eventType);
 }
@@ -430,6 +462,19 @@ function validateStateFactPayload(type, payload, errors, path) {
     case 'pregnancy_confirmation':
       if (!only('pregnancy_id') || !text(payload.pregnancy_id)) addError(errors, path);
       return;
+    case 'pregnancy_lifecycle': {
+      const statuses = new Set(['not_pregnant', 'pregnant_ongoing', 'miscarriage', 'termination', 'delivery', 'outcome_unknown']);
+      const allowed = ['status', 'pregnancy_id', 'pregnancy_ref', 'cycle_id', 'evidence_refs'];
+      if (!only(...allowed) || !statuses.has(payload.status) || !text(payload.cycle_id)) addError(errors, path);
+      if (payload.status === 'not_pregnant') {
+        if (payload.pregnancy_id !== undefined && payload.pregnancy_id !== null) addError(errors, `${path}.pregnancy_id`);
+        if (payload.pregnancy_ref !== undefined && payload.pregnancy_ref !== null && payload.pregnancy_ref.kind !== 'existing') addError(errors, `${path}.pregnancy_ref`);
+      } else if (!text(payload.pregnancy_id) && !(payload.pregnancy_ref && ['new', 'existing'].includes(payload.pregnancy_ref.kind))) {
+        addError(errors, `${path}.pregnancy_id`);
+      }
+      if (payload.evidence_refs !== undefined && (!Array.isArray(payload.evidence_refs) || payload.evidence_refs.some(item => !text(item)))) addError(errors, `${path}.evidence_refs`);
+      return;
+    }
     case 'reproductive_source_attribution':
       if (!only('pregnancy_id', 'source_character_id', 'contribution_kind', 'attribution')
         || !text(payload.pregnancy_id)

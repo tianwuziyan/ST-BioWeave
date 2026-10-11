@@ -218,3 +218,52 @@ test('input records remain immutable', async () => {
   await persistence.saveProjectionEvidence({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), evidenceRecord: evidence})
   assert.deepEqual(evidence, before)
 })
+
+test('Projection delivery submission is Floor-owned, readbacked, and idempotent', async () => {
+  const created = projection(10)
+  const {persistence, store} = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {schema_version: 1, creations: [created], evidence_records: [], lifecycle_records: [], delivery_records: []}},
+    '1:0': {floor_version: version(13), projection_timeline: emptyProjectionTimeline()},
+  }})
+  const delivery = {
+    projection_id: created.projection_id,
+    aggregation_id: 'aggregation-1',
+    subject_id: 'char_000001',
+    pregnancy_id: null,
+    cycle_id: 'cycle-1',
+    submitted_floor_version: version(13),
+    created_at_floor_version: version(13),
+    context_fingerprint: 'context-1',
+  }
+  assert.equal((await persistence.saveProjectionDeliverySubmission({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: delivery})).status, 'appended')
+  assert.equal((await persistence.saveProjectionDeliverySubmission({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: delivery})).status, 'deduped')
+  const records = await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'})
+  assert.equal(records.length, 1)
+  assert.equal(records[0].submitted_floor_version.message_version, 'v13-0')
+  assert.equal(store.state.floors['0:0'].projection_timeline.delivery_records?.length ?? 0, 0)
+})
+
+test('Projection delivery response is a separate idempotent record and stale Floor versions fail closed', async () => {
+  const created = projection(10)
+  const {persistence} = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {schema_version: 1, creations: [created], evidence_records: [], lifecycle_records: [], delivery_records: []}},
+    '1:0': {floor_version: version(13), projection_timeline: emptyProjectionTimeline()},
+  }})
+  const base = {
+    projection_id: created.projection_id,
+    aggregation_id: 'aggregation-1',
+    subject_id: 'char_000001',
+    pregnancy_id: null,
+    cycle_id: 'cycle-1',
+    submitted_floor_version: version(10),
+    created_at_floor_version: version(10),
+    context_fingerprint: 'context-1',
+  }
+  await persistence.saveProjectionDeliverySubmission({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), deliveryRecord: base})
+  const submission = (await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'}))[0]
+  const response = {...base, delivery_id: submission.delivery_id, response_id: 'response-1', response_floor_version: version(13), created_at_floor_version: version(13), analysis_execution_id: 'analysis-1', analysis_status: 'success', explicit_lifecycle_fact_ids: []}
+  assert.equal((await persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: response})).status, 'appended')
+  assert.equal((await persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: response})).status, 'deduped')
+  assert.equal((await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'})).length, 2)
+  await assert.rejects(() => persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: {...version(13), content_hash: 'stale'}, deliveryRecord: response}), /FLOOR_VERSION_STALE/)
+})

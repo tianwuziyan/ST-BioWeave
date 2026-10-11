@@ -110,6 +110,48 @@ test('BioWeave Calendar Resolver and local Calendar Engine calculate same-era di
   assert.deepEqual(storyTime.getDateDifference(current, event), {value: 61, unit: 'day'});
 });
 
+test('same era-standard dates share comparison and difference semantics', () => {
+  const dates = ['羲和元年三月四日', '羲和元年三月十五日', '羲和元年三月二十日']
+    .map(display => storyTimeWithCalendar().normalize({display}));
+  assert.equal(compareStoryTime(dates[0], dates[1]), -1);
+  assert.equal(compareStoryTime(dates[1], dates[2]), -1);
+  assert.equal(compareStoryTime(dates[0], dates[2]), -1);
+  assert.deepEqual(differenceStoryTime(dates[2], dates[0]), {value: 16, unit: 'day'});
+  assert.equal(compareStoryTime(dates[0], dates[2]) < 0, differenceStoryTime(dates[0], dates[2]).value < 0);
+});
+
+test('era-standard comparison preserves month, year, and leap-day arithmetic', () => {
+  const normalize = value => storyTimeWithCalendar().normalize({display: value});
+  const monthStart = normalize('羲和元年三月一日');
+  const monthEnd = normalize('羲和元年二月二十八日');
+  assert.equal(compareStoryTime(monthEnd, monthStart), -1);
+  assert.deepEqual(differenceStoryTime(monthStart, monthEnd), {value: 1, unit: 'day'});
+  const leapDay = normalize('羲和四年二月二十九日');
+  const nextDay = normalize('羲和四年三月一日');
+  assert.equal(compareStoryTime(leapDay, nextDay), -1);
+  assert.deepEqual(differenceStoryTime(nextDay, leapDay), {value: 1, unit: 'day'});
+  const nextYear = normalize('羲和五年正月一日');
+  assert.equal(compareStoryTime(nextDay, nextYear), -1);
+  assert.ok(differenceStoryTime(nextYear, nextDay).value > 0);
+});
+
+test('same-day clock precision is reflected by comparison without changing Story Days', () => {
+  const earlier = storyTimeWithCalendar().normalize({display: '羲和元年三月四日 巳时初'});
+  const later = storyTimeWithCalendar().normalize({display: '羲和元年三月四日 午时初'});
+  assert.equal(compareStoryTime(earlier, later), -1);
+  assert.deepEqual(differenceStoryTime(later, earlier), {value: 120, unit: 'minute'});
+  assert.equal(differenceStoryDays(later, earlier), 0);
+});
+
+test('different eras and unknown dates remain incomparable', () => {
+  const xihe = storyTimeWithCalendar().normalize({display: '羲和元年三月四日'});
+  const tianhe = storyTimeWithCalendar().normalize({display: '天河元年三月四日'});
+  assert.equal(compareStoryTime(xihe, tianhe), null);
+  assert.equal(differenceStoryTime(xihe, tianhe), null);
+  assert.equal(compareStoryTime({...xihe, calendar_id: 'other'}, {...xihe, calendar_id: 'different'}), null);
+  assert.equal(compareStoryTime({display: '未知'}, {display: '未知'}), null);
+});
+
 test('Custom dates retain display-only day_index while using local elapsed arithmetic', () => {
   const storyTime = createStoryTime();
   const current = storyTime.normalize({display: '羲和元年五月初四 午时'});
