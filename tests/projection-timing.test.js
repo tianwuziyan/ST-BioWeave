@@ -53,6 +53,15 @@ test('timing window is before-min, inclusive-open at min/max, and missed after m
   assert.equal(evaluateProjectionTiming({timingInstance: timing, currentStoryTime: {day_index: 121}, events: [event], subjectId: 'char_000001'}).status, 'window_missed');
 });
 
+test('Projection Timing elapsed uses unified Story Time for display-only Gregorian dates', () => {
+  const displayEvent = {...event, story_time: {display: '2026-01-01'}};
+  const displayConfig = {...config, base_min_story_days: 90, base_max_story_days: 100, variance_ratio: 0, variance_cap_story_days: 0, total_adjustment_cap_story_days: 0};
+  const timing = resolveProjectionTimingInstance({chatId: floorVersion.chat_id, subjectId: 'char_000001', mechanismKey: 'fertilization', firstEvent: displayEvent, config: displayConfig, floorVersion, rng: () => 0.5});
+  const result = evaluateProjectionTiming({timingInstance: timing, currentStoryTime: {display: '2026-04-01'}, events: [displayEvent], subjectId: 'char_000001'});
+  assert.equal(result.status, 'window_open');
+  assert.equal(result.elapsed_story_days, 90);
+});
+
 test('Projection eligibility composes World Rule eligibility with timing eligibility', () => {
   const content = {schema_version: 1, mechanism_key: 'fertilization', development_concern_key: 'detection', development_kind: 'possible_detection', trigger: {kind: 'immediate_after_event', source_event_type: 'sexual_activity'}, requirements: {capabilities: [], source_compatibility: 'not_required', contributor_relationships: []}, realization: null, contradiction: null, expiration: null};
   const rule = {...content, projection_rule_id: buildProjectionRuleId(content)};

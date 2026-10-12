@@ -1324,6 +1324,7 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
         renderStoryTimeDebugRow('Candidate Source', info.candidate_source ?? info.source),
         renderStoryTimeDebugRow('候选文本', info.candidate), renderStoryTimeDebugRow('Parsed Display', storyTime?.display),
         renderStoryTimeDebugRow('Normalized', storyTime?.normalized), renderStoryTimeDebugRow('Precision', storyTime?.precision),
+        renderStoryTimeDebugRow('Persisted Structured', info.persisted_structured), renderStoryTimeDebugRow('Parseable', info.parseable),
         renderStoryTimeDebugRow('Era', parsed?.era_label), renderStoryTimeDebugRow('Year', parsed?.year),
         renderStoryTimeDebugRow('Month', parsed?.month), renderStoryTimeDebugRow('Day', parsed?.day),
         renderStoryTimeDebugRow('Hour', parsed?.hour), renderStoryTimeDebugRow('Minute', parsed?.minute),
@@ -1338,6 +1339,8 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
         renderStoryTimeDebugRow('Event Normalized', eventStoryTime?.normalized), renderStoryTimeDebugRow('Event Calendar ID', eventStoryTime?.calendar_id),
         renderStoryTimeDebugRow('Event Day Index', eventStoryTime?.day_index), renderStoryTimeDebugRow('Current Story Time', storyTime?.display),
         renderStoryTimeDebugRow('Current Calendar ID', storyTime?.calendar_id), renderStoryTimeDebugRow('Current Day Index', storyTime?.day_index),
+        renderStoryTimeDebugRow('Comparable', info.comparable), renderStoryTimeDebugRow('Event Persisted Structured', event?.persisted_structured),
+        renderStoryTimeDebugRow('Event Parseable', event?.parseable),
         renderStoryTimeDebugRow('Difference', difference ? `${difference.value} ${difference.unit}` : null), renderStoryTimeDebugRow('Failure Reason', info.failure_reason),
       ].join('') + '</dl></section>' : '',
     ].join('');

@@ -874,17 +874,18 @@ real leap-year validity; custom calendars do not pass through JavaScript `Date`.
 `extractDayFromTime()` retains its existing relative-day and numeric-date keys,
 then uses the same parser for the Chinese-date fallback.
 
-Only the trusted SevenDaysCal-compatible provider adapter may turn a raw
-provider/display-only value into structured date or time fields. Existing
-structured fields (`normalized`, `date`, `iso_date`, `day_index`, and equivalent
-aliases) are authoritative. Complete Gregorian dates become `YYYY-MM-DD` with
-a strict UTC `day_index`; custom or era-labeled dates become
+Existing structured fields (`normalized`, `date`, `iso_date`, `day_index`, and
+equivalent aliases) are authoritative. Complete Gregorian dates become
+`YYYY-MM-DD` with a strict UTC `day_index`; custom or era-labeled dates become
 `cn-year-month-day` with `day_index: null`. When an explicit display-formatting
 boundary is used (the trusted provider adapter or final Event normalization),
 `parseCnDate()` may independently canonicalize only the reliable date portion
 of `display`; it must preserve the trailing text and must not regenerate or
-overwrite `normalized` or `day_index`. The local fallback provider and
-`formatStoryTime()` never turn display text into structured date/time values.
+overwrite `normalized` or `day_index`. The unified Story Time calculation
+entry points may also parse a reliable display-only value through this same
+parser when no structured date is present; they never use that parse to
+overwrite existing structured fields. Unknown dates, different calendar
+domains, and proven field conflicts remain unresolved.
 
 Traditional time parsing is a separate pure component of that same boundary.
 Its grammar is exactly `<earthly branch>时 [<number>刻]` (the traditional `時`
@@ -969,8 +970,11 @@ conception or pregnancy. Exposure/source evidence controls the Event.
 when present, is only `true`, `false`, or `null`; `true` requires the same
 canonical exposure evidence marker.
 
-`story_time.display` is for formatting only. Sorting and elapsed-time logic
-must use `day_index` or another structured normalized value.
+`story_time.display` remains a presentation field for persisted facts. Sorting
+and elapsed-time logic uses structured values when present and may use the
+shared date parser for reliable display-only values; it never uses display to
+overwrite an existing `normalized` or `day_index`, and it remains fail-closed
+for unknown or incompatible calendar domains.
 
 `location` is a natural-language `string | null`. Known locations retain the
 original narrative/Target Floor/Recent Context/Worldbook text and language; no

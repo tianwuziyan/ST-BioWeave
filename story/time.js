@@ -3,6 +3,7 @@ import {
   daysInMonth,
   isGregorian,
   ordinalOf,
+  parseCalendarDate,
   validateCalendarDescriptor,
 } from '../business/calendar/date.js';
 import { matchTraditionalTime, parseCnDate, parseTraditionalTime } from '../utils/cn-date.js';
@@ -61,14 +62,10 @@ function validPrecision(value) {
 
 function strictDayIndex(normalized) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
-  const [year, month, day] = normalized.split('-').map(Number);
+  const parsed = parseCalendarDate(normalized);
+  if (!parsed) return null;
+  const {year, month, day} = parsed;
   const timestamp = Date.UTC(year, month - 1, day);
-  const date = new Date(timestamp);
-  if (date.getUTCFullYear() !== year
-    || date.getUTCMonth() !== month - 1
-    || date.getUTCDate() !== day) {
-    return null;
-  }
   return Math.floor(timestamp / 86400000);
 }
 
@@ -108,7 +105,8 @@ function parseCalendarDateValue(value, calendar) {
 }
 
 function customCalendarDifference(left, right, calendar) {
-  if ((isGregorian(calendar) && calendar?.kind !== 'era-standard') || !isGregorian(calendar)) return null;
+  if (!calendar || (!isGregorian(calendar) && !validateCalendarDescriptor(calendar))) return null;
+  if (isGregorian(calendar) && calendar?.kind !== 'era-standard') return null;
   const leftCalendarId = calendarIdentity(sourceStoryTime(left));
   const rightCalendarId = calendarIdentity(sourceStoryTime(right));
   if (leftCalendarId !== null && rightCalendarId !== null && leftCalendarId !== rightCalendarId) return null;
@@ -122,7 +120,8 @@ function customCalendarDifference(left, right, calendar) {
   if (leftDate.year === rightDate.year) return leftOrdinal - rightOrdinal;
   const yearLength = year => {
     let total = 0;
-    for (let month = 1; month <= 12; month += 1) total += daysInMonth(calendar, month, year);
+    const monthCount = isGregorian(calendar) ? 12 : calendar.months.length;
+    for (let month = 1; month <= monthCount; month += 1) total += daysInMonth(calendar, month, year);
     return total;
   };
   if (leftDate.year > rightDate.year) {
@@ -181,6 +180,10 @@ function isDateContinuation(value) {
 }
 
 function parseDisplayDateCandidate(value, calendar = null) {
+  const standardMatch = /^\s*(\d{4}-\d{2}-\d{2})(?=$|T|\s)/u.exec(value);
+  if (standardMatch && (calendar == null || isGregorian(calendar))) {
+    return parseCalendarDate(standardMatch[1]);
+  }
   const parsed = parseCnDate(value, {calendar});
   if (parsed || !/元\s*年/u.test(value)) return parsed;
   // parseCnDate already understands 元 as a year-first token. For an
@@ -462,37 +465,120 @@ export function parseStoryTimeCandidate(value, {calendar = null} = {}) {
   return result?.display ? {...result, display: text} : null;
 }
 
-function differenceFromValues(left, right) {
-  const normalizeForDifference = value => {
-    const normalized = normalizeStoryTime(value);
-    if (normalized.day_index !== null || !normalized.display) return normalized;
-    return parseStoryTimeCandidate(normalized.display) ?? normalized;
-  };
-  const leftTime = normalizeForDifference(left);
-  const rightTime = normalizeForDifference(right);
-  if (leftTime.day_index === null || rightTime.day_index === null) return null;
-  return leftTime.day_index - rightTime.day_index;
-}
-
 function storyTimeDomain(value) {
   const normalized = normalizeStoryTime(value);
   if (normalized.calendar_id) return `calendar:${normalized.calendar_id}`;
   return 'default';
 }
 
-function comparableStoryTimes(left, right) {
-  const a = normalizeStoryTime(left);
-  const b = normalizeStoryTime(right);
-  return a.day_index !== null
-    && b.day_index !== null
-    && storyTimeDomain(a) === storyTimeDomain(b);
+function resolveStoryTimeForCalculation(value, calendar = null) {
+  const source = sourceStoryTime(value);
+  const normalized = normalizeStoryTime(value);
+  const structured = hasStructuredDate(source);
+  const displayCandidate = normalized.display
+    ? normalizeStoryTimeCandidateValue({display: normalized.display}, calendar)
+    : null;
+
+  let conflict = null;
+  if (structured && normalized.day_index !== null && displayCandidate && displayCandidate.day_index !== null
+    && normalized.day_index !== displayCandidate.day_index) {
+    conflict = 'display-day-index-conflict';
+  }
+  if (structured && normalized.normalized && displayCandidate?.normalized) {
+    const structuredDate = normalized.normalized.split('T')[0];
+    const displayDate = displayCandidate.normalized.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(structuredDate)
+      && /^\d{4}-\d{2}-\d{2}$/.test(displayDate)
+      && structuredDate !== displayDate) {
+      conflict = 'display-normalized-conflict';
+    }
+    if (/^cn-\d+-\d+-\d+$/.test(structuredDate)
+      && /^cn-\d+-\d+-\d+$/.test(displayDate)
+      && structuredDate !== displayDate) {
+      conflict = 'display-normalized-conflict';
+    }
+  }
+
+  return {
+    source,
+    normalized,
+    structured,
+    conflict,
+    dayIndex: normalized.day_index !== null
+      ? normalized.day_index
+      : structured ? null : displayCandidate?.day_index ?? null,
+    effective: structured ? normalized : displayCandidate ?? normalized,
+  };
 }
 
-function storyTimeDateDifference(left, right) {
-  const eraDifference = customCalendarDifference(left, right, {kind: 'era-standard'});
+function hasReliableGregorianDate(resolved) {
+  const effective = resolved?.effective;
+  const normalized = effective?.normalized;
+  const normalizedDate = typeof normalized === 'string' ? normalized.split('T')[0] : null;
+  const parsedDisplay = normalizedDate ? null : parseDisplayDate(effective?.display ?? '');
+  if (parsedDisplay?.eraLabel || (parsedDisplay && parsedDisplay.year == null)) return false;
+  const dateText = normalizedDate ?? (parsedDisplay
+    ? `${String(parsedDisplay.year).padStart(4, '0')}-${String(parsedDisplay.month).padStart(2, '0')}-${String(parsedDisplay.day).padStart(2, '0')}`
+    : null);
+  if (!dateText || !/^\d{4}-\d{2}-\d{2}$/u.test(dateText)) return false;
+  const dayIndex = strictDayIndex(dateText);
+  return dayIndex !== null && (resolved.dayIndex === null || resolved.dayIndex === dayIndex);
+}
+
+function compatibleCalendarDomains(left, right, hasContext) {
+  const leftId = calendarIdentity(left.normalized);
+  const rightId = calendarIdentity(right.normalized);
+  if (leftId !== null && rightId !== null) return leftId === rightId;
+  if (hasContext || leftId === null && rightId === null) return true;
+  // A missing domain ID is not a Gregorian default. It is compatible with an
+  // explicit ID only when both values independently prove the same strict
+  // Gregorian calculation: canonical ISO date plus its matching day index.
+  const explicitDomain = leftId !== null ? left : right;
+  return explicitDomain.structured
+    && hasReliableGregorianDate(left)
+    && hasReliableGregorianDate(right);
+}
+
+function storyTimeDateDifference(left, right, calendar = null) {
+  const leftResolved = resolveStoryTimeForCalculation(left, calendar);
+  const rightResolved = resolveStoryTimeForCalculation(right, calendar);
+  if (leftResolved.conflict || rightResolved.conflict) return null;
+  if (!compatibleCalendarDomains(leftResolved, rightResolved, Boolean(calendar))) return null;
+
+  const dateCalendar = calendar ?? {kind: 'era-standard'};
+  const eraDifference = customCalendarDifference(left, right, dateCalendar);
   if (eraDifference !== null) return eraDifference;
-  if (!comparableStoryTimes(left, right)) return null;
-  return normalizeStoryTime(left).day_index - normalizeStoryTime(right).day_index;
+  if (leftResolved.dayIndex === null || rightResolved.dayIndex === null) return null;
+  if (storyTimeDomain(leftResolved.normalized) !== storyTimeDomain(rightResolved.normalized)) return null;
+  return leftResolved.dayIndex - rightResolved.dayIndex;
+}
+
+function hasKnownNormalizedDate(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  const date = normalized.split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(date)) return strictDayIndex(date) !== null;
+  return /^cn-\d+-\d+-\d+$/u.test(date);
+}
+
+/** Return read-only interpretation state without changing the input value. */
+export function diagnoseStoryTime(value, {calendar = null} = {}) {
+  const source = sourceStoryTime(value);
+  const normalized = normalizeStoryTime(value);
+  const resolved = resolveStoryTimeForCalculation(value, calendar);
+  const persistedStructured = hasKnownNormalizedDate(normalized.normalized)
+    || (hasOwn(source, 'day_index') && normalizeDayIndex(source.day_index) !== null)
+    || (hasOwn(source, 'dayIndex') && normalizeDayIndex(source.dayIndex) !== null);
+  const parseable = !resolved.conflict && (
+    resolved.dayIndex !== null
+    || hasKnownNormalizedDate(resolved.effective?.normalized)
+  );
+  return {
+    persisted_structured: persistedStructured,
+    parseable,
+    failure_reason: resolved.conflict
+      ? 'STORY_TIME_FIELD_CONFLICT'
+      : parseable ? null : 'STORY_TIME_PARSE_FAILED',
+  };
 }
 
 /**
@@ -511,7 +597,7 @@ export function differenceStoryDays(left, right) {
 }
 
 function normalizedClockMinutes(value) {
-  const normalized = normalizeStoryTime(value).normalized;
+  const normalized = value?.normalized;
   const match = typeof normalized === 'string'
     ? normalized.match(/T(\d{2}):(\d{2})(?::\d{2})?$/u)
     : null;
@@ -529,11 +615,13 @@ function normalizedClockMinutes(value) {
  * precision is used only when both values carry a reliable normalized clock
  * and refer to the same story day; otherwise the result stays day-based.
  */
-export function differenceStoryTime(left, right) {
-  const dateDifference = storyTimeDateDifference(left, right);
+export function differenceStoryTime(left, right, {calendar = null} = {}) {
+  const leftResolved = resolveStoryTimeForCalculation(left, calendar);
+  const rightResolved = resolveStoryTimeForCalculation(right, calendar);
+  const dateDifference = storyTimeDateDifference(left, right, calendar);
   if (dateDifference === null) return null;
-  const leftTime = normalizeStoryTime(left);
-  const rightTime = normalizeStoryTime(right);
+  const leftTime = leftResolved.effective;
+  const rightTime = rightResolved.effective;
   const dayDifference = dateDifference;
   const preciseClock = ['hour', 'minute'].includes(leftTime.precision)
     && ['hour', 'minute'].includes(rightTime.precision)
@@ -549,36 +637,41 @@ export function differenceStoryTime(left, right) {
   return {value: dayDifference, unit: 'day'};
 }
 
-function provenanceCompare(left, right) {
-  const floorLeft = Number(left?.source?.floor);
-  const floorRight = Number(right?.source?.floor);
-  const safeLeft = Number.isFinite(floorLeft) ? floorLeft : 0;
-  const safeRight = Number.isFinite(floorRight) ? floorRight : 0;
-  return safeLeft - safeRight
-    || String(left?.source?.message_id ?? '').localeCompare(String(right?.source?.message_id ?? ''))
-    || Number(left?.source?.swipe_id ?? 0) - Number(right?.source?.swipe_id ?? 0)
-    || String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''));
-}
-
 /**
  * Story-time chronology is intentionally separate from the Event domain's
- * provenance order. Incomparable times deterministically fall back to source
- * Floor/message/Swipe/Event identity order.
+ * provenance order. Comparable pairs become ordering edges; incomparable
+ * pairs do not. A stable topological pass preserves the input order for
+ * unconstrained events instead of pretending they share a date.
  */
-export function sortEventsByStoryTime(events = []) {
+export function sortEventsByStoryTime(events = [], {descending = false} = {}) {
   if (!Array.isArray(events)) return [];
-  return [...events].sort((left, right) => {
-    const leftTime = normalizeStoryTime(left?.story_time);
-    const rightTime = normalizeStoryTime(right?.story_time);
-    const leftDomain = storyTimeDomain(leftTime);
-    const rightDomain = storyTimeDomain(rightTime);
-    if (leftDomain !== rightDomain) return leftDomain.localeCompare(rightDomain);
-    if (leftTime.day_index !== null && rightTime.day_index !== null) {
-      const compared = leftTime.day_index - rightTime.day_index;
-      if (compared !== 0) return compared;
+  const items = events.map((event, index) => ({event, index, outgoing: new Set(), indegree: 0}));
+  for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
+      const compared = compareStoryTime(
+        items[leftIndex].event?.story_time,
+        items[rightIndex].event?.story_time,
+      );
+      if (compared === null || compared === 0) continue;
+      const earlier = descending ? (compared > 0 ? leftIndex : rightIndex) : (compared < 0 ? leftIndex : rightIndex);
+      const later = earlier === leftIndex ? rightIndex : leftIndex;
+      if (items[earlier].outgoing.has(later)) continue;
+      items[earlier].outgoing.add(later);
+      items[later].indegree += 1;
     }
-    return provenanceCompare(left, right);
-  });
+  }
+  const ready = items.filter(item => item.indegree === 0).map(item => item.index);
+  const result = [];
+  while (ready.length) {
+    ready.sort((left, right) => left - right);
+    const index = ready.shift();
+    result.push(items[index].event);
+    for (const next of items[index].outgoing) {
+      items[next].indegree -= 1;
+      if (items[next].indegree === 0) ready.push(next);
+    }
+  }
+  return result.length === items.length ? result : events.slice();
 }
 
 export const normalizeStoryTimeValue = normalizeStoryTime;
@@ -619,10 +712,7 @@ export function createStoryTime({calendarResolver = null, currentTime = null, fl
   const diff = (left, right) => {
     const resolved = resolverPair(calendarResolver, left, right);
     if (resolved?.descriptor) {
-      const leftValue = normalizeStoryTimeCandidateValue(left, resolved.descriptor);
-      const rightValue = normalizeStoryTimeCandidateValue(right, resolved.descriptor);
-      const custom = customCalendarDifference(leftValue, rightValue, resolved.descriptor);
-      if (custom !== null) return {value: custom, unit: 'day'};
+      return differenceStoryTime(left, right, {calendar: resolved.descriptor});
     }
     return differenceStoryTime(normalize(left), normalize(right));
   };

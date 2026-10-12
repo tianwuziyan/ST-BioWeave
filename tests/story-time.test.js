@@ -33,6 +33,14 @@ test('Floor Story Time resolution uses only the first non-empty header line', ()
 test('canonical parser supports Gregorian forms and validates dates', () => {
   for (const value of ['2026-09-20', '2026/09/20', '2026.09.20', '2026-09-20 14:30', '2026-09-20T14:30:25', '2026年9月20日', '2026年九月二十日']) assert.ok(parseStoryTimeCandidate(value), value);
   assert.equal(parseStoryTimeCandidate('2024-02-29').day_index, 19782);
+  assert.deepEqual(createStoryTime().normalize({display: '2026-09-20T14:30'}), {
+    display: '2026年9月20日 T14:30',
+    normalized: '2026-09-20T14:30',
+    day_index: 20716,
+    calendar_id: null,
+    precision: 'minute',
+    confidence: null,
+  });
   assert.equal(parseStoryTimeCandidate('2026-02-29'), null);
   assert.equal(parseStoryTimeCandidate('2026-04-31'), null);
   assert.equal(parseStoryTimeCandidate('9月20日').day_index, null);
@@ -45,6 +53,23 @@ test('canonical parser rejects version, IP, numeric, and URL fragments', () => {
 test('Gregorian display-only values receive local deterministic differences', () => {
   const storyTime = createStoryTime();
   assert.deepEqual(storyTime.getDateDifference({display: '2026-05-04'}, {display: '2026-03-04'}), {value: 61, unit: 'day'});
+  assert.equal(compareStoryTime({display: '2026-03-04'}, {display: '2026-05-04'}), -1);
+  assert.deepEqual(differenceStoryTime({display: '2026-05-04'}, {display: '2026-03-04'}), {value: 61, unit: 'day'});
+});
+
+test('display-only clock values share minute semantics with the facade', () => {
+  const earlier = {display: '2026-09-20 10:00'};
+  const later = {display: '2026-09-20 12:00'};
+  assert.equal(compareStoryTime(earlier, later), -1);
+  assert.deepEqual(differenceStoryTime(later, earlier), {value: 120, unit: 'minute'});
+  assert.equal(differenceStoryDays(later, earlier), 0);
+  assert.deepEqual(createStoryTime().getDateDifference(later, earlier), {value: 120, unit: 'minute'});
+});
+
+test('structured-only and day-index-only Gregorian values remain comparable', () => {
+  assert.equal(compareStoryTime({normalized: '2024-02-29', precision: 'day'}, {day_index: 19782}), 0);
+  assert.deepEqual(differenceStoryTime({normalized: '2024-03-01', precision: 'day'}, {day_index: 19782}), {value: 1, unit: 'day'});
+  assert.equal(compareStoryTime({normalized: '2024-02-29', day_index: null}, {day_index: 19782}), null);
 });
 
 test('Floor candidate extraction is bounded and excludes narrative history', () => {
@@ -69,6 +94,26 @@ test('Story Time compares compatible domains without a provider dimension', () =
   assert.equal(compareStoryTime(day1, otherCalendar), null);
 });
 
+test('Gregorian structured and display-only values can prove a shared calculation domain', () => {
+  const event = {
+    display: '2026-01-01',
+    normalized: '2026-01-01',
+    day_index: 20454,
+    calendar_id: 'main',
+    precision: 'day',
+  };
+  const current = {
+    display: '2026-04-01',
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+    precision: 'day',
+  };
+  assert.equal(compareStoryTime(current, event), 1);
+  assert.deepEqual(differenceStoryTime(current, event), {value: 90, unit: 'day'});
+  assert.equal(differenceStoryDays(current, event), 90);
+});
+
 test('Story Time ordering remains separate from provenance ordering', () => {
   const events = [
     {event_id: 'later-floor', source: {floor: 2}, story_time: {day_index: 10, calendar_id: 'main'}},
@@ -76,6 +121,28 @@ test('Story Time ordering remains separate from provenance ordering', () => {
     {event_id: 'unknown-time', source: {floor: 3}, story_time: {day_index: null, calendar_id: 'main'}},
   ];
   assert.deepEqual(sortEventsByStoryTime(events).map(event => event.event_id), ['later-floor', 'earlier-story', 'unknown-time']);
+});
+
+test('Story Time event ordering parses display-only dates and supports both directions', () => {
+  const events = [
+    {event_id: 'b', story_time: {display: '2026-03-15'}},
+    {event_id: 'a', story_time: {display: '2026年1月1日'}},
+    {event_id: 'c', story_time: {display: '2026年2月10日'}},
+  ];
+  assert.deepEqual(sortEventsByStoryTime(events).map(event => event.event_id), ['a', 'c', 'b']);
+  assert.deepEqual(sortEventsByStoryTime(events, {descending: true}).map(event => event.event_id), ['b', 'c', 'a']);
+  assert.deepEqual(events.map(event => event.event_id), ['b', 'a', 'c']);
+});
+
+test('Story Time event ordering keeps incomparable pairs stable without guessing', () => {
+  const events = [
+    {event_id: 'unknown', story_time: {display: '未知'}},
+    {event_id: 'later', story_time: {display: '2026-03-15'}},
+    {event_id: 'earlier', story_time: {display: '2026-01-01'}},
+    {event_id: 'custom', story_time: {display: '三月四日', calendar_id: 'custom-story'}},
+  ];
+  assert.deepEqual(sortEventsByStoryTime(events).map(event => event.event_id), ['unknown', 'earlier', 'later', 'custom']);
+  assert.deepEqual(sortEventsByStoryTime(events, {descending: true}).map(event => event.event_id), ['unknown', 'later', 'earlier', 'custom']);
 });
 
 test('normalizeStoryTime keeps structured values and does not expose provider', () => {
@@ -150,6 +217,36 @@ test('different eras and unknown dates remain incomparable', () => {
   assert.equal(differenceStoryTime(xihe, tianhe), null);
   assert.equal(compareStoryTime({...xihe, calendar_id: 'other'}, {...xihe, calendar_id: 'different'}), null);
   assert.equal(compareStoryTime({display: '未知'}, {display: '未知'}), null);
+});
+
+test('an explicit custom calendar does not compare with an unscoped date', () => {
+  const customDate = {display: '2026-03-04', calendar_id: 'custom-story'};
+  const unscopedDate = {display: '2026-03-05'};
+  assert.equal(compareStoryTime(customDate, unscopedDate), null);
+  assert.equal(differenceStoryTime(customDate, unscopedDate), null);
+});
+
+test('proven conflicts remain unresolved instead of selecting a date silently', () => {
+  const conflicting = {display: '2026-03-04', normalized: '2026-03-05', day_index: 20522, precision: 'day'};
+  assert.equal(compareStoryTime(conflicting, {display: '2026-03-05'}), null);
+  assert.equal(differenceStoryTime(conflicting, {display: '2026-03-04'}), null);
+});
+
+test('injected custom calendars keep local month arithmetic without inventing Gregorian dates', () => {
+  const calendar = {
+    kind: 'custom',
+    id: 'custom-story',
+    months: [{name: '霜季', days: 20}, {name: '雨季', days: 25}],
+  };
+  const resolver = {
+    resolve: () => ({descriptor: calendar}),
+    resolvePair: () => ({descriptor: calendar}),
+  };
+  const storyTime = createStoryTime({calendarResolver: resolver});
+  const earlier = {display: '星海纪元三年霜季十九日'};
+  const later = {display: '星海纪元三年雨季一日'};
+  assert.deepEqual(storyTime.getDateDifference(later, earlier), {value: 2, unit: 'day'});
+  assert.equal(storyTime.normalize(earlier).day_index, null);
 });
 
 test('Custom dates retain display-only day_index while using local elapsed arithmetic', () => {

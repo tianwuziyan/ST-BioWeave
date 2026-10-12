@@ -28,6 +28,96 @@ test('runtime diagnostics maps stale floor owner failures to the business messag
   assert.equal(safeDiagnosticSummary({ classification: 'TRUE_STALE_OWNER_CHANGE' }), staleMessage)
 })
 
+test('Story Time diagnostics separates persisted fields from read-only parsing and comparison', () => {
+  const diagnostics = createRuntimeDiagnostics();
+  const input = {
+    display: '2026-09-20',
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+  };
+  const dto = diagnostics.buildStoryTimeDebugInfo({
+    info: {
+      status: 'ready',
+      story_time: input,
+      trace: [{source: 'floor_header', story_time: input}],
+    },
+  });
+  assert.equal(dto.persisted_structured, false);
+  assert.equal(dto.parseable, true);
+  assert.equal(dto.comparable, 'not_evaluated');
+  assert.equal(dto.failure_reason, 'COMPARISON_NOT_EVALUATED');
+  assert.deepEqual(input, {
+    display: '2026-09-20',
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+  });
+});
+
+test('Story Time diagnostics reports structured, invalid, and zero-index states', () => {
+  const diagnostics = createRuntimeDiagnostics();
+  const zeroIndex = diagnostics.buildStoryTimeDebugInfo({
+    info: {status: 'ready', story_time: {day_index: 0}, trace: []},
+  });
+  assert.equal(zeroIndex.persisted_structured, true);
+  assert.equal(zeroIndex.parseable, true);
+
+  const invalid = diagnostics.buildStoryTimeDebugInfo({
+    info: {status: 'ready', story_time: {display: '2026-02-30'}, trace: []},
+  });
+  assert.equal(invalid.persisted_structured, false);
+  assert.equal(invalid.parseable, false);
+  assert.equal(invalid.failure_reason, 'CURRENT_STORY_TIME_PARSE_FAILED');
+
+  const conflict = diagnostics.buildStoryTimeDebugInfo({
+    info: {
+      status: 'ready',
+      story_time: {display: '2026-09-20', normalized: '2026-09-21', day_index: null},
+      trace: [],
+    },
+  });
+  assert.equal(conflict.parseable, false);
+  assert.equal(conflict.failure_reason, 'STORY_TIME_FIELD_CONFLICT');
+});
+
+test('Story Time diagnostics reports a unified difference without changing Event input', () => {
+  const diagnostics = createRuntimeDiagnostics();
+  const eventStoryTime = {display: '2026-09-19', normalized: null, day_index: null};
+  const dto = diagnostics.buildStoryTimeDebugInfo({
+    info: {status: 'ready', story_time: {display: '2026-09-20'}, trace: []},
+    business: {
+      active_events: [{event_id: 'event-a', story_time: eventStoryTime}],
+      current_story_time_differences: { 'event-a': {value: 1, unit: 'day'} },
+    },
+  });
+  assert.equal(dto.persisted_structured, false);
+  assert.equal(dto.parseable, true);
+  assert.equal(dto.comparable, true);
+  assert.deepEqual(dto.difference, {value: 1, unit: 'day'});
+  assert.equal(dto.recent_event.persisted_structured, false);
+  assert.equal(dto.recent_event.parseable, true);
+  assert.deepEqual(eventStoryTime, {display: '2026-09-19', normalized: null, day_index: null});
+});
+
+test('Story Time diagnostics exposes the current date, historical Event date, and 90 Story Days', () => {
+  const diagnostics = createRuntimeDiagnostics();
+  const eventStoryTime = {display: '2026-01-01', normalized: null, day_index: null, calendar_id: null};
+  const currentStoryTime = {display: '2026-04-01', normalized: null, day_index: null, calendar_id: null};
+  const dto = diagnostics.buildStoryTimeDebugInfo({
+    info: {status: 'ready', story_time: currentStoryTime, trace: []},
+    business: {
+      active_events: [{event_id: 'event-90', story_time: eventStoryTime}],
+      current_story_time_differences: {'event-90': {value: 90, unit: 'day'}},
+    },
+  });
+  assert.equal(dto.story_time.display, '2026-04-01');
+  assert.equal(dto.recent_event.story_time.display, '2026-01-01');
+  assert.equal(dto.comparable, true);
+  assert.deepEqual(dto.difference, {value: 90, unit: 'day'});
+  assert.equal(dto.failure_reason, null);
+});
+
 test('UI maps all stale floor owner variants to the same business message', () => {
   assert.equal(runtimeAnalysisFailureMessage({ error_code: 'FLOOR_TX_STALE_VERSION' }), staleMessage)
   assert.equal(runtimeAnalysisFailureMessage({ code: 'STALE_FLOOR_VERSION' }), staleMessage)

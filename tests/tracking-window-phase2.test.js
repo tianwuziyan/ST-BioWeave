@@ -38,6 +38,19 @@ test('open Window expires at authoritative horizon and terminal states never reo
   assert.equal(evaluateTrackingWindowHorizon({...window, status: 'resolved_pregnant', terminal_event_id: 'confirmation', terminal_reason: 'pregnancy_confirmation'}, {worldModel: world, subjectProfile: {species: 'Human', biological_type: 'female'}, currentStoryTime: {day_index: 100}}).status, 'resolved_pregnant');
 });
 
+test('Tracking Window horizon uses unified Story Time for display-only Gregorian dates', () => {
+  const displayEvent = {...exposure, story_time: {display: '2026-01-01'}};
+  const window = deriveTrackingWindows([displayEvent], {chatId: version.chat_id})[0];
+  const expired = evaluateTrackingWindowHorizon(window, {
+    worldModel: world,
+    subjectProfile: {species: 'Human', biological_type: 'female'},
+    currentStoryTime: {display: '2026-01-08'},
+    floorVersion: version,
+  });
+  assert.equal(expired.status, 'expired');
+  assert.equal(expired.terminal_reason, 'tracking_window_horizon_reached');
+});
+
 test('future independent exposure creates a new Window after expiration', () => {
   const runtime = createTrackingWindowRuntime();
   const expired = evaluateTrackingWindowHorizon(deriveTrackingWindows([exposure], {chatId: version.chat_id})[0], {worldModel: world, subjectProfile: {species: 'Human', biological_type: 'female'}, currentStoryTime: {day_index: 8}, floorVersion: version});

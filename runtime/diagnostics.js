@@ -2,6 +2,7 @@ import {
   safeErrorSummary as clientSafeErrorSummary,
   statusFromError as clientStatusFromError,
 } from "../ai/client.js";
+import {diagnoseStoryTime} from "../story/time.js";
 
 export const VERSION_CHAIN_FIELDS = Object.freeze([
   "chat_id",
@@ -420,16 +421,24 @@ function buildStoryTimeDebugInfo({info = {}, business = null, trace = [], chatId
   const normalizeCandidateSource = source => source === "synopsis_time" ? "synopsis_block_time" : (source ?? "unknown");
   const debugSource = normalizeCandidateSource(latestResolution?.source);
   const candidateSource = normalizeCandidateSource(latestResolution?.candidate_source ?? debugSource);
-  const currentStoryTimeParsed = Boolean(currentStoryTime?.normalized || currentStoryTime?.day_index !== null);
-  const eventStoryTimeParsed = Boolean(eventStoryTime?.normalized || eventStoryTime?.day_index !== null);
+  const currentInterpretation = diagnoseStoryTime(currentStoryTime);
+  const eventInterpretation = eventStoryTime ? diagnoseStoryTime(eventStoryTime) : null;
+  const currentStoryTimeParsed = currentInterpretation.parseable;
+  const eventStoryTimeParsed = eventInterpretation?.parseable === true;
   const failureReason = difference
     ? null
     : info.status === "NO_CHARACTER_FLOOR"
       ? "CURRENT_STORY_TIME_UNKNOWN"
       : !currentStoryTimeParsed
-        ? "CURRENT_STORY_TIME_PARSE_FAILED"
+        ? currentInterpretation.failure_reason === "STORY_TIME_FIELD_CONFLICT"
+          ? "STORY_TIME_FIELD_CONFLICT"
+          : "CURRENT_STORY_TIME_PARSE_FAILED"
         : event && !eventStoryTimeParsed
-          ? "HISTORICAL_STORY_TIME_PARSE_FAILED"
+          ? eventInterpretation?.failure_reason === "STORY_TIME_FIELD_CONFLICT"
+            ? "HISTORICAL_STORY_TIME_FIELD_CONFLICT"
+            : "HISTORICAL_STORY_TIME_PARSE_FAILED"
+          : !event
+            ? "COMPARISON_NOT_EVALUATED"
           : (calendar?.failure_reason ?? "STORY_TIME_NOT_COMPARABLE");
   return {
     status: info.status ?? "unknown",
@@ -446,6 +455,9 @@ function buildStoryTimeDebugInfo({info = {}, business = null, trace = [], chatId
     candidate_source: candidateSource,
     candidate: latestResolution?.candidate ?? null,
     story_time: currentStoryTime,
+    persisted_structured: currentInterpretation.persisted_structured,
+    parseable: currentInterpretation.parseable,
+    comparable: event ? difference !== null : "not_evaluated",
     parsed_parts: latestResolution?.parsed_parts ?? null,
     calendar: calendar ? {
       calendar_id: calendar.calendar_id ?? currentStoryTime?.calendar_id ?? null,
@@ -462,7 +474,13 @@ function buildStoryTimeDebugInfo({info = {}, business = null, trace = [], chatId
       day_index: currentStoryTime?.day_index ?? null,
       failure_reason: info.status === "NO_CHARACTER_FLOOR" ? "CURRENT_STORY_TIME_UNKNOWN" : "NO_CALENDAR_MAPPING",
     },
-    recent_event: event ? {event_id: eventId, story_time: eventStoryTime, difference} : null,
+    recent_event: event ? {
+      event_id: eventId,
+      story_time: eventStoryTime,
+      persisted_structured: eventInterpretation?.persisted_structured ?? false,
+      parseable: eventInterpretation?.parseable ?? false,
+      difference,
+    } : null,
     difference,
     failure_reason: difference ? null : failureReason,
     trace,

@@ -239,12 +239,22 @@ test('Story Time debug settings stay inside Advanced / Debug and render only the
       story_time: {display: '羲和元年五月初四 午时', normalized: 'cn-1-5-4T11:00', calendar_id: null, day_index: null, precision: 'hour'},
       parsed_parts: {era_label: '羲和', year: 1, month: 5, day: 4},
       calendar: {calendar_id: null, era_label: '羲和', calculation_level: 2, day_index: null},
+      persisted_structured: false,
+      parseable: true,
+      comparable: 'not_evaluated',
       recent_event: null,
       failure_reason: null,
     },
   }});
   assert.match(open, /synopsis_time/);
   assert.match(open, /羲和元年五月初四 午时/);
+  assert.match(open, /Persisted Structured/);
+  assert.match(open, /Parseable/);
+  assert.match(open, /Comparable/);
+  assert.match(open, /Calendar ID/);
+  assert.match(open, /Day Index/);
+  assert.match(open, /Difference/);
+  assert.match(open, /Failure Reason/);
   assert.match(open, /data-bioweave-action="refresh-story-time-debug"/);
   assert.match(open, /data-bioweave-action="copy-story-time-debug"/);
   assert.match(open, /data-bioweave-action="export-story-time-debug"/);
