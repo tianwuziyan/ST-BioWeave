@@ -524,6 +524,60 @@ test('normal Character render refreshes the current Floor without starting analy
   fixture.app.destroyBioWeave();
 });
 
+test('running Event Analysis status keeps the cached Character business state', async () => {
+  const fixture = await createFixture({analysisState: 'success'});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const before = fixture.businessDataCalls();
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    payload: {state: 'running', phase: 'event_analysis'},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.businessDataCalls(), before);
+  fixture.emit({
+    type: 'EVENT_ANALYSIS_STATUS_CHANGED',
+    payload: {state: 'success'},
+  });
+  await waitFor(() => fixture.businessDataCalls() > before, 'terminal business refresh');
+  fixture.app.destroyBioWeave();
+});
+
+test('Chat change does not trigger a second UI refresh for its registry notification', async () => {
+  const fixture = await createFixture({analysisState: 'success'});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const beforeChatChange = fixture.businessDataCalls();
+  fixture.emit({type: 'CHAT_CHANGED', chatId: 'chat-app'});
+  await waitFor(() => fixture.businessDataCalls() > beforeChatChange, 'Chat change business refresh');
+  const afterChatChange = fixture.businessDataCalls();
+  fixture.emit({
+    type: 'TRACKING_REGISTRY_REFRESHED',
+    chatId: 'chat-app',
+    payload: {reason: 'CHAT_CHANGED', event_count: 0},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.businessDataCalls(), afterChatChange);
+  fixture.app.destroyBioWeave();
+});
+
+test('loaded UI reopens and switches routes without repeating business reads', async () => {
+  const fixture = await createFixture({analysisState: 'success'});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const reads = fixture.businessDataCalls();
+
+  fixture.app.openBioWeave();
+  for (const route of ['overview', 'characters', 'events', 'projection', 'settings']) {
+    fixture.app.go(route);
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(fixture.businessDataCalls(), reads);
+  const performanceTrace = fixture.persistenceTrace().filter(entry => entry.stage === 'CHARACTER_UI_PERFORMANCE');
+  assert.ok(performanceTrace.some(entry => entry.operation === 'open'));
+  assert.ok(performanceTrace.some(entry => entry.operation === 'route-switch'));
+  assert.ok(performanceTrace.some(entry => entry.operation === 'business-refresh' && Number.isFinite(entry.business_read_ms) && Number.isFinite(entry.render_ms)));
+  fixture.app.destroyBioWeave();
+});
+
 async function createStaleBusinessRefreshFixture() {
   const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
   await waitFor(() => fixture.persistenceTrace().some(entry => entry.stage === 'CHARACTER_UI_STATE_COMMITTED'), 'initial UI business refresh');

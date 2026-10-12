@@ -3632,7 +3632,9 @@ export function createApp(runtime, options = {}) {
         if (typeof runtime.collectActiveBusinessData !== 'function') {
           throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
         }
+        const businessReadStartedAt = monotonicNow()
         const collected = await runtime.collectActiveBusinessData({ reason })
+        const businessReadMs = durationMs(businessReadStartedAt)
         if (requestId !== businessRefreshSequence) {
           recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
             business_refresh_sequence: cycleId,
@@ -3683,9 +3685,17 @@ export function createApp(runtime, options = {}) {
           business_refresh_sequence: cycleId,
         })
         if (root?.dataset.open === 'true') {
+          const renderStartedAt = monotonicNow()
           render()
           recordCharacterRefreshTrace('CHARACTER_UI_RENDERED', {
             business_refresh_sequence: cycleId,
+          })
+          recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
+            business_refresh_sequence: cycleId,
+            operation: 'business-refresh',
+            request_source: reason,
+            business_read_ms: businessReadMs,
+            render_ms: durationMs(renderStartedAt),
           })
         }
         if (storyTimeDebugState.enabled) void refreshStoryTimeDebug({renderAfter: true})
@@ -4438,6 +4448,8 @@ export function createApp(runtime, options = {}) {
   }
   function go(nextRoute) {
     if (!pages[nextRoute]) return false
+    const routeSwitchStartedAt = monotonicNow()
+    const previousRoute = route
     if (nextRoute === 'settings' && route !== 'settings') refreshAnalysisChatSettings()
     if (nextRoute === 'world' && route !== 'world') {
       worldModelState = {
@@ -4457,7 +4469,15 @@ export function createApp(runtime, options = {}) {
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
     }
     if (nextRoute !== 'events') setEventFilter()
+    const renderStartedAt = monotonicNow()
     render()
+    recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
+      operation: 'route-switch',
+      from_route: previousRoute,
+      to_route: nextRoute,
+      route_switch_total_ms: durationMs(routeSwitchStartedAt),
+      render_ms: durationMs(renderStartedAt),
+    })
     return true
   }
   function openCharacter(characterId) {
@@ -5301,8 +5321,8 @@ export function createApp(runtime, options = {}) {
       const eventAnalysisBusy = payload.state === 'running' && payload.phase === 'event_analysis'
       businessState = {
         ...businessState,
-        loaded: false,
-        loading: false,
+        loaded: terminal ? false : businessState.loaded,
+        loading: terminal ? false : businessState.loading,
         analysisStatus: {
           ...businessState.analysisStatus,
           ...payload,
@@ -5365,6 +5385,10 @@ export function createApp(runtime, options = {}) {
       event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED'
         ? event?.mutationType
         : event?.type
+    const redundantChatRegistryRefresh =
+      event?.type === 'TRACKING_REGISTRY_REFRESHED' &&
+      event?.payload?.reason === 'CHAT_CHANGED' &&
+      (event?.chatId === undefined || String(event.chatId) === String(runtime.chat.current()))
     const isCharacterFloorLifecycleRefresh =
       event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED' &&
       lifecycleRefreshType === 'CHARACTER_MESSAGE_RENDERED'
@@ -5380,8 +5404,8 @@ export function createApp(runtime, options = {}) {
     const shouldRefreshCharacterFloor =
       !characterLifecycleRefreshKey || characterLifecycleRefreshKey !== lastCharacterLifecycleRefreshKey
     if (
-      event?.type === 'TRACKING_REGISTRY_REFRESHED' ||
-      event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' ||
+      (event?.type === 'TRACKING_REGISTRY_REFRESHED' && !redundantChatRegistryRefresh) ||
+      (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state !== 'running') ||
       event?.type === 'EVENT_ANALYSIS_COMMITTED' ||
       event?.type === 'MESSAGE_DELETED' ||
       event?.type === 'MESSAGE_UPDATED' ||
@@ -6155,6 +6179,7 @@ export function createApp(runtime, options = {}) {
     if (node) delete node[APP_RUNTIME_DESTROY_PROPERTY]
   }
   function initializeRoot(node, surface) {
+    const initializationStartedAt = monotonicNow()
     const wasOpen = node.dataset.open === 'true'
     clearExistingRootBindings(node)
     root = node
@@ -6203,7 +6228,13 @@ export function createApp(runtime, options = {}) {
       if (typeof unsubscribeRuntime === 'function') root[APP_RUNTIME_UNSUBSCRIBE_PROPERTY] = unsubscribeRuntime
     }
     setTheme(normalizeTheme(preferences.readTheme()))
+    const renderStartedAt = monotonicNow()
     render()
+    recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
+      operation: 'initialization',
+      ui_initialization_ms: durationMs(initializationStartedAt),
+      render_ms: durationMs(renderStartedAt),
+    })
   }
   const lifecycle = createOverlayLifecycle({
     documentRef,
@@ -6232,12 +6263,18 @@ export function createApp(runtime, options = {}) {
     return root
   }
   function openBioWeave() {
+    const openStartedAt = monotonicNow()
     const opened = lifecycle.open()
     if (!opened) return null
     overlay = opened.overlay
     root = opened.root
     if (route === 'settings') refreshAnalysisChatSettings()
     if (opened.initializedBeforeOpen) render()
+    recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
+      operation: 'open',
+      ui_open_total_ms: durationMs(openStartedAt),
+      initialized_before_open: opened.initializedBeforeOpen === true,
+    })
     return root
   }
   function closeBioWeave() {

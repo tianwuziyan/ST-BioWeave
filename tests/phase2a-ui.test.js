@@ -222,7 +222,9 @@ test('event relative formatter handles zero, one, and unavailable Runtime differ
   const storyTime = { display: '第三日夜间', normalized: null, day_index: null, calendar_id: null, precision: 'day' }
   const render = difference =>
     eventsPage({ activeEvents: [{ ...event, story_time: storyTime }], currentStoryTimeDifferences: { 'evt-1': difference } })
-  assert.match(render({ value: 1, unit: 'day' }), /1天前/)
+  assert.match(render({ value: 1, unit: 'day' }), /昨天/)
+  assert.match(render({ value: 3, unit: 'day' }), /3天前/)
+  assert.match(render({ value: 0, unit: 'minute' }), /今天/)
   assert.match(render({ value: 0, unit: 'day' }), /今天/)
   const unavailable = render(null)
   assert.match(unavailable, /class="bioweave-event-story-time">第三日夜间<\/b>/)
@@ -383,12 +385,43 @@ test('character tracking uses day fallback, precise clock, future values, and un
     })
   const sameDay = { display: '同日', normalized: 'cn-1-3-4', day_index: 63, calendar_id: 'xihe', precision: 'day' }
   assert.match(render(sameDay, { ...sameDay, display: '当前' }, { value: 0, unit: 'day' }), /今天/)
+  assert.match(
+    render(
+      { ...sameDay, display: '羲和1年3月20日 辰时' },
+      { ...sameDay, display: '羲和1年3月20日 午时' },
+      { value: 0, unit: 'minute' },
+    ),
+    /今天/,
+  )
   const eventAtTen = { ...sameDay, display: '巳时', normalized: 'cn-1-3-4T10:00', precision: 'hour' }
   const currentAtTwelve = { ...sameDay, display: '午时', normalized: 'cn-1-3-4T12:00', precision: 'hour' }
   assert.match(render(eventAtTen, currentAtTwelve, { value: 120, unit: 'minute' }), /2小时前/)
   assert.match(render(currentAtTwelve, { ...sameDay, day_index: 61, display: '前两日' }, { value: -2, unit: 'day' }), /2天后/)
   assert.doesNotMatch(render({ ...sameDay, calendar_id: 'other' }, sameDay, null), /今天|天前|天后/)
   assert.match(render({ ...sameDay, display: null, day_index: null, normalized: null }, sameDay, null), /未知时间/)
+})
+
+test('event and character pages use the same same-day relative-time wording', () => {
+  const eventStoryTime = { display: '羲和1年3月20日 辰时', normalized: null, day_index: null, calendar_id: null, precision: 'hour' }
+  const currentStoryTime = { display: '羲和1年3月20日 午时', normalized: null, day_index: null, calendar_id: null, precision: 'hour' }
+  const difference = { value: 0, unit: 'minute' }
+  const eventHtml = eventsPage({
+    activeEvents: [{ ...event, story_time: eventStoryTime }],
+    currentStoryTime,
+    currentStoryTimeDifferences: {'evt-1': difference},
+  })
+  const characterHtml = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {subject: {character_id: 'char-a', display_name: '阿甲', exposure_event_ids: ['evt-1'], status: 'active'}},
+    characterProfiles: {subject: {character_id: 'char-a', display_name: '阿甲'}},
+    activeEvents: [{ ...event, story_time: eventStoryTime }],
+    currentStoryTime,
+    currentStoryTimeDifferences: {'evt-1': difference},
+  })
+  assert.match(eventHtml, /今天/)
+  assert.match(characterHtml, /今天/)
+  assert.doesNotMatch(eventHtml, /同一时间/)
+  assert.doesNotMatch(characterHtml, /同一时间/)
 })
 
 test('capability labels remain Chinese across Character, State, and World UI', () => {

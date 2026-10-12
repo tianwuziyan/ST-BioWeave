@@ -127,6 +127,69 @@ test('same site observations with different factual kinds remain one site group'
   assert.deepEqual(result.characters['char-a'].grouped_issues[0].source_observation_ids.sort(), ['pain', 'wound']);
 });
 
+test('continuation updates one current health issue while retaining both source Events', () => {
+  const initial = event({
+    id: 'laceration',
+    kind: 'laceration',
+    description: '左大腿外侧割伤',
+    bodySite: '左大腿外侧',
+    laterality: 'left',
+    day: 15,
+  });
+  const healing = event({
+    id: 'laceration-healing',
+    kind: 'laceration_healing',
+    description: '左大腿外侧割伤正在恢复',
+    bodySite: '左大腿外侧',
+    laterality: 'left',
+    continuation: true,
+    day: 18,
+  });
+  const result = deriveCurrentHealthState({
+    events: [initial, healing],
+    assessments: [assessment({eventId: initial.event_id, expectedDay: 100}), assessment({eventId: healing.event_id, expectedDay: 100})],
+    currentStoryTime: story(20),
+  });
+  const character = result.characters['char-a'];
+  assert.deepEqual(character.active_observations.map(item => item.source_event_id), ['laceration', 'laceration-healing']);
+  assert.equal(character.grouped_issues.length, 1);
+  assert.equal(character.grouped_issues[0].health_observations.length, 1);
+  assert.equal(character.grouped_issues[0].health_observations[0].source_event_id, healing.event_id);
+  assert.equal(character.grouped_issues[0].current_description, 'early-laceration-healing');
+  assert.deepEqual(character.grouped_issues[0].source_event_ids, [initial.event_id, healing.event_id]);
+});
+
+test('same-site Event without continuation remains a separate current observation', () => {
+  const result = deriveCurrentHealthState({
+    events: [
+      event({id: 'new-injury-a', kind: 'laceration', bodySite: '左大腿外侧', laterality: 'left', day: 15}),
+      event({id: 'new-injury-b', kind: 'laceration', bodySite: '左大腿外侧', laterality: 'left', day: 18}),
+    ],
+    assessments: [assessment({eventId: 'new-injury-a', expectedDay: 100}), assessment({eventId: 'new-injury-b', expectedDay: 100})],
+    currentStoryTime: story(20),
+  });
+  assert.equal(result.characters['char-a'].grouped_issues[0].health_observations.length, 2);
+});
+
+test('severity summary follows the current continuation while preserving another moderate issue', () => {
+  const result = deriveCurrentHealthState({
+    events: [
+      event({id: 'laceration', kind: 'laceration', bodySite: 'left-thigh', laterality: 'left', day: 15}),
+      event({id: 'laceration-healing', kind: 'laceration_healing', bodySite: 'left-thigh', laterality: 'left', continuation: true, day: 18}),
+      event({id: 'shoulder-injury', kind: 'contusion', bodySite: 'right-shoulder', laterality: 'right', day: 18}),
+    ],
+    assessments: [
+      assessment({eventId: 'laceration', severity: 'moderate', expectedDay: 100}),
+      assessment({eventId: 'laceration-healing', severity: 'mild', expectedDay: 100}),
+      assessment({eventId: 'shoulder-injury', severity: 'moderate', expectedDay: 100}),
+    ],
+    currentStoryTime: story(20),
+  });
+  const character = result.characters['char-a'];
+  assert.equal(character.grouped_issues.find(issue => issue.body_site === 'left-thigh').health_observations[0].severity, 'mild');
+  assert.equal(character.severity_summary, 'moderate');
+});
+
 test('intervention-only health data does not create Current Health state', () => {
   const result = deriveCurrentHealthState({
     events: [event({id: 'treatment', type: 'medical_event', kind: 'wound_treatment', healthRole: 'intervention'})],

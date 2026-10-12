@@ -9,7 +9,8 @@ export function formatStoryTimeRelative(difference) {
   if (!difference) return ''
   const value = Number(difference.value)
   if (!Number.isFinite(value)) return ''
-  if (value === 0) return difference.unit === 'minute' ? '同一时间' : '今天'
+  if (value === 0) return '今天'
+  if (difference.unit === 'day' && value === 1) return '昨天'
   const suffix = value > 0 ? '前' : '后'
   const magnitude = Math.abs(value)
   if (difference.unit === 'minute') {

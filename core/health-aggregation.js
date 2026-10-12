@@ -29,6 +29,18 @@ function commonCurrentDescription(observations) {
   return descriptions.length === 1 ? descriptions[0] : null;
 }
 
+function presentationObservation(item) {
+  return {
+    description: text(item.description),
+    current_description: text(item.current_description ?? item.description),
+    factual_kind: item.factual_kind ?? null,
+    severity: item.severity ?? 'unknown',
+    source_event_id: item.source_event_id,
+    recovery_stage: item.recovery_stage ?? null,
+    continuation: item.continuation === true,
+  };
+}
+
 const severityRank = {unknown: 0, mild: 1, moderate: 2, severe: 3};
 
 /** Presentation-only summary of the supplied active observations. */
@@ -54,16 +66,17 @@ export function aggregateActiveHealthObservations(observations = []) {
       existing.source_observation_ids.push(item.source_event_id);
       const description = text(item.description);
       if (description && !existing.descriptions.includes(description)) existing.descriptions.push(description);
-      existing.health_observations.push({
-        description,
-        factual_kind: item.factual_kind ?? null,
-          severity: item.severity ?? 'unknown',
-          source_event_id: item.source_event_id,
-          recovery_stage: item.recovery_stage ?? null,
-          current_description: text(item.current_description ?? item.description),
-        });
+      if (item.continuation === true && existing.health_observations.length === 1) {
+        existing.health_observations[0] = presentationObservation(item);
+        existing.factual_kind = item.factual_kind ?? existing.factual_kind;
+        existing.description = description ?? existing.description;
+        existing.current_description = text(item.current_description ?? item.description) ?? existing.current_description;
+        existing.recovery_stage = item.recovery_stage ?? null;
+      } else {
+        existing.health_observations.push(presentationObservation(item));
         existing.recovery_stage = commonRecoveryStage(existing.health_observations);
         existing.current_description = commonCurrentDescription(existing.health_observations);
+      }
       return;
     }
     groups.set(key, {
@@ -74,7 +87,7 @@ export function aggregateActiveHealthObservations(observations = []) {
       factual_kind: item.factual_kind ?? null,
       description: text(item.description),
       descriptions: text(item.description) ? [text(item.description)] : [],
-      health_observations: [{description: text(item.description), current_description: text(item.current_description ?? item.description), factual_kind: item.factual_kind ?? null, severity: item.severity ?? 'unknown', source_event_id: item.source_event_id, recovery_stage: item.recovery_stage ?? null}],
+      health_observations: [presentationObservation(item)],
       recovery_stage: item.recovery_stage ?? null,
       current_description: text(item.current_description ?? item.description),
       source_observation_ids: [item.source_event_id],
@@ -93,5 +106,6 @@ export function healthObservationPresentationIdentity(event) {
     factual_kind: normalized(fact.kind) ?? text(event?.type) ?? 'unknown',
     body_site: text(fact.body_site),
     laterality: text(fact.laterality),
+    continuation: fact.continuation === true,
   };
 }

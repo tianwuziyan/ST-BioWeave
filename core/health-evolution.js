@@ -67,6 +67,8 @@ export function expiredHealthEventIds({
 }
 
 function observationSort(left, right) {
+  const comparison = compareStoryTime(left.reference_story_time, right.reference_story_time);
+  if (comparison !== null && comparison !== 0) return comparison;
   return String(left.source_event_id).localeCompare(String(right.source_event_id));
 }
 
@@ -86,6 +88,7 @@ function buildObservation(event, assessment, currentStoryTime) {
     assessment_id: assessment?.assessment_id ?? null,
     severity: assessment?.severity ?? 'unknown',
     factual_kind: identity.factual_kind,
+    continuation: identity.continuation,
     description: event.state_fact?.payload?.symptom?.description
       ?? event.state_fact?.payload?.fact?.description
       ?? null,
@@ -134,7 +137,9 @@ export function deriveCurrentHealthState({events = [], assessments = [], current
   for (const character of Object.values(characters)) {
     character.active_observations.sort(observationSort);
     character.grouped_issues = aggregateActiveHealthObservations(character.active_observations);
-    character.severity_summary = summarizeActiveHealthSeverity(character.active_observations);
+    character.severity_summary = summarizeActiveHealthSeverity(
+      character.grouped_issues.flatMap(issue => issue.health_observations),
+    );
   }
   for (const [subject, character] of Object.entries(characters)) {
     if (!character.active_observations.length) {

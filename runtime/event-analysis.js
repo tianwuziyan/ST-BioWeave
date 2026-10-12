@@ -70,7 +70,11 @@ import { createAutomaticAnalysisPort } from "./automatic-analysis.js";
 import { createAnalysisExecutionPort } from "./analysis-execution.js";
 import { createManualAnalysisPort } from "./manual-analysis.js";
 import { createTrackingWindowRuntime } from "./tracking-window-runtime.js";
-import { buildVersionChainDiagnostic } from "./diagnostics.js";
+import {
+  buildVersionChainDiagnostic,
+  durationMs,
+  monotonicNow,
+} from "./diagnostics.js";
 const LIFECYCLE_ONLY_EVENTS = new Set([
   // Deletion only invalidates the downstream active path; it never analyzes
   // the message collection after the owner has been removed.
@@ -2559,7 +2563,7 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
-  async function collectActiveBusinessData({includeDebug = false} = {}) {
+  async function collectActiveBusinessData({includeDebug = false, reason = "unknown"} = {}) {
     const withDebug = (data, statusValue, stateInfo = null) => includeDebug
       ? {
           ...data,
@@ -2598,6 +2602,7 @@ export function createEventAnalysisCoordinator({
       }), status);
     }
     let derived;
+    const canonicalBuildStartedAt = monotonicNow();
     try {
       derived = await collectCurrentDerivedState(token, chatData, {
         target,
@@ -2621,8 +2626,10 @@ export function createEventAnalysisCoordinator({
         },
       ), diagnostics.buildFloorPreflightStatus(error, 0));
     }
+    const canonicalBuildMs = durationMs(canonicalBuildStartedAt);
     await assertBusinessTargetCurrent(target, token);
-    return withDebug(buildBusinessData(
+    const dtoBuildStartedAt = monotonicNow();
+    const businessData = buildBusinessData(
       status,
       derived.activeEvents,
       derived.chatData,
@@ -2643,7 +2650,15 @@ export function createEventAnalysisCoordinator({
         current_story_time_differences: derived.currentStoryTimeDifferences,
         current_health_state: derived.currentHealthState,
       },
-    ), status, derived);
+    );
+    const dtoBuildMs = durationMs(dtoBuildStartedAt);
+    emitPersistenceTrace("CHARACTER_UI_PERFORMANCE", null, target, {
+      operation: "business-read",
+      request_source: reason,
+      canonical_build_ms: canonicalBuildMs,
+      dto_build_ms: dtoBuildMs,
+    }, "ui");
+    return withDebug(businessData, status, derived);
   }
 
   async function verifyCharacterCanonicalReady(
@@ -2910,7 +2925,7 @@ export function createEventAnalysisCoordinator({
       health_state: {
         source_type: "CURRENT_DERIVED",
         current_story_time: cloneValue(stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null),
-        state: cloneValue(stateInfo?.current_health_state ?? {schema_version: 1, characters: {}}),
+        state: cloneValue(stateInfo?.current_health_state ?? stateInfo?.currentHealthState ?? {schema_version: 1, characters: {}}),
       },
     };
   }
