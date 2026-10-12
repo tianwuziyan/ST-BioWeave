@@ -573,8 +573,8 @@ test('loaded UI reopens and switches routes without repeating business reads', a
   assert.equal(fixture.businessDataCalls(), reads);
   const performanceTrace = fixture.persistenceTrace().filter(entry => entry.stage === 'CHARACTER_UI_PERFORMANCE');
   assert.ok(performanceTrace.some(entry => entry.operation === 'open'));
-  assert.ok(performanceTrace.some(entry => entry.operation === 'route-switch'));
-  assert.ok(performanceTrace.some(entry => entry.operation === 'business-refresh' && Number.isFinite(entry.business_read_ms) && Number.isFinite(entry.render_ms)));
+  assert.ok(performanceTrace.some(entry => entry.operation === 'route_switch'));
+  assert.ok(performanceTrace.some(entry => entry.operation === 'refresh' && Number.isFinite(entry.business_read_ms) && Number.isFinite(entry.render_ms)));
   fixture.app.destroyBioWeave();
 });
 

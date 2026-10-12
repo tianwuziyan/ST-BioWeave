@@ -11,9 +11,10 @@ import {diagnosticFingerprint} from './diagnostics.js';
 
 export function createCurrentStateAttributionResolver({collectActiveBusinessData} = {}) {
   if (typeof collectActiveBusinessData !== 'function') throw new TypeError('CURRENT_STATE_REQUIRED');
-  return async ({chatId, floor} = {}) => {
+  return async ({chatId, floor, businessData, businessDataError, businessDataResolved = false} = {}) => {
     if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) return {};
-    const business = await collectActiveBusinessData();
+    if (businessDataError) throw businessDataError;
+    const business = businessDataResolved ? businessData : await collectActiveBusinessData();
     if (business?.current_state_status !== 'ready') return {};
     if (!business?.current_floor?.version || !sameFloorVersion(business.current_floor.version, floor.version)) return {};
     return attributionBySubjectFromCurrentState(business.current_state);
@@ -29,6 +30,7 @@ export function createProjectionContextCoordinator({
   attributionResolver = null,
   healthGuidanceResolver = null,
   projectionEvidenceResolver = null,
+  collectActiveBusinessData = null,
   recordProjectionSubmission = null,
   trace = () => {},
   injection = {},
@@ -159,16 +161,55 @@ function floorReadStillMatches(left, right) {
     }
     try {
       let views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      let businessData;
+      let businessDataError = null;
+      let businessDataResolved = false;
+      if (
+        typeof collectActiveBusinessData === 'function'
+        && (
+          typeof projectionEvidenceResolver === 'function'
+          || typeof attributionResolver === 'function'
+          || typeof healthGuidanceResolver === 'function'
+        )
+      ) {
+        businessDataResolved = true;
+        try {
+          businessData = await collectActiveBusinessData();
+        } catch (error) {
+          businessDataError = error;
+        }
+      }
       if (typeof projectionEvidenceResolver === 'function') {
-        views = await projectionEvidenceResolver({chatId, floor, views});
+        views = await projectionEvidenceResolver({
+          chatId,
+          floor,
+          views,
+          businessData,
+          businessDataError,
+          businessDataResolved,
+        });
       }
       const attributionBySubject = typeof attributionResolver === 'function'
-        ? await attributionResolver({chatId, floor, views})
+        ? await attributionResolver({
+          chatId,
+          floor,
+          views,
+          businessData,
+          businessDataError,
+          businessDataResolved,
+        })
         : {};
       let healthGuidance = [];
       if (typeof healthGuidanceResolver === 'function') {
         try {
-          healthGuidance = await healthGuidanceResolver({chatId, floor, views});
+          healthGuidance = await healthGuidanceResolver({
+            chatId,
+            floor,
+            views,
+            businessData,
+            businessDataError,
+            businessDataResolved,
+          });
         } catch {
           healthGuidance = [];
         }

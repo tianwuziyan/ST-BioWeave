@@ -3633,7 +3633,7 @@ export function createApp(runtime, options = {}) {
           throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
         }
         const businessReadStartedAt = monotonicNow()
-        const collected = await runtime.collectActiveBusinessData({ reason })
+        const collected = await runtime.collectActiveBusinessData({ reason, route })
         const businessReadMs = durationMs(businessReadStartedAt)
         if (requestId !== businessRefreshSequence) {
           recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
@@ -3692,7 +3692,7 @@ export function createApp(runtime, options = {}) {
           })
           recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
             business_refresh_sequence: cycleId,
-            operation: 'business-refresh',
+            operation: 'refresh',
             request_source: reason,
             business_read_ms: businessReadMs,
             render_ms: durationMs(renderStartedAt),
@@ -4472,7 +4472,7 @@ export function createApp(runtime, options = {}) {
     const renderStartedAt = monotonicNow()
     render()
     recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
-      operation: 'route-switch',
+      operation: 'route_switch',
       from_route: previousRoute,
       to_route: nextRoute,
       route_switch_total_ms: durationMs(routeSwitchStartedAt),

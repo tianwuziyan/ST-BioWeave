@@ -2074,15 +2074,17 @@ export function createRuntime({
     getChatId: () => chat.current(),
     setExtensionPrompt: st.setExtensionPrompt,
     enabledResolver: isBioWeaveEnabled,
+    collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
     attributionResolver: createCurrentStateAttributionResolver({
       collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
     }),
-    projectionEvidenceResolver: async ({chatId, floor, views}) => {
+    projectionEvidenceResolver: async ({chatId, floor, views, businessData, businessDataError, businessDataResolved = false}) => {
       const projectionViews = Array.isArray(views?.all) ? views.all : (Array.isArray(views) ? views : []);
       if (!projectionViews.some(view => view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence)) return views;
       try {
         const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor});
-        const business = await eventAnalysis.collectActiveBusinessData();
+        if (businessDataError) throw businessDataError;
+        const business = businessDataResolved ? businessData : await eventAnalysis.collectActiveBusinessData();
         if (!business?.current_floor?.version || !sameFloorVersion(business.current_floor.version, floor.version)) {
           return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
         }
@@ -2117,8 +2119,9 @@ export function createRuntime({
       }
       return {status: 'readback_verified', records};
     },
-    healthGuidanceResolver: async ({chatId, floor}) => {
-      const business = await eventAnalysis.collectActiveBusinessData();
+    healthGuidanceResolver: async ({chatId, floor, businessData, businessDataError, businessDataResolved = false}) => {
+      if (businessDataError) throw businessDataError;
+      const business = businessDataResolved ? businessData : await eventAnalysis.collectActiveBusinessData();
       if (
         business?.current_state_status === "STATE_ERROR" ||
         !business?.current_floor?.version ||

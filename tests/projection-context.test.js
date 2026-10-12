@@ -306,6 +306,94 @@ test('coordinator refresh reads attribution through the resolver and updates the
   assert.equal(writes.length, 2);
 });
 
+test('coordinator shares one local business snapshot across Projection resolvers', async () => {
+  const writes = [];
+  const floorVersions = [
+    {chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0, content_hash: 'hash-a', message_version: 'v1'},
+    {chat_id: 'chat-a', message_id: 'message-b', floor: 3, swipe_id: 0, content_hash: 'hash-b', message_version: 'v1'},
+  ];
+  const businessSnapshots = [
+    {marker: 'BUSINESS_A', current_floor: {version: floorVersions[0]}, current_state: {marker: 'STATE_A'}},
+    {marker: 'BUSINESS_B', current_floor: {version: floorVersions[1]}, current_state: {marker: 'STATE_B'}},
+  ];
+  let refreshIndex = 0;
+  let reads = 0;
+  const seen = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: floorVersions[refreshIndex]}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    collectActiveBusinessData: async () => businessSnapshots[reads++],
+    projectionEvidenceResolver: async ({views, businessData}) => {
+      seen.push(['evidence', businessData]);
+      return {
+        all: views.all.map(item => ({
+          ...item,
+          development: {...item.development, next_signal: businessData.marker},
+        })),
+      };
+    },
+    attributionResolver: async ({businessData}) => {
+      seen.push(['attribution', businessData]);
+      return {
+        char_000002: {
+          confirmed: [{source_character_id: businessData.current_state.marker, contribution_kind: 'genetic'}],
+        },
+      };
+    },
+    healthGuidanceResolver: async ({businessData}) => {
+      seen.push(['health', businessData]);
+      return [{
+        subject_id: 'char_000002',
+        body_site: '左手腕',
+        stage: 'early',
+        guidance: businessData.marker,
+      }];
+    },
+  });
+
+  const first = await coordinator.refreshProjectionContext();
+  assert.equal(reads, 1);
+  assert.equal(seen.length, 3);
+  assert.equal(new Set(seen.map(([, business]) => business)).size, 1);
+  assert.match(first.prompt, /BUSINESS_A/);
+  assert.deepEqual(first.dto[0].attribution.confirmed[0].source_character_id, 'STATE_A');
+
+  refreshIndex = 1;
+  seen.length = 0;
+  const second = await coordinator.refreshProjectionContext();
+  assert.equal(reads, 2);
+  assert.equal(new Set(seen.map(([, business]) => business)).size, 1);
+  assert.match(second.prompt, /BUSINESS_B/);
+  assert.deepEqual(second.dto[0].attribution.confirmed[0].source_character_id, 'STATE_B');
+  assert.equal(writes.length, 2);
+});
+
+test('coordinator performs one business read when only a subset of resolvers is configured', async () => {
+  let reads = 0;
+  let received = null;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    collectActiveBusinessData: async () => {
+      reads += 1;
+      return {marker: 'BUSINESS_ONLY'};
+    },
+    healthGuidanceResolver: async ({businessData, businessDataResolved}) => {
+      received = {businessData, businessDataResolved};
+      return [];
+    },
+  });
+
+  const result = await coordinator.refreshProjectionContext();
+  assert.equal(result.status, 'cleared');
+  assert.equal(reads, 1);
+  assert.deepEqual(received, {businessData: {marker: 'BUSINESS_ONLY'}, businessDataResolved: true});
+});
+
 test('current State attribution resolver fails closed for chat, Floor, Swipe, and state mismatches', async () => {
   const version = {chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 1, content_hash: 'hash-a', message_version: 'v1'};
   let business = {

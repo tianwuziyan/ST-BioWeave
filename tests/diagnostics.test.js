@@ -6,7 +6,7 @@ import {
   createRuntimeDiagnostics,
   safeDiagnosticSummary,
 } from '../runtime/diagnostics.js'
-import { runtimeAnalysisFailureMessage } from '../ui/app.js'
+import { buildDebugExportText, runtimeAnalysisFailureMessage } from '../ui/app.js'
 
 const staleMessage = '当前楼层状态已发生变化，本次分析结果未写入。'
 
@@ -162,6 +162,43 @@ test('health diagnostics export separates invocation counts from persisted reuse
   }])
   assert.equal(trace.summary.generation.projection_refresh_awaited, true)
   assert.equal(trace.summary.generation.context_ready_before_listener_resolve, true)
+})
+
+test('UI performance trace preserves zero and millisecond fields through Debug JSON export', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'CHARACTER_UI_PERFORMANCE',
+    operation: 'open',
+    route: 'overview',
+    ui_open_total_ms: 0,
+    ui_initialization_ms: 1.25,
+    business_read_ms: 2.5,
+    canonical_build_ms: 3.75,
+    dto_build_ms: 0,
+    render_ms: 4,
+    message_content: '敏感聊天正文不应进入 Trace',
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'CHARACTER_UI_PERFORMANCE',
+    operation: 'route_switch',
+    from_route: 'overview',
+    to_route: 'characters',
+    route_switch_total_ms: 5.5,
+  }})
+  const trace = diagnostics.getPersistenceTrace()
+  const performanceEntries = trace.sequence.filter(item => item.stage === 'CHARACTER_UI_PERFORMANCE')
+  assert.equal(performanceEntries[0].ui_open_total_ms, 0)
+  assert.equal(performanceEntries[0].dto_build_ms, 0)
+  assert.equal(performanceEntries[0].message_content, undefined)
+  assert.equal(performanceEntries[1].route_switch_total_ms, 5.5)
+  assert.equal(performanceEntries[1].ui_open_total_ms, undefined)
+
+  const exported = JSON.parse(buildDebugExportText({historyTrace: trace}))
+  const exportedEntries = exported.history_trace.sequence.filter(item => item.stage === 'CHARACTER_UI_PERFORMANCE')
+  assert.equal(exportedEntries[0].ui_open_total_ms, 0)
+  assert.equal(exportedEntries[0].canonical_build_ms, 3.75)
+  assert.equal(exportedEntries[1].route_switch_total_ms, 5.5)
+  assert.equal(exportedEntries[1].message_content, undefined)
 })
 
 test('Settings debug trace retains Story Time Projection stages and safe IDs', () => {

@@ -2563,7 +2563,7 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
-  async function collectActiveBusinessData({includeDebug = false, reason = "unknown"} = {}) {
+  async function collectActiveBusinessData({includeDebug = false, reason = "unknown", route = null} = {}) {
     const withDebug = (data, statusValue, stateInfo = null) => includeDebug
       ? {
           ...data,
@@ -2655,6 +2655,7 @@ export function createEventAnalysisCoordinator({
     emitPersistenceTrace("CHARACTER_UI_PERFORMANCE", null, target, {
       operation: "business-read",
       request_source: reason,
+      route,
       canonical_build_ms: canonicalBuildMs,
       dto_build_ms: dtoBuildMs,
     }, "ui");
