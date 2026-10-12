@@ -72,6 +72,24 @@ function eventResult(eventId = "evt-1", overrides = {}) {
   };
 }
 
+const RELIABLE_FIXTURE_EVENT_STORY_TIME = Object.freeze({
+  display: "羲和1年3月4日 巳时中",
+  normalized: null,
+  day_index: null,
+  calendar_id: null,
+  precision: "unknown",
+  confidence: 0.6,
+});
+
+const RELIABLE_FIXTURE_CURRENT_STORY_TIME = Object.freeze({
+  display: "羲和1年3月5日 巳时中",
+  normalized: null,
+  day_index: null,
+  calendar_id: null,
+  precision: "unknown",
+  confidence: 1,
+});
+
 function createFixture({
   floor = 3,
   messages = null,
@@ -94,18 +112,25 @@ function createFixture({
   onWorldCandidate = null,
   healthRecoveryStabilityDelayMs = 2000,
   participantAggregationLockCapability = false,
+  reliableStoryTime = false,
 } = {}) {
   const listeners = new Map();
+  const baseMessages = messages ?? [
+    {
+      message_id: "message-stable",
+      floor,
+      content: "当前剧情",
+      role: "assistant",
+    },
+  ];
+  const fixtureMessages = reliableStoryTime
+    ? baseMessages.map(message => message?.role !== "user" && message?.is_user !== true
+      ? {...message, story_time: {...RELIABLE_FIXTURE_CURRENT_STORY_TIME}}
+      : message)
+    : baseMessages;
   const context = {
     chatId: "chat-runtime",
-    chat: messages ?? [
-      {
-        message_id: "message-stable",
-        floor,
-        content: "当前剧情",
-        role: "assistant",
-      },
-    ],
+    chat: fixtureMessages,
     chatMetadata: {},
     extensionSettings: { bioweave: { api_request_settings: { retry_count: retryCount } } },
     eventTypes: {
@@ -236,7 +261,23 @@ function createFixture({
         content_hash: version.content_hash ?? null,
         message_version: version.message_version ?? null,
       } : null);
-      return configuredAnalyzer.analyzeFloor(input);
+      if (!reliableStoryTime) return configuredAnalyzer.analyzeFloor(input);
+      const result = await configuredAnalyzer.analyzeFloor(input);
+      const normalizeEventStoryTime = event => {
+        const storyTime = event?.story_time;
+        const hasStructuredDate = storyTime && (
+          storyTime.normalized ||
+          storyTime.day_index !== null && storyTime.day_index !== undefined
+        );
+        if (hasStructuredDate) return event;
+        return {
+          ...event,
+          story_time: {...RELIABLE_FIXTURE_EVENT_STORY_TIME},
+        };
+      };
+      if (Array.isArray(result)) return result.map(normalizeEventStoryTime);
+      if (!result || typeof result !== "object" || !Array.isArray(result.events)) return result;
+      return {...result, events: result.events.map(normalizeEventStoryTime)};
     },
     // Existing Runtime fixtures focus on Character/Event behavior. Their
     // default World result is an explicit empty, validated model so those
@@ -734,6 +775,7 @@ test("business refresh reuses the target complete Event state for derived data",
 test("manual supplement preserves current Floor facts omitted by the new AI result", async () => {
   let analysisCount = 0;
   const fixture = createFixture({
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         analysisCount += 1;
@@ -1090,6 +1132,7 @@ async function withGlobalCrypto(value, callback) {
 test("manual analysis targets the current Floor and exposes observable status", async () => {
   let input = null;
   const fixture = createFixture({
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor(request) {
         input = request.analysisInput;
@@ -1308,6 +1351,7 @@ test("two new mechanism exposures canonicalize on Swipe 0 and rebuild eligible s
   };
   const fixture = createFixture({
     messages,
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor() {
         return {
@@ -1359,6 +1403,7 @@ test("two new mechanism exposures canonicalize on Swipe 0 and rebuild eligible s
 
 test("Runtime owns canonical Event IDs and Floor provenance", async () => {
   const fixture = createFixture({
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor() {
         const {
@@ -1851,6 +1896,7 @@ test("strict Runtime rejects a hallucinated existing character ID", async () => 
 test("generic API response with legacy source reaches Floor save, Registry, and business DTOs", async () => {
   const eventA = canonicalApiEvent();
   const fixture = createFixture({
+    reliableStoryTime: true,
     rawApiResponse: JSON.stringify({
       schema_version: 1,
       events: [eventA],
@@ -2190,6 +2236,7 @@ test("Runtime persists pending candidates and re-evaluates them after a World Mo
     }),
   );
   const fixture = createFixture({
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor() {
         return { events: [abstractEvent] };
@@ -2403,6 +2450,7 @@ test("narrative StoryTime persists a formatted first-year display when time rema
 test("production analyzer accepts multi-Event force refresh and keeps exposure tracking subject-local", async () => {
   let responseCount = 0;
   const fixture = createFixture({
+    reliableStoryTime: true,
     rawApiResponse: () => {
       const registry = { schema_version: 1, entities: {} };
       const firstEvent = canonicalApiEventForRegistry(registry);
@@ -2507,7 +2555,10 @@ test("invalid raw location response preserves the previous successful Event and 
   });
   secondEvent.location = { display: "location_alpha" };
   let rawResponse = JSON.stringify({ schema_version: 1, events: [firstEvent] });
-  const fixture = createFixture({ rawApiResponse: () => rawResponse });
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    rawApiResponse: () => rawResponse,
+  });
 
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
@@ -4654,14 +4705,17 @@ test("scheduler rebases on the current valid timeline after a successful baselin
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
+  const floor60Settled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "timeline-60", 60, "Floor 60");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await floor60Settled;
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+  const floor62Settled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "timeline-62", 62, "Floor 62");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await floor62Settled;
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 2);
+  const floor64Settled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "timeline-64", 64, "Floor 64");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await floor64Settled;
 
   assert.equal(fixture.calls(), 2); // one baseline refresh + one automatic analysis
   const state = fixture.runtime.getAutoAnalysisSchedulerState();
@@ -4678,8 +4732,9 @@ test("reroll creates a normal timeline member instead of bypassing interval", as
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
+  const floor60Settled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "timeline-60-reroll", 60, "Floor 60");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await floor60Settled;
   fixture.context.chat.push({
     message_id: "timeline-62-reroll",
     floor: 62,
@@ -4690,15 +4745,16 @@ test("reroll creates a normal timeline member instead of bypassing interval", as
     genType: "regenerate",
     message_id: "timeline-62-reroll",
   });
-  await settle();
   await fixture.emit("generation-ended", { message_id: "timeline-62-reroll" });
+  const rerollSettled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   await fixture.emit("character-message-rendered", { message_id: "timeline-62-reroll" });
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await rerollSettled;
   assert.equal(fixture.calls(), 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 2);
 
+  const floor64Settled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "timeline-64-reroll", 64, "Floor 64");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await floor64Settled;
   assert.equal(fixture.calls(), 2);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
   const decision = fixture.runtime.getPersistenceTrace().sequence
@@ -6661,6 +6717,7 @@ test(
       { message_id: "reset-boundary-floor", floor: 6, content: "边界楼层", role: "assistant" },
     ];
     const fixture = createFixture({
+      reliableStoryTime: true,
       messages,
       analyzer: {
         async analyzeFloor() {
@@ -7039,7 +7096,7 @@ test("active Swipe deletion rebuilds the registry and fails closed without a slo
     swipe_info: [{}],
     role: "assistant",
   };
-  const fixture = createFixture({ messages: [message] });
+  const fixture = createFixture({ messages: [message], reliableStoryTime: true });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   assert.equal(
@@ -7149,6 +7206,7 @@ test("reload restores all business state from three Floor facts without Chat mir
   ];
   const fixture = createFixture({
     messages,
+    reliableStoryTime: true,
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         return {
@@ -7638,6 +7696,7 @@ test("deleted Floor facts leave no orphan derived references", async () => {
 
 test("current-derived reads ignore deleted Floor metadata without a lifecycle callback", async () => {
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {
         message_id: "message-owner",

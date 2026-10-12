@@ -322,9 +322,15 @@ test("chat reads never return another chat metadata", () => {
 test("runtime registry refresh scans current Floor snapshots without requesting AI", async () => {
   const adapter = createAdapter();
   adapter.message.swipe_id = 0;
-  adapter.message.swipes = ["story"];
+  adapter.message.swipes = ["羲和1年3月5日 巳时中"];
+  adapter.message.story_time = {
+    display: "羲和1年3月5日 巳时中",
+    normalized: null,
+    day_index: null,
+    calendar_id: null,
+  };
   adapter.getChat = () => [adapter.message];
-  const text = "story";
+  const text = adapter.message.swipes[0];
   const version = await floorVersion({
     chatId: "chat-a",
     messageId: 0,
@@ -339,6 +345,12 @@ test("runtime registry refresh scans current Floor snapshots without requesting 
         event_id: "evt-refresh",
         type: "sexual_activity",
         status: "confirmed",
+        story_time: {
+          display: "羲和1年3月4日 巳时中",
+          normalized: null,
+          day_index: null,
+          calendar_id: null,
+        },
         source: version,
         participants: [
           {
