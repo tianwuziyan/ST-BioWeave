@@ -578,6 +578,20 @@ test('loaded UI reopens and switches routes without repeating business reads', a
   fixture.app.destroyBioWeave();
 });
 
+test('character switch consumes the cached business DTO without rereading the Floor', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  const fixture = await createFixture({event: sourceEvent(version), analysisState: 'success'});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const reads = fixture.businessDataCalls();
+
+  fixture.app.openCharacter('char-a');
+
+  assert.equal(fixture.businessDataCalls(), reads);
+  assert.equal(fixture.calls().characterAnalysis, 0);
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+  fixture.app.destroyBioWeave();
+});
+
 async function createStaleBusinessRefreshFixture() {
   const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
   await waitFor(() => fixture.persistenceTrace().some(entry => entry.stage === 'CHARACTER_UI_STATE_COMMITTED'), 'initial UI business refresh');

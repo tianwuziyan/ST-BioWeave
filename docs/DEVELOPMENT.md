@@ -48,6 +48,32 @@ UI、Storage 或 Runtime 私有实现建立第二套语义：
 calendar、字段冲突和未知时间的 characterization 行为。未经新的等价性验证，不得删除、
 替换或扩大该快路径。
 
+## UI 性能敏感路径
+
+以下约束保护已经验证的 UI 打开与切换路径；它们是性能回归契约，不是新的
+UI 架构。实现位置见 [`ui/app.js`](../ui/app.js)、[`runtime/events.js`](../runtime/events.js)
+和 [`runtime/event-analysis.js`](../runtime/event-analysis.js)，行为回归由
+`tests/ui.test.js`、`tests/phase2a-app.test.js`、`tests/floating-launcher.test.js`、
+`tests/projection-runtime.test.js`、`tests/health-assessment.test.js` 和
+`tests/tracking-window.test.js` 保护。
+
+- `openBioWeave()` 的 warm reopen 必须复用已有的 UI root 和已加载的 `businessState`；
+  `closeBioWeave()` 只关闭 UI，不得随意改成 `destroyBioWeave()`。
+- `go()` 的 route switch 不得主动调用 `refreshBusinessState()`；`openCharacter()`
+  不得主动重新扫描历史 Floor。
+- 页面 renderer 只能消费已有的 canonical business DTO，不得自行发起完整 Runtime
+  业务读取。普通页面切换不得自动触发 Projection 或 Health AI 计算。
+- `refreshBusinessState()` 的 in-flight 合并、queued refresh、request sequence 和
+  stale guard 必须保持；Runtime canonical build 的 single-flight 也必须保持。
+- World Model 的 refresh key、load generation 和 stale reload suppression 必须保持，
+  相同有效 refresh key 不得重复读取。
+- Root delegated listeners、Runtime subscription、Host menu 和 Floating Launcher
+  registration 不得重复累积；销毁后必须清理各自的 listeners、observer 和 subscription。
+- `core/tracking-window.js` 的 Story Time normalized fast path 是现有性能优化，不是
+  第二套时间规则。未经等价性测试和真实性能验证，不得删除、替换或绕过它。
+- 当前 `render()` 使用 `main.innerHTML` 替换主页面内容。不得将现状描述为组件级
+  DOM diff 或局部 DOM patch；如未来改变渲染策略，必须另行建立行为和真实性能基线。
+
 ## Current Implementation Status
 
 以下是当前生产代码与 Runtime 调用链的状态基线；`PRODUCTION` 只表示该范围已经进入当前生产链，不表示所有未来语义都已完成。
