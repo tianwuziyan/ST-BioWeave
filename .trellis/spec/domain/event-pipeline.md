@@ -37,6 +37,42 @@ The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
 
+### Stable core module boundaries (Scheme A)
+
+The following are protected development boundaries for the already validated
+pipeline. They constrain new call sites; they do not create a second runtime
+implementation or change Event semantics.
+
+- `story/time.js` is the single Story Time semantic entry for normalization,
+  comparison, and difference. `story/coordinator.js` owns Floor lifecycle
+  coordination. The existing `core/tracking-window.js` normalized fast path is
+  a performance optimization and must remain available; it must not become a
+  second Story Time rule set.
+- `core/events.js` is the canonical Event normalization, validation, and
+  semantic-dedupe domain entry. Core/domain code does not read or write Store.
+- `runtime/character-event-analysis.js` is the current complete Event
+  Reconciliation implementation. AI may return a duplicate Event; Runtime
+  decides whether to add, merge, or skip it. Same-time, same-participant,
+  same-biological-process continuity may remain one Event and must not be split
+  merely because the narrative contains multiple actions.
+- Reconciliation remains responsible for historical semantic dedupe, explicit
+  continuation validation, same-Floor implicit continuity, evidence merge,
+  canonical identity/source/story-time preservation, and removal of temporary
+  continuation fields before persistence. Cross-Floor implicit continuity must
+  not be widened.
+- Floor/Swipe/Version validation, `existing_events` selection, persistence
+  decision, deletion/reanalysis/reload behavior, and authoritative Store I/O
+  remain Runtime/Store responsibilities. Reconciliation does not persist by
+  itself. Tracking, Health, Projection, and UI consume canonical Events or
+  read models; they do not copy Event identity, dedupe, or continuation rules
+  and do not import the private Reconciliation implementation.
+
+These boundaries are protected by a small import-boundary check included in
+the repository's existing `npm run check` test glob. The check intentionally
+does not ban field names or infer domain ownership from arbitrary strings.
+The detailed Floor/Swipe/Version ownership and lifecycle contract remains
+[Floor State Ownership](./floor-state.md).
+
 Pre-confirmation timing may consume currently valid pregnancy-relevant Event
 references, but it does not extend the BiologicalEvent contract. A timing
 instance is a separate Floor-owned derived timing record; its variance cannot

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Stable Event, Story Time, and Reconciliation boundary contract"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe/Version and Store ownership contract"}
