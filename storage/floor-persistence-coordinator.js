@@ -73,6 +73,36 @@ function equalValue(left, right) {
   return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
 }
 
+function serializeEventSnapshot(events, existingEvents) {
+  if (!Array.isArray(events)) return events;
+  const legacyDayIndexEventIds = new Set(
+    (Array.isArray(existingEvents) ? existingEvents : [])
+      .filter(event => Object.prototype.hasOwnProperty.call(event?.story_time ?? {}, "day_index"))
+      .map(event => event?.event_id)
+      .filter(eventId => eventId !== undefined && eventId !== null),
+  );
+  return events.map(event => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) return clone(event);
+    const next = clone(event);
+    const storyTime = next.story_time;
+    if (!storyTime || typeof storyTime !== "object" || Array.isArray(storyTime)) return next;
+    if (!legacyDayIndexEventIds.has(next.event_id)) {
+      delete storyTime.day_index;
+      delete storyTime.dayIndex;
+    }
+    return next;
+  });
+}
+
+function preparePersistedPatch(owner, patch, latest) {
+  if (!patch || !Array.isArray(patch.events) || !["event", "lifecycle"].includes(owner))
+    return patch;
+  return {
+    ...patch,
+    events: serializeEventSnapshot(patch.events, latest?.events),
+  };
+}
+
 function presence(slot = {}) {
   return Object.fromEntries(SIBLING_FIELDS.map(field => [
     `${field}_present`, hasOwn(slot, field) && slot[field] !== undefined,
@@ -300,7 +330,11 @@ export function createFloorPersistenceCoordinator({
     const resolvedPatch = typeof input.patchResolver === "function"
       ? await input.patchResolver({latest: clone(latest), expected: clone(expected), transaction})
       : transaction.patch;
-    const patch = assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type);
+    const patch = preparePersistedPatch(
+      transaction.owner,
+      assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type),
+      latest,
+    );
     emit("FLOOR_TX_PATCH_VALIDATED", transaction, {patch_fields: Object.keys(patch)});
     const merged = {
       ...clone(latest),

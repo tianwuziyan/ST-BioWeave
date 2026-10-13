@@ -201,6 +201,35 @@ test('UI performance trace preserves zero and millisecond fields through Debug J
   assert.equal(exportedEntries[1].message_content, undefined)
 })
 
+test('Event reconciliation diagnostics keep only safe IDs, reasons, and timings', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'EVENT_RECONCILIATION_RESULT',
+    pre_analysis_event_ids: ['event-a', 'event-b'],
+    candidate_event_count: 1,
+    post_analysis_event_ids: ['event-a'],
+    removed_event_ids: ['event-b'],
+    removal_reasons: [{event_id: 'event-b', reason: 'explicit_continuation_duplicate'}],
+    continuation_diagnostics: [{
+      continuation_reference_present: true,
+      continuation_reference_event_id: 'event-a',
+      continuation_reference_target_exists: true,
+      continuation_reference_valid: true,
+      continuation_merge_executed: true,
+    }],
+    canonical_build_wall_ms: 7.5,
+    tracking_registry_sync_ms: 1.25,
+    story_text: '敏感剧情正文不应进入 Trace',
+    evidence: [{text: '敏感证据'}],
+  }})
+  const entry = diagnostics.getPersistenceTrace().sequence.at(-1)
+  assert.equal(entry.pre_analysis_event_ids[0], 'event-a')
+  assert.equal(entry.continuation_diagnostics[0].continuation_reference_valid, true)
+  assert.equal(entry.canonical_build_wall_ms, 7.5)
+  assert.equal(entry.story_text, undefined)
+  assert.equal(entry.evidence, undefined)
+})
+
 test('Settings debug trace retains Story Time Projection stages and safe IDs', () => {
   const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
   diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {

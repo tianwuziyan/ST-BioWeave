@@ -281,6 +281,22 @@ mechanism, or source evidence differs. Do not use display name, fuzzy text,
 type/person-only matching, response order, or persistence owner as a substitute
 for this contract.
 
+When the analyzer has explicit evidence that a candidate is a continuation of
+one Event, it may provide the temporary `continuation_of_event_id` reference
+from the bounded `existing_events` projection. Runtime validates that the
+referenced Event belongs to the current Chat/active Swipe and visible Floor
+history, and that its type, canonical participant/subject/source sets,
+mechanism kind, location, and comparable Story Time are compatible. An invalid
+explicit reference never falls back to the legacy implicit continuity path. A
+missing reference keeps the legacy implicit continuity behavior and does not
+inherit the explicit continuation source or incremental-merge semantics. The optional temporary
+`continuation_update` marker is only accepted when Runtime also finds new
+structured evidence or another factual state change. These analysis-only
+fields are removed before the canonical Event is persisted; a validated
+continuation retains the original Event ID and source while updating only the
+current Floor's complete snapshot. Evidence is merged by content identity,
+not by appending repeated raw descriptions.
+
 Three projections remain distinct: `identity_context` answers which person a
 mention names and contains canonical ID/display name/aliases only;
 `individual_evidence` / Character Evidence answers which stable biological
@@ -628,8 +644,11 @@ format or send greeting content or the `【开场白】` section.
 
 `AIEventAnalysisDTO` has only `schema_version: 1` and `events[]` at the top
 level, and Event Analysis V1 accepts `events.length >= 0` for one Target Floor
-Version. A legacy top-level `source` may be present and is ignored; any other
-unknown top-level field is rejected. An AI event does not require or trust
+Version. A legacy top-level `source` may be present and is ignored. For provider
+responses that incorrectly return one complete Event object at the top level,
+the parser may wrap it as `events[0]` only when every top-level key is in the
+strict Event AI field allowlist; it then applies the normal Event validation.
+Any other unknown top-level field is rejected. An AI event does not require or trust
 `event_id` or `source`; legacy copies of those fields inside an event are
 ignored. Each accepted AI event contains biological facts such as `type`,
 `status`, structured `story_time`, `location`, directly relevant
@@ -705,11 +724,12 @@ Identical duplicate `event_id` records are deterministically deduped; the same
 ID with different normalized facts is a validation conflict and is never
 resolved by input order or last-write-wins.
 
-`sortEvents()` remains the existing provenance order used by Event/Tracking
-flows. Story-time chronology uses the separate `sortEventsByStoryTime()` helper:
-compatible structured domains sort by `day_index`; different or unresolved
-domains use a deterministic domain/provenance fallback. `display`, Floor index,
-message send time, and system clock are never Story Time arithmetic inputs.
+`sortEvents()` is the provenance order used by Event/State/Tracking flows:
+known `source.floor` values sort first, while Events from the same Floor retain
+their existing input order. It does not use `day_index`, `display`, message
+send time, or the system clock as a provenance key. Story-time chronology uses
+the separate `sortEventsByStoryTime()` helper; different or unresolved domains
+remain stable and are never assigned an invented order.
 
 ### Runtime Character Identity Contract
 
@@ -917,7 +937,10 @@ Every persisted, accepted Domain Event has:
 - `event_id`, `type`, and one of `confirmed`, `probable`, `ambiguous`,
   `negated`, or `fictional` statuses;
 - structured `story_time` with `display`, `normalized`, `calendar_id`,
-  `day_index`, `provider`, `precision`, and `confidence`;
+  `precision`, and `confidence`; new Event Snapshots omit the derived
+  `day_index` property, while Runtime and legacy Snapshot reads continue to
+  accept it. An existing Event that already owns `day_index` keeps that field
+  on later saves, including day-index-only historical Events;
 - scalar `location` (`string | null`), `participants[]`,
   `pregnancy_relevance`, `source_evidence`, and a complete Floor/Swipe `source`;
 - for `possible_conception: true`, `relevant: true`, non-empty
@@ -1118,7 +1141,7 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 | Chinese date uses an unknown or invalid alias/date | Return `null`; do not manufacture a normalized date |
 | A longer month/festival alias overlaps a shorter alias | Match the longest dictionary entry first |
 | Custom era label appears without prior registration | Capture the label from input and keep the canonical date era-scoped |
-| Structured Story Time fields are present | Preserve `normalized`/`day_index` and independently format only a reliably parsed display date when the explicit formatting boundary allows it |
+| Structured Story Time fields are present | Preserve authoritative `normalized` and legacy `day_index` values when present; new Snapshot Events omit derived `day_index`, while display formatting remains independent and never rewrites structured fields |
 | Trusted provider or final narrative Event normalization receives a parseable display date | Canonicalize only the date portion; preserve arbitrary trailing text and every structured field |
 | Fallback provider or `formatStoryTime()` receives display text | Keep the conservative display-only behavior; do not create structured date/time values |
 | Custom/era date has no Gregorian absolute day | Keep `day_index: null`; sorting/calculation must not invent one |

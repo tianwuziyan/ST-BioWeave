@@ -18,6 +18,7 @@ import { createAnalyzer, normalizeWorldModel, parseEventAnalysisResponse } from 
 import {
   dedupeEventsAgainstExisting,
   eventSemanticKey,
+  normalizeEvent,
   PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
 } from '../core/events.js';
 import { SILLYTAVERN_CURRENT_API } from '../storage/schema.js';
@@ -177,6 +178,7 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /诱因发生在 Recent Story/);
   assert.match(prompt, /症状/);
   assert.match(prompt, /actual reproductive exposure/);
+  assert.match(prompt, /即使只有一个 Event，也必须把完整 Event 放在 events\[0\] 内/);
   assert.match(prompt, /biological_context/);
   assert.match(prompt, /species/);
   assert.match(prompt, /biological_type/);
@@ -229,6 +231,42 @@ test('Event prompt regression keeps gender as World Model type evidence only', (
     contracts,
     /不能使用现实人类常识、Character Card 的 gender\/sex 或旧默认能力补空/,
   );
+});
+
+test('Event prompt defines duplicate, continuation, independent, and uncertain boundaries', () => {
+  const input = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: {
+      floor: floorVersion.floor,
+      message_id: floorVersion.message_id,
+      swipe_id: floorVersion.swipe_id,
+      narrative: '当前楼层继续描述既有事实，并出现新的可验证状态结果。',
+    },
+    recentContext: [],
+    existingEvents: [event({event_id: 'evt-existing'})],
+    worldModel: {species: []},
+    storyTime: {display: 'unknown', precision: 'unknown'},
+    characterContext: {characters: []},
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+
+  assert.match(prompt, /事件边界/);
+  assert.match(prompt, /existing_events 已完整覆盖/);
+  assert.match(prompt, /必须返回 events=\[\]/);
+  assert.match(prompt, /同一持续 episode/);
+  assert.match(prompt, /continuation_of_event_id/);
+  assert.match(prompt, /新的独立 episode/);
+  assert.match(prompt, /关系不确定/);
+  assert.match(prompt, /保留.*事实候选/);
+  assert.match(prompt, /Runtime 仍负责最终校验 continuation/);
+  assert.match(prompt, /不是要求重新输出的历史事件清单/);
+  assert.match(prompt, /同一 episode.*同一 subject/);
+  assert.match(prompt, /不同独立 episode 即使 subject 相同也可以输出多个 Event/);
+  assert.doesNotMatch(prompt, /同一响应\/Floor 中同一 subject 只能出现一次/);
+  assert.doesNotMatch(prompt, /不要在 Runtime 或 UI 合并事件/);
 });
 
 test('Event discovery window includes Recent Story without weakening event boundaries', () => {
@@ -307,6 +345,90 @@ test('semantic Event dedupe is exact and conservative across the discovery windo
   assert.deepEqual(
     dedupeEventsAgainstExisting([differentType, differentCounterpart], [historical]),
     [differentType, differentCounterpart],
+  );
+});
+
+test('Event semantic identity records the current normalized/day_index compatibility baseline', () => {
+  const normalizedOnly = event({
+    event_id: 'normalized-only',
+    story_time: {
+      display: '羲和元年三月四日 巳时中',
+      normalized: 'cn-1-3-4T10:00',
+      calendar_id: null,
+      day_index: null,
+      precision: 'hour',
+      confidence: null,
+    },
+  });
+  const normalizedWithDayIndex = {
+    ...structuredClone(normalizedOnly),
+    event_id: 'normalized-with-day-index',
+    story_time: {...normalizedOnly.story_time, day_index: 123},
+  };
+  assert.equal(
+    eventSemanticKey(normalizedOnly),
+    eventSemanticKey(normalizedWithDayIndex),
+    'normalized is the semantic time identity when present',
+  );
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([normalizedWithDayIndex], [normalizedOnly]),
+    [],
+  );
+
+  const dayIndexOnly = {
+    ...structuredClone(normalizedOnly),
+    event_id: 'day-index-only',
+    story_time: {
+      display: null,
+      normalized: null,
+      calendar_id: 'main',
+      day_index: 123,
+      precision: 'day',
+      confidence: null,
+    },
+  };
+  const sameDayIndexOnly = {
+    ...structuredClone(dayIndexOnly),
+    event_id: 'day-index-only-duplicate',
+  };
+  assert.match(eventSemanticKey(dayIndexOnly), /day_index:123/);
+  assert.equal(eventSemanticKey(dayIndexOnly), eventSemanticKey(sameDayIndexOnly));
+  assert.deepEqual(dedupeEventsAgainstExisting([sameDayIndexOnly], [dayIndexOnly]), []);
+  assert.notEqual(eventSemanticKey(dayIndexOnly), eventSemanticKey(normalizedOnly));
+
+  const displayOnly = {
+    ...structuredClone(normalizedOnly),
+    event_id: 'display-only',
+    story_time: {
+      display: '羲和元年三月四日 巳时中',
+      normalized: null,
+      calendar_id: null,
+      day_index: null,
+      precision: 'hour',
+      confidence: null,
+    },
+  };
+  const missingTime = {
+    ...structuredClone(normalizedOnly),
+    event_id: 'missing-time',
+    story_time: {},
+  };
+  assert.equal(eventSemanticKey(displayOnly), null);
+  assert.equal(eventSemanticKey(missingTime), null);
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([displayOnly, missingTime], [normalizedOnly]),
+    [displayOnly, missingTime],
+  );
+
+  const sameEventDifferentDate = {
+    ...structuredClone(normalizedOnly),
+    event_id: 'same-event-different-date',
+    story_time: {...normalizedOnly.story_time, display: '羲和元年三月五日', normalized: 'cn-1-3-5'},
+  };
+  assert.notEqual(eventSemanticKey(sameEventDifferentDate), eventSemanticKey(normalizedOnly));
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([sameEventDifferentDate], [normalizedOnly]),
+    [sameEventDifferentDate],
   );
 });
 
@@ -1202,6 +1324,120 @@ test('analyzeFloor preserves processRequest content and OpenAI message content f
   }
 });
 
+test('analyzeFloor preserves narrow single-Event compatibility without relocating continuation metadata', async () => {
+  const legacySingleEvent = event();
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        model: 'test-model',
+      },
+      getChatCompletionModel: () => 'test-model',
+      ChatCompletionService: {
+        async processRequest() {
+          return JSON.stringify(legacySingleEvent);
+        },
+      },
+    }),
+  });
+  const parsed = await analyzer.analyzeFloor({
+    analysisInput: buildEventAnalysisInput({
+      chatId: floorVersion.chat_id,
+      floorVersion,
+      currentFloor: { narrative: 'Current floor narrative.' },
+      recentContext: [],
+      worldModel: normalizeWorldModel({ schema_version: 1, species: [] }),
+      storyTime: { display: 'unknown', precision: 'unknown' },
+      characterContext: { characters: [] },
+    }),
+  });
+  assert.equal(parsed.events.length, 1);
+  assert.equal(parsed.events[0].type, legacySingleEvent.type);
+
+  const invalidContinuation = event({
+    continuation_of_event_id: 'evt-existing',
+    continuation_update: true,
+  });
+  assert.throws(
+    () => parseEventAnalysisResponse(JSON.stringify({
+      ...JSON.parse(response([event()])),
+      continuation_of_event_id: invalidContinuation.continuation_of_event_id,
+    })),
+    error => error?.diagnostic_path === '$.continuation_of_event_id',
+  );
+  assert.throws(
+    () => parseEventAnalysisResponse(JSON.stringify({
+      ...JSON.parse(response([legacySingleEvent])),
+      continuation_of_event_id: 'evt-existing',
+    })),
+    error => error?.diagnostic_path === '$.continuation_of_event_id',
+  );
+  assert.throws(
+    () => parseEventAnalysisResponse(JSON.stringify({
+      ...legacySingleEvent,
+      state_fact: {subject_id: 'character_subject', payload: {}},
+    })),
+    error => error?.diagnostic_code === 'unexpected_top_level_field',
+  );
+});
+
+test('analyzeFloor retry directive teaches continuation placement while retaining existing events', async () => {
+  const requests = [];
+  const continuationEvent = event({
+    continuation_of_event_id: 'evt-existing',
+    continuation_update: true,
+  });
+  const invalidContinuation = {
+    ...JSON.parse(response([event()])),
+    continuation_of_event_id: 'evt-existing',
+  };
+  const validContinuation = response([continuationEvent]);
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        model: 'test-model',
+      },
+      getChatCompletionModel: () => 'test-model',
+      ChatCompletionService: {
+        async processRequest(request) {
+          requests.push(request);
+          return requests.length === 1
+            ? JSON.stringify(invalidContinuation)
+            : validContinuation;
+        },
+      },
+    }),
+  });
+  const analysisInput = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: { narrative: 'Current floor narrative.' },
+    recentContext: [],
+    existing_events: [event({event_id: 'evt-existing'})],
+    worldModel: normalizeWorldModel({ schema_version: 1, species: [] }),
+    storyTime: { display: 'unknown', precision: 'unknown' },
+    characterContext: { characters: [] },
+  });
+  await assert.rejects(
+    () => analyzer.analyzeFloor({analysisInput}),
+    error => error?.diagnostic_path === '$.continuation_of_event_id',
+  );
+  const parsed = await analyzer.analyzeFloor({
+    analysisInput,
+    retry_directive: {kind: 'continuation_field_placement'},
+  });
+  assert.equal(parsed.events[0].continuation_of_event_id, 'evt-existing');
+  const retryPrompt = requests[1].messages.map(message => message.content).join('\n');
+  assert.match(retryPrompt, /continuation_of_event_id/);
+  assert.match(retryPrompt, /events\[n\]/);
+  assert.match(retryPrompt, /内部/);
+  assert.match(retryPrompt, /evt-existing/);
+  assert.doesNotMatch(retryPrompt, /DO-NOT-SEND/);
+});
+
 test('World Model analyzer injects the same common analysis prompt layer', async () => {
   const requests = [];
   const analyzer = createAnalyzer({
@@ -1363,6 +1599,101 @@ test('Event protected output contract exposes the exact Domain enums and scalar 
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /例如“传灯院”仍输出“传灯院”/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /\{"location": null\}/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /禁止地点对象或数组/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /day_index 是 Runtime 派生的 canonical 字段，AI 可以省略/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /AI 不负责生成 day_index/);
+});
+
+test('AI Story Time may omit day_index while Runtime derives only reliable values', () => {
+  const withoutDayIndex = aiOnlyEvent({
+    story_time: {
+      display: '2026-01-01',
+      normalized: '2026-01-01',
+      calendar_id: null,
+      precision: 'day',
+      confidence: null,
+    },
+  });
+  const parsedGregorian = parseEventAnalysisResponse(response([withoutDayIndex]), {
+    deferIdentityValidation: true,
+  });
+  assert.equal(parsedGregorian.events[0].story_time.day_index, 20454);
+  assert.deepEqual(
+    Object.keys(normalizeEvent(parsedGregorian.events[0]).story_time).sort(),
+    ['calendar_id', 'confidence', 'day_index', 'display', 'normalized', 'precision'],
+  );
+
+  const parsedEra = parseEventAnalysisResponse(response([aiOnlyEvent({
+    story_time: {
+      display: '羲和元年三月四日',
+      normalized: 'cn-1-3-4',
+      calendar_id: null,
+      precision: 'day',
+      confidence: null,
+    },
+  })]), {deferIdentityValidation: true});
+  assert.equal(parsedEra.events[0].story_time.day_index, null);
+
+  const parsedCustom = parseEventAnalysisResponse(response([aiOnlyEvent({
+    story_time: {
+      display: '2026-01-01',
+      normalized: '2026-01-01',
+      calendar_id: 'custom-story',
+      precision: 'day',
+      confidence: null,
+    },
+  })]), {deferIdentityValidation: true});
+  assert.equal(parsedCustom.events[0].story_time.day_index, null);
+});
+
+test('Legacy AI day_index remains compatible without overriding trusted Gregorian calculation', () => {
+  const corrected = parseEventAnalysisResponse(response([aiOnlyEvent({
+    story_time: {
+      display: '2026-01-01',
+      normalized: '2026-01-01',
+      calendar_id: null,
+      day_index: 20455,
+      precision: 'day',
+      confidence: null,
+    },
+  })]), {deferIdentityValidation: true});
+  assert.equal(corrected.events[0].story_time.day_index, 20454);
+
+  const legacyDayIndexOnly = parseEventAnalysisResponse(response([aiOnlyEvent({
+    story_time: {
+      display: null,
+      normalized: null,
+      calendar_id: null,
+      day_index: 20454,
+      precision: 'day',
+      confidence: null,
+    },
+  })]), {deferIdentityValidation: true});
+  assert.equal(legacyDayIndexOnly.events[0].story_time.day_index, 20454);
+
+  const invalidWithoutOtherRequiredField = aiOnlyEvent({
+    story_time: {
+      display: '2026-01-01',
+      normalized: '2026-01-01',
+      calendar_id: null,
+      precision: 'day',
+    },
+  });
+  delete invalidWithoutOtherRequiredField.story_time.precision;
+  assert.throws(
+    () => parseEventAnalysisResponse(response([invalidWithoutOtherRequiredField]), {
+      deferIdentityValidation: true,
+    }),
+    /EVENT_ANALYSIS_STORY_TIME_PRECISION_REQUIRED/,
+  );
+});
+
+test('AI continuation metadata is accepted as analysis-only input', () => {
+  const parsed = parseEventAnalysisResponse(response([aiOnlyEvent({
+    continuation_of_event_id: 'evt-existing',
+    continuation_update: true,
+  })]), {deferIdentityValidation: true});
+  assert.equal(parsed.events[0].continuation_of_event_id, 'evt-existing');
+  assert.equal(parsed.events[0].continuation_update, true);
 });
 
 test('AI Event DTO may omit identity and ignore only the legacy top-level source', () => {

@@ -1,4 +1,4 @@
-import {differenceStoryTime} from '../story/time.js';
+import {compareStoryTime, differenceStoryTime, sortEventsByStoryTime} from '../story/time.js';
 import {deterministicDigest, PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KINDS, isProjectionEligible} from './projection.js';
 import {evaluateProjectionTiming} from './projection-timing.js';
 import {buildParticipantAggregationEvidence, isParticipantAggregationEvidenceComplete} from './participant-aggregation.js';
@@ -130,7 +130,28 @@ function eventsForSubject(events, subjectId) { return (Array.isArray(events) ? e
 function mechanismMatches(event, mechanismKey) { return event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey; }
 function candidateMatches(candidate, subjectId, mechanismKey) { return candidate?.subject_id === subjectId && candidate?.mechanism_key === mechanismKey; }
 function subjectIds(events, state, candidates) { return [...new Set([...Object.keys(state?.characters ?? {}), ...(Array.isArray(events) ? events.flatMap(event => event?.pregnancy_relevance?.gestational_subject_ids ?? []) : []), ...(Array.isArray(candidates) ? candidates.map(item => item.subject_id) : [])])].filter(text).sort(); }
-function orderedEvents(events) { return [...events].sort((left, right) => Number(left?.story_time?.day_index ?? Number.POSITIVE_INFINITY) - Number(right?.story_time?.day_index ?? Number.POSITIVE_INFINITY) || String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''))); }
+function orderedEvents(events) {
+  const chronological = sortEventsByStoryTime(Array.isArray(events) ? events : []);
+  const ordered = [];
+  let index = 0;
+  while (index < chronological.length) {
+    let end = index + 1;
+    while (
+      end < chronological.length &&
+      compareStoryTime(
+        chronological[index]?.story_time,
+        chronological[end]?.story_time,
+      ) === 0
+    ) end += 1;
+    const group = chronological.slice(index, end);
+    group.sort((left, right) =>
+      String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? '')),
+    );
+    ordered.push(...group);
+    index = end;
+  }
+  return ordered;
+}
 function evidenceFor(events, candidates, subjectId, mechanismKey) { const eventIds = [...events.map(event => event.event_id), ...candidates.flatMap(candidate => candidate.source_event_ids ?? [])].filter(text); const refs = [...eventIds.map(id => `event:${id}`), ...candidates.map(candidate => `candidate:${candidate.source_character_id}:${candidate.contribution_kind}`), `mechanism:${mechanismKey}`]; return {source_event_ids: [...new Set(eventIds)].sort(), evidence_refs: [...new Set(refs)].sort()}; }
 function evaluateCapabilities(rule, character) { for (const requirement of rule.requirements.capabilities) { const actual = character?.reproductive_capabilities?.[requirement.key]; if (actual === undefined) return {status: 'unresolved', reason_code: 'required_capability_missing'}; if (actual === null) return {status: 'unresolved', reason_code: 'required_capability_unknown'}; if (actual !== requirement.equals) return {status: 'not_eligible', reason_code: 'required_capability_incompatible'}; } return null; }
 function evaluateCandidates(rule, candidates) { if (rule.requirements.source_compatibility === 'not_required') return null; if (!candidates.length) return {status: 'unresolved', reason_code: 'source_candidate_missing'}; if (candidates.some(candidate => candidate.compatibility === true)) return null; if (candidates.some(candidate => candidate.compatibility === null)) return {status: 'unresolved', reason_code: 'source_compatibility_unknown'}; return {status: 'not_eligible', reason_code: 'source_compatibility_incompatible'}; }

@@ -244,10 +244,10 @@ function createFixture({
           contextResolver: () => context,
         })
       : {
-          async analyzeFloor() {
-            calls += 1;
-            return { events: [eventResult(`evt-${calls}`)] };
-          },
+        async analyzeFloor() {
+          calls += 1;
+          return { events: [eventResult(`evt-${calls}`)] };
+        },
         });
   const runtimeAnalyzer = {
     ...configuredAnalyzer,
@@ -486,6 +486,7 @@ test('Runtime updates aliases only in the current Character Floor without re-run
 
 test("Registry identity and alias edits inherit the nearest complete snapshot", async () => {
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       { message_id: "registry-source-floor", floor: 20, content: "人物来源", role: "assistant" },
       { message_id: "registry-edit-floor", floor: 26, content: "人物编辑", role: "assistant" },
@@ -566,6 +567,11 @@ test("manual-refresh saves inherited Registry data when the target Floor has non
       { message_id: "manual-registry-source", floor: 20, content: "已有完整人物", role: "assistant" },
       { message_id: "manual-registry-target", floor: 35, content: "手动刷新人物", role: "assistant" },
     ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        return {events: [eventResultForRegistry(analysisInput.character_registry)]};
+      },
+    },
   });
   await fixture.runtime.init();
   await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
@@ -772,6 +778,92 @@ test("business refresh reuses the target complete Event state for derived data",
   fixture.runtime.destroy();
 });
 
+test("concurrent business reads share one canonical build and isolate returned data", async () => {
+  const rawTrace = [];
+  const fixture = createFixture({
+    notify: event => {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") rawTrace.push(event.payload);
+    },
+    messages: Array.from({length: 24}, (_, index) => ({
+      message_id: `canonical-build-concurrent-${index}`,
+      floor: index,
+      content: `当前剧情 ${index}`,
+      role: "assistant",
+    })),
+  });
+  await fixture.runtime.init();
+  const traceStart = fixture.runtime.getPersistenceTrace().sequence.length;
+  const rawTraceStart = rawTrace.length;
+
+  const originalDigest = globalThis.crypto?.subtle?.digest;
+  if (typeof originalDigest !== "function") {
+    fixture.runtime.destroy();
+    return;
+  }
+  globalThis.crypto.subtle.digest = async function delayedDigest(...args) {
+    await new Promise(resolve => setTimeout(resolve, 2));
+    return originalDigest.call(this, ...args);
+  };
+  let first;
+  let second;
+  try {
+    [first, second] = await Promise.all([
+      fixture.runtime.collectActiveBusinessData({reason: "manual-analysis"}),
+      fixture.runtime.collectActiveBusinessData({reason: "canonical-readiness"}),
+    ]);
+  } finally {
+    globalThis.crypto.subtle.digest = originalDigest;
+  }
+  const buildTrace = fixture.runtime.getPersistenceTrace().sequence.slice(traceStart).filter(item =>
+    String(item.stage ?? "").startsWith("CHARACTER_CANONICAL_BUILD_"));
+
+  assert.equal(buildTrace.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_STARTED").length, 1);
+  assert.equal(buildTrace.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_JOINED_EXISTING").length, 1);
+  assert.equal(buildTrace.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED").length, 1);
+  assert.equal(buildTrace.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_JOIN_COMPLETED").length, 1);
+  const rawBuildTrace = rawTrace.slice(rawTraceStart).filter(item =>
+    String(item.stage ?? "").startsWith("CHARACTER_CANONICAL_BUILD_"));
+  const observedGeneration = rawBuildTrace[0]?.canonical_generation;
+  assert.ok(rawBuildTrace.every(item => item.canonical_generation === observedGeneration));
+  assert.ok(buildTrace.some(item => Number.isFinite(item.join_wait_ms)));
+
+  second.active_events.push({event_id: "caller-local-mutation"});
+  assert.equal(first.active_events.some(event => event?.event_id === "caller-local-mutation"), false);
+  fixture.runtime.destroy();
+});
+
+test("canonical generation changes only after a derived Floor commit, not a read-only Tracking refresh", async () => {
+  const rawTrace = [];
+  const fixture = createFixture({
+    notify: event => {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") rawTrace.push(event.payload);
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor({force: true});
+
+  const beforeReads = rawTrace.length;
+  await fixture.runtime.collectActiveBusinessData();
+  const afterFirstRead = rawTrace.slice(beforeReads).filter(item =>
+    item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
+  assert.ok(afterFirstRead.length >= 1);
+  const generationBeforeTrackingRead = afterFirstRead.at(-1).canonical_generation;
+
+  await fixture.runtime.refreshTrackingRegistry("diagnostic-read");
+  await fixture.runtime.collectActiveBusinessData();
+  const afterTrackingRead = rawTrace.slice(beforeReads).filter(item =>
+    item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
+  assert.equal(afterTrackingRead.at(-1).canonical_generation, generationBeforeTrackingRead);
+
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  await fixture.runtime.updateEvent(currentEvents[0].event_id, {location: "generation-bump"});
+  await fixture.runtime.collectActiveBusinessData();
+  const afterCommit = rawTrace.slice(beforeReads).filter(item =>
+    item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
+  assert.ok(afterCommit.at(-1).canonical_generation > generationBeforeTrackingRead);
+  fixture.runtime.destroy();
+});
+
 test("manual supplement preserves current Floor facts omitted by the new AI result", async () => {
   let analysisCount = 0;
   const fixture = createFixture({
@@ -799,7 +891,7 @@ test("manual supplement preserves current Floor facts omitted by the new AI resu
         }
         return {
           events: [
-            identityEventForCharacters(
+            stableContinuationEventFromInput(analysisInput, "角色B") ?? identityEventForCharacters(
               analysisInput.character_registry,
               "角色B",
               "来源B",
@@ -813,6 +905,13 @@ test("manual supplement preserves current Floor facts omitted by the new AI resu
 
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
+  const firstFloorEvents = structuredClone(fixture.runtime.store.getFloor(0, 0).events);
+  const firstEventIdsBySubject = new Map(
+    firstFloorEvents.map((storedEvent) => [
+      storedEvent.participants[0].display_name,
+      storedEvent.event_id,
+    ]),
+  );
   await fixture.runtime.refreshCurrentFloorAnalysis();
 
   const floor = fixture.runtime.store.getFloor(0, 0);
@@ -820,6 +919,16 @@ test("manual supplement preserves current Floor facts omitted by the new AI resu
   assert.deepEqual(
     floor.events.map((event) => event.participants[0].display_name).sort(),
     ["角色A", "角色B"],
+  );
+  assert.equal(
+    floor.events.find((event) => event.participants[0].display_name === "角色B").event_id,
+    firstEventIdsBySubject.get("角色B"),
+    "Supplement reuses the existing Event ID for the matched fact",
+  );
+  assert.equal(
+    floor.events.find((event) => event.participants[0].display_name === "角色A").event_id,
+    firstEventIdsBySubject.get("角色A"),
+    "Supplement preserves the omitted existing Event ID",
   );
   assert.deepEqual(
     Object.values(floor.character_registry.entities)
@@ -838,6 +947,215 @@ test("manual supplement preserves current Floor facts omitted by the new AI resu
     ["角色A", "角色B"],
   );
   fixture.runtime.destroy();
+});
+
+test("Supplement continuity reuses Event ID when only legacy day_index presence changes", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    analyzer: {
+      async analyzeFloor({ analysisInput }) {
+        analysisCount += 1;
+        const continuingEvent = analysisCount === 1
+          ? identityEventForCharacters(
+            analysisInput.character_registry,
+            "角色A",
+            "来源A",
+            "same-fact",
+          )
+          : stableContinuationEventFromInput(analysisInput, "角色A");
+        continuingEvent.story_time = analysisCount === 1
+          ? {
+              display: "2026-01-01",
+              normalized: "2026-01-01",
+              day_index: 20454,
+              calendar_id: "main",
+              precision: "day",
+              confidence: 1,
+            }
+          : {
+              display: "2026-01-01",
+              normalized: "2026-01-01",
+              day_index: null,
+              calendar_id: "main",
+              precision: "day",
+              confidence: 1,
+            };
+        if (analysisCount === 1) {
+          return {events: [continuingEvent]};
+        }
+
+        const updatedContinuingEvent = stableContinuationEventFromInput(analysisInput, "角色A");
+        updatedContinuingEvent.story_time = {
+          display: "2026-01-01",
+          normalized: "2026-01-01",
+          day_index: null,
+          calendar_id: "main",
+          precision: "day",
+          confidence: 1,
+        };
+
+        const newEvent = identityEventForCharacters(
+          analysisInput.character_registry,
+          "角色B",
+          "来源B",
+          "new-fact",
+        );
+        newEvent.story_time = {
+          display: "2026-01-02",
+          normalized: "2026-01-02",
+          day_index: null,
+          calendar_id: "main",
+          precision: "day",
+          confidence: 1,
+        };
+        return {events: [newEvent, updatedContinuingEvent]};
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const first = fixture.runtime.store.getFloor(0, 0).events[0];
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const secondEvents = fixture.runtime.store.getFloor(0, 0).events;
+  const second = secondEvents.find(
+    (event) => event.participants[0].display_name === "角色A",
+  );
+
+  assert.equal(analysisCount, 2);
+  assert.equal(secondEvents.length, 2, JSON.stringify(secondEvents.map((event) => ({
+    event_id: event.event_id,
+    display: event.participants?.[0]?.display_name,
+    story_time: event.story_time,
+  }))));
+  assert.equal(second.event_id, first.event_id);
+  assert.equal(second.story_time.normalized, "2026-01-01");
+  assert.equal(Object.hasOwn(second.story_time, "day_index"), false);
+  fixture.runtime.destroy();
+});
+
+test("Supplement continuity keeps time and calendar conflicts separate", async () => {
+  const scenarios = [
+    {
+      name: "day-index-only legacy event",
+      initial: {display: "2026-01-01", normalized: null, day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "2026-01-01", normalized: null, day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      reuse: true,
+    },
+    {
+      name: "display-only event",
+      initial: {display: "羲和元年三月四日", normalized: null, day_index: null, calendar_id: null, precision: "day", confidence: 1},
+      next: {display: "羲和元年三月四日", normalized: null, day_index: null, calendar_id: null, precision: "day", confidence: 1},
+      reuse: true,
+    },
+    {
+      name: "conflicting supplied day index does not override normalized identity",
+      initial: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20455, calendar_id: "main", precision: "day", confidence: 1},
+      reuse: true,
+    },
+    {
+      name: "different display with the same normalized story time",
+      initial: {display: "羲和元年三月四日", normalized: "cn-1-3-4", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "Xihe year 1, month 3 day 4", normalized: "cn-1-3-4", day_index: null, calendar_id: "main", precision: "day", confidence: 1},
+      reuse: true,
+    },
+    {
+      name: "different normalized date",
+      initial: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "2026-01-02", normalized: "2026-01-02", day_index: null, calendar_id: "main", precision: "day", confidence: 1},
+      reuse: false,
+    },
+    {
+      name: "different calendar domain",
+      initial: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "2026-01-01", normalized: "2026-01-01", day_index: null, calendar_id: "custom-story", precision: "day", confidence: 1},
+      reuse: false,
+    },
+    {
+      name: "same day different time",
+      initial: {display: "2026-01-01 09:00", normalized: "2026-01-01T09:00", day_index: 20454, calendar_id: "main", precision: "minute", confidence: 1},
+      next: {display: "2026-01-01 10:00", normalized: "2026-01-01T10:00", day_index: null, calendar_id: "main", precision: "minute", confidence: 1},
+      reuse: false,
+    },
+    {
+      name: "different mechanism pathway",
+      initial: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+      next: {display: "2026-01-01", normalized: "2026-01-01", day_index: null, calendar_id: "main", precision: "day", confidence: 1},
+      initialPathway: "pathway-a",
+      nextPathway: "pathway-b",
+      reuse: true,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    let analysisCount = 0;
+    const fixture = createFixture({
+      reliableStoryTime: true,
+      analyzer: {
+        async analyzeFloor({analysisInput}) {
+          analysisCount += 1;
+          const event = analysisCount === 1
+            ? identityEventForCharacters(
+              analysisInput.character_registry,
+              "角色A",
+              "来源A",
+              `${scenario.name}-${analysisCount}`,
+            )
+            : stableContinuationEventFromInput(analysisInput, "角色A") ?? identityEventForCharacters(
+              analysisInput.character_registry,
+              "角色A",
+              "来源A",
+              `${scenario.name}-${analysisCount}`,
+            );
+          if (scenario.initialPathway !== undefined && analysisCount > 1) {
+            delete event.continuation_of_event_id;
+            delete event.continuation_update;
+          }
+          event.story_time = analysisCount === 1 ? scenario.initial : scenario.next;
+          if (scenario.initialPathway !== undefined) {
+            event.pregnancy_relevance.reproductive_mechanism = {
+              ...(event.pregnancy_relevance.reproductive_mechanism ?? {}),
+              kind: event.pregnancy_relevance.reproductive_mechanism?.kind ?? "intravaginal_exposure",
+              pathway: analysisCount === 1
+                ? scenario.initialPathway
+                : scenario.nextPathway ?? scenario.initialPathway,
+            };
+          }
+          if (analysisCount === 1) return {events: [event]};
+          const newEvent = identityEventForCharacters(
+            analysisInput.character_registry,
+            "角色B",
+            "来源B",
+            `${scenario.name}-new`,
+          );
+          newEvent.story_time = {
+            display: "2026-01-02",
+            normalized: "2026-01-02",
+            day_index: null,
+            calendar_id: "main",
+            precision: "day",
+            confidence: 1,
+          };
+          return {events: [newEvent, event]};
+        },
+      },
+    });
+    await fixture.runtime.init();
+    await fixture.runtime.refreshCurrentFloorAnalysis();
+    const first = fixture.runtime.store.getFloor(0, 0).events[0];
+    await fixture.runtime.refreshCurrentFloorAnalysis();
+    const events = fixture.runtime.store.getFloor(0, 0).events;
+    const subjectEvents = events.filter(
+      (event) => event.participants[0].display_name === "角色A",
+    );
+    assert.equal(events.length, scenario.reuse ? 2 : 3, scenario.name);
+    assert.equal(subjectEvents.length, scenario.reuse ? 1 : 2, scenario.name);
+    if (scenario.reuse) assert.equal(subjectEvents[0].event_id, first.event_id, scenario.name);
+    else assert.notEqual(subjectEvents[0].event_id, subjectEvents[1].event_id, scenario.name);
+    fixture.runtime.destroy();
+  }
 });
 
 function canonicalApiEvent({
@@ -980,6 +1298,47 @@ function eventResultForRegistry(registry, eventId = "evt-1", overrides = {}) {
   return event;
 }
 
+function fixtureContinuationEvent(analysisInput, event) {
+  const existing = analysisInput?.existing_events?.[0];
+  if (!existing) return event;
+  for (const participant of existing.participants ?? []) {
+    const characterId = participant?.character_id;
+    if (!characterId) continue;
+    analysisInput.character_registry.entities[characterId] = {
+      character_id: characterId,
+      display_name: participant.display_name,
+      aliases: [],
+    };
+  }
+  const existingRelevance = existing.pregnancy_relevance ?? {};
+  const eventRelevance = event.pregnancy_relevance ?? {};
+  const existingMechanism = existingRelevance.reproductive_mechanism ?? {};
+  const eventMechanism = eventRelevance.reproductive_mechanism ?? {};
+  const mergedMechanism = {...eventMechanism};
+  if (existingMechanism.kind !== undefined) {
+    mergedMechanism.kind = existingMechanism.kind;
+  }
+  return {
+    ...event,
+    story_time: structuredClone(existing.story_time ?? event.story_time),
+    participants: (event.participants ?? []).map((participant, index) => ({
+      ...participant,
+      character_id: existing.participants?.[index]?.character_id ?? participant.character_id,
+      event_role: existing.participants?.[index]?.event_role ?? participant.event_role,
+      identity_status: "existing",
+      mention_id: null,
+    })),
+    pregnancy_relevance: {
+      ...eventRelevance,
+      gestational_subject_ids: existingRelevance.gestational_subject_ids ?? eventRelevance.gestational_subject_ids,
+      counterpart_ids: existingRelevance.counterpart_ids ?? eventRelevance.counterpart_ids,
+      reproductive_mechanism: mergedMechanism,
+    },
+    continuation_of_event_id: existing.event_id,
+    continuation_update: true,
+  };
+}
+
 function identityParticipant({
   identityStatus,
   characterId = null,
@@ -1076,6 +1435,33 @@ function identityEventForCharacters(
       `${sourceName}-${eventId}-source`,
     ),
   });
+}
+
+function stableContinuationEventFromInput(analysisInput, displayName, overrides = {}) {
+  const existing = (analysisInput.existing_events ?? []).find(
+    (event) => event.participants?.[0]?.display_name === displayName,
+  ) ?? (analysisInput.existing_events ?? [])[0];
+  if (!existing) return null;
+  for (const participant of existing.participants ?? []) {
+    const characterId = participant.character_id;
+    if (!characterId) continue;
+    analysisInput.character_registry.entities[characterId] = {
+      character_id: characterId,
+      display_name: participant.display_name,
+      aliases: [],
+    };
+  }
+  const candidate = structuredClone(existing);
+  delete candidate.event_id;
+  delete candidate.source;
+  candidate.participants = candidate.participants.map((participant) => ({
+    ...participant,
+    identity_status: "existing",
+    mention_id: null,
+  }));
+  candidate.continuation_of_event_id = existing.event_id;
+  candidate.continuation_update = true;
+  return {...candidate, ...overrides};
 }
 
 async function settle() {
@@ -1481,7 +1867,8 @@ test("AI Event writes reject comparable future Story Time without dropping legal
   await fixture.runtime.init();
   await fixture.runtime.analyzeCurrentFloor();
   const events = await fixture.runtime.getCurrentFloorEvents();
-  assert.deepEqual(events.map(event => event.story_time.day_index), [5]);
+  assert.deepEqual(events.map(event => event.story_time.normalized), ["2026-01-05"]);
+  assert.equal(Object.hasOwn(events[0].story_time, "day_index"), false);
   fixture.runtime.destroy();
 });
 
@@ -1507,9 +1894,9 @@ test("manual Event Story Time edit rejects future time and allows equal target t
     fixture.runtime.updateEvent(eventId, {story_time: {normalized: "2026-01-20", day_index: 20, calendar_id: "main", precision: "day"}}),
     error => error?.code === "EVENT_STORY_TIME_AFTER_CURRENT",
   );
-  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].story_time.day_index, 5);
+  assert.equal(Object.hasOwn((await fixture.runtime.getCurrentFloorEvents())[0].story_time, "day_index"), false);
   await fixture.runtime.updateEvent(eventId, {story_time: {normalized: "2026-01-10", day_index: 10, calendar_id: "main", precision: "day"}});
-  assert.equal((await fixture.runtime.getCurrentFloorEvents())[0].story_time.day_index, 10);
+  assert.equal(Object.hasOwn((await fixture.runtime.getCurrentFloorEvents())[0].story_time, "day_index"), false);
   fixture.runtime.destroy();
 });
 
@@ -1561,12 +1948,58 @@ test("manual Event Story Time display edits rebuild all derived fields instead o
   assert.deepEqual(updated.source, fixture.runtime.store.getFloor(0).events[0].source);
   assert.equal(updated.story_time.display, "羲和1年3月18日 酉时末");
   assert.equal(updated.story_time.normalized, "cn-1-3-18T19:00");
-  assert.equal(updated.story_time.day_index, null);
+  assert.equal(Object.hasOwn(updated.story_time, "day_index"), false);
   assert.equal(updated.story_time.calendar_id, null);
   assert.equal(updated.story_time.precision, "minute");
   assert.equal(updated.story_time.confidence, null);
   assert.ok(traces.some(trace => trace.stage === "EVENT_EDIT_SUBMITTED" && trace.event_id === eventId));
   assert.ok(traces.some(trace => trace.stage === "EVENT_EDIT_PERSISTENCE_CONFIRMED" && trace.persistence_confirmed === true));
+  fixture.runtime.destroy();
+});
+
+test("manual edits of a legacy Event replace its persisted day_index without changing ownership", async () => {
+  const fixture = createFixture({
+    messages: [{
+      message_id: "legacy-story-time-edit",
+      floor: 10,
+      content: "当前剧情",
+      story_time: {display: "2026-01-10", normalized: "2026-01-10", day_index: 20463, calendar_id: "main", precision: "day"},
+      role: "assistant",
+    }],
+    analyzer: {
+      async analyzeFloor() {
+        return {events: [eventResult("legacy-editable-time", {
+          story_time: {display: "2026-01-01", normalized: "2026-01-01", day_index: 20454, calendar_id: "main", precision: "day", confidence: 1},
+        })]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeCurrentFloor();
+  const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
+  const before = fixture.runtime.store.getFloor(0, 0);
+  const legacyFloor = structuredClone(before);
+  legacyFloor.events[0].story_time.day_index = 20454;
+  await fixture.runtime.store.saveFloor(0, 0, legacyFloor);
+  const legacySource = structuredClone(legacyFloor.events[0].source);
+  const legacyVersion = structuredClone(legacyFloor.floor_version);
+
+  await fixture.runtime.updateEvent(eventId, {story_time: {display: "2026-01-05"}});
+  const afterEdit = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.equal(afterEdit.event_id, eventId);
+  assert.deepEqual(afterEdit.source, legacySource);
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).floor_version, legacyVersion);
+  assert.equal(afterEdit.story_time.display, "2026-01-05");
+  assert.equal(afterEdit.story_time.normalized, "2026-01-05");
+  assert.equal(afterEdit.story_time.day_index, 20458);
+  assert.notEqual(afterEdit.story_time.day_index, 20454);
+
+  await fixture.runtime.updateEvent(eventId, {story_time: {display: "2026-01-05"}});
+  const afterResave = (await fixture.runtime.getCurrentFloorEvents())[0];
+  assert.deepEqual(afterResave.story_time, afterEdit.story_time);
+  assert.equal(afterResave.event_id, eventId);
+  assert.deepEqual(afterResave.source, legacySource);
+  assert.deepEqual(fixture.runtime.store.getFloor(0, 0).floor_version, legacyVersion);
   fixture.runtime.destroy();
 });
 
@@ -1602,7 +2035,7 @@ test("manual Event Story Time display edits compare parsed same-era dates withou
 
   const updated = (await fixture.runtime.getCurrentFloorEvents())[0];
   assert.equal(updated.story_time.normalized, "cn-1-3-18T19:00");
-  assert.equal(updated.story_time.day_index, null);
+  assert.equal(Object.hasOwn(updated.story_time, "day_index"), false);
   assert.equal(updated.story_time.calendar_id, null);
   assert.equal(fixture.saveFloorCalls(), beforeSaves + 1);
   assert.equal(traces.some(trace => trace.stage === "EVENT_STORY_TIME_INCOMPARABLE" && trace.event_ids.includes(eventId)), false);
@@ -2409,7 +2842,6 @@ test("narrative StoryTime keeps structured fields when persisted through Runtime
   assert.deepEqual(persisted.story_time, {
     display: "天河42年3月18日 午时至未时",
     normalized: "0042-03-18T12:45:00",
-    day_index: 42,
     calendar_id: "tianhe",
     precision: "hour",
     confidence: 0.73,
@@ -2439,7 +2871,6 @@ test("narrative StoryTime persists a formatted first-year display when time rema
   assert.deepEqual(persisted.story_time, {
     display: "羲和1年3月4日 巳时末",
     normalized: null,
-    day_index: null,
     calendar_id: null,
     precision: "minute",
     confidence: 1,
@@ -2798,14 +3229,23 @@ test("World-first runtime execution is independent of UI subscriber presence", a
 });
 
 test("successful Floor skips non-force analysis and force success replaces Events", async () => {
-  const fixture = createFixture();
+  let calls = 0;
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    analyzer: {
+      async analyzeFloor({analysisInput} = {}) {
+        calls += 1;
+        return {events: [fixtureContinuationEvent(analysisInput, eventResult("fixture-event"))]};
+      },
+    },
+  });
   await fixture.runtime.init();
   await fixture.runtime.analyzeCurrentFloor();
   const firstId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
   await fixture.runtime.analyzeCurrentFloor();
-  assert.equal(fixture.calls(), 1);
+  assert.equal(calls, 1);
   await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(fixture.calls(), 2);
+  assert.equal(calls, 2);
   assert.deepEqual(
     (await fixture.runtime.getCurrentFloorEvents()).map(
       (event) => event.event_id,
@@ -2871,6 +3311,7 @@ test("semantic duplicate from Recent Story is not persisted a second time", asyn
     confidence: null,
   };
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {message_id: "message-history", floor: 1, content: "历史 exposure", role: "assistant"},
       {message_id: "message-target", floor: 2, content: "当前 physical symptom", role: "assistant"},
@@ -2912,6 +3353,464 @@ test("semantic duplicate from Recent Story is not persisted a second time", asyn
   assert.equal(currentEvents.length, 1);
   assert.equal(currentEvents[0].event_id, persisted.event_id);
   assert.equal(currentEvents[0].source.message_id, "message-history");
+  fixture.runtime.destroy();
+});
+
+test("Runtime persists a parser-normalized Event envelope without continuation metadata", async () => {
+  const rawEvent = eventResult("raw-top-level", {
+    continuation_of_event_id: "evt-not-visible",
+    continuation_update: true,
+  });
+  rawEvent.participants = rawEvent.participants.map((participant) => ({
+    ...participant,
+    reproductive_capabilities_used: {
+      can_produce_sperm: null,
+      can_produce_ova: null,
+      can_be_fertilized: null,
+      can_fertilize: null,
+      can_carry_pregnancy: participant.event_role === "potential_gestational_subject",
+      can_cause_pregnancy: participant.event_role === "potential_conception_source",
+    },
+  }));
+  const fixture = createFixture({
+    rawApiResponse: JSON.stringify({schema_version: 1, events: [rawEvent]}),
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+
+  const persisted = fixture.runtime.store.getFloor(0, 0).events;
+  assert.equal(persisted.length, 1);
+  assert.equal(Object.hasOwn(persisted[0], "continuation_of_event_id"), false);
+  assert.equal(Object.hasOwn(persisted[0], "continuation_update"), false);
+  assert.equal(persisted[0].source.floor, 3);
+  fixture.runtime.destroy();
+});
+
+test("cross-Floor continuation with new evidence reuses the existing Event ID", async () => {
+  const inputs = [];
+  let persisted = null;
+  const storyTime = {
+    display: "羲和1年3月4日 巳时中",
+    normalized: "cn-1-3-4T10:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-66", floor: 66, content: "持续互动开始", role: "assistant"},
+      {message_id: "floor-68", floor: 68, content: "持续互动继续", role: "assistant"},
+      {message_id: "floor-70", floor: 70, content: "持续互动出现新事实", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        inputs.push(structuredClone(analysisInput));
+        const candidate = identityEventForCharacters(
+          analysisInput.character_registry,
+          "祁鸢",
+          "金文达",
+          `ai-event-${inputs.length}`,
+        );
+        candidate.type = "sexual_activity";
+        candidate.story_time = storyTime;
+        candidate.location = "底舱";
+        candidate.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: ["中文路径描述", "rewritten English pathway", "日本語の経路説明"][inputs.length - 1],
+          world_model_rule_refs: [],
+          evidence: [{
+            kind: "pregnancy_relevant_exposure",
+            text: `机制证据 ${["A", "B", "C"][inputs.length - 1]}`,
+          }],
+        };
+        candidate.source_evidence = [{
+          kind: "pregnancy_relevant_exposure",
+          text: `证据 ${["A", "B", "C"][inputs.length - 1]}`,
+        }];
+        if (inputs.length > 1) {
+          candidate.continuation_of_event_id = persisted?.event_id;
+          candidate.continuation_update = true;
+        }
+        return {events: [candidate]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  persisted = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  assert.deepEqual(
+    inputs[1].existing_events.map((event) => event.event_id),
+    [persisted.event_id],
+  );
+  assert.deepEqual(
+    inputs[2].existing_events.map((event) => event.event_id),
+    [persisted.event_id],
+  );
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(currentEvents.length, 1, "continuation should update the existing Event");
+  assert.equal(currentEvents[0].event_id, persisted.event_id);
+  assert.equal(currentEvents[0].source.floor, 66);
+  assert.deepEqual(
+    currentEvents[0].source_evidence.map((item) => item.text),
+    ["证据 A", "证据 B", "证据 C"],
+  );
+  assert.equal(Object.hasOwn(currentEvents[0], "continuation_of_event_id"), false);
+  assert.equal(Object.hasOwn(currentEvents[0], "continuation_update"), false);
+  fixture.runtime.destroy();
+});
+
+test("structure-only continuity does not merge without a continuity license", async () => {
+  let analysisCount = 0;
+  const storyTime = {
+    display: "羲和1年3月4日 巳时中",
+    normalized: "cn-1-3-4T10:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    messages: [
+      {message_id: "implicit-floor-66", floor: 66, content: "连续场景开始", role: "assistant"},
+      {message_id: "implicit-floor-68", floor: 68, content: "连续场景继续", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        if (analysisCount === 1) {
+          const event = identityEventForCharacters(
+            analysisInput.character_registry,
+            "祁鸢",
+            "金文达",
+            "implicit-source",
+          );
+          event.type = "sexual_activity";
+          event.story_time = storyTime;
+          event.location = "底舱";
+          event.pregnancy_relevance.reproductive_mechanism = {
+            kind: "intravaginal_exposure",
+            label: "阴道内交合暴露",
+            pathway: "稳定路径",
+            world_model_rule_refs: [],
+            evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "机制证据 A"}],
+          };
+          event.source_evidence = [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "来源证据 A"}];
+          return {events: [event]};
+        }
+        const event = stableContinuationEventFromInput(analysisInput, "祁鸢");
+        delete event.continuation_of_event_id;
+        delete event.continuation_update;
+        event.story_time = storyTime;
+        event.pregnancy_relevance.reproductive_mechanism.pathway = "剧烈改写的 pathway";
+        event.source_evidence = [
+          {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "来源证据 A"},
+          {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "来源证据 B"},
+        ];
+        event.pregnancy_relevance.reproductive_mechanism.evidence = [
+          {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "机制证据 A"},
+          {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "机制证据 B"},
+        ];
+        event.participants = event.participants.map((participant) => ({
+          ...participant,
+          display_name: `重命名-${participant.character_id}`,
+          evidence: [
+            ...(participant.evidence ?? []),
+            {kind: "participant", text: "参与者证据 B"},
+          ],
+        }));
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const originalPersisted = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const events = fixture.runtime.store.getFloor(1, 0).events;
+  assert.equal(events.length, 2);
+  assert.equal(events[0].event_id, originalPersisted.event_id);
+  assert.equal(events[0].source.floor, 66);
+  assert.equal(events[1].source.floor, 68);
+  fixture.runtime.destroy();
+});
+
+test("manual Character reanalysis converges an explicitly referenced current-Floor duplicate", async () => {
+  let analysisCount = 0;
+  let persistedA = null;
+  let persistedB = null;
+  const storyTime = {
+    display: "羲和1年3月20日 午时",
+    normalized: "cn-1-3-20T11:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-66-converge", floor: 66, content: "持续互动开始", role: "assistant"},
+      {message_id: "floor-68-converge", floor: 68, content: "持续互动继续", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        if (analysisCount < 3) {
+          const candidate = identityEventForCharacters(
+            analysisInput.character_registry,
+            "祁鸢",
+            "金文达",
+            `converge-${analysisCount}`,
+          );
+          candidate.type = "sexual_activity";
+          candidate.story_time = storyTime;
+          candidate.location = "底舱";
+          candidate.source_evidence = [{
+            kind: "pregnancy_relevant_exposure",
+            text: analysisCount === 1 ? "连续场景 A" : "连续场景 B",
+          }];
+          return {events: [candidate]};
+        }
+        const continuation = structuredClone(persistedB);
+        delete continuation.event_id;
+        delete continuation.source;
+        continuation.participants = continuation.participants.map(participant => ({
+          ...participant,
+          identity_status: "existing",
+          mention_id: null,
+        }));
+        continuation.continuation_of_event_id = persistedA.event_id;
+        continuation.continuation_update = true;
+        return {events: [continuation]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  persistedA = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  const currentFloor = fixture.runtime.store.getFloor(1, 0);
+  const targetFloor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 1});
+  persistedB = {
+    ...structuredClone(persistedA),
+    event_id: "evt_converge_duplicate_2",
+    source: structuredClone(targetFloor.version),
+    source_evidence: [{
+      kind: "pregnancy_relevant_exposure",
+      text: "连续场景 B",
+    }],
+  };
+  await fixture.runtime.store.saveFloor(1, 0, {
+    ...currentFloor,
+    events: [persistedA, persistedB],
+  });
+  const before = fixture.runtime.store.getFloor(1, 0).events.map(event => event.event_id);
+  assert.ok(before.includes(persistedA.event_id));
+  assert.ok(before.includes(persistedB.event_id));
+
+  await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  const after = fixture.runtime.store.getFloor(1, 0).events;
+  assert.deepEqual(after.map(event => event.event_id), [persistedA.event_id]);
+  assert.equal(after[0].source.floor, 66);
+  assert.deepEqual(
+    after[0].source_evidence.map(item => item.text).sort(),
+    ["连续场景 A", "连续场景 B"],
+  );
+  assert.equal(Object.hasOwn(after[0], "continuation_of_event_id"), false);
+  assert.equal(Object.hasOwn(after[0], "continuation_update"), false);
+  fixture.runtime.destroy();
+});
+
+test("invalid continuation references do not force a cross-Floor merge", async () => {
+  let analysisCount = 0;
+  const storyTime = {
+    display: "羲和1年3月20日 午时",
+    normalized: "cn-1-3-20T11:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-66-invalid-ref", floor: 66, content: "持续互动开始", role: "assistant"},
+      {message_id: "floor-68-invalid-ref", floor: 68, content: "另一件互动", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const candidate = identityEventForCharacters(
+          analysisInput.character_registry,
+          "祁鸢",
+          "金文达",
+          `invalid-ref-${analysisCount}`,
+        );
+        candidate.type = "sexual_activity";
+        candidate.story_time = storyTime;
+        candidate.location = "底舱";
+        candidate.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: `描述 ${analysisCount}`,
+          world_model_rule_refs: [],
+          evidence: [{kind: "pregnancy_relevant_exposure", text: `证据 ${analysisCount}`}],
+        };
+        candidate.source_evidence = [{
+          kind: "pregnancy_relevant_exposure",
+          text: `证据 ${analysisCount}`,
+        }];
+        if (analysisCount > 1) {
+          candidate.continuation_of_event_id = "evt-not-visible-in-current-floor";
+          candidate.continuation_update = true;
+        }
+        return {events: [candidate]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(currentEvents.length, 2);
+  assert.notEqual(currentEvents[0].event_id, currentEvents[1].event_id);
+  fixture.runtime.destroy();
+});
+
+test("continuation with disjoint World Model rule references does not merge", async () => {
+  let analysisCount = 0;
+  const storyTime = {
+    display: "羲和1年3月20日 午时",
+    normalized: "cn-1-3-20T11:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-66-rule-a", floor: 66, content: "机制 A", role: "assistant"},
+      {message_id: "floor-68-rule-b", floor: 68, content: "机制 B", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "rule-conflict")
+          : stableContinuationEventFromInput(analysisInput, "祁鸢");
+        event.type = "sexual_activity";
+        event.story_time = storyTime;
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          pathway: "同一结构路径",
+          world_model_rule_refs: [analysisCount === 1 ? "rule-a" : "rule-b"],
+          evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `规则证据 ${analysisCount}`}],
+        };
+        event.source_evidence = [{
+          kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+          text: `来源证据 ${analysisCount}`,
+        }];
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.length, 2);
+  fixture.runtime.destroy();
+});
+
+test("a validated continuation without a meaningful update preserves the existing Event", async () => {
+  let analysisCount = 0;
+  let persisted = null;
+  const storyTime = {
+    display: "羲和1年3月20日 午时",
+    normalized: "cn-1-3-20T11:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    messages: [
+      {message_id: "floor-66-no-update", floor: 66, content: "持续互动开始", role: "assistant"},
+      {message_id: "floor-68-no-update", floor: 68, content: "重复描述", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const candidate = identityEventForCharacters(
+          analysisInput.character_registry,
+          "祁鸢",
+          "金文达",
+          `no-update-${analysisCount}`,
+        );
+        candidate.type = "sexual_activity";
+        candidate.story_time = storyTime;
+        candidate.location = "底舱";
+        candidate.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: "描述 A",
+          world_model_rule_refs: [],
+          evidence: [{kind: "pregnancy_relevant_exposure", text: "证据 A"}],
+        };
+        candidate.source_evidence = [{
+          kind: "pregnancy_relevant_exposure",
+          text: "证据 A",
+        }];
+        if (analysisCount > 1) {
+          candidate.continuation_of_event_id = persisted?.event_id;
+          candidate.continuation_update = false;
+        }
+        return {events: [candidate]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  persisted = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  assert.deepEqual(currentEvents, [persisted]);
   fixture.runtime.destroy();
 });
 
@@ -3005,6 +3904,7 @@ test("historical exposure and current symptom keep separate times under the curr
 test("API input uses the nearest valid previous Floor Version provenance", async () => {
   const inputs = [];
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {
         message_id: "message-1",
@@ -3029,7 +3929,10 @@ test("API input uses the nearest valid previous Floor Version provenance", async
       async analyzeFloor(request) {
         inputs.push(request.analysisInput);
         return {
-          events: [eventResultForRegistry(request.analysisInput.character_registry)],
+          events: [fixtureContinuationEvent(
+            request.analysisInput,
+            eventResultForRegistry(request.analysisInput.character_registry),
+          )],
         };
       },
     },
@@ -3053,7 +3956,7 @@ test("API input uses the nearest valid previous Floor Version provenance", async
   assert.equal(baseline.analysis.floor_version.message_id, "message-2");
   assert.deepEqual(
     baseline.events.map((event) => event.source.message_id),
-    ["message-2"],
+    ["message-1"],
   );
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 2 },
@@ -3063,7 +3966,7 @@ test("API input uses the nearest valid previous Floor Version provenance", async
   assert.equal(reanalysis.analysis.floor_version.message_id, "message-2");
   assert.deepEqual(
     reanalysis.events.map((event) => event.source.message_id),
-    ["message-2"],
+    ["message-1"],
   );
   assert.doesNotMatch(JSON.stringify(reanalysis), /message-3/u);
   fixture.runtime.destroy();
@@ -3191,6 +4094,7 @@ test("Floor character snapshots accumulate from the nearest previous Floor", asy
 test("API input uses 6F when the unanalysed target is 9F", async () => {
   let input;
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {
         message_id: "message-3",
@@ -3215,7 +4119,10 @@ test("API input uses 6F when the unanalysed target is 9F", async () => {
       async analyzeFloor(request) {
         input = request.analysisInput;
         return {
-          events: [eventResultForRegistry(request.analysisInput.character_registry)],
+          events: [fixtureContinuationEvent(
+            request.analysisInput,
+            eventResultForRegistry(request.analysisInput.character_registry),
+          )],
         };
       },
     },
@@ -3240,7 +4147,11 @@ test("API input uses 6F when the unanalysed target is 9F", async () => {
   );
   assert.deepEqual(
     input.existing_bioweave.events.map((event) => event.source.message_id),
-    ["message-6"],
+    ["message-3"],
+  );
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(2, 0).events.map((event) => event.source.message_id),
+    ["message-3"],
   );
   fixture.runtime.destroy();
 });
@@ -3291,6 +4202,7 @@ test("historical target analysis does not inherit a later complete Event or Regi
 test("deleted latest Floor falls back to the nearest remaining valid previous Floor", async () => {
   const inputs = [];
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {
         message_id: "message-3",
@@ -3321,12 +4233,13 @@ test("deleted latest Floor falls back to the nearest remaining valid previous Fl
       async analyzeFloor(request) {
         inputs.push(request.analysisInput);
         return {
-          events: [
+          events: [fixtureContinuationEvent(
+            request.analysisInput,
             eventResultForRegistry(
               request.analysisInput.character_registry,
               `event-${inputs.length}`,
             ),
-          ],
+          )],
         };
       },
     },
@@ -3349,7 +4262,7 @@ test("deleted latest Floor falls back to the nearest remaining valid previous Fl
     inputs
       .at(-1)
       .existing_bioweave.events.map((event) => event.source.message_id),
-    ["message-6"],
+    ["message-3"],
   );
   assert.doesNotMatch(
     JSON.stringify(inputs.at(-1).existing_bioweave),
@@ -5330,8 +6243,17 @@ test("automatic failure trace separates scheduler trigger from the actual failur
   const fixture = createFixture({saveFloorError: "ST_FLOOR_STORAGE_UNAVAILABLE"});
   configureScheduler(fixture, {interval: 1});
   await fixture.runtime.init();
+  const analysisFailed = new Promise(resolve => {
+    let unsubscribe = () => {};
+    unsubscribe = fixture.runtime.subscribe(event => {
+      if (event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "failed") {
+        unsubscribe();
+        resolve();
+      }
+    });
+  });
   fixture.emit("character-message-rendered", {message_id: "message-stable"});
-  await settle();
+  await analysisFailed;
   const trace = fixture.runtime.getPersistenceTrace();
   const failure = trace?.sequence.find(entry => entry.stage === "ANALYSIS_FAILED");
   assert.ok(failure);
@@ -7210,14 +8132,15 @@ test("reload restores all business state from three Floor facts without Chat mir
     analyzer: {
       async analyzeFloor({ analysisInput }) {
         return {
-          events: [
+          events: [fixtureContinuationEvent(
+            analysisInput,
             identityEventForCharacters(
               analysisInput.character_registry,
               "Alice",
               "Bob",
               `analysis-event-${analysisInput.current_floor.floor}`,
             ),
-          ],
+          )],
         };
       },
     },
@@ -7412,6 +8335,7 @@ test("deleting one Event preserves same-Floor sibling Events", async () => {
 
 test("editing an Event writes only the current complete Floor state", async () => {
   const fixture = createFixture({
+    reliableStoryTime: true,
     messages: [
       {
         message_id: "message-historical-edit",
@@ -7428,7 +8352,13 @@ test("editing an Event writes only the current complete Floor state", async () =
     ],
     analyzer: {
       async analyzeFloor({analysisInput}) {
-        return {events: [eventResult(`event-floor-${analysisInput.current_floor.floor}`)]};
+        return {events: [fixtureContinuationEvent(
+          analysisInput,
+          eventResultForRegistry(
+            analysisInput.character_registry,
+            `event-floor-${analysisInput.current_floor.floor}`,
+          ),
+        )]};
       },
     },
   });

@@ -4,6 +4,7 @@ import {
   dedupeEventsAgainstExisting,
   dedupeEvents,
   normalizeEvent,
+  eventSemanticKey,
   splitCompositePregnancyExposureEvent,
   validateEventStoryTimesAtOrBefore,
   validateEventCollection,
@@ -13,6 +14,7 @@ import {
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
 } from "../core/identity.js";
+import {compareStoryTime} from "../story/time.js";
 import {
   floorVersionFromData,
   hashText,
@@ -91,32 +93,77 @@ async function materializeStateFact(event, version, ordinal) {
   return { ...event, state_fact: stateFact };
 }
 
-// Supplement output may omit prior facts. Match only the same Floor's stable
-// event shape so an updated fact can retain its canonical IDs without turning
-// a different participant or mechanism into the same Event.
+function continuityIdList(value) {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const ids = value.map((item) => typeof item === "string" ? item.trim() : "");
+  if (ids.some((item) => !item) || new Set(ids).size !== ids.length) return null;
+  return [...ids].sort();
+}
+
+function continuityParticipants(event) {
+  const participants = Array.isArray(event?.participants) ? event.participants : [];
+  const normalized = participants.map((participant) => {
+    const characterId = typeof participant?.character_id === "string"
+      ? participant.character_id.trim()
+      : "";
+    const eventRole = typeof participant?.event_role === "string"
+      ? participant.event_role.trim()
+      : "";
+    if (!characterId || !eventRole) return null;
+    return {character_id: characterId, event_role: eventRole};
+  });
+  if (normalized.some((participant) => participant === null)) return null;
+  const characterIds = normalized.map((participant) => participant.character_id);
+  if (new Set(characterIds).size !== characterIds.length) return null;
+  return normalized.sort((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+// This is only a same-current-Floor reconciliation key. Cross-Floor reuse
+// still requires an explicitly validated continuation reference.
 function eventContinuityKey(event) {
   const storyTime = event?.story_time ?? {};
   const mechanism = event?.pregnancy_relevance?.reproductive_mechanism ?? {};
+  const participants = continuityParticipants(event);
+  const gestationalSubjectIds = continuityIdList(
+    event?.pregnancy_relevance?.gestational_subject_ids,
+  );
+  const counterpartIds = continuityIdList(
+    event?.pregnancy_relevance?.counterpart_ids,
+  );
+  if (!participants || !gestationalSubjectIds || !counterpartIds) return null;
   return JSON.stringify({
     type: event?.type ?? null,
     location: event?.location ?? null,
     story_time: {
       normalized: storyTime.normalized ?? null,
-      day_index: storyTime.day_index ?? null,
-      display: storyTime.display ?? null,
+      day_index: storyTime.normalized ? null : storyTime.day_index ?? null,
+      calendar_id: storyTime.calendar_id ?? null,
     },
-    participants: (event?.participants ?? [])
-      .map((participant) => ({
-        display_name: participant?.display_name ?? null,
-        event_role: participant?.event_role ?? null,
-      }))
-      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
-    mechanism: {
-      kind: mechanism.kind ?? null,
-      pathway: mechanism.pathway ?? null,
-      world_model_rule_refs: [...(mechanism.world_model_rule_refs ?? [])].sort(),
-    },
+    participants,
+    gestational_subject_ids: gestationalSubjectIds,
+    counterpart_ids: counterpartIds,
+    mechanism: {kind: mechanism.kind ?? null},
   });
+}
+
+function strictContinuationDuplicate(candidate, current) {
+  const candidateKey = eventSemanticKey(candidate);
+  const currentKey = eventSemanticKey(current);
+  return Boolean(candidateKey && currentKey && candidateKey === currentKey);
+}
+
+function continuationStoryTimeCompatible(leftStoryTime, rightStoryTime) {
+  const left = leftStoryTime ?? {};
+  const right = rightStoryTime ?? {};
+  const leftNormalized = typeof left.normalized === "string" ? left.normalized.trim() : "";
+  const rightNormalized = typeof right.normalized === "string" ? right.normalized.trim() : "";
+  if (leftNormalized || rightNormalized) {
+    return Boolean(leftNormalized && rightNormalized && leftNormalized === rightNormalized &&
+      (left.calendar_id ?? null) === (right.calendar_id ?? null));
+  }
+  return compareStoryTime(left, right) === 0;
 }
 
 function mergeCurrentParticipantEvidence(currentParticipant, nextParticipant) {
@@ -140,11 +187,150 @@ function mergeCurrentParticipantEvidence(currentParticipant, nextParticipant) {
       ]),
     ),
     evidence: [
-      ...new Set([
-        ...(Array.isArray(current.evidence) ? current.evidence : []),
-        ...(Array.isArray(next.evidence) ? next.evidence : []),
-      ]),
+      ...mergeEvidenceUnique(current.evidence, next.evidence),
     ],
+  };
+}
+
+function stableFingerprint(value) {
+  if (Array.isArray(value)) return `[${value.map(stableFingerprint).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableFingerprint(value[key])}`).join(",")}}`;
+}
+
+function evidenceFingerprint(value) {
+  const item = value && typeof value === "object" ? value : {};
+  return stableFingerprint({
+    kind: typeof item.kind === "string" ? item.kind.trim() : item.kind ?? null,
+    text: typeof item.text === "string" ? item.text.trim() : item.text ?? null,
+  });
+}
+
+function mergeEvidenceUnique(...collections) {
+  const result = [];
+  const seen = new Set();
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) continue;
+    for (const item of collection) {
+      const key = evidenceFingerprint(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(structuredClone(item));
+    }
+  }
+  return result;
+}
+
+function sameIdSet(left = [], right = []) {
+  const a = new Set((Array.isArray(left) ? left : []).filter(Boolean));
+  const b = new Set((Array.isArray(right) ? right : []).filter(Boolean));
+  return a.size === b.size && [...a].every((value) => b.has(value));
+}
+
+function compatibleWorldModelRuleRefs(left = [], right = []) {
+  const leftRefs = new Set((Array.isArray(left) ? left : []).filter(Boolean));
+  const rightRefs = new Set((Array.isArray(right) ? right : []).filter(Boolean));
+  if (!leftRefs.size || !rightRefs.size) return true;
+  return [...leftRefs].some((reference) => rightRefs.has(reference));
+}
+
+function continuationSourceIsVisible(source, targetVersion) {
+  if (!source || typeof source !== "object") return false;
+  if (source.chat_id !== targetVersion?.chat_id || source.swipe_id !== targetVersion?.swipe_id) return false;
+  if (["message_id", "content_hash", "message_version"].some((key) => {
+    const value = source[key];
+    return value === null || value === undefined || String(value).trim() === "";
+  })) return false;
+  const sourceFloor = Number(source.floor);
+  const targetFloor = Number(targetVersion?.floor);
+  if (!Number.isFinite(sourceFloor) || !Number.isFinite(targetFloor)) return false;
+  if (sourceFloor === targetFloor && !sameFloorVersion(source, targetVersion)) return false;
+  return sourceFloor <= targetFloor;
+}
+
+function validateContinuationReference(candidate, current, targetVersion) {
+  if (!candidate || !current || !continuationSourceIsVisible(current.source, targetVersion)) return false;
+  if (candidate.type !== current.type) return false;
+  const candidateParticipants = continuityParticipants(candidate);
+  const currentParticipants = continuityParticipants(current);
+  if (!candidateParticipants || !currentParticipants ||
+      JSON.stringify(candidateParticipants) !== JSON.stringify(currentParticipants)) return false;
+  const candidateRelevance = candidate.pregnancy_relevance ?? {};
+  const currentRelevance = current.pregnancy_relevance ?? {};
+  if (!sameIdSet(candidateRelevance.gestational_subject_ids, currentRelevance.gestational_subject_ids) ||
+      !sameIdSet(candidateRelevance.counterpart_ids, currentRelevance.counterpart_ids)) return false;
+  const candidateMechanism = candidateRelevance.reproductive_mechanism ?? {};
+  const currentMechanism = currentRelevance.reproductive_mechanism ?? {};
+  if (candidateMechanism.kind !== currentMechanism.kind) return false;
+  if (!compatibleWorldModelRuleRefs(
+    candidateMechanism.world_model_rule_refs,
+    currentMechanism.world_model_rule_refs,
+  )) return false;
+  if (candidate.location && current.location && candidate.location !== current.location) return false;
+  return continuationStoryTimeCompatible(candidate.story_time, current.story_time);
+}
+
+function hasMeaningfulContinuationUpdate(current, candidate) {
+  if (candidate?.continuation_update !== true) return false;
+  const currentMechanism = current?.pregnancy_relevance?.reproductive_mechanism ?? {};
+  const candidateMechanism = candidate?.pregnancy_relevance?.reproductive_mechanism ?? {};
+  const currentEvidence = [
+    ...(current?.source_evidence ?? []),
+    ...(currentMechanism.evidence ?? []),
+    ...(current?.participants ?? []).flatMap((item) => item?.evidence ?? []),
+  ];
+  const candidateEvidence = [
+    ...(candidate?.source_evidence ?? []),
+    ...(candidateMechanism.evidence ?? []),
+    ...(candidate?.participants ?? []).flatMap((item) => item?.evidence ?? []),
+  ];
+  const currentKeys = new Set(currentEvidence.map(evidenceFingerprint));
+  if (candidateEvidence.some((item) => !currentKeys.has(evidenceFingerprint(item)))) return true;
+  return stableFingerprint(current?.state_fact ?? null) !== stableFingerprint(candidate?.state_fact ?? null) ||
+    stableFingerprint(current?.physical_effect ?? null) !== stableFingerprint(candidate?.physical_effect ?? null) ||
+    current.status !== candidate.status;
+}
+
+function mergeContinuedEvent(current, candidate, meaningfulUpdate) {
+  if (!meaningfulUpdate) return current;
+  const currentRelevance = current.pregnancy_relevance ?? {};
+  const candidateRelevance = candidate.pregnancy_relevance ?? {};
+  const currentMechanism = currentRelevance.reproductive_mechanism ?? {};
+  const candidateMechanism = candidateRelevance.reproductive_mechanism ?? {};
+  const participants = (current.participants ?? []).map((currentParticipant) => {
+    const nextParticipant = (candidate.participants ?? []).find(
+      (item) => item?.character_id === currentParticipant?.character_id,
+    );
+    return nextParticipant
+      ? mergeCurrentParticipantEvidence(currentParticipant, nextParticipant)
+      : currentParticipant;
+  });
+  return {
+    ...structuredClone(current),
+    status: candidate.status ?? current.status,
+    participants,
+    source_evidence: mergeEvidenceUnique(current.source_evidence, candidate.source_evidence),
+    physical_effect: candidate.physical_effect && typeof candidate.physical_effect === "object"
+      ? {...structuredClone(current.physical_effect ?? {}), ...structuredClone(candidate.physical_effect)}
+      : current.physical_effect,
+    pregnancy_relevance: {
+      ...structuredClone(currentRelevance),
+      possible_conception: candidateRelevance.possible_conception ?? currentRelevance.possible_conception,
+      confidence: candidateRelevance.confidence ?? currentRelevance.confidence,
+      reproductive_mechanism: {
+        ...structuredClone(currentMechanism),
+        label: candidateMechanism.label ?? currentMechanism.label,
+        pathway: candidateMechanism.pathway ?? currentMechanism.pathway,
+        world_model_rule_refs: [...new Set([
+          ...(currentMechanism.world_model_rule_refs ?? []),
+          ...(candidateMechanism.world_model_rule_refs ?? []),
+        ])],
+        evidence: mergeEvidenceUnique(currentMechanism.evidence, candidateMechanism.evidence),
+      },
+    },
+    state_fact: candidate.state_fact ?? current.state_fact,
+    event_id: current.event_id,
+    source: structuredClone(current.source),
   };
 }
 
@@ -354,6 +540,7 @@ export function createCharacterEventAnalysis({
     finalWorldModel,
     savedAnalysis,
     dependencyHash,
+    previousError = null,
   }) {
     if (typeof analyzer?.analyzeFloor !== "function")
       throw new Error("EVENT_ANALYZER_UNAVAILABLE");
@@ -369,6 +556,11 @@ export function createCharacterEventAnalysis({
       floor_version: target.version,
       authoritative_floor_version: target.version,
       signal: execution.controller.signal,
+      retry_directive:
+        previousError?.diagnostic_code === "unexpected_top_level_field" &&
+        (previousError?.diagnostic_path ?? previousError?.error_path) === "$.continuation_of_event_id"
+          ? {kind: "continuation_field_placement"}
+          : null,
       onEventAnalysisTrace: (details) => emitPersistenceTrace(
         details?.stage ?? "EVENT_ANALYSIS_DIAGNOSTIC",
         execution,
@@ -405,6 +597,12 @@ export function createCharacterEventAnalysis({
     const currentFloorEvents = Array.isArray(analysisInput.existing_events)
       ? analysisInput.existing_events.map((event) => normalizeEvent(event))
       : [];
+    const explicitContinuationIndexes = new WeakMap();
+    const explicitContinuationUpdates = new WeakMap();
+    const rejectedExplicitContinuations = new WeakSet();
+    const removedCurrentIndexes = new Map();
+    const continuationDiagnostics = [];
+    let appendedEventOrdinal = 0;
     const historicalEventsForDedupe = (analysisInput.existing_events ?? [])
       .filter((event) => !sameFloorVersion(event?.source, target.version));
     const dedupedEvents = dedupeEventsAgainstExisting(
@@ -422,21 +620,77 @@ export function createCharacterEventAnalysis({
     execution.stage = "normalization";
     const hasExistingState = currentFloorEvents.length > 0 ||
       Boolean(analysisInput.existing_bioweave?.analysis?.status);
-    const currentEventIndexes = new Map(
-      currentFloorEvents.map((event, index) => [eventContinuityKey(event), index]),
+    const currentEventIndexes = new Map();
+    const hasCurrentFloorEvents = currentFloorEvents.some(event =>
+      sameFloorVersion(event?.source, target.version),
     );
-    let appendedEventOrdinal = 0;
+    if (hasCurrentFloorEvents) {
+      currentFloorEvents.forEach((event, index) => {
+        if (!sameFloorVersion(event?.source, target.version)) return;
+        const key = eventContinuityKey(event);
+        if (!key) return;
+        const indexes = currentEventIndexes.get(key) ?? [];
+        indexes.push(index);
+        currentEventIndexes.set(key, indexes);
+      });
+    }
+    const findContinuityIndex = (event) => {
+      if (!hasCurrentFloorEvents) return undefined;
+      const key = eventContinuityKey(event);
+      if (!key) return undefined;
+      const compatibleIndexes = (currentEventIndexes.get(key) ?? []).filter(index =>
+        continuationStoryTimeCompatible(
+          currentFloorEvents[index]?.story_time,
+          event?.story_time,
+        ) && compatibleWorldModelRuleRefs(
+          currentFloorEvents[index]?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
+          event?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
+        ));
+      return compatibleIndexes.length === 1 ? compatibleIndexes[0] : undefined;
+    };
     const enrichedEvents = await Promise.all(
       dedupedEvents.map(
         async (event) => {
           const facts = event && typeof event === "object" && !Array.isArray(event)
             ? Object.fromEntries(Object.entries(event).filter(
-              ([key]) => key !== "event_id" && key !== "source",
+              ([key]) => key !== "event_id" && key !== "source" &&
+                key !== "continuation_of_event_id" && key !== "continuation_update",
             ))
             : event;
           if (!facts || typeof facts !== "object" || Array.isArray(facts)) return facts;
-          const continuityIndex = currentEventIndexes.get(eventContinuityKey(facts));
-          const eventOrdinal = continuityIndex ?? currentFloorEvents.length + appendedEventOrdinal++;
+          const requestedContinuationId = typeof event?.continuation_of_event_id === "string"
+            ? event.continuation_of_event_id.trim()
+            : "";
+          const requestedContinuationIndex = requestedContinuationId
+            ? currentFloorEvents.findIndex((current) => current.event_id === requestedContinuationId)
+            : -1;
+          const explicitContinuationIndex = requestedContinuationIndex >= 0 &&
+            validateContinuationReference(
+              facts,
+              currentFloorEvents[requestedContinuationIndex],
+              target.version,
+            )
+            ? requestedContinuationIndex
+            : undefined;
+          if (requestedContinuationId && explicitContinuationIndex === undefined) {
+            rejectedExplicitContinuations.add(event);
+          }
+          const continuationDiagnostic = {
+            continuation_reference_present: Boolean(requestedContinuationId),
+            continuation_reference_event_id: requestedContinuationId || null,
+            continuation_reference_target_exists: requestedContinuationIndex >= 0,
+            continuation_reference_valid: explicitContinuationIndex !== undefined,
+            continuation_merge_executed: false,
+            continuation_rejection_reason: requestedContinuationId
+              ? explicitContinuationIndex === undefined
+                ? requestedContinuationIndex >= 0 ? "reference_validation_failed" : "reference_target_missing"
+                : null
+              : null,
+          };
+          const continuityIndex = explicitContinuationIndex ?? (
+            requestedContinuationId ? undefined : findContinuityIndex(facts)
+          );
+          const eventOrdinal = currentFloorEvents.length + appendedEventOrdinal++;
           const materialized = await materializeStateFact({
             ...facts,
             event_id: await deterministicEventId(
@@ -448,6 +702,28 @@ export function createCharacterEventAnalysis({
           if (continuityIndex !== undefined) {
             materialized.event_id = currentFloorEvents[continuityIndex].event_id;
           }
+          if (requestedContinuationId && explicitContinuationIndex === undefined) {
+            rejectedExplicitContinuations.add(materialized);
+          }
+          if (explicitContinuationIndex !== undefined) {
+            materialized.source = structuredClone(currentFloorEvents[continuityIndex].source);
+            explicitContinuationIndexes.set(materialized, explicitContinuationIndex);
+            explicitContinuationUpdates.set(
+              materialized,
+              hasMeaningfulContinuationUpdate(
+                currentFloorEvents[explicitContinuationIndex],
+                event,
+              ),
+            );
+            continuationDiagnostic.continuation_merge_executed = true;
+            for (const [currentIndex, currentEvent] of currentFloorEvents.entries()) {
+              if (currentIndex === explicitContinuationIndex ||
+                  !sameFloorVersion(currentEvent?.source, target.version) ||
+                  !strictContinuationDuplicate(facts, currentEvent)) continue;
+              removedCurrentIndexes.set(currentIndex, "explicit_continuation_duplicate");
+            }
+          }
+          continuationDiagnostics.push(continuationDiagnostic);
           return materialized;
         },
       ),
@@ -531,40 +807,61 @@ export function createCharacterEventAnalysis({
     const updatedByCurrentIndex = new Map(
       acceptedEnrichedEvents
         .map((event) => {
-          const index = currentEventIndexes.get(eventContinuityKey(event));
+          const explicitIndex = explicitContinuationIndexes.get(event);
+          const index = explicitIndex ?? (
+            rejectedExplicitContinuations.has(event) ? undefined : findContinuityIndex(event)
+          );
           if (index === undefined) return [index, event];
           const current = currentFloorEvents[index];
-          return [index, {
-            ...event,
-            pregnancy_relevance: {
-              ...(event.pregnancy_relevance ?? {}),
-              gestational_subject_ids: [
-                ...(current.pregnancy_relevance?.gestational_subject_ids ?? []),
-              ],
-              counterpart_ids: [
-                ...(current.pregnancy_relevance?.counterpart_ids ?? []),
-              ],
-            },
-            participants: (event.participants ?? []).map((participant) => {
-              const currentParticipant = (current.participants ?? []).find(
-                (candidate) => candidate.event_role === participant.event_role &&
-                  candidate.display_name === participant.display_name,
-              );
-              return currentParticipant?.character_id
-                ? {
-                    ...mergeCurrentParticipantEvidence(currentParticipant, participant),
-                    character_id: currentParticipant.character_id,
-                  }
-                : participant;
-            }),
-          }];
+          return [index, mergeContinuedEvent(
+            current,
+            event,
+            explicitContinuationIndexes.has(event)
+              ? explicitContinuationUpdates.get(event) === true
+              : true,
+          )];
         })
         .filter(([index]) => index !== undefined),
     );
     let events = dedupeEvents([
-      ...currentFloorEvents.map((event, index) => updatedByCurrentIndex.get(index) ?? event),
-      ...acceptedEnrichedEvents.filter((event) => !currentEventIndexes.has(eventContinuityKey(event))),
+      ...currentFloorEvents
+        .map((event, index) => removedCurrentIndexes.has(index)
+          ? null
+          : updatedByCurrentIndex.get(index) ?? event)
+        .filter(Boolean),
+      ...acceptedEnrichedEvents.filter((event) => {
+        const explicitIndex = explicitContinuationIndexes.get(event);
+        if (explicitIndex !== undefined) return false;
+        if (rejectedExplicitContinuations.has(event)) return true;
+        return findContinuityIndex(event) === undefined;
+      }),
     ]).map((event) => normalizeEvent(event));
+    const preAnalysisEventIds = currentFloorEvents.map(event => event?.event_id).filter(Boolean);
+    const postAnalysisEventIds = events.map(event => event?.event_id).filter(Boolean);
+    const preAnalysisIdSet = new Set(preAnalysisEventIds);
+    const postAnalysisIdSet = new Set(postAnalysisEventIds);
+    const updatedEventIds = [...updatedByCurrentIndex.entries()]
+      .filter(([index]) => !removedCurrentIndexes.has(index))
+      .map(([, event]) => event?.event_id)
+      .filter(Boolean);
+    emitPersistenceTrace("EVENT_RECONCILIATION_RESULT", execution, target, {
+      pre_analysis_event_ids: preAnalysisEventIds,
+      pre_analysis_current_floor_event_ids: currentFloorEvents
+        .filter(event => sameFloorVersion(event?.source, target.version))
+        .map(event => event?.event_id)
+        .filter(Boolean),
+      candidate_event_count: identityResolvedEvents.length,
+      post_analysis_event_ids: postAnalysisEventIds,
+      added_event_ids: postAnalysisEventIds.filter(id => !preAnalysisIdSet.has(id)),
+      updated_event_ids: [...new Set(updatedEventIds)],
+      retained_event_ids: postAnalysisEventIds.filter(id => preAnalysisIdSet.has(id) && !updatedEventIds.includes(id)),
+      removed_event_ids: preAnalysisEventIds.filter(id => !postAnalysisIdSet.has(id)),
+      removal_reasons: [...removedCurrentIndexes.entries()].map(([index, reason]) => ({
+        event_id: currentFloorEvents[index]?.event_id ?? null,
+        reason,
+      })),
+      continuation_diagnostics: continuationDiagnostics,
+    }, "event");
     if (healthEvolution?.findExpiredEventIds) {
       const currentStoryTime = getCurrentStoryTime
         ? await getCurrentStoryTime(target)
@@ -619,7 +916,19 @@ export function createCharacterEventAnalysis({
           characterRegistry.entities[characterId] = entry;
       }
     }
-    const unchanged = JSON.stringify(events) === JSON.stringify(currentFloorEvents);
+    const currentFloor = getFloor(target.index, target.swipeId);
+    const currentFloorHasCompleteSnapshot = Boolean(
+      currentFloor &&
+      sameFloorVersion(floorVersionFromData(currentFloor), target.version) &&
+      currentFloor.analysis?.status === "success" &&
+      Array.isArray(currentFloor.events) &&
+      currentFloor.character_registry,
+    );
+    const inheritedEmptyResultIsUnchanged = !currentFloorHasCompleteSnapshot &&
+      currentFloorEvents.length > 0 &&
+      acceptedEnrichedEvents.length === 0;
+    const unchanged = (currentFloorHasCompleteSnapshot || inheritedEmptyResultIsUnchanged) &&
+      JSON.stringify(events) === JSON.stringify(currentFloorEvents);
     const currentStoredRegistry = normalizeCharacterRegistry(
       getFloor(target.index, target.swipeId)?.character_registry,
     );

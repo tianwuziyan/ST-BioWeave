@@ -50,15 +50,15 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   'World Model 是世界级生物规则的权威输入；本请求由 Runtime 保证只在 validated + normalized World Model 存在时发出。species/type mapping 只能综合当前 World Model 与 Runtime 提供的 canonical/derived individual evidence；明确生理性别事实可以用于映射到当前 World Model 已存在的 biological_type，但不能单独创建 type 或授权 capability。reproductive capabilities 与 mechanism compatibility 只能来自匹配的 World Model baseline 或明确的个体生理/生殖证据；不得使用现实人类常识或旧默认能力补空。',
   '如果上下文中出现 BioWeave Projection Context，它只是未来可能的发展方向，不是已发生事实或 Event 证据；只有 narrative discovery window 中明确写出的历史或当前事实才能进入 BiologicalEvent。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
-  '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实或不同 gestational subject 的暴露压进同一个 Event，也不要在 Runtime 或 UI 合并事件。',
-  '对 pregnancy-related sexual_activity，先识别当前 Floor 中所有有实际 pregnancy-relevant exposure 的 gestational subject，再按 subject 分组：同一 subject 的多个 actual exposure source 合并到同一个 Event，不同 subject 必须输出不同 Event；同一响应中同一 subject 最多出现一个 pregnancy-related Event，不能把多个 subject 填进同一个 Event。',
+  '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实、不同 episode 或不同 gestational subject 的暴露压进同一个 Event。AI 负责事实提取、事件边界判断、重复识别和可选 continuation 引用；Runtime 负责最终校验 continuation、保护 Event 身份/来源/证据、执行合法合并和持久化，UI 不负责 Event 身份判断。',
+  '对 pregnancy-related sexual_activity，先识别 narrative 中彼此独立的 exposure episode，再在每个 episode 内按 subject 分组：同一 episode、同一 subject 的多个 actual exposure source 合并到同一个 subject-local Event；不同 subject 必须输出不同 Event；同一 subject 在不同独立 episode 中可以有多个 Event，不能把多个 subject 填进同一个 Event。',
   'recipient discovery 必须 exhaustive：先完整扫描 narrative discovery window（Current Target Floor 与 Recent Story），建立临时 exposure candidate 集合，收集全部 actual pregnancy-relevant exposure recipients，再对集合中的每个 recipient 依次执行 identity resolution、World Model mapping、capability resolution 与 eligibility decision。不得因 current user、existing individual evidence、首个 eligible recipient，或某个 recipient 为 false/unknown 而提前 return、break、跳过后续扫描；canonical/derived individual evidence 只提供上下文，不是 participant whitelist，也不赋予任何扫描优先级；首次在当前 narrative 出现的对象也可以进入分析，但不得由模型自行创造永久 character_id。',
   'character_id 是 Runtime/Plugin 管理的 canonical entity identifier，不是姓名、拼音、romanization、lowercase、snake_case、slug、翻译、hash 或缩写的格式化结果。raw AI response 中的 new/unresolved 只能使用 character_id:null；只有 Runtime 完成 identity resolution 后，canonical Event 才会拥有正式 character_id。existing participant 只能原样引用输入 identity projection 中的 canonical character_id；new/unresolved 必须使用当前完整 response 内唯一、无业务语义的 response-local mention token，existing 的 mention_id 必须为 null。模型只判断 mention 指向谁，Runtime 才创建、校验和持久化实体 ID；不确定同名、同音、同 alias 或别名归属时必须返回 unresolved。',
   '正式 character_id 只由 Runtime 创建和验证；模型不需要知道、预测或自行生成正式 ID。existing 必须复制输入 Registry 实际提供的 canonical character_id，new 必须返回 character_id:null，绝不能自行生成永久 ID。',
   'identity_status=new 表示 narrative 明确出现了此前未登记的实体；如果 display_name 或 alias 命中已有 registry candidate，不能仅凭名称复用或创建，除非 narrative 明确说明这是另一个人物，并在 identity_evidence 使用 explicit_new_entity 等证据类型，否则返回 unresolved。',
   '如果 narrative 明确揭示真名、化名、改名或“此前称呼”与当前人物是同一人，existing mention 必须继续引用原有 canonical character_id，并通过 identity_evidence 表达明确的 name revelation；不得因为 display_name 改变而创建新的 character_id。',
   '每个 pregnancy-related sexual_activity Event 必须保持 subject-local：gestational_subject_ids[] 恰好一个，counterpart_ids[] 至少一个，participants[] 的 ID 集合恰好等于该 subject 与这些 actual exposure source 的并集；不重复、不让 subject 出现在 counterpart、不混入另一 subject 的 source 或仅在场对象。',
-  '同一 subject 的 Event 可合并其多个 actual exposure source、即时症状、physical effect、直接身体反应与相关证据；不同的独立 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event，静态外貌、体质、长期设定和人物描写没有本楼新变化时不产生 physical_symptom。',
+  '同一 episode、同一 subject 的 Event 可合并其多个 actual exposure source、即时症状、physical effect、直接身体反应与相关证据；不同 episode 的事实不得仅因 subject、地点或时间相似而合并。不同的独立 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event，静态外貌、体质、长期设定和人物描写没有本楼新变化时不产生 physical_symptom。',
   '如果目标楼层正文直接描述当前仍存在或正在发生的疼痛、酸胀、肿胀、瘀痕、活动受限或其它身体症状，即使其诱因发生在 Recent Story，也应按当前楼层的直接事实评估 physical_symptom；不得仅因症状起因在前一楼层就排除。只有目标楼层没有当前状态描述、仅泛泛回顾过去症状时，才不输出该 Event。',
   '只有明确的医疗检查、诊断、治疗、给药、干预或医学监测才允许唯一的 medical_event；普通送汤、食物、补品、饮料、照顾或休息建议不单独成 Event。外貌、体质、长期设定和静态人物描写没有本楼新变化时不产生 physical_symptom。',
   '对 sexual_activity 只提取实际 pregnancy-relevant reproductive exposure 链中的直接参与者：实际承载暴露的 gestational subject 与实际造成暴露的 conception source。不要把仅在场、普通性伴侣、能力具备者、保护动作参与者或未进入有效路径的对象加入 participants；参与者使用已由 Runtime 提供或后续分配的 canonical character_id，姓名只作为 display_name。',
@@ -80,24 +80,30 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
 export const EVENT_ANALYZER_TASK_CONTRACT = [
   '任务：分析 narrative discovery window（Current Target Floor 与 Recent Story）中实际发生或有可靠事实证据支持的 BiologicalEvent，并返回完整 events 数组；events[] 允许为空、包含一个或包含多个彼此独立的 Event。每个已确认 participant 都要执行完整的人物生物学分析，不能以 pregnancy_relevance.relevant === true 作为前提；明确生理性别事实可以映射到当前 World Model 已存在的 biological_type；只有映射到匹配 species/type 后，才可读取该 World Model baseline 的 capability，gender/sex 不能直接推出 capability、创建 type 或替代 World Model。',
   '开始生成 pregnancy-related sexual_activity Event 前，必须先扫描完整 narrative discovery window 的全部 narrative evidence，临时收集所有 actual pregnancy-relevant exposure recipients；随后对每个 candidate 独立完成 exposure、identity、World Model mapping、capability 与 eligibility 判断。明确生理性别可作为 biological_type 映射证据之一，但不能单独授权 capability；能力仍须由匹配的 World Model baseline 或明确的个体生理/生殖能力证据支持。不得因 current user、已有 individual evidence、首个 eligible，或任何 false/unknown candidate 中途停止；individual_evidence 不是 whitelist，首次出现的 narrative character 也不能被漏掉。',
-  '对 pregnancy-related sexual_activity，按唯一 gestational subject 分组；同一 subject 的多个 actual exposure source 必须合并成一个 subject-local Event，不同 subject 必须拆成不同 Event；输出前不得让同一 subject 重复出现，必须将该 subject 的 actual sources 合并到一个 Event。',
+  '先按 narrative 事实划分独立 exposure episode，再按唯一 gestational subject 分组；同一 episode、同一 subject 的多个 actual exposure source 必须合并到一个 subject-local Event，不同 subject 必须拆成不同 Event；不同独立 episode 即使 subject 相同也可以输出多个 Event。',
   '每个 pregnancy-related Event 只能有一个 gestational subject、至少一个 counterpart source，participants[] 只能是该 subject 与该 Event 实际 exposure sources，不能加入另一 subject、另一 Event 的 source、在场者或无 actual exposure 的 participant。',
-  '同一 subject Event 内合并直接相关的即时症状、physical effects 和证据；独立的新 physical symptom、明确医疗检查/诊断/治疗/给药/干预/医学监测或其它独立 BiologicalEvent 可在同一 Floor 单独输出。普通补品、食物、饮料、送汤、照顾、休息建议、外貌、体质或静态人物设定都不单独形成 Event。',
+  '同一 episode、同一 subject Event 内合并直接相关的即时症状、physical effects 和证据；独立的新 physical symptom、明确医疗检查/诊断/治疗/给药/干预/医学监测或其它独立 BiologicalEvent 可在同一 Floor 单独输出。普通补品、食物、饮料、送汤、照顾、休息建议、外貌、体质或静态人物设定都不单独形成 Event。',
   'Current Target Floor 与 Recent Story 都是 narrative discovery evidence；Recent Story 中明确已经发生的历史 Event 可以被发现，必须保留该事实自己的 story_time。当前 Target Floor active Swipe 仍是本轮新增 Event 的唯一 persistence owner，Event source 由 Runtime 绑定当前 Floor，不得伪装成原始历史 Floor source。',
   '不要把预测、症状或可能性写成已经发生的受孕或妊娠事实。',
 ].join('\n')
 export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   '只输出一个完整、可直接 JSON.parse 的 JSON 对象，不要 Markdown、代码围栏、前后解释或半结构化文本。顶层固定为 {"schema_version":1,"events":[]}；唯一允许的旧兼容顶层字段是会被忽略的 source，任何其它未知顶层字段都必须拒绝。',
+  '即使只有一个 Event，也必须把完整 Event 放在 events[0] 内；不要把 state_fact、continuation_of_event_id、continuation_update 或其它 Event 字段提升到响应顶层。',
   '一个 Target Floor Version 的 events[] 允许是 []、[一个 Event] 或包含多个 Event；每个数组成员是一个独立生物事实，不要使用 type 数组或拼接 type 表达多个事实。',
   '输出前必须完成完整 narrative discovery window exhaustive scan：先把 Current Target Floor 与 Recent Story 中全部 actual pregnancy-relevant exposure recipients 放入临时 candidate 集合，再逐 recipient 解析 identity、World Model species/type、capability 与三态 eligibility；不得因 current user、已有 individual evidence、首个 eligible 或某个 false/unknown recipient 而提前结束。individual evidence 不是 whitelist，首次出现的 narrative character 也必须按同一规则处理。',
-  'pregnancy-related sexual_activity 必须按唯一 gestational subject 分组：同一 subject 的多个 actual exposure sources 合并为一个 Event，不同 subject 输出不同 Event；同一响应/Floor 中同一 subject 只能出现一次，不能由 Runtime 自动合并重复 subject Event。',
+  '先按 narrative 事实划分独立 exposure episode，再按唯一 gestational subject 分组：同一 episode、同一 subject 的多个 actual exposure sources 合并为一个 subject-local Event，不同 subject 输出不同 Event；不同独立 episode 即使 subject 相同也可以输出多个 Event。',
   '每个 pregnancy-related sexual_activity Event 的 subject-local 结构必须满足：gestational_subject_ids.length===1；counterpart_ids.length>=1；唯一 subject 与 counterpart_ids[] 中每个 source 都在 participants[]；participants[] 的 ID 集合严格等于 subject 与 counterpart_ids[] 的并集；所有 ID 不重复，subject 不得出现在 counterpart_ids[]。counterpart_ids[] 只记录对该 subject 造成 actual pregnancy-relevant exposure 的 source，不记录另一 subject、另一 Event 的 source、在场者、普通 sexual participant 或无有效路径对象。',
-  '同一 subject Event 合并直接相关的即时症状、physical effect、直接身体反应和证据；独立的 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。实际 pregnancy-relevant sexual exposure 使用 sexual_activity；普通补品、食物、饮料、照顾、休息建议、外貌、体质和静态人物描写不单独输出 Event。',
+  '同一 episode、同一 subject Event 合并直接相关的即时症状、physical effect、直接身体反应和证据；独立的 physical_symptom、medical_event 或其它 BiologicalEvent 可以在同一 Floor 并存。实际 pregnancy-relevant sexual exposure 使用 sexual_activity；普通补品、食物、饮料、照顾、休息建议、外貌、体质和静态人物描写不单独输出 Event。',
   'AI Event DTO 不生成 event_id 或 source；它们不是 AI 事实字段。Runtime 会按响应顺序生成 deterministic、同一响应内唯一且不依赖 display_name 的 event_id，并强制绑定 authoritative 当前 Floor Version。若兼容旧响应而出现 event.event_id、event.source，它们会被忽略，不能覆盖 Runtime 身份；从 Recent Story 发现的 Event 保留其事实自己的 story_time，但 canonical source 仍表示当前 persistence owner。',
-  'existing_events 是 discovery window 内已保存的 canonical Event 参考。已存在且结构化事实高置信度完全匹配的 Event 不得再次输出；匹配不足或证据不确定时保留候选，不得用模糊相似度吞掉可能独立的 Event。不同 type、gestational subject、counterpart、mechanism、story_time 或关键事实证据的 Event 不得合并。',
+  '对每个候选先按以下顺序判断事件边界：事实是否确实发生 → existing_events 是否已经完整覆盖 → 是否属于某个已有 Event 的同一持续 episode → 是否有实际事实支持的独立事件边界 → 若仍无法判断则保留事实候选但不猜测身份。自然语言同义改写、翻译、pathway/label 修辞变化或单纯证据文字变化本身不构成新事实；不得把事件身份不确定错误当成事实不存在。',
+  '如果 existing_events 已完整覆盖当前候选，且当前 Floor 没有新增结果、状态变化、独立动作或关键直接证据，不要输出该候选；如果全部候选都属于这种重复描述，必须返回 events=[]。Recent Story 再次发现已保存 Event 不代表新的独立 Event。',
+  '如果当前 narrative 明确证明候选属于 existing_events 中唯一可识别的同一持续 episode，并且有可验证的重要新增事实、结果、状态变化或关键机制/状态证据，可以输出完整 Event DTO，并在该 events[n] 内填写 existing_events 中真实存在的 continuation_of_event_id 与 continuation_update=true。continuation_of_event_id 仍然是可选字段；无法确认唯一引用时不得猜测。',
+  '如果 narrative 明确支持新的独立 episode、已结束后重新开始、独立动作、独立 physical effect、独立 medical_event、机制实质变化或其它独立 BiologicalEvent，输出不带 continuation 引用的独立 Event。不能仅因为人物、地点、时间、pathway、label、语言、修辞或 evidence 文本不同而判定独立。',
+  '如果当前 narrative 明确支持新的事实，但事件关系不确定、无法可靠判断它属于已有 Event 还是独立 Event，必须保留该事实候选，不得伪造 continuation_of_event_id，不得仅凭结构相似强制合并，也不得仅因身份不确定返回 events=[]；只有 existing_events 已完整覆盖且没有需要提交的新增事实时，才允许因重复而省略。',
+  'existing_events 是已保存 canonical Event 的参考，不是要求重新输出的历史事件清单。它用于识别重复、持续过程和事件边界；Runtime 仍负责最终校验 continuation、保护 event_id/source/evidence 并执行合法合并，AI 不得依赖 Runtime 或 UI 猜测身份。',
   `event.type 只能取：${EVENT_TYPES.join('、')}。event.status 只能取：${EVENT_STATUS.join('、')}。不得创造其它枚举值。`,
-  `story_time 必须是结构化对象：display、normalized、calendar_id、day_index、precision、confidence；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized/day_index 使用 null，不要从模糊 display 伪造日期。`,
-  'story_time.day_index 只有在证据提供真实、连续且可排序的 canonical index 时才能填写 number；否则必须是 null。不要把月内第几日或 display 文本解析成 day_index，时间计算不读取 display。',
+  `story_time 必须是结构化对象：display、normalized、calendar_id、precision、confidence；day_index 是 Runtime 派生的 canonical 字段，AI 可以省略；precision 只能取：${EVENT_STORY_TIME_PRECISIONS.join('、')}；不可靠的 normalized 使用 null，不要从模糊 display 伪造日期。`,
+  'AI 不负责生成 day_index。Runtime 会使用统一 Story Time 模块在可信边界派生 Gregorian 日序；中文纪年、没有可靠历法描述符的 custom calendar 或无法证明绝对位置的时间必须保持 day_index=null。兼容旧响应中的 day_index 时，不得让 AI 数值覆盖 Runtime 的可信计算。',
   'location 固定为 string | null；已知地点必须保留 Target Floor、Recent Story 或 canonical evidence 中出现的原始文字和原始语言，例如“传灯院”仍输出“传灯院”；不得拼音化、romanize、翻译、snake_case、slugify 或 ASCII 化。无法可靠确定时使用 {"location": null}；禁止地点对象或数组。',
   `participants 必须是直接相关对象数组；对 sexual_activity 只保留 actual reproductive exposure chain 的 subject 与实际 exposure source，对其它 BiologicalEvent 只保留直接作用对象。每项包含 identity_status、character_id、mention_id、display_name、event_role、biological_context、reproductive_capabilities_used 和 evidence；identity_status 只能是 existing、new 或 unresolved。existing 只能原样引用 identity projection 中的 canonical character_id，且 mention_id 必须为 null；new/unresolved 的 character_id 必须为 null，并使用当前完整 raw response 内唯一、无语义的 response-local mention token供内部引用。只有 Runtime 完成 identity resolution 后，最终 Event 才能保存 canonical character_id。每个 participant 都必须包含 biological_context 对象，固定包含 species 与 biological_type 两个字段，值只能是非空字符串或 null，未知填 null；无论 pregnancy_relevance.relevant 为 true 还是 false，都必须先执行人物 biological analysis。pregnancy_relevance 只描述当前 Event 是否与受孕/妊娠有关，不能作为跳过 participant biological facts 的条件，也不能由人物 capability 反推为 true。identity 可以由明确 narrative 标签、canonical/derived individual evidence 或明确生理性别事实映射到当前 World Model 已存在的 species/type；生理性别只能作为 biological_type 映射证据之一，不能单独创建 type 或授权 capability。不得把其它 species 的同名 type 套用 Human baseline；映射冲突或不足时保持 null 并进入 pending。姓名、称谓、event_role、性行为位置、主动/被动、社会身份、穿着、气质和单一外貌不能单独决定身份或能力。event_role 只能取：${EVENT_REPRODUCTIVE_ROLES.join('、')}。它表示本事件中的生殖角色，不表示姿势、主动/被动、攻/受、职业、性别或社会角色。`,
   `capability 判断顺序固定为：persisted current World Model 的匹配 species/type baseline → canonical/derived individual evidence → current Target Floor / Recent Story evidence；明确生理性别只能参与 biological_type 映射，不能单独授权或补齐 capability；个体明确证据可覆盖或补充 baseline，未知 capability 保持 null。reproductive_capabilities_used 固定包含 ${EVENT_CAPABILITY_KEYS.join('、')}；每个值只能是 true、false 或 null。`,
@@ -494,8 +500,16 @@ function formatEventExistingEvents(events) {
   if (!Array.isArray(events) || !events.length) return ''
   return [
     '【现有 BiologicalEvent 事实参考】',
-    '以下是 narrative discovery window 覆盖范围内已保存的 canonical Event，用于避免重复或理解历史。已存在且结构化事实高置信度完全匹配的 Event 不要再次输出；窗口中尚未记录但有明确事实证据的 Event 可以补录，并由 Runtime 持久化到当前目标 Floor。',
+    '以下是 narrative discovery window 覆盖范围内已保存的 canonical Event 参考，不是要求重新输出的历史事件清单。先判断当前事实是否已被完整覆盖：纯重复描述返回 events=[]；同一持续 episode 有重要增量时才可引用真实 event_id；有明确独立边界时输出不带 continuation 的新 Event；关系不确定但事实明确时保留事实候选，不猜测身份。',
     formatPromptValue(events),
+  ].join('\n')
+}
+function formatEventRetryDirective(retryDirective) {
+  if (retryDirective?.kind !== 'continuation_field_placement') return ''
+  return [
+    '【Event 格式重试指引】',
+    '上一次响应把 continuation_of_event_id 放在了响应 envelope 顶层，因而未通过严格校验。请重新输出完整固定 JSON envelope；continuation_of_event_id 只能放在对应的 events[n] Event 对象内部，不能放在 schema_version/events 同级。',
+    '请保留并重新检查 existing_events 参考，重新执行重复、持续、独立和不确定关系判断：如果当前候选明确是其中某个已保存 Event 的连续过程，在该 events[n] 内填写实际存在的 event_id，并仅在有重要新增事实时填写 continuation_update=true；如果只是重复描述则返回 events=[]；无法确认时不要猜测 event_id，也不要把字段提升到顶层。',
   ].join('\n')
 }
 function joinPromptSections(sections) {
@@ -784,7 +798,7 @@ export function buildWorldModelPatchMessagesV2(analysisInput = {}, promptSetting
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
   return messages
 }
-export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = {}) {
+export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = {}, options = {}) {
   const input = normalizeEventAnalysisInput(analysisInput)
   const settings = normalizeAnalysisPrompt(promptSettings)
   const names = inputNames(input)
@@ -792,6 +806,7 @@ export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = 
   addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
   addMessage(messages, 'system', formatEventAnalysisRules(input, settings, names))
   addMessage(messages, 'system', formatEventAnalysisReferences(input, names))
+  addMessage(messages, 'system', formatEventRetryDirective(options.retryDirective))
   addMessage(
     messages,
     'assistant',

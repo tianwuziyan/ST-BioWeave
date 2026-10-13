@@ -1170,31 +1170,27 @@ export function dedupeEventsAgainstExisting(events = [], existingEvents = []) {
   });
 }
 
-function sortableNumber(value, fallback) {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 export function sortEvents(events = []) {
   if (!Array.isArray(events)) return [];
-  return [...events].sort((left, right) => {
-    const floorOrder =
-      sortableNumber(left?.source?.floor, 0) -
-      sortableNumber(right?.source?.floor, 0);
-    if (floorOrder) return floorOrder;
-    const leftDay = sortableNumber(
-      left?.story_time?.day_index,
-      Number.POSITIVE_INFINITY,
-    );
-    const rightDay = sortableNumber(
-      right?.story_time?.day_index,
-      Number.POSITIVE_INFINITY,
-    );
-    if (leftDay !== rightDay) return leftDay - rightDay;
-    return String(left?.event_id ?? '').localeCompare(
-      String(right?.event_id ?? ''),
-    );
-  });
+  return events
+    .map((event, index) => ({event, index}))
+    .sort((left, right) => {
+      const parseFloor = (event) => {
+        const value = event?.source?.floor;
+        if (typeof value === 'number') return value;
+        if (typeof value !== 'string' || !value.trim()) return Number.NaN;
+        return Number(value);
+      };
+      const leftFloor = parseFloor(left.event);
+      const rightFloor = parseFloor(right.event);
+      const leftHasFloor = Number.isFinite(leftFloor);
+      const rightHasFloor = Number.isFinite(rightFloor);
+      if (leftHasFloor && rightHasFloor && leftFloor !== rightFloor)
+        return leftFloor - rightFloor;
+      if (leftHasFloor !== rightHasFloor) return leftHasFloor ? -1 : 1;
+      return left.index - right.index;
+    })
+    .map(({event}) => event);
 }
 
 /**

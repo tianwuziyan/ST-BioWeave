@@ -214,6 +214,126 @@ test("a later Event success may replace an earlier terminal failure", async () =
   assert.deepEqual(state.read().events, [{event_id: "event-b"}]);
 });
 
+test("new Event snapshots omit derived day_index while retaining legacy fields", async () => {
+  const legacyEvent = {
+    event_id: "legacy-event",
+    story_time: {
+      display: "2026-01-01",
+      normalized: "2026-01-01",
+      day_index: 20454,
+      calendar_id: "main",
+      precision: "day",
+      confidence: 1,
+    },
+  };
+  const state = fixture({initial: {
+    floor_version: version(),
+    events: [legacyEvent],
+  }});
+  const coordinator = createFloorPersistenceCoordinator({store: state.store});
+  await coordinator.commitFloorPatch({
+    owner: "event", chatId: "chat-a", ownerFloor: {message_index: 0},
+    floorVersion: version(),
+    patch: {
+      events: [
+        legacyEvent,
+        {
+          event_id: "new-event",
+          story_time: {
+            display: "2026-04-01",
+            normalized: "2026-04-01",
+            day_index: 20544,
+            calendar_id: "main",
+            precision: "day",
+            confidence: 1,
+          },
+        },
+        {
+          event_id: "new-era-event",
+          story_time: {
+            display: "羲和元年三月四日",
+            normalized: null,
+            day_index: null,
+            calendar_id: null,
+            precision: "day",
+            confidence: null,
+          },
+        },
+        {
+          event_id: "new-custom-event",
+          story_time: {
+            display: "custom day",
+            normalized: "custom-1-1-1",
+            day_index: 77,
+            calendar_id: "custom-story",
+            precision: "day",
+            confidence: null,
+          },
+        },
+      ],
+    },
+  });
+  const saved = state.read().events;
+  assert.equal(saved[0].story_time.day_index, 20454);
+  assert.equal(Object.hasOwn(saved[1].story_time, "day_index"), false);
+  assert.equal(Object.hasOwn(saved[2].story_time, "day_index"), false);
+  assert.equal(Object.hasOwn(saved[3].story_time, "day_index"), false);
+});
+
+test("legacy day-index-only Events survive a read and resave", async () => {
+  const legacyEvent = {
+    event_id: "legacy-day-only",
+    story_time: {display: null, normalized: null, day_index: 20454, calendar_id: null, precision: "day"},
+  };
+  const state = fixture({initial: {
+    floor_version: version(),
+    events: [legacyEvent],
+  }});
+  const coordinator = createFloorPersistenceCoordinator({store: state.store});
+  const readBack = state.read().events;
+  await coordinator.commitFloorPatch({
+    owner: "event", chatId: "chat-a", ownerFloor: {message_index: 0},
+    floorVersion: version(),
+    patch: {events: readBack},
+  });
+  assert.deepEqual(state.read().events[0].story_time, legacyEvent.story_time);
+});
+
+test("legacy Events with an explicit null day_index preserve the property on owner resave", async () => {
+  const legacyEvent = {
+    event_id: "legacy-null-day-index",
+    source: {floor: 1, swipe_id: 0, version: version()},
+    story_time: {
+      display: "羲和元年三月四日",
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      precision: "day",
+      confidence: null,
+    },
+  };
+  const state = fixture({initial: {
+    floor_version: version(),
+    events: [legacyEvent],
+  }});
+  const coordinator = createFloorPersistenceCoordinator({store: state.store});
+
+  await coordinator.commitFloorPatch({
+    owner: "event",
+    chatId: "chat-a",
+    ownerFloor: {message_index: 0},
+    floorVersion: version(),
+    patch: {events: state.read().events},
+  });
+
+  const saved = state.read().events[0];
+  assert.equal(Object.hasOwn(saved.story_time, "day_index"), true);
+  assert.equal(saved.story_time.day_index, null);
+  assert.equal(saved.event_id, legacyEvent.event_id);
+  assert.deepEqual(saved.source, legacyEvent.source);
+  assert.deepEqual(state.read().floor_version, version());
+});
+
 test("a queued terminal transaction is cancelled when its execution is superseded", async () => {
   const state = fixture({initial: {floor_version: version()}});
   let release;

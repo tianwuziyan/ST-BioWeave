@@ -58,6 +58,40 @@ test('first exposure creates deterministic open Window and compatible basis atta
   assert.equal(secondBuild[0].cycle_id, buildTrackingWindowCycleId({chatId: 'chat-window', subjectId: 'char-subject', mechanismKey: 'fertilization', firstEvent: first}));
 });
 
+test('Tracking Window diagnostics are phase-only and do not change derived output', () => {
+  const events = [
+    exposure({eventId: 'profile-a', day: 1}),
+    exposure({eventId: 'profile-b', day: 2}),
+    terminal({eventId: 'profile-confirmation', day: 3}),
+    {
+      event_id: 'unrelated-observation',
+      type: 'physical_symptom',
+      status: 'confirmed',
+      story_time: {day_index: 2},
+      source: {chat_id: 'chat-window', message_id: 'message-unrelated', floor: 2, swipe_id: 0, content_hash: 'hash-unrelated', message_version: 'v-unrelated'},
+      participants: [],
+      pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []},
+    },
+  ];
+  let diagnostics = null;
+  const withDiagnostics = deriveTrackingWindows(events, {
+    chatId: 'chat-window',
+    currentStoryTime: {day_index: 3},
+    onDiagnostics: value => { diagnostics = value; },
+  });
+  const withoutDiagnostics = deriveTrackingWindows(events, {
+    chatId: 'chat-window',
+    currentStoryTime: {day_index: 3},
+  });
+  assert.deepEqual(withDiagnostics, withoutDiagnostics);
+  assert.equal(diagnostics.normalize_validate_count, events.length);
+  assert.ok(diagnostics.story_time_compare_count > 0);
+  assert.ok(diagnostics.story_time_compare_ms >= 0);
+  assert.ok(diagnostics.digest_count >= 1);
+  assert.equal(Object.hasOwn(diagnostics, 'event_text'), false);
+  assert.equal(Object.hasOwn(diagnostics, 'evidence'), false);
+});
+
 test('Story Time, not Event ID, fixes the first Exposure anchor across historical Floors', () => {
   const events = [
     normalizeEvent(exposure({eventId: 'z-exposure-c', storyTime: {display: '羲和元年三月二十日'}, floor: 66})),

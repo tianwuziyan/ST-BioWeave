@@ -26,6 +26,7 @@ import {
 } from './world-supplement-protocol.js';
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
 import {normalizeHealthAssessment, validateHealthAssessment} from '../core/health-assessment.js';
+import {createStoryTime} from '../story/time.js';
 
 const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 3;
 
@@ -2307,6 +2308,8 @@ const EVENT_IDENTITY_STATUSES = new Set(['existing', 'new', 'unresolved']);
 const EVENT_ALIAS_CANDIDATE_KINDS = new Set(['name_variant', 'nickname']);
 const EVENT_AI_FIELDS = new Set([
   'event_id',
+  'continuation_of_event_id',
+  'continuation_update',
   'type',
   'status',
   'story_time',
@@ -2318,6 +2321,7 @@ const EVENT_AI_FIELDS = new Set([
   'physical_effect',
   'state_fact',
 ]);
+const runtimeStoryTime = createStoryTime();
 
 function invalidEventAnalysis(
   message = 'EVENT_ANALYSIS_INVALID',
@@ -2664,6 +2668,14 @@ function validateRawEventShape(raw, eventIndex) {
       );
     }
   }
+  if (hasOwn(raw, 'continuation_of_event_id') && raw.continuation_of_event_id !== null &&
+      typeof raw.continuation_of_event_id !== 'string') {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_CONTINUATION_REFERENCE_INVALID');
+  }
+  if (hasOwn(raw, 'continuation_update') && raw.continuation_update !== null &&
+      typeof raw.continuation_update !== 'boolean') {
+    throw invalidEventAnalysis('EVENT_ANALYSIS_CONTINUATION_UPDATE_INVALID');
+  }
   if (hasOwn(raw, 'participants') && !Array.isArray(raw.participants)) {
     throw invalidEventAnalysis('EVENT_ANALYSIS_PARTICIPANTS_ARRAY_REQUIRED');
   }
@@ -2768,7 +2780,6 @@ function validateRawEventShape(raw, eventIndex) {
     'display',
     'normalized',
     'calendar_id',
-    'day_index',
     'precision',
     'confidence',
   ]) {
@@ -2797,6 +2808,7 @@ function validateRawEventShape(raw, eventIndex) {
   }
   for (const field of ['day_index', 'confidence']) {
     if (
+      storyTime[field] !== undefined &&
       storyTime[field] !== null &&
       (typeof storyTime[field] !== 'number' ||
         !Number.isFinite(storyTime[field]))
@@ -3055,16 +3067,29 @@ function normalizeEventStoryTime(value) {
   if (!EVENT_STORY_TIME_PRECISIONS.has(precision)) {
     throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_PRECISION_INVALID');
   }
-  let dayIndex = null;
-  if (value.day_index !== undefined && value.day_index !== null) {
+  const suppliedDayIndex = value.day_index !== undefined && value.day_index !== null
+    ? value.day_index
+    : null;
+  if (suppliedDayIndex !== null) {
     if (
-      typeof value.day_index !== 'number' ||
-      !Number.isInteger(value.day_index)
+      typeof suppliedDayIndex !== 'number' ||
+      !Number.isInteger(suppliedDayIndex)
     ) {
       throw invalidEventAnalysis('EVENT_ANALYSIS_STORY_TIME_DAY_INDEX_INVALID');
     }
-    dayIndex = value.day_index;
   }
+  const hasExplicitCalendar = value.calendar_id !== undefined &&
+    value.calendar_id !== null && String(value.calendar_id).trim() !== '';
+  const calculationInput = {...value};
+  delete calculationInput.day_index;
+  delete calculationInput.dayIndex;
+  const calculated = hasExplicitCalendar
+    ? null
+    : runtimeStoryTime.normalize(calculationInput);
+  const hasReliableCalculatedTime = Boolean(calculated?.normalized);
+  const dayIndex = hasExplicitCalendar
+    ? suppliedDayIndex
+    : calculated?.day_index ?? (hasReliableCalculatedTime ? null : suppliedDayIndex);
   return {
     display: eventText(value.display, 'story_time_display'),
     normalized: eventText(value.normalized, 'story_time_normalized'),
@@ -3360,6 +3385,14 @@ function normalizeEventRecord(
     physical_effect: safeEventValue(raw.physical_effect ?? {}),
     state_fact: normalizeRawStateFact(raw.state_fact),
   };
+  if (hasOwn(raw, 'continuation_of_event_id')) {
+    normalized.continuation_of_event_id = typeof raw.continuation_of_event_id === 'string'
+      ? raw.continuation_of_event_id.trim() || null
+      : null;
+  }
+  if (hasOwn(raw, 'continuation_update')) {
+    normalized.continuation_update = raw.continuation_update === true;
+  }
   const hasProvisionalIdentity = participants.some(
     (item) => item.identity_status !== 'existing' || !item.character_id,
   );
@@ -3482,13 +3515,36 @@ function eventPayload(raw) {
   }
 }
 
+function normalizeEventResponseEnvelope(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  if (
+    hasOwn(payload, 'schema_version') ||
+    hasOwn(payload, 'events')
+  ) {
+    return payload;
+  }
+  const keys = Object.keys(payload);
+  // Keep the legacy single-Event compatibility path narrow. Continuation
+  // metadata is envelope-sensitive and must never be silently relocated from
+  // the response top level into events[0].
+  const isSingleEvent = keys.length > 0 &&
+    keys.every((key) => EVENT_AI_FIELDS.has(key) &&
+      key !== 'continuation_of_event_id' && key !== 'continuation_update' &&
+      key !== 'state_fact');
+  return isSingleEvent
+    ? {schema_version: EVENT_SCHEMA_VERSION, events: [payload]}
+    : payload;
+}
+
 // Parse only the fixed Event response object. Identity and Floor provenance
 // are deliberately absent here; Runtime owns both after a successful parse.
 export function parseEventAnalysisResponse(
   raw,
   { deferIdentityValidation = false } = {},
 ) {
-  const payload = eventPayload(raw);
+  const payload = normalizeEventResponseEnvelope(eventPayload(raw));
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
   }
@@ -5450,6 +5506,7 @@ export function createAnalyzer({
       messages = buildEventAnalysisMessages(
         analysisInput,
         analysisPromptResolver?.() ?? {},
+        {retryDirective: input.retry_directive ?? null},
       );
     } catch (error) {
       throw annotateAnalysisError(error, 'request_build');

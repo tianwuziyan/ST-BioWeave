@@ -8,6 +8,8 @@ const SOURCE_C = 'char_000003';
 
 function story(day, calendar_id = 'main') { return {display: `Day ${day}`, normalized: `day-${day}`, day_index: day, calendar_id, precision: 'day'}; }
 function exposure(event_id, day, source = SOURCE_B, mechanism = 'mechanism:implant') { return {event_id, type: 'sexual_activity', status: 'confirmed', story_time: story(day), pregnancy_relevance: {relevant: true, gestational_subject_ids: [SUBJECT], counterpart_ids: [source], reproductive_mechanism: {kind: mechanism}}}; }
+function eraStory(display, precision = 'day') { return {display, normalized: null, day_index: null, calendar_id: null, precision}; }
+function eraExposure(event_id, display, source = SOURCE_B, precision = 'day') { return {event_id, type: 'sexual_activity', status: 'confirmed', story_time: eraStory(display, precision), pregnancy_relevance: {relevant: true, gestational_subject_ids: [SUBJECT], counterpart_ids: [source], reproductive_mechanism: {kind: 'mechanism:implant'}}}; }
 function factual(event_id, type, status = 'confirmed') { return {event_id, type, status, story_time: story(10), state_fact: {subject_id: SUBJECT, payload: {}}}; }
 function rule(overrides = {}) { return {schema_version: 1, projection_rule_id: 'rule:implant-change-v1', mechanism_key: 'mechanism:implant', development_concern_key: 'concern:implant-change', development_kind: 'possible_biological_change', trigger: {kind: 'elapsed_after_event', source_event_type: 'sexual_activity', min_elapsed_story_days: 5}, requirements: {capabilities: [{key: 'can_carry_pregnancy', equals: true}], source_compatibility: 'required_true', contributor_relationships: []}, realization: {event_types: ['medical_event']}, contradiction: {event_types: ['other_biological']}, ...overrides}; }
 function state(capability = true, extra = {}) { return {characters: {[SUBJECT]: {reproductive_capabilities: {can_carry_pregnancy: capability}, pregnancy: {episodes: {}, ...extra}}}}; }
@@ -24,6 +26,67 @@ test('matching exposure, capability, candidate compatibility, and Story Time pro
   assert.equal(result.decisions.length, 1);
   assert.equal(result.decisions[0].eligibility, 'eligible');
   assert.deepEqual(result.decisions[0].source_event_ids, ['e1', 'e2', 'event-char_000002', 'event-char_000003']);
+});
+test('projection orders comparable era events by Story Time instead of event ID', () => {
+  const result = evaluate({
+    events: [
+      eraExposure('z-earlier', '羲和元年三月四日'),
+      eraExposure('a-later', '羲和元年三月十五日', SOURCE_C),
+    ],
+    sourceCandidates: [candidate(SOURCE_B), candidate(SOURCE_C)],
+    currentStoryTime: eraStory('羲和元年三月二十日'),
+  });
+  assert.equal(result.decisions[0].eligibility, 'eligible');
+  assert.equal(result.decisions[0].reference_event_id, 'z-earlier');
+  assert.deepEqual(result.decisions[0].exposure_event_ids, ['z-earlier', 'a-later']);
+});
+test('projection orders same-day era events by comparable traditional time', () => {
+  const result = evaluate({
+    events: [
+      eraExposure('z-earlier', '羲和元年三月二十日 午时', SOURCE_B, 'hour'),
+      eraExposure('a-later', '羲和元年三月二十日 酉时', SOURCE_C, 'hour'),
+    ],
+    sourceCandidates: [candidate(SOURCE_B), candidate(SOURCE_C)],
+    currentStoryTime: eraStory('羲和元年三月三十日', 'day'),
+  });
+  assert.equal(result.decisions[0].eligibility, 'eligible');
+  assert.equal(result.decisions[0].reference_event_id, 'z-earlier');
+  assert.deepEqual(result.decisions[0].exposure_event_ids, ['z-earlier', 'a-later']);
+});
+test('projection uses event ID only as a stable tie breaker for identical Story Time', () => {
+  const result = evaluate({
+    events: [
+      eraExposure('z-same', '羲和元年三月二十日 午时', SOURCE_B, 'hour'),
+      eraExposure('a-same', '羲和元年三月二十日 午时', SOURCE_C, 'hour'),
+    ],
+    sourceCandidates: [candidate(SOURCE_B), candidate(SOURCE_C)],
+    currentStoryTime: eraStory('羲和元年三月三十日'),
+  });
+  assert.equal(result.decisions[0].eligibility, 'eligible');
+  assert.equal(result.decisions[0].reference_event_id, 'a-same');
+  assert.deepEqual(result.decisions[0].exposure_event_ids, ['a-same', 'z-same']);
+});
+test('projection keeps different-era events unresolved instead of inferring an order', () => {
+  const result = evaluate({
+    events: [eraExposure('tianhe-event', '天河元年三月四日')],
+    sourceCandidates: [candidate(SOURCE_B)],
+    currentStoryTime: eraStory('羲和元年三月二十日'),
+  });
+  assert.equal(result.decisions[0].eligibility, 'unresolved');
+  assert.equal(result.decisions[0].reason_code, 'story_time_incomparable');
+});
+test('projection keeps incomparable candidates stable while comparable candidates retain eligibility semantics', () => {
+  const result = evaluate({
+    events: [
+      eraExposure('z-earlier', '羲和元年三月四日', SOURCE_B),
+      eraExposure('unknown-event', '第三日', SOURCE_C),
+    ],
+    sourceCandidates: [candidate(SOURCE_B), candidate(SOURCE_C)],
+    currentStoryTime: eraStory('羲和元年三月二十日'),
+  });
+  assert.equal(result.decisions[0].eligibility, 'eligible');
+  assert.equal(result.decisions[0].reference_event_id, 'z-earlier');
+  assert.deepEqual(result.decisions[0].exposure_event_ids, ['z-earlier', 'unknown-event']);
 });
 test('multiple exposures share one concern decision and existing identity is not recreated', () => {
   const result = evaluate({existingProjections: [{projection_id: 'projection-existing', subject_id: SUBJECT, projection_rule_id: 'rule:implant-change-v1', development_concern_key: 'concern:implant-change'}]});

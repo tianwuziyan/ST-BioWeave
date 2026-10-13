@@ -1012,7 +1012,7 @@ test('state fact effective Story Time references Event story_time', () => {
   });
 });
 
-test('sortEvents uses source floor and canonical day index without parsing display text', () => {
+test('sortEvents uses source floor and preserves same-Floor input order', () => {
   const events = [
     {
       event_id: 'b',
@@ -1034,6 +1034,87 @@ test('sortEvents uses source floor and canonical day index without parsing displ
     events.map((event) => event.event_id),
     ['b', 'a'],
   );
+});
+
+test('sortEvents ignores day_index and preserves same-Floor input order', () => {
+  const makeEvent = (event_id, story_time, floor = 1) => ({
+    event_id,
+    source: {floor},
+    story_time,
+  });
+  const chinese = [
+    makeEvent('z-earlier', {display: '羲和元年三月四日', day_index: null}),
+    makeEvent('a-later', {display: '羲和元年三月十五日', day_index: null}),
+  ];
+  assert.deepEqual(sortEvents(chinese).map((event) => event.event_id), [
+    'z-earlier',
+    'a-later',
+  ]);
+
+  const mixed = [
+    makeEvent('z-no-index', {display: '2026-01-01'}),
+    makeEvent('a-null-index', {display: '2026-01-02', day_index: null}),
+    makeEvent('m-index', {display: '2026-01-03', day_index: 3}),
+  ];
+  assert.deepEqual(sortEvents(mixed).map((event) => event.event_id), [
+    'z-no-index',
+    'a-null-index',
+    'm-index',
+  ]);
+
+  const floors = [
+    makeEvent('floor-2-earlier-story', {day_index: 1}, 2),
+    makeEvent('floor-1-later-story', {day_index: 9}, 1),
+  ];
+  assert.deepEqual(sortEvents(floors).map((event) => event.event_id), [
+    'floor-1-later-story',
+    'floor-2-earlier-story',
+  ]);
+
+  const gregorian = [
+    makeEvent('z-later', {normalized: '2026-03-15', day_index: 3}),
+    makeEvent('a-earlier', {normalized: '2026-01-01', day_index: 1}),
+  ];
+  assert.deepEqual(sortEvents(gregorian).map((event) => event.event_id), [
+    'z-later',
+    'a-earlier',
+  ]);
+
+  const sameDayTimes = [
+    makeEvent('z-earlier-time', {normalized: '2026-01-01T09:00', day_index: 1}),
+    makeEvent('a-later-time', {normalized: '2026-01-01T17:00', day_index: 1}),
+  ];
+  assert.deepEqual(sortEvents(sameDayTimes).map((event) => event.event_id), [
+    'z-earlier-time',
+    'a-later-time',
+  ]);
+
+  const dayIndexOnly = [
+    makeEvent('legacy-later', {day_index: 20}),
+    makeEvent('legacy-earlier', {day_index: 10}),
+  ];
+  assert.deepEqual(sortEvents(dayIndexOnly).map((event) => event.event_id), [
+    'legacy-later',
+    'legacy-earlier',
+  ]);
+
+  const displayOnly = [
+    makeEvent('z-display-first-input', {display: '2026-01-01'}),
+    makeEvent('a-display-second-input', {display: '2026-03-15'}),
+  ];
+  assert.deepEqual(sortEvents(displayOnly).map((event) => event.event_id), [
+    'z-display-first-input',
+    'a-display-second-input',
+  ]);
+
+  const isolatedSources = [
+    makeEvent('swipe-1', {day_index: 1}, 1),
+    {...makeEvent('swipe-0', {day_index: 99}, 1), source: {floor: 1, swipe_id: 0, message_version: 'v1'}},
+  ];
+  assert.deepEqual(sortEvents(isolatedSources).map((event) => event.event_id), [
+    'swipe-1',
+    'swipe-0',
+  ]);
 });
 
 test('Event Story Time validation rejects only comparable future events', () => {

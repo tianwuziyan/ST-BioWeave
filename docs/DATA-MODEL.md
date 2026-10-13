@@ -429,7 +429,9 @@ confirmed 与 excluded 时 fail closed，不使用输入顺序或 last-write-win
 AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version: 1`
 和 `events[]` 中的生物学事实，不需要生成 `event_id` 或 `source`。为兼容
 旧响应，顶层单独出现的 `source` 以及 Event 内的 `event_id`/`source` 会被
-忽略；其它未知顶层字段仍按固定 Contract 拒绝。对于新的 Event Analysis V1，
+忽略；如果 provider 将一个完整的单 Event 对象错误提升到响应顶层，解析器仅在
+其所有字段都属于严格 Event AI 字段白名单时将它包装为 `events[0]`，然后继续
+执行同一套 Event 校验。其它未知顶层字段仍按固定 Contract 拒绝。对于新的 Event Analysis V1，
 `events[]` 可包含 0、1 或 N 条；多条合法 Event 按响应序号进入 Runtime，不会被
 合并。每个 pregnancy-related `sexual_activity` Event 在 parser/domain boundary
 检查唯一 subject、实际 source 与 participants 闭包；同一 Floor 的重复 subject
@@ -470,7 +472,8 @@ ID 和 participant identity；只有真正新增的 Event 才追加。消息编�
 
 ### Story Time
 
-Story Time 采用结构化 DTO：
+Story Time 采用结构化 DTO；以下是 Runtime 结构示例。新 Event Snapshot
+不持久化可重新派生的 `day_index`，旧 Snapshot 仍兼容读取：
 
 ```json
 {

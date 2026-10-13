@@ -156,6 +156,43 @@ test('same input is deep-equal, input order is irrelevant, and input is not muta
   assert.deepEqual(events, original);
 });
 
+test('state replay baseline keeps same-Floor unresolved Events in input order', () => {
+  const earlier = event({
+    event_id: 'z-earlier',
+    floor: 1,
+    story: {
+      display: '羲和元年三月四日',
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      precision: 'day',
+    },
+    payload: {symptom: {kind: 'laceration', description: 'earlier'}},
+  });
+  const later = event({
+    event_id: 'a-later',
+    floor: 1,
+    story: {
+      display: '羲和元年三月十五日',
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      precision: 'day',
+    },
+    payload: {symptom: {kind: 'laceration', description: 'later'}},
+  });
+  const first = reduce([earlier, later]);
+  const second = reduce([later, earlier]);
+  assert.deepEqual(
+    first.characters[SUBJECT].symptoms.records.map((record) => record.event_id),
+    ['z-earlier', 'a-later'],
+  );
+  assert.deepEqual(
+    second.characters[SUBJECT].symptoms.records.map((record) => record.event_id),
+    ['a-later', 'z-earlier'],
+  );
+});
+
 test('characterFacts creates only canonical characters and keeps source counterparts out', () => {
   const state = reduce([exposure({ event_id: 'exposure-1', day: 1 })]);
   assert.deepEqual(Object.keys(state.characters), [SUBJECT]);
@@ -234,7 +271,7 @@ test('conception is factual only for confirmed typed conception events', () => {
   assert.equal(state.characters[SUBJECT].pregnancy.episodes['preg-a'].status, 'unknown');
   assert.deepEqual(
     state.characters[SUBJECT].pregnancy.episodes['preg-a'].conception_event_ids,
-    ['confirmed-conception', 'probable-conception'],
+    ['probable-conception', 'confirmed-conception'],
   );
 });
 

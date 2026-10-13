@@ -322,7 +322,7 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际 pregnancy-relevant exposure 时，才允许创建或更新 Subject。`can_carry_pregnancy` 为 `true` 才是 `eligible`；`false` 为 `ineligible`，`null`/无法确认是 `pending`，不能把 pending 当作 eligible，也不能把 `can_be_fertilized` 单独当作承孕资格。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断。
 - BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
 - Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
-- `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；无法可靠得到规范值时保留 `null`。
+- Runtime 的 `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。新 Event Snapshot 不再持久化可重新派生的 `day_index`；旧 Snapshot 读取和 day-index-only 历史 Event 仍保留兼容字段。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
 - 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 `tracking_subjects` 的原因，UI 不复制资格条件。
@@ -667,7 +667,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 
 ### Story Time 的 display 可以用于排序吗？
 
-不能。Story Time 持久化为结构化对象；`display` 只是显示层文本。可信 provider 或最终 Event 归一化可以在明确边界独立格式化可靠日期部分并保留后续原文，但不会重算或覆盖 `normalized`、`day_index` 等结构化字段；排序或后续计算仍只能使用这些字段，无法可靠得到的值必须保留 `null`。
+不能。Story Time 以结构化对象在 Runtime 中流转；`display` 只是显示层文本。新 Event Snapshot 不持久化可派生的 `day_index`，但旧 Snapshot 的 `day_index` 仍按兼容字段读取和保存。可信 provider 或最终 Event 归一化可以在明确边界独立格式化可靠日期部分并保留后续原文，但不会用不可信值覆盖 `normalized` 或历史时间事实；排序或后续计算仍只能使用统一 Story Time 能可靠解释的字段，无法可靠得到的值必须保持 `null`。
 
 ### 项目支持 Docker 或独立数据库吗？
 

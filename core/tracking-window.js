@@ -35,11 +35,12 @@ export const TRACKING_WINDOW_EXPIRATION_REASON = 'tracking_window_horizon_reache
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
-function clone(value) {
+function clone(value, metrics = null) {
   if (value === undefined || value === null || typeof value !== 'object') return value;
+  if (metrics) metrics.clone_count += 1;
   if (typeof structuredClone === 'function') return structuredClone(value);
-  if (Array.isArray(value)) return value.map(clone);
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)]));
+  if (Array.isArray(value)) return value.map(item => clone(item, metrics));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item, metrics)]));
 }
 function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -56,8 +57,74 @@ function mechanismKey(event) {
     ?? text(mechanism?.pathway)?.toLowerCase()
     ?? 'unspecified';
 }
-function eventVersion(event) {
-  return clone(event?.source ?? null);
+function eventVersion(event, metrics = null) {
+  return clone(event?.source ?? null, metrics);
+}
+
+function now() {
+  return typeof performance?.now === 'function' ? performance.now() : Date.now();
+}
+
+function nowTime() {
+  return typeof performance?.now === 'function' ? performance.now() : Date.now();
+}
+
+function normalizedStoryTimeParts(value) {
+  const normalized = typeof value?.normalized === 'string' ? value.normalized.trim() : '';
+  const match = normalized.match(/^(?:(cn)-(-?\d+)-(\d+)-(\d+)|(-?\d{4})-(\d{2})-(\d{2}))(?:T(\d{2}):(\d{2}))?$/u);
+  if (!match) return null;
+  return {
+    domain: match[1] ? 'cn' : 'gregorian',
+    year: Number(match[2] ?? match[5]),
+    month: Number(match[3] ?? match[6]),
+    day: Number(match[4] ?? match[7]),
+    minute: match[8] == null ? null : Number(match[8]) * 60 + Number(match[9]),
+    calendarId: value?.calendar_id ?? null,
+  };
+}
+
+function fastNormalizedStoryTimeCompare(left, right) {
+  const leftParts = normalizedStoryTimeParts(left);
+  const rightParts = normalizedStoryTimeParts(right);
+  if (!leftParts || !rightParts || leftParts.domain !== rightParts.domain) return undefined;
+  if (leftParts.calendarId !== rightParts.calendarId && leftParts.calendarId && rightParts.calendarId)
+    return null;
+  for (const field of ['year', 'month', 'day']) {
+    if (leftParts[field] !== rightParts[field]) return leftParts[field] < rightParts[field] ? -1 : 1;
+  }
+  if (leftParts.minute !== null && rightParts.minute !== null && leftParts.minute !== rightParts.minute)
+    return leftParts.minute < rightParts.minute ? -1 : 1;
+  return 0;
+}
+
+function measuredStoryTime(left, right, metrics) {
+  if (metrics) metrics.story_time_compare_count += 1;
+  if (metrics && left && typeof left === 'object' && right && typeof right === 'object') {
+    const rightCache = metrics.story_time_cache.get(left);
+    if (rightCache?.has(right)) {
+      metrics.story_time_compare_cache_hit_count += 1;
+      return rightCache.get(right);
+    }
+  }
+  const fastResult = fastNormalizedStoryTimeCompare(left, right);
+  if (fastResult !== undefined) {
+    if (metrics) metrics.fast_story_time_compare_count += 1;
+    return fastResult;
+  }
+  const startedAt = metrics ? now() : 0;
+  const result = compareStoryTime(left, right);
+  if (metrics) {
+    metrics.story_time_compare_ms += Math.max(0, now() - startedAt);
+    if (left && typeof left === 'object' && right && typeof right === 'object') {
+      let rightCache = metrics.story_time_cache.get(left);
+      if (!rightCache) {
+        rightCache = new WeakMap();
+        metrics.story_time_cache.set(left, rightCache);
+      }
+      rightCache.set(right, result);
+    }
+  }
+  return result;
 }
 
 function eventChronology(left, right) {
@@ -68,19 +135,24 @@ function hasReliableStoryTime(event) {
   return compareStoryTime(event?.story_time, event?.story_time) !== null;
 }
 
-function eventSort(left, right) {
-  const storyComparison = compareStoryTime(left?.story_time, right?.story_time);
+function eventSort(left, right, metrics = null) {
+  const storyComparison = measuredStoryTime(left?.story_time, right?.story_time, metrics);
   if (storyComparison !== null) {
     if (storyComparison !== 0) return storyComparison;
     return String(left?.event_id ?? '').localeCompare(String(right?.event_id ?? ''));
   }
   return 0;
 }
-function validEvent(raw) {
+function validEvent(raw, metrics = null) {
+  const startedAt = metrics ? now() : 0;
+  if (metrics) metrics.normalize_validate_count += 1;
   try {
     const event = normalizeEvent(raw);
-    return validateEvent(event).ok ? event : null;
+    const result = validateEvent(event).ok ? event : null;
+    if (metrics) metrics.normalize_validate_ms += Math.max(0, now() - startedAt);
+    return result;
   } catch {
+    if (metrics) metrics.normalize_validate_ms += Math.max(0, now() - startedAt);
     return null;
   }
 }
@@ -131,19 +203,26 @@ function bindingMaterial({chatId, subjectId, mechanismKeyValue, firstEvent}) {
   };
 }
 
-export function buildTrackingWindowCycleId({chatId, subjectId, mechanismKey: mechanism, firstEvent} = {}) {
-  return buildProjectionTimingCycleId({
+export function buildTrackingWindowCycleId({chatId, subjectId, mechanismKey: mechanism, firstEvent, metrics = null} = {}) {
+  const startedAt = metrics ? now() : 0;
+  if (metrics) metrics.digest_count += 1;
+  const result = buildProjectionTimingCycleId({
     chatId,
     subjectId,
     mechanismKey: mechanism,
     firstEvent,
   });
+  if (metrics) metrics.digest_ms += Math.max(0, now() - startedAt);
+  return result;
 }
 
-export function buildTrackingWindowId({cycleId} = {}) {
-  return text(cycleId)
-    ? `tracking_window_${deterministicDigest({schema_version: TRACKING_WINDOW_SCHEMA_VERSION, cycle_id: cycleId})}`
-    : null;
+export function buildTrackingWindowId({cycleId, metrics = null} = {}) {
+  if (!text(cycleId)) return null;
+  const startedAt = metrics ? now() : 0;
+  if (metrics) metrics.digest_count += 1;
+  const result = `tracking_window_${deterministicDigest({schema_version: TRACKING_WINDOW_SCHEMA_VERSION, cycle_id: cycleId})}`;
+  if (metrics) metrics.digest_ms += Math.max(0, now() - startedAt);
+  return result;
 }
 
 export function areCompatibleTrackingWindowExposures(left, right) {
@@ -257,15 +336,17 @@ export function evaluateTrackingWindowLifecycles(windows = [], options = {}) {
     .sort((left, right) => String(left?.tracking_window_id ?? '').localeCompare(String(right?.tracking_window_id ?? '')));
 }
 
-function createWindow({chatId, subjectId, mechanism, event, now}) {
+function createWindow({chatId, subjectId, mechanism, event, now: timestamp, metrics = null}) {
+  const startedAt = metrics ? now() : 0;
   const cycleId = buildTrackingWindowCycleId({
     chatId,
     subjectId,
     mechanismKey: mechanism,
     firstEvent: event,
+    metrics,
   });
-  const trackingWindowId = buildTrackingWindowId({cycleId});
-  return normalizeTrackingWindow({
+  const trackingWindowId = buildTrackingWindowId({cycleId, metrics});
+  const result = normalizeTrackingWindow({
     tracking_window_id: trackingWindowId,
     cycle_id: cycleId,
     subject_id: subjectId,
@@ -274,43 +355,49 @@ function createWindow({chatId, subjectId, mechanism, event, now}) {
     source_basis_refs: {
       [event.event_id]: {
         event_id: event.event_id,
-        story_time: clone(event.story_time),
-        source: eventVersion(event),
+        story_time: clone(event.story_time, metrics),
+        source: eventVersion(event, metrics),
       },
     },
     status: 'open',
-    opened_story_time: clone(event.story_time),
-    opened_at_floor_version: eventVersion(event),
+    opened_story_time: clone(event.story_time, metrics),
+    opened_at_floor_version: eventVersion(event, metrics),
     terminal_event_id: null,
     terminal_reason: null,
     terminal_story_time: null,
     terminal_at_floor_version: null,
-    created_at: typeof now === 'function' ? now() : null,
-    updated_at: typeof now === 'function' ? now() : null,
+    created_at: typeof timestamp === 'function' ? timestamp() : null,
+    updated_at: typeof timestamp === 'function' ? timestamp() : null,
   });
+  if (metrics) metrics.window_create_ms += Math.max(0, now() - startedAt);
+  return result;
 }
 
-function attachExposure(window, event, now) {
+function attachExposure(window, event, timestamp, metrics = null) {
+  const startedAt = metrics ? now() : 0;
   if (!window.source_event_ids.includes(event.event_id)) {
     window.source_event_ids.push(event.event_id);
     window.source_event_ids.sort();
     window.source_basis_refs[event.event_id] = {
       event_id: event.event_id,
-      story_time: clone(event.story_time),
-      source: eventVersion(event),
+      story_time: clone(event.story_time, metrics),
+      source: eventVersion(event, metrics),
     };
   }
-  window.updated_at = typeof now === 'function' ? now() : window.updated_at;
+  window.updated_at = typeof timestamp === 'function' ? timestamp() : window.updated_at;
+  if (metrics) metrics.window_binding_ms += Math.max(0, now() - startedAt);
 }
 
-function closeWindow(window, event, now) {
+function closeWindow(window, event, timestamp, metrics = null) {
+  const startedAt = metrics ? now() : 0;
   if (window.status !== 'open') return;
   window.status = TRACKING_WINDOW_TERMINAL_REASONS[event.type];
   window.terminal_event_id = event.event_id;
   window.terminal_reason = event.type;
-  window.terminal_story_time = clone(event.story_time);
-  window.terminal_at_floor_version = eventVersion(event);
-  window.updated_at = typeof now === 'function' ? now() : window.updated_at;
+  window.terminal_story_time = clone(event.story_time, metrics);
+  window.terminal_at_floor_version = eventVersion(event, metrics);
+  window.updated_at = typeof timestamp === 'function' ? timestamp() : window.updated_at;
+  if (metrics) metrics.window_binding_ms += Math.max(0, now() - startedAt);
 }
 
 export function deriveTrackingWindows(events = [], {
@@ -319,24 +406,59 @@ export function deriveTrackingWindows(events = [], {
   worldModel = {},
   subjectProfiles = {},
   currentStoryTime = null,
+  onDiagnostics = null,
 } = {}) {
+  const metrics = {
+    normalize_validate_count: 0,
+    normalize_validate_ms: 0,
+    sort_compare_count: 0,
+    sort_ms: 0,
+    story_time_compare_count: 0,
+    story_time_compare_ms: 0,
+    story_time_compare_cache_hit_count: 0,
+    fast_story_time_compare_count: 0,
+    story_time_cache: new WeakMap(),
+    window_create_count: 0,
+    window_create_ms: 0,
+    window_binding_ms: 0,
+    clone_count: 0,
+    digest_count: 0,
+    digest_ms: 0,
+    output_ms: 0,
+  };
+  const totalStartedAt = nowTime();
   const normalizedEvents = [...new Map(
     (Array.isArray(events) ? events : [])
-      .map(validEvent)
+      .map(event => validEvent(event, metrics))
       .filter(Boolean)
       .filter(event => event.event_id)
+      // Only exposure and pregnancy-lifecycle Events can affect a Window.
+      // Other state facts (for example physical symptoms) cannot open,
+      // resolve, terminate, or expire one, so excluding them before
+      // chronology sorting avoids Story Time parsing work.
+      .filter(event =>
+        isPregnancyRelevantExposure(event) ||
+        event.type === 'pregnancy_confirmation' ||
+        Object.hasOwn(TRACKING_WINDOW_TERMINAL_REASONS, event.type),
+      )
       .filter(event => {
-        const order = compareStoryTime(event.story_time, currentStoryTime);
+        const order = measuredStoryTime(event.story_time, currentStoryTime, metrics);
         return order === null || order <= 0;
       })
       .map(event => [event.event_id, event]),
-  ).values()].sort(eventSort);
+  ).values()];
+  const sortStartedAt = nowTime();
+  normalizedEvents.sort((left, right) => {
+    metrics.sort_compare_count += 1;
+    return eventSort(left, right, metrics);
+  });
+  metrics.sort_ms = Math.max(0, nowTime() - sortStartedAt);
   const ambiguousExposureIds = new Set();
   for (let leftIndex = 0; leftIndex < normalizedEvents.length; leftIndex += 1) {
     const left = normalizedEvents[leftIndex];
     for (let rightIndex = leftIndex + 1; rightIndex < normalizedEvents.length; rightIndex += 1) {
       const right = normalizedEvents[rightIndex];
-      if (compareStoryTime(left.story_time, right.story_time) !== null) continue;
+      if (measuredStoryTime(left.story_time, right.story_time, metrics) !== null) continue;
       const leftSubjects = left.pregnancy_relevance?.gestational_subject_ids ?? [];
       const rightSubjects = right.pregnancy_relevance?.gestational_subject_ids ?? [];
       if (!leftSubjects.some(subjectId => rightSubjects.includes(subjectId))) continue;
@@ -357,8 +479,8 @@ export function deriveTrackingWindows(events = [], {
         if (!hasReliableStoryTime(event) || ambiguousExposureIds.has(event.event_id)) continue;
         const confirmation = confirmedPregnancies.get(subjectId);
         const afterConfirmation = confirmation
-          && compareStoryTime(event.story_time, confirmation.story_time) !== null
-          && compareStoryTime(event.story_time, confirmation.story_time) > 0;
+          && measuredStoryTime(event.story_time, confirmation.story_time, metrics) !== null
+          && measuredStoryTime(event.story_time, confirmation.story_time, metrics) > 0;
         if (afterConfirmation) continue;
         const mechanism = mechanismKey(event);
         const open = [...windows.values()].find(window =>
@@ -366,30 +488,31 @@ export function deriveTrackingWindows(events = [], {
           && window.subject_id === subjectId
           && window.mechanism_key === mechanism,
         );
-        const orderAgainstAnchor = open ? eventChronology(event, {
+        const orderAgainstAnchor = open ? measuredStoryTime(event.story_time, {
           story_time: open.opened_story_time,
-          source: open.opened_at_floor_version,
-        }) : null;
+        }, metrics) : null;
         if (open && orderAgainstAnchor === null && !open.source_event_ids.includes(event.event_id)) {
           // An exposure with no comparable Story Time and no distinct trusted
           // Floor cannot safely become part of this cycle or move its anchor.
           continue;
         }
         if (open && !horizonReachedBeforeExposure(open, event, {worldModel, subjectProfiles})) {
-          attachExposure(open, event, now);
+          attachExposure(open, event, now, metrics);
         } else if (open) {
-          const created = createWindow({chatId, subjectId, mechanism, event, now});
+          metrics.window_create_count += 1;
+          const created = createWindow({chatId, subjectId, mechanism, event, now: now, metrics});
           if (created.tracking_window_id) windows.set(created.tracking_window_id, created);
         }
         else {
           const historicalResolved = [...windows.values()].find(window => {
             if (window.status !== 'resolved_pregnant' || window.subject_id !== subjectId || window.mechanism_key !== mechanism) return false;
-            const order = compareStoryTime(event.story_time, window.terminal_story_time);
+            const order = measuredStoryTime(event.story_time, window.terminal_story_time, metrics);
             return order !== null && order <= 0;
           });
-          if (historicalResolved) attachExposure(historicalResolved, event, now);
+          if (historicalResolved) attachExposure(historicalResolved, event, now, metrics);
           else {
-            const created = createWindow({chatId, subjectId, mechanism, event, now});
+            metrics.window_create_count += 1;
+            const created = createWindow({chatId, subjectId, mechanism, event, now: now, metrics});
             if (created.tracking_window_id) windows.set(created.tracking_window_id, created);
           }
         }
@@ -400,19 +523,26 @@ export function deriveTrackingWindows(events = [], {
         if (event.type !== 'pregnancy_confirmation') {
           const confirmation = confirmedPregnancies.get(subjectId);
           const afterConfirmation = confirmation
-            && compareStoryTime(event.story_time, confirmation.story_time) !== null
-            && compareStoryTime(event.story_time, confirmation.story_time) >= 0;
+            && measuredStoryTime(event.story_time, confirmation.story_time, metrics) !== null
+            && measuredStoryTime(event.story_time, confirmation.story_time, metrics) >= 0;
           if (afterConfirmation) confirmedPregnancies.delete(subjectId);
         }
         for (const window of windows.values()) {
           if (window.status !== 'open' || window.subject_id !== subjectId) continue;
-          const order = compareStoryTime(event.story_time, window.opened_story_time);
-          if (order !== null && order >= 0) closeWindow(window, event, now);
+          const order = measuredStoryTime(event.story_time, window.opened_story_time, metrics);
+          if (order !== null && order >= 0) closeWindow(window, event, now, metrics);
         }
       }
     }
   }
-  return [...windows.values()].sort((left, right) => left.tracking_window_id.localeCompare(right.tracking_window_id));
+  const outputStartedAt = nowTime();
+  const result = [...windows.values()].sort((left, right) => left.tracking_window_id.localeCompare(right.tracking_window_id));
+  metrics.output_ms = Math.max(0, nowTime() - outputStartedAt);
+  if (typeof onDiagnostics === 'function') {
+    const {story_time_cache, ...safeMetrics} = metrics;
+    onDiagnostics({...safeMetrics, total_ms: Math.max(0, nowTime() - totalStartedAt)});
+  }
+  return result;
 }
 
 export function activeTrackingWindows(windows = []) {

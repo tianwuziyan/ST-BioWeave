@@ -7,6 +7,7 @@ import {
   resolveCarryingCapability,
 } from "../core/tracking.js";
 import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
+import { createTrackingRuntime } from "../runtime/tracking-runtime.js";
 
 function event(overrides = {}) {
   return {
@@ -73,6 +74,43 @@ function abstractWorldModel(typeCapabilities = {}) {
     ],
   };
 }
+
+test("Tracking runtime builds windows once and preserves registry output", () => {
+  const windows = [{window_id: "window-1", subject_id: "char-a", floor: 1}];
+  const windowInputs = [];
+  const traces = [];
+  const runtime = createTrackingRuntime({
+    trackingWindowRuntime: {
+      buildTrackingWindows(input) {
+        windowInputs.push(input);
+        return structuredClone(windows);
+      },
+    },
+    notify(payload) {
+      if (payload?.type === "BIOWEAVE_PERSISTENCE_TRACE") traces.push(payload.payload);
+    },
+  });
+  const activeEvents = [event()];
+  const worldModel = abstractWorldModel({type_a: {can_carry_pregnancy: true}});
+  const registry = runtime.buildTrackingRegistry({
+    activeEvents,
+    worldModel,
+    chatId: "chat-1",
+    floorVersion: {floor: 1, swipe_id: 0},
+  });
+  const expected = rebuildTrackingRegistry(activeEvents, {
+    world_model: worldModel,
+    trackingWindows: windows,
+  });
+  assert.deepEqual(registry, expected);
+  assert.equal(windowInputs.length, 1);
+  const trace = traces.find(item => item.stage === "TRACKING_REGISTRY_BUILD_PHASES");
+  assert.equal(trace.window_build_count, 1);
+  assert.equal(trace.input_event_count, 1);
+  assert.equal(trace.unique_event_count, 1);
+  assert.equal(typeof trace.window_build_ms, "number");
+  assert.equal(typeof trace.registry_rebuild_ms, "number");
+});
 
 function abstractExposureEvent({
   eventId = "evt_abstract",
@@ -190,6 +228,43 @@ test("tracking requires a pregnancy-relevant exposure and explicit carrying capa
     eligibleGestationalSubjects(event({ status: "fictional" })),
     [],
   );
+});
+
+test("tracking registry baseline keeps same-Floor unresolved exposure input order", () => {
+  const earlier = event({
+    event_id: "z-earlier",
+    source: {...event().source, content_hash: "hash-z"},
+    story_time: {
+      display: "羲和元年三月四日",
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      precision: "day",
+    },
+  });
+  const later = event({
+    event_id: "a-later",
+    source: {...event().source, content_hash: "hash-a"},
+    story_time: {
+      display: "羲和元年三月十五日",
+      normalized: null,
+      day_index: null,
+      calendar_id: null,
+      precision: "day",
+    },
+  });
+  const first = rebuildTrackingRegistry([later, earlier]);
+  const second = rebuildTrackingRegistry([earlier, later]);
+  assert.deepEqual(
+    first.tracking_subjects["char-a"].exposure_event_ids,
+    ["a-later", "z-earlier"],
+  );
+  assert.deepEqual(
+    second.tracking_subjects["char-a"].exposure_event_ids,
+    ["z-earlier", "a-later"],
+  );
+  assert.equal(first.tracking_subjects["char-a"].created_from_event_id, "a-later");
+  assert.equal(second.tracking_subjects["char-a"].created_from_event_id, "z-earlier");
 });
 
 test("non-sexual mechanism exposure enters tracking without a conception flag", () => {

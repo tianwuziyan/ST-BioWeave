@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify no ownership or stale-guard regression"}
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Verify Event and continuation behavior is unchanged"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check runtime/test boundary and diagnostics consistency"}

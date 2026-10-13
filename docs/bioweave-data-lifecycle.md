@@ -547,11 +547,14 @@ event:
   story_time:
     display
     normalized
-    day_index
     calendar_id
     precision
     confidence
 ```
+
+新 Event Snapshot 不持久化可由 Runtime Story Time 重新派生的 `day_index`。
+读取旧 Snapshot 时仍保留该字段；已有 day-index-only Event 在读取、Supplement
+和再次保存时不得丢失其唯一时间信息。
 
 For pregnancy-related `sexual_activity`, identity, participant closure, and
 subject-local Event rules remain those of the Event Pipeline contract. The

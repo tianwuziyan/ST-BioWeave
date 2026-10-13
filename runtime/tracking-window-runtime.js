@@ -9,12 +9,13 @@ import {
  * caller without making the domain core depend on storage or the host.
  */
 export function createTrackingWindowRuntime({getChatId = () => null, persist = null, getPersisted = null} = {}) {
-  function buildTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = []} = {}) {
+  function buildTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = [], onDiagnostics = null} = {}) {
     const derived = deriveTrackingWindows(Array.isArray(activeEvents) ? activeEvents : [], {
       chatId,
       worldModel,
       subjectProfiles,
       currentStoryTime,
+      onDiagnostics,
     });
     return evaluateTrackingWindowLifecycles(derived, {
       worldModel,

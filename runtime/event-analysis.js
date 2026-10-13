@@ -87,6 +87,22 @@ function scalar(value) {
   return null;
 }
 
+function sameDerivedValue(left, right) {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== typeof right) return false;
+  if (!left || typeof left !== "object") return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left)) {
+    return left.length === right.length && left.every((value, index) =>
+      sameDerivedValue(value, right[index]));
+  }
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every(key =>
+    Object.prototype.hasOwnProperty.call(right, key) &&
+    sameDerivedValue(left[key], right[key]));
+}
+
 function messagePartText(value) {
   if (typeof value === "string" || typeof value === "number")
     return String(value);
@@ -102,6 +118,103 @@ function cloneWorldValue(value) {
   if (typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneWorldValue(item)]));
   return value;
+}
+
+function stableEventReferenceFingerprint(value) {
+  if (Array.isArray(value)) return `[${value.map(stableEventReferenceFingerprint).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableEventReferenceFingerprint(value[key])}`).join(",")}}`;
+}
+
+function mergeEventReferenceEvidence(previousEvent, currentEvent) {
+  if (!previousEvent || !currentEvent || typeof currentEvent !== "object") return currentEvent;
+  const previousSourceFloor = Number(previousEvent.source?.floor);
+  const currentSourceFloor = Number(currentEvent.source?.floor);
+  if (!Number.isFinite(previousSourceFloor) || !Number.isFinite(currentSourceFloor) ||
+      previousSourceFloor >= currentSourceFloor) return currentEvent;
+  const seen = new Set();
+  const sourceEvidence = [
+    ...(Array.isArray(previousEvent.source_evidence) ? previousEvent.source_evidence : []),
+    ...(Array.isArray(currentEvent.source_evidence) ? currentEvent.source_evidence : []),
+  ].filter(item => {
+    const key = stableEventReferenceFingerprint(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return {
+    ...currentEvent,
+    source: previousEvent.source,
+    source_evidence: sourceEvidence,
+  };
+}
+
+function selectAnalysisExistingEvents({previousEvents = [], currentFloorEvents = [], targetVersion = null} = {}) {
+  const selected = new Map();
+  const unkeyed = [];
+  let inputTotalCount = 0;
+  let conflictEventCount = 0;
+  let unresolvedConflictCount = 0;
+  const selectedSourceCounts = {
+    current_floor_target_version: 0,
+    current_floor_resolved: 0,
+    previous_resolved: 0,
+  };
+
+  function consider(event, sourceCategory, priority) {
+    inputTotalCount += 1;
+    const eventId = typeof event?.event_id === "string" ? event.event_id.trim() : "";
+    if (!eventId) {
+      unkeyed.push(event);
+      return;
+    }
+    const fingerprint = stableEventReferenceFingerprint(event);
+    const existing = selected.get(eventId);
+    if (!existing) {
+      selected.set(eventId, {event, fingerprint, priority, sourceCategory});
+      return;
+    }
+    if (existing.fingerprint === fingerprint) return;
+    conflictEventCount += 1;
+    if (priority > existing.priority) {
+      selected.set(eventId, {
+        event: mergeEventReferenceEvidence(existing.event, event),
+        fingerprint,
+        priority,
+        sourceCategory,
+      });
+      return;
+    }
+    if (priority === existing.priority) {
+      unresolvedConflictCount += 1;
+      if (fingerprint < existing.fingerprint)
+        selected.set(eventId, {event, fingerprint, priority, sourceCategory});
+    }
+  }
+
+  for (const event of Array.isArray(currentFloorEvents) ? currentFloorEvents : []) {
+    const sourceCategory = sameFloorVersion(event?.source, targetVersion)
+      ? "current_floor_target_version"
+      : "current_floor_resolved";
+    consider(event, sourceCategory, sourceCategory === "current_floor_target_version" ? 3 : 2);
+  }
+  for (const event of Array.isArray(previousEvents) ? previousEvents : [])
+    consider(event, "previous_resolved", 1);
+
+  for (const {sourceCategory} of selected.values()) selectedSourceCounts[sourceCategory] += 1;
+  return {
+    events: [
+      ...[...selected.values()].map(item => item.event),
+      ...unkeyed,
+    ],
+    diagnostics: {
+      input_total_count: inputTotalCount,
+      unique_event_id_count: selected.size,
+      conflict_event_id_count: conflictEventCount,
+      selected_version_source_counts: selectedSourceCounts,
+      unresolved_conflict_count: unresolvedConflictCount,
+    },
+  };
 }
 function messageText(message, swipeId = 0) {
   if (typeof message === "string" || typeof message === "number")
@@ -443,9 +556,11 @@ export function createEventAnalysisCoordinator({
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
   const inFlight = new Map();
+  const canonicalBuilds = new Map();
   const lastTerminal = new Map();
   let attemptSequence = 0;
   let analysisExecutionSequence = 0;
+  let canonicalGeneration = 0;
   let registryRefreshChain = Promise.resolve();
   let lifecycleMutationChain = Promise.resolve();
   let destroyed = false;
@@ -472,6 +587,47 @@ export function createEventAnalysisCoordinator({
     lastFailure: null,
     schedulerRevision: 0,
   };
+
+  function canonicalBuildKey(target, analysisPhase = null) {
+    return [
+      floorExecutionKey(target?.version),
+      canonicalGeneration,
+      analysisPhase ?? "default",
+    ].map(value => String(value ?? "")).join("\u001f");
+  }
+
+  function emitCanonicalBuildTrace(stage, target, details = {}) {
+    emitPersistenceTrace(`CHARACTER_CANONICAL_BUILD_${stage}`, null, target, {
+      canonical_generation: canonicalGeneration,
+      ...details,
+    }, "ui");
+  }
+
+  function advanceCanonicalGeneration(reason, target = null) {
+    canonicalGeneration += 1;
+    emitCanonicalBuildTrace("INVALIDATED", target, {
+      invalidation_reason: reason,
+    });
+    return canonicalGeneration;
+  }
+
+  function derivedPatchFields(owner) {
+    switch (String(owner ?? "").toLowerCase()) {
+      case "event":
+        return ["analysis", "events", "character_registry"];
+      case "terminal":
+        return ["analysis"];
+      case "world":
+        return ["world_model", "world_model_meta"];
+      default:
+        return [];
+    }
+  }
+
+  function patchChangesDerivedState(owner, before, after) {
+    return derivedPatchFields(owner).some(field =>
+      !sameDerivedValue(before?.[field], after?.[field]));
+  }
 
   function cancelPendingHealthRecoveryChecks() {
     healthRecoveryScheduleRevision += 1;
@@ -655,6 +811,7 @@ export function createEventAnalysisCoordinator({
       });
       return sameFloorVersion(current.version, target.version);
     };
+    const before = store.getFloor?.(target?.index, target?.swipeId) ?? target?.floorData ?? {};
     return persistence.commitFloorPatch({
       owner,
       chatId: target?.version?.chat_id ?? target?.chatId ?? chat.current(),
@@ -672,6 +829,10 @@ export function createEventAnalysisCoordinator({
       retry_index: input.retry_index,
       traceContext,
       assertCurrent,
+    }).then(result => {
+      if (patchChangesDerivedState(owner, before, result?.floor))
+        advanceCanonicalGeneration(`confirmed:${owner}:${input.operation_type ?? "patch"}`, target);
+      return result;
     });
   }
 
@@ -971,6 +1132,7 @@ export function createEventAnalysisCoordinator({
       }, domain === "world" ? "world" : "analysis");
       if (execution) execution.retryConfigEmitted = true;
     }
+    let previousError = null;
     for (let retryIndex = 0; ; retryIndex += 1) {
       const attempt = retryIndex + 1;
       if (execution) {
@@ -1002,7 +1164,7 @@ export function createEventAnalysisCoordinator({
           max_retries: maxRetries,
           trigger,
         }, domain === "world" ? "world" : "analysis");
-        const result = await invoke({ attempt, retryIndex });
+        const result = await invoke({ attempt, retryIndex, previousError });
         emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_SUCCEEDED`, execution, target, {
           domain,
           attempt,
@@ -1027,6 +1189,7 @@ export function createEventAnalysisCoordinator({
         }, domain === "world" ? "world" : "analysis");
         return completed;
       } catch (error) {
+        previousError = error;
         if (!aiSucceeded) {
           emitPersistenceTrace(`${domain.toUpperCase()}_AI_ATTEMPT_FAILED`, execution, target, {
             domain,
@@ -1413,6 +1576,7 @@ export function createEventAnalysisCoordinator({
           assertCurrent: () => chat.assert(token),
           reason: `mutation:${event?.type ?? "unknown"}`,
         });
+        advanceCanonicalGeneration(`confirmed:floor-clear:${event?.type ?? "unknown"}`);
         chat.assert(token);
       }
     }
@@ -1707,6 +1871,8 @@ export function createEventAnalysisCoordinator({
     validOnly = false,
   } = {}) {
     const states = [];
+    let floorVersionCallCount = 0;
+    let floorVersionWallMs = 0;
     const all = messages();
     for (let index = 0; index < all.length; index += 1) {
       if (target && Number.isInteger(target.index) && index > target.index) continue;
@@ -1718,6 +1884,8 @@ export function createEventAnalysisCoordinator({
       const storedVersion = floorVersionFromData(floorData);
       let version;
       try {
+        const floorVersionStartedAt = monotonicNow();
+        floorVersionCallCount += 1;
         version = await floorVersion({
           chatId: token.chatId,
           messageId: messageId(all[index], index, storedVersion),
@@ -1726,6 +1894,7 @@ export function createEventAnalysisCoordinator({
           text: messageText(all[index], swipeId),
           messageVersion: messageVersion(all[index], storedVersion),
         });
+        floorVersionWallMs += durationMs(floorVersionStartedAt) ?? 0;
       } catch (error) {
         throw withAnalysisStage(error, "floor_version");
       }
@@ -1742,6 +1911,13 @@ export function createEventAnalysisCoordinator({
       if (validOnly && isFloorInvalidated(state)) continue;
       states.push(state);
     }
+    Object.defineProperty(states, "__timing", {
+      enumerable: false,
+      value: {
+        floor_version_call_count: floorVersionCallCount,
+        floor_version_wall_ms: Number(floorVersionWallMs.toFixed(3)),
+      },
+    });
     return states;
   }
   async function collectTrackingInputs(token = chat.token(), {
@@ -1752,7 +1928,9 @@ export function createEventAnalysisCoordinator({
     const boundedTarget = target?.version && Number.isInteger(target.index)
       ? target
       : undefined;
+    const trackingInputsStartedAt = monotonicNow();
     const states = await collectCurrentFloorStates(token, {target: boundedTarget});
+    const floorStateTiming = states.__timing ?? {};
     const validStates = states.filter(
       (state) => !isFloorInvalidated(state),
     );
@@ -1789,6 +1967,11 @@ export function createEventAnalysisCoordinator({
       // An empty Chat has no target Floor and therefore no World Model.
     }
     const characterRegistryResolution = currentCharacterRegistryResolutionFromStates(validStates);
+    const storyTimeStartedAt = monotonicNow();
+    const currentStoryTime = storyTimeCoordinator && target !== null &&
+      (target !== undefined || validStates.length)
+      ? await storyTimeCoordinator.resolveFloorStoryTime(target ?? validStates.at(-1))
+      : null;
     return {
       states: validStates,
       activeEvents,
@@ -1798,10 +1981,7 @@ export function createEventAnalysisCoordinator({
       floorVersion: current?.version ?? null,
       characterRegistry: characterRegistryResolution.registry,
       characterRegistryState: characterRegistryResolution.state,
-      currentStoryTime: storyTimeCoordinator && target !== null &&
-        (target !== undefined || validStates.length)
-        ? await storyTimeCoordinator.resolveFloorStoryTime(target ?? validStates.at(-1))
-        : null,
+      currentStoryTime,
       subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
         participant.character_id,
         {
@@ -1809,6 +1989,12 @@ export function createEventAnalysisCoordinator({
           biological_type: participant.biological_context?.biological_type ?? null,
         },
       ]))),
+      diagnostics: {
+        tracking_inputs_wall_ms: durationMs(trackingInputsStartedAt),
+        floor_version_call_count: floorStateTiming.floor_version_call_count ?? 0,
+        floor_version_wall_ms: floorStateTiming.floor_version_wall_ms ?? 0,
+        story_time_wall_ms: durationMs(storyTimeStartedAt),
+      },
     };
   }
   async function collectActiveEvents(token = chat.token()) {
@@ -2043,6 +2229,7 @@ export function createEventAnalysisCoordinator({
     currentEventState = undefined,
     currentEventStateVersion = undefined,
   } = {}) {
+    const canonicalStartedAt = monotonicNow();
     const trackingInputs = await collectTrackingInputs(token, {
       target,
       currentEventState,
@@ -2066,6 +2253,7 @@ export function createEventAnalysisCoordinator({
         ? await storyTimeCoordinator.getCurrentStoryTimeInfo(target === undefined ? null : target)
         : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
     const currentStoryTime = storyTimeInfo.story_time;
+    const registryStartedAt = monotonicNow();
     const registry = trackingRuntime.buildTrackingRegistry({
       ...trackingInputs,
       states: validStates,
@@ -2073,11 +2261,15 @@ export function createEventAnalysisCoordinator({
       characterRegistry,
       chatId: token.chatId,
     });
+    const trackingRegistrySyncMs = durationMs(registryStartedAt);
+    const characterFactsStartedAt = monotonicNow();
     const characterFacts = buildCharacterFacts(
       activeEvents,
       registry,
       characterRegistry,
     );
+    const characterFactsSyncMs = durationMs(characterFactsStartedAt);
+    const healthStartedAt = monotonicNow();
     const currentHealthState = healthEvolution?.deriveFromFloorStates
       ? healthEvolution.deriveFromFloorStates({
           states: validStates,
@@ -2085,8 +2277,10 @@ export function createEventAnalysisCoordinator({
           currentStoryTime,
         })
       : {schema_version: 1, characters: {}};
+    const healthDeriveSyncMs = durationMs(healthStartedAt);
     let currentState;
     let currentStateStatus = currentFloor ? "ready" : "NO_CHARACTER_FLOOR";
+    const reduceStartedAt = monotonicNow();
     try {
       // floor.events is already the complete current Event state. Replaying
       // every later Floor on top of a Snapshot would apply unchanged Events
@@ -2101,6 +2295,18 @@ export function createEventAnalysisCoordinator({
       currentState = stateErrorState(error);
       currentStateStatus = "STATE_ERROR";
     }
+    const reduceStateSyncMs = durationMs(reduceStartedAt);
+    emitPersistenceTrace("CHARACTER_CANONICAL_PHASES", null, currentFloor, {
+      canonical_build_wall_ms: durationMs(canonicalStartedAt),
+      tracking_inputs_wall_ms: trackingInputs.diagnostics?.tracking_inputs_wall_ms ?? null,
+      floor_version_call_count: trackingInputs.diagnostics?.floor_version_call_count ?? 0,
+      floor_version_wall_ms: trackingInputs.diagnostics?.floor_version_wall_ms ?? 0,
+      story_time_wall_ms: trackingInputs.diagnostics?.story_time_wall_ms ?? null,
+      tracking_registry_sync_ms: trackingRegistrySyncMs,
+      character_facts_sync_ms: characterFactsSyncMs,
+      health_derive_sync_ms: healthDeriveSyncMs,
+      reduce_state_sync_ms: reduceStateSyncMs,
+    }, "ui");
     chat.assert(token);
     return {
       states: validStates,
@@ -2121,6 +2327,66 @@ export function createEventAnalysisCoordinator({
       currentHealthState,
       chatData: currentChat,
     };
+  }
+
+  async function collectCanonicalDerivedState(token, chatData, {
+    target,
+    currentEventState,
+    currentEventStateVersion,
+    analysisPhase = null,
+  } = {}) {
+    const key = canonicalBuildKey(target, analysisPhase);
+    const existing = canonicalBuilds.get(key);
+    if (existing) {
+      const joinedAt = monotonicNow();
+      emitCanonicalBuildTrace("JOINED_EXISTING", target, {
+        join_wait_ms: null,
+      });
+      try {
+        const derived = await existing.promise;
+        emitCanonicalBuildTrace("JOIN_COMPLETED", target, {
+          join_wait_ms: durationMs(joinedAt),
+        });
+        return {derived, joined: true};
+      } catch (error) {
+        emitCanonicalBuildTrace("JOIN_FAILED", target, {
+          join_wait_ms: durationMs(joinedAt),
+          error_code: error?.code ?? error?.message ?? "CANONICAL_BUILD_FAILED",
+        });
+        throw error;
+      }
+    }
+
+    const entry = {
+      key,
+      startedAt: monotonicNow(),
+      promise: null,
+    };
+    emitCanonicalBuildTrace("STARTED", target);
+    entry.promise = (async () => {
+      try {
+        const derived = await collectCurrentDerivedState(token, chatData, {
+          target,
+          currentEventState,
+          currentEventStateVersion,
+        });
+        emitCanonicalBuildTrace("COMPLETED", target, {
+          build_duration_ms: durationMs(entry.startedAt),
+        });
+        return derived;
+      } catch (error) {
+        emitCanonicalBuildTrace("FAILED", target, {
+          build_duration_ms: durationMs(entry.startedAt),
+          error_code: error?.code ?? error?.message ?? "CANONICAL_BUILD_FAILED",
+        });
+        throw error;
+      } finally {
+        if (canonicalBuilds.get(key) === entry)
+          canonicalBuilds.delete(key);
+      }
+    })();
+    canonicalBuilds.set(key, entry);
+    return {derived: await entry.promise, joined: false};
   }
   const featureComposition = createRuntimeComposition({
     generation: {
@@ -2563,7 +2829,12 @@ export function createEventAnalysisCoordinator({
     }
     return current;
   }
-  async function collectActiveBusinessData({includeDebug = false, reason = "unknown", route = null} = {}) {
+  async function collectActiveBusinessData({
+    includeDebug = false,
+    reason = "unknown",
+    route = null,
+    analysisPhase = null,
+  } = {}) {
     const withDebug = (data, statusValue, stateInfo = null) => includeDebug
       ? {
           ...data,
@@ -2602,13 +2873,17 @@ export function createEventAnalysisCoordinator({
       }), status);
     }
     let derived;
+    let joinedCanonicalBuild = false;
     const canonicalBuildStartedAt = monotonicNow();
     try {
-      derived = await collectCurrentDerivedState(token, chatData, {
+      const canonical = await collectCanonicalDerivedState(token, chatData, {
         target,
         currentEventState: eventStateCache.state,
         currentEventStateVersion: eventStateCache.targetVersion,
+        analysisPhase,
       });
+      derived = canonical.derived;
+      joinedCanonicalBuild = canonical.joined;
     } catch (error) {
       if (!isFloorPreflightStage(error?.analysis_stage)) throw error;
       return withDebug(buildBusinessData(
@@ -2651,6 +2926,9 @@ export function createEventAnalysisCoordinator({
         current_health_state: derived.currentHealthState,
       },
     );
+    const isolatedBusinessData = joinedCanonicalBuild
+      ? cloneBusinessDataForConsumer(businessData)
+      : businessData;
     const dtoBuildMs = durationMs(dtoBuildStartedAt);
     emitPersistenceTrace("CHARACTER_UI_PERFORMANCE", null, target, {
       operation: "business-read",
@@ -2659,7 +2937,7 @@ export function createEventAnalysisCoordinator({
       canonical_build_ms: canonicalBuildMs,
       dto_build_ms: dtoBuildMs,
     }, "ui");
-    return withDebug(businessData, status, derived);
+    return withDebug(isolatedBusinessData, status, derived);
   }
 
   async function verifyCharacterCanonicalReady(
@@ -3015,6 +3293,10 @@ export function createEventAnalysisCoordinator({
       analysis_status: analysisStatus,
       ...analysisStatus,
     };
+  }
+
+  function cloneBusinessDataForConsumer(data) {
+    return cloneValue(data);
   }
   function executionIsCurrent(execution) {
     return (
@@ -3382,9 +3664,11 @@ export function createEventAnalysisCoordinator({
     target,
     token,
     {
+      execution = null,
       preserveCurrentFloorState = false,
       useCurrentCharacterRegistry = false,
       includeCurrentFloorComparison = false,
+      includeCurrentFloorHistory = false,
     } = {},
   ) {
     const chatData = store.getChat(token.chatId);
@@ -3455,10 +3739,21 @@ export function createEventAnalysisCoordinator({
     });
     // `existing_bioweave` and event dedupe both use the nearest complete state;
     // complete states must never be replayed by flattening older Floors.
-    const existingEvents = currentFloorIsComparisonReference &&
-      Array.isArray(currentFloorData.events)
-      ? dedupeEvents(currentFloorData.events)
-      : dedupeEvents(previous.events);
+    const existingEventsSelection = currentFloorIsComparisonReference
+      ? selectAnalysisExistingEvents({
+          previousEvents: includeCurrentFloorHistory ? previous.events : [],
+          currentFloorEvents: currentFloorData?.events,
+          targetVersion: target.version,
+        })
+      : selectAnalysisExistingEvents({
+          previousEvents: previous.events,
+          currentFloorEvents: [],
+          targetVersion: target.version,
+        });
+    const existingEvents = existingEventsSelection.events;
+    emitPersistenceTrace("EVENT_ANALYSIS_INPUT_EVENTS", execution, target, {
+      ...existingEventsSelection.diagnostics,
+    }, "event");
     const characterContext = characterContextResolver(
       context,
       derivedState,
@@ -3525,11 +3820,14 @@ export function createEventAnalysisCoordinator({
         ? await resolvePersistedWorldModelForAnalysis(target)
         : null;
       const preserveCurrentFloorState = execution.reason === "reroll" ||
-        execution.reason === "manual-refresh";
+        execution.reason === "manual-refresh" ||
+        execution.analysis_intent === "manual-character";
       const preWorldInput = await buildFloorAnalysisInput(target, token, {
+        execution,
         preserveCurrentFloorState,
         useCurrentCharacterRegistry: execution.reason === "reroll",
         includeCurrentFloorComparison: execution.reason === "reroll",
+        includeCurrentFloorHistory: execution.analysis_intent === "manual-character",
       });
       await assertAnalysisOwnerCurrent(execution, target, token);
       if (execution.reason !== "manual-refresh") {
@@ -3569,9 +3867,11 @@ export function createEventAnalysisCoordinator({
             : "reuse";
       await assertAnalysisOwnerCurrent(execution, target, token);
       const analysisInput = await buildFloorAnalysisInput(target, token, {
+        execution,
         preserveCurrentFloorState,
         useCurrentCharacterRegistry: execution.reason === "reroll",
         includeCurrentFloorComparison: execution.reason === "reroll",
+        includeCurrentFloorHistory: execution.analysis_intent === "manual-character",
       });
       analysisInput.world_model = cloneWorldValue(finalWorldModel);
       notify({
@@ -3597,7 +3897,7 @@ export function createEventAnalysisCoordinator({
         signal: execution.controller.signal,
         trigger: execution.reason,
         assertBeforeInvoke: () => assertAnalysisOwnerCurrent(execution, target, token),
-        invoke: async () => {
+        invoke: async ({previousError = null} = {}) => {
           execution.stage = "api_request";
           return characterEventAnalysis.runEventAttempt({
             target,
@@ -3607,6 +3907,7 @@ export function createEventAnalysisCoordinator({
             finalWorldModel,
             savedAnalysis,
             dependencyHash: execution.dependency_hash,
+            previousError,
           });
         },
       });
@@ -4321,6 +4622,7 @@ export function createEventAnalysisCoordinator({
     cancelPendingHealthRecoveryChecks();
     clearWorldbookCache(sourceCache);
     if (signal?.changed) {
+      advanceCanonicalGeneration(`chat-boundary:${signal?.reason ?? "changed"}`);
       lastTerminal.clear();
       invalidatedFloors.clear();
       lifecycleSnapshot = null;
@@ -4340,6 +4642,7 @@ export function createEventAnalysisCoordinator({
       execution.controller = null;
     }
     inFlight.clear();
+    canonicalBuilds.clear();
     worldAnalysis.clear();
     automaticAnalysis.reset("destroy");
   }

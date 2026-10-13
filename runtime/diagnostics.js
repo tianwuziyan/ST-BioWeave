@@ -194,12 +194,25 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state", "execution_snapshot_present", "execution_snapshot_mutated", "execution_snapshot_accepted_operation_count", "execution_snapshot_successful_round_count", "execution_snapshot_last_successful_round", "execution_snapshot_persistence_eligible", "snapshot_preserved", "last_attempt_failed", "last_attempt_failure_code",
     "resolution_reason", "request_source", "panel_open", "active_tab", "route", "operation", "from_route", "to_route", "initialized_before_open",
     "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
-    "event_id", "event_edit_operation_id", "error_code", "safe_error_summary", "error_name", "error_message", "error_path", "diagnostic_path", "diagnostic_code", "analysis_stage", "validation_stage", "validator", "keyword", "persistence_entered", "persistence_confirmed", "success", "duration_ms", "failure_stage", "runtime_duration_ms", "floor_resolution_duration_ms", "event_normalization_duration_ms", "event_validation_duration_ms", "stale_guard_duration_ms", "persistence_duration_ms", "tracking_registry_refresh_duration_ms", "post_save_refresh_duration_ms", "ui_runtime_call_duration_ms", "ui_visible_completion_duration_ms", "official_get_before_save_duration_ms", "official_get_after_save_duration_ms", "host_chat_save_duration_ms", "ui_open_total_ms", "ui_initialization_ms", "business_read_ms", "canonical_build_ms", "dto_build_ms", "render_ms", "route_switch_total_ms",
+    "event_id", "event_edit_operation_id", "error_code", "safe_error_summary", "error_name", "error_message", "error_path", "diagnostic_path", "diagnostic_code", "analysis_stage", "validation_stage", "validator", "keyword", "persistence_entered", "persistence_confirmed", "success", "duration_ms", "failure_stage", "runtime_duration_ms", "floor_resolution_duration_ms", "event_normalization_duration_ms", "event_validation_duration_ms", "stale_guard_duration_ms", "persistence_duration_ms", "tracking_registry_refresh_duration_ms", "post_save_refresh_duration_ms", "ui_runtime_call_duration_ms", "ui_visible_completion_duration_ms", "official_get_before_save_duration_ms", "official_get_after_save_duration_ms", "host_chat_save_duration_ms", "ui_open_total_ms", "ui_initialization_ms", "business_read_ms", "canonical_build_ms", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason", "dto_build_ms", "render_ms", "route_switch_total_ms", "canonical_build_wall_ms", "tracking_inputs_wall_ms", "floor_version_call_count", "floor_version_wall_ms", "story_time_wall_ms", "tracking_registry_sync_ms", "character_facts_sync_ms", "health_derive_sync_ms", "reduce_state_sync_ms",
     "response_shape", "extraction_mode", "parsed", "events_present",
     "schema_valid", "domain_valid", "validation_error_path",
     "valid_empty", "empty_reason", "expected_event_count",
     "expected_character_count", "expected_character_ids", "actual_event_count",
     "actual_character_count", "actual_registry_character_count",
+    "pre_analysis_event_ids", "pre_analysis_current_floor_event_ids", "candidate_event_count",
+    "post_analysis_event_ids", "added_event_ids", "updated_event_ids", "retained_event_ids",
+    "removed_event_ids", "removal_reasons", "continuation_diagnostics",
+    "continuation_reference_present", "continuation_reference_event_id",
+    "continuation_reference_target_exists", "continuation_reference_valid",
+    "continuation_merge_executed", "continuation_rejection_reason",
+    "input_total_count", "unique_event_id_count", "conflict_event_id_count",
+    "selected_version_source_counts", "unresolved_conflict_count",
+    "window_build_count", "window_build_ms", "registry_rebuild_ms",
+    "input_event_count", "unique_event_count",
+    "normalize_validate_count", "normalize_validate_ms", "sort_compare_count", "sort_ms",
+    "story_time_compare_count", "story_time_compare_ms", "story_time_compare_cache_hit_count", "fast_story_time_compare_count", "window_create_count", "window_create_ms",
+    "window_binding_ms", "clone_count", "digest_count", "digest_ms", "output_ms", "total_ms",
     "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
   ];
   return Object.fromEntries(
@@ -511,7 +524,10 @@ export function createRuntimeDiagnostics({getChatId = () => null} = {}) {
             attempt: payload.attempt ?? null,
             trigger: payload.trigger ?? null,
           },
-          sequence: mergedSequence.slice(-64),
+          // Canonical and tracking diagnostics can add more than 64 entries
+          // before analysis settles. Preserve the lifecycle boundary in the
+          // exported trace instead of silently dropping GENERATION_* entries.
+          sequence: mergedSequence.slice(-256),
           terminal: null,
           host_post_save_hook: "NO_PUBLIC_POST_SAVE_HOOK",
         };
