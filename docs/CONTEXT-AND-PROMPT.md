@@ -134,8 +134,9 @@ Event 仍单独发送 Target Floor，但 Recent Story 必须包含同一个 Curr
 Event discovery window 与 Event persistence owner 是两个独立概念：Current
 Target Floor 与 bounded Recent Story 都可参与 BiologicalEvent discovery；本轮
 新发现 Event 统一持久化到当前 Character Floor active Swipe。历史 Event 保留
-实际 story_time，但 canonical source 仍由 Runtime 绑定当前 Floor Version，表示
-本轮 persistence owner，而不是历史事实原始 Floor。
+实际 `story_time`；新建 Event 的 canonical source 由 Runtime 绑定当前 Floor
+Version，表示本轮 persistence owner，而不是历史事实原始 Floor。合法继承或
+continuation Event 保留原始 Event ID 和原始 source。
 
 `existing_bioweave` 继续只表示最近合法成功前置 Floor 的 snapshot，用于身份和
 profile continuity。Event prompt 的 `existing_events` 是单独的 bounded dedupe
@@ -145,6 +146,13 @@ projection：除最近前置 snapshot 外，至少覆盖 Recent Story discovery 
 type、structured story_time、canonical participant/subject/counterpart 集合、机制、
 关键事实 evidence 与 state fact 均完全匹配时才视为 semantic duplicate；资料不完整
 或存在差异时保留 Event。
+
+`existing_events` 是 AI 的 bounded reference，不是要求重新输出的历史清单。AI
+response DTO 只提供待验证的 Event 候选，不生成 canonical `event_id` 或 `source`。
+Runtime 先执行历史 semantic dedupe，再对当前 Floor 的候选执行唯一、结构兼容的
+same-Floor implicit continuity；跨 Floor 只有在 AI 提供真实存在且通过校验的
+`continuation_of_event_id` 时才进入 explicit continuation。Runtime 最终决定新增、
+合并、跳过和持久化；continuation 临时字段不会进入 persisted Event。
 
 ## 6. External Memory provider contract
 

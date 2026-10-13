@@ -32,6 +32,22 @@
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
 
+## 稳定核心边界
+
+以下入口是当前已验证管线的稳定边界，新增调用方必须复用其职责，不得通过
+UI、Storage 或 Runtime 私有实现建立第二套语义：
+
+- `story/time.js`：Story Time 的规范化、比较和差值统一入口。
+- `core/events.js`：BiologicalEvent 的 normalize、validate、sort 和历史 semantic dedupe 入口。
+- `runtime/character-event-analysis.js`：Event Reconciliation owner，负责 continuity、显式 continuation 校验、证据合并和 canonical Event 身份保护。
+- `runtime/event-analysis.js`：Floor-bound analysis coordinator，负责输入边界、调度、提交、readback 和派生刷新编排。
+
+稳定边界由 `tests/stable-core-boundary.test.js` 保护；Story Time 的
+`core/tracking-window.js` normalized fast path 是现有性能优化，不是第二套时间规则。
+`tests/story-time-fast-path-baseline.test.js` 记录了 Gregorian/custom calendar、不可比较
+calendar、字段冲突和未知时间的 characterization 行为。未经新的等价性验证，不得删除、
+替换或扩大该快路径。
+
 ## Current Implementation Status
 
 以下是当前生产代码与 Runtime 调用链的状态基线；`PRODUCTION` 只表示该范围已经进入当前生产链，不表示所有未来语义都已完成。

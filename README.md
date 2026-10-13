@@ -6,7 +6,7 @@
 
 BioWeave 用结构化数据记录故事中的生理事件、状态、世界规则和非事实推演，并将当前 Chat 的相关上下文整理给 AI。它适合长篇角色扮演、原创物种设定和需要持续追踪生理变化的剧情。插件直接运行在 SillyTavern 中，不包含独立后端、独立数据库或单独的账号系统。
 
-> **开发状态**：项目仍在快速迭代中。World Model、Character/Event、Tracking、StateReducer、Current Biological State、Snapshot Runtime、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已在当前范围内接通；Projection 与 Genealogy 仍为 PARTIAL，Pregnancy Exposure Tracking Window 尚未实现。当前 feature ownership 与实现矩阵以 [架构导航](docs/ARCHITECTURE.md) 和 [开发规范](docs/DEVELOPMENT.md) 为准。
+> **开发状态**：项目仍在快速迭代中。World Model、Character/Event、Tracking、StateReducer、Current Biological State、Snapshot Runtime、输入选择、API Profile/Secret、宿主生命周期和响应式 UI 已在当前范围内接通；Pregnancy Exposure Tracking Window 已完成 Phase 1/2，但 `resolved_not_pregnant` 尚未实现；Projection Runtime 已支持受限的 eligibility、AI generation、持久化、evolution 和 Context injection；Genealogy 仍为 PARTIAL。Projection、Timing 和部分 UI 行为仍需真实 SillyTavern Host 验收。当前 feature ownership 与实现矩阵以 [架构导航](docs/ARCHITECTURE.md) 和 [开发规范](docs/DEVELOPMENT.md) 为准。
 
 ## 目录
 
@@ -63,7 +63,8 @@ tracking subject 和 Characters UI entry 是四个不同层级。AI 只能分类
 | Runtime / Storage | ✅ 基础实现 | Chat 切换、楼层版本、作用域校验、宿主生命周期和失败保护。 |
 | Event / Tracking Subject | ✅ Phase 2A + Real Host baseline | 已接通固定 Event、Floor/Swipe 绑定、Tracking Registry、人物/事件/总览真实 DTO，并完成真实 SillyTavern 自动分析、持久化、F5 和 Swipe 验证。 |
 | StateReducer / Current State / Snapshot | ✅ 当前生产链 | StateReducer、Current Biological State 和 Snapshot restore/replay 已由 Runtime 接通；conception、labor、postpartum 仍保留 PARTIAL 语义。 |
-| Projection / Genealogy | 🧩 PARTIAL | Projection 有 pure core、persistence 和 Context injection，但没有主 Runtime 自动生成链；Genealogy 目前是 core 查询基础与空状态 UI。 |
+| Tracking Window | ✅ Phase 1/2 | 从有效 Event 派生 Window；支持 `open`、`resolved_pregnant`、`terminated`、`expired`，`resolved_not_pregnant` 尚未实现。 |
+| Projection / Genealogy | 🧩 PARTIAL | Projection Runtime 已支持当前单身份范围内的 eligibility、AI generation、persistence、evolution 和受限 Context injection；Genealogy 目前是 core 查询基础与空状态 UI，真实 Host 行为仍需验收。 |
 | 多人总览、人物详情、事件 | 🧪 当前范围 UI | Characters UI 消费 Tracking、Character Profiles、active Events、Current State 和 Story Time；Overview 仍为 PARTIAL。 |
 
 ## 核心能力
@@ -172,7 +173,7 @@ npm run check    # index.js 语法检查 + 全部 Node 测试
 5. **预览输入**：先查看 AnalysisInput 的结构和实际 World Model 消息，确认没有不需要的剧情或来源；可编辑的首尾 SYSTEM 会按真实请求位置显示。
 6. **分析世界模型**：进入世界模型，点击重新分析。成功后，结果才会写入当前有效 Character Floor/active Swipe 的 Floor-owned `bioweave` slot。
 7. **按模块维护**：选择一个物种和生物类型，按需编辑生殖能力、生殖规则、生命周期、特殊规则、医疗与照护、例外或未知项；每个模块独立保存或取消。
-8. **管理当前 Chat 数据**：在设置页的“数据管理”中使用“清除人物数据”“清除世界数据”或“清除全部 BioWeave 数据”。每项都会先弹出二次确认；清除只针对当前 Chat，聊天正文、所有 Swipe 正文、其它插件数据以及 API / Secret / 全局配置都会保留。
+8. **管理当前 Chat 数据**：在设置页的“数据管理”中使用“清除人物数据”“清除世界数据”或“清除全部分析数据”。每项都会先弹出二次确认；清除只针对当前 Chat。清除人物数据会删除人物相关 Floor 分析、Event 和 canonical identity；三项操作都保留聊天正文、所有 Swipe 正文、其它插件数据以及 API / Secret / 全局配置。
 
 切换 Chat 后，BioWeave 会重新读取当前 Chat 的数据。World Model 重新分析失败时，原有成功模型不会被清空。
 
@@ -262,9 +263,9 @@ semantic continuation；dynamic coverage 只是 Host-local accounting。
 
 设置页的“数据管理”是 BioWeave 唯一的手动清除入口，且三个操作都只作用于当前 Chat：
 
-- “清除人物数据”删除人物当前状态、tracking、关系和人物派生结果；保留世界模型、有效历史 Event/Floor 分析、正文以及全局/API 配置。
+- “清除人物数据”删除人物相关 Floor 分析、Event、canonical identity、tracking、关系和人物派生结果；保留世界模型、正文以及全局/API 配置。
 - “清除世界数据”删除 World Model 和世界派生结果；保留人物独立数据、有效历史 Event/Floor 分析、正文以及全局/API 配置，并使相关世界引用失效。
-- “清除全部 BioWeave 数据”删除当前 Chat 的 Chat-local、Floor-local、Swipe-local 和 derived BioWeave 数据，包括所有普通消息和所有 Swipe；聊天正文、Swipe 正文、其它插件数据以及全局/API 配置不删除。
+- “清除全部分析数据”删除当前 Chat 的 Chat-local、Floor-local、Swipe-local 和 derived BioWeave 数据，包括所有普通消息和所有 Swipe；聊天正文、Swipe 正文、其它插件数据以及全局/API 配置不删除。
 
 用户主动点击 SillyTavern 原生“开始新聊天”时，旧 Chat 是一次特殊的 destructive lifecycle source：旧 Chat 的上述 BioWeave Chat/Floor/Swipe 数据会被清除，新 Chat 从空 BioWeave 状态开始。切换到已经存在的 Chat 只加载目标 Chat 自己的数据，不会删除来源 Chat。完整的数据所有权、生命周期和失败语义见 [BioWeave Data Lifecycle](docs/bioweave-data-lifecycle.md)。
 
@@ -314,19 +315,20 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
              → State Reducer → Current State → Snapshot → Projection → Context
 ```
 
-其中 Event 表示历史事实，Tracking Subject 是从当前有效 Floor facts 重建的 Runtime 派生索引，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的推演。当前生产链已经接通 Event → Tracking → State → Snapshot replay → UI；Tracking Window 仍未实现，Projection 与 Genealogy 仍处于 PARTIAL。
+其中 Event 表示历史事实，Tracking Subject 是从当前有效 Floor facts 重建的 Runtime 派生索引，State 是计算结果，Snapshot 是检查点，Projection 是明确标注为非事实的未来可能性。当前生产链已经接通 Event → Tracking → State → Snapshot replay → UI；Tracking Window 已完成 Phase 1/2，Projection Runtime 已接通当前单身份范围内的 eligibility、generation、持久化、evolution 和受限 Context injection；Genealogy 仍处于 PARTIAL，真实 Host 行为仍需分别验收。
 
 ### Phase 2A Event / Tracking 契约
 
 - 人物列表只来自当前 Chat 的 active `tracking_subjects` Registry。普通聊天角色、主卡角色、出现过的名字和不满足受孕暴露条件的参与者不会自动进入人物列表；有 exposure 但能力未知的 recipient 保留在后台 `tracking_candidates`。
 - 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际 pregnancy-relevant exposure 时，才允许创建或更新 Subject。`can_carry_pregnancy` 为 `true` 才是 `eligible`；`false` 为 `ineligible`，`null`/无法确认是 `pending`，不能把 pending 当作 eligible，也不能把 `can_be_fertilized` 单独当作承孕资格。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断。
 - BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
-- Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
-- Runtime 的 `story_time` 使用结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。新 Event Snapshot 不再持久化可重新派生的 `day_index`；旧 Snapshot 读取和 day-index-only 历史 Event 仍保留兼容字段。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；无法可靠得到规范值时保留 `null`。
+- 新建 Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；合法继承或 continuation Event 保留原始 Event ID 和原始 `source`。存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
+- Runtime 的 `story_time` 使用统一的结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。新 Event Snapshot 不再持久化可重新派生的 `day_index`；旧 Snapshot 读取和 day-index-only 历史 Event 仍保留兼容字段。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；`display` 不参与时间数学，不兼容或无法确认的 calendar 不强制比较，无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
+- AI 返回的是待验证的 Event 候选，不是直接持久化结果；Runtime 决定新增、合并或跳过。重复分析不必然产生新 Event，同一连续生物学过程可以在有合法新增事实时聚合。跨 Floor 不会仅凭相似描述自动合并；合法 continuation 会保留原 Event 身份和来源。
 - 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 `tracking_subjects` 的原因，UI 不复制资格条件。
-- 本阶段保留其它 BiologicalEvent 类型兼容，但以 pregnancy-relevant exposure 作为 Tracking gate；妊娠概率、Gestational Age 和预计分娩日仍不在当前范围。StateReducer 的 conception、labor、postpartum episode transition 仍为 PARTIAL；Tracking Window 未实现。
+- 本阶段保留其它 BiologicalEvent 类型兼容，但以 pregnancy-relevant exposure 作为 Tracking gate；妊娠概率、Gestational Age 和预计分娩日仍不在当前范围。StateReducer 的 conception、labor、postpartum episode transition 仍为 PARTIAL；Tracking Window 已支持 `open`、`resolved_pregnant`、`terminated`、`expired`，但 `resolved_not_pregnant` 尚未实现，且 Window 不等于已确认妊娠。
 
 ## AI / World Model 工作流
 
@@ -590,7 +592,7 @@ BioWeave 不提供独立用户认证、权限系统或服务端隔离能力；�
 
 - 完成 Phase 2A 的固定 Event JSON 分析、Floor/Swipe 持久化、Tracking Registry 重建以及人物/事件/总览真实 DTO 接线。
 - 在真实 SillyTavern 中验证 Character counter、Floor Version 去重、失败重试/retryPaused、reroll/Swipe 分类、手动刷新成功替换/失败保留和宿主删除/切换语义。
-- 后续继续定义 Current Biological State 的 semantic contract，补齐 Tracking Window，并决定 Projection 主 Runtime generation 与 Genealogy 数据链的独立施工边界。
+- 后续继续完善 Current Biological State 的 semantic contract、Tracking Window 的 negative resolution、Projection/Timing 的真实 Host 验收，以及 Genealogy 数据链的独立施工边界。
 - Characters / Events 已消费真实 Runtime DTO；Overview、Projection 和 Genealogy 仍按各自 PARTIAL 范围推进，不把占位页面误写成完整产品能力。
 - 补充真实 SillyTavern 环境下的 Desktop、Tablet、Mobile 手动验收截图。
 - 在正式发布前补充仓库 License 和明确的发布/更新渠道。
@@ -655,7 +657,7 @@ null 表示资料没有足够证据。BioWeave 有意区分未知和明确否定
 
 ### Projection 是已经发生的事实吗？
 
-不是。Projection 是非事实的后续推演，和 Event 的历史事实边界分开；当前已有 pure eligibility/generation、persistence 和 Context injection，但主 Runtime 尚未自动生成 Projection，完整生命周期仍为 PARTIAL。
+不是。Projection 是非事实的未来可能性，和 Event 的历史事实边界分开；当前已有 Runtime eligibility、AI generation、persistence、evolution 和受限 Context injection，Genealogy 仍为 PARTIAL，真实 SillyTavern Host 行为尚未全部验收。
 
 ### 人物列表为什么不等于当前 Chat 的全部角色？
 

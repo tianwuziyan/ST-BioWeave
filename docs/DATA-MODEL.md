@@ -441,9 +441,20 @@ Runtime 在解析成功后仍按 authoritative Floor Version 与响应序号生�
 并写入 Floor。响应序号保留是为了兼容 deterministic identity 语义，并保证同一
 Floor 的多个 Event 都有稳定且不依赖 display name 的 ID。
 
+AI response DTO 只是待验证的事实候选；canonical persisted Event 由 Runtime 在
+身份解析、规范化、Domain validation 和 Floor authoritative readback 后确定。AI
+不拥有 `event_id` 或 `source`，也不能决定最终是否新增、更新或跳过 Event。
+
+Runtime 的重复处理分为三层：历史 bounded `existing_events` 使用完整且高置信度
+的 semantic key 做 semantic dedupe；同一当前 Floor 的候选可在唯一、结构兼容的
+情况下走 implicit continuity；跨 Floor continuation 必须携带并通过校验的
+`continuation_of_event_id`。同一人物、地点和时间本身不足以证明事件相同。合法
+continuation 会保留原 Event ID、原始 source 和可保留的 Story Time；临时
+`continuation_of_event_id` / `continuation_update` 不进入持久化 Event。
+
 ### Source binding 与 Floor / Swipe
 
-Event 的 `source` 必须由当前分析目标的 authoritative Floor Version 写入，不能信任 AI 返回的跨作用域身份。固定字段为：
+新建 Event 的 `source` 必须由当前分析目标的 authoritative Floor Version 写入，不能信任 AI 返回的跨作用域身份。合法继承或 continuation Event 保留原始 Event ID 和原始 `source`；包含它的当前 Floor 是本次分析/保存边界，不等于该 Event 的原始来源。固定字段为：
 
 ```json
 {
@@ -465,7 +476,7 @@ subject-local consistency validation。
 
 成功的 manual supplement 在同一 Floor Version 内按稳定事实连续性更新已有 Event：
 本轮未再次出现的有效 Event 不因 omission 被删除，匹配事实保留原 canonical Event
-ID 和 participant identity；只有真正新增的 Event 才追加。消息编辑、Floor/Swipe 删除
+ID、source 和 participant identity；只有真正新增的 Event 才追加。消息编辑、Floor/Swipe 删除
 或版本失效仍按现有 authoritative Floor 规则使旧事实退出 active read。
 
 自动分析的 Character Floor counter、Floor Version 去重、reroll/Swipe 分类和 retryPaused 规则见唯一权威文档 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)。本数据模型只保留 Floor/Swipe owner、版本和事实持久化规则；User、编辑、删除和 lifecycle update 不创建新的 Floor 事实。
@@ -486,7 +497,7 @@ Story Time 采用结构化 DTO；以下是 Runtime 结构示例。新 Event Snap
 }
 ```
 
-字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。Story Time 只由 BioWeave 本地 trusted candidate extraction、canonical parser 和 Calendar Engine 计算；不读取外部日期 Store。
+字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。Story Time 只由 BioWeave 本地 trusted candidate extraction、canonical parser 和 Calendar Engine 计算；不读取外部日期 Store。统一比较入口只使用可解释的结构化字段；不同或无法确认的 calendar 保持不可比较，不强制生成顺序或差值。
 
 `display` 不是排序或计算输入。`parseCnDate()`、传统时辰解析和 Calendar Engine 都是 BioWeave 本地能力；解析失败时保留显示值并返回 `null`，不伪造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
 
