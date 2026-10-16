@@ -123,10 +123,10 @@ const FLOOR_FIELDS = Object.freeze({
     kind: 'append_only_projection_timeline_with_delivery_receipts',
     clearOn: Object.freeze(['character', 'all']),
   }),
-  projection_timing_timeline: Object.freeze({
+  projection_timing_snapshot: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'append_only_projection_timing_timeline',
+    kind: 'complete_floor_projection_timing_snapshot',
     clearOn: Object.freeze(['character', 'all']),
   }),
   tracking_window_timeline: Object.freeze({
@@ -135,10 +135,10 @@ const FLOOR_FIELDS = Object.freeze({
     kind: 'append_only_tracking_window_timeline',
     clearOn: Object.freeze(['character', 'all']),
   }),
-  participant_aggregation_timeline: Object.freeze({
+  participant_aggregation_snapshot: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'append_only_participant_aggregation_timeline',
+    kind: 'complete_floor_participant_aggregation_snapshot',
     clearOn: Object.freeze(['character', 'all']),
   }),
   pregnancy_lifecycle_timeline: Object.freeze({
@@ -171,7 +171,7 @@ const FLOOR_FIELDS = Object.freeze({
 // field is preserved until its ownership and clear semantics are explicitly
 // added here; it must never become clearable merely by existing in a Floor.
 export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
-  character: Object.freeze(['analysis', 'events', 'character_registry', 'snapshot', 'projection_timeline', 'projection_timing_timeline', 'tracking_window_timeline', 'participant_aggregation_timeline', 'pregnancy_lifecycle_timeline', 'health_assessment_timeline']),
+  character: Object.freeze(['analysis', 'events', 'character_registry', 'snapshot', 'projection_timeline', 'projection_timing_snapshot', 'tracking_window_timeline', 'participant_aggregation_snapshot', 'pregnancy_lifecycle_timeline', 'health_assessment_timeline']),
   world: Object.freeze(['world_model', 'world_model_meta']),
   all: Object.freeze([
     'analysis',
@@ -179,9 +179,9 @@ export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
     'character_registry',
     'snapshot',
     'projection_timeline',
-    'projection_timing_timeline',
+    'projection_timing_snapshot',
     'tracking_window_timeline',
-    'participant_aggregation_timeline',
+    'participant_aggregation_snapshot',
     'pregnancy_lifecycle_timeline',
     'health_assessment_timeline',
     'world_model',

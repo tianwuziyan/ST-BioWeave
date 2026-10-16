@@ -1,4 +1,4 @@
-import {differenceStoryTime} from '../story/time.js';
+import {differenceStoryTime, normalizeStoryTime} from '../story/time.js';
 import {deterministicDigest} from './projection.js';
 import {normalizeCharacterTimingConfig, validateCharacterTimingConfig} from './character-timing-config.js';
 
@@ -19,10 +19,36 @@ const TIMING_FIELDS = new Set([
 function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 function clone(value) { if (value === undefined || value === null || typeof value !== 'object') return value; if (typeof structuredClone === 'function') return structuredClone(value); if (Array.isArray(value)) return value.map(clone); return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)])); }
 function text(value) { return typeof value === 'string' && value.trim() !== ''; }
+function nonEmptyFloorScalar(value) { return text(value) || (typeof value === 'number' && Number.isFinite(value)); }
 function uniqueTextArray(value) { return Array.isArray(value) && value.every(text) && new Set(value).size === value.length; }
 function finite(value) { return Number.isFinite(Number(value)); }
 function finiteNonNegative(value) { return finite(value) && Number(value) >= 0; }
-function validateFloorVersion(value, path, errors) { if (!isRecord(value) || !text(value.chat_id) || !text(value.message_id) || !finite(value.floor) || !finite(value.swipe_id) || !text(value.content_hash) || !text(String(value.message_version))) errors.push(`${path}:invalid`); }
+function finiteFloorNumber(value) { return nonEmptyFloorScalar(value) && finite(value); }
+function validateFloorVersion(value, path, errors) { if (!isRecord(value) || !text(value.chat_id) || !nonEmptyFloorScalar(value.message_id) || !finiteFloorNumber(value.floor) || !finiteFloorNumber(value.swipe_id) || !text(value.content_hash) || !nonEmptyFloorScalar(value.message_version)) errors.push(`${path}:invalid`); }
+
+/**
+ * Cycle identity must use the same compact Story Time shape everywhere.  In
+ * particular, an omitted day_index and an explicit null both mean that the
+ * source did not provide a day index; neither should change cycle identity.
+ * Story Time comparison itself remains owned by story/time.js.
+ */
+export function normalizeProjectionTimingCycleStoryTime(value = null) {
+  if (value === null || value === undefined) return null;
+  const source = isRecord(value?.story_time) ? value.story_time : value;
+  const normalized = normalizeStoryTime(source, {formatDisplay: true});
+  return {
+    display: normalized.display ?? null,
+    normalized: normalized.normalized ?? null,
+    // day_index is a derived comparison aid. It may be synthesized while an
+    // Event is normalized, so it must not change identity depending on which
+    // read path supplied the same Story Time. Missing and explicit null are
+    // therefore both represented as null here.
+    day_index: null,
+    calendar_id: normalized.calendar_id ?? null,
+    precision: normalized.precision ?? null,
+    confidence: normalized.confidence ?? null,
+  };
+}
 
 export function validateProjectionTimingInstance(value) {
   const errors = [];
@@ -85,7 +111,14 @@ export function isPregnancyRelevantBasis(event, subjectId, mechanismKey = null) 
 
 export function buildProjectionTimingCycleId({chatId, subjectId, mechanismKey, firstEvent} = {}) {
   if (!text(chatId) || !text(subjectId) || !text(mechanismKey) || !text(firstEvent?.event_id)) return null;
-  return `projection_timing_cycle_${deterministicDigest({schema_version: PROJECTION_TIMING_SCHEMA_VERSION, chat_id: chatId, subject_id: subjectId, mechanism_key: mechanismKey, first_event_id: firstEvent.event_id, first_event_story_time: firstEvent.story_time ?? null})}`;
+  return `projection_timing_cycle_${deterministicDigest({
+    schema_version: PROJECTION_TIMING_SCHEMA_VERSION,
+    chat_id: chatId,
+    subject_id: subjectId,
+    mechanism_key: mechanismKey,
+    first_event_id: firstEvent.event_id,
+    first_event_story_time: normalizeProjectionTimingCycleStoryTime(firstEvent.story_time ?? null),
+  })}`;
 }
 
 export function buildProjectionTimingInstanceId({cycleId} = {}) {
@@ -112,7 +145,7 @@ export function resolveProjectionTimingInstance({chatId, subjectId, mechanismKey
     mechanism_key: mechanismKey,
     cycle_id: cycleId,
     source_event_ids: [firstEvent.event_id],
-    source_basis_refs: {[firstEvent.event_id]: {event_id: firstEvent.event_id, story_time: clone(firstEvent.story_time ?? null), event_version: firstEvent.version ?? firstEvent.event_version ?? null}},
+    source_basis_refs: {[firstEvent.event_id]: {event_id: firstEvent.event_id, story_time: clone(firstEvent.story_time ?? null), event_version: clone(firstEvent.source ?? firstEvent.version ?? firstEvent.event_version ?? null)}},
     reference_story_time: clone(firstEvent.story_time ?? null),
     config_snapshot: normalizedConfig,
     base_min_story_days: normalizedConfig.base_min_story_days,
@@ -128,6 +161,67 @@ export function resolveProjectionTimingInstance({chatId, subjectId, mechanismKey
     world_rule_binding: worldRuleBinding,
     created_at_floor_version: floorVersion,
     created_at: now(),
+  });
+}
+
+/**
+ * Apply an explicit user edit to an already frozen Timing Instance.
+ *
+ * This is deliberately not a resolver: it keeps the cycle identity and
+ * provenance untouched. The creation-time sampled offset is always frozen;
+ * variance settings only change its validity and deterministic total cap.
+ */
+export function editProjectionTimingInstance(instance, {
+  baseMinStoryDays,
+  baseMaxStoryDays,
+  varianceRatio,
+  varianceCapStoryDays,
+  totalAdjustmentCapStoryDays,
+} = {}) {
+  const current = normalizeProjectionTimingInstance(instance);
+  const nextMin = Number(baseMinStoryDays);
+  const nextMax = Number(baseMaxStoryDays);
+  const nextVarianceRatio = Number(varianceRatio ?? current.variance_ratio);
+  const nextVarianceCap = Number(varianceCapStoryDays ?? current.variance_cap_story_days);
+  const nextTotalCap = Number(totalAdjustmentCapStoryDays ?? current.total_adjustment_cap_story_days);
+  const nextSampledOffset = Number(current.sampled_individual_offset_story_days);
+  if (!finiteNonNegative(nextMin)) throw new TypeError('projection_timing.base_min_story_days:invalid');
+  if (!finiteNonNegative(nextMax)) throw new TypeError('projection_timing.base_max_story_days:invalid');
+  if (nextMax < nextMin) throw new TypeError('projection_timing.base_max_story_days:before_min');
+  if (!finiteNonNegative(nextVarianceRatio)) throw new TypeError('projection_timing.variance_ratio:invalid');
+  if (!finiteNonNegative(nextVarianceCap)) throw new TypeError('projection_timing.variance_cap_story_days:invalid');
+  if (!finiteNonNegative(nextTotalCap)) throw new TypeError('projection_timing.total_adjustment_cap_story_days:invalid');
+  if (!finite(nextSampledOffset)) throw new TypeError('projection_timing.sampled_individual_offset_story_days:invalid');
+
+  const configSnapshot = normalizeCharacterTimingConfig({
+    ...current.config_snapshot,
+    base_min_story_days: nextMin,
+    base_max_story_days: nextMax,
+    variance_ratio: nextVarianceRatio,
+    variance_cap_story_days: nextVarianceCap,
+    total_adjustment_cap_story_days: nextTotalCap,
+  });
+  const referenceDays = (nextMin + nextMax) / 2;
+  const allowedOffset = Math.min(referenceDays * nextVarianceRatio, nextVarianceCap);
+  if (Math.abs(nextSampledOffset) > allowedOffset) {
+    throw new TypeError('projection_timing.sampled_offset:outside_allowed_range');
+  }
+  const uncappedTotal = nextSampledOffset + Number(current.state_modifier_story_days);
+  const totalAdjustment = Math.max(-nextTotalCap, Math.min(nextTotalCap, uncappedTotal));
+  const effectiveMin = Math.max(0, nextMin + totalAdjustment);
+  const effectiveMax = Math.max(effectiveMin, nextMax + totalAdjustment);
+  return normalizeProjectionTimingInstance({
+    ...current,
+    config_snapshot: configSnapshot,
+    base_min_story_days: nextMin,
+    base_max_story_days: nextMax,
+    variance_ratio: nextVarianceRatio,
+    variance_cap_story_days: nextVarianceCap,
+    sampled_individual_offset_story_days: nextSampledOffset,
+    total_adjustment_cap_story_days: nextTotalCap,
+    total_adjustment_story_days: totalAdjustment,
+    effective_min_story_days: effectiveMin,
+    effective_max_story_days: effectiveMax,
   });
 }
 

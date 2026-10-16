@@ -10,6 +10,7 @@ import {createWorldAnalysis} from "./world-analysis.js";
 // mutable execution state remain owned by event-analysis.js; this module only
 // creates feature instances and wires narrow capabilities into them.
 export function createRuntime({
+  diagnostics: providedDiagnostics = null,
   diagnosticsOptions = {},
   tracking,
   generation,
@@ -17,7 +18,7 @@ export function createRuntime({
   characterEvent,
   eventEditing,
 } = {}) {
-  const diagnostics = createRuntimeDiagnostics(diagnosticsOptions);
+  const diagnostics = providedDiagnostics ?? createRuntimeDiagnostics(diagnosticsOptions);
   const trackingWindowRuntime = tracking?.trackingWindowRuntime ?? createTrackingWindowRuntime({
     getChatId: tracking?.getChatId ?? (() => null),
   });

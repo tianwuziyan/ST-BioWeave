@@ -265,13 +265,12 @@ function messageId(message, index, storedVersion = null) {
   }
   return index;
 }
-function messageVersion(message, storedVersion = null) {
+function messageVersion(message) {
   return (
     scalar(
       message?.message_version ??
         message?.messageVersion ??
-        message?.version ??
-        storedVersion?.message_version,
+        message?.version,
     ) ?? undefined
   );
 }
@@ -543,6 +542,7 @@ export function createEventAnalysisCoordinator({
   externalMemoryProviderLoader = null,
   globalRecentStoryResolver = () => ({}),
   analysisSourceCache = null,
+  runtimeDiagnostics = null,
   enabledResolver = () => true,
   notify = () => {},
   floorPersistence = null,
@@ -791,6 +791,7 @@ export function createEventAnalysisCoordinator({
       generation_type: execution?.generation_type ?? null,
       generation_settled: execution?.generation_settled ?? null,
       analysis_execution_id: execution?.analysis_execution_id ?? null,
+      run_id: execution?.pipeline_run_id ?? null,
       scheduler_revision: execution?.scheduler_revision ?? schedulerState.schedulerRevision,
       source_text_length: execution?.source_text_length ?? null,
       execution_active: execution ? !execution.released && !execution.cancelRequested : null,
@@ -1706,7 +1707,11 @@ export function createEventAnalysisCoordinator({
         floor: messageFloor(message, index, storedVersion),
         swipeId,
         text: messageText(message, swipeId),
-        messageVersion: messageVersion(message, storedVersion),
+        // A stored Floor Version is historical state, not a revision source
+        // for the current message. Only an explicit host revision may bind
+        // message_version; otherwise floorVersion derives the v1 hash from
+        // the current active-Swipe content.
+        messageVersion: messageVersion(message),
       });
     } catch (error) {
       throw withAnalysisStage(error, "floor_version");
@@ -1892,7 +1897,9 @@ export function createEventAnalysisCoordinator({
           floor: messageFloor(all[index], index, storedVersion),
           swipeId,
           text: messageText(all[index], swipeId),
-          messageVersion: messageVersion(all[index], storedVersion),
+          // Do not revive a historical stored revision after an edit. An
+          // explicit host message_version remains authoritative.
+          messageVersion: messageVersion(all[index]),
         });
         floorVersionWallMs += durationMs(floorVersionStartedAt) ?? 0;
       } catch (error) {
@@ -2389,6 +2396,7 @@ export function createEventAnalysisCoordinator({
     return {derived: await entry.promise, joined: false};
   }
   const featureComposition = createRuntimeComposition({
+    diagnostics: runtimeDiagnostics,
     generation: {
       getChatId: () => chat.current(),
       baselineVersionForPayload: payload => lifecycleVersionForPayload(payload),
@@ -2579,6 +2587,27 @@ export function createEventAnalysisCoordinator({
     },
   });
   diagnostics = featureComposition.diagnostics;
+  function recordPipelineDiagnostic(payload = {}) {
+    try {
+      diagnostics?.recordNsfwPipelineStage?.(payload);
+    } catch {
+      // Diagnostics are fail-open and must never change analysis scheduling.
+    }
+  }
+  function startPipelineDiagnostic(payload = {}) {
+    try {
+      return diagnostics?.startNsfwPipelineRun?.(payload) ?? null;
+    } catch {
+      return null;
+    }
+  }
+  function finishPipelineDiagnostic(payload = {}) {
+    try {
+      diagnostics?.finishNsfwPipelineRun?.(payload);
+    } catch {
+      // Diagnostics are fail-open and must never change analysis completion.
+    }
+  }
   generationLifecycle = featureComposition.generationLifecycle;
   const trackingRuntime = featureComposition.trackingRuntime;
   trackingRefresh = featureComposition.trackingRuntime.refreshTrackingRegistry;
@@ -3336,6 +3365,7 @@ export function createEventAnalysisCoordinator({
       started_at: execution.started_at,
       finished_at: execution.finished_at,
       floor_version: execution.version,
+      run_id: execution.pipeline_run_id ?? null,
       diagnostic,
     };
     execution.terminal = terminal;
@@ -3349,6 +3379,7 @@ export function createEventAnalysisCoordinator({
         started_at: execution.started_at,
         finished_at: execution.finished_at,
         floor_version: execution.version,
+        run_id: execution.pipeline_run_id ?? null,
         reason: execution.reason,
         world_resolution: execution.world_resolution,
         ...(diagnostic ?? {}),
@@ -3367,7 +3398,7 @@ export function createEventAnalysisCoordinator({
         chatId: execution.version.chat_id,
       });
       if (typeof projectionPostProcessor === "function") {
-        void projectionPostProcessor({target: execution.target, execution}).catch((error) => {
+        void projectionPostProcessor({target: execution.target, execution, run_id: execution.pipeline_run_id ?? null}).catch((error) => {
           notify({
             type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
             payload: {
@@ -3375,6 +3406,7 @@ export function createEventAnalysisCoordinator({
               phase: "post_processing",
               error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
               floor_version: execution.version,
+              run_id: execution.pipeline_run_id ?? null,
             },
             chatId: execution.version.chat_id,
           });
@@ -4014,13 +4046,32 @@ export function createEventAnalysisCoordinator({
   }
   async function analyzeFloor(
     selector = null,
-    { force = false, reason = "automatic", generation = null, analysisExecutionId = null, intent = null } = {},
+    { force = false, reason = "automatic", generation = null, analysisExecutionId = null, pipelineRunId = null, intent = null } = {},
   ) {
     if (!isEnabled())
       return { skipped: true, status: "disabled", reason: "disabled" };
     const target = await resolveFloor(selector);
     const requestKey = floorExecutionKey(target.version);
-    if (inFlight.has(requestKey)) return inFlight.get(requestKey).promise;
+    if (inFlight.has(requestKey)) {
+      recordPipelineDiagnostic({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "ANALYSIS_ALREADY_IN_FLIGHT",
+        invoked: true,
+        run_id: pipelineRunId,
+        chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+        floor_version: target?.version ?? null,
+        input_count: 1,
+        output_count: 0,
+        source_type: "EXECUTION_TRACE",
+      });
+      finishPipelineDiagnostic({
+        run_id: pipelineRunId,
+        execution_status: "SKIPPED",
+        reason_code: "ANALYSIS_ALREADY_IN_FLIGHT",
+      });
+      return inFlight.get(requestKey).promise;
+    }
     const savedAnalysis = target.floorData?.analysis ?? null;
     const dependencyInvalidated = invalidatedFloors.has(requestKey);
     if (
@@ -4057,6 +4108,7 @@ export function createEventAnalysisCoordinator({
       generation_type: generation?.generation_type ?? null,
       generation_settled: generation ? generation.settled === true : null,
       analysis_execution_id: analysisExecutionId ?? analysisExecutionIdFor(generation),
+      pipeline_run_id: pipelineRunId,
       scheduler_revision: schedulerState.schedulerRevision,
       source_text_length: messageText(target.message, target.swipeId).length,
       generation: generation ?? null,
@@ -4072,6 +4124,7 @@ export function createEventAnalysisCoordinator({
         attempt,
         started_at: execution.started_at,
         floor_version: target.version,
+        run_id: execution.pipeline_run_id ?? null,
         ...(reason === "manual-refresh" || intent === "manual-character"
           ? { phase: "event_analysis" }
           : {}),
@@ -4080,7 +4133,7 @@ export function createEventAnalysisCoordinator({
     });
     return execution.promise;
   }
-  async function runScheduledAnalysis(target, { reason, generation = null, analysisExecutionId = null }) {
+  async function runScheduledAnalysis(target, { reason, generation = null, analysisExecutionId = null, pipelineRunId = null }) {
     const settings = schedulerSettings();
     const resolvedAnalysisExecutionId = analysisExecutionId ?? analysisExecutionIdFor(generation);
     const schedulerRun = {
@@ -4098,21 +4151,47 @@ export function createEventAnalysisCoordinator({
           reason,
           generation,
           analysisExecutionId: resolvedAnalysisExecutionId,
+          pipelineRunId,
           trigger: "automatic",
         },
       );
       if (!(await schedulerRunIsCurrent(schedulerRun, target))) {
+        finishPipelineDiagnostic({run_id: pipelineRunId,
+          execution_status: "BLOCKED",
+          reason_code: "FLOOR_VERSION_CHANGED",
+        });
         recordStaleSchedulerCompletion(target, schedulerRun, "success");
         return {skipped: true, reason: "stale-scheduler-completion"};
       }
       if (result?.status === "success") recordSchedulerSuccess();
+      if (result?.skipped) {
+        finishPipelineDiagnostic({run_id: pipelineRunId,
+          execution_status: "SKIPPED",
+          reason_code: result?.reason ?? "ANALYSIS_ALREADY_CURRENT",
+        });
+      } else if (result?.status !== "success") {
+        finishPipelineDiagnostic({run_id: pipelineRunId,
+          execution_status: result?.status === "disabled" ? "SKIPPED" : "FAILED",
+          reason_code: result?.reason ?? result?.status ?? "ANALYSIS_NOT_SUCCEEDED",
+        });
+      }
       return result;
     } catch (error) {
       if (!(await schedulerRunIsCurrent(schedulerRun, target))) {
+        finishPipelineDiagnostic({run_id: pipelineRunId,
+          execution_status: "BLOCKED",
+          reason_code: "FLOOR_VERSION_CHANGED",
+          error_code: error?.code ?? error?.message ?? "STALE_SCHEDULER_COMPLETION",
+        });
         recordStaleSchedulerCompletion(target, schedulerRun, "failure", error);
         return {skipped: true, reason: "stale-scheduler-completion"};
       }
       recordSchedulerFailure(error, settings.retryFailed);
+      finishPipelineDiagnostic({run_id: pipelineRunId,
+        execution_status: "FAILED",
+        reason_code: "EVENT_ANALYSIS_FAILED",
+        error_code: error?.code ?? error?.message ?? "EVENT_ANALYSIS_FAILED",
+      });
       throw error;
     }
   }
@@ -4226,6 +4305,17 @@ export function createEventAnalysisCoordinator({
       analysisExecutionId: resolvedAnalysisExecutionId,
     });
     if (alreadyObserved) {
+      recordPipelineDiagnostic({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "FLOOR_ALREADY_OBSERVED",
+        invoked: true,
+        floor_version: target?.version ?? null,
+        chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+        input_count: 1,
+        output_count: 0,
+        source_type: "EXECUTION_TRACE",
+      });
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
         force: false,
@@ -4243,6 +4333,17 @@ export function createEventAnalysisCoordinator({
     }
     rememberSchedulerKey(schedulerState.observedFloorKeys, key);
     if (schedulerState.retryPaused) {
+      recordPipelineDiagnostic({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "RETRY_PAUSED",
+        invoked: true,
+        floor_version: target?.version ?? null,
+        chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+        input_count: 1,
+        output_count: 0,
+        source_type: "EXECUTION_TRACE",
+      });
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
         force: false,
@@ -4261,6 +4362,17 @@ export function createEventAnalysisCoordinator({
     schedulerState.counter = Math.min(interval, schedulerState.counter + 1);
     rememberSchedulerKey(schedulerState.countedFloorKeys, key);
     if (schedulerState.counter < interval) {
+      recordPipelineDiagnostic({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "CHARACTER_INTERVAL",
+        invoked: true,
+        floor_version: target?.version ?? null,
+        chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+        input_count: 1,
+        output_count: schedulerState.counter,
+        source_type: "EXECUTION_TRACE",
+      });
       emitPersistenceTrace("AUTO_SCHEDULER_DECISION", null, target, {
         floor_version_key: key,
         force: false,
@@ -4298,7 +4410,26 @@ export function createEventAnalysisCoordinator({
       sourceKind: "scheduler_target",
       analysisExecutionId: resolvedAnalysisExecutionId,
     });
-    return runScheduledAnalysis(target, { reason, generation, analysisExecutionId: resolvedAnalysisExecutionId });
+    const pipelineRunId = startPipelineDiagnostic({
+      kind: "automatic",
+      trigger: reason,
+      reason,
+      chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+      floor_version: target?.version ?? null,
+    }) ?? null;
+    recordPipelineDiagnostic({
+      stage: "PIPELINE_SCHEDULING",
+      execution_status: "ATTEMPTED",
+      reason_code: "INTERVAL_DUE",
+      invoked: true,
+      run_id: pipelineRunId,
+      floor_version: target?.version ?? null,
+      chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
+      input_count: 1,
+      output_count: 1,
+      source_type: "EXECUTION_TRACE",
+    });
+    return runScheduledAnalysis(target, { reason, generation, analysisExecutionId: resolvedAnalysisExecutionId, pipelineRunId });
   }
   function handoffSettledCharacterFloor(
     target,
@@ -4360,8 +4491,18 @@ export function createEventAnalysisCoordinator({
   }
   async function handleLifecycleEvent(event) {
     const work = async () => {
-      if (!isEnabled())
+      if (!isEnabled()) {
+        recordPipelineDiagnostic({
+          stage: "PIPELINE_SCHEDULING",
+          execution_status: "SKIPPED",
+          reason_code: "PLUGIN_DISABLED",
+          invoked: true,
+          input_count: 1,
+          output_count: 0,
+          source_type: "EXECUTION_TRACE",
+        });
         return { skipped: true, status: "disabled", reason: event?.type };
+      }
       const type = event?.type;
       if (type === "CHAT_CHANGED") {
         await primeLifecycleSnapshot();

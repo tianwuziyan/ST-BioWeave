@@ -9,9 +9,9 @@ import {durationMs, monotonicNow} from "../runtime/diagnostics.js";
 export const FLOOR_OWNER_FIELDS = Object.freeze({
   world: Object.freeze(["world_model", "world_model_meta"]),
   event: Object.freeze(["analysis", "events", "character_registry"]),
-  projection: Object.freeze(["snapshot", "projection_timeline", "projection_timing_timeline"]),
+  projection: Object.freeze(["snapshot", "projection_timeline", "projection_timing_snapshot"]),
   tracking: Object.freeze(["tracking_window_timeline"]),
-  participant_aggregation: Object.freeze(["participant_aggregation_timeline"]),
+  participant_aggregation: Object.freeze(["participant_aggregation_snapshot"]),
   lifecycle: Object.freeze(["pregnancy_lifecycle_timeline", "events"]),
   health: Object.freeze(["health_assessment_timeline"]),
   // Terminal attempts persist only the analysis status record. Existing
@@ -44,8 +44,7 @@ function hasOwn(value, key) {
 function ownerSelector(input = {}) {
   const owner = input.ownerFloor ?? input.owner ?? {};
   return owner.message_index ?? owner.messageIndex ?? owner.index ??
-    input.messageIndex ?? input.message_index ?? input.selector ??
-    owner.message_id ?? owner.messageId ?? input.message_id;
+    input.messageIndex ?? input.message_index ?? input.selector;
 }
 
 function ownerSwipe(input = {}, version = {}) {
@@ -57,6 +56,17 @@ function ownerSwipe(input = {}, version = {}) {
 function safeVersion(version) {
   if (!version || typeof version !== "object") return null;
   return Object.fromEntries(VERSION_FIELDS.map(field => [field, version[field] ?? null]));
+}
+
+function versionAudit(expected, actual) {
+  const expectedValue = safeVersion(expected);
+  const actualValue = safeVersion(actual);
+  const mismatchFields = VERSION_FIELDS.filter(field => expectedValue?.[field] !== actualValue?.[field]);
+  return {
+    expected: expectedValue,
+    actual: actualValue,
+    mismatch_fields: mismatchFields,
+  };
 }
 
 function transactionKey(version) {
@@ -180,7 +190,7 @@ export function createFloorPersistenceCoordinator({
         event_edit_operation_id: traceContext.event_edit_operation_id ?? null,
         scheduler_revision: traceContext.scheduler_revision ?? null,
         source_text_length: traceContext.source_text_length ?? null,
-        message_index: traceContext.message_index ?? null,
+        message_index: traceContext.message_index ?? transaction.ownerFloor?.message_index ?? null,
         ...(traceContext.event_edit_operation_id
           ? {duration_ms: durationMs(transaction.started_at)}
           : {}),
@@ -298,9 +308,14 @@ export function createFloorPersistenceCoordinator({
     currentVersion ??= live.version;
     if (currentVersion && hasCompleteFloorVersion(currentVersion) &&
         !sameFloorVersion(currentVersion, expected)) {
+      const audit = versionAudit(expected, currentVersion);
       throw coordinatorError("FLOOR_TX_STALE_VERSION", {
         expected_floor_version: safeVersion(expected),
         actual_floor_version: safeVersion(currentVersion),
+        version_audit: audit,
+        validation_layer: "floor_persistence_coordinator.dispatch",
+        validation_source: "current_floor_resolver",
+        version_classification: "TRUE_CONTEXT_VERSION_CHANGE",
       });
     }
     emit("FLOOR_TX_AUTHORITATIVE_SOURCE_READ", transaction, {
@@ -330,6 +345,44 @@ export function createFloorPersistenceCoordinator({
     const resolvedPatch = typeof input.patchResolver === "function"
       ? await input.patchResolver({latest: clone(latest), expected: clone(expected), transaction})
       : transaction.patch;
+    if (resolvedPatch?.__floor_tx_noop === true) {
+      if (typeof input.assertCurrent === "function" && (await input.assertCurrent()) === false)
+        throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
+      if (!executionCurrent(input, isExecutionCurrent))
+        throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
+      const readback = typeof store.readAuthoritativeFloor === "function"
+        ? await store.readAuthoritativeFloor(selector, swipeId, expected)
+        : store.getFloor(selector, swipeId) ?? null;
+      if (!readback || !sameFloorVersion(floorVersionFromData(readback), expected))
+        throw coordinatorError("FLOOR_TX_READBACK_FAILED", {
+          expected_floor_version: safeVersion(expected),
+          actual_floor_version: safeVersion(floorVersionFromData(readback)),
+          failure_stage: "no_op_readback",
+          owner_message_index: selector,
+          owner_message_id: expected.message_id,
+          owner_swipe_id: swipeId,
+        });
+      emit("FLOOR_TX_READBACK", transaction, {
+        after_presence: presence(readback),
+        actual_floor_version: safeVersion(floorVersionFromData(readback)),
+      });
+      emit("FLOOR_TX_NOOP", transaction, {
+        commit_state: "confirmed",
+        after_presence: presence(readback),
+      });
+      return {
+        ok: true,
+        status: "noop",
+        commitState: "confirmed",
+        floor_transaction_id: transaction.floor_transaction_id,
+        transaction_key: transaction.transaction_key,
+        owner: transaction.owner,
+        floor_version: clone(expected),
+        floor: clone(readback),
+        authoritativeReadback: true,
+        noWrite: true,
+      };
+    }
     const patch = preparePersistedPatch(
       transaction.owner,
       assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type),
@@ -378,13 +431,24 @@ export function createFloorPersistenceCoordinator({
       after_presence: readbackPresence,
       floor_version_match: versionMatches,
     });
-    if (!readback || missingOwnerFields.length || missingSiblings.length || !versionMatches)
+    if (!readback || missingOwnerFields.length || missingSiblings.length || !versionMatches) {
+      const actualVersion = floorVersionFromData(readback);
       throw coordinatorError("FLOOR_TX_READBACK_FAILED", {
         expected_floor_version: safeVersion(expected),
-        actual_floor_version: safeVersion(floorVersionFromData(readback)),
+        actual_floor_version: safeVersion(actualVersion),
+        ...(versionMatches ? {} : {
+          version_audit: versionAudit(expected, actualVersion),
+          validation_layer: "floor_persistence_coordinator.readback",
+          validation_source: "authoritative_readback",
+          version_classification: "READBACK_VERSION_MISMATCH",
+        }),
         missing_owner_fields: missingOwnerFields,
         missing_siblings: missingSiblings,
+        owner_message_index: selector,
+        owner_message_id: expected.message_id,
+        owner_swipe_id: swipeId,
       });
+    }
     emit("FLOOR_TX_CONFIRMED", transaction, {commit_state: "confirmed", after_presence: readbackPresence});
     return {
       ok: true,
@@ -425,6 +489,7 @@ export function createFloorPersistenceCoordinator({
       patch,
       patch_resolver: typeof input.patchResolver === "function",
       floorVersion: clone(floorVersion),
+      ownerFloor: clone(input.ownerFloor ?? input.owner ?? {}),
       operation_type: operationType,
       execution_attempt: input.execution_attempt ?? input.execution?.attempt ?? null,
       stage_attempt: input.stage_attempt ?? input.execution?.stage_attempt ?? null,

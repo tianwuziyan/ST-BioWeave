@@ -51,7 +51,7 @@ test('debug timing save facade delegates to official Chat-local persistence and 
   assert.deepEqual(fixture.saveCalls, ['chat-a']);
   assert.deepEqual(fixture.chats['chat-a'].settings.character_timing_configs['char_000001'], configInput);
   assert.equal(fixture.chats['chat-a'].events, undefined);
-  assert.equal(fixture.chats['chat-a'].projection_timing_timeline, undefined);
+  assert.equal(fixture.chats['chat-a'].projection_timing_snapshot, undefined);
 });
 
 test('debug timing facade preserves formal validation and fails closed for unknown IDs', async () => {

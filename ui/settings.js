@@ -1183,6 +1183,92 @@ function renderBusinessDebugRows(rows = []) {
   return '<dl class="bioweave-data-list">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>';
 }
 
+function renderNsfwPipelineDiagnostics(debug = {}) {
+  const pipeline = debug?.nsfw_pipeline_diagnostics ?? {};
+  const current = pipeline.current_state ?? {};
+  const derived = pipeline.derived_diagnostic ?? {};
+  const trace = pipeline.execution_trace ?? {};
+  const timingDiagnostics = Array.isArray(pipeline.timing_diagnostics)
+    ? pipeline.timing_diagnostics
+    : Array.isArray(debug?.timing_diagnostics) ? debug.timing_diagnostics : [];
+  const aggregationDiagnostics = Array.isArray(pipeline.aggregation_diagnostics)
+    ? pipeline.aggregation_diagnostics
+    : Array.isArray(debug?.aggregation_diagnostics) ? debug.aggregation_diagnostics : [];
+  const traceStages = Array.isArray(trace.stages) ? trace.stages : [];
+  const stageCards = traceStages.slice(-16).map(stage => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(stage.stage ?? 'UNKNOWN') + '</h5>' + renderBusinessDebugRows([
+    ['execution_status', stage.execution_status], ['reason_code', stage.reason_code], ['invoked', stage.invoked],
+    ['run_id', stage.run_id], ['Chat', stage.chat_id], ['Floor / Swipe', [stage.floor, stage.active_swipe_id]],
+    ['subject_id', stage.subject_id], ['mechanism_key', stage.mechanism_key], ['Tracking Window', stage.tracking_window_id],
+    ['Tracking Window Cycle', stage.tracking_window_cycle_id], ['final cycle_id', stage.final_cycle_id ?? stage.cycle_id], ['cycle_id 来源', stage.cycle_id_source], ['Cycle 一致性', [stage.cycle_id_consistent, stage.cycle_id_consistency_reason_code]],
+    ['first Exposure', stage.first_exposure_event_id], ['候选 Exposure', stage.candidate_exposure_event_ids], ['accepted Exposure', stage.accepted_exposure_event_ids],
+    ['input_count', stage.input_count], ['output_count', stage.output_count], ['配置 base min/max', [stage.base_min_story_days, stage.base_max_story_days]],
+    ['variance_ratio', stage.variance_ratio], ['variance_cap_story_days', stage.variance_cap_story_days],
+    ['sampled_individual_offset_story_days', stage.sampled_individual_offset_story_days], ['偏移来源 / 状态', [stage.sampled_offset_source, stage.frozen_offset_status]], ['RNG 来源', stage.rng_source],
+    ['state_modifier_story_days', stage.state_modifier_story_days], ['total_adjustment_story_days', stage.total_adjustment_story_days],
+    ['total_adjustment_cap_story_days', stage.total_adjustment_cap_story_days], ['effective min/max', [stage.effective_min_story_days, stage.effective_max_story_days]],
+    ['world_rule_binding', stage.world_rule_binding], ['aggregation trigger', stage.aggregation_trigger_status], ['aggregation overdue', stage.aggregation_overdue],
+    ['readback attempted/succeeded/present', [stage.readback_attempted, stage.readback_succeeded, stage.readback_result_present]],
+    ['readback reason', stage.readback_reason_code], ['Projection Rules', [stage.projection_rules_available, stage.projection_rules_count]],
+    ['Projection Eligibility / AI', [stage.projection_eligibility, stage.projection_ai_request_started]], ['人工修改 Timing', stage.manual_timing_edit], ['Aggregation 重新评估', stage.aggregation_reevaluation], ['error_code', stage.error_code],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前 Floor 没有可用的 NSFW 执行阶段记录。</p>';
+  const aggregationByKey = new Map(aggregationDiagnostics.map(item => [
+    [item.subject_id, item.mechanism_key, item.cycle_id, item.tracking_window_id].map(value => String(value ?? '')).join('\u001f'),
+    item,
+  ]));
+  const personCards = timingDiagnostics.map(item => {
+    const key = [item.subject_id, item.mechanism_key, item.cycle_id, item.tracking_window_id].map(value => String(value ?? '')).join('\u001f');
+    const aggregation = aggregationByKey.get(key) ?? null;
+    return '<details class="bioweave-business-debug-window"><summary>' + escapeHtml([item.subject_id, item.mechanism_key, item.cycle_id].filter(Boolean).join(' · ') || '未知 Tracking Subject') + '</summary>' + renderBusinessDebugRows([
+      ['Tracking Window', item.tracking_window_id], ['Tracking Window Cycle', item.tracking_window_cycle_id], ['Tracking 状态', item.tracking_window_status], ['cycle_id 来源', item.cycle_id_source], ['Cycle 一致性', [item.cycle_id_consistent, item.cycle_id_consistency_reason_code]],
+      ['first Exposure Event', item.first_exposure_event_id], ['候选 Exposure IDs', item.candidate_exposure_event_ids], ['source_event_ids', item.source_event_ids],
+      ['accepted_exposure_event_ids', item.accepted_exposure_event_ids], ['排除候选原因', item.excluded_candidate_reasons], ['首次 Exposure Story Time', item.first_exposure_story_time],
+      ['当前 Story Time', item.current_story_time], ['elapsed_story_days', item.elapsed_story_days], ['Story Time 原因', item.story_time_reason_code],
+      ['Timing config available', item.timing_config_available], ['Timing config source', item.timing_config_source],
+      ['人物默认配置', item.character_timing_config],
+      ['Timing Instance', item.timing_instance_id], ['Timing Instance 解析', item.timing_instance_resolution], ['Timing Instance 存在', item.timing_instance_exists],
+      ['Timing readback attempted/succeeded/present', [item.timing_instance_readback_attempted, item.timing_instance_readback_succeeded, item.timing_instance_readback_result_present]],
+      ['Timing readback reason', item.timing_instance_readback_reason_code], ['配置 base min/max', [item.base_min_story_days, item.base_max_story_days]],
+      ['variance_ratio', item.variance_ratio], ['variance_cap_story_days', item.variance_cap_story_days],
+      ['sampled_individual_offset_story_days', item.sampled_individual_offset_story_days],
+      ['state_modifier_story_days', item.state_modifier_story_days], ['total_adjustment_story_days', item.total_adjustment_story_days],
+      ['total_adjustment_cap_story_days', item.total_adjustment_cap_story_days], ['world_rule_binding', item.world_rule_binding],
+      ['effective_min_story_days', item.effective_min_story_days], ['effective_max_story_days', item.effective_max_story_days],
+      ['当前 Timing 快照', item.active_timing_instance], ['人工修改 Timing', item.manual_timing_edit],
+      ['Timing 状态', item.timing_status], ['Timing 原因', item.timing_reason_code], ['Timing 证据来源', item.timing_evidence_source],
+      ['aggregation_due', item.aggregation_due], ['aggregation_trigger_status', aggregation?.aggregation_trigger_status], ['overdue', aggregation?.aggregation_overdue],
+      ['aggregation_attempted', item.aggregation_attempted], ['aggregation block reason', item.aggregation_block_reason],
+      ['Aggregation 状态', aggregation?.aggregation_status], ['Aggregation 原因', aggregation?.aggregation_reason_code],
+      ['Aggregation 重新评估', aggregation?.aggregation_reevaluation],
+      ['Aggregation invoked', aggregation?.aggregation_invoked], ['Aggregation attempts', aggregation?.aggregation_attempt_count],
+      ['Aggregation ID', aggregation?.aggregation_id], ['Aggregation persistence', aggregation?.persistence_succeeded],
+      ['Aggregation readback attempted/succeeded/present', [aggregation?.readback_attempted, aggregation?.readback_succeeded, aggregation?.readback_result_present]],
+      ['Aggregation readback reason', aggregation?.readback_reason_code],
+    ]) + '</details>';
+  }).join('') || '<p class="bioweave-muted">当前没有可展开的人物级 Timing 诊断。</p>';
+  return [
+    '<section class="bioweave-business-debug-lifecycle" data-bioweave-nsfw-pipeline-diagnostics><h5>NSFW Pipeline Diagnostics</h5>',
+    '<p class="bioweave-muted">CURRENT_STATE、EXECUTION_TRACE、DERIVED_DIAGNOSTIC 分开显示；缺少历史记录时不推断为未调用。</p>',
+    '<h6>当前执行状态</h6>' + renderBusinessDebugRows([
+      ['执行状态', derived.current_execution_status], ['当前阻断阶段', derived.current_blocking_stage], ['当前阻断原因', derived.current_blocking_reason_code],
+      ['诊断置信度', derived.confidence], ['current_run_id', derived.current_run_id], ['trace_buffer_status', trace.trace_buffer_status], ['trace_truncated', trace.trace_truncated],
+      ['当前 Chat / Floor / Swipe', [pipeline.automatic_execution?.current_chat_id, pipeline.automatic_execution?.current_floor, pipeline.automatic_execution?.active_swipe_id]],
+      ['插件启用', current.plugin_enabled], ['自动入口已注册', pipeline.automatic_execution?.entry_registered], ['最近触发', pipeline.automatic_execution?.latest_trigger],
+      ['Event 数量', current.event_count], ['有效 Exposure 数量', current.authoritative_exposure_count], ['pregnancy-relevant Exposure 数量', current.pregnancy_relevant_exposure_count],
+      ['Exposure 候选 Subject / mechanism', [current.candidate_subject_ids, current.candidate_mechanism_keys]], ['Tracking 人物数量', current.tracking_subject_count], ['Tracking Window 数量', current.tracking_window_count], ['Timing Instance 数量', current.timing_instance_count],
+      ['Participant Aggregation 数量', current.participant_aggregation_count], ['Projection 数量', current.projection_count], ['Projection Rule 数量', current.projection_rules_count],
+      ['Projection Eligibility / AI', pipeline.projection_diagnostics],
+      ['NSFW Lock Gate', current.nsfw_lock?.gate], ['Lock 对聚合创建的影响', derived.capability_flag_effect?.aggregation_creation_control],
+    ]) +
+    '<h6>最近一次聚合尝试</h6>' + renderBusinessDebugRows([
+      ['状态', derived.latest_aggregation_attempt?.aggregation_status], ['原因', derived.latest_aggregation_attempt?.aggregation_reason_code],
+      ['aggregation_id', derived.latest_aggregation_attempt?.aggregation_id], ['last_attempt_at', derived.latest_aggregation_attempt?.last_attempt_at],
+    ]) +
+    '<h6>人物级 Timing / Aggregation</h6>' + personCards +
+    '<h6>执行阶段（最近 16 条）</h6>' + stageCards +
+    '</section>',
+  ].join('');
+}
+
 function renderLifecycleRuntimeDebug(debug = {}) {
   if (debug?.status === 'unavailable') return '<section><h5>Pregnancy Lifecycle Runtime</h5><p class="bioweave-status-error">读取失败：' + escapeHtml(debug.reason ?? 'LIFECYCLE_DEBUG_UNAVAILABLE') + '</p></section>';
   const aggregation = debug.participant_aggregation ?? {};
@@ -1282,6 +1368,7 @@ function renderBusinessDebugState(debugState = null) {
     ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>' + windowCards + '</section>',
     '<section><h5>Tracking Registry · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(trackingRegistry)) + '</pre></section>',
     '<section><h5>Health Evolution · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(healthState.state)) + '</pre></section>',
+    renderNsfwPipelineDiagnostics(debug),
     renderLifecycleRuntimeDebug(lifecycleRuntime),
     '</div>',
     '</section>',

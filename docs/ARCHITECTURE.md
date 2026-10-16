@@ -75,8 +75,8 @@ flowchart TD
 | Analysis Pipeline Coordinator | `runtime/event-analysis.js` | execution ownership、runAnalysis、generic retry、scheduler、World→Event pipeline、terminal 和 shared bridges |
 | ST integration / compatibility facade | `runtime/events.js` | 顶层 bootstrap、public facade、lifecycle orchestration、source cleanup 和冻结的 persistence-policy bridge |
 | Floor Persistence Coordinator | `storage/floor-persistence-coordinator.js` | ordinary owner-scoped Floor transaction、merge、save、readback、confirmed decision |
-| Projection | `storage/projection.js`、`runtime/projection-runtime.js` | `projection_timeline` 的 Floor-owned owner workflow；Runtime post-processing 与 readback |
-| Participant aggregation | `core/participant-aggregation.js`、`storage/participant-aggregation.js` | 独立 `participant_aggregation_timeline` 的 frozen Timing 触发、Floor-owned success readback、当前 Event 快照名单派生与 Projection evidence 校验；不拥有 Timing、Tracking Window 或生命周期解锁 |
+| Projection | `storage/projection.js`、`storage/projection-timing.js`、`runtime/projection-runtime.js` | `projection_timeline` 与 `projection_timing_snapshot` 的 Floor-owned owner workflow；Runtime post-processing 与 readback |
+| Participant aggregation | `core/participant-aggregation.js`、`storage/participant-aggregation.js` | 独立 `participant_aggregation_snapshot` 完整 Floor 集合的 frozen Timing 触发、Floor-owned success readback、当前 Event 快照名单派生与 Projection evidence 校验；当前 Timing Instance 的显式人工编辑成功后由 Runtime 重新评估同一 Cycle；不拥有 Timing、Tracking Window 或生命周期解锁 |
 | Pregnancy lifecycle archive/release | `core/pregnancy-lifecycle.js`、`storage/pregnancy-lifecycle.js` | 独立 `pregnancy_lifecycle_timeline` 的 confirmed lifecycle fact、父方候选/证据归档、当前 cycle 精确 Exposure 快照删除与 release readback；不改写历史 Floor、不拥有 father UI |
 | Storage primitives | `storage/store.js` | Floor/Chat storage abstraction 与 host-store compatibility |
 | Clear / special lifecycle | `storage/clear.js` | explicit clear、restore/migration 和特殊生命周期操作 |
@@ -201,6 +201,33 @@ trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除
 `GENERATION_STARTED` listener resolve 前 ready，不能在没有 Host request-payload hook 时声称
 最终模型已经消费该 slot。
 
+NSFW 自动聚合诊断也复用 `runtime/diagnostics.js` 的有限 Runtime buffer，不创建业务状态或
+新的 Floor 持久化根。自动调度、Projection process 与
+`runtime/events.js::resolvePreConfirmationTiming` 共用一个 `run_id`；每个 stage 同时保留
+`CURRENT_STATE`、`EXECUTION_TRACE` 或 `DERIVED_DIAGNOSTIC` 来源标记，以及 Chat、Floor/Swipe、
+Subject、Cycle 关联。`runtime.collectActiveBusinessData({includeDebug: true})` 在既有
+`business_debug` / `lifecycle_runtime` 之外输出 `diagnostic_metadata`、
+`nsfw_pipeline_diagnostics`、`timing_diagnostics` 和 `aggregation_diagnostics`。
+
+诊断 readback 只复用现有只读权威读取；Timing/Aggregation 业务入口不会因为采集诊断而额外
+创建实例、聚合、调用 AI 或改变持久化顺序。没有可见执行 Trace 时使用 `TRACE_UNAVAILABLE`
+或 `UNKNOWN`，不把当前缺失的 Timing Instance 反推为历史上未调用；Timing Instance
+由当前有效的 pregnancy-relevant Exposure、人物配置和既有 Story Time 机制创建，
+不依赖 `projection_rules`；规则为空只阻断 Projection Eligibility/AI，不阻断 Timing
+或到期后的 Participant Aggregation，也不单独证明名单聚合失败。
+
+人物级 Timing/Aggregation 诊断另外保留 Tracking Window 的权威 Cycle、首次有效
+Exposure、候选/accepted Exposure、最终 Cycle 及 `cycle_id_source`；`cycle_id_consistent`
+与 `cycle_id_consistency_reason_code` 用于显式报告 Tracking Window Cycle 与最终周期是否匹配，
+不得用最终实例字段覆盖前者。配置基础区间、variance/offset、effective 区间、Aggregation
+到期/overdue/已有结果和 `readback_attempted`、`readback_succeeded`、
+`readback_result_present`、`readback_reason_code` 分开输出；首次创建阶段另记录
+`sampled_offset_source`、`frozen_offset_status` 和 `rng_source`，用于区分真实初始采样、冻结复用
+与未创建；其中 readback succeeded 只表示
+只读权威读取成功，结果是否存在由 result_present 表示。`projection_diagnostics` 单独报告
+规则可用性、Eligibility、Timing Window 和 Projection AI 调度，不把空规则解释为 Timing
+或 Aggregation 的阻断。
+
 ## Feature module creation rule
 
 1. 已有 feature owner 能完整说明职责时，扩展该 owner。
@@ -271,7 +298,11 @@ Owner whitelist：
 | --- | --- |
 | `world` | `world_model`, `world_model_meta` |
 | `event` | `analysis`, `events`, `character_registry` |
-| `projection` | `snapshot`, `projection_timeline` |
+| `projection` | `snapshot`, `projection_timeline`, `projection_timing_snapshot` |
+| `tracking` | `tracking_window_timeline` |
+| `participant_aggregation` | `participant_aggregation_snapshot` |
+| `lifecycle` | `pregnancy_lifecycle_timeline`, `events` |
+| `health` | `health_assessment_timeline` |
 | `terminal` | `analysis` |
 
 普通业务模块不得直接调用 `store.saveFloor`、`/api/chats/save`、`context.saveChat`、`saveOfficialFloorSlot`，也不得直接写任意 `extra.bioweave` 或 `swipe_info[*].extra.bioweave`。Chat clear、source cleanup、lifecycle root invalidation、migration/restore、metadata/settings 和 explicit Floor clear 是特殊操作，不是 ordinary owner-patch precedent。
@@ -388,6 +419,20 @@ injection 和 advanced Episode orchestration 仍未实现。resolved Window 到
 pregnancy 后阻止新的 pre-confirmation Window 已实现，均保持只读、derived、
 Floor 重建语义。`resolved_not_pregnant` 仍需明确 factual authority。
 
+Runtime 初始化、Chat 切换/创建、消息接收以及生成完成后的稳定生命周期边界，会通过
+`runtime/events.js` 的恢复入口调用既有 `projectionRuntime.process()`；该入口只读取当前
+有效 Floor Event，不重新运行 Event/World Analysis AI。相同 Chat、完整 Floor Version 和
+active Swipe 的恢复请求由 Projection Runtime single-flight 与 stale guard 保护；上下文未
+就绪时延后，下一次有效生命周期边界可重试。Debug/业务 DTO read 不调用该恢复入口。
+
+Tracking Window 与 Timing Instance 共用 `core/projection-timing.js` 的 canonical Cycle ID：
+身份材料包含 Chat、Subject、Mechanism、首次有效 Exposure ID 和规范 Story Time；Story Time
+缺失的 `day_index` 与显式 `null` 不改变 Cycle 身份。当前权威读取中若发现历史 Timing 的
+Cycle ID 与 canonical 值不同，只能以当前 Chat、active Swipe/有效 Floor、Subject、Mechanism、
+首次 Exposure ID、Tracking Window 来源集合、Story Time 及可用 Floor provenance 唯一证明
+属于同一周期时复用旧 Timing/Aggregation；候选不唯一则阻断，不做 subject + mechanism 的
+模糊复用。找不到可证明的历史记录时，新记录使用 canonical Cycle ID。
+
 Event discovery window、identity authority、Event occurrence time 和 persistence
 owner 是四个独立概念。Current Target Floor 与 bounded Recent Story 可以共同发现
 Event；历史 Event 保留自身 `story_time`，但新结果由当前 active Floor/Swipe 持久化。
@@ -440,15 +485,21 @@ Chat metadata 读写，timing instance 通过 `storage/projection-timing.js` 复
 Floor Persistence Coordinator、active Swipe、完整 Floor Version、官方保存与
 权威 readback。Runtime 只把 timing eligibility 与现有 World Rule eligibility
 组合；不向 World projection rule 加入 probability/random/seed，也不在 Runtime
-使用缺少 World authority 的 Human 常识 fallback。内置 Human narrative preset
+使用缺少适用性证据的 Human 常识 fallback。内置 Human narrative preset
 位于单一 Core preset module，只有在 World species 与 canonical character
-species 都明确为普通 Human 时作为未来周期 config baseline；它不创建或替代
-World projection rule。Characters UI 通过正式 Runtime config API 读取/保存
+species 都明确为普通 Human 时作为周期 config baseline；它不创建或替代
+World projection rule。即使 `projection_rules[]` 为空，已解析的 Exposure 和
+人物配置仍可创建 Timing Instance 并触发到期 Aggregation；规则仍只控制
+Projection Eligibility/AI。Characters UI 通过正式 Runtime config API 读取/保存
 Chat-local override，不能调用 debug facade。Timing editor 的正式 view read
-只读取当前 Chat 的 World applicability、Chat config 和 Floor timing timeline，
+只读取当前 Chat 的 World applicability、Chat config 和 Floor timing snapshot，
 不调用 debug aggregation、Event analysis 或 Projection eligibility；打开先显示
 popup shell，再异步填充 read projection。v1 state modifier 固定为 0；没有明确
 有效 config 时 timing integration 保持 disabled，不改变既有 Projection 行为。
+当前 owner 槽位若保留了旧 `content_hash` 和/或 `message_version`，但
+Chat/message/Floor/Swipe 与编辑开始时捕获的 live authoritative version 完全一致，
+显式 Timing 编辑/当前 Aggregation 重评估可在严格 live six-field 校验通过后修复该
+槽位元数据；历史 Floor 与普通写入不走此路径，且 Debug read 仍然只读。
 
 ### Feature Delivery Completeness
 

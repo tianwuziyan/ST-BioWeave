@@ -16,9 +16,20 @@ unimplemented. Sections marked
 marked **Current Implementation** describe the current checkout.
 
 Pre-confirmation Projection Timing remains separate from this Window. Its
-`projection_timing_timeline` is only a lightweight observation timing record:
-same subject + same explicit mechanism may attach additional valid Event refs,
-but it must not be treated as the Window owner or as Window expiration.
+`projection_timing_snapshot` is the complete Floor-owned collection of
+lightweight observation timing records. A later Floor may replace one item or
+attach additional valid Event refs by writing the next complete collection; it
+must not be treated as the Window owner or as Window expiration. Historical
+reads inherit the nearest valid Floor root only when the target root is absent;
+an explicit empty snapshot blocks inheritance. The corresponding
+`participant_aggregation_snapshot` uses the same complete-collection and
+bounded historical-read semantics.
+Timing candidates are derived from the current complete, valid
+pregnancy-relevant Exposure snapshot and the Character timing resolver; an
+empty World Model `projection_rules[]` does not block Timing Instance creation.
+The Timing record may therefore have `world_rule_binding: null`. The same
+frozen Timing Instance drives Participant Aggregation eligibility, while World
+Model rules remain a separate prerequisite for Projection Eligibility and AI.
 
 When a valid Timing Instance reaches its frozen effective minimum, the current
 aggregation strategy may record one independent participant-aggregation
@@ -161,6 +172,18 @@ is a deterministic digest of that cycle ID. Compatible attachment requires the
 same canonical subject, mechanism, and valid pregnancy-relevant factual basis.
 Grouping and identity are implemented; cross-mechanism Episode binding remains
 outside this contract.
+
+The Timing and Tracking cycle identity uses one canonical Story-Time shape. A
+missing `day_index` and an explicit `day_index: null` are equivalent for this
+identity; Story-Time comparison still uses the existing Calendar Engine and is
+not replaced by the identity normalization. Runtime lifecycle recovery may
+revisit a current Chat at initialization, Chat change, plugin re-enable, or a
+stable new Floor boundary without re-running Event Analysis. Before creating a
+new Timing Instance it may reuse one historical instance only when the current
+Chat, active Swipe/Floor authority, subject, mechanism, first source Event,
+source overlap, and Story-Time basis prove one unique cycle. Ambiguous or
+unavailable provenance must not be guessed; the runtime creates only a new
+canonical cycle when no old record can be safely proven equivalent.
 
 ## 4. Resolution and attribution boundaries
 

@@ -10,6 +10,8 @@ import { buildWorldModelSupplementCoverageTargets } from "../ai/world-supplement
 import { archiveWorldModelSpecies } from "../core/world-species-archive.js";
 import { healthObservationFingerprint } from "../core/health-assessment.js";
 import { normalizeParticipantAggregation } from "../core/participant-aggregation.js";
+import { buildParticipantAggregationId } from "../core/participant-aggregation.js";
+import { resolveProjectionTimingInstance } from "../core/projection-timing.js";
 import { createProjection } from "../core/projection.js";
 
 function eventResult(eventId = "evt-1", overrides = {}) {
@@ -94,6 +96,9 @@ function createFixture({
   floor = 3,
   messages = null,
   analyzer = null,
+  projectionTimingConfigResolver = null,
+  projectionTimingBaselineResolver = null,
+  projectionTimingRandom = null,
   storyTimeDebug = false,
   storyTimeTrace = null,
   characterContextResolver = null,
@@ -113,6 +118,7 @@ function createFixture({
   healthRecoveryStabilityDelayMs = 2000,
   participantAggregationLockCapability = false,
   reliableStoryTime = false,
+  messageLookupById = false,
 } = {}) {
   const listeners = new Map();
   const baseMessages = messages ?? [
@@ -172,7 +178,9 @@ function createFixture({
     getChatMetadata: () => context.chatMetadata,
     getExtensionSettings: () => context.extensionSettings,
     getGlobalSettings: () => context.extensionSettings.bioweave,
-    getMessage: (index) => context.chat[index] ?? null,
+    getMessage: (index) => messageLookupById && typeof index === "string"
+      ? context.chat.find(message => message?.message_id === index) ?? null
+      : context.chat[index] ?? null,
     setExtensionPrompt(payload) {
       if (typeof setExtensionPromptHook === "function")
         return setExtensionPromptHook(payload);
@@ -305,6 +313,9 @@ function createFixture({
       ? { characterContextResolver }
       : {}),
     analyzer: runtimeAnalyzer,
+    ...(typeof projectionTimingConfigResolver === "function" ? {projectionTimingConfigResolver} : {}),
+    ...(typeof projectionTimingBaselineResolver === "function" ? {projectionTimingBaselineResolver} : {}),
+    ...(typeof projectionTimingRandom === "function" ? {projectionTimingRandom} : {}),
     notify: fixtureNotify,
     storyTimeDebug,
     storyTimeTrace,
@@ -385,7 +396,7 @@ test("real Runtime does not create a Projection submission receipt when setExten
     source_basis_refs: {},
     created_at_floor_version: floor.version,
   });
-  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: floor.index}, floorVersion: floor.version, aggregation});
+  await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: floor.index}, floorVersion: floor.version, aggregation});
   const projection = createProjection({
     subject_id: subjectId,
     projection_rule_id: "rule:projection-receipt-failed",
@@ -629,6 +640,44 @@ test("business data returns one stable target version without persistence side e
   fixture.runtime.destroy();
 });
 
+test("current Floor Version does not reuse stored message_version after content edit", async () => {
+  const message = {
+    message_id: "message-version-fallback-target",
+    floor: 35,
+    content: "编辑后的当前正文",
+    role: "assistant",
+    extra: {
+      bioweave: {
+        floor_version: {
+          chat_id: "chat-runtime",
+          message_id: "message-version-fallback-target",
+          floor: 35,
+          swipe_id: 0,
+          content_hash: "old-content-hash",
+          message_version: "v1:old-content-hash",
+        },
+      },
+    },
+  };
+  const fixture = createFixture({messages: [message]});
+  await fixture.runtime.init();
+  const current = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  const expected = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  assert.deepEqual(current.version, expected);
+  assert.notEqual(current.version.content_hash, "old-content-hash");
+  assert.notEqual(current.version.message_version, "v1:old-content-hash");
+  message.message_version = "host-revision-7";
+  const explicitHostVersion = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  assert.equal(explicitHostVersion.version.message_version, "host-revision-7");
+  fixture.runtime.destroy();
+});
+
 test("business debug samples the current production states and provenance", async () => {
   const message = {
     message_id: "business-debug-target",
@@ -639,6 +688,7 @@ test("business debug samples the current production states and provenance", asyn
   const fixture = createFixture({messages: [message]});
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
 
   const beforeWrites = fixture.saveFloorCalls();
   const business = await fixture.runtime.collectActiveBusinessData({includeDebug: true});
@@ -663,6 +713,1364 @@ test("business debug samples the current production states and provenance", asyn
   assert.equal(debug.lifecycle_runtime.projection_delivery.count, 0);
   assert.equal(debug.lifecycle_runtime.pregnancy_lifecycle.facts.length, 0);
   assert.equal(debug.lifecycle_runtime.nsfw_lock.gate, "disabled_until_lifecycle_archive_release");
+  assert.equal(debug.diagnostic_metadata.diagnostics_schema_version, 1);
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.source_type, "CURRENT_STATE");
+  assert.equal(debug.nsfw_pipeline_diagnostics.execution_trace.source_type, "EXECUTION_TRACE");
+  assert.equal(debug.nsfw_pipeline_diagnostics.derived_diagnostic.source_type, "DERIVED_DIAGNOSTIC");
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.projection_rules_count, 0);
+  assert.equal(
+    debug.nsfw_pipeline_diagnostics.current_state.tracking_subject_count,
+    Object.keys(debug.tracking_registry.tracking_subjects).length,
+  );
+  assert.ok(debug.nsfw_pipeline_diagnostics.execution_trace.stages.every(stage =>
+    !(stage.stage === "TIMING_INSTANCE_CREATION" && stage.reason_code === "WORLD_RULE_UNAVAILABLE"),
+  ));
+  assert.ok(["TIMING_INSTANCE_MISSING", "TRACE_UNAVAILABLE"].includes(debug.nsfw_pipeline_diagnostics.derived_diagnostic.current_blocking_reason_code));
+  assert.ok(Array.isArray(debug.timing_diagnostics));
+  assert.ok(Array.isArray(debug.aggregation_diagnostics));
+  const traceRunId = debug.nsfw_pipeline_diagnostics.execution_trace.current_run_id;
+  const debugAgain = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  assert.equal(fixture.saveFloorCalls(), beforeWrites);
+  assert.equal(debugAgain.nsfw_pipeline_diagnostics.execution_trace.current_run_id, traceRunId);
+  assert.equal(debugAgain.nsfw_pipeline_diagnostics.current_state.timing_instance_count, debug.nsfw_pipeline_diagnostics.current_state.timing_instance_count);
+  assert.equal(debugAgain.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count, debug.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count);
+  fixture.runtime.destroy();
+});
+
+test("NSFW pipeline diagnostics keep valid Tracking visible when projection rules are empty", async () => {
+  let projectionAiCalls = 0;
+  const exposure = eventResult("nsfw-empty-rules", {
+    pregnancy_relevance: {
+      ...eventResult("nsfw-empty-rules").pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    projectionTimingConfigResolver: async () => ({
+      schema_version: 1,
+      config_version: 1,
+      base_min_story_days: 0,
+      base_max_story_days: 10,
+      variance_ratio: 0,
+      variance_cap_story_days: 0,
+      total_adjustment_cap_story_days: 0,
+    }),
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+          projection_rules: [],
+        });
+      },
+      async analyzeFloor() {
+        return {events: [exposure]};
+      },
+      async generateProjection() {
+        projectionAiCalls += 1;
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.projection_rules_count, 0);
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.tracking_subject_count, 1);
+  assert.ok(debug.nsfw_pipeline_diagnostics.current_state.tracking_window_count >= 1);
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.timing_instance_count, 1);
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count, 1);
+  assert.ok(debug.nsfw_pipeline_diagnostics.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_CONFIGURATION_RESOLUTION" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "TIMING_CONFIG_RESOLVED",
+  ));
+  assert.ok(debug.nsfw_pipeline_diagnostics.execution_trace.stages.every(stage => stage.reason_code !== "WORLD_RULE_UNAVAILABLE"));
+  assert.equal(projectionAiCalls, 0);
+  fixture.runtime.destroy();
+});
+
+function projectionDiagnosticsFixtureOptions({eventId, reliableStoryTime = true, saveFloorHook = null, events = null, projectionRules = null} = {}) {
+  const exposure = eventResult(eventId, {
+    pregnancy_relevance: {
+      ...eventResult(eventId).pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const ruleContent = {
+    schema_version: 1,
+    mechanism_key: "fertilization",
+    development_concern_key: "participant-list",
+    development_kind: "possible_detection",
+    trigger: {kind: "immediate_after_event", source_event_type: "sexual_activity"},
+    requirements: {capabilities: [], source_compatibility: "not_required", contributor_relationships: []},
+    realization: null,
+    contradiction: null,
+    expiration: null,
+  };
+  const timingConfig = {
+    schema_version: 1,
+    config_version: 1,
+    base_min_story_days: 0,
+    base_max_story_days: 42,
+    variance_ratio: 0,
+    variance_cap_story_days: 0,
+    total_adjustment_cap_story_days: 0,
+  };
+  return {
+    reliableStoryTime,
+    messageLookupById: true,
+    messages: [{message_id: "0", floor: 3, content: "当前剧情", role: "assistant"}],
+    saveFloorHook,
+    projectionTimingBaselineResolver: async () => timingConfig,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+          projection_rules: projectionRules ?? [ruleContent],
+        });
+      },
+      async analyzeFloor() {
+        return {events: events ?? [exposure]};
+      },
+      async generateProjection() {
+        return {development: {kind: "possible_detection", description: "诊断成功路径测试。"}};
+      },
+    },
+  };
+}
+
+const LIFECYCLE_RECOVERY_TIMING_CONFIG = Object.freeze({
+  schema_version: 1,
+  config_version: 7,
+  base_min_story_days: 10,
+  base_max_story_days: 16,
+  variance_ratio: 0,
+  variance_cap_story_days: 0,
+  total_adjustment_cap_story_days: 0,
+});
+
+async function seededLifecycleRecoveryFloor({eventId = "recovery-exposure", existingTiming = false, existingAggregation = false} = {}) {
+  const message = {
+    message_id: "0",
+    floor: 20,
+    content: "已经存在的有效 Exposure",
+    role: "assistant",
+    story_time: {
+      display: "2026-01-21",
+      normalized: "2026-01-21",
+      calendar_id: null,
+      precision: "day",
+      confidence: 1,
+    },
+  };
+  const version = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: message.message_id,
+    floor: message.floor,
+    swipeId: 0,
+    text: message.content,
+  });
+  const event = eventResult(eventId, {
+    source: version,
+    participants: [
+      {
+        ...eventResult(eventId).participants[0],
+        identity_status: "existing",
+        character_id: `${eventId}-subject`,
+      },
+      {
+        ...eventResult(eventId).participants[1],
+        identity_status: "existing",
+        character_id: `${eventId}-source`,
+      },
+    ],
+    story_time: {
+      display: "2026-01-01",
+      normalized: "2026-01-01",
+      calendar_id: null,
+      precision: "day",
+      confidence: 1,
+    },
+    pregnancy_relevance: {
+      ...eventResult(eventId).pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const worldModel = normalizeWorldModel({
+    schema_version: 1,
+    species: [{
+      name: "species-a",
+      biological_types: [{
+        name: "type-a",
+        capabilities: {can_carry_pregnancy: true},
+      }],
+    }],
+    projection_rules: [],
+  });
+  const floor = {
+    ...emptyFloor(),
+    floor_version: version,
+    analysis: {
+      status: "success",
+      floor_version: version,
+      analyzed_at: "2026-01-21T00:00:00.000Z",
+      last_success: {analyzed_at: "2026-01-21T00:00:00.000Z"},
+    },
+    events: [event],
+    world_model: worldModel,
+  };
+  let historicalTiming = null;
+  if (existingTiming) {
+    const canonicalTiming = resolveProjectionTimingInstance({
+      chatId: version.chat_id,
+      subjectId: event.pregnancy_relevance.gestational_subject_ids[0],
+      mechanismKey: "fertilization",
+      firstEvent: event,
+      config: LIFECYCLE_RECOVERY_TIMING_CONFIG,
+      floorVersion: version,
+      rng: () => 1,
+    });
+    historicalTiming = {
+      ...canonicalTiming,
+    };
+    floor.projection_timing_snapshot = {schema_version: 1, items: [historicalTiming]};
+  }
+  if (existingAggregation) {
+    const timing = historicalTiming ?? resolveProjectionTimingInstance({
+      chatId: version.chat_id,
+      subjectId: event.pregnancy_relevance.gestational_subject_ids[0],
+      mechanismKey: "fertilization",
+      firstEvent: event,
+      config: LIFECYCLE_RECOVERY_TIMING_CONFIG,
+      floorVersion: version,
+      rng: () => 1,
+    });
+    const aggregation = normalizeParticipantAggregation({
+      aggregation_id: buildParticipantAggregationId({
+        cycleId: timing.cycle_id,
+        timingInstanceId: timing.timing_instance_id,
+      }),
+      subject_id: timing.subject_id,
+      pregnancy_id: null,
+      mechanism_key: timing.mechanism_key,
+      cycle_id: timing.cycle_id,
+      timing_instance_id: timing.timing_instance_id,
+      aggregation_trigger_strategy: "at_effective_min",
+      reference_story_time: timing.reference_story_time,
+      aggregation_story_time: message.story_time,
+      elapsed_story_days: 20,
+      effective_min_story_days: timing.effective_min_story_days,
+      effective_max_story_days: timing.effective_max_story_days,
+      sampled_individual_offset_story_days: timing.sampled_individual_offset_story_days,
+      config_snapshot: timing.config_snapshot,
+      accepted_exposure_event_ids: [event.event_id],
+      source_basis_refs: timing.source_basis_refs,
+      created_at_floor_version: version,
+      created_at: "2026-01-21T00:00:00.000Z",
+    });
+    floor.participant_aggregation_snapshot = {schema_version: 1, items: [aggregation]};
+  }
+  message.extra = {bioweave: floor};
+  return {message, version, event, timing: historicalTiming};
+}
+
+test("runtime init recovers historical Exposure into Timing and overdue Aggregation without reanalysis", async () => {
+  const seed = await seededLifecycleRecoveryFloor({eventId: "recovery-init-exposure"});
+  let worldCalls = 0;
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    projectionTimingConfigResolver: async () => LIFECYCLE_RECOVERY_TIMING_CONFIG,
+    analyzer: {
+      async analyzeWorldModel() {
+        worldCalls += 1;
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_RECOVERY");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_RECOVERY");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const recoveryStage = pipeline.execution_trace.stages.find(stage =>
+    stage.recovery_trigger === "lifecycle-runtime-init" && stage.recovery_status === "SUCCEEDED",
+  );
+  assert.equal(fixture.analysisCalls().length, 0);
+  assert.equal(worldCalls, 0);
+  assert.equal(pipeline.current_state.projection_rules_count, 0);
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 1);
+  assert.equal(recoveryStage?.recovery_status, "SUCCEEDED");
+  assert.equal(recoveryStage?.tracking_window_found, true);
+  assert.equal(recoveryStage?.timing_instance_created, true);
+  assert.equal(recoveryStage?.aggregation_reused_or_created, true);
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "TIMING_INSTANCE_PERSISTED",
+  ));
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "AGGREGATION_PERSISTED",
+  ));
+  assert.equal(pipeline.projection_diagnostics.projection_ai_request_started, false);
+  fixture.runtime.destroy();
+});
+
+test("runtime init reuses a canonical Cycle ID Timing and Aggregation without resampling", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "recovery-legacy-cycle",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    projectionTimingConfigResolver: async () => ({
+      ...LIFECYCLE_RECOVERY_TIMING_CONFIG,
+      config_version: 99,
+      variance_ratio: 0.9,
+      variance_cap_story_days: 9,
+      total_adjustment_cap_story_days: 9,
+    }),
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_CANONICAL_REUSE");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_CANONICAL_REUSE");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const timing = debug.lifecycle_runtime.projection_timing.timing_instances[0];
+  const aggregation = debug.lifecycle_runtime.participant_aggregation.aggregations[0];
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const currentRunId = pipeline.execution_trace.current_run_id;
+  const runStages = pipeline.execution_trace.stages.filter(stage => stage.run_id === currentRunId);
+  assert.ok(timing);
+  assert.ok(aggregation);
+  assert.equal(timing.timing_instance_id, seed.timing.timing_instance_id);
+  assert.equal(timing.cycle_id, seed.timing.cycle_id);
+  assert.equal(timing.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(aggregation.aggregation_id, buildParticipantAggregationId({
+    cycleId: seed.timing.cycle_id,
+    timingInstanceId: seed.timing.timing_instance_id,
+  }));
+  assert.ok(runStages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" &&
+    stage.reason_code === "TIMING_INSTANCE_EXISTS" &&
+    stage.cycle_id_resolution_status === "CANONICAL_CYCLE_ID",
+  ));
+  const timingDiagnostic = pipeline.timing_diagnostics.find(item =>
+    item.timing_instance_id === seed.timing.timing_instance_id,
+  );
+  assert.equal(timingDiagnostic?.cycle_id_source, "TRACKING_WINDOW");
+  assert.equal(timingDiagnostic?.cycle_id_consistent, true);
+  assert.equal(timingDiagnostic?.first_exposure_event_id, seed.event.event_id);
+  const aggregationDiagnostic = pipeline.aggregation_diagnostics.find(item =>
+    item.aggregation_id === aggregation.aggregation_id,
+  );
+  assert.equal(aggregationDiagnostic?.cycle_id_source, "TRACKING_WINDOW");
+  assert.equal(aggregationDiagnostic?.first_exposure_event_id, seed.event.event_id);
+  assert.equal(runStages.some(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" && stage.reason_code === "AGGREGATION_PERSISTED",
+  ), false);
+  fixture.runtime.destroy();
+});
+
+test("manual Timing Instance edit writes the current Floor and reevaluates only its Aggregation", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-edit",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_MANUAL_TIMING_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_MANUAL_TIMING_EDIT");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  await fixture.runtime.saveCharacterTimingConfig({
+    characterId: subjectId,
+    config: {...LIFECYCLE_RECOVERY_TIMING_CONFIG, base_min_story_days: 18, base_max_story_days: 20},
+  });
+  const separated = await fixture.runtime.getCharacterTimingEditorData({characterId: subjectId});
+  assert.equal(separated.config.base_min_story_days, 18);
+  assert.equal(separated.config.base_max_story_days, 20);
+  assert.equal(separated.timing_instance.base_min_story_days, 10);
+  assert.equal(separated.timing_instance.base_max_story_days, 16);
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: seed.timing.timing_instance_id,
+    baseMinStoryDays: 18,
+    baseMaxStoryDays: 20,
+    varianceRatio: 0.25,
+    varianceCapStoryDays: 4,
+    totalAdjustmentCapStoryDays: 2,
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.timing_instance.cycle_id, seed.timing.cycle_id);
+  assert.equal(result.timing_instance.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(result.timing_instance.base_min_story_days, 18);
+  assert.equal(result.timing_instance.base_max_story_days, 20);
+  assert.equal(result.timing_instance.variance_ratio, 0.25);
+  assert.equal(result.timing_instance.variance_cap_story_days, 4);
+  assert.equal(result.timing_instance.total_adjustment_cap_story_days, 2);
+  assert.equal(result.aggregation_reevaluation.action, "removed_before_min");
+
+  const timingDebug = await fixture.runtime.getProjectionTimingDebug();
+  const timing = timingDebug.timing_instances.find(item =>
+    item.timing_instance_id === seed.timing.timing_instance_id,
+  );
+  assert.ok(timing, JSON.stringify(timingDebug));
+  assert.equal(timing.base_min_story_days, 18);
+  assert.equal(timing.base_max_story_days, 20);
+  assert.equal(timing.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(timing.variance_ratio, 0.25);
+  assert.equal(timing.variance_cap_story_days, 4);
+  assert.equal(timing.total_adjustment_cap_story_days, 2);
+  assert.equal((await fixture.runtime.getParticipantAggregations({
+    chatId: "chat-runtime",
+    endpointFloor: seed.version.floor,
+    endpointIndex: 0,
+  })).items.length, 0);
+  const trace = fixture.runtime.getPersistenceTrace();
+  assert.ok(trace);
+  const pipeline = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug.nsfw_pipeline_diagnostics;
+  assert.ok(pipeline.execution_trace.runs.some(run => run.trigger === "manual-timing-instance-edit"));
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_MANUAL_EDIT"
+    && stage.execution_status === "SUCCEEDED"
+    && stage.sampled_individual_offset_story_days === seed.timing.sampled_individual_offset_story_days
+    && stage.sampled_offset_source === "FROZEN_SNAPSHOT"
+    && stage.frozen_offset_status === "PRESERVED",
+  ));
+  assert.ok(pipeline.timing_diagnostics.some(item =>
+    item.timing_instance_id === seed.timing.timing_instance_id
+    && item.manual_timing_edit?.succeeded === true
+    && item.character_timing_config?.min_story_days === 18
+    && item.variance_ratio === 0.25
+    && item.active_timing_instance?.effective_min_story_days === 18,
+  ));
+  assert.ok(pipeline.aggregation_diagnostics.some(item =>
+    item.timing_instance_id === seed.timing.timing_instance_id
+    && item.aggregation_reevaluation?.action === "removed_before_min",
+  ));
+
+  const restored = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    baseMinStoryDays: 16,
+    baseMaxStoryDays: 20,
+    varianceRatio: 0.25,
+    varianceCapStoryDays: 4,
+    totalAdjustmentCapStoryDays: 4,
+  });
+  assert.equal(restored.status, "succeeded");
+  assert.equal(restored.timing_instance.timing_instance_id, seed.timing.timing_instance_id);
+  assert.equal(restored.timing_instance.cycle_id, seed.timing.cycle_id);
+  assert.equal(restored.timing_instance.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(restored.timing_instance.variance_ratio, 0.25);
+  assert.equal(restored.timing_instance.effective_min_story_days, 16);
+  assert.equal(restored.timing_instance.effective_max_story_days, 20);
+  assert.equal(restored.aggregation_reevaluation.action, "created_due");
+  const restoredAggregations = await fixture.runtime.getParticipantAggregations({
+    chatId: "chat-runtime",
+    endpointFloor: seed.version.floor,
+    endpointIndex: 0,
+  });
+  assert.equal(restoredAggregations.items.length, 1);
+  assert.equal(restoredAggregations.items[0].subject_id, subjectId);
+  assert.equal(restoredAggregations.items[0].cycle_id, seed.timing.cycle_id);
+
+  fixture.runtime.destroy();
+});
+
+test("manual Timing Instance edit uses the chat-array owner index when host message_id is numeric", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-numeric-owner",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.message_id = 72;
+  seed.message.floor = 72;
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const currentVersion = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: seed.message.message_id,
+    floor: seed.message.floor,
+    swipeId: 0,
+    text: seed.message.content,
+  });
+  const floorData = seed.message.extra.bioweave;
+  floorData.floor_version = currentVersion;
+  floorData.analysis.floor_version = currentVersion;
+  floorData.events = floorData.events.map(item => ({...item, source: currentVersion}));
+
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [
+      {message_id: "user-before-target", floor: 71, content: "用户上下文", role: "user"},
+      seed.message,
+    ],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_NUMERIC_OWNER_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_NUMERIC_OWNER_EDIT");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: seed.timing.timing_instance_id,
+    baseMinStoryDays: 18,
+    baseMaxStoryDays: 20,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.timing_instance.base_min_story_days, 18);
+  assert.equal(result.aggregation_reevaluation.action, "removed_before_min");
+  assert.equal(fixture.context.chat[1].extra.bioweave.floor_version.message_id, 72);
+  assert.equal(fixture.context.chat[1].extra.bioweave.projection_timing_snapshot.items[0].base_min_story_days, 18);
+  assert.equal(fixture.context.chat[1].extra.bioweave.participant_aggregation_snapshot.items.length, 0);
+  assert.equal(fixture.context.chat[0].extra, undefined);
+  assert.equal(fixture.analysisCalls().length, 0);
+
+  const pipeline = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug.nsfw_pipeline_diagnostics;
+  const editStage = [...pipeline.execution_trace.stages].reverse().find(stage =>
+    stage.stage === "TIMING_INSTANCE_MANUAL_EDIT" && stage.execution_status === "SUCCEEDED",
+  );
+  assert.equal(editStage.owner_message_index, 1);
+  assert.equal(editStage.owner_message_id, 72);
+  assert.equal(editStage.floor_version.message_id, currentVersion.message_id);
+  assert.equal(editStage.floor_version.floor, currentVersion.floor);
+  assert.equal(editStage.floor_version.content_hash, currentVersion.content_hash);
+  assert.equal(editStage.version_classification, null);
+  fixture.runtime.destroy();
+});
+
+test("manual Timing Instance edit preserves an explicit Floor 72 owner index through readback", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-floor-72-owner",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.message_id = 72;
+  seed.message.floor = 72;
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const currentVersion = await floorVersion({
+    chatId: "chat-runtime",
+    messageId: seed.message.message_id,
+    floor: seed.message.floor,
+    swipeId: 0,
+    text: seed.message.content,
+  });
+  const floorData = seed.message.extra.bioweave;
+  floorData.floor_version = currentVersion;
+  floorData.analysis.floor_version = currentVersion;
+  floorData.events = floorData.events.map(item => ({...item, source: currentVersion}));
+  const messages = Array.from({length: 72}, (_, index) => ({
+    message_id: index,
+    floor: index,
+    content: `历史消息 ${index}`,
+    role: "user",
+  }));
+  messages.push(seed.message);
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages,
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_FLOOR_72_OWNER_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_FLOOR_72_OWNER_EDIT");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_DURING_FLOOR_72_OWNER_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: "stale-ui-timing-id",
+    baseMinStoryDays: 18,
+    baseMaxStoryDays: 20,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(fixture.context.chat[72].extra.bioweave.floor_version.message_id, 72);
+  assert.equal(fixture.context.chat[72].extra.bioweave.projection_timing_snapshot.items[0].base_min_story_days, 18);
+  assert.equal(fixture.context.chat[72].extra.bioweave.participant_aggregation_snapshot.items.length, 0);
+  assert.equal(fixture.context.chat[0].extra, undefined);
+  const transactionTrace = fixture.runtime.getPersistenceTrace().sequence.filter(entry =>
+    entry.operation_type === "manual-timing-instance-edit",
+  );
+  assert.ok(transactionTrace.some(entry => entry.stage === "FLOOR_TX_CREATED" && entry.message_index === 72));
+  assert.ok(transactionTrace.some(entry => entry.stage === "FLOOR_TX_READBACK" && entry.message_index === 72));
+  fixture.runtime.destroy();
+});
+
+test("manual Timing Instance edit rejects multiple current instances for one character", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-ambiguous-character",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  const duplicate = {
+    ...structuredClone(seed.timing),
+    timing_instance_id: "projection_timing_duplicate_current",
+    cycle_id: "projection_timing_cycle_duplicate_current",
+  };
+  seed.message.extra.bioweave.projection_timing_snapshot.items.push(duplicate);
+  const fixture = createFixture({
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_AMBIGUOUS_TIMING_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_AMBIGUOUS_TIMING_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const savesBeforeEdit = fixture.saveFloorCalls();
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  await assert.rejects(
+    fixture.runtime.editCharacterTimingInstance({
+      characterId: subjectId,
+      timingInstanceId: seed.timing.timing_instance_id,
+      baseMinStoryDays: 18,
+      baseMaxStoryDays: 20,
+    }),
+    error => error.code === "TIMING_INSTANCE_AMBIGUOUS",
+  );
+  assert.equal(fixture.saveFloorCalls(), savesBeforeEdit);
+  fixture.runtime.destroy();
+});
+
+test("real Runtime manual Timing edit repairs a current owner slot with both stored version fields stale", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-stale-owner-slot",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_STALE_OWNER_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_STALE_OWNER_EDIT");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_DURING_STALE_OWNER_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const current = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const stored = fixture.context.chat[0].extra.bioweave;
+  const storedVersion = {
+    ...current.version,
+    content_hash: "a29ab3f742a62daf08bd70a5367f82f43c20b1e32406bea170ae528a9d5d4d40",
+    message_version: "v1:a29ab3f742a62daf08bd70a5367f82f43c20b1e32406bea170ae528a9d5d4d40",
+  };
+  stored.floor_version = storedVersion;
+  assert.notEqual(storedVersion.content_hash, current.version.content_hash);
+  assert.notEqual(storedVersion.message_version, current.version.message_version);
+
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: seed.timing.timing_instance_id,
+    baseMinStoryDays: 18,
+    baseMaxStoryDays: 20,
+    editStartFloorVersion: current.version,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.timing_instance.timing_instance_id, seed.timing.timing_instance_id);
+  assert.equal(result.timing_instance.cycle_id, seed.timing.cycle_id);
+  assert.equal(result.timing_instance.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(result.aggregation_reevaluation.action, "removed_before_min");
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.floor_version, current.version);
+  assert.equal(fixture.context.chat[0].extra.bioweave.projection_timing_snapshot.items[0].base_min_story_days, 18);
+  assert.equal(fixture.context.chat[0].extra.bioweave.projection_timing_snapshot.items[0].base_max_story_days, 20);
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.participant_aggregation_snapshot.items, []);
+  assert.equal(fixture.analysisCalls().length, 0);
+  fixture.runtime.destroy();
+});
+
+test("manual Timing edit repairs a stale owner slot even when the frozen values are unchanged", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-stale-owner-noop",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_STALE_OWNER_NOOP_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_STALE_OWNER_NOOP_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const current = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const stored = fixture.context.chat[0].extra.bioweave;
+  stored.floor_version = {
+    ...current.version,
+    content_hash: "a29ab3f742a62daf08bd70a5367f82f43c20b1e32406bea170ae528a9d5d4d40",
+    message_version: "v1:a29ab3f742a62daf08bd70a5367f82f43c20b1e32406bea170ae528a9d5d4d40",
+  };
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: "stale-ui-timing-id",
+    baseMinStoryDays: 10,
+    baseMaxStoryDays: 16,
+    editStartFloorVersion: current.version,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.timing_instance.base_min_story_days, 10);
+  assert.equal(result.timing_instance.base_max_story_days, 16);
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave.floor_version, current.version);
+  assert.equal(result.timing_instance.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
+  assert.equal(fixture.analysisCalls().length, 0);
+  fixture.runtime.destroy();
+});
+
+test("real Runtime rejects a Timing edit when the Floor changes after edit start", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-edit-stale-context",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  seed.message.story_time = {
+    display: "2026-01-18",
+    normalized: "2026-01-18",
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_STALE_CONTEXT_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_STALE_CONTEXT_EDIT");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_DURING_STALE_CONTEXT_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const editStart = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const before = structuredClone(fixture.context.chat[0].extra.bioweave);
+  fixture.context.chat[0].content = "编辑期间正文变化";
+
+  await assert.rejects(
+    fixture.runtime.editCharacterTimingInstance({
+      characterId: seed.event.pregnancy_relevance.gestational_subject_ids[0],
+      timingInstanceId: seed.timing.timing_instance_id,
+      baseMinStoryDays: 18,
+      baseMaxStoryDays: 20,
+      editStartFloorVersion: editStart.version,
+    }),
+    error => error.code === "FLOOR_VERSION_STALE"
+      && error.version_classification === "TRUE_CONTEXT_VERSION_CHANGE"
+      && error.validation_source === "current_floor_resolver",
+  );
+  assert.deepEqual(fixture.context.chat[0].extra.bioweave, before);
+  assert.equal(fixture.analysisCalls().length, 0);
+  fixture.runtime.destroy();
+});
+
+test("manual Timing Instance edit preserves an existing successful Aggregation when still due", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-edit-preserve",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_MANUAL_TIMING_EDIT_PRESERVE");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_MANUAL_TIMING_EDIT_PRESERVE");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: subjectId,
+    timingInstanceId: seed.timing.timing_instance_id,
+    baseMinStoryDays: 18,
+    baseMaxStoryDays: 20,
+  });
+  assert.equal(result.aggregation_reevaluation.action, "preserved_due");
+  const readback = await fixture.runtime.getParticipantAggregations({
+    chatId: "chat-runtime",
+    endpointFloor: seed.version.floor,
+    endpointIndex: 0,
+  });
+  assert.equal(readback.items.length, 1);
+  assert.equal(readback.items[0].aggregation_id, buildParticipantAggregationId({
+    cycleId: seed.timing.cycle_id,
+    timingInstanceId: seed.timing.timing_instance_id,
+  }));
+  assert.equal(readback.items[0].effective_min_story_days, 18);
+  assert.equal(readback.items[0].effective_max_story_days, 20);
+  fixture.runtime.destroy();
+});
+
+test("NSFW pipeline diagnostics expose successful Timing and Aggregation persistence", async () => {
+  const fixture = createFixture(projectionDiagnosticsFixtureOptions({eventId: "nsfw-successful-aggregation"}));
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 1);
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" && stage.execution_status === "SUCCEEDED",
+  ));
+  const creation = pipeline.execution_trace.stages.find(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION"
+    && stage.execution_status === "SUCCEEDED"
+    && stage.reason_code === "TIMING_INSTANCE_PERSISTED",
+  );
+  assert.equal(creation.rng_source, "RUNTIME_DEFAULT_MATH_RANDOM");
+  assert.equal(creation.sampled_offset_source, "INITIAL_RANDOM_SAMPLE");
+  assert.equal(creation.frozen_offset_status, "FROZEN_ON_CREATION");
+
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "PARTICIPANT_AGGREGATION_EXECUTION" && stage.execution_status === "SUCCEEDED",
+  ));
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" && stage.execution_status === "SUCCEEDED",
+  ));
+  const aggregation = debug.aggregation_diagnostics.find(item => item.aggregation_status === "SUCCEEDED");
+  assert.ok(aggregation);
+  assert.equal(aggregation.readback_succeeded, true);
+  fixture.runtime.destroy();
+});
+
+test("first Timing creation uses the runtime RNG and freezes its sampled offset", async () => {
+  let rngCalls = 0;
+  const fixture = createFixture({
+    ...projectionDiagnosticsFixtureOptions({
+      eventId: "nsfw-first-timing-rng-trace",
+      projectionRules: [],
+    }),
+    projectionTimingBaselineResolver: async () => ({
+      schema_version: 1,
+      config_version: 1,
+      base_min_story_days: 16,
+      base_max_story_days: 20,
+      variance_ratio: 0.1,
+      variance_cap_story_days: 3,
+      total_adjustment_cap_story_days: 3,
+    }),
+    projectionTimingRandom: () => {
+      rngCalls += 1;
+      return 1;
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const creation = pipeline.execution_trace.stages.find(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION"
+    && stage.execution_status === "SUCCEEDED"
+    && stage.reason_code === "TIMING_INSTANCE_PERSISTED",
+  );
+  assert.equal(rngCalls, 1);
+  assert.ok(creation, JSON.stringify(pipeline.execution_trace.stages));
+  assert.equal(creation.rng_source, "RUNTIME_INJECTED_RNG");
+  assert.equal(creation.sampled_offset_source, "INITIAL_RANDOM_SAMPLE");
+  assert.equal(creation.frozen_offset_status, "FROZEN_ON_CREATION");
+  assert.equal(creation.sampled_individual_offset_story_days, 1.8);
+  assert.equal(creation.total_adjustment_story_days, 1.8);
+  assert.equal(creation.effective_min_story_days, 17.8);
+  assert.equal(creation.effective_max_story_days, 21.8);
+  assert.equal(pipeline.current_state.projection_rules_count, 0);
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  fixture.runtime.destroy();
+});
+
+test("rules=[] still persist valid Timing and Aggregation without Projection AI", async () => {
+  let projectionAiCalls = 0;
+  const fixture = createFixture({
+    ...projectionDiagnosticsFixtureOptions({
+      eventId: "nsfw-empty-rules-success",
+      projectionRules: [],
+    }),
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+          projection_rules: [],
+        });
+      },
+      async analyzeFloor() {
+        return {events: [eventResult("nsfw-empty-rules-success", {
+          pregnancy_relevance: {
+            ...eventResult("nsfw-empty-rules-success").pregnancy_relevance,
+            reproductive_mechanism: {kind: "fertilization"},
+          },
+        })]};
+      },
+      async generateProjection() {
+        projectionAiCalls += 1;
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_WITHOUT_RULES");
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const timingInstance = debug.lifecycle_runtime.projection_timing.timing_instances[0];
+  const timingDiagnostic = debug.timing_diagnostics.find(item => item.timing_instance_id === timingInstance.timing_instance_id);
+  const aggregationDiagnostic = debug.aggregation_diagnostics.find(item => item.aggregation_status === "SUCCEEDED");
+  assert.equal(pipeline.current_state.projection_rules_count, 0);
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 1);
+  assert.equal(timingInstance.world_rule_binding, null);
+  const trackingWindow = debug.tracking_window.windows.find(window => window.subject_id === timingInstance.subject_id && window.mechanism_key === timingInstance.mechanism_key);
+  assert.equal(timingDiagnostic.tracking_window_cycle_id, trackingWindow.cycle_id);
+  assert.equal(timingDiagnostic.final_cycle_id, timingInstance.cycle_id);
+  assert.equal(timingDiagnostic.cycle_id_consistent, trackingWindow.cycle_id === timingInstance.cycle_id);
+  assert.equal(timingDiagnostic.cycle_id_consistency_reason_code, trackingWindow.cycle_id === timingInstance.cycle_id ? "TRACKING_WINDOW_CYCLE_MATCH" : "TRACKING_WINDOW_CYCLE_MISMATCH");
+  assert.equal(timingDiagnostic.first_exposure_event_id, timingInstance.source_event_ids[0]);
+  assert.deepEqual(timingDiagnostic.candidate_exposure_event_ids, timingInstance.source_event_ids);
+  assert.ok(["CREATED", "REUSED"].includes(timingDiagnostic.timing_instance_resolution));
+  assert.equal(timingDiagnostic.timing_instance_readback_attempted, true);
+  assert.equal(timingDiagnostic.timing_instance_readback_succeeded, true);
+  assert.equal(timingDiagnostic.timing_instance_readback_result_present, true);
+  assert.equal(aggregationDiagnostic.cycle_id, timingInstance.cycle_id);
+  assert.equal(aggregationDiagnostic.aggregation_trigger_status, "already_succeeded");
+  assert.equal(aggregationDiagnostic.aggregation_due, true);
+  assert.equal(aggregationDiagnostic.aggregation_overdue, false);
+  assert.equal(aggregationDiagnostic.readback_attempted, true);
+  assert.equal(aggregationDiagnostic.readback_succeeded, true);
+  assert.equal(aggregationDiagnostic.readback_result_present, true);
+  assert.equal(pipeline.projection_diagnostics.projection_rules_available, false);
+  assert.equal(pipeline.projection_diagnostics.projection_ai_request_started, false);
+  assert.equal(projectionAiCalls, 0);
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "TIMING_INSTANCE_PERSISTED",
+  ));
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "AGGREGATION_PERSISTED",
+  ));
+  const successfulPersistenceStages = pipeline.execution_trace.stages.filter(stage =>
+    ["TIMING_INSTANCE_CREATION", "AGGREGATION_PERSISTENCE"].includes(stage.stage) &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code.endsWith("PERSISTED"),
+  );
+  assert.equal(new Set(successfulPersistenceStages.map(stage => stage.run_id)).size, 1);
+  assert.equal(pipeline.derived_diagnostic.projection_rules_effect, "NO_RULES_NO_TIMING_BLOCK");
+  fixture.runtime.destroy();
+});
+
+test("numeric host message_id preserves the full Timing and Aggregation chain", async () => {
+  const base = projectionDiagnosticsFixtureOptions({
+    eventId: "nsfw-numeric-host-floor-version",
+    projectionRules: [],
+  });
+  const messages = [
+    ...Array.from({length: 70}, (_, index) => ({message_id: index, floor: index, content: `历史用户消息 ${index}`, role: "user"})),
+    {message_id: 70, floor: 70, content: "当前剧情", role: "assistant"},
+  ];
+  const fixture = createFixture({...base, messages});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const timingInstance = debug.lifecycle_runtime.projection_timing.timing_instances[0];
+  assert.equal(debug.target.floor_version.message_id, 70);
+  assert.equal(timingInstance.created_at_floor_version.message_id, 70);
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 1);
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "TIMING_INSTANCE_PERSISTED",
+  ));
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" &&
+    stage.execution_status === "SUCCEEDED" &&
+    stage.reason_code === "AGGREGATION_PERSISTED",
+  ));
+  fixture.runtime.destroy();
+});
+
+test("rules=[] with invalid character timing and no baseline does not create a Timing Instance", async () => {
+  const fixture = createFixture({
+    ...projectionDiagnosticsFixtureOptions({
+      eventId: "nsfw-empty-rules-invalid-config",
+      projectionRules: [],
+    }),
+    projectionTimingConfigResolver: async () => ({
+      schema_version: 1,
+      config_version: 1,
+      base_min_story_days: 10,
+      base_max_story_days: 16,
+      variance_ratio: Infinity,
+      variance_cap_story_days: 0,
+      total_adjustment_cap_story_days: 0,
+    }),
+    projectionTimingBaselineResolver: async () => null,
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const result = await fixture.runtime.refreshProjection();
+
+  assert.equal(result.status, "failed");
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  assert.equal(pipeline.current_state.timing_instance_count, 0);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 0);
+  assert.ok(pipeline.execution_trace.stages.some(stage =>
+    stage.stage === "TIMING_CONFIGURATION_RESOLUTION" &&
+    stage.execution_status === "FAILED" &&
+    stage.reason_code === "TIMING_CONFIG_INVALID",
+  ));
+  assert.ok(pipeline.execution_trace.stages.every(stage =>
+    stage.stage !== "TIMING_INSTANCE_CREATION" || stage.execution_status !== "SUCCEEDED",
+  ));
+  fixture.runtime.destroy();
+});
+
+test("NSFW timing diagnostics identify reuse without resampling a frozen instance", async () => {
+  const fixture = createFixture(projectionDiagnosticsFixtureOptions({
+    eventId: "nsfw-timing-reuse",
+    projectionRules: [],
+  }));
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+  const firstDebug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const firstInstance = firstDebug.lifecycle_runtime.projection_timing.timing_instances[0];
+  assert.ok(firstInstance);
+
+  await fixture.runtime.refreshProjection();
+  const secondDebug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const secondInstance = secondDebug.lifecycle_runtime.projection_timing.timing_instances[0];
+  const secondTiming = secondDebug.timing_diagnostics.find(item => item.timing_instance_id === secondInstance.timing_instance_id);
+  const currentRunId = secondDebug.nsfw_pipeline_diagnostics.execution_trace.current_run_id;
+  const currentStages = secondDebug.nsfw_pipeline_diagnostics.execution_trace.stages.filter(stage => stage.run_id === currentRunId);
+  assert.equal(secondInstance.timing_instance_id, firstInstance.timing_instance_id);
+  assert.equal(secondInstance.sampled_individual_offset_story_days, firstInstance.sampled_individual_offset_story_days);
+  assert.equal(secondTiming.timing_instance_resolution, "REUSED");
+  const reuseStage = currentStages.find(stage =>
+    stage.stage === "TIMING_INSTANCE_CREATION" && stage.reason_code === "TIMING_INSTANCE_EXISTS",
+  );
+  assert.ok(reuseStage);
+  assert.equal(reuseStage.sampled_offset_source, "FROZEN_SNAPSHOT");
+  assert.equal(reuseStage.frozen_offset_status, "PRESERVED");
+  assert.equal(reuseStage.rng_source, null);
+  fixture.runtime.destroy();
+});
+
+test("same-cycle Exposures share one Timing Instance and one Aggregation basis", async () => {
+  const first = eventResult("nsfw-same-cycle-first", {
+    pregnancy_relevance: {
+      ...eventResult("nsfw-same-cycle-first").pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const secondSource = eventResult("nsfw-same-cycle-second");
+  const second = {
+    ...secondSource,
+    participants: [
+      {...secondSource.participants[0], mention_id: first.pregnancy_relevance.gestational_subject_ids[0]},
+      {...secondSource.participants[1], mention_id: "nsfw-same-cycle-source"},
+    ],
+    pregnancy_relevance: {
+      ...first.pregnancy_relevance,
+      counterpart_ids: ["nsfw-same-cycle-source"],
+    },
+  };
+  const fixture = createFixture(projectionDiagnosticsFixtureOptions({
+    events: [first, second],
+    projectionRules: [],
+    eventId: "nsfw-same-cycle-first",
+  }));
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const timingInstances = debug.lifecycle_runtime.projection_timing.timing_instances;
+  const aggregations = debug.lifecycle_runtime.participant_aggregation.aggregations;
+  const currentEventIds = debug.event_state.events.map(item => item.event_id);
+  assert.equal(timingInstances.length, 1);
+  assert.equal(aggregations.length, 1);
+  assert.equal(currentEventIds.length, 2);
+  assert.deepEqual(timingInstances[0].source_event_ids.sort(), currentEventIds.sort());
+  assert.deepEqual(aggregations[0].accepted_exposure_event_ids.sort(), currentEventIds.sort());
+  const timingDiagnostic = debug.timing_diagnostics.find(item => item.timing_instance_id === timingInstances[0].timing_instance_id);
+  const aggregationDiagnostic = debug.aggregation_diagnostics.find(item => item.aggregation_id === aggregations[0].aggregation_id);
+  const trackingWindow = debug.tracking_window.windows.find(window => window.subject_id === timingInstances[0].subject_id && window.mechanism_key === timingInstances[0].mechanism_key);
+  assert.equal(timingDiagnostic.tracking_window_cycle_id, trackingWindow.cycle_id);
+  assert.equal(timingDiagnostic.final_cycle_id, timingInstances[0].cycle_id);
+  assert.equal(timingDiagnostic.cycle_id_consistent, trackingWindow.cycle_id === timingInstances[0].cycle_id);
+  assert.equal(timingDiagnostic.cycle_id_consistency_reason_code, trackingWindow.cycle_id === timingInstances[0].cycle_id ? "TRACKING_WINDOW_CYCLE_MATCH" : "TRACKING_WINDOW_CYCLE_MISMATCH");
+  assert.ok(currentEventIds.includes(timingDiagnostic.first_exposure_event_id));
+  assert.deepEqual(timingDiagnostic.candidate_exposure_event_ids.sort(), currentEventIds.sort());
+  assert.deepEqual(aggregationDiagnostic.candidate_exposure_event_ids.sort(), currentEventIds.sort());
+  assert.deepEqual(aggregationDiagnostic.accepted_exposure_event_ids.sort(), currentEventIds.sort());
+  assert.equal(aggregationDiagnostic.cycle_id_consistent, trackingWindow.cycle_id === timingInstances[0].cycle_id);
+  fixture.runtime.destroy();
+});
+
+test("NSFW timing diagnostics preserve unresolved Story Time without inventing elapsed days", async () => {
+  const fixture = createFixture(projectionDiagnosticsFixtureOptions({
+    eventId: "nsfw-unresolved-story-time",
+    reliableStoryTime: false,
+  }));
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const timing = debug.timing_diagnostics.find(item => item.timing_instance_exists);
+  assert.equal(timing.timing_instance_exists, true);
+  assert.equal(timing.elapsed_story_days, null);
+  assert.equal(timing.story_time_reason_code, "story_time_unresolved");
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count, 0);
+  assert.ok(debug.aggregation_diagnostics.every(item => item.aggregation_reason_code !== "TIMING_INSTANCE_MISSING"));
+  fixture.runtime.destroy();
+});
+
+test("NSFW pipeline diagnostics distinguish Aggregation calculation from persistence failure", async () => {
+  const fixture = createFixture(projectionDiagnosticsFixtureOptions({
+    eventId: "nsfw-aggregation-persist-failure",
+    saveFloorHook: async ({value}) => {
+      if (value?.participant_aggregation_snapshot?.items?.length) {
+        const error = new Error("AGGREGATION_STORAGE_UNAVAILABLE");
+        error.code = "AGGREGATION_STORAGE_UNAVAILABLE";
+        throw error;
+      }
+    },
+  }));
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const result = await fixture.runtime.refreshProjection();
+  assert.equal(result.status, "failed");
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  const runId = pipeline.execution_trace.current_run_id;
+  const stages = pipeline.execution_trace.stages.filter(stage => stage.run_id === runId);
+  const aggregationPersistenceStage = [...pipeline.execution_trace.stages].reverse().find(stage =>
+    stage.stage === "AGGREGATION_PERSISTENCE" && stage.error_code === "AGGREGATION_STORAGE_UNAVAILABLE",
+  );
+  assert.ok(stages.some(stage =>
+    stage.stage === "PARTICIPANT_AGGREGATION_EXECUTION" && stage.execution_status === "SUCCEEDED",
+  ));
+  assert.equal(aggregationPersistenceStage?.execution_status, "PERSIST_FAILED");
+  assert.equal(aggregationPersistenceStage?.error_code, "AGGREGATION_STORAGE_UNAVAILABLE");
+  assert.equal(pipeline.derived_diagnostic.current_blocking_stage, "AGGREGATION_PERSISTENCE");
+  assert.equal(pipeline.derived_diagnostic.current_blocking_reason_code, "AGGREGATION_PERSISTENCE_FAILED");
+  assert.equal(debug.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count, 0);
+  const aggregationDiagnostic = debug.aggregation_diagnostics.find(item => item.aggregation_status === "PERSIST_FAILED");
+  assert.equal(aggregationDiagnostic.aggregation_status, "PERSIST_FAILED");
+  assert.equal(aggregationDiagnostic.persistence_attempted, true);
+  assert.equal(aggregationDiagnostic.persistence_succeeded, false);
+  assert.equal(aggregationDiagnostic.readback_succeeded, true);
+  assert.equal(aggregationDiagnostic.readback_result_present, false);
+  fixture.runtime.destroy();
+});
+
+test("NSFW pipeline diagnostics identify the first real Timing persistence blocker", async () => {
+  const exposure = eventResult("nsfw-success-path", {
+    pregnancy_relevance: {
+      ...eventResult("nsfw-success-path").pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const ruleContent = {
+    schema_version: 1,
+    mechanism_key: "fertilization",
+    development_concern_key: "participant-list",
+    development_kind: "possible_detection",
+    trigger: {kind: "immediate_after_event", source_event_type: "sexual_activity"},
+    requirements: {capabilities: [], source_compatibility: "not_required", contributor_relationships: []},
+    realization: null,
+    contradiction: null,
+    expiration: null,
+  };
+  const timingConfig = {
+    schema_version: 1,
+    config_version: 1,
+    base_min_story_days: 0,
+    base_max_story_days: 42,
+    variance_ratio: 0,
+    variance_cap_story_days: 0,
+    total_adjustment_cap_story_days: 0,
+  };
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    projectionTimingBaselineResolver: async () => timingConfig,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+          projection_rules: [ruleContent],
+        });
+      },
+      async analyzeFloor() {
+        return {events: [exposure]};
+      },
+      async generateProjection() {
+        return {development: {kind: "possible_detection", description: "诊断成功路径测试。"}};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const pipeline = debug.nsfw_pipeline_diagnostics;
+  assert.equal(pipeline.current_state.projection_rules_count, 1);
+  assert.equal(pipeline.current_state.tracking_window_status_counts.open, 1);
+  assert.equal(pipeline.current_state.timing_instance_count, 1);
+  assert.equal(pipeline.current_state.participant_aggregation_count, 1);
+  const runId = pipeline.execution_trace.current_run_id;
+  const stages = pipeline.execution_trace.stages.filter(stage => stage.run_id === runId);
+  assert.ok(stages.some(stage => stage.stage === "TIMING_CONFIGURATION_RESOLUTION" && stage.execution_status === "SUCCEEDED"));
+  assert.ok(stages.some(stage => stage.stage === "TIMING_INSTANCE_CREATION" && stage.execution_status === "SUCCEEDED"));
+  assert.ok(stages.some(stage => stage.stage === "AGGREGATION_PERSISTENCE" && stage.execution_status === "SUCCEEDED"));
+  assert.notEqual(pipeline.derived_diagnostic.current_blocking_stage, "TIMING_INSTANCE_CREATION");
+  assert.notEqual(pipeline.derived_diagnostic.current_blocking_reason_code, "TIMING_PERSISTENCE_FAILED");
+  assert.notEqual(pipeline.derived_diagnostic.current_blocking_reason_code, "TIMING_INSTANCE_MISSING");
   fixture.runtime.destroy();
 });
 
@@ -6525,8 +7933,9 @@ test("retry=false pauses automatic retry until Manual Refresh succeeds", async (
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
   fixture.context.chat[0].content = "普通编辑";
   fixture.emit("message-edited", { message_id: "paused-1" });
+  const renderedSettled = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
   appendCharacter(fixture, "paused-2", 2);
-  await settle();
+  await renderedSettled;
   assert.equal(calls, 1);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().retryPaused, true);
   await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /AUTO_FAILED/u);
@@ -7835,6 +9244,92 @@ test("SillyTavern adapter does not treat a normal void saveChat as confirmed", a
     assert.deepEqual(result, {commitState: "unknown", status: "unknown"});
     assert.deepEqual(context.chat[0].extra.bioweave.future_field, { must_survive: true });
   } finally {
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("SillyTavern official Floor readback keeps message_index 72 and swipe 0 aligned", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  const target = {
+    message_id: 72,
+    floor: 72,
+    content: "Floor 72 当前正文",
+    role: "assistant",
+  };
+  const messages = Array.from({length: 72}, (_, index) => ({
+    message_id: index,
+    floor: index,
+    content: `历史正文 ${index}`,
+    role: "user",
+  }));
+  messages.push(target);
+  const context = {
+    chatId: "chat-official-owner",
+    characterId: "character-official-owner",
+    name2: "角色",
+    avatar_url: "character.png",
+    chat: messages,
+    getRequestHeaders: () => ({}),
+  };
+  let remoteMessages = structuredClone(messages);
+  const requests = [];
+  globalThis.SillyTavern = {getContext: () => context};
+  globalThis.fetch = async (endpoint, options) => {
+    requests.push({endpoint, body: options?.body ? JSON.parse(options.body) : null});
+    if (endpoint === "/api/chats/get") {
+      return {
+        ok: true,
+        async json() {
+          return [{chat_metadata: {}}, ...structuredClone(remoteMessages)];
+        },
+      };
+    }
+    if (endpoint === "/api/chats/save") {
+      remoteMessages = structuredClone(JSON.parse(options.body).chat.slice(1));
+      return {ok: true, status: 200};
+    }
+    throw new Error(`unexpected endpoint: ${endpoint}`);
+  };
+  try {
+    const adapter = createSillyTavernAdapter();
+    const expected = await floorVersion({
+      chatId: context.chatId,
+      messageId: target.message_id,
+      floor: target.floor,
+      swipeId: 0,
+      text: target.content,
+    });
+    const value = {
+      ...emptyFloor(),
+      floor_version: expected,
+      projection_timing_snapshot: {schema_version: 1, items: []},
+    };
+    const result = await adapter.saveFloorSlot(
+      72,
+      0,
+      value,
+      context.chatId,
+      expected,
+      {coordinator_transaction: true, domain: "projection"},
+    );
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(remoteMessages[72].extra.bioweave.floor_version.message_id, 72);
+    assert.equal(remoteMessages[72].extra.bioweave.projection_timing_snapshot.items.length, 0);
+    assert.equal(remoteMessages[0].extra, undefined);
+    const readback = await adapter.readOfficialFloorSlot({
+      messageIndex: 72,
+      swipeId: 0,
+      expectedChatId: context.chatId,
+      expectedVersion: expected,
+    });
+    assert.equal(readback.messageIndex, 72);
+    assert.equal(readback.swipe_id, 0);
+    assert.deepEqual(readback.floor, remoteMessages[72].extra.bioweave);
+    assert.ok(requests.filter(request => request.endpoint === "/api/chats/save").length >= 1);
+  } finally {
+    globalThis.fetch = previousFetch;
     if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
     else globalThis.SillyTavern = previousSillyTavern;
   }
@@ -11569,7 +13064,7 @@ test("Event Analysis persists confirmed pregnancy_lifecycle facts and runtime re
     source_basis_refs: {},
     created_at_floor_version: firstFloor.version,
   });
-  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
+  await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
   await fixture.runtime.archiveAndReleasePregnancy({
     ownerFloor: {message_index: firstFloor.index},
     floorVersion: firstFloor.version,
@@ -11639,7 +13134,7 @@ for (const terminalStatus of ["delivery", "miscarriage", "termination"]) {
       source_basis_refs: {},
       created_at_floor_version: firstFloor.version,
     });
-    await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
+    await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: firstFloor.index}, floorVersion: firstFloor.version, aggregation});
     await fixture.runtime.archiveAndReleasePregnancy({
       ownerFloor: {message_index: firstFloor.index},
       floorVersion: firstFloor.version,
@@ -11691,7 +13186,7 @@ test("real Runtime lock capability filters new NSFW Exposure and blocks edit whi
     source_basis_refs: {},
     created_at_floor_version: firstFloor.version,
   });
-  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
+  await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
   await assert.rejects(fixture.runtime.updateEvent(firstEvent.event_id, {location: "blocked-edit"}), error => error.code === "PARTICIPANT_AGGREGATION_EVENT_LOCKED");
   await fixture.runtime.refreshCurrentFloorAnalysis();
   const afterAnalysis = await fixture.runtime.getCurrentFloorEvents();
@@ -11766,7 +13261,7 @@ test("real Runtime lock capability splits multi-subject output before cycle filt
     source_basis_refs: {},
     created_at_floor_version: firstFloor.version,
   });
-  await fixture.runtime.appendParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
+  await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
   await fixture.runtime.refreshCurrentFloorAnalysis();
   const events = await fixture.runtime.getCurrentFloorEvents();
   assert.equal(events.some(event => event.location === "M-new"), false);

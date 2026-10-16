@@ -59,8 +59,8 @@ function messageFloor(message, index, storedVersion = null) {
   return index;
 }
 
-function messageVersion(message, storedVersion = null) {
-  return message?.message_version ?? message?.messageVersion ?? storedVersion?.message_version;
+function messageVersion(message) {
+  return message?.message_version ?? message?.messageVersion ?? message?.version;
 }
 
 function hasStoryTime(value) {
@@ -303,7 +303,7 @@ export function createStoryTimeCoordinator({
         floor: messageFloor(message, candidate, storedVersion),
         swipeId,
         text: messageText(message, swipeId),
-        messageVersion: messageVersion(message, storedVersion),
+        messageVersion: messageVersion(message),
       });
       chat.assert?.(chat.token?.());
       return {index: candidate, message, swipeId, version, chatId: version.chat_id};

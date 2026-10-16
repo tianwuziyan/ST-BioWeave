@@ -23,6 +23,16 @@ function clone(value) { if (value === undefined || value === null || typeof valu
 function text(value) { return typeof value === 'string' && value.trim() !== ''; }
 function ids(value, required = false) { return Array.isArray(value) && (!required || value.length > 0) && value.every(text) && new Set(value).size === value.length; }
 function finite(value) { return Number.isFinite(Number(value)); }
+function nonEmptyFloorScalar(value) { return text(value) || (typeof value === 'number' && Number.isFinite(value)); }
+function validFloorVersion(value) {
+  return isRecord(value)
+    && text(value.chat_id)
+    && nonEmptyFloorScalar(value.message_id)
+    && finite(value.floor)
+    && finite(value.swipe_id)
+    && text(value.content_hash)
+    && nonEmptyFloorScalar(value.message_version);
+}
 
 export function buildParticipantAggregationId({cycleId, timingInstanceId} = {}) {
   if (!text(cycleId) || !text(timingInstanceId)) return null;
@@ -42,7 +52,7 @@ export function validateParticipantAggregation(value) {
   if (!isRecord(value.config_snapshot) || !validateCharacterTimingConfig(value.config_snapshot).ok) errors.push('participant_aggregation.config_snapshot:invalid');
   for (const field of ['elapsed_story_days', 'effective_min_story_days', 'effective_max_story_days', 'sampled_individual_offset_story_days']) if (!finite(value[field])) errors.push(`participant_aggregation.${field}:invalid`);
   if (Number(value.effective_min_story_days) < 0 || Number(value.effective_max_story_days) < Number(value.effective_min_story_days)) errors.push('participant_aggregation.effective_window:invalid');
-  if (!isRecord(value.created_at_floor_version)) errors.push('participant_aggregation.created_at_floor_version:invalid');
+  if (!validFloorVersion(value.created_at_floor_version)) errors.push('participant_aggregation.created_at_floor_version:invalid');
   return {ok: errors.length === 0, errors};
 }
 
@@ -76,51 +86,83 @@ export function normalizeParticipantAggregation(value) {
   return normalized;
 }
 
-export function emptyParticipantAggregationTimeline() {
-  return {schema_version: PARTICIPANT_AGGREGATION_SCHEMA_VERSION, creations: [], lifecycle_records: []};
+export const PARTICIPANT_AGGREGATION_SNAPSHOT_SCHEMA_VERSION = PARTICIPANT_AGGREGATION_SCHEMA_VERSION;
+
+export function emptyParticipantAggregationSnapshot() {
+  return {schema_version: PARTICIPANT_AGGREGATION_SNAPSHOT_SCHEMA_VERSION, items: []};
 }
 
-export function normalizeParticipantAggregationTimeline(value, {expectedChatId = null} = {}) {
-  const source = isRecord(value) ? value : {};
-  const creations = [];
+/**
+ * Participant aggregation is stored as the complete collection for one Floor.
+ * Only `items` is authoritative; old timeline fields are intentionally not
+ * read or migrated.
+ */
+export function normalizeParticipantAggregationSnapshot(value, {expectedChatId = null} = {}) {
+  const validRoot = isRecord(value)
+    && value.schema_version === PARTICIPANT_AGGREGATION_SNAPSHOT_SCHEMA_VERSION
+    && Array.isArray(value.items);
+  const source = validRoot ? value : {};
+  const items = [];
   const conflicts = [];
   const rejected = [];
   const byId = new Map();
-  for (const item of Array.isArray(source.creations) ? source.creations : []) {
+  for (const item of Array.isArray(source.items) ? source.items : []) {
     try {
       const normalized = normalizeParticipantAggregation(item);
       if (expectedChatId !== null && normalized.created_at_floor_version.chat_id !== expectedChatId) throw new Error('chat_scope');
       const previous = byId.get(normalized.aggregation_id);
       if (previous && JSON.stringify(previous) !== JSON.stringify(normalized)) conflicts.push(normalized.aggregation_id);
-      else if (!previous) { byId.set(normalized.aggregation_id, normalized); creations.push(normalized); }
+      else if (!previous) byId.set(normalized.aggregation_id, normalized);
     } catch { rejected.push(item?.aggregation_id ?? null); }
   }
-  const lifecycleRecords = Array.isArray(source.lifecycle_records)
-    ? source.lifecycle_records.filter(record => isRecord(record) && text(record.aggregation_id) && text(record.action)).map(clone)
-    : [];
-  return {timeline: {schema_version: PARTICIPANT_AGGREGATION_SCHEMA_VERSION, creations: creations.sort((a, b) => a.aggregation_id.localeCompare(b.aggregation_id)), lifecycle_records: lifecycleRecords}, conflicts, rejected};
+  items.push(...byId.values());
+  items.sort((left, right) => left.aggregation_id.localeCompare(right.aggregation_id));
+  return {
+    snapshot: {schema_version: PARTICIPANT_AGGREGATION_SNAPSHOT_SCHEMA_VERSION, items},
+    conflicts,
+    rejected,
+    invalid: !validRoot,
+  };
 }
 
-export function appendParticipantAggregation(record, {timeline, expectedChatId = null} = {}) {
+export function upsertParticipantAggregation(record, {snapshot, expectedChatId = null} = {}) {
   const normalized = normalizeParticipantAggregation(record);
   if (expectedChatId !== null && normalized.created_at_floor_version.chat_id !== expectedChatId) throw new Error('CHAT_SCOPE_MISMATCH');
-  const current = normalizeParticipantAggregationTimeline(timeline, {expectedChatId});
-  if (current.conflicts.length || current.rejected.length) throw new Error('PARTICIPANT_AGGREGATION_TIMELINE_INVALID');
-  const existing = current.timeline.creations.find(item => item.aggregation_id === normalized.aggregation_id);
-  if (existing) return JSON.stringify(existing) === JSON.stringify(normalized)
-    ? {status: 'deduped', timeline: current.timeline}
-    : {status: 'conflict'};
-  return {status: 'appended', timeline: {...current.timeline, creations: [...current.timeline.creations, normalized]}};
+  const current = normalizeParticipantAggregationSnapshot(snapshot, {expectedChatId});
+  if (current.invalid || current.conflicts.length || current.rejected.length) throw new Error('PARTICIPANT_AGGREGATION_SNAPSHOT_INVALID');
+  const index = current.snapshot.items.findIndex(item => item.aggregation_id === normalized.aggregation_id);
+  if (index < 0) {
+    return {
+      status: 'created',
+      snapshot: {
+        ...current.snapshot,
+        items: [...current.snapshot.items, normalized].sort((left, right) => left.aggregation_id.localeCompare(right.aggregation_id)),
+      },
+    };
+  }
+  if (JSON.stringify(current.snapshot.items[index]) === JSON.stringify(normalized)) return {status: 'deduped', snapshot: current.snapshot};
+  const items = current.snapshot.items.slice();
+  items[index] = normalized;
+  return {
+    status: 'updated',
+    snapshot: {...current.snapshot, items: items.sort((left, right) => left.aggregation_id.localeCompare(right.aggregation_id))},
+  };
 }
 
-export function resolveParticipantAggregationTimeline(entries = []) {
-  const creations = new Map();
-  const lifecycle = new Map();
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    for (const record of entry?.creations ?? []) creations.set(record.aggregation_id, clone(record));
-    for (const record of entry?.lifecycle_records ?? []) lifecycle.set(`${record.aggregation_id}:${record.action}:${record.event_id ?? ''}`, clone(record));
-  }
-  return {creations: [...creations.values()], lifecycle_records: [...lifecycle.values()]};
+export function removeParticipantAggregation(aggregationId, {snapshot, expectedChatId = null} = {}) {
+  const current = normalizeParticipantAggregationSnapshot(snapshot, {expectedChatId});
+  if (current.invalid || current.conflicts.length || current.rejected.length) throw new Error('PARTICIPANT_AGGREGATION_SNAPSHOT_INVALID');
+  const items = current.snapshot.items.filter(item => item.aggregation_id !== aggregationId);
+  return {
+    status: items.length === current.snapshot.items.length ? 'not_found' : 'removed',
+    snapshot: {...current.snapshot, items},
+  };
+}
+
+export function replaceParticipantAggregationSnapshot(items, {expectedChatId = null} = {}) {
+  const normalized = normalizeParticipantAggregationSnapshot({schema_version: PARTICIPANT_AGGREGATION_SNAPSHOT_SCHEMA_VERSION, items}, {expectedChatId});
+  if (normalized.invalid || normalized.conflicts.length || normalized.rejected.length) throw new Error('PARTICIPANT_AGGREGATION_SNAPSHOT_INVALID');
+  return normalized.snapshot;
 }
 
 export function resolveParticipantAggregationTrigger({strategy = 'at_effective_min', timingInstance = null, currentStoryTime = null, aggregation = null} = {}) {

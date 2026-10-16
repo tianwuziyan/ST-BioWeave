@@ -6,7 +6,7 @@ import {
   isCharacterMessage,
 } from "../storage/store.js";
 import { createAnalyzer } from "../ai/analyzer.js";
-import { createStoryTime } from "../story/time.js";
+import { compareStoryTime, createStoryTime, differenceStoryTime } from "../story/time.js";
 import {
   FOLLOW_DEFAULT_API,
   SILLYTAVERN_CURRENT_API,
@@ -26,9 +26,14 @@ import { createProjectionTimingPersistence } from "../storage/projection-timing.
 import { createTrackingWindowPersistence } from "../storage/tracking-window.js";
 import { createParticipantAggregationPersistence } from "../storage/participant-aggregation.js";
 import { createPregnancyLifecyclePersistence } from "../storage/pregnancy-lifecycle.js";
-import { evaluateProjectionTiming, resolveProjectionTimingInstance } from "../core/projection-timing.js";
-import { appendParticipantAggregation, buildParticipantAggregationEvidence, buildParticipantAggregationId, filterProjectionViewsByAggregationEvidence, resolveParticipantAggregationTrigger } from "../core/participant-aggregation.js";
-import { normalizeParticipantAggregationTimeline } from "../core/participant-aggregation.js";
+import {
+  buildProjectionTimingCycleId,
+  evaluateProjectionTiming,
+  normalizeProjectionTimingCycleStoryTime,
+  resolveProjectionTimingInstance,
+} from "../core/projection-timing.js";
+import { isPregnancyRelevantExposure } from "../core/events.js";
+import { buildParticipantAggregationEvidence, buildParticipantAggregationId, filterProjectionViewsByAggregationEvidence, resolveParticipantAggregationTrigger, upsertParticipantAggregation } from "../core/participant-aggregation.js";
 import { normalizePregnancyLifecycleTimeline } from "../core/pregnancy-lifecycle.js";
 import { PARTICIPANT_AGGREGATION_LOCK_DISABLED, resolveCycleLocks } from "../core/participant-aggregation-lock.js";
 import { evaluateProjectionEligibility } from "../core/projection-eligibility.js";
@@ -68,6 +73,76 @@ const LIFECYCLE_EVENTS = [
 ];
 
 const SOURCE_OWNER_LATEST_MERGE = true;
+
+function cycleStoryTimeEqual(left, right) {
+  return JSON.stringify(normalizeProjectionTimingCycleStoryTime(left))
+    === JSON.stringify(normalizeProjectionTimingCycleStoryTime(right));
+}
+
+function eventFloorVersion(event) {
+  return event?.source ?? event?.version ?? event?.event_version ?? null;
+}
+
+function storedEventBasisChanged(stored, current) {
+  if (!stored || !current) return false;
+  return !sameFloorVersion(stored, current);
+}
+
+function resolveTrackingWindowFirstExposure({trackingWindow = null, candidateEvents = [], chatId, subjectId, mechanismKey} = {}) {
+  const candidates = (Array.isArray(candidateEvents) ? candidateEvents : [])
+    .filter(event => trackingWindow?.source_event_ids?.includes(event?.event_id));
+  if (!trackingWindow) return candidates.length ? {event: candidates[0], source: "EXPOSURE_FIRST_EVENT"} : {event: null, reason_code: "EXPOSURE_FIRST_EVENT_UNAVAILABLE"};
+  const cycleMatches = candidates.filter(event =>
+    buildProjectionTimingCycleId({chatId, subjectId, mechanismKey, firstEvent: event}) === trackingWindow.cycle_id,
+  );
+  if (cycleMatches.length === 1) return {event: cycleMatches[0], source: "TRACKING_WINDOW"};
+  if (cycleMatches.length > 1) return {event: null, reason_code: "CYCLE_FIRST_EXPOSURE_AMBIGUOUS"};
+  const openedMatches = candidates.filter(event => cycleStoryTimeEqual(event?.story_time, trackingWindow.opened_story_time));
+  if (openedMatches.length === 1) return {event: openedMatches[0], source: "TRACKING_WINDOW_OPENED_STORY_TIME"};
+  if (openedMatches.length > 1) return {event: null, reason_code: "CYCLE_FIRST_EXPOSURE_AMBIGUOUS"};
+  let first = null;
+  for (const candidate of candidates) {
+    if (!first) {
+      first = candidate;
+      continue;
+    }
+    const comparison = compareStoryTime(candidate?.story_time, first?.story_time);
+    if (comparison === null) return {event: null, reason_code: "CYCLE_FIRST_EXPOSURE_STORY_TIME_UNRESOLVED"};
+    if (comparison < 0) first = candidate;
+    else if (comparison === 0) return {event: null, reason_code: "CYCLE_FIRST_EXPOSURE_AMBIGUOUS"};
+  }
+  return first
+    ? {event: first, source: "TRACKING_WINDOW_CHRONOLOGY"}
+    : {event: null, reason_code: "CYCLE_FIRST_EXPOSURE_UNAVAILABLE"};
+}
+
+function resolveCanonicalTimingInstance({timingInstances = [], subjectId, mechanismKey, candidate, canonicalCycleId} = {}) {
+  const trackingWindowIds = new Set(candidate?.trackingWindow?.source_event_ids ?? []);
+  const firstEventId = candidate?.firstEvent?.event_id ?? null;
+  const firstEventVersion = eventFloorVersion(candidate?.firstEvent);
+  const candidates = (Array.isArray(timingInstances) ? timingInstances : []).filter(instance => {
+    if (instance?.subject_id !== subjectId || instance?.mechanism_key !== mechanismKey) return false;
+    if (!canonicalCycleId || instance?.cycle_id !== canonicalCycleId) return false;
+    if (!firstEventId || !(instance?.source_event_ids ?? []).includes(firstEventId)) return false;
+    if (trackingWindowIds.size && !(instance?.source_event_ids ?? []).some(id => trackingWindowIds.has(id))) return false;
+    const storedEventVersion = instance?.source_basis_refs?.[firstEventId]?.event_version
+      ?? instance?.source_basis_refs?.[firstEventId]?.source
+      ?? null;
+    if (storedEventVersion && firstEventVersion && !sameFloorVersion(storedEventVersion, firstEventVersion)) return false;
+    return cycleStoryTimeEqual(instance?.reference_story_time, candidate?.firstEvent?.story_time);
+  });
+  const unique = [...new Map(candidates.map(instance => [instance.timing_instance_id, instance])).values()];
+  if (unique.length > 1) return {status: "ambiguous", candidates: unique};
+  if (unique.length === 1) {
+    const instance = unique[0];
+    return {
+      status: "matched",
+      instance,
+      source: "CANONICAL_CYCLE_ID",
+    };
+  }
+  return {status: "unavailable", candidates: []};
+}
 
 function ownerId(value) {
   const raw =
@@ -315,18 +390,61 @@ export function createSillyTavernAdapter() {
     return io.readOfficialChatOwner(owner);
   }
 
+  function resolveOfficialOwnerMessage(messages, {messageIndex = null, expectedMessageId = null} = {}) {
+    const requestedIndex = Number.isInteger(Number(messageIndex)) && Number(messageIndex) >= 0
+      ? Number(messageIndex)
+      : null;
+    const expectedId = expectedMessageId == null ? null : String(expectedMessageId);
+    if (requestedIndex !== null) {
+      const message = messages?.[requestedIndex];
+      if (!message) {
+        throw sourceError("STALE_FLOOR_VERSION", {
+          version_check_source: "official_owner",
+          owner_message_found: false,
+          owner_message_index: requestedIndex,
+          owner_message_id: expectedMessageId ?? null,
+          owner_resolution: "MESSAGE_INDEX_NOT_FOUND",
+        });
+      }
+      const actualId = String(messageIdForFloor(message, requestedIndex));
+      if (expectedId !== null && actualId !== expectedId) {
+        throw sourceError("STALE_FLOOR_VERSION", {
+          version_check_source: "official_owner",
+          owner_message_found: false,
+          owner_message_index: requestedIndex,
+          owner_message_id: expectedMessageId ?? null,
+          actual_owner_message_id: messageIdForFloor(message, requestedIndex),
+          owner_resolution: "MESSAGE_INDEX_ID_MISMATCH",
+        });
+      }
+      return {message, index: requestedIndex};
+    }
+    if (expectedId === null) {
+      throw sourceError("FLOOR_OWNER_REQUIRED", {
+        owner_resolution: "MESSAGE_INDEX_REQUIRED",
+      });
+    }
+    const matches = (Array.isArray(messages) ? messages : [])
+      .map((message, index) => ({message, index}))
+      .filter(({message, index}) => String(messageIdForFloor(message, index)) === expectedId);
+    if (matches.length !== 1) {
+      throw sourceError("STALE_FLOOR_VERSION", {
+        version_check_source: "official_owner",
+        owner_message_found: matches.length === 1,
+        owner_message_id: expectedMessageId,
+        owner_resolution: matches.length > 1 ? "MESSAGE_ID_AMBIGUOUS" : "MESSAGE_ID_NOT_FOUND",
+      });
+    }
+    return matches[0];
+  }
+
   async function readOfficialFloorSlot({messageIndex, message_id, swipeId = 0, expectedChatId, expectedVersion} = {}) {
     const state = await readOfficialChatOwner({chatId: expectedChatId});
     const expectedMessageId = expectedVersion?.message_id ?? message_id;
-    const index = state.messages.findIndex((message, candidateIndex) => {
-      if (expectedMessageId == null && Number(candidateIndex) === Number(messageIndex)) return true;
-      return String(messageIdForFloor(message, candidateIndex)) === String(expectedMessageId);
+    const {message, index} = resolveOfficialOwnerMessage(state.messages, {
+      messageIndex,
+      expectedMessageId,
     });
-    if (index < 0) throw sourceError("STALE_FLOOR_VERSION", {
-      version_check_source: "official_owner",
-      owner_message_found: false,
-    });
-    const message = state.messages[index];
     const targetSwipeId = Number.isInteger(Number(swipeId)) && Number(swipeId) >= 0
       ? Number(swipeId)
       : 0;
@@ -350,9 +468,12 @@ export function createSillyTavernAdapter() {
       throw sourceError("FLOOR_OWNER_REQUIRED");
     const state = await readOfficialChatOwner({chatId: expectedChatId});
     const expectedMessageId = expectedVersion?.message_id ?? messageIdForFloor(liveTarget, messageIndex);
-    const officialIndex = state.messages.findIndex((message, index) =>
-      String(messageIdForFloor(message, index)) === String(expectedMessageId));
-    const officialTarget = officialIndex >= 0 ? state.messages[officialIndex] : null;
+    const officialOwner = resolveOfficialOwnerMessage(state.messages, {
+      messageIndex,
+      expectedMessageId,
+    });
+    const officialIndex = officialOwner.index;
+    const officialTarget = officialOwner.message;
     const currentContext = getContext();
     if (String(currentContext?.chatId) !== String(expectedChatId) ||
         currentContext?.chat?.[messageIndex] !== liveTarget)
@@ -858,8 +979,10 @@ export function createSillyTavernAdapter() {
       const currentContextForOwner = getContext();
       expectedMessageId = expectedVersion?.message_id ??
         messageIdForFloor(currentContextForOwner?.chat?.[messageIndex], messageIndex);
-      targetIndex = latest.messages.findIndex((message, index) =>
-        String(messageIdForFloor(message, index)) === String(expectedMessageId));
+      targetIndex = resolveOfficialOwnerMessage(latest.messages, {
+        messageIndex,
+        expectedMessageId,
+      }).index;
       trace("OFFICIAL_OWNER_MESSAGE_RESOLVED", {
         owner_found: targetIndex >= 0,
         owner_message_id: targetIndex >= 0
@@ -1131,8 +1254,10 @@ export function createSillyTavernAdapter() {
       revision: committed.revision,
       official_get_after_save_duration_ms: durationMs(afterSaveReadStartedAt),
     });
-    const committedMessage = committed.messages.find((message, index) =>
-      String(messageIdForFloor(message, index)) === String(expectedMessageId));
+    const committedMessage = resolveOfficialOwnerMessage(committed.messages, {
+      messageIndex,
+      expectedMessageId,
+    }).message;
     const readbackPresent = Boolean(committedMessage && readFloorSlot(committedMessage, targetSwipeId) !== undefined);
     trace("BIOWEAVE_FULL_CHAT_SAVE_READBACK", {
       source: "official_clone",
@@ -1163,8 +1288,10 @@ export function createSillyTavernAdapter() {
       chatId: expectedChatId,
       characterId: descriptor.characterId,
     });
-    const finalMessage = finalState.messages.find((message, index) =>
-      String(messageIdForFloor(message, index)) === String(expectedMessageId));
+    const finalMessage = resolveOfficialOwnerMessage(finalState.messages, {
+      messageIndex,
+      expectedMessageId,
+    }).message;
     const finalServerSlot = finalMessage
       ? readFloorSlot(finalMessage, targetSwipeId)
       : undefined;
@@ -1528,6 +1655,7 @@ export function createRuntime({
   analysisSourceCache = null,
   projectionTimingConfigResolver = null,
   projectionTimingBaselineResolver = null,
+  projectionTimingRandom = Math.random,
   healthRecoveryStabilityDelayMs = 2000,
   participantAggregationLockCapability = false,
 } = {}) {
@@ -1543,6 +1671,10 @@ export function createRuntime({
   const activity = createRuntimeActivity();
   let initialized = false;
   let destroyed = false;
+  const timingRandom = typeof projectionTimingRandom === 'function' ? projectionTimingRandom : Math.random;
+  const timingRandomSource = timingRandom === Math.random
+    ? 'RUNTIME_DEFAULT_MATH_RANDOM'
+    : 'RUNTIME_INJECTED_RNG';
 
   function isBioWeaveEnabled() {
     return store.getChat(chat.current()).settings?.enabled !== false;
@@ -1565,6 +1697,30 @@ export function createRuntime({
       } catch (error) {
         console.error("[BioWeave] runtime subscriber failed", error);
       }
+    }
+  }
+
+  function recordNsfwPipelineStage(payload = {}) {
+    try {
+      diagnostics.recordNsfwPipelineStage?.(payload);
+    } catch {
+      // Diagnostic collection is fail-open and must not affect business flow.
+    }
+  }
+
+  function startNsfwPipelineRun(payload = {}) {
+    try {
+      return diagnostics.startNsfwPipelineRun?.(payload) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function finishNsfwPipelineRun(runId, payload = {}) {
+    try {
+      diagnostics.finishNsfwPipelineRun?.({run_id: runId, ...payload});
+    } catch {
+      // Diagnostic collection is fail-open and must not affect business flow.
     }
   }
 
@@ -1799,18 +1955,25 @@ export function createRuntime({
       return {lifecycleArchiveReleaseReady: false, lockedCycleKeys: []};
     }
     const resolvedTarget = target ?? await eventAnalysis?.resolveCurrentBioWeaveFloor?.();
-    const floor = resolvedTarget
-      ? store.getFloor(resolvedTarget.index, resolvedTarget.swipeId)
-      : null;
-    const aggregationTimeline = normalizeParticipantAggregationTimeline(
-      floor?.participant_aggregation_timeline,
-      {expectedChatId: resolvedTarget?.version?.chat_id ?? null},
-    ).timeline;
+    if (!resolvedTarget?.version || !participantAggregationPersistence) {
+      return {lifecycleArchiveReleaseReady: false, lockedCycleKeys: []};
+    }
+    const floor = store.getFloor(resolvedTarget.index, resolvedTarget.swipeId);
+    let aggregationReadback;
+    try {
+      aggregationReadback = await participantAggregationPersistence.getParticipantAggregations({
+        chatId: resolvedTarget.version.chat_id,
+        endpointFloor: resolvedTarget.version.floor,
+        endpointIndex: resolvedTarget.index,
+      });
+    } catch {
+      return {lifecycleArchiveReleaseReady: false, lockedCycleKeys: []};
+    }
     const lifecycleTimeline = normalizePregnancyLifecycleTimeline(floor?.pregnancy_lifecycle_timeline);
     return {
       lifecycleArchiveReleaseReady: true,
       lockedCycleKeys: [...resolveCycleLocks({
-        aggregations: aggregationTimeline.creations,
+        aggregations: aggregationReadback?.items ?? [],
         lifecycleFacts: lifecycleTimeline.facts,
         releaseRecords: lifecycleTimeline.release_records,
         lifecycleArchiveReleaseReady: true,
@@ -1828,7 +1991,7 @@ export function createRuntime({
     const endpointFloor = target.version.floor;
     try {
       const [aggregations, lifecycle, deliveries, projections, lock, projectionTiming] = await Promise.all([
-        participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor}),
+        participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor, endpointIndex: target.index}),
         pregnancyLifecyclePersistence.getTimeline({chatId, endpointFloor}),
         projectionPersistence.getProjectionDeliveryRecords({chatId, endpointFloor}),
         projectionPersistence.getProjectionViews({chatId, endpointFloor}),
@@ -1840,8 +2003,8 @@ export function createRuntime({
         status: 'ready',
         target: {chat_id: chatId, floor: target.version.floor, swipe_id: target.version.swipe_id, floor_version: cloneValue(target.version)},
         participant_aggregation: {
-          count: aggregations.creations.length,
-          aggregations: aggregations.creations.map(item => ({
+          count: aggregations.items.length,
+          aggregations: aggregations.items.map(item => ({
             aggregation_id: item.aggregation_id,
             subject_id: item.subject_id,
             pregnancy_id: item.pregnancy_id ?? null,
@@ -1924,6 +2087,173 @@ export function createRuntime({
       return {status: 'unavailable', reason: error?.code ?? error?.message ?? 'LIFECYCLE_DEBUG_UNAVAILABLE'};
     }
   }
+  function buildNsfwPipelineDiagnostics({business = {}, projection = {}, lifecycleRuntime = {}} = {}) {
+    const floorVersion = business?.current_floor?.version
+      ?? lifecycleRuntime?.target?.floor_version
+      ?? null;
+    const chatId = floorVersion?.chat_id ?? chat.current();
+    const projectionTiming = lifecycleRuntime?.projection_timing ?? {};
+    let executionTrace = projectionTiming.execution_trace ?? null;
+    if (!executionTrace || typeof executionTrace !== 'object') {
+      try {
+        executionTrace = diagnostics.getNsfwPipelineDiagnostics({
+          chat_id: chatId,
+          ...(floorVersion ? {floor_version: floorVersion} : {}),
+        });
+      } catch {
+        executionTrace = {
+          source_type: 'EXECUTION_TRACE',
+          collection_status: 'FAILED',
+          trace_truncated: null,
+          trace_buffer_status: 'UNKNOWN',
+          current_run_id: null,
+          runs: [],
+          stages: [],
+        };
+      }
+    }
+    const stages = Array.isArray(executionTrace?.stages) ? [...executionTrace.stages] : [];
+    const runs = Array.isArray(executionTrace?.runs) ? [...executionTrace.runs] : [];
+    const currentRunId = executionTrace?.current_run_id ?? runs.at(-1)?.run_id ?? null;
+    const currentRunStages = stages
+      .filter(stage => currentRunId ? stage?.run_id === currentRunId : !stage?.run_id)
+      .sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0));
+    const latestRun = runs.find(run => run?.run_id === currentRunId) ?? runs.at(-1) ?? null;
+    const readbackDiagnostic = projectionTiming?.readback_diagnostic ?? null;
+    const blockingStatuses = new Set(['BLOCKED', 'FAILED', 'PERSIST_FAILED', 'READBACK_FAILED']);
+    const nonProgressReasons = new Set(['READBACK_DEFERRED_TO_CURRENT_STATE']);
+    const nonBlockingNotInvokedReasons = new Set(['TIMING_INSTANCE_EXISTS', 'READBACK_DEFERRED_TO_CURRENT_STATE']);
+    const isBlockingStage = stage =>
+      !nonProgressReasons.has(stage?.reason_code) &&
+      (blockingStatuses.has(stage?.execution_status) ||
+        (stage?.execution_status === 'NOT_INVOKED' && stage?.invoked === false && !nonBlockingNotInvokedReasons.has(stage?.reason_code)) ||
+        (stage?.execution_status === 'SKIPPED' && stage?.invoked === true));
+    const currentBlockingStage = currentRunStages.find(isBlockingStage);
+    // A refresh can expose a newer ATTEMPTED run while its post-processing
+    // stage is still being recorded. Keep the latest run as the current
+    // execution identity, but do not hide the last concrete blocker already
+    // recorded for this Floor in that short diagnostic window.
+    const priorBlockingStage = !currentBlockingStage && latestRun?.execution_status === 'ATTEMPTED'
+      ? (() => {
+        for (const run of [...runs].reverse()) {
+          if (!run?.run_id || run.run_id === currentRunId) continue;
+          const stage = stages
+            .filter(item => item?.run_id === run.run_id)
+            .sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0))
+            .find(isBlockingStage);
+          if (stage) return stage;
+        }
+        return [...stages].reverse().find(stage => stage?.run_id !== currentRunId && isBlockingStage(stage)) ?? null;
+      })()
+      : null;
+    const blockingStage = currentBlockingStage
+      ?? priorBlockingStage
+      ?? (blockingStatuses.has(readbackDiagnostic?.execution_status) ? readbackDiagnostic : null);
+    const timingDiagnostics = Array.isArray(projectionTiming.timing_diagnostics)
+      ? projectionTiming.timing_diagnostics
+      : [];
+    const aggregationDiagnostics = Array.isArray(projectionTiming.aggregation_diagnostics)
+      ? projectionTiming.aggregation_diagnostics
+      : [];
+    const lock = lifecycleRuntime?.nsfw_lock ?? {};
+    const trackingWindows = Array.isArray(business?.tracking_windows) ? business.tracking_windows : [];
+    const activeEvents = Array.isArray(business?.active_events) ? business.active_events : [];
+    const validExposureEvents = activeEvents.filter(event => {
+      try { return isPregnancyRelevantExposure(event); } catch { return false; }
+    });
+    const eventCount = Array.isArray(business?.active_events) ? business.active_events.length : null;
+    const timingCount = Number.isFinite(projectionTiming?.authoritative_readback?.timing_instance_count)
+      ? projectionTiming.authoritative_readback.timing_instance_count
+      : null;
+    const aggregationCount = Number.isFinite(projectionTiming?.authoritative_readback?.aggregation_count)
+      ? projectionTiming.authoritative_readback.aggregation_count
+      : Number.isFinite(lifecycleRuntime?.participant_aggregation?.count)
+        ? lifecycleRuntime.participant_aggregation.count
+        : null;
+    const projectionCount = Array.isArray(projection?.projections)
+      ? projection.projections.length
+      : null;
+    const currentState = {
+      source_type: 'CURRENT_STATE',
+      plugin_enabled: (() => {
+        try { return isBioWeaveEnabled() === true; } catch { return null; }
+      })(),
+      chat_id: chatId,
+      floor_version: cloneValue(floorVersion),
+      event_count: eventCount,
+      authoritative_exposure_count: validExposureEvents.length,
+      pregnancy_relevant_exposure_count: validExposureEvents.length,
+      candidate_subject_ids: [...new Set(validExposureEvents.flatMap(event => event?.pregnancy_relevance?.gestational_subject_ids ?? []))].sort(),
+      candidate_mechanism_keys: [...new Set(validExposureEvents.map(event => event?.pregnancy_relevance?.reproductive_mechanism?.kind).filter(Boolean))].sort(),
+      tracking_subject_count: Object.keys(business?.tracking_subjects ?? {}).length,
+      tracking_window_count: trackingWindows.length,
+      tracking_window_status_counts: Object.fromEntries(
+        [...new Set(trackingWindows.map(window => window?.status).filter(Boolean))]
+          .map(status => [status, trackingWindows.filter(window => window?.status === status).length]),
+      ),
+      timing_instance_count: timingCount,
+      participant_aggregation_count: aggregationCount,
+      projection_count: projectionCount,
+      projection_rules_count: projectionTiming?.timing_runtime?.projection_rules_count ?? null,
+      projection_rules_available: projectionTiming?.timing_runtime?.projection_rules_available ?? null,
+      nsfw_lock: {
+        capability_enabled: lock.capability_enabled ?? null,
+        gate: lock.gate ?? null,
+        lifecycle_archive_release_ready: lock.lifecycle_archive_release_ready ?? null,
+      },
+    };
+    const derived = {
+      source_type: 'DERIVED_DIAGNOSTIC',
+      current_run_id: currentRunId,
+      current_execution_status: latestRun?.execution_status
+        ?? blockingStage?.execution_status
+        ?? (stages.length ? 'UNKNOWN' : 'TRACE_UNAVAILABLE'),
+      current_blocking_stage: blockingStage?.stage ?? (stages.length ? null : 'UNKNOWN'),
+      current_blocking_reason_code: blockingStage?.reason_code ?? (stages.length ? null : 'TRACE_UNAVAILABLE'),
+      current_blocking_error_code: blockingStage?.error_code ?? null,
+      first_blocking_node_source: blockingStage
+        ? blockingStage.source_type ?? (readbackDiagnostic ? 'DERIVED_DIAGNOSTIC' : 'EXECUTION_TRACE')
+        : stages.length ? 'DERIVED_DIAGNOSTIC' : 'TRACE_UNAVAILABLE',
+      trace_truncated: executionTrace?.trace_truncated ?? null,
+      confidence: blockingStage
+        ? blockingStage === readbackDiagnostic ? 'CONFIRMED_BY_READBACK_FAILURE' : 'CONFIRMED_BY_EXECUTION_TRACE'
+        : executionTrace?.trace_truncated === true || !stages.length
+          ? 'UNKNOWN'
+          : 'NO_BLOCKING_STAGE_OBSERVED',
+      latest_aggregation_attempt: [...aggregationDiagnostics]
+        .filter(item => item?.last_attempt_at)
+        .sort((left, right) => String(left.last_attempt_at).localeCompare(String(right.last_attempt_at)))
+        .at(-1) ?? null,
+      projection_rules_effect: projectionTiming?.timing_runtime?.projection_rules_effect ?? null,
+      capability_flag_effect: {
+        participant_aggregation_lock: lock.gate ?? null,
+        aggregation_creation_control: 'NOT_CONTROLLED_BY_PARTICIPANT_AGGREGATION_LOCK',
+        explanation: 'PARTICIPANT_AGGREGATION_LOCK_DISABLED 只影响周期锁定过滤，不决定名单聚合函数是否创建或保存结果。',
+      },
+    };
+    return {
+      diagnostics_schema_version: 1,
+      diagnostic_sources: ['CURRENT_STATE', 'EXECUTION_TRACE', 'DERIVED_DIAGNOSTIC'],
+      current_state: currentState,
+      execution_trace: executionTrace,
+      derived_diagnostic: derived,
+      timing_diagnostics: timingDiagnostics,
+      aggregation_diagnostics: aggregationDiagnostics,
+      projection_diagnostics: projectionTiming?.projection_diagnostics ?? null,
+      automatic_execution: {
+        plugin_enabled: currentState.plugin_enabled,
+        entry_registered: typeof eventAnalysis?.automaticAnalysis?.observeSettledCharacterFloor === 'function',
+        latest_trigger: latestRun?.trigger ?? null,
+        latest_run_id: currentRunId,
+        current_chat_id: chatId,
+        current_floor: Number.isFinite(floorVersion?.floor) ? floorVersion.floor : null,
+        active_swipe_id: Number.isFinite(floorVersion?.swipe_id) ? floorVersion.swipe_id : null,
+        current_floor_version: cloneValue(floorVersion),
+        execution_status: latestRun?.execution_status ?? null,
+        scheduling_stage: currentRunStages.find(stage => stage?.stage === 'PIPELINE_SCHEDULING') ?? null,
+      },
+    };
+  }
   eventAnalysis = createEventAnalysisCoordinator({
     st,
     chat,
@@ -1945,6 +2275,7 @@ export function createRuntime({
       ? { externalMemoryProviderLoader }
       : {}),
     ...(analysisSourceCache ? { analysisSourceCache } : {}),
+    runtimeDiagnostics: diagnostics,
     globalRecentStoryResolver: () =>
       store.profileStore?.getSettings?.()?.recent_story_global ?? {},
     enabledResolver: isBioWeaveEnabled,
@@ -1978,7 +2309,7 @@ export function createRuntime({
       }
       for (const fact of lifecycleFacts) {
         if (!['not_pregnant', 'miscarriage', 'termination', 'delivery'].includes(fact.status)) continue;
-        const aggregations = (await participantAggregationPersistence.getParticipantAggregations({chatId: target.version.chat_id, endpointFloor: target.version.floor})).creations;
+        const aggregations = (await participantAggregationPersistence.getParticipantAggregations({chatId: target.version.chat_id, endpointFloor: target.version.floor, endpointIndex: target.index})).items;
         const aggregation = aggregations.find(item => item.subject_id === fact.subject_id && item.cycle_id === fact.cycle_id && (item.pregnancy_id ?? null) === (fact.pregnancy_id ?? null));
         if (!aggregation) continue;
         const evidence = buildParticipantAggregationEvidence({aggregation, events, subjectId: fact.subject_id});
@@ -2082,13 +2413,13 @@ export function createRuntime({
       const projectionViews = Array.isArray(views?.all) ? views.all : (Array.isArray(views) ? views : []);
       if (!projectionViews.some(view => view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence)) return views;
       try {
-        const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor});
+        const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
         if (businessDataError) throw businessDataError;
         const business = businessDataResolved ? businessData : await eventAnalysis.collectActiveBusinessData();
         if (!business?.current_floor?.version || !sameFloorVersion(business.current_floor.version, floor.version)) {
           return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
         }
-        return filterProjectionViewsByAggregationEvidence({views, aggregations: aggregationTimeline.creations, events: business.active_events ?? []});
+        return filterProjectionViewsByAggregationEvidence({views, aggregations: aggregationTimeline.items, events: business.active_events ?? []});
       } catch {
         return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
       }
@@ -2163,7 +2494,7 @@ export function createRuntime({
         worldModel: world?.model ?? {},
         currentStoryTime: business.current_story_time ?? null,
         storyContext: [],
-        participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor})).creations,
+        participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index})).items,
         pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor}),
         deleteProjection: projectionPersistence.deleteProjection,
       };
@@ -2175,92 +2506,1009 @@ export function createRuntime({
     saveProjectionDeliveryResponse: projectionPersistence.saveProjectionDeliveryResponse,
     getProjectionDeliveryRecords: projectionPersistence.getProjectionDeliveryRecords,
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
+    diagnostics,
     saveEvolutionDecision: projectionPersistence.saveEvolutionDecision,
-    resolvePreConfirmationTiming: async ({inputs}) => {
-      const timeline = await projectionTimingPersistence.getTimingInstances({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor});
-      const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor});
+    resolvePreConfirmationTiming: async ({inputs, run_id: pipelineRunId = null}) => {
+      const timeline = await projectionTimingPersistence.getTimingInstances({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
+      const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
       const rules = Array.isArray(inputs.worldModel?.projection_rules) ? inputs.worldModel.projection_rules : [];
       const events = Array.isArray(inputs.events) ? inputs.events : [];
-      const timingInstances = [...timeline.creations];
+      const timingInstances = [...timeline.items];
       let timingEnabled = timingInstances.length > 0;
+      const floorVersion = inputs.floor?.version ?? null;
+      // Timing is anchored by factual Exposure, while World Model rules remain
+      // authoritative only for Projection Eligibility/AI.  In particular, an
+      // empty rules collection must not erase a valid pre-confirmation cycle.
+      const relevantExposureEvents = events.filter(event => {
+        try {
+          return isPregnancyRelevantExposure(event)
+            && Array.isArray(event?.pregnancy_relevance?.gestational_subject_ids)
+            && event.pregnancy_relevance.gestational_subject_ids.every(subjectId => typeof subjectId === "string" && subjectId.trim() !== '')
+            && typeof event?.pregnancy_relevance?.reproductive_mechanism?.kind === "string"
+            && event.pregnancy_relevance.reproductive_mechanism.kind.trim() !== '';
+        } catch {
+          return false;
+        }
+      });
+      const timingCandidateTargets = new Set();
+      const timingTargetKey = (subjectId, mechanismKey, trackingWindowId = null) =>
+        [subjectId, mechanismKey, trackingWindowId ?? ""].map(value => String(value ?? "")).join("\u001f");
+      recordNsfwPipelineStage({
+        stage: "EVENT_SNAPSHOT_RESOLUTION",
+        execution_status: "SUCCEEDED",
+        reason_code: "CURRENT_FLOOR_SNAPSHOT_RESOLVED",
+        invoked: true,
+        run_id: pipelineRunId,
+        chat_id: floorVersion?.chat_id ?? null,
+        floor_version: floorVersion,
+        input_count: events.length,
+        output_count: events.length,
+        candidate_exposure_event_ids: relevantExposureEvents.map(event => event.event_id),
+        source_type: "EXECUTION_TRACE",
+      });
+      const excludedExposureReasons = events.map(event => {
+        if (!event?.event_id || relevantExposureEvents.includes(event)) return null;
+        const relevance = event?.pregnancy_relevance;
+        const reasonCode = relevance?.relevant !== true
+          ? "PREGNANCY_RELEVANCE_FALSE"
+          : !Array.isArray(relevance?.gestational_subject_ids) || !relevance.gestational_subject_ids.length
+            ? "GESTATIONAL_SUBJECT_ID_INVALID"
+            : typeof relevance?.reproductive_mechanism?.kind !== "string" || !relevance.reproductive_mechanism.kind.trim()
+              ? "REPRODUCTIVE_MECHANISM_INVALID"
+              : "EXPOSURE_VALIDATION_FAILED";
+        return {event_id: event.event_id, reason_code: reasonCode};
+      }).filter(Boolean);
+      recordNsfwPipelineStage({
+        stage: "EXPOSURE_CLASSIFICATION",
+        execution_status: "SUCCEEDED",
+        reason_code: "EXPOSURE_INPUTS_CLASSIFIED",
+        invoked: true,
+        run_id: pipelineRunId,
+        chat_id: floorVersion?.chat_id ?? null,
+        floor_version: floorVersion,
+        input_count: events.length,
+        output_count: relevantExposureEvents.length,
+        candidate_exposure_event_ids: relevantExposureEvents.map(event => event.event_id),
+        candidate_subject_ids: [...new Set(relevantExposureEvents.flatMap(event => event?.pregnancy_relevance?.gestational_subject_ids ?? []))],
+        candidate_mechanism_keys: [...new Set(relevantExposureEvents.map(event => event?.pregnancy_relevance?.reproductive_mechanism?.kind).filter(Boolean))],
+        excluded_candidate_reasons: excludedExposureReasons,
+        source_type: "EXECUTION_TRACE",
+      });
+      recordNsfwPipelineStage({
+        stage: "TRACKING_WINDOW_RESOLUTION",
+        execution_status: "SUCCEEDED",
+        reason_code: "TRACKING_WINDOW_INPUTS_RESOLVED",
+        invoked: true,
+        run_id: pipelineRunId,
+        chat_id: floorVersion?.chat_id ?? null,
+        floor_version: floorVersion,
+        input_count: Array.isArray(inputs.trackingWindows) ? inputs.trackingWindows.length : 0,
+        output_count: Array.isArray(inputs.trackingWindows) ? inputs.trackingWindows.length : 0,
+        source_type: "EXECUTION_TRACE",
+      });
       const confirmedSubjects = events.filter(event => event?.type === 'pregnancy_confirmation' && event.status === 'confirmed').flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
       const terminatedSubjects = events.filter(event => ['pregnancy_loss', 'abortion'].includes(event?.type) && event.status === 'confirmed').flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
       const ownerFloor = floorOwnerForProjection(inputs.floor);
-      for (const rule of rules) {
-        for (const event of events) {
-          const subjectIds = event?.pregnancy_relevance?.gestational_subject_ids ?? [];
-          if (!event?.pregnancy_relevance?.relevant || event?.pregnancy_relevance?.reproductive_mechanism?.kind !== rule.mechanism_key) continue;
-          for (const subjectId of subjectIds) {
-            const existing = timingInstances.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && !confirmedSubjects.includes(subjectId) && !terminatedSubjects.includes(subjectId) && item.source_event_ids.some(sourceId => events.some(candidate => candidate.event_id === sourceId && candidate.pregnancy_relevance?.relevant === true && candidate.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId) && candidate.pregnancy_relevance?.reproductive_mechanism?.kind === rule.mechanism_key)));
-            const changedHistoricalBasis = timingInstances.some(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.source_event_ids.includes(event.event_id) && JSON.stringify(item.source_basis_refs?.[event.event_id]?.event_version ?? null) !== JSON.stringify(event.version ?? event.event_version ?? null));
-            if (changedHistoricalBasis) continue;
-            if (existing) {
-              if (!existing.source_event_ids.includes(event.event_id)) {
-                await projectionTimingPersistence.appendTimingBasis({
-                  chatId: inputs.floor.version.chat_id,
-                  ownerFloor,
-                  floorVersion: inputs.floor.version,
-                  timingInstanceId: existing.timing_instance_id,
-                  sourceEventIds: [event.event_id],
-                  sourceBasisRefs: {[event.event_id]: {event_id: event.event_id, story_time: event.story_time ?? null}},
-                });
-                existing.source_event_ids = [...new Set([...existing.source_event_ids, event.event_id])].sort();
-              }
-              continue;
+      const ruleByMechanism = new Map(
+        rules
+          .filter(rule => typeof rule?.mechanism_key === "string" && rule.mechanism_key.trim() !== '')
+          .map(rule => [rule.mechanism_key, rule]),
+      );
+      const timingCandidates = new Map();
+      const cycleResolutionDiagnostics = new Set();
+      for (const event of relevantExposureEvents) {
+        const mechanismKey = event?.pregnancy_relevance?.reproductive_mechanism?.kind;
+        for (const subjectId of event?.pregnancy_relevance?.gestational_subject_ids ?? []) {
+          const trackingWindow = (inputs.trackingWindows ?? []).find(window =>
+            window?.subject_id === subjectId
+            && window?.mechanism_key === mechanismKey
+            && (window?.source_event_ids ?? []).includes(event.event_id),
+          ) ?? null;
+          const windowBasis = trackingWindow
+            ? relevantExposureEvents.filter(candidate =>
+                (trackingWindow.source_event_ids ?? []).includes(candidate.event_id)
+                && candidate?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId)
+                && candidate?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey,
+              )
+            : [];
+          const firstExposure = resolveTrackingWindowFirstExposure({
+            trackingWindow,
+            candidateEvents: windowBasis,
+            chatId: floorVersion?.chat_id,
+            subjectId,
+            mechanismKey,
+          });
+          if (trackingWindow && !firstExposure.event) {
+            const diagnosticKey = timingTargetKey(subjectId, mechanismKey, trackingWindow.tracking_window_id);
+            if (!cycleResolutionDiagnostics.has(diagnosticKey)) {
+              cycleResolutionDiagnostics.add(diagnosticKey);
+              recordNsfwPipelineStage({
+                stage: "TIMING_INSTANCE_CREATION",
+                execution_status: "BLOCKED",
+                reason_code: firstExposure.reason_code ?? "CYCLE_FIRST_EXPOSURE_UNAVAILABLE",
+                invoked: false,
+                run_id: pipelineRunId,
+                chat_id: floorVersion?.chat_id ?? null,
+                subject_id: subjectId,
+                mechanism_key: mechanismKey,
+                tracking_window_id: trackingWindow.tracking_window_id ?? null,
+                tracking_window_cycle_id: trackingWindow.cycle_id ?? null,
+                floor_version: floorVersion,
+                input_count: windowBasis.length,
+                output_count: 0,
+                source_type: "EXECUTION_TRACE",
+              });
             }
-            const override = typeof projectionTimingConfigResolver === 'function'
-              ? await projectionTimingConfigResolver({subjectId, inputs, rule, event})
-              : readCharacterTimingConfig(store.getChat(inputs.floor.version.chat_id), subjectId).config;
-            const baseline = typeof humanTimingBaselineResolver === 'function'
-              ? await humanTimingBaselineResolver({subjectId, inputs, rule, event})
-              : null;
-            const resolvedConfig = resolveCharacterTimingConfig({override, baseline});
-            if (!resolvedConfig.config) continue;
-            timingEnabled = true;
-            const instance = resolveProjectionTimingInstance({
-              chatId: inputs.floor.version.chat_id,
-              subjectId,
-              mechanismKey: rule.mechanism_key,
-              firstEvent: event,
-              config: resolvedConfig.config,
-              floorVersion: inputs.floor.version,
-              worldRuleBinding: {projection_rule_id: rule.projection_rule_id, mechanism_key: rule.mechanism_key},
-            });
-            await projectionTimingPersistence.saveTimingInstance({chatId: inputs.floor.version.chat_id, ownerFloor, floorVersion: inputs.floor.version, timingInstance: instance});
-            timingInstances.push(instance);
+            continue;
           }
+          const firstEvent = firstExposure.event ?? event;
+          const canonicalCycleId = buildProjectionTimingCycleId({
+            chatId: floorVersion?.chat_id,
+            subjectId,
+            mechanismKey,
+            firstEvent,
+          });
+          const cycleId = canonicalCycleId;
+          const key = timingTargetKey(subjectId, mechanismKey, cycleId);
+          const candidate = timingCandidates.get(key) ?? {
+            subjectId,
+            mechanismKey,
+            firstEvent,
+            cycleId,
+            canonicalCycleId,
+            cycleIdSource: trackingWindow
+              ? trackingWindow.cycle_id === canonicalCycleId
+                ? firstExposure.source
+                : "CANONICAL_CYCLE_ID"
+              : "EXPOSURE_FIRST_EVENT",
+            trackingWindow,
+            events: [],
+          };
+          candidate.events.push(event);
+          if (!candidate.trackingWindow && trackingWindow) candidate.trackingWindow = trackingWindow;
+          timingCandidates.set(key, candidate);
         }
       }
-      const aggregations = [...aggregationTimeline.creations];
+      for (const candidate of timingCandidates.values()) {
+        const {subjectId, mechanismKey, firstEvent: event, trackingWindow, events: candidateEvents} = candidate;
+        const rule = ruleByMechanism.get(mechanismKey) ?? null;
+        const worldRuleBinding = typeof rule?.projection_rule_id === "string" && rule.projection_rule_id.trim() !== ''
+          ? {projection_rule_id: rule.projection_rule_id, mechanism_key: mechanismKey}
+          : null;
+        timingCandidateTargets.add(timingTargetKey(subjectId, mechanismKey, trackingWindow?.tracking_window_id));
+        const candidateCycleId = candidate.cycleId;
+        const candidateDiagnostic = {
+          tracking_window_cycle_id: trackingWindow?.cycle_id ?? null,
+          first_exposure_event_id: event?.event_id ?? null,
+          first_exposure_story_time: event?.story_time ?? null,
+          candidate_exposure_event_ids: candidateEvents.map(item => item.event_id),
+          accepted_exposure_event_ids: candidateEvents.map(item => item.event_id),
+          final_cycle_id: candidateCycleId,
+          canonical_cycle_id: candidate.canonicalCycleId ?? null,
+          cycle_id_source: candidate.cycleIdSource ?? (trackingWindow ? "TRACKING_WINDOW" : "EXPOSURE_FIRST_EVENT"),
+          cycle_id_consistent: trackingWindow?.cycle_id && candidateCycleId
+            ? trackingWindow.cycle_id === candidateCycleId
+            : null,
+          cycle_id_consistency_reason_code: trackingWindow?.cycle_id && candidateCycleId
+            ? trackingWindow.cycle_id === candidateCycleId
+              ? "TRACKING_WINDOW_CYCLE_MATCH"
+              : "TRACKING_WINDOW_CYCLE_MISMATCH"
+            : "TRACKING_WINDOW_CYCLE_UNAVAILABLE",
+        };
+        const canonicalResolution = resolveCanonicalTimingInstance({
+          timingInstances,
+          subjectId,
+          mechanismKey,
+          candidate,
+          canonicalCycleId: candidate.canonicalCycleId,
+        });
+        if (canonicalResolution.status === "ambiguous") {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "BLOCKED",
+            reason_code: "CYCLE_ID_CANONICAL_AMBIGUOUS",
+            invoked: false,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: candidateCycleId,
+            resolution_candidate_count: canonicalResolution.candidates.length,
+            cycle_id_resolution_status: "AMBIGUOUS",
+            cycle_id_resolution_reason_code: "MULTIPLE_CANONICAL_TIMING_INSTANCES",
+            ...candidateDiagnostic,
+            floor_version: floorVersion,
+            input_count: canonicalResolution.candidates.length,
+            output_count: 0,
+            source_type: "EXECUTION_TRACE",
+          });
+          continue;
+        }
+        const existing = canonicalResolution.status === "matched" ? canonicalResolution.instance : null;
+        const changedHistoricalBasis = timingInstances.some(item =>
+          item.subject_id === subjectId
+          && item.mechanism_key === mechanismKey
+          && item.timing_instance_id === existing?.timing_instance_id
+          && candidateEvents.some(basisEvent =>
+            item.source_event_ids.includes(basisEvent.event_id)
+            && storedEventBasisChanged(
+              item.source_basis_refs?.[basisEvent.event_id]?.event_version
+                ?? item.source_basis_refs?.[basisEvent.event_id]?.source
+                ?? null,
+              eventFloorVersion(basisEvent),
+            ),
+          ),
+        );
+        if (changedHistoricalBasis) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "BLOCKED",
+            reason_code: "HISTORICAL_BASIS_CHANGED",
+            invoked: false,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: existing?.cycle_id ?? null,
+            ...candidateDiagnostic,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            source_type: "EXECUTION_TRACE",
+          });
+          continue;
+        }
+        if (existing) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_CONFIGURATION_RESOLUTION",
+            execution_status: "NOT_INVOKED",
+            reason_code: "TIMING_INSTANCE_EXISTS",
+            invoked: false,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: existing.cycle_id,
+            ...candidateDiagnostic,
+            floor_version: floorVersion,
+            input_count: 0,
+            output_count: 1,
+            timing_config_available: true,
+            timing_config_source: "TIMING_INSTANCE_SNAPSHOT",
+            cycle_id_resolution_status: canonicalResolution.status === "matched" ? "CANONICAL_CYCLE_ID" : "UNAVAILABLE",
+            cycle_id_resolution_reason_code: canonicalResolution.status === "matched" ? "CANONICAL_TIMING_REUSED" : "CANONICAL_TIMING_NOT_FOUND",
+            base_min_story_days: existing.base_min_story_days,
+            base_max_story_days: existing.base_max_story_days,
+            variance_ratio: existing.variance_ratio,
+            variance_cap_story_days: existing.variance_cap_story_days,
+            sampled_individual_offset_story_days: existing.sampled_individual_offset_story_days,
+            sampled_offset_source: "FROZEN_SNAPSHOT",
+            frozen_offset_status: "PRESERVED",
+            state_modifier_story_days: existing.state_modifier_story_days,
+            total_adjustment_story_days: existing.total_adjustment_story_days,
+            total_adjustment_cap_story_days: existing.total_adjustment_cap_story_days,
+            effective_min_story_days: existing.effective_min_story_days,
+            effective_max_story_days: existing.effective_max_story_days,
+            world_rule_binding: existing.world_rule_binding ?? null,
+            source_type: "EXECUTION_TRACE",
+          });
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "SKIPPED",
+            reason_code: "TIMING_INSTANCE_EXISTS",
+            invoked: false,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: existing.cycle_id,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 1,
+            timing_instance_id: existing.timing_instance_id,
+            cycle_id_resolution_status: canonicalResolution.status === "matched" ? "CANONICAL_CYCLE_ID" : "UNAVAILABLE",
+            cycle_id_resolution_reason_code: canonicalResolution.status === "matched" ? "CANONICAL_TIMING_REUSED" : "CANONICAL_TIMING_NOT_FOUND",
+            base_min_story_days: existing.base_min_story_days,
+            base_max_story_days: existing.base_max_story_days,
+            variance_ratio: existing.variance_ratio,
+            variance_cap_story_days: existing.variance_cap_story_days,
+            sampled_individual_offset_story_days: existing.sampled_individual_offset_story_days,
+            sampled_offset_source: "FROZEN_SNAPSHOT",
+            frozen_offset_status: "PRESERVED",
+            state_modifier_story_days: existing.state_modifier_story_days,
+            total_adjustment_story_days: existing.total_adjustment_story_days,
+            total_adjustment_cap_story_days: existing.total_adjustment_cap_story_days,
+            effective_min_story_days: existing.effective_min_story_days,
+            effective_max_story_days: existing.effective_max_story_days,
+            world_rule_binding: existing.world_rule_binding ?? null,
+            source_type: "EXECUTION_TRACE",
+          });
+          const nextSourceEventIds = [...new Set([
+            ...(existing.source_event_ids ?? []),
+            ...candidateEvents.map(basisEvent => basisEvent.event_id),
+          ])].sort();
+          const nextSourceBasisRefs = {...(existing.source_basis_refs ?? {})};
+          for (const basisEvent of candidateEvents) {
+            nextSourceBasisRefs[basisEvent.event_id] = {
+              ...(nextSourceBasisRefs[basisEvent.event_id] ?? {}),
+              event_id: basisEvent.event_id,
+              story_time: basisEvent.story_time ?? null,
+              event_version: eventFloorVersion(basisEvent),
+            };
+          }
+          if (JSON.stringify(nextSourceEventIds) !== JSON.stringify(existing.source_event_ids ?? [])
+              || JSON.stringify(nextSourceBasisRefs) !== JSON.stringify(existing.source_basis_refs ?? {})) {
+            const nextExisting = {
+              ...existing,
+              source_event_ids: nextSourceEventIds,
+              source_basis_refs: nextSourceBasisRefs,
+            };
+            try {
+              await projectionTimingPersistence.saveTimingInstance({
+                chatId: inputs.floor.version.chat_id,
+                ownerFloor,
+                floorVersion: inputs.floor.version,
+                timingInstance: nextExisting,
+              });
+              Object.assign(existing, nextExisting);
+            } catch (error) {
+              recordNsfwPipelineStage({
+                stage: "TIMING_INSTANCE_CREATION",
+                execution_status: "PERSIST_FAILED",
+                reason_code: "TIMING_SNAPSHOT_UPDATE_FAILED",
+                invoked: true,
+                run_id: pipelineRunId,
+                chat_id: floorVersion?.chat_id ?? null,
+                subject_id: subjectId,
+                mechanism_key: mechanismKey,
+                tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+                cycle_id: existing.cycle_id,
+                timing_instance_id: existing.timing_instance_id,
+                floor_version: floorVersion,
+                input_count: nextSourceEventIds.length,
+                output_count: 0,
+                error_code: error?.code ?? error?.message ?? "TIMING_SNAPSHOT_UPDATE_FAILED",
+                source_type: "EXECUTION_TRACE",
+              });
+              throw error;
+            }
+          }
+          continue;
+        }
+        let override = null;
+        let baseline = null;
+        let resolvedConfig;
+        try {
+          override = typeof projectionTimingConfigResolver === 'function'
+            ? await projectionTimingConfigResolver({subjectId, inputs, rule, event})
+            : readCharacterTimingConfig(store.getChat(inputs.floor.version.chat_id), subjectId).config;
+          baseline = typeof humanTimingBaselineResolver === 'function'
+            ? await humanTimingBaselineResolver({subjectId, inputs, rule, event})
+            : null;
+          resolvedConfig = resolveCharacterTimingConfig({override, baseline});
+        } catch (error) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_CONFIGURATION_RESOLUTION",
+            execution_status: "FAILED",
+            reason_code: "TIMING_CONFIG_INVALID",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: null,
+            ...candidateDiagnostic,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            error_code: error?.code ?? error?.message ?? "TIMING_CONFIG_INVALID",
+            timing_config_available: false,
+            timing_config_source: null,
+            source_type: "EXECUTION_TRACE",
+          });
+          throw error;
+        }
+        const timingConfigSource = override ? "CHARACTER_OVERRIDE" : baseline ? "HUMAN_BASELINE" : null;
+        recordNsfwPipelineStage({
+          stage: "TIMING_CONFIGURATION_RESOLUTION",
+          execution_status: resolvedConfig.config ? "SUCCEEDED" : "BLOCKED",
+          reason_code: resolvedConfig.config ? "TIMING_CONFIG_RESOLVED" : "TIMING_CONFIG_UNAVAILABLE",
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: subjectId,
+          mechanism_key: mechanismKey,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: null,
+          ...candidateDiagnostic,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: resolvedConfig.config ? 1 : 0,
+          timing_config_available: Boolean(resolvedConfig.config),
+          timing_config_source: timingConfigSource,
+          base_min_story_days: resolvedConfig.config?.base_min_story_days ?? null,
+          base_max_story_days: resolvedConfig.config?.base_max_story_days ?? null,
+          variance_ratio: resolvedConfig.config?.variance_ratio ?? null,
+          variance_cap_story_days: resolvedConfig.config?.variance_cap_story_days ?? null,
+          total_adjustment_cap_story_days: resolvedConfig.config?.total_adjustment_cap_story_days ?? null,
+          source_type: "EXECUTION_TRACE",
+        });
+        if (!resolvedConfig.config) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "BLOCKED",
+            reason_code: "TIMING_CONFIG_UNAVAILABLE",
+            invoked: false,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: null,
+            ...candidateDiagnostic,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            source_type: "EXECUTION_TRACE",
+          });
+          continue;
+        }
+        timingEnabled = true;
+        let instance;
+        try {
+          instance = resolveProjectionTimingInstance({
+            chatId: inputs.floor.version.chat_id,
+            subjectId,
+            mechanismKey,
+            firstEvent: event,
+            config: resolvedConfig.config,
+            floorVersion: inputs.floor.version,
+            worldRuleBinding,
+            rng: timingRandom,
+          });
+        } catch (error) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "FAILED",
+            reason_code: "TIMING_INSTANCE_CREATION_FAILED",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: null,
+          ...candidateDiagnostic,
+          floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            error_code: error?.code ?? error?.message ?? "TIMING_INSTANCE_CREATION_FAILED",
+            rng_source: timingRandomSource,
+            frozen_offset_status: "NOT_CREATED",
+            source_type: "EXECUTION_TRACE",
+          });
+          throw error;
+        }
+        if (instance.cycle_id !== candidateCycleId) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "BLOCKED",
+            reason_code: "TRACKING_WINDOW_CYCLE_MISMATCH",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: instance.cycle_id,
+            ...candidateDiagnostic,
+            cycle_id_resolution_status: "CANONICAL_CYCLE_ID_MISMATCH",
+            cycle_id_resolution_reason_code: "TIMING_RESOLVER_RETURNED_DIFFERENT_CYCLE",
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            timing_instance_id: instance.timing_instance_id,
+            sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+            sampled_offset_source: "INITIAL_RANDOM_SAMPLE",
+            frozen_offset_status: "NOT_PERSISTED",
+            rng_source: timingRandomSource,
+            source_type: "EXECUTION_TRACE",
+          });
+          continue;
+        }
+        const sourceEventIds = [...new Set([
+          ...(instance.source_event_ids ?? []),
+          ...candidateEvents.map(basisEvent => basisEvent.event_id),
+        ])].sort();
+        const sourceBasisRefs = {...(instance.source_basis_refs ?? {})};
+        for (const basisEvent of candidateEvents) {
+          sourceBasisRefs[basisEvent.event_id] = {
+            ...(sourceBasisRefs[basisEvent.event_id] ?? {}),
+            event_id: basisEvent.event_id,
+            story_time: basisEvent.story_time ?? null,
+            event_version: eventFloorVersion(basisEvent),
+          };
+        }
+        instance = {...instance, source_event_ids: sourceEventIds, source_basis_refs: sourceBasisRefs};
+        recordNsfwPipelineStage({
+          stage: "TIMING_INSTANCE_CREATION",
+          execution_status: "ATTEMPTED",
+          reason_code: "TIMING_INSTANCE_CREATED_IN_MEMORY",
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: subjectId,
+          mechanism_key: mechanismKey,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: 1,
+          timing_instance_id: instance.timing_instance_id,
+          ...candidateDiagnostic,
+          cycle_id_resolution_status: "CANONICAL_CYCLE_ID_CREATED",
+          cycle_id_resolution_reason_code: "CANONICAL_CYCLE_ID",
+          base_min_story_days: instance.base_min_story_days,
+          base_max_story_days: instance.base_max_story_days,
+          variance_ratio: instance.variance_ratio,
+          variance_cap_story_days: instance.variance_cap_story_days,
+          sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+          sampled_offset_source: "INITIAL_RANDOM_SAMPLE",
+          frozen_offset_status: "FROZEN_ON_CREATION",
+          rng_source: timingRandomSource,
+          state_modifier_story_days: instance.state_modifier_story_days,
+          total_adjustment_story_days: instance.total_adjustment_story_days,
+          total_adjustment_cap_story_days: instance.total_adjustment_cap_story_days,
+          effective_min_story_days: instance.effective_min_story_days,
+          effective_max_story_days: instance.effective_max_story_days,
+          world_rule_binding: instance.world_rule_binding ?? null,
+          source_type: "EXECUTION_TRACE",
+        });
+        let persisted;
+        try {
+          persisted = await projectionTimingPersistence.saveTimingInstance({chatId: inputs.floor.version.chat_id, ownerFloor, floorVersion: inputs.floor.version, timingInstance: instance});
+        } catch (error) {
+          recordNsfwPipelineStage({
+            stage: "TIMING_INSTANCE_CREATION",
+            execution_status: "PERSIST_FAILED",
+            reason_code: "TIMING_PERSISTENCE_FAILED",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: subjectId,
+            mechanism_key: mechanismKey,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: instance.cycle_id,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            timing_instance_id: instance.timing_instance_id,
+            ...candidateDiagnostic,
+            base_min_story_days: instance.base_min_story_days,
+            base_max_story_days: instance.base_max_story_days,
+            variance_ratio: instance.variance_ratio,
+            variance_cap_story_days: instance.variance_cap_story_days,
+            sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+            sampled_offset_source: "INITIAL_RANDOM_SAMPLE",
+            frozen_offset_status: "FROZEN_ON_CREATION",
+            rng_source: timingRandomSource,
+            state_modifier_story_days: instance.state_modifier_story_days,
+            total_adjustment_story_days: instance.total_adjustment_story_days,
+            total_adjustment_cap_story_days: instance.total_adjustment_cap_story_days,
+            error_code: error?.code ?? error?.message ?? "TIMING_PERSISTENCE_FAILED",
+            world_rule_binding: instance.world_rule_binding ?? null,
+            source_type: "EXECUTION_TRACE",
+          });
+          throw error;
+        }
+        recordNsfwPipelineStage({
+          stage: "TIMING_INSTANCE_CREATION",
+          execution_status: "SUCCEEDED",
+          reason_code: persisted?.status === "deduped" ? "TIMING_INSTANCE_DEDUPED" : "TIMING_INSTANCE_PERSISTED",
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: subjectId,
+          mechanism_key: mechanismKey,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: 1,
+          timing_instance_id: instance.timing_instance_id,
+          ...candidateDiagnostic,
+          base_min_story_days: instance.base_min_story_days,
+          base_max_story_days: instance.base_max_story_days,
+          variance_ratio: instance.variance_ratio,
+          variance_cap_story_days: instance.variance_cap_story_days,
+          sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+          sampled_offset_source: "INITIAL_RANDOM_SAMPLE",
+          frozen_offset_status: "FROZEN_ON_CREATION",
+          rng_source: timingRandomSource,
+          state_modifier_story_days: instance.state_modifier_story_days,
+          total_adjustment_story_days: instance.total_adjustment_story_days,
+          total_adjustment_cap_story_days: instance.total_adjustment_cap_story_days,
+          effective_min_story_days: instance.effective_min_story_days,
+          effective_max_story_days: instance.effective_max_story_days,
+          world_rule_binding: instance.world_rule_binding ?? null,
+          source_type: "EXECUTION_TRACE",
+        });
+        recordNsfwPipelineStage({
+          stage: "TIMING_INSTANCE_READBACK",
+          execution_status: "NOT_INVOKED",
+          reason_code: "READBACK_DEFERRED_TO_CURRENT_STATE",
+          invoked: false,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: subjectId,
+          mechanism_key: mechanismKey,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          floor_version: floorVersion,
+          input_count: 0,
+          output_count: 0,
+          timing_instance_id: instance.timing_instance_id,
+          ...candidateDiagnostic,
+          sampled_offset_source: "INITIAL_RANDOM_SAMPLE",
+          frozen_offset_status: "FROZEN_ON_CREATION",
+          rng_source: timingRandomSource,
+          source_type: "EXECUTION_TRACE",
+        });
+        timingInstances.push(instance);
+      }
+      for (const trackingWindow of inputs.trackingWindows ?? []) {
+        const subjectId = trackingWindow?.subject_id ?? null;
+        const mechanismKey = trackingWindow?.mechanism_key ?? null;
+        if (!subjectId || !mechanismKey) continue;
+        const hasTimingInstance = timingInstances.some(instance =>
+          instance?.subject_id === subjectId &&
+          instance?.mechanism_key === mechanismKey &&
+          (!trackingWindow.cycle_id || instance?.cycle_id === trackingWindow.cycle_id ||
+            (instance?.source_event_ids ?? []).some(eventId => (trackingWindow.source_event_ids ?? []).includes(eventId))),
+        );
+        if (hasTimingInstance || timingCandidateTargets.has(timingTargetKey(subjectId, mechanismKey, trackingWindow.tracking_window_id))) continue;
+        const candidateExposureCount = relevantExposureEvents.filter(event =>
+          event?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId)
+          && event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey,
+        ).length;
+        const candidateReason = candidateExposureCount === 0
+          ? "EXPOSURE_CANDIDATE_NOT_FOUND"
+          : "TIMING_ENTRY_NOT_REACHED";
+        const diagnosticTarget = {
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: subjectId,
+          mechanism_key: mechanismKey,
+          tracking_window_id: trackingWindow.tracking_window_id ?? null,
+          cycle_id: trackingWindow.cycle_id ?? null,
+          floor_version: floorVersion,
+          input_count: candidateExposureCount,
+          output_count: 0,
+          source_type: "EXECUTION_TRACE",
+        };
+        recordNsfwPipelineStage({stage: "TIMING_CONFIGURATION_RESOLUTION", execution_status: "NOT_INVOKED", reason_code: candidateReason, invoked: false, ...diagnosticTarget});
+        recordNsfwPipelineStage({stage: "TIMING_INSTANCE_CREATION", execution_status: "NOT_INVOKED", reason_code: candidateReason, invoked: false, ...diagnosticTarget});
+        recordNsfwPipelineStage({stage: "TIMING_ELIGIBILITY_EVALUATION", execution_status: "NOT_INVOKED", reason_code: candidateReason, invoked: false, ...diagnosticTarget});
+        recordNsfwPipelineStage({stage: "AGGREGATION_ELIGIBILITY_EVALUATION", execution_status: "NOT_INVOKED", reason_code: candidateReason, invoked: false, aggregation_due: null, aggregation_attempted: false, ...diagnosticTarget});
+        recordNsfwPipelineStage({stage: "PARTICIPANT_AGGREGATION_EXECUTION", execution_status: "NOT_INVOKED", reason_code: candidateReason, invoked: false, aggregation_due: null, aggregation_attempted: false, ...diagnosticTarget});
+      }
+      const aggregations = [...aggregationTimeline.items];
+      if (!timingInstances.length) {
+        recordNsfwPipelineStage({
+          stage: "AGGREGATION_ELIGIBILITY_EVALUATION",
+          execution_status: "NOT_INVOKED",
+          reason_code: "TIMING_INSTANCE_MISSING",
+          invoked: false,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          floor_version: floorVersion,
+          input_count: 0,
+          output_count: 0,
+          source_type: "EXECUTION_TRACE",
+        });
+        recordNsfwPipelineStage({
+          stage: "PARTICIPANT_AGGREGATION_EXECUTION",
+          execution_status: "NOT_INVOKED",
+          reason_code: "TIMING_INSTANCE_MISSING",
+          invoked: false,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          floor_version: floorVersion,
+          input_count: 0,
+          output_count: 0,
+          source_type: "EXECUTION_TRACE",
+        });
+      }
       const currentEvents = Array.isArray(inputs.events) ? inputs.events : [];
       for (const instance of timingInstances) {
         const existing = aggregations.find(item => item.timing_instance_id === instance.timing_instance_id && item.cycle_id === instance.cycle_id);
+        const trackingWindow = (inputs.trackingWindows ?? []).find(window =>
+          window?.cycle_id === instance.cycle_id
+          && window?.subject_id === instance.subject_id
+          && window?.mechanism_key === instance.mechanism_key,
+        ) ?? (inputs.trackingWindows ?? []).find(window =>
+          window?.subject_id === instance.subject_id
+          && window?.mechanism_key === instance.mechanism_key
+          && (instance.source_event_ids ?? []).some(eventId => (window?.source_event_ids ?? []).includes(eventId)),
+        ) ?? null;
+        const candidateExposureEvents = currentEvents.filter(event => {
+          try {
+            return isPregnancyRelevantExposure(event)
+              && event?.pregnancy_relevance?.gestational_subject_ids?.includes(instance.subject_id)
+              && event?.pregnancy_relevance?.reproductive_mechanism?.kind === instance.mechanism_key;
+          } catch {
+            return false;
+          }
+        });
+        const candidateExposureEventIds = candidateExposureEvents.map(event => event.event_id);
+        const acceptedExposureEventIds = instance.source_event_ids.filter(eventId => candidateExposureEventIds.includes(eventId));
+        const firstExposureEvent = candidateExposureEvents.find(event =>
+          buildProjectionTimingCycleId({
+            chatId: floorVersion?.chat_id,
+            subjectId: instance.subject_id,
+            mechanismKey: instance.mechanism_key,
+            firstEvent: event,
+          }) === instance.cycle_id,
+        ) ?? candidateExposureEvents.find(event =>
+          (instance.source_event_ids ?? []).includes(event?.event_id)
+          && cycleStoryTimeEqual(event?.story_time, instance.reference_story_time),
+        ) ?? null;
+        const cycleIdSource = trackingWindow?.cycle_id === instance.cycle_id
+          ? "TRACKING_WINDOW"
+          : firstExposureEvent ? "TIMING_INSTANCE_CYCLE_ID" : "UNAVAILABLE";
         const trigger = resolveParticipantAggregationTrigger({timingInstance: instance, currentStoryTime: inputs.currentStoryTime, aggregation: existing});
-        if (!trigger.eligible || existing) continue;
-        const acceptedIds = instance.source_event_ids.filter(eventId => currentEvents.some(event => event?.event_id === eventId));
-        if (!acceptedIds.length) continue;
-        const aggregation = appendParticipantAggregation({
-          aggregation_id: buildParticipantAggregationId({cycleId: instance.cycle_id, timingInstanceId: instance.timing_instance_id}),
-          pregnancy_id: instance.pregnancy_id ?? null,
+        const triggerReason = existing
+          ? "AGGREGATION_ALREADY_SUCCEEDED"
+          : trigger.eligible
+            ? "AGGREGATION_DUE"
+            : String(trigger.reason_code ?? trigger.status ?? "AGGREGATION_NOT_DUE").toUpperCase();
+        const aggregationDiagnostic = {
+          tracking_window_cycle_id: trackingWindow?.cycle_id ?? null,
+          first_exposure_event_id: firstExposureEvent?.event_id ?? null,
+          first_exposure_story_time: firstExposureEvent?.story_time ?? instance.reference_story_time ?? null,
+          candidate_exposure_event_ids: candidateExposureEventIds,
+          accepted_exposure_event_ids: acceptedExposureEventIds,
+          final_cycle_id: instance.cycle_id,
+          cycle_id_source: cycleIdSource,
+          cycle_id_consistent: trackingWindow?.cycle_id && instance.cycle_id
+            ? trackingWindow.cycle_id === instance.cycle_id
+            : null,
+          cycle_id_consistency_reason_code: trackingWindow?.cycle_id && instance.cycle_id
+            ? trackingWindow.cycle_id === instance.cycle_id
+              ? "TRACKING_WINDOW_CYCLE_MATCH"
+              : "TRACKING_WINDOW_CYCLE_MISMATCH"
+            : "TRACKING_WINDOW_CYCLE_UNAVAILABLE",
+          base_min_story_days: instance.base_min_story_days,
+          base_max_story_days: instance.base_max_story_days,
+          variance_ratio: instance.variance_ratio,
+          variance_cap_story_days: instance.variance_cap_story_days,
+          sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+          state_modifier_story_days: instance.state_modifier_story_days,
+          total_adjustment_story_days: instance.total_adjustment_story_days,
+          total_adjustment_cap_story_days: instance.total_adjustment_cap_story_days,
+          aggregation_trigger_status: existing ? "already_succeeded" : trigger.status ?? null,
+          aggregation_reason_code: triggerReason,
+          aggregation_overdue: trigger.status === "aggregate_due_overdue",
+          existing_aggregation_succeeded: existing?.status === "succeeded",
+          accepted_exposure_count: acceptedExposureEventIds.length,
+          world_rule_binding: instance.world_rule_binding ?? null,
+        };
+        recordNsfwPipelineStage({
+          stage: "TIMING_ELIGIBILITY_EVALUATION",
+          execution_status: "SUCCEEDED",
+          reason_code: trigger.eligible ? "TIMING_WINDOW_EVALUATED" : triggerReason,
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
           subject_id: instance.subject_id,
           mechanism_key: instance.mechanism_key,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
           cycle_id: instance.cycle_id,
+          ...aggregationDiagnostic,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: trigger.eligible ? 1 : 0,
           timing_instance_id: instance.timing_instance_id,
-          aggregation_trigger_strategy: 'at_effective_min',
-          reference_story_time: instance.reference_story_time,
-          aggregation_story_time: inputs.currentStoryTime,
-          elapsed_story_days: trigger.elapsed_story_days,
+          elapsed_story_days: trigger.elapsed_story_days ?? null,
           effective_min_story_days: instance.effective_min_story_days,
           effective_max_story_days: instance.effective_max_story_days,
-          sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
-          config_snapshot: instance.config_snapshot,
-          accepted_exposure_event_ids: acceptedIds,
-          source_basis_refs: instance.source_basis_refs,
-          created_at_floor_version: inputs.floor.version,
-          created_at: new Date().toISOString(),
-        }, {timeline: {schema_version: 1, creations: [], lifecycle_records: []}, expectedChatId: inputs.floor.version.chat_id});
-        const persisted = await participantAggregationPersistence.appendAggregation({chatId: inputs.floor.version.chat_id, ownerFloor, floorVersion: inputs.floor.version, aggregation: aggregation.timeline.creations[0]});
-        if (persisted.status === 'appended' || persisted.status === 'deduped') aggregations.push(aggregation.timeline.creations[0]);
+          source_type: "EXECUTION_TRACE",
+        });
+        recordNsfwPipelineStage({
+          stage: "AGGREGATION_ELIGIBILITY_EVALUATION",
+          execution_status: existing ? "SKIPPED" : trigger.eligible ? "SUCCEEDED" : "BLOCKED",
+          reason_code: triggerReason,
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: instance.subject_id,
+          mechanism_key: instance.mechanism_key,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          ...aggregationDiagnostic,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: trigger.eligible && !existing ? 1 : 0,
+          timing_instance_id: instance.timing_instance_id,
+          aggregation_id: existing?.aggregation_id ?? null,
+          aggregation_due: existing?.status === "succeeded" || trigger.eligible,
+          aggregation_attempted: false,
+          source_type: "EXECUTION_TRACE",
+        });
+        if (!trigger.eligible || existing) continue;
+        const acceptedIds = instance.source_event_ids.filter(eventId => currentEvents.some(event => event?.event_id === eventId));
+        if (!acceptedIds.length) {
+          recordNsfwPipelineStage({
+            stage: "AGGREGATION_ELIGIBILITY_EVALUATION",
+            execution_status: "BLOCKED",
+            reason_code: "ACCEPTED_EXPOSURE_MISSING",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: instance.subject_id,
+            mechanism_key: instance.mechanism_key,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: instance.cycle_id,
+            ...aggregationDiagnostic,
+            floor_version: floorVersion,
+            input_count: instance.source_event_ids.length,
+            output_count: 0,
+            timing_instance_id: instance.timing_instance_id,
+            aggregation_due: true,
+            aggregation_attempted: false,
+            source_type: "EXECUTION_TRACE",
+          });
+          continue;
+        }
+        let aggregation;
+        try {
+          aggregation = upsertParticipantAggregation({
+            aggregation_id: buildParticipantAggregationId({cycleId: instance.cycle_id, timingInstanceId: instance.timing_instance_id}),
+            pregnancy_id: instance.pregnancy_id ?? null,
+            subject_id: instance.subject_id,
+            mechanism_key: instance.mechanism_key,
+            cycle_id: instance.cycle_id,
+            timing_instance_id: instance.timing_instance_id,
+            aggregation_trigger_strategy: 'at_effective_min',
+            reference_story_time: instance.reference_story_time,
+            aggregation_story_time: inputs.currentStoryTime,
+            elapsed_story_days: trigger.elapsed_story_days,
+            effective_min_story_days: instance.effective_min_story_days,
+            effective_max_story_days: instance.effective_max_story_days,
+            sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+            config_snapshot: instance.config_snapshot,
+            accepted_exposure_event_ids: acceptedIds,
+            source_basis_refs: instance.source_basis_refs,
+            created_at_floor_version: inputs.floor.version,
+            created_at: new Date().toISOString(),
+          }, {snapshot: {schema_version: 1, items: []}, expectedChatId: inputs.floor.version.chat_id});
+        } catch (error) {
+          recordNsfwPipelineStage({
+            stage: "PARTICIPANT_AGGREGATION_EXECUTION",
+            execution_status: "FAILED",
+            reason_code: "AGGREGATION_EXECUTION_FAILED",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: instance.subject_id,
+            mechanism_key: instance.mechanism_key,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: instance.cycle_id,
+            floor_version: floorVersion,
+            input_count: acceptedIds.length,
+            output_count: 0,
+            timing_instance_id: instance.timing_instance_id,
+            aggregation_due: true,
+            aggregation_attempted: true,
+            error_code: error?.code ?? error?.message ?? "AGGREGATION_EXECUTION_FAILED",
+            source_type: "EXECUTION_TRACE",
+          });
+          throw error;
+        }
+        const aggregationRecord = aggregation.snapshot.items[0];
+        recordNsfwPipelineStage({
+          stage: "PARTICIPANT_AGGREGATION_EXECUTION",
+          execution_status: "SUCCEEDED",
+          reason_code: "AGGREGATION_RESULT_BUILT",
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: instance.subject_id,
+          mechanism_key: instance.mechanism_key,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          ...aggregationDiagnostic,
+          floor_version: floorVersion,
+          input_count: acceptedIds.length,
+          output_count: 1,
+          timing_instance_id: instance.timing_instance_id,
+          aggregation_id: aggregationRecord?.aggregation_id ?? null,
+          aggregation_due: true,
+          aggregation_attempted: true,
+          accepted_exposure_count: acceptedIds.length,
+          source_type: "EXECUTION_TRACE",
+        });
+        let persisted;
+        try {
+          persisted = await participantAggregationPersistence.upsertAggregation({chatId: inputs.floor.version.chat_id, ownerFloor, floorVersion: inputs.floor.version, aggregation: aggregationRecord});
+        } catch (error) {
+          recordNsfwPipelineStage({
+            stage: "AGGREGATION_PERSISTENCE",
+            execution_status: "PERSIST_FAILED",
+            reason_code: "AGGREGATION_PERSISTENCE_FAILED",
+            invoked: true,
+            run_id: pipelineRunId,
+            chat_id: floorVersion?.chat_id ?? null,
+            subject_id: instance.subject_id,
+            mechanism_key: instance.mechanism_key,
+            tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+            cycle_id: instance.cycle_id,
+            ...aggregationDiagnostic,
+            floor_version: floorVersion,
+            input_count: 1,
+            output_count: 0,
+            timing_instance_id: instance.timing_instance_id,
+            aggregation_id: aggregationRecord?.aggregation_id ?? null,
+            aggregation_due: true,
+            aggregation_attempted: true,
+            persistence_attempted: true,
+            persistence_succeeded: false,
+            error_code: error?.code ?? error?.message ?? "AGGREGATION_PERSISTENCE_FAILED",
+            source_type: "EXECUTION_TRACE",
+          });
+          throw error;
+        }
+        recordNsfwPipelineStage({
+          stage: "AGGREGATION_PERSISTENCE",
+          execution_status: ["created", "updated", "deduped"].includes(persisted?.status) ? "SUCCEEDED" : "ATTEMPTED",
+          reason_code: persisted?.status === "deduped" ? "AGGREGATION_DEDUPED" : "AGGREGATION_PERSISTED",
+          invoked: true,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: instance.subject_id,
+          mechanism_key: instance.mechanism_key,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          ...aggregationDiagnostic,
+          floor_version: floorVersion,
+          input_count: 1,
+          output_count: 1,
+          timing_instance_id: instance.timing_instance_id,
+          aggregation_id: aggregationRecord?.aggregation_id ?? null,
+          aggregation_due: true,
+          aggregation_attempted: true,
+          persistence_attempted: true,
+          persistence_succeeded: ["created", "updated", "deduped"].includes(persisted?.status),
+          source_type: "EXECUTION_TRACE",
+        });
+        recordNsfwPipelineStage({
+          stage: "AGGREGATION_READBACK",
+          execution_status: "NOT_INVOKED",
+          reason_code: "READBACK_DEFERRED_TO_CURRENT_STATE",
+          invoked: false,
+          run_id: pipelineRunId,
+          chat_id: floorVersion?.chat_id ?? null,
+          subject_id: instance.subject_id,
+          mechanism_key: instance.mechanism_key,
+          tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+          cycle_id: instance.cycle_id,
+          ...aggregationDiagnostic,
+          floor_version: floorVersion,
+          input_count: 0,
+          output_count: 0,
+          timing_instance_id: instance.timing_instance_id,
+          aggregation_id: aggregationRecord?.aggregation_id ?? null,
+          persistence_attempted: true,
+          persistence_succeeded: ["created", "updated", "deduped"].includes(persisted?.status),
+          readback_succeeded: null,
+          source_type: "EXECUTION_TRACE",
+        });
+        if (["created", "updated", "deduped"].includes(persisted.status)) aggregations.push(aggregationRecord);
       }
       return {enabled: timingEnabled, instances: timingInstances, windows: inputs.trackingWindows ?? [], confirmedSubjects, terminatedSubjects, aggregations};
     },
@@ -2306,6 +3554,10 @@ export function createRuntime({
       // are not interpreted as an automatic backlog.
       await eventAnalysis.primeLifecycleSnapshot?.();
       await projectionContext.refreshProjectionContext({chatId});
+      await runLifecycleRecovery({
+        trigger: "lifecycle-plugin-reenabled",
+        reason: "plugin-reenabled",
+      });
     }
     notify({
       type: "BIOWEAVE_ENABLED_CHANGED",
@@ -2324,6 +3576,7 @@ export function createRuntime({
   });
   let lifecycleSequence = 0;
   let lifecycleTail = Promise.resolve();
+  const lifecycleRecoveryInFlight = new Map();
   let activeOwner = null;
   let knownChatIds = null;
   let knownChatIdsEvidence = false;
@@ -2349,6 +3602,292 @@ export function createRuntime({
         .sort()
         .map((key) => [key, stableValue(value[key])]),
     );
+  }
+
+  function lifecycleRecoveryKey(target) {
+    return JSON.stringify(stableValue({
+      chat_id: target?.version?.chat_id ?? chat.current(),
+      floor_version: target?.version ?? null,
+      active_swipe_id: target?.swipeId ?? target?.version?.swipe_id ?? null,
+    }));
+  }
+
+  function recordLifecycleRecoveryTrace({
+    status,
+    trigger,
+    reasonCode,
+    target = null,
+    runId = null,
+    errorCode = null,
+    contextReady = null,
+    enteredRecovery = null,
+    trackingWindowFound = null,
+    timingInstanceReused = null,
+    timingInstanceCreated = null,
+    aggregationReusedOrCreated = null,
+    staleContextCancelled = null,
+  } = {}) {
+    const floorVersion = target?.version ?? null;
+    const payload = {
+      stage: "NSFW_LIFECYCLE_RECOVERY",
+      recovery_status: status,
+      recovery_trigger: trigger,
+      execution_status: status,
+      reason_code: reasonCode,
+      run_id: runId,
+      chat_id: floorVersion?.chat_id ?? chat.current(),
+      floor_version: floorVersion,
+      floor: Number.isFinite(floorVersion?.floor) ? floorVersion.floor : null,
+      active_swipe_id: Number.isFinite(floorVersion?.swipe_id) ? floorVersion.swipe_id : null,
+      error_code: errorCode,
+      context_ready: contextReady,
+      entered_recovery: enteredRecovery,
+      tracking_window_found: trackingWindowFound,
+      timing_instance_reused: timingInstanceReused,
+      timing_instance_created: timingInstanceCreated,
+      aggregation_reused_or_created: aggregationReusedOrCreated,
+      stale_context_cancelled: staleContextCancelled,
+      source_type: "EXECUTION_TRACE",
+    };
+    recordNsfwPipelineStage({stage: "PIPELINE_SCHEDULING", ...payload});
+    try {
+      recordPersistenceTrace(payload);
+    } catch {
+      // Recovery diagnostics are fail-open and must never alter lifecycle work.
+    }
+  }
+
+  async function runLifecycleRecovery({trigger = "lifecycle-recovery", reason = "lifecycle-recovery", processTrigger = trigger, requireCandidate = true} = {}) {
+    const initialChatId = chat.current();
+    const initialEpoch = chat.getEpoch();
+    if (!isBioWeaveEnabled()) {
+      recordLifecycleRecoveryTrace({
+        status: "SKIPPED",
+        trigger,
+        reasonCode: "PLUGIN_DISABLED",
+        contextReady: false,
+        enteredRecovery: false,
+      });
+      return {status: "disabled", reason: "PLUGIN_DISABLED"};
+    }
+    let target;
+    try {
+      target = await eventAnalysis.resolveCurrentBioWeaveFloor();
+    } catch (error) {
+      recordLifecycleRecoveryTrace({
+        status: "DEFERRED_CONTEXT_NOT_READY",
+        trigger,
+        reasonCode: error?.code ?? error?.message ?? "CURRENT_FLOOR_UNAVAILABLE",
+        errorCode: error?.code ?? error?.message ?? "CURRENT_FLOOR_UNAVAILABLE",
+        contextReady: false,
+        enteredRecovery: false,
+      });
+      return {status: "deferred", reason: error?.code ?? error?.message ?? "CURRENT_FLOOR_UNAVAILABLE"};
+    }
+    if (!target?.version) {
+      recordLifecycleRecoveryTrace({
+        status: "DEFERRED_CONTEXT_NOT_READY",
+        trigger,
+        reasonCode: "CURRENT_FLOOR_UNAVAILABLE",
+        contextReady: false,
+        enteredRecovery: false,
+      });
+      return {status: "deferred", reason: "CURRENT_FLOOR_UNAVAILABLE"};
+    }
+    if (chat.current() !== initialChatId || chat.getEpoch() !== initialEpoch) {
+      recordLifecycleRecoveryTrace({
+        status: "CANCELLED_STALE_CONTEXT",
+        trigger,
+        reasonCode: "CHAT_OR_EPOCH_CHANGED_BEFORE_RECOVERY",
+        target,
+        contextReady: false,
+        enteredRecovery: false,
+        staleContextCancelled: true,
+      });
+      return {status: "cancelled", reason: "CHAT_OR_EPOCH_CHANGED_BEFORE_RECOVERY"};
+    }
+    let activeEvents;
+    try {
+      activeEvents = await eventAnalysis.getCurrentFloorEvents();
+    } catch (error) {
+      recordLifecycleRecoveryTrace({
+        status: "DEFERRED_CONTEXT_NOT_READY",
+        trigger,
+        reasonCode: error?.code ?? error?.message ?? "BUSINESS_STATE_UNAVAILABLE",
+        target,
+        errorCode: error?.code ?? error?.message ?? "BUSINESS_STATE_UNAVAILABLE",
+        contextReady: false,
+        enteredRecovery: false,
+      });
+      return {status: "deferred", reason: error?.code ?? error?.message ?? "BUSINESS_STATE_UNAVAILABLE"};
+    }
+    if (chat.current() !== initialChatId || chat.getEpoch() !== initialEpoch) {
+      recordLifecycleRecoveryTrace({
+        status: "CANCELLED_STALE_CONTEXT",
+        trigger,
+        reasonCode: "CHAT_OR_EPOCH_CHANGED_DURING_PREFLIGHT",
+        target,
+        contextReady: false,
+        enteredRecovery: false,
+        staleContextCancelled: true,
+      });
+      return {status: "cancelled", reason: "CHAT_OR_EPOCH_CHANGED_DURING_PREFLIGHT"};
+    }
+    const currentTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+    if (!currentTarget?.version || !sameFloorVersion(currentTarget.version, target.version)) {
+      recordLifecycleRecoveryTrace({
+        status: "CANCELLED_STALE_CONTEXT",
+        trigger,
+        reasonCode: "FLOOR_VERSION_CHANGED_DURING_PREFLIGHT",
+        target,
+        contextReady: false,
+        enteredRecovery: false,
+        staleContextCancelled: true,
+      });
+      return {status: "cancelled", reason: "FLOOR_VERSION_CHANGED_DURING_PREFLIGHT"};
+    }
+    activeEvents = Array.isArray(activeEvents) ? activeEvents : [];
+    const validExposureFound = activeEvents.some(event => {
+      try { return isPregnancyRelevantExposure(event); } catch { return false; }
+    });
+    // Tracking Windows are derived from the same authoritative Event snapshot
+    // consumed by projectionRuntime.process(). Do not rebuild a second
+    // business DTO here merely to decide whether to schedule recovery.
+    const trackingWindowFound = validExposureFound ? null : false;
+    if (requireCandidate && !validExposureFound && !trackingWindowFound) {
+      recordLifecycleRecoveryTrace({
+        status: "NOT_TRIGGERED",
+        trigger,
+        reasonCode: "NO_VALID_EXPOSURE_OR_TRACKING_WINDOW",
+        target,
+        contextReady: true,
+        enteredRecovery: false,
+        trackingWindowFound: false,
+      });
+      return {status: "skipped", reason: "NO_VALID_EXPOSURE_OR_TRACKING_WINDOW"};
+    }
+    const key = lifecycleRecoveryKey(target);
+    if (lifecycleRecoveryInFlight.has(key)) {
+      recordLifecycleRecoveryTrace({
+        status: "SKIPPED",
+        trigger,
+        reasonCode: "LIFECYCLE_RECOVERY_ALREADY_IN_FLIGHT",
+        target,
+        contextReady: true,
+        enteredRecovery: false,
+        trackingWindowFound,
+      });
+      return lifecycleRecoveryInFlight.get(key);
+    }
+    const work = (async () => {
+      recordLifecycleRecoveryTrace({
+        status: "ATTEMPTED",
+        trigger,
+        reasonCode: "LIFECYCLE_RECOVERY_STARTED",
+        target,
+        contextReady: true,
+        enteredRecovery: true,
+        trackingWindowFound,
+      });
+      let result;
+      try {
+        result = await projectionRuntime.process({reason, trigger: processTrigger});
+      } catch (error) {
+        recordLifecycleRecoveryTrace({
+          status: "FAILED",
+          trigger,
+          reasonCode: "LIFECYCLE_RECOVERY_FAILED",
+          target,
+          errorCode: error?.code ?? error?.message ?? "LIFECYCLE_RECOVERY_FAILED",
+          contextReady: true,
+          enteredRecovery: true,
+          trackingWindowFound,
+        });
+        return {status: "failed", reason: error?.code ?? error?.message ?? "LIFECYCLE_RECOVERY_FAILED"};
+      }
+      const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+      if (chat.current() !== initialChatId || chat.getEpoch() !== initialEpoch || !finalTarget?.version || !sameFloorVersion(finalTarget.version, target.version)) {
+        recordLifecycleRecoveryTrace({
+          status: "CANCELLED_STALE_CONTEXT",
+          trigger,
+          reasonCode: "FLOOR_VERSION_CHANGED_AFTER_RECOVERY",
+          target,
+          runId: result?.run_id ?? null,
+          contextReady: true,
+          enteredRecovery: true,
+          trackingWindowFound,
+          staleContextCancelled: true,
+        });
+        return {...(result ?? {}), status: "cancelled", reason: "FLOOR_VERSION_CHANGED_AFTER_RECOVERY"};
+      }
+      let recoveryOutcome = {};
+      try {
+        if (!result?.run_id) throw new Error("RECOVERY_TRACE_RUN_UNAVAILABLE");
+        const trace = diagnostics.getNsfwPipelineDiagnostics?.({
+          run_id: result.run_id,
+          floor_version: target.version,
+        });
+        const stages = (trace?.stages ?? []).filter(stage =>
+          stage?.run_id === result.run_id,
+        );
+        const timingStages = stages.filter(stage => stage?.stage === "TIMING_INSTANCE_CREATION");
+        const aggregationEligibilityStages = stages.filter(stage => stage?.stage === "AGGREGATION_ELIGIBILITY_EVALUATION");
+        const aggregationExecutionStages = stages.filter(stage => stage?.stage === "PARTICIPANT_AGGREGATION_EXECUTION");
+        const aggregationPersistenceStages = stages.filter(stage => stage?.stage === "AGGREGATION_PERSISTENCE");
+        const trackingStages = stages.filter(stage => stage?.stage === "TRACKING_WINDOW_RESOLUTION");
+        const hasReason = (items, reasons) => items.some(item => reasons.has(item?.reason_code));
+        recoveryOutcome = {
+          trackingWindowFound: trackingStages.length
+            ? trackingStages.some(stage => Number(stage?.output_count ?? 0) > 0)
+            : null,
+          timingInstanceReused: timingStages.length
+            ? hasReason(timingStages, new Set(["TIMING_INSTANCE_EXISTS", "TIMING_INSTANCE_DEDUPED"]))
+            : null,
+          timingInstanceCreated: timingStages.length
+            ? hasReason(timingStages, new Set(["TIMING_INSTANCE_PERSISTED"]))
+            : null,
+          aggregationReusedOrCreated: [
+            ...aggregationEligibilityStages,
+            ...aggregationExecutionStages,
+            ...aggregationPersistenceStages,
+          ].length
+            ? hasReason(aggregationEligibilityStages, new Set(["AGGREGATION_ALREADY_SUCCEEDED"]))
+              || hasReason(aggregationExecutionStages, new Set(["AGGREGATION_RESULT_BUILT"]))
+              || hasReason(aggregationPersistenceStages, new Set(["AGGREGATION_PERSISTED", "AGGREGATION_DEDUPED"]))
+            : null,
+        };
+      } catch {
+        // The execution result remains authoritative when the optional trace
+        // summary cannot be collected.
+      }
+      const resultStatus = result?.status === "success"
+        ? "SUCCEEDED"
+        : result?.status === "stale"
+          ? "CANCELLED_STALE_CONTEXT"
+          : result?.status === "partial"
+            ? "ATTEMPTED"
+            : "FAILED";
+      recordLifecycleRecoveryTrace({
+        status: resultStatus,
+        trigger,
+        reasonCode: result?.reason ?? (resultStatus === "SUCCEEDED" ? "LIFECYCLE_RECOVERY_COMPLETED" : "LIFECYCLE_RECOVERY_RESULT_NOT_SUCCESS"),
+        target,
+        runId: result?.run_id ?? null,
+        errorCode: result?.errors?.[0]?.reason ?? null,
+        contextReady: true,
+        enteredRecovery: true,
+        ...recoveryOutcome,
+        trackingWindowFound: recoveryOutcome.trackingWindowFound ?? trackingWindowFound,
+        staleContextCancelled: resultStatus === "CANCELLED_STALE_CONTEXT",
+      });
+      return result;
+    })();
+    lifecycleRecoveryInFlight.set(key, work);
+    try {
+      return await work;
+    } finally {
+      lifecycleRecoveryInFlight.delete(key);
+    }
   }
 
   function scalarId(value) {
@@ -2769,7 +4308,6 @@ export function createRuntime({
       generation_intent_id: payload?.generation_intent_id ?? payload?.generationIntentId ?? null,
       generation_type: payload?.generation_type ?? payload?.generationType ?? payload?.genType ?? null,
     };
-    const isStoryTimeProjectionTrigger = key === "MESSAGE_RECEIVED";
     const refreshGenerationProjectionContext = async () => {
       if (key === "GENERATION_STARTED") {
         recordPersistenceTrace({
@@ -2866,19 +4404,20 @@ export function createRuntime({
           if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
             console.error("[BioWeave] projection lifecycle tick failed", error);
         }
-        if (isStoryTimeProjectionTrigger) {
-          try {
-            await projectionRuntime.process({
-              reason: `story-time:${key}`,
-              trigger: "story-time-progression",
-            });
-          } catch (error) {
-            if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
-              console.error("[BioWeave] story-time projection processing failed", error);
-          }
-        }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());
+        if (["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED", "GENERATION_ENDED", "CHARACTER_MESSAGE_RENDERED"].includes(key)) {
+          const recovery = runLifecycleRecovery({
+            trigger: `lifecycle-${key.toLowerCase()}`,
+            reason: key === "MESSAGE_RECEIVED"
+              ? "story-time:MESSAGE_RECEIVED"
+              : `lifecycle-recovery:${key.toLowerCase()}`,
+            processTrigger: key === "MESSAGE_RECEIVED" ? "story-time-progression" : `lifecycle-${key.toLowerCase()}`,
+            requireCandidate: key !== "MESSAGE_RECEIVED",
+          });
+          if (["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED"].includes(key)) await recovery;
+          else void recovery.catch(() => null);
+        }
         await refreshGenerationProjectionContext();
         notifyLifecycleSettled(key, eventType, payload);
       },
@@ -2980,13 +4519,19 @@ export function createRuntime({
     }
     bindLifecycleEvents();
     initialized = true;
-    void eventAnalysis.refreshTrackingRegistry("init").catch((error) => {
+    try {
+      await eventAnalysis.refreshTrackingRegistry("init");
+    } catch (error) {
       if (error?.message !== "STALE_CHAT") {
         console.error(
           "[BioWeave] initial tracking registry refresh failed",
           error,
         );
       }
+    }
+    await runLifecycleRecovery({
+      trigger: "lifecycle-runtime-init",
+      reason: "runtime-init-recovery",
     });
     return true;
   }
@@ -3062,13 +4607,26 @@ export function createRuntime({
     });
   }
 
-  async function getProjectionTimingDebug() {
+  async function getProjectionTimingDebugInternal() {
     const chatId = chat.current();
     const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
     if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) {
-      return {status: "unavailable", reason: "NO_CHARACTER_FLOOR", chat_id: chatId, timing_instances: [], authoritative_readback: {timing_timeline_present: false, timing_instance_count: 0}};
+      return {
+        status: "unavailable",
+        reason: "NO_CHARACTER_FLOOR",
+        chat_id: chatId,
+        timing_instances: [],
+        timing_diagnostics: [],
+        aggregation_diagnostics: [],
+        authoritative_readback: {
+          timing_snapshot_present: false,
+          timing_instance_count: 0,
+          timing_readback_succeeded: false,
+          aggregation_readback_succeeded: false,
+        },
+      };
     }
-    const timeline = await projectionTimingPersistence.getTimingInstances({chatId, endpointFloor: floor.version.floor});
+    const timeline = await projectionTimingPersistence.getTimingInstances({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
     const business = await eventAnalysis.collectActiveBusinessData();
     const world = await eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index});
     const events = business.active_events ?? [];
@@ -3076,13 +4634,144 @@ export function createRuntime({
     const terminatedSubjects = events.filter(event => ["pregnancy_loss", "abortion"].includes(event?.type) && event.status === "confirmed").flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
     const rules = Array.isArray(world?.model?.projection_rules) ? world.model.projection_rules : [];
     const projections = await projectionPersistence.getProjectionViews({chatId, endpointFloor: floor.version.floor});
-    const aggregations = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor});
-    const instances = timeline.creations.map(instance => ({
+    const aggregations = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
+    let executionTrace;
+    try {
+      executionTrace = diagnostics.getNsfwPipelineDiagnostics({chat_id: chatId, floor_version: floor.version});
+    } catch {
+      executionTrace = {
+        source_type: "EXECUTION_TRACE",
+        collection_status: "FAILED",
+        trace_truncated: null,
+        trace_buffer_status: "UNKNOWN",
+        current_run_id: null,
+        runs: [],
+        stages: [],
+      };
+    }
+    const traceStages = Array.isArray(executionTrace?.stages) ? executionTrace.stages : [];
+    const traceRuns = Array.isArray(executionTrace?.runs) ? executionTrace.runs : [];
+    const traceAvailable = traceStages.length > 0 || traceRuns.length > 0;
+    const currentTraceRunId = executionTrace?.current_run_id ?? traceRuns.at(-1)?.run_id ?? null;
+    const currentTraceRun = traceRuns.find(run => run?.run_id === currentTraceRunId) ?? null;
+    const currentRunHasAggregationPersistence = traceStages.some(stage =>
+      stage?.run_id === currentTraceRunId && stage?.stage === "AGGREGATION_PERSISTENCE",
+    );
+    const diagnosticTraceRunId = currentTraceRun?.execution_status === "ATTEMPTED" && !currentRunHasAggregationPersistence
+      ? [...traceRuns].reverse().find(run =>
+          run?.run_id !== currentTraceRunId && traceStages.some(stage =>
+            stage?.run_id === run?.run_id && stage?.stage === "AGGREGATION_PERSISTENCE",
+          ),
+        )?.run_id ?? currentTraceRunId
+      : currentTraceRunId;
+    const currentStoryTime = business.current_story_time ?? null;
+    const trackingWindows = Array.isArray(business.tracking_windows) ? business.tracking_windows : [];
+    const scalarMatches = (actual, expected) =>
+      expected === null || expected === undefined || actual === null || actual === undefined
+        ? true
+        : String(actual) === String(expected);
+    const stageMatches = (stage, target = {}) =>
+      scalarMatches(stage?.subject_id, target.subject_id) &&
+      scalarMatches(stage?.mechanism_key, target.mechanism_key) &&
+      scalarMatches(stage?.cycle_id, target.cycle_id) &&
+      scalarMatches(stage?.tracking_window_id, target.tracking_window_id);
+    const stagesFor = (stageName, target = {}) => traceStages
+      .filter(stage => stage?.stage === stageName && stageMatches(stage, target) &&
+        (diagnosticTraceRunId ? stage?.run_id === diagnosticTraceRunId : !stage?.run_id))
+      .sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0));
+    const latestStage = (stageName, target = {}) => stagesFor(stageName, target).at(-1) ?? null;
+    const stageForTarget = (stageName, target = {}) => latestStage(stageName, target);
+    const eventById = new Map(events.map(event => [event?.event_id, event]));
+    const exposureIdsFor = ({subjectId, mechanismKey, sourceEventIds = []} = {}) =>
+      [...new Set(sourceEventIds)].filter(eventId => {
+        const event = eventById.get(eventId);
+        return event?.pregnancy_relevance?.relevant === true &&
+          (event.pregnancy_relevance?.gestational_subject_ids ?? []).includes(subjectId) &&
+          (!mechanismKey || event.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey);
+      });
+    const storyElapsedDays = (referenceStoryTime) => {
+      const difference = differenceStoryTime(currentStoryTime, referenceStoryTime);
+      return difference?.unit === "day" && Number.isFinite(Number(difference.value))
+        ? Number(difference.value)
+        : null;
+    };
+    const sourceEventsFor = (subjectId, mechanismKey, sourceEventIds) =>
+      exposureIdsFor({subjectId, mechanismKey, sourceEventIds});
+    const candidateExposureInfoFor = ({subjectId, mechanismKey, sourceEventIds = []} = {}) => {
+      const relevant = events.filter(event => {
+        try {
+          return isPregnancyRelevantExposure(event)
+            && event?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId)
+            && event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey;
+        } catch {
+          return false;
+        }
+      });
+      const sourceIds = new Set(sourceEventIds);
+      const candidate = sourceIds.size
+        ? relevant.filter(event => sourceIds.has(event.event_id))
+        : relevant;
+      const excludedCandidateReasons = sourceIds.size
+        ? relevant
+          .filter(event => !sourceIds.has(event.event_id))
+          .map(event => ({event_id: event.event_id, reason_code: "EXPOSURE_NOT_IN_TIMING_BASIS"}))
+        : [];
+      return {
+        relevant,
+        candidate,
+        candidate_exposure_event_ids: candidate.map(event => event.event_id),
+        excluded_candidate_reasons: excludedCandidateReasons,
+      };
+    };
+    const firstExposureFor = ({subjectId, mechanismKey, cycleId, candidateEvents = [], referenceStoryTime = null, sourceEventIds = []} = {}) => {
+      const canonicalMatches = candidateEvents.filter(event => buildProjectionTimingCycleId({
+        chatId,
+        subjectId,
+        mechanismKey,
+        firstEvent: event,
+      }) === cycleId);
+      if (canonicalMatches.length === 1) return canonicalMatches[0];
+      const sourceMatches = candidateEvents.filter(event =>
+        sourceEventIds.includes(event?.event_id)
+        && cycleStoryTimeEqual(event?.story_time, referenceStoryTime),
+      );
+      return sourceMatches.length === 1 ? sourceMatches[0] : null;
+    };
+    const windowMatchesInstance = (window, instance) =>
+      window?.cycle_id === instance?.cycle_id &&
+      window?.subject_id === instance?.subject_id &&
+      window?.mechanism_key === instance?.mechanism_key
+      || (
+        window?.subject_id === instance?.subject_id
+        && window?.mechanism_key === instance?.mechanism_key
+        && (instance?.source_event_ids ?? []).some(eventId => (window?.source_event_ids ?? []).includes(eventId))
+      );
+    const findWindowForInstance = instance => trackingWindows.find(window => windowMatchesInstance(window, instance));
+    const timingInstanceByTarget = (subjectId, mechanismKey, cycleId, window = null) => timeline.items.find(instance =>
+      instance?.subject_id === subjectId &&
+      instance?.mechanism_key === mechanismKey &&
+      (!cycleId || instance?.cycle_id === cycleId),
+    ) ?? (window
+      ? timeline.items.find(instance =>
+          instance?.subject_id === subjectId
+          && instance?.mechanism_key === mechanismKey
+          && (instance?.source_event_ids ?? []).some(eventId => (window?.source_event_ids ?? []).includes(eventId)),
+        )
+      : null);
+    const diagnosticTargets = trackingWindows.map(window => ({
+      window,
+      instance: timingInstanceByTarget(window.subject_id, window.mechanism_key, window.cycle_id, window),
+    }));
+    for (const instance of timeline.items) {
+      if (diagnosticTargets.some(target => target.instance?.timing_instance_id === instance?.timing_instance_id)) continue;
+      diagnosticTargets.push({window: findWindowForInstance(instance), instance});
+    }
+    const instances = timeline.items.map(instance => ({
       ...instance,
-      derived_timing: evaluateProjectionTiming({timingInstance: instance, currentStoryTime: business.current_story_time ?? null, events, subjectId: instance.subject_id, pregnancyConfirmed: confirmedSubjects.includes(instance.subject_id), terminated: terminatedSubjects.includes(instance.subject_id)}),
+      derived_timing: evaluateProjectionTiming({timingInstance: instance, currentStoryTime, events, subjectId: instance.subject_id, pregnancyConfirmed: confirmedSubjects.includes(instance.subject_id), terminated: terminatedSubjects.includes(instance.subject_id)}),
       aggregation: (() => {
-        const aggregation = aggregations.creations.find(item => item.timing_instance_id === instance.timing_instance_id && item.cycle_id === instance.cycle_id) ?? null;
-        const trigger = resolveParticipantAggregationTrigger({timingInstance: instance, currentStoryTime: business.current_story_time ?? null, aggregation});
+        const aggregation = aggregations.items.find(item => item.timing_instance_id === instance.timing_instance_id && item.cycle_id === instance.cycle_id) ?? null;
+        const trigger = resolveParticipantAggregationTrigger({timingInstance: instance, currentStoryTime, aggregation});
         return {
           aggregation_id: aggregation?.aggregation_id ?? null,
           succeeded: aggregation?.status === 'succeeded',
@@ -3093,6 +4782,322 @@ export function createRuntime({
         };
       })(),
     }));
+    const timingDiagnostics = diagnosticTargets.map(({window, instance}) => {
+      const subjectId = instance?.subject_id ?? window?.subject_id ?? null;
+      const mechanismKey = instance?.mechanism_key ?? window?.mechanism_key ?? null;
+      const cycleId = instance?.cycle_id ?? window?.cycle_id ?? null;
+      const trackingWindowId = window?.tracking_window_id ?? null;
+      const sourceEventIds = [...new Set(instance?.source_event_ids ?? window?.source_event_ids ?? [])];
+      const acceptedExposureEventIds = sourceEventsFor(subjectId, mechanismKey, sourceEventIds);
+      const candidateExposureInfo = candidateExposureInfoFor({subjectId, mechanismKey, sourceEventIds});
+      const firstExposureEvent = firstExposureFor({
+        subjectId,
+        mechanismKey,
+        cycleId,
+        candidateEvents: candidateExposureInfo.candidate,
+        referenceStoryTime: instance?.reference_story_time ?? window?.opened_story_time ?? null,
+        sourceEventIds,
+      });
+      const referenceStoryTime = firstExposureEvent?.story_time
+        ?? instance?.reference_story_time
+        ?? window?.opened_story_time
+        ?? null;
+      const cycleIdSource = window?.cycle_id === cycleId
+        ? "TRACKING_WINDOW"
+        : instance?.cycle_id === cycleId
+          ? "TIMING_INSTANCE"
+          : "UNAVAILABLE";
+      const elapsedStoryDays = storyElapsedDays(referenceStoryTime);
+      const target = {subject_id: subjectId, mechanism_key: mechanismKey, cycle_id: cycleId, tracking_window_id: trackingWindowId};
+      const configurationStage = stageForTarget("TIMING_CONFIGURATION_RESOLUTION", target);
+      const creationStage = stageForTarget("TIMING_INSTANCE_CREATION", target);
+      const timingEvaluationStage = stageForTarget("TIMING_ELIGIBILITY_EVALUATION", target);
+      const timingState = instance
+        ? evaluateProjectionTiming({timingInstance: instance, currentStoryTime, events, subjectId, pregnancyConfirmed: confirmedSubjects.includes(subjectId), terminated: terminatedSubjects.includes(subjectId)})
+        : null;
+      const timingEvidence = instance
+        ? {
+            status: timingState?.status ?? "UNKNOWN",
+            reason_code: timingState?.reason_code ?? "UNKNOWN",
+            source_type: "CURRENT_STATE",
+          }
+        : creationStage
+          ? {
+              status: creationStage.execution_status ?? "UNKNOWN",
+              reason_code: creationStage.reason_code ?? "UNKNOWN",
+              source_type: "EXECUTION_TRACE",
+            }
+          : {
+                status: "UNKNOWN",
+                reason_code: "TRACE_UNAVAILABLE",
+                source_type: "DERIVED_DIAGNOSTIC",
+              };
+      const aggregation = instance
+        ? aggregations.items.find(item => item.timing_instance_id === instance.timing_instance_id && item.cycle_id === instance.cycle_id) ?? null
+        : null;
+      const trigger = instance
+        ? resolveParticipantAggregationTrigger({timingInstance: instance, currentStoryTime, aggregation})
+        : null;
+      const aggregationStage = stageForTarget("AGGREGATION_ELIGIBILITY_EVALUATION", target);
+      const aggregationExecutionStage = stageForTarget("PARTICIPANT_AGGREGATION_EXECUTION", target);
+      const aggregationPersistenceStage = stageForTarget("AGGREGATION_PERSISTENCE", target);
+      const aggregationReadbackStage = stageForTarget("AGGREGATION_READBACK", target);
+      const manualTimingEditStage = stageForTarget("TIMING_INSTANCE_MANUAL_EDIT", target);
+      const aggregationReevaluationStage = stageForTarget("AGGREGATION_REEVALUATION", target);
+      let characterTimingConfig = null;
+      try {
+        characterTimingConfig = readCharacterTimingConfig(store.getChat(chatId), subjectId).config;
+      } catch {
+        characterTimingConfig = null;
+      }
+      const characterTimingConfigSource = characterTimingConfig
+        ? "CHARACTER_OVERRIDE"
+        : configurationStage?.timing_config_source === "HUMAN_BASELINE"
+          ? "HUMAN_BASELINE"
+          : null;
+      const aggregationDue = aggregation
+        ? aggregation.status === "succeeded" || trigger?.eligible === true
+        : trigger?.eligible ?? null;
+      const aggregationAttempted = aggregationExecutionStage
+        ? aggregationExecutionStage.invoked
+        : null;
+      const aggregationBlockReason = aggregation
+        ? null
+        : aggregationStage?.reason_code
+          ?? aggregationExecutionStage?.reason_code
+          ?? (trigger && trigger.eligible !== true ? trigger.reason_code ?? trigger.status : null)
+          ?? (traceAvailable ? "TRACE_UNAVAILABLE" : "TRACE_UNAVAILABLE");
+      return {
+        source_type: "DERIVED_DIAGNOSTIC",
+        subject_id: subjectId,
+        mechanism_key: mechanismKey,
+        cycle_id: cycleId,
+        tracking_window_id: trackingWindowId,
+        tracking_window_status: window?.status ?? null,
+        source_event_ids: sourceEventIds,
+        tracking_window_cycle_id: window?.cycle_id ?? null,
+        first_exposure_event_id: firstExposureEvent?.event_id ?? null,
+        first_exposure_story_time_source: firstExposureEvent
+          ? "CURRENT_EVENT_SNAPSHOT"
+          : instance?.reference_story_time
+            ? "TIMING_INSTANCE_SNAPSHOT"
+            : window?.opened_story_time ? "TRACKING_WINDOW_SNAPSHOT" : "UNAVAILABLE",
+        candidate_exposure_event_ids: candidateExposureInfo.candidate_exposure_event_ids,
+        accepted_exposure_event_ids: acceptedExposureEventIds,
+        excluded_candidate_reasons: candidateExposureInfo.excluded_candidate_reasons,
+        final_cycle_id: cycleId,
+        cycle_id_source: cycleIdSource,
+        cycle_id_consistent: window?.cycle_id && cycleId
+          ? window.cycle_id === cycleId
+          : null,
+        cycle_id_consistency_reason_code: window?.cycle_id && cycleId
+          ? window.cycle_id === cycleId
+            ? "TRACKING_WINDOW_CYCLE_MATCH"
+            : "TRACKING_WINDOW_CYCLE_MISMATCH"
+          : "TRACKING_WINDOW_CYCLE_UNAVAILABLE",
+        first_exposure_story_time: cloneValue(referenceStoryTime),
+        current_story_time: cloneValue(currentStoryTime),
+        elapsed_story_days: elapsedStoryDays,
+        story_time_reason_code: elapsedStoryDays === null ? "story_time_unresolved" : null,
+        timing_config_available: instance?.config_snapshot
+          ? true
+          : typeof configurationStage?.timing_config_available === "boolean"
+            ? configurationStage.timing_config_available
+            : null,
+        timing_config_source: configurationStage?.timing_config_source
+          ?? (instance?.config_snapshot ? "TIMING_INSTANCE_SNAPSHOT" : null),
+        timing_instance_exists: Boolean(instance),
+        timing_instance_id: instance?.timing_instance_id ?? null,
+        timing_instance_readback_attempted: true,
+        timing_instance_readback_succeeded: true,
+        timing_instance_readback_result_present: Boolean(instance),
+        timing_instance_readback_reason_code: instance ? "TIMING_INSTANCE_READBACK_PRESENT" : "TIMING_INSTANCE_READBACK_NOT_FOUND",
+        base_min_story_days: instance?.base_min_story_days ?? null,
+        base_max_story_days: instance?.base_max_story_days ?? null,
+        variance_ratio: instance?.variance_ratio ?? null,
+        variance_cap_story_days: instance?.variance_cap_story_days ?? null,
+        sampled_individual_offset_story_days: instance?.sampled_individual_offset_story_days ?? null,
+        state_modifier_story_days: instance?.state_modifier_story_days ?? null,
+        total_adjustment_story_days: instance?.total_adjustment_story_days ?? null,
+        total_adjustment_cap_story_days: instance?.total_adjustment_cap_story_days ?? null,
+        effective_min_story_days: instance?.effective_min_story_days ?? null,
+        effective_max_story_days: instance?.effective_max_story_days ?? null,
+        world_rule_binding: instance?.world_rule_binding ?? null,
+        timing_instance_resolution: manualTimingEditStage?.execution_status === "SUCCEEDED"
+          ? "MANUALLY_EDITED"
+          : creationStage?.reason_code === "TIMING_INSTANCE_EXISTS"
+          ? "REUSED"
+          : creationStage?.reason_code === "TIMING_INSTANCE_PERSISTED"
+            ? "CREATED"
+            : instance ? "CURRENT_STATE_PRESENT" : "UNKNOWN",
+        timing_status: timingEvidence.status,
+        timing_reason_code: timingEvidence.reason_code,
+        timing_evidence_source: timingEvidence.source_type,
+        timing_execution_status: creationStage?.execution_status ?? null,
+        timing_configuration_execution_status: configurationStage?.execution_status ?? null,
+        timing_eligibility_execution_status: timingEvaluationStage?.execution_status ?? null,
+        character_timing_config: {
+          min_story_days: characterTimingConfig?.base_min_story_days
+            ?? (characterTimingConfigSource === "HUMAN_BASELINE" ? configurationStage?.base_min_story_days : null),
+          max_story_days: characterTimingConfig?.base_max_story_days
+            ?? (characterTimingConfigSource === "HUMAN_BASELINE" ? configurationStage?.base_max_story_days : null),
+          source: characterTimingConfigSource,
+        },
+        active_timing_instance: instance
+          ? {
+              timing_instance_id: instance.timing_instance_id,
+              cycle_id: instance.cycle_id,
+              base_min_story_days: instance.base_min_story_days,
+              base_max_story_days: instance.base_max_story_days,
+              sampled_offset_story_days: instance.sampled_individual_offset_story_days,
+              effective_min_story_days: instance.effective_min_story_days,
+              effective_max_story_days: instance.effective_max_story_days,
+              source_floor: cloneValue(instance.created_at_floor_version ?? null),
+              readback_status: "PRESENT",
+            }
+          : null,
+        manual_timing_edit: manualTimingEditStage?.manual_timing_edit ?? {
+          attempted: false,
+          succeeded: null,
+          target_cycle_id: cycleId,
+          persisted_floor: null,
+          readback_status: "NOT_ATTEMPTED",
+        },
+        aggregation_reevaluation: aggregationReevaluationStage?.aggregation_reevaluation ?? {
+          attempted: false,
+          previous_status: aggregation?.status ?? null,
+          new_trigger_status: trigger?.status ?? null,
+          action: "NOT_ATTEMPTED",
+          readback_status: "NOT_ATTEMPTED",
+        },
+        aggregation_due: aggregationDue,
+        aggregation_attempted: aggregationAttempted,
+        aggregation_block_reason: aggregationBlockReason,
+        aggregation_id: aggregation?.aggregation_id ?? aggregationExecutionStage?.aggregation_id ?? null,
+        aggregation_execution_status: aggregationExecutionStage?.execution_status ?? null,
+        aggregation_persistence_status: aggregationPersistenceStage?.execution_status ?? null,
+        aggregation_readback_status: aggregationReadbackStage?.execution_status ?? null,
+        run_id: creationStage?.run_id ?? aggregationStage?.run_id ?? executionTrace?.current_run_id ?? null,
+      };
+    });
+    const aggregationDiagnostics = diagnosticTargets.map(({window, instance}) => {
+      const subjectId = instance?.subject_id ?? window?.subject_id ?? null;
+      const mechanismKey = instance?.mechanism_key ?? window?.mechanism_key ?? null;
+      const cycleId = instance?.cycle_id ?? window?.cycle_id ?? null;
+      const timingDiagnostic = timingDiagnostics.find(item => item.subject_id === subjectId && item.mechanism_key === mechanismKey && item.cycle_id === cycleId) ?? null;
+      const candidateExposureInfo = candidateExposureInfoFor({
+        subjectId,
+        mechanismKey,
+        sourceEventIds: instance?.source_event_ids ?? window?.source_event_ids ?? [],
+      });
+      const target = {subject_id: subjectId, mechanism_key: mechanismKey, cycle_id: cycleId, tracking_window_id: window?.tracking_window_id ?? null};
+      const eligibilityStage = stageForTarget("AGGREGATION_ELIGIBILITY_EVALUATION", target);
+      const executionStages = stagesFor("PARTICIPANT_AGGREGATION_EXECUTION", target);
+      const executionStage = executionStages.at(-1) ?? null;
+      const persistenceStage = stageForTarget("AGGREGATION_PERSISTENCE", target);
+      const readbackStage = stageForTarget("AGGREGATION_READBACK", target);
+      const aggregationReevaluationStage = stageForTarget("AGGREGATION_REEVALUATION", target);
+      const aggregation = instance
+        ? aggregations.items.find(item => item.timing_instance_id === instance.timing_instance_id && item.cycle_id === instance.cycle_id) ?? null
+        : null;
+      const currentStatePresent = aggregation?.status === "succeeded";
+      const manualReevaluationAction = aggregationReevaluationStage?.aggregation_reevaluation?.action ?? null;
+      const persistenceSucceeded = persistenceStage?.execution_status === "SUCCEEDED"
+        && persistenceStage?.persistence_succeeded !== false;
+      const trigger = instance
+        ? resolveParticipantAggregationTrigger({timingInstance: instance, currentStoryTime, aggregation})
+        : null;
+      const status = currentStatePresent
+        ? "SUCCEEDED"
+        : manualReevaluationAction === "removed_before_min"
+          ? "REMOVED"
+          : manualReevaluationAction
+            ? "REEVALUATED"
+        : persistenceStage?.execution_status === "PERSIST_FAILED"
+          ? "PERSIST_FAILED"
+          : persistenceSucceeded
+            ? "READBACK_FAILED"
+          : executionStage?.execution_status ?? eligibilityStage?.execution_status ?? "UNKNOWN";
+      const reasonCode = currentStatePresent
+        ? "AGGREGATION_CURRENT_STATE_PRESENT"
+          : manualReevaluationAction
+            ? `AGGREGATION_REEVALUATION_${manualReevaluationAction.toUpperCase()}`
+          : persistenceStage?.reason_code
+          ?? executionStage?.reason_code
+          ?? eligibilityStage?.reason_code
+          ?? "TRACE_UNAVAILABLE";
+      const finalReasonCode = currentStatePresent
+        ? reasonCode
+        : persistenceSucceeded
+          ? "AGGREGATION_READBACK_NOT_FOUND"
+          : reasonCode;
+      const upstreamTimingReason = timingDiagnostic?.timing_reason_code ?? null;
+      const resolvedReasonCode = finalReasonCode === "TIMING_INSTANCE_MISSING"
+        ? upstreamTimingReason && upstreamTimingReason !== "TIMING_INSTANCE_MISSING"
+          ? upstreamTimingReason
+          : "TRACE_UNAVAILABLE"
+        : finalReasonCode;
+      return {
+        source_type: "DERIVED_DIAGNOSTIC",
+        subject_id: subjectId,
+        cycle_id: cycleId,
+        final_cycle_id: cycleId,
+        cycle_id_source: timingDiagnostic?.cycle_id_source ?? (window?.cycle_id === cycleId ? "TRACKING_WINDOW" : instance ? "TIMING_INSTANCE" : "UNAVAILABLE"),
+        cycle_id_consistent: window?.cycle_id && cycleId
+          ? window.cycle_id === cycleId
+          : null,
+        cycle_id_consistency_reason_code: window?.cycle_id && cycleId
+          ? window.cycle_id === cycleId
+            ? "TRACKING_WINDOW_CYCLE_MATCH"
+            : "TRACKING_WINDOW_CYCLE_MISMATCH"
+          : "TRACKING_WINDOW_CYCLE_UNAVAILABLE",
+        mechanism_key: mechanismKey,
+        tracking_window_cycle_id: window?.cycle_id ?? null,
+        first_exposure_event_id: timingDiagnostic?.first_exposure_event_id ?? null,
+        first_exposure_story_time: timingDiagnostic?.first_exposure_story_time ?? null,
+        current_story_time: cloneValue(currentStoryTime),
+        elapsed_story_days: timingDiagnostic?.elapsed_story_days ?? trigger?.elapsed_story_days ?? null,
+        candidate_exposure_event_ids: timingDiagnostic?.candidate_exposure_event_ids ?? candidateExposureInfo.candidate_exposure_event_ids,
+        accepted_exposure_event_ids: timingDiagnostic?.accepted_exposure_event_ids ?? sourceEventsFor(subjectId, mechanismKey, instance?.source_event_ids ?? window?.source_event_ids ?? []),
+        excluded_candidate_reasons: timingDiagnostic?.excluded_candidate_reasons ?? candidateExposureInfo.excluded_candidate_reasons,
+        candidate_exposure_count: timingDiagnostic?.candidate_exposure_event_ids?.length ?? candidateExposureInfo.candidate_exposure_event_ids.length,
+        accepted_exposure_count: timingDiagnostic?.accepted_exposure_event_ids?.length
+          ?? sourceEventsFor(subjectId, mechanismKey, instance?.source_event_ids ?? window?.source_event_ids ?? []).length,
+        effective_min_story_days: instance?.effective_min_story_days ?? null,
+        effective_max_story_days: instance?.effective_max_story_days ?? null,
+        aggregation_trigger_status: instance ? (currentStatePresent ? "already_succeeded" : trigger?.status ?? null) : null,
+        aggregation_due: instance ? (currentStatePresent || trigger?.eligible === true) : null,
+        aggregation_overdue: trigger?.status === "aggregate_due_overdue",
+        existing_aggregation_succeeded: currentStatePresent,
+        aggregation_status: status,
+        aggregation_reason_code: resolvedReasonCode,
+        aggregation_immediate_block_reason: reasonCode,
+        upstream_timing_reason_code: upstreamTimingReason,
+        aggregation_invoked: executionStage?.invoked ?? null,
+        aggregation_attempt_count: executionStages.length ? executionStages.filter(stage => stage?.invoked === true).length : null,
+        aggregation_id: aggregation?.aggregation_id ?? executionStage?.aggregation_id ?? aggregationReevaluationStage?.aggregation_id ?? null,
+        aggregation_execution_result: executionStage?.reason_code ?? null,
+        persistence_attempted: persistenceStage?.persistence_attempted ?? aggregationReevaluationStage?.persistence_attempted ?? null,
+        persistence_succeeded: persistenceStage?.persistence_succeeded
+          ?? aggregationReevaluationStage?.persistence_succeeded
+          ?? (currentStatePresent ? true : null),
+        readback_attempted: true,
+        readback_succeeded: true,
+        readback_result_present: currentStatePresent,
+        readback_reason_code: currentStatePresent ? "AGGREGATION_READBACK_PRESENT" : "AGGREGATION_READBACK_NOT_FOUND",
+        last_attempt_at: persistenceStage?.completed_at ?? executionStage?.completed_at ?? executionStage?.started_at ?? aggregation?.created_at ?? null,
+        aggregation_reevaluation: aggregationReevaluationStage?.aggregation_reevaluation ?? {
+          attempted: false,
+          previous_status: aggregation?.status ?? null,
+          new_trigger_status: trigger?.status ?? null,
+          action: "NOT_ATTEMPTED",
+          readback_status: "NOT_ATTEMPTED",
+        },
+        timing_instance_id: instance?.timing_instance_id ?? null,
+        tracking_window_id: window?.tracking_window_id ?? null,
+        run_id: executionStage?.run_id ?? eligibilityStage?.run_id ?? executionTrace?.current_run_id ?? null,
+      };
+    });
     const eligibility = instances.length ? evaluateProjectionEligibility({
       currentState: business.current_state ?? {},
       events,
@@ -3100,25 +5105,138 @@ export function createRuntime({
       worldModel: world?.model ?? {},
       currentStoryTime: business.current_story_time ?? null,
       existingProjections: projections?.all ?? [],
-      preConfirmationTiming: {enabled: true, instances, windows: business.tracking_windows ?? [], confirmedSubjects, terminatedSubjects, aggregations: aggregations.creations},
+      preConfirmationTiming: {enabled: true, instances, windows: business.tracking_windows ?? [], confirmedSubjects, terminatedSubjects, aggregations: aggregations.items},
     }) : {decisions: [], diagnostics: []};
+    const projectionEligibilityStage = stageForTarget("PROJECTION_ELIGIBILITY");
+    const projectionAiSchedulingStage = stageForTarget("PROJECTION_AI_SCHEDULING");
+    let persistenceTrace = null;
+    try { persistenceTrace = diagnostics.getPersistenceTrace?.() ?? null; } catch { persistenceTrace = null; }
+    const projectionAiRequestEntries = (persistenceTrace?.sequence ?? []).filter(entry =>
+      entry?.stage === "PROJECTION_AI_REQUEST_STARTED"
+      && (!currentTraceRunId || entry?.run_id === currentTraceRunId),
+    );
     return {
       status: "ok",
       chat_id: chatId,
       floor_version: floor.version,
       current_story_time: business.current_story_time ?? null,
       timing_instances: instances,
+      timing_diagnostics: timingDiagnostics,
+      aggregation_diagnostics: aggregationDiagnostics,
+      execution_trace: executionTrace,
+      readback_diagnostic: null,
       timing_runtime: {
-        creation_policy: 'world_projection_rule_bound',
+        creation_policy: 'exposure_based',
         projection_rules_available: rules.length > 0,
-        status: instances.length > 0 ? 'ready' : rules.length > 0 ? 'no_timing_instance' : 'projection_rules_unavailable',
-        reason_code: instances.length > 0 ? null : rules.length > 0 ? 'no_valid_timing_instance' : 'projection_rules_unavailable',
+        projection_rules_count: rules.length,
+        projection_rules_source: 'CURRENT_STATE',
+        projection_rules_effect: rules.length > 0
+          ? 'PROJECTION_ELIGIBILITY_ONLY'
+          : 'NO_RULES_NO_TIMING_BLOCK',
+        status: instances.length > 0 ? 'ready' : 'no_timing_instance',
+        reason_code: instances.length > 0 ? null : 'no_valid_timing_instance',
       },
       projection_rule_ids: rules.map(rule => rule.projection_rule_id).filter(Boolean),
       projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, timing_instance_id: decision.timing_instance_id ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null})),
+      projection_diagnostics: {
+        source_type: "DERIVED_DIAGNOSTIC",
+        projection_rules_available: rules.length > 0,
+        projection_rules_count: rules.length,
+        eligibility_status: projectionEligibilityStage?.execution_status ?? (traceAvailable ? "UNKNOWN" : "TRACE_UNAVAILABLE"),
+        eligibility_reason_code: projectionEligibilityStage?.reason_code ?? (rules.length ? "TRACE_UNAVAILABLE" : "projection_rules_unavailable"),
+        timing_window_entered: eligibility.decisions.some(decision => decision.timing_status === "window_open"),
+        timing_window_statuses: [...new Set(eligibility.decisions.map(decision => decision.timing_status).filter(Boolean))],
+        ai_scheduling_status: projectionAiSchedulingStage?.execution_status ?? (traceAvailable ? "UNKNOWN" : "TRACE_UNAVAILABLE"),
+        ai_scheduling_reason_code: projectionAiSchedulingStage?.reason_code ?? (rules.length ? "TRACE_UNAVAILABLE" : "NO_ELIGIBLE_PROJECTION"),
+        projection_ai_request_started: projectionAiRequestEntries.length > 0,
+        projection_ai_request_count: projectionAiRequestEntries.length,
+      },
       projection_ids: (projections?.all ?? []).map(item => item.projection_id).filter(Boolean),
-      authoritative_readback: {timing_timeline_present: timeline.creations.length > 0, timing_instance_count: timeline.creations.length, aggregation_count: aggregations.creations.length, basis_record_count: timeline.basis_records?.length ?? 0},
+      authoritative_readback: {
+        timing_readback_attempted: true,
+        timing_snapshot_present: timeline.items.length > 0,
+        timing_instance_count: timeline.items.length,
+        timing_readback_succeeded: true,
+        timing_readback_result_present: timeline.items.length > 0,
+        aggregation_readback_attempted: true,
+        aggregation_count: aggregations.items.length,
+        aggregation_readback_succeeded: true,
+        aggregation_readback_result_present: aggregations.items.length > 0,
+        basis_record_count: 0,
+      },
     };
+  }
+
+  async function getProjectionTimingDebug() {
+    try {
+      return await getProjectionTimingDebugInternal();
+    } catch (error) {
+      let executionTrace;
+      try {
+        executionTrace = diagnostics.getNsfwPipelineDiagnostics({chat_id: chat.current()});
+      } catch {
+        executionTrace = {
+          source_type: "EXECUTION_TRACE",
+          collection_status: "FAILED",
+          trace_truncated: null,
+          trace_buffer_status: "UNKNOWN",
+          current_run_id: null,
+          runs: [],
+          stages: [],
+        };
+      }
+      return {
+        status: "unavailable",
+        reason: "READBACK_FAILED",
+        readback_error_code: error?.code ?? error?.message ?? "PROJECTION_TIMING_READBACK_FAILED",
+        timing_instances: [],
+        timing_diagnostics: [],
+        aggregation_diagnostics: [],
+        projection_diagnostics: {
+          source_type: "DERIVED_DIAGNOSTIC",
+          projection_rules_available: null,
+          projection_rules_count: null,
+          eligibility_status: "READBACK_FAILED",
+          eligibility_reason_code: "READBACK_FAILED",
+          timing_window_entered: null,
+          timing_window_statuses: [],
+          ai_scheduling_status: "READBACK_FAILED",
+          ai_scheduling_reason_code: "READBACK_FAILED",
+          projection_ai_request_started: null,
+          projection_ai_request_count: null,
+        },
+        execution_trace: executionTrace,
+        readback_diagnostic: {
+          stage: "CURRENT_STATE_READBACK",
+          execution_status: "READBACK_FAILED",
+          source_type: "DERIVED_DIAGNOSTIC",
+          reason_code: "READBACK_FAILED",
+          invoked: true,
+          error_code: error?.code ?? error?.message ?? "PROJECTION_TIMING_READBACK_FAILED",
+        },
+        timing_runtime: {
+          creation_policy: "exposure_based",
+          projection_rules_available: null,
+          projection_rules_count: null,
+          projection_rules_source: "CURRENT_STATE_UNAVAILABLE",
+          projection_rules_effect: "UNKNOWN",
+          status: "unavailable",
+          reason_code: "READBACK_FAILED",
+        },
+        authoritative_readback: {
+          timing_readback_attempted: true,
+          timing_snapshot_present: false,
+          timing_instance_count: 0,
+          timing_readback_succeeded: false,
+          timing_readback_result_present: false,
+          aggregation_readback_attempted: true,
+          aggregation_count: 0,
+          aggregation_readback_succeeded: false,
+          aggregation_readback_result_present: false,
+          basis_record_count: 0,
+        },
+      };
+    }
   }
 
   async function getCharacterTimingEditorData({characterId, characterProfile = null} = {}) {
@@ -3130,7 +5248,16 @@ export function createRuntime({
       floor?.index === undefined
         ? Promise.resolve(null)
         : eventAnalysis.resolveWorldModelAtOrBefore({__messageIndex: true, index: floor.index}),
-      projectionTimingPersistence.getTimingInstances({chatId, endpointFloor: floor?.version?.floor}),
+      projectionTimingPersistence.getTimingInstances({
+        chatId,
+        endpointFloor: floor?.version?.floor,
+        endpointIndex: floor?.index,
+        // Opening the editor establishes the edit-start boundary. This lets
+        // the read path inspect a stale current owner slot only after the
+        // current authoritative version has been captured; ordinary reads
+        // remain exact-match only.
+        editStartFloorVersion: floor?.version ?? null,
+      }),
     ]);
     const worldSpecies = Array.isArray(world?.model?.species) ? world.model.species : [];
     const profileSpecies = characterProfile?.biological_context?.species ?? characterProfile?.species;
@@ -3141,7 +5268,15 @@ export function createRuntime({
       override,
       baseline: humanApplicable ? getHumanPreconfirmationTimingPreset() : null,
     });
-    const timingInstance = [...(timeline?.creations ?? [])].reverse().find(instance => instance.subject_id === id) ?? null;
+    const subjectTimingInstances = (timeline?.items ?? []).filter(instance => instance.subject_id === id);
+    if (subjectTimingInstances.length > 1) {
+      throw Object.assign(new Error('TIMING_INSTANCE_AMBIGUOUS'), {
+        code: 'TIMING_INSTANCE_AMBIGUOUS',
+        subject_id: id,
+        candidate_timing_instance_ids: subjectTimingInstances.map(instance => instance.timing_instance_id),
+      });
+    }
+    const timingInstance = subjectTimingInstances[0] ?? null;
     return {
       character_id: id,
       config: resolved.config,
@@ -3149,8 +5284,533 @@ export function createRuntime({
       human_preset_applicable: humanApplicable,
       human_preset_version: HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION,
       timing_instance: timingInstance,
+      floor_version: cloneValue(floor?.version ?? null),
       chat_id: chatId,
     };
+  }
+
+  async function editCharacterTimingInstance({characterId, timingInstanceId, baseMinStoryDays, baseMaxStoryDays, varianceRatio, varianceCapStoryDays, totalAdjustmentCapStoryDays, editStartFloorVersion = null} = {}) {
+    assertBioWeaveEnabled();
+    const subjectId = String(characterId ?? '').trim();
+    if (!subjectId) throw Object.assign(new TypeError('character_id:required'), {code: 'CHARACTER_ID_REQUIRED'});
+
+    const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
+    const chatId = chat.current();
+    if (!floor?.version || String(floor.version.chat_id) !== String(chatId)) {
+      throw Object.assign(new Error('NO_CHARACTER_FLOOR'), {code: 'NO_CHARACTER_FLOOR'});
+    }
+    const floorVersion = floor.version;
+    const editStartVersion = editStartFloorVersion ?? floorVersion;
+    const ownerFloor = floorOwnerForProjection(floor);
+    const runId = startNsfwPipelineRun({
+      trigger: 'manual-timing-instance-edit',
+      chat_id: chatId,
+      floor_version: floorVersion,
+      edit_start_floor_version: editStartVersion,
+      reason_code: 'MANUAL_TIMING_INSTANCE_EDIT',
+    });
+    let runFinished = false;
+    const finish = payload => {
+      if (runFinished) return;
+      runFinished = true;
+      finishNsfwPipelineRun(runId, payload);
+    };
+    const stageBase = {
+      run_id: runId,
+      chat_id: chatId,
+      floor_version: floorVersion,
+      owner_message_index: Number.isInteger(Number(floor.index)) ? Number(floor.index) : null,
+      owner_message_id: floorVersion.message_id ?? null,
+      subject_id: subjectId,
+      timing_instance_id: null,
+      source_type: 'EXECUTION_TRACE',
+      operation_type: 'manual-timing-instance-edit',
+    };
+    const fail = (error, {stage = null, execution_status = 'FAILED', reason_code = 'TIMING_INSTANCE_MANUAL_EDIT_FAILED', ...details} = {}) => {
+      if (stage) recordNsfwPipelineStage({
+        ...stageBase,
+        stage,
+        execution_status,
+        reason_code,
+        invoked: true,
+        error_code: error?.code ?? error?.message ?? reason_code,
+        version_validation_layer: error?.validation_layer ?? null,
+        version_validation_source: error?.validation_source ?? null,
+        owner_message_index: error?.owner_message_index ?? null,
+        owner_message_id: error?.owner_message_id ?? null,
+        expected_floor_version: error?.expected_floor_version ?? error?.version_audit?.expected ?? null,
+        actual_floor_version: error?.actual_floor_version ?? error?.version_audit?.actual ?? null,
+        stored_floor_version: error?.stored_floor_version ?? null,
+        version_mismatch_fields: error?.version_audit?.mismatch_fields ?? [],
+        stored_version_audit: error?.stored_version_audit ?? null,
+        version_classification: error?.version_classification ?? null,
+        ...details,
+      });
+      finish({execution_status, reason_code, error_code: error?.code ?? error?.message ?? reason_code});
+      throw error;
+    };
+
+    try {
+      let before;
+      try {
+        before = await projectionTimingPersistence.getTimingInstances({
+          chatId,
+          endpointFloor: floorVersion.floor,
+          endpointIndex: floor.index,
+          editStartFloorVersion: editStartVersion,
+        });
+      } catch (error) {
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: 'BLOCKED',
+          reason_code: error?.code === 'FLOOR_VERSION_STALE'
+            ? 'TIMING_INSTANCE_EDIT_STALE_CONTEXT'
+            : 'TIMING_INSTANCE_READ_FAILED',
+          persistence_attempted: false,
+          persistence_succeeded: false,
+          readback_attempted: false,
+          readback_succeeded: false,
+          manual_timing_edit: {
+            attempted: false,
+            succeeded: false,
+            target_cycle_id: null,
+            persisted_floor: null,
+            readback_status: 'NOT_ATTEMPTED',
+          },
+        });
+      }
+      const subjectInstances = before.items.filter(item => item?.subject_id === subjectId);
+      if (subjectInstances.length > 1) {
+        const error = Object.assign(new Error('TIMING_INSTANCE_AMBIGUOUS'), {
+          code: 'TIMING_INSTANCE_AMBIGUOUS',
+          timing_instance_ids: subjectInstances.map(item => item.timing_instance_id),
+        });
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: 'BLOCKED',
+          reason_code: 'TIMING_INSTANCE_AMBIGUOUS',
+          manual_timing_edit: {
+            attempted: false,
+            succeeded: false,
+            target_cycle_id: null,
+            persisted_floor: null,
+            readback_status: 'AMBIGUOUS',
+          },
+        });
+      }
+      const current = subjectInstances[0] ?? null;
+      if (!current) {
+        const error = Object.assign(new Error('TIMING_INSTANCE_NOT_FOUND'), {code: 'TIMING_INSTANCE_NOT_FOUND'});
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: 'BLOCKED',
+          reason_code: 'TIMING_INSTANCE_NOT_FOUND',
+          manual_timing_edit: {
+            attempted: false,
+            succeeded: false,
+            target_cycle_id: null,
+            persisted_floor: null,
+            readback_status: 'NOT_FOUND',
+          },
+        });
+      }
+      // The current character instance is the authoritative edit target. The
+      // UI may send a stale timing_instance_id, but it must not override the
+      // current-floor character lookup or make a valid edit fail.
+      const requestedTimingInstanceId = current.timing_instance_id;
+      const editVarianceRatio = varianceRatio ?? current.variance_ratio;
+      const editVarianceCap = varianceCapStoryDays ?? current.variance_cap_story_days;
+      const editTotalCap = totalAdjustmentCapStoryDays ?? current.total_adjustment_cap_story_days;
+      stageBase.timing_instance_id = requestedTimingInstanceId;
+      stageBase.mechanism_key = current.mechanism_key;
+      const manualTimingEdit = {
+        attempted: true,
+        succeeded: false,
+        source: 'manual_ui',
+        submitted_values: {
+          base_min_story_days: Number(baseMinStoryDays),
+          base_max_story_days: Number(baseMaxStoryDays),
+          variance_ratio: Number(editVarianceRatio),
+          variance_cap_story_days: Number(editVarianceCap),
+          total_adjustment_cap_story_days: Number(editTotalCap),
+        },
+        frozen_offset_status: 'PRESERVED',
+        sampled_offset_source: 'FROZEN_SNAPSHOT',
+        target_cycle_id: current.cycle_id,
+        persisted_floor: floorVersion,
+        readback_status: 'NOT_ATTEMPTED',
+      };
+      recordNsfwPipelineStage({
+        ...stageBase,
+        stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+        execution_status: 'ATTEMPTED',
+        reason_code: 'TIMING_INSTANCE_EDIT_STARTED',
+        invoked: true,
+        cycle_id: current.cycle_id,
+        base_min_story_days: Number(baseMinStoryDays),
+        base_max_story_days: Number(baseMaxStoryDays),
+        variance_ratio: Number(editVarianceRatio),
+        variance_cap_story_days: Number(editVarianceCap),
+        total_adjustment_cap_story_days: Number(editTotalCap),
+        sampled_individual_offset_story_days: Number(current.sampled_individual_offset_story_days),
+        frozen_offset_status: 'PRESERVED',
+        sampled_offset_source: 'FROZEN_SNAPSHOT',
+        manual_edit_source: 'manual_ui',
+        effective_min_story_days: current.effective_min_story_days,
+        effective_max_story_days: current.effective_max_story_days,
+        manual_timing_edit: manualTimingEdit,
+      });
+
+      let persistedTiming;
+      try {
+        persistedTiming = await projectionTimingPersistence.editTimingInstance({
+          chatId,
+          ownerFloor,
+          floorVersion,
+          timingInstanceId: requestedTimingInstanceId,
+          baseMinStoryDays,
+          baseMaxStoryDays,
+          varianceRatio: editVarianceRatio,
+          varianceCapStoryDays: editVarianceCap,
+          totalAdjustmentCapStoryDays: editTotalCap,
+          operation_type: 'manual-timing-instance-edit',
+          editStartFloorVersion: editStartVersion,
+        });
+      } catch (error) {
+        manualTimingEdit.readback_status = 'NOT_ATTEMPTED';
+        const validationFailure = String(error?.message ?? error?.code ?? '').startsWith('projection_timing.');
+        manualTimingEdit.frozen_offset_status = String(error?.message ?? '').includes('sampled_offset:outside_allowed_range')
+          || String(error?.message ?? '').includes('sampled_offset:outside_variance_cap')
+          ? 'REJECTED_OUTSIDE_NEW_ALLOWED_RANGE'
+          : 'NOT_EVALUATED';
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: validationFailure ? 'FAILED' : 'PERSIST_FAILED',
+          reason_code: validationFailure ? 'TIMING_INSTANCE_EDIT_INVALID' : 'TIMING_INSTANCE_PERSISTENCE_FAILED',
+          cycle_id: current.cycle_id,
+          sampled_individual_offset_story_days: current.sampled_individual_offset_story_days,
+          persistence_attempted: !validationFailure,
+          persistence_succeeded: false,
+          manual_timing_edit: manualTimingEdit,
+        });
+      }
+
+      let timingReadback;
+      try {
+      timingReadback = await projectionTimingPersistence.getTimingInstances({
+          chatId,
+          endpointFloor: floorVersion.floor,
+          endpointIndex: floor.index,
+          editStartFloorVersion: editStartVersion,
+        });
+      } catch (error) {
+        manualTimingEdit.readback_status = 'FAILED';
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: 'READBACK_FAILED',
+          reason_code: 'TIMING_INSTANCE_READBACK_FAILED',
+          cycle_id: current.cycle_id,
+          sampled_individual_offset_story_days: current.sampled_individual_offset_story_days,
+          persistence_attempted: true,
+          persistence_succeeded: ['created', 'updated', 'deduped'].includes(persistedTiming?.status),
+          readback_attempted: true,
+          readback_succeeded: false,
+          readback_result_present: false,
+          manual_timing_edit: manualTimingEdit,
+        });
+      }
+      const editedTiming = timingReadback.items.find(item => item.timing_instance_id === requestedTimingInstanceId && item.subject_id === subjectId) ?? null;
+      if (!editedTiming
+        || editedTiming.cycle_id !== current.cycle_id
+        || editedTiming.base_min_story_days !== Number(baseMinStoryDays)
+        || editedTiming.base_max_story_days !== Number(baseMaxStoryDays)
+        || editedTiming.variance_ratio !== Number(editVarianceRatio)
+        || editedTiming.sampled_individual_offset_story_days !== Number(current.sampled_individual_offset_story_days)
+        || editedTiming.variance_cap_story_days !== Number(editVarianceCap)
+        || editedTiming.total_adjustment_cap_story_days !== Number(editTotalCap)) {
+        const error = Object.assign(new Error('TIMING_INSTANCE_READBACK_FAILED'), {code: 'TIMING_INSTANCE_READBACK_FAILED'});
+        manualTimingEdit.readback_status = 'FAILED';
+        return fail(error, {
+          stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+          execution_status: 'READBACK_FAILED',
+          reason_code: 'TIMING_INSTANCE_READBACK_FAILED',
+          cycle_id: current.cycle_id,
+          sampled_individual_offset_story_days: current.sampled_individual_offset_story_days,
+          persistence_attempted: true,
+          persistence_succeeded: ['created', 'updated', 'deduped'].includes(persistedTiming?.status),
+          readback_attempted: true,
+          readback_succeeded: false,
+          readback_result_present: Boolean(editedTiming),
+          manual_timing_edit: manualTimingEdit,
+        });
+      }
+      manualTimingEdit.succeeded = true;
+      manualTimingEdit.readback_status = 'SUCCEEDED';
+      recordNsfwPipelineStage({
+        ...stageBase,
+        stage: 'TIMING_INSTANCE_MANUAL_EDIT',
+        execution_status: 'SUCCEEDED',
+        reason_code: 'TIMING_INSTANCE_EDIT_PERSISTED',
+        invoked: true,
+        cycle_id: editedTiming.cycle_id,
+        timing_instance_id: editedTiming.timing_instance_id,
+        base_min_story_days: editedTiming.base_min_story_days,
+        base_max_story_days: editedTiming.base_max_story_days,
+        variance_ratio: editedTiming.variance_ratio,
+        variance_cap_story_days: editedTiming.variance_cap_story_days,
+        total_adjustment_cap_story_days: editedTiming.total_adjustment_cap_story_days,
+        sampled_individual_offset_story_days: editedTiming.sampled_individual_offset_story_days,
+        frozen_offset_status: 'PRESERVED',
+        sampled_offset_source: 'FROZEN_SNAPSHOT',
+        manual_edit_source: 'manual_ui',
+        effective_min_story_days: editedTiming.effective_min_story_days,
+        effective_max_story_days: editedTiming.effective_max_story_days,
+        persistence_attempted: true,
+        persistence_succeeded: ['created', 'updated', 'deduped'].includes(persistedTiming?.status),
+        readback_attempted: true,
+        readback_succeeded: true,
+        readback_result_present: true,
+        readback_reason_code: 'TIMING_INSTANCE_READBACK_PRESENT',
+        manual_timing_edit: manualTimingEdit,
+      });
+
+      const business = await eventAnalysis.collectActiveBusinessData();
+      const currentEvents = Array.isArray(business.active_events) ? business.active_events : [];
+      const aggregationSnapshot = await participantAggregationPersistence.getParticipantAggregations({
+        chatId,
+        endpointFloor: floorVersion.floor,
+        endpointIndex: floor.index,
+        editStartFloorVersion: editStartVersion,
+      });
+      const existing = aggregationSnapshot.items.find(item =>
+        item.timing_instance_id === editedTiming.timing_instance_id && item.cycle_id === editedTiming.cycle_id,
+      ) ?? null;
+      const trackingWindow = (business.tracking_windows ?? []).find(window =>
+        window?.subject_id === subjectId
+        && window?.mechanism_key === editedTiming.mechanism_key
+        && (window?.cycle_id === editedTiming.cycle_id
+          || (editedTiming.source_event_ids ?? []).some(eventId => (window?.source_event_ids ?? []).includes(eventId))),
+      ) ?? null;
+      const trigger = resolveParticipantAggregationTrigger({
+        timingInstance: editedTiming,
+        currentStoryTime: business.current_story_time ?? null,
+        // A manual edit must reevaluate the frozen Timing rather than taking
+        // the automatic already_succeeded shortcut before timing is checked.
+        aggregation: null,
+      });
+      const candidateExposureEvents = currentEvents.filter(event => {
+        try {
+          return isPregnancyRelevantExposure(event)
+            && event?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId)
+            && event?.pregnancy_relevance?.reproductive_mechanism?.kind === editedTiming.mechanism_key;
+        } catch {
+          return false;
+        }
+      });
+      const candidateExposureEventIds = candidateExposureEvents.map(event => event.event_id);
+      const acceptedExposureEventIds = editedTiming.source_event_ids.filter(eventId => candidateExposureEventIds.includes(eventId));
+      const reevaluation = {
+        attempted: true,
+        previous_status: existing?.status ?? null,
+        new_trigger_status: trigger.status ?? null,
+        action: 'NOT_ATTEMPTED',
+        readback_status: 'NOT_ATTEMPTED',
+      };
+      const aggregationBase = {
+        ...stageBase,
+        stage: 'AGGREGATION_REEVALUATION',
+        tracking_window_id: trackingWindow?.tracking_window_id ?? null,
+        tracking_window_cycle_id: trackingWindow?.cycle_id ?? null,
+        cycle_id: editedTiming.cycle_id,
+        aggregation_id: existing?.aggregation_id ?? buildParticipantAggregationId({
+          cycleId: editedTiming.cycle_id,
+          timingInstanceId: editedTiming.timing_instance_id,
+        }),
+        elapsed_story_days: trigger.elapsed_story_days ?? null,
+        effective_min_story_days: editedTiming.effective_min_story_days,
+        effective_max_story_days: editedTiming.effective_max_story_days,
+        aggregation_trigger_status: trigger.status ?? null,
+        aggregation_due: trigger.eligible === true,
+        existing_aggregation_succeeded: existing?.status === 'succeeded',
+        accepted_exposure_count: acceptedExposureEventIds.length,
+        aggregation_reevaluation: reevaluation,
+      };
+
+      if (trigger.status === 'before_min') {
+        if (existing) {
+          let removed;
+          try {
+            removed = await participantAggregationPersistence.removeAggregation({
+              chatId,
+              ownerFloor,
+              floorVersion,
+              editStartFloorVersion: editStartVersion,
+              aggregationId: existing.aggregation_id,
+              operation_type: 'manual-timing-aggregation-reevaluation',
+            });
+          } catch (error) {
+            reevaluation.action = 'remove_failed';
+            reevaluation.readback_status = 'NOT_ATTEMPTED';
+            return fail(error, {
+              ...aggregationBase,
+              execution_status: 'PERSIST_FAILED',
+              reason_code: 'AGGREGATION_PERSISTENCE_FAILED',
+              persistence_attempted: true,
+              persistence_succeeded: false,
+            });
+          }
+            const afterRemoval = await participantAggregationPersistence.getParticipantAggregations({
+            chatId,
+            endpointFloor: floorVersion.floor,
+            endpointIndex: floor.index,
+            editStartFloorVersion: editStartVersion,
+          });
+          const stillPresent = afterRemoval.items.some(item => item.aggregation_id === existing.aggregation_id);
+          if (stillPresent) {
+            reevaluation.action = 'remove_readback_failed';
+            reevaluation.readback_status = 'FAILED';
+            const error = Object.assign(new Error('AGGREGATION_READBACK_FAILED'), {code: 'AGGREGATION_READBACK_FAILED'});
+            return fail(error, {
+              ...aggregationBase,
+              execution_status: 'READBACK_FAILED',
+              reason_code: 'AGGREGATION_READBACK_FAILED',
+              persistence_attempted: true,
+              persistence_succeeded: ['removed', 'deduped'].includes(removed?.status),
+              readback_attempted: true,
+              readback_succeeded: false,
+              readback_result_present: true,
+            });
+          }
+          reevaluation.action = 'removed_before_min';
+          reevaluation.readback_status = 'SUCCEEDED';
+        } else {
+          reevaluation.action = 'not_due_before_min';
+        }
+      } else if (trigger.eligible === true) {
+        if (!existing && !acceptedExposureEventIds.length) {
+          reevaluation.action = 'blocked_missing_exposure';
+        } else {
+          const aggregationRecord = existing
+            ? {
+                ...existing,
+                reference_story_time: editedTiming.reference_story_time,
+                elapsed_story_days: trigger.elapsed_story_days,
+                effective_min_story_days: editedTiming.effective_min_story_days,
+                effective_max_story_days: editedTiming.effective_max_story_days,
+                sampled_individual_offset_story_days: editedTiming.sampled_individual_offset_story_days,
+                config_snapshot: editedTiming.config_snapshot,
+                source_basis_refs: editedTiming.source_basis_refs,
+                accepted_exposure_event_ids: acceptedExposureEventIds.length
+                  ? acceptedExposureEventIds
+                  : existing.accepted_exposure_event_ids,
+              }
+            : upsertParticipantAggregation({
+                aggregation_id: buildParticipantAggregationId({
+                  cycleId: editedTiming.cycle_id,
+                  timingInstanceId: editedTiming.timing_instance_id,
+                }),
+                pregnancy_id: editedTiming.pregnancy_id ?? null,
+                subject_id: editedTiming.subject_id,
+                mechanism_key: editedTiming.mechanism_key,
+                cycle_id: editedTiming.cycle_id,
+                timing_instance_id: editedTiming.timing_instance_id,
+                aggregation_trigger_strategy: 'at_effective_min',
+                reference_story_time: editedTiming.reference_story_time,
+                aggregation_story_time: business.current_story_time ?? null,
+                elapsed_story_days: trigger.elapsed_story_days,
+                effective_min_story_days: editedTiming.effective_min_story_days,
+                effective_max_story_days: editedTiming.effective_max_story_days,
+                sampled_individual_offset_story_days: editedTiming.sampled_individual_offset_story_days,
+                config_snapshot: editedTiming.config_snapshot,
+                accepted_exposure_event_ids: acceptedExposureEventIds,
+                source_basis_refs: editedTiming.source_basis_refs,
+                created_at_floor_version: floorVersion,
+                created_at: new Date().toISOString(),
+              }, {snapshot: {schema_version: 1, items: []}, expectedChatId: chatId}).snapshot.items[0];
+          let persistedAggregation;
+          try {
+            persistedAggregation = await participantAggregationPersistence.upsertAggregation({
+              chatId,
+              ownerFloor,
+              floorVersion,
+              aggregation: aggregationRecord,
+              operation_type: 'manual-timing-aggregation-reevaluation',
+              editStartFloorVersion: editStartVersion,
+            });
+          } catch (error) {
+            reevaluation.action = existing ? 'preserve_update_failed' : 'create_failed';
+            reevaluation.readback_status = 'NOT_ATTEMPTED';
+            const wrapped = Object.assign(new Error('AGGREGATION_REEVALUATION_FAILED'), {
+              code: 'AGGREGATION_REEVALUATION_FAILED',
+              cause: error,
+              timing_persisted: true,
+              aggregation_persistence_succeeded: false,
+            });
+            return fail(wrapped, {
+              ...aggregationBase,
+              execution_status: 'PERSIST_FAILED',
+              reason_code: 'AGGREGATION_PERSISTENCE_FAILED',
+              aggregation_id: aggregationRecord.aggregation_id,
+              persistence_attempted: true,
+              persistence_succeeded: false,
+            });
+          }
+          const aggregationReadback = await participantAggregationPersistence.getParticipantAggregations({
+            chatId,
+            endpointFloor: floorVersion.floor,
+            endpointIndex: floor.index,
+            editStartFloorVersion: editStartVersion,
+          });
+          const confirmedAggregation = aggregationReadback.items.find(item => item.aggregation_id === aggregationRecord.aggregation_id) ?? null;
+          if (!confirmedAggregation || confirmedAggregation.cycle_id !== editedTiming.cycle_id) {
+            reevaluation.action = existing ? 'preserve_readback_failed' : 'create_readback_failed';
+            reevaluation.readback_status = 'FAILED';
+            const error = Object.assign(new Error('AGGREGATION_READBACK_FAILED'), {code: 'AGGREGATION_READBACK_FAILED'});
+            return fail(error, {
+              ...aggregationBase,
+              execution_status: 'READBACK_FAILED',
+              reason_code: 'AGGREGATION_READBACK_FAILED',
+              aggregation_id: aggregationRecord.aggregation_id,
+              persistence_attempted: true,
+              persistence_succeeded: ['created', 'updated', 'deduped'].includes(persistedAggregation?.status),
+              readback_attempted: true,
+              readback_succeeded: false,
+              readback_result_present: Boolean(confirmedAggregation),
+            });
+          }
+          reevaluation.action = existing ? 'preserved_due' : 'created_due';
+          reevaluation.readback_status = 'SUCCEEDED';
+          aggregationBase.aggregation_id = confirmedAggregation.aggregation_id;
+        }
+      } else {
+        reevaluation.action = trigger.status === 'unresolved' ? 'unresolved' : 'not_due';
+      }
+
+      recordNsfwPipelineStage({
+        ...aggregationBase,
+        execution_status: reevaluation.action === 'blocked_missing_exposure' ? 'BLOCKED' : 'SUCCEEDED',
+        reason_code: reevaluation.action === 'blocked_missing_exposure'
+          ? 'ACCEPTED_EXPOSURE_MISSING'
+          : `AGGREGATION_REEVALUATION_${reevaluation.action.toUpperCase()}`,
+        invoked: true,
+        persistence_attempted: reevaluation.readback_status !== 'NOT_ATTEMPTED',
+        persistence_succeeded: reevaluation.readback_status === 'SUCCEEDED',
+        readback_attempted: reevaluation.readback_status !== 'NOT_ATTEMPTED',
+        readback_succeeded: reevaluation.readback_status === 'SUCCEEDED',
+        readback_result_present: reevaluation.action === 'preserved_due' || reevaluation.action === 'created_due',
+      });
+      finish({execution_status: 'SUCCEEDED', reason_code: 'MANUAL_TIMING_INSTANCE_EDIT_COMPLETED'});
+      return {
+        status: 'succeeded',
+        timing_instance: editedTiming,
+        timing_persistence: persistedTiming,
+        timing_readback: {succeeded: true, present: true},
+        aggregation_reevaluation: reevaluation,
+      };
+    } catch (error) {
+      if (!runFinished) finish({execution_status: 'FAILED', reason_code: 'MANUAL_TIMING_INSTANCE_EDIT_FAILED', error_code: error?.code ?? error?.message ?? 'MANUAL_TIMING_INSTANCE_EDIT_FAILED'});
+      throw error;
+    }
   }
 
   const dataLifecycle = {
@@ -3216,6 +5876,7 @@ export function createRuntime({
     getStoryTimeDebugInfo,
     getProjectionTimingDebug,
     getCharacterTimingEditorData,
+    editCharacterTimingInstance,
     getCharacterTimingConfig: characterTimingConfigStore.getConfig,
     saveCharacterTimingConfig: characterTimingConfigStore.saveConfig,
     resetCharacterTimingConfig: characterTimingConfigStore.resetConfig,
@@ -3231,12 +5892,89 @@ export function createRuntime({
       const business = await eventAnalysis.collectActiveBusinessData(...args);
       const projection = await projectionRuntime.getBusinessData();
       if (options.includeDebug !== true) return {...business, ...projection};
+      const lifecycleRuntime = await buildLifecycleDebugData();
+      const floorVersion = business?.current_floor?.version ?? lifecycleRuntime?.target?.floor_version ?? null;
+      let diagnosticMetadata;
+      try {
+        const traceForMetadata = lifecycleRuntime?.projection_timing?.execution_trace
+          ?? diagnostics.getNsfwPipelineDiagnostics({
+            chat_id: floorVersion?.chat_id ?? null,
+            ...(floorVersion ? {floor_version: floorVersion} : {}),
+          });
+        diagnosticMetadata = diagnostics.getDiagnosticMetadata({
+          current_run_id: traceForMetadata?.current_run_id ?? null,
+          current_floor_version: floorVersion,
+        });
+      } catch {
+        diagnosticMetadata = {
+          diagnostics_schema_version: 1,
+          collected_at: null,
+          collection_status: 'FAILED',
+          trace_buffer_status: 'UNKNOWN',
+          trace_truncated: null,
+          current_run_id: null,
+          current_floor_version: cloneValue(floorVersion),
+        };
+      }
+      let nsfwPipelineDiagnostics;
+      try {
+        nsfwPipelineDiagnostics = buildNsfwPipelineDiagnostics({business, projection, lifecycleRuntime});
+      } catch (error) {
+        nsfwPipelineDiagnostics = {
+          diagnostics_schema_version: 1,
+          diagnostic_sources: ['CURRENT_STATE', 'EXECUTION_TRACE', 'DERIVED_DIAGNOSTIC'],
+          current_state: {
+            source_type: 'CURRENT_STATE',
+            plugin_enabled: null,
+            chat_id: floorVersion?.chat_id ?? null,
+            floor_version: cloneValue(floorVersion),
+          },
+          execution_trace: {
+            source_type: 'EXECUTION_TRACE',
+            collection_status: 'FAILED',
+            trace_buffer_status: 'UNKNOWN',
+            trace_truncated: null,
+            current_run_id: null,
+            runs: [],
+            stages: [],
+          },
+          derived_diagnostic: {
+            source_type: 'DERIVED_DIAGNOSTIC',
+            current_execution_status: 'UNKNOWN',
+            current_blocking_stage: 'UNKNOWN',
+            current_blocking_reason_code: 'TRACE_UNAVAILABLE',
+            first_blocking_node_source: 'TRACE_UNAVAILABLE',
+            confidence: 'UNKNOWN',
+            diagnostic_error_code: error?.code ?? error?.message ?? 'NSFW_DIAGNOSTICS_FAILED',
+          },
+          timing_diagnostics: [],
+          aggregation_diagnostics: [],
+          projection_diagnostics: {
+            source_type: 'DERIVED_DIAGNOSTIC',
+            projection_rules_available: null,
+            projection_rules_count: null,
+            eligibility_status: 'READBACK_FAILED',
+            eligibility_reason_code: 'READBACK_FAILED',
+            timing_window_entered: null,
+            timing_window_statuses: [],
+            ai_scheduling_status: 'READBACK_FAILED',
+            ai_scheduling_reason_code: 'READBACK_FAILED',
+            projection_ai_request_started: null,
+            projection_ai_request_count: null,
+          },
+          automatic_execution: {plugin_enabled: null, entry_registered: null, latest_trigger: null, latest_run_id: null, scheduling_stage: null},
+        };
+      }
       return {
         ...business,
         ...projection,
         debug: {
           ...(business.debug ?? {}),
-          lifecycle_runtime: await buildLifecycleDebugData(),
+          diagnostic_metadata: diagnosticMetadata,
+          nsfw_pipeline_diagnostics: nsfwPipelineDiagnostics,
+          timing_diagnostics: lifecycleRuntime?.projection_timing?.timing_diagnostics ?? [],
+          aggregation_diagnostics: lifecycleRuntime?.projection_timing?.aggregation_diagnostics ?? [],
+          lifecycle_runtime: lifecycleRuntime,
         },
       };
     },
@@ -3254,7 +5992,7 @@ export function createRuntime({
     confirmPregnancyFather: pregnancyLifecyclePersistence.confirmFather,
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
     getPregnancyLifecycleTimeline: pregnancyLifecyclePersistence.getTimeline,
-    appendParticipantAggregation: participantAggregationPersistence.appendAggregation,
+    upsertParticipantAggregation: participantAggregationPersistence.upsertAggregation,
     getParticipantAggregations: participantAggregationPersistence.getParticipantAggregations,
     clearCharacterData,
     clearWorldData,

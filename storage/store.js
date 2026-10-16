@@ -634,6 +634,17 @@ function normalizeFloorData(data) {
   return normalized;
 }
 
+// `emptyFloor()` is the schema template used by lifecycle/clear operations.
+// A missing persisted Floor is different from a module root containing an
+// explicit empty collection, so ordinary reads must not manufacture the two
+// snapshot roots for an unsaved Character Floor.
+function emptyReadableFloor() {
+  const floor = emptyFloor();
+  delete floor.projection_timing_snapshot;
+  delete floor.participant_aggregation_snapshot;
+  return floor;
+}
+
 export function hasSwipeStructure(message) {
   return (
     Array.isArray(message?.swipes) ||
@@ -820,10 +831,10 @@ export function createStore(adapter, boundary = null) {
   function getFloor(messageId, swipeId = 0) {
     const message = adapter.getMessage?.(messageId);
     if (!message) return null;
-    if (!isCharacterMessage(message)) return emptyFloor();
+    if (!isCharacterMessage(message)) return emptyReadableFloor();
     const targetSwipeId = validSwipeId(swipeId);
     if (hasSwipeStructure(message) && !hasSwipeSlot(message, targetSwipeId))
-      return emptyFloor();
+      return emptyReadableFloor();
     // The message/per-Swipe slot owns Floor facts; active reads select one slot. See .trellis/spec/domain/floor-state.md.
     const stored = hasSwipeStructure(message)
       ? message.swipe_info?.[targetSwipeId]?.extra?.bioweave
@@ -832,7 +843,7 @@ export function createStore(adapter, boundary = null) {
       !stored ||
       !hasMatchingFloorScope(stored, currentChatId(adapter, boundary))
     ) {
-      return emptyFloor();
+      return emptyReadableFloor();
     }
     return cloneForStorage(normalizeFloorData(stored));
   }
@@ -865,9 +876,9 @@ export function createStore(adapter, boundary = null) {
     return filterActiveFloorEvents(getActiveFloor(messageId), version);
   }
 
-  async function saveFloor(messageId, swipeId, data, traceContext = null) {
+  async function saveFloor(messageIndex, swipeId, data, traceContext = null) {
     const targetSwipeId = validSwipeId(swipeId);
-    const message = adapter.getMessage?.(messageId);
+    const message = adapter.getMessage?.(messageIndex);
     if (!message || !isCharacterMessage(message))
       throw new Error('BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN');
     if (
@@ -885,7 +896,7 @@ export function createStore(adapter, boundary = null) {
       throw new Error("ST_FLOOR_STORAGE_UNAVAILABLE");
     }
     const persistenceResult = await floorWriter.call(adapter,
-      messageId,
+      messageIndex,
       targetSwipeId,
       safeData,
       token.chatId,
@@ -896,13 +907,13 @@ export function createStore(adapter, boundary = null) {
     return persistenceResult;
   }
 
-  async function readAuthoritativeFloor(messageId, swipeId = 0, expectedVersion = null) {
+  async function readAuthoritativeFloor(messageIndex, swipeId = 0, expectedVersion = null) {
     const targetSwipeId = validSwipeId(swipeId);
     const reader = adapter.readAuthoritativeFloor ?? adapter.readOfficialFloorSlot;
-    if (typeof reader !== "function") return getFloor(messageId, targetSwipeId);
+    if (typeof reader !== "function") return getFloor(messageIndex, targetSwipeId);
     const token = captureToken(adapter, boundary);
     const result = await reader.call(adapter, {
-      messageIndex: messageId,
+      messageIndex,
       message_id: expectedVersion?.message_id,
       swipeId: targetSwipeId,
       swipe_id: targetSwipeId,

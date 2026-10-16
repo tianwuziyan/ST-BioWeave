@@ -253,3 +253,165 @@ test('Settings debug trace retains Story Time Projection stages and safe IDs', (
   assert.deepEqual(trace.summary.projection.generated_projection_ids, ['projection-a'])
   assert.deepEqual(trace.summary.projection_context.projection_ids, ['projection-a'])
 })
+
+test('NSFW pipeline recorder preserves explicit execution status and source semantics', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 3, message_index: 3,
+    swipe_id: 1, content_hash: 'hash-a', message_version: 2,
+  }
+  const runId = diagnostics.startNsfwPipelineRun({chat_id: 'chat-a', floor_version: floorVersion})
+  for (const [stage, execution_status, invoked, source_type] of [
+    ['schedule', 'SKIPPED', false, 'EXECUTION_TRACE'],
+    ['timing', 'BLOCKED', true, 'EXECUTION_TRACE'],
+    ['aggregation', 'PERSIST_FAILED', true, 'EXECUTION_TRACE'],
+    ['projection', 'NOT_INVOKED', false, 'DERIVED_DIAGNOSTIC'],
+  ]) {
+    assert.equal(diagnostics.recordNsfwPipelineStage({
+      stage, run_id: runId, floor_version: floorVersion, execution_status, invoked, source_type,
+      reason_code: `${stage}_reason`, subject_id: 'subject-a', cycle_id: 'cycle-a', tracking_window_cycle_id: 'cycle-a',
+      final_cycle_id: 'cycle-a', cycle_id_source: 'TRACKING_WINDOW', cycle_id_consistent: true,
+      cycle_id_consistency_reason_code: 'TRACKING_WINDOW_CYCLE_MATCH', candidate_exposure_event_ids: ['event-a'],
+      accepted_exposure_event_ids: ['event-a'], world_rule_binding: null, readback_attempted: true,
+      readback_succeeded: true, readback_result_present: true, input_count: 2,
+    }), true)
+  }
+  assert.equal(diagnostics.finishNsfwPipelineRun({run_id: runId, floor_version: floorVersion, execution_status: 'PERSIST_FAILED'}), true)
+
+  const result = diagnostics.getNsfwPipelineDiagnostics({run_id: runId, floor_version: floorVersion})
+  assert.equal(result.runs[0].execution_status, 'PERSIST_FAILED')
+  assert.deepEqual(result.stages.map(stage => stage.execution_status), [
+    'SKIPPED', 'BLOCKED', 'PERSIST_FAILED', 'NOT_INVOKED',
+  ])
+  assert.equal(result.stages[3].invoked, false)
+  assert.equal(result.stages[3].source_type, 'DERIVED_DIAGNOSTIC')
+  assert.equal(result.stages[0].source_type, 'EXECUTION_TRACE')
+  assert.equal(result.stages[1].run_context_available, true)
+  assert.equal(result.stages[0].tracking_window_cycle_id, 'cycle-a')
+  assert.equal(result.stages[0].cycle_id_consistent, true)
+  assert.deepEqual(result.stages[0].candidate_exposure_event_ids, ['event-a'])
+  assert.equal(result.stages[0].readback_result_present, true)
+  assert.equal(diagnostics.getDiagnosticMetadata({current_floor_version: floorVersion}).current_run_id, runId)
+})
+
+test('NSFW pipeline export keeps current state, execution trace, and derived diagnostics separate', () => {
+  const exported = JSON.parse(buildDebugExportText({
+    diagnosticMetadata: {diagnostics_schema_version: 1, trace_buffer_status: 'EMPTY', trace_truncated: null},
+    nsfwPipelineDiagnostics: {
+      current_state: {source_type: 'CURRENT_STATE', timing_instance_count: 0},
+      execution_trace: {source_type: 'EXECUTION_TRACE', trace_buffer_status: 'EMPTY', stages: []},
+      derived_diagnostic: {source_type: 'DERIVED_DIAGNOSTIC', current_blocking_reason_code: 'TRACE_UNAVAILABLE'},
+    },
+    timingDiagnostics: [{source_type: 'DERIVED_DIAGNOSTIC', timing_reason_code: 'TRACE_UNAVAILABLE'}],
+    aggregationDiagnostics: [{source_type: 'DERIVED_DIAGNOSTIC', aggregation_reason_code: 'TRACE_UNAVAILABLE'}],
+  }))
+  assert.equal(exported.diagnostic_metadata.trace_buffer_status, 'EMPTY')
+  assert.equal(exported.nsfw_pipeline_diagnostics.current_state.source_type, 'CURRENT_STATE')
+  assert.equal(exported.nsfw_pipeline_diagnostics.execution_trace.source_type, 'EXECUTION_TRACE')
+  assert.equal(exported.nsfw_pipeline_diagnostics.derived_diagnostic.source_type, 'DERIVED_DIAGNOSTIC')
+  assert.equal(exported.timing_diagnostics[0].timing_reason_code, 'TRACE_UNAVAILABLE')
+  assert.equal(exported.aggregation_diagnostics[0].aggregation_reason_code, 'TRACE_UNAVAILABLE')
+})
+
+test('NSFW pipeline recorder bounds run and stage buffers and reports truncation', () => {
+  const diagnostics = createRuntimeDiagnostics({maxNsfwPipelineRuns: 2, maxNsfwPipelineStages: 2})
+  const runIds = []
+  for (let index = 1; index <= 3; index += 1) {
+    const runId = diagnostics.startNsfwPipelineRun({run_id: `run-${index}`, chat_id: 'chat-a'})
+    runIds.push(runId)
+    diagnostics.recordNsfwPipelineStage({run_id: runId, stage: `stage-${index}`, execution_status: 'ATTEMPTED'})
+  }
+  const result = diagnostics.getNsfwPipelineDiagnostics()
+  assert.deepEqual(result.runs.map(run => run.run_id), runIds.slice(1))
+  assert.deepEqual(result.stages.map(stage => stage.stage), ['stage-2', 'stage-3'])
+  assert.equal(result.trace_truncated, true)
+  assert.equal(diagnostics.getDiagnosticMetadata().trace_truncated, true)
+})
+
+test('NSFW pipeline recorder isolates run IDs and Floor Versions', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const floorA = {chat_id: 'chat-a', message_id: 'message-a', floor: 1, swipe_id: 0, content_hash: 'hash-a', message_version: 1}
+  const floorB = {...floorA, swipe_id: 1, content_hash: 'hash-b', message_version: 2}
+  const runA = diagnostics.startNsfwPipelineRun({run_id: 'same-run', chat_id: 'chat-a', floor_version: floorA})
+  const runB = diagnostics.startNsfwPipelineRun({run_id: 'same-run', chat_id: 'chat-a', floor_version: floorB})
+  assert.notEqual(runA, runB)
+
+  diagnostics.recordNsfwPipelineStage({run_id: runA, floor_version: floorA, stage: 'floor-a', execution_status: 'SUCCEEDED'})
+  diagnostics.recordNsfwPipelineStage({run_id: runB, floor_version: floorB, stage: 'floor-b', execution_status: 'SUCCEEDED'})
+  diagnostics.recordNsfwPipelineStage({run_id: runA, floor_version: floorB, stage: 'mismatch', execution_status: 'BLOCKED'})
+
+  const floorAResult = diagnostics.getNsfwPipelineDiagnostics({floor_version: floorA})
+  const floorBResult = diagnostics.getNsfwPipelineDiagnostics({floor_version: floorB})
+  assert.equal(floorAResult.stages[0].stage, 'floor-a')
+  assert.equal(floorBResult.stages[0].stage, 'floor-b')
+  const mismatch = diagnostics.getNsfwPipelineDiagnostics({run_id: runA}).stages.find(stage => stage.stage === 'mismatch')
+  assert.equal(mismatch.run_context_available, false)
+  assert.equal(mismatch.run_floor_match, false)
+  assert.equal(mismatch.reason_code, 'RUN_FLOOR_VERSION_MISMATCH')
+})
+
+test('NSFW pipeline stages correlate with existing persistence trace by run and Floor Version', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const floorVersion = {chat_id: 'chat-a', message_id: 'message-a', floor: 4, swipe_id: 0, content_hash: 'hash-a', message_version: 1}
+  const runId = diagnostics.startNsfwPipelineRun({chat_id: 'chat-a', floor_version: floorVersion})
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {
+    stage: 'PROJECTION_TIMING_EVALUATED', run_id: runId, chat_id: 'chat-a', floor_version: floorVersion,
+  }})
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {
+    stage: 'PROJECTION_READBACK', run_id: runId, chat_id: 'chat-a',
+    floor_version: {...floorVersion, swipe_id: 1, content_hash: 'other-hash'},
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'unversioned_trace', run_id: runId, chat_id: 'chat-a',
+  }})
+  diagnostics.recordNsfwPipelineStage({
+    run_id: runId, chat_id: 'chat-a', floor_version: floorVersion, stage: 'timing', execution_status: 'SUCCEEDED',
+  })
+  const result = diagnostics.getNsfwPipelineDiagnostics({run_id: runId})
+  const traceSequence = diagnostics.getPersistenceTrace().sequence[0].seq
+  assert.deepEqual(result.stages[0].persistence_trace_sequences, [traceSequence])
+  assert.equal(diagnostics.getPersistenceTrace().sequence[0].run_id, runId)
+})
+
+test('NSFW recorder failures are fail-open and surfaced as partial diagnostic collection', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => { throw new Error('host unavailable') }})
+  let businessResult = null
+  assert.doesNotThrow(() => {
+    const runId = diagnostics.startNsfwPipelineRun({floor_version: {chat_id: 'chat-a', floor: 1}})
+    diagnostics.recordNsfwPipelineStage({
+      run_id: runId, stage: 'scheduler', execution_status: 'ATTEMPTED',
+    })
+    businessResult = 'business-continued'
+  })
+  assert.equal(businessResult, 'business-continued')
+  assert.equal(diagnostics.getDiagnosticMetadata().collection_status, 'PARTIAL')
+  assert.equal(diagnostics.getDiagnosticMetadata().diagnostic_error_code, 'DIAGNOSTIC_RECORDER_FAILED')
+  assert.equal(diagnostics.getNsfwPipelineDiagnostics().collection_status, 'PARTIAL')
+  assert.equal(diagnostics.getNsfwPipelineDiagnostics().diagnostic_error_code, 'DIAGNOSTIC_RECORDER_FAILED')
+  assert.equal(diagnostics.recordNsfwPipelineStage(new Proxy({}, {get() { throw new Error('diagnostic input failed') }})), false)
+  assert.equal(diagnostics.getNsfwPipelineDiagnostics().collection_status, 'PARTIAL')
+
+  const observerDiagnostics = createRuntimeDiagnostics({getChatId: () => { throw new Error('host unavailable') }})
+  assert.doesNotThrow(() => observerDiagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {stage: 'PROJECTION_PROCESS_STARTED'}}))
+  assert.equal(observerDiagnostics.recordLifecycleTrace('LIFECYCLE_DIAGNOSTIC_FAILURE', {}), false)
+  assert.equal(observerDiagnostics.getDiagnosticMetadata().collection_status, 'PARTIAL')
+  assert.equal(observerDiagnostics.getDiagnosticMetadata().diagnostic_error_code, 'DIAGNOSTIC_RECORDER_FAILED')
+})
+
+test('missing session trace is unknown and never reported as proof of NOT_INVOKED', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  assert.equal(diagnostics.getDiagnosticMetadata().trace_buffer_status, 'EMPTY')
+  assert.equal(diagnostics.getDiagnosticMetadata().trace_truncated, null)
+  assert.equal(diagnostics.getNsfwPipelineDiagnostics().trace_truncated, null)
+  assert.deepEqual(diagnostics.getNsfwPipelineDiagnostics().stages, [])
+})
+
+test('legacy lifecycle trace ring reports when earlier execution history was overwritten', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  for (let index = 0; index < 65; index += 1) {
+    diagnostics.recordLifecycleTrace(`LIFECYCLE_${index}`, {event_type: 'test'})
+  }
+  assert.equal(diagnostics.getDiagnosticMetadata().trace_truncated, true)
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {stage: 'PROJECTION_PROCESS_STARTED'}})
+  assert.equal(diagnostics.getPersistenceTrace().trace_truncated, true)
+})

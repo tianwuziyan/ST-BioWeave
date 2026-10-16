@@ -695,14 +695,45 @@ message 的 endpoint 都重新 resolve；没有有效 Character Floor 或读取�
 `bioweave.settings.character_timing_configs[canonical_character_id]`，不属于
 `character_registry`、Tracking、Profile、Current State 或 Snapshot。一次有效
 observation cycle 的 timing instance 位于当前 Character Floor/active Swipe 的
-`projection_timing_timeline`，以 append-only creation/basis 记录保存 frozen
-config snapshot、一次 variance、effective min/max、Story Time anchor、World
-rule binding 及完整 Floor Version。它不是 Event、Projection、Exposure Tracking
-Window 或 Current State；`effective_max` 只阻止首次迟到生成，已有 Projection
-仍使用原有 realization → contradiction → expiration 生命周期。
+`projection_timing_snapshot.items`，并作为完整 Floor 集合保存 frozen config
+snapshot、一次 variance、effective min/max、Story Time anchor、World rule
+binding 及完整 Floor Version。后续 basis refs、替换和删除都通过一次完整
+snapshot update 写回；历史读取只在目标 root 缺失时继承最近合法 root，显式
+`{schema_version: 1, items: []}` 会阻断继承，schema-invalid root 会被跳过而
+不会伪装成显式空集合。它不是 Event、Projection、
+Exposure Tracking Window 或 Current State；root 内 item 的创建 provenance
+不得超出 root/目标 Floor、Chat 或 active Swipe；`effective_max` 只阻止首次迟到
+生成，已有 Projection 仍使用原有 realization → contradiction → expiration 生命周期。
 内置 Human narrative preset 是版本化 Product Policy（14/42 Story days、10%
 variance、3/3 Story-day caps），不是医学标准，也不是 World Rule。它仅在
-authoritative World/character context 明确为普通 Human 时作为 future-cycle
-config baseline；显式 Chat-local config 保存为 character override。保存或恢复
-preset 不会创建 World Rule、Timing Instance、Projection、Event 或 State，也不
-会改写已有 Timing Instance 的 frozen snapshot/offset/effective window。
+authoritative World/character context 明确为普通 Human 时作为 Character timing
+config baseline 与恢复预设；显式 Chat-local config 保存为 character override。
+没有当前 Timing Instance 时，恢复预设只是更新表单草稿，点击保存后写入该 config，
+不会创建 World Rule、Timing Instance、Projection、Event 或 State。存在当前 Timing
+Instance 时，同一恢复按钮仍先更新草稿，点击保存后通过当前实例编辑 API 写入当前
+Floor；它保留 Timing/Cycle ID 与冻结 offset，不会隐式重新采样。
+人物详情中的“推演周期”表单是 Timing 配置与当前 Timing Instance 的唯一手动编辑入口。
+没有当前 Timing Instance 时，表单保存上述 Chat-local 默认配置；它不会在缺少有效
+Exposure/Cycle 时创建 Timing Instance。存在当前 Timing Instance 时，表单的基础周期
+读取该实例的实际 min/max，保存调用当前实例编辑 API，保留
+`timing_instance_id`、`cycle_id`、首次 Exposure provenance 和已采样 offset，只重算
+该实例的 effective bounds，并将完整 Timing snapshot 写入当前权威 Floor。当前实例编辑表单中的
+“个体浮动”对应当前实例的 `variance_ratio` 百分比配置；“最大浮动”和“总调整上限”对应
+实例快照中的两个 cap。当前实例编辑只更新这些显式配置并保留
+`sampled_individual_offset_story_days` 冻结值、Timing/Cycle ID；按新允许范围确定性校验，
+非法组合明确拒绝，不会随机重采样；总调整上限继续按既有数学裁剪 total adjustment。写入后必须
+通过当前 Floor readback 确认；只有确认成功才会对同一 Cycle 重新评估
+Participant Aggregation：若新的 Story Time 判定为 `before_min`，当前 Floor 的完整
+Aggregation snapshot 移除该 Cycle；若仍到期则保留并同步冻结 Timing 元数据；历史
+Floor 不被改写，失败状态不得伪装为整体成功。
+
+Participant Aggregation 同样位于当前 Character Floor/active Swipe 的
+`participant_aggregation_snapshot.items`。该 root 保存一个 Floor 的完整
+aggregation 集合；后续 Floor 以完整集合更新、删除或清空，且每个历史候选
+都重新验证 active Swipe、当前六字段 Floor Version 和目标 Floor 上界。历史读取
+只在目标 root 缺失时继承最近合法完整快照；显式
+`{schema_version: 1, items: []}` 会阻断继承，schema-invalid root 会跳过而
+不会伪装成显式空集合；root 内 item 的创建 provenance 超出 root/目标 Floor、
+Chat 或 active Swipe 时，该候选 root 也会跳过。Aggregation 的
+`accepted_exposure_event_ids` 只用于从当前有效 Event 快照重建 participant
+名单，不构成 Chat-level 第二事实源。

@@ -73,6 +73,7 @@ import {
   worldbookSelectionState,
 } from '../ai/worldbook.js'
 import { detectExternalMemoryProviders, probeExternalMemoryProviders } from '../story/seven-days-cal.js'
+import { getHumanPreconfirmationTimingPreset } from '../core/human-timing-preset.js'
 import {
   DEFAULT_API_REQUEST_SETTINGS,
   DEFAULT_API_PROFILE,
@@ -147,7 +148,7 @@ export function debugExportFilename(date = new Date()) {
   const stamp = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('') + '-' + [String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0'), String(date.getSeconds()).padStart(2, '0')].join('')
   return `ST-BioWeave-Debug-${stamp}.txt`
 }
-export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, exportedAt = new Date().toISOString()} = {}) {
+export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, diagnosticMetadata = null, nsfwPipelineDiagnostics = null, timingDiagnostics = null, aggregationDiagnostics = null, exportedAt = new Date().toISOString()} = {}) {
   return JSON.stringify({
     debug_metadata: {
       format: 'ST-BioWeave-Debug',
@@ -162,6 +163,10 @@ export function buildDebugExportText({businessDebug = null, worldModelLiveState 
     world_model_live_state: worldModelLiveState,
     history_trace: historyTrace,
     story_time_debug: storyTimeDebug,
+    diagnostic_metadata: diagnosticMetadata,
+    nsfw_pipeline_diagnostics: nsfwPipelineDiagnostics,
+    timing_diagnostics: timingDiagnostics,
+    aggregation_diagnostics: aggregationDiagnostics,
   }, null, 2)
 }
 export function buildStoryTimeDebugExportText(info, exportedAt = new Date().toISOString()) {
@@ -727,6 +732,7 @@ export function createApp(runtime, options = {}) {
     config: null,
     draft: null,
     timingInstance: null,
+    editStartFloorVersion: null,
     humanPresetApplicable: false,
     error: null,
   }
@@ -1132,6 +1138,10 @@ export function createApp(runtime, options = {}) {
         worldModelLiveState: liveState,
         historyTrace: runtime.getPersistenceTrace?.() ?? null,
         storyTimeDebug,
+        diagnosticMetadata: collected?.debug?.diagnostic_metadata ?? null,
+        nsfwPipelineDiagnostics: collected?.debug?.nsfw_pipeline_diagnostics ?? null,
+        timingDiagnostics: collected?.debug?.timing_diagnostics ?? null,
+        aggregationDiagnostics: collected?.debug?.aggregation_diagnostics ?? null,
       })
       downloadUtf8Text({text, filename: debugExportFilename(), documentRef, windowRef})
       notify('调试信息已导出为 TXT。', 'success', documentRef)
@@ -3877,13 +3887,19 @@ export function createApp(runtime, options = {}) {
   function timingEditorErrorMessage(error) {
     const code = String(error?.code ?? error?.message ?? '').toLowerCase()
     if (code.includes('unknown_character') || code.includes('character_id_not_found')) return '当前人物不在有效 Floor 身份快照中。'
+    if (String(error?.version_classification ?? '').startsWith('INTERNAL_')) return 'Timing 保存被内部 Floor 版本校验拒绝，请检查 Debug 中的版本审计信息。'
     if (code.includes('stale') || code.includes('chat')) return '当前 Chat 或人物身份已变化，请重新打开设置。'
+    if (code.includes('aggregation_reevaluation')) return '当前周期已保存，但 Aggregation 重新评估失败，请检查 Debug 中的部分成功状态。'
+    if (code.includes('timing_instance_readback')) return '当前周期保存结果无法从权威 Floor 读回，请检查 Debug。'
+    if (code.includes('timing_instance_ambiguous')) return '当前人物存在多个有效推演周期，无法安全判断要编辑哪一个。'
+    if (code.includes('timing_instance_association_mismatch')) return '当前人物的推演周期已变化，请重新打开设置。'
+    if (code.includes('timing_instance_not_found')) return '当前周期已不存在，请重新读取人物状态。'
     if (code.includes('before_min')) return '最大时间不能小于最短时间。'
     if (code.includes('invalid')) return '推演周期设置无效，请检查输入值。'
     return '推演周期保存失败，请重新读取当前人物信息。'
   }
   function closeCharacterTiming() {
-    timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
     render()
   }
   function closeCharacterHealth({restoreFocus = true} = {}) {
@@ -3918,7 +3934,7 @@ export function createApp(runtime, options = {}) {
     }
     const chatId = runtime.chat.current()
     if (healthPopoverState.open) healthPopoverState = {open: false, characterId: null}
-    timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
     render()
     void loadCharacterTimingData({id, chatId})
   }
@@ -3926,7 +3942,16 @@ export function createApp(runtime, options = {}) {
     try {
       const data = await runtime.getCharacterTimingEditorData({characterId: id, characterProfile: businessState.characterProfiles?.[id] ?? null})
       if (runtime.chat.current() !== chatId || String(focusedCharacterId ?? '') !== id) return
-      timingEditorState = {...timingEditorState, open: true, loading: false, config: data?.config ?? null, draft: data?.config ? {...data.config} : null, timingInstance: data?.timing_instance ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
+      const timingInstance = data?.timing_instance ?? null
+      const draft = data?.config ? {...data.config} : null
+      if (timingInstance && draft) {
+        draft.base_min_story_days = timingInstance.base_min_story_days
+        draft.base_max_story_days = timingInstance.base_max_story_days
+        draft.variance_ratio = timingInstance.variance_ratio
+        draft.variance_cap_story_days = timingInstance.variance_cap_story_days
+        draft.total_adjustment_cap_story_days = timingInstance.total_adjustment_cap_story_days
+      }
+      timingEditorState = {...timingEditorState, open: true, loading: false, config: data?.config ?? null, draft, timingInstance, editStartFloorVersion: data?.floor_version ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
     } catch (error) {
       timingEditorState = {...timingEditorState, loading: false, error: timingEditorErrorMessage(error)}
     }
@@ -3941,12 +3966,23 @@ export function createApp(runtime, options = {}) {
   }
   function restoreHumanTimingPreset() {
     if (!timingEditorState.humanPresetApplicable || !timingEditorState.draft) return
-    timingEditorState = {...timingEditorState, draft: {...timingEditorState.draft, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.10, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3}, error: null}
+    const preset = getHumanPreconfirmationTimingPreset()
+    timingEditorState = {...timingEditorState, draft: {
+      ...timingEditorState.draft,
+      base_min_story_days: preset.base_min_story_days,
+      base_max_story_days: preset.base_max_story_days,
+      variance_ratio: preset.variance_ratio,
+      variance_cap_story_days: preset.variance_cap_story_days,
+      total_adjustment_cap_story_days: preset.total_adjustment_cap_story_days,
+    }, error: null}
     render()
   }
   async function saveCharacterTiming() {
     const state = timingEditorState
-    if (state.saving || !state.characterId || !state.draft || typeof runtime.saveCharacterTimingConfig !== 'function') return
+    const editingCurrent = Boolean(state.timingInstance)
+    if (state.saving || !state.characterId || !state.draft) return
+    if (editingCurrent && typeof runtime.editCharacterTimingInstance !== 'function') return
+    if (!editingCurrent && typeof runtime.saveCharacterTimingConfig !== 'function') return
     if (runtime.chat.current() !== state.chatId || String(focusedCharacterId ?? '') !== String(state.characterId)) {
       timingEditorState = {...state, error: '当前 Chat 或人物身份已变化，请重新打开设置。'}
       render()
@@ -3955,13 +3991,64 @@ export function createApp(runtime, options = {}) {
     timingEditorState = {...state, saving: true, error: null}
     render()
     try {
-      await runtime.saveCharacterTimingConfig({characterId: state.characterId, config: state.draft})
+      let result = null
+      if (editingCurrent) {
+        result = await runtime.editCharacterTimingInstance({
+          characterId: state.characterId,
+          timingInstanceId: state.timingInstance.timing_instance_id,
+          baseMinStoryDays: state.draft.base_min_story_days,
+          baseMaxStoryDays: state.draft.base_max_story_days,
+          varianceRatio: state.draft.variance_ratio,
+          varianceCapStoryDays: state.draft.variance_cap_story_days,
+          totalAdjustmentCapStoryDays: state.draft.total_adjustment_cap_story_days,
+          editStartFloorVersion: state.editStartFloorVersion,
+        })
+      } else {
+        await runtime.saveCharacterTimingConfig({characterId: state.characterId, config: state.draft})
+      }
       const data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
       if (runtime.chat.current() !== state.chatId || String(focusedCharacterId ?? '') !== String(state.characterId)) throw Object.assign(new Error('STALE_CHAT'), {code: 'STALE_CHAT'})
-      timingEditorState = {...timingEditorState, saving: false, loading: false, config: data?.config ?? null, draft: data?.config ? {...data.config} : null, timingInstance: data?.timing_instance ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
-      notify('推演周期设置已保存。', 'success', documentRef)
+      const saved = data?.timing_instance ?? null
+      if (editingCurrent && (!saved || saved.timing_instance_id !== state.timingInstance.timing_instance_id
+        || saved.base_min_story_days !== Number(state.draft.base_min_story_days)
+        || saved.base_max_story_days !== Number(state.draft.base_max_story_days)
+        || saved.variance_ratio !== Number(state.draft.variance_ratio)
+        || saved.variance_cap_story_days !== Number(state.draft.variance_cap_story_days)
+        || saved.total_adjustment_cap_story_days !== Number(state.draft.total_adjustment_cap_story_days))) {
+        throw Object.assign(new Error('TIMING_INSTANCE_READBACK_FAILED'), {code: 'TIMING_INSTANCE_READBACK_FAILED'})
+      }
+      const draft = data?.config ? {...data.config} : null
+      if (editingCurrent && saved && draft) {
+        draft.base_min_story_days = saved.base_min_story_days
+        draft.base_max_story_days = saved.base_max_story_days
+        draft.variance_ratio = saved.variance_ratio
+        draft.variance_cap_story_days = saved.variance_cap_story_days
+        draft.total_adjustment_cap_story_days = saved.total_adjustment_cap_story_days
+      }
+      timingEditorState = {...timingEditorState, saving: false, loading: false, config: data?.config ?? null, draft, timingInstance: saved, editStartFloorVersion: data?.floor_version ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
+      notify(editingCurrent
+        ? (result?.aggregation_reevaluation?.action === 'removed_before_min' ? '当前周期已保存，原聚合因尚未到期而移除。' : '当前周期已保存，并已重新评估聚合。')
+        : '推演周期设置已保存。', 'success', documentRef)
     } catch (error) {
-      timingEditorState = {...timingEditorState, saving: false, error: timingEditorErrorMessage(error)}
+      if (editingCurrent && error?.timing_persisted === true) {
+        try {
+          const data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
+          const saved = data?.timing_instance
+          const draft = data?.config ? {...data.config} : state.draft
+          if (saved && draft) {
+            draft.base_min_story_days = saved.base_min_story_days
+            draft.base_max_story_days = saved.base_max_story_days
+            draft.variance_ratio = saved.variance_ratio
+            draft.variance_cap_story_days = saved.variance_cap_story_days
+            draft.total_adjustment_cap_story_days = saved.total_adjustment_cap_story_days
+          }
+          timingEditorState = {...state, saving: false, loading: false, config: data?.config ?? state.config, draft, timingInstance: saved ?? state.timingInstance, editStartFloorVersion: data?.floor_version ?? state.editStartFloorVersion, humanPresetApplicable: data?.human_preset_applicable === true, error: timingEditorErrorMessage(error)}
+        } catch {
+          timingEditorState = {...state, saving: false, error: timingEditorErrorMessage(error)}
+        }
+      } else {
+        timingEditorState = {...state, saving: false, error: timingEditorErrorMessage(error)}
+      }
       notify(timingEditorErrorMessage(error), 'error', documentRef)
     }
     render()
@@ -4466,7 +4553,7 @@ export function createApp(runtime, options = {}) {
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
-      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
     }
     if (nextRoute !== 'events') setEventFilter()
     const renderStartedAt = monotonicNow()
@@ -4490,7 +4577,7 @@ export function createApp(runtime, options = {}) {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
     }
-    if (timingEditorState.characterId !== nextId) timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+    if (timingEditorState.characterId !== nextId) timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
     render()
   }
   function settingsOperationError(error) {
@@ -5263,7 +5350,7 @@ export function createApp(runtime, options = {}) {
         : null
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
-      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       healthPopoverState = {open: false, characterId: null}
       route = 'overview'
       focusedCharacterId = null
@@ -5417,7 +5504,7 @@ export function createApp(runtime, options = {}) {
       if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorRequestSequence += 1
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
-        timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+        timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       }
       if (characterLifecycleRefreshKey) lastCharacterLifecycleRefreshKey = characterLifecycleRefreshKey
       const targetBoundaryChanged = [
@@ -5505,7 +5592,7 @@ export function createApp(runtime, options = {}) {
       route === 'characters' &&
       !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
     ) {
-      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, humanPresetApplicable: false, error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       render()
     }
     if (

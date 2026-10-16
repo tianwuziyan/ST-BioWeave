@@ -68,7 +68,7 @@ test('Character UI distinguishes a successful empty Event result from an unanaly
   assert.doesNotMatch(html, /尚未完成事件分析/u)
 })
 
-test('Character detail exposes timing config entry and separates future config from frozen current timing', () => {
+test('Character detail uses one timing form for the current Timing Instance', () => {
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: { 'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []} },
@@ -80,24 +80,53 @@ test('Character detail exposes timing config entry and separates future config f
       characterId: 'char-a',
       humanPresetApplicable: true,
       draft: {base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.1, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3},
-      timingInstance: {base_min_story_days: 10, base_max_story_days: 20, sampled_individual_offset_story_days: 1.2, effective_min_story_days: 11.2, effective_max_story_days: 21.2},
+      timingInstance: {base_min_story_days: 10, base_max_story_days: 20, variance_ratio: 0.12, variance_cap_story_days: 4, total_adjustment_cap_story_days: 2, sampled_individual_offset_story_days: 1.2, effective_min_story_days: 11.2, effective_max_story_days: 21.2},
     },
   })
   assert.ok(html.indexOf('推演周期') < html.indexOf('编辑昵称'))
-  assert.match(html, /之后新周期的设置/u)
+  assert.match(html, /推演周期设置/u)
+  assert.doesNotMatch(html, /之后新周期的设置/u)
   assert.match(html, /当前已经采用的周期/u)
   assert.match(html, /bioweave-character-timing-popover/u)
   assert.match(html, /aria-modal="true"/u)
   assert.match(html, /data-bioweave-action="cancel-character-timing"/u)
-  assert.match(html, /14/)
-  assert.match(html, /42/)
-  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
-  assert.match(html, />%<\/em>/)
+  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="10"/)
+  assert.match(html, /data-bioweave-timing-field="base_max_story_days" value="20"/)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="12"/)
+  assert.doesNotMatch(html, /data-bioweave-timing-field="sampled_individual_offset_story_days"/)
+  assert.match(html, /data-bioweave-timing-field="variance_cap_story_days" value="4"/)
+  assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="2"/)
+  assert.match(html, /data-bioweave-action="restore-human-timing-preset"/)
+  assert.match(html, />天<\/em>/)
   assert.match(html, /\+1\.2 天/u)
   assert.match(html, /11\.2 ～ 21\.2 天/u)
+  assert.equal((html.match(/data-bioweave-action="save-character-timing"/g) ?? []).length, 1)
+  assert.doesNotMatch(html, /save-current-character-timing/u)
+  assert.doesNotMatch(html, /data-bioweave-current-timing-field/u)
+  assert.doesNotMatch(html, /14/)
+  assert.doesNotMatch(html, /42/)
+  assert.match(html, /个体浮动为百分比配置/u)
   assert.doesNotMatch(UI_SOURCE, /__BIOWEAVE_DEBUG__/u)
   assert.match(FINAL_STYLE_SOURCE, /bioweave-character-timing-popover[\s\S]*width: min\(320px/u)
   assert.match(FINAL_STYLE_SOURCE, /character-timing-fields input[\s\S]*width: 8ch/u)
+  assert.match(APP_SOURCE, /const editingCurrent = Boolean\(state\.timingInstance\)/u)
+  assert.match(APP_SOURCE, /runtime\.editCharacterTimingInstance\(/u)
+  assert.match(APP_SOURCE, /varianceRatio: state\.draft\.variance_ratio/u)
+  assert.doesNotMatch(APP_SOURCE, /sampledIndividualOffsetStoryDays: state\.draft/u)
+  const restoreStart = APP_SOURCE.indexOf('function restoreHumanTimingPreset(')
+  const saveStart = APP_SOURCE.indexOf('async function saveCharacterTiming(', restoreStart)
+  const restoreSource = APP_SOURCE.slice(restoreStart, saveStart)
+  assert.match(restoreSource, /const preset = getHumanPreconfirmationTimingPreset\(\)/u)
+  for (const field of ['base_min_story_days', 'base_max_story_days', 'variance_ratio', 'variance_cap_story_days', 'total_adjustment_cap_story_days']) {
+    assert.match(restoreSource, new RegExp(`${field}: preset\\.${field}`, 'u'))
+  }
+  assert.doesNotMatch(restoreSource, /saveCharacterTiming|runtime\./u)
+  assert.match(APP_SOURCE, /runtime\.saveCharacterTimingConfig\(/u)
+  assert.match(APP_SOURCE, /当前周期已保存，但 Aggregation 重新评估失败/u)
+  assert.match(APP_SOURCE, /当前周期保存结果无法从权威 Floor 读回/u)
+  assert.match(APP_SOURCE, /timing_persisted === true/u)
+  assert.doesNotMatch(APP_SOURCE, /saveCurrentCharacterTiming/u)
+  assert.doesNotMatch(APP_SOURCE, /save-current-character-timing/u)
 })
 
 test('Character timing editor shows no current cycle before a Timing Instance exists', () => {
@@ -115,7 +144,11 @@ test('Character timing editor shows no current cycle before a Timing Instance ex
     },
   })
   assert.match(html, /尚未建立观察周期/u)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
+  assert.match(html, />%<\/em>/)
   assert.doesNotMatch(html, /本次偏移/u)
+  assert.match(html, /data-bioweave-action="restore-human-timing-preset"/)
+  assert.equal((html.match(/data-bioweave-action="save-character-timing"/g) ?? []).length, 1)
 })
 
 test('Character Health popover keeps the A-variant interaction contract', () => {
@@ -171,6 +204,15 @@ test('business debug renders existing Projection Timing diagnostics in lifecycle
   assert.match(source, /effective_min/u)
   assert.match(source, /aggregation 未执行原因/u)
   assert.doesNotMatch(source, /getProjectionTimingDebug/u)
+  assert.match(SETTINGS_SOURCE, /data-bioweave-nsfw-pipeline-diagnostics/u)
+  assert.match(SETTINGS_SOURCE, /\['variance_ratio', (?:stage|item)\.variance_ratio\]/u)
+  assert.match(SETTINGS_SOURCE, /\['variance_cap_story_days', (?:stage|item)\.variance_cap_story_days\]/u)
+  assert.match(SETTINGS_SOURCE, /\['sampled_individual_offset_story_days', (?:stage|item)\.sampled_individual_offset_story_days\]/u)
+  assert.match(SETTINGS_SOURCE, /\['RNG 来源', stage\.rng_source\]/u)
+  assert.match(SETTINGS_SOURCE, /\['total_adjustment_cap_story_days', (?:stage|item)\.total_adjustment_cap_story_days\]/u)
+  assert.doesNotMatch(SETTINGS_SOURCE, /\['variance \/ offset'/u)
+  assert.match(SETTINGS_SOURCE, /trace_buffer_status/u)
+  assert.match(SETTINGS_SOURCE, /诊断置信度/u)
 })
 
 test('Nickname editor uses the compact shell-first popup path', () => {

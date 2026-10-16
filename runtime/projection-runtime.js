@@ -183,6 +183,7 @@ export function createProjectionRuntime({
   saveProjectionDeliveryResponse = null,
   getProjectionDeliveryRecords = null,
   archiveAndReleasePregnancy = null,
+  diagnostics = null,
   notify = () => {},
   activity = null,
 } = {}) {
@@ -228,6 +229,30 @@ export function createProjectionRuntime({
       payload,
       chatId: payload?.chat_id ?? getChatId?.(),
     });
+  }
+
+  function recordPipelineStage(payload = {}) {
+    try {
+      diagnostics?.recordNsfwPipelineStage?.(payload);
+    } catch {
+      // Diagnostic collection is fail-open and must not affect Projection.
+    }
+  }
+
+  function startPipelineRun(payload = {}) {
+    try {
+      return diagnostics?.startNsfwPipelineRun?.(payload) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function finishPipelineRun(runId, payload = {}) {
+    try {
+      diagnostics?.finishNsfwPipelineRun?.({run_id: runId, ...payload});
+    } catch {
+      // Diagnostic collection is fail-open and must not affect Projection.
+    }
   }
 
   function startActivity(identity) {
@@ -321,19 +346,71 @@ export function createProjectionRuntime({
   }
 
   async function handleAnalysisSuccess({target, execution} = {}) {
-    let current = null;
-    try { current = await resolveCurrentFloor?.(); } catch { current = null; }
-    if (!sameFloorOwner(current?.version, target?.version)) return {status: 'stale', response: null, timeout: null, projection: null};
-    const response = await recordCompletedResponse({target, execution});
-    const timeout = await evaluateTimeoutNoPregnancy(target);
-    const projection = await process({reason: 'factual-success', target});
-    return {response, timeout, projection};
+    const runId = execution?.pipeline_run_id ?? null;
+    try {
+      let current = null;
+      try { current = await resolveCurrentFloor?.(); } catch { current = null; }
+      if (!sameFloorOwner(current?.version, target?.version)) {
+        finishPipelineRun(runId, {
+          execution_status: "BLOCKED",
+          reason_code: "FLOOR_VERSION_CHANGED",
+        });
+        return {status: 'stale', response: null, timeout: null, projection: null};
+      }
+      const response = await recordCompletedResponse({target, execution});
+      const timeout = await evaluateTimeoutNoPregnancy(target);
+      const projection = await process({reason: 'factual-success', runId});
+      return {response, timeout, projection};
+    } catch (error) {
+      finishPipelineRun(runId, {
+        execution_status: "FAILED",
+        reason_code: "PROJECTION_POST_PROCESSING_FAILED",
+        error_code: error?.code ?? error?.message ?? "PROJECTION_POST_PROCESSING_FAILED",
+      });
+      throw error;
+    }
   }
 
   async function runExecution(inputs, identity, reason, trigger) {
     const startedAt = new Date().toISOString();
     startActivity(identity);
     emitStatus({stage: "PROJECTION_PROCESS_STARTED", state: "running", phase: "process", reason, trigger, current_story_time: inputs.currentStoryTime ?? null, ...identity, started_at: startedAt});
+    recordPipelineStage({
+      stage: "EVENT_SNAPSHOT_RESOLUTION",
+      execution_status: "SUCCEEDED",
+      reason_code: "CURRENT_FLOOR_SNAPSHOT_RESOLVED",
+      invoked: true,
+      run_id: identity.run_id ?? null,
+      chat_id: identity.chat_id,
+      floor_version: identity.floor_version,
+      input_count: Array.isArray(inputs.events) ? inputs.events.length : 0,
+      output_count: Array.isArray(inputs.events) ? inputs.events.length : 0,
+      source_type: "EXECUTION_TRACE",
+    });
+    recordPipelineStage({
+      stage: "EXPOSURE_CLASSIFICATION",
+      execution_status: "SUCCEEDED",
+      reason_code: "CURRENT_EVENT_INPUTS_RESOLVED",
+      invoked: true,
+      run_id: identity.run_id ?? null,
+      chat_id: identity.chat_id,
+      floor_version: identity.floor_version,
+      input_count: Array.isArray(inputs.events) ? inputs.events.length : 0,
+      output_count: Array.isArray(inputs.sourceCandidates) ? inputs.sourceCandidates.length : 0,
+      source_type: "EXECUTION_TRACE",
+    });
+    recordPipelineStage({
+      stage: "TRACKING_WINDOW_RESOLUTION",
+      execution_status: "SUCCEEDED",
+      reason_code: "CURRENT_TRACKING_WINDOW_SNAPSHOT_RESOLVED",
+      invoked: true,
+      run_id: identity.run_id ?? null,
+      chat_id: identity.chat_id,
+      floor_version: identity.floor_version,
+      input_count: Array.isArray(inputs.trackingWindows) ? inputs.trackingWindows.length : 0,
+      output_count: Array.isArray(inputs.trackingWindows) ? inputs.trackingWindows.length : 0,
+      source_type: "EXECUTION_TRACE",
+    });
     let partial = false;
     const errors = [];
     try {
@@ -374,7 +451,7 @@ export function createProjectionRuntime({
         endpointFloor: identity.floor_version.floor,
       });
       const preConfirmationTiming = typeof resolvePreConfirmationTiming === "function"
-        ? await resolvePreConfirmationTiming({inputs, views, execution: identity})
+        ? await resolvePreConfirmationTiming({inputs, views, execution: identity, run_id: identity.run_id ?? null})
         : null;
       const eligibility = evaluateProjectionEligibility({
         currentState: inputs.currentState,
@@ -384,6 +461,38 @@ export function createProjectionRuntime({
         currentStoryTime: inputs.currentStoryTime,
         existingProjections: views?.all ?? [],
         preConfirmationTiming,
+      });
+      const timingDecisions = eligibility.decisions.filter(decision => decision.timing_instance_id || decision.tracking_window_id);
+      recordPipelineStage({
+        stage: "TIMING_ELIGIBILITY_EVALUATION",
+        execution_status: "SUCCEEDED",
+        reason_code: timingDecisions.length ? "TIMING_ELIGIBILITY_EVALUATED" : "TIMING_INSTANCE_MISSING",
+        invoked: timingDecisions.length > 0,
+        run_id: identity.run_id ?? null,
+        chat_id: identity.chat_id,
+        floor_version: identity.floor_version,
+        input_count: timingDecisions.length,
+        output_count: timingDecisions.filter(decision => decision.eligibility === "eligible").length,
+        source_type: "EXECUTION_TRACE",
+      });
+      recordPipelineStage({
+        stage: "PROJECTION_ELIGIBILITY",
+        execution_status: eligibility.diagnostics?.some(item => item.code === "projection_rule_conflict")
+          ? "FAILED"
+          : "SUCCEEDED",
+        reason_code: eligibility.diagnostics?.[0]?.code ?? (eligibility.decisions.length ? "ELIGIBILITY_EVALUATED" : "NO_PROJECTION_DECISION"),
+        invoked: true,
+        run_id: identity.run_id ?? null,
+        chat_id: identity.chat_id,
+        floor_version: identity.floor_version,
+        input_count: rules.length,
+        output_count: eligibility.decisions.length,
+        error_code: eligibility.diagnostics?.some(item => item.code === "projection_rule_conflict") ? "PROJECTION_ELIGIBILITY_FAILED" : null,
+        projection_rules_available: rules.length > 0,
+        projection_rules_count: rules.length,
+        projection_eligibility: eligibility.decisions.length ? "DECISIONS_EVALUATED" : "NO_ELIGIBLE_PROJECTION",
+        timing_window_status: eligibility.decisions.map(decision => decision.timing_status).filter(Boolean).join(",") || null,
+        source_type: "EXECUTION_TRACE",
       });
       emitStatus({
         stage: "PROJECTION_TIMING_EVALUATED",
@@ -413,6 +522,23 @@ export function createProjectionRuntime({
 
       const generationDecisions = eligibility.decisions.filter(item => item.eligibility === "eligible" && !item.existing_projection_id);
       emitStatus({stage: "PROJECTION_AI_PLAN", state: "running", phase: "generation", reason, trigger, candidate_count: 0, ai_call_will_start: generationDecisions.length > 0, ...identity, started_at: startedAt});
+      recordPipelineStage({
+        stage: "PROJECTION_AI_SCHEDULING",
+        execution_status: generationDecisions.length > 0 ? "ATTEMPTED" : "BLOCKED",
+        reason_code: generationDecisions.length > 0 ? "ELIGIBLE_DECISION_FOUND" : "NO_ELIGIBLE_PROJECTION",
+        invoked: true,
+        run_id: identity.run_id ?? null,
+        chat_id: identity.chat_id,
+        floor_version: identity.floor_version,
+        input_count: eligibility.decisions.length,
+        output_count: generationDecisions.length,
+        projection_rules_available: rules.length > 0,
+        projection_rules_count: rules.length,
+        projection_eligibility: generationDecisions.length > 0 ? "ELIGIBLE_DECISION_FOUND" : "NO_ELIGIBLE_PROJECTION",
+        timing_window_status: eligibility.decisions.map(decision => decision.timing_status).filter(Boolean).join(",") || null,
+        projection_ai_request_started: false,
+        source_type: "EXECUTION_TRACE",
+      });
       for (const decision of generationDecisions) {
         const rule = ruleByKey.get(`${decision.projection_rule_id}\u001f${decision.development_concern_key}`);
         if (!rule) {
@@ -454,7 +580,11 @@ export function createProjectionRuntime({
         emitStatus({stage: "PROJECTION_AI_REQUEST_COMPLETED", state: result.status === 'generated' ? "running" : "partial", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, ai_request_completed: true, ai_request_failed: result.status !== 'generated', candidate_count: generatedProjectionIds.length, candidate_validation_result: validationResult, validation_errors: result.errors ?? [], rejection_reason: result.reason_code ?? null, generated_projection_ids: generatedProjectionIds, ...identity});
         if (result.status === "stale") {
           emitStatus({state: "stale", phase: result.reason_code, reason, ...identity, started_at: startedAt});
-          return {status: "stale", execution_id: identity.execution_id, results: [result]};
+          finishPipelineRun(identity.run_id, {
+            execution_status: "BLOCKED",
+            reason_code: "FLOOR_VERSION_CHANGED",
+          });
+          return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: [result]};
         }
         if (result.status !== "generated") {
           partial = true;
@@ -463,7 +593,11 @@ export function createProjectionRuntime({
         }
         if (!(await currentInputsMatch(identity.execution_id))) {
           emitStatus({state: "stale", phase: "before_persistence", reason, ...identity, started_at: startedAt});
-          return {status: "stale", execution_id: identity.execution_id, results: [result]};
+          finishPipelineRun(identity.run_id, {
+            execution_status: "BLOCKED",
+            reason_code: "FLOOR_VERSION_CHANGED",
+          });
+          return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: [result]};
         }
         try {
           await saveGeneratedProjection({
@@ -497,36 +631,135 @@ export function createProjectionRuntime({
               },
             });
           }
+          recordPipelineStage({
+            stage: "PROJECTION_PERSISTENCE",
+            execution_status: "SUCCEEDED",
+            reason_code: "PROJECTION_PERSISTED",
+            invoked: true,
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            output_count: 1,
+            source_type: "EXECUTION_TRACE",
+          });
         } catch (error) {
           partial = true;
           errors.push({decision: decisionKey(decision), reason: error?.code ?? error?.message ?? "persistence_failed"});
+          recordPipelineStage({
+            stage: "PROJECTION_PERSISTENCE",
+            execution_status: "PERSIST_FAILED",
+            reason_code: "PROJECTION_PERSISTENCE_FAILED",
+            invoked: true,
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            error_code: error?.code ?? error?.message ?? "PROJECTION_PERSISTENCE_FAILED",
+            source_type: "EXECUTION_TRACE",
+          });
         }
       }
-      const finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor});
-      const dto = dtoFromViews(finalViews);
-      await refreshProjectionContext?.({chatId: identity.chat_id});
+      let finalViews;
+      let dto;
+      try {
+        finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor});
+        dto = dtoFromViews(finalViews);
+        await refreshProjectionContext?.({chatId: identity.chat_id});
+      } catch (error) {
+        recordPipelineStage({
+          stage: "PROJECTION_READBACK",
+          execution_status: "READBACK_FAILED",
+          reason_code: "PROJECTION_READBACK_FAILED",
+          invoked: true,
+          run_id: identity.run_id ?? null,
+          chat_id: identity.chat_id,
+          floor_version: identity.floor_version,
+          error_code: error?.code ?? error?.message ?? "PROJECTION_READBACK_FAILED",
+          readback_succeeded: false,
+          source_type: "EXECUTION_TRACE",
+        });
+        throw error;
+      }
       const status = partial ? "partial" : "success";
       emitStatus({stage: "PROJECTION_READBACK", state: status, phase: "readback", reason, trigger, ...projectionViewDiagnostics(finalViews), projection_contribution_count: projectionViewDiagnostics(finalViews).context_visible_projection_count, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), errors});
+      recordPipelineStage({
+        stage: "PROJECTION_READBACK",
+        execution_status: "SUCCEEDED",
+        reason_code: "PROJECTION_READBACK_COMPLETED",
+        invoked: true,
+        run_id: identity.run_id ?? null,
+        chat_id: identity.chat_id,
+        floor_version: identity.floor_version,
+        input_count: finalViews?.all?.length ?? 0,
+        output_count: finalViews?.all?.length ?? 0,
+        readback_succeeded: true,
+        source_type: "EXECUTION_TRACE",
+      });
+      finishPipelineRun(identity.run_id, {
+        execution_status: status === "partial" ? "ATTEMPTED" : "SUCCEEDED",
+        reason_code: status === "partial" ? "PROJECTION_PARTIAL" : "PROJECTION_COMPLETED",
+      });
       finishActivity(identity, status, errors[0]);
-      return {status, execution_id: identity.execution_id, ...dto, errors};
+      return {status, execution_id: identity.execution_id, run_id: identity.run_id, ...dto, errors};
     } catch (error) {
       emitStatus({stage: "PROJECTION_PROCESS_FAILED", state: "failed", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED"});
+      recordPipelineStage({
+        stage: "PROJECTION_ELIGIBILITY",
+        execution_status: "FAILED",
+        reason_code: "PROJECTION_PROCESS_FAILED",
+        invoked: true,
+        run_id: identity.run_id ?? null,
+        chat_id: identity.chat_id,
+        floor_version: identity.floor_version,
+        error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+        source_type: "EXECUTION_TRACE",
+      });
+      finishPipelineRun(identity.run_id, {
+        execution_status: "FAILED",
+        reason_code: "PROJECTION_PROCESS_FAILED",
+        error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+      });
       finishActivity(identity, "failed", error);
-      return {status: "failed", execution_id: identity.execution_id, errors: [{reason: error?.code ?? error?.message ?? "PROJECTION_FAILED"}]};
+      return {status: "failed", execution_id: identity.execution_id, run_id: identity.run_id, errors: [{reason: error?.code ?? error?.message ?? "PROJECTION_FAILED"}]};
     }
   }
 
-  async function process({reason = "projection-refresh", trigger = "projection-refresh"} = {}) {
+  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null} = {}) {
     if (destroyed) return {status: "destroyed"};
     if (enabledResolver() === false) return {status: "disabled"};
     const inputs = await collectInputs();
     if (!inputs?.floor?.version || inputs.currentStateStatus === "STATE_ERROR") return {status: "unavailable"};
     const execution_id = await executionIdentity(inputs);
-    if (inFlight.has(execution_id)) return inFlight.get(execution_id);
+    const resolvedRunId = runId ?? startPipelineRun({
+      kind: "projection",
+      trigger,
+      reason,
+      chat_id: inputs.floor.version.chat_id,
+      floor_version: inputs.floor.version,
+    });
+    if (inFlight.has(execution_id)) {
+      recordPipelineStage({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "PROJECTION_ALREADY_IN_FLIGHT",
+        invoked: true,
+        run_id: resolvedRunId,
+        chat_id: inputs.floor.version.chat_id,
+        floor_version: inputs.floor.version,
+        input_count: 1,
+        output_count: 0,
+        source_type: "EXECUTION_TRACE",
+      });
+      finishPipelineRun(resolvedRunId, {
+        execution_status: "SKIPPED",
+        reason_code: "PROJECTION_ALREADY_IN_FLIGHT",
+      });
+      return inFlight.get(execution_id);
+    }
     const identity = {
       execution_id,
       chat_id: inputs.floor.version.chat_id,
       floor_version: inputs.floor.version,
+      run_id: resolvedRunId,
     };
     const promise = runExecution(inputs, identity, reason, trigger).finally(() => inFlight.delete(execution_id));
     inFlight.set(execution_id, promise);

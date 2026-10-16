@@ -638,8 +638,9 @@ recursive deletion. The current domain vocabulary is:
 | `global_settings` | `extensionSettings.bioweave` and its recognized fields | Guarded, global, never clearable by this contract |
 | `chat_settings` | `chatMetadata.bioweave.settings` | Chat configuration; preserve for every Data Management operation |
 | `world` | Floor `world_model`, Floor `world_model_meta`; future explicit world references | Floor-owned World Model history; clear World and All across exact message/Swipe owners |
-| `character` | Valid Floor `analysis`, `events[]` and Floor `character_registry`; Runtime tracking/profile DTOs | Character and All clear remove these authoritative facts and rebuild empty Runtime DTOs |
-| `participant_aggregation` | Floor `participant_aggregation_timeline` in the exact Character message/Swipe owner | Append-only aggregation success and frozen Timing provenance; clear with Character/All, reject wrong Chat/Swipe/Floor Version, and re-derive participants from the current valid Floor Events |
+| `character` | Valid Floor `analysis`, `events[]`, `character_registry`, `snapshot`, `projection_timeline`, `tracking_window_timeline`, `pregnancy_lifecycle_timeline`, and `health_assessment_timeline`; Runtime tracking/profile DTOs | Character and All clear remove these authoritative facts and rebuild empty Runtime DTOs |
+| `projection_timing` | Floor `projection_timing_snapshot` in the exact Character message/Swipe owner | Complete frozen Timing collection; clear with Character/All, reject wrong Chat/Swipe/Floor Version, and skip invalid roots during bounded historical reads |
+| `participant_aggregation` | Floor `participant_aggregation_snapshot` in the exact Character message/Swipe owner | Complete aggregation collection and frozen Timing provenance; clear with Character/All, reject wrong Chat/Swipe/Floor Version or item provenance, distinguish absent root from explicit empty root during bounded historical reads, and re-derive participants from the current valid Floor Events |
 | `pregnancy_lifecycle` | Floor `pregnancy_lifecycle_timeline` in the exact Character message/Swipe owner | Confirmed lifecycle facts, independent father candidates, archive evidence, and cycle-scoped release records; clear with Character/All, guard Chat/active Swipe/six-field Version, and never reconstruct candidates from deleted Exposure Events |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
@@ -761,10 +762,14 @@ authoritative slot, applies only the owner's allowlist, and records safe
 events and do not trigger UI rendering.
 
 The owner allowlists are World (`world_model`, `world_model_meta`),
-Event/Character (`analysis`, `events`, `character_registry`), and Projection
-(`snapshot`, `projection_timeline`). Clear, restore, migration, and lifecycle
-root invalidation remain explicit low-level operations with their own guards;
-they are not a second ordinary patch path. A successful `saveFloor()` Promise
+Event/Character (`analysis`, `events`, `character_registry`), Projection
+(`snapshot`, `projection_timeline`, `projection_timing_snapshot`), Tracking
+(`tracking_window_timeline`), Participant Aggregation
+(`participant_aggregation_snapshot`), Lifecycle
+(`pregnancy_lifecycle_timeline`, `events`), and Health
+(`health_assessment_timeline`). Clear, restore, migration, and lifecycle root
+invalidation remain explicit low-level operations with their own guards; they
+are not a second ordinary patch path. A successful `saveFloor()` Promise
 does not by itself claim durable success: the coordinator requires read-back of
 the expected owner patch, preservation of every pre-existing sibling root, and
 a matching current Floor Version before returning `commitState: "confirmed"`.
@@ -796,11 +801,14 @@ is confirmed.
 
 ### 6.2 Manual Character clear
 
-The Character operation removes `analysis`, `events[]`, `character_registry`, and
-`projection_timeline` from every exact message and Swipe Floor owner. These are
-the authoritative sources for character Events, canonical identity, tracking
-subjects/candidates, and profiles; removing only Runtime projections would
-allow reload to rebuild the old state. It preserves World Model fields,
+The Character operation removes `analysis`, `events[]`, `character_registry`,
+`snapshot`, `projection_timeline`, `projection_timing_snapshot`,
+`tracking_window_timeline`, `participant_aggregation_snapshot`,
+`pregnancy_lifecycle_timeline`, and `health_assessment_timeline` from every
+exact message and Swipe Floor owner. These are the authoritative sources for
+character Events, canonical identity, Tracking subjects/candidates, frozen
+Timing/Aggregation collections, and profiles; removing only Runtime
+projections would allow reload to rebuild the old state. It preserves World Model fields,
 `v`, `floor_version`, Chat settings, text, Swipe text, unrelated fields, global
 settings, and the Secret Store. No reset marker is written.
 
@@ -826,9 +834,12 @@ silently retained.
 ### 6.4 Manual Clear All
 
 Clear All removes the explicit union of the Character and World Floor
-allowlists: `analysis`, `events`, `character_registry`, `world_model`, and
-`world_model_meta`. It never replaces Chat metadata or removes a whole Floor
-root. `v`, `floor_version`, unknown future fields, settings, text, and
+allowlists: `analysis`, `events`, `character_registry`, `snapshot`,
+`projection_timeline`, `projection_timing_snapshot`,
+`tracking_window_timeline`, `participant_aggregation_snapshot`,
+`pregnancy_lifecycle_timeline`, `health_assessment_timeline`, `world_model`,
+and `world_model_meta`. It never replaces Chat metadata or removes a whole
+Floor root. `v`, `floor_version`, unknown future fields, settings, text, and
 unrelated data remain intact.
 
 The walker preserves all surrounding host objects: Chat metadata outside the
@@ -842,7 +853,7 @@ removal coverage in contract tests.
 
 | Target | Chat metadata removed/reset | Floor/Swipe treatment | Facts/projections retained | Runtime and global treatment |
 | --- | --- | --- | --- | --- |
-| Character | Runtime character DTOs | Remove Floor `analysis`, `events`, and `character_registry` in every owner | World Model, `v`, `floor_version`, settings, text, Swipe text, unknown fields, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
+| Character | Runtime character DTOs | Remove Floor `analysis`, `events`, `character_registry`, `snapshot`, `projection_timeline`, `projection_timing_snapshot`, `tracking_window_timeline`, `participant_aggregation_snapshot`, `pregnancy_lifecycle_timeline`, and `health_assessment_timeline` in every owner | World Model, `v`, `floor_version`, settings, text, Swipe text, unknown fields, unrelated fields | Abort/invalidate character work; preserve global settings and Secret Store |
 | World | Floor `world_model`, Floor `world_model_meta` | Remove those exact fields in every message and every Swipe owner | Runtime character DTOs, settings, Events, analysis, valid Floor identity snapshots, text, Swipe text, unrelated fields | Abort/invalidate World/cache work; preserve global settings and Secret Store |
 | All | No Chat metadata | Remove only the explicit union of Character and World Floor fields in every ordinary message and every Swipe slot | Chat metadata, `v`, `floor_version`, unknown fields, text, Swipe text, unrelated plugin fields | Abort/invalidate all work; preserve global settings and Secret Store |
 | Start New source A | Same All plan, applied to immutable source A | Same All traversal across A's metadata, ordinary messages, and all Swipe slots | A's text, Swipe text, unrelated fields, and global settings | A is invalidated; B is loaded clean and is never the source target |
@@ -1258,15 +1269,28 @@ Related contracts:
 ## Pre-confirmation timing lifecycle
 
 `settings.character_timing_configs` is Chat-local authoritative configuration
-and is isolated by Chat scope. `projection_timing_timeline` is a separate
-Floor-owned append-only root under the existing Projection coordinator owner;
-it is cleared with Character/All Floor facts, filtered by active Swipe and exact
-Floor Version, and never becomes a Chat-level fact mirror. A timing creation
-freezes config, variance, state modifier, effective min/max, basis, and owner
-version. Later config/World/State changes do not rewrite it. Source Event edit or
-delete is handled on derived read by basis validation; when no basis remains the
-timing is fail-closed. Timing never enters Event, Current State, Snapshot, or
-Projection Context evidence.
+and is isolated by Chat scope. `projection_timing_snapshot` is a separate
+Floor-owned complete collection root under the existing Projection coordinator
+owner; it is cleared with Character/All Floor facts, filtered by active Swipe
+and exact Floor Version, and never becomes a Chat-level fact mirror. A timing
+creation freezes config, variance, state modifier, effective min/max, basis, and
+owner version. Later config/World/State changes do not rewrite an existing
+item, while a later Floor writes the next complete collection when it attaches
+new basis refs or removes/replaces an item. Historical reads scan only the
+current Chat through the target Floor: an absent root inherits the nearest
+valid older snapshot, an explicit empty snapshot stops inheritance, and a root
+with an invalid schema is skipped rather than treated as explicit empty state.
+Every candidate is revalidated with the current active Swipe and recomputed
+complete Floor Version; item creation provenance outside the root/target Floor,
+Chat, or active Swipe invalidates that candidate root. Source Event edit or delete is handled on derived read
+by basis validation; when no basis remains the timing is fail-closed. Timing
+never enters Event, Current State, Snapshot, or Projection Context evidence.
+An explicit current-cycle manual Timing edit captures the live six-field Floor
+Version at edit start and may repair only the current owner slot when that
+version still matches exactly at write time. A stored `content_hash` and/or
+`message_version` mismatch is not accepted for ordinary writes or historical
+reads; the validated complete collection is rewritten with the current live
+version through the Coordinator and read back authoritatively.
 
 ## Pre-confirmation Tracking Window Phase 1 + Phase 2
 

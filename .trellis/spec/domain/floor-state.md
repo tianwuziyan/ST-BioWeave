@@ -215,17 +215,35 @@ after edit/regeneration, after history truncation, and after reload.
 
 ### Pre-confirmation timing owner
 
-`projection_timing_timeline` is a sibling Floor-owned append-only root under the
-Projection persistence owner. It uses the same active Character Swipe, complete
-six-field Floor Version, coordinator transaction, authoritative readback, and
-stale-owner guards as `projection_timeline`, but it is not a Projection,
-BiologicalEvent, Snapshot, Current State, or Tracking Window. Chat-local
-`settings.character_timing_configs` is authoritative configuration and is not a
-Floor-derived fact. Timing records never become a fallback source when their
-Floor/Swipe/version is inactive. The built-in Human narrative preset is a Core
-configuration baseline, not a Floor fact or World Rule; the formal Characters
-UI writes only through the Chat-local timing-config API and never through the
-debug facade.
+`projection_timing_snapshot` is a sibling Floor-owned complete collection root
+under the Projection persistence owner. It uses the same active Character
+Swipe, complete six-field Floor Version, coordinator transaction, authoritative
+readback, and stale-owner guards as `projection_timeline`, but it is not a
+Projection, BiologicalEvent, Snapshot, Current State, or Tracking Window.
+Timing items may be replaced on a later Floor so the latest complete collection
+is authoritative for that Floor; historical roots remain immutable. A read
+scans the current Chat toward the target Floor and uses the nearest actual,
+valid root. An absent root inherits that older collection, an explicit
+`{schema_version: 1, items: []}` root is authoritative and blocks inheritance,
+and a schema-invalid root is skipped rather than treated as explicit empty.
+Every candidate is revalidated against the active Swipe and recomputed complete
+Floor Version; an item whose creation provenance is outside the root/target
+Floor, Chat, or active Swipe also invalidates that candidate root. Chat-local
+`settings.character_timing_configs` is authoritative
+configuration and is not a Floor-derived fact. Timing records never become a
+fallback source when their Floor/Swipe/version is inactive. The built-in Human
+narrative preset is a Core configuration baseline, not a Floor fact or World
+Rule; the formal Characters UI writes only through the Chat-local timing-config
+API and never through the debug facade.
+An explicit edit of the current Timing Instance may repair a current owner slot
+whose stored metadata has the same Chat/message/Floor/Swipe identity as the
+live authoritative version, only when the edit-start version exactly matches
+that live six-field version. The stored root may have stale `content_hash`
+and/or `message_version`; the live six-field version is checked first, the
+complete validated collection is written with the repaired version through the
+Coordinator, and historical candidates and ordinary writes remain exact-match
+only. This read/repair path does not write during diagnostic collection and is
+not a historical compatibility reader.
 
 `tracking_window_timeline` is a separate sibling Floor-owned append-only root
 under the Tracking owner. It follows the same active Swipe, complete Floor
@@ -234,14 +252,23 @@ immutability rules. It is a derived lifecycle record, not a BiologicalEvent or
 Current State fact; active Tracking rebuilds still validate the surviving Event
 basis before using an open Window.
 
-`participant_aggregation_timeline` is another independent sibling root. It is
-owned by the exact Character Floor and active Swipe that records a successful
-participant aggregation, carries the complete six-field Floor Version, and is
-written/read through the Floor Persistence Coordinator. It is not a Timing
-Instance, Tracking Window, Projection, or Chat-level cache. Its accepted
-Exposure IDs are only a boundary for re-deriving the current participant list
-from the current complete valid Event snapshot; later Floor owners never merge
-Exposure facts across Floors.
+`participant_aggregation_snapshot` is another independent sibling complete
+collection root. It is owned by the exact Character Floor and active Swipe that
+records a successful participant aggregation, carries the complete six-field
+Floor Version, and is written/read through the Floor Persistence Coordinator.
+Later Floors replace/update/delete the complete collection while historical
+roots remain immutable. Its read uses the same nearest-root rule: an absent root
+inherits, an explicit empty root blocks inheritance, a schema-invalid root is
+skipped, and every candidate is revalidated against active Swipe and the
+recomputed complete Floor Version. An explicit current-cycle reevaluation may
+use the same bounded current-owner metadata repair described for Timing before
+writing the current complete collection; historical candidates and ordinary
+writes remain exact-match only. An item whose creation provenance is outside
+the root/target Floor, Chat, or active Swipe invalidates that candidate root. It
+is not a Timing Instance, Tracking Window, Projection, or Chat-level cache. Its
+accepted Exposure IDs are only a boundary for re-deriving the current
+participant list from the current complete valid Event snapshot; later Floor
+owners never merge Exposure facts across Floors.
 
 `pregnancy_lifecycle_timeline` is an independent sibling root owned by the
 exact Character Floor and active Swipe. It stores normalized confirmed
@@ -497,13 +524,17 @@ second Floor storage abstraction.
 Ordinary writes are submitted to the single `FloorPersistenceCoordinator` as
 owner-scoped patches. World may patch only `world_model` and
 `world_model_meta`; Event/Character may patch only `analysis`, `events`, and
-`character_registry`; Projection may patch only `snapshot` and
-`projection_timeline`. The coordinator serializes the same Chat/message/Floor/
-Swipe/Version key, reacquires the live owner immediately before dispatch,
-merges the latest authoritative slot, and confirms only after official
-readback plus sibling audit. `FLOOR_TX_*` traces are diagnostics, not business
-events. Clear, restore, migration, and explicit lifecycle invalidation remain
-special low-level operations with separate guards.
+`character_registry`; Projection may patch only `snapshot`,
+`projection_timeline`, and `projection_timing_snapshot`; Tracking may patch
+only `tracking_window_timeline`; Participant Aggregation may patch only
+`participant_aggregation_snapshot`; Lifecycle may patch only
+`pregnancy_lifecycle_timeline` and `events`; Health may patch only
+`health_assessment_timeline`. The coordinator serializes the same
+Chat/message/Floor/Swipe/Version key, reacquires the live owner immediately
+before dispatch, merges the latest authoritative slot, and confirms only after
+official readback plus sibling audit. `FLOOR_TX_*` traces are diagnostics, not
+business events. Clear, restore, migration, and explicit lifecycle
+invalidation remain special low-level operations with separate guards.
 
 Terminal failure/cancellation patches are checked again at dispatch time and
 cannot overwrite an already confirmed Event `analysis.status=success` from

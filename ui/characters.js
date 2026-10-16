@@ -314,18 +314,23 @@ function renderCharacterTimingEditor(editor, characterId) {
   const config = editor.draft ?? editor.config ?? {}
   const presetLabel = editor.humanPresetApplicable ? '恢复人类默认' : '恢复默认'
   const current = editor.timingInstance
+  const presetAction = '<button type="button" class="bioweave-button" data-bioweave-action="restore-human-timing-preset">' + presetLabel + '</button>'
+  const formConfig = current
+    ? {...config, base_min_story_days: current.base_min_story_days, base_max_story_days: current.base_max_story_days, variance_ratio: current.variance_ratio, variance_cap_story_days: current.variance_cap_story_days, total_adjustment_cap_story_days: current.total_adjustment_cap_story_days}
+    : config
+  const individualFluctuationField = '<label><span>个体浮动</span><input class="bioweave-input" type="number" min="0" step="0.01" data-bioweave-timing-field="variance_ratio" value="' + escapeHtml(Number(formConfig.variance_ratio) * 100) + '"> <em>%</em></label>'
   return (
     '<section class="bioweave-card bioweave-character-timing-editor bioweave-character-timing-popover bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-timing-popover" role="dialog" aria-modal="true" aria-label="未确认妊娠推演周期">' +
-    '<header class="bioweave-character-timing-editor-head"><div><h3>未确认妊娠推演周期</h3><p>只影响之后新建立的观察周期，不重新计算当前周期。</p></div><button type="button" class="bioweave-button bioweave-character-timing-close" data-bioweave-action="cancel-character-timing" aria-label="关闭未确认妊娠推演周期">×</button></header>' +
-    '<div class="bioweave-character-timing-section"><h4>之后新周期的设置</h4><div class="bioweave-character-timing-fields">' +
-    '<label><span>最短时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_min_story_days" value="' + escapeHtml(config.base_min_story_days) + '"> <em>天</em></label>' +
-    '<label><span>最大时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_max_story_days" value="' + escapeHtml(config.base_max_story_days) + '"> <em>天</em></label>' +
-    '<label><span>个体浮动</span><input class="bioweave-input" type="number" min="0" step="0.01" data-bioweave-timing-field="variance_ratio" value="' + escapeHtml(Number(config.variance_ratio) * 100) + '"> <em>%</em></label>' +
-    '<label><span>最大浮动</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="variance_cap_story_days" value="' + escapeHtml(config.variance_cap_story_days) + '"> <em>天</em></label>' +
-    '<label><span>总调整上限</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="total_adjustment_cap_story_days" value="' + escapeHtml(config.total_adjustment_cap_story_days) + '"> <em>天</em></label>' +
+    '<header class="bioweave-character-timing-editor-head"><div><h3>未确认妊娠推演周期</h3><p>' + (current ? '当前已采用周期可直接在此修改；个体浮动为百分比配置，不会自动重新随机采样。' : '保存后作为推演周期配置使用。') + '</p></div><button type="button" class="bioweave-button bioweave-character-timing-close" data-bioweave-action="cancel-character-timing" aria-label="关闭未确认妊娠推演周期">×</button></header>' +
+    '<div class="bioweave-character-timing-section"><h4>推演周期设置</h4><div class="bioweave-character-timing-fields">' +
+    '<label><span>最短时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_min_story_days" value="' + escapeHtml(formConfig.base_min_story_days) + '"> <em>天</em></label>' +
+    '<label><span>最大时间</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="base_max_story_days" value="' + escapeHtml(formConfig.base_max_story_days) + '"> <em>天</em></label>' +
+    individualFluctuationField +
+    '<label><span>最大浮动</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="variance_cap_story_days" value="' + escapeHtml(formConfig.variance_cap_story_days) + '"> <em>天</em></label>' +
+    '<label><span>总调整上限</span><input class="bioweave-input" type="number" min="0" step="0.1" data-bioweave-timing-field="total_adjustment_cap_story_days" value="' + escapeHtml(formConfig.total_adjustment_cap_story_days) + '"> <em>天</em></label>' +
     '</div></div>' +
-    '<div class="bioweave-character-timing-section"><h4>当前已经采用的周期</h4>' + renderTimingInstanceSummary(current) + '</div>' +
-    '<div class="bioweave-character-timing-actions"><button type="button" class="bioweave-button" data-bioweave-action="restore-human-timing-preset">' + presetLabel + '</button><span class="bioweave-spacer"></span><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-timing">取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-timing"' + (editor.saving ? ' disabled' : '') + '>保存</button></div>' +
+    '<div class="bioweave-character-timing-section"><h4>当前已经采用的周期</h4>' + renderTimingInstanceSummary(current) + (current ? '<p class="bioweave-muted">上方基础周期来自当前 Timing Instance；保存会写入当前 Floor，并只重新评估本周期的 Aggregation。</p>' : '') + '</div>' +
+    '<div class="bioweave-character-timing-actions">' + presetAction + '<span class="bioweave-spacer"></span><button type="button" class="bioweave-button" data-bioweave-action="cancel-character-timing">取消</button><button type="button" class="bioweave-button primary" data-bioweave-action="save-character-timing"' + (editor.saving ? ' disabled' : '') + '>保存</button></div>' +
     (editor.error ? '<p class="bioweave-form-error">' + escapeHtml(editor.error) + '</p>' : '') +
     '</section>'
   )

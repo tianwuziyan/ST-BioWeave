@@ -146,7 +146,7 @@ have separate contracts and failure boundaries.
 | Projection | Floor-owned non-factual future possibility and its lifecycle | Yes, in `projection_timeline` | Watch for a possible development and evolve it as narrative evidence appears | Event; factual pregnancy state |
 | Projection Context | Runtime view of context-visible Projections | Runtime/read model; prompt slot is refreshed | Inject possible developments into the ST prompt | Event evidence; authoritative factual storage |
 | Character Timing Config | Chat-local character configuration | Yes, Chat-local | Base pre-confirmation timing policy for future cycles | Character Registry/Profile; World Rule |
-| Observation Timing Instance | Floor-owned Timing-domain record | Yes, `projection_timing_timeline` | Freeze one cycle's basis, variance, effective min/max, and provenance | Tracking Window; Projection; BiologicalEvent |
+| Observation Timing Instance | Floor-owned Timing-domain record | Yes, `projection_timing_snapshot` complete Floor collection | Freeze one cycle's basis, variance, effective min/max, and provenance | Tracking Window; Projection; BiologicalEvent |
 | Tracking Window | Floor-owned Tracking Window Phase 1 + Phase 2 | Yes, `tracking_window_timeline` | Deterministic exposure round, World-authoritative horizon lifecycle, and active pre-confirmation filtering | Timing Instance; Pregnancy Episode; Projection |
 | Snapshot | Factual state optimization/bridge | Yes where the current lifecycle requires it | Avoid rebuilding factual state unnecessarily | Projection persistence; Timing persistence |
 
@@ -295,7 +295,7 @@ filtering. It still does not implement negative resolution.
 The current implementation includes:
 
 - Chat-local `character_timing_configs`, including reset and versioning;
-- Floor-owned `projection_timing_timeline`;
+- Floor-owned `projection_timing_snapshot` complete collections;
 - deterministic logical cycle and timing identities;
 - one-time bounded variance sampling at Timing Instance creation;
 - frozen effective minimum and maximum;
@@ -354,9 +354,9 @@ Rules remain declarative and deterministic and prohibit `random`, `rng`,
 `seed`, `probability`, and `weight` fields.
 
 For an active compatible cycle, later compatible factual exposures attach as
-additional basis references. They do not resample, move the anchor, or change
-the frozen effective window. Timing Instance is deliberately not a complete
-Pregnancy Exposure Tracking Window.
+additional basis references through one complete snapshot update. They do not
+resample, move the anchor, or change the frozen effective window. Timing
+Instance is deliberately not a complete Pregnancy Exposure Tracking Window.
 
 ## Persistence Model
 
@@ -372,8 +372,10 @@ The validated persistence architecture is:
 - immutable historical Floors;
 - forward-only persistence.
 
-Projection records and Timing records are separate Floor-owned timelines. Do
-not bypass `floor-persistence-coordinator.js`, use message extras as a parallel
+Projection records remain in the append-only `projection_timeline`, while Timing
+and Participant Aggregation records are complete Floor collections in
+`projection_timing_snapshot` and `participant_aggregation_snapshot`. Do not
+bypass `floor-persistence-coordinator.js`, use message extras as a parallel
 fact source, or introduce Chat-level derived state as a second authority.
 
 The historical World F5/reload persistence overwrite issue is closed: the

@@ -66,9 +66,9 @@ test('user Floor clear operations are explicit allowlists and never include owne
     'character_registry',
     'snapshot',
     'projection_timeline',
-    'projection_timing_timeline',
+    'projection_timing_snapshot',
     'tracking_window_timeline',
-    'participant_aggregation_timeline',
+    'participant_aggregation_snapshot',
     'pregnancy_lifecycle_timeline',
     'health_assessment_timeline',
   ]);

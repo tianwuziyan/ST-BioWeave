@@ -17,6 +17,7 @@ export function createAnalysisExecutionPort({run} = {}) {
         reason = "automatic",
         generation,
         analysisExecutionId,
+        pipelineRunId,
         intent,
         trigger,
       } = request;
@@ -25,6 +26,8 @@ export function createAnalysisExecutionPort({run} = {}) {
         options.generation = generation;
       if (Object.prototype.hasOwnProperty.call(request, "analysisExecutionId"))
         options.analysisExecutionId = analysisExecutionId;
+      if (Object.prototype.hasOwnProperty.call(request, "pipelineRunId"))
+        options.pipelineRunId = pipelineRunId;
       if (Object.prototype.hasOwnProperty.call(request, "intent"))
         options.intent = intent;
       if (Object.prototype.hasOwnProperty.call(request, "trigger"))

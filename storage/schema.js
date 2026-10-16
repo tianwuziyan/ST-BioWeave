@@ -732,21 +732,18 @@ export function emptyFloor() {
       lifecycle_records: [],
       delivery_records: [],
     },
-    projection_timing_timeline: {
+    projection_timing_snapshot: {
       schema_version: 1,
-      creations: [],
-      basis_records: [],
-      lifecycle_records: [],
+      items: [],
     },
     tracking_window_timeline: {
       schema_version: 1,
       creations: [],
       lifecycle_records: [],
     },
-    participant_aggregation_timeline: {
+    participant_aggregation_snapshot: {
       schema_version: 1,
-      creations: [],
-      lifecycle_records: [],
+      items: [],
     },
     pregnancy_lifecycle_timeline: {
       schema_version: 1,

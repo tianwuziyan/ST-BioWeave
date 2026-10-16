@@ -1888,10 +1888,14 @@ current Fact contract rejects that sentinel.
 
 World Model remains the only authority for validated declarative
 `projection_rules[]` and mechanism binding. Character-specific timing config and
-the Floor-owned frozen observation timing instance are separate layers. Runtime
-MUST NOT add a real-world Human timing fallback when `projection_rules[]` is
-empty, and projection rules MUST NOT contain probability, weight, random, rng,
-or seed fields. A future Human baseline composition may create a validated
-World-owned rule before Runtime consumption; this Phase 1 deliberately supplies
-no medical default day values. Nonhuman types must not inherit that baseline
-without an explicit World Model composition decision.
+the Floor-owned frozen observation timing instance are separate layers. A valid
+pregnancy-relevant Exposure plus a resolved Character timing config may create
+the Timing Instance even when `projection_rules[]` is empty; in that case
+`world_rule_binding` is explicitly `null` and no rule is fabricated. World Model
+rules remain mandatory for Projection Eligibility and Projection AI, but are not
+a prerequisite for Timing or Participant Aggregation. Runtime MUST NOT invent a
+medical default day range: an explicit Character override or the existing
+validated Human baseline policy is resolved through the same Character timing
+resolver, and nonhuman types must not inherit that baseline without an explicit
+World Model applicability decision. Projection rules MUST NOT contain
+probability, weight, random, rng, or seed fields.

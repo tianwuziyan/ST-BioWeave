@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"核对六字段 Floor Version、active Swipe、Floor-owned derived state、只读 readback 与 stale 结果隔离约束"}
+{"file":".trellis/spec/domain/automatic-analysis.md","reason":"核对自动调度入口、共享 Analysis Execution Port、scheduler ownership 和异步边界"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"核对 Tracking Window、Story Time、Timing 与 Aggregation 的现有业务边界，避免诊断复制规则"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"核对有效 Event snapshot、Exposure provenance 和 Runtime 输入边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"实现 Runtime 到 Debug 导出/UI 的跨层 DTO 时复核 source/transform/read boundary 与状态区分"}
+{"file":"docs/ARCHITECTURE.md","reason":"保持 diagnostics owner、Runtime feature owner、Debug DTO 和普通产品 UI 边界一致"}

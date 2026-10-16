@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查新增 run_id/诊断 readback 不越过 Floor-owned Snapshot、Swipe 和六字段版本权威边界"}
+{"file":".trellis/spec/domain/automatic-analysis.md","reason":"检查 scheduler、异步 Promise、stale completion 和 manual/automatic execution 没有被诊断改动"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 Debug UI 的安全渲染、只读 DTO 消费和无业务资格重算"}
+{"file":".trellis/spec/frontend/api-error-propagation.md","reason":"检查诊断异常 fail-open、错误码和 readback failure 的安全传播"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 Runtime、导出、UI、测试之间的结构化诊断契约与三种来源类型"}
+{"file":"docs/ARCHITECTURE.md","reason":"检查架构文档、模块责任、调用链和 Debug surface 是否与最终 Diff 同步"}

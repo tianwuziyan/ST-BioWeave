@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createProjectionRuntime} from '../runtime/projection-runtime.js'
 import {buildProjectionRuleId} from '../core/projection-eligibility.js'
+import {createRuntimeDiagnostics} from '../runtime/diagnostics.js'
 
 const version = {
   chat_id: 'chat-projection',
@@ -51,7 +52,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, mutateInputs = null, resolvePreConfirmationTiming = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null} = {}) {
   let current = inputs()
   const saved = []
   const statuses = []
@@ -65,11 +66,12 @@ function createFixture({analyzer, mutateInputs = null, resolvePreConfirmationTim
       return structuredClone(current)
     },
     resolveCurrentFloor: async () => current.floor,
-    getProjectionViews: views,
+    getProjectionViews: getProjectionViews ?? views,
     saveGeneratedProjection: async ({projectionCandidate}) => { saved.push(projectionCandidate); return {status: 'committed'} },
     saveProjectionEvidence: async () => ({status: 'committed'}),
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     resolvePreConfirmationTiming,
+    diagnostics,
     refreshProjectionContext: async () => {
       contextRefreshes.push(saved.length)
     },
@@ -77,6 +79,55 @@ function createFixture({analyzer, mutateInputs = null, resolvePreConfirmationTim
   })
   return {runtime, saved, statuses, contextRefreshes, setInputs: next => {current = next}}
 }
+
+test('Projection Runtime correlates real stages to one bounded pipeline run', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const fixture = createFixture({diagnostics})
+  const result = await fixture.runtime.process({reason: 'factual-success'})
+  assert.equal(result.status, 'success')
+
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  assert.equal(trace.runs.length, 1)
+  assert.equal(trace.runs[0].execution_status, 'SUCCEEDED')
+  const runIds = new Set(trace.stages.map(stage => stage.run_id))
+  assert.deepEqual([...runIds], [trace.runs[0].run_id])
+  assert.ok(trace.stages.some(stage => stage.stage === 'TIMING_ELIGIBILITY_EVALUATION'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_ELIGIBILITY'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_AI_SCHEDULING'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_PERSISTENCE'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_READBACK' && stage.readback_succeeded === true))
+})
+
+test('Projection Runtime business output is unchanged when diagnostics are absent', async () => {
+  const withoutDiagnostics = createFixture()
+  const withDiagnostics = createFixture({diagnostics: createRuntimeDiagnostics()})
+
+  const withoutResult = await withoutDiagnostics.runtime.process({reason: 'diagnostic-equivalence'})
+  const withResult = await withDiagnostics.runtime.process({reason: 'diagnostic-equivalence'})
+
+  assert.equal(withResult.status, withoutResult.status)
+  assert.deepEqual(withResult.errors, withoutResult.errors)
+  assert.equal(withDiagnostics.saved.length, withoutDiagnostics.saved.length)
+  assert.deepEqual(withDiagnostics.contextRefreshes, withoutDiagnostics.contextRefreshes)
+})
+
+test('Projection Runtime marks authoritative readback failures without changing the business result contract', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  let viewReads = 0
+  const fixture = createFixture({
+    diagnostics,
+    getProjectionViews: async () => {
+      viewReads += 1
+      if (viewReads > 2) throw Object.assign(new Error('PROJECTION_READBACK_UNAVAILABLE'), {code: 'PROJECTION_READBACK_UNAVAILABLE'})
+      return {all: fixture?.saved?.map(item => ({...item, factual_status: 'active', deleted: false, context_visible: true})) ?? []}
+    },
+  })
+  const result = await fixture.runtime.process({reason: 'readback-regression'})
+  assert.equal(result.status, 'failed')
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_READBACK' && stage.execution_status === 'READBACK_FAILED'))
+  assert.equal(trace.runs[0].execution_status, 'FAILED')
+})
 
 test('Projection Runtime generates one candidate and same identity reread does not call AI again', async () => {
   let calls = 0
