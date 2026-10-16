@@ -90,12 +90,12 @@ test('Character detail uses one timing form for the current Timing Instance', ()
   assert.match(html, /bioweave-character-timing-popover/u)
   assert.match(html, /aria-modal="true"/u)
   assert.match(html, /data-bioweave-action="cancel-character-timing"/u)
-  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="10"/)
-  assert.match(html, /data-bioweave-timing-field="base_max_story_days" value="20"/)
-  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="12"/)
+  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="14"/)
+  assert.match(html, /data-bioweave-timing-field="base_max_story_days" value="42"/)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
   assert.doesNotMatch(html, /data-bioweave-timing-field="sampled_individual_offset_story_days"/)
-  assert.match(html, /data-bioweave-timing-field="variance_cap_story_days" value="4"/)
-  assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="2"/)
+  assert.match(html, /data-bioweave-timing-field="variance_cap_story_days" value="3"/)
+  assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="3"/)
   assert.match(html, /data-bioweave-action="restore-human-timing-preset"/)
   assert.match(html, />天<\/em>/)
   assert.match(html, /\+1\.2 天/u)
@@ -103,8 +103,7 @@ test('Character detail uses one timing form for the current Timing Instance', ()
   assert.equal((html.match(/data-bioweave-action="save-character-timing"/g) ?? []).length, 1)
   assert.doesNotMatch(html, /save-current-character-timing/u)
   assert.doesNotMatch(html, /data-bioweave-current-timing-field/u)
-  assert.doesNotMatch(html, /14/)
-  assert.doesNotMatch(html, /42/)
+  assert.match(html, /当前已采用周期可直接在此修改/u)
   assert.match(html, /个体浮动为百分比配置/u)
   assert.doesNotMatch(UI_SOURCE, /__BIOWEAVE_DEBUG__/u)
   assert.match(FINAL_STYLE_SOURCE, /bioweave-character-timing-popover[\s\S]*width: min\(320px/u)
@@ -122,6 +121,10 @@ test('Character detail uses one timing form for the current Timing Instance', ()
   }
   assert.doesNotMatch(restoreSource, /saveCharacterTiming|runtime\./u)
   assert.match(APP_SOURCE, /runtime\.saveCharacterTimingConfig\(/u)
+  assert.match(APP_SOURCE, /if \(!timingEditorState\.humanPresetApplicable \|\| !timingEditorState\.draft\) return/u)
+  assert.match(APP_SOURCE, /if \(!editingCurrent && typeof runtime\.saveCharacterTimingConfig !== 'function'\) return/u)
+  assert.match(APP_SOURCE, /if \(editingCurrent\) \{[\s\S]*runtime\.editCharacterTimingInstance\(/u)
+  assert.match(APP_SOURCE, /\} else \{[\s\S]*await runtime\.saveCharacterTimingConfig\(/u)
   assert.match(APP_SOURCE, /当前周期已保存，但 Aggregation 重新评估失败/u)
   assert.match(APP_SOURCE, /当前周期保存结果无法从权威 Floor 读回/u)
   assert.match(APP_SOURCE, /timing_persisted === true/u)
@@ -149,6 +152,112 @@ test('Character timing editor shows no current cycle before a Timing Instance ex
   assert.doesNotMatch(html, /本次偏移/u)
   assert.match(html, /data-bioweave-action="restore-human-timing-preset"/)
   assert.equal((html.match(/data-bioweave-action="save-character-timing"/g) ?? []).length, 1)
+})
+
+test('Character timing editor keeps non-Human draft values without applying the preset', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '精灵', biological_type: '非人类'}}},
+    analysisStatus: {state: 'success', event_count: 0},
+    timingEditor: {
+      open: true,
+      characterId: 'char-a',
+      humanPresetApplicable: false,
+      draft: {base_min_story_days: 8, base_max_story_days: 30, variance_ratio: 0.2, variance_cap_story_days: 5, total_adjustment_cap_story_days: 4},
+      timingInstance: null,
+    },
+  })
+  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="8"/)
+  assert.match(html, /data-bioweave-timing-field="base_max_story_days" value="30"/)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="20"/)
+  assert.match(html, /data-bioweave-timing-field="variance_cap_story_days" value="5"/)
+  assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="4"/)
+  assert.match(html, />恢复默认<\/button>/u)
+  assert.doesNotMatch(html, />恢复人类默认<\/button>/u)
+})
+
+test('clicking restore updates the current timing draft without persisting it', async () => {
+  const documentRef = new AppFakeDocument()
+  const timing = {
+    character_id: 'char-a',
+    timing_instance_id: 'timing-a',
+    base_min_story_days: 10,
+    base_max_story_days: 16,
+    variance_ratio: 0.2,
+    variance_cap_story_days: 5,
+    total_adjustment_cap_story_days: 4,
+    sampled_individual_offset_story_days: 1,
+    effective_min_story_days: 11,
+    effective_max_story_days: 17,
+  }
+  let editCalls = 0
+  let configSaveCalls = 0
+  let editorReads = 0
+  const runtime = {
+    ...apiProfileRuntime('chat-timing-restore'),
+    collectActiveBusinessData: async () => ({
+      tracking_subjects: {
+        'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []},
+      },
+      character_profiles: {
+        'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}},
+      },
+      active_events: [],
+      analysis_status: {state: 'success', event_count: 0},
+      current_state_status: 'NO_CHARACTER_FLOOR',
+    }),
+    getCharacterTimingEditorData: async () => {
+      editorReads += 1
+      return {
+      config: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.1, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3},
+      human_preset_applicable: true,
+      timing_instance: structuredClone(timing),
+      floor_version: null,
+      }
+    },
+    editCharacterTimingInstance: async () => { editCalls += 1 },
+    saveCharacterTimingConfig: async () => { configSaveCalls += 1 },
+  }
+  const app = createApp(runtime, {
+    documentRef,
+    storageRef: {},
+    profileStore: {getSettings: () => ({})},
+  })
+  const root = app.openBioWeave()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  app.go('characters')
+  app.openCharacter('char-a')
+  const click = [...root.listeners.get('click')][0]
+  const timingActionTarget = dataset => ({
+    __root: root,
+    dataset,
+    closest(selector) {
+      return selector.includes('[data-bioweave-action') ? this : null
+    },
+  })
+  await click({
+    target: timingActionTarget({bioweaveAction: 'open-character-timing', characterId: 'char-a'}),
+    preventDefault() {},
+  })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(editorReads, 1)
+  let html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="10"/)
+
+  await click({
+    target: timingActionTarget({bioweaveAction: 'restore-human-timing-preset'}),
+    preventDefault() {},
+  })
+  html = root.querySelector('.bioweave-main').innerHTML
+  assert.match(html, /data-bioweave-timing-field="base_min_story_days" value="14"/)
+  assert.match(html, /data-bioweave-timing-field="base_max_story_days" value="42"/)
+  assert.match(html, /data-bioweave-timing-field="variance_ratio" value="10"/)
+  assert.match(html, /data-bioweave-timing-field="variance_cap_story_days" value="3"/)
+  assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="3"/)
+  assert.equal(editCalls, 0)
+  assert.equal(configSaveCalls, 0)
+  app.destroyBioWeave()
 })
 
 test('Character Health popover keeps the A-variant interaction contract', () => {

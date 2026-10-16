@@ -315,9 +315,9 @@ function renderCharacterTimingEditor(editor, characterId) {
   const presetLabel = editor.humanPresetApplicable ? '恢复人类默认' : '恢复默认'
   const current = editor.timingInstance
   const presetAction = '<button type="button" class="bioweave-button" data-bioweave-action="restore-human-timing-preset">' + presetLabel + '</button>'
-  const formConfig = current
+  const formConfig = editor.draft ?? (current
     ? {...config, base_min_story_days: current.base_min_story_days, base_max_story_days: current.base_max_story_days, variance_ratio: current.variance_ratio, variance_cap_story_days: current.variance_cap_story_days, total_adjustment_cap_story_days: current.total_adjustment_cap_story_days}
-    : config
+    : config)
   const individualFluctuationField = '<label><span>个体浮动</span><input class="bioweave-input" type="number" min="0" step="0.01" data-bioweave-timing-field="variance_ratio" value="' + escapeHtml(Number(formConfig.variance_ratio) * 100) + '"> <em>%</em></label>'
   return (
     '<section class="bioweave-card bioweave-character-timing-editor bioweave-character-timing-popover bioweave-character-editor-popover bioweave-compact-popup" id="bioweave-character-timing-popover" role="dialog" aria-modal="true" aria-label="未确认妊娠推演周期">' +
