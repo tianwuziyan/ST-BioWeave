@@ -1,4 +1,5 @@
 import {floorVersionFromData, hasCompleteFloorVersion, sameFloorVersion} from '../runtime/floor.js';
+import {durationMs, monotonicNow} from '../runtime/diagnostics.js';
 import {cloneValue, emptyFloor} from './schema.js';
 import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js';
 import {
@@ -66,9 +67,14 @@ function itemIsWithinFloorBounds(item, rootVersion, endpointFloor) {
     && Number(created.floor) <= Number(endpointFloor);
 }
 
-export function createParticipantAggregationPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true, floorPersistence = null} = {}) {
+export function createParticipantAggregationPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true, floorPersistence = null, performanceStage = null} = {}) {
   if (!store) throw new TypeError('STORE_REQUIRED');
   const persistence = floorPersistence ?? createFloorPersistenceCoordinator({store, enabledResolver});
+  const persistenceKind = 'PARTICIPANT_AGGREGATION';
+
+  function reportPerformanceStage(payload) {
+    try { performanceStage?.(payload); } catch { /* diagnostics are fail-open */ }
+  }
 
   async function rejectVersion({code, expected, actual, owner, selector, swipeId, source}) {
     let authoritative = actual;
@@ -113,6 +119,37 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
       stored_version_audit: storedAudit,
       version_classification: classification,
     });
+  }
+
+  async function resolveOwnerWithPerformance(input) {
+    const operationId = input?.performanceOperationId;
+    if (!operationId || typeof performanceStage !== 'function') return resolveOwner(input);
+    const startedAt = monotonicNow();
+    try {
+      const result = await resolveOwner(input);
+      reportPerformanceStage({
+        operation_id: operationId,
+        stage: 'PERSISTENCE_REQUEST_PREPARE',
+        kind: 'ASYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(startedAt),
+        persistence_kind: persistenceKind,
+        reason_code: 'PERSISTENCE_OWNER_RESOLVED',
+      });
+      return result;
+    } catch (cause) {
+      reportPerformanceStage({
+        operation_id: operationId,
+        stage: 'PERSISTENCE_REQUEST_PREPARE',
+        kind: 'ASYNC',
+        status: 'FAILED',
+        duration_ms: durationMs(startedAt),
+        persistence_kind: persistenceKind,
+        reason_code: 'PERSISTENCE_OWNER_RESOLUTION_FAILED',
+        error_code: cause?.code ?? cause?.message ?? 'PERSISTENCE_OWNER_RESOLUTION_FAILED',
+      });
+      throw cause;
+    }
   }
 
   async function resolveOwner(input = {}) {
@@ -172,7 +209,7 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
   }
 
   async function mutateFloor(input, mutate) {
-    const resolved = await resolveOwner(input);
+    const resolved = await resolveOwnerWithPerformance(input);
     let mutation = null;
     const result = await persistence.commitFloorPatch({
       owner: 'participant_aggregation',
@@ -181,10 +218,14 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
       swipeId: resolved.swipeId,
       floorVersion: resolved.version,
       operation_type: input.operation_type ?? 'participant-aggregation-snapshot-patch',
+      traceContext: input.performanceOperationId
+        ? {performance_operation_id: input.performanceOperationId, persistence_kind: persistenceKind}
+        : undefined,
       patchResolver: async ({latest}) => {
         // Resolve the collection only after the Coordinator has entered its
-        // serialized dispatch; this preserves siblings across same-Floor
-        // updates that were initiated from stale pre-queue reads.
+        // serialized dispatch and read the current Context slot; this
+        // preserves siblings across same-Floor updates initiated from stale
+        // pre-queue reads.
         let raw = hasOwn(latest, ROOT) ? latest[ROOT] : null;
         if (!hasOwn(latest, ROOT)) {
           const inherited = await getParticipantAggregations({
@@ -215,20 +256,20 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
     return {...mutation, authoritativeReadback: result.authoritativeReadback, noWrite: result.noWrite === true, floor: result.floor};
   }
 
-  async function upsertAggregation({chatId, ownerFloor, floorVersion, editStartFloorVersion, aggregation, operation_type} = {}) {
+  async function upsertAggregation({chatId, ownerFloor, floorVersion, editStartFloorVersion, aggregation, operation_type, performanceOperationId} = {}) {
     const normalized = normalizeParticipantAggregation(aggregation);
     if (String(normalized.created_at_floor_version.chat_id) !== String(chatId)) throw error('CHAT_SCOPE_MISMATCH');
-    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type}, snapshot =>
+    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type, performanceOperationId}, snapshot =>
       upsertParticipantAggregation(normalized, {snapshot, expectedChatId: chatId}));
   }
 
-  async function removeAggregation({chatId, ownerFloor, floorVersion, editStartFloorVersion, aggregationId, aggregation_id, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type}, snapshot =>
+  async function removeAggregation({chatId, ownerFloor, floorVersion, editStartFloorVersion, aggregationId, aggregation_id, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type, performanceOperationId}, snapshot =>
       removeParticipantAggregation(aggregationId ?? aggregation_id, {snapshot, expectedChatId: chatId}));
   }
 
-  async function saveParticipantAggregationSnapshot({chatId, ownerFloor, floorVersion, items, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot => {
+  async function saveParticipantAggregationSnapshot({chatId, ownerFloor, floorVersion, items, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot => {
       const next = replaceParticipantAggregationSnapshot(items, {expectedChatId: chatId});
       return sameSnapshot(snapshot, next)
         ? {status: 'deduped', snapshot}
@@ -236,8 +277,8 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
     });
   }
 
-  async function clearAggregations({chatId, ownerFloor, floorVersion, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot => {
+  async function clearAggregations({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot => {
       const next = emptyParticipantAggregationSnapshot();
       return sameSnapshot(snapshot, next)
         ? {status: 'deduped', snapshot}

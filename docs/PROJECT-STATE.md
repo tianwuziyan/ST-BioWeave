@@ -10,11 +10,11 @@ replacement for the domain specifications, implementation, or test suite.
 | --- | --- |
 | Project | ST-BioWeave |
 | Development branch | `fix/world-model-prompt-baseline` |
-| Checkpoint | Observed at 2026-10-05; HEAD is checkpoint information, not a permanent architectural contract. |
-| Working tree | Current checkpoint includes the committed Health Assessment schema v3, deterministic Health State/Guidance chain, Character Health read-model UI, and synchronized recovery-stage presentation contract. |
-| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, and Automatic Analysis / Floor Counting CLOSED. Real-host behavioral acceptance remains separate by feature. |
+| Checkpoint | Observed at 2026-10-17; this is a working-tree checkpoint, not a permanent architectural contract. |
+| Working tree | Current checkpoint includes the committed Health Assessment schema v3, deterministic Health State/Guidance chain, Character Health read-model UI, synchronized recovery-stage presentation contract, Context-first Floor persistence, and canonical derived-state read caching. |
+| Major milestone | Pre-confirmation Tracking Window Phase 1 + Phase 2, resolved-Window candidate read model, confirmed-pregnancy guard, read-only contributor summary Context bridge, Automatic Analysis / Floor Counting CLOSED, and ordinary Floor writes using the loaded Chat Context plus one authoritative readback. Real-host behavioral acceptance remains separate by feature. |
 | Loading model | SillyTavern direct source-extension loading: `manifest.json` → `index.js`; the remote third-party/BioWeave copy is the host under test. No build, `dist`, or bundle step is required by the current manifest. |
-| Current host status | The remote SillyTavern copy has been verified to load the timing diagnostic entry; `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. The current source additionally contains controlled timing-config fixture save/reset methods using the official current-Chat persistence path; the remote copy must be refreshed before those writes can be used. Host build/load identity is VERIFIED. Behavioral timing/Projection smoke remains pending. |
+| Current host status | SillyTavern 1.19.0 temporary-Chat evidence verifies Context Floor write, native save, official readback, reload durability, and active Swipe behavior; it does not verify formal Chat writes or external multi-client CAS. `__BIOWEAVE_DEBUG__` is visible and diagnostic timing/config reads are callable and read-only. Timing/Projection business acceptance remains a separate gate. |
 
 When this checkpoint conflicts with a concrete implementation or an
 authoritative domain document, verify the current checkout and update this
@@ -365,7 +365,8 @@ The validated persistence architecture is:
 - Floor-owned derived facts and timelines;
 - active-Swipe ownership;
 - complete Floor Version guards;
-- official save through the Floor Persistence Coordinator;
+- Context-first owner merge through the Floor Persistence Coordinator;
+- native host save through the current SillyTavern Chat Context;
 - authoritative readback after save;
 - host-memory slot synchronization;
 - stale-owner/epoch guards;
@@ -472,16 +473,15 @@ missing.
 This is a checkpoint, not a permanent number:
 
 ```text
-1140 total
-1119 pass
-21 fail
+1688 total
+1672 pass
+16 skipped
+0 fail
 ```
 
-The known failures are not being chased in this task: 16 are World prompt
-contract assertion failures; 5 are Story-Time coordinator, Start New Chat
-one-shot cleanup, pending source-A cleanup, and source-A persistence-isolation
-failures. Their signatures are outside the Window/candidate change scope.
-Future verification must compare failure sets and signatures, not only counts.
+This baseline was produced by the current `npm run check` run. The skipped tests
+are explicit historical UI Debug Popup cases; future verification should compare
+test names and signatures, not only aggregate counts.
 
 ## Real Host Status
 
@@ -514,22 +514,14 @@ Build/load identity being VERIFIED is not behavioral Timing acceptance. The
 next smoke run must verify timing identity, persistence, window boundaries, and
 Projection lifecycle behavior separately.
 
-## Documentation Conflicts and Evidence Notes
+## Documentation Evidence Notes
 
-- `docs/DEVELOPMENT.md` contains older checkpoints. The current checkout
-  checkpoint is `1116 / 1099 / 17` after adding ten focused tests. Use the
-  current test run/failure signatures as the
-  operational baseline and update the authoritative development document in a
-  separately authorized documentation task if needed.
-- Historical Timing task artifacts describe earlier design-only or pre-host
-  stages. Current production code and current authoritative docs take
-  precedence over those historical descriptions.
-- An earlier probe observed `__BIOWEAVE_DEBUG__` as undefined. A subsequent
-  dedicated build/load audit superseded that observation: the current remote
-  loaded entry was verified to contain the Phase 1 diagnostic code, and the
-  debug handle plus both read APIs were verified after initialization and
-  reload. The build/load identity gate is closed; Timing behavioral acceptance
-  remains open.
+- Historical Timing and persistence task artifacts describe earlier design or
+  pre-host stages. Current production code and the canonical documents in
+  `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, and
+  `docs/bioweave-data-lifecycle.md` take precedence.
+- Host Context/save/readback evidence is a temporary-Chat acceptance boundary,
+  not a guarantee of formal-chat or cross-tab/device compare-and-swap behavior.
 
 ## Current Next Step
 

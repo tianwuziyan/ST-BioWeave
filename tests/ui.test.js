@@ -194,6 +194,7 @@ test('clicking restore updates the current timing draft without persisting it', 
   let editCalls = 0
   let configSaveCalls = 0
   let editorReads = 0
+  const timingPerformanceOperations = []
   const runtime = {
     ...apiProfileRuntime('chat-timing-restore'),
     collectActiveBusinessData: async () => ({
@@ -216,7 +217,35 @@ test('clicking restore updates the current timing draft without persisting it', 
       floor_version: null,
       }
     },
-    editCharacterTimingInstance: async () => { editCalls += 1 },
+    startTimingPerformanceOperation: input => {
+      const operationId = `timing-perf-${timingPerformanceOperations.length + 1}`
+      timingPerformanceOperations.push({operationId, ...input, stages: [], finished: null})
+      return operationId
+    },
+    recordTimingPerformanceStage: input => {
+      timingPerformanceOperations.find(item => item.operationId === input.operation_id)?.stages.push(input)
+    },
+    finishTimingPerformanceOperation: input => {
+      const operation = timingPerformanceOperations.find(item => item.operationId === input.operation_id)
+      if (operation) operation.finished = input
+    },
+    editCharacterTimingInstance: async input => {
+      editCalls += 1
+      return {
+        status: 'succeeded',
+        timing_instance: {
+          ...timing,
+          base_min_story_days: input.baseMinStoryDays,
+          base_max_story_days: input.baseMaxStoryDays,
+          variance_ratio: input.varianceRatio,
+          variance_cap_story_days: input.varianceCapStoryDays,
+          total_adjustment_cap_story_days: input.totalAdjustmentCapStoryDays,
+        },
+        floor_version: null,
+        timing_readback: {succeeded: true, present: true},
+        aggregation_reevaluation: {attempted: true, readback_status: 'SUCCEEDED', action: 'not_due_before_min'},
+      }
+    },
     saveCharacterTimingConfig: async () => { configSaveCalls += 1 },
   }
   const app = createApp(runtime, {
@@ -257,6 +286,174 @@ test('clicking restore updates the current timing draft without persisting it', 
   assert.match(html, /data-bioweave-timing-field="total_adjustment_cap_story_days" value="3"/)
   assert.equal(editCalls, 0)
   assert.equal(configSaveCalls, 0)
+
+  await click({
+    target: timingActionTarget({bioweaveAction: 'save-character-timing'}),
+    preventDefault() {},
+  })
+  assert.equal(editCalls, 1)
+  assert.equal(editorReads, 1)
+  assert.ok(timingPerformanceOperations.some(item => item.operation === 'OPEN_TIMING_EDITOR'))
+  assert.ok(timingPerformanceOperations.some(item => item.operation === 'RESTORE_TIMING_DEFAULTS'))
+  assert.ok(timingPerformanceOperations.some(item => item.operation === 'SAVE_TIMING_INSTANCE'))
+  app.destroyBioWeave()
+})
+
+test('restoring timing defaults updates the editor controls without rebuilding the characters page when mounted', async () => {
+  const documentRef = new AppFakeDocument()
+  const runtime = {
+    ...apiProfileRuntime('chat-timing-restore-local'),
+    collectActiveBusinessData: async () => ({
+      tracking_subjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+      character_profiles: {'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}}},
+      active_events: [],
+      analysis_status: {state: 'success', event_count: 0},
+      current_state_status: 'NO_CHARACTER_FLOOR',
+    }),
+    getCharacterTimingEditorData: async () => ({
+      config: {schema_version: 1, config_version: 1, base_min_story_days: 14, base_max_story_days: 42, variance_ratio: 0.1, variance_cap_story_days: 3, total_adjustment_cap_story_days: 3},
+      human_preset_applicable: true,
+      timing_instance: null,
+      floor_version: null,
+    }),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  const root = app.openBioWeave()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  app.go('characters')
+  app.openCharacter('char-a')
+  const click = [...root.listeners.get('click')][0]
+  const target = dataset => ({
+    __root: root,
+    dataset,
+    closest(selector) { return selector.includes('[data-bioweave-action') ? this : null },
+  })
+  await click({target: target({bioweaveAction: 'open-character-timing', characterId: 'char-a'}), preventDefault() {}})
+  await new Promise(resolve => setTimeout(resolve, 10))
+
+  const fields = Object.fromEntries([
+    'base_min_story_days', 'base_max_story_days', 'variance_ratio', 'variance_cap_story_days', 'total_adjustment_cap_story_days',
+  ].map(field => [field, {value: 'unchanged'}]))
+  const editor = {
+    querySelector(selector) {
+      const field = selector.match(/data-bioweave-timing-field="([^"]+)"/)?.[1]
+      return fields[field] ?? null
+    },
+  }
+  const originalQuerySelector = root.querySelector.bind(root)
+  root.querySelector = selector => selector === '#bioweave-character-timing-popover' ? editor : originalQuerySelector(selector)
+  const pageBeforeRestore = root.querySelector('.bioweave-main').innerHTML
+  await click({target: target({bioweaveAction: 'restore-human-timing-preset'}), preventDefault() {}})
+
+  assert.deepEqual(Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value])), {
+    base_min_story_days: '14',
+    base_max_story_days: '42',
+    variance_ratio: '10',
+    variance_cap_story_days: '3',
+    total_adjustment_cap_story_days: '3',
+  })
+  assert.equal(root.querySelector('.bioweave-main').innerHTML, pageBeforeRestore)
+  app.destroyBioWeave()
+})
+
+test('character selection preserves the mounted list, replaces only details, and records fail-open performance operations', async () => {
+  const documentRef = new AppFakeDocument()
+  const performanceOperations = []
+  const runtime = {
+    ...apiProfileRuntime('chat-character-selection'),
+    collectActiveBusinessData: async () => ({
+      tracking_subjects: {
+        'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []},
+        'char-b': {character_id: 'char-b', display_name: 'Bob', exposure_event_ids: []},
+      },
+      character_profiles: {
+        'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}},
+        'char-b': {character_id: 'char-b', display_name: 'Bob', biological_context: {species: '人类', biological_type: '男性'}},
+      },
+      active_events: [],
+      analysis_status: {state: 'success', event_count: 0},
+      current_state_status: 'NO_CHARACTER_FLOOR',
+    }),
+    startTimingPerformanceOperation: input => {
+      const operation = {operationId: `selection-${performanceOperations.length + 1}`, ...input, stages: [], finished: null}
+      performanceOperations.push(operation)
+      return operation.operationId
+    },
+    recordTimingPerformanceStage: input => {
+      performanceOperations.find(operation => operation.operationId === input.operation_id)?.stages.push(input)
+    },
+    finishTimingPerformanceOperation: input => {
+      const operation = performanceOperations.find(item => item.operationId === input.operation_id)
+      if (operation) operation.finished = input
+    },
+  }
+  const app = createApp(runtime, {documentRef})
+  const root = app.openBioWeave()
+  app.go('characters')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const main = root.querySelector('.bioweave-main')
+  const pageRoot = {}
+  const rows = ['char-a', 'char-b'].map(characterId => {
+    const classNames = new Set(['bioweave-character-row'])
+    return {
+      dataset: {characterId},
+      classList: {toggle(name, force) { force ? classNames.add(name) : classNames.delete(name) }},
+      setAttribute(name, value) { this[name] = value },
+      hasSelectedClass() { return classNames.has('selected') },
+    }
+  })
+  const list = {querySelectorAll: () => rows}
+  let detailMarkup = ''
+  let detailReplacements = 0
+  const detail = {}
+  Object.defineProperty(detail, 'outerHTML', {
+    get: () => detailMarkup,
+    set: value => {
+      detailMarkup = String(value)
+      detailReplacements += 1
+    },
+  })
+  main.selectorNodes.set('.bioweave-characters-page', [pageRoot])
+  main.selectorNodes.set('.bioweave-character-list', [list])
+  main.selectorNodes.set('.bioweave-character-detail-pane', [detail])
+  const pageMarkupBeforeSelection = main.innerHTML
+
+  assert.doesNotThrow(() => app.openCharacter('char-a'))
+  assert.equal(main.innerHTML, pageMarkupBeforeSelection)
+  assert.equal(detailReplacements, 1)
+  assert.match(detailMarkup, />Alice</u)
+  assert.equal(rows[0].hasSelectedClass(), true)
+  assert.equal(rows[1].hasSelectedClass(), false)
+
+  app.openCharacter('char-b')
+  assert.equal(main.innerHTML, pageMarkupBeforeSelection)
+  assert.equal(detailReplacements, 2)
+  assert.match(detailMarkup, />Bob</u)
+  assert.equal(rows[0].hasSelectedClass(), false)
+  assert.equal(rows[1].hasSelectedClass(), true)
+  assert.equal(app.getFocusedCharacterId(), 'char-b')
+  const openCharactersOperation = performanceOperations.find(item => item.operation === 'OPEN_CHARACTERS_PAGE')
+  assert.ok(openCharactersOperation)
+  assert.equal(openCharactersOperation.character_count, 0)
+  assert.deepEqual(openCharactersOperation.stages.map(stage => stage.stage), ['CHARACTERS_PAGE_FULL_RENDER'])
+  assert.equal(openCharactersOperation.stages[0].render_scope, 'characters_page_full')
+  assert.equal(performanceOperations.find(item => item.operation === 'SELECT_CHARACTER')?.character_count, 2)
+  assert.ok(performanceOperations.find(item => item.operation === 'RENDER_CHARACTER_LIST')?.stages.some(stage => stage.stage === 'CHARACTER_LIST_SELECTION_UPDATE'))
+  assert.ok(performanceOperations.find(item => item.operation === 'RENDER_CHARACTER_DETAILS')?.stages.some(stage => stage.stage === 'CHARACTER_DETAIL_HTML_BUILD'))
+  assert.ok(performanceOperations.find(item => item.operation === 'RENDER_CHARACTER_DETAILS')?.stages.some(stage => stage.stage === 'CHARACTER_DETAIL_DOM_COMMIT'))
+  assert.deepEqual(
+    ['SELECT_CHARACTER', 'RENDER_CHARACTER_LIST', 'RENDER_CHARACTER_DETAILS'],
+    ['SELECT_CHARACTER', 'RENDER_CHARACTER_LIST', 'RENDER_CHARACTER_DETAILS'].filter(operation => performanceOperations.some(item => item.operation === operation)),
+  )
+  assert.ok(performanceOperations.every(operation => operation.finished?.status === 'SUCCEEDED'))
+
+  runtime.startTimingPerformanceOperation = () => { throw new Error('DIAGNOSTICS_DISABLED') }
+  runtime.recordTimingPerformanceStage = () => { throw new Error('DIAGNOSTICS_DISABLED') }
+  runtime.finishTimingPerformanceOperation = () => { throw new Error('DIAGNOSTICS_DISABLED') }
+  assert.doesNotThrow(() => app.openCharacter('char-a'))
+  assert.equal(detailReplacements, 3)
+  assert.equal(app.getFocusedCharacterId(), 'char-a')
   app.destroyBioWeave()
 })
 
@@ -293,16 +490,109 @@ test('Character Health popover keeps the A-variant interaction contract', () => 
 test('Character timing open renders before async data and avoids debug aggregation', () => {
   const openStart = APP_SOURCE.indexOf('function openCharacterTiming(')
   const loadStart = APP_SOURCE.indexOf('async function loadCharacterTimingData(')
+  const closeStart = APP_SOURCE.indexOf('function closeCharacterTiming(')
+  const detailPatchStart = APP_SOURCE.indexOf('function renderCharacterDetailOrFallback(')
+  const detailPatchEnd = APP_SOURCE.indexOf('\n  function syncTimingEditorDraftInputs', detailPatchStart)
   const openSource = APP_SOURCE.slice(openStart, loadStart)
+  const loadSource = APP_SOURCE.slice(loadStart, APP_SOURCE.indexOf('\n  function updateCharacterTimingDraft', loadStart))
+  const closeSource = APP_SOURCE.slice(closeStart, openStart)
+  const detailPatchSource = APP_SOURCE.slice(detailPatchStart, detailPatchEnd)
   const editorStart = RUNTIME_EVENTS_SOURCE.indexOf('async function getCharacterTimingEditorData(')
   const editorSource = RUNTIME_EVENTS_SOURCE.slice(editorStart, RUNTIME_EVENTS_SOURCE.indexOf('\n  const dataLifecycle', editorStart))
   assert.ok(openStart >= 0)
   assert.ok(loadStart > openStart)
+  assert.ok(closeStart >= 0)
+  assert.ok(detailPatchStart >= 0)
+  assert.doesNotMatch(detailPatchSource, /renderCharacterSelection\(\)/u)
+  assert.match(detailPatchSource, /detail\.outerHTML = renderCharacterDetailPane\(characterPageOptions\(\)\)/u)
+  assert.match(detailPatchSource, /if \(!detail\) \{[\s\S]*render\(\)/u)
+  assert.match(APP_SOURCE, /detail\.outerHTML = detailMarkup/u)
   assert.match(openSource, /timingEditorState = \{[\s\S]*open: true[\s\S]*loading: true/u)
-  assert.match(openSource, /render\(\)[\s\S]*void loadCharacterTimingData/u)
+  assert.match(openSource, /renderCharacterDetailOrFallback\(\)[\s\S]*void loadCharacterTimingData/u)
+  assert.match(openSource, /stage: 'OPEN_EDITOR_SHELL_RENDER'[\s\S]*render_scope: 'character_detail'/u)
   assert.doesNotMatch(openSource, /await\s+runtime\.getCharacterTimingEditorData/u)
+  assert.match(loadSource, /renderCharacterDetailOrFallback\(\)/u)
+  assert.match(loadSource, /stage: 'OPEN_EDITOR_DATA_RENDER'[\s\S]*render_scope: 'character_detail'/u)
+  assert.doesNotMatch(loadSource, /\.bioweave-main[\s\S]*innerHTML/u)
+  assert.match(closeSource, /timingEditorRequestSequence \+= 1[\s\S]*renderCharacterDetailOrFallback\(\)/u)
+  assert.match(loadSource, /requestId !== timingEditorRequestSequence/u)
+  assert.match(loadSource, /!timingEditorState\.open/u)
+  assert.match(loadSource, /route !== 'characters'/u)
   assert.doesNotMatch(editorSource, /getProjectionTimingDebug/u)
   assert.match(editorSource, /Promise\.all\(\[/u)
+})
+
+test('closed Timing editor drops a deferred result without replacing the mounted main pane', async () => {
+  const documentRef = new AppFakeDocument()
+  let releaseTimingRead
+  let timingReadStarted = false
+  const timingRead = new Promise(resolve => { releaseTimingRead = resolve })
+  const runtime = {
+    ...apiProfileRuntime('chat-timing-deferred-close'),
+    collectActiveBusinessData: async () => ({
+      tracking_subjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+      character_profiles: {'char-a': {character_id: 'char-a', display_name: 'Alice'}},
+      active_events: [],
+      analysis_status: {state: 'success', event_count: 0},
+      current_state_status: 'NO_CHARACTER_FLOOR',
+    }),
+    getCharacterTimingEditorData: () => {
+      timingReadStarted = true
+      return timingRead
+    },
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  const root = app.openBioWeave()
+  app.go('characters')
+  await Promise.resolve()
+  await Promise.resolve()
+
+  const main = root.querySelector('.bioweave-main')
+  const pageRoot = {}
+  const list = {querySelectorAll: () => []}
+  let detailMarkup = ''
+  const detail = {}
+  Object.defineProperty(detail, 'outerHTML', {
+    get: () => detailMarkup,
+    set: value => { detailMarkup = String(value) },
+  })
+  main.selectorNodes.set('.bioweave-characters-page', [pageRoot])
+  main.selectorNodes.set('.bioweave-character-list', [list])
+  main.selectorNodes.set('.bioweave-character-detail-pane', [detail])
+  let fullRenderCount = 0
+  let mainMarkup = main.innerHTML
+  Object.defineProperty(main, 'innerHTML', {
+    configurable: true,
+    get: () => mainMarkup,
+    set: value => {
+      fullRenderCount += 1
+      mainMarkup = String(value)
+    },
+  })
+
+  app.openCharacter('char-a')
+  const click = [...root.listeners.get('click')][0]
+  const target = dataset => ({
+    __root: root,
+    dataset,
+    closest(selector) { return selector.includes('[data-bioweave-action') ? this : null },
+  })
+  await click({target: target({bioweaveAction: 'open-character-timing', characterId: 'char-a'}), preventDefault() {}})
+  assert.equal(timingReadStarted, true)
+  assert.match(detailMarkup, /bioweave-character-timing-popover/u)
+  const mountedMain = root.querySelector('.bioweave-main')
+
+  await click({target: target({bioweaveAction: 'cancel-character-timing'}), preventDefault() {}})
+  assert.doesNotMatch(detailMarkup, /bioweave-character-timing-popover/u)
+  releaseTimingRead({config: null, timing_instance: null, floor_version: null})
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(root.querySelector('.bioweave-main'), mountedMain)
+  assert.equal(fullRenderCount, 0)
+  assert.doesNotMatch(detailMarkup, /bioweave-character-timing-popover/u)
+  app.destroyBioWeave()
 })
 
 test('business debug renders existing Projection Timing diagnostics in lifecycle runtime', () => {
@@ -322,6 +612,8 @@ test('business debug renders existing Projection Timing diagnostics in lifecycle
   assert.doesNotMatch(SETTINGS_SOURCE, /\['variance \/ offset'/u)
   assert.match(SETTINGS_SOURCE, /trace_buffer_status/u)
   assert.match(SETTINGS_SOURCE, /诊断置信度/u)
+  assert.match(SETTINGS_SOURCE, /timing_performance_diagnostics/u)
+  assert.match(SETTINGS_SOURCE, /data-bioweave-timing-performance-diagnostics/u)
 })
 
 test('Nickname editor uses the compact shell-first popup path', () => {

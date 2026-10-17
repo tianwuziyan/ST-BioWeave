@@ -394,6 +394,98 @@ test('coordinator performs one business read when only a subset of resolvers is 
   assert.deepEqual(received, {businessData: {marker: 'BUSINESS_ONLY'}, businessDataResolved: true});
 });
 
+test('coordinator reuses a caller-provided business snapshot for the same Floor', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a',
+    message_id: 'message-a',
+    floor: 2,
+    swipe_id: 0,
+    content_hash: 'hash-a',
+    message_version: 'v1',
+  };
+  const businessData = {
+    marker: 'CALLER_SNAPSHOT',
+    current_floor: {version: floorVersion},
+    current_state_status: 'ready',
+    current_state: {marker: 'state-a'},
+  };
+  let fallbackReads = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    collectActiveBusinessData: async () => {
+      fallbackReads += 1;
+      throw new Error('UNEXPECTED_CANONICAL_REBUILD');
+    },
+    healthGuidanceResolver: async ({businessData: received}) => [{
+      subject_id: 'char_000002',
+      body_site: '右肩',
+      stage: 'early',
+      guidance: received?.marker ?? 'MISSING_SNAPSHOT',
+    }],
+  });
+
+  const result = await coordinator.refreshProjectionContext({chatId: 'chat-a', businessData});
+
+  assert.equal(result.status, 'updated');
+  assert.match(result.prompt, /CALLER_SNAPSHOT/);
+  assert.equal(fallbackReads, 0);
+});
+
+test('coordinator rejects a caller-provided business snapshot from another Floor', async () => {
+  const currentVersion = {
+    chat_id: 'chat-a',
+    message_id: 'message-current',
+    floor: 3,
+    swipe_id: 0,
+    content_hash: 'hash-current',
+    message_version: 'v2',
+  };
+  const staleBusiness = {
+    marker: 'STALE_CALLER_SNAPSHOT',
+    current_floor: {version: {
+      ...currentVersion,
+      message_id: 'message-old',
+      floor: 2,
+      content_hash: 'hash-old',
+      message_version: 'v1',
+    }},
+    current_state_status: 'ready',
+    current_state: {marker: 'state-old'},
+  };
+  let fallbackReads = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: currentVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    collectActiveBusinessData: async () => {
+      fallbackReads += 1;
+      return {
+        marker: 'CURRENT_FALLBACK_SNAPSHOT',
+        current_floor: {version: currentVersion},
+        current_state_status: 'ready',
+        current_state: {marker: 'state-current'},
+      };
+    },
+    healthGuidanceResolver: async ({businessData: received}) => [{
+      subject_id: 'char_000002',
+      body_site: '右肩',
+      stage: 'early',
+      guidance: received?.marker ?? 'MISSING_SNAPSHOT',
+    }],
+  });
+
+  const result = await coordinator.refreshProjectionContext({chatId: 'chat-a', businessData: staleBusiness});
+
+  assert.equal(result.status, 'updated');
+  assert.match(result.prompt, /CURRENT_FALLBACK_SNAPSHOT/);
+  assert.doesNotMatch(result.prompt, /STALE_CALLER_SNAPSHOT/);
+  assert.equal(fallbackReads, 1);
+});
+
 test('current State attribution resolver fails closed for chat, Floor, Swipe, and state mismatches', async () => {
   const version = {chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 1, content_hash: 'hash-a', message_version: 'v1'};
   let business = {

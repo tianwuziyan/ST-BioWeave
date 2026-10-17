@@ -46,14 +46,14 @@ test("the compatibility entry point cannot become a second persistence implement
   assert.doesNotMatch(source, /function createFloorPersistenceCoordinator|const tails|store\.saveFloor/u);
 });
 
-test("the frozen Coordinator retains owner acquisition, readback, sibling audit, and confirmed semantics", async () => {
+test("the Context-first Coordinator retains guards, readback audit, and confirmed semantics", async () => {
   const source = await readFile(resolve(root, "storage/floor-persistence-coordinator.js"), "utf8");
   assert.match(source, /FLOOR_OWNER_FIELDS/u);
-  assert.match(source, /HOST_AHEAD_OF_OFFICIAL/u);
-  assert.match(source, /TRUE_STALE_OWNER_CHANGE/u);
+  assert.match(source, /FLOOR_TX_CONTEXT_SOURCE_READ/u);
+  assert.match(source, /FLOOR_TX_CONTEXT_SLOT_RESOLVED/u);
   assert.match(source, /FLOOR_TX_SIBLING_AUDIT/u);
   assert.match(source, /FLOOR_TX_CONFIRMED/u);
-  assert.match(source, /readAuthoritativeFloor/u);
+  assert.match(source, /resolveCurrentFloorVersion/u);
   assert.match(source, /tails\.get\(transaction\.transaction_key\)/u);
   assert.match(source, /commitState: "confirmed"/u);
 });

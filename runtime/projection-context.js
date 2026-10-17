@@ -139,7 +139,7 @@ function floorReadStillMatches(left, right) {
       : {ok: true, status: 'cleared', reason, ...extra};
   }
 
-  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null} = {}) {
+  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null} = {}) {
     diagnostic('PROJECTION_CONTEXT_REFRESH_STARTED', {
       ...generationFields(generation),
       slot: PROJECTION_CONTEXT_INJECTION_KEY,
@@ -172,11 +172,17 @@ function floorReadStillMatches(left, right) {
           || typeof healthGuidanceResolver === 'function'
         )
       ) {
-        businessDataResolved = true;
-        try {
-          businessData = await collectActiveBusinessData();
-        } catch (error) {
-          businessDataError = error;
+        const suppliedFloorVersion = suppliedBusinessData?.current_floor?.version;
+        if (sameFloorVersion(suppliedFloorVersion, floor.version)) {
+          businessData = suppliedBusinessData;
+          businessDataResolved = true;
+        } else {
+          businessDataResolved = true;
+          try {
+            businessData = await collectActiveBusinessData();
+          } catch (error) {
+            businessDataError = error;
+          }
         }
       }
       if (typeof projectionEvidenceResolver === 'function') {

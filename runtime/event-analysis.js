@@ -557,6 +557,10 @@ export function createEventAnalysisCoordinator({
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
   const inFlight = new Map();
   const canonicalBuilds = new Map();
+  // Completed canonical state is reusable only while the exact Floor
+  // identity and canonical generation remain unchanged.  This is a
+  // per-runtime read cache, not a second Floor source of truth.
+  const completedCanonicalBuilds = new Map();
   const lastTerminal = new Map();
   let attemptSequence = 0;
   let analysisExecutionSequence = 0;
@@ -596,6 +600,23 @@ export function createEventAnalysisCoordinator({
     ].map(value => String(value ?? "")).join("\u001f");
   }
 
+  function cloneCanonicalDerived(derived) {
+    const trackingWindows = derived?.registry?.tracking_windows;
+    const cloned = cloneValue(derived);
+    // Tracking Runtime intentionally exposes this collection through a
+    // non-enumerable getter. Reattach it after cloning so a cache copy keeps
+    // the same business DTO shape as a freshly built registry.
+    if (cloned?.registry && trackingWindows !== undefined) {
+      Object.defineProperty(cloned.registry, "tracking_windows", {
+        configurable: true,
+        enumerable: false,
+        value: cloneValue(trackingWindows),
+        writable: false,
+      });
+    }
+    return cloned;
+  }
+
   function emitCanonicalBuildTrace(stage, target, details = {}) {
     emitPersistenceTrace(`CHARACTER_CANONICAL_BUILD_${stage}`, null, target, {
       canonical_generation: canonicalGeneration,
@@ -605,10 +626,19 @@ export function createEventAnalysisCoordinator({
 
   function advanceCanonicalGeneration(reason, target = null) {
     canonicalGeneration += 1;
+    completedCanonicalBuilds.clear();
     emitCanonicalBuildTrace("INVALIDATED", target, {
       invalidation_reason: reason,
     });
     return canonicalGeneration;
+  }
+
+  // Health Assessment commits are wired directly to the shared persistence
+  // coordinator by the Runtime composition. Expose the same invalidation
+  // boundary so those confirmed writes cannot leave a completed canonical
+  // read cache stale.
+  function invalidateCanonicalDerivedReads(reason = "external-derived-commit", target = null) {
+    return advanceCanonicalGeneration(reason, target);
   }
 
   function derivedPatchFields(owner) {
@@ -619,6 +649,8 @@ export function createEventAnalysisCoordinator({
         return ["analysis"];
       case "world":
         return ["world_model", "world_model_meta"];
+      case "health":
+        return ["health_assessment_timeline"];
       default:
         return [];
     }
@@ -2009,6 +2041,52 @@ export function createEventAnalysisCoordinator({
     const state = await resolveCompleteEventStateAtOrBefore(current);
     return sortEvents(state?.events ?? []);
   }
+
+  async function getParticipantAggregationInputs({subjectId, mechanismKey, target = null} = {}) {
+    const token = chat.token();
+    const current = target ?? await resolveCurrentBioWeaveFloor();
+    if (!current?.version || String(current.version.chat_id) !== String(token.chatId)) {
+      const error = new Error("NO_CHARACTER_FLOOR");
+      error.code = "NO_CHARACTER_FLOOR";
+      throw error;
+    }
+    const eventState = await resolveCompleteEventStateAtOrBefore(current);
+    const activeEvents = sortEvents(eventState?.events ?? []);
+    const world = await resolveWorldModelAtOrBefore(current);
+    const currentStoryTime = await storyTimeCoordinator.getCurrentStoryTime();
+    const subjectProfiles = Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
+      participant.character_id,
+      {
+        species: participant.biological_context?.species ?? null,
+        biological_type: participant.biological_context?.biological_type ?? null,
+      },
+    ])));
+    const trackingWindows = trackingRuntime.buildTrackingWindows({
+      activeEvents,
+      chatId: token.chatId,
+      worldModel: world?.model ?? {},
+      currentStoryTime,
+      floorVersion: current.version,
+      subjectProfiles,
+    }).filter(window => window?.subject_id === subjectId
+      && (!mechanismKey || window?.mechanism_key === mechanismKey));
+    const relevantEvents = activeEvents.filter(event => {
+      try {
+        return isPregnancyRelevantExposure(event)
+          && event?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId)
+          && (!mechanismKey || event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey);
+      } catch {
+        return false;
+      }
+    });
+    chat.assert(token);
+    return {
+      active_events: relevantEvents,
+      tracking_windows: trackingWindows,
+      current_story_time: currentStoryTime,
+      floor_version: current.version,
+    };
+  }
   function currentStoryTimeDifferences(activeEvents, currentStoryTime) {
     const differences = {};
     for (const event of Array.isArray(activeEvents) ? activeEvents : []) {
@@ -2341,6 +2419,7 @@ export function createEventAnalysisCoordinator({
     currentEventState,
     currentEventStateVersion,
     analysisPhase = null,
+    useCompletedCache = true,
   } = {}) {
     const key = canonicalBuildKey(target, analysisPhase);
     const existing = canonicalBuilds.get(key);
@@ -2363,6 +2442,27 @@ export function createEventAnalysisCoordinator({
         throw error;
       }
     }
+    const completed = useCompletedCache && hasCompleteFloorVersion(target?.version)
+      ? completedCanonicalBuilds.get(key)
+      : null;
+    if (completed) {
+      emitCanonicalBuildTrace("CACHE_HIT", target, {
+        cache_scope: "same-floor-version-and-canonical-generation",
+      });
+      const derived = cloneCanonicalDerived(completed.derived);
+      // Chat-local settings are consumed while building the DTO. Keep that
+      // small input current without rebuilding Floor-derived state.
+      derived.chatData = chatData;
+      derived.currentFloor = target;
+      // Preserve the normal Floor/Chat stale window on cache hits. This is a
+      // local story-time read (normally served by the coordinator cache), not
+      // a second canonical rebuild; the final target assertion below remains
+      // authoritative for Chat/Floor/Swipe changes.
+      if (typeof storyTimeCoordinator?.resolveFloorStoryTime === "function")
+        await storyTimeCoordinator.resolveFloorStoryTime(target);
+      chat.assert(token);
+      return {derived, joined: false};
+    }
 
     const entry = {
       key,
@@ -2377,6 +2477,13 @@ export function createEventAnalysisCoordinator({
           currentEventState,
           currentEventStateVersion,
         });
+        if (
+          useCompletedCache
+          && hasCompleteFloorVersion(target?.version)
+          && derived?.currentStateStatus !== "STATE_ERROR"
+        ) {
+          completedCanonicalBuilds.set(key, {derived: cloneCanonicalDerived(derived)});
+        }
         emitCanonicalBuildTrace("COMPLETED", target, {
           build_duration_ms: durationMs(entry.startedAt),
         });
@@ -2910,6 +3017,7 @@ export function createEventAnalysisCoordinator({
         currentEventState: eventStateCache.state,
         currentEventStateVersion: eventStateCache.targetVersion,
         analysisPhase,
+        useCompletedCache: includeDebug !== true,
       });
       derived = canonical.derived;
       joinedCanonicalBuild = canonical.joined;
@@ -4784,6 +4892,7 @@ export function createEventAnalysisCoordinator({
     }
     inFlight.clear();
     canonicalBuilds.clear();
+    completedCanonicalBuilds.clear();
     worldAnalysis.clear();
     automaticAnalysis.reset("destroy");
   }
@@ -4812,9 +4921,11 @@ export function createEventAnalysisCoordinator({
     },
     getCurrentFloorEvents: async () =>
       (await statusForCurrentFloor()).current_floor_events,
+    getParticipantAggregationInputs,
     resolveWorldModelAtOrBefore,
     resolveWorldModelStrictlyBefore,
     resolvePersistedWorldModelForAnalysis,
+    invalidateCanonicalDerivedReads,
     getWorldModelDiagnosticState,
     saveWorldModel,
     analyzeCurrentWorldModelFull,

@@ -1,4 +1,5 @@
 import {floorVersionFromData, hasCompleteFloorVersion, sameFloorVersion} from '../runtime/floor.js';
+import {durationMs, monotonicNow} from '../runtime/diagnostics.js';
 import {cloneValue, emptyFloor} from './schema.js';
 import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js';
 import {
@@ -68,11 +69,47 @@ function itemIsWithinFloorBounds(item, rootVersion, endpointFloor) {
     && Number(created.floor) <= Number(endpointFloor);
 }
 
-export function createProjectionTimingPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true, floorPersistence = null} = {}) {
+export function createProjectionTimingPersistence({store, resolveCurrentFloorVersion = null, enabledResolver = () => true, floorPersistence = null, performanceStage = null} = {}) {
   if (!store) throw new TypeError('STORE_REQUIRED');
   const persistence = floorPersistence ?? createFloorPersistenceCoordinator({store, enabledResolver});
+  const persistenceKind = 'TIMING_INSTANCE';
 
   function assertEnabled() { if (enabledResolver() === false) throw error('BIOWEAVE_DISABLED'); }
+
+  function reportPerformanceStage(payload) {
+    try { performanceStage?.(payload); } catch { /* diagnostics are fail-open */ }
+  }
+
+  async function resolveOwnerWithPerformance(input) {
+    const operationId = input?.performanceOperationId;
+    if (!operationId || typeof performanceStage !== 'function') return resolveOwner(input);
+    const startedAt = monotonicNow();
+    try {
+      const result = await resolveOwner(input);
+      reportPerformanceStage({
+        operation_id: operationId,
+        stage: 'PERSISTENCE_REQUEST_PREPARE',
+        kind: 'ASYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(startedAt),
+        persistence_kind: persistenceKind,
+        reason_code: 'PERSISTENCE_OWNER_RESOLVED',
+      });
+      return result;
+    } catch (cause) {
+      reportPerformanceStage({
+        operation_id: operationId,
+        stage: 'PERSISTENCE_REQUEST_PREPARE',
+        kind: 'ASYNC',
+        status: 'FAILED',
+        duration_ms: durationMs(startedAt),
+        persistence_kind: persistenceKind,
+        reason_code: 'PERSISTENCE_OWNER_RESOLUTION_FAILED',
+        error_code: cause?.code ?? cause?.message ?? 'PERSISTENCE_OWNER_RESOLUTION_FAILED',
+      });
+      throw cause;
+    }
+  }
 
   async function rejectVersion({code, expected, actual, owner, selector, swipeId, source}) {
     let authoritative = actual;
@@ -180,7 +217,7 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
   }
 
   async function mutateFloor(input, mutate) {
-    const resolved = await resolveOwner(input);
+    const resolved = await resolveOwnerWithPerformance(input);
     let mutation = null;
     const result = await persistence.commitFloorPatch({
       owner: 'projection',
@@ -189,9 +226,12 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
       swipeId: resolved.swipeId,
       floorVersion: resolved.version,
       operation_type: input.operation_type ?? 'projection-timing-snapshot-patch',
+      traceContext: input.performanceOperationId
+        ? {performance_operation_id: input.performanceOperationId, persistence_kind: persistenceKind}
+        : undefined,
       patchResolver: async ({latest}) => {
         // This callback runs inside the Coordinator's same-key queue, after
-        // the latest authoritative slot has been read. Never use the
+        // the current Context slot has been resolved. Never use the
         // pre-queue `resolved.floorData` as the collection baseline.
         let raw = hasOwn(latest, ROOT) ? latest[ROOT] : null;
         if (!hasOwn(latest, ROOT)) {
@@ -232,15 +272,15 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
     return {...mutation, authoritativeReadback: result.authoritativeReadback, noWrite: result.noWrite === true, floor: result.floor};
   }
 
-  async function saveTimingInstance({chatId, ownerFloor, floorVersion, timingInstance, operation_type} = {}) {
+  async function saveTimingInstance({chatId, ownerFloor, floorVersion, timingInstance, operation_type, performanceOperationId} = {}) {
     const normalized = normalizeProjectionTimingInstance(timingInstance);
     if (String(normalized.created_at_floor_version.chat_id) !== String(chatId)) throw error('CHAT_SCOPE_MISMATCH');
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot =>
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot =>
       upsertProjectionTimingInstance(normalized, {snapshot, expectedChatId: chatId}));
   }
 
-  async function editTimingInstance({chatId, ownerFloor, floorVersion, editStartFloorVersion, timingInstanceId, baseMinStoryDays, baseMaxStoryDays, varianceRatio, varianceCapStoryDays, totalAdjustmentCapStoryDays, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type}, snapshot => {
+  async function editTimingInstance({chatId, ownerFloor, floorVersion, editStartFloorVersion, timingInstanceId, baseMinStoryDays, baseMaxStoryDays, varianceRatio, varianceCapStoryDays, totalAdjustmentCapStoryDays, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, editStartFloorVersion, operation_type, performanceOperationId}, snapshot => {
       const current = snapshot.items.find(item => item.timing_instance_id === timingInstanceId);
       if (!current) return {status: 'rejected', code: 'TIMING_INSTANCE_NOT_FOUND'};
       const edited = editProjectionTimingInstance(current, {
@@ -254,13 +294,13 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
     });
   }
 
-  async function removeTimingInstance({chatId, ownerFloor, floorVersion, timingInstanceId, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot =>
+  async function removeTimingInstance({chatId, ownerFloor, floorVersion, timingInstanceId, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot =>
       removeProjectionTimingInstance(timingInstanceId, {snapshot, expectedChatId: chatId}));
   }
 
-  async function saveTimingSnapshot({chatId, ownerFloor, floorVersion, items, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot => {
+  async function saveTimingSnapshot({chatId, ownerFloor, floorVersion, items, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot => {
       const next = replaceProjectionTimingSnapshot(items, {expectedChatId: chatId});
       return sameSnapshot(snapshot, next)
         ? {status: 'deduped', snapshot}
@@ -268,8 +308,8 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
     });
   }
 
-  async function clearTimingInstances({chatId, ownerFloor, floorVersion, operation_type} = {}) {
-    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type}, snapshot => {
+  async function clearTimingInstances({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId} = {}) {
+    return mutateFloor({chatId, ownerFloor, floorVersion, operation_type, performanceOperationId}, snapshot => {
       const next = emptyProjectionTimingSnapshot();
       return sameSnapshot(snapshot, next)
         ? {status: 'deduped', snapshot}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor owner, Swipe slot and six-field identity contract for the real-host probe"}
+{"file": "docs/ARCHITECTURE.md", "reason": "Existing module ownership and persistence boundaries; no production bypass"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle, persistence outcome and stale-write contract"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Required cross-layer boundary review for host Context and persistence"}

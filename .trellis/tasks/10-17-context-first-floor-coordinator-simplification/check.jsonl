@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check Floor ownership and active Swipe invariants."}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Check lifecycle and unknown persistence outcome semantics."}
+{"file": ".trellis/tasks/10-17-context-first-floor-coordinator-simplification/design.md", "reason": "Check implementation against this task design."}
+{"file": "docs/ARCHITECTURE.md", "reason": "Check architecture and no second Writer constraint."}

@@ -1317,6 +1317,27 @@ function renderLifecycleRuntimeDebug(debug = {}) {
   ].join('');
 }
 
+function renderTimingPerformanceDiagnostics(debug = {}) {
+  const diagnostics = debug?.timing_performance_diagnostics ?? {}
+  const operations = Array.isArray(diagnostics.recent_operations) ? diagnostics.recent_operations : []
+  const cards = operations.slice(-8).reverse().map(operation => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(operation.operation ?? 'UNKNOWN') + '</h5>' + renderBusinessDebugRows([
+    ['operation_id', operation.operation_id], ['character_id', operation.character_id], ['status', operation.status],
+    ['character_count', operation.character_count],
+    ['total_duration_ms', operation.total_duration_ms], ['render_count / scope', [operation.render_count, operation.render_scope]],
+    ['persistence attempted/succeeded', [operation.persistence_attempted, operation.persistence_succeeded]],
+    ['readback attempted/succeeded', [operation.readback_attempted, operation.readback_succeeded]],
+    ['Aggregation reevaluation', [operation.aggregation_reevaluation_attempted, operation.aggregation_reevaluation_succeeded]],
+    ['reason_code', operation.reason_code],
+    ['stages', (operation.stages ?? []).map(stage => [stage.stage, stage.kind, stage.status, stage.duration_ms])],
+  ]) + '</article>').join('')
+  return '<section class="bioweave-business-debug-window" data-bioweave-timing-performance-diagnostics><h5>Timing 操作性能</h5>' + renderBusinessDebugRows([
+    ['collection_status', diagnostics.collection_status],
+    ['trace_buffer_status', diagnostics.trace_buffer_status],
+    ['trace_truncated', diagnostics.trace_truncated],
+    ['recent_operations', operations.length],
+  ]) + (cards || '<p class="bioweave-muted">暂无 Timing 操作性能记录。</p>') + '</section>'
+}
+
 function renderBusinessDebugState(debugState = null) {
   if (debugState?.status === 'error') {
     return '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug><header class="bioweave-debug-section-header"><div><h4>当前生产业务状态</h4></div><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-business-debug">刷新业务状态</button></header><div class="bioweave-debug-preview-scroll bioweave-business-debug-content"><p class="bioweave-status-error">读取失败：' + escapeHtml(debugState.reason ?? 'BUSINESS_DEBUG_FAILED') + '</p></div></section>'
@@ -1369,6 +1390,7 @@ function renderBusinessDebugState(debugState = null) {
     '<section><h5>Tracking Registry · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(trackingRegistry)) + '</pre></section>',
     '<section><h5>Health Evolution · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(healthState.state)) + '</pre></section>',
     renderNsfwPipelineDiagnostics(debug),
+    renderTimingPerformanceDiagnostics(debug),
     renderLifecycleRuntimeDebug(lifecycleRuntime),
     '</div>',
     '</section>',

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查目标角色写入不覆盖其他角色、历史 Floor、Swipe 和 Floor Version 保护。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"检查定向 Aggregation 输入仍来自合法 Event/Exposure provenance。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"检查 before_min、in_window、overdue、Tracking Window 和角色独立性。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查 Timing 成功/Aggregation 失败的部分成功、失效和恢复语义。"}
+{"file":"docs/ARCHITECTURE.md","reason":"检查 Runtime/UI/Storage 调用链和不新增平行持久化实现。"}

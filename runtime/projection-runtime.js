@@ -663,7 +663,7 @@ export function createProjectionRuntime({
       try {
         finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor});
         dto = dtoFromViews(finalViews);
-        await refreshProjectionContext?.({chatId: identity.chat_id});
+        await refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData});
       } catch (error) {
         recordPipelineStage({
           stage: "PROJECTION_READBACK",
@@ -793,7 +793,7 @@ export function createProjectionRuntime({
         });
         expired += 1;
       }
-      await refreshProjectionContext?.({chatId: inputs.floor.version.chat_id});
+      await refreshProjectionContext?.({chatId: inputs.floor.version.chat_id, businessData: inputs.businessData});
       return {status: 'success', execution_id, expired_projections: expired};
     })().finally(() => lifecycleInFlight.delete(execution_id));
     lifecycleInFlight.set(execution_id, work);
@@ -827,7 +827,7 @@ export function createProjectionRuntime({
       projectionId,
       evidenceRefs: ["user:delete"],
     });
-    await refreshProjectionContext?.({chatId: inputs.floor.version.chat_id});
+    await refreshProjectionContext?.({chatId: inputs.floor.version.chat_id, businessData: inputs.businessData});
     return {...result, ...(await getBusinessData())};
   }
 

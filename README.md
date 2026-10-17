@@ -550,7 +550,7 @@ Chat-local settings 主要包括：
 }
 ```
 
-存在 swipe 结构时，数据只能写入对应 `message.swipe_info[n].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时使用 `message.extra.bioweave`。Floor `events[]` 是该消息/版本的绑定事实集合，不是 Chat-level 唯一事件大数组。每个 Event 的 `source` 绑定六字段 Floor Version，删除楼层或切换到没有事件的 swipe 后旧 Event 不再参与当前有效状态。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
+存在 swipe 结构时，数据写入对应 `message.swipe_info[n].extra.bioweave`，包括 swipe `0`；当前 active Swipe 的内容同时镜像到 `message.extra.bioweave`，以保持宿主当前消息视图一致，其他 Swipe 不被改写。没有 swipe 结构时使用 `message.extra.bioweave`。Floor `events[]` 是该消息/版本的绑定事实集合，不是 Chat-level 唯一事件大数组。每个 Event 的 `source` 绑定六字段 Floor Version，删除楼层或切换到没有事件的 swipe 后旧 Event 不再参与当前有效状态。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
 
 ## 性能与可扩展性
 

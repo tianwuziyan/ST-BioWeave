@@ -313,6 +313,127 @@ test('NSFW pipeline export keeps current state, execution trace, and derived dia
   assert.equal(exported.aggregation_diagnostics[0].aggregation_reason_code, 'TRACE_UNAVAILABLE')
 })
 
+test('timing performance diagnostics are bounded, structured, and exported without payloads', () => {
+  const diagnostics = createRuntimeDiagnostics({maxTimingPerformanceOperations: 2})
+  const first = diagnostics.startTimingPerformanceOperation({
+    operation: 'RESTORE_TIMING_DEFAULTS',
+    character_id: 'char-a',
+    chat_id: 'chat-a',
+    character_count: 3.8,
+  })
+  assert.ok(first)
+  assert.equal(diagnostics.recordTimingPerformanceStage({
+    operation_id: first,
+    stage: 'DRAFT_DOM_UPDATE',
+    kind: 'SYNC',
+    status: 'SUCCEEDED',
+    duration_ms: 1.25,
+    render_count: 1,
+    render_scope: 'timing_editor',
+    message_content: '敏感正文不应进入诊断',
+  }), true)
+  assert.equal(diagnostics.finishTimingPerformanceOperation({
+    operation_id: first,
+    status: 'SUCCEEDED',
+    persistence_attempted: false,
+    aggregation_reevaluation_attempted: false,
+  }), true)
+  const second = diagnostics.startTimingPerformanceOperation({operation: 'OPEN_TIMING_EDITOR', character_id: 'char-b', character_count: 4.8})
+  diagnostics.recordTimingPerformanceStage({
+    operation_id: second,
+    stage: 'EDITOR_DATA_READ',
+    kind: 'ASYNC',
+    status: 'SUCCEEDED',
+    duration_ms: 2,
+    persistence_kind: 'TIMING_INSTANCE',
+    queue_depth_at_enqueue: 1,
+    queue_wait_ms: 4.5,
+    execution_duration_ms: 12.5,
+    store_save_duration_ms: 8.25,
+    host_save_duration_ms: 7.75,
+    message_content: '敏感正文不应进入诊断',
+  })
+  diagnostics.recordTimingPerformanceStage({
+    operation_id: second,
+    stage: 'STORE_SAVE_FLOOR',
+    kind: 'ASYNC',
+    status: 'NOT_APPLICABLE',
+    reason_code: 'FLOOR_TX_NOOP',
+  })
+  diagnostics.finishTimingPerformanceOperation({operation_id: second, status: 'FAILED', reason_code: 'EDITOR_READ_FAILED'})
+  const third = diagnostics.startTimingPerformanceOperation({operation: 'SAVE_TIMING_INSTANCE', character_id: 'char-c'})
+  for (let index = 0; index < 21; index += 1) {
+    diagnostics.recordTimingOfficialIo({
+      operation_id: third,
+      io_call_id: `io-${index}`,
+      floor_transaction_id: index < 10 ? 'floor-tx-timing' : 'floor-tx-aggregation',
+      persistence_kind: index < 10 ? 'TIMING_INSTANCE' : 'PARTICIPANT_AGGREGATION',
+      io_purpose: index % 2 === 0 ? 'LATEST_SLOT_READ' : 'COORDINATOR_READBACK',
+      endpoint_kind: index === 20 ? 'CHAT_SAVE' : 'CHAT_GET',
+      actual_network_request: true,
+      cache_status: 'NOT_USED',
+      status: 'SUCCEEDED',
+      total_duration_ms: index + 0.25,
+      network_wait_duration_ms: index + 0.1,
+      response_body_read_duration_ms: index + 0.05,
+      json_parse_duration_ms: 0.05,
+      response_parse_duration_ms: 0.05,
+      message_content: '敏感正文不应进入诊断',
+    })
+  }
+  diagnostics.recordTimingOfficialIo({
+    operation_id: third,
+    io_call_id: 'io-20',
+    stage: 'OFFICIAL_FLOOR_EXTRACT',
+    floor_extract_duration_ms: 0.75,
+    owner_message_index: 72,
+    owner_message_id: 72,
+    owner_swipe_id: 0,
+  })
+  for (let index = 0; index < 49; index += 1) {
+    diagnostics.recordTimingPerformanceStage({
+      operation_id: third,
+      stage: `STAGE_${index}`,
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: index,
+    })
+  }
+  diagnostics.finishTimingPerformanceOperation({operation_id: third, status: 'SUCCEEDED'})
+
+  const result = diagnostics.getTimingPerformanceDiagnostics()
+  assert.equal(result.schema_version, 1)
+  assert.equal(result.recent_operations.length, 2)
+  assert.equal(result.trace_truncated, true)
+  assert.deepEqual(result.recent_operations.map(item => item.operation), ['OPEN_TIMING_EDITOR', 'SAVE_TIMING_INSTANCE'])
+  assert.equal(result.recent_operations[0].stages[0].message_content, undefined)
+  assert.equal(result.recent_operations[0].stages[0].duration_ms, 2)
+  assert.equal(result.recent_operations[0].stages[0].persistence_kind, 'TIMING_INSTANCE')
+  assert.equal(result.recent_operations[0].stages[0].queue_depth_at_enqueue, 1)
+  assert.equal(result.recent_operations[0].stages[0].queue_wait_ms, 4.5)
+  assert.equal(result.recent_operations[0].stages[0].execution_duration_ms, 12.5)
+  assert.equal(result.recent_operations[0].stages[0].store_save_duration_ms, 8.25)
+  assert.equal(result.recent_operations[0].stages[0].host_save_duration_ms, 7.75)
+  assert.equal(result.recent_operations[0].stages[1].status, 'NOT_APPLICABLE')
+  assert.equal(result.recent_operations[0].stages[1].duration_ms, null)
+  assert.equal(result.recent_operations[0].character_count, 4)
+  assert.equal(result.recent_operations.at(-1).message_content, undefined)
+  assert.equal(result.recent_operations.at(-1).stages.length, 48)
+  assert.equal(result.recent_operations.at(-1).stages_truncated, true)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.length, 20)
+  assert.equal(result.recent_operations.at(-1).official_io_calls_truncated, true)
+  assert.equal(result.recent_operations.at(-1).official_io_summary.actual_chat_get_count, 19)
+  assert.equal(result.recent_operations.at(-1).official_io_summary.actual_chat_save_count, 1)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.at(-1).floor_extract_duration_ms, 0.75)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.at(-1).response_body_read_duration_ms, 20.05)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.at(-1).json_parse_duration_ms, 0.05)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.at(-1).owner_message_index, 72)
+  assert.equal(result.recent_operations.at(-1).official_io_calls.at(-1).message_content, undefined)
+
+  const exported = JSON.parse(buildDebugExportText({timingPerformanceDiagnostics: result}))
+  assert.equal(exported.timing_performance_diagnostics.recent_operations.length, 2)
+})
+
 test('NSFW pipeline recorder bounds run and stage buffers and reports truncation', () => {
   const diagnostics = createRuntimeDiagnostics({maxNsfwPipelineRuns: 2, maxNsfwPipelineStages: 2})
   const runIds = []

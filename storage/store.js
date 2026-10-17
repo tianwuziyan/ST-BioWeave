@@ -907,7 +907,12 @@ export function createStore(adapter, boundary = null) {
     return persistenceResult;
   }
 
-  async function readAuthoritativeFloor(messageIndex, swipeId = 0, expectedVersion = null) {
+  async function readAuthoritativeFloor(
+    messageIndex,
+    swipeId = 0,
+    expectedVersion = null,
+    traceContext = null,
+  ) {
     const targetSwipeId = validSwipeId(swipeId);
     const reader = adapter.readAuthoritativeFloor ?? adapter.readOfficialFloorSlot;
     if (typeof reader !== "function") return getFloor(messageIndex, targetSwipeId);
@@ -919,6 +924,7 @@ export function createStore(adapter, boundary = null) {
       swipe_id: targetSwipeId,
       expectedChatId: token.chatId,
       expectedVersion,
+      traceContext,
     });
     assertToken(adapter, boundary, token);
     return cloneForStorage(result?.floor ?? result ?? emptyFloor());

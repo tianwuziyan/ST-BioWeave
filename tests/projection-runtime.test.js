@@ -142,6 +142,29 @@ test('Projection Runtime generates one candidate and same identity reread does n
   assert.equal(fixture.saved.length, 1)
 })
 
+test('lifecycle-only Projection refresh receives the business snapshot built for its inputs', async () => {
+  const businessData = {
+    marker: 'LIFECYCLE_INPUT_SNAPSHOT',
+    current_floor: {version},
+  };
+  const refreshes = [];
+  const runtime = createProjectionRuntime({
+    analyzer: {generateProjection: async () => { throw new Error('AI_MUST_NOT_RUN'); }},
+    collectInputs: async () => ({...inputs(), businessData}),
+    resolveCurrentFloor: async () => ({version}),
+    getProjectionViews: async () => ({all: []}),
+    saveGeneratedProjection: async () => { throw new Error('GENERATION_MUST_NOT_RUN'); },
+    saveEvolutionDecision: async () => ({status: 'skipped'}),
+    refreshProjectionContext: async options => { refreshes.push(options); },
+  });
+
+  const result = await runtime.tickLifecycleOnly();
+
+  assert.equal(result.status, 'success');
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0].businessData, businessData);
+});
+
 test('Projection Runtime does not persist a new aggregation-path Projection when evidence cannot be built', async () => {
   let calls = 0
   const timing = {

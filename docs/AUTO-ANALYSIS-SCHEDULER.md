@@ -285,10 +285,13 @@ World-specific single-flight 和 Analysis single-flight 仍按完整 Floor Versi
 版本不匹配的写入，但 Runtime 会再次检查当前 Chat、Character owner、Floor、
 active Swipe、正文 hash、message version，以及 execution 是否仍 active。
 
-- 若这些 live owner 条件仍与 execution 相同，而只有官方 `/api/chats/get` 的
-  owner 版本暂时落后，分类为 `temporary_server_convergence`。这是可重试的完整
-  Stage failure：下一次必须重新开始 World/Event Stage，并重新请求 AI，不能只重放
-  persistence，也不能复用上一次 AI 结果。
+- 若这些 live owner 条件仍与 execution 相同，而错误明确来自旧的
+  `official_owner` / source-owner 兼容路径，且官方 `/api/chats/get` 的 owner 版本
+  暂时落后，分类为 `temporary_server_convergence`。这是可重试的完整 Stage
+  failure：下一次必须重新开始 World/Event Stage，并重新请求 AI，不能只重放
+  persistence，也不能复用上一次 AI 结果。普通 Context-first Coordinator 事务不
+  走这条官方 prewrite GET 收敛路径；其 stale 判断以当前加载的 Chat Context 和
+  Floor Version 为准。
 - 若 Chat/Floor/message/Swipe/正文版本确实变化，或 execution 已取消、被替代、
   插件已禁用或 ownership 已丢失，分类为 `true_owner_change`，立即停止，不向旧
   owner 写入，也不启动 retry。
@@ -406,7 +409,8 @@ attempt + domain`。World/Event phase 只是该 execution 的状态更新，不�
 `startActivity`；`success`、`failed`、`cancelled` 或 `disabled` 只允许完成一次
 对应 identity。这样悬浮窗反映的是执行数量，而不是状态事件数量。
 
-自动分析成功还必须通过 Floor 的 authoritative latest-source merge 与 read-back；
-不能把当前内存可读或一次 `saveChat()` 调用当作宿主已提交。SillyTavern 生成消息的
+自动分析成功还必须通过 Floor Coordinator 的 Context-first owner merge 与
+authoritative read-back；不能把当前内存可读或一次 `saveChat()` 调用当作宿主已提交。
+只有显式 source-owner 兼容操作才使用 latest-source merge。SillyTavern 生成消息的
 生命周期事件是观察信号，最终 Floor 写入继续遵守
 [`docs/bioweave-data-lifecycle.md`](./bioweave-data-lifecycle.md) 的 commit contract。

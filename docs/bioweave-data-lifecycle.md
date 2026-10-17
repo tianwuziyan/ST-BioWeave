@@ -103,28 +103,28 @@ The Coordinator owns the following invariants:
 
 - `FLOOR_OWNER_FIELDS` and owner-scoped patch validation;
 - same-Floor transaction serialization and dispatch-time owner/execution checks;
-- latest authoritative Floor reread and sibling-preserving merge;
-- host-memory synchronization, direct official save, and authoritative
-  readback;
+- current host Context Floor view and sibling-preserving owner merge;
+- host-memory synchronization, native `saveChat()`, and one official
+  authoritative readback;
 - complete six-field Floor Version and active Swipe validation, including
   Swipe 0;
-- `AUTHORITATIVE_MATCH`, strictly guarded `HOST_AHEAD_OF_OFFICIAL` bootstrap,
-  and fail-closed true-stale owner handling;
+- fail-closed Chat, Message, Swipe, Floor Version, and execution/epoch handling;
 - terminal supersede and cancellation/supersede protection; and
 - `commitState: "confirmed"` only after owner patch, authoritative readback,
   Floor Version, and sibling audit all succeed.
 
-Implementation status is `IMPLEMENTED`; automated tests cover the persistence
-mechanism; real SillyTavern World persistence final-save + F5/reload durability
-is `REAL-HOST VERIFIED`. The host result is manual acceptance evidence, not an
-automated test result. The issue is closed and is not a release blocker.
+Implementation status is `IMPLEMENTED`; automated tests cover the Context-first
+persistence mechanism. SillyTavern 1.19.0 temporary-Chat Context/save/readback
+validation is prior host evidence, not an automated test and not a cross-client
+CAS guarantee. Formal Chat writes and cross-tab/device concurrency remain outside
+this task.
 
 The adapter also emits `HOST_MEMORY_SLOT_BEFORE_SYNC`,
 `HOST_MEMORY_SLOT_AFTER_SYNC`, and `FINAL_FLOOR_SLOT_AUDIT` diagnostics for the
 host-memory and authoritative-slot checks.
 
-`saveChat()`/`saveChatConditional()` resolution is not, by itself, durable
-confirmation. Immediate authoritative readback remains the confirmation
+`saveChat()` resolution is not, by itself, durable confirmation. Immediate
+authoritative readback remains the confirmation
 boundary used by the ordinary Floor write path. The subsequent SillyTavern
 generation final-save and F5/reload durability path has also been verified in
 the real host: host-memory Floor slot synchronization keeps the authoritative
@@ -134,12 +134,11 @@ an automated test.
 
 The Generation Settle Barrier and Analysis Input Ready boundary are adjacent
 lifecycle contracts, not alternate persistence implementations. They remain
-frozen together with the Coordinator's owner acquisition, stale execution
-guard, cancellation guard, and complete Stage Retry contract. A World/Event/
-Character, prompt, input, UI, or tracking change MUST NOT alter this
-persistence mainline. A persistence change requires a separate persistence
-root-cause task, its own regression tests, and renewed real-host World + Event
-F5 durability validation.
+frozen together with the Coordinator's Context identity guard, pre-save
+execution/epoch guard, cancellation guard, and complete Stage Retry contract.
+A World/Event/Character, prompt, input, UI, or tracking change MUST NOT alter
+this persistence mainline. A persistence change requires a separate persistence
+root-cause task, its own regression tests, and renewed real-host validation.
 
 The following are not ordinary Floor patch writers: explicit Chat/source clear
 and cleanup, lifecycle root invalidation, migration/restore operations, Chat
@@ -754,12 +753,14 @@ Ordinary World, Event/Character, Projection, Manual, and explicitly approved
 terminal writes are submitted through `FloorPersistenceCoordinator` as an
 owner-scoped patch. Its transaction key is the complete six-field Floor
 Version plus Chat scope, and transactions for the same owner slot are
-serialized. Before dispatch it reacquires the live owner, active Swipe, and
-current Floor Version; a changed owner, Chat, Swipe, Version, execution, or
-cancellation fails closed without a write. The coordinator reads the latest
-authoritative slot, applies only the owner's allowlist, and records safe
-`FLOOR_TX_*` diagnostics. These diagnostics are runtime traces, not business
-events and do not trigger UI rendering.
+serialized. Before merge it resolves the current loaded Chat Context, active
+Swipe, and current Floor Version; a changed owner, Chat, Swipe, Version,
+execution, or cancellation fails closed without a write. The coordinator reads
+the current Context Floor view, applies only the owner's allowlist, and records
+safe `FLOOR_TX_*` diagnostics. Ordinary Context-first transactions do not use
+owner-acquisition or latest-slot official GETs for this internal merge. These
+diagnostics are runtime traces, not business events and do not trigger UI
+rendering.
 
 The owner allowlists are World (`world_model`, `world_model_meta`),
 Event/Character (`analysis`, `events`, `character_registry`), Projection
@@ -773,27 +774,33 @@ are not a second ordinary patch path. A successful `saveFloor()` Promise
 does not by itself claim durable success: the coordinator requires read-back of
 the expected owner patch, preservation of every pre-existing sibling root, and
 a matching current Floor Version before returning `commitState: "confirmed"`.
-Phase H real SillyTavern validation covered the ordinary save/readback/F5
-path, new Swipe and existing Swipe switching. Broader product and responsive
-UI acceptance remains separate from this persistence contract.
+Prior SillyTavern 1.19.0 temporary-Chat validation covered Context write,
+native save/readback, F5/reload durability, and new/existing Swipe behavior;
+that evidence is separate from automated tests and does not cover external
+multi-client CAS. Broader product and responsive UI acceptance remains
+separate from this persistence contract.
 
-When the SillyTavern source-owner capability is available, the adapter reads the
-latest authoritative Chat owner first, verifies the target `Floor Version` and
-active Swipe, merges only `message.extra.bioweave` or the exact
-`swipe_info[swipe_id].extra.bioweave` slot, saves that latest source, and reads
-the source back to verify the same payload. It never saves a stale pre-generation
-whole-Chat snapshot.
+For an ordinary Coordinator transaction, the adapter uses the current loaded
+SillyTavern Context as the internal Floor source, verifies the target `Floor
+Version` and active Swipe, merges only `message.extra.bioweave` or the exact
+`swipe_info[swipe_id].extra.bioweave` slot, calls native `saveChat()`, and reads
+the official source back once to verify the same payload. The previous
+source-owner/latest-source path remains only for explicit compatibility paths;
+it is not used to calculate the ordinary Context-first merge.
 
 This boundary matters because SillyTavern emits `MESSAGE_RECEIVED` and
 `CHARACTER_MESSAGE_RENDERED` while the generated message is being finalized;
-the generation path may perform its own final `saveChat` afterward. A runtime
-memory read or a single mutable-context `saveChat()` call therefore is not enough
-to prove a Floor result survived the host writer. The authoritative merge/read-back
-is the persistence contract used by automatic and manual Floor writes.
+the generation path may perform its own final `saveChat` afterward. A Context
+mutation or a single mutable-context `saveChat()` call therefore is not enough
+to prove a Floor result survived the host writer. The official readback remains
+the persistence confirmation boundary used by automatic and manual Floor writes.
 
 World and Character/Event writes remain separate forward-only Floor-slot merges.
-Each merge starts from the latest source, so a later Event write retains the
-already persisted World fields and a later World write retains Event-owned fields.
+Each merge starts from the current Context Floor view, so a later Event write
+retains the already loaded World fields and a later World write retains
+Event-owned fields. The Coordinator queue protects BioWeave's own same-Floor
+writes; other tabs, devices, or direct API writers remain outside that queue and
+may still cause last-write-wins behavior when the host has no CAS.
 If the target message, active Swipe, content hash, or message version changed
 before the commit, the write is stale and is rejected; no result is attached to
 the new owner. Runtime memory is updated only after the authoritative read-back

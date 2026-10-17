@@ -1,0 +1,6 @@
+{"file":"AGENTS.md","reason":"检查最终 diff 是否仅包含授权的测试原型、测试和审计文档，并执行 npm/diff 质量门。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"复核原型结论没有放宽 Floor Version、active Swipe、历史不可变和 sibling ownership。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"复核原型没有改写 lifecycle/persistence confirmation/partial-success 契约。"}
+{"file":"docs/ARCHITECTURE.md","reason":"复核生产 canonical Coordinator/Adapter boundary 未被测试代码旁路成实现。"}
+{"file":".trellis/tasks/10-17-native-floor-persistence-prototype/design.md","reason":"按已批准技术设计检查模型、测试场景、请求计数和证据分级是否完整。"}
+{"file":".trellis/tasks/10-17-native-floor-persistence-prototype/implement.md","reason":"按执行清单检查测试、报告、静态检查和工作区边界。"}

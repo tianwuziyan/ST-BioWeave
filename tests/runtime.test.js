@@ -4,6 +4,7 @@ import { createChatBoundary, STALE_CHAT } from "../runtime/chat.js";
 import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
 import { floorVersion } from "../runtime/floor.js";
 import { createStore } from "../storage/store.js";
+import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
 import { PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND } from "../core/events.js";
 
 function createAdapter() {
@@ -548,7 +549,7 @@ test("SillyTavern adapter writes per-swipe data to the host message", async () =
     const adapter = createSillyTavernAdapter();
     await adapter.saveFloorBioWeave(0, 0, { marker: "zero" }, "chat-a");
     await adapter.saveFloorBioWeave(0, 1, { marker: "one" }, "chat-a");
-    assert.equal(context.chat[0].extra?.bioweave, undefined);
+    assert.deepEqual(context.chat[0].extra?.bioweave, { marker: "zero" });
     assert.equal(context.chat[0].swipe_info[0].extra.bioweave.marker, "zero");
     assert.equal(context.chat[0].swipe_info[1].extra.bioweave.marker, "one");
   } finally {
@@ -659,6 +660,116 @@ test("SillyTavern Floor writes merge the latest authoritative Chat and verify re
   }
 });
 
+test("official Chat GET splits response-body read and JSON parse timing without a second read", async () => {
+  const context = {
+    chatId: "chat-response-timing",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+  };
+  const trace = [];
+  let bodyReadCount = 0;
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () => {
+      bodyReadCount += 1;
+      return JSON.stringify([{chat_metadata: {}}, {message_id: "response-timing-floor", floor: 1, role: "assistant", content: "正文"}]);
+    },
+  });
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const owner = await adapter.readOfficialChatOwner({
+      chatId: context.chatId,
+      characterId: context.characterId,
+      officialIoContext: {
+        performance_operation_id: "perf-response-timing",
+        floor_transaction_id: "floor-tx-response-timing",
+        persistence_kind: "TIMING_INSTANCE",
+        io_purpose: "COORDINATOR_READBACK",
+      },
+      officialIoTrace: entry => trace.push(entry),
+    });
+    assert.equal(owner.messages.length, 1);
+    assert.equal(bodyReadCount, 1);
+    const io = trace.find(entry => entry.stage === "OFFICIAL_CHAT_IO");
+    assert.equal(io.endpoint_kind, "CHAT_GET");
+    assert.equal(io.actual_network_request, true);
+    assert.equal(io.io_purpose, "COORDINATOR_READBACK");
+    assert.ok(Number.isFinite(io.response_body_read_duration_ms));
+    assert.ok(Number.isFinite(io.json_parse_duration_ms));
+    assert.ok(Number.isFinite(io.response_parse_duration_ms));
+    assert.ok(io.response_parse_duration_ms >= io.response_body_read_duration_ms);
+    assert.equal(JSON.stringify(io).includes("response-timing-floor"), false);
+    assert.equal(JSON.stringify(io).includes("正文"), false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("official Chat GET preserves failure semantics and nulls unmeasured split timing", async () => {
+  const context = {
+    chatId: "chat-response-failure-timing",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+  };
+  const cases = [
+    {
+      name: "body read",
+      response: {ok: true, text: async () => { throw new Error("BODY_READ_FAILED"); }},
+      expected: {body: true, json: null},
+    },
+    {
+      name: "json parse",
+      response: {ok: true, text: async () => "not-json"},
+      expected: {body: true, json: true},
+    },
+    {
+      name: "http error",
+      response: {ok: false, status: 503, statusText: "Unavailable"},
+      expected: {body: null, json: null},
+    },
+  ];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  try {
+    for (const item of cases) {
+      const trace = [];
+      globalThis.fetch = async () => item.response;
+      globalThis.SillyTavern = {getContext: () => context};
+      const adapter = createSillyTavernAdapter();
+      adapter.setPersistenceTraceSink(entry => trace.push(entry));
+      await assert.rejects(
+        adapter.readOfficialChatOwner({
+          chatId: context.chatId,
+          characterId: context.characterId,
+          officialIoContext: {io_purpose: "OWNER_ACQUISITION"},
+          officialIoTrace: entry => trace.push(entry),
+        }),
+        /SOURCE_OWNER_READ_/,
+        item.name,
+      );
+      const io = trace.find(entry => entry.stage === "OFFICIAL_CHAT_IO");
+      assert.equal(io.status, "FAILED", item.name);
+      assert.equal(Number.isFinite(io.response_body_read_duration_ms), item.expected.body !== null, item.name);
+      assert.equal(Number.isFinite(io.json_parse_duration_ms), item.expected.json !== null, item.name);
+      assert.ok(io.response_parse_duration_ms === null || Number.isFinite(io.response_parse_duration_ms), item.name);
+    }
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
 test("SillyTavern Floor persistence trace records official path, read-back, and Swipe 0", async () => {
   const context = {
     chatId: "chat-trace-official",
@@ -672,8 +783,10 @@ test("SillyTavern Floor persistence trace records official path, read-back, and 
     { message_id: "trace-floor", floor: 6, role: "assistant", content: "最新正文" },
   ];
   const trace = [];
+  const officialRequests = [];
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async (_url, options) => {
+  globalThis.fetch = async (url, options) => {
+    officialRequests.push(url);
     const body = JSON.parse(options.body);
     if (body.chat) {
       authoritative = structuredClone(body.chat);
@@ -699,12 +812,220 @@ test("SillyTavern Floor persistence trace records official path, read-back, and 
       {floor_version: version, world_model: {species: [{name: "人类"}]}},
       context.chatId,
       version,
-      {domain: "world", chat_id: context.chatId, message_id: "trace-floor", swipe_id: 0, attempt: 1, trigger: "auto-full"},
+      {
+        domain: "world",
+        chat_id: context.chatId,
+        message_id: "trace-floor",
+        swipe_id: 0,
+        attempt: 1,
+        trigger: "auto-full",
+        performance_operation_id: "perf-official-io",
+        floor_transaction_id: "floor-tx-official-io",
+        persistence_kind: "TIMING_INSTANCE",
+      },
     );
     assert.equal(trace.find(entry => entry.stage === "WORLD_SAVE_PATH_SELECTED")?.path, "official");
     assert.ok(trace.some(entry => entry.stage === "OFFICIAL_GET_BEFORE_SAVE_BEGIN"));
     assert.ok(trace.some(entry => entry.stage === "OFFICIAL_SAVE_BEGIN"));
     assert.equal(trace.find(entry => entry.stage === "WORLD_SLOT_AFTER_READBACK")?.present, true);
+    assert.equal(officialRequests.filter(url => url === "/api/chats/get").length, 3);
+    assert.equal(officialRequests.filter(url => url === "/api/chats/save").length, 1);
+    const ioCalls = trace.filter(entry => entry.stage === "OFFICIAL_CHAT_IO");
+    assert.equal(ioCalls.filter(entry => entry.endpoint_kind === "CHAT_GET").length, 3);
+    assert.equal(ioCalls.filter(entry => entry.endpoint_kind === "CHAT_SAVE").length, 1);
+    assert.equal(new Set(ioCalls.map(entry => entry.io_call_id)).size, 4);
+    assert.equal(ioCalls.every(entry => entry.actual_network_request === true), true);
+    assert.equal(ioCalls.every(entry => entry.cache_status === "NOT_USED"), true);
+    assert.deepEqual(
+      ioCalls.filter(entry => entry.endpoint_kind === "CHAT_GET").map(entry => entry.io_purpose),
+      ["SAVE_PREWRITE_READ", "SAVE_AUTHORITATIVE_READBACK", "SAVE_FINAL_SLOT_AUDIT"],
+    );
+    assert.deepEqual(
+      trace.filter(entry => entry.stage === "OFFICIAL_FLOOR_EXTRACT").map(entry => entry.io_purpose),
+      ["SAVE_PREWRITE_READ", "SAVE_AUTHORITATIVE_READBACK", "SAVE_FINAL_SLOT_AUDIT"],
+    );
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Coordinator write diagnostics count actual official Chat I/O without adding requests", async () => {
+  const context = {
+    chatId: "chat-coordinator-official-io",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "io-floor", floor: 9, role: "assistant", content: "权威正文", extra: {}}],
+  };
+  const version = await floorVersion({
+    chatId: context.chatId,
+    messageId: "io-floor",
+    floor: 9,
+    swipeId: 0,
+    text: "权威正文",
+  });
+  const initialFloor = {floor_version: version, world_model: {revision: 1}};
+  context.chat[0].extra.bioweave = structuredClone(initialFloor);
+  context.saveChat = async () => {
+    authoritative = [{chat_metadata: {}}, ...structuredClone(context.chat)];
+  };
+  let authoritative = [
+    {chat_metadata: {}},
+    structuredClone(context.chat[0]),
+  ];
+  const requests = [];
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (url, options) => {
+    requests.push(url);
+    const body = JSON.parse(options.body);
+    if (url === "/api/chats/save") authoritative = structuredClone(body.chat);
+    return {
+      ok: true,
+      json: async () => url === "/api/chats/get" ? structuredClone(authoritative) : {},
+    };
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const boundary = createChatBoundary(adapter);
+    const store = createStore(adapter, boundary);
+    const coordinator = createFloorPersistenceCoordinator({
+      store,
+      resolveCurrentFloorVersion: async () => version,
+    });
+    const result = await coordinator.commitFloorPatch({
+      owner: "world",
+      chatId: context.chatId,
+      ownerFloor: {message_index: 0, message_id: "io-floor"},
+      swipeId: 0,
+      floorVersion: version,
+      patch: {world_model: {revision: 2}},
+      traceContext: {
+        performance_operation_id: "perf-full-official-io",
+        persistence_kind: "TIMING_INSTANCE",
+      },
+    });
+    assert.equal(result.status, "confirmed");
+    assert.equal(requests.filter(url => url === "/api/chats/get").length, 1);
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+    const ioCalls = trace.filter(entry => entry.stage === "OFFICIAL_CHAT_IO");
+    assert.equal(ioCalls.filter(entry => entry.endpoint_kind === "CHAT_GET").length, 1);
+    assert.equal(ioCalls.filter(entry => entry.endpoint_kind === "CHAT_SAVE").length, 0);
+    assert.deepEqual(
+      ioCalls.filter(entry => entry.endpoint_kind === "CHAT_GET").map(entry => entry.io_purpose),
+      ["SAVE_AUTHORITATIVE_READBACK"],
+    );
+    assert.equal(new Set(ioCalls.map(entry => entry.io_call_id)).size, 1);
+
+    requests.length = 0;
+    trace.length = 0;
+    const noOp = await coordinator.commitFloorPatch({
+      owner: "world",
+      chatId: context.chatId,
+      ownerFloor: {message_index: 0, message_id: "io-floor"},
+      swipeId: 0,
+      floorVersion: version,
+      patchResolver: async () => ({__floor_tx_noop: true}),
+      traceContext: {
+        performance_operation_id: "perf-full-official-io-noop",
+        persistence_kind: "TIMING_INSTANCE",
+      },
+    });
+    assert.equal(noOp.status, "noop");
+    assert.equal(requests.filter(url => url === "/api/chats/get").length, 0);
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+    assert.deepEqual(
+      trace.filter(entry => entry.stage === "OFFICIAL_CHAT_IO").map(entry => entry.io_purpose),
+      [],
+    );
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Coordinator Context-first writes mirror the active Swipe into message extra", async () => {
+  const context = {
+    chatId: "chat-coordinator-context-swipe",
+    characterId: "character-1",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "context-swipe-floor",
+      floor: 4,
+      role: "assistant",
+      mes: "保持正文",
+      swipes: ["保持正文", "其他 Swipe"],
+      swipe_id: 0,
+      extra: {other_extension: {keep: true}},
+      swipe_info: [
+        {extra: {bioweave: {analysis: {status: "success"}}}},
+        {extra: {bioweave: {world_model: {species: [{name: "旧 Swipe"}]}}}},
+      ],
+    }],
+  };
+  const version = await floorVersion({
+    chatId: context.chatId,
+    messageId: "context-swipe-floor",
+    floor: 4,
+    swipeId: 0,
+    text: "保持正文",
+  });
+  context.chat[0].swipe_info[0].extra.bioweave.floor_version = version;
+  context.chat[0].swipe_info[0].extra.bioweave.analysis = {status: "success"};
+  let hostSaveCount = 0;
+  let authoritative = [{chat_metadata: {}}, structuredClone(context.chat[0])];
+  context.saveChat = async () => {
+    hostSaveCount += 1;
+    authoritative = [{chat_metadata: {}}, ...structuredClone(context.chat)];
+  };
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (url, options) => {
+    requests.push(url);
+    assert.equal(options?.method, "POST");
+    return {
+      ok: true,
+      json: async () => url === "/api/chats/get" ? structuredClone(authoritative) : {},
+    };
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const store = createStore(adapter, createChatBoundary(adapter));
+    const coordinator = createFloorPersistenceCoordinator({store});
+    const result = await coordinator.commitFloorPatch({
+      owner: "world",
+      chatId: context.chatId,
+      ownerFloor: {message_index: 0, message_id: version.message_id},
+      swipeId: 0,
+      floorVersion: version,
+      patch: {world_model: {species: [{name: "新世界"}]}},
+    });
+
+    assert.equal(result.status, "confirmed");
+    assert.equal(hostSaveCount, 1);
+    assert.equal(requests.filter(url => url === "/api/chats/get").length, 1);
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+    assert.deepEqual(context.chat[0].extra.other_extension, {keep: true});
+    assert.deepEqual(
+      context.chat[0].extra.bioweave,
+      context.chat[0].swipe_info[0].extra.bioweave,
+    );
+    assert.deepEqual(context.chat[0].swipe_info[0].extra.bioweave.world_model, {species: [{name: "新世界"}]});
+    assert.deepEqual(context.chat[0].swipe_info[0].extra.bioweave.analysis, {status: "success"});
+    assert.deepEqual(context.chat[0].swipe_info[1].extra.bioweave, {world_model: {species: [{name: "旧 Swipe"}]} });
+    assert.equal(context.chat[0].mes, "保持正文");
+    assert.deepEqual(authoritative[1].extra.bioweave, authoritative[1].swipe_info[0].extra.bioweave);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
@@ -994,7 +1315,7 @@ test("official owner convergence saves the current host chat before the Floor wr
       trigger: "reroll",
       generation_settled: true,
     });
-    assert.equal(hostSaveCalls, 0);
+    assert.equal(hostSaveCalls, 1);
     assert.equal(trace.filter(entry => entry.stage === "HOST_AUTHORITATIVE_SAVE_BEGIN").length, 0);
     assert.equal(trace.filter(entry => entry.stage === "OFFICIAL_SAVE_BEGIN").length, 1);
     assert.equal(authoritative[1].extra.bioweave.world_model.species[0].name, "人类");

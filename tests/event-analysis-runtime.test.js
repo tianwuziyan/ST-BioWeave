@@ -1130,6 +1130,8 @@ test("manual Timing Instance edit writes the current Floor and reevaluates only 
 
   await fixture.runtime.init();
   const subjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const canonicalBuildsBeforeEdit = fixture.runtime.getPersistenceTrace().sequence
+    .filter(item => item.stage === "CHARACTER_CANONICAL_PHASES").length;
   await fixture.runtime.saveCharacterTimingConfig({
     characterId: subjectId,
     config: {...LIFECYCLE_RECOVERY_TIMING_CONFIG, base_min_story_days: 18, base_max_story_days: 20},
@@ -1139,6 +1141,11 @@ test("manual Timing Instance edit writes the current Floor and reevaluates only 
   assert.equal(separated.config.base_max_story_days, 20);
   assert.equal(separated.timing_instance.base_min_story_days, 10);
   assert.equal(separated.timing_instance.base_max_story_days, 16);
+  const performanceOperationId = fixture.runtime.startTimingPerformanceOperation({
+    operation: "SAVE_TIMING_INSTANCE",
+    character_id: subjectId,
+    chat_id: "chat-runtime",
+  });
   const result = await fixture.runtime.editCharacterTimingInstance({
     characterId: subjectId,
     timingInstanceId: seed.timing.timing_instance_id,
@@ -1147,8 +1154,13 @@ test("manual Timing Instance edit writes the current Floor and reevaluates only 
     varianceRatio: 0.25,
     varianceCapStoryDays: 4,
     totalAdjustmentCapStoryDays: 2,
+    performanceOperationId,
   });
+  fixture.runtime.finishTimingPerformanceOperation({operation_id: performanceOperationId, status: "SUCCEEDED"});
   assert.equal(result.status, "succeeded");
+  const canonicalBuildsAfterEdit = fixture.runtime.getPersistenceTrace().sequence
+    .filter(item => item.stage === "CHARACTER_CANONICAL_PHASES").length;
+  assert.equal(canonicalBuildsAfterEdit, canonicalBuildsBeforeEdit);
   assert.equal(result.timing_instance.cycle_id, seed.timing.cycle_id);
   assert.equal(result.timing_instance.sampled_individual_offset_story_days, seed.timing.sampled_individual_offset_story_days);
   assert.equal(result.timing_instance.base_min_story_days, 18);
@@ -1157,6 +1169,89 @@ test("manual Timing Instance edit writes the current Floor and reevaluates only 
   assert.equal(result.timing_instance.variance_cap_story_days, 4);
   assert.equal(result.timing_instance.total_adjustment_cap_story_days, 2);
   assert.equal(result.aggregation_reevaluation.action, "removed_before_min");
+  const performanceOperation = fixture.runtime.getTimingPerformanceDiagnostics().recent_operations.find(item =>
+    item.operation_id === performanceOperationId,
+  );
+  assert.equal(performanceOperation?.status, "SUCCEEDED");
+  assert.ok(performanceOperation?.total_duration_ms !== null);
+  const performanceStageNames = new Set(performanceOperation?.stages.map(stage => stage.stage));
+  for (const stage of [
+    "TIMING_INSTANCE_RESOLUTION",
+    "TIMING_INSTANCE_PERSISTENCE",
+    "TIMING_INSTANCE_READBACK",
+    "AGGREGATION_REEVALUATION_INPUT",
+    "AGGREGATION_PERSISTENCE",
+    "AGGREGATION_READBACK",
+    "PERSISTENCE_REQUEST_PREPARE",
+    "COORDINATOR_QUEUE_WAIT",
+    "AUTHORITATIVE_FLOOR_RESOLVE",
+    "FLOOR_VERSION_VALIDATION",
+    "SNAPSHOT_MERGE",
+    "COORDINATOR_PRE_SAVE_GUARD",
+    "STORE_SAVE_FLOOR",
+    "COORDINATOR_READBACK",
+    "COORDINATOR_EXECUTION",
+  ]) assert.ok(performanceStageNames.has(stage), stage);
+  fixture.runtime.recordPersistenceTrace({
+    stage: "BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED",
+    performance_operation_id: performanceOperationId,
+    persistence_kind: "TIMING_INSTANCE",
+  });
+  fixture.runtime.recordPersistenceTrace({
+    stage: "BIOWEAVE_FULL_CHAT_SAVE_RESOLVED",
+    performance_operation_id: performanceOperationId,
+    persistence_kind: "TIMING_INSTANCE",
+    commit_state: "resolved",
+    host_chat_save_duration_ms: 12.75,
+  });
+  fixture.runtime.recordPersistenceTrace({
+    stage: "OFFICIAL_CHAT_IO",
+    performance_operation_id: performanceOperationId,
+    floor_transaction_id: "floor-tx-timing-test",
+    persistence_kind: "TIMING_INSTANCE",
+    io_call_id: "official-io-test",
+    io_purpose: "SAVE_PREWRITE_READ",
+    endpoint_kind: "CHAT_GET",
+    actual_network_request: true,
+    cache_status: "NOT_USED",
+    status: "SUCCEEDED",
+    total_duration_ms: 9.5,
+    network_wait_duration_ms: 8.25,
+    response_body_read_duration_ms: 0.75,
+    json_parse_duration_ms: 0.15,
+    response_parse_duration_ms: 0.5,
+    response_normalize_duration_ms: 0.25,
+    source_revision_duration_ms: 0.5,
+  });
+  fixture.runtime.recordPersistenceTrace({
+    stage: "OFFICIAL_FLOOR_EXTRACT",
+    performance_operation_id: performanceOperationId,
+    floor_transaction_id: "floor-tx-timing-test",
+    persistence_kind: "TIMING_INSTANCE",
+    io_call_id: "official-io-test",
+    io_purpose: "SAVE_PREWRITE_READ",
+    floor_extract_duration_ms: 0.2,
+    status: "SUCCEEDED",
+  });
+  const hostSaveStage = fixture.runtime.getTimingPerformanceDiagnostics().recent_operations
+    .find(item => item.operation_id === performanceOperationId)?.stages.find(stage => stage.stage === "HOST_SAVE_AWAIT");
+  const hostInvocationStage = fixture.runtime.getTimingPerformanceDiagnostics().recent_operations
+    .find(item => item.operation_id === performanceOperationId)?.stages.find(stage => stage.stage === "HOST_SAVE_INVOCATION");
+  assert.equal(hostInvocationStage?.status, "ATTEMPTED");
+  assert.equal(hostInvocationStage?.duration_ms, null);
+  assert.equal(hostSaveStage?.status, "SUCCEEDED");
+  assert.equal(hostSaveStage?.host_save_duration_ms, 12.75);
+  const officialIo = fixture.runtime.getTimingPerformanceDiagnostics().recent_operations
+    .find(item => item.operation_id === performanceOperationId)?.official_io_calls;
+  assert.equal(officialIo?.length, 1);
+  assert.equal(officialIo?.[0].floor_transaction_id, "floor-tx-timing-test");
+  assert.equal(officialIo?.[0].io_purpose, "SAVE_PREWRITE_READ");
+  assert.equal(officialIo?.[0].endpoint_kind, "CHAT_GET");
+  assert.equal(officialIo?.[0].actual_network_request, true);
+  assert.equal(officialIo?.[0].network_wait_duration_ms, 8.25);
+  assert.equal(officialIo?.[0].response_body_read_duration_ms, 0.75);
+  assert.equal(officialIo?.[0].json_parse_duration_ms, 0.15);
+  assert.equal(officialIo?.[0].floor_extract_duration_ms, 0.2);
 
   const timingDebug = await fixture.runtime.getProjectionTimingDebug();
   const timing = timingDebug.timing_instances.find(item =>
@@ -1628,6 +1723,79 @@ test("manual Timing Instance edit preserves an existing successful Aggregation w
   }));
   assert.equal(readback.items[0].effective_min_story_days, 18);
   assert.equal(readback.items[0].effective_max_story_days, 20);
+  fixture.runtime.destroy();
+});
+
+test("manual Timing reevaluation removes only the target Aggregation and preserves siblings", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "manual-timing-target-only",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_TARGET_ONLY_EDIT");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_TARGET_ONLY_EDIT");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const targetSubjectId = seed.event.pregnancy_relevance.gestational_subject_ids[0];
+  const sibling = normalizeParticipantAggregation({
+    aggregation_id: "participant_aggregation_sibling",
+    subject_id: "sibling-subject",
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: "sibling-cycle",
+    timing_instance_id: "sibling-timing",
+    reference_story_time: {day_index: 1},
+    aggregation_story_time: {day_index: 20},
+    elapsed_story_days: 19,
+    effective_min_story_days: 14,
+    effective_max_story_days: 42,
+    sampled_individual_offset_story_days: 0,
+    config_snapshot: LIFECYCLE_RECOVERY_TIMING_CONFIG,
+    accepted_exposure_event_ids: [seed.event.event_id],
+    source_basis_refs: {fixture: "sibling"},
+    created_at_floor_version: seed.version,
+  });
+  await fixture.runtime.upsertParticipantAggregation({
+    chatId: "chat-runtime",
+    ownerFloor: {message_index: 0},
+    floorVersion: seed.version,
+    aggregation: sibling,
+  });
+  const siblingBefore = structuredClone((await fixture.runtime.getParticipantAggregations({
+    chatId: "chat-runtime",
+    endpointFloor: seed.version.floor,
+    endpointIndex: 0,
+  })).items.find(item => item.aggregation_id === sibling.aggregation_id));
+
+  const result = await fixture.runtime.editCharacterTimingInstance({
+    characterId: targetSubjectId,
+    timingInstanceId: seed.timing.timing_instance_id,
+    baseMinStoryDays: 40,
+    baseMaxStoryDays: 50,
+  });
+  assert.equal(result.aggregation_reevaluation.action, "removed_before_min");
+
+  const after = await fixture.runtime.getParticipantAggregations({
+    chatId: "chat-runtime",
+    endpointFloor: seed.version.floor,
+    endpointIndex: 0,
+  });
+  assert.equal(after.items.some(item => item.subject_id === targetSubjectId), false);
+  assert.deepEqual(
+    after.items.find(item => item.aggregation_id === sibling.aggregation_id),
+    siblingBefore,
+  );
   fixture.runtime.destroy();
 });
 
@@ -2216,8 +2384,8 @@ test("concurrent business reads share one canonical build and isolate returned d
   let second;
   try {
     [first, second] = await Promise.all([
-      fixture.runtime.collectActiveBusinessData({reason: "manual-analysis"}),
-      fixture.runtime.collectActiveBusinessData({reason: "canonical-readiness"}),
+      fixture.runtime.collectActiveBusinessData({reason: "manual-analysis", analysisPhase: "concurrent-read-test"}),
+      fixture.runtime.collectActiveBusinessData({reason: "canonical-readiness", analysisPhase: "concurrent-read-test"}),
     ]);
   } finally {
     globalThis.crypto.subtle.digest = originalDigest;
@@ -2240,6 +2408,47 @@ test("concurrent business reads share one canonical build and isolate returned d
   fixture.runtime.destroy();
 });
 
+test("completed canonical reads reuse the exact Floor generation and invalidate after derived commits", async () => {
+  const rawTrace = [];
+  const seed = await seededLifecycleRecoveryFloor({eventId: "completed-canonical-cache"});
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messageLookupById: true,
+    messages: [seed.message],
+    notify: event => {
+      if (event?.type === "BIOWEAVE_PERSISTENCE_TRACE") rawTrace.push(event.payload);
+    },
+    analyzer: {
+      async analyzeWorldModel() {
+        throw new Error("WORLD_AI_MUST_NOT_RUN_DURING_CANONICAL_CACHE_TEST");
+      },
+      async analyzeFloor() {
+        throw new Error("EVENT_AI_MUST_NOT_RUN_DURING_CANONICAL_CACHE_TEST");
+      },
+      async generateProjection() {
+        throw new Error("PROJECTION_AI_MUST_NOT_RUN_DURING_CANONICAL_CACHE_TEST");
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  const traceStart = rawTrace.length;
+  await fixture.runtime.collectActiveBusinessData({reason: "completed-cache-first", analysisPhase: "completed-cache-test"});
+  await fixture.runtime.collectActiveBusinessData({reason: "completed-cache-second", analysisPhase: "completed-cache-test"});
+
+  const readsAfterReuse = rawTrace.slice(traceStart);
+  assert.equal(readsAfterReuse.filter(item => item.stage === "CHARACTER_CANONICAL_PHASES").length, 1);
+  assert.equal(readsAfterReuse.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_CACHE_HIT").length, 1);
+
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  await fixture.runtime.updateEvent(currentEvents[0].event_id, {location: "canonical-cache-generation-bump"});
+  await fixture.runtime.collectActiveBusinessData({reason: "completed-cache-after-commit", analysisPhase: "completed-cache-test"});
+
+  const readsAfterCommit = rawTrace.slice(traceStart);
+  assert.ok(readsAfterCommit.filter(item => item.stage === "CHARACTER_CANONICAL_PHASES").length >= 2);
+  fixture.runtime.destroy();
+});
+
 test("canonical generation changes only after a derived Floor commit, not a read-only Tracking refresh", async () => {
   const rawTrace = [];
   const fixture = createFixture({
@@ -2251,21 +2460,21 @@ test("canonical generation changes only after a derived Floor commit, not a read
   await fixture.runtime.analyzeCurrentFloor({force: true});
 
   const beforeReads = rawTrace.length;
-  await fixture.runtime.collectActiveBusinessData();
+  await fixture.runtime.collectActiveBusinessData({includeDebug: true});
   const afterFirstRead = rawTrace.slice(beforeReads).filter(item =>
     item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
   assert.ok(afterFirstRead.length >= 1);
   const generationBeforeTrackingRead = afterFirstRead.at(-1).canonical_generation;
 
   await fixture.runtime.refreshTrackingRegistry("diagnostic-read");
-  await fixture.runtime.collectActiveBusinessData();
+  await fixture.runtime.collectActiveBusinessData({includeDebug: true});
   const afterTrackingRead = rawTrace.slice(beforeReads).filter(item =>
     item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
   assert.equal(afterTrackingRead.at(-1).canonical_generation, generationBeforeTrackingRead);
 
   const currentEvents = await fixture.runtime.getCurrentFloorEvents();
   await fixture.runtime.updateEvent(currentEvents[0].event_id, {location: "generation-bump"});
-  await fixture.runtime.collectActiveBusinessData();
+  await fixture.runtime.collectActiveBusinessData({includeDebug: true});
   const afterCommit = rawTrace.slice(beforeReads).filter(item =>
     item.stage === "CHARACTER_CANONICAL_BUILD_COMPLETED");
   assert.ok(afterCommit.at(-1).canonical_generation > generationBeforeTrackingRead);
@@ -7353,7 +7562,7 @@ test("automatic analysis trace exposes the Character handoff and scheduler decis
     "API_REQUEST_STARTED",
     "API_RESULT_RECEIVED",
     "FLOOR_TX_CREATED",
-    "AUTHORITATIVE_SOURCE_READ_BEFORE_WRITE",
+    "CONTEXT_SOURCE_READ_BEFORE_WRITE",
   ]) {
     assert.equal(versionChainBoundaries.has(boundary), true, boundary);
   }
@@ -8855,7 +9064,7 @@ test("unrelated GENERATION_STARTED does not cancel the bound Floor execution", a
   fixture.emit("character-message-rendered", {message_id: "message-stable"});
   await worldStarted;
 
-  fixture.emit("generation-started", {
+  const generationStarted = fixture.emit("generation-started", {
     genType: "regenerate",
     message_id: "unrelated-generation",
     generation_id: "generation-unrelated",
@@ -8865,6 +9074,7 @@ test("unrelated GENERATION_STARTED does not cancel the bound Floor execution", a
     schema_version: 1,
     species: [{ name: "人类", biological_types: [] }],
   }));
+  await generationStarted;
   await settle();
 
   const trace = fixture.runtime.getPersistenceTrace();
@@ -9292,6 +9502,10 @@ test("SillyTavern official Floor readback keeps message_index 72 and swipe 0 ali
     }
     throw new Error(`unexpected endpoint: ${endpoint}`);
   };
+  context.saveChat = async () => {
+    remoteMessages = structuredClone(context.chat);
+    return {commitState: "host-accepted", status: "accepted"};
+  };
   try {
     const adapter = createSillyTavernAdapter();
     const expected = await floorVersion({
@@ -9318,6 +9532,8 @@ test("SillyTavern official Floor readback keeps message_index 72 and swipe 0 ali
     assert.equal(remoteMessages[72].extra.bioweave.floor_version.message_id, 72);
     assert.equal(remoteMessages[72].extra.bioweave.projection_timing_snapshot.items.length, 0);
     assert.equal(remoteMessages[0].extra, undefined);
+    assert.equal(requests.filter(request => request.endpoint === "/api/chats/save").length, 0);
+    assert.equal(requests.filter(request => request.endpoint === "/api/chats/get").length, 1);
     const readback = await adapter.readOfficialFloorSlot({
       messageIndex: 72,
       swipeId: 0,
@@ -9327,7 +9543,7 @@ test("SillyTavern official Floor readback keeps message_index 72 and swipe 0 ali
     assert.equal(readback.messageIndex, 72);
     assert.equal(readback.swipe_id, 0);
     assert.deepEqual(readback.floor, remoteMessages[72].extra.bioweave);
-    assert.ok(requests.filter(request => request.endpoint === "/api/chats/save").length >= 1);
+    assert.equal(requests.filter(request => request.endpoint === "/api/chats/get").length, 2);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
@@ -10651,6 +10867,10 @@ test("confirmed cancellation releases execution and preserves the previous succe
   });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
+  // Event success schedules Projection post-processing asynchronously. Await
+  // that existing runtime barrier before starting the cancellation scenario so
+  // the assertion below covers the cancelled Event execution only.
+  await fixture.runtime.refreshProjection();
   const previousId = (await fixture.runtime.getCurrentFloorEvents())[0]
     .event_id;
   const pending = fixture.runtime.refreshCurrentFloorAnalysis();

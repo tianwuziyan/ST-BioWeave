@@ -207,7 +207,22 @@ NSFW 自动聚合诊断也复用 `runtime/diagnostics.js` 的有限 Runtime buff
 `CURRENT_STATE`、`EXECUTION_TRACE` 或 `DERIVED_DIAGNOSTIC` 来源标记，以及 Chat、Floor/Swipe、
 Subject、Cycle 关联。`runtime.collectActiveBusinessData({includeDebug: true})` 在既有
 `business_debug` / `lifecycle_runtime` 之外输出 `diagnostic_metadata`、
-`nsfw_pipeline_diagnostics`、`timing_diagnostics` 和 `aggregation_diagnostics`。
+`nsfw_pipeline_diagnostics`、`timing_diagnostics`、`aggregation_diagnostics` 和
+`timing_performance_diagnostics`。后者是有界的前端操作 Trace，保留 Timing 编辑器操作（打开、恢复默认、保存）以及人物页
+打开/选人/列表与详情局部渲染记录；按同步/异步阶段记录人物数量、渲染范围、HTML 构建与 DOM 提交耗时，并在保存操作中记录
+持久化/readback/Aggregation 重评估结果。持久化阶段还按同一 `operation_id` 记录请求准备、Coordinator 队列等待、执行、owner 获取与当前性校验、Snapshot 合并、no-op 决策/收尾、
+`store.saveFloor` 边界、权威回读以及宿主保存等待（宿主没有实际保存时不产生该阶段）；no-op 会将 `STORE_SAVE_FLOOR` 标为 `NOT_APPLICABLE`，不包含聊天正文或完整 Snapshot。人物页已挂载时，选人只更新列表选中状态并替换详情
+pane，不重新构建无关人物列表；无法安全局部更新时回退完整页面渲染。Settings Debug 只格式化这份 DTO，最多展示最近八次
+操作及其阶段耗时，不重新读取或重算业务状态。
+
+Timing 保存的官方 Chat I/O 也记录在同一个有界操作 Trace 的 `official_io_calls` 中。记录点位于
+`runtime/sillytavern-adapter.js` 的真实 `fetch` 边界，而不是仅统计上层包装函数；每次调用用
+`io_call_id` 关联 `floor_transaction_id`、`persistence_kind` 和 `io_purpose`，并分别记录
+`CHAT_GET` / `CHAT_SAVE`、请求等待、响应体读取、JSON 解析、owner 规范化、`sourceRevision` 与 Floor slot
+提取耗时；当响应对象只提供已经合并读取/解析的兼容接口时，两个拆分字段保持 `null`，不估算。
+当前 Adapter 不缓存官方 Chat GET，因此 `cache_status` 为 `NOT_USED`。这些记录只解释
+Owner Acquisition、Latest Slot、保存前读取、保存后 Adapter readback、最终 slot audit 与
+Coordinator readback 的实际成本，不复用或删除任何权威读取，也不记录 Chat 正文、完整请求、响应或 Snapshot。
 
 诊断 readback 只复用现有只读权威读取；Timing/Aggregation 业务入口不会因为采集诊断而额外
 创建实例、聚合、调用 AI 或改变持久化顺序。没有可见执行 Trace 时使用 `TRACE_UNAVAILABLE`
@@ -285,10 +300,11 @@ ordinary Floor write path：
 World / Event / Event Editing / Projection / Terminal
 → owner-scoped patch
 → FloorPersistenceCoordinator
-→ latest authoritative merge
+→ current host Context Floor view + identity guards
+→ owner-scoped Snapshot merge
 → host sync
-→ official save
-→ authoritative readback
+→ native saveChat()
+→ one official authoritative readback
 → confirmed
 ```
 
@@ -307,7 +323,7 @@ Owner whitelist：
 
 普通业务模块不得直接调用 `store.saveFloor`、`/api/chats/save`、`context.saveChat`、`saveOfficialFloorSlot`，也不得直接写任意 `extra.bioweave` 或 `swipe_info[*].extra.bioweave`。Chat clear、source cleanup、lifecycle root invalidation、migration/restore、metadata/settings 和 explicit Floor clear 是特殊操作，不是 ordinary owner-patch precedent。
 
-## Known-good freeze
+## Persistence safety boundary
 
 以下内容未经 root-cause evidence 不应修改：
 
@@ -315,11 +331,12 @@ Owner whitelist：
 - `runtime/sillytavern-adapter.js`
 - `runtime/generation-lifecycle.js`
 - `runtime/floor.js`
-- `runtime/events.js` 中的 owner inspection/acquisition、host-ahead bootstrap、official save、readback/confirmed 路径
+- `runtime/events.js` 中的 Context identity guard、native save、readback/confirmed 路径
 
-这些路径的当前状态为：`IMPLEMENTED`；自动化测试已覆盖 persistence mechanism；真实
-SillyTavern World persistence 的 final-save + F5/reload durability 与 Swipe 行为已人工验证。
-人工宿主验收不等同于自动化测试。与产品行为无关的问题不得顺手触碰它们。
+这些路径的当前状态为：`IMPLEMENTED`；自动化测试已覆盖 Context-first persistence
+mechanism。SillyTavern 1.19.0 临时 Chat 的 Context 写入、native save 和官方
+readback 已在前置 Host 验证中通过，但本任务没有对正式 Chat 做写入，也没有把
+跨标签页/设备并发描述成宿主保证。与产品行为无关的问题不得顺手触碰它们。
 
 ## World 与 Character/Event
 

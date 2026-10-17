@@ -16,6 +16,12 @@ export const VERSION_CHAIN_FIELDS = Object.freeze([
 
 const NSFW_PIPELINE_RUN_LIMIT = 64;
 const NSFW_PIPELINE_STAGE_LIMIT = 256;
+const TIMING_PERFORMANCE_OPERATION_LIMIT = 32;
+const TIMING_PERFORMANCE_OFFICIAL_IO_LIMIT = 20;
+// A save operation can contain Timing and Aggregation Coordinator stages in
+// addition to the UI/runtime stages. Keep the buffer bounded, but large
+// enough to retain one complete save trace after the Coordinator breakdown.
+const TIMING_PERFORMANCE_STAGE_LIMIT = 48;
 const NSFW_PIPELINE_STATUSES = new Set([
   "NOT_INVOKED",
   "SKIPPED",
@@ -91,9 +97,16 @@ function diagnosticNow() {
 }
 
 export function monotonicNow() {
-  return typeof globalThis.performance?.now === "function"
-    ? globalThis.performance.now()
-    : null;
+  try {
+    if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
+  } catch {
+    // Fall through to the legacy-compatible clock below.
+  }
+  try {
+    return typeof Date.now === "function" ? Date.now() : null;
+  } catch {
+    return null;
+  }
 }
 
 export function durationMs(start, end = monotonicNow()) {
@@ -241,7 +254,12 @@ function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
     "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "elapsed_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
-    "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "domain", "state", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path",
+    "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "trigger", "domain", "state", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path",
+    "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
+    "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
+    "json_parse_duration_ms", "response_parse_duration_ms",
+    "response_normalize_duration_ms", "source_revision_duration_ms", "floor_extract_duration_ms",
+    "total_duration_ms", "owner_swipe_id",
     "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
     "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
     "retry_index", "max_retries", "failure_stage", "failure_code",
@@ -581,23 +599,32 @@ export function createRuntimeDiagnostics({
   getChatId = () => null,
   maxNsfwPipelineRuns = NSFW_PIPELINE_RUN_LIMIT,
   maxNsfwPipelineStages = NSFW_PIPELINE_STAGE_LIMIT,
+  maxTimingPerformanceOperations = TIMING_PERFORMANCE_OPERATION_LIMIT,
 } = {}) {
   let persistenceTrace = null;
   let traceSequence = 0;
   const recentLifecycleTrace = [];
   const nsfwPipelineRuns = [];
   const nsfwPipelineStages = [];
+  const timingPerformanceOperations = [];
+  const timingPerformanceClocks = new Map();
   const maxRunCount = Number.isInteger(maxNsfwPipelineRuns) && maxNsfwPipelineRuns > 0
     ? maxNsfwPipelineRuns
     : NSFW_PIPELINE_RUN_LIMIT;
   const maxStageCount = Number.isInteger(maxNsfwPipelineStages) && maxNsfwPipelineStages > 0
     ? maxNsfwPipelineStages
     : NSFW_PIPELINE_STAGE_LIMIT;
+  const maxTimingPerformanceOperationCount = Number.isInteger(maxTimingPerformanceOperations)
+    && maxTimingPerformanceOperations > 0
+    ? maxTimingPerformanceOperations
+    : TIMING_PERFORMANCE_OPERATION_LIMIT;
   let runSequence = 0;
   let stageSequence = 0;
+  let timingPerformanceSequence = 0;
   let persistenceTraceTruncated = false;
   let lifecycleTraceTruncated = false;
   let nsfwPipelineTruncated = false;
+  let timingPerformanceTruncated = false;
   let recorderFailed = false;
 
   function appendPersistenceTraceEntry(entry) {
@@ -616,6 +643,247 @@ export function createRuntimeDiagnostics({
       recorderFailed = true;
       return fallback;
     }
+  }
+
+  function createTimingPerformanceOperationId() {
+    timingPerformanceSequence += 1;
+    return `timing_perf_${Date.now().toString(36)}_${timingPerformanceSequence.toString(36)}`;
+  }
+
+  function timingPerformanceOperationFor(operationId) {
+    const id = diagnosticScalar(operationId, 120);
+    return id ? [...timingPerformanceOperations].reverse().find(item => item.operation_id === id) ?? null : null;
+  }
+
+  function startTimingPerformanceOperation(input = {}) {
+    return safeCall(() => {
+      const operationId = createTimingPerformanceOperationId();
+      const startedAt = monotonicNow();
+      const operation = {
+        operation: diagnosticScalar(input.operation, 120) ?? "UNKNOWN",
+        operation_id: operationId,
+        character_id: diagnosticScalar(input.character_id),
+        chat_id: diagnosticScalar(input.chat_id) ?? safeCall(() => diagnosticScalar(getChatId())),
+        character_count: Number.isFinite(Number(input.character_count))
+          ? Math.max(0, Math.trunc(Number(input.character_count)))
+          : null,
+        status: "ATTEMPTED",
+        started_at: diagnosticNow(),
+        completed_at: null,
+        total_duration_ms: null,
+        stages: [],
+        stages_truncated: false,
+        official_io_calls: [],
+        official_io_calls_truncated: false,
+        official_io_summary: {
+          actual_chat_get_count: 0,
+          actual_chat_save_count: 0,
+          failed_call_count: 0,
+        },
+        render_count: 0,
+        render_scope: null,
+        persistence_attempted: null,
+        persistence_succeeded: null,
+        readback_attempted: null,
+        readback_succeeded: null,
+        aggregation_reevaluation_attempted: null,
+        aggregation_reevaluation_succeeded: null,
+        reason_code: null,
+        source_type: "EXECUTION_TRACE",
+      };
+      timingPerformanceOperations.push(operation);
+      timingPerformanceClocks.set(operationId, startedAt);
+      while (timingPerformanceOperations.length > maxTimingPerformanceOperationCount) {
+        const removed = timingPerformanceOperations.shift();
+        if (removed) timingPerformanceClocks.delete(removed.operation_id);
+        timingPerformanceTruncated = true;
+      }
+      return operationId;
+    }, null);
+  }
+
+  function recordTimingPerformanceStage(input = {}) {
+    return safeCall(() => {
+      const operation = timingPerformanceOperationFor(input.operation_id);
+      if (!operation) return false;
+      const status = String(input.status ?? "UNKNOWN").toUpperCase();
+      const kind = String(input.kind ?? "UNKNOWN").toUpperCase();
+      const stage = {
+        stage: diagnosticScalar(input.stage, 120) ?? "UNKNOWN",
+        kind: ["SYNC", "ASYNC", "UNKNOWN"].includes(kind) ? kind : "UNKNOWN",
+        status: ["ATTEMPTED", "FAILED", "SUCCEEDED", "SKIPPED", "NOT_APPLICABLE", "UNKNOWN"].includes(status) ? status : "UNKNOWN",
+        started_at: diagnosticTimestamp(input.started_at),
+        completed_at: diagnosticTimestamp(input.completed_at),
+        duration_ms: Number.isFinite(input.duration_ms) ? Math.max(0, input.duration_ms) : null,
+        persistence_kind: diagnosticScalar(input.persistence_kind, 80),
+        queue_depth_at_enqueue: Number.isFinite(Number(input.queue_depth_at_enqueue))
+          ? Math.max(0, Math.trunc(Number(input.queue_depth_at_enqueue)))
+          : null,
+        queue_wait_ms: Number.isFinite(input.queue_wait_ms) ? Math.max(0, input.queue_wait_ms) : null,
+        execution_duration_ms: Number.isFinite(input.execution_duration_ms)
+          ? Math.max(0, input.execution_duration_ms)
+          : null,
+        store_save_duration_ms: Number.isFinite(input.store_save_duration_ms)
+          ? Math.max(0, input.store_save_duration_ms)
+          : null,
+        host_save_duration_ms: Number.isFinite(input.host_save_duration_ms)
+          ? Math.max(0, input.host_save_duration_ms)
+          : null,
+        render_count: Number.isFinite(input.render_count) ? Math.max(0, input.render_count) : 0,
+        render_scope: diagnosticScalar(input.render_scope, 120),
+        reason_code: diagnosticScalar(input.reason_code, 120),
+        error_code: diagnosticScalar(input.error_code, 120),
+      };
+      operation.stages.push(stage);
+      while (operation.stages.length > TIMING_PERFORMANCE_STAGE_LIMIT) {
+        operation.stages.shift();
+        operation.stages_truncated = true;
+      }
+      if (stage.render_count > 0) operation.render_count += stage.render_count;
+      if (stage.render_scope) operation.render_scope = stage.render_scope;
+      for (const field of [
+        "persistence_attempted",
+        "persistence_succeeded",
+        "readback_attempted",
+        "readback_succeeded",
+        "aggregation_reevaluation_attempted",
+        "aggregation_reevaluation_succeeded",
+      ]) {
+        if (typeof input[field] === "boolean") operation[field] = input[field];
+      }
+      return true;
+    }, false);
+  }
+
+  function recordTimingOfficialIo(input = {}) {
+    return safeCall(() => {
+      const operation = timingPerformanceOperationFor(input.operation_id);
+      const ioCallId = diagnosticScalar(input.io_call_id, 120);
+      if (!operation || !ioCallId) return false;
+      let call = operation.official_io_calls.find(item => item.io_call_id === ioCallId) ?? null;
+      if (!call) {
+        call = {
+          io_call_id: ioCallId,
+          floor_transaction_id: null,
+          persistence_kind: null,
+          io_purpose: null,
+          endpoint_kind: null,
+          actual_network_request: null,
+          cache_status: null,
+          status: "UNKNOWN",
+          total_duration_ms: null,
+          request_prepare_duration_ms: null,
+          network_wait_duration_ms: null,
+          response_body_read_duration_ms: null,
+          json_parse_duration_ms: null,
+          response_parse_duration_ms: null,
+          response_normalize_duration_ms: null,
+          source_revision_duration_ms: null,
+          floor_extract_duration_ms: null,
+          reason_code: null,
+          error_code: null,
+          owner_message_index: null,
+          owner_message_id: null,
+          owner_swipe_id: null,
+        };
+        operation.official_io_calls.push(call);
+        while (operation.official_io_calls.length > TIMING_PERFORMANCE_OFFICIAL_IO_LIMIT) {
+          operation.official_io_calls.shift();
+          operation.official_io_calls_truncated = true;
+        }
+      }
+      for (const field of [
+        "floor_transaction_id",
+        "persistence_kind",
+        "io_purpose",
+        "endpoint_kind",
+        "cache_status",
+        "reason_code",
+        "error_code",
+        "owner_message_id",
+      ]) {
+        if (input[field] !== undefined && input[field] !== null)
+          call[field] = diagnosticScalar(input[field], 120);
+      }
+      for (const field of [
+        "total_duration_ms",
+        "request_prepare_duration_ms",
+        "network_wait_duration_ms",
+        "response_body_read_duration_ms",
+        "json_parse_duration_ms",
+        "response_parse_duration_ms",
+        "response_normalize_duration_ms",
+        "source_revision_duration_ms",
+        "floor_extract_duration_ms",
+      ]) {
+        if (Number.isFinite(input[field])) call[field] = Math.max(0, input[field]);
+      }
+      for (const field of ["owner_message_index", "owner_swipe_id"]) {
+        if (Number.isFinite(Number(input[field]))) call[field] = Number(input[field]);
+      }
+      if (typeof input.actual_network_request === "boolean")
+        call.actual_network_request = input.actual_network_request;
+      if (input.status !== undefined) {
+        const status = String(input.status).toUpperCase();
+        call.status = ["ATTEMPTED", "FAILED", "SUCCEEDED", "UNKNOWN"].includes(status)
+          ? status
+          : "UNKNOWN";
+      }
+      operation.official_io_summary = {
+        actual_chat_get_count: operation.official_io_calls.filter(item =>
+          item.actual_network_request === true && item.endpoint_kind === "CHAT_GET").length,
+        actual_chat_save_count: operation.official_io_calls.filter(item =>
+          item.actual_network_request === true && item.endpoint_kind === "CHAT_SAVE").length,
+        failed_call_count: operation.official_io_calls.filter(item => item.status === "FAILED").length,
+      };
+      return true;
+    }, false);
+  }
+
+  function finishTimingPerformanceOperation(input = {}) {
+    return safeCall(() => {
+      const operation = timingPerformanceOperationFor(input.operation_id);
+      if (!operation) return false;
+      const status = String(input.status ?? "SUCCEEDED").toUpperCase();
+      operation.status = ["ATTEMPTED", "FAILED", "SUCCEEDED", "SKIPPED", "CANCELLED_STALE_CONTEXT", "UNKNOWN"].includes(status)
+        ? status
+        : "UNKNOWN";
+      operation.reason_code = diagnosticScalar(input.reason_code, 120);
+      operation.completed_at = diagnosticNow();
+      operation.total_duration_ms = durationMs(timingPerformanceClocks.get(operation.operation_id));
+      for (const field of [
+        "persistence_attempted",
+        "persistence_succeeded",
+        "readback_attempted",
+        "readback_succeeded",
+        "aggregation_reevaluation_attempted",
+        "aggregation_reevaluation_succeeded",
+      ]) {
+        if (typeof input[field] === "boolean") operation[field] = input[field];
+      }
+      timingPerformanceClocks.delete(operation.operation_id);
+      return true;
+    }, false);
+  }
+
+  function getTimingPerformanceDiagnostics() {
+    return safeCall(() => ({
+      schema_version: 1,
+      source_type: "EXECUTION_TRACE",
+      collection_status: recorderFailed ? "PARTIAL" : "OK",
+      diagnostic_error_code: recorderFailed ? "DIAGNOSTIC_RECORDER_FAILED" : null,
+      trace_buffer_status: timingPerformanceOperations.length ? "SESSION_ONLY" : "EMPTY",
+      trace_truncated: timingPerformanceTruncated ? true : timingPerformanceOperations.length ? false : null,
+      recent_operations: timingPerformanceOperations.map(cloneSafeTraceValue),
+    }), {
+      schema_version: 1,
+      source_type: "EXECUTION_TRACE",
+      collection_status: "FAILED",
+      diagnostic_error_code: "DIAGNOSTIC_COLLECTION_FAILED",
+      trace_buffer_status: "UNKNOWN",
+      trace_truncated: null,
+      recent_operations: [],
+    });
   }
 
   function createSafeRunId() {
@@ -785,6 +1053,7 @@ export function createRuntimeDiagnostics({
           : null,
         readback_reason_code: diagnosticScalar(input.readback_reason_code),
         operation_type: diagnosticScalar(input.operation_type),
+        performance_operation_id: diagnosticScalar(input.performance_operation_id, 120),
         version_validation_layer: diagnosticScalar(input.version_validation_layer),
         version_validation_source: diagnosticScalar(input.version_validation_source),
         owner_message_index: Number.isInteger(Number(input.owner_message_index))
@@ -1126,6 +1395,11 @@ export function createRuntimeDiagnostics({
     recordNsfwPipelineStage,
     finishNsfwPipelineRun,
     getNsfwPipelineDiagnostics,
+    startTimingPerformanceOperation,
+    recordTimingPerformanceStage,
+    recordTimingOfficialIo,
+    finishTimingPerformanceOperation,
+    getTimingPerformanceDiagnostics,
     getDiagnosticMetadata,
     sanitizePersistenceTracePayload,
     cloneSafeTraceValue,

@@ -1,0 +1,6 @@
+{"file":"AGENTS.md","reason":"确认本任务的授权边界、Floor 数据所有权、部分成功语义、文件编辑和文档同步要求。"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认当前 Floor/Swipe/Version、历史不可变、Store/Coordinator 唯一写入边界和 sibling 保留规则。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event、Exposure、canonical state 和 Tracking 输入的来源与验证边界。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"确认 Tracking Window、Exposure、before_min/in_window/overdue 和目标角色范围。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认 Timing、Aggregation 和 derived state 的生命周期、失效与失败处理契约。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Runtime、Storage、Coordinator 和 UI 的职责边界，避免把通用业务读取塞回错误层。"}

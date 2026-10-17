@@ -51,12 +51,12 @@ test("owner patch keeps all sibling roots and confirms the authoritative readbac
   assert.deepEqual(state.read().world_model, current.world_model);
   assert.deepEqual(state.read().analysis, current.analysis);
   assert.deepEqual(state.read().events, current.events);
-  assert.ok(stages.includes("FLOOR_TX_LATEST_SLOT_RESOLVED"));
+  assert.ok(stages.includes("FLOOR_TX_CONTEXT_SLOT_RESOLVED"));
   assert.ok(stages.includes("FLOOR_TX_SIBLING_AUDIT"));
   assert.ok(stages.includes("FLOOR_TX_CONFIRMED"));
 });
 
-test("dispatch merges against the latest slot rather than the creation snapshot", async () => {
+test("dispatch merges against the current Context slot and ignores official latest readers", async () => {
   const state = fixture({initial: {floor_version: version(), world_model: {old: true}}});
   const latest = {
     floor_version: version(),
@@ -71,9 +71,35 @@ test("dispatch merges against the latest slot rather than the creation snapshot"
     owner: "projection", chatId: "chat-a", ownerFloor: {message_index: 0},
     floorVersion: version(), patch: {snapshot: {checkpoint: 1}},
   });
-  assert.deepEqual(state.read().world_model, latest.world_model);
-  assert.deepEqual(state.read().events, latest.events);
+  assert.deepEqual(state.read().world_model, {old: true});
+  assert.equal(state.read().events, undefined);
   assert.deepEqual(state.read().snapshot, {checkpoint: 1});
+});
+
+test("an owner patch equal to the Context slot is a local no-op without save or readback", async () => {
+  const state = fixture({initial: {
+    floor_version: version(),
+    world_model: {stable: true},
+  }});
+  let readbackCount = 0;
+  state.store.readAuthoritativeFloor = async () => {
+    readbackCount += 1;
+    return state.read();
+  };
+  const coordinator = createFloorPersistenceCoordinator({store: state.store});
+  const result = await coordinator.commitFloorPatch({
+    owner: "world",
+    chatId: "chat-a",
+    ownerFloor: {message_index: 0},
+    floorVersion: version(),
+    patch: {world_model: {stable: true}},
+  });
+  assert.equal(result.status, "noop");
+  assert.equal(result.commitState, "local-noop");
+  assert.equal(result.authoritativeReadback, false);
+  assert.equal(result.noWrite, true);
+  assert.equal(state.saves(), 0);
+  assert.equal(readbackCount, 0);
 });
 
 test("missing readback is a structured failure, never a confirmed save", async () => {
@@ -101,7 +127,7 @@ test("confirmed readback uses the authoritative store reader when available", as
   assert.equal(authoritativeReads, 1);
 });
 
-test("dispatch acquires a host-ahead owner before applying the Floor patch", async () => {
+test("dispatch does not acquire an official owner before applying the Context patch", async () => {
   const state = fixture({initial: {floor_version: version()}});
   const classifications = [];
   const coordinator = createFloorPersistenceCoordinator({
@@ -115,11 +141,11 @@ test("dispatch acquires a host-ahead owner before applying the Floor patch", asy
     owner: "world", chatId: "chat-a", ownerFloor: {message_index: 0},
     floorVersion: version(), patch: {world_model: {source: "bootstrapped"}},
   });
-  assert.deepEqual(classifications, ["HOST_AHEAD_OF_OFFICIAL"]);
+  assert.deepEqual(classifications, []);
   assert.deepEqual(state.read().world_model, {source: "bootstrapped"});
 });
 
-test("owner acquisition rejects a true stale owner before any Floor write", async () => {
+test("owner acquisition hooks are not used by the Context-first transaction", async () => {
   const state = fixture({initial: {floor_version: version()}});
   const coordinator = createFloorPersistenceCoordinator({
     store: state.store,
@@ -128,11 +154,11 @@ test("owner acquisition rejects a true stale owner before any Floor write", asyn
       confirmed: false,
     }),
   });
-  await assert.rejects(() => coordinator.commitFloorPatch({
+  await coordinator.commitFloorPatch({
     owner: "world", chatId: "chat-a", ownerFloor: {message_index: 0},
     floorVersion: version(), patch: {world_model: {must_not_write: true}},
-  }), error => error.code === "FLOOR_TX_STALE_VERSION");
-  assert.equal(state.saves(), 0);
+  });
+  assert.equal(state.saves(), 1);
 });
 
 test("cross-owner fields and non-character owners fail closed", async () => {
@@ -181,6 +207,124 @@ test("same Floor transactions serialize and a cancelled queued transaction never
   assert.equal(state.saves(), 1);
   assert.deepEqual(state.read().world_model, {source: "first"});
   assert.equal(state.read().events, undefined);
+});
+
+test("performance stages expose queue wait, Coordinator execution, merge, store save, and readback per operation", async () => {
+  const state = fixture({initial: {floor_version: version()}});
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const originalSave = state.store.saveFloor;
+  state.store.saveFloor = async (...args) => {
+    if (state.saves() === 0) await gate;
+    return originalSave(...args);
+  };
+  const stages = [];
+  const coordinator = createFloorPersistenceCoordinator({
+    store: state.store,
+    performanceStage: payload => stages.push(payload),
+  });
+  const first = coordinator.commitFloorPatch({
+    owner: "world", chatId: "chat-a", ownerFloor: {message_index: 0}, floorVersion: version(),
+    traceContext: {performance_operation_id: "op-1", persistence_kind: "TIMING_INSTANCE"},
+    patch: {world_model: {source: "first"}},
+  });
+  const second = coordinator.commitFloorPatch({
+    owner: "event", chatId: "chat-a", ownerFloor: {message_index: 0}, floorVersion: version(),
+    traceContext: {performance_operation_id: "op-2", persistence_kind: "PARTICIPANT_AGGREGATION"},
+    patch: {events: [{event_id: "second"}]},
+  });
+  await Promise.resolve();
+  release();
+  await Promise.all([first, second]);
+
+  const byOperation = new Map();
+  for (const stage of stages) {
+    assert.ok(["op-1", "op-2"].includes(stage.operation_id));
+    assert.ok(["TIMING_INSTANCE", "PARTICIPANT_AGGREGATION"].includes(stage.persistence_kind));
+    assert.equal(stage.kind, "ASYNC");
+    assert.ok(Number.isFinite(stage.duration_ms));
+    byOperation.set(stage.operation_id, [...(byOperation.get(stage.operation_id) ?? []), stage]);
+  }
+  for (const operationId of ["op-1", "op-2"]) {
+    const operationStages = byOperation.get(operationId) ?? [];
+    const names = operationStages.map(stage => stage.stage);
+    assert.ok(names.includes("COORDINATOR_QUEUE_WAIT"));
+    assert.ok(names.includes("COORDINATOR_EXECUTION"));
+    assert.ok(names.includes("SNAPSHOT_MERGE"));
+    assert.ok(names.includes("STORE_SAVE_FLOOR"));
+    assert.ok(names.includes("COORDINATOR_READBACK"));
+  }
+  const queuedSecond = (byOperation.get("op-2") ?? []).find(stage => stage.stage === "COORDINATOR_QUEUE_WAIT");
+  assert.equal(queuedSecond.queue_depth_at_enqueue, 1);
+  assert.ok(Number.isFinite(queuedSecond.queue_wait_ms));
+  const executionSecond = (byOperation.get("op-2") ?? []).find(stage => stage.stage === "COORDINATOR_EXECUTION");
+  assert.equal(executionSecond.execution_duration_ms, executionSecond.duration_ms);
+  const storeSaveSecond = (byOperation.get("op-2") ?? []).find(stage => stage.stage === "STORE_SAVE_FLOOR");
+  assert.equal(storeSaveSecond.store_save_duration_ms, storeSaveSecond.duration_ms);
+  assert.equal(stages.some(stage => stage.stage === "HOST_SAVE_AWAIT"), false);
+});
+
+test("no-op performance stages expose owner waits and never claim a Floor or host save", async () => {
+  const state = fixture({initial: {floor_version: version(), world_model: {stable: true}}});
+  const stages = [];
+  const readContexts = [];
+  let assertCurrentCalls = 0;
+  state.store.readAuthoritativeFloor = async (_index, _swipe, _expected, traceContext) => {
+    readContexts.push(traceContext);
+    return state.read();
+  };
+  const coordinator = createFloorPersistenceCoordinator({
+    store: state.store,
+    performanceStage: payload => stages.push(payload),
+    acquireAuthoritativeFloorOwner: async () => ({
+      classification: "AUTHORITATIVE_MATCH",
+      confirmed: true,
+    }),
+  });
+  const result = await coordinator.commitFloorPatch({
+    owner: "world",
+    chatId: "chat-a",
+    ownerFloor: {message_index: 0},
+    floorVersion: version(),
+    traceContext: {performance_operation_id: "op-noop", persistence_kind: "TIMING_INSTANCE"},
+    patchResolver: async () => ({__floor_tx_noop: true}),
+    assertCurrent: async () => {
+      assertCurrentCalls += 1;
+      return true;
+    },
+  });
+
+  assert.equal(result.status, "noop");
+  assert.equal(result.commitState, "local-noop");
+  assert.equal(result.authoritativeReadback, false);
+  assert.equal(result.noWrite, true);
+  assert.equal(state.saves(), 0);
+  assert.equal(assertCurrentCalls, 2);
+  const stage = name => stages.find(item => item.stage === name);
+  assert.equal(stage("COORDINATOR_OWNER_GUARD")?.status, "SUCCEEDED");
+  assert.equal(stage("COORDINATOR_OWNER_ACQUISITION"), undefined);
+  assert.equal(stage("COORDINATOR_NOOP_GUARD")?.status, "SUCCEEDED");
+  assert.equal(stage("COORDINATOR_NOOP_FINALIZATION")?.status, "SUCCEEDED");
+  assert.equal(stage("STORE_SAVE_FLOOR")?.status, "NOT_APPLICABLE");
+  assert.equal(stage("STORE_SAVE_FLOOR")?.duration_ms, null);
+  assert.equal(stage("COORDINATOR_READBACK"), undefined);
+  assert.equal(stages.some(item => item.stage === "HOST_SAVE_AWAIT"), false);
+  assert.equal(readContexts.length, 0);
+});
+
+test("performance diagnostics are fail-open and never block a Floor commit", async () => {
+  const state = fixture({initial: {floor_version: version()}});
+  const coordinator = createFloorPersistenceCoordinator({
+    store: state.store,
+    performanceStage: () => { throw new Error("DIAGNOSTICS_BROKE"); },
+  });
+  const result = await coordinator.commitFloorPatch({
+    owner: "world", chatId: "chat-a", ownerFloor: {message_index: 0}, floorVersion: version(),
+    traceContext: {performance_operation_id: "op-fail-open", persistence_kind: "TIMING_INSTANCE"},
+    patch: {world_model: {source: "diagnostic-failure"}},
+  });
+  assert.equal(result.ok, true);
+  assert.equal(state.saves(), 1);
 });
 
 test("a late terminal failure cannot overwrite confirmed Event success", async () => {

@@ -148,6 +148,44 @@ export function createSillyTavernAdapter() {
   const getContext = () => globalThis.SillyTavern?.getContext?.() ?? null;
   let chatIndexCache = null;
   let chatIndexOwnerKey = null;
+  let officialIoSequence = 0;
+
+  const monotonicNow = () => typeof globalThis.performance?.now === "function"
+    ? globalThis.performance.now()
+    : Date.now();
+  const elapsedMs = startedAt => Math.max(0, Math.round((monotonicNow() - startedAt) * 10) / 10);
+  const nextOfficialIoCallId = () => `official-io-${++officialIoSequence}`;
+  const emitOfficialIo = (owner, metric) => {
+    try {
+      owner?.officialIoTrace?.({
+        ...(owner?.officialIoContext && typeof owner.officialIoContext === "object"
+          ? owner.officialIoContext
+          : {}),
+        stage: "OFFICIAL_CHAT_IO",
+        ...metric,
+      });
+    } catch {
+      // Official I/O diagnostics are fail-open and never alter persistence.
+    }
+  };
+  const createOfficialIoMetric = (owner, endpointKind, ioPurpose) => ({
+    io_call_id: nextOfficialIoCallId(),
+    io_purpose: ioPurpose ?? owner?.officialIoContext?.io_purpose ?? "UNSPECIFIED",
+    endpoint_kind: endpointKind,
+    actual_network_request: false,
+    cache_status: "NOT_USED",
+    request_prepare_duration_ms: null,
+    network_wait_duration_ms: null,
+    response_body_read_duration_ms: null,
+    json_parse_duration_ms: null,
+    response_parse_duration_ms: null,
+    response_normalize_duration_ms: null,
+    source_revision_duration_ms: null,
+    total_duration_ms: null,
+    status: "ATTEMPTED",
+    reason_code: null,
+    error_code: null,
+  });
 
   function hostMessageAt(messageIndex) {
     const context = getContext();
@@ -181,6 +219,13 @@ export function createSillyTavernAdapter() {
       message.swipe_info[swipeIndex] ??= {};
       message.swipe_info[swipeIndex].extra ??= {};
       message.swipe_info[swipeIndex].extra.bioweave = cloneValue(bioweave);
+      // Keep the current message mirror in sync only for the active Swipe;
+      // writing a non-active slot must not make it look current to readers.
+      const activeSwipeId = Number.isInteger(message?.swipe_id) ? message.swipe_id : 0;
+      if (Number(swipeIndex) === activeSwipeId) {
+        message.extra ??= {};
+        message.extra.bioweave = cloneValue(bioweave);
+      }
     } else {
       message.extra ??= {};
       message.extra.bioweave = cloneValue(bioweave);
@@ -233,21 +278,34 @@ export function createSillyTavernAdapter() {
     };
   }
 
-  async function requestJson(endpoint, body, {signal = undefined, write = false} = {}) {
+  async function requestJson(endpoint, body, {
+    signal = undefined,
+    write = false,
+    serializedBody = null,
+    ioMetric = null,
+  } = {}) {
     const context = getContext();
     const fetchRef = globalThis.fetch;
     if (typeof fetchRef !== "function")
       throw sourceError("SOURCE_OWNER_HTTP_UNAVAILABLE");
+    const prepareStartedAt = monotonicNow();
+    const requestBody = serializedBody ?? JSON.stringify(body);
+    if (ioMetric && ioMetric.request_prepare_duration_ms === null)
+      ioMetric.request_prepare_duration_ms = elapsedMs(prepareStartedAt);
     let response;
+    const requestStartedAt = monotonicNow();
     try {
+      if (ioMetric) ioMetric.actual_network_request = true;
       response = await fetchRef(endpoint, {
         method: "POST",
         headers: sourceRequestHeaders(context),
-        body: JSON.stringify(body),
+        body: requestBody,
         cache: "no-cache",
         ...(signal ? {signal} : {}),
       });
+      if (ioMetric) ioMetric.network_wait_duration_ms = elapsedMs(requestStartedAt);
     } catch (error) {
+      if (ioMetric) ioMetric.network_wait_duration_ms = elapsedMs(requestStartedAt);
       const wrapped = sourceError(
         write ? "SOURCE_OWNER_SAVE_UNKNOWN" : "SOURCE_OWNER_READ_FAILED",
         {cause: error},
@@ -269,9 +327,42 @@ export function createSillyTavernAdapter() {
       throw error;
     }
     if (write) return response;
+    const responseParseStartedAt = monotonicNow();
+    const bodyReadStartedAt = responseParseStartedAt;
+    const canSplitResponseTiming = typeof response.text === "function";
+    let responseText;
     try {
-      return await response.json();
+      if (!canSplitResponseTiming) {
+        // Keep the adapter usable with the minimal response doubles used by
+        // older host/test integrations. This path is not split-measurable:
+        // the host has already combined body consumption and JSON parsing.
+        const data = await response.json();
+        if (ioMetric) ioMetric.response_parse_duration_ms = elapsedMs(responseParseStartedAt);
+        return data;
+      }
+      responseText = await response.text();
+      if (ioMetric) ioMetric.response_body_read_duration_ms = elapsedMs(bodyReadStartedAt);
     } catch (error) {
+      if (ioMetric) {
+        if (canSplitResponseTiming)
+          ioMetric.response_body_read_duration_ms = elapsedMs(bodyReadStartedAt);
+        ioMetric.response_parse_duration_ms = elapsedMs(responseParseStartedAt);
+      }
+      throw sourceError("SOURCE_OWNER_READ_INVALID_RESPONSE", {cause: error});
+    }
+    const jsonParseStartedAt = monotonicNow();
+    try {
+      const data = JSON.parse(responseText);
+      if (ioMetric) {
+        ioMetric.json_parse_duration_ms = elapsedMs(jsonParseStartedAt);
+        ioMetric.response_parse_duration_ms = elapsedMs(responseParseStartedAt);
+      }
+      return data;
+    } catch (error) {
+      if (ioMetric) {
+        ioMetric.json_parse_duration_ms = elapsedMs(jsonParseStartedAt);
+        ioMetric.response_parse_duration_ms = elapsedMs(responseParseStartedAt);
+      }
       throw sourceError("SOURCE_OWNER_READ_INVALID_RESPONSE", {cause: error});
     }
   }
@@ -311,42 +402,93 @@ export function createSillyTavernAdapter() {
   }
 
   async function readOfficialChatOwner(owner = {}) {
+    const operationStartedAt = monotonicNow();
+    const ioMetric = createOfficialIoMetric(owner, "CHAT_GET", owner?.officialIoContext?.io_purpose);
     const context = getContext();
     const descriptor = sourceDescriptor(context, owner);
-    const data = await requestJson(
-      "/api/chats/get",
-      {
-        ch_name: descriptor.ch_name,
-        file_name: descriptor.apiFileName,
-        avatar_url: descriptor.avatar_url,
-      },
-      {signal: owner?.signal},
-    );
-    const state = parseSourceResponse(data, descriptor);
-    state.revision = await sourceRevision(state);
-    state.sourceRevision = state.revision;
-    state.owner = {
-      chatId: descriptor.chatId,
-      characterId: descriptor.characterId,
-      groupId: descriptor.groupId,
-      revision: state.revision,
-    };
-    return state;
+    try {
+      const data = await requestJson(
+        "/api/chats/get",
+        {
+          ch_name: descriptor.ch_name,
+          file_name: descriptor.apiFileName,
+          avatar_url: descriptor.avatar_url,
+        },
+        {signal: owner?.signal, ioMetric},
+      );
+      const normalizeStartedAt = monotonicNow();
+      const state = parseSourceResponse(data, descriptor);
+      ioMetric.response_normalize_duration_ms = elapsedMs(normalizeStartedAt);
+      const revisionStartedAt = monotonicNow();
+      state.revision = await sourceRevision(state);
+      ioMetric.source_revision_duration_ms = elapsedMs(revisionStartedAt);
+      state.sourceRevision = state.revision;
+      state.owner = {
+        chatId: descriptor.chatId,
+        characterId: descriptor.characterId,
+        groupId: descriptor.groupId,
+        revision: state.revision,
+      };
+      Object.defineProperty(state, "__official_io_call_id", {
+        value: ioMetric.io_call_id,
+        enumerable: false,
+      });
+      ioMetric.status = "SUCCEEDED";
+      ioMetric.reason_code = "OFFICIAL_CHAT_GET_COMPLETED";
+      ioMetric.total_duration_ms = elapsedMs(operationStartedAt);
+      emitOfficialIo(owner, ioMetric);
+      return state;
+    } catch (error) {
+      ioMetric.status = "FAILED";
+      ioMetric.reason_code = "OFFICIAL_CHAT_GET_FAILED";
+      ioMetric.error_code = error?.code ?? error?.message ?? "OFFICIAL_CHAT_GET_FAILED";
+      ioMetric.total_duration_ms = elapsedMs(operationStartedAt);
+      emitOfficialIo(owner, ioMetric);
+      throw error;
+    }
   }
 
-  async function requestOfficialChatSave({owner = {}, descriptor = null, chat, signal} = {}) {
+  async function requestOfficialChatSave({
+    owner = {},
+    descriptor = null,
+    chat,
+    signal,
+    officialIoTrace = null,
+    officialIoContext = null,
+  } = {}) {
+    const traceOwner = {officialIoTrace, officialIoContext};
+    const operationStartedAt = monotonicNow();
+    const ioMetric = createOfficialIoMetric(traceOwner, "CHAT_SAVE", officialIoContext?.io_purpose);
     const resolved = descriptor ?? sourceDescriptor(getContext(), owner);
-    return requestJson(
-      "/api/chats/save",
-      {
+    try {
+      const prepareStartedAt = monotonicNow();
+      const body = {
         ch_name: resolved.ch_name,
         file_name: resolved.apiFileName,
         chat: cloneOwnerValue(chat),
         avatar_url: resolved.avatar_url,
         force: false,
-      },
-      {signal, write: true},
-    );
+      };
+      const serializedBody = JSON.stringify(body);
+      ioMetric.request_prepare_duration_ms = elapsedMs(prepareStartedAt);
+      const response = await requestJson(
+        "/api/chats/save",
+        body,
+        {signal, write: true, serializedBody, ioMetric},
+      );
+      ioMetric.status = "SUCCEEDED";
+      ioMetric.reason_code = "OFFICIAL_CHAT_SAVE_COMPLETED";
+      ioMetric.total_duration_ms = elapsedMs(operationStartedAt);
+      emitOfficialIo(traceOwner, ioMetric);
+      return response;
+    } catch (error) {
+      ioMetric.status = "FAILED";
+      ioMetric.reason_code = "OFFICIAL_CHAT_SAVE_FAILED";
+      ioMetric.error_code = error?.code ?? error?.message ?? "OFFICIAL_CHAT_SAVE_FAILED";
+      ioMetric.total_duration_ms = elapsedMs(operationStartedAt);
+      emitOfficialIo(traceOwner, ioMetric);
+      throw error;
+    }
   }
 
   async function refreshOfficialChatIndex(owner = {}) {

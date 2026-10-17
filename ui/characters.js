@@ -538,6 +538,73 @@ function unavailableDetailPage() {
     '</section>'
   )
 }
+
+function renderSelectedCharacterDetail({
+  selectedId,
+  subjects,
+  characterProfiles,
+  effectiveEvents,
+  currentState,
+  currentStateStatus,
+  currentHealthState,
+  currentStoryTime,
+  currentStoryTimeDifferences,
+  aliasEditor,
+  timingEditor,
+  healthPopoverOpen,
+}) {
+  const selectedSubject = subjects.find(item => item.key === selectedId)?.value
+  if (!selectedId) {
+    return '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
+  }
+  if (!selectedSubject) return unavailableDetailPage()
+  return detailPage({
+    subject: selectedSubject,
+    profile: profileFor(characterProfiles, selectedId),
+    activeEvents: effectiveEvents,
+    currentStoryTime,
+    storyTimeDifferences: currentStoryTimeDifferences,
+    aliasEditor,
+    timingEditor,
+    currentState,
+    currentStateStatus,
+    currentHealthState,
+    healthPopoverOpen,
+  })
+}
+
+export function renderCharacterDetailPane({
+  characterId = null,
+  trackingSubjects = [],
+  characterProfiles = {},
+  activeEvents = [],
+  analysisStatus = null,
+  currentState = null,
+  currentStateStatus = 'NO_CHARACTER_FLOOR',
+  currentHealthState = null,
+  currentStoryTime = null,
+  currentStoryTimeDifferences = {},
+  aliasEditor = null,
+  timingEditor = null,
+  healthPopoverOpen = false,
+} = {}) {
+  const status = normalizeAnalysisStatus(analysisStatus)
+  return renderSelectedCharacterDetail({
+    selectedId: String(characterId ?? '').trim(),
+    subjects: subjectEntries(trackingSubjects),
+    characterProfiles,
+    effectiveEvents: analysisStatusEvents(status, activeEvents, 'active_events'),
+    currentState,
+    currentStateStatus,
+    currentHealthState,
+    currentStoryTime,
+    currentStoryTimeDifferences,
+    aliasEditor,
+    timingEditor,
+    healthPopoverOpen,
+  })
+}
+
 export function charactersPage({
   characterId = null,
   trackingSubjects = [],
@@ -555,7 +622,6 @@ export function charactersPage({
 } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
-  const effectiveEvents = analysisStatusEvents(status, activeEvents, 'active_events')
   const rows = subjects
     .map(({ key, value: subject }) => {
       const displayName = subject.display_name ?? '未命名角色'
@@ -611,24 +677,20 @@ export function charactersPage({
                   '</dd></div>' +
                   '</dl></div>'
   const selectedId = String(characterId ?? '').trim()
-  const selectedSubject = subjects.find(item => item.key === selectedId)?.value
-  const detail = selectedId
-    ? selectedSubject
-      ? detailPage({
-          subject: selectedSubject,
-          profile: profileFor(characterProfiles, selectedId),
-          activeEvents: effectiveEvents,
-          currentStoryTime,
-          storyTimeDifferences: currentStoryTimeDifferences,
-          aliasEditor,
-          timingEditor,
-          currentState,
-          currentStateStatus,
-          currentHealthState,
-          healthPopoverOpen,
-        })
-      : unavailableDetailPage()
-    : '<section class="bioweave-card bioweave-character-detail-pane bioweave-character-detail-placeholder"><div><strong>选择一个人物查看详情</strong><p>详情会在当前页面展开，不需要离开人物列表。</p></div></section>'
+  const detail = renderSelectedCharacterDetail({
+    selectedId,
+    subjects,
+    characterProfiles,
+    effectiveEvents: analysisStatusEvents(status, activeEvents, 'active_events'),
+    currentState,
+    currentStateStatus,
+    currentHealthState,
+    currentStoryTime,
+    currentStoryTimeDifferences,
+    aliasEditor,
+    timingEditor,
+    healthPopoverOpen,
+  })
   if (selectedId && !subjects.length) {
     return (
       '<section class="bioweave-page bioweave-characters-page" data-bioweave-page="characters"><div class="bioweave-page-title bioweave-page-head"><div><h2>人物列表</h2>' +

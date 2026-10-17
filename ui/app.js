@@ -1,5 +1,5 @@
 import { overviewPage } from './overview.js'
-import { charactersPage } from './characters.js'
+import { charactersPage, renderCharacterDetailPane } from './characters.js'
 import { eventsPage, focusEventById, setEventFilter } from './events.js'
 import { projectionPage } from './projection.js'
 import { genealogyPage } from './genealogy.js'
@@ -148,7 +148,7 @@ export function debugExportFilename(date = new Date()) {
   const stamp = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('') + '-' + [String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0'), String(date.getSeconds()).padStart(2, '0')].join('')
   return `ST-BioWeave-Debug-${stamp}.txt`
 }
-export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, diagnosticMetadata = null, nsfwPipelineDiagnostics = null, timingDiagnostics = null, aggregationDiagnostics = null, exportedAt = new Date().toISOString()} = {}) {
+export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, diagnosticMetadata = null, nsfwPipelineDiagnostics = null, timingDiagnostics = null, aggregationDiagnostics = null, timingPerformanceDiagnostics = null, exportedAt = new Date().toISOString()} = {}) {
   return JSON.stringify({
     debug_metadata: {
       format: 'ST-BioWeave-Debug',
@@ -167,6 +167,7 @@ export function buildDebugExportText({businessDebug = null, worldModelLiveState 
     nsfw_pipeline_diagnostics: nsfwPipelineDiagnostics,
     timing_diagnostics: timingDiagnostics,
     aggregation_diagnostics: aggregationDiagnostics,
+    timing_performance_diagnostics: timingPerformanceDiagnostics,
   }, null, 2)
 }
 export function buildStoryTimeDebugExportText(info, exportedAt = new Date().toISOString()) {
@@ -723,6 +724,7 @@ export function createApp(runtime, options = {}) {
     error: null,
   }
   let aliasEditorRequestSequence = 0
+  let timingEditorRequestSequence = 0
   let timingEditorState = {
     open: false,
     loading: false,
@@ -1142,6 +1144,7 @@ export function createApp(runtime, options = {}) {
         nsfwPipelineDiagnostics: collected?.debug?.nsfw_pipeline_diagnostics ?? null,
         timingDiagnostics: collected?.debug?.timing_diagnostics ?? null,
         aggregationDiagnostics: collected?.debug?.aggregation_diagnostics ?? null,
+        timingPerformanceDiagnostics: collected?.debug?.timing_performance_diagnostics ?? null,
       })
       downloadUtf8Text({text, filename: debugExportFilename(), documentRef, windowRef})
       notify('调试信息已导出为 TXT。', 'success', documentRef)
@@ -3612,6 +3615,163 @@ export function createApp(runtime, options = {}) {
       ...payload,
     })
   }
+  function startTimingPerformanceOperation(operation, characterId, characterCount = Object.keys(businessState.trackingSubjects ?? {}).length) {
+    try {
+      return runtime.startTimingPerformanceOperation?.({
+        operation,
+        character_id: characterId ?? null,
+        chat_id: runtime.chat.current(),
+        character_count: Number.isFinite(Number(characterCount)) ? Number(characterCount) : null,
+      }) ?? null
+    } catch {
+      return null
+    }
+  }
+  function recordTimingPerformanceStage(input = {}) {
+    try {
+      runtime.recordTimingPerformanceStage?.(input)
+    } catch {
+      // Performance collection is fail-open and must not affect the editor.
+    }
+  }
+  function finishTimingPerformanceOperation(input = {}) {
+    try {
+      runtime.finishTimingPerformanceOperation?.(input)
+    } catch {
+      // Performance collection is fail-open and must not affect the editor.
+    }
+  }
+  function characterPageOptions() {
+    return {
+      characterId: focusedCharacterId,
+      trackingSubjects: businessState.trackingSubjects,
+      characterProfiles: businessState.characterProfiles,
+      activeEvents: businessState.activeEvents,
+      currentState: businessState.currentState,
+      currentStateStatus: businessState.currentStateStatus,
+      currentHealthState: businessState.currentHealthState,
+      currentStoryTime: businessState.currentStoryTime,
+      currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
+      aliasEditor: aliasEditorState,
+      timingEditor: timingEditorState,
+      healthPopoverOpen: healthPopoverState.open && healthPopoverState.characterId === focusedCharacterId,
+      analysisStatus: businessState.analysisStatus,
+    }
+  }
+  function renderCharacterSelection() {
+    if (route !== 'characters' || !root) return false
+    const main = root.querySelector('.bioweave-main')
+    const pageRoot = main?.querySelector?.('.bioweave-characters-page')
+    const list = main?.querySelector?.('.bioweave-character-list')
+    const detail = main?.querySelector?.('.bioweave-character-detail-pane')
+    if (!pageRoot || !list || !detail) return false
+    const characterId = String(focusedCharacterId ?? '')
+    const selectionStartedAt = monotonicNow()
+    const selectOperationId = startTimingPerformanceOperation('SELECT_CHARACTER', characterId)
+    const listOperationId = startTimingPerformanceOperation('RENDER_CHARACTER_LIST', characterId)
+    const detailOperationId = startTimingPerformanceOperation('RENDER_CHARACTER_DETAILS', characterId)
+    try {
+      const listStartedAt = monotonicNow()
+      list.querySelectorAll?.('[data-character-id]')?.forEach(row => {
+        const selected = String(row.dataset?.characterId ?? '') === characterId
+        row.classList?.toggle('selected', selected)
+        row.setAttribute?.('aria-current', selected ? 'true' : 'false')
+      })
+      recordTimingPerformanceStage({
+        operation_id: listOperationId,
+        stage: 'CHARACTER_LIST_SELECTION_UPDATE',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(listStartedAt),
+        render_count: 1,
+        render_scope: 'character_list_selection',
+      })
+      finishTimingPerformanceOperation({operation_id: listOperationId, status: 'SUCCEEDED'})
+
+      const detailBuildStartedAt = monotonicNow()
+      const detailMarkup = renderCharacterDetailPane(characterPageOptions())
+      recordTimingPerformanceStage({
+        operation_id: detailOperationId,
+        stage: 'CHARACTER_DETAIL_HTML_BUILD',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(detailBuildStartedAt),
+        render_scope: 'character_detail_html',
+      })
+      const detailDomStartedAt = monotonicNow()
+      detail.outerHTML = detailMarkup
+      recordTimingPerformanceStage({
+        operation_id: detailOperationId,
+        stage: 'CHARACTER_DETAIL_DOM_COMMIT',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(detailDomStartedAt),
+        render_count: 1,
+        render_scope: 'character_detail',
+      })
+      finishTimingPerformanceOperation({operation_id: detailOperationId, status: 'SUCCEEDED'})
+      recordTimingPerformanceStage({
+        operation_id: selectOperationId,
+        stage: 'CHARACTER_SELECTION_COMMIT',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(selectionStartedAt),
+        render_count: 1,
+        render_scope: 'character_selection',
+      })
+      finishTimingPerformanceOperation({operation_id: selectOperationId, status: 'SUCCEEDED'})
+      return true
+    } catch (error) {
+      recordTimingPerformanceStage({
+        operation_id: selectOperationId,
+        stage: 'CHARACTER_SELECTION_PATCH',
+        kind: 'SYNC',
+        status: 'FAILED',
+        reason_code: error?.code ?? error?.message ?? 'CHARACTER_SELECTION_PATCH_FAILED',
+        error_code: error?.code ?? error?.message ?? 'CHARACTER_SELECTION_PATCH_FAILED',
+      })
+      finishTimingPerformanceOperation({operation_id: listOperationId, status: 'FAILED', reason_code: 'CHARACTER_SELECTION_PATCH_FAILED'})
+      finishTimingPerformanceOperation({operation_id: detailOperationId, status: 'FAILED', reason_code: 'CHARACTER_SELECTION_PATCH_FAILED'})
+      finishTimingPerformanceOperation({operation_id: selectOperationId, status: 'FAILED', reason_code: 'CHARACTER_SELECTION_PATCH_FAILED'})
+      return false
+    }
+  }
+  function renderCharacterDetailOrFallback() {
+    if (route !== 'characters' || !root) {
+      render()
+      return false
+    }
+    const main = root.querySelector('.bioweave-main')
+    const detail = main?.querySelector?.('.bioweave-character-detail-pane')
+    if (!detail) {
+      render()
+      return false
+    }
+    try {
+      detail.outerHTML = renderCharacterDetailPane(characterPageOptions())
+      return true
+    } catch {
+      render()
+      return false
+    }
+  }
+  function syncTimingEditorDraftInputs(draft) {
+    const editor = root?.querySelector?.('#bioweave-character-timing-popover')
+    if (!editor || timingEditorState.error) return false
+    const fields = ['base_min_story_days', 'base_max_story_days', 'variance_ratio', 'variance_cap_story_days', 'total_adjustment_cap_story_days']
+    const values = new Map(fields.map(field => [
+      field,
+      field === 'variance_ratio' ? Number(draft?.[field]) * 100 : draft?.[field],
+    ]))
+    const inputs = fields.map(field => editor.querySelector?.(`[data-bioweave-timing-field="${field}"]`) ?? null)
+    if (inputs.some(input => !input)) return false
+    inputs.forEach((input, index) => {
+      const value = values.get(fields[index])
+      input.value = Number.isFinite(Number(value)) ? String(value) : ''
+    })
+    editor.querySelectorAll?.('.bioweave-form-error')?.forEach(node => node.remove?.())
+    return true
+  }
   function refreshBusinessState({ reason = 'ui-read', force = false, staleRetry = 0 } = {}) {
     recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_REQUESTED', {
       request_source: reason,
@@ -3899,8 +4059,9 @@ export function createApp(runtime, options = {}) {
     return '推演周期保存失败，请重新读取当前人物信息。'
   }
   function closeCharacterTiming() {
+    timingEditorRequestSequence += 1
     timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
-    render()
+    renderCharacterDetailOrFallback()
   }
   function closeCharacterHealth({restoreFocus = true} = {}) {
     const characterId = healthPopoverState.characterId
@@ -3933,15 +4094,49 @@ export function createApp(runtime, options = {}) {
       return
     }
     const chatId = runtime.chat.current()
+    const requestId = ++timingEditorRequestSequence
     if (healthPopoverState.open) healthPopoverState = {open: false, characterId: null}
+    const performanceOperationId = startTimingPerformanceOperation('OPEN_TIMING_EDITOR', id)
     timingEditorState = { ...timingEditorState, open: true, loading: true, saving: false, characterId: id, chatId, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
-    render()
-    void loadCharacterTimingData({id, chatId})
+    const renderStartedAt = monotonicNow()
+    renderCharacterDetailOrFallback()
+    recordTimingPerformanceStage({
+      operation_id: performanceOperationId,
+      stage: 'OPEN_EDITOR_SHELL_RENDER',
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: durationMs(renderStartedAt),
+      render_count: 1,
+      render_scope: 'character_detail',
+    })
+    void loadCharacterTimingData({id, chatId, requestId, performanceOperationId})
   }
-  async function loadCharacterTimingData({id, chatId}) {
+  async function loadCharacterTimingData({id, chatId, requestId, performanceOperationId = null}) {
+    const readStartedAt = monotonicNow()
+    let operationStatus = 'SUCCEEDED'
+    let operationReason = null
     try {
       const data = await runtime.getCharacterTimingEditorData({characterId: id, characterProfile: businessState.characterProfiles?.[id] ?? null})
-      if (runtime.chat.current() !== chatId || String(focusedCharacterId ?? '') !== id) return
+      recordTimingPerformanceStage({
+        operation_id: performanceOperationId,
+        stage: 'OPEN_EDITOR_DATA_READ',
+        kind: 'ASYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(readStartedAt),
+      })
+      if (
+        requestId !== timingEditorRequestSequence ||
+        runtime.chat.current() !== chatId ||
+        route !== 'characters' ||
+        String(focusedCharacterId ?? '') !== id ||
+        !timingEditorState.open ||
+        timingEditorState.characterId !== id
+      ) {
+        operationStatus = 'CANCELLED_STALE_CONTEXT'
+        operationReason = 'STALE_EDITOR_CONTEXT'
+        finishTimingPerformanceOperation({operation_id: performanceOperationId, status: operationStatus, reason_code: operationReason})
+        return
+      }
       const timingInstance = data?.timing_instance ?? null
       const draft = data?.config ? {...data.config} : null
       if (timingInstance && draft) {
@@ -3953,9 +4148,53 @@ export function createApp(runtime, options = {}) {
       }
       timingEditorState = {...timingEditorState, open: true, loading: false, config: data?.config ?? null, draft, timingInstance, editStartFloorVersion: data?.floor_version ?? null, humanPresetApplicable: data?.human_preset_applicable === true, error: null}
     } catch (error) {
+      if (
+        requestId !== timingEditorRequestSequence ||
+        runtime.chat.current() !== chatId ||
+        route !== 'characters' ||
+        String(focusedCharacterId ?? '') !== id ||
+        !timingEditorState.open ||
+        timingEditorState.characterId !== id
+      ) {
+        finishTimingPerformanceOperation({operation_id: performanceOperationId, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'STALE_EDITOR_CONTEXT'})
+        return
+      }
+      operationStatus = 'FAILED'
+      operationReason = error?.code ?? error?.message ?? 'TIMING_EDITOR_READ_FAILED'
+      recordTimingPerformanceStage({
+        operation_id: performanceOperationId,
+        stage: 'OPEN_EDITOR_DATA_READ',
+        kind: 'ASYNC',
+        status: 'FAILED',
+        duration_ms: durationMs(readStartedAt),
+        reason_code: operationReason,
+        error_code: operationReason,
+      })
       timingEditorState = {...timingEditorState, loading: false, error: timingEditorErrorMessage(error)}
     }
-    render()
+    if (
+      requestId !== timingEditorRequestSequence ||
+      runtime.chat.current() !== chatId ||
+      route !== 'characters' ||
+      String(focusedCharacterId ?? '') !== id ||
+      !timingEditorState.open ||
+      timingEditorState.characterId !== id
+    ) {
+      finishTimingPerformanceOperation({operation_id: performanceOperationId, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'STALE_EDITOR_CONTEXT'})
+      return
+    }
+    const renderStartedAt = monotonicNow()
+    renderCharacterDetailOrFallback()
+    recordTimingPerformanceStage({
+      operation_id: performanceOperationId,
+      stage: 'OPEN_EDITOR_DATA_RENDER',
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: durationMs(renderStartedAt),
+      render_count: 1,
+      render_scope: 'character_detail',
+    })
+    finishTimingPerformanceOperation({operation_id: performanceOperationId, status: operationStatus, reason_code: operationReason})
   }
   function updateCharacterTimingDraft(target) {
     if (!timingEditorState.draft) return
@@ -3965,7 +4204,8 @@ export function createApp(runtime, options = {}) {
     timingEditorState = {...timingEditorState, draft: {...timingEditorState.draft, [field]: field === 'variance_ratio' ? value / 100 : value}, error: null}
   }
   function restoreHumanTimingPreset() {
-    if (!timingEditorState.humanPresetApplicable || !timingEditorState.draft) return
+    const performanceOperationId = startTimingPerformanceOperation('RESTORE_TIMING_DEFAULTS', timingEditorState.characterId)
+    if (!timingEditorState.humanPresetApplicable || !timingEditorState.draft) return finishTimingPerformanceOperation({operation_id: performanceOperationId, status: 'SKIPPED', reason_code: 'PRESET_NOT_APPLICABLE'})
     const preset = getHumanPreconfirmationTimingPreset()
     timingEditorState = {...timingEditorState, draft: {
       ...timingEditorState.draft,
@@ -3975,7 +4215,19 @@ export function createApp(runtime, options = {}) {
       variance_cap_story_days: preset.variance_cap_story_days,
       total_adjustment_cap_story_days: preset.total_adjustment_cap_story_days,
     }, error: null}
-    render()
+    const renderStartedAt = monotonicNow()
+    const localUpdate = syncTimingEditorDraftInputs(timingEditorState.draft)
+    if (!localUpdate) render()
+    recordTimingPerformanceStage({
+      operation_id: performanceOperationId,
+      stage: localUpdate ? 'RESTORE_DRAFT_DOM_UPDATE' : 'RESTORE_EDITOR_RENDER',
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: durationMs(renderStartedAt),
+      render_count: 1,
+      render_scope: localUpdate ? 'timing_editor' : 'characters_page',
+    })
+    finishTimingPerformanceOperation({operation_id: performanceOperationId, status: 'SUCCEEDED'})
   }
   async function saveCharacterTiming() {
     const state = timingEditorState
@@ -3988,10 +4240,29 @@ export function createApp(runtime, options = {}) {
       render()
       return
     }
+    const performanceOperationId = startTimingPerformanceOperation(
+      editingCurrent ? 'SAVE_TIMING_INSTANCE' : 'SAVE_CHARACTER_TIMING_CONFIG',
+      state.characterId,
+    )
+    let performanceStatus = 'SUCCEEDED'
+    let performanceReason = null
+    let runtimeStartedAt = null
+    let performanceFailureStage = 'SAVE_RUNTIME_CALL'
     timingEditorState = {...state, saving: true, error: null}
+    const savingRenderStartedAt = monotonicNow()
     render()
+    recordTimingPerformanceStage({
+      operation_id: performanceOperationId,
+      stage: 'SAVE_SAVING_STATE_RENDER',
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: durationMs(savingRenderStartedAt),
+      render_count: 1,
+      render_scope: 'characters_page',
+    })
     try {
       let result = null
+      runtimeStartedAt = monotonicNow()
       if (editingCurrent) {
         result = await runtime.editCharacterTimingInstance({
           characterId: state.characterId,
@@ -4002,11 +4273,62 @@ export function createApp(runtime, options = {}) {
           varianceCapStoryDays: state.draft.variance_cap_story_days,
           totalAdjustmentCapStoryDays: state.draft.total_adjustment_cap_story_days,
           editStartFloorVersion: state.editStartFloorVersion,
+          performanceOperationId,
         })
       } else {
-        await runtime.saveCharacterTimingConfig({characterId: state.characterId, config: state.draft})
+        result = await runtime.saveCharacterTimingConfig({characterId: state.characterId, config: state.draft})
       }
-      const data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
+      recordTimingPerformanceStage({
+        operation_id: performanceOperationId,
+        stage: 'SAVE_RUNTIME_CALL',
+        kind: 'ASYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(runtimeStartedAt),
+        persistence_attempted: true,
+        persistence_succeeded: editingCurrent
+          ? ['created', 'updated', 'deduped'].includes(result?.timing_persistence?.status)
+          : true,
+        readback_attempted: editingCurrent ? result?.timing_readback?.succeeded === true : null,
+        readback_succeeded: editingCurrent ? result?.timing_readback?.succeeded === true : null,
+        aggregation_reevaluation_attempted: editingCurrent ? result?.aggregation_reevaluation?.attempted === true : false,
+        aggregation_reevaluation_succeeded: editingCurrent
+          ? result?.aggregation_reevaluation?.readback_status === 'SUCCEEDED'
+          : null,
+      })
+      let data
+      if (editingCurrent && result?.timing_instance) {
+        data = {
+          config: state.config,
+          timing_instance: result.timing_instance,
+          floor_version: state.editStartFloorVersion,
+          human_preset_applicable: state.humanPresetApplicable,
+        }
+      } else {
+        performanceFailureStage = 'SAVE_EDITOR_DATA_READBACK'
+        const editorReadStartedAt = monotonicNow()
+        data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
+        recordTimingPerformanceStage({
+          operation_id: performanceOperationId,
+          stage: 'SAVE_EDITOR_DATA_READBACK',
+          kind: 'ASYNC',
+          status: 'SUCCEEDED',
+          duration_ms: durationMs(editorReadStartedAt),
+          readback_attempted: true,
+          readback_succeeded: true,
+        })
+      }
+      if (editingCurrent && result?.timing_instance) {
+        recordTimingPerformanceStage({
+          operation_id: performanceOperationId,
+          stage: 'SAVE_AUTHORITATIVE_EDITOR_READBACK_REUSED',
+          kind: 'ASYNC',
+          status: 'SUCCEEDED',
+          reason_code: 'RUNTIME_TIMING_READBACK',
+          readback_attempted: true,
+          readback_succeeded: result?.timing_readback?.succeeded === true,
+        })
+      }
+      performanceFailureStage = 'SAVE_UI_READBACK_VALIDATION'
       if (runtime.chat.current() !== state.chatId || String(focusedCharacterId ?? '') !== String(state.characterId)) throw Object.assign(new Error('STALE_CHAT'), {code: 'STALE_CHAT'})
       const saved = data?.timing_instance ?? null
       if (editingCurrent && (!saved || saved.timing_instance_id !== state.timingInstance.timing_instance_id
@@ -4030,9 +4352,34 @@ export function createApp(runtime, options = {}) {
         ? (result?.aggregation_reevaluation?.action === 'removed_before_min' ? '当前周期已保存，原聚合因尚未到期而移除。' : '当前周期已保存，并已重新评估聚合。')
         : '推演周期设置已保存。', 'success', documentRef)
     } catch (error) {
+      performanceStatus = 'FAILED'
+      performanceReason = error?.code ?? error?.message ?? 'TIMING_SAVE_FAILED'
+      recordTimingPerformanceStage({
+        operation_id: performanceOperationId,
+        stage: performanceFailureStage,
+        kind: 'ASYNC',
+        status: 'FAILED',
+        duration_ms: durationMs(runtimeStartedAt),
+        reason_code: performanceReason,
+        error_code: performanceReason,
+        persistence_attempted: true,
+        persistence_succeeded: error?.timing_persisted === true,
+        aggregation_reevaluation_attempted: editingCurrent && error?.timing_persisted === true,
+        aggregation_reevaluation_succeeded: false,
+      })
       if (editingCurrent && error?.timing_persisted === true) {
+        const reconciliationStartedAt = monotonicNow()
         try {
           const data = await runtime.getCharacterTimingEditorData({characterId: state.characterId})
+          recordTimingPerformanceStage({
+            operation_id: performanceOperationId,
+            stage: 'SAVE_FAILURE_RECONCILIATION_READ',
+            kind: 'ASYNC',
+            status: 'SUCCEEDED',
+            duration_ms: durationMs(reconciliationStartedAt),
+            readback_attempted: true,
+            readback_succeeded: true,
+          })
           const saved = data?.timing_instance
           const draft = data?.config ? {...data.config} : state.draft
           if (saved && draft) {
@@ -4043,7 +4390,18 @@ export function createApp(runtime, options = {}) {
             draft.total_adjustment_cap_story_days = saved.total_adjustment_cap_story_days
           }
           timingEditorState = {...state, saving: false, loading: false, config: data?.config ?? state.config, draft, timingInstance: saved ?? state.timingInstance, editStartFloorVersion: data?.floor_version ?? state.editStartFloorVersion, humanPresetApplicable: data?.human_preset_applicable === true, error: timingEditorErrorMessage(error)}
-        } catch {
+        } catch (reconciliationError) {
+          recordTimingPerformanceStage({
+            operation_id: performanceOperationId,
+            stage: 'SAVE_FAILURE_RECONCILIATION_READ',
+            kind: 'ASYNC',
+            status: 'FAILED',
+            duration_ms: durationMs(reconciliationStartedAt),
+            reason_code: reconciliationError?.code ?? reconciliationError?.message ?? 'TIMING_RECONCILIATION_READ_FAILED',
+            error_code: reconciliationError?.code ?? reconciliationError?.message ?? 'TIMING_RECONCILIATION_READ_FAILED',
+            readback_attempted: true,
+            readback_succeeded: false,
+          })
           timingEditorState = {...state, saving: false, error: timingEditorErrorMessage(error)}
         }
       } else {
@@ -4051,7 +4409,22 @@ export function createApp(runtime, options = {}) {
       }
       notify(timingEditorErrorMessage(error), 'error', documentRef)
     }
+    const completionRenderStartedAt = monotonicNow()
     render()
+    recordTimingPerformanceStage({
+      operation_id: performanceOperationId,
+      stage: 'SAVE_COMPLETION_RENDER',
+      kind: 'SYNC',
+      status: 'SUCCEEDED',
+      duration_ms: durationMs(completionRenderStartedAt),
+      render_count: 1,
+      render_scope: 'characters_page',
+    })
+    finishTimingPerformanceOperation({
+      operation_id: performanceOperationId,
+      status: performanceStatus,
+      reason_code: performanceReason,
+    })
   }
   async function refreshStoryTimeDebug({renderAfter = true} = {}) {
     if (!storyTimeDebugState.enabled || typeof runtime.getStoryTimeDebugInfo !== 'function') return null
@@ -4537,6 +4910,9 @@ export function createApp(runtime, options = {}) {
     if (!pages[nextRoute]) return false
     const routeSwitchStartedAt = monotonicNow()
     const previousRoute = route
+    const characterPageOperationId = nextRoute === 'characters'
+      ? startTimingPerformanceOperation('OPEN_CHARACTERS_PAGE', null)
+      : null
     if (nextRoute === 'settings' && route !== 'settings') refreshAnalysisChatSettings()
     if (nextRoute === 'world' && route !== 'world') {
       worldModelState = {
@@ -4552,12 +4928,26 @@ export function createApp(runtime, options = {}) {
     healthPopoverState = {open: false, characterId: null}
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
+      timingEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
     }
     if (nextRoute !== 'events') setEventFilter()
     const renderStartedAt = monotonicNow()
     render()
+    if (characterPageOperationId) {
+      recordTimingPerformanceStage({
+        operation_id: characterPageOperationId,
+        stage: 'CHARACTERS_PAGE_FULL_RENDER',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(renderStartedAt),
+        render_count: 1,
+        render_scope: 'characters_page_full',
+        reason_code: 'ROUTE_OPEN',
+      })
+      finishTimingPerformanceOperation({operation_id: characterPageOperationId, status: 'SUCCEEDED'})
+    }
     recordCharacterRefreshTrace('CHARACTER_UI_PERFORMANCE', {
       operation: 'route_switch',
       from_route: previousRoute,
@@ -4577,8 +4967,26 @@ export function createApp(runtime, options = {}) {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
     }
-    if (timingEditorState.characterId !== nextId) timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
-    render()
+    if (timingEditorState.characterId !== nextId) {
+      timingEditorRequestSequence += 1
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
+    }
+    if (!renderCharacterSelection()) {
+      const performanceOperationId = startTimingPerformanceOperation('SELECT_CHARACTER', nextId)
+      const renderStartedAt = monotonicNow()
+      render()
+      recordTimingPerformanceStage({
+        operation_id: performanceOperationId,
+        stage: 'CHARACTER_PAGE_FULL_RENDER',
+        kind: 'SYNC',
+        status: 'SUCCEEDED',
+        duration_ms: durationMs(renderStartedAt),
+        render_count: 1,
+        render_scope: 'characters_page_full',
+        reason_code: 'LIST_NOT_MOUNTED',
+      })
+      finishTimingPerformanceOperation({operation_id: performanceOperationId, status: 'SUCCEEDED'})
+    }
   }
   function settingsOperationError(error) {
     const transportMessage = sharedTransportErrorMessage(error)
@@ -5349,6 +5757,7 @@ export function createApp(runtime, options = {}) {
         ? {...businessDebugState, status: 'stale', reason: 'Chat 已切换'}
         : null
       aliasEditorRequestSequence += 1
+      timingEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       healthPopoverState = {open: false, characterId: null}
@@ -5503,6 +5912,7 @@ export function createApp(runtime, options = {}) {
     ) {
       if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
         aliasEditorRequestSequence += 1
+        timingEditorRequestSequence += 1
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
         timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       }
@@ -5592,8 +6002,7 @@ export function createApp(runtime, options = {}) {
       route === 'characters' &&
       !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
     ) {
-      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
-      render()
+      closeCharacterTiming()
     }
     if (
       aliasEditorState.open &&

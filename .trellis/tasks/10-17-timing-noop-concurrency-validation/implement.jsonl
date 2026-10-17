@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe/version ownership and stale-write invariants for the concurrency audit."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer review of Chat, Store, Coordinator, Runtime, and test seams."}
+{"file":".trellis/tasks/10-17-floor-write-path-performance-audit/audit-report.md","reason":"Prior measured Floor transaction and official I/O baseline."}
+{"file":".trellis/tasks/10-17-timing-noop-performance-audit/audit-report.md","reason":"Prior no-op optimization audit and candidate D context."}

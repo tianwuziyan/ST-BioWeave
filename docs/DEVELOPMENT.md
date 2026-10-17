@@ -306,7 +306,7 @@ Character/Event Analysis。Event Input Boundary 已实现：World Analyzer 继�
 
 UI 只能调用这些 API 并显示 busy/success/error。不得在 `ui/app.js` 或页面模块重新实现 Floor Version 有效性、Event normalize/validate、Tracking eligibility 或 Registry rebuild。强制刷新失败时，Runtime 写入失败状态，但保留同一 Floor Version 的上一份成功 Events；UI 不清空事件或人物。
 
-### KNOWN-GOOD Floor Persistence Mainline（Frozen Boundary）
+### Context-first Floor Persistence Mainline（Frozen Boundary）
 
 当前已经通过真实 SillyTavern World/Event 与 F5 durability 验证的普通
 Floor persistence mainline 必须视为冻结行为，而不是可顺手重构的基础设施。
@@ -319,18 +319,20 @@ SillyTavern World persistence 的 generation final-save + F5/reload durability
 ```text
 owner-scoped patch
   → storage/floor-persistence-coordinator.js
-  → latest authoritative Floor merge
-  → host sync + official save
-  → authoritative readback + sibling audit
+  → current loaded Chat Context Floor view + identity/version guards
+  → owner-scoped Snapshot merge
+  → host sync + native saveChat()
+  → one official authoritative readback + sibling audit
   → confirmed
 ```
 
 `runtime/floor-persistence.js` 只是 compatibility re-export，不是第二套
 persistence implementation。冻结范围包括 owner allowlist、同 Floor 串行、
-当前 message/Swipe/Floor Version 校验、latest merge、sibling preservation、
-host-ahead bootstrap、official readback、confirmed 定义、terminal supersede、
-cancel/supersede guard，以及 Swipe 0 规则。`saveChat()` 或
-`saveChatConditional()` 的 Promise resolve 不能单独证明 durable persistence。
+当前 message/Swipe/Floor Version 校验、Context-first merge、sibling preservation、
+native save、official readback、confirmed 定义、terminal supersede、
+cancel/supersede guard，以及 Swipe 0 规则。普通 Context-first 事务不会为了
+内部合并额外请求 `/api/chats/get`；该请求只作为保存后的权威确认边界。
+`saveChat()` 的 Promise resolve 不能单独证明 durable persistence。
 
 World Analysis、Event Analysis、Character Analysis、Prompt、Input Builder、
 UI 或 Tracking 任务不得顺手修改这条 mainline。只有新的真实 SillyTavern
@@ -400,5 +402,5 @@ Chat metadata/settings save 和 Auto prerequisite host lifecycle/save boundary
 
 - World Persistence：Floor-owned persistence、official save/readback、host-memory slot synchronization、Floor Version/active Swipe guards 均已实现；persistence mechanism 为 automated verified，SillyTavern final-save + F5/reload durability 已真实宿主验证，World reload persistence issue 为 `CLOSED`，不再是 blocker。
 - Character/Event validation：pregnancy-relevant `source_evidence`、strict domain validation 和 canonical typed `physical_symptom` payload 均有当前回归测试覆盖；本轮定向 Event/Core/Runtime/Snapshot/Floor persistence 测试通过。
-- 本轮全量结果为 `1140` 个测试、`1119` 通过、`21` 失败；其中 16 项是 World prompt contract 断言失败，另 5 项是 StoryTime/Start New Chat/source isolation lifecycle failures。它们均未触及本轮 Window/candidate 修改范围。
+- 当前 `npm run check` 结果为 `1688` 个测试、`1672` 通过、`16` 跳过、`0` 失败；跳过项是已移除 UI Debug Popup 的历史覆盖，不代表生产能力缺失。
 - 以上 automated test 结果与真实 SillyTavern 人工验收分别记录，不互相替代。

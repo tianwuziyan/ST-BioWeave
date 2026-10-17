@@ -293,7 +293,7 @@ export function createSillyTavernAdapter() {
     try {
       const allowed = new Set([
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason",
-        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path", "reason",
+        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
@@ -332,6 +332,11 @@ export function createSillyTavernAdapter() {
       "bioweave_present", "event_count", "character_count", "current_floor_included",
       "source", "ready", "ui_state_fingerprint", "rendered_field_count", "unrendered_canonical_field_count", "canonical_field_count",
       "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state",
+      "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
+      "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
+      "json_parse_duration_ms", "response_parse_duration_ms",
+      "response_normalize_duration_ms", "source_revision_duration_ms", "floor_extract_duration_ms",
+      "total_duration_ms", "owner_message_index", "owner_swipe_id",
       "resolution_reason", "request_source", "panel_open", "active_tab",
       "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
       "error_name", "error_message", "diagnostic_code",
@@ -386,8 +391,32 @@ export function createSillyTavernAdapter() {
     return io.getOwnerDescriptor(owner);
   }
 
-  async function readOfficialChatOwner(owner) {
-    return io.readOfficialChatOwner(owner);
+  function officialIoContext(traceContext = null, ioPurpose = null) {
+    return {
+      ...(traceContext && typeof traceContext === "object" ? traceContext : {}),
+      ...(ioPurpose ? {io_purpose: ioPurpose} : {}),
+    };
+  }
+
+  async function readOfficialChatOwner(owner = {}) {
+    const context = owner?.officialIoContext ?? {};
+    return io.readOfficialChatOwner({
+      ...owner,
+      officialIoContext: context,
+      officialIoTrace: payload => emitPersistenceTrace({...context, ...payload}),
+    });
+  }
+
+  function traceOfficialFloorExtract(state, traceContext, startedAt, details = {}) {
+    emitPersistenceTrace({
+      ...officialIoContext(traceContext),
+      stage: "OFFICIAL_FLOOR_EXTRACT",
+      io_call_id: state?.__official_io_call_id ?? null,
+      floor_extract_duration_ms: durationMs(startedAt),
+      status: "SUCCEEDED",
+      reason_code: "OFFICIAL_FLOOR_EXTRACT_COMPLETED",
+      ...details,
+    });
   }
 
   function resolveOfficialOwnerMessage(messages, {messageIndex = null, expectedMessageId = null} = {}) {
@@ -438,8 +467,17 @@ export function createSillyTavernAdapter() {
     return matches[0];
   }
 
-  async function readOfficialFloorSlot({messageIndex, message_id, swipeId = 0, expectedChatId, expectedVersion} = {}) {
-    const state = await readOfficialChatOwner({chatId: expectedChatId});
+  async function readOfficialFloorSlot({
+    messageIndex,
+    message_id,
+    swipeId = 0,
+    expectedChatId,
+    expectedVersion,
+    traceContext = null,
+  } = {}) {
+    const ioContext = officialIoContext(traceContext, traceContext?.io_purpose ?? "AUTHORITATIVE_FLOOR_READ");
+    const state = await readOfficialChatOwner({chatId: expectedChatId, officialIoContext: ioContext});
+    const extractStartedAt = monotonicNow();
     const expectedMessageId = expectedVersion?.message_id ?? message_id;
     const {message, index} = resolveOfficialOwnerMessage(state.messages, {
       messageIndex,
@@ -450,6 +488,11 @@ export function createSillyTavernAdapter() {
       : 0;
     if (!isCharacterMessage(message)) throw sourceError("BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN");
     const slot = readFloorSlot(message, targetSwipeId);
+    traceOfficialFloorExtract(state, ioContext, extractStartedAt, {
+      owner_message_index: index,
+      owner_message_id: messageIdForFloor(message, index),
+      owner_swipe_id: targetSwipeId,
+    });
     return {
       floor: slot ? cloneOwnerValue(slot) : null,
       messageIndex: index,
@@ -459,14 +502,22 @@ export function createSillyTavernAdapter() {
     };
   }
 
-  async function inspectOfficialFloorOwner({messageIndex, swipeId = 0, expectedChatId, expectedVersion} = {}) {
+  async function inspectOfficialFloorOwner({
+    messageIndex,
+    swipeId = 0,
+    expectedChatId,
+    expectedVersion,
+    traceContext = null,
+  } = {}) {
     const context = getContext();
     if (String(context?.chatId) !== String(expectedChatId)) throw sourceError("STALE_CHAT");
     const liveMessages = context?.chat;
     const liveTarget = liveMessages?.[messageIndex];
     if (!Array.isArray(liveMessages) || !liveTarget || !isCharacterMessage(liveTarget))
       throw sourceError("FLOOR_OWNER_REQUIRED");
-    const state = await readOfficialChatOwner({chatId: expectedChatId});
+    const ioContext = officialIoContext(traceContext, traceContext?.io_purpose ?? "OWNER_ACQUISITION");
+    const state = await readOfficialChatOwner({chatId: expectedChatId, officialIoContext: ioContext});
+    const extractStartedAt = monotonicNow();
     const expectedMessageId = expectedVersion?.message_id ?? messageIdForFloor(liveTarget, messageIndex);
     const officialOwner = resolveOfficialOwnerMessage(state.messages, {
       messageIndex,
@@ -478,6 +529,14 @@ export function createSillyTavernAdapter() {
     if (String(currentContext?.chatId) !== String(expectedChatId) ||
         currentContext?.chat?.[messageIndex] !== liveTarget)
       throw sourceError("STALE_FLOOR_VERSION");
+    const officialSwipeId = officialTarget && hasSwipeStructure(officialTarget)
+      ? Number.isInteger(officialTarget.swipe_id) ? officialTarget.swipe_id : 0
+      : 0;
+    traceOfficialFloorExtract(state, ioContext, extractStartedAt, {
+      owner_message_index: officialIndex,
+      owner_message_id: messageIdForFloor(officialTarget, officialIndex),
+      owner_swipe_id: officialSwipeId,
+    });
     const versionOf = async (message, index) => {
       if (!message || !isCharacterMessage(message)) return null;
       const activeSwipe = hasSwipeStructure(message)
@@ -492,7 +551,7 @@ export function createSillyTavernAdapter() {
         messageVersion: message.message_version ?? message.messageVersion,
       });
     };
-    return {
+    const result = {
       state,
       liveTarget,
       officialTarget,
@@ -508,11 +567,11 @@ export function createSillyTavernAdapter() {
       targetIndex: messageIndex,
       activeSwipeId: hasSwipeStructure(liveTarget)
         ? Number.isInteger(liveTarget.swipe_id) ? liveTarget.swipe_id : 0 : 0,
-      officialSwipeId: officialTarget && hasSwipeStructure(officialTarget)
-        ? Number.isInteger(officialTarget.swipe_id) ? officialTarget.swipe_id : 0 : 0,
+      officialSwipeId,
       requestedSwipeId: swipeId,
       expectedVersion,
     };
+    return result;
   }
 
   async function bootstrapOfficialFloorOwner({inspection, expectedVersion} = {}) {
@@ -597,12 +656,14 @@ export function createSillyTavernAdapter() {
     messageIndex,
     swipeId = 0,
     generationSettled = false,
+    traceContext = null,
   } = {}) {
     const inspection = await inspectOfficialFloorOwner({
       messageIndex,
       swipeId,
       expectedChatId: expectedVersion?.chat_id,
       expectedVersion,
+      traceContext: officialIoContext(traceContext, "OWNER_ACQUISITION"),
     });
     if (inspection.officialTargetVersion &&
         sameFloorVersion(inspection.officialTargetVersion, expectedVersion)) {
@@ -730,6 +791,11 @@ export function createSillyTavernAdapter() {
       message.swipe_info[swipeId] ??= {};
       message.swipe_info[swipeId].extra ??= {};
       message.swipe_info[swipeId].extra.bioweave = cloneOwnerValue(value);
+      const activeSwipeId = Number.isInteger(message?.swipe_id) ? message.swipe_id : 0;
+      if (Number(swipeId) === activeSwipeId) {
+        message.extra ??= {};
+        message.extra.bioweave = cloneOwnerValue(value);
+      }
       return;
     }
     message.extra ??= {};
@@ -937,16 +1003,33 @@ export function createSillyTavernAdapter() {
           version_audit: floorVersionAudit(expectedVersion, liveVersion),
         });
     }
-    const beforeSaveReadStartedAt = monotonicNow();
-    trace("OFFICIAL_GET_BEFORE_SAVE_BEGIN");
-    const latest = await readOfficialChatOwner({
-      chatId: expectedChatId,
-      characterId: descriptor.characterId,
-    });
-    trace("OFFICIAL_GET_BEFORE_SAVE_END", {
-      revision: latest.revision,
-      official_get_before_save_duration_ms: durationMs(beforeSaveReadStartedAt),
-    });
+    const contextFirst = traceContext?.coordinator_transaction === true;
+    let latest;
+    if (contextFirst) {
+      latest = {
+        revision: null,
+        header: {},
+        chatMetadata: cloneOwnerValue(context?.chatMetadata ?? {}),
+        messages: cloneOwnerValue(Array.isArray(context?.chat) ? context.chat : []),
+        response_shape: "host_context",
+      };
+      trace("CONTEXT_FLOOR_SOURCE_RESOLVED", {
+        source: "host_context",
+        messages_count: latest.messages.length,
+      });
+    } else {
+      const beforeSaveReadStartedAt = monotonicNow();
+      trace("OFFICIAL_GET_BEFORE_SAVE_BEGIN");
+      latest = await readOfficialChatOwner({
+        chatId: expectedChatId,
+        characterId: descriptor.characterId,
+        officialIoContext: officialIoContext(traceContext, "SAVE_PREWRITE_READ"),
+      });
+      trace("OFFICIAL_GET_BEFORE_SAVE_END", {
+        revision: latest.revision,
+        official_get_before_save_duration_ms: durationMs(beforeSaveReadStartedAt),
+      });
+    }
     let target;
     let targetIndex;
     let targetSwipeId;
@@ -976,6 +1059,7 @@ export function createSillyTavernAdapter() {
         messages_present: true,
         messages_count: latest.messages.length,
       });
+      const prewriteExtractStartedAt = monotonicNow();
       const currentContextForOwner = getContext();
       expectedMessageId = expectedVersion?.message_id ??
         messageIdForFloor(currentContextForOwner?.chat?.[messageIndex], messageIndex);
@@ -1050,6 +1134,16 @@ export function createSillyTavernAdapter() {
       if (!swipeFound || (hasSwipeStructure(target) &&
         Number.isInteger(target.swipe_id) && target.swipe_id !== targetSwipeId))
         throw sourceError("STALE_FLOOR_VERSION");
+      traceOfficialFloorExtract(
+        latest,
+        officialIoContext(traceContext, "SAVE_PREWRITE_READ"),
+        prewriteExtractStartedAt,
+        {
+          owner_message_index: targetIndex,
+          owner_message_id: messageIdForFloor(target, targetIndex),
+          owner_swipe_id: targetSwipeId,
+        },
+      );
       if (expectedVersion) {
         failureStage = "official_owner_floor_version_check";
         const authoritativeVersion = await floorVersion({
@@ -1173,7 +1267,7 @@ export function createSillyTavernAdapter() {
       });
     }
     // The coordinator has already merged the owner-scoped patch against its
-    // dispatch-time latest slot. The adapter is only a low-level transport
+    // dispatch-time Context slot. The adapter is only a low-level transport
     // boundary in that path and must never apply a second domain merge.
     const mergedValue = traceContext?.coordinator_transaction === true
       ? cloneOwnerValue(value)
@@ -1221,10 +1315,22 @@ export function createSillyTavernAdapter() {
       commit_state: "dispatched",
     });
     try {
-      await io.requestOfficialChatSave({
-        descriptor,
-        chat: [header, ...cloneOwnerValue(latest.messages)],
-      });
+      if (contextFirst) {
+        await io.saveChat({
+          expectedChatId,
+          officialIoContext: officialIoContext(traceContext, "SAVE_WRITE"),
+        });
+      } else {
+        await io.requestOfficialChatSave({
+          descriptor,
+          chat: [header, ...cloneOwnerValue(latest.messages)],
+          officialIoContext: officialIoContext(traceContext, "SAVE_WRITE"),
+          officialIoTrace: payload => emitPersistenceTrace({
+            ...officialIoContext(traceContext, "SAVE_WRITE"),
+            ...payload,
+          }),
+        });
+      }
       trace("BIOWEAVE_FULL_CHAT_SAVE_RESOLVED", {
         source: "official_clone",
         persistence_transaction_id: persistenceTransactionId,
@@ -1249,7 +1355,9 @@ export function createSillyTavernAdapter() {
     const committed = await readOfficialChatOwner({
       chatId: expectedChatId,
       characterId: descriptor.characterId,
+      officialIoContext: officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
     });
+    const committedExtractStartedAt = monotonicNow();
     trace("OFFICIAL_GET_AFTER_SAVE_END", {
       revision: committed.revision,
       official_get_after_save_duration_ms: durationMs(afterSaveReadStartedAt),
@@ -1258,13 +1366,51 @@ export function createSillyTavernAdapter() {
       messageIndex,
       expectedMessageId,
     }).message;
-    const readbackPresent = Boolean(committedMessage && readFloorSlot(committedMessage, targetSwipeId) !== undefined);
+    const committedActiveSwipe = committedMessage && hasSwipeStructure(committedMessage)
+      ? Number.isInteger(committedMessage.swipe_id)
+        ? committedMessage.swipe_id
+        : targetSwipeId
+      : targetSwipeId;
+    const committedSlot = committedMessage
+      ? readFloorSlot(committedMessage, targetSwipeId)
+      : undefined;
+    const committedMirror = committedMessage?.extra?.bioweave;
+    const committedVersion = committedMessage
+      ? await floorVersion({
+        chatId: expectedChatId,
+        messageId: messageIdForFloor(committedMessage, messageIndex),
+        floor: committedMessage.floor ?? messageIndex,
+        swipeId: committedActiveSwipe,
+        text: messageTextForFloor(committedMessage, committedActiveSwipe),
+        messageVersion: committedMessage.message_version ?? committedMessage.messageVersion,
+      })
+      : null;
+    const readbackPresent = Boolean(
+      committedMessage &&
+      isCharacterMessage(committedMessage) &&
+      String(messageIdForFloor(committedMessage, messageIndex)) === String(expectedMessageId) &&
+      committedActiveSwipe === targetSwipeId &&
+      sameFloorVersion(committedVersion, expectedVersion) &&
+      JSON.stringify(committedSlot) === JSON.stringify(mergedValue) &&
+      JSON.stringify(committedMirror) === JSON.stringify(mergedValue),
+    );
+    traceOfficialFloorExtract(
+      committed,
+      officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
+      committedExtractStartedAt,
+      {
+        owner_message_index: messageIndex,
+        owner_message_id: expectedMessageId,
+        owner_swipe_id: targetSwipeId,
+      },
+    );
     trace("BIOWEAVE_FULL_CHAT_SAVE_READBACK", {
       source: "official_clone",
       persistence_transaction_id: persistenceTransactionId,
       save_invocation_id: saveInvocationId,
       commit_state: readbackPresent ? "readback_confirmed" : "unknown",
-      ...slotPresence(committedMessage ? readFloorSlot(committedMessage, targetSwipeId) : undefined),
+      ...slotPresence(committedSlot),
+      mirror_present: committedMirror !== undefined,
     });
     trace(traceStage("WORLD_SLOT_AFTER_READBACK", "EVENT_SLOT_AFTER_READBACK"), {
       present: readbackPresent,
@@ -1272,7 +1418,7 @@ export function createSillyTavernAdapter() {
       swipe_match: Boolean(committedMessage && (!hasSwipeStructure(committedMessage) || committedMessage.swipe_id === targetSwipeId)),
       persistence_duration_ms: durationMs(persistenceStartedAt),
     });
-    if (!committedMessage || JSON.stringify(readFloorSlot(committedMessage, targetSwipeId)) !== JSON.stringify(mergedValue))
+    if (!readbackPresent)
       throw sourceError("FLOOR_PERSISTENCE_READBACK_FAILED");
     await syncHostMemoryFloorSlot({
       messageIndex,
@@ -1284,10 +1430,19 @@ export function createSillyTavernAdapter() {
       beforeStage: traceStage("HOST_MEMORY_SLOT_BEFORE_SYNC", "EVENT_HOST_MEMORY_SLOT_BEFORE_SYNC"),
       afterStage: traceStage("HOST_MEMORY_SLOT_AFTER_SYNC", "EVENT_HOST_MEMORY_SLOT_AFTER_SYNC"),
     });
+    if (contextFirst) {
+      return {
+        commitState: "confirmed",
+        mergeMode: "context-floor-slot-and-host-memory",
+        authoritativeReadback: true,
+      };
+    }
     const finalState = await readOfficialChatOwner({
       chatId: expectedChatId,
       characterId: descriptor.characterId,
+      officialIoContext: officialIoContext(traceContext, "SAVE_FINAL_SLOT_AUDIT"),
     });
+    const finalExtractStartedAt = monotonicNow();
     const finalMessage = resolveOfficialOwnerMessage(finalState.messages, {
       messageIndex,
       expectedMessageId,
@@ -1295,6 +1450,16 @@ export function createSillyTavernAdapter() {
     const finalServerSlot = finalMessage
       ? readFloorSlot(finalMessage, targetSwipeId)
       : undefined;
+    traceOfficialFloorExtract(
+      finalState,
+      officialIoContext(traceContext, "SAVE_FINAL_SLOT_AUDIT"),
+      finalExtractStartedAt,
+      {
+        owner_message_index: messageIndex,
+        owner_message_id: expectedMessageId,
+        owner_swipe_id: targetSwipeId,
+      },
+    );
     const finalLiveContext = getContext();
     const finalLiveMessage = finalLiveContext?.chat?.[messageIndex];
     const finalHostSlot = finalLiveMessage
@@ -1578,17 +1743,7 @@ export function createSillyTavernAdapter() {
       traceContext?.domain === "world"
         ? trace("WORLD_SLOT_BEFORE_WRITE", {present: Boolean(message?.extra?.bioweave || message?.swipe_info?.[targetSwipeId]?.extra?.bioweave)})
         : trace("EVENT_SOURCE_WORLD_PRESENT", {present: Boolean(message?.extra?.bioweave?.world_model || message?.swipe_info?.[targetSwipeId]?.extra?.bioweave?.world_model)});
-      if (hasSwipeStructure(message)) {
-        if (!hasSwipeSlot(message, targetSwipeId))
-          throw new Error("SWIPE_NOT_FOUND");
-        message.swipe_info ??= [];
-        message.swipe_info[targetSwipeId] ??= {};
-        message.swipe_info[targetSwipeId].extra ??= {};
-        message.swipe_info[targetSwipeId].extra.bioweave = value;
-      } else {
-        message.extra ??= {};
-        message.extra.bioweave = value;
-      }
+      writeFloorSlot(message, targetSwipeId, value);
       trace(traceContext?.domain === "world" ? "WORLD_SLOT_AFTER_MERGE" : "EVENT_SLOT_AFTER_MERGE", {
         present: true,
       });
@@ -1724,6 +1879,38 @@ export function createRuntime({
     }
   }
 
+  function startTimingPerformanceOperation(payload = {}) {
+    try {
+      return diagnostics.startTimingPerformanceOperation?.(payload) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function recordTimingPerformanceStage(payload = {}) {
+    try {
+      diagnostics.recordTimingPerformanceStage?.(payload);
+    } catch {
+      // Performance diagnostics are fail-open and must not affect business flow.
+    }
+  }
+
+  function recordTimingOfficialIo(payload = {}) {
+    try {
+      diagnostics.recordTimingOfficialIo?.(payload);
+    } catch {
+      // Official I/O diagnostics are fail-open and must not affect persistence.
+    }
+  }
+
+  function finishTimingPerformanceOperation(payload = {}) {
+    try {
+      diagnostics.finishTimingPerformanceOperation?.(payload);
+    } catch {
+      // Performance diagnostics are fail-open and must not affect business flow.
+    }
+  }
+
   function recordPersistenceTrace(payload = {}) {
     let versionChain = payload?.stage === "VERSION_CHAIN"
       ? buildVersionChainDiagnostic(payload)
@@ -1748,6 +1935,23 @@ export function createRuntime({
       versionChain = buildVersionChainDiagnostic({
         boundary: "AUTHORITATIVE_SOURCE_READ_BEFORE_WRITE",
         source_kind: "official_chat_read",
+        version: payload.actual_floor_version,
+        message_index: payload.message_index,
+        generation_id: payload.generation_id,
+        generation_intent_id: payload.generation_intent_id,
+        generation_type: payload.generation_type,
+        generation_ended: payload.generation_ended,
+        generation_settled: payload.generation_settled,
+        scheduler_revision: payload.scheduler_revision,
+        analysis_execution_id: payload.analysis_execution_id,
+        source_text_length: payload.source_text_length,
+      });
+    }
+    if (!versionChain && payload?.stage === "FLOOR_TX_CONTEXT_SOURCE_READ" &&
+        payload?.actual_floor_version && typeof payload.actual_floor_version === "object") {
+      versionChain = buildVersionChainDiagnostic({
+        boundary: "CONTEXT_SOURCE_READ_BEFORE_WRITE",
+        source_kind: "host_context",
         version: payload.actual_floor_version,
         message_index: payload.message_index,
         generation_id: payload.generation_id,
@@ -1796,6 +2000,43 @@ export function createRuntime({
       });
     }
     versionChain ??= payload;
+    if (payload?.performance_operation_id &&
+        (payload?.stage === "OFFICIAL_CHAT_IO" || payload?.stage === "OFFICIAL_FLOOR_EXTRACT")) {
+      recordTimingOfficialIo({
+        operation_id: payload.performance_operation_id,
+        ...payload,
+      });
+    }
+    if (payload?.performance_operation_id && payload?.stage === "BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED") {
+      recordTimingPerformanceStage({
+        operation_id: payload.performance_operation_id,
+        stage: "HOST_SAVE_INVOCATION",
+        kind: "ASYNC",
+        status: "ATTEMPTED",
+        duration_ms: null,
+        persistence_kind: payload.persistence_kind ?? null,
+        reason_code: "HOST_SAVE_DISPATCHED",
+      });
+    }
+    if (payload?.performance_operation_id && payload?.stage === "BIOWEAVE_FULL_CHAT_SAVE_RESOLVED") {
+      recordTimingPerformanceStage({
+        operation_id: payload.performance_operation_id,
+        stage: "HOST_SAVE_AWAIT",
+        kind: "ASYNC",
+        status: payload.commit_state === "resolved" ? "SUCCEEDED" : "FAILED",
+        duration_ms: Number.isFinite(payload.host_chat_save_duration_ms)
+          ? payload.host_chat_save_duration_ms
+          : null,
+        host_save_duration_ms: Number.isFinite(payload.host_chat_save_duration_ms)
+          ? payload.host_chat_save_duration_ms
+          : null,
+        persistence_kind: payload.persistence_kind ?? null,
+        reason_code: payload.commit_state === "resolved"
+          ? "HOST_SAVE_RESOLVED"
+          : "HOST_SAVE_FAILED",
+        error_code: payload.error_code ?? null,
+      });
+    }
     const emitTrace = tracePayload => notify({
       type: "BIOWEAVE_PERSISTENCE_TRACE",
       payload: tracePayload,
@@ -1895,23 +2136,7 @@ export function createRuntime({
     store,
     enabledResolver: isBioWeaveEnabled,
     trace: recordPersistenceTrace,
-    readLatestFloor: async ({messageIndex, swipeId, floorVersion, chatId}) => {
-      const authoritative = await store.readAuthoritativeFloor?.(
-        messageIndex,
-        swipeId,
-        floorVersion ?? {chat_id: chatId},
-      );
-      return authoritative ?? store.getFloor(messageIndex, swipeId);
-    },
-    acquireAuthoritativeFloorOwner: typeof st.acquireAuthoritativeFloorOwner === "function"
-      ? async ({selector, swipeId, expectedVersion, execution}) =>
-        st.acquireAuthoritativeFloorOwner({
-          messageIndex: selector,
-          swipeId,
-          expectedVersion,
-          generationSettled: execution?.generation_settled === true,
-        })
-      : null,
+    performanceStage: payload => recordTimingPerformanceStage(payload),
     resolveCurrentFloorVersion: async ({ownerFloor}) => {
       const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
       if (!Number.isInteger(Number(index)) || !eventAnalysis?.resolveCurrentBioWeaveFloor)
@@ -1925,17 +2150,26 @@ export function createRuntime({
   const healthAssessment = createHealthAssessmentCoordinator({
     analyzer: eventAnalyzer,
     getFloor: (index, swipeId) => store.getFloor?.(index, swipeId),
-    commitFloorPatch: (target, owner, patch, input = {}) => floorPersistence.commitFloorPatch({
-      owner,
-      chatId: target?.version?.chat_id ?? chat.current(),
-      ownerFloor: {message_index: target?.index, message_id: target?.version?.message_id},
-      swipeId: target?.swipeId ?? target?.version?.swipe_id ?? 0,
-      floorVersion: target?.version,
-      patch,
-      operation_type: input.operation_type ?? `${owner}-patch`,
-      execution: input.execution,
-      assertCurrent: input.assertCurrent,
-    }),
+    commitFloorPatch: async (target, owner, patch, input = {}) => {
+      const result = await floorPersistence.commitFloorPatch({
+        owner,
+        chatId: target?.version?.chat_id ?? chat.current(),
+        ownerFloor: {message_index: target?.index, message_id: target?.version?.message_id},
+        swipeId: target?.swipeId ?? target?.version?.swipe_id ?? 0,
+        floorVersion: target?.version,
+        patch,
+        operation_type: input.operation_type ?? `${owner}-patch`,
+        execution: input.execution,
+        assertCurrent: input.assertCurrent,
+      });
+      if (owner === "health") {
+        eventAnalysis?.invalidateCanonicalDerivedReads?.(
+          `confirmed:health:${input.operation_type ?? "patch"}`,
+          target,
+        );
+      }
+      return result;
+    },
     assertExecutionTargetCurrent: (...args) => eventAnalysis?.assertExecutionTargetCurrent?.(...args),
     trace: payload => recordPersistenceTrace(payload),
   });
@@ -2366,6 +2600,7 @@ export function createRuntime({
     store,
     enabledResolver: isBioWeaveEnabled,
     floorPersistence,
+    performanceStage: payload => recordTimingPerformanceStage(payload),
     resolveCurrentFloorVersion: async ({ownerFloor}) => {
       const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
       if (!Number.isInteger(Number(index))) return null;
@@ -2376,6 +2611,7 @@ export function createRuntime({
     store,
     enabledResolver: isBioWeaveEnabled,
     floorPersistence,
+    performanceStage: payload => recordTimingPerformanceStage(payload),
     resolveCurrentFloorVersion: async ({ownerFloor}) => {
       const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
       if (!Number.isInteger(Number(index))) return null;
@@ -2485,6 +2721,7 @@ export function createRuntime({
       });
       return {
         floor,
+        businessData: business,
         currentState: business.current_state,
         characterProfiles: business.character_profiles,
         currentStateStatus: business.current_state_status,
@@ -5289,7 +5526,7 @@ export function createRuntime({
     };
   }
 
-  async function editCharacterTimingInstance({characterId, timingInstanceId, baseMinStoryDays, baseMaxStoryDays, varianceRatio, varianceCapStoryDays, totalAdjustmentCapStoryDays, editStartFloorVersion = null} = {}) {
+  async function editCharacterTimingInstance({characterId, timingInstanceId, baseMinStoryDays, baseMaxStoryDays, varianceRatio, varianceCapStoryDays, totalAdjustmentCapStoryDays, editStartFloorVersion = null, performanceOperationId = null} = {}) {
     assertBioWeaveEnabled();
     const subjectId = String(characterId ?? '').trim();
     if (!subjectId) throw Object.assign(new TypeError('character_id:required'), {code: 'CHARACTER_ID_REQUIRED'});
@@ -5309,6 +5546,34 @@ export function createRuntime({
       edit_start_floor_version: editStartVersion,
       reason_code: 'MANUAL_TIMING_INSTANCE_EDIT',
     });
+    async function measureTimingPerformanceStage(stage, callback, {kind = 'ASYNC', ...fields} = {}) {
+      if (!performanceOperationId) return callback();
+      const startedAt = monotonicNow();
+      try {
+        const result = await callback();
+        recordTimingPerformanceStage({
+          operation_id: performanceOperationId,
+          stage,
+          kind,
+          status: 'SUCCEEDED',
+          duration_ms: durationMs(startedAt),
+          ...fields,
+        });
+        return result;
+      } catch (error) {
+        recordTimingPerformanceStage({
+          operation_id: performanceOperationId,
+          stage,
+          kind,
+          status: 'FAILED',
+          duration_ms: durationMs(startedAt),
+          reason_code: fields.reason_code ?? 'TIMING_PERFORMANCE_STAGE_FAILED',
+          error_code: error?.code ?? error?.message ?? 'TIMING_PERFORMANCE_STAGE_FAILED',
+          ...fields,
+        });
+        throw error;
+      }
+    }
     let runFinished = false;
     const finish = payload => {
       if (runFinished) return;
@@ -5325,6 +5590,7 @@ export function createRuntime({
       timing_instance_id: null,
       source_type: 'EXECUTION_TRACE',
       operation_type: 'manual-timing-instance-edit',
+      performance_operation_id: performanceOperationId,
     };
     const fail = (error, {stage = null, execution_status = 'FAILED', reason_code = 'TIMING_INSTANCE_MANUAL_EDIT_FAILED', ...details} = {}) => {
       if (stage) recordNsfwPipelineStage({
@@ -5353,12 +5619,12 @@ export function createRuntime({
     try {
       let before;
       try {
-        before = await projectionTimingPersistence.getTimingInstances({
+        before = await measureTimingPerformanceStage('TIMING_INSTANCE_RESOLUTION', () => projectionTimingPersistence.getTimingInstances({
           chatId,
           endpointFloor: floorVersion.floor,
           endpointIndex: floor.index,
           editStartFloorVersion: editStartVersion,
-        });
+        }), {persistence_attempted: false, readback_attempted: true, readback_succeeded: true});
       } catch (error) {
         return fail(error, {
           stage: 'TIMING_INSTANCE_MANUAL_EDIT',
@@ -5463,7 +5729,7 @@ export function createRuntime({
 
       let persistedTiming;
       try {
-        persistedTiming = await projectionTimingPersistence.editTimingInstance({
+        persistedTiming = await measureTimingPerformanceStage('TIMING_INSTANCE_PERSISTENCE', () => projectionTimingPersistence.editTimingInstance({
           chatId,
           ownerFloor,
           floorVersion,
@@ -5475,7 +5741,8 @@ export function createRuntime({
           totalAdjustmentCapStoryDays: editTotalCap,
           operation_type: 'manual-timing-instance-edit',
           editStartFloorVersion: editStartVersion,
-        });
+          performanceOperationId,
+        }), {persistence_attempted: true});
       } catch (error) {
         manualTimingEdit.readback_status = 'NOT_ATTEMPTED';
         const validationFailure = String(error?.message ?? error?.code ?? '').startsWith('projection_timing.');
@@ -5497,12 +5764,12 @@ export function createRuntime({
 
       let timingReadback;
       try {
-      timingReadback = await projectionTimingPersistence.getTimingInstances({
+      timingReadback = await measureTimingPerformanceStage('TIMING_INSTANCE_READBACK', () => projectionTimingPersistence.getTimingInstances({
           chatId,
           endpointFloor: floorVersion.floor,
           endpointIndex: floor.index,
           editStartFloorVersion: editStartVersion,
-        });
+        }), {readback_attempted: true});
       } catch (error) {
         manualTimingEdit.readback_status = 'FAILED';
         return fail(error, {
@@ -5574,14 +5841,22 @@ export function createRuntime({
         manual_timing_edit: manualTimingEdit,
       });
 
-      const business = await eventAnalysis.collectActiveBusinessData();
+      const aggregationInputs = await measureTimingPerformanceStage('AGGREGATION_REEVALUATION_INPUT', async () => ({
+        business: await eventAnalysis.getParticipantAggregationInputs({
+          subjectId,
+          mechanismKey: editedTiming.mechanism_key,
+          target: floor,
+        }),
+        aggregationSnapshot: await participantAggregationPersistence.getParticipantAggregations({
+          chatId,
+          endpointFloor: floorVersion.floor,
+          endpointIndex: floor.index,
+          editStartFloorVersion: editStartVersion,
+        }),
+      }), {aggregation_reevaluation_attempted: true});
+      const business = aggregationInputs.business;
       const currentEvents = Array.isArray(business.active_events) ? business.active_events : [];
-      const aggregationSnapshot = await participantAggregationPersistence.getParticipantAggregations({
-        chatId,
-        endpointFloor: floorVersion.floor,
-        endpointIndex: floor.index,
-        editStartFloorVersion: editStartVersion,
-      });
+      const aggregationSnapshot = aggregationInputs.aggregationSnapshot;
       const existing = aggregationSnapshot.items.find(item =>
         item.timing_instance_id === editedTiming.timing_instance_id && item.cycle_id === editedTiming.cycle_id,
       ) ?? null;
@@ -5640,14 +5915,15 @@ export function createRuntime({
         if (existing) {
           let removed;
           try {
-            removed = await participantAggregationPersistence.removeAggregation({
+            removed = await measureTimingPerformanceStage('AGGREGATION_PERSISTENCE', () => participantAggregationPersistence.removeAggregation({
               chatId,
               ownerFloor,
               floorVersion,
               editStartFloorVersion: editStartVersion,
               aggregationId: existing.aggregation_id,
               operation_type: 'manual-timing-aggregation-reevaluation',
-            });
+              performanceOperationId,
+            }), {persistence_attempted: true});
           } catch (error) {
             reevaluation.action = 'remove_failed';
             reevaluation.readback_status = 'NOT_ATTEMPTED';
@@ -5659,12 +5935,12 @@ export function createRuntime({
               persistence_succeeded: false,
             });
           }
-            const afterRemoval = await participantAggregationPersistence.getParticipantAggregations({
+          const afterRemoval = await measureTimingPerformanceStage('AGGREGATION_READBACK', () => participantAggregationPersistence.getParticipantAggregations({
             chatId,
             endpointFloor: floorVersion.floor,
             endpointIndex: floor.index,
             editStartFloorVersion: editStartVersion,
-          });
+          }), {readback_attempted: true, aggregation_reevaluation_succeeded: true});
           const stillPresent = afterRemoval.items.some(item => item.aggregation_id === existing.aggregation_id);
           if (stillPresent) {
             reevaluation.action = 'remove_readback_failed';
@@ -5729,14 +6005,15 @@ export function createRuntime({
               }, {snapshot: {schema_version: 1, items: []}, expectedChatId: chatId}).snapshot.items[0];
           let persistedAggregation;
           try {
-            persistedAggregation = await participantAggregationPersistence.upsertAggregation({
+            persistedAggregation = await measureTimingPerformanceStage('AGGREGATION_PERSISTENCE', () => participantAggregationPersistence.upsertAggregation({
               chatId,
               ownerFloor,
               floorVersion,
               aggregation: aggregationRecord,
               operation_type: 'manual-timing-aggregation-reevaluation',
               editStartFloorVersion: editStartVersion,
-            });
+              performanceOperationId,
+            }), {persistence_attempted: true});
           } catch (error) {
             reevaluation.action = existing ? 'preserve_update_failed' : 'create_failed';
             reevaluation.readback_status = 'NOT_ATTEMPTED';
@@ -5755,12 +6032,12 @@ export function createRuntime({
               persistence_succeeded: false,
             });
           }
-          const aggregationReadback = await participantAggregationPersistence.getParticipantAggregations({
+          const aggregationReadback = await measureTimingPerformanceStage('AGGREGATION_READBACK', () => participantAggregationPersistence.getParticipantAggregations({
             chatId,
             endpointFloor: floorVersion.floor,
             endpointIndex: floor.index,
             editStartFloorVersion: editStartVersion,
-          });
+          }), {readback_attempted: true, aggregation_reevaluation_succeeded: true});
           const confirmedAggregation = aggregationReadback.items.find(item => item.aggregation_id === aggregationRecord.aggregation_id) ?? null;
           if (!confirmedAggregation || confirmedAggregation.cycle_id !== editedTiming.cycle_id) {
             reevaluation.action = existing ? 'preserve_readback_failed' : 'create_readback_failed';
@@ -5865,6 +6142,10 @@ export function createRuntime({
     reconcileSchedulerState: eventAnalysis.reconcileSchedulerState,
     getPersistenceTrace: diagnostics.getPersistenceTrace,
     recordPersistenceTrace,
+    startTimingPerformanceOperation,
+    recordTimingPerformanceStage,
+    finishTimingPerformanceOperation,
+    getTimingPerformanceDiagnostics: diagnostics.getTimingPerformanceDiagnostics,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
     resolveCharacterRegistryAtOrBefore: eventAnalysis.resolveCharacterRegistryAtOrBefore,
@@ -5916,6 +6197,28 @@ export function createRuntime({
           current_floor_version: cloneValue(floorVersion),
         };
       }
+      let timingPerformanceDiagnostics;
+      try {
+        timingPerformanceDiagnostics = diagnostics.getTimingPerformanceDiagnostics?.() ?? {
+          schema_version: 1,
+          source_type: 'EXECUTION_TRACE',
+          collection_status: 'UNAVAILABLE',
+          diagnostic_error_code: 'TIMING_PERFORMANCE_DIAGNOSTICS_UNAVAILABLE',
+          trace_buffer_status: 'UNKNOWN',
+          trace_truncated: null,
+          recent_operations: [],
+        };
+      } catch {
+        timingPerformanceDiagnostics = {
+          schema_version: 1,
+          source_type: 'EXECUTION_TRACE',
+          collection_status: 'FAILED',
+          diagnostic_error_code: 'TIMING_PERFORMANCE_DIAGNOSTICS_FAILED',
+          trace_buffer_status: 'UNKNOWN',
+          trace_truncated: null,
+          recent_operations: [],
+        };
+      }
       let nsfwPipelineDiagnostics;
       try {
         nsfwPipelineDiagnostics = buildNsfwPipelineDiagnostics({business, projection, lifecycleRuntime});
@@ -5949,6 +6252,7 @@ export function createRuntime({
           },
           timing_diagnostics: [],
           aggregation_diagnostics: [],
+          timing_performance_diagnostics: timingPerformanceDiagnostics,
           projection_diagnostics: {
             source_type: 'DERIVED_DIAGNOSTIC',
             projection_rules_available: null,
@@ -5974,6 +6278,7 @@ export function createRuntime({
           nsfw_pipeline_diagnostics: nsfwPipelineDiagnostics,
           timing_diagnostics: lifecycleRuntime?.projection_timing?.timing_diagnostics ?? [],
           aggregation_diagnostics: lifecycleRuntime?.projection_timing?.aggregation_diagnostics ?? [],
+          timing_performance_diagnostics: timingPerformanceDiagnostics,
           lifecycle_runtime: lifecycleRuntime,
         },
       };

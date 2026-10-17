@@ -156,15 +156,15 @@ export function createFloorPersistenceCoordinator({
   store,
   resolveCurrentContext = null,
   resolveCurrentFloorVersion = null,
-  readLatestFloor = null,
-  acquireAuthoritativeFloorOwner = null,
   trace = () => {},
+  performanceStage = null,
   enabledResolver = () => true,
   isExecutionCurrent = null,
 } = {}) {
   if (!store || typeof store.getFloor !== "function" || typeof store.saveFloor !== "function")
     throw new TypeError("FLOOR_TX_STORE_REQUIRED");
   const tails = new Map();
+  const queueDepths = new Map();
   let sequence = 0;
 
   function emit(stage, transaction, details = {}) {
@@ -188,6 +188,8 @@ export function createFloorPersistenceCoordinator({
         generation_ended: traceContext.generation_ended ?? null,
         generation_settled: traceContext.generation_settled ?? null,
         event_edit_operation_id: traceContext.event_edit_operation_id ?? null,
+        performance_operation_id: traceContext.performance_operation_id ?? null,
+        persistence_kind: traceContext.persistence_kind ?? null,
         scheduler_revision: traceContext.scheduler_revision ?? null,
         source_text_length: traceContext.source_text_length ?? null,
         message_index: traceContext.message_index ?? transaction.ownerFloor?.message_index ?? null,
@@ -197,6 +199,56 @@ export function createFloorPersistenceCoordinator({
         ...details,
       });
     } catch { /* diagnostics never change persistence */ }
+  }
+
+  function emitPerformanceStage(transaction, stage, details = {}) {
+    const operationId = transaction?.traceContext?.performance_operation_id;
+    if (!operationId || typeof performanceStage !== "function") return;
+    try {
+      performanceStage({
+        operation_id: operationId,
+        stage,
+        kind: "ASYNC",
+        persistence_kind: transaction.traceContext?.persistence_kind ?? null,
+        ...details,
+      });
+    } catch { /* performance diagnostics never change persistence */ }
+  }
+
+  function authoritativeReadTraceContext(transaction, ioPurpose) {
+    return {
+      ...transaction.traceContext,
+      floor_transaction_id: transaction.floor_transaction_id,
+      transaction_key: transaction.transaction_key,
+      persistence_kind: transaction.traceContext?.persistence_kind ?? null,
+      io_purpose: ioPurpose,
+    };
+  }
+
+  async function measurePerformanceStage(transaction, stage, callback, details = {}) {
+    const startedAt = monotonicNow();
+    try {
+      const result = await callback();
+      const elapsed = durationMs(startedAt);
+      emitPerformanceStage(transaction, stage, {
+        status: "SUCCEEDED",
+        duration_ms: elapsed,
+        ...(stage === "STORE_SAVE_FLOOR" ? {store_save_duration_ms: elapsed} : {}),
+        ...details,
+      });
+      return result;
+    } catch (cause) {
+      const elapsed = durationMs(startedAt);
+      emitPerformanceStage(transaction, stage, {
+        status: "FAILED",
+        duration_ms: elapsed,
+        ...(stage === "STORE_SAVE_FLOOR" ? {store_save_duration_ms: elapsed} : {}),
+        reason_code: details.reason_code ?? "FLOOR_PERSISTENCE_STAGE_FAILED",
+        error_code: cause?.code ?? cause?.message ?? "FLOOR_PERSISTENCE_STAGE_FAILED",
+        ...details,
+      });
+      throw cause;
+    }
   }
 
   async function resolveLive(input, transaction) {
@@ -229,7 +281,12 @@ export function createFloorPersistenceCoordinator({
     if (!executionCurrent(input, isExecutionCurrent))
       throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "dispatch"});
     emit("FLOOR_TX_DISPATCH_BEGIN", transaction);
-    const live = await resolveLive(input, transaction);
+    const live = await measurePerformanceStage(
+      transaction,
+      "AUTHORITATIVE_FLOOR_RESOLVE",
+      () => resolveLive(input, transaction),
+      {reason_code: "AUTHORITATIVE_FLOOR_CONTEXT_RESOLVED"},
+    );
     const selector = live.selector ?? ownerSelector(input);
     const swipeId = Number(live.swipeId ?? ownerSwipe(input, transaction.floorVersion));
     const expected = transaction.floorVersion;
@@ -243,67 +300,40 @@ export function createFloorPersistenceCoordinator({
     if (owner && owner.active_swipe_id !== undefined && Number(owner.active_swipe_id) !== swipeId)
       throw coordinatorError("FLOOR_TX_STALE_SWIPE", {active_swipe_id: owner.active_swipe_id});
     if (swipeId !== Number(expected.swipe_id)) throw coordinatorError("FLOOR_TX_STALE_SWIPE");
-    if (typeof input.assertCurrent === "function") {
-      if ((await input.assertCurrent()) === false)
-        throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "owner_check"});
-    }
-    if (!executionCurrent(input, isExecutionCurrent))
-      throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "owner_check"});
+    await measurePerformanceStage(
+      transaction,
+      "COORDINATOR_OWNER_GUARD",
+      async () => {
+        if (typeof input.assertCurrent === "function" && (await input.assertCurrent()) === false)
+          throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "owner_check"});
+        if (!executionCurrent(input, isExecutionCurrent))
+          throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "owner_check"});
+      },
+      {reason_code: "COORDINATOR_OWNER_GUARD_COMPLETED"},
+    );
     emit("FLOOR_TX_OWNER_CHECK", transaction, {
       owner_message_id: expected.message_id,
       owner_found: Boolean(owner),
       active_swipe_id: swipeId,
     });
 
-    if (typeof acquireAuthoritativeFloorOwner === "function") {
-      const acquisition = await acquireAuthoritativeFloorOwner({
-        input,
-        transaction,
-        selector,
-        swipeId,
-        expectedVersion: expected,
-        live,
-      });
-      const classification = acquisition?.classification ?? "AUTHORITATIVE_MATCH";
-      emit("FLOOR_TX_OWNER_ACQUISITION", transaction, {
-        classification,
-        commit_state: acquisition?.commitState ?? "unknown",
-        official_owner_found: acquisition?.officialOwnerFound ?? null,
-        official_floor_version_match: acquisition?.officialFloorVersionMatch ?? null,
-      });
-      if (classification === "TRUE_STALE_OWNER_CHANGE")
-        throw coordinatorError("FLOOR_TX_STALE_VERSION", {
-          failure_stage: "owner_acquisition",
-          classification,
-          version_audit: acquisition?.versionAudit,
-        });
-      if (classification === "HOST_AHEAD_OF_OFFICIAL" && acquisition?.confirmed !== true)
-        throw coordinatorError("FLOOR_TX_OWNER_ACQUISITION_FAILED", {
-          failure_stage: "owner_acquisition",
-          classification,
-        });
-    }
-
     let currentVersion = null;
     if (typeof resolveCurrentFloorVersion === "function") {
-      currentVersion = await resolveCurrentFloorVersion({
-        chatId: expected.chat_id,
-        ownerFloor: {message_index: selector, message_id: expected.message_id},
-        floorVersion: expected,
-        swipeId,
-      });
-    }
-    const latest = typeof readLatestFloor === "function"
-      ? clone(await readLatestFloor({
-        chatId: expected.chat_id,
-        messageIndex: selector,
-        swipeId,
-        floorVersion: expected,
+      currentVersion = await measurePerformanceStage(
         transaction,
-      })) ?? emptyFloor()
-      : (live.floorData && typeof live.floorData === "object"
-        ? clone(live.floorData)
-        : store.getFloor(selector, swipeId) ?? emptyFloor());
+        "FLOOR_VERSION_VALIDATION",
+        () => resolveCurrentFloorVersion({
+          chatId: expected.chat_id,
+          ownerFloor: {message_index: selector, message_id: expected.message_id},
+          floorVersion: expected,
+          swipeId,
+        }),
+        {reason_code: "CURRENT_FLOOR_VERSION_RESOLVED"},
+      );
+    }
+    const latest = live.floorData && typeof live.floorData === "object"
+      ? clone(live.floorData)
+      : store.getFloor(selector, swipeId) ?? emptyFloor();
     const storedVersion = floorVersionFromData(latest);
     currentVersion ??= live.version;
     if (currentVersion && hasCompleteFloorVersion(currentVersion) &&
@@ -318,11 +348,11 @@ export function createFloorPersistenceCoordinator({
         version_classification: "TRUE_CONTEXT_VERSION_CHANGE",
       });
     }
-    emit("FLOOR_TX_AUTHORITATIVE_SOURCE_READ", transaction, {
+    emit("FLOOR_TX_CONTEXT_SOURCE_READ", transaction, {
       actual_floor_version: safeVersion(currentVersion ?? storedVersion),
-      version_check_source: "official_owner",
+      version_check_source: "current_context",
     });
-    emit("FLOOR_TX_LATEST_SLOT_RESOLVED", transaction, {
+    emit("FLOOR_TX_CONTEXT_SLOT_RESOLVED", transaction, {
       before_presence: presence(latest),
       actual_floor_version: safeVersion(storedVersion),
     });
@@ -342,125 +372,185 @@ export function createFloorPersistenceCoordinator({
         failure_stage: "terminal_analysis_guard",
       });
     }
-    const resolvedPatch = typeof input.patchResolver === "function"
-      ? await input.patchResolver({latest: clone(latest), expected: clone(expected), transaction})
-      : transaction.patch;
-    if (resolvedPatch?.__floor_tx_noop === true) {
-      if (typeof input.assertCurrent === "function" && (await input.assertCurrent()) === false)
-        throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
-      if (!executionCurrent(input, isExecutionCurrent))
-        throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
-      const readback = typeof store.readAuthoritativeFloor === "function"
-        ? await store.readAuthoritativeFloor(selector, swipeId, expected)
-        : store.getFloor(selector, swipeId) ?? null;
-      if (!readback || !sameFloorVersion(floorVersionFromData(readback), expected))
-        throw coordinatorError("FLOOR_TX_READBACK_FAILED", {
-          expected_floor_version: safeVersion(expected),
-          actual_floor_version: safeVersion(floorVersionFromData(readback)),
-          failure_stage: "no_op_readback",
-          owner_message_index: selector,
-          owner_message_id: expected.message_id,
-          owner_swipe_id: swipeId,
-        });
-      emit("FLOOR_TX_READBACK", transaction, {
-        after_presence: presence(readback),
-        actual_floor_version: safeVersion(floorVersionFromData(readback)),
+    const snapshotResult = await measurePerformanceStage(
+      transaction,
+      "SNAPSHOT_MERGE",
+      async () => {
+        const resolvedPatch = typeof input.patchResolver === "function"
+          ? await input.patchResolver({latest: clone(latest), expected: clone(expected), transaction})
+          : transaction.patch;
+        if (resolvedPatch?.__floor_tx_noop === true) return {noOp: true};
+        const patch = preparePersistedPatch(
+          transaction.owner,
+          assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type),
+          latest,
+        );
+        emit("FLOOR_TX_PATCH_VALIDATED", transaction, {patch_fields: Object.keys(patch)});
+        const merged = {
+          ...clone(latest),
+          floor_version: clone(expected),
+          ...clone(patch),
+        };
+        const before = presence(latest);
+        for (const [field, wasPresent] of Object.entries(before)) {
+          if (wasPresent && !presence(merged)[field])
+            throw coordinatorError("FLOOR_TX_SIBLING_LOST", {field});
+        }
+        return {
+          patch,
+          merged,
+          before,
+          noOp: equalValue(merged, latest),
+        };
+      },
+      {reason_code: "SNAPSHOT_MERGED"},
+    );
+    if (snapshotResult.noOp) {
+      await measurePerformanceStage(
+        transaction,
+        "COORDINATOR_NOOP_GUARD",
+        async () => {
+          if (typeof input.assertCurrent === "function" && (await input.assertCurrent()) === false)
+            throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
+          if (!executionCurrent(input, isExecutionCurrent))
+            throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "no_op_owner_check"});
+        },
+        {reason_code: "COORDINATOR_NOOP_GUARD_COMPLETED"},
+      );
+      emitPerformanceStage(transaction, "STORE_SAVE_FLOOR", {
+        status: "NOT_APPLICABLE",
+        duration_ms: null,
+        reason_code: "FLOOR_TX_NOOP",
       });
-      emit("FLOOR_TX_NOOP", transaction, {
-        commit_state: "confirmed",
-        after_presence: presence(readback),
-      });
-      return {
-        ok: true,
-        status: "noop",
-        commitState: "confirmed",
+      return await measurePerformanceStage(
+        transaction,
+        "COORDINATOR_NOOP_FINALIZATION",
+        () => {
+          emit("FLOOR_TX_NOOP", transaction, {
+            commit_state: "local-noop",
+            after_presence: presence(latest),
+          });
+          return {
+            ok: true,
+            status: "noop",
+            commitState: "local-noop",
+            floor_transaction_id: transaction.floor_transaction_id,
+            transaction_key: transaction.transaction_key,
+            owner: transaction.owner,
+            floor_version: clone(expected),
+            floor: clone(latest),
+            authoritativeReadback: false,
+            noWrite: true,
+          };
+        },
+        {reason_code: "FLOOR_TX_NOOP_LOCAL_ONLY"},
+      );
+    }
+    const {patch, merged, before} = snapshotResult;
+    await measurePerformanceStage(
+      transaction,
+      "COORDINATOR_PRE_SAVE_GUARD",
+      async () => {
+        if (typeof input.assertCurrent === "function" && (await input.assertCurrent()) === false)
+          throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "pre_save_guard"});
+        if (!executionCurrent(input, isExecutionCurrent))
+          throw coordinatorError("FLOOR_TX_SUPERSEDED", {failure_stage: "pre_save_guard"});
+      },
+      {reason_code: "COORDINATOR_PRE_SAVE_GUARD_COMPLETED"},
+    );
+    const persistenceResult = await measurePerformanceStage(
+      transaction,
+      "STORE_SAVE_FLOOR",
+      () => store.saveFloor(selector, swipeId, merged, {
         floor_transaction_id: transaction.floor_transaction_id,
         transaction_key: transaction.transaction_key,
         owner: transaction.owner,
-        floor_version: clone(expected),
-        floor: clone(readback),
-        authoritativeReadback: true,
-        noWrite: true,
-      };
-    }
-    const patch = preparePersistedPatch(
-      transaction.owner,
-      assertPatch(transaction.owner, resolvedPatch, expected, transaction.operation_type),
-      latest,
+        domain: transaction.owner,
+        operation_type: transaction.operation_type,
+        ...transaction.traceContext,
+      }),
+      {reason_code: "STORE_SAVE_FLOOR_COMPLETED"},
     );
-    emit("FLOOR_TX_PATCH_VALIDATED", transaction, {patch_fields: Object.keys(patch)});
-    const merged = {
-      ...clone(latest),
-      floor_version: clone(expected),
-      ...clone(patch),
-    };
-    const before = presence(latest);
-    for (const [field, wasPresent] of Object.entries(before)) {
-      if (wasPresent && !presence(merged)[field])
-        throw coordinatorError("FLOOR_TX_SIBLING_LOST", {field});
-    }
-    await store.saveFloor(selector, swipeId, merged, {
-      floor_transaction_id: transaction.floor_transaction_id,
-      transaction_key: transaction.transaction_key,
-      owner: transaction.owner,
-      domain: transaction.owner,
-      operation_type: transaction.operation_type,
-      ...transaction.traceContext,
-    });
     emit("FLOOR_TX_HOST_SYNCED", transaction, {after_presence: presence(merged)});
     emit("FLOOR_TX_OFFICIAL_SAVE_RESOLVED", transaction, {commit_state: "resolved"});
-    if (typeof input.assertCurrent === "function") await input.assertCurrent();
-    const readback = typeof store.readAuthoritativeFloor === "function"
-      ? await store.readAuthoritativeFloor(selector, swipeId, expected)
-      : store.getFloor(selector, swipeId) ?? null;
-    emit("FLOOR_TX_READBACK", transaction, {
-      after_presence: presence(readback ?? {}),
-      actual_floor_version: safeVersion(floorVersionFromData(readback)),
-    });
-    const missingOwnerFields = Object.keys(patch).filter(key => !equalValue(readback?.[key], patch[key]));
-    const readbackPresence = presence(readback ?? {});
-    const missingSiblings = Object.entries(before)
-      .filter(([field, wasPresent]) => wasPresent && !readbackPresence[field])
-      .map(([field]) => field);
-    const versionMatches = Boolean(readback && sameFloorVersion(floorVersionFromData(readback), expected));
-    emit("FLOOR_TX_SIBLING_AUDIT", transaction, {
-      preserved: missingSiblings.length === 0,
-      missing_owner_fields: missingOwnerFields,
-      missing_siblings: missingSiblings,
-      before_presence: before,
-      after_presence: readbackPresence,
-      floor_version_match: versionMatches,
-    });
-    if (!readback || missingOwnerFields.length || missingSiblings.length || !versionMatches) {
-      const actualVersion = floorVersionFromData(readback);
-      throw coordinatorError("FLOOR_TX_READBACK_FAILED", {
-        expected_floor_version: safeVersion(expected),
-        actual_floor_version: safeVersion(actualVersion),
-        ...(versionMatches ? {} : {
-          version_audit: versionAudit(expected, actualVersion),
-          validation_layer: "floor_persistence_coordinator.readback",
-          validation_source: "authoritative_readback",
-          version_classification: "READBACK_VERSION_MISMATCH",
-        }),
-        missing_owner_fields: missingOwnerFields,
-        missing_siblings: missingSiblings,
-        owner_message_index: selector,
-        owner_message_id: expected.message_id,
-        owner_swipe_id: swipeId,
-      });
+    if (typeof input.assertCurrent === "function") {
+      await measurePerformanceStage(
+        transaction,
+        "COORDINATOR_POST_SAVE_GUARD",
+        () => input.assertCurrent(),
+        {reason_code: "COORDINATOR_POST_SAVE_GUARD_COMPLETED"},
+      );
     }
-    emit("FLOOR_TX_CONFIRMED", transaction, {commit_state: "confirmed", after_presence: readbackPresence});
-    return {
-      ok: true,
-      status: "confirmed",
-      commitState: "confirmed",
-      floor_transaction_id: transaction.floor_transaction_id,
-      transaction_key: transaction.transaction_key,
-      owner: transaction.owner,
-      floor_version: clone(expected),
-      floor: clone(readback),
-      authoritativeReadback: true,
-    };
+    const readback = await measurePerformanceStage(
+      transaction,
+      "COORDINATOR_READBACK",
+      () => persistenceResult?.authoritativeReadback === true
+        ? clone(merged)
+        : typeof store.readAuthoritativeFloor === "function"
+        ? store.readAuthoritativeFloor(
+          selector,
+          swipeId,
+          expected,
+          authoritativeReadTraceContext(transaction, "COORDINATOR_READBACK"),
+        )
+          : store.getFloor(selector, swipeId) ?? null,
+      {reason_code: "AUTHORITATIVE_READBACK_COMPLETED"},
+    );
+    return await measurePerformanceStage(
+      transaction,
+      "COORDINATOR_RESULT_FINALIZATION",
+      () => {
+        emit("FLOOR_TX_READBACK", transaction, {
+          after_presence: presence(readback ?? {}),
+          actual_floor_version: safeVersion(floorVersionFromData(readback)),
+        });
+        const missingOwnerFields = Object.keys(patch).filter(key => !equalValue(readback?.[key], patch[key]));
+        const readbackPresence = presence(readback ?? {});
+        const missingSiblings = Object.entries(before)
+          .filter(([field, wasPresent]) => wasPresent && !readbackPresence[field])
+          .map(([field]) => field);
+        const versionMatches = Boolean(readback && sameFloorVersion(floorVersionFromData(readback), expected));
+        emit("FLOOR_TX_SIBLING_AUDIT", transaction, {
+          preserved: missingSiblings.length === 0,
+          missing_owner_fields: missingOwnerFields,
+          missing_siblings: missingSiblings,
+          before_presence: before,
+          after_presence: readbackPresence,
+          floor_version_match: versionMatches,
+        });
+        if (!readback || missingOwnerFields.length || missingSiblings.length || !versionMatches) {
+          const actualVersion = floorVersionFromData(readback);
+          throw coordinatorError("FLOOR_TX_READBACK_FAILED", {
+            expected_floor_version: safeVersion(expected),
+            actual_floor_version: safeVersion(actualVersion),
+            ...(versionMatches ? {} : {
+              version_audit: versionAudit(expected, actualVersion),
+              validation_layer: "floor_persistence_coordinator.readback",
+              validation_source: "authoritative_readback",
+              version_classification: "READBACK_VERSION_MISMATCH",
+            }),
+            missing_owner_fields: missingOwnerFields,
+            missing_siblings: missingSiblings,
+            owner_message_index: selector,
+            owner_message_id: expected.message_id,
+            owner_swipe_id: swipeId,
+          });
+        }
+        emit("FLOOR_TX_CONFIRMED", transaction, {commit_state: "confirmed", after_presence: readbackPresence});
+        return {
+          ok: true,
+          status: "confirmed",
+          commitState: "confirmed",
+          floor_transaction_id: transaction.floor_transaction_id,
+          transaction_key: transaction.transaction_key,
+          owner: transaction.owner,
+          floor_version: clone(expected),
+          floor: clone(readback),
+          authoritativeReadback: true,
+        };
+      },
+      {reason_code: "FLOOR_TX_RESULT_FINALIZED"},
+    );
   }
 
   function commitFloorPatch(input = {}) {
@@ -498,12 +588,57 @@ export function createFloorPersistenceCoordinator({
       started_at: monotonicNow(),
     };
     emit("FLOOR_TX_CREATED", transaction, {patch_fields: Object.keys(patch ?? {})});
+    const queueDepthAtEnqueue = queueDepths.get(transaction.transaction_key) ?? 0;
+    const queued = queueDepthAtEnqueue > 0;
+    const enqueuedAt = monotonicNow();
+    transaction.queue_depth_at_enqueue = queueDepthAtEnqueue;
+    transaction.enqueued_at = enqueuedAt;
+    queueDepths.set(transaction.transaction_key, queueDepthAtEnqueue + 1);
     const prior = tails.get(transaction.transaction_key) ?? Promise.resolve();
-    emit("FLOOR_TX_QUEUED", transaction, {queued: tails.has(transaction.transaction_key)});
-    const run = prior.catch(() => null).then(() => dispatch(input, transaction));
+    emit("FLOOR_TX_QUEUED", transaction, {
+      queued,
+      queue_depth_at_enqueue: queueDepthAtEnqueue,
+    });
+    const run = prior.catch(() => null).then(async () => {
+      const queueWait = durationMs(enqueuedAt);
+      emitPerformanceStage(transaction, "COORDINATOR_QUEUE_WAIT", {
+        status: "SUCCEEDED",
+        duration_ms: queueWait,
+        queue_depth_at_enqueue: queueDepthAtEnqueue,
+        queue_wait_ms: queueWait,
+        reason_code: queued ? "COORDINATOR_QUEUE_SETTLED" : "COORDINATOR_DISPATCHED_IMMEDIATELY",
+      });
+      const executionStartedAt = monotonicNow();
+      try {
+        const result = await dispatch(input, transaction);
+        const executionDuration = durationMs(executionStartedAt);
+        emitPerformanceStage(transaction, "COORDINATOR_EXECUTION", {
+          status: "SUCCEEDED",
+          duration_ms: executionDuration,
+          execution_duration_ms: executionDuration,
+          queue_depth_at_enqueue: queueDepthAtEnqueue,
+          reason_code: "COORDINATOR_EXECUTION_CONFIRMED",
+        });
+        return result;
+      } catch (cause) {
+        const executionDuration = durationMs(executionStartedAt);
+        emitPerformanceStage(transaction, "COORDINATOR_EXECUTION", {
+          status: "FAILED",
+          duration_ms: executionDuration,
+          execution_duration_ms: executionDuration,
+          queue_depth_at_enqueue: queueDepthAtEnqueue,
+          reason_code: "COORDINATOR_EXECUTION_FAILED",
+          error_code: cause?.code ?? cause?.message ?? "FLOOR_TX_FAILED",
+        });
+        throw cause;
+      }
+    });
     let settled;
     settled = run.finally(() => {
       if (tails.get(transaction.transaction_key) === settled) tails.delete(transaction.transaction_key);
+      const pending = queueDepths.get(transaction.transaction_key) ?? 1;
+      if (pending <= 1) queueDepths.delete(transaction.transaction_key);
+      else queueDepths.set(transaction.transaction_key, pending - 1);
     });
     tails.set(transaction.transaction_key, settled);
     return settled.catch(cause => {
