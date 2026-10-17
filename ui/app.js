@@ -3772,6 +3772,13 @@ export function createApp(runtime, options = {}) {
     editor.querySelectorAll?.('.bioweave-form-error')?.forEach(node => node.remove?.())
     return true
   }
+  function waitForBusinessRefreshDrain(refresh) {
+    return refresh.finally(() => {
+      const next = businessRefreshInFlight
+      if (next && next !== refresh) return waitForBusinessRefreshDrain(next)
+      return undefined
+    })
+  }
   function refreshBusinessState({ reason = 'ui-read', force = false, staleRetry = 0 } = {}) {
     recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_REQUESTED', {
       request_source: reason,
@@ -3781,13 +3788,14 @@ export function createApp(runtime, options = {}) {
       queued_refresh: Boolean(businessRefreshQueued),
     })
     if (businessRefreshInFlight) {
-      businessRefreshQueued = { reason, force }
+      const inFlight = businessRefreshInFlight
+      businessRefreshQueued = { reason, force, staleRetry }
       recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
         reason: 'refresh-in-flight',
         refresh_cycle_in_flight: true,
         queued_refresh: true,
       })
-      return businessRefreshInFlight
+      return waitForBusinessRefreshDrain(inFlight)
     }
     const work = (async () => {
       const requestId = ++businessRefreshSequence

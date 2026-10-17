@@ -56,10 +56,28 @@ implementation or change Event semantics.
   same-biological-process continuity may remain one Event and must not be split
   merely because the narrative contains multiple actions.
 - Reconciliation remains responsible for historical semantic dedupe, explicit
-  continuation validation, same-Floor implicit continuity, evidence merge,
-  canonical identity/source/story-time preservation, and removal of temporary
-  continuation fields before persistence. Cross-Floor implicit continuity must
-  not be widened.
+  continuation validation, same-Floor implicit continuity, bounded Episode
+  continuity reconciliation, evidence merge, canonical identity/source/story-time
+  preservation, and removal of temporary continuation fields before persistence.
+  For pregnancy-relevant `sexual_activity`, cross-Floor continuation may use
+  one visible stable candidate with the same gestational subject, mechanism,
+  location, canonical participants, and counterpart set even when
+  `continuation_update` is omitted. `continuation_update === true` additionally
+  licenses Episode matching when counterpart/participant sets expand;
+  `continuation_update === false` blocks this implicit path. Markerless
+  cross-Floor continuity additionally requires comparable Story Time with an
+  actual interval of at most six hours, including across midnight; missing or
+  incomparable Story Time fails closed. Time, evidence wording, pathway/label,
+  and Floor number are not boundaries within that window when the stable sets
+  are unchanged; set expansion is not itself proof of a new Episode, but
+  Runtime only merges it with the explicit marker. Explicit continuation
+  metadata may cross the six-hour window after the same structural and
+  narrative validation. If bounded history already contains multiple Events with that exact stable continuity identity, and the
+  current candidate has no `continuation_update === false` and no stable-set
+  expansion, Runtime converges those historical duplicates to the earliest
+  source Floor/Event and merges their evidence. Different subjects,
+  mechanisms, locations, explicit narrative boundaries, or non-identical
+  stable candidates remain separate/fail closed.
 - Floor/Swipe/Version validation, `existing_events` selection, persistence
   decision, deletion/reanalysis/reload behavior, and authoritative Store I/O
   remain Runtime/Store responsibilities. Reconciliation does not persist by
@@ -311,9 +329,11 @@ This comparison is a Runtime correctness contract, not merely a prompt rule.
 The four Analysis Context parts—Current Target Floor, bounded Recent Story,
 `existing_events`, and Character Registry—must belong to one explicit Floor
 boundary. Historical rediscovery is the same factual occurrence and is not a
-second canonical Event; a genuinely later repeated Event remains distinct when
-its structured story time, canonical counterpart/participants, reproductive
-mechanism, or source evidence differs. Do not use display name, fuzzy text,
+second canonical Event; for pregnancy-relevant `sexual_activity`, different
+time or evidence wording alone is not a new Event when stable
+subject/mechanism/location and complete participant/counterpart sets identify one
+bounded Episode. Set expansion requires an explicit continuation marker or
+validated reference; a genuinely independent Event remains distinct. Do not use display name, fuzzy text,
 type/person-only matching, response order, or persistence owner as a substitute
 for this contract.
 
@@ -322,10 +342,18 @@ one Event, it may provide the temporary `continuation_of_event_id` reference
 from the bounded `existing_events` projection. Runtime validates that the
 referenced Event belongs to the current Chat/active Swipe and visible Floor
 history, and that its type, canonical participant/subject/source sets,
-mechanism kind, location, and comparable Story Time are compatible. An invalid
+mechanism kind and location are compatible. For `sexual_activity`, Story Time
+and counterpart-set equality are not required; merge unions counterpart and
+participant evidence. An invalid
 explicit reference never falls back to the legacy implicit continuity path. A
-missing reference keeps the legacy implicit continuity behavior and does not
-inherit the explicit continuation source or incremental-merge semantics. The optional temporary
+missing reference permits the bounded cross-Floor Episode path when exactly one
+stable candidate exists; unchanged canonical participant/counterpart sets do
+not require a marker. If multiple historical candidates have the exact same
+stable continuity identity, Runtime converges them to the earliest source
+Event during this reconciliation; a valid explicit continuation target is retained
+as the identity anchor when it belongs to that duplicate group;
+`continuation_update === true` permits a licensed set expansion and `false` blocks
+implicit matching. The optional temporary
 `continuation_update` marker is only accepted when Runtime also finds new
 structured evidence or another factual state change. These analysis-only
 fields are removed before the canonical Event is persisted; a validated

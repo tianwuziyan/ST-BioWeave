@@ -69,6 +69,91 @@ An async write captures `{chatId, epoch}` before it starts and asserts the same
 token after the host save finishes. A changed Chat throws `STALE_CHAT`; the
 caller must not copy the result into the new Chat.
 
+### Business DTO refresh queue
+
+#### 1. Scope / Trigger
+
+This contract applies to `ui/app.js` business-state reads started by Runtime
+notifications, Event edit/delete completion, Floor lifecycle changes, and other
+actions that call `refreshBusinessState()`.
+
+#### 2. Signatures
+
+```js
+refreshBusinessState({reason, force, staleRetry})
+  -> Promise<void>
+
+waitForBusinessRefreshDrain(refresh)
+  -> Promise<void>
+```
+
+#### 3. Contracts
+
+- At most one `collectActiveBusinessData()` read is in flight. A new request
+  during that read replaces the single `businessRefreshQueued` request with the
+  newest `{reason, force, staleRetry}` values.
+- A caller that arrives during an in-flight read must await the complete refresh
+  chain, not only the already-running Promise. The chain includes the queued
+  refresh, any later notification queued while that refresh runs, and the one
+  permitted `STALE_FLOOR_VERSION` retry.
+- An in-flight read may finish with its captured DTO, but after a queued
+  mutation the newest successful Runtime DTO must be the final committed and
+  rendered state; a pre-mutation DTO may not remain visible after Event
+  deletion or edit completes.
+- Queue draining must preserve the existing request sequence, single-flight
+  canonical read, stale guard, and empty/error state behavior.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| No business read is in flight | Start one read and settle after state commit/render |
+| Read is in flight and a new request arrives | Keep one queued request, replace it with the newest request, and return a drain Promise |
+| Current read returns `STALE_FLOOR_VERSION` | Clear stale visible business data, queue at most one retry, and keep the caller waiting for that retry |
+| Another notification arrives during the queued read | Continue the same drain chain; do not orphan the original caller's Promise |
+| Runtime returns a business read error | Commit the existing UI error state and settle the current refresh chain without claiming a fresh DTO was committed |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: Event deletion receives `TRACKING_REGISTRY_REFRESHED` while an older
+  read is pending; the delete handler returns only after the queued DTO removes
+  the deleted Event from the page.
+- Base: Several notifications arrive during one read; one latest queued read
+  runs after it and no parallel business reads are started.
+- Bad: Return the current `businessRefreshInFlight` Promise directly from a
+  queued request and start the next refresh with `void`, allowing the caller to
+  finish while the old Event card remains rendered.
+
+#### 6. Tests Required
+
+- In `tests/phase2a-app.test.js`, block a read with the pre-delete Event
+  snapshot, emit `TRACKING_REGISTRY_REFRESHED` during deletion, and assert the
+  click Promise does not settle before the Event disappears.
+- In the same regression, emit another refresh during the queued read and make
+  that read return `STALE_FLOOR_VERSION`; assert the one retry completes and the
+  page still has no deleted Event.
+- Run the focused UI suite, Runtime Event edit/delete tests, `node --check`,
+  `git diff --check`, and the full `npm run check` suite.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: the mutation waits only for the already-running, pre-mutation read.
+if (businessRefreshInFlight) {
+  businessRefreshQueued = request;
+  return businessRefreshInFlight;
+}
+```
+
+```js
+// Correct: replace the queued request but wait until the whole chain drains.
+if (businessRefreshInFlight) {
+  const inFlight = businessRefreshInFlight;
+  businessRefreshQueued = request;
+  return waitForBusinessRefreshDrain(inFlight);
+}
+```
+
 ### Secrets
 
 Storage removes obvious secret value fields recursively, including `api_key`,

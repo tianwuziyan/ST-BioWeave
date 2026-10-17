@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"约束跨 Floor Event continuity 只能消费合法当前 Chat/active Swipe/Floor Version facts，禁止新增 Chat-level 事实源。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event semantic identity、bounded existing_events、continuation、重复事实和独立事件边界。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Character/Event owner、Runtime reconciliation、Floor complete snapshot 和禁止修改 persistence mainline 的架构边界。"}
+{"file":"docs/DATA-MODEL.md","reason":"同步 BiologicalEvent、story_time、source、semantic dedupe 与跨 Floor continuation 的最终契约。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认 Event persistent field、provenance、owner/epoch/stale guard 与不新增生命周期字段的约束。"}

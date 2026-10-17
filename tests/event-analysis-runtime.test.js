@@ -5086,7 +5086,7 @@ test("cross-Floor continuation with new evidence reuses the existing Event ID", 
   fixture.runtime.destroy();
 });
 
-test("structure-only continuity does not merge without a continuity license", async () => {
+test("unique licensed continuity merges across Floors when Story Time advances", async () => {
   let analysisCount = 0;
   const storyTime = {
     display: "羲和1年3月4日 巳时中",
@@ -5128,7 +5128,7 @@ test("structure-only continuity does not merge without a continuity license", as
         const event = stableContinuationEventFromInput(analysisInput, "祁鸢");
         delete event.continuation_of_event_id;
         delete event.continuation_update;
-        event.story_time = storyTime;
+        event.story_time = {...storyTime, normalized: "cn-1-3-4T12:00", display: "羲和1年3月4日 午时"};
         event.pregnancy_relevance.reproductive_mechanism.pathway = "剧烈改写的 pathway";
         event.source_evidence = [
           {kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "来源证据 A"},
@@ -5162,10 +5162,411 @@ test("structure-only continuity does not merge without a continuity license", as
   await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
 
   const events = fixture.runtime.store.getFloor(1, 0).events;
-  assert.equal(events.length, 2);
+  assert.equal(events.length, 1);
   assert.equal(events[0].event_id, originalPersisted.event_id);
   assert.equal(events[0].source.floor, 66);
-  assert.equal(events[1].source.floor, 68);
+  assert.deepEqual(events[0].source_evidence.map(item => item.text), ["来源证据 A", "来源证据 B"]);
+  fixture.runtime.destroy();
+});
+
+test("licensed continuity crosses midnight and unions a newly observed counterpart", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    messages: [
+      {message_id: "cross-midnight-start", floor: 66, content: "跨午夜开始", role: "assistant"},
+      {message_id: "cross-midnight-continue", floor: 68, content: "跨午夜新增对应方", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "midnight")
+          : identityEventForCharacters(analysisInput.character_registry, "祁鸢", "新来源", "midnight");
+        event.type = "sexual_activity";
+        event.story_time = analysisCount === 1
+          ? {
+              display: "羲和1年3月4日 子时末",
+              normalized: "cn-1-3-4T23:00",
+              calendar_id: null,
+              day_index: null,
+              precision: "hour",
+              confidence: 1,
+            }
+          : {
+              display: "羲和1年3月5日 丑时初",
+              normalized: "cn-1-3-5T01:00",
+              calendar_id: null,
+              day_index: null,
+              precision: "hour",
+              confidence: 1,
+            };
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: `跨午夜路径 ${analysisCount}`,
+          world_model_rule_refs: [],
+          evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `跨午夜证据 ${analysisCount}`}],
+        };
+        event.source_evidence = [{
+          kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+          text: `跨午夜来源证据 ${analysisCount}`,
+        }];
+        if (analysisCount > 1) event.continuation_update = true;
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const original = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+
+  const events = fixture.runtime.store.getFloor(1, 0).events;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_id, original.event_id);
+  assert.equal(events[0].source.floor, 66);
+  assert.ok(
+    events[0].pregnancy_relevance.counterpart_ids.includes(
+      original.pregnancy_relevance.counterpart_ids[0],
+    ),
+  );
+  assert.equal(events[0].pregnancy_relevance.counterpart_ids.length, 2);
+  assert.ok(events[0].participants.some(item => item.display_name === "新来源"));
+  assert.equal(events[0].participants.length, 3);
+  assert.equal(events[0].source_evidence.length, 2);
+  fixture.runtime.destroy();
+});
+
+test("markerless continuity uses a six-hour window across midnight and then fails closed", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    messages: [
+      {message_id: "markerless-midnight-start", floor: 66, content: "23点开始", role: "assistant"},
+      {message_id: "markerless-midnight-continue", floor: 68, content: "次日1点继续", role: "assistant"},
+      {message_id: "markerless-too-late", floor: 70, content: "次日8点再次出现", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "markerless-window")
+          : stableContinuationEventFromInput(analysisInput, "祁鸢");
+        event.type = "sexual_activity";
+        event.story_time = [
+          {display: "羲和1年3月4日 子时末", normalized: "cn-1-3-4T23:00", calendar_id: null, day_index: null, precision: "hour", confidence: 1},
+          {display: "羲和1年3月5日 丑时初", normalized: "cn-1-3-5T01:00", calendar_id: null, day_index: null, precision: "hour", confidence: 1},
+          {display: "羲和1年3月5日 辰时", normalized: "cn-1-3-5T08:00", calendar_id: null, day_index: null, precision: "hour", confidence: 1},
+        ][analysisCount - 1];
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "同一机制",
+          pathway: `路径 ${analysisCount}`,
+          world_model_rule_refs: [],
+          evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `机制证据 ${analysisCount}`}],
+        };
+        event.source_evidence = [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `来源证据 ${analysisCount}`}];
+        delete event.continuation_of_event_id;
+        delete event.continuation_update;
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 3}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const original = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1, 0).events.map(event => event.event_id),
+    [original.event_id],
+    "23:00 -> 01:00 should stay within the markerless six-hour window",
+  );
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+  const events = fixture.runtime.store.getFloor(2, 0).events;
+  assert.equal(events.length, 2, "a seven-hour follow-up must create a new Event");
+  assert.ok(events.some(event => event.event_id === original.event_id));
+  assert.ok(events.some(event => event.event_id !== original.event_id));
+  fixture.runtime.destroy();
+});
+
+test("markerless continuity fails closed when Story Time is missing", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    messages: [
+      {message_id: "markerless-unknown-start", floor: 66, content: "未知时间开始", role: "assistant"},
+      {message_id: "markerless-unknown-continue", floor: 70, content: "未知时间继续", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "markerless-unknown")
+          : stableContinuationEventFromInput(analysisInput, "祁鸢");
+        event.type = "sexual_activity";
+        event.story_time = {display: null, normalized: null, day_index: null, calendar_id: null, precision: "unknown", confidence: null};
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "同一机制",
+          pathway: "未知时间路径",
+          world_model_rule_refs: [],
+          evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `未知时间证据 ${analysisCount}`}],
+        };
+        event.source_evidence = [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `未知时间来源 ${analysisCount}`}];
+        delete event.continuation_of_event_id;
+        delete event.continuation_update;
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.length, 2);
+  fixture.runtime.destroy();
+});
+
+test("same-Floor subject and mechanism similarity without continuation license stays independent", async () => {
+  let analysisCount = 0;
+  const fixture = createFixture({
+    messages: [
+      {message_id: "same-floor-restart", floor: 66, content: "同楼层独立重启", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = identityEventForCharacters(
+          analysisInput.character_registry,
+          "祁鸢",
+          "金文达",
+          `same-floor-${analysisCount}`,
+        );
+        event.type = "sexual_activity";
+        event.story_time = {
+          display: analysisCount === 1 ? "羲和1年3月4日 巳时" : "羲和1年3月4日 午时",
+          normalized: analysisCount === 1 ? "cn-1-3-4T10:00" : "cn-1-3-4T12:00",
+          calendar_id: null,
+          day_index: null,
+          precision: "hour",
+          confidence: 1,
+        };
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: "同一机制",
+          world_model_rule_refs: [],
+          evidence: [{
+            kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+            text: `独立轮次证据 ${analysisCount}`,
+          }],
+        };
+        event.source_evidence = [{
+          kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+          text: `独立轮次来源 ${analysisCount}`,
+        }];
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 2}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  const events = fixture.runtime.store.getFloor(0, 0).events;
+  assert.equal(events.length, 2);
+  assert.notEqual(events[0].event_id, events[1].event_id);
+  fixture.runtime.destroy();
+});
+
+test("marker-free continuity converges two historical stable duplicates", async () => {
+  let analysisCount = 0;
+  const storyTime = index => ({
+    display: `羲和1年3月4日 ${index === 1 ? "巳时" : index === 2 ? "午时" : "未时"}`,
+    normalized: `cn-1-3-4T${index === 1 ? "10" : index === 2 ? "12" : "14"}:00`,
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  });
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    messages: [
+      {message_id: "ambiguous-floor-66", floor: 66, content: "第一轮", role: "assistant"},
+      {message_id: "ambiguous-floor-68", floor: 68, content: "明确重启", role: "assistant"},
+      {message_id: "ambiguous-floor-70", floor: 70, content: "无法判定归属", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "ambiguous")
+          : stableContinuationEventFromInput(analysisInput, "祁鸢");
+        event.type = "sexual_activity";
+        event.story_time = storyTime(analysisCount);
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: "同一机制",
+          world_model_rule_refs: [],
+          evidence: [{
+            kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+            text: `机制证据 ${analysisCount}`,
+          }],
+        };
+        event.source_evidence = [{
+          kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+          text: `来源证据 ${analysisCount}`,
+        }];
+        if (analysisCount === 2) {
+          delete event.continuation_of_event_id;
+          event.continuation_update = false;
+        } else if (analysisCount === 3) {
+          delete event.continuation_of_event_id;
+          delete event.continuation_update;
+        }
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 3}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.length, 2);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  const events = fixture.runtime.store.getFloor(2, 0).events;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_id, fixture.runtime.store.getFloor(0, 0).events[0].event_id);
+  assert.equal(events[0].source.floor, 66);
+  assert.deepEqual(
+    events[0].source_evidence.map(item => item.text).sort(),
+    ["来源证据 1", "来源证据 2", "来源证据 3"],
+  );
+  const reconciliation = fixture.runtime.getPersistenceTrace().sequence
+    .filter(entry => entry.stage === "EVENT_RECONCILIATION_RESULT")
+    .at(-1);
+  assert.ok(reconciliation);
+  assert.deepEqual(reconciliation.continuation_diagnostics.at(-1), {
+    continuation_reference_present: false,
+    continuation_reference_event_id: null,
+    continuation_reference_target_exists: false,
+    continuation_reference_valid: false,
+    continuation_merge_executed: false,
+    continuation_rejection_reason: null,
+    continuation_reconciliation_reason: "stable_duplicate_converged",
+    continuation_reconciliation_event_id: fixture.runtime.store.getFloor(0, 0).events[0].event_id,
+    continuation_reconciliation_removed_event_ids: [fixture.runtime.store.getFloor(1, 0).events[1].event_id],
+  });
+  assert.deepEqual(reconciliation.removal_reasons, [{
+    event_id: fixture.runtime.store.getFloor(1, 0).events[1].event_id,
+    reason: "stable_duplicate_converged",
+  }]);
+  fixture.runtime.destroy();
+});
+
+test("historical stable duplicate convergence respects the six-hour window", async () => {
+  let analysisCount = 0;
+  const storyTimes = ["10:00", "12:00", "20:00"];
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    messages: [
+      {message_id: "stable-window-66", floor: 66, content: "第一轮", role: "assistant"},
+      {message_id: "stable-window-68", floor: 68, content: "独立重复", role: "assistant"},
+      {message_id: "stable-window-70", floor: 70, content: "长时间后再次出现", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        const event = analysisCount === 1
+          ? identityEventForCharacters(analysisInput.character_registry, "祁鸢", "金文达", "stable-window")
+          : stableContinuationEventFromInput(analysisInput, "祁鸢");
+        event.type = "sexual_activity";
+        event.story_time = {
+          display: `羲和1年3月4日 ${storyTimes[analysisCount - 1]}`,
+          normalized: `cn-1-3-4T${storyTimes[analysisCount - 1]}`,
+          calendar_id: null,
+          day_index: null,
+          precision: "hour",
+          confidence: 1,
+        };
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "同一机制",
+          pathway: "稳定路径",
+          world_model_rule_refs: [],
+          evidence: [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `机制证据 ${analysisCount}`}],
+        };
+        event.source_evidence = [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: `来源证据 ${analysisCount}`}];
+        if (analysisCount === 2) event.continuation_update = false;
+        else {
+          delete event.continuation_of_event_id;
+          delete event.continuation_update;
+        }
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 3}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  const duplicateFloor = fixture.runtime.store.getFloor(1, 0);
+  const duplicate = structuredClone(duplicateFloor.events[0]);
+  duplicate.event_id = "stable-window-historical-duplicate";
+  duplicate.source_evidence = [{kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND, text: "历史重复证据"}];
+  duplicate.story_time = {
+    display: "羲和1年3月4日 午时",
+    normalized: "cn-1-3-4T12:00",
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  };
+  await fixture.runtime.store.saveFloor(1, 0, {
+    ...duplicateFloor,
+    events: [...duplicateFloor.events, duplicate],
+  });
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.length, 2);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+  assert.equal(
+    fixture.runtime.store.getFloor(2, 0).events.length,
+    3,
+    "a 20:00 candidate must not converge 10:00/12:00 historical duplicates",
+  );
   fixture.runtime.destroy();
 });
 
@@ -5258,6 +5659,108 @@ test("manual Character reanalysis converges an explicitly referenced current-Flo
   );
   assert.equal(Object.hasOwn(after[0], "continuation_of_event_id"), false);
   assert.equal(Object.hasOwn(after[0], "continuation_update"), false);
+  fixture.runtime.destroy();
+});
+
+test("explicit historical continuation converges same stable duplicates into the referenced Event", async () => {
+  let analysisCount = 0;
+  let persistedA = null;
+  let persistedB = null;
+  const storyTime = index => ({
+    display: `羲和1年3月4日 ${index === 1 ? "巳时" : index === 2 ? "午时" : "戌时"}`,
+    normalized: `cn-1-3-4T${index === 1 ? "10:00" : index === 2 ? "12:00" : "20:00"}`,
+    calendar_id: null,
+    day_index: null,
+    precision: "hour",
+    confidence: 1,
+  });
+  const fixture = createFixture({
+    reliableStoryTime: false,
+    messages: [
+      {message_id: "explicit-historical-66", floor: 66, content: "第一轮", role: "assistant"},
+      {message_id: "explicit-historical-68", floor: 68, content: "重复记录", role: "assistant"},
+      {message_id: "explicit-historical-70", floor: 70, content: "明确继续", role: "assistant"},
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        analysisCount += 1;
+        if (analysisCount === 3) {
+          const continuation = structuredClone(persistedB);
+          delete continuation.event_id;
+          delete continuation.source;
+          continuation.participants = continuation.participants.map((participant) => ({
+            ...participant,
+            identity_status: "existing",
+            mention_id: null,
+          }));
+          continuation.source_evidence = [{
+            kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+            text: "明确继续证据",
+          }];
+          continuation.continuation_of_event_id = persistedB.event_id;
+          continuation.continuation_update = true;
+          return {events: [continuation]};
+        }
+        const event = identityEventForCharacters(
+          analysisInput.character_registry,
+          "祁鸢",
+          "金文达",
+          `explicit-historical-${analysisCount}`,
+        );
+        event.type = "sexual_activity";
+        event.story_time = storyTime(analysisCount);
+        event.location = "底舱";
+        event.pregnancy_relevance.reproductive_mechanism = {
+          kind: "intravaginal_exposure",
+          label: "阴道内交合暴露",
+          pathway: "同一机制",
+          world_model_rule_refs: [],
+          evidence: [{
+            kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+            text: `机制证据 ${analysisCount}`,
+          }],
+        };
+        event.source_evidence = [{
+          kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
+          text: `来源证据 ${analysisCount}`,
+        }];
+        if (analysisCount === 2) event.continuation_update = false;
+        return {events: [event]};
+      },
+    },
+  });
+  fixture.context.chatMetadata.bioweave = {
+    chat_scope: {chat_id: "chat-runtime"},
+    settings: {recent_story: {enabled: true, floor_count: 3}},
+  };
+
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  persistedA = structuredClone(fixture.runtime.store.getFloor(0, 0).events[0]);
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 1}, {force: true});
+  persistedB = structuredClone(
+    fixture.runtime.store.getFloor(1, 0).events.find(event => event.event_id !== persistedA.event_id),
+  );
+  assert.ok(persistedB);
+  assert.equal(fixture.runtime.store.getFloor(1, 0).events.length, 2);
+
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 2}, {force: true});
+
+  const events = fixture.runtime.store.getFloor(2, 0).events;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_id, persistedB.event_id);
+  assert.equal(events[0].source.floor, 68);
+  assert.deepEqual(
+    events[0].source_evidence.map(item => item.text).sort(),
+    ["明确继续证据", "来源证据 1", "来源证据 2"].sort(),
+  );
+  const reconciliation = fixture.runtime.getPersistenceTrace().sequence
+    .filter(entry => entry.stage === "EVENT_RECONCILIATION_RESULT")
+    .at(-1);
+  assert.deepEqual(reconciliation.removal_reasons, [{
+    event_id: persistedA.event_id,
+    reason: "stable_duplicate_converged",
+  }]);
   fixture.runtime.destroy();
 });
 

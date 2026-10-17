@@ -23,6 +23,12 @@ test('differenceStoryTime returns comparable day and clock differences', () => {
   assert.equal(differenceStoryTime(current, {display: '未知'}), null);
 });
 
+test('differenceStoryTime preserves clock precision across a day boundary', () => {
+  const later = {normalized: '2026-08-21T01:00', day_index: 20686, calendar_id: 'main', precision: 'hour'};
+  const earlier = {normalized: '2026-08-20T23:00', day_index: 20685, calendar_id: 'main', precision: 'hour'};
+  assert.deepEqual(differenceStoryTime(later, earlier, {includeCrossDayClock: true}), {value: 120, unit: 'minute'});
+});
+
 test('Floor Story Time resolution uses only the first non-empty header line', () => {
   const header = resolveStoryTimeHeader(['羲和元年五月初四 午时', '她回忆羲和元年三月四日发生的事情'].join('\n'));
   assert.equal(header.display, '羲和元年五月初四 午时');

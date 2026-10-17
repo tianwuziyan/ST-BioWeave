@@ -360,12 +360,23 @@ structured story_time、canonical participant/subject/counterpart 集合、mecha
 source evidence 和 state fact。缺少高置信字段时保留 candidate；不得使用姓名、固定
 ID、Floor 编号、Event 顺序或模糊文本相似度吞掉可能独立的 Event。
 
+对于 pregnancy-related `sexual_activity`，semantic duplicate 之外还要按稳定的
+subject、机制、地点及完整 participant/counterpart 集合判断 bounded Episode continuity；
+时间推进、跨午夜、证据措辞或 pathway/label 改写本身不切分 Episode。集合扩展只有在
+`continuation_update=true` 或合法精确 continuation 引用下才允许合并；无标记跨 Floor
+延续还必须有可比较的 Story Time，且实际间隔不超过 6 小时（含跨午夜）；时间缺失、
+不可比较或超过窗口时 fail closed 并保留新候选。明确结束/重启、机制或 subject 变化，
+以及不唯一的不同稳定候选仍保持独立或 fail closed。
+
 Analysis Job 的 `Current Target Floor`、bounded `Recent Story`、`existing_events` 与
 `Character Registry` 是同一明确 Floor Version boundary 的四部分 Context；不得把
 当前 live Floor 与旧 execution owner 混合。`existing_events` 是 Runtime correctness
 contract 的比较输入，不只是 prompt instruction。相同历史事实再次被 discovery 时，
-Runtime 必须按现有 canonical semantic key 去重；后来不同 story time、counterpart、
-mechanism 或 evidence 的同类型事实仍是新的 Event，不能按 type 或人物粗暴删除。
+Runtime 必须按现有 canonical semantic key 去重；同一持续 Episode 的不同 story time、
+证据措辞或 pathway/label 改写不应仅因此创建新 Event。counterpart/participant 集合
+保持稳定且 Story Time 间隔不超过 6 小时时可以隐式延续；集合扩展或跨越该窗口需要明确
+continuation 许可。不同 mechanism、subject、
+明确独立边界或无法唯一消解的稳定候选仍然是独立 Event，不能按 type 或人物粗暴删除。
 
 对于 pregnancy-related `sexual_activity`，Event 的粒度是一个 gestational subject
 在本 Floor Version 中的一组实际 pregnancy-relevant exposure。先识别所有实际
@@ -447,9 +458,19 @@ AI response DTO 只是待验证的事实候选；canonical persisted Event 由 R
 
 Runtime 的重复处理分为三层：历史 bounded `existing_events` 使用完整且高置信度
 的 semantic key 做 semantic dedupe；同一当前 Floor 的候选可在唯一、结构兼容的
-情况下走 implicit continuity；跨 Floor continuation 必须携带并通过校验的
-`continuation_of_event_id`。同一人物、地点和时间本身不足以证明事件相同。合法
-continuation 会保留原 Event ID、原始 source 和可保留的 Story Time；临时
+情况下走 implicit continuity。跨 Floor 的 pregnancy-relevant `sexual_activity`
+只要 bounded 历史中存在唯一稳定的同一 gestational subject、机制、地点以及
+canonical participant/counterpart 集合候选，即使省略 `continuation_update` 也允许
+无精确 ID 延续；如果历史中已有多条完全相同 stable continuity identity 的重复 Event，
+且当前候选没有明确 `continuation_update=false`、稳定集合也没有扩展，则收敛到最早
+source Event 并合并证据；若存在合法 `continuation_of_event_id` 且目标属于该重复组，则以目标 Event 为身份锚点收敛其它重复。`continuation_update=true` 还允许 counterpart/participant
+集合扩展，`continuation_update=false` 则阻止隐式匹配。时间前进、跨午夜、证据措辞、
+pathway/label 改写本身不是边界；未改变稳定集合时，counterpart/participant 只是同一
+持续 Episode 的重复观察；明确结束/重新开始、
+机制或 subject 变化，以及多个不完全相同的兼容候选不得强制合并。集合扩展本身不证明是新
+Episode，但没有 marker 或合法精确引用时也不能强制合并。同一人物、地点和时间本身不足以证明事件相同。合法
+continuation 会保留原 Event ID、原始 source 和可保留的 Story Time，并 union
+新增 counterpart/participant evidence；临时
 `continuation_of_event_id` / `continuation_update` 不进入持久化 Event。
 
 ### Source binding 与 Floor / Swipe
@@ -470,8 +491,9 @@ continuation 会保留原 Event ID、原始 source 和可保留的 Story Time；
 没有 swipe 结构时，Event 保存到 `message.extra.bioweave`；存在 swipe 结构时，包括 swipe `0`，只能保存到对应 `message.swipe_info[swipe_id].extra.bioweave`。Floor `events[]` 是该消息/版本的 Floor-bound 事实集合，不是 Chat-level 历史事件账本。删除 Floor 后其 Event 必须消失；切换到没有事件的 Swipe 后旧 Swipe Event 不得参与当前有效状态。
 
 失败的 force refresh（包括重复 subject 或 subject-local contract failure）只记录
-失败尝试，不覆盖同一 Floor Version 的上一份成功分析。跨 Floor 的已存在历史数据不在本轮
-自动迁移或语义合并；本轮保证新 AI response 在保存边界前满足 0/1/N，并通过
+失败尝试，不覆盖同一 Floor Version 的上一份成功分析。跨 Floor 的已存在历史数据不做
+独立的全量迁移；只有在本轮出现匹配候选时，完全相同 stable continuity identity 的历史
+重复才可按上述规则收敛。本轮仍保证新 AI response 在保存边界前满足 0/1/N，并通过
 subject-local consistency validation。
 
 成功的 manual supplement 在同一 Floor Version 内按稳定事实连续性更新已有 Event：

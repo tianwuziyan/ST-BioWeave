@@ -1159,14 +1159,17 @@ export function eventSemanticKey(rawEvent) {
  */
 export function dedupeEventsAgainstExisting(events = [], existingEvents = []) {
   if (!Array.isArray(events)) return [];
-  const existingKeys = new Set(
+  const seenKeys = new Set(
     (Array.isArray(existingEvents) ? existingEvents : [])
       .map(eventSemanticKey)
       .filter(Boolean),
   );
   return events.filter((event) => {
     const key = eventSemanticKey(event);
-    return !key || !existingKeys.has(key);
+    if (!key) return true;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
   });
 }
 

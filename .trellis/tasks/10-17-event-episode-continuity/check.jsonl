@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"验证测试和实现没有绕过 Floor/Swipe ownership、完整 Version 和当前事实重建边界。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验证 exact dedupe、Episode continuity、explicit boundary、multi-subject separation 和 bounded history。"}
+{"file":"docs/ARCHITECTURE.md","reason":"验证模块责任、Event analysis pipeline、Coordinator 和 persistence boundary 没有被误改。"}
+{"file":"docs/DATA-MODEL.md","reason":"验证最终 Event DTO、story_time/source/provenance 与文档契约一致。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"验证无未登记 persistent/derived 字段，stale/rollback/clear 语义未被改变。"}

@@ -348,6 +348,23 @@ test('semantic Event dedupe is exact and conservative across the discovery windo
   );
 });
 
+test('semantic Event dedupe removes duplicate candidates within one response', () => {
+  const first = event({
+    event_id: 'response-1',
+    story_time: {
+      display: '羲和元年三月四日巳时',
+      normalized: 'cn-1-3-4T10:00',
+      calendar_id: null,
+      day_index: null,
+      precision: 'hour',
+      confidence: 1,
+    },
+  });
+  const second = structuredClone(first);
+  second.event_id = 'response-2';
+  assert.deepEqual(dedupeEventsAgainstExisting([first, second], []), [first]);
+});
+
 test('Event semantic identity records the current normalized/day_index compatibility baseline', () => {
   const normalizedOnly = event({
     event_id: 'normalized-only',

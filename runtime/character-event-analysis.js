@@ -14,7 +14,7 @@ import {
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
 } from "../core/identity.js";
-import {compareStoryTime} from "../story/time.js";
+import {compareStoryTime, differenceStoryTime} from "../story/time.js";
 import {
   floorVersionFromData,
   hashText,
@@ -120,8 +120,6 @@ function continuityParticipants(event) {
     JSON.stringify(left).localeCompare(JSON.stringify(right)));
 }
 
-// This is only a same-current-Floor reconciliation key. Cross-Floor reuse
-// still requires an explicitly validated continuation reference.
 function eventContinuityKey(event) {
   const storyTime = event?.story_time ?? {};
   const mechanism = event?.pregnancy_relevance?.reproductive_mechanism ?? {};
@@ -129,9 +127,7 @@ function eventContinuityKey(event) {
   const gestationalSubjectIds = continuityIdList(
     event?.pregnancy_relevance?.gestational_subject_ids,
   );
-  const counterpartIds = continuityIdList(
-    event?.pregnancy_relevance?.counterpart_ids,
-  );
+  const counterpartIds = continuityIdList(event?.pregnancy_relevance?.counterpart_ids);
   if (!participants || !gestationalSubjectIds || !counterpartIds) return null;
   return JSON.stringify({
     type: event?.type ?? null,
@@ -148,22 +144,38 @@ function eventContinuityKey(event) {
   });
 }
 
+// Cross-Floor Episode identity is intentionally narrower in scope but looser
+// in facts: time, wording, participants and counterpart sets can evolve.
+function eventEpisodeContinuityKey(event) {
+  if (event?.type !== "sexual_activity" || event?.pregnancy_relevance?.relevant !== true) return null;
+  const mechanism = event?.pregnancy_relevance?.reproductive_mechanism ?? {};
+  const subjects = continuityIdList(event?.pregnancy_relevance?.gestational_subject_ids);
+  if (!subjects || subjects.length !== 1 || !mechanism.kind) return null;
+  return JSON.stringify({type: event.type, gestational_subject_id: subjects[0], mechanism: mechanism.kind});
+}
+
+// A marker-free cross-Floor update is safe only when the complete canonical
+// participant/counterpart relation and location remain stable. This is
+// narrower than Episode identity, so a marker is still required for source
+// expansion or other continuity matches that need stronger narrative license.
+function eventStableContinuityKey(event) {
+  if (eventEpisodeContinuityKey(event) === null) return null;
+  const participants = continuityParticipants(event);
+  const relevance = event?.pregnancy_relevance ?? {};
+  const counterpartIds = continuityIdList(relevance.counterpart_ids);
+  if (!participants || !counterpartIds) return null;
+  return JSON.stringify({
+    episode: eventEpisodeContinuityKey(event),
+    location: event?.location ?? null,
+    participants,
+    counterpart_ids: counterpartIds,
+  });
+}
+
 function strictContinuationDuplicate(candidate, current) {
   const candidateKey = eventSemanticKey(candidate);
   const currentKey = eventSemanticKey(current);
   return Boolean(candidateKey && currentKey && candidateKey === currentKey);
-}
-
-function continuationStoryTimeCompatible(leftStoryTime, rightStoryTime) {
-  const left = leftStoryTime ?? {};
-  const right = rightStoryTime ?? {};
-  const leftNormalized = typeof left.normalized === "string" ? left.normalized.trim() : "";
-  const rightNormalized = typeof right.normalized === "string" ? right.normalized.trim() : "";
-  if (leftNormalized || rightNormalized) {
-    return Boolean(leftNormalized && rightNormalized && leftNormalized === rightNormalized &&
-      (left.calendar_id ?? null) === (right.calendar_id ?? null));
-  }
-  return compareStoryTime(left, right) === 0;
 }
 
 function mergeCurrentParticipantEvidence(currentParticipant, nextParticipant) {
@@ -234,6 +246,30 @@ function compatibleWorldModelRuleRefs(left = [], right = []) {
   return [...leftRefs].some((reference) => rightRefs.has(reference));
 }
 
+function continuationStoryTimeCompatible(leftStoryTime, rightStoryTime) {
+  const left = leftStoryTime ?? {};
+  const right = rightStoryTime ?? {};
+  const leftNormalized = typeof left.normalized === "string" ? left.normalized.trim() : "";
+  const rightNormalized = typeof right.normalized === "string" ? right.normalized.trim() : "";
+  if (leftNormalized || rightNormalized) {
+    return Boolean(leftNormalized && rightNormalized && leftNormalized === rightNormalized &&
+      (left.calendar_id ?? null) === (right.calendar_id ?? null));
+  }
+  return compareStoryTime(left, right) === 0;
+}
+
+const MARKERLESS_CONTINUITY_WINDOW_MINUTES = 6 * 60;
+
+function markerlessStoryTimeCompatible(leftStoryTime, rightStoryTime) {
+  const difference = differenceStoryTime(leftStoryTime, rightStoryTime, {
+    includeCrossDayClock: true,
+  });
+  if (!difference || difference.unit !== "minute" || !Number.isFinite(Number(difference.value))) {
+    return false;
+  }
+  return Math.abs(Number(difference.value)) <= MARKERLESS_CONTINUITY_WINDOW_MINUTES;
+}
+
 function continuationSourceIsVisible(source, targetVersion) {
   if (!source || typeof source !== "object") return false;
   if (source.chat_id !== targetVersion?.chat_id || source.swipe_id !== targetVersion?.swipe_id) return false;
@@ -248,17 +284,23 @@ function continuationSourceIsVisible(source, targetVersion) {
   return sourceFloor <= targetFloor;
 }
 
+function sameFloorOwner(source, targetVersion) {
+  return Boolean(source && targetVersion &&
+    source.chat_id === targetVersion.chat_id &&
+    source.message_id === targetVersion.message_id &&
+    Number(source.floor) === Number(targetVersion.floor) &&
+    source.swipe_id === targetVersion.swipe_id);
+}
+
 function validateContinuationReference(candidate, current, targetVersion) {
   if (!candidate || !current || !continuationSourceIsVisible(current.source, targetVersion)) return false;
   if (candidate.type !== current.type) return false;
   const candidateParticipants = continuityParticipants(candidate);
   const currentParticipants = continuityParticipants(current);
-  if (!candidateParticipants || !currentParticipants ||
-      JSON.stringify(candidateParticipants) !== JSON.stringify(currentParticipants)) return false;
+  if (!candidateParticipants || !currentParticipants) return false;
   const candidateRelevance = candidate.pregnancy_relevance ?? {};
   const currentRelevance = current.pregnancy_relevance ?? {};
-  if (!sameIdSet(candidateRelevance.gestational_subject_ids, currentRelevance.gestational_subject_ids) ||
-      !sameIdSet(candidateRelevance.counterpart_ids, currentRelevance.counterpart_ids)) return false;
+  if (!sameIdSet(candidateRelevance.gestational_subject_ids, currentRelevance.gestational_subject_ids)) return false;
   const candidateMechanism = candidateRelevance.reproductive_mechanism ?? {};
   const currentMechanism = currentRelevance.reproductive_mechanism ?? {};
   if (candidateMechanism.kind !== currentMechanism.kind) return false;
@@ -267,7 +309,15 @@ function validateContinuationReference(candidate, current, targetVersion) {
     currentMechanism.world_model_rule_refs,
   )) return false;
   if (candidate.location && current.location && candidate.location !== current.location) return false;
-  return continuationStoryTimeCompatible(candidate.story_time, current.story_time);
+  if (candidate.type === "sexual_activity" && current.type === "sexual_activity" &&
+      eventEpisodeContinuityKey(candidate) && eventEpisodeContinuityKey(current)) {
+    return Boolean(eventEpisodeContinuityKey(candidate) && eventEpisodeContinuityKey(current));
+  }
+  if (!sameIdSet(candidateRelevance.counterpart_ids, currentRelevance.counterpart_ids) ||
+      !candidateParticipants || !currentParticipants ||
+      JSON.stringify(candidateParticipants) !== JSON.stringify(currentParticipants) ||
+      !continuationStoryTimeCompatible(candidate.story_time, current.story_time)) return false;
+  return true;
 }
 
 function hasMeaningfulContinuationUpdate(current, candidate) {
@@ -297,14 +347,25 @@ function mergeContinuedEvent(current, candidate, meaningfulUpdate) {
   const candidateRelevance = candidate.pregnancy_relevance ?? {};
   const currentMechanism = currentRelevance.reproductive_mechanism ?? {};
   const candidateMechanism = candidateRelevance.reproductive_mechanism ?? {};
-  const participants = (current.participants ?? []).map((currentParticipant) => {
-    const nextParticipant = (candidate.participants ?? []).find(
-      (item) => item?.character_id === currentParticipant?.character_id,
+  const participants = [...(current.participants ?? [])];
+  for (const nextParticipant of candidate.participants ?? []) {
+    const existingIndex = participants.findIndex(
+      (item) => item?.character_id === nextParticipant?.character_id,
     );
-    return nextParticipant
-      ? mergeCurrentParticipantEvidence(currentParticipant, nextParticipant)
-      : currentParticipant;
-  });
+    if (existingIndex < 0) participants.push(structuredClone(nextParticipant));
+    else participants[existingIndex] = mergeCurrentParticipantEvidence(
+      participants[existingIndex],
+      nextParticipant,
+    );
+  }
+  const gestationalSubjectIds = [...new Set([
+    ...(currentRelevance.gestational_subject_ids ?? []),
+    ...(candidateRelevance.gestational_subject_ids ?? []),
+  ])];
+  const counterpartIds = [...new Set([
+    ...(currentRelevance.counterpart_ids ?? []),
+    ...(candidateRelevance.counterpart_ids ?? []),
+  ])];
   return {
     ...structuredClone(current),
     status: candidate.status ?? current.status,
@@ -316,6 +377,8 @@ function mergeContinuedEvent(current, candidate, meaningfulUpdate) {
     pregnancy_relevance: {
       ...structuredClone(currentRelevance),
       possible_conception: candidateRelevance.possible_conception ?? currentRelevance.possible_conception,
+      gestational_subject_ids: gestationalSubjectIds,
+      counterpart_ids: counterpartIds,
       confidence: candidateRelevance.confidence ?? currentRelevance.confidence,
       reproductive_mechanism: {
         ...structuredClone(currentMechanism),
@@ -594,11 +657,15 @@ export function createCharacterEventAnalysis({
     const identityResolvedEvents = Array.isArray(identityResult.events)
       ? identityResult.events
       : [];
-    const currentFloorEvents = Array.isArray(analysisInput.existing_events)
-      ? analysisInput.existing_events.map((event) => normalizeEvent(event))
+    const selectedExistingEvents = Array.isArray(analysisInput.existing_events)
+      ? analysisInput.existing_events
       : [];
+    const currentFloorEvents = selectedExistingEvents
+      .map((event) => normalizeEvent(event));
     const explicitContinuationIndexes = new WeakMap();
     const explicitContinuationUpdates = new WeakMap();
+    const implicitContinuationIndexes = new WeakMap();
+    const implicitContinuationUpdates = new WeakMap();
     const rejectedExplicitContinuations = new WeakSet();
     const removedCurrentIndexes = new Map();
     const continuationDiagnostics = [];
@@ -621,31 +688,72 @@ export function createCharacterEventAnalysis({
     const hasExistingState = currentFloorEvents.length > 0 ||
       Boolean(analysisInput.existing_bioweave?.analysis?.status);
     const currentEventIndexes = new Map();
-    const hasCurrentFloorEvents = currentFloorEvents.some(event =>
-      sameFloorVersion(event?.source, target.version),
-    );
-    if (hasCurrentFloorEvents) {
+    if (currentFloorEvents.length) {
       currentFloorEvents.forEach((event, index) => {
-        if (!sameFloorVersion(event?.source, target.version)) return;
-        const key = eventContinuityKey(event);
-        if (!key) return;
-        const indexes = currentEventIndexes.get(key) ?? [];
-        indexes.push(index);
-        currentEventIndexes.set(key, indexes);
+        if (!continuationSourceIsVisible(event?.source, target.version)) return;
+        for (const key of [
+          eventContinuityKey(event) && `same:${eventContinuityKey(event)}`,
+          eventEpisodeContinuityKey(event) && `episode:${eventEpisodeContinuityKey(event)}`,
+          eventStableContinuityKey(event) && `stable:${eventStableContinuityKey(event)}`,
+        ].filter(Boolean)) {
+          const indexes = currentEventIndexes.get(key) ?? [];
+          indexes.push(index);
+          currentEventIndexes.set(key, indexes);
+        }
       });
     }
+    const historicalStableDuplicateIndexes = (event) => {
+      const stableKey = eventStableContinuityKey(event);
+      if (!stableKey || event?.continuation_update === false) return [];
+      return [...new Set((currentEventIndexes.get(`stable:${stableKey}`) ?? [])
+        .filter(index => {
+          const current = currentFloorEvents[index];
+          return !sameFloorOwner(current?.source, target.version) &&
+            markerlessStoryTimeCompatible(event?.story_time, current?.story_time) &&
+            compatibleWorldModelRuleRefs(
+              current?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
+              event?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
+            ) && (!current?.location || !event?.location || current.location === event.location);
+        }))];
+    };
+    const earliestHistoricalIndex = (indexes) => indexes.reduce((earliest, index) => {
+      const earliestFloor = Number(currentFloorEvents[earliest]?.source?.floor);
+      const candidateFloor = Number(currentFloorEvents[index]?.source?.floor);
+      return Number.isFinite(candidateFloor) &&
+        (!Number.isFinite(earliestFloor) || candidateFloor < earliestFloor)
+        ? index
+        : earliest;
+    }, indexes[0]);
+    const convergedHistoricalEvents = new Map();
     const findContinuityIndex = (event) => {
-      if (!hasCurrentFloorEvents) return undefined;
-      const key = eventContinuityKey(event);
-      if (!key) return undefined;
-      const compatibleIndexes = (currentEventIndexes.get(key) ?? []).filter(index =>
-        continuationStoryTimeCompatible(
-          currentFloorEvents[index]?.story_time,
-          event?.story_time,
-        ) && compatibleWorldModelRuleRefs(
+      const exactKey = eventContinuityKey(event);
+      const episodeKey = eventEpisodeContinuityKey(event);
+      const stableKey = eventStableContinuityKey(event);
+      const markerAllowsContinuity = event?.continuation_update === true;
+      const explicitIndependentBoundary = event?.continuation_update === false;
+      const keys = [
+        exactKey && `same:${exactKey}`,
+        !explicitIndependentBoundary && stableKey && `stable:${stableKey}`,
+        markerAllowsContinuity && episodeKey && `episode:${episodeKey}`,
+      ].filter(Boolean);
+      const candidateIndexes = keys.flatMap(key =>
+        (currentEventIndexes.get(key) ?? []).map(index => ({index, key})),
+      );
+      const compatibleIndexEntries = candidateIndexes.filter(({index, key}) =>
+        (key.startsWith("same:")
+          ? sameFloorVersion(currentFloorEvents[index]?.source, target.version)
+          : key.startsWith("episode:")
+            ? Boolean(markerAllowsContinuity && episodeKey)
+            : !sameFloorOwner(currentFloorEvents[index]?.source, target.version) &&
+              !explicitIndependentBoundary && Boolean(stableKey)) &&
+        (!key.startsWith("stable:") ||
+          markerlessStoryTimeCompatible(event?.story_time, currentFloorEvents[index]?.story_time)) &&
+        compatibleWorldModelRuleRefs(
           currentFloorEvents[index]?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
           event?.pregnancy_relevance?.reproductive_mechanism?.world_model_rule_refs,
-        ));
+        ) && (!currentFloorEvents[index]?.location || !event?.location ||
+          currentFloorEvents[index].location === event.location));
+      const compatibleIndexes = [...new Set(compatibleIndexEntries.map(({index}) => index))];
       return compatibleIndexes.length === 1 ? compatibleIndexes[0] : undefined;
     };
     const enrichedEvents = await Promise.all(
@@ -687,8 +795,47 @@ export function createCharacterEventAnalysis({
                 : null
               : null,
           };
+          // An explicit continuation reference already selects the identity to
+          // update. Only converge historical duplicates when that validated
+          // target is itself one of the same stable-identity duplicates; keep
+          // an expanded or otherwise different explicit target independent.
+          const historicalStableIndexes = historicalStableDuplicateIndexes(event);
+          const stableDuplicateIndexes = explicitContinuationIndex !== undefined
+            ? historicalStableIndexes.includes(explicitContinuationIndex)
+              ? historicalStableIndexes
+              : []
+            : requestedContinuationId
+              ? []
+              : historicalStableIndexes;
+          if (stableDuplicateIndexes.length > 1) {
+            const canonicalIndex = explicitContinuationIndex !== undefined
+              ? explicitContinuationIndex
+              : earliestHistoricalIndex(stableDuplicateIndexes);
+            const removedIndexes = stableDuplicateIndexes.filter(index => index !== canonicalIndex);
+            let canonicalEvent = convergedHistoricalEvents.get(canonicalIndex) ??
+              currentFloorEvents[canonicalIndex];
+            for (const duplicateIndex of removedIndexes) {
+              canonicalEvent = mergeContinuedEvent(
+                canonicalEvent,
+                currentFloorEvents[duplicateIndex],
+                true,
+              );
+              removedCurrentIndexes.set(duplicateIndex, "stable_duplicate_converged");
+            }
+            convergedHistoricalEvents.set(canonicalIndex, canonicalEvent);
+            const removedEventIds = removedIndexes
+              .map(index => currentFloorEvents[index]?.event_id)
+              .filter(Boolean);
+            continuationDiagnostic.continuation_reconciliation_reason = "stable_duplicate_converged";
+            continuationDiagnostic.continuation_reconciliation_event_id = canonicalEvent?.event_id ?? null;
+            continuationDiagnostic.continuation_reconciliation_removed_event_ids = removedEventIds;
+          }
           const continuityIndex = explicitContinuationIndex ?? (
-            requestedContinuationId ? undefined : findContinuityIndex(facts)
+            requestedContinuationId
+              ? undefined
+              : stableDuplicateIndexes.length > 1
+                ? earliestHistoricalIndex(stableDuplicateIndexes)
+                : findContinuityIndex(event)
           );
           const eventOrdinal = currentFloorEvents.length + appendedEventOrdinal++;
           const materialized = await materializeStateFact({
@@ -701,6 +848,18 @@ export function createCharacterEventAnalysis({
           }, target.version, eventOrdinal);
           if (continuityIndex !== undefined) {
             materialized.event_id = currentFloorEvents[continuityIndex].event_id;
+            if (explicitContinuationIndex === undefined) {
+              implicitContinuationIndexes.set(materialized, continuityIndex);
+              implicitContinuationUpdates.set(
+                materialized,
+                event?.continuation_update === true
+                  ? hasMeaningfulContinuationUpdate(
+                    currentFloorEvents[continuityIndex],
+                    event,
+                  )
+                  : true,
+              );
+            }
           }
           if (requestedContinuationId && explicitContinuationIndex === undefined) {
             rejectedExplicitContinuations.add(materialized);
@@ -708,18 +867,20 @@ export function createCharacterEventAnalysis({
           if (explicitContinuationIndex !== undefined) {
             materialized.source = structuredClone(currentFloorEvents[continuityIndex].source);
             explicitContinuationIndexes.set(materialized, explicitContinuationIndex);
-            explicitContinuationUpdates.set(
-              materialized,
-              hasMeaningfulContinuationUpdate(
-                currentFloorEvents[explicitContinuationIndex],
-                event,
-              ),
+            const meaningfulExplicitUpdate = hasMeaningfulContinuationUpdate(
+              currentFloorEvents[explicitContinuationIndex],
+              event,
             );
+            explicitContinuationUpdates.set(materialized, meaningfulExplicitUpdate);
             continuationDiagnostic.continuation_merge_executed = true;
             for (const [currentIndex, currentEvent] of currentFloorEvents.entries()) {
               if (currentIndex === explicitContinuationIndex ||
-                  !sameFloorVersion(currentEvent?.source, target.version) ||
-                  !strictContinuationDuplicate(facts, currentEvent)) continue;
+                  !sameFloorVersion(currentEvent?.source, target.version)) continue;
+              const sameEpisode = (eventEpisodeContinuityKey(facts) &&
+                eventEpisodeContinuityKey(currentEvent) === eventEpisodeContinuityKey(facts)) ||
+                (eventContinuityKey(facts) &&
+                eventContinuityKey(currentEvent) === eventContinuityKey(facts));
+              if (!strictContinuationDuplicate(facts, currentEvent) && !sameEpisode) continue;
               removedCurrentIndexes.set(currentIndex, "explicit_continuation_duplicate");
             }
           }
@@ -809,16 +970,18 @@ export function createCharacterEventAnalysis({
         .map((event) => {
           const explicitIndex = explicitContinuationIndexes.get(event);
           const index = explicitIndex ?? (
-            rejectedExplicitContinuations.has(event) ? undefined : findContinuityIndex(event)
+            rejectedExplicitContinuations.has(event)
+              ? undefined
+              : implicitContinuationIndexes.get(event)
           );
           if (index === undefined) return [index, event];
           const current = currentFloorEvents[index];
           return [index, mergeContinuedEvent(
-            current,
+            convergedHistoricalEvents.get(index) ?? current,
             event,
             explicitContinuationIndexes.has(event)
               ? explicitContinuationUpdates.get(event) === true
-              : true,
+              : implicitContinuationUpdates.get(event) === true,
           )];
         })
         .filter(([index]) => index !== undefined),
@@ -833,7 +996,7 @@ export function createCharacterEventAnalysis({
         const explicitIndex = explicitContinuationIndexes.get(event);
         if (explicitIndex !== undefined) return false;
         if (rejectedExplicitContinuations.has(event)) return true;
-        return findContinuityIndex(event) === undefined;
+        return implicitContinuationIndexes.get(event) === undefined;
       }),
     ]).map((event) => normalizeEvent(event));
     const preAnalysisEventIds = currentFloorEvents.map(event => event?.event_id).filter(Boolean);

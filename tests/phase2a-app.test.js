@@ -173,7 +173,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, characterAnalysisError = null, updateEventError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, onBusinessDataRead = null, onDelete = null, characterAnalysisError = null, updateEventError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -275,7 +275,9 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     collectActiveBusinessData: async () => {
       businessDataCalls += 1;
       if (businessDataFailure) throw businessDataFailure;
-      return structuredClone(businessData());
+      const collected = structuredClone(businessData());
+      if (onBusinessDataRead) await onBusinessDataRead({collected, call: businessDataCalls});
+      return collected;
     },
     async refreshCurrentFloorAnalysis() {
       refreshCalls += 1;
@@ -309,6 +311,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
       deleteCalls += 1;
       floor.events = floor.events.filter(item => item.event_id !== eventId);
       trackingSubjects = {};
+      if (onDelete) await onDelete({eventId, floor, context});
       return true;
     },
     subscribe: listener => {
@@ -1223,6 +1226,72 @@ test('Event edit writes the current Floor fact and delete removes its Tracking e
   assert.equal(fixture.calls().delete, 1);
   assert.deepEqual(fixture.getFloor().events, []);
   assert.equal(Object.hasOwn(fixture.getChat(), 'tracking_subjects'), false);
+  fixture.app.destroyBioWeave();
+});
+
+test('Event deletion waits for a queued business refresh before returning from the click handler', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  let blockNextRead = false;
+  let oldSnapshotEventCount = null;
+  let deletionSettled = false;
+  let readStartedResolve;
+  let releaseRead;
+  const readStarted = new Promise(resolve => { readStartedResolve = resolve; });
+  const blockedRead = new Promise(resolve => { releaseRead = resolve; });
+  let fixture;
+  fixture = await createFixture({
+    event: sourceEvent(version),
+    onBusinessDataRead: async ({call, collected}) => {
+      if (call === 3) {
+        fixture.emit({
+          type: 'TRACKING_REGISTRY_REFRESHED',
+          chatId: 'chat-app',
+          payload: {reason: 'during-queued-refresh', event_count: 0},
+        });
+        throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'});
+      }
+      if (!blockNextRead || call !== 2) return;
+      oldSnapshotEventCount = collected.active_events.length;
+      readStartedResolve();
+      await blockedRead;
+    },
+    onDelete: async () => {
+      fixture.emit({
+        type: 'TRACKING_REGISTRY_REFRESHED',
+        chatId: 'chat-app',
+        payload: {reason: 'EVENT_DELETED', event_count: 0},
+      });
+    },
+  });
+  fixture.app.go('events');
+  await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('evt-1'), 'initial Event UI');
+
+  blockNextRead = true;
+  fixture.emit({
+    type: 'TRACKING_REGISTRY_REFRESHED',
+    chatId: 'chat-app',
+    payload: {reason: 'before-event-delete', event_count: 1},
+  });
+  await readStarted;
+  fixture.context.Popup = {show: {confirm: async () => 'affirmative'}};
+  fixture.context.POPUP_RESULT = {AFFIRMATIVE: 'affirmative'};
+  const click = [...fixture.root.listeners.get('click')][0];
+  const deletion = click({
+    target: clickTarget('delete-event', {root: fixture.root, bioweaveEventId: 'evt-1'}),
+    preventDefault() {},
+  });
+  deletion.then(() => { deletionSettled = true; });
+
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(oldSnapshotEventCount, 1);
+  assert.equal(deletionSettled, false);
+  releaseRead();
+  await waitFor(() => deletionSettled, 'delete click completion');
+  await deletion;
+
+  assert.equal(fixture.calls().delete, 1);
+  assert.equal(fixture.businessDataCalls(), 4);
+  assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /evt-1/);
   fixture.app.destroyBioWeave();
 });
 

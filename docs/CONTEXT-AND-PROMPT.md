@@ -150,9 +150,21 @@ type、structured story_time、canonical participant/subject/counterpart 集合�
 `existing_events` 是 AI 的 bounded reference，不是要求重新输出的历史清单。AI
 response DTO 只提供待验证的 Event 候选，不生成 canonical `event_id` 或 `source`。
 Runtime 先执行历史 semantic dedupe，再对当前 Floor 的候选执行唯一、结构兼容的
-same-Floor implicit continuity；跨 Floor 只有在 AI 提供真实存在且通过校验的
-`continuation_of_event_id` 时才进入 explicit continuation。Runtime 最终决定新增、
-合并、跳过和持久化；continuation 临时字段不会进入 persisted Event。
+same-Floor implicit continuity。对于 pregnancy-relevant `sexual_activity`，跨 Floor
+还可以在 bounded 历史中只有一个稳定的同一 gestational subject、机制、地点以及
+canonical participant/counterpart 集合候选时完成 Episode continuity；如果历史中已有多条
+完全相同 stable continuity identity 的重复 Event，且当前候选没有明确
+`continuation_update=false`、稳定集合也没有扩展，则收敛到最早 source Event 并合并证据；若有合法
+`continuation_of_event_id` 且被引用 Event 属于该重复组，则以被引用 Event 为身份锚点合并其它重复。
+集合扩展时需要 `continuation_update=true`，而 `continuation_update=false` 阻止隐式匹配。真实存在的
+`continuation_of_event_id` 仍是可选的精确提示，不是跨 Floor 连续的唯一许可。
+无标记跨 Floor 延续必须有可比较的 Story Time，且实际间隔不超过 6 小时（含跨午夜）；
+超过 6 小时、时间缺失或不可比较时，不能仅凭稳定身份隐式合并。时间前进、跨午夜、证据措辞和 pathway/label 改写本身不构成新 Episode；集合
+扩展也不自动证明是新 Episode，但 Runtime 只有在 `continuation_update=true` 或
+合法精确引用下才合并集合扩展；不完全相同的多个兼容候选仍保持独立并 fail closed。
+明确结束/重新开始、机制或主体变化仍形成独立 Event。
+Runtime 最终决定新增、合并、跳过和持久化；continuation 临时字段不会进入
+persisted Event。
 
 ## 6. External Memory provider contract
 

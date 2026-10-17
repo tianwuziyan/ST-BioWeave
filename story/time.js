@@ -612,10 +612,11 @@ function normalizedClockMinutes(value) {
 /**
  * Return a deterministic, already-comparable Story Time difference. The
  * signed value is left minus right: positive means left is later. Clock-level
- * precision is used only when both values carry a reliable normalized clock
- * and refer to the same story day; otherwise the result stays day-based.
+ * precision is used when both values carry a reliable normalized clock and
+ * refer to comparable story dates. Cross-day clock precision is opt-in for
+ * callers that need an actual elapsed interval rather than day-level output.
  */
-export function differenceStoryTime(left, right, {calendar = null} = {}) {
+export function differenceStoryTime(left, right, {calendar = null, includeCrossDayClock = false} = {}) {
   const leftResolved = resolveStoryTimeForCalculation(left, calendar);
   const rightResolved = resolveStoryTimeForCalculation(right, calendar);
   const dateDifference = storyTimeDateDifference(left, right, calendar);
@@ -625,12 +626,14 @@ export function differenceStoryTime(left, right, {calendar = null} = {}) {
   const dayDifference = dateDifference;
   const preciseClock = ['hour', 'minute'].includes(leftTime.precision)
     && ['hour', 'minute'].includes(rightTime.precision)
-    && dayDifference === 0;
+    && normalizedClockMinutes(leftTime) !== null
+    && normalizedClockMinutes(rightTime) !== null
+    && (dayDifference === 0 || includeCrossDayClock);
   if (preciseClock) {
     const leftMinutes = normalizedClockMinutes(leftTime);
     const rightMinutes = normalizedClockMinutes(rightTime);
     if (leftMinutes !== null && rightMinutes !== null) {
-      return {value: leftMinutes - rightMinutes, unit: 'minute'};
+      return {value: dayDifference * 1440 + leftMinutes - rightMinutes, unit: 'minute'};
     }
   }
   if (dayDifference === 0) return {value: 0, unit: 'day'};
