@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check proposed architecture against Floor ownership and no-bypass rules"}
-{"file": "docs/bioweave-data-lifecycle.md", "reason": "Check state machine and failure/recovery against lifecycle contract"}
-{"file": ".trellis/tasks/10-17-timing-noop-concurrency-validation/audit-report.md", "reason": "Check GET reuse and concurrency conclusions"}
-{"file": ".trellis/tasks/10-17-sillytavern-native-persistence-capability-audit/audit-report.md", "reason": "Check host completion/CAS and native save claims"}

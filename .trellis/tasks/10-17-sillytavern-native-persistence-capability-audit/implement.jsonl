@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor/Swipe ownership and lifecycle contract for any host persistence conclusion"}
-{"file": "docs/ARCHITECTURE.md", "reason": "Existing persistence architecture and Coordinator boundary"}
-{"file": ".trellis/tasks/10-17-native-host-persistence-architecture-audit/audit-report.md", "reason": "Previous native host architecture audit and unresolved P1 evidence"}
-{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle and explicit persistence outcome contract"}
-{"file": ".trellis/tasks/10-17-sillytavern-native-persistence-capability-audit/research/host-source-evidence.md", "reason": "Actual remote SillyTavern 1.19.0 frontend/runtime evidence and explicit server-side evidence gaps"}

@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "Check that a local View does not bypass Floor ownership, Swipe or provenance rules"}
-{"file": "docs/bioweave-data-lifecycle.md", "reason": "Check invalidation, stale, persistence failure and partial-success semantics"}
-{"file": ".trellis/tasks/10-17-timing-noop-concurrency-validation/audit-report.md", "reason": "Check that internal reuse is not confused with unsafe Coordinator GET reuse"}
-{"file": ".trellis/tasks/10-17-sillytavern-native-persistence-capability-audit/audit-report.md", "reason": "Check host and official I/O performance evidence boundaries"}
-{"file": ".trellis/tasks/10-17-floor-view-performance-baseline/audit-report.md", "reason": "Validate final classifications, baseline numbers and Execute boundary"}

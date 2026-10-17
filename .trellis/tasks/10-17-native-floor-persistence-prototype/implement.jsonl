@@ -1,6 +1,0 @@
-{"file":"AGENTS.md","reason":"确认测试原型、任务文档、工作区保留和禁止修改生产路径的仓库规则。"}
-{"file":".trellis/spec/domain/floor-state.md","reason":"确认 Floor/Swipe/Version owner、历史不可变、sibling merge、显式空值和 authoritative persistence 契约。"}
-{"file":"docs/bioweave-data-lifecycle.md","reason":"确认 ordinary Floor writer、保存确认、生命周期 stale guard 和部分失败语义。"}
-{"file":"docs/ARCHITECTURE.md","reason":"确认 Coordinator canonical path、Adapter 边界、owner whitelist 和 known-good freeze。"}
-{"file":".trellis/tasks/10-17-native-host-persistence-architecture-audit/audit-report.md","reason":"复用已完成的 Context/native save 架构审计和现有安全边界。"}
-{"file":".trellis/tasks/10-17-sillytavern-native-persistence-capability-audit/audit-report.md","reason":"复用当前宿主 saveChat、debounce、服务端写入及 unknown completion 证据。"}

@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, Swipe, inheritance, provenance and authoritative read contract"}
-{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle, clear, async outcome and Floor write contract"}
-{"file": "docs/ARCHITECTURE.md", "reason": "Current feature owners and persistence canonical path"}
-{"file": ".trellis/tasks/10-17-floor-write-path-performance-audit/audit-report.md", "reason": "Current cross-module GET/SAVE baseline and owner inventory"}
-{"file": ".trellis/tasks/10-17-native-floor-persistence-prototype/audit-report.md", "reason": "Context-first prototype evidence and limitations"}

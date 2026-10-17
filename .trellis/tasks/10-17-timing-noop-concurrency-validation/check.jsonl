@@ -1,4 +1,0 @@
-{"file":".trellis/spec/domain/floor-state.md","reason":"Validate that test conclusions preserve Floor/Swipe/version/epoch ownership rules."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check cross-layer and concurrent-state reasoning in the final audit."}
-{"file":".trellis/tasks/10-17-timing-noop-concurrency-validation/prd.md","reason":"Acceptance criteria and safety constraints for the test-only audit."}
-{"file":".trellis/tasks/10-17-timing-noop-concurrency-validation/design.md","reason":"Test harness boundaries, candidate models, and evidence grading."}

@@ -1,5 +1,0 @@
-{"file": "docs/ARCHITECTURE.md", "reason": "Runtime/storage boundary and existing Coordinator architecture."}
-{"file": ".trellis/tasks/10-17-context-first-floor-writer-real-host-validation/audit-report.md", "reason": "Bounded SillyTavern 1.19.0 Context/save/readback evidence."}
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor ownership, active Swipe, identity and historical immutability contract."}
-{"file": ".trellis/tasks/10-17-context-first-floor-writer/audit-report.md", "reason": "Isolation prototype evidence and schema-preserving merge behavior."}
-{"file": "docs/bioweave-data-lifecycle.md", "reason": "Persistent-field ownership, invalidation and persistence outcome contract."}
