@@ -94,7 +94,7 @@ Story Time 使用结构化对象：`display`、`normalized`、`calendar_id`、`d
 
 总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
 
-推演页只展示 Projection DTO，并按人物分组：先显示观察人物列表，再显示当前选中人物自己的候选路线和观察说明，不把不同人物的时间线混在一张全局列表里。人物名称来自当前 Runtime 的 `tracking_subjects`，路线标题和正文来自 Projection DTO；UI 不从人物名、事件文本或技术字段自行推断症状和时间。Projection Runtime 在完成读回或进入失败等终态后会通过 `PROJECTION_ANALYSIS_STATUS_CHANGED` 触发一次业务状态重读，页面无需手动点击“刷新推演”即可显示最新结果。运行中的状态事件只更新进度，不触发重复读回。空 `projection_rules` 时，内置受孕前观察路径生成三段、每段四条彼此独立的备选支线；它们不是事实，也不调用 Projection AI。正文没有写出某种表现时，页面不会把候选路线显示成已发生事实；超过观察周期仍没有正文确认时，当前周期结束并按本轮未怀孕处理，当前周期的 NSFW 事件不再带入下一轮。
+推演页只展示 Projection DTO，并按人物分组：先显示观察人物列表，再显示当前选中人物自己的候选路线和观察说明，不把不同人物的时间线混在一张全局列表里。人物名称来自当前 Runtime 的 `tracking_subjects`，路线标题和正文来自 Projection DTO；UI 不从人物名、事件文本或技术字段自行推断症状和时间。Projection Runtime 在完成读回或进入失败等终态后会通过 `PROJECTION_ANALYSIS_STATUS_CHANGED` 触发一次业务状态重读，页面无需手动点击“刷新推演”即可显示最新结果。运行中的状态事件只更新进度，不触发重复读回。空 `projection_rules` 时，内置受孕前观察路径生成三段、每段四条彼此独立的备选支线；它们不是事实，也不调用 Projection AI。正文没有写出某种表现时，页面不会把候选路线显示成已发生事实；超过观察周期仍没有正文确认时，当前周期结束并按本轮未怀孕处理，当前周期的亲密事件不再带入下一轮。
 这些内置支线按人物自己的观察经过天数分段出现：第 14–20 天显示嗜睡或疲倦、乳房敏感、对气味或食物产生轻微变化、暂时没有明显反应；第 21–27 天显示恶心、闻到气味不舒服、情绪变化、食欲变化；第 28–42 天显示恶心加重、可能出现孕吐、持续疲倦、一直没有明显反应。页面直接消费 Projection DTO 的人物分组、当前阶段和时间字段，不自己计算或把未到时间的支线提前显示。
 
 总览显示用户可理解的 Analysis Status、人物/事件统计、最近事件和分析操作；不显示当前 Floor Version 的 chat/message/floor/swipe/hash/message version，不显示 Event ID、raw Event JSON、Registry Summary 或 execution diagnostics。运行中按钮保持可点击并显示“分析中… · 点击可终止”；二次点击通过 SillyTavern confirm Popup 请求 Runtime 取消，拒绝确认不改变执行。Runtime 仍保留完整诊断 DTO，必要的 raw/provenance inspection 只通过 Settings 的 Advanced/Debug Popup 提供，而不是普通 Overview 的折叠详情。主动取消显示信息提示，且保留上一份有效 Event/Tracking 结果。

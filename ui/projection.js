@@ -131,41 +131,40 @@ function groupProjections(items, trackingSubjects, observationSchedule = []) {
     if (!group.labels.includes(label)) group.labels.push(label)
     groups.set(subjectId, group)
   }
-  return [...groups.values()].map(group => {
-    const builtInItems = group.items.filter(isBuiltInPreConfirmationItem)
-    const builtInCandidateCounts = builtInItems.map(item => item?.aggregated_candidate_count)
-    const hasConsistentBuiltInCandidateCount = builtInItems.length === 0 || (
-      builtInCandidateCounts.length > 0 &&
-      builtInCandidateCounts.every(count => Number.isSafeInteger(count) && count >= 0 && count === builtInCandidateCounts[0])
-    )
-    if (!hasConsistentBuiltInCandidateCount) return null
-    const activeItems = group.items.filter(item => item?.status === 'active')
-    const sourceRefs = new Set(group.items.flatMap(item => (Array.isArray(item?.source_refs) ? item.source_refs : [])))
-    const timing = timingFor(group.items)
-    const candidateCounts = builtInItems.length
-      ? builtInCandidateCounts
-      : group.items
-          .map(item => item?.aggregated_candidate_count)
-          .filter(count => Number.isSafeInteger(count) && count >= 0)
-    const aggregatedCandidateCount = candidateCounts.length && candidateCounts.every(count => count === candidateCounts[0])
-      ? candidateCounts[0]
-      : null
-    const result = {
-      ...group,
-      activeItems,
-      activeCount: activeItems.length,
-      sourceCount: sourceRefs.size,
-      aggregatedCandidateCount,
-      timing,
-      status: activeItems.length ? 'active' : (group.items.at(-1)?.status ?? 'active'),
-      schedule: observationSchedule,
-    }
-    result.currentStage = currentStageFor(result, observationSchedule)
-    result.currentItems = result.currentStage ? activeItems.filter(item => stageOf(item)?.key === result.currentStage.key) : activeItems
-    if (!result.currentItems.length && activeItems.length && !result.currentStage) result.currentItems = activeItems
-    result.stageIndex = result.currentStage ? observationSchedule.findIndex(stage => stage.key === result.currentStage.key) : -1
-    return result
-  }).filter(Boolean)
+  return [...groups.values()]
+    .map(group => {
+      const builtInItems = group.items.filter(isBuiltInPreConfirmationItem)
+      const builtInCandidateCounts = builtInItems.map(item => item?.aggregated_candidate_count)
+      const hasConsistentBuiltInCandidateCount =
+        builtInItems.length === 0 ||
+        (builtInCandidateCounts.length > 0 &&
+          builtInCandidateCounts.every(count => Number.isSafeInteger(count) && count >= 0 && count === builtInCandidateCounts[0]))
+      if (!hasConsistentBuiltInCandidateCount) return null
+      const activeItems = group.items.filter(item => item?.status === 'active')
+      const sourceRefs = new Set(group.items.flatMap(item => (Array.isArray(item?.source_refs) ? item.source_refs : [])))
+      const timing = timingFor(group.items)
+      const candidateCounts = builtInItems.length
+        ? builtInCandidateCounts
+        : group.items.map(item => item?.aggregated_candidate_count).filter(count => Number.isSafeInteger(count) && count >= 0)
+      const aggregatedCandidateCount =
+        candidateCounts.length && candidateCounts.every(count => count === candidateCounts[0]) ? candidateCounts[0] : null
+      const result = {
+        ...group,
+        activeItems,
+        activeCount: activeItems.length,
+        sourceCount: sourceRefs.size,
+        aggregatedCandidateCount,
+        timing,
+        status: activeItems.length ? 'active' : (group.items.at(-1)?.status ?? 'active'),
+        schedule: observationSchedule,
+      }
+      result.currentStage = currentStageFor(result, observationSchedule)
+      result.currentItems = result.currentStage ? activeItems.filter(item => stageOf(item)?.key === result.currentStage.key) : activeItems
+      if (!result.currentItems.length && activeItems.length && !result.currentStage) result.currentItems = activeItems
+      result.stageIndex = result.currentStage ? observationSchedule.findIndex(stage => stage.key === result.currentStage.key) : -1
+      return result
+    })
+    .filter(Boolean)
 }
 function dayLabel(day) {
   return day === null ? '时间待推进' : `第 ${day} 天`
@@ -258,7 +257,7 @@ function laterSection(group) {
       )
       .join('')
   }
-  return '<div class="bioweave-projection-route-row"><div class="bioweave-projection-route-day">观察期结束</div><div><strong>没有确认怀孕 → 本轮结束</strong><p>如果正文一直没有明确确认，当前周期按未怀孕处理，本周期的 NSFW 事件不再带入下一轮。</p></div></div>'
+  return '<div class="bioweave-projection-route-row"><div class="bioweave-projection-route-day">观察期结束</div><div><strong>没有确认怀孕 → 本轮结束</strong><p>如果正文一直没有明确确认，当前周期按未怀孕处理，本周期的亲密事件不再带入下一轮。</p></div></div>'
 }
 function detail(group) {
   if (!group) return ''
@@ -267,9 +266,7 @@ function detail(group) {
   const finalStage = group.schedule.at(-1)
   const settlement = group.timing.observationDaysUntilEnd === null ? '以观察周期为准' : `${group.timing.observationDaysUntilEnd} 天`
   const aggregatedCandidates = group.aggregatedCandidateCount === null ? '' : `${group.aggregatedCandidateCount} 人`
-  const candidateSummary = aggregatedCandidates
-    ? '<div><span>已聚合候选</span><strong>' + escapeHtml(aggregatedCandidates) + '</strong></div>'
-    : ''
+  const candidateSummary = aggregatedCandidates ? '<div><span>已聚合候选</span><strong>' + escapeHtml(aggregatedCandidates) + '</strong></div>' : ''
   return (
     '<section class="bioweave-projection-detail" aria-label="' +
     escapeHtml(group.name) +
@@ -287,7 +284,9 @@ function detail(group) {
     '</span></div></header>' +
     '<div class="bioweave-projection-detail-summary"><div><span>当前阶段</span><strong>' +
     escapeHtml(`${stageLabel(group)} · ${stagePhase(group)}`) +
-    '</strong></div>' + candidateSummary + '<div><span>距离本轮结算</span><strong>' +
+    '</strong></div>' +
+    candidateSummary +
+    '<div><span>距离本轮结算</span><strong>' +
     escapeHtml(settlement) +
     '</strong></div></div>' +
     '<section class="bioweave-projection-detail-section current"><div class="bioweave-projection-section-title"><h3>现在可能出现</h3><span>' +

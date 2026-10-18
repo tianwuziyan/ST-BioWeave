@@ -213,7 +213,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 推演页使用 `bioweave-projection-page`。页面先列出有候选路线的观察人物，再在右侧（Mobile 为下方）显示当前人物自己的详情；不使用按全局 Story Time 排序的长列表。预确认推演只有在参与者聚合证据通过验证后才进入普通推演页；缺少有效证据的 `pre_confirmation` / `participant_aggregation` projection 在 DTO 边界过滤，通用 projection 仍按既有契约保留。人物卡显示人物可读名称、观察状态、Runtime 提供的当前阶段、结算剩余时间和当前路线摘要；详情摘要显示 Runtime DTO 提供的安全 `aggregated_candidate_count` 为“已聚合候选 N 人”，不从分支数量推算人数。`character_id`、`projection_id`、`event_id`、`cycle_id`、Floor Version 与原始 concern key 不进入普通可见文案。
 
-人物选择使用事件委托钩子 `data-bioweave-action="select-projection-subject"` 与 `data-projection-subject-id`，删除候选路线继续使用 `data-bioweave-action="delete-projection"`；删除按钮保留，但卡片不再显示“备选路线”字段。当前有效候选中，concern key 以 `no_reaction_early` 或 `no_reaction_late` 结尾时显示“始终可能”，其他当前有效候选显示“当前可能出现”；已出现、已否定、已过期、已删除等历史状态保留原状态语义。详情固定分为“现在可能出现”“之后可能出现”“最后怎么结束”三段：候选路线必须明确是备选，不是已经发生的事实；正文没有写出时不能改成已观察表现；超过观察周期仍无正文确认时，当前周期结束并按本轮未怀孕处理，本周期 NSFW 事件不再带入下一轮。
+人物选择使用事件委托钩子 `data-bioweave-action="select-projection-subject"` 与 `data-projection-subject-id`，删除候选路线继续使用 `data-bioweave-action="delete-projection"`；删除按钮保留，但卡片不再显示“备选路线”字段。当前有效候选中，concern key 以 `no_reaction_early` 或 `no_reaction_late` 结尾时显示“始终可能”，其他当前有效候选显示“当前可能出现”；已出现、已否定、已过期、已删除等历史状态保留原状态语义。详情固定分为“现在可能出现”“之后可能出现”“最后怎么结束”三段：候选路线必须明确是备选，不是已经发生的事实；正文没有写出时不能改成已观察表现；超过观察周期仍无正文确认时，当前周期结束并按本轮未怀孕处理，本周期的亲密事件不再带入下一轮。
 
 空 `projection_rules` 时，Runtime DTO 可以附带三段受孕前观察排期，生产 UI 只显示 DTO 给出的当前段和后续段，不在页面重新计算时间：第 14–20 天为“嗜睡或疲倦 / 乳房敏感 / 对气味或食物产生轻微变化 / 暂时没有明显反应”；第 21–27 天为“恶心 / 闻到气味不舒服 / 情绪变化 / 食欲变化”；第 28–42 天为“恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应”。
 
