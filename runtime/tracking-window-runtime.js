@@ -9,12 +9,15 @@ import {
  * caller without making the domain core depend on storage or the host.
  */
 export function createTrackingWindowRuntime({getChatId = () => null, persist = null, getPersisted = null} = {}) {
-  function buildTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = [], onDiagnostics = null} = {}) {
+  function buildTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, timingInstances = [], participantAggregations = [], lifecycleReleaseRecords = [], persistedWindows = [], onDiagnostics = null} = {}) {
     const derived = deriveTrackingWindows(Array.isArray(activeEvents) ? activeEvents : [], {
       chatId,
       worldModel,
       subjectProfiles,
       currentStoryTime,
+      timingInstances,
+      participantAggregations,
+      lifecycleReleaseRecords,
       onDiagnostics,
     });
     return evaluateTrackingWindowLifecycles(derived, {
@@ -22,17 +25,18 @@ export function createTrackingWindowRuntime({getChatId = () => null, persist = n
       currentStoryTime,
       floorVersion,
       subjectProfiles,
+      timingInstances,
       subjectProfile: null,
     });
   }
 
-  async function resolveTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = null, assertCurrent = null} = {}) {
+  async function resolveTrackingWindows({activeEvents = [], chatId = getChatId(), worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, timingInstances = [], participantAggregations = [], lifecycleReleaseRecords = [], persistedWindows = null, assertCurrent = null} = {}) {
     // The current complete Event state is authoritative. Keep the injected
     // reader in the public constructor for older hosts, but do not read or
     // apply historical expired Windows during the deterministic calculation.
     void getPersisted;
     void persistedWindows;
-    const windows = buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles});
+    const windows = buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, timingInstances, participantAggregations, lifecycleReleaseRecords});
     if (typeof assertCurrent === 'function') await assertCurrent();
     if (typeof persist === 'function') await persist({chatId, windows, assertCurrent});
     if (typeof assertCurrent === 'function') await assertCurrent();

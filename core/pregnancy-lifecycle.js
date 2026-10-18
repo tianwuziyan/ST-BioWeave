@@ -104,7 +104,9 @@ export function appendPregnancyLifecycleFact(timeline, value) {
   if (existing) return JSON.stringify(existing) === JSON.stringify(result.value)
     ? {status: 'deduped', timeline: current}
     : {status: 'conflict', timeline: current};
-  const sameIdentity = current.facts.filter(item => item.subject_id === result.value.subject_id && item.cycle_id === result.value.cycle_id);
+  const sameIdentity = current.facts.filter(item => item.subject_id === result.value.subject_id
+    && item.cycle_id === result.value.cycle_id
+    && (item.pregnancy_id ?? null) === (result.value.pregnancy_id ?? null));
   if (sameIdentity.some(item => TERMINAL_SET.has(item.status) && TERMINAL_SET.has(result.value.status) && item.status !== result.value.status)) {
     return {status: 'fact_conflict', timeline: current};
   }
@@ -153,6 +155,23 @@ export function buildArchiveSnapshot({fact = null, closureReason = null, aggrega
 
 export function cycleLockKey({subjectId, pregnancyId = null, cycleId} = {}) {
   return text(subjectId) && text(cycleId) ? `${subjectId}:${pregnancyId ?? 'none'}:${cycleId}` : null;
+}
+
+/**
+ * A null pregnancy identity belongs to the observation phase. It may be
+ * promoted to one concrete identity by a positive confirmation, but it is
+ * never a wildcard for an already-confirmed identity.
+ */
+export function pregnancyIdentityMatches({subjectId, pregnancyId = null, candidateSubjectId, candidatePregnancyId = null, candidateStatus = null, allowObservationPromotion = false} = {}) {
+  if (!text(subjectId) || subjectId !== candidateSubjectId) return false;
+  if (!text(candidateStatus) || !['not_pregnant', 'pregnancy_confirmation', 'pregnant_ongoing', 'pregnancy_loss', 'abortion', 'miscarriage', 'termination', 'delivery', 'outcome_unknown'].includes(candidateStatus)) return false;
+  const left = pregnancyId ?? null;
+  const right = candidatePregnancyId ?? null;
+  if (left === right) return true;
+  return allowObservationPromotion
+    && left === null
+    && right !== null
+    && ['pregnancy_confirmation', 'pregnant_ongoing'].includes(candidateStatus);
 }
 
 export function isTerminalLifecycleStatus(status) { return TERMINAL_SET.has(status); }

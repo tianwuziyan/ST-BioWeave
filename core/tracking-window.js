@@ -167,20 +167,45 @@ function terminalForSubject(event, subjectId) {
     && event?.state_fact?.subject_id === subjectId;
 }
 
-function horizonReachedBeforeExposure(window, event, {worldModel = {}, subjectProfiles = {}} = {}) {
+function matchingTimingInstance(window, timingInstances = []) {
+  if (!window?.cycle_id) return null;
+  return (Array.isArray(timingInstances) ? timingInstances : []).find(instance =>
+    instance?.cycle_id === window.cycle_id
+      && instance?.subject_id === window.subject_id
+      && instance?.mechanism_key === window.mechanism_key
+      && Number.isFinite(Number(instance.effective_max_story_days))) ?? null;
+}
+
+function aggregationIdentityKey(value = {}) {
+  return `${value?.subject_id ?? ''}:${value?.pregnancy_id ?? 'none'}:${value?.cycle_id ?? ''}`;
+}
+
+export function isExposureBlockedByParticipantAggregation({event = null, subjectId = null, mechanismKey: expectedMechanismKey = null, participantAggregations = [], lifecycleReleaseRecords = []} = {}) {
+  if (!event?.event_id || !text(subjectId) || !text(expectedMechanismKey)) return false;
+  const released = new Set((Array.isArray(lifecycleReleaseRecords) ? lifecycleReleaseRecords : [])
+    .filter(record => record?.action === 'cycle-lock-released')
+    .map(aggregationIdentityKey));
+  const activeAggregations = (Array.isArray(participantAggregations) ? participantAggregations : [])
+    .filter(aggregation => aggregation?.status === 'succeeded'
+      && aggregation?.subject_id === subjectId
+      && aggregation?.mechanism_key === expectedMechanismKey
+      && !released.has(aggregationIdentityKey(aggregation)));
+  if (!activeAggregations.length) return false;
+  return !activeAggregations.some(aggregation =>
+    (aggregation.accepted_exposure_event_ids ?? []).includes(event.event_id),
+  );
+}
+
+function horizonReachedBeforeExposure(window, event, {timingInstances = []} = {}) {
   if (!window || window.status !== 'open' || !event?.story_time || !window.opened_story_time) return false;
-  const horizon = resolveTrackingWindowHorizon({
-    worldModel,
-    subjectProfile: subjectProfiles?.[window.subject_id] ?? null,
-    mechanismKey: window.mechanism_key,
-  });
-  if (!horizon) return false;
+  const timing = matchingTimingInstance(window, timingInstances);
+  if (!timing) return false;
   const difference = differenceStoryTime(event.story_time, window.opened_story_time);
   return Boolean(
     difference &&
     difference.unit === 'day' &&
     Number.isFinite(Number(difference.value)) &&
-    Number(difference.value) >= horizon.max_story_days,
+    Number(difference.value) >= Number(timing.effective_max_story_days),
   );
 }
 
@@ -310,12 +335,12 @@ export function resolveTrackingWindowHorizon({worldModel = {}, subjectProfile = 
     : null;
 }
 
-export function evaluateTrackingWindowHorizon(window, {worldModel = {}, subjectProfile = null, currentStoryTime = null, now = () => new Date().toISOString(), floorVersion = null} = {}) {
+export function evaluateTrackingWindowHorizon(window, {timingInstances = [], currentStoryTime = null, now = () => new Date().toISOString(), floorVersion = null} = {}) {
   if (!window || window.status !== 'open') return window;
-  const horizon = resolveTrackingWindowHorizon({worldModel, subjectProfile, mechanismKey: window.mechanism_key});
-  if (!horizon || !currentStoryTime || !window.opened_story_time) return window;
+  const timing = matchingTimingInstance(window, timingInstances);
+  if (!timing || !currentStoryTime || !window.opened_story_time) return window;
   const difference = differenceStoryTime(currentStoryTime, window.opened_story_time);
-  if (!difference || difference.unit !== 'day' || !Number.isFinite(Number(difference.value)) || Number(difference.value) < horizon.max_story_days) return window;
+  if (!difference || difference.unit !== 'day' || !Number.isFinite(Number(difference.value)) || Number(difference.value) < Number(timing.effective_max_story_days)) return window;
   return normalizeTrackingWindow({
     ...window,
     status: 'expired',
@@ -331,7 +356,6 @@ export function evaluateTrackingWindowLifecycles(windows = [], options = {}) {
   return (Array.isArray(windows) ? windows : [])
     .map(window => evaluateTrackingWindowHorizon(window, {
       ...options,
-      subjectProfile: options.subjectProfiles?.[window.subject_id] ?? options.subjectProfile,
     }))
     .sort((left, right) => String(left?.tracking_window_id ?? '').localeCompare(String(right?.tracking_window_id ?? '')));
 }
@@ -405,6 +429,9 @@ export function deriveTrackingWindows(events = [], {
   now = () => null,
   worldModel = {},
   subjectProfiles = {},
+  timingInstances = [],
+  participantAggregations = [],
+  lifecycleReleaseRecords = [],
   currentStoryTime = null,
   onDiagnostics = null,
 } = {}) {
@@ -441,6 +468,18 @@ export function deriveTrackingWindows(events = [], {
         event.type === 'pregnancy_confirmation' ||
         Object.hasOwn(TRACKING_WINDOW_TERMINAL_REASONS, event.type),
       )
+      .filter(event => {
+        if (!isPregnancyRelevantExposure(event)) return true;
+        const subjects = event?.pregnancy_relevance?.gestational_subject_ids ?? [];
+        const expectedMechanismKey = mechanismKey(event);
+        return subjects.every(subjectId => !isExposureBlockedByParticipantAggregation({
+          event,
+          subjectId,
+          mechanismKey: expectedMechanismKey,
+          participantAggregations,
+          lifecycleReleaseRecords,
+        }));
+      })
       .filter(event => {
         const order = measuredStoryTime(event.story_time, currentStoryTime, metrics);
         return order === null || order <= 0;
@@ -496,7 +535,7 @@ export function deriveTrackingWindows(events = [], {
           // Floor cannot safely become part of this cycle or move its anchor.
           continue;
         }
-        if (open && !horizonReachedBeforeExposure(open, event, {worldModel, subjectProfiles})) {
+        if (open && !horizonReachedBeforeExposure(open, event, {timingInstances})) {
           attachExposure(open, event, now, metrics);
         } else if (open) {
           metrics.window_create_count += 1;

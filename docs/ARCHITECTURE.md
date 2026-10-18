@@ -86,7 +86,7 @@ flowchart TD
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
-| Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 World-authoritative horizon lifecycle and Floor persistence |
+| Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 Timing-bound Story-Time lifecycle and Floor persistence; World `tracking_window_horizon` remains configuration/evidence but cannot split or expire a Window before the frozen Timing boundary |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence；完整当前 `floor.events` 直接作为 StateReducer 输入，避免再次 replay 累计状态 |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 只对 factual `health_role: observation` 做 eligibility、fingerprint、schema v3 normalize/validate、observation-level severity、one-time recovery profile 与 source-bound active filtering；`intervention` 不触发 Assessment；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写回 BiologicalEvent factual payload；旧 v1/v2 记录不补评估，缺少 v3 profile 时不产生 staged Guidance |
@@ -215,6 +215,15 @@ Subject、Cycle 关联。`runtime.collectActiveBusinessData({includeDebug: true}
 pane，不重新构建无关人物列表；无法安全局部更新时回退完整页面渲染。Settings Debug 只格式化这份 DTO，最多展示最近八次
 操作及其阶段耗时，不重新读取或重算业务状态。
 
+`lifecycle_runtime.observation_boundary` 是同一只读 DTO 的观察轮次诊断：
+它按成功 aggregation 保留当前 Floor/Swipe 边界、冻结状态、accepted
+Exposure IDs、聚合后排除的当前有效 Exposure IDs 与 reason code、冻结的
+`effective_max_story_days`、elapsed Story days、timeout status，以及可为
+`null` 的 pregnancy ID、closure/release reason 和 deleted-event count。elapsed
+以本轮首次 Exposure 的 reference Story Time 为起点；正常终止生命周期会显示
+`released/terminal_lifecycle`，而不是误报为尚未清理。这些字段只用于判断后来事件为何没有进入本轮、以及本轮是否已经超时释放，
+不写入第二事实源，也不输出正文、secret 或 raw prompt。
+
 Timing 保存的官方 Chat I/O 也记录在同一个有界操作 Trace 的 `official_io_calls` 中。记录点位于
 `runtime/sillytavern-adapter.js` 的真实 `fetch` 边界，而不是仅统计上层包装函数；每次调用用
 `io_call_id` 关联 `floor_transaction_id`、`persistence_kind` 和 `io_purpose`，并分别记录
@@ -228,8 +237,21 @@ Coordinator readback 的实际成本，不复用或删除任何权威读取，�
 创建实例、聚合、调用 AI 或改变持久化顺序。没有可见执行 Trace 时使用 `TRACE_UNAVAILABLE`
 或 `UNKNOWN`，不把当前缺失的 Timing Instance 反推为历史上未调用；Timing Instance
 由当前有效的 pregnancy-relevant Exposure、人物配置和既有 Story Time 机制创建，
-不依赖 `projection_rules`；规则为空只阻断 Projection Eligibility/AI，不阻断 Timing
-或到期后的 Participant Aggregation，也不单独证明名单聚合失败。
+不依赖 `projection_rules`；规则为空不阻断 Timing 或到期后的 Participant Aggregation。
+正式 Participant Aggregation 成功且存在有效 Timing/Tracking Window 时，Projection Runtime
+使用插件内置的 `pre_confirmation_observation` 分支规则生成三段、每段四条确定性的中性候选
+（第 14–20 天为嗜睡或疲倦、乳房敏感、气味或食物轻微变化、暂时无明显反应；第 21–27 天为
+恶心、气味不舒服、情绪变化、食欲变化；第 28–42 天为恶心加重、可能孕吐、持续疲倦、一直无明显反应）；这些候选不创建
+BiologicalEvent、pregnancy fact 或 `pregnancy_id`，ST 正文与 Event Analysis 仍是怀孕事实确认边界。
+内置分支按经过的 Story Time 分段触发；未达到对应时间段的分支不会提前生成。Projection DTO 和持久化候选
+保留参考时间、当前时间与 elapsed days。旧版立即触发的内置候选在首次运行新规则时只做 Projection
+生命周期删除并重新生成，不删除事实 Event 或改写 Timing/Aggregation。
+升级前一版插件留下的单条中性占位 Projection 时，Runtime 只将该旧生成物标记为删除，保留
+正式候选、Exposure 与 Aggregation 历史，不会删除用户的事实 Event。
+若没有有效 Aggregation/Timing 依据，则保持无候选，并在诊断中区分空规则与无候选。当前 Event
+快照只缺少部分已接受来源时，新候选只使用仍然有效的当前来源，历史 Aggregation 名单不被改写；
+Debug 在 `aggregation_evidence_invalid_event_ids` 中列出具体缺失/失效 ID，也不会把这些来源重新带回当前
+事实。只有所有已接受来源都失效时，才失败关闭；已经保存、仍引用失效来源的旧 Projection 仍会被隐藏。
 
 人物级 Timing/Aggregation 诊断另外保留 Tracking Window 的权威 Cycle、首次有效
 Exposure、候选/accepted Exposure、最终 Cycle 及 `cycle_id_source`；`cycle_id_consistent`
@@ -240,8 +262,8 @@ Exposure、候选/accepted Exposure、最终 Cycle 及 `cycle_id_source`；`cycl
 `sampled_offset_source`、`frozen_offset_status` 和 `rng_source`，用于区分真实初始采样、冻结复用
 与未创建；其中 readback succeeded 只表示
 只读权威读取成功，结果是否存在由 result_present 表示。`projection_diagnostics` 单独报告
-规则可用性、Eligibility、Timing Window 和 Projection AI 调度，不把空规则解释为 Timing
-或 Aggregation 的阻断。
+规则可用性、Eligibility、Timing Window 和 Projection 调度，不把空规则解释为 Timing
+或 Aggregation 的阻断；诊断还标记内置候选来源与是否实际调用 AI。
 
 ## Feature module creation rule
 
@@ -506,8 +528,9 @@ Floor Persistence Coordinator、active Swipe、完整 Floor Version、官方保�
 位于单一 Core preset module，只有在 World species 与 canonical character
 species 都明确为普通 Human 时作为周期 config baseline；它不创建或替代
 World projection rule。即使 `projection_rules[]` 为空，已解析的 Exposure 和
-人物配置仍可创建 Timing Instance 并触发到期 Aggregation；规则仍只控制
-Projection Eligibility/AI。Characters UI 通过正式 Runtime config API 读取/保存
+人物配置仍可创建 Timing Instance 并触发到期 Aggregation；正式 Aggregation 成功后，
+Runtime 使用内置 `pre_confirmation_observation` 多分支规则提供不依赖 AI 的中性候选兜底，
+而自定义规则仍控制其自身的 Projection Eligibility/AI。Characters UI 通过正式 Runtime config API 读取/保存
 Chat-local override，不能调用 debug facade。Timing editor 的正式 view read
 只读取当前 Chat 的 World applicability、Chat config 和 Floor timing snapshot，
 不调用 debug aggregation、Event analysis 或 Projection eligibility；打开先显示

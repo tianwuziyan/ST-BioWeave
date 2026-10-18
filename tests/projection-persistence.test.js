@@ -267,3 +267,26 @@ test('Projection delivery response is a separate idempotent record and stale Flo
   assert.equal((await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'})).length, 2)
   await assert.rejects(() => persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: {...version(13), content_hash: 'stale'}, deliveryRecord: response}), /FLOOR_VERSION_STALE/)
 })
+
+test('Projection views and deliveries respect an optional endpoint index while preserving the unbounded default', async () => {
+  const created = projection(10)
+  const {persistence, store} = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {schema_version: 1, creations: [created], evidence_records: [], lifecycle_records: [], delivery_records: []}},
+    '1:0': {floor_version: version(13), projection_timeline: emptyProjectionTimeline()},
+  }})
+  const delivery = {
+    projection_id: created.projection_id,
+    aggregation_id: 'aggregation-endpoint',
+    subject_id: 'char_000001',
+    pregnancy_id: null,
+    cycle_id: 'cycle-endpoint',
+    submitted_floor_version: version(13),
+    created_at_floor_version: version(13),
+    context_fingerprint: 'context-endpoint',
+  }
+  await persistence.saveProjectionDeliverySubmission({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: delivery})
+  assert.equal((await persistence.getProjectionViews({chatId: 'chat-a', endpointIndex: 0, endpointFloor: 13})).all.length, 1)
+  assert.equal((await persistence.getProjectionDeliveryRecords({chatId: 'chat-a', endpointIndex: 0, endpointFloor: 13})).length, 0)
+  assert.equal((await persistence.getProjectionDeliveryRecords({chatId: 'chat-a', endpointFloor: 13})).length, 1)
+  assert.equal(store.state.floors['1:0'].projection_timeline.delivery_records.length, 1)
+})

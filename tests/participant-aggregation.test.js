@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {resolveProjectionTimingInstance} from '../core/projection-timing.js';
-import {buildParticipantAggregationEvidence, deriveParticipantList, emptyParticipantAggregationSnapshot, filterProjectionViewsByAggregationEvidence, normalizeParticipantAggregation, normalizeParticipantAggregationSnapshot, resolveParticipantAggregationTrigger, upsertParticipantAggregation} from '../core/participant-aggregation.js';
+import {buildParticipantAggregationEvidence, deriveParticipantList, emptyParticipantAggregationSnapshot, filterProjectionViewsByAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, normalizeParticipantAggregation, normalizeParticipantAggregationSnapshot, resolveParticipantAggregationTrigger, upsertParticipantAggregation} from '../core/participant-aggregation.js';
 import {createParticipantAggregationPersistence} from '../storage/participant-aggregation.js';
 import {emptyFloor} from '../storage/schema.js';
 
@@ -123,6 +123,20 @@ test('projection evidence invalidates unique and all-Exposure deletions while re
   assert.equal(noneRemaining.projection_id, view.projection_id);
 });
 
+test('new projection evidence can use the surviving current subset without changing historical Aggregation', () => {
+  const events = [exposure('exposure-1', 1, ['source-1']), exposure('exposure-2', 2, ['source-1', 'source-2'])];
+  const aggregation = normalizeParticipantAggregation({aggregation_id: 'aggregation-partial-current', subject_id: 'subject-1', mechanism_key: 'fertilization', cycle_id: 'cycle-partial-current', timing_instance_id: 'timing-partial-current', reference_story_time: {day_index: 1}, aggregation_story_time: {day_index: 18}, elapsed_story_days: 17, effective_min_story_days: 14, effective_max_story_days: 42, sampled_individual_offset_story_days: 0, config_snapshot: config, accepted_exposure_event_ids: ['exposure-1', 'exposure-2'], source_basis_refs: {}, created_at_floor_version: version});
+  const evidence = buildParticipantAggregationEvidence({aggregation, events: [events[1]], subjectId: 'subject-1', allowPartial: true});
+  assert.deepEqual(evidence.accepted_exposure_event_ids, ['exposure-2']);
+  assert.deepEqual(evidence.participant_exposure_mapping, [
+    {participant_id: 'source-1', exposure_event_ids: ['exposure-2'], exposure_count: 1},
+    {participant_id: 'source-2', exposure_event_ids: ['exposure-2'], exposure_count: 1},
+  ]);
+  const view = {projection_id: 'projection-partial-current', subject_id: 'subject-1', aggregation_path: 'participant_aggregation', aggregation_evidence: evidence, context_visible: true};
+  assert.equal(filterProjectionViewsByAggregationEvidence({views: {all: [view]}, aggregations: [aggregation], events: [events[1]]}).all[0].context_visible, true);
+  assert.deepEqual(aggregation.accepted_exposure_event_ids, ['exposure-1', 'exposure-2']);
+});
+
 test('projection evidence is invalid when its persisted aggregation is absent from current readback', () => {
   const aggregation = normalizeParticipantAggregation({aggregation_id: 'aggregation-missing', subject_id: 'subject-1', mechanism_key: 'fertilization', cycle_id: 'cycle-missing', timing_instance_id: 'timing-missing', reference_story_time: {day_index: 1}, aggregation_story_time: {day_index: 18}, elapsed_story_days: 17, effective_min_story_days: 14, effective_max_story_days: 42, sampled_individual_offset_story_days: 0, config_snapshot: config, accepted_exposure_event_ids: ['exposure-1'], source_basis_refs: {}, created_at_floor_version: version});
   const view = {projection_id: 'projection-missing-aggregation', subject_id: 'subject-1', aggregation_evidence: buildParticipantAggregationEvidence({aggregation, events: [exposure('exposure-1', 1)], subjectId: 'subject-1'}), context_visible: true};
@@ -134,6 +148,13 @@ test('projection evidence is invalid when its persisted aggregation is absent fr
 test('aggregation evidence construction rejects accepted IDs absent from the current subject-local Event snapshot', () => {
   const aggregation = normalizeParticipantAggregation({aggregation_id: 'aggregation-current-events', subject_id: 'subject-1', mechanism_key: 'fertilization', cycle_id: 'cycle-current-events', timing_instance_id: 'timing-current-events', reference_story_time: {day_index: 1}, aggregation_story_time: {day_index: 18}, elapsed_story_days: 17, effective_min_story_days: 14, effective_max_story_days: 42, sampled_individual_offset_story_days: 0, config_snapshot: config, accepted_exposure_event_ids: ['missing-exposure'], source_basis_refs: {}, created_at_floor_version: version});
   assert.equal(buildParticipantAggregationEvidence({aggregation, events: [], subjectId: 'subject-1'}), null);
+});
+test('aggregation evidence diagnostics identify the exact invalidated accepted Event IDs', () => {
+  const aggregation = normalizeParticipantAggregation({aggregation_id: 'aggregation-invalid-ids', subject_id: 'subject-1', mechanism_key: 'fertilization', cycle_id: 'cycle-invalid-ids', timing_instance_id: 'timing-invalid-ids', reference_story_time: {day_index: 1}, aggregation_story_time: {day_index: 18}, elapsed_story_days: 17, effective_min_story_days: 14, effective_max_story_days: 42, sampled_individual_offset_story_days: 0, config_snapshot: config, accepted_exposure_event_ids: ['exposure-1', 'exposure-2'], source_basis_refs: {}, created_at_floor_version: version});
+  assert.deepEqual(
+    findParticipantAggregationEvidenceInvalidEventIds({aggregation, events: [exposure('exposure-1', 1)], subjectId: 'subject-1'}),
+    ['exposure-2'],
+  );
 });
 test('legacy projections without aggregation evidence remain visible while invalid new-path projections are hidden', () => {
   const legacy = {projection_id: 'legacy', subject_id: 'subject-1', context_visible: true};

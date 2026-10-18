@@ -1,11 +1,64 @@
 import {compareStoryTime, differenceStoryTime, sortEventsByStoryTime} from '../story/time.js';
 import {deterministicDigest, PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KINDS, isProjectionEligible} from './projection.js';
 import {evaluateProjectionTiming} from './projection-timing.js';
-import {buildParticipantAggregationEvidence, isParticipantAggregationEvidenceComplete} from './participant-aggregation.js';
+import {buildParticipantAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, isParticipantAggregationEvidenceComplete} from './participant-aggregation.js';
 
 export const PROJECTION_RULE_SCHEMA_VERSION = 1;
 export const PROJECTION_DECISION_STATUSES = Object.freeze(['eligible', 'not_eligible', 'unresolved']);
 export const PROJECTION_EVOLUTION_DECISIONS = Object.freeze(['keep_active', 'realized', 'contradicted', 'expired', 'unresolved']);
+export const BUILT_IN_PRE_CONFIRMATION_CONCERN = 'pre_confirmation_observation';
+export const LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION = '当前已完成参与者聚合，后续剧情可能出现观察信号；这不是已确认怀孕事实。';
+export const BUILT_IN_PRE_CONFIRMATION_STAGES = Object.freeze([
+  Object.freeze({
+    key: 'early_subtle_changes',
+    label: '第 14–20 天',
+    phase: '早期细微变化',
+    min_elapsed_story_days: 14,
+    max_elapsed_story_days: 20,
+    branches: Object.freeze([
+      Object.freeze({key: 'fatigue', label: '嗜睡或疲倦', description: '比平时更早想休息，白天注意力下降；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'breast_sensitivity', label: '乳房敏感', description: '衣物摩擦或触碰时，比平时更容易不适；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'scent_food_change', label: '对气味或食物产生轻微变化', description: '对平时的气味或食物出现轻微的不适或偏好变化；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'no_reaction_early', label: '暂时没有明显反应', description: '日常状态和平时一样，暂时没有明显身体表现；这只是备选剧情方向，不是已确认怀孕事实。'}),
+    ]),
+  }),
+  Object.freeze({
+    key: 'early_reactions',
+    label: '第 21–27 天',
+    phase: '早期反应出现',
+    min_elapsed_story_days: 21,
+    max_elapsed_story_days: 27,
+    branches: Object.freeze([
+      Object.freeze({key: 'nausea', label: '恶心', description: '闻到油烟、浓烈香气或某些食物时出现反胃感；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'odor_discomfort', label: '闻到气味不舒服', description: '闻到某些气味时觉得不舒服，想要避开；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'mood_change', label: '情绪变化', description: '情绪比平时更容易波动；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'appetite_change', label: '食欲变化', description: '食量或对食物的偏好发生变化；这只是备选剧情方向，不是已确认怀孕事实。'}),
+    ]),
+  }),
+  Object.freeze({
+    key: 'more_obvious_reactions',
+    label: '第 28–42 天',
+    phase: '反应逐渐明显',
+    min_elapsed_story_days: 28,
+    max_elapsed_story_days: 42,
+    branches: Object.freeze([
+      Object.freeze({key: 'nausea_worsening', label: '恶心加重', description: '恶心比之前更频繁，或更容易被气味、进食触发；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'vomiting', label: '可能出现孕吐', description: '恶心进一步加重，可能在特定时间或气味刺激下呕吐；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'persistent_fatigue', label: '持续疲倦', description: '疲倦持续存在，休息后仍觉得乏力；这只是备选剧情方向，不是已确认怀孕事实。'}),
+      Object.freeze({key: 'no_reaction_late', label: '一直没有明显反应', description: '一直没有明显身体反应，不能因为没有反应就确认结果；这只是备选剧情方向，不是已确认怀孕事实。'}),
+    ]),
+  }),
+]);
+export const BUILT_IN_PRE_CONFIRMATION_BRANCHES = Object.freeze(
+  BUILT_IN_PRE_CONFIRMATION_STAGES.flatMap(stage => stage.branches.map(branch => Object.freeze({
+    ...branch,
+    stage_key: stage.key,
+    stage_label: stage.label,
+    stage_phase: stage.phase,
+    min_elapsed_story_days: stage.min_elapsed_story_days,
+    max_elapsed_story_days: stage.max_elapsed_story_days,
+  }))),
+);
 
 const RULE_FIELDS = new Set(['schema_version', 'projection_rule_id', 'mechanism_key', 'development_concern_key', 'development_kind', 'trigger', 'requirements', 'realization', 'contradiction', 'expiration']);
 const RAW_RULE_FIELDS = new Set(['schema_version', 'mechanism_key', 'development_concern_key', 'development_kind', 'trigger', 'requirements', 'realization', 'contradiction', 'expiration']);
@@ -126,6 +179,52 @@ export function normalizeProjectionRules(value, {allowGeneratedIdentity = true} 
   return [...byId.values()].sort((left, right) => left.projection_rule_id.localeCompare(right.projection_rule_id)).map(clone);
 }
 function rulesFrom(worldModel) { return Array.isArray(worldModel?.projection_rules) ? worldModel.projection_rules : []; }
+export function buildBuiltInPreConfirmationRules(preConfirmationTiming = null) {
+  const mechanisms = [...new Set([
+    ...(preConfirmationTiming?.instances ?? []).map(item => item?.mechanism_key),
+    ...(preConfirmationTiming?.aggregations ?? []).filter(item => item?.status === 'succeeded').map(item => item?.mechanism_key),
+  ].filter(text))].sort();
+  return mechanisms.flatMap(mechanismKey => BUILT_IN_PRE_CONFIRMATION_BRANCHES.map(branch => {
+    const content = {
+        schema_version: PROJECTION_RULE_SCHEMA_VERSION,
+        mechanism_key: mechanismKey,
+        development_concern_key: `${BUILT_IN_PRE_CONFIRMATION_CONCERN}:${branch.key}`,
+        development_kind: 'monitoring_signal',
+        trigger: {kind: 'elapsed_after_event', source_event_type: null, min_elapsed_story_days: branch.min_elapsed_story_days},
+        requirements: {capabilities: [], source_compatibility: 'not_required', contributor_relationships: []},
+        realization: null,
+        contradiction: null,
+        expiration: {trigger: {kind: 'elapsed_after_event', source_event_type: null, min_elapsed_story_days: branch.max_elapsed_story_days + 1}},
+      };
+      return {...content, projection_rule_id: buildProjectionRuleId(content)};
+    }));
+}
+
+export function getBuiltInPreConfirmationSchedule() {
+  return BUILT_IN_PRE_CONFIRMATION_STAGES.map(stage => ({
+    key: stage.key,
+    label: stage.label,
+    phase: stage.phase,
+    min_elapsed_story_days: stage.min_elapsed_story_days,
+    max_elapsed_story_days: stage.max_elapsed_story_days,
+    branches: stage.branches.map(branch => ({
+      key: branch.key,
+      label: branch.label,
+      description: branch.description,
+    })),
+  }));
+}
+
+export function builtInPreConfirmationBranchForConcern(concernKey) {
+  const prefix = `${BUILT_IN_PRE_CONFIRMATION_CONCERN}:`;
+  const key = typeof concernKey === 'string' && concernKey.startsWith(prefix) ? concernKey.slice(prefix.length) : '';
+  return BUILT_IN_PRE_CONFIRMATION_BRANCHES.find(branch => branch.key === key) ?? null;
+}
+export function isLegacyBuiltInPreConfirmationProjection(view) {
+  return (view?.development_concern_key === BUILT_IN_PRE_CONFIRMATION_CONCERN
+      && view?.development?.next_signal === LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION)
+    || view?.development_concern_key === `${BUILT_IN_PRE_CONFIRMATION_CONCERN}:no_reaction`;
+}
 function eventsForSubject(events, subjectId) { return (Array.isArray(events) ? events : []).filter(event => event?.pregnancy_relevance?.relevant === true && event.pregnancy_relevance.gestational_subject_ids?.includes(subjectId)); }
 function mechanismMatches(event, mechanismKey) { return event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey; }
 function candidateMatches(candidate, subjectId, mechanismKey) { return candidate?.subject_id === subjectId && candidate?.mechanism_key === mechanismKey; }
@@ -168,19 +267,62 @@ function openPreConfirmationWindow(windows, subjectId, mechanismKey, matchingEve
 }
 
 export function evaluateProjectionEligibility({currentState = {}, events = [], sourceCandidates = [], worldModel = {}, currentStoryTime = null, existingProjections = [], preConfirmationTiming = null} = {}) {
-  const rawRules = rulesFrom(worldModel); if (!rawRules.length) return {decisions: [], diagnostics: [{code: 'projection_rules_unavailable'}]};
+  const rawRules = rulesFrom(worldModel);
+  const builtInRules = rawRules.length ? [] : buildBuiltInPreConfirmationRules(preConfirmationTiming);
+  if (!rawRules.length && !builtInRules.length) return {decisions: [], diagnostics: [{code: 'projection_rules_unavailable'}], built_in_rules: []};
+  const effectiveRules = rawRules.length ? rawRules : builtInRules;
   const rules = []; const seenRules = new Map(); const diagnostics = [];
-  for (const rawRule of rawRules) { const previous = seenRules.get(rawRule?.projection_rule_id); if (previous) { if (fingerprint(previous) !== fingerprint(rawRule)) diagnostics.push({code: 'projection_rule_conflict', projection_rule_id: rawRule?.projection_rule_id ?? null}); continue; } seenRules.set(rawRule?.projection_rule_id, rawRule); rules.push(rawRule); }
+  for (const rawRule of effectiveRules) { const previous = seenRules.get(rawRule?.projection_rule_id); if (previous) { if (fingerprint(previous) !== fingerprint(rawRule)) diagnostics.push({code: 'projection_rule_conflict', projection_rule_id: rawRule?.projection_rule_id ?? null}); continue; } seenRules.set(rawRule?.projection_rule_id, rawRule); rules.push(rawRule); }
   const decisions = [];
   for (const rawRule of rules) {
     const validation = validateProjectionRule(rawRule); if (!validation.ok) { diagnostics.push({code: 'invalid_projection_rule', projection_rule_id: rawRule?.projection_rule_id ?? null, detail: validation.errors.join('|')}); continue; }
     const rule = normalizedRule(rawRule);
     for (const subjectId of subjectIds(events, currentState, sourceCandidates)) {
-      const allSubjectEvents = eventsForSubject(events, subjectId); const matchingEvents = orderedEvents(allSubjectEvents.filter(event => mechanismMatches(event, rule.mechanism_key) && (!rule.trigger.source_event_type || event.type === rule.trigger.source_event_type))); const matchingCandidates = (Array.isArray(sourceCandidates) ? sourceCandidates : []).filter(candidate => candidateMatches(candidate, subjectId, rule.mechanism_key)); const evidence = evidenceFor(matchingEvents, matchingCandidates, subjectId, rule.mechanism_key); const trackingWindow = openPreConfirmationWindow(preConfirmationTiming?.windows, subjectId, rule.mechanism_key, matchingEvents); const timingInstance = preConfirmationTiming?.instances?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.source_event_ids?.some(id => matchingEvents.some(event => event.event_id === id))) ?? null; const timingCheck = preConfirmationTiming?.enabled ? (Array.isArray(preConfirmationTiming.windows) && !trackingWindow ? {eligible: 'not_eligible', reason_code: 'tracking_window_not_open', status: 'not_eligible'} : timingInstance ? evaluateProjectionTiming({timingInstance, currentStoryTime, events, subjectId, pregnancyConfirmed: preConfirmationTiming.confirmedSubjects?.includes(subjectId), terminated: preConfirmationTiming.terminatedSubjects?.includes(subjectId)}) : {eligible: 'unresolved', reason_code: matchingEvents.length ? 'no_valid_timing_instance' : 'no_valid_factual_basis', status: 'source_invalidated'}) : null; const timingEligibility = timingCheck ? {...timingCheck, status: timingCheck.eligible} : null; const aggregation = preConfirmationTiming?.aggregations?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.cycle_id === timingInstance?.cycle_id) ?? null; const aggregationEvidence = aggregation ? buildParticipantAggregationEvidence({aggregation, events, subjectId}) : null; const aggregationEligibility = preConfirmationTiming?.aggregations ? (aggregation ? (aggregationEvidence ? {status: 'eligible', reason_code: 'participant_aggregation_succeeded'} : {status: 'not_eligible', reason_code: 'participant_aggregation_evidence_invalid'}) : {status: 'not_eligible', reason_code: 'participant_aggregation_pending'}) : null; const effectiveTimingEligibility = aggregation && timingCheck && !['source_invalidated', 'pregnancy_confirmed', 'terminated_by_loss_or_abortion'].includes(timingCheck.status) ? {status: 'eligible', reason_code: 'participant_aggregation_succeeded', elapsed_story_days: timingCheck.elapsed_story_days ?? null} : timingEligibility; const checks = [triggerResult(rule, matchingEvents, currentStoryTime), evaluateCapabilities(rule, currentState.characters?.[subjectId]), evaluateCandidates(rule, matchingCandidates), evaluateContributorRequirements(rule, currentState.characters?.[subjectId]), effectiveTimingEligibility, aggregationEligibility].filter(Boolean); const notEligible = checks.find(check => check.status === 'not_eligible'); const unresolved = checks.find(check => check.status === 'unresolved'); const result = notEligible ?? unresolved ?? checks[0] ?? {status: 'unresolved', reason_code: 'rule_unresolved'}; const existing = existingProjection(existingProjections, subjectId, rule); decisions.push({subject_id: subjectId, projection_rule_id: rule.projection_rule_id, development_concern_key: rule.development_concern_key, development_kind: rule.development_kind, eligibility: result.status, reason_code: result.reason_code, source_event_ids: evidence.source_event_ids, exposure_event_ids: matchingEvents.map(event => event.event_id), evidence_refs: evidence.evidence_refs, existing_projection_id: existing?.projection_id ?? null, reference_event_id: result.reference_event_id ?? null, timing_instance_id: timingInstance?.timing_instance_id ?? null, tracking_window_id: trackingWindow?.tracking_window_id ?? null, timing_status: timingCheck?.status ?? null, timing_elapsed_story_days: timingCheck?.elapsed_story_days ?? null, effective_min_story_days: timingInstance?.effective_min_story_days ?? null, effective_max_story_days: timingInstance?.effective_max_story_days ?? null, aggregation_id: aggregation?.aggregation_id ?? null, aggregation_path: aggregation ? 'participant_aggregation' : null, aggregation_evidence: aggregationEvidence});
+      const allSubjectEvents = eventsForSubject(events, subjectId);
+      const matchingEvents = orderedEvents(allSubjectEvents.filter(event => mechanismMatches(event, rule.mechanism_key) && (!rule.trigger.source_event_type || event.type === rule.trigger.source_event_type)));
+      const matchingCandidates = (Array.isArray(sourceCandidates) ? sourceCandidates : []).filter(candidate => candidateMatches(candidate, subjectId, rule.mechanism_key));
+      const evidence = evidenceFor(matchingEvents, matchingCandidates, subjectId, rule.mechanism_key);
+      const trackingWindow = openPreConfirmationWindow(preConfirmationTiming?.windows, subjectId, rule.mechanism_key, matchingEvents);
+      const timingInstance = preConfirmationTiming?.instances?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.source_event_ids?.some(id => matchingEvents.some(event => event.event_id === id))) ?? null;
+      const timingCheck = preConfirmationTiming?.enabled
+        ? (!Array.isArray(preConfirmationTiming.windows) || !trackingWindow
+          ? {eligible: 'not_eligible', reason_code: 'tracking_window_not_open', status: 'not_eligible'}
+          : timingInstance
+            ? evaluateProjectionTiming({timingInstance, currentStoryTime, events, subjectId, pregnancyConfirmed: preConfirmationTiming.confirmedSubjects?.includes(subjectId), terminated: preConfirmationTiming.terminatedSubjects?.includes(subjectId)})
+            : {eligible: 'unresolved', reason_code: matchingEvents.length ? 'no_valid_timing_instance' : 'no_valid_factual_basis', status: 'source_invalidated'})
+        : null;
+      const timingEligibility = timingCheck ? {...timingCheck, status: timingCheck.eligible} : null;
+      const aggregation = preConfirmationTiming?.aggregations?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.cycle_id === timingInstance?.cycle_id) ?? null;
+      const aggregationEvidenceInvalidEventIds = aggregation
+        ? findParticipantAggregationEvidenceInvalidEventIds({aggregation, events, subjectId})
+        : [];
+      const aggregationEvidence = aggregation
+        ? buildParticipantAggregationEvidence({aggregation, events, subjectId, allowPartial: true})
+        : null;
+      const aggregationEligibility = preConfirmationTiming?.aggregations
+        ? (aggregation
+          ? (aggregationEvidence
+            ? {status: 'eligible', reason_code: aggregationEvidenceInvalidEventIds.length ? 'participant_aggregation_evidence_partial' : 'participant_aggregation_succeeded'}
+            : {status: 'not_eligible', reason_code: 'participant_aggregation_evidence_invalid'})
+          : {status: 'not_eligible', reason_code: 'participant_aggregation_pending'})
+        : null;
+      const effectiveTimingEligibility = aggregation && timingCheck && !['source_invalidated', 'pregnancy_confirmed', 'terminated_by_loss_or_abortion'].includes(timingCheck.status)
+        ? {status: 'eligible', reason_code: 'participant_aggregation_succeeded', elapsed_story_days: timingCheck.elapsed_story_days ?? null}
+        : timingEligibility;
+      const builtInBranch = !rawRules.length ? builtInPreConfirmationBranchForConcern(rule.development_concern_key) : null;
+      const builtInStageEligibility = builtInBranch && Number.isFinite(Number(timingCheck?.elapsed_story_days)) && Number(timingCheck.elapsed_story_days) > builtInBranch.max_elapsed_story_days
+        ? {status: 'not_eligible', reason_code: 'observation_stage_expired'}
+        : null;
+      const checks = [triggerResult(rule, matchingEvents, currentStoryTime), evaluateCapabilities(rule, currentState.characters?.[subjectId]), evaluateCandidates(rule, matchingCandidates), evaluateContributorRequirements(rule, currentState.characters?.[subjectId]), effectiveTimingEligibility, aggregationEligibility, builtInStageEligibility].filter(Boolean);
+      const notEligible = checks.find(check => check.status === 'not_eligible');
+      const unresolved = checks.find(check => check.status === 'unresolved');
+      const result = notEligible ?? unresolved ?? checks[0] ?? {status: 'unresolved', reason_code: 'rule_unresolved'};
+      const existing = existingProjection(existingProjections, subjectId, rule);
+      decisions.push({subject_id: subjectId, projection_rule_id: rule.projection_rule_id, development_concern_key: rule.development_concern_key, development_kind: rule.development_kind, eligibility: result.status, reason_code: result.reason_code, source_event_ids: evidence.source_event_ids, exposure_event_ids: matchingEvents.map(event => event.event_id), evidence_refs: evidence.evidence_refs, existing_projection_id: existing?.projection_id ?? null, reference_event_id: result.reference_event_id ?? null, timing_instance_id: timingInstance?.timing_instance_id ?? null, tracking_window_id: trackingWindow?.tracking_window_id ?? null, timing_status: timingCheck?.status ?? null, timing_elapsed_story_days: timingCheck?.elapsed_story_days ?? null, effective_min_story_days: timingInstance?.effective_min_story_days ?? null, effective_max_story_days: timingInstance?.effective_max_story_days ?? null, aggregation_id: aggregation?.aggregation_id ?? null, aggregation_path: aggregation ? 'participant_aggregation' : null, aggregation_evidence: aggregationEvidence, aggregation_evidence_invalid_event_ids: aggregationEvidenceInvalidEventIds, projection_source: rawRules.length ? 'world_model_rule' : 'built_in_pre_confirmation'});
     }
   }
   decisions.sort((left, right) => left.subject_id.localeCompare(right.subject_id) || left.projection_rule_id.localeCompare(right.projection_rule_id) || left.development_concern_key.localeCompare(right.development_concern_key));
-  return {decisions, diagnostics};
+  return {decisions, diagnostics: rawRules.length ? diagnostics : [{code: 'projection_rules_unavailable'}, ...diagnostics], built_in_rules: builtInRules};
 }
 
 function criteriaMatch(event, criteria) { if (!criteria) return false; if (criteria.event_types?.length && !criteria.event_types.includes(event.type)) return false; if (criteria.statuses?.length && !criteria.statuses.includes(event.status)) return false; if (criteria.payload_equals && Object.entries(criteria.payload_equals).some(([key, value]) => event.state_fact?.payload?.[key] !== value)) return false; return true; }

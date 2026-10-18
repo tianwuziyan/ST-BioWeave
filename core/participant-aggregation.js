@@ -193,22 +193,34 @@ export function deriveParticipantList({events = [], acceptedExposureEventIds = [
   return [...participants.values()].sort((left, right) => left.participant_id.localeCompare(right.participant_id)).map(item => ({...item, exposure_count: item.exposure_event_ids.length}));
 }
 
-export function buildParticipantAggregationEvidence({aggregation = null, events = [], subjectId = null} = {}) {
+export function findParticipantAggregationEvidenceInvalidEventIds({aggregation = null, events = [], subjectId = null} = {}) {
+  const acceptedIds = Array.isArray(aggregation?.accepted_exposure_event_ids) ? aggregation.accepted_exposure_event_ids : [];
+  const eventById = new Map((Array.isArray(events) ? events : []).map(event => [event?.event_id, event]));
+  return acceptedIds.filter(eventId => {
+    const event = eventById.get(eventId);
+    return event?.pregnancy_relevance?.relevant !== true
+      || !event.pregnancy_relevance.gestational_subject_ids?.includes(subjectId)
+      || event.pregnancy_relevance.reproductive_mechanism?.kind !== aggregation?.mechanism_key;
+  });
+}
+
+// Historical Aggregation stays immutable; Projection generation may opt into a
+// current valid subset, while strict callers keep the all-sources contract.
+export function buildParticipantAggregationEvidence({aggregation = null, events = [], subjectId = null, allowPartial = false} = {}) {
   if (!aggregation?.aggregation_id || !aggregation?.cycle_id || !subjectId || !ids(aggregation.accepted_exposure_event_ids, true)) return null;
-  const acceptedEvents = (Array.isArray(events) ? events : []).filter(event =>
-    aggregation.accepted_exposure_event_ids.includes(event?.event_id) &&
-    event?.pregnancy_relevance?.relevant === true &&
-    event?.pregnancy_relevance?.gestational_subject_ids?.includes(subjectId));
-  if (acceptedEvents.length !== aggregation.accepted_exposure_event_ids.length) return null;
+  const invalidEventIds = findParticipantAggregationEvidenceInvalidEventIds({aggregation, events, subjectId});
+  if (invalidEventIds.length && !allowPartial) return null;
+  const acceptedExposureEventIds = aggregation.accepted_exposure_event_ids.filter(eventId => !invalidEventIds.includes(eventId));
+  if (!acceptedExposureEventIds.length) return null;
   return {
     subject_id: subjectId,
     aggregation_id: aggregation.aggregation_id,
     pregnancy_id: aggregation.pregnancy_id ?? null,
     cycle_id: aggregation.cycle_id,
-    accepted_exposure_event_ids: [...new Set(aggregation.accepted_exposure_event_ids ?? [])].sort(),
+    accepted_exposure_event_ids: [...new Set(acceptedExposureEventIds)].sort(),
     participant_exposure_mapping: deriveParticipantList({
       events,
-      acceptedExposureEventIds: aggregation.accepted_exposure_event_ids,
+      acceptedExposureEventIds,
       subjectId,
     }),
   };
@@ -234,7 +246,7 @@ export function projectionAggregationEvidenceMatches({projection = null, aggrega
   if (!isParticipantAggregationEvidenceComplete(evidence)) return false;
   if (!aggregation || evidence.subject_id !== projection.subject_id || evidence.aggregation_id !== aggregation.aggregation_id || evidence.cycle_id !== aggregation.cycle_id) return false;
   if ((evidence.pregnancy_id ?? null) !== (aggregation.pregnancy_id ?? null)) return false;
-  const current = buildParticipantAggregationEvidence({aggregation, events, subjectId: projection.subject_id});
+  const current = buildParticipantAggregationEvidence({aggregation, events, subjectId: projection.subject_id, allowPartial: true});
   if (!current || !sameIds(evidence.accepted_exposure_event_ids, current.accepted_exposure_event_ids)) return false;
   return JSON.stringify(evidence.participant_exposure_mapping ?? []) === JSON.stringify(current.participant_exposure_mapping ?? []);
 }

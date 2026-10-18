@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"验收时检查实现是否仍遵守 Floor-owned Event、active Swipe、六字段版本和派生状态重建约束。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"验收 Tracking Window 的 horizon、Story Time、终止和当前有效 Event 语义是否与最终决策一致。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"验收 Exposure、Lifecycle facts、pregnancy identity 和 Event Analysis 的边界没有被跨层混用。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"验收来源删除、历史 Aggregation、Lifecycle Archive/Release 和 Projection Context 的生命周期一致性。"}
+{"file":"docs/ARCHITECTURE.md","reason":"验收模块责任、Host NO-GO 和未授权范围没有被实现意外扩大。"}

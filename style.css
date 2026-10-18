@@ -8105,3 +8105,540 @@
     grid-template-columns: minmax(0, 5.5fr) minmax(0, 4.5fr) !important;
   }
 }
+
+/* Projection: person-first observation view. Each person's candidates stay
+ * together so the reader never has to reconstruct separate timelines from a
+ * global list. */
+.bioweave-projection-page {
+  max-width: 900px !important;
+}
+
+.bioweave-projection-page .bioweave-page-head {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  min-width: 0;
+  margin-bottom: 11px !important;
+}
+
+.bioweave-projection-page .bioweave-page-head h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.bioweave-projection-page .bioweave-page-head p {
+  margin-top: 4px;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+}
+
+.bioweave-projection-page .bioweave-page-actions {
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.bioweave-projection-page .bioweave-page-head-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.bioweave-projection-page .bioweave-button {
+  min-height: 32px !important;
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-projection-page .bioweave-badge.accent {
+  border-color: color-mix(in srgb, var(--bioweave-accent) 62%, var(--bioweave-border) 38%) !important;
+  background: var(--bioweave-accent-soft) !important;
+  color: var(--bioweave-accent) !important;
+}
+
+.bioweave-projection-page .bioweave-badge {
+  background: var(--bioweave-surface-raised) !important;
+  color: var(--bioweave-text-muted) !important;
+  line-height: 1.5 !important;
+}
+
+.bioweave-projection-page .bioweave-badge.good {
+  border-color: color-mix(in srgb, var(--bioweave-success) 45%, var(--bioweave-border) 55%) !important;
+  background: var(--bioweave-success-soft) !important;
+  color: var(--bioweave-success) !important;
+}
+
+.bioweave-projection-page .bioweave-badge.warn {
+  border-color: color-mix(in srgb, var(--bioweave-warn) 45%, var(--bioweave-border) 55%) !important;
+  background: var(--bioweave-warn-soft) !important;
+  color: var(--bioweave-warn) !important;
+}
+
+.bioweave-projection-page .bioweave-projection-person-status {
+  margin-top: 2px !important;
+  font-size: 11px !important;
+}
+
+.bioweave-projection-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 10px 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--bioweave-accent) 42%, var(--bioweave-border) 58%) !important;
+  border-radius: 8px !important;
+  background: var(--bioweave-accent-soft) !important;
+  color: var(--bioweave-text-secondary) !important;
+  line-height: 1.5;
+}
+
+.bioweave-projection-notice > span {
+  color: var(--bioweave-accent);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.bioweave-projection-notice strong {
+  color: var(--bioweave-accent);
+  font-size: 12px;
+}
+
+.bioweave-projection-notice p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bioweave-projection-status {
+  margin-bottom: 10px !important;
+  border: 1px solid var(--bioweave-border) !important;
+  border-radius: 9px !important;
+  background: var(--bioweave-card) !important;
+}
+
+.bioweave-projection-overview-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 12px 7px;
+}
+
+.bioweave-projection-overview-line h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.bioweave-projection-overview-line span,
+.bioweave-projection-panel-head span,
+.bioweave-projection-person-status,
+.bioweave-projection-person-stats span,
+.bioweave-projection-section-title span,
+.bioweave-projection-detail-head p,
+.bioweave-projection-detail-summary span,
+.bioweave-projection-signal-foot,
+.bioweave-projection-detail-foot {
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+}
+
+.bioweave-projection-workspace {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin: 0 10px;
+}
+
+.bioweave-projection-people-panel,
+.bioweave-projection-detail {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 9px;
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-projection-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 11px;
+  border-bottom: 1px solid var(--bioweave-border);
+}
+
+.bioweave-projection-panel-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.bioweave-projection-people-list {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+}
+
+.bioweave-projection-person-card {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 8px;
+  background: var(--bioweave-surface-soft);
+  color: var(--bioweave-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bioweave-projection-person-card:hover,
+.bioweave-projection-person-card:focus-visible {
+  border-color: var(--bioweave-accent);
+  outline: 0;
+}
+
+.bioweave-projection-person-card.selected {
+  border-color: var(--bioweave-accent);
+  background: var(--bioweave-card-selected);
+}
+
+.bioweave-projection-person-top,
+.bioweave-projection-signal-head,
+.bioweave-projection-signal-foot,
+.bioweave-projection-section-title,
+.bioweave-projection-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bioweave-projection-person-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bioweave-text);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bioweave-projection-person-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.bioweave-projection-person-stats > div {
+  min-width: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--bioweave-border);
+}
+
+.bioweave-projection-person-status,
+.bioweave-projection-person-stats span,
+.bioweave-projection-detail-summary span {
+  font-size: 10px;
+}
+
+.bioweave-projection-person-stats strong {
+  display: block;
+  margin-top: 1px;
+  color: var(--bioweave-text-secondary);
+  font-size: 12px;
+}
+
+.bioweave-projection-person-progress {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.bioweave-projection-person-progress i {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bioweave-border-soft);
+}
+
+.bioweave-projection-person-progress i.done {
+  background: var(--bioweave-text-muted);
+}
+
+.bioweave-projection-person-progress i.current {
+  background: var(--bioweave-accent);
+}
+
+.bioweave-projection-person-route {
+  min-width: 0;
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--bioweave-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bioweave-projection-person-route b {
+  color: var(--bioweave-accent);
+  font-weight: 600;
+}
+
+.bioweave-projection-detail-head {
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--bioweave-border);
+  background: linear-gradient(90deg, var(--bioweave-card-selected), var(--bioweave-surface-raised));
+}
+
+.bioweave-projection-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.bioweave-projection-detail-head p {
+  margin: 3px 0 0;
+}
+
+.bioweave-projection-detail-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bioweave-projection-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--bioweave-border);
+  background: var(--bioweave-border);
+}
+
+.bioweave-projection-detail-summary > div {
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-projection-detail-summary strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--bioweave-text-secondary);
+  font-size: 12px;
+}
+
+.bioweave-projection-detail-section {
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--bioweave-border-soft);
+}
+
+.bioweave-projection-detail-section:last-of-type {
+  border-bottom: 0;
+}
+
+.bioweave-projection-detail-section.current {
+  background: color-mix(in srgb, var(--bioweave-card-selected) 50%, var(--bioweave-surface-raised) 50%);
+}
+
+.bioweave-projection-section-title {
+  align-items: baseline;
+  margin-bottom: 7px;
+}
+
+.bioweave-projection-section-title h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.bioweave-projection-section-copy {
+  margin: 0 0 8px;
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bioweave-projection-signals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.bioweave-projection-signal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-projection-signal > strong,
+.bioweave-projection-signal > p {
+  display: block;
+  grid-column: 1 / -1;
+}
+
+.bioweave-projection-signal-head {
+  align-items: center;
+}
+
+.bioweave-projection-signal-head strong,
+.bioweave-projection-route-row strong,
+.bioweave-projection-outcomes strong {
+  min-width: 0;
+  color: var(--bioweave-text);
+  font-size: 12px;
+}
+
+.bioweave-projection-signal > strong {
+  display: block;
+  font-size: 12px;
+}
+
+.bioweave-projection-page .bioweave-badge {
+  font-size: 11px !important;
+}
+
+.bioweave-projection-signal p,
+.bioweave-projection-route-row p,
+.bioweave-projection-outcomes p {
+  margin: 3px 0 0;
+  color: var(--bioweave-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bioweave-projection-signal em {
+  grid-column: 1;
+  align-self: center;
+  display: block;
+  margin-top: 7px;
+  color: var(--bioweave-text-muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.bioweave-projection-signal-foot {
+  grid-column: 2;
+  align-self: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 7px;
+  white-space: nowrap;
+}
+
+.bioweave-projection-signal-foot .bioweave-text-button {
+  margin-left: auto;
+  padding: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bioweave-projection-route-row {
+  display: grid;
+  grid-template-columns: 95px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px solid var(--bioweave-border-soft);
+}
+
+.bioweave-projection-route-row:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.bioweave-projection-route-day {
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+}
+
+.bioweave-projection-outcomes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.bioweave-projection-outcomes article {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-soft);
+}
+
+.bioweave-projection-outcomes article.end {
+  border-color: color-mix(in srgb, var(--bioweave-warn) 42%, var(--bioweave-border) 58%);
+  background: var(--bioweave-warn-soft);
+}
+
+.bioweave-projection-detail-foot {
+  padding: 9px 13px;
+  background: var(--bioweave-surface-raised);
+}
+
+@media (max-width: 767px) {
+  .bioweave-projection-page .bioweave-page-head {
+    flex-direction: column !important;
+  }
+
+  .bioweave-projection-page .bioweave-page-actions {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
+
+  .bioweave-projection-notice,
+  .bioweave-projection-workspace {
+    margin-left: 5px;
+    margin-right: 5px;
+  }
+
+  .bioweave-projection-overview-line {
+    margin-left: 7px;
+    margin-right: 7px;
+  }
+
+  .bioweave-projection-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .bioweave-projection-people-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bioweave-projection-signals,
+  .bioweave-projection-outcomes {
+    grid-template-columns: 1fr;
+  }
+
+  .bioweave-projection-detail-head {
+    flex-direction: column;
+  }
+
+  .bioweave-projection-detail-meta {
+    justify-content: flex-start;
+  }
+
+  .bioweave-projection-detail-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .bioweave-projection-detail-summary > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .bioweave-projection-route-row {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 7px;
+  }
+}

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认 Floor/Swipe/六字段版本是当前 Event 与派生状态的唯一事实源，约束本任务的存储与回归边界。"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"核对当前 Tracking Window、horizon、Window 生命周期与正式 Timing/Aggregation 的既有契约，并识别待同步语义。"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"确认 Event Analysis 的 Exposure、生命周期事实、身份与 fail-closed 约束。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"核对 Aggregation、Lifecycle、Projection Context 和来源删除后的持久化/失效要求。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认模块 owner、Projection/Host 边界和本任务不应触碰的 H-14 范围。"}

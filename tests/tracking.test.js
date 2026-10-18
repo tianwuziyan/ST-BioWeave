@@ -92,11 +92,13 @@ test("Tracking runtime builds windows once and preserves registry output", () =>
   });
   const activeEvents = [event()];
   const worldModel = abstractWorldModel({type_a: {can_carry_pregnancy: true}});
+  const timingInstances = [{cycle_id: "cycle-1", effective_max_story_days: 21}];
   const registry = runtime.buildTrackingRegistry({
     activeEvents,
     worldModel,
     chatId: "chat-1",
     floorVersion: {floor: 1, swipe_id: 0},
+    timingInstances,
   });
   const expected = rebuildTrackingRegistry(activeEvents, {
     world_model: worldModel,
@@ -104,6 +106,7 @@ test("Tracking runtime builds windows once and preserves registry output", () =>
   });
   assert.deepEqual(registry, expected);
   assert.equal(windowInputs.length, 1);
+  assert.deepEqual(windowInputs[0].timingInstances, timingInstances);
   const trace = traces.find(item => item.stage === "TRACKING_REGISTRY_BUILD_PHASES");
   assert.equal(trace.window_build_count, 1);
   assert.equal(trace.input_event_count, 1);

@@ -2802,6 +2802,68 @@
           padding-bottom: 18px;
         }
       }
+
+      .projection-notice {
+        display: flex;
+        gap: 8px;
+        margin: 0 10px 12px;
+        padding: 9px 11px;
+        border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line) 58%);
+        border-radius: 8px;
+        background: var(--accent-soft);
+      }
+      .projection-notice strong { color: var(--accent); font-size: 12px; }
+      .projection-notice p { margin: 2px 0 0; color: var(--text-2); font-size: 12px; }
+      .projection-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 10px; margin: 0 10px; }
+      .projection-people-panel, .projection-detail { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+      .projection-panel-head, .projection-detail-head, .projection-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .projection-panel-head { padding: 10px 11px; border-bottom: 1px solid var(--line); }
+      .projection-panel-head h2, .projection-section-title h3 { margin: 0; font-size: 14px; }
+      .projection-people-list { display: grid; gap: 5px; padding: 7px; }
+      .projection-person { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-raised); color: inherit; text-align: left; }
+      .projection-person.selected { border-color: var(--accent); background: var(--card-selected); }
+      .projection-person-top, .projection-person-stats { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+      .projection-person-name { font-size: 14px; font-weight: 700; }
+      .projection-person-status, .projection-person-stats span { color: var(--muted); font-size: 10px; }
+      .projection-person-stats { margin-top: 10px; }
+      .projection-person-stats > div { min-width: 0; padding-top: 6px; border-top: 1px solid var(--line); }
+      .projection-person-stats strong { display: block; margin-top: 1px; color: var(--text-2); font-size: 12px; }
+      .projection-person-progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 10px; }
+      .projection-person-progress i { display: block; height: 4px; border-radius: 99px; background: var(--line); }
+      .projection-person-progress i.done { background: var(--muted); }
+      .projection-person-progress i.current { background: var(--accent); }
+      .projection-person-route { margin-top: 8px; overflow: hidden; color: var(--text-2); font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+      .projection-person-route b { color: var(--accent); font-weight: 600; }
+      .projection-person small, .projection-section-title span, .projection-detail-head p { color: var(--muted); font-size: 11px; }
+      .projection-detail-head { padding: 12px 13px; border-bottom: 1px solid var(--line); background: var(--card-selected); }
+      .projection-detail-head h2 { margin: 0; font-size: 18px; }
+      .projection-detail-head p { margin: 3px 0 0; }
+      .projection-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border-bottom: 1px solid var(--line); background: var(--line); }
+      .projection-detail-summary > div { min-width: 0; padding: 9px 11px; background: var(--card); }
+      .projection-detail-summary span { display: block; color: var(--muted); font-size: 10px; }
+      .projection-detail-summary strong { display: block; margin-top: 2px; color: var(--text-2); font-size: 12px; }
+      .projection-detail-section { padding: 12px 13px; border-bottom: 1px solid var(--line-soft); }
+      .projection-detail-section.current { background: color-mix(in srgb, var(--card-selected) 50%, var(--card) 50%); }
+      .projection-section-copy { margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+      .projection-signals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+      .projection-signal, .projection-outcome { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-raised); }
+      .projection-signal > strong { display: block; font-size: 12px; }
+      .projection-signal p, .projection-outcome p { margin: 3px 0 0; color: var(--text-2); font-size: 11px; }
+      .projection-signal em { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; font-style: normal; }
+      .projection-signal-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
+      .projection-detail-foot { padding: 9px 13px; color: var(--muted); font-size: 11px; background: var(--card); }
+      .projection-route-row { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
+      .projection-route-row:first-child { border-top: 0; }
+      .projection-route-row small { color: var(--muted); font-size: 11px; }
+      .projection-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+      @media (max-width: 760px) {
+        .projection-workspace { grid-template-columns: 1fr; margin-inline: 5px; }
+        .projection-people-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .projection-signals, .projection-outcomes { grid-template-columns: 1fr; }
+        .projection-detail-summary { grid-template-columns: 1fr 1fr; }
+        .projection-detail-summary > div:last-child { grid-column: 1 / -1; }
+        .projection-detail-head { display: block; }
+      }
     </style>
   </head>
   <body data-device="desktop" data-theme="dark">
@@ -3101,6 +3163,30 @@
       </section>`
       }
 
+      function projectionPage() {
+        return `<section class="page projection-page">
+          ${pageHead('人物推演', '先选人物，再查看这个人物自己的潜在剧情时间线', '<span class="badge">n 位人物观察中</span><button class="button" type="button">重新读取</button>')}
+          <div class="projection-notice"><span aria-hidden="true">✦</span><div><strong>每个人单独计算时间</strong><p>人物之间不共用第几天；只有正文明确写出某种表现，才会把它记为已观察到。</p></div></div>
+          <div class="projection-workspace">
+            <aside class="projection-people-panel">
+              <header class="projection-panel-head"><h2>人物列表</h2><span>n 人</span></header>
+              <div class="projection-people-list">
+                <button class="projection-person selected" type="button" data-bioweave-action="select-projection-subject" data-projection-subject-id="runtime-subject-id" aria-pressed="true"><div class="projection-person-top"><div><div class="projection-person-name">Runtime display_name</div><div class="projection-person-status">观察中 · 名单已完成</div></div><span class="badge">第 23 天</span></div><div class="projection-person-stats"><div><span>当前阶段</span><strong>早期反应出现</strong></div><div><span>距离本轮结算</span><strong>19 天</strong></div></div><div class="projection-person-progress" aria-hidden="true"><i class="done"></i><i class="current"></i><i></i></div><div class="projection-person-route"><b>可能：</b>恶心 · 闻到气味不舒服 · 情绪变化 · 食欲变化</div></button>
+                <button class="projection-person" type="button" data-bioweave-action="select-projection-subject" data-projection-subject-id="runtime-subject-id-2" aria-pressed="false"><div class="projection-person-top"><div><div class="projection-person-name">另一个 Runtime 角色</div><div class="projection-person-status">观察中 · 名单已完成</div></div><span class="badge">第 16 天</span></div><div class="projection-person-stats"><div><span>当前阶段</span><strong>早期细微变化</strong></div><div><span>距离本轮结算</span><strong>26 天</strong></div></div><div class="projection-person-progress" aria-hidden="true"><i class="current"></i><i></i><i></i></div><div class="projection-person-route"><b>可能：</b>嗜睡或疲倦 · 乳房敏感 · 对气味或食物产生轻微变化 · 暂时没有明显反应</div></button>
+              </div>
+            </aside>
+            <section class="projection-detail" aria-label="Runtime display_name 的推演详情">
+              <header class="projection-detail-head"><div><h2>Runtime display_name</h2><p>这条时间线只属于当前人物，不与其他人物共用天数。</p></div><span class="badge">第 23 天</span></header>
+              <div class="projection-detail-summary"><div><span>当前阶段</span><strong>第 21–27 天 · 早期反应出现</strong></div><div><span>已聚合候选</span><strong>4 人</strong></div><div><span>距离本轮结算</span><strong>19 天</strong></div></div>
+              <section class="projection-detail-section current"><div class="projection-section-title"><h3>现在可能出现</h3><span>第 21–27 天</span></div><p class="projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="projection-signals"><article class="projection-signal"><strong>恶心</strong><p>闻到油烟、浓烈香气或某些食物时出现反胃感。</p><em>当前可能出现；不是已经发生的事实。</em><div class="projection-signal-foot"><button class="text-button" type="button" data-bioweave-action="delete-projection" data-projection-id="runtime-projection-id">删除</button></div></article><article class="projection-signal"><strong>闻到气味不舒服</strong><p>闻到某些气味时觉得不舒服，想要避开。</p><em>当前可能出现；不是已经发生的事实。</em></article><article class="projection-signal"><strong>情绪变化</strong><p>情绪比平时更容易波动。</p><em>当前可能出现；不是已经发生的事实。</em></article><article class="projection-signal"><strong>食欲变化</strong><p>食量或对食物的偏好发生变化。</p><em>当前可能出现；不是已经发生的事实。</em></article></div></section>
+              <section class="projection-detail-section"><div class="projection-section-title"><h3>之后可能出现</h3><span>跟着人物自己的时间走</span></div><div class="projection-route-row"><small>第 28–42 天</small><div><strong>恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应</strong><p>时间推进到这一段后才开放这些方向；正文没有写出，就不会把候选路线记成已经发生。</p></div></div></section>
+              <section class="projection-detail-section"><div class="projection-section-title"><h3>最后怎么结束</h3><span>以正文和观察周期为准</span></div><div class="projection-outcomes"><article class="projection-outcome"><strong>正文明确确认怀孕</strong><p>进入确认阶段。</p></article><article class="projection-outcome"><strong>超过周期仍没有确认</strong><p>本轮结束并按未怀孕处理。</p></article></div></section>
+              <footer class="projection-detail-foot">插件自动生成候选路线；正文没有写出，就不会把路线记成已经发生。</footer>
+            </section>
+          </div>
+        </section>`
+      }
+
       function emptyPage(title, description, strong, body) {
         return `<section class="page">${pageHead(title, description)}<section class="surface empty"><div><strong>${strong}</strong><p>${body}</p></div></section></section>`
       }
@@ -3261,13 +3347,7 @@
           overview: overviewPage,
           characters: charactersPage,
           events: eventsPage,
-          projection: () =>
-            emptyPage(
-              '推演预测',
-              '未来可能发生的生理推演，不是事实账本',
-              '当前没有需要展示的推演',
-              '推演并非已发生事实，也不会自动成为 confirmed Event。',
-            ),
+          projection: projectionPage,
           genealogy: () =>
             emptyPage(
               '家系图谱',

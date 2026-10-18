@@ -64,6 +64,7 @@ test('context ordering is stable and input views remain unchanged', () => {
   assert.deepEqual(views, original);
   assert.deepEqual(result.dto.map(item => item.subject_id), ['char_000001', 'char_000002']);
   assert.match(result.prompt, /不是已经发生的事实/);
+  assert.match(result.prompt, /不要默认让它们同时发生/);
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
 });
 

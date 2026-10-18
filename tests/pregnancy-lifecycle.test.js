@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {emptyFloor} from '../storage/schema.js';
-import {buildCandidateRecord, normalizePregnancyLifecycleFact, validatePregnancyLifecycleFact} from '../core/pregnancy-lifecycle.js';
+import {appendPregnancyLifecycleFact, buildCandidateRecord, normalizePregnancyLifecycleFact, pregnancyIdentityMatches, validatePregnancyLifecycleFact} from '../core/pregnancy-lifecycle.js';
 import {createPregnancyLifecyclePersistence} from '../storage/pregnancy-lifecycle.js';
 import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js';
 
@@ -25,6 +25,14 @@ test('not_pregnant keeps nullable pregnancy identity and requires a cycle', () =
   assert.equal(fact.pregnancy_id, null);
   assert.equal(validatePregnancyLifecycleFact(fact).ok, false);
   assert.equal(validatePregnancyLifecycleFact({...fact, source_event_id: 'fact-1'}).ok, true);
+});
+
+test('pregnancy lifecycle terminal conflicts stay isolated by concrete pregnancy identity', () => {
+  const first = appendPregnancyLifecycleFact(null, {fact_id: 'fact-p1', subject_id: 'subject-1', pregnancy_id: 'pregnancy-1', cycle_id: 'c1', status: 'delivery', source_event_id: 'event-p1'});
+  const second = appendPregnancyLifecycleFact(first.timeline, {fact_id: 'fact-p2', subject_id: 'subject-1', pregnancy_id: 'pregnancy-2', cycle_id: 'c1', status: 'delivery', source_event_id: 'event-p2'});
+  assert.equal(second.status, 'appended');
+  assert.equal(pregnancyIdentityMatches({subjectId: 'subject-1', pregnancyId: null, candidateSubjectId: 'subject-1', candidatePregnancyId: 'pregnancy-1', candidateStatus: 'delivery'}), false);
+  assert.equal(pregnancyIdentityMatches({subjectId: 'subject-1', pregnancyId: null, candidateSubjectId: 'subject-1', candidatePregnancyId: 'pregnancy-1', candidateStatus: 'pregnancy_confirmation', allowObservationPromotion: true}), true);
 });
 
 test('terminal lifecycle archives evidence, deletes only accepted current-cycle Events, preserves empty snapshot, and releases once', async () => {

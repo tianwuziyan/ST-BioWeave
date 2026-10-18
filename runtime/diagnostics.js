@@ -1076,6 +1076,8 @@ export function createRuntimeDiagnostics({
           ? Math.max(0, input.projection_rules_count)
           : null,
         projection_eligibility: diagnosticScalar(input.projection_eligibility),
+        projection_candidate_status: diagnosticScalar(input.projection_candidate_status),
+        projection_candidate_source: diagnosticScalar(input.projection_candidate_source),
         timing_window_status: diagnosticScalar(input.timing_window_status),
         projection_ai_request_started: typeof input.projection_ai_request_started === "boolean"
           ? input.projection_ai_request_started

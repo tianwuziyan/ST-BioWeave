@@ -35,8 +35,9 @@ import {
 import { isPregnancyRelevantExposure } from "../core/events.js";
 import { buildParticipantAggregationEvidence, buildParticipantAggregationId, filterProjectionViewsByAggregationEvidence, resolveParticipantAggregationTrigger, upsertParticipantAggregation } from "../core/participant-aggregation.js";
 import { normalizePregnancyLifecycleTimeline } from "../core/pregnancy-lifecycle.js";
+import { isExposureBlockedByParticipantAggregation } from "../core/tracking-window.js";
 import { PARTICIPANT_AGGREGATION_LOCK_DISABLED, resolveCycleLocks } from "../core/participant-aggregation-lock.js";
-import { evaluateProjectionEligibility } from "../core/projection-eligibility.js";
+import { BUILT_IN_PRE_CONFIRMATION_CONCERN, evaluateProjectionEligibility } from "../core/projection-eligibility.js";
 import { readCharacterTimingConfig, resolveCharacterTimingConfig } from "../core/character-timing-config.js";
 import { getHumanPreconfirmationTimingPreset, HUMAN_PRECONFIRMATION_TIMING_PRESET_VERSION } from "../core/human-timing-preset.js";
 import { isCanonicalWorldHumanSpecies } from "../core/world-species-identity.js";
@@ -2226,12 +2227,96 @@ export function createRuntime({
     try {
       const [aggregations, lifecycle, deliveries, projections, lock, projectionTiming] = await Promise.all([
         participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor, endpointIndex: target.index}),
-        pregnancyLifecyclePersistence.getTimeline({chatId, endpointFloor}),
-        projectionPersistence.getProjectionDeliveryRecords({chatId, endpointFloor}),
-        projectionPersistence.getProjectionViews({chatId, endpointFloor}),
+        pregnancyLifecyclePersistence.getTimeline({chatId, endpointFloor, endpointIndex: target.index}),
+        projectionPersistence.getProjectionDeliveryRecords({chatId, endpointFloor, endpointIndex: target.index}),
+        projectionPersistence.getProjectionViews({chatId, endpointFloor, endpointIndex: target.index}),
         resolveLockedExposureState({target}),
         getProjectionTimingDebug(),
       ]);
+      const business = await eventAnalysis.collectActiveBusinessData();
+      const activeEvents = Array.isArray(business?.active_events) ? business.active_events : [];
+      const currentStoryTime = projectionTiming?.current_story_time ?? business?.current_story_time ?? null;
+      const storyDays = (from, to) => {
+        const difference = differenceStoryTime(to, from);
+        return difference?.unit === 'day' && Number.isFinite(Number(difference.value)) ? Number(difference.value) : null;
+      };
+      const lifecycleReleaseFor = item => lifecycle.release_records.find(record =>
+        record?.subject_id === item?.subject_id &&
+        (record?.pregnancy_id ?? null) === (item?.pregnancy_id ?? null) &&
+        record?.cycle_id === item?.cycle_id &&
+        record?.action === 'cycle-lock-released',
+      ) ?? null;
+      const aggregationDiagnostics = Array.isArray(projectionTiming?.aggregation_diagnostics)
+        ? projectionTiming.aggregation_diagnostics
+        : [];
+      const observationBoundary = aggregations.items.map(item => {
+        const diagnostic = aggregationDiagnostics.find(entry => entry?.aggregation_id === item.aggregation_id) ?? null;
+        const mechanismKey = item.mechanism_key ?? diagnostic?.mechanism_key ?? null;
+        const acceptedIds = [...(item.accepted_exposure_event_ids ?? [])];
+        const release = lifecycleReleaseFor(item);
+        const referenceStoryTime = cloneValue(
+          item.reference_story_time
+            ?? diagnostic?.first_exposure_story_time
+            ?? item.aggregation_story_time
+            ?? null,
+        );
+        const currentExposureEventIds = activeEvents.filter(event => {
+          try {
+            return isPregnancyRelevantExposure(event) &&
+              event?.pregnancy_relevance?.gestational_subject_ids?.includes(item.subject_id) &&
+              Boolean(mechanismKey) && event?.pregnancy_relevance?.reproductive_mechanism?.kind === mechanismKey;
+          } catch { return false; }
+        }).map(event => event.event_id).filter(Boolean);
+        const excludedAfterAggregationEventIds = item.status === 'succeeded' && !release
+          ? currentExposureEventIds.filter(eventId => !acceptedIds.includes(eventId)).filter(eventId => {
+              const event = activeEvents.find(candidate => candidate?.event_id === eventId);
+              const elapsed = storyDays(referenceStoryTime, event?.story_time);
+              return elapsed !== null && elapsed > 0 && isExposureBlockedByParticipantAggregation({
+                event,
+                subjectId: item.subject_id,
+                mechanismKey,
+                participantAggregations: [item],
+                lifecycleReleaseRecords: lifecycle.release_records,
+              });
+            })
+          : [];
+        const deletion = lifecycle.release_records.find(record =>
+          record?.subject_id === item?.subject_id &&
+          (record?.pregnancy_id ?? null) === (item?.pregnancy_id ?? null) &&
+          record?.cycle_id === item?.cycle_id &&
+          record?.action === 'old-exposure-deleted',
+        ) ?? null;
+        const elapsedStoryDays = storyDays(referenceStoryTime, currentStoryTime);
+        const effectiveMax = Number.isFinite(Number(item.effective_max_story_days)) ? Number(item.effective_max_story_days) : null;
+        const timedOut = effectiveMax !== null && elapsedStoryDays !== null && elapsedStoryDays > effectiveMax;
+        const timeoutStatus = release
+          ? release.closure_reason === 'timeout_no_pregnancy'
+            ? 'released/timeout_no_pregnancy'
+            : 'released/terminal_lifecycle'
+          : timedOut
+            ? 'due/overdue_not_released'
+            : 'waiting/not_due';
+        return {
+          aggregation_id: item.aggregation_id,
+          subject_id: item.subject_id,
+          mechanism_key: mechanismKey,
+          cycle_id: item.cycle_id,
+          pregnancy_id: item.pregnancy_id ?? null,
+          floor_version: cloneValue(item.created_at_floor_version ?? target.version),
+          freeze_status: release ? 'RELEASED' : item.status === 'succeeded' ? 'FROZEN' : 'NOT_FROZEN',
+          reference_story_time: referenceStoryTime,
+          accepted_exposure_event_ids: acceptedIds,
+          current_exposure_event_ids: currentExposureEventIds,
+          excluded_after_aggregation_event_ids: excludedAfterAggregationEventIds,
+          excluded_after_aggregation_reason: excludedAfterAggregationEventIds.length ? 'POST_AGGREGATION_CYCLE_FROZEN' : null,
+          effective_max_story_days: item.effective_max_story_days ?? null,
+          elapsed_story_days: elapsedStoryDays,
+          timeout_status: timeoutStatus,
+          closure_reason: release?.closure_reason ?? null,
+          release_action: release?.action ?? null,
+          deleted_event_count: deletion?.deleted_event_ids?.length ?? null,
+        };
+      });
       const projectionIds = new Set((projections?.all ?? []).map(item => item?.projection_id).filter(Boolean));
       return {
         status: 'ready',
@@ -2242,6 +2327,7 @@ export function createRuntime({
             aggregation_id: item.aggregation_id,
             subject_id: item.subject_id,
             pregnancy_id: item.pregnancy_id ?? null,
+            mechanism_key: item.mechanism_key,
             cycle_id: item.cycle_id,
             status: item.status,
             accepted_exposure_count: item.accepted_exposure_event_ids.length,
@@ -2250,7 +2336,14 @@ export function createRuntime({
             effective_min_story_days: item.effective_min_story_days,
             effective_max_story_days: item.effective_max_story_days,
             aggregation_trigger_strategy: item.aggregation_trigger_strategy,
+            freeze_status: lifecycleReleaseFor(item) ? 'RELEASED' : item.status === 'succeeded' ? 'FROZEN' : 'NOT_FROZEN',
+            created_at_floor_version: cloneValue(item.created_at_floor_version ?? null),
           })),
+        },
+        observation_boundary: {
+          floor_version: cloneValue(target.version),
+          current_story_time: cloneValue(currentStoryTime),
+          aggregations: observationBoundary,
         },
         projection_delivery: {
           count: deliveries.length,
@@ -2488,6 +2581,8 @@ export function createRuntime({
       },
     };
   }
+  let projectionTimingPersistence = null;
+  let participantAggregationPersistence = null;
   eventAnalysis = createEventAnalysisCoordinator({
     st,
     chat,
@@ -2519,6 +2614,9 @@ export function createRuntime({
     healthEvolution,
     healthRecoveryStabilityDelayMs,
     resolveLockedExposureState,
+    getTrackingTimingInstances: ({chatId, endpointFloor, endpointIndex}) => projectionTimingPersistence?.getTimingInstances({chatId, endpointFloor, endpointIndex}),
+    getTrackingParticipantAggregations: ({chatId, endpointFloor, endpointIndex}) => participantAggregationPersistence?.getParticipantAggregations({chatId, endpointFloor, endpointIndex}),
+    getTrackingLifecycleTimeline: ({chatId, endpointFloor, endpointIndex}) => pregnancyLifecyclePersistence?.getTimeline({chatId, endpointFloor, endpointIndex}),
     persistPregnancyLifecycleFacts: async ({target, events}) => {
       const lifecycleFacts = [];
       for (const event of Array.isArray(events) ? events : []) {
@@ -2596,7 +2694,7 @@ export function createRuntime({
       })).version;
     },
   });
-  const projectionTimingPersistence = createProjectionTimingPersistence({
+  projectionTimingPersistence = createProjectionTimingPersistence({
     store,
     enabledResolver: isBioWeaveEnabled,
     floorPersistence,
@@ -2607,7 +2705,7 @@ export function createRuntime({
       return (await eventAnalysis.resolveCurrentBioWeaveFloor({__messageIndex: true, index: Number(index)})).version;
     },
   });
-  const participantAggregationPersistence = createParticipantAggregationPersistence({
+  participantAggregationPersistence = createParticipantAggregationPersistence({
     store,
     enabledResolver: isBioWeaveEnabled,
     floorPersistence,
@@ -2732,7 +2830,7 @@ export function createRuntime({
         currentStoryTime: business.current_story_time ?? null,
         storyContext: [],
         participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index})).items,
-        pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor}),
+        pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index}),
         deleteProjection: projectionPersistence.deleteProjection,
       };
     },
@@ -2748,6 +2846,9 @@ export function createRuntime({
     resolvePreConfirmationTiming: async ({inputs, run_id: pipelineRunId = null}) => {
       const timeline = await projectionTimingPersistence.getTimingInstances({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
       const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId: inputs.floor.version.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
+      const lifecycleReleaseRecords = Array.isArray(inputs.pregnancyLifecycleTimeline?.release_records)
+        ? inputs.pregnancyLifecycleTimeline.release_records
+        : [];
       const rules = Array.isArray(inputs.worldModel?.projection_rules) ? inputs.worldModel.projection_rules : [];
       const events = Array.isArray(inputs.events) ? inputs.events : [];
       const timingInstances = [...timeline.items];
@@ -2762,7 +2863,14 @@ export function createRuntime({
             && Array.isArray(event?.pregnancy_relevance?.gestational_subject_ids)
             && event.pregnancy_relevance.gestational_subject_ids.every(subjectId => typeof subjectId === "string" && subjectId.trim() !== '')
             && typeof event?.pregnancy_relevance?.reproductive_mechanism?.kind === "string"
-            && event.pregnancy_relevance.reproductive_mechanism.kind.trim() !== '';
+            && event.pregnancy_relevance.reproductive_mechanism.kind.trim() !== ''
+            && event.pregnancy_relevance.gestational_subject_ids.every(subjectId => !isExposureBlockedByParticipantAggregation({
+              event,
+              subjectId,
+              mechanismKey: event.pregnancy_relevance.reproductive_mechanism.kind,
+              participantAggregations: aggregationTimeline.items,
+              lifecycleReleaseRecords,
+            }));
         } catch {
           return false;
         }
@@ -4870,7 +4978,7 @@ export function createRuntime({
     const confirmedSubjects = events.filter(event => event?.type === "pregnancy_confirmation" && event.status === "confirmed").flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
     const terminatedSubjects = events.filter(event => ["pregnancy_loss", "abortion"].includes(event?.type) && event.status === "confirmed").flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : (event?.pregnancy_relevance?.gestational_subject_ids ?? []));
     const rules = Array.isArray(world?.model?.projection_rules) ? world.model.projection_rules : [];
-    const projections = await projectionPersistence.getProjectionViews({chatId, endpointFloor: floor.version.floor});
+    const projections = await projectionPersistence.getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
     const aggregations = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
     let executionTrace;
     try {
@@ -5346,6 +5454,20 @@ export function createRuntime({
     }) : {decisions: [], diagnostics: []};
     const projectionEligibilityStage = stageForTarget("PROJECTION_ELIGIBILITY");
     const projectionAiSchedulingStage = stageForTarget("PROJECTION_AI_SCHEDULING");
+    const generationCandidates = eligibility.decisions.filter(decision =>
+      decision.eligibility === "eligible" && !decision.existing_projection_id,
+    );
+    const builtInCandidate = generationCandidates.some(decision =>
+      decision.projection_source === "built_in_pre_confirmation",
+    ) || (projections?.all ?? []).some(projection =>
+      projection?.context_visible === true
+      && projection?.aggregation_path === "participant_aggregation"
+      && (projection?.development_concern_key === BUILT_IN_PRE_CONFIRMATION_CONCERN
+        || projection?.development_concern_key?.startsWith(`${BUILT_IN_PRE_CONFIRMATION_CONCERN}:`)),
+    );
+    const worldRuleCandidate = generationCandidates.some(decision =>
+      decision.projection_source === "world_model_rule",
+    );
     let persistenceTrace = null;
     try { persistenceTrace = diagnostics.getPersistenceTrace?.() ?? null; } catch { persistenceTrace = null; }
     const projectionAiRequestEntries = (persistenceTrace?.sequence ?? []).filter(entry =>
@@ -5374,7 +5496,7 @@ export function createRuntime({
         reason_code: instances.length > 0 ? null : 'no_valid_timing_instance',
       },
       projection_rule_ids: rules.map(rule => rule.projection_rule_id).filter(Boolean),
-      projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, timing_instance_id: decision.timing_instance_id ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null})),
+      projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, development_concern_key: decision.development_concern_key, projection_source: decision.projection_source ?? null, timing_instance_id: decision.timing_instance_id ?? null, elapsed_story_days: decision.timing_elapsed_story_days ?? null, effective_min_story_days: decision.effective_min_story_days ?? null, effective_max_story_days: decision.effective_max_story_days ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null, aggregation_evidence_invalid_event_ids: decision.aggregation_evidence_invalid_event_ids ?? []})),
       projection_diagnostics: {
         source_type: "DERIVED_DIAGNOSTIC",
         projection_rules_available: rules.length > 0,
@@ -5383,6 +5505,10 @@ export function createRuntime({
         eligibility_reason_code: projectionEligibilityStage?.reason_code ?? (rules.length ? "TRACE_UNAVAILABLE" : "projection_rules_unavailable"),
         timing_window_entered: eligibility.decisions.some(decision => decision.timing_status === "window_open"),
         timing_window_statuses: [...new Set(eligibility.decisions.map(decision => decision.timing_status).filter(Boolean))],
+        projection_candidate_status: builtInCandidate || worldRuleCandidate ? "candidate_available" : "no_candidate",
+        projection_candidate_source: builtInCandidate
+          ? "built_in_pre_confirmation"
+          : worldRuleCandidate ? "world_model_rule" : null,
         ai_scheduling_status: projectionAiSchedulingStage?.execution_status ?? (traceAvailable ? "UNKNOWN" : "TRACE_UNAVAILABLE"),
         ai_scheduling_reason_code: projectionAiSchedulingStage?.reason_code ?? (rules.length ? "TRACE_UNAVAILABLE" : "NO_ELIGIBLE_PROJECTION"),
         projection_ai_request_started: projectionAiRequestEntries.length > 0,
@@ -5437,6 +5563,8 @@ export function createRuntime({
           eligibility_reason_code: "READBACK_FAILED",
           timing_window_entered: null,
           timing_window_statuses: [],
+          projection_candidate_status: null,
+          projection_candidate_source: null,
           ai_scheduling_status: "READBACK_FAILED",
           ai_scheduling_reason_code: "READBACK_FAILED",
           projection_ai_request_started: null,
@@ -6261,6 +6389,8 @@ export function createRuntime({
             eligibility_reason_code: 'READBACK_FAILED',
             timing_window_entered: null,
             timing_window_statuses: [],
+            projection_candidate_status: null,
+            projection_candidate_source: null,
             ai_scheduling_status: 'READBACK_FAILED',
             ai_scheduling_reason_code: 'READBACK_FAILED',
             projection_ai_request_started: null,

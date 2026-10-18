@@ -1830,6 +1830,14 @@ test("NSFW pipeline diagnostics expose successful Timing and Aggregation persist
   const aggregation = debug.aggregation_diagnostics.find(item => item.aggregation_status === "SUCCEEDED");
   assert.ok(aggregation);
   assert.equal(aggregation.readback_succeeded, true);
+  const lifecycleAggregation = debug.lifecycle_runtime.observation_boundary.aggregations.find(item => item.aggregation_id === aggregation.aggregation_id);
+  assert.ok(lifecycleAggregation);
+  assert.equal(lifecycleAggregation.freeze_status, "FROZEN");
+  assert.deepEqual(lifecycleAggregation.accepted_exposure_event_ids, aggregation.accepted_exposure_event_ids);
+  assert.deepEqual(lifecycleAggregation.excluded_after_aggregation_event_ids, []);
+  assert.equal(lifecycleAggregation.excluded_after_aggregation_reason, null);
+  assert.equal(lifecycleAggregation.pregnancy_id, null);
+  assert.equal(lifecycleAggregation.timeout_status, "waiting/not_due");
   fixture.runtime.destroy();
 });
 
@@ -1879,13 +1887,26 @@ test("first Timing creation uses the runtime RNG and freezes its sampled offset"
   fixture.runtime.destroy();
 });
 
-test("rules=[] still persist valid Timing and Aggregation without Projection AI", async () => {
+test("rules=[] still generate a built-in Projection without Projection AI", async () => {
   let projectionAiCalls = 0;
+  const projectionFixtureOptions = projectionDiagnosticsFixtureOptions({
+    eventId: "nsfw-empty-rules-success",
+    projectionRules: [],
+  });
+  projectionFixtureOptions.reliableStoryTime = false;
+  projectionFixtureOptions.messages = [{
+    ...projectionFixtureOptions.messages[0],
+    story_time: {
+      display: "羲和1年3月30日 巳时中",
+      normalized: "cn-1-3-30T09:00",
+      day_index: 30,
+      calendar_id: "main",
+      precision: "minute",
+      confidence: 1,
+    },
+  }];
   const fixture = createFixture({
-    ...projectionDiagnosticsFixtureOptions({
-      eventId: "nsfw-empty-rules-success",
-      projectionRules: [],
-    }),
+    ...projectionFixtureOptions,
     analyzer: {
       async analyzeWorldModel() {
         return normalizeWorldModel({
@@ -1896,6 +1917,14 @@ test("rules=[] still persist valid Timing and Aggregation without Projection AI"
       },
       async analyzeFloor() {
         return {events: [eventResult("nsfw-empty-rules-success", {
+          story_time: {
+            display: "羲和1年3月1日 巳时中",
+            normalized: "cn-1-3-1T09:00",
+            day_index: 1,
+            calendar_id: "main",
+            precision: "minute",
+            confidence: 1,
+          },
           pregnancy_relevance: {
             ...eventResult("nsfw-empty-rules-success").pregnancy_relevance,
             reproductive_mechanism: {kind: "fertilization"},
@@ -1940,6 +1969,9 @@ test("rules=[] still persist valid Timing and Aggregation without Projection AI"
   assert.equal(aggregationDiagnostic.readback_succeeded, true);
   assert.equal(aggregationDiagnostic.readback_result_present, true);
   assert.equal(pipeline.projection_diagnostics.projection_rules_available, false);
+  assert.equal(pipeline.current_state.projection_count, 4);
+  assert.equal(pipeline.projection_diagnostics.projection_candidate_status, "candidate_available");
+  assert.equal(pipeline.projection_diagnostics.projection_candidate_source, "built_in_pre_confirmation");
   assert.equal(pipeline.projection_diagnostics.projection_ai_request_started, false);
   assert.equal(projectionAiCalls, 0);
   assert.ok(pipeline.execution_trace.stages.some(stage =>
@@ -2113,6 +2145,125 @@ test("same-cycle Exposures share one Timing Instance and one Aggregation basis",
   assert.deepEqual(aggregationDiagnostic.candidate_exposure_event_ids.sort(), currentEventIds.sort());
   assert.deepEqual(aggregationDiagnostic.accepted_exposure_event_ids.sort(), currentEventIds.sort());
   assert.equal(aggregationDiagnostic.cycle_id_consistent, trackingWindow.cycle_id === timingInstances[0].cycle_id);
+  fixture.runtime.destroy();
+});
+
+test("successful Aggregation keeps later Exposure out of the frozen Timing and Aggregation basis", async () => {
+  const seed = await seededLifecycleRecoveryFloor({
+    eventId: "post-aggregation-frozen-source",
+    existingTiming: true,
+    existingAggregation: true,
+  });
+  const subjectId = "char_000001";
+  const sourceId = "char_000002";
+  const canonicalEvent = {
+    ...seed.event,
+    participants: seed.event.participants.map((participant, index) => ({
+      ...participant,
+      identity_status: "existing",
+      character_id: index === 0 ? subjectId : sourceId,
+      mention_id: null,
+    })),
+    pregnancy_relevance: {
+      ...seed.event.pregnancy_relevance,
+      gestational_subject_ids: [subjectId],
+      counterpart_ids: [sourceId],
+    },
+  };
+  const canonicalTiming = resolveProjectionTimingInstance({
+    chatId: seed.version.chat_id,
+    subjectId,
+    mechanismKey: "fertilization",
+    firstEvent: canonicalEvent,
+    config: LIFECYCLE_RECOVERY_TIMING_CONFIG,
+    floorVersion: seed.version,
+    rng: () => 1,
+  });
+  const canonicalAggregation = normalizeParticipantAggregation({
+    aggregation_id: buildParticipantAggregationId({
+      cycleId: canonicalTiming.cycle_id,
+      timingInstanceId: canonicalTiming.timing_instance_id,
+    }),
+    subject_id: subjectId,
+    pregnancy_id: null,
+    mechanism_key: "fertilization",
+    cycle_id: canonicalTiming.cycle_id,
+    timing_instance_id: canonicalTiming.timing_instance_id,
+    aggregation_trigger_strategy: "at_effective_min",
+    reference_story_time: canonicalTiming.reference_story_time,
+    aggregation_story_time: seed.message.story_time,
+    elapsed_story_days: 20,
+    effective_min_story_days: canonicalTiming.effective_min_story_days,
+    effective_max_story_days: canonicalTiming.effective_max_story_days,
+    sampled_individual_offset_story_days: canonicalTiming.sampled_individual_offset_story_days,
+    config_snapshot: canonicalTiming.config_snapshot,
+    accepted_exposure_event_ids: [canonicalEvent.event_id],
+    source_basis_refs: canonicalTiming.source_basis_refs,
+    created_at_floor_version: seed.version,
+    created_at: "2026-01-21T00:00:00.000Z",
+  });
+  seed.event = canonicalEvent;
+  seed.timing = canonicalTiming;
+  seed.message.extra.bioweave.events = [canonicalEvent];
+  seed.message.extra.bioweave.projection_timing_snapshot = {schema_version: 1, items: [canonicalTiming]};
+  seed.message.extra.bioweave.participant_aggregation_snapshot = {schema_version: 1, items: [canonicalAggregation]};
+  seed.message.extra.bioweave.character_registry = {
+    schema_version: 1,
+    entities: {
+      [subjectId]: {character_id: subjectId, display_name: "Alice", aliases: []},
+      [sourceId]: {character_id: sourceId, display_name: "Bob", aliases: []},
+    },
+  };
+  const laterSource = eventResult("post-aggregation-later-source");
+  const later = {
+    ...laterSource,
+    source: seed.version,
+    story_time: {
+      display: "2026-01-08",
+      normalized: "2026-01-08",
+      calendar_id: null,
+      precision: "day",
+      confidence: 1,
+    },
+    participants: [
+      {...laterSource.participants[0], identity_status: "existing", character_id: subjectId, mention_id: subjectId},
+      {...laterSource.participants[1], identity_status: "existing", character_id: sourceId, mention_id: sourceId},
+    ],
+    pregnancy_relevance: {
+      ...seed.event.pregnancy_relevance,
+      counterpart_ids: [sourceId],
+    },
+  };
+  const fixture = createFixture({
+    messages: [seed.message, {message_id: "post-aggregation-target", floor: 21, content: "后续剧情", role: "assistant", story_time: {display: "2026-01-21", normalized: "2026-01-21", calendar_id: null, precision: "day", confidence: 1}}],
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({
+          schema_version: 1,
+          species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+          projection_rules: [],
+        });
+      },
+      async analyzeFloor({analysisInput}) {
+        return {events: [seed.event, later]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
+  const timing = debug.lifecycle_runtime.projection_timing.timing_instances.find(item => item.timing_instance_id === seed.timing.timing_instance_id);
+  const aggregation = debug.lifecycle_runtime.participant_aggregation.aggregations.find(item => item.aggregation_id === buildParticipantAggregationId({cycleId: seed.timing.cycle_id, timingInstanceId: seed.timing.timing_instance_id}));
+  const boundary = debug.lifecycle_runtime.observation_boundary.aggregations.find(item => item.aggregation_id === aggregation.aggregation_id);
+  assert.deepEqual(timing.source_event_ids, [seed.event.event_id]);
+  assert.deepEqual(aggregation.accepted_exposure_event_ids, [seed.event.event_id]);
+  assert.equal((debug.tracking_window.windows.find(window => window.cycle_id === seed.timing.cycle_id)?.source_event_ids ?? []).includes(later.event_id), false);
+  assert.equal(boundary.mechanism_key, "fertilization");
+  assert.deepEqual(boundary.reference_story_time, seed.timing.reference_story_time);
+  assert.equal(boundary.excluded_after_aggregation_event_ids.length, 1);
+  assert.notEqual(boundary.excluded_after_aggregation_event_ids[0], seed.event.event_id);
+  assert.equal(boundary.excluded_after_aggregation_reason, "POST_AGGREGATION_CYCLE_FROZEN");
+  assert.equal(boundary.timeout_status, "due/overdue_not_released");
   fixture.runtime.destroy();
 });
 

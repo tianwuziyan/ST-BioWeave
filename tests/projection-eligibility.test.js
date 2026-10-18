@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {evaluateProjectionEligibility, evaluateProjectionEvolution, validateProjectionRule} from '../core/projection-eligibility.js';
+import {buildBuiltInPreConfirmationRules, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, validateProjectionRule} from '../core/projection-eligibility.js';
 
 const SUBJECT = 'char_000001';
 const SOURCE_B = 'char_000002';
@@ -116,11 +116,174 @@ test('aggregation path fails closed with a stable reason when evidence cannot be
   assert.equal(result.decisions[0].reason_code, 'participant_aggregation_evidence_invalid');
   assert.equal(result.decisions[0].aggregation_path, 'participant_aggregation');
 });
+test('aggregation path keeps current valid evidence when one historical source is missing', () => {
+  const result = evaluate({
+    events: [exposure('e1', 0)],
+    sourceCandidates: [candidate(SOURCE_B)],
+    currentStoryTime: story(17),
+    preConfirmationTiming: {
+      enabled: true,
+      instances: [{subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-partial', timing_instance_id: 'timing-partial', source_event_ids: ['e1', 'missing'], reference_story_time: story(0), effective_min_story_days: 14, effective_max_story_days: 42}],
+      windows: [{tracking_window_id: 'window-partial', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-partial', status: 'open', source_event_ids: ['e1', 'missing']}],
+      aggregations: [{aggregation_id: 'aggregation-partial', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-partial', pregnancy_id: null, status: 'succeeded', accepted_exposure_event_ids: ['e1', 'missing']}],
+    },
+  });
+  assert.equal(result.decisions[0].eligibility, 'eligible');
+  assert.equal(result.decisions[0].reason_code, 'elapsed_threshold_reached');
+  assert.deepEqual(result.decisions[0].aggregation_evidence.accepted_exposure_event_ids, ['e1']);
+  assert.deepEqual(result.decisions[0].aggregation_evidence_invalid_event_ids, ['missing']);
+});
 test('missing World Model rule is unresolved at the rule layer and does not create facts', () => {
   const events = [exposure('e1', 0)]; const before = structuredClone(events); const result = evaluateProjectionEligibility({currentState: state(), events, worldModel: {}, currentStoryTime: story(10)});
   assert.deepEqual(result.decisions, []);
   assert.equal(result.diagnostics[0].code, 'projection_rules_unavailable');
   assert.deepEqual(events, before);
+});
+
+test('empty projection rules provide independent built-in observation branches with stable identities', () => {
+  const rules = buildBuiltInPreConfirmationRules({
+    instances: [{mechanism_key: 'fertilization'}],
+  });
+  assert.equal(rules.length, 12);
+  assert.equal(new Set(rules.map(rule => rule.projection_rule_id)).size, 12);
+  assert.equal(new Set(rules.map(rule => rule.development_concern_key)).size, 12);
+  assert.deepEqual(
+    rules.map(rule => rule.development_concern_key).sort(),
+    [
+      'pre_confirmation_observation:fatigue',
+      'pre_confirmation_observation:breast_sensitivity',
+      'pre_confirmation_observation:scent_food_change',
+      'pre_confirmation_observation:no_reaction_early',
+      'pre_confirmation_observation:nausea',
+      'pre_confirmation_observation:odor_discomfort',
+      'pre_confirmation_observation:mood_change',
+      'pre_confirmation_observation:appetite_change',
+      'pre_confirmation_observation:nausea_worsening',
+      'pre_confirmation_observation:vomiting',
+      'pre_confirmation_observation:persistent_fatigue',
+      'pre_confirmation_observation:no_reaction_late',
+    ].sort(),
+  );
+});
+test('built-in observation branches use the agreed elapsed-day windows', () => {
+  const rules = buildBuiltInPreConfirmationRules({
+    instances: [{mechanism_key: 'fertilization'}],
+  });
+  assert.deepEqual(
+    Object.fromEntries(rules.map(item => [item.development_concern_key.split(':').at(-1), item.trigger.min_elapsed_story_days])),
+    {
+      fatigue: 14,
+      breast_sensitivity: 14,
+      scent_food_change: 14,
+      no_reaction_early: 14,
+      nausea: 21,
+      odor_discomfort: 21,
+      mood_change: 21,
+      appetite_change: 21,
+      nausea_worsening: 28,
+      vomiting: 28,
+      persistent_fatigue: 28,
+      no_reaction_late: 28,
+    },
+  );
+  assert.ok(rules.every(item => item.trigger.kind === 'elapsed_after_event'));
+  assert.deepEqual(
+    Object.fromEntries(rules.map(item => [item.development_concern_key.split(':').at(-1), item.expiration.trigger.min_elapsed_story_days])),
+    {
+      fatigue: 21,
+      breast_sensitivity: 21,
+      scent_food_change: 21,
+      no_reaction_early: 21,
+      nausea: 28,
+      odor_discomfort: 28,
+      mood_change: 28,
+      appetite_change: 28,
+      nausea_worsening: 43,
+      vomiting: 43,
+      persistent_fatigue: 43,
+      no_reaction_late: 43,
+    },
+  );
+});
+test('built-in observation branches advance by elapsed days for every complete subject', () => {
+  const secondSubject = 'char_000003';
+  const secondEvent = structuredClone(exposure('e3', 0));
+  secondEvent.pregnancy_relevance.gestational_subject_ids = [secondSubject];
+  const result = evaluate({
+    currentState: {characters: {[SUBJECT]: {}, [secondSubject]: {}}},
+    events: [exposure('e1', 0), secondEvent],
+    sourceCandidates: [],
+    worldModel: {projection_rules: []},
+    currentStoryTime: story(17),
+    preConfirmationTiming: {
+      enabled: true,
+      instances: [
+        {subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-1', timing_instance_id: 'timing-1', source_event_ids: ['e1'], reference_story_time: story(0), effective_min_story_days: 14, effective_max_story_days: 42},
+        {subject_id: secondSubject, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-2', timing_instance_id: 'timing-2', source_event_ids: ['e3'], reference_story_time: story(0), effective_min_story_days: 14, effective_max_story_days: 42},
+      ],
+      windows: [
+        {tracking_window_id: 'window-1', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-1', status: 'open', source_event_ids: ['e1']},
+        {tracking_window_id: 'window-2', subject_id: secondSubject, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-2', status: 'open', source_event_ids: ['e3']},
+      ],
+      aggregations: [
+        {aggregation_id: 'aggregation-1', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-1', pregnancy_id: null, status: 'succeeded', accepted_exposure_event_ids: ['e1']},
+        {aggregation_id: 'aggregation-2', subject_id: secondSubject, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-2', pregnancy_id: null, status: 'succeeded', accepted_exposure_event_ids: ['e3']},
+      ],
+    },
+  });
+  const eligible = result.decisions
+    .filter(item => item.eligibility === 'eligible')
+    .map(item => `${item.subject_id}:${item.development_concern_key}`)
+    .sort();
+  assert.deepEqual(eligible, [
+    `${SUBJECT}:pre_confirmation_observation:fatigue`,
+    `${SUBJECT}:pre_confirmation_observation:breast_sensitivity`,
+    `${SUBJECT}:pre_confirmation_observation:scent_food_change`,
+    `${SUBJECT}:pre_confirmation_observation:no_reaction_early`,
+    `${secondSubject}:pre_confirmation_observation:fatigue`,
+    `${secondSubject}:pre_confirmation_observation:breast_sensitivity`,
+    `${secondSubject}:pre_confirmation_observation:scent_food_change`,
+    `${secondSubject}:pre_confirmation_observation:no_reaction_early`,
+  ].sort());
+});
+test('built-in observation branches follow each elapsed-day stage', () => {
+  const timing = {
+    enabled: true,
+    instances: [{subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-stages', timing_instance_id: 'timing-stages', source_event_ids: ['e1'], reference_story_time: story(0), effective_min_story_days: 14, effective_max_story_days: 42}],
+    windows: [{tracking_window_id: 'window-stages', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-stages', status: 'open', source_event_ids: ['e1']}],
+    aggregations: [{aggregation_id: 'aggregation-stages', subject_id: SUBJECT, mechanism_key: 'mechanism:implant', cycle_id: 'cycle-stages', pregnancy_id: null, status: 'succeeded', accepted_exposure_event_ids: ['e1']}],
+  };
+  const expected = new Map([
+    [17, ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']],
+    [23, ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']],
+    [35, ['nausea_worsening', 'vomiting', 'persistent_fatigue', 'no_reaction_late']],
+  ]);
+  for (const [day, keys] of expected) {
+    const result = evaluate({worldModel: {projection_rules: []}, currentStoryTime: story(day), preConfirmationTiming: timing});
+    assert.deepEqual(
+      result.decisions.filter(item => item.eligibility === 'eligible').map(item => item.development_concern_key.split(':').at(-1)).sort(),
+      keys.sort(),
+      `day ${day} should expose only its own observation stage`,
+    );
+  }
+});
+test('legacy built-in placeholder detection is exact and does not match user projections', () => {
+  assert.equal(isLegacyBuiltInPreConfirmationProjection({
+    development_concern_key: 'pre_confirmation_observation',
+    development: {next_signal: LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION},
+  }), true);
+  assert.equal(isLegacyBuiltInPreConfirmationProjection({
+    development_concern_key: 'pre_confirmation_observation:fatigue',
+    development: {next_signal: LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION},
+  }), false);
+  assert.equal(isLegacyBuiltInPreConfirmationProjection({
+    development_concern_key: 'pre_confirmation_observation:no_reaction',
+    development: {next_signal: '旧版无明显反应候选'},
+  }), true);
+  assert.equal(isLegacyBuiltInPreConfirmationProjection({
+    development_concern_key: 'user:observation',
+    development: {next_signal: LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION},
+  }), false);
 });
 test('Story Time eligibility does not create a BiologicalEvent or select a contributor', () => {
   const result = evaluate();

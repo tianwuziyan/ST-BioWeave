@@ -111,6 +111,7 @@ export function buildProjectionContextPrompt(context = []) {
     lines.push(
       'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
       '以下内容描述未来可能的方向；本轮不要求兑现，也不得将其改写成已确认事实。',
+      '同一角色列出的多条内容是备选方向，不要默认让它们同时发生；只有正文明确写出某一种表现，才可视为已经观察到。',
     );
   }
   for (const entry of projectionEntries) {

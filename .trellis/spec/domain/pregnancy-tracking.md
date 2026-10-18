@@ -8,8 +8,8 @@ Events, exposure tracking, Pregnancy Episodes, and Projections.
 
 The current branch implements Tracking Subjects/Candidates and the independent
 Phase 1 + Phase 2 Window object/lifecycle derived from valid
-pregnancy-relevant Events. Phase 2 adds the World-authoritative mechanism
-horizon and deterministic Story-Time-only `expired` lifecycle. The overall feature remains
+pregnancy-relevant Events. Phase 2 adds deterministic Story-Time-only
+`expired` lifecycle evaluation at the persisted Timing Instance boundary. The overall feature remains
 `PARTIAL / PHASE 1 + PHASE 2 IMPLEMENTED`; `resolved_not_pregnant` remains
 unimplemented. Sections marked
 **Target Contract** remain the design baseline for later phases. Sections
@@ -29,7 +29,42 @@ pregnancy-relevant Exposure snapshot and the Character timing resolver; an
 empty World Model `projection_rules[]` does not block Timing Instance creation.
 The Timing record may therefore have `world_rule_binding: null`. The same
 frozen Timing Instance drives Participant Aggregation eligibility, while World
-Model rules remain a separate prerequisite for Projection Eligibility and AI.
+World Model rules remain the configurable path for Projection Eligibility and AI.
+When a successful Participant Aggregation has valid Timing/Tracking Window
+evidence, the Runtime may use its deterministic built-in
+`pre_confirmation_observation` candidate path even when `projection_rules[]` is
+empty. This candidate is neutral and does not create a BiologicalEvent,
+pregnancy fact, or `pregnancy_id`; ST text and Event Analysis remain the
+pregnancy-fact confirmation boundary.
+The built-in branches are elapsed-Story-Time gates in three stages: day 14–20
+offers fatigue/sleepiness, breast sensitivity, light scent-or-food changes,
+and temporarily no obvious reaction; day 21–27 offers nausea, scent
+discomfort, mood change, and appetite change; day 28–42 offers worsening
+nausea, possible vomiting, persistent fatigue, and continued absence of obvious
+reaction. A branch is not created before its stage gate; a later refresh can
+create the newly reached branches for the same observation. Each generated
+candidate carries its reference Story Time, current Story Time, elapsed days,
+and the read-only stage metadata consumed by Product UI. When the branch
+schedule changes, old built-in branch records are lifecycle-deleted and
+regenerated; this migration does not delete factual Events or rewrite
+Timing/Aggregation history.
+
+Participant Aggregation remains an observation candidate snapshot. Its
+`pregnancy_id` may be `null` until Event Analysis confirms a concrete pregnancy
+identity from ST正文. A `null` identity is observation-scoped, not a wildcard:
+different concrete pregnancy IDs remain isolated even when subject and cycle
+match. When an observation reaches its frozen effective maximum without a
+positive confirmation, the Projection lifecycle timeout path closes that
+observation with `timeout_no_pregnancy` and removes only its currently accepted
+Exposure Events through the existing Floor-owned lifecycle cleanup. A missing
+response delivery does not by itself prevent this timeout evaluation. Historical
+Aggregation snapshots remain unchanged.
+
+After a successful Aggregation, active Tracking and Timing derivation only keep
+the Aggregation's accepted Exposure IDs for that subject/mechanism until a
+Lifecycle Release record exists. Later Exposure facts may remain ordinary
+Floor-owned facts, but they cannot append to the frozen Timing/Window source
+set or silently create the next observation round.
 
 When a valid Timing Instance reaches its frozen effective minimum, the current
 aggregation strategy may record one independent participant-aggregation
@@ -37,7 +72,13 @@ success. A Story Time value beyond the frozen effective maximum is an overdue
 aggregation opportunity, not a reason to skip the aggregation. The aggregation
 record remains separate from Projection AI success; its participant list is
 re-derived from the accepted Exposure IDs and the current complete valid Floor
-Event snapshot after Event deletion or other permitted changes.
+Event snapshot after Event deletion or other permitted changes. If only some
+of the accepted IDs remain valid, a new Projection may use that surviving
+current subset without changing the historical Aggregation snapshot. The
+read-only debug DTO reports the exact missing or invalid IDs under
+`aggregation_evidence_invalid_event_ids`; it must not put those stale sources
+back into the current evidence. If no accepted ID remains valid, the
+Projection decision fails closed.
 
 When Story Time advances, Runtime re-evaluates active pre-confirmation Timing
 instances even if no new factual Event was discovered. The deterministic
@@ -50,8 +91,8 @@ existing identity and lifecycle guards.
 ### Current Implementation: Phase 1 + Phase 2
 
 Phase 1 owns deterministic Window/cycle identity, compatible exposure grouping,
-and Floor persistence/readback. Phase 2 adds the World-authoritative horizon and
-Story-Time-only expiration. Together they provide `open` / `resolved_pregnant` /
+and Floor persistence/readback. Phase 2 adds Timing-bound Story-Time-only
+expiration. Together they provide `open` / `resolved_pregnant` /
 `terminated` / `expired`, active
 Tracking filtering, Timing cycle binding, and the pre-confirmation Projection
 Eligibility bridge. `pregnancy_confirmation` resolves an open Window;
@@ -84,9 +125,13 @@ BiologicalEvent
   → Projection / Context derived from the surviving facts
 ```
 
-`expired` is a Window lifecycle result. It is not deletion of a
+`expired` is a Window lifecycle result. It is not, by itself, deletion of a
 `BiologicalEvent`, `resolved_not_pregnant`, `pregnancy_confirmation(false)`, a
-`medical_event`, or any other newly invented fact.
+`medical_event`, or any other newly invented fact. After a formal Participant
+Aggregation has been created, a separate lifecycle timeout may close that
+observation with `timeout_no_pregnancy` and remove only its currently accepted
+Exposure Events; that cleanup is not the Window status itself and does not
+rewrite the historical Aggregation snapshot.
 
 ## 3. Target Window contract
 
@@ -141,7 +186,8 @@ does not create a `tracking_subjects` entry or a Characters UI entry.
 `resolved_not_pregnant` requires factual evidence. Silence, time passing, or
 the absence of a later pregnancy Event cannot create it.
 
-Expiration only ends the Window's current Tracking influence. It must not:
+Standalone Window expiration only ends the Window's current Tracking influence.
+It must not:
 
 - delete, negate, or rewrite the historical exposure Event;
 - create a negative pregnancy fact, `medical_event`, or `state_fact`;
@@ -263,13 +309,15 @@ factual exposure basis while the same subject remains a Candidate. Terminal
 Window statuses do not delete Events, Registry identity, or Pregnancy Episodes.
 
 `core/tracking-window.js` derives deterministic identity, compatible grouping,
-and factual terminal transitions from surviving valid Events. Runtime evaluates
-the World mechanism-level `tracking_window_horizon`; a comparable Story-Time
-value at or beyond the authoritative maximum produces `expired`. Missing,
-ambiguous, or incomparable horizon/time data fails closed and leaves the Window
+and factual terminal transitions from surviving valid Events. Runtime supplies
+read-only persisted Timing Instances through the event-analysis orchestration
+boundary. A matching Timing Instance's frozen `effective_max_story_days` is
+the time boundary for Window split/expiration; the independent World Model
+`tracking_window_horizon` cannot end a Window earlier. Without a matching
+Timing Instance, time-based split/expiration fails closed and leaves the Window
 open. Factual terminal Windows never reopen from horizon correction; an
-`expired` result is recomputed from the current complete Events and effective
-horizon.
+`expired` result is recomputed from the current complete Events and matching
+Timing boundary.
 
 `core/state.js` separately records exposure history and derives
 `last_exposure_story_time` plus `elapsed_story_days`; that derived value does
@@ -331,14 +379,17 @@ surviving valid Events + canonical identities + persisted World Model
   → attach compatible Event IDs and source sets
   → inspect later factual resolution Events
   → resolve pregnant only when an authorized factual Event supports it
-  → expire only when a reliable World Model horizon and Story Time elapsed value support it
+  → expire only when a matching persisted Timing boundary and Story Time elapsed value support it
   → feed open Windows to active Tracking / current unresolved-exposure tracking signal
 ```
 
 If the elapsed value is `null`, the Window remains open; unresolved is
 descriptive language only, not a separate lifecycle state. Closed Windows do
-not revive from future exposures; new exposures may start a new round.
-Historical Events remain unchanged throughout. Resolved Window provenance now
+not revive from future exposures; new exposures may start a new round only
+after the prior observation has been released. Standalone Window derivation
+does not rewrite Events. The separate `timeout_no_pregnancy` lifecycle cleanup
+may remove currently accepted Exposure IDs after archiving their Aggregation;
+the archive preserves the historical source identity. Resolved Window provenance now
 feeds a pure read-only contributor-candidate view, bound to the terminal
 `pregnancy_confirmation` `pregnancy_id`; candidate sources are not contributors
 and are never auto-confirmed or excluded. After confirmed pregnancy, later
@@ -360,10 +411,12 @@ by this contract:
 
 ## 12. Regression guardrails
 
-Wrong: elapsed time deletes a historical `sexual_activity` Event.
+Wrong: Window expiration itself deletes a historical `sexual_activity` Event.
 
 Correct: elapsed canonical Story Time may close/expire a derived Window while
-the Event remains in its authoritative Floor/Swipe.
+the Event remains in its authoritative Floor/Swipe; only the separate
+post-Aggregation `timeout_no_pregnancy` cleanup removes currently accepted
+cycle Exposure IDs after archiving them.
 
 Wrong: `expired` means “confirmed not pregnant.”
 
@@ -378,8 +431,11 @@ unresolved exposure tracking horizons.
 Wrong: every new exposure indefinitely resets one Window.
 
 Correct: compatible exposures join the same open round, and closed rounds do
-not reopen. A World-authoritative mechanism horizon is required for expiration;
-missing/ambiguous horizon or Story Time remains open.
+not reopen. A matching persisted Timing Instance boundary is required for
+time-based expiration; missing/ambiguous Timing boundary or Story Time remains
+open. Lifecycle `timeout_no_pregnancy` may then clear the current cycle's
+accepted Exposure Events through the existing cleanup entry point; historical
+Aggregation snapshots are not rewritten.
 
 Wrong: pregnancy confirmation automatically chooses the nearest counterpart.
 
@@ -420,7 +476,20 @@ Chat/Floor/Swipe and existing persistence readbacks.
 `participant_aggregation.aggregations[]`, `projection_delivery.records[]`,
 `pregnancy_lifecycle.facts/archives/candidate_records/release_records`, and
 `nsfw_lock`. Aggregations expose identity, accepted Exposure counts/IDs, Story
-Time and frozen min/max. Delivery records expose submission/response versions
+Time and frozen min/max. `observation_boundary.aggregations[]` additionally
+exposes the read-only per-aggregation Floor/Swipe boundary, `freeze_status`,
+`accepted_exposure_event_ids`, current valid pregnancy-relevant Exposure IDs,
+post-aggregation excluded IDs with `POST_AGGREGATION_CYCLE_FROZEN` when
+applicable, `effective_max_story_days`, elapsed Story days, and a timeout state
+of `waiting/not_due`, `due/overdue_not_released`, or
+`released/timeout_no_pregnancy`; a normally completed terminal lifecycle uses
+`released/terminal_lifecycle`. Elapsed Story days use the observation's
+reference/first Exposure Story Time, not the later Aggregation write time. It
+also carries nullable-or-concrete `pregnancy_id`, closure/release reason
+fields, and deleted-event count. These
+fields explain why a later Exposure did not enter the frozen snapshot and
+whether timeout cleanup actually released the cycle; they do not create or
+modify business facts. Delivery records expose submission/response versions
 and analysis status. Candidate records expose counts, not narrative payloads.
 
 ### 13.4 Validation and error matrix
@@ -452,3 +521,78 @@ Wrong: add a user setting or Chat-level mirror for each internal lock state.
 
 Correct: reuse current Timing settings where configuration is needed and expose
 bounded lock/delivery/lifecycle status through the existing debug DTO.
+
+## 14. Executable observation-timeout and identity contract
+
+### 14.1 Scope / trigger
+
+This contract applies after a successful Participant Aggregation has created an
+observation candidate and Story Time advances beyond its frozen
+`effective_max_story_days` without a matching positive pregnancy fact.
+
+### 14.2 Signatures
+
+- `evaluateTimeoutNoPregnancy(target) -> {status, closed}` evaluates both
+  successful Projection deliveries and persisted successful Aggregations.
+- `pregnancyIdentityMatches({subjectId, pregnancyId, candidateSubjectId,
+  candidatePregnancyId, candidateStatus, allowObservationPromotion}) -> boolean`
+  is the shared nullable-identity comparison rule.
+- `evaluateTrackingWindowHorizon(window, {timingInstances, currentStoryTime})`
+  uses the matching Timing Instance as the time boundary.
+
+### 14.3 Contracts
+
+- Aggregation identity is `subject_id + pregnancy_id + cycle_id`; the
+  observation phase permits `pregnancy_id: null`.
+- `null` matches `null` exactly. It may promote to one concrete ID only for a
+  positive confirmation/ongoing-pregnancy fact in the same subject and cycle;
+  it is never a wildcard for an unrelated concrete ID.
+- Timeout archives the Aggregation snapshot with
+  `closure_reason: timeout_no_pregnancy`, deletes only its currently accepted
+  Exposure Event IDs, and releases the cycle. The operation key must include
+  the delivery ID or Aggregation ID so separate rounds cannot deduplicate one
+  another.
+- A missing Projection response delivery does not suppress timeout evaluation.
+- The Window's World `tracking_window_horizon` cannot split or expire a round
+  before the matching Timing `effective_max_story_days`.
+
+### 14.4 Validation and error matrix
+
+- no matching Timing Instance or incomparable Story Time → keep the Window
+  open;
+- different subject, cycle, or concrete pregnancy ID → lifecycle fact does not
+  match the Aggregation;
+- `not_pregnant` with a concrete pregnancy ID → invalid fact;
+- missing accepted current Event IDs during cleanup → fail closed according to
+  the existing Floor lifecycle persistence contract;
+- missing response delivery with a valid successful Aggregation → still
+  evaluate timeout.
+
+### 14.5 Good / base / bad cases
+
+- Good: `subject + null + cycle` Aggregation times out, accepted current NSFW
+  Events are removed, the archive is preserved, and a new cycle cannot reuse
+  them.
+- Base: a later positive ST fact promotes the observation to its concrete
+  pregnancy ID and prevents the no-pregnancy timeout.
+- Bad: a fact for another pregnancy ID or another cycle suppresses timeout or
+  causes the wrong Exposure Events to be archived/deleted.
+
+### 14.6 Required tests
+
+- nullable identity promotion and concrete-ID isolation;
+- timeout with and without a response delivery;
+- timeout mismatch by pregnancy ID and by cycle ID;
+- deletion of only accepted current-cycle Exposure Events with unrelated
+  Events preserved;
+- same-subject Day 0/Day 8/Day 14 exposures remaining in one round when the
+  Timing maximum is later than the World horizon.
+
+### 14.7 Wrong vs correct
+
+Wrong: treat `pregnancy_id: null` as matching every pregnancy, or use a fixed
+`timeout-no-pregnancy:null` operation key for all no-delivery Aggregations.
+
+Correct: compare subject, cycle, and nullable pregnancy identity explicitly,
+allow only the documented observation-to-confirmation promotion, and derive a
+unique timeout operation key from the delivery or Aggregation identity.

@@ -13,13 +13,13 @@ export function createTrackingRuntime({
   enqueueRefresh,
   trackingWindowRuntime = createTrackingWindowRuntime(),
 } = {}) {
-  function buildTrackingWindows({activeEvents = [], chatId = null, worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = [], onDiagnostics = null} = {}) {
+  function buildTrackingWindows({activeEvents = [], chatId = null, worldModel = {}, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, timingInstances = [], participantAggregations = [], lifecycleReleaseRecords = [], persistedWindows = [], onDiagnostics = null} = {}) {
     return trackingWindowRuntime?.buildTrackingWindows
-      ? trackingWindowRuntime.buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, persistedWindows, onDiagnostics})
+      ? trackingWindowRuntime.buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, timingInstances, participantAggregations, lifecycleReleaseRecords, persistedWindows, onDiagnostics})
       : [];
   }
 
-  function buildTrackingRegistry({activeEvents = [], worldModel = null, trackingWindows = null, chatId = null, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, persistedWindows = []} = {}) {
+  function buildTrackingRegistry({activeEvents = [], worldModel = null, trackingWindows = null, chatId = null, currentStoryTime = null, floorVersion = null, subjectProfiles = {}, timingInstances = [], participantAggregations = [], lifecycleReleaseRecords = [], persistedWindows = []} = {}) {
     const buildStartedAt = monotonicNow();
     const inputEventCount = Array.isArray(activeEvents) ? activeEvents.length : 0;
     const uniqueEventCount = new Set(
@@ -30,7 +30,7 @@ export function createTrackingRuntime({
     const windowStartedAt = monotonicNow();
     const shouldBuildWindows = trackingWindows == null && Boolean(chatId);
     let windowDiagnostics = null;
-    const resolvedWindows = trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, persistedWindows, onDiagnostics: value => { windowDiagnostics = value; }}) : null);
+    const resolvedWindows = trackingWindows ?? (chatId ? buildTrackingWindows({activeEvents, chatId, worldModel, currentStoryTime, floorVersion, subjectProfiles, timingInstances, participantAggregations, lifecycleReleaseRecords, persistedWindows, onDiagnostics: value => { windowDiagnostics = value; }}) : null);
     const windowBuildMs = shouldBuildWindows ? durationMs(windowStartedAt) : 0;
     const registry = rebuildTrackingRegistry(activeEvents, {
       world_model: worldModel,

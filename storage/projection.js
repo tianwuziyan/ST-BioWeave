@@ -137,7 +137,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     return saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord: record})
   }
 
-  async function getProjectionViews({chatId, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
+  async function getProjectionViews({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
     if (!chatId) throw error('CHAT_OWNER_REQUIRED')
     const ownerSnapshot = store.getCurrentChatOwnerSnapshot(chatId)
     const entries = []
@@ -148,7 +148,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
       if (swipeId === null || swipeId === undefined) continue
       const floor = store.getFloor(selector, swipeId)
       const version = floorVersionFromData(floor)
-      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || Number(version.floor) > Number(endpointFloor)) continue
+      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor)) continue
       const messageId = message?.message_id ?? message?.messageId ?? message?.id ?? version.message_id
       if (version.swipe_id !== swipeId || String(version.message_id) !== String(messageId)) continue
       if (typeof resolveVersion !== 'function') continue
@@ -170,10 +170,10 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     return resolveProjectionTimeline(entries)
   }
 
-  async function getProjectionDeliveryRecords({chatId, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
+  async function getProjectionDeliveryRecords({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
     if (!chatId) throw error('CHAT_OWNER_REQUIRED');
     const ownerSnapshot = store.getCurrentChatOwnerSnapshot(chatId);
-    const projectionViews = await getProjectionViews({chatId, endpointFloor});
+    const projectionViews = await getProjectionViews({chatId, endpointIndex, endpointFloor});
     const knownProjectionIds = new Set((projectionViews.all || []).map(item => item.projection_id));
     const records = [];
     for (let index = 0; index < ownerSnapshot.messages.length; index += 1) {
@@ -181,7 +181,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
       if (swipeId === null || swipeId === undefined) continue;
       const floor = store.getFloor(index, swipeId);
       const version = floorVersionFromData(floor);
-      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || Number(version.floor) > Number(endpointFloor) || Number(version.swipe_id) !== Number(swipeId)) continue;
+      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor) || Number(version.swipe_id) !== Number(swipeId)) continue;
       const currentVersion = await resolveVersion({chatId, ownerFloor: {message_index: index, message_id: version.message_id}, floorVersion: version, swipeId}).catch(() => null);
       if (!sameFloorVersion(currentVersion, version)) continue;
       const timeline = normalizeProjectionTimeline(floor.projection_timeline, {expectedChatId: chatId, knownProjectionIds});

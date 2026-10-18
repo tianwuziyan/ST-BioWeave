@@ -265,9 +265,14 @@ exposure 与 World Model compatibility 派生的 read model；只有 `confirmed`
 的 `reproductive_source_attribution` BiologicalEvent 才能改变 contributor attribution，
 允许多个 confirmed contributors，`unresolved` 是合法状态。
 
-`core/projection-eligibility.js` 只执行 World Model 提供的
-`projection_rules[]`。它输出三态 `eligible`、`not_eligible`、`unresolved` decision；
-Story Time 只决定 trigger eligibility，不产生 BiologicalEvent 或 pregnancy fact。
+`core/projection-eligibility.js` 优先执行 World Model 提供的
+`projection_rules[]`；当规则为空时，只有在存在有效 Timing、Tracking Window
+和成功 Participant Aggregation 的受孕前观察中，才使用插件内置的
+`pre_confirmation_observation` 分支路径。它按第 14–20、21–27、28–42 天三段为嗜睡或疲倦、
+乳房敏感、气味或食物变化、恶心、气味不舒服、情绪变化、食欲变化、恶心加重、可能孕吐、
+持续疲倦和无明显反应等彼此独立的备选方向输出三态 `eligible`、`not_eligible`、
+`unresolved` decision；Story Time 只决定 trigger eligibility，不产生
+BiologicalEvent 或 pregnancy fact。
 Evolution 只有在规则定义的 confirmed factual realization/contradiction/expiration
 criteria 满足时，才输出对应生命周期决策。正文沉默、时间经过、概率和 Candidate
 选择都不能改变事实层；该模块仍不负责 AI、Persistence 或 Context Injection。
@@ -314,7 +319,7 @@ AI 原始返回只在当前分析调用中存在；若启用开发调试 trace�
 已规范化 DTO 的再次读取/编辑只能通过明确的 trusted
 `normalizeStoredWorldModel()` 路径；raw AI schema 与 normalized domain DTO 不混用。
 
-World Model v1 的顶层也正式包含 `projection_rules: []`。它是当前 Floor 所有的声明式机制规则集合，不是 Projection 实例。AI/raw rule content 不输出 `projection_rule_id`；每条 raw rule 只包含业务内容，由 BioWeave 在规范化阶段生成 ID 后形成完整 domain DTO。每条最终规则包含 `schema_version`、`projection_rule_id`、`mechanism_key`、`development_concern_key`、`development_kind`、`trigger`、`requirements`、`realization`、`contradiction` 和 `expiration`；规则必须先通过 `validateProjectionRuleContent()`、`normalizeProjectionRules()` 与 final validation，再随 `world_model` 保存。规则不得包含概率、RNG、Prompt、AI 原文、妊娠结果或可执行代码。没有可验证规则时保存空数组，Eligibility 保持无可用规则，不使用现实人类 timing fallback。`projection_rule_id` 由规范化规则材料稳定生成，source Event 证据属于 Projection provenance，不属于 World Model rule identity。
+World Model v1 的顶层也正式包含 `projection_rules: []`。它是当前 Floor 所有的声明式机制规则集合，不是 Projection 实例。AI/raw rule content 不输出 `projection_rule_id`；每条 raw rule 只包含业务内容，由 BioWeave 在规范化阶段生成 ID 后形成完整 domain DTO。每条最终规则包含 `schema_version`、`projection_rule_id`、`mechanism_key`、`development_concern_key`、`development_kind`、`trigger`、`requirements`、`realization`、`contradiction` 和 `expiration`；规则必须先通过 `validateProjectionRuleContent()`、`normalizeProjectionRules()` 与 final validation，再随 `world_model` 保存。规则不得包含概率、RNG、Prompt、AI 原文、妊娠结果或可执行代码。没有可验证规则时仍保存空数组；这不会阻断已完成受孕前观察聚合的内置中性候选，但不会凭空创建 Timing、Tracking Window 或事实。`projection_rule_id` 由规范化规则材料稳定生成，source Event 证据属于 Projection provenance，不属于 World Model rule identity。
 
 World Model Patch v2 还支持显式的 `Projection_Rule_Override` Fact，并在 Host 内部转换为 `DISABLE_PROJECTION_RULE`。它只能针对 Existing 中已存在的 deterministic rule，且必须绑定当前 World evidence 与明确的 contradiction/non-applicability reason；omission、uncertainty、no-evidence 和空 `projection_rules` 都不会禁用旧 rule。替换由 disable 加新的 `ADD_PROJECTION_RULE` 组成。历史 Floor 的 World snapshot 与既有 Projection 不回写，Runtime 只消费新 authoritative `projection_rules[]`，不维护 disabled-rule blacklist。
 
@@ -548,9 +553,13 @@ Calendar Engine。
 当前 Phase 1 已冻结并实现最小 Window DTO/schema：Window 是独立
 `tracking_window_timeline` Floor root，支持多次 compatible exposure、确定性
 cycle/window ID、`open` / `resolved_pregnant` / `terminated` / `expired`，并按 active
-Swipe 与 Floor Version 过滤。Phase 2 的 `expired` 只由 World mechanism-level
-`tracking_window_horizon` 与可比较 Story Time 触发；缺失 horizon fail closed，
-且 terminal Window 不因 horizon correction 复活。`resolved_not_pregnant` 仍未实现。
+Swipe 与 Floor Version 过滤。Phase 2 的 `expired` 只由匹配的 Timing Instance
+的冻结 `effective_max_story_days` 与可比较 Story Time 触发；World
+`tracking_window_horizon` 不能提前拆分或结束 Window；缺失 Timing boundary
+fail closed，且 terminal Window 不因 boundary correction 复活。
+`resolved_not_pregnant` 仍未实现。正式 Aggregation 超过冻结最大观察天数且没有
+ST 正文确认时，独立 lifecycle timeout 会以 `timeout_no_pregnancy` 归档本轮并
+删除当前仍存在且被本轮接受的 Exposure Events；这不会改写历史 Aggregation。
 
 `expired` 不删除 BiologicalEvent，不等于 confirmed-not-pregnant，不创建
 medical/state fact，也不修改 `reproductive_source_attribution`。只有 open
@@ -758,4 +767,6 @@ aggregation 集合；后续 Floor 以完整集合更新、删除或清空，且�
 不会伪装成显式空集合；root 内 item 的创建 provenance 超出 root/目标 Floor、
 Chat 或 active Swipe 时，该候选 root 也会跳过。Aggregation 的
 `accepted_exposure_event_ids` 只用于从当前有效 Event 快照重建 participant
-名单，不构成 Chat-level 第二事实源。
+名单，不构成 Chat-level 第二事实源。历史 accepted 集合不因当前 Event 编辑而改写；
+如果其中只有部分来源仍在当前快照中，新 Projection 只携带仍有效的子集，失效 ID
+进入 Debug 诊断；如果没有任何来源仍有效，则不生成新的 Projection。

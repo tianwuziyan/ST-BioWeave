@@ -147,7 +147,7 @@ have separate contracts and failure boundaries.
 | Projection Context | Runtime view of context-visible Projections | Runtime/read model; prompt slot is refreshed | Inject possible developments into the ST prompt | Event evidence; authoritative factual storage |
 | Character Timing Config | Chat-local character configuration | Yes, Chat-local | Base pre-confirmation timing policy for future cycles | Character Registry/Profile; World Rule |
 | Observation Timing Instance | Floor-owned Timing-domain record | Yes, `projection_timing_snapshot` complete Floor collection | Freeze one cycle's basis, variance, effective min/max, and provenance | Tracking Window; Projection; BiologicalEvent |
-| Tracking Window | Floor-owned Tracking Window Phase 1 + Phase 2 | Yes, `tracking_window_timeline` | Deterministic exposure round, World-authoritative horizon lifecycle, and active pre-confirmation filtering | Timing Instance; Pregnancy Episode; Projection |
+| Tracking Window | Floor-owned Tracking Window Phase 1 + Phase 2 | Yes, `tracking_window_timeline` | Deterministic exposure round, Timing-bound Story-Time lifecycle, and active pre-confirmation filtering; World horizon cannot end it earlier | Timing Instance; Pregnancy Episode; Projection |
 | Snapshot | Factual state optimization/bridge | Yes where the current lifecycle requires it | Avoid rebuilding factual state unnecessarily | Projection persistence; Timing persistence |
 
 Important identity boundaries:
@@ -182,8 +182,27 @@ real-world Human assumptions. `carrying_compatibility` is tri-state; unknown is
 not false.
 
 `projection_rules[]` is the validated declarative authority consumed by
-Projection Runtime. No rule means no Projection eligibility fallback; Runtime
-does not invent a rule.
+Projection Runtime for configurable rules. An empty collection does not block
+the separate deterministic `pre_confirmation_observation` candidate path when
+the current subject has valid Timing/Tracking Window evidence and a successful
+Participant Aggregation. That built-in path is not a World Model rule, is not
+persisted into `projection_rules[]`, does not call Projection AI, and does not
+create a factual Event or pregnancy state. Without the required observation
+evidence, no Projection candidate is created. Its built-in branches are
+elapsed-day gated by the person's own observation day: day 14–20 shows
+fatigue, breast sensitivity, slight scent/food changes, or no obvious reaction;
+day 21–27 shows nausea, scent discomfort, mood changes, or appetite changes;
+day 28–42 shows worsening nausea, possible vomiting, persistent fatigue, or no
+obvious reaction. The persisted Projection timing keeps
+the reference Story Time, current Story Time, and elapsed days. Existing
+immediate-trigger built-in records are lifecycle-migrated on the next Runtime
+run; factual Events, Timing Instances, and Aggregations are not rewritten.
+When only some accepted Exposure IDs are absent or no longer valid in the
+current Event snapshot, a new Projection uses the surviving current subset
+without rewriting the historical Aggregation; Debug reports the exact IDs in
+`aggregation_evidence_invalid_event_ids`. If no accepted ID remains valid,
+eligibility fails closed. A previously persisted Projection whose evidence still
+contains an invalidated ID is hidden until a current valid evidence set is saved.
 
 ### Projection Rule Override
 
@@ -239,7 +258,7 @@ A Projection is a non-factual future biological development possibility or
 question. Conceptually:
 
 ```text
-Current factual State + Story Time + World Rule
+Current factual State + Story Time + World Rule or built-in pre-confirmation observation
   → development worth watching
   → possible future development
   → Projection Context
@@ -286,7 +305,7 @@ long-term progression 与 explicit recovery resolution 仍未实现。Character 
 ## Pre-confirmation Tracking Window and Projection Timing
 
 Tracking Window Phase 1 + Phase 2 is implemented as a separate lifecycle
-boundary. Phase 2 adds the World-authoritative horizon and deterministic
+boundary. Phase 2 adds the Timing-bound maximum and deterministic
 expiration.
 It owns deterministic Window/cycle binding, compatible exposure grouping,
 `open` / `resolved_pregnant` / `terminated` / `expired`, and active Tracking
@@ -302,10 +321,11 @@ The current implementation includes:
 - compatible multi-exposure basis attachment;
 - source invalidation;
 - confirmation, pregnancy-loss, and abortion exits;
-- timing plus World Rule eligibility composition;
+- timing plus World Rule or built-in pre-confirmation eligibility composition;
 - Floor, Swipe, and stale-owner guards;
 - authoritative persistence readback.
-- World mechanism-level Tracking Window horizon evaluation and scheduler-independent
+- World mechanism-level Tracking Window horizon remains configuration/evidence
+  only; matching Timing `effective_max_story_days` drives scheduler-independent
   lifecycle-only expiration;
 - Projection-owner lifecycle bridge for bound pre-confirmation Projections;
 - read-only Current State contributor summary in Projection Context.
@@ -465,16 +485,18 @@ The Human preset is intentionally a conservative narrative Product Policy, not
 a medical standard, pregnancy-confirmation interval, symptom guarantee, or
 universal exposure-anchored medical value. The research note preserves the
 medical evidence and its anchor limitations. The preset does not create a World
-Rule, infer capability, or provide a Runtime fallback when World Rules are
-missing.
+Rule, infer capability, or provide a Human timing/medical fallback when World
+Rules are missing. The separate built-in pre-confirmation observation path only
+uses already persisted Timing, Tracking Window, and successful Aggregation
+evidence; it does not infer Human biology.
 
 ## Current Test Baseline
 
 This is a checkpoint, not a permanent number:
 
 ```text
-1688 total
-1672 pass
+1626 total
+1610 pass
 16 skipped
 0 fail
 ```

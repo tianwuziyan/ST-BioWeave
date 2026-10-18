@@ -624,6 +624,7 @@ export function createApp(runtime, options = {}) {
   let panelDragController = null
   let route = 'overview'
   let focusedCharacterId = null
+  let focusedProjectionSubjectId = null
   let unsubscribeRuntime = null
   const runtimeNotificationKeys = new Set()
   let modelRefreshSequence = 0
@@ -645,6 +646,7 @@ export function createApp(runtime, options = {}) {
   let worldModelQueuedRefresh = null
   let worldModelLastRefreshKey = null
   let lastCharacterLifecycleRefreshKey = null
+  let lastProjectionTerminalRefreshKey = null
   let uiRefreshCycleSequence = 0
   let dataManagementState = createDataManagementState()
   let worldModelAbortController = null
@@ -4831,6 +4833,7 @@ export function createApp(runtime, options = {}) {
       projections: businessState.projections,
       projectionSummary: businessState.projectionSummary,
       projectionStatus: businessState.projectionStatus,
+      projectionSubjectId: focusedProjectionSubjectId,
       editingEventId: eventEditingId,
       eventEditDraft,
       eventEditSaving,
@@ -4933,6 +4936,7 @@ export function createApp(runtime, options = {}) {
     captureAnalysisSourceDisclosure()
     route = nextRoute
     focusedCharacterId = null
+    focusedProjectionSubjectId = null
     healthPopoverState = {open: false, characterId: null}
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
@@ -5771,9 +5775,11 @@ export function createApp(runtime, options = {}) {
       healthPopoverState = {open: false, characterId: null}
       route = 'overview'
       focusedCharacterId = null
+      focusedProjectionSubjectId = null
       businessRefreshSequence += 1
       businessRefreshQueued = null
       lastCharacterLifecycleRefreshKey = null
+      lastProjectionTerminalRefreshKey = null
       businessState = {
         ...businessState,
         loaded: false,
@@ -5844,11 +5850,26 @@ export function createApp(runtime, options = {}) {
       }
     }
     if (event?.type === 'PROJECTION_ANALYSIS_STATUS_CHANGED') {
+      const projectionStatus = event.payload ?? {}
       businessState = {
         ...businessState,
-        projectionStatus: event.payload ?? null,
+        projectionStatus,
       }
-      if (route === 'projection' || route === 'overview') render()
+      const projectionTerminal = projectionStatus.stage === 'PROJECTION_READBACK'
+        || projectionStatus.stage === 'PROJECTION_PROCESS_FAILED'
+        || (['failed', 'stale', 'cancelled'].includes(projectionStatus.state) && projectionStatus.phase !== 'generation')
+      if (projectionStatus.state === 'running') lastProjectionTerminalRefreshKey = null
+      const projectionTerminalRefreshKey = projectionStatus.run_id
+        ?? projectionStatus.execution_id
+        ?? `${projectionStatus.chat_id ?? ''}:${projectionStatus.floor_version?.message_id ?? ''}:${projectionStatus.reason ?? ''}`
+      const shouldRefreshProjectionTerminal = projectionTerminal
+        && projectionTerminalRefreshKey !== lastProjectionTerminalRefreshKey
+      if (shouldRefreshProjectionTerminal && (route === 'projection' || route === 'overview')) {
+        lastProjectionTerminalRefreshKey = projectionTerminalRefreshKey
+        void refreshBusinessState({reason: 'projection-analysis-terminal', force: true})
+      } else if (route === 'projection' || route === 'overview') {
+        render()
+      }
     }
     if (event?.type === 'WORLD_PERSISTENCE_CONFIRMED') {
       if (root?.dataset.open === 'true')
@@ -6089,6 +6110,12 @@ export function createApp(runtime, options = {}) {
       } catch (error) {
         notify('推演刷新失败。', 'error', documentRef)
       }
+      return
+    }
+    if (action === 'select-projection-subject') {
+      event.preventDefault()
+      focusedProjectionSubjectId = String(target.dataset.projectionSubjectId ?? '').trim() || null
+      render()
       return
     }
     if (action === 'delete-projection') {
@@ -6811,6 +6838,8 @@ export function createApp(runtime, options = {}) {
     worldModelLastRefreshKey = null
     route = 'overview'
     focusedCharacterId = null
+    focusedProjectionSubjectId = null
+    lastProjectionTerminalRefreshKey = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()
     lastWorldRenderDiagnostic = null

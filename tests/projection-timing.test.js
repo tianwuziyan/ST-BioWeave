@@ -821,7 +821,16 @@ test('Projection eligibility composes World Rule eligibility with timing eligibi
   const content = {schema_version: 1, mechanism_key: 'fertilization', development_concern_key: 'detection', development_kind: 'possible_detection', trigger: {kind: 'immediate_after_event', source_event_type: 'sexual_activity'}, requirements: {capabilities: [], source_compatibility: 'not_required', contributor_relationships: []}, realization: null, contradiction: null, expiration: null};
   const rule = {...content, projection_rule_id: buildProjectionRuleId(content)};
   const timing = resolveProjectionTimingInstance({chatId: floorVersion.chat_id, subjectId: 'char_000001', mechanismKey: 'fertilization', firstEvent: event, config, floorVersion, rng: () => 0.5});
-  const result = evaluateProjectionEligibility({events: [event], currentState: {characters: {'char_000001': {reproductive_capabilities: {}}}}, worldModel: {projection_rules: [rule]}, currentStoryTime: {day_index: 109}, preConfirmationTiming: {enabled: true, instances: [timing]}});
+  const result = evaluateProjectionEligibility({events: [event], currentState: {characters: {'char_000001': {reproductive_capabilities: {}}}}, worldModel: {projection_rules: [rule]}, currentStoryTime: {day_index: 109}, preConfirmationTiming: {enabled: true, instances: [timing], windows: [{tracking_window_id: 'window-projection-timing', subject_id: 'char_000001', mechanism_key: 'fertilization', status: 'open', source_event_ids: [event.event_id]}]}});
   assert.equal(result.decisions[0].eligibility, 'not_eligible');
   assert.equal(result.decisions[0].reason_code, 'before_min');
+});
+
+test('Projection eligibility fails closed when enabled timing has no valid Tracking Window', () => {
+  const content = {schema_version: 1, mechanism_key: 'fertilization', development_concern_key: 'detection', development_kind: 'possible_detection', trigger: {kind: 'immediate_after_event', source_event_type: 'sexual_activity'}, requirements: {capabilities: [], source_compatibility: 'not_required', contributor_relationships: []}, realization: null, contradiction: null, expiration: null};
+  const rule = {...content, projection_rule_id: buildProjectionRuleId(content)};
+  const timing = resolveProjectionTimingInstance({chatId: floorVersion.chat_id, subjectId: 'char_000001', mechanismKey: 'fertilization', firstEvent: event, config, floorVersion, rng: () => 0.5});
+  const result = evaluateProjectionEligibility({events: [event], currentState: {characters: {'char_000001': {reproductive_capabilities: {}}}}, worldModel: {projection_rules: [rule]}, currentStoryTime: {day_index: 110}, preConfirmationTiming: {enabled: true, instances: [timing]}});
+  assert.equal(result.decisions[0].eligibility, 'not_eligible');
+  assert.equal(result.decisions[0].reason_code, 'tracking_window_not_open');
 });

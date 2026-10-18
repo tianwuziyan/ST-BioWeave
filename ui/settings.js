@@ -1209,7 +1209,7 @@ function renderNsfwPipelineDiagnostics(debug = {}) {
     ['world_rule_binding', stage.world_rule_binding], ['aggregation trigger', stage.aggregation_trigger_status], ['aggregation overdue', stage.aggregation_overdue],
     ['readback attempted/succeeded/present', [stage.readback_attempted, stage.readback_succeeded, stage.readback_result_present]],
     ['readback reason', stage.readback_reason_code], ['Projection Rules', [stage.projection_rules_available, stage.projection_rules_count]],
-    ['Projection Eligibility / AI', [stage.projection_eligibility, stage.projection_ai_request_started]], ['人工修改 Timing', stage.manual_timing_edit], ['Aggregation 重新评估', stage.aggregation_reevaluation], ['error_code', stage.error_code],
+    ['Projection Eligibility / AI', [stage.projection_eligibility, stage.projection_ai_request_started]], ['Projection candidate status', stage.projection_candidate_status], ['Projection candidate source', stage.projection_candidate_source], ['人工修改 Timing', stage.manual_timing_edit], ['Aggregation 重新评估', stage.aggregation_reevaluation], ['error_code', stage.error_code],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前 Floor 没有可用的 NSFW 执行阶段记录。</p>';
   const aggregationByKey = new Map(aggregationDiagnostics.map(item => [
     [item.subject_id, item.mechanism_key, item.cycle_id, item.tracking_window_id].map(value => String(value ?? '')).join('\u001f'),
@@ -1287,10 +1287,18 @@ function renderLifecycleRuntimeDebug(debug = {}) {
     ['aggregation 未执行原因', item.aggregation?.reason_code],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 Timing Instance。</p>';
   const aggregationCards = (aggregation.aggregations ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.aggregation_id ?? '未知 aggregation') + '</h5>' + renderBusinessDebugRows([
-    ['subject_id', item.subject_id], ['pregnancy_id', item.pregnancy_id], ['cycle_id', item.cycle_id], ['状态', item.status],
+    ['subject_id', item.subject_id], ['pregnancy_id（观察阶段可为 null）', item.pregnancy_id], ['cycle_id', item.cycle_id], ['状态', item.status], ['冻结状态', item.freeze_status],
     ['accepted Exposure 数量', item.accepted_exposure_count], ['aggregation Story Time', item.aggregation_story_time],
-    ['effective_min', item.effective_min_story_days], ['effective_max', item.effective_max_story_days], ['触发策略', item.aggregation_trigger_strategy],
+    ['accepted_exposure_event_ids', item.accepted_exposure_event_ids], ['effective_min', item.effective_min_story_days], ['effective_max', item.effective_max_story_days], ['触发策略', item.aggregation_trigger_strategy],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 aggregation。</p>';
+  const observationBoundary = debug.observation_boundary ?? {};
+  const observationBoundaryCards = (observationBoundary.aggregations ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.aggregation_id ?? '未知 aggregation') + '</h5>' + renderBusinessDebugRows([
+    ['Floor / Swipe 边界', item.floor_version], ['subject / mechanism', [item.subject_id, item.mechanism_key]], ['pregnancy_id（观察阶段可为 null）', item.pregnancy_id], ['冻结状态', item.freeze_status],
+    ['accepted_exposure_event_ids', item.accepted_exposure_event_ids], ['当前有效 pregnancy-relevant Exposure IDs', item.current_exposure_event_ids],
+    ['聚合后排除的 Exposure IDs', item.excluded_after_aggregation_event_ids], ['排除 reason_code', item.excluded_after_aggregation_reason],
+    ['本轮起点 Story Time', item.reference_story_time], ['effective_max_story_days', item.effective_max_story_days], ['elapsed_story_days', item.elapsed_story_days], ['timeout_status', item.timeout_status],
+    ['closure_reason', item.closure_reason], ['release_action', item.release_action], ['deleted_event_count', item.deleted_event_count],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有成功 aggregation 的观察轮次快照。</p>';
   const deliveryCards = (delivery.records ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.delivery_id ?? '未知 delivery') + '</h5>' + renderBusinessDebugRows([
     ['projection_id', item.projection_id], ['projection 是否存在', item.projection_present], ['aggregation_id', item.aggregation_id],
     ['subject_id', item.subject_id], ['cycle_id', item.cycle_id], ['提交状态', item.status], ['提交 Floor Version', item.submitted_floor_version],
@@ -1302,9 +1310,12 @@ function renderLifecycleRuntimeDebug(debug = {}) {
     '<section class="bioweave-business-debug-lifecycle"><h5>Projection Timing Runtime</h5>' + renderBusinessDebugRows([
       ['创建策略', timingRuntime.creation_policy], ['Projection Rule 可用', timingRuntime.projection_rules_available],
       ['运行状态', timingRuntime.status], ['未执行原因', timingRuntime.reason_code],
+      ['Projection candidate status', projectionTiming.projection_diagnostics?.projection_candidate_status],
+      ['Projection candidate source', projectionTiming.projection_diagnostics?.projection_candidate_source],
       ['Projection Rule IDs', projectionTiming.projection_rule_ids],
     ]) + timingCards + '</section>',
     '<section class="bioweave-business-debug-lifecycle"><h5>Participant Aggregation · ' + escapeHtml(String(aggregation.count ?? 0)) + '</h5>' + aggregationCards + '</section>',
+    '<section class="bioweave-business-debug-lifecycle"><h5>观察轮次边界 · 当前轮次冻结诊断</h5>' + renderBusinessDebugRows([['当前 Floor / Swipe', observationBoundary.floor_version], ['当前 Story Time', observationBoundary.current_story_time]]) + observationBoundaryCards + '</section>',
     '<section class="bioweave-business-debug-lifecycle"><h5>Projection Delivery · ' + escapeHtml(String(delivery.count ?? 0)) + '</h5>' + deliveryCards + '</section>',
     '<section class="bioweave-business-debug-lifecycle"><h5>Pregnancy Lifecycle</h5>' + renderBusinessDebugRows([
       ['facts', lifecycle.facts?.length ?? 0], ['archives', lifecycle.archives?.length ?? 0], ['candidate records', lifecycle.candidate_records?.length ?? 0],

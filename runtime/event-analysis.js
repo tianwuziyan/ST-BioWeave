@@ -552,6 +552,9 @@ export function createEventAnalysisCoordinator({
   healthRecoveryStabilityDelayMs = 2000,
   persistPregnancyLifecycleFacts = null,
   resolveLockedExposureState = null,
+  getTrackingTimingInstances = null,
+  getTrackingParticipantAggregations = null,
+  getTrackingLifecycleTimeline = null,
 } = {}) {
   if (!st || !chat || !store)
     throw new TypeError("EVENT_ANALYSIS_DEPENDENCIES_REQUIRED");
@@ -1959,6 +1962,54 @@ export function createEventAnalysisCoordinator({
     });
     return states;
   }
+  async function resolveTrackingTimingInstances(current) {
+    if (!current?.version || typeof getTrackingTimingInstances !== 'function') return [];
+    try {
+      const result = await getTrackingTimingInstances({
+        chatId: current.version.chat_id,
+        endpointFloor: current.version.floor,
+        endpointIndex: current.index,
+        floor: current,
+      });
+      return Array.isArray(result?.items) ? result.items : Array.isArray(result) ? result : [];
+    } catch {
+      return [];
+    }
+  }
+  async function resolveTrackingAggregationState(current) {
+    if (!current?.version) return {participantAggregations: [], lifecycleReleaseRecords: []};
+    const read = async (reader, payload) => {
+      if (typeof reader !== 'function') return null;
+      try {
+        return await reader(payload);
+      } catch {
+        return null;
+      }
+    };
+    const [aggregationResult, lifecycleResult] = await Promise.all([
+      read(getTrackingParticipantAggregations, {
+        chatId: current.version.chat_id,
+        endpointFloor: current.version.floor,
+        endpointIndex: current.index,
+        floor: current,
+      }),
+      read(getTrackingLifecycleTimeline, {
+        chatId: current.version.chat_id,
+        endpointFloor: current.version.floor,
+        endpointIndex: current.index,
+        floor: current,
+      }),
+    ]);
+    return {
+      participantAggregations: Array.isArray(aggregationResult?.items)
+        ? aggregationResult.items
+        : Array.isArray(aggregationResult) ? aggregationResult : [],
+      lifecycleReleaseRecords: Array.isArray(lifecycleResult?.release_records)
+        ? lifecycleResult.release_records
+        : [],
+    };
+  }
+
   async function collectTrackingInputs(token = chat.token(), {
     target = undefined,
     currentEventState = undefined,
@@ -2006,6 +2057,8 @@ export function createEventAnalysisCoordinator({
       // An empty Chat has no target Floor and therefore no World Model.
     }
     const characterRegistryResolution = currentCharacterRegistryResolutionFromStates(validStates);
+    const timingInstances = await resolveTrackingTimingInstances(current);
+    const trackingAggregationState = await resolveTrackingAggregationState(current);
     const storyTimeStartedAt = monotonicNow();
     const currentStoryTime = storyTimeCoordinator && target !== null &&
       (target !== undefined || validStates.length)
@@ -2020,6 +2073,8 @@ export function createEventAnalysisCoordinator({
       floorVersion: current?.version ?? null,
       characterRegistry: characterRegistryResolution.registry,
       characterRegistryState: characterRegistryResolution.state,
+      ...trackingAggregationState,
+      timingInstances,
       currentStoryTime,
       subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
         participant.character_id,
@@ -2054,6 +2109,8 @@ export function createEventAnalysisCoordinator({
     const activeEvents = sortEvents(eventState?.events ?? []);
     const world = await resolveWorldModelAtOrBefore(current);
     const currentStoryTime = await storyTimeCoordinator.getCurrentStoryTime();
+    const timingInstances = await resolveTrackingTimingInstances(current);
+    const trackingAggregationState = await resolveTrackingAggregationState(current);
     const subjectProfiles = Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
       participant.character_id,
       {
@@ -2068,6 +2125,8 @@ export function createEventAnalysisCoordinator({
       currentStoryTime,
       floorVersion: current.version,
       subjectProfiles,
+      ...trackingAggregationState,
+      timingInstances,
     }).filter(window => window?.subject_id === subjectId
       && (!mechanismKey || window?.mechanism_key === mechanismKey));
     const relevantEvents = activeEvents.filter(event => {

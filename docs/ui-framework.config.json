@@ -419,6 +419,49 @@
       },
       "dataPolicy": "list and detail consume trackingSubjects, characterProfiles, and activeEvents from Runtime; no fixed character or gender names"
     },
+    "projectionPage": {
+      "root": "bioweave-projection-page",
+      "maxWidth": "900px",
+      "dataSource": "Projection DTO grouped by Runtime tracking_subjects display name",
+      "layout": "person list first, selected person's independent detail timeline second",
+      "notice": "each person keeps an independent observation day; a candidate is not a factual Event",
+      "builtInObservationSchedule": [
+        {"range": "第 14–20 天", "phase": "早期细微变化", "branches": ["嗜睡或疲倦", "乳房敏感", "对气味或食物产生轻微变化", "暂时没有明显反应"]},
+        {"range": "第 21–27 天", "phase": "早期反应出现", "branches": ["恶心", "闻到气味不舒服", "情绪变化", "食欲变化"]},
+        {"range": "第 28–42 天", "phase": "反应逐渐明显", "branches": ["恶心加重", "可能出现孕吐", "持续疲倦", "一直没有明显反应"]}
+      ],
+      "workspace": {
+        "class": "bioweave-projection-workspace",
+        "desktopColumns": "250px minmax(0, 1fr)",
+        "gap": "10px",
+        "listPosition": "left",
+        "mobileLayout": "single-column; people first, detail second"
+      },
+      "peopleList": {
+        "panel": "bioweave-projection-people-panel",
+        "card": "bioweave-projection-person-card",
+        "selectionHook": "data-bioweave-action=select-projection-subject",
+        "selectionId": "data-projection-subject-id",
+        "visibleFields": ["display name", "observation status", "current phase", "distance to observation settlement when supplied by DTO", "current route labels"],
+        "forbiddenFields": ["character_id", "projection_id", "event_id", "cycle_id", "Floor Version", "raw concern key"]
+      },
+      "detail": {
+        "class": "bioweave-projection-detail",
+        "sections": ["现在可能出现", "之后可能出现", "最后怎么结束"],
+        "candidateCard": "bioweave-projection-signal",
+        "deleteHook": "data-bioweave-action=delete-projection",
+        "deleteId": "data-projection-id",
+        "candidateStatusLabels": {"noReaction": "始终可能", "otherActive": "当前可能出现", "historical": "preserve status label"},
+        "candidateFooter": "delete button only; do not render a 备选路线 field",
+        "summaryCandidateCount": "render the safe DTO aggregated_candidate_count as 已聚合候选 N 人; pre_confirmation and participant_aggregation views without validated evidence are filtered before UI; never derive the count from active branches",
+        "copyRule": "candidate route remains explicitly non-factual until正文 supplies matching evidence",
+        "timeoutRule": "observation period ends without confirmation means the current cycle is treated as not pregnant and its NSFW events do not enter the next cycle"
+      },
+      "responsive": {
+        "desktop": "people list and detail are two columns",
+        "mobile": "people list becomes two-column cards; detail follows in one column; signal and outcome cards stack"
+      }
+    },
     "eventReview": {
       "root": "bioweave-event-review-panel",
       "list": "bioweave-event-review-list",

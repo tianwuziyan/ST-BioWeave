@@ -600,6 +600,16 @@ current Event production path does not expose a separate attribution UI or an
 independent persisted attribution root; orphan attribution remains diagnostic and
 does not create an episode.
 
+Participant Aggregation is an observation candidate, not a pregnancy fact, and
+may retain `pregnancy_id: null` until Event Analysis confirms a concrete
+identity. Identity matching is exact for concrete IDs; the observation `null`
+state may transition to a positive confirmation but does not match unrelated
+confirmed pregnancies. When the frozen aggregation maximum is reached without
+confirmation, the lifecycle timeout path uses the existing Floor-owned archive
+and Exposure cleanup entry point with `timeout_no_pregnancy`. It evaluates the
+current aggregation even when no response delivery record exists, while keeping
+the historical Aggregation snapshot immutable.
+
 ### 4.4 Runtime transient state
 
 Runtime memory is disposable and is never an alternate persistence layer. The
@@ -1305,15 +1315,22 @@ version through the Coordinator and read back authoritatively.
 append-only root under the Tracking owner. It uses the same complete six-field
 Floor Version and authoritative coordinator readback contract as other Floor
 roots. The ordinary current Tracking path derives Windows from the target
-Floor's complete valid Events, target Story Time, and effective World Model; it
-does not read persisted Timeline creations as an authority that overrides the
+Floor's complete valid Events, target Story Time, effective World Model, and
+read-only persisted Timing Instances. It does not read persisted Timeline
+creations as an authority that overrides the
 current facts. The Timeline API and stored data remain available for explicit
 lifecycle/persistence compatibility paths. Phase 1 + Phase 2 supports `open`,
-`resolved_pregnant`, `terminated`, and World-authoritative Story-Time `expired`;
+`resolved_pregnant`, `terminated`, and Timing-bound Story-Time `expired`;
+the Tracking runtime receives read-only persisted Timing Instances through the
+event-analysis boundary. A matching frozen `effective_max_story_days` is the
+time boundary; an independent World `tracking_window_horizon` cannot split or
+expire a Window earlier. Without a matching Timing Instance, time-based
+expiration fails closed and the Window remains open;
 source edit/delete, Swipe changes, and stale versions fail closed during derived
-reads. Missing, ambiguous, or incomparable horizon/time data also fails closed;
+reads. Missing, ambiguous, or incomparable Timing boundary/Story Time data also
+fails closed;
 factual terminal Window states remain terminal, while an `expired` result is
-recomputed from the current complete Events and effective horizon.
+recomputed from the current complete Events and matching Timing boundary.
 
 The Window does not create pregnancy or negative-pregnancy facts, does not enter
 Projection Context, and does not modify Current State. `resolved_not_pregnant`

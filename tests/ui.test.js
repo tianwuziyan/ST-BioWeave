@@ -20,6 +20,7 @@ import { createApiProfileStore } from '../storage/store.js'
 import { settingsPage } from '../ui/settings.js'
 import { normalizeWorldModel } from '../ai/analyzer.js'
 import { charactersPage } from '../ui/characters.js'
+import { projectionPage } from '../ui/projection.js'
 import { createDeviceLocalPreferences } from '../core/device-local-preferences.js'
 const STYLE_SOURCE = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8')
 const FINAL_STYLE_SOURCE = STYLE_SOURCE.slice(STYLE_SOURCE.lastIndexOf('/* Last cascade layer:'))
@@ -600,6 +601,11 @@ test('business debug renders existing Projection Timing diagnostics in lifecycle
   const renderEnd = SETTINGS_SOURCE.indexOf('\nfunction renderBusinessDebugState(', renderStart)
   const source = SETTINGS_SOURCE.slice(renderStart, renderEnd)
   assert.match(source, /projection_timing/u)
+  assert.match(source, /observation_boundary/u)
+  assert.match(source, /excluded_after_aggregation_event_ids/u)
+  assert.match(source, /排除 reason_code/u)
+  assert.match(source, /timeout_status/u)
+  assert.match(source, /Projection candidate status/u)
   assert.match(source, /effective_min/u)
   assert.match(source, /aggregation 未执行原因/u)
   assert.doesNotMatch(source, /getProjectionTimingDebug/u)
@@ -1338,6 +1344,218 @@ function apiProfileRuntime(chatId = 'chat-model-cache') {
     subscribe: () => () => {},
   }
 }
+
+test('Projection terminal status automatically rereads business projections without rereading while running', async () => {
+  const documentRef = new AppFakeDocument()
+  let runtimeListener = null
+  let businessReads = 0
+  const runtime = {
+    ...apiProfileRuntime('chat-projection-auto-refresh'),
+    collectActiveBusinessData: async () => {
+      businessReads += 1
+      return {
+        projections: businessReads > 1 ? [{id: 'projection-read-back', generated_statement: '候选支线'}] : [],
+        projection_summary: {active_count: businessReads > 1 ? 1 : 0, recent: []},
+        analysis_status: {state: 'success'},
+      }
+    },
+    subscribe: listener => {
+      runtimeListener = listener
+      return () => { if (runtimeListener === listener) runtimeListener = null }
+    },
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  app.openBioWeave()
+  app.go('projection')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const readsBeforeRunning = businessReads
+  runtimeListener?.({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {state: 'running', stage: 'PROJECTION_AI_REQUEST_STARTED'}})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(businessReads, readsBeforeRunning)
+  runtimeListener?.({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {state: 'success', stage: 'PROJECTION_READBACK'}})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(businessReads, readsBeforeRunning + 1)
+  runtimeListener?.({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {state: 'success', stage: 'PROJECTION_READBACK'}})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(businessReads, readsBeforeRunning + 1)
+  assert.match(app.getRoot().querySelector('.bioweave-main').innerHTML, /候选支线/)
+  app.destroyBioWeave()
+})
+
+test('Projection page renders built-in pre-confirmation branch labels instead of concern keys', () => {
+  const html = projectionPage({
+    trackingSubjects: {
+      char_000001: {character_id: 'char_000001', display_name: '祁鸢'},
+    },
+    projectionSubjectId: 'char_000001',
+    projections: [{
+      id: 'projection-built-in',
+      subject: {id: 'char_000001'},
+      rule: {label: '嗜睡或疲倦', description: '观察期内可能出现嗜睡或疲倦等身体表现；这只是备选剧情方向，不是已确认怀孕事实。'},
+      concern_key: 'pre_confirmation_observation:fatigue',
+      aggregated_candidate_count: 4,
+      status: 'active',
+      generated_statement: '观察期内可能出现嗜睡或疲倦等身体表现；这只是备选剧情方向。',
+      source_refs: [],
+      timing: {elapsed_story_days: 21},
+    }],
+    projectionSummary: {active_count: 1},
+  })
+  assert.match(html, /人物推演/u)
+  assert.match(html, /祁鸢/u)
+  assert.match(html, /第 21 天/u)
+  assert.match(html, /现在可能出现/u)
+  assert.match(html, /最后怎么结束/u)
+  assert.match(html, /嗜睡或疲倦/u)
+  assert.match(html, /观察期内可能出现嗜睡或疲倦等身体表现/u)
+  assert.doesNotMatch(html, /备选路线/u)
+  assert.doesNotMatch(html, /这只是备选剧情方向/u)
+  assert.doesNotMatch(html, /pre_confirmation_observation:fatigue/u)
+})
+
+test('Projection page uses stable possibility labels and keeps the delete hook', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [
+      {id: 'projection-no-reaction', subject: {id: 'char_qi'}, rule: {label: '一直没有明显反应', concern_key: 'pre_confirmation_observation:no_reaction_late', description: '一直没有明显身体反应，不能因为没有反应就确认结果。'}, aggregated_candidate_count: 4, status: 'active'},
+      {id: 'projection-nausea', subject: {id: 'char_qi'}, concern_key: 'pre_confirmation_observation:nausea', rule: {label: '恶心', description: '闻到气味或进食时可能出现反胃感。'}, aggregated_candidate_count: 4, status: 'active'},
+    ],
+    projectionSummary: {active_count: 2},
+  })
+  assert.match(html, /始终可能/u)
+  assert.match(html, /当前可能出现/u)
+  assert.match(html, /data-bioweave-action="delete-projection"/u)
+  assert.match(html, /已聚合候选<\/span><strong>4 人/u)
+  assert.doesNotMatch(html, /当前路线/u)
+  assert.doesNotMatch(html, /未知/u)
+  assert.doesNotMatch(html, /备选路线/u)
+  const historicalHtml = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projections: [{id: 'projection-realized', subject: {id: 'char_qi'}, rule: {label: '已出现表现', description: '正文已经记录了对应表现。'}, status: 'realized', generated_statement: '历史说明'}],
+  })
+  assert.match(historicalHtml, /已出现/u)
+  assert.doesNotMatch(historicalHtml, /历史说明/u)
+  assert.doesNotMatch(historicalHtml, /不是已经发生的事实/u)
+})
+
+test('Projection page keeps the reference header structure and active status tone', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-active', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+  })
+  assert.match(html, /class="bioweave-page-head"><div class="bioweave-page-head-copy">/u)
+  assert.match(html, /class="bioweave-badge good">观察中<\/span>/u)
+  assert.match(html, /class="bioweave-badge accent">1 位人物观察中<\/span>/u)
+})
+
+test('Projection CSS preserves reference parity for controls, notices, and signal cards', () => {
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-button\s*\{[\s\S]*?min-height: 32px !important;[\s\S]*?padding: 5px 10px !important;[\s\S]*?font-size: 12px !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-badge\.accent\s*\{[\s\S]*?background: var\(--bioweave-accent-soft\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-notice\s*\{[\s\S]*?border: 1px solid color-mix[\s\S]*?background: var\(--bioweave-accent-soft\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-status\s*\{[\s\S]*?border: 1px solid var\(--bioweave-border\) !important;[\s\S]*?background: var\(--bioweave-card\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-projection-person-status\s*\{[\s\S]*?margin-top: 2px !important;[\s\S]*?font-size: 11px !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal\s*\{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;[\s\S]*?background: var\(--bioweave-surface-raised\);/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal > strong,[\s\S]*?grid-column: 1 \/ -1;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?display: flex;[\s\S]*?justify-content: space-between;/u)
+})
+
+test('Projection page filters malformed built-in groups but keeps generic projections', () => {
+  const html = projectionPage({
+    trackingSubjects: {
+      char_invalid: {character_id: 'char_invalid', display_name: '无效人物'},
+      char_generic: {character_id: 'char_generic', display_name: '通用人物'},
+    },
+    projections: [
+      {
+        id: 'projection-invalid-built-in',
+        subject: {id: 'char_invalid'},
+        concern_key: 'pre_confirmation_observation:fatigue',
+        rule: {label: '嗜睡或疲倦', description: '不应渲染的内置预确认。'},
+        status: 'active',
+      },
+      {
+        id: 'projection-generic',
+        subject: {id: 'char_generic'},
+        concern_key: 'generic_observation',
+        rule: {label: '通用观察', description: '通用推演仍应显示。'},
+        status: 'active',
+      },
+    ],
+    projectionSummary: {active_count: 2},
+  })
+  assert.doesNotMatch(html, /无效人物/u)
+  assert.doesNotMatch(html, /不应渲染的内置预确认/u)
+  assert.match(html, /通用人物/u)
+  assert.match(html, /通用推演仍应显示/u)
+})
+
+test('Projection page keeps each person in an independent selected detail view', () => {
+  const html = projectionPage({
+    trackingSubjects: {
+      char_qi: {character_id: 'char_qi', display_name: '祁鸢'},
+      char_shen: {character_id: 'char_shen', display_name: '沈微'},
+    },
+    projectionSubjectId: 'char_shen',
+    projections: [
+      {
+        id: 'projection-qi',
+        subject: {id: 'char_qi'},
+        rule: {label: '恶心'},
+        status: 'active',
+        generated_statement: '祁鸢可能出现恶心。',
+        source_refs: ['event-qi'],
+        timing: {elapsed_story_days: 23},
+      },
+      {
+        id: 'projection-shen',
+        subject: {id: 'char_shen'},
+        rule: {label: '嗜睡或疲倦'},
+        status: 'active',
+        generated_statement: '沈微可能出现嗜睡或疲倦。',
+        source_refs: ['event-shen'],
+        timing: {elapsed_story_days: 16},
+      },
+    ],
+    projectionSummary: {active_count: 2},
+  })
+  assert.match(html, /data-projection-subject-id="char_qi"/u)
+  assert.match(html, /data-projection-subject-id="char_shen"/u)
+  assert.match(html, /沈微 的推演详情/u)
+  assert.match(html, /第 16 天/u)
+  assert.match(html, /沈微可能出现嗜睡或疲倦/u)
+  assert.match(html, /可能：<\/b>恶心/u)
+  assert.doesNotMatch(html, /pre_confirmation_observation/u)
+})
+
+test('Projection page follows the person-specific staged observation schedule', () => {
+  const stages = [
+    {key: 'early_subtle_changes', label: '第 14–20 天', phase: '早期细微变化', min_elapsed_story_days: 14, max_elapsed_story_days: 20, branches: [{key: 'fatigue', label: '嗜睡或疲倦'}, {key: 'breast_sensitivity', label: '乳房敏感'}, {key: 'scent_food_change', label: '对气味或食物产生轻微变化'}, {key: 'no_reaction_early', label: '暂时没有明显反应'}]},
+    {key: 'early_reactions', label: '第 21–27 天', phase: '早期反应出现', min_elapsed_story_days: 21, max_elapsed_story_days: 27, branches: [{key: 'nausea', label: '恶心'}, {key: 'odor_discomfort', label: '闻到气味不舒服'}, {key: 'mood_change', label: '情绪变化'}, {key: 'appetite_change', label: '食欲变化'}]},
+    {key: 'more_obvious_reactions', label: '第 28–42 天', phase: '反应逐渐明显', min_elapsed_story_days: 28, max_elapsed_story_days: 42, branches: [{key: 'nausea_worsening', label: '恶心加重'}, {key: 'vomiting', label: '可能出现孕吐'}, {key: 'persistent_fatigue', label: '持续疲倦'}, {key: 'no_reaction_late', label: '一直没有明显反应'}]},
+  ]
+  const currentStage = stages[1]
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: currentStage.branches.map((branch, index) => ({
+      id: `projection-stage-${index}`,
+      subject: {id: 'char_qi'},
+      rule: {label: branch.label, observation_stage: currentStage},
+      status: 'active',
+      generated_statement: `${branch.label}只是备选剧情方向。`,
+      timing: {elapsed_story_days: 23, observation_stage_key: currentStage.key, observation_days_until_end: 19},
+    })),
+    projectionSummary: {active_count: 4, observation_schedule: stages},
+  })
+  for (const label of currentStage.branches.map(branch => branch.label)) assert.match(html, new RegExp(label, 'u'))
+  for (const label of stages[2].branches.map(branch => branch.label)) assert.match(html, new RegExp(label, 'u'))
+  assert.match(html, /第 21–27 天 · 早期反应出现/u)
+  assert.match(html, /距离本轮结算/u)
+  assert.doesNotMatch(html, /只是备选剧情方向/u)
+  assert.doesNotMatch(html, /嗜睡或疲倦/u)
+})
 function createSettingsTestApp(profileStore, { apiClient = undefined, chatId = 'chat-profile-save' } = {}) {
   const documentRef = new AppFakeDocument()
   const app = createApp(apiProfileRuntime(chatId), {
@@ -2796,6 +3014,7 @@ test('settings debug keeps the inline preview and directly downloads the complet
       target: {floor_version: {chat_id: 'chat-debug-export', floor: 7, swipe_id: 0}},
       event_state: {events: [{event_id: 'event-edit', event: {event_edit_operation_id: 'op-7'}}]},
       tracking_registry: {tracking_subjects: {'char-a': {}}},
+      observation_boundary: {aggregations: [{freeze_status: 'FROZEN', excluded_after_aggregation_event_ids: ['event-later'], timeout_status: 'waiting/not_due'}]},
     }}),
     getPersistenceTrace: () => ({sequence: [{stage: 'EVENT_EDIT_COMPLETED', event_edit_operation_id: 'op-7', duration_ms: 12.5, persistence_confirmed: true, failure_stage: null}]}),
     getStoryTimeDebugInfo: async () => ({
@@ -2817,13 +3036,19 @@ test('settings debug keeps the inline preview and directly downloads the complet
   assert.equal(downloads.length, 1)
   assert.match(downloads[0].download, /^ST-BioWeave-Debug-\d{8}-\d{6}\.txt$/)
   assert.deepEqual(revoked, ['blob:debug-report-1'])
+  const downloaded = JSON.parse(await createdBlobs[0].text())
+  assert.equal(downloaded.business_debug.observation_boundary.aggregations[0].freeze_status, 'FROZEN')
+  assert.deepEqual(downloaded.business_debug.observation_boundary.aggregations[0].excluded_after_aggregation_event_ids, ['event-later'])
+  assert.equal(downloaded.business_debug.observation_boundary.aggregations[0].timeout_status, 'waiting/not_due')
   const text = buildDebugExportText({
-    businessDebug: {event_state: {events: [{event_edit_operation_id: 'op-7'}]}},
+    businessDebug: {event_state: {events: [{event_edit_operation_id: 'op-7'}]}, observation_boundary: {aggregations: [{freeze_status: 'FROZEN', excluded_after_aggregation_reason: 'POST_AGGREGATION_CYCLE_FROZEN'}]}},
     worldModelLiveState: {history_trace: {nested: [1, 2]}},
     historyTrace: {sequence: [{event_edit_operation_id: 'op-7', duration_ms: 12.5}]},
   })
   const exported = JSON.parse(text)
   assert.equal(exported.business_debug.event_state.events[0].event_edit_operation_id, 'op-7')
+  assert.equal(exported.business_debug.observation_boundary.aggregations[0].freeze_status, 'FROZEN')
+  assert.equal(exported.business_debug.observation_boundary.aggregations[0].excluded_after_aggregation_reason, 'POST_AGGREGATION_CYCLE_FROZEN')
   assert.equal(exported.history_trace.sequence[0].duration_ms, 12.5)
   assert.deepEqual(exported.world_model_live_state.history_trace.nested, [1, 2])
   const storyToggle = actionTarget(root, {bioweaveAction: 'toggle-story-time-debug'})
