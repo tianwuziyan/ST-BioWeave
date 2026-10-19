@@ -612,6 +612,13 @@ Event and cannot update StateReducer; Event Analysis treats only the actual
 target Character message as direct factual evidence. Clearing or changing the
 current Chat/Floor/Swipe/Version clears or replaces the same slot.
 
+The model-facing prompt is wrapped in `<bioweave>...</bioweave>` as an explicit
+context boundary. SillyTavern trims leading and trailing whitespace from
+extension prompt values before assembling an outgoing prompt, so outer newline
+characters alone cannot guarantee a blank line at the host boundary. This
+wrapper does not change the injection slot or create a second slot;
+`bioweave_projection_context` remains the stable internal key.
+
 Projection Runtime is production-connected within the single-identity contract.
 Context injection still reads only persisted Projection Views and never feeds a
 Projection generated after a factual execution back into that same execution.

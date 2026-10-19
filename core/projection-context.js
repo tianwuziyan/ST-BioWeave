@@ -185,7 +185,7 @@ export function buildProjectionContextPrompt(context = []) {
       lines.push(`- 角色 ${text(entry.display_name) || SAFE_SUBJECT_DISPLAY_NAME} 的${entry.body_site}：${entry.guidance}`)
     }
   }
-  return `\n${lines.join('\n')}\n`
+  return `\n<bioweave>\n${lines.join('\n')}\n</bioweave>\n`
 }
 
 export function buildProjectionContext(views, options = {}) {

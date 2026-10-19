@@ -63,8 +63,12 @@ test('context ordering is stable and input views remain unchanged', () => {
   const result = buildProjectionContext(views);
   assert.deepEqual(views, original);
   assert.deepEqual(result.dto.map(item => item.subject_id), ['char_000001', 'char_000002']);
+  assert.equal(result.prompt.startsWith('\n<bioweave>\n'), true);
+  assert.equal(result.prompt.endsWith('\n</bioweave>\n'), true);
+  assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
+  assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
   assert.match(result.prompt, /不是已经发生的事实/);
-  assert.match(result.prompt, /属于潜在生理表现参考/);
+  assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理/);
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
 });
 
@@ -86,12 +90,14 @@ test('Projection Context renders the exact built-in direction format without cha
     description: '比平时更早想休息，白天注意力下降；这只是备选剧情方向，不是已确认怀孕事实。',
     mechanism: {key: 'mechanism-a'},
   }]);
-  assert.equal(result.prompt.startsWith('\nBioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：\n'), true);
-  assert.equal(result.prompt.endsWith('\n————————————\n'), true);
-  assert.match(result.prompt, /以下内容描述角色可能出现的身体状态，属于潜在生理表现参考。可选择性参考用于辅助日常描写和角色表现，不构成剧情目标，也不要求主动推进或兑现。/);
+  assert.equal(result.prompt.startsWith('\n<bioweave>\n'), true);
+  assert.equal(result.prompt.endsWith('\n</bioweave>\n'), true);
+  assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
+  assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
+  assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。/);
   assert.match(result.prompt, /- 角色 林月：\n  - 可能的发展方向1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
   assert.doesNotMatch(result.prompt, /这只是备选剧情方向，不是已确认怀孕事实。/);
-  assert.match(result.prompt, /各状态为独立备选，不要求同时出现。可根据剧情节奏自然选择其中一种，也可以不触发任何变化。不得仅凭这些状态推断或确认特定生理原因。/);
+  assert.match(result.prompt, /本模块仅提供潜在表现，不得据此确认特定生理原因，也不得与其他身体问题擅自建立因果关系。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景|Context 中的 Projection/);
 });
 
@@ -178,8 +184,12 @@ test('health recovery guidance shares the projection context slot without exposi
   });
   assert.equal(result.dto.length, 1);
   assert.equal(result.dto[0].context_type, 'health_recovery_guidance');
+  assert.equal(result.prompt.startsWith('\n<bioweave>\n'), true);
+  assert.equal(result.prompt.endsWith('\n</bioweave>\n'), true);
+  assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
+  assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
   assert.match(result.prompt, /恢复阶段身体表现指导/);
-  assert.match(result.prompt, /无关场景可以完全不提/);
+  assert.match(result.prompt, /无关场景无需主动提及/);
   assert.match(result.prompt, /不要机械重复健康问题/);
   assert.doesNotMatch(result.prompt, /remaining_days\s*=|deadline\s*=|story_days\s*=|assessment_id\s*=|event_id\s*=|recovering/);
 });
