@@ -434,6 +434,50 @@ test('timing performance diagnostics are bounded, structured, and exported witho
   assert.equal(exported.timing_performance_diagnostics.recent_operations.length, 2)
 })
 
+test('automatic Projection performance diagnostics are separate, bounded, and fail-open', () => {
+  const diagnostics = createRuntimeDiagnostics({maxTimingPerformanceOperations: 1})
+  const runId = diagnostics.startAutomaticProjectionRun({
+    chat_id: 'chat-auto',
+    floor_version: {chat_id: 'chat-auto', message_id: 'm-1', floor: 4, swipe_id: 0, content_hash: 'hash', message_version: 1},
+    trigger: 'factual-success',
+  })
+  diagnostics.recordAutomaticProjectionStage({
+    run_id: runId,
+    stage: 'INPUT_COLLECTION',
+    status: 'SUCCEEDED',
+    duration_ms: 2.5,
+    call_count: 1,
+    read_count: 3,
+    message_content: 'must not be exported',
+  })
+  diagnostics.recordAutomaticProjectionStage({
+    run_id: runId,
+    stage: 'PROJECTION_PERSISTENCE',
+    status: 'FAILED',
+    duration_ms: 4,
+    call_count: 1,
+    error_code: 'BATCH_FAILED',
+  })
+  diagnostics.finishAutomaticProjectionRun({run_id: runId, status: 'FAILED', error_code: 'BATCH_FAILED'})
+  const manualId = diagnostics.startTimingPerformanceOperation({operation: 'SAVE_TIMING_INSTANCE'})
+  diagnostics.finishTimingPerformanceOperation({operation_id: manualId, status: 'SUCCEEDED'})
+
+  const result = diagnostics.getTimingPerformanceDiagnostics()
+  assert.equal(result.recent_operations.length, 1)
+  assert.equal(result.recent_operations[0].operation, 'SAVE_TIMING_INSTANCE')
+  assert.equal(result.automatic_projection_runs.length, 1)
+  const run = result.automatic_projection_runs[0]
+  assert.equal(run.status, 'FAILED')
+  assert.equal(typeof run.total_duration_ms, 'number')
+  assert.deepEqual(run.stages.map(stage => stage.stage), ['INPUT_COLLECTION', 'PROJECTION_PERSISTENCE'])
+  assert.equal(run.stages[0].call_count, 1)
+  assert.equal(run.stages[0].read_count, 3)
+  assert.equal(run.stages[0].message_content, undefined)
+
+  const exported = JSON.parse(buildDebugExportText({timingPerformanceDiagnostics: result}))
+  assert.equal(exported.timing_performance_diagnostics.automatic_projection_runs[0].run_id, run.run_id)
+})
+
 test('NSFW pipeline recorder bounds run and stage buffers and reports truncation', () => {
   const diagnostics = createRuntimeDiagnostics({maxNsfwPipelineRuns: 2, maxNsfwPipelineStages: 2})
   const runIds = []

@@ -311,8 +311,18 @@ visible Projection Views and active Health Recovery Guidance; an empty
 Projection view alone does not clear the slot when Health Guidance remains.
 Only when both inputs are empty is the slot explicitly cleared. Concurrent
 refreshes are serialized before replacing the shared slot.
-At native `GENERATION_STARTED`, the runtime awaits that existing refresh queue
-before SillyTavern reads extension prompts for the generation.
+At native `GENERATION_STARTED`, the runtime only advances the Generation
+Lifecycle and preserves the existing slot while SillyTavern generates the
+response body. It does not perform a full Projection Context refresh,
+Projection lifecycle tick,
+Tracking/timeout calculation, or Floor save during generation. Automatic
+Chat/message triggers are coalesced behind a non-blocking Generation gate; after
+the final Character Floor is confirmed, or generation is explicitly stopped or
+cancelled, the runtime revalidates the current Chat, active Swipe, and complete
+Floor Version before replaying the deferred lifecycle signals once and running
+one post-generation handoff. Deferred signals from an old Chat are discarded. A
+Chat boundary clears the old slot first and rebuilds Context only after that
+handoff.
 Chat changes, active Swipe changes, Floor Version changes, Floor deletion, no
 Character Floor, or a read failure all resolve again or clear the slot. The
 prompt is transient narrative guidance, not factual evidence; Event Analysis

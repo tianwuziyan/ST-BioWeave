@@ -1,6 +1,6 @@
 import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, normalizeProjectionRules} from "../core/projection-eligibility.js";
 import {generateProjectionCandidate} from "../core/projection-generation.js";
-import {hashText} from "./floor.js";
+import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
 import {pregnancyIdentityMatches} from "../core/pregnancy-lifecycle.js";
 import {isParticipantAggregationEvidenceComplete} from "../core/participant-aggregation.js";
@@ -225,11 +225,12 @@ export function createProjectionRuntime({
   collectInputs,
   resolveCurrentFloor,
   getProjectionViews,
-  saveGeneratedProjection,
-  saveProjectionEvidence,
+  saveProjectionBatch,
   saveEvolutionDecision,
+  saveProjectionLifecycleBatch = null,
   resolvePreConfirmationTiming = null,
   refreshProjectionContext = null,
+  saveProjectionDeliveryResponseBatch = null,
   saveProjectionDeliveryResponse = null,
   getProjectionDeliveryRecords = null,
   archiveAndReleasePregnancy = null,
@@ -240,7 +241,7 @@ export function createProjectionRuntime({
   if (typeof collectInputs !== "function") throw new TypeError("PROJECTION_INPUTS_REQUIRED");
   if (typeof resolveCurrentFloor !== "function") throw new TypeError("PROJECTION_FLOOR_REQUIRED");
   if (typeof getProjectionViews !== "function") throw new TypeError("PROJECTION_VIEWS_REQUIRED");
-  if (typeof saveGeneratedProjection !== "function") throw new TypeError("PROJECTION_SAVE_REQUIRED");
+  if (typeof saveProjectionBatch !== "function") throw new TypeError("PROJECTION_BATCH_SAVE_REQUIRED");
   if (typeof saveEvolutionDecision !== "function") throw new TypeError("PROJECTION_EVOLUTION_SAVE_REQUIRED");
 
   const inFlight = new Map();
@@ -305,6 +306,35 @@ export function createProjectionRuntime({
     }
   }
 
+  function startAutomaticPerformance(payload = {}) {
+    try { return diagnostics?.startAutomaticProjectionRun?.(payload) ?? null; } catch { return null; }
+  }
+
+  function recordAutomaticPerformanceStage(payload = {}) {
+    try { diagnostics?.recordAutomaticProjectionStage?.(payload); } catch { /* fail-open */ }
+  }
+
+  function finishAutomaticPerformance(payload = {}) {
+    try { diagnostics?.finishAutomaticProjectionRun?.(payload); } catch { /* fail-open */ }
+  }
+
+  function performanceClock() {
+    try { return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now(); } catch { return Date.now(); }
+  }
+
+  async function measureAutomaticStage(runId, stage, callback, details = {}) {
+    if (!runId) return callback();
+    const started = performanceClock();
+    try {
+      const result = await callback();
+      recordAutomaticPerformanceStage({run_id: runId, stage, status: 'SUCCEEDED', duration_ms: Math.max(0, Number((performanceClock() - started).toFixed(3))), ...details});
+      return result;
+    } catch (error) {
+      recordAutomaticPerformanceStage({run_id: runId, stage, status: 'FAILED', duration_ms: Math.max(0, Number((performanceClock() - started).toFixed(3))), error_code: error?.code ?? error?.message ?? `${stage}_FAILED`, ...details});
+      throw error;
+    }
+  }
+
   function startActivity(identity) {
     activity?.startActivity?.("projection_generation", {
       chat_id: identity.chat_id,
@@ -328,23 +358,30 @@ export function createProjectionRuntime({
     );
   }
 
-  async function recordCompletedResponse({target, execution} = {}) {
-    if (typeof getProjectionDeliveryRecords !== 'function' || typeof saveProjectionDeliveryResponse !== 'function') return {status: 'unsupported', observed: 0};
-    const inputs = await collectInputs();
-    const deliveries = await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index});
+  async function recordCompletedResponse({target, execution, inputs: suppliedInputs = null, deliveries: suppliedDeliveries = null} = {}) {
+    const saveResponses = typeof saveProjectionDeliveryResponseBatch === 'function'
+      ? async ({chatId, ownerFloor, floorVersion, records}) => saveProjectionDeliveryResponseBatch({chatId, ownerFloor, floorVersion, records})
+      : typeof saveProjectionDeliveryResponse === 'function'
+        ? async ({chatId, ownerFloor, floorVersion, records}) => {
+          for (const deliveryRecord of records) {
+            await saveProjectionDeliveryResponse({chatId, ownerFloor, floorVersion, deliveryRecord});
+          }
+        }
+        : null;
+    if (typeof getProjectionDeliveryRecords !== 'function' || !saveResponses) return {status: 'unsupported', observed: 0};
+    const inputs = suppliedInputs ?? await collectInputs();
+    const deliveries = Array.isArray(suppliedDeliveries)
+      ? suppliedDeliveries
+      : await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index});
     const existingResponseIds = new Set(deliveries.filter(item => item.response_id).map(item => item.response_id));
-    let observed = 0;
+    const records = [];
     for (const delivery of deliveries.filter(item => item.status === 'readback_verified' && !item.response_id)) {
       if (!deliveryIsBeforeResponse(delivery, target, execution)) continue;
       const responseId = `projection_response_${await hashText(JSON.stringify({delivery_id: delivery.delivery_id, response_floor_version: target.version}))}`;
       if (existingResponseIds.has(responseId)) continue;
       const identity = {subject_id: delivery.subject_id, pregnancy_id: delivery.pregnancy_id ?? null, cycle_id: delivery.cycle_id};
       const explicitFacts = lifecycleFactsFor(inputs.events, identity).map(event => event.event_id).filter(Boolean).sort();
-      await saveProjectionDeliveryResponse({
-        chatId: target.version.chat_id,
-        ownerFloor: floorOwner(target),
-        floorVersion: target.version,
-        deliveryRecord: {
+      records.push({
           delivery_id: delivery.delivery_id,
           projection_id: delivery.projection_id,
           aggregation_id: delivery.aggregation_id,
@@ -361,17 +398,27 @@ export function createProjectionRuntime({
           analysis_execution_id: execution?.analysis_execution_id ?? `analysis:${target.version.message_id}:${target.version.message_version}`,
           analysis_status: 'success',
           explicit_lifecycle_fact_ids: explicitFacts,
-        },
       });
-      observed += 1;
     }
-    return {status: 'observed', observed};
+    if (records.length) {
+      await saveResponses({chatId: target.version.chat_id, ownerFloor: floorOwner(target), floorVersion: target.version, records});
+    }
+    const observedByDeliveryId = new Map(records.map(record => [record.delivery_id, record]));
+    const responseDeliveries = deliveries.map(delivery => {
+      const response = observedByDeliveryId.get(delivery.delivery_id);
+      return response
+        ? {...delivery, ...response, status: 'response_observed'}
+        : delivery;
+    });
+    return {status: 'observed', observed: records.length, deliveries: responseDeliveries};
   }
 
-  async function evaluateTimeoutNoPregnancy(target) {
+  async function evaluateTimeoutNoPregnancy(target, {inputs: suppliedInputs = null, deliveries: suppliedDeliveries = null} = {}) {
     if (typeof getProjectionDeliveryRecords !== 'function' || typeof archiveAndReleasePregnancy !== 'function') return {status: 'unsupported', closed: 0};
-    const inputs = await collectInputs();
-    const deliveries = await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index});
+    const inputs = suppliedInputs ?? await collectInputs();
+    const deliveries = Array.isArray(suppliedDeliveries)
+      ? suppliedDeliveries
+      : await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index});
     const lifecycle = inputs.pregnancyLifecycleTimeline ?? {release_records: []};
     const released = new Set((lifecycle.release_records ?? []).filter(record => record.action === 'cycle-lock-released').map(record => `${record.subject_id}:${record.pregnancy_id ?? 'none'}:${record.cycle_id}`));
     let closed = 0;
@@ -406,6 +453,11 @@ export function createProjectionRuntime({
 
   async function handleAnalysisSuccess({target, execution} = {}) {
     const runId = execution?.pipeline_run_id ?? null;
+    const performanceRunId = startAutomaticPerformance({
+      chat_id: target?.version?.chat_id,
+      floor_version: target?.version,
+      trigger: 'factual-success',
+    });
     try {
       let current = null;
       try { current = await resolveCurrentFloor?.(); } catch { current = null; }
@@ -414,13 +466,20 @@ export function createProjectionRuntime({
           execution_status: "BLOCKED",
           reason_code: "FLOOR_VERSION_CHANGED",
         });
+        finishAutomaticPerformance({run_id: performanceRunId, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'FLOOR_VERSION_CHANGED'});
         return {status: 'stale', response: null, timeout: null, projection: null};
       }
-      const response = await recordCompletedResponse({target, execution});
-      const timeout = await evaluateTimeoutNoPregnancy(target);
-      const projection = await process({reason: 'factual-success', runId});
+      const inputs = await measureAutomaticStage(performanceRunId, 'INPUT_COLLECTION', collectInputs, {call_count: 1, read_count: 1});
+      const deliveries = typeof getProjectionDeliveryRecords === 'function'
+        ? await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE_READ', () => getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index}), {call_count: 1, read_count: 1})
+        : null;
+      const response = await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE', () => recordCompletedResponse({target, execution, inputs, deliveries}), {call_count: 1, output_count: deliveries?.length ?? 0});
+      const timeout = await evaluateTimeoutNoPregnancy(target, {inputs, deliveries: response.deliveries ?? deliveries});
+      const projection = await process({reason: 'factual-success', runId, inputs: timeout.closed ? null : inputs, performanceRunId});
+      finishAutomaticPerformance({run_id: performanceRunId, status: projection.status === 'failed' ? 'FAILED' : projection.status === 'partial' ? 'PARTIAL' : 'SUCCEEDED'});
       return {response, timeout, projection};
     } catch (error) {
+      finishAutomaticPerformance({run_id: performanceRunId, status: 'FAILED', error_code: error?.code ?? error?.message ?? 'PROJECTION_POST_PROCESSING_FAILED', reason_code: 'PROJECTION_POST_PROCESSING_FAILED'});
       finishPipelineRun(runId, {
         execution_status: "FAILED",
         reason_code: "PROJECTION_POST_PROCESSING_FAILED",
@@ -472,31 +531,31 @@ export function createProjectionRuntime({
     });
     let partial = false;
     const errors = [];
+    const generatedRecords = [];
+    const generatedResults = [];
     try {
-      let views = await getProjectionViews({
+      let views = await measureAutomaticStage(identity.performance_run_id, 'INITIAL_PROJECTION_VIEWS', () => getProjectionViews({
         chatId: identity.chat_id,
         endpointFloor: identity.floor_version.floor,
         endpointIndex: inputs.floor?.index,
-      });
+      }), {call_count: 1, read_count: 1, output_count: 0});
+      const lifecycleDeletionRecords = [];
+      const lifecycleEvolutionRecords = [];
+      const scheduledDeletionIds = new Set();
       const legacyBuiltInViews = (views?.all ?? []).filter(view => !view?.deleted && isLegacyBuiltInPreConfirmationProjection(view));
-      if (legacyBuiltInViews.length && typeof inputs.deleteProjection === 'function') {
+      if (legacyBuiltInViews.length && (typeof saveProjectionLifecycleBatch === 'function' || typeof inputs.deleteProjection === 'function')) {
         for (const view of legacyBuiltInViews) {
-          await inputs.deleteProjection({
-            chatId: identity.chat_id,
-            ownerFloor: floorOwner(inputs.floor),
-            floorVersion: inputs.floor.version,
-            projectionId: view.projection_id,
-            evidenceRefs: ['system:built-in-projection-upgrade'],
+          scheduledDeletionIds.add(view.projection_id);
+          lifecycleDeletionRecords.push({
+            projection_id: view.projection_id,
+            action: 'deleted',
+            created_at_floor_version: inputs.floor.version,
+            evidence_refs: ['system:built-in-projection-upgrade'],
           });
         }
-        views = await getProjectionViews({
-          chatId: identity.chat_id,
-          endpointFloor: identity.floor_version.floor,
-          endpointIndex: inputs.floor?.index,
-        });
       }
       const preConfirmationTiming = typeof resolvePreConfirmationTiming === "function"
-        ? await resolvePreConfirmationTiming({inputs, views, execution: identity, run_id: identity.run_id ?? null})
+        ? await measureAutomaticStage(identity.performance_run_id, 'TIMING_RESOLUTION', () => resolvePreConfirmationTiming({inputs, views, execution: identity, run_id: identity.run_id ?? null}), {call_count: 1, read_count: 1})
         : null;
       const rules = normalizeProjectionRules(inputs.worldModel?.projection_rules ?? []);
       const ruleByKey = new Map(rules.map(rule => [
@@ -510,6 +569,7 @@ export function createProjectionRuntime({
         ? {...inputs.worldModel, projection_rules: builtInEvolutionRules}
         : inputs.worldModel;
 
+      let viewsChanged = false;
       for (const view of views?.all ?? []) {
         if (view?.deleted || ["realized", "contradicted", "expired"].includes(view?.factual_status)) continue;
         const evolution = evaluateProjectionEvolution({
@@ -520,23 +580,15 @@ export function createProjectionRuntime({
           worldModel: evolutionWorldModel,
           currentStoryTime: inputs.currentStoryTime,
         });
-        if (["realized", "contradicted", "expired"].includes(evolution.decision)) {
-          await saveEvolutionDecision({
-            chatId: identity.chat_id,
-            ownerFloor: floorOwner(inputs.floor),
-            floorVersion: inputs.floor.version,
-            projectionId: view.projection_id,
-            decision: evolution.decision,
-            evidenceRefs: (evolution.evidence_event_ids ?? []).map(id => `event:${id}`),
+        if (["realized", "contradicted", "expired"].includes(evolution.decision) && !scheduledDeletionIds.has(view.projection_id)) {
+          lifecycleEvolutionRecords.push({
+            projection_id: view.projection_id,
+            action: evolution.decision,
+            created_at_floor_version: inputs.floor.version,
+            evidence_refs: (evolution.evidence_event_ids ?? []).map(id => `event:${id}`),
           });
         }
       }
-
-      views = await getProjectionViews({
-        chatId: identity.chat_id,
-        endpointFloor: identity.floor_version.floor,
-        endpointIndex: inputs.floor?.index,
-      });
       if (!inputs.worldModel?.projection_rules?.length && preConfirmationTiming) {
         const expectedBuiltInRules = buildBuiltInPreConfirmationRules(preConfirmationTiming);
         const expectedRuleIds = new Map(expectedBuiltInRules.map(rule => [
@@ -549,24 +601,55 @@ export function createProjectionRuntime({
           const expectedRuleId = expectedRuleIds.get(`${view?.mechanism?.key ?? ''}\u001f${view.development_concern_key}`);
           return Boolean(expectedRuleId && expectedRuleId !== view.projection_rule_id);
         });
-        if (staleBuiltInViews.length && typeof inputs.deleteProjection === 'function') {
+        if (staleBuiltInViews.length && (typeof saveProjectionLifecycleBatch === 'function' || typeof inputs.deleteProjection === 'function')) {
           for (const view of staleBuiltInViews) {
-            await inputs.deleteProjection({
-              chatId: identity.chat_id,
-              ownerFloor: floorOwner(inputs.floor),
-              floorVersion: inputs.floor.version,
-              projectionId: view.projection_id,
-              evidenceRefs: ['system:built-in-projection-schedule-upgrade'],
+            if (scheduledDeletionIds.has(view.projection_id)) continue;
+            scheduledDeletionIds.add(view.projection_id);
+            lifecycleDeletionRecords.push({
+              projection_id: view.projection_id,
+              action: 'deleted',
+              created_at_floor_version: inputs.floor.version,
+              evidence_refs: ['system:built-in-projection-schedule-upgrade'],
             });
           }
-          views = await getProjectionViews({
-            chatId: identity.chat_id,
-            endpointFloor: identity.floor_version.floor,
-            endpointIndex: inputs.floor?.index,
-          });
         }
       }
-      const eligibility = evaluateProjectionEligibility({
+      if (lifecycleDeletionRecords.length) {
+        const saveDeletions = typeof saveProjectionLifecycleBatch === 'function'
+          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleDeletionRecords, traceContext: {trigger}})
+          : async () => {
+            let changed = false;
+            for (const record of lifecycleDeletionRecords) {
+              const result = await inputs.deleteProjection({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, projectionId: record.projection_id, evidenceRefs: record.evidence_refs});
+              changed ||= !result || ['appended', 'created', 'updated'].includes(result.status);
+            }
+            return {status: changed ? 'appended' : 'deduped'};
+          };
+        const result = await measureAutomaticStage(identity.performance_run_id, 'LEGACY_PROJECTION_LIFECYCLE', saveDeletions, {call_count: 1, output_count: lifecycleDeletionRecords.length});
+        viewsChanged ||= !result || ['appended', 'created', 'updated'].includes(result.status);
+      }
+      if (lifecycleEvolutionRecords.length) {
+        const saveEvolutions = typeof saveProjectionLifecycleBatch === 'function'
+          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleEvolutionRecords, traceContext: {trigger}})
+          : async () => {
+            let changed = false;
+            for (const record of lifecycleEvolutionRecords) {
+              const result = await saveEvolutionDecision({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, projectionId: record.projection_id, decision: record.action, evidenceRefs: record.evidence_refs});
+              changed ||= !result || ['appended', 'created', 'updated'].includes(result.status);
+            }
+            return {status: changed ? 'appended' : 'deduped'};
+          };
+        const result = await measureAutomaticStage(identity.performance_run_id, 'LEGACY_PROJECTION_LIFECYCLE', saveEvolutions, {call_count: 1, output_count: lifecycleEvolutionRecords.length});
+        viewsChanged ||= !result || ['appended', 'created', 'updated'].includes(result.status);
+      }
+      if (viewsChanged) {
+        views = await measureAutomaticStage(identity.performance_run_id, 'LIFECYCLE_READBACK', () => getProjectionViews({
+          chatId: identity.chat_id,
+          endpointFloor: identity.floor_version.floor,
+          endpointIndex: inputs.floor?.index,
+        }), {call_count: 1, read_count: 1});
+      }
+      const eligibility = await measureAutomaticStage(identity.performance_run_id, 'ELIGIBILITY_EVALUATION', async () => evaluateProjectionEligibility({
         currentState: inputs.currentState,
         events: inputs.events,
         sourceCandidates: inputs.sourceCandidates,
@@ -574,7 +657,7 @@ export function createProjectionRuntime({
         currentStoryTime: inputs.currentStoryTime,
         existingProjections: views?.all ?? [],
         preConfirmationTiming,
-      });
+      }), {call_count: 1, read_count: 1, output_count: 0});
       for (const rule of eligibility.built_in_rules ?? []) {
         ruleByKey.set(`${rule.projection_rule_id}\u001f${rule.development_concern_key}`, rule);
       }
@@ -693,7 +776,7 @@ export function createProjectionRuntime({
         } else {
           emitStatus({stage: "PROJECTION_AI_REQUEST_STARTED", state: "running", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, ai_request_started: true, ai_call_will_start: true, ...timingDecisionDiagnostics(decision, preConfirmationTiming, inputs), ...identity});
         }
-        const result = await generateProjectionCandidate({
+          const result = await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_GENERATION', () => generateProjectionCandidate({
           decision,
           rule,
           currentState: inputs.currentState,
@@ -718,9 +801,10 @@ export function createProjectionRuntime({
           },
           isStillCurrent: async ({phase}) => {
             if (destroyed || inFlight.get(identity.execution_id) === undefined) return false;
+            if (builtInCandidate) return true;
             return currentInputsMatch(identity.execution_id);
           },
-        });
+        }), {call_count: 1, ai_called: !builtInCandidate});
         const generatedProjectionIds = result.projection?.projection_id ? [result.projection.projection_id] : [];
         const validationResult = result.status === 'generated'
           ? 'passed'
@@ -734,6 +818,7 @@ export function createProjectionRuntime({
             execution_status: "BLOCKED",
             reason_code: "FLOOR_VERSION_CHANGED",
           });
+          finishAutomaticPerformance({run_id: identity.performance_run_id, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'FLOOR_VERSION_CHANGED'});
           return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: [result]};
         }
         if (result.status !== "generated") {
@@ -741,46 +826,35 @@ export function createProjectionRuntime({
           errors.push({decision: decisionKey(decision), reason: result.reason_code, errors: result.errors ?? []});
           continue;
         }
+        generatedResults.push(result);
+        generatedRecords.push({
+          projectionCandidate: result.projection,
+          evidenceRecord: {
+            projection_id: result.projection.projection_id,
+            source_event_ids: result.projection.source_event_ids,
+            created_at_floor_version: inputs.floor.version,
+            evidence_refs: result.projection.evidence_refs,
+          },
+        });
+      }
+      if (generatedRecords.length) {
         if (!(await currentInputsMatch(identity.execution_id))) {
           emitStatus({state: "stale", phase: "before_persistence", reason, ...identity, started_at: startedAt});
           finishPipelineRun(identity.run_id, {
             execution_status: "BLOCKED",
             reason_code: "FLOOR_VERSION_CHANGED",
           });
-          return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: [result]};
+          finishAutomaticPerformance({run_id: identity.performance_run_id, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'FLOOR_VERSION_CHANGED'});
+          return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: generatedResults};
         }
         try {
-          await saveGeneratedProjection({
+          await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_PERSISTENCE', () => saveProjectionBatch({
             chatId: identity.chat_id,
             ownerFloor: floorOwner(inputs.floor),
             floorVersion: inputs.floor.version,
-            projectionCandidate: result.projection,
-            traceContext: {
-              projection_id: result.projection.projection_id,
-              projection_rule_id: decision.projection_rule_id,
-              development_concern_key: decision.development_concern_key,
-              trigger,
-            },
-          });
-          if (typeof saveProjectionEvidence === "function") {
-            await saveProjectionEvidence({
-              chatId: identity.chat_id,
-              ownerFloor: floorOwner(inputs.floor),
-              floorVersion: inputs.floor.version,
-              evidenceRecord: {
-                projection_id: result.projection.projection_id,
-                source_event_ids: result.projection.source_event_ids,
-                created_at_floor_version: inputs.floor.version,
-                evidence_refs: result.projection.evidence_refs,
-              },
-              traceContext: {
-                projection_id: result.projection.projection_id,
-                projection_rule_id: decision.projection_rule_id,
-                development_concern_key: decision.development_concern_key,
-                trigger,
-              },
-            });
-          }
+            records: generatedRecords,
+            traceContext: {trigger},
+          }), {call_count: 1, output_count: generatedRecords.length});
           recordPipelineStage({
             stage: "PROJECTION_PERSISTENCE",
             execution_status: "SUCCEEDED",
@@ -789,12 +863,12 @@ export function createProjectionRuntime({
             run_id: identity.run_id ?? null,
             chat_id: identity.chat_id,
             floor_version: identity.floor_version,
-            output_count: 1,
+            output_count: generatedRecords.length,
             source_type: "EXECUTION_TRACE",
           });
         } catch (error) {
           partial = true;
-          errors.push({decision: decisionKey(decision), reason: error?.code ?? error?.message ?? "persistence_failed"});
+          errors.push({reason: error?.code ?? error?.message ?? "persistence_failed", output_count: generatedRecords.length});
           recordPipelineStage({
             stage: "PROJECTION_PERSISTENCE",
             execution_status: "PERSIST_FAILED",
@@ -811,9 +885,11 @@ export function createProjectionRuntime({
       let finalViews;
       let dto;
       try {
-        finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index});
+        finalViews = generatedRecords.length || viewsChanged
+          ? await measureAutomaticStage(identity.performance_run_id, 'FINAL_PROJECTION_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1})
+          : views;
         dto = dtoFromViews(finalViews);
-        await refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData});
+        await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});
       } catch (error) {
         recordPipelineStage({
           stage: "PROJECTION_READBACK",
@@ -848,6 +924,7 @@ export function createProjectionRuntime({
         execution_status: status === "partial" ? "ATTEMPTED" : "SUCCEEDED",
         reason_code: status === "partial" ? "PROJECTION_PARTIAL" : "PROJECTION_COMPLETED",
       });
+      finishAutomaticPerformance({run_id: identity.performance_run_id, status: status === 'partial' ? 'PARTIAL' : 'SUCCEEDED'});
       finishActivity(identity, status, errors[0]);
       return {status, execution_id: identity.execution_id, run_id: identity.run_id, ...dto, errors};
     } catch (error) {
@@ -868,20 +945,40 @@ export function createProjectionRuntime({
         reason_code: "PROJECTION_PROCESS_FAILED",
         error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
       });
+      finishAutomaticPerformance({run_id: identity.performance_run_id, status: 'FAILED', error_code: error?.code ?? error?.message ?? 'PROJECTION_FAILED'});
       finishActivity(identity, "failed", error);
       return {status: "failed", execution_id: identity.execution_id, run_id: identity.run_id, errors: [{reason: error?.code ?? error?.message ?? "PROJECTION_FAILED"}]};
     }
   }
 
-  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null} = {}) {
+  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null, inputs: suppliedInputs = null, performanceRunId = null} = {}) {
     if (destroyed) return {status: "destroyed"};
     if (enabledResolver() === false) return {status: "disabled"};
-    const inputs = await collectInputs();
-    if (!inputs?.floor?.version || inputs.currentStateStatus === "STATE_ERROR") return {status: "unavailable"};
+    const ownPerformanceRunId = performanceRunId ?? startAutomaticPerformance({chat_id: getChatId?.(), trigger});
+    let inputs;
+    try {
+      inputs = suppliedInputs ?? await measureAutomaticStage(ownPerformanceRunId, 'INPUT_COLLECTION', collectInputs, {call_count: 1, read_count: 1});
+    } catch (error) {
+      finishAutomaticPerformance({run_id: ownPerformanceRunId, status: 'FAILED', reason_code: 'PROJECTION_INPUT_COLLECTION_FAILED', error_code: error?.code ?? error?.message ?? 'PROJECTION_INPUT_COLLECTION_FAILED'});
+      throw error;
+    }
+    if (!inputs?.floor?.version || inputs.currentStateStatus === "STATE_ERROR") {
+      finishAutomaticPerformance({run_id: ownPerformanceRunId, status: 'FAILED', reason_code: 'PROJECTION_INPUT_UNAVAILABLE'});
+      return {status: "unavailable"};
+    }
+    if (suppliedInputs) {
+      let currentFloor = null;
+      try { currentFloor = await resolveCurrentFloor(); } catch { currentFloor = null; }
+      if (!sameFloorVersion(currentFloor?.version, inputs.floor.version)) {
+        finishAutomaticPerformance({run_id: ownPerformanceRunId, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'FLOOR_VERSION_CHANGED'});
+        return {status: "stale", reason: "FLOOR_VERSION_CHANGED"};
+      }
+    }
     const execution_id = await executionIdentity(inputs);
     const resolvedRunId = runId ?? startPipelineRun({
       kind: "projection",
       trigger,
+      performance_run_id: ownPerformanceRunId,
       reason,
       chat_id: inputs.floor.version.chat_id,
       floor_version: inputs.floor.version,
@@ -903,6 +1000,7 @@ export function createProjectionRuntime({
         execution_status: "SKIPPED",
         reason_code: "PROJECTION_ALREADY_IN_FLIGHT",
       });
+      finishAutomaticPerformance({run_id: ownPerformanceRunId, status: 'SKIPPED', reason_code: 'PROJECTION_ALREADY_IN_FLIGHT'});
       return inFlight.get(execution_id);
     }
     const identity = {
@@ -910,6 +1008,7 @@ export function createProjectionRuntime({
       chat_id: inputs.floor.version.chat_id,
       floor_version: inputs.floor.version,
       run_id: resolvedRunId,
+      performance_run_id: ownPerformanceRunId,
     };
     const promise = runExecution(inputs, identity, reason, trigger).finally(() => inFlight.delete(execution_id));
     inFlight.set(execution_id, promise);
@@ -927,25 +1026,55 @@ export function createProjectionRuntime({
     const execution_id = await executionIdentity(inputs);
     if (lifecycleInFlight.has(execution_id)) return lifecycleInFlight.get(execution_id);
     const work = (async () => {
-      const timeout = await evaluateTimeoutNoPregnancy(inputs.floor);
+      const timeout = await evaluateTimeoutNoPregnancy(inputs.floor, {inputs});
       const effectiveInputs = timeout.closed ? await collectInputs() : inputs;
       const views = await getProjectionViews({chatId: effectiveInputs.floor.version.chat_id, endpointFloor: effectiveInputs.floor.version.floor, endpointIndex: effectiveInputs.floor.index});
       const expiredWindows = new Map((effectiveInputs.trackingWindows ?? []).filter(window => window.status === 'expired').map(window => [window.tracking_window_id, window]));
       let expired = 0;
+      let viewsChanged = false;
+      const expiredRecords = [];
       for (const view of views?.all ?? []) {
         const window = expiredWindows.get(view.tracking_window_id);
         if (!window || view.tracking_scope !== 'pre_confirmation' || view.deleted || ['realized', 'contradicted', 'expired'].includes(view.factual_status)) continue;
-        await saveEvolutionDecision({
-          chatId: effectiveInputs.floor.version.chat_id,
-          ownerFloor: floorOwner(effectiveInputs.floor),
-          floorVersion: effectiveInputs.floor.version,
-          projectionId: view.projection_id,
-          decision: 'expired',
-          evidenceRefs: [`tracking_window:${window.tracking_window_id}`],
+        expiredRecords.push({
+          projection_id: view.projection_id,
+          action: 'expired',
+          created_at_floor_version: effectiveInputs.floor.version,
+          evidence_refs: [`tracking_window:${window.tracking_window_id}`],
         });
-        expired += 1;
       }
-      await refreshProjectionContext?.({chatId: effectiveInputs.floor.version.chat_id, businessData: effectiveInputs.businessData});
+      if (expiredRecords.length) {
+        let result;
+        if (typeof saveProjectionLifecycleBatch === 'function') {
+          result = await saveProjectionLifecycleBatch({
+            chatId: effectiveInputs.floor.version.chat_id,
+            ownerFloor: floorOwner(effectiveInputs.floor),
+            floorVersion: effectiveInputs.floor.version,
+            records: expiredRecords,
+            traceContext: {reason},
+          });
+        } else {
+          let changed = false;
+          for (const record of expiredRecords) {
+            result = await saveEvolutionDecision({
+              chatId: effectiveInputs.floor.version.chat_id,
+              ownerFloor: floorOwner(effectiveInputs.floor),
+              floorVersion: effectiveInputs.floor.version,
+              projectionId: record.projection_id,
+              decision: record.action,
+              evidenceRefs: record.evidence_refs,
+            });
+            changed ||= !result || ['appended', 'created', 'updated'].includes(result.status);
+          }
+          result = {status: changed ? 'appended' : 'deduped'};
+        }
+        viewsChanged = !result || ['appended', 'created', 'updated'].includes(result.status);
+        expired = expiredRecords.length;
+      }
+      const finalViews = viewsChanged
+        ? await getProjectionViews({chatId: effectiveInputs.floor.version.chat_id, endpointFloor: effectiveInputs.floor.version.floor, endpointIndex: effectiveInputs.floor.index})
+        : views;
+      await refreshProjectionContext?.({chatId: effectiveInputs.floor.version.chat_id, businessData: effectiveInputs.businessData, projectionViews: finalViews});
       return {status: 'success', execution_id, expired_projections: expired, timeout_closed: timeout.closed ?? 0};
     })().finally(() => lifecycleInFlight.delete(execution_id));
     lifecycleInFlight.set(execution_id, work);

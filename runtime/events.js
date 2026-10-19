@@ -2758,15 +2758,11 @@ export function createRuntime({
         return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
       }
     },
-    recordProjectionSubmission: async ({chatId, floor, views, contextFingerprint, generation}) => {
-      const records = [];
+    recordProjectionSubmission: async ({chatId, floor, views, contextFingerprint, generation, performanceRunId = null}) => {
+      const deliveryRecords = [];
       for (const view of (Array.isArray(views?.all) ? views.all : []).filter(item => item?.context_visible === true && item?.aggregation_evidence)) {
         const evidence = view.aggregation_evidence;
-        const result = await projectionPersistence.saveProjectionDeliverySubmission({
-          chatId,
-          ownerFloor: {message_index: floor.index, message_id: floor.version.message_id},
-          floorVersion: floor.version,
-          deliveryRecord: {
+        deliveryRecords.push({
             projection_id: view.projection_id,
             aggregation_id: evidence.aggregation_id,
             subject_id: evidence.subject_id,
@@ -2777,12 +2773,43 @@ export function createRuntime({
             context_fingerprint: contextFingerprint,
             generation_id: generation?.generation_id ?? generation?.generationId ?? null,
             generation_intent_id: generation?.generation_intent_id ?? generation?.generationIntentId ?? null,
-          },
-          traceContext: {projection_id: view.projection_id, aggregation_id: evidence.aggregation_id, context_fingerprint: contextFingerprint},
         });
-        records.push({projection_id: view.projection_id, status: result.status});
       }
-      return {status: 'readback_verified', records};
+      if (!deliveryRecords.length) return {status: 'readback_verified', records: []};
+      const started = Date.now();
+      try {
+        const result = await projectionPersistence.saveProjectionDeliverySubmissionBatch({
+          chatId,
+          ownerFloor: {message_index: floor.index, message_id: floor.version.message_id},
+          floorVersion: floor.version,
+          records: deliveryRecords,
+          traceContext: {context_fingerprint: contextFingerprint},
+        });
+        try {
+          diagnostics.recordAutomaticProjectionStage?.({
+            run_id: performanceRunId,
+            stage: 'DELIVERY_SUBMISSION',
+            status: 'SUCCEEDED',
+            duration_ms: Math.max(0, Date.now() - started),
+            call_count: 1,
+            output_count: deliveryRecords.length,
+          });
+        } catch { /* fail-open */ }
+        return {status: 'readback_verified', records: deliveryRecords.map(record => ({projection_id: record.projection_id, status: result.status}))};
+      } catch (error) {
+        try {
+          diagnostics.recordAutomaticProjectionStage?.({
+            run_id: performanceRunId,
+            stage: 'DELIVERY_SUBMISSION',
+            status: 'FAILED',
+            duration_ms: Math.max(0, Date.now() - started),
+            call_count: 1,
+            output_count: deliveryRecords.length,
+            error_code: error?.code ?? error?.message ?? 'DELIVERY_SUBMISSION_FAILED',
+          });
+        } catch { /* fail-open */ }
+        throw error;
+      }
     },
     healthGuidanceResolver: async ({chatId, floor, businessData, businessDataError, businessDataResolved = false}) => {
       if (businessDataError) throw businessDataError;
@@ -2836,8 +2863,9 @@ export function createRuntime({
     },
     resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     getProjectionViews: projectionPersistence.getProjectionViews,
-    saveGeneratedProjection: projectionPersistence.saveGeneratedProjection,
-    saveProjectionEvidence: projectionPersistence.saveProjectionEvidence,
+    saveProjectionBatch: projectionPersistence.saveProjectionBatch,
+    saveProjectionLifecycleBatch: projectionPersistence.saveProjectionLifecycleBatch,
+    saveProjectionDeliveryResponseBatch: projectionPersistence.saveProjectionDeliveryResponseBatch,
     saveProjectionDeliveryResponse: projectionPersistence.saveProjectionDeliveryResponse,
     getProjectionDeliveryRecords: projectionPersistence.getProjectionDeliveryRecords,
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
@@ -3927,6 +3955,85 @@ export function createRuntime({
   let knownChatIdsEvidence = false;
   let pendingStartNewChat = null;
   const failedSourceClears = new Map();
+  let generationGate = null;
+
+  const generationBoundaryEvents = new Set([
+    "GENERATION_STARTED",
+    "GENERATION_ENDED",
+    "GENERATION_STOPPED",
+    "GENERATION_CANCELLED",
+    "CHARACTER_MESSAGE_RENDERED",
+  ]);
+
+  function generationAutomaticWorkIsDeferred(key) {
+    return Boolean(generationGate?.active || generationGate?.startPending) &&
+      !generationBoundaryEvents.has(key);
+  }
+
+  function markGenerationPending(key, eventType, payload, chatId) {
+    if (!generationGate?.active && !generationGate?.startPending) return;
+    generationGate.pending = true;
+    generationGate.pendingEvents.set(key, {eventType, payload, chatId});
+  }
+
+  async function replayDeferredGenerationEvents(pendingEvents) {
+    const entries = [...pendingEvents.entries()];
+    const chatChanges = entries.filter(([key]) => key === "CHAT_CHANGED");
+    const otherEvents = entries.filter(([key]) => key !== "CHAT_CHANGED");
+    for (const [key, deferredEvent] of [...chatChanges, ...otherEvents]) {
+      // A Chat switch invalidates events captured from the old Chat. Only
+      // replay an event when its captured Chat is still the active owner.
+      if (deferredEvent?.chatId !== null &&
+          deferredEvent?.chatId !== undefined &&
+          String(deferredEvent.chatId) !== String(chat.current())) {
+        recordPersistenceTrace({
+          stage: "GENERATION_DEFERRED_EVENT_REPLAY",
+          host_event_key: key,
+          execution_status: "SKIPPED",
+          reason: "STALE_CHAT",
+          deferred_chat_id: deferredEvent.chatId,
+          active_chat_id: chat.current(),
+        });
+        continue;
+      }
+      try {
+        await eventAnalysis.handleLifecycleEvent({
+          type: key,
+          eventType: deferredEvent?.eventType ?? null,
+          payload: deferredEvent?.payload,
+          chatId: chat.current(),
+          deferAutomaticWork: false,
+        });
+        recordPersistenceTrace({
+          stage: "GENERATION_DEFERRED_EVENT_REPLAY",
+          host_event_key: key,
+          execution_status: "SUCCEEDED",
+          deferred_chat_id: deferredEvent?.chatId ?? null,
+          active_chat_id: chat.current(),
+        });
+      } catch (error) {
+        recordPersistenceTrace({
+          stage: "GENERATION_DEFERRED_EVENT_REPLAY",
+          host_event_key: key,
+          execution_status: "FAILED",
+          reason: error?.code ?? error?.message ?? "DEFERRED_EVENT_REPLAY_FAILED",
+          deferred_chat_id: deferredEvent?.chatId ?? null,
+          active_chat_id: chat.current(),
+        });
+        if (![
+          "STALE_CHAT",
+          "MESSAGE_NOT_FOUND",
+          "SWIPE_NOT_FOUND",
+        ].includes(error?.message)) throw error;
+      }
+    }
+  }
+
+  function generationHasSettled() {
+    const state = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
+    return !state.pendingGeneration && !state.pendingSwipeGeneration &&
+      Boolean(state.completedGeneration || state.completedSwipeGeneration);
+  }
 
   function cloneValue(value) {
     if (value === undefined || value === null) return value;
@@ -4625,6 +4732,22 @@ export function createRuntime({
     }[key];
     if (lifecycleTraceStage) diagnostics.recordLifecycleTrace(lifecycleTraceStage, payload, chatId);
     const chatChanged = chat.getEpoch() !== epochBefore;
+    if (key === "GENERATION_STARTED" && !generationGate?.active && !generationGate?.startPending) {
+      // Reserve the non-blocking gate synchronously so a Chat/message event
+      // arriving before this listener's promise runs is still coalesced. The
+      // gate becomes active only after Generation Lifecycle accepts the
+      // payload, and is discarded for an unrecognized start signal.
+      generationGate = {
+        active: false,
+        startPending: true,
+        pending: false,
+        pendingEvents: new Map(),
+      };
+    }
+    if (generationAutomaticWorkIsDeferred(key)) {
+      markGenerationPending(key, eventType, payload, chatId);
+      if (key === "CHAT_CHANGED") projectionContext.clearProjectionContext();
+    }
     let sourceTransition = null;
     if (key === "CHAT_CHANGED" && chatChanged) {
       prepareStartNewChatTransition(
@@ -4723,7 +4846,17 @@ export function createRuntime({
               eventType,
               payload,
               chatId,
+              deferAutomaticWork: generationAutomaticWorkIsDeferred(key),
             });
+            if (key === "GENERATION_STARTED" &&
+                runtimeResult?.reason === "generation-pending") {
+              generationGate.active = true;
+              generationGate.startPending = false;
+              eventAnalysis.setGenerationAutomaticWorkDeferred?.(true);
+            } else if (key === "GENERATION_STARTED") {
+              generationGate = null;
+              eventAnalysis.setGenerationAutomaticWorkDeferred?.(false);
+            }
             recordPersistenceTrace({
               stage: "HOST_EVENT_FORWARD_RESULT",
               ...hostEventDiagnostic,
@@ -4743,6 +4876,38 @@ export function createRuntime({
               console.error("[BioWeave] event analysis lifecycle failed", error);
           }
         }
+        let generationReleased = false;
+        if (generationGate?.active) {
+          const canRelease = key === "GENERATION_STOPPED" ||
+            key === "GENERATION_CANCELLED" ||
+            ((key === "GENERATION_ENDED" || key === "CHARACTER_MESSAGE_RENDERED") &&
+              generationHasSettled());
+          if (!canRelease) {
+            notifyLifecycleSettled(key, eventType, payload);
+            return;
+          }
+          const deferredEvents = generationGate.pendingEvents;
+          generationGate.active = false;
+          generationGate = null;
+          eventAnalysis.setGenerationAutomaticWorkDeferred?.(false);
+          // Deferred Chat/message/Swipe events are intentionally not processed
+          // while generation is active. Rebind and invalidate only after the
+          // generation boundary settles, so an old Chat/Floor cannot refresh
+          // state during the host request.
+          await replayDeferredGenerationEvents(deferredEvents);
+          if (key === "GENERATION_ENDED" || key === "CHARACTER_MESSAGE_RENDERED") {
+            const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+            if (finalTarget?.version) {
+              const state = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
+              await eventAnalysis.handoffSettledCharacterFloor(finalTarget, {
+                reason: key,
+                generation: state.completedGeneration ?? state.completedSwipeGeneration ?? null,
+                lifecycleOutcome: {status: "generation-settled"},
+              });
+              generationReleased = true;
+            }
+          }
+        }
         try {
           await projectionRuntime.tickLifecycleOnly({reason: `story-time:${key}`});
         } catch (error) {
@@ -4751,7 +4916,7 @@ export function createRuntime({
         }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());
-        if (["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED", "GENERATION_ENDED", "CHARACTER_MESSAGE_RENDERED"].includes(key)) {
+        if (["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED", "GENERATION_ENDED", "GENERATION_STOPPED", "GENERATION_CANCELLED", "CHARACTER_MESSAGE_RENDERED"].includes(key) && !generationReleased) {
           const recovery = runLifecycleRecovery({
             trigger: `lifecycle-${key.toLowerCase()}`,
             reason: key === "MESSAGE_RECEIVED"

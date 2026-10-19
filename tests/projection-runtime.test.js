@@ -56,9 +56,12 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, archiveAndReleasePregnancy = null} = {}) {
   let current = inputs()
   const saved = []
+  let collectInputsCalls = 0
+  let batchPersistenceCalls = 0
+  const batchRecordCounts = []
   const statuses = []
   const contextRefreshes = []
   const views = async () => ({all: saved.map(item => ({...item, factual_status: 'active', deleted: false, context_visible: true}))})
@@ -66,6 +69,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     analyzer: analyzer ?? {generateProjection: async () => ({development: {kind: 'possible_detection', description: '可能出现检测迹象。'}})},
     getChatId: () => version.chat_id,
     collectInputs: async () => {
+      collectInputsCalls += 1
       if (mutateInputs) current = mutateInputs(current)
       const snapshot = structuredClone(current)
       if (deleteProjection) snapshot.deleteProjection = deleteProjection
@@ -73,9 +77,18 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     },
     resolveCurrentFloor: async () => current.floor,
     getProjectionViews: getProjectionViews ?? views,
-    saveGeneratedProjection: async ({projectionCandidate}) => { saved.push(projectionCandidate); return {status: 'committed'} },
-    saveProjectionEvidence: async () => ({status: 'committed'}),
+    saveProjectionBatch: async ({records}) => {
+      batchPersistenceCalls += 1
+      batchRecordCounts.push(records.length)
+      for (const {projectionCandidate} of records) saved.push(projectionCandidate)
+      return {status: 'appended'}
+    },
+    saveProjectionLifecycleBatch,
     saveEvolutionDecision: async () => ({status: 'skipped'}),
+    getProjectionDeliveryRecords,
+    saveProjectionDeliveryResponseBatch,
+    saveProjectionDeliveryResponse,
+    archiveAndReleasePregnancy,
     resolvePreConfirmationTiming,
     diagnostics,
     refreshProjectionContext: async () => {
@@ -83,8 +96,143 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     },
     notify: event => statuses.push(event),
   })
-  return {runtime, saved, statuses, contextRefreshes, setInputs: next => {current = next}}
+  return {runtime, saved, statuses, contextRefreshes, batchRecordCounts, setInputs: next => {current = next}, get collectInputsCalls() { return collectInputsCalls }, get batchPersistenceCalls() { return batchPersistenceCalls }}
 }
+
+test('Projection Runtime batches expired lifecycle updates in one save', async () => {
+  const savedRecords = []
+  let viewReads = 0
+  const expiredViews = Array.from({length: 7}, (_, index) => ({
+    projection_id: `projection-expired-${index}`,
+    tracking_scope: 'pre_confirmation',
+    tracking_window_id: `window-expired-${index}`,
+    factual_status: 'active',
+    deleted: false,
+  }))
+  const fixture = createFixture({
+    getProjectionViews: async () => { viewReads += 1; return {all: expiredViews} },
+    saveProjectionLifecycleBatch: async ({records}) => {
+      savedRecords.push(records)
+      return {status: 'appended'}
+    },
+  })
+  fixture.setInputs({...inputs(), trackingWindows: expiredViews.map(view => ({tracking_window_id: view.tracking_window_id, status: 'expired'}))})
+  const result = await fixture.runtime.tickLifecycleOnly({reason: 'batch-expired-lifecycle'})
+  assert.equal(result.status, 'success')
+  assert.equal(result.expired_projections, 7)
+  assert.equal(savedRecords.length, 1)
+  assert.equal(savedRecords[0].length, 7)
+  assert.deepEqual(savedRecords[0].map(record => record.action), Array(7).fill('expired'))
+  assert.equal(viewReads, 2)
+})
+
+test('Projection Runtime batches factual lifecycle evolution records in one save', async () => {
+  const savedRecords = []
+  const evolvedRule = {...rule, realization: {event_types: ['medical_event']}}
+  evolvedRule.projection_rule_id = buildProjectionRuleId(evolvedRule)
+  const evolvedViews = Array.from({length: 7}, (_, index) => ({
+    projection_id: `projection-realized-${index}`,
+    subject_id: subject,
+    projection_rule_id: evolvedRule.projection_rule_id,
+    development_concern_key: evolvedRule.development_concern_key,
+    factual_status: 'active',
+    deleted: false,
+    context_visible: true,
+  }))
+  const fixture = createFixture({
+    getProjectionViews: async () => ({all: evolvedViews}),
+    saveProjectionLifecycleBatch: async ({records}) => {
+      savedRecords.push(records)
+      return {status: 'appended'}
+    },
+  })
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: [evolvedRule]}, events: [{
+    event_id: 'medical-event-1',
+    type: 'medical_event',
+    status: 'confirmed',
+    state_fact: {subject_id: subject, payload: {}},
+  }]})
+  const result = await fixture.runtime.process({reason: 'batch-factual-lifecycle'})
+  assert.equal(result.status, 'success')
+  assert.equal(savedRecords.length, 1)
+  assert.equal(savedRecords[0].length, 7)
+  assert.deepEqual(savedRecords[0].map(record => record.action), Array(7).fill('realized'))
+})
+
+test('Projection Runtime batches all completed delivery responses in one save', async () => {
+  const deliveries = Array.from({length: 23}, (_, index) => ({
+    delivery_record_id: `delivery-record-${index}`,
+    delivery_id: `delivery-${index}`,
+    projection_id: `projection-${index}`,
+    aggregation_id: `aggregation-${index}`,
+    subject_id: subject,
+    pregnancy_id: null,
+    cycle_id: `cycle-${index}`,
+    submitted_floor_version: version,
+    context_fingerprint: 'context-batch',
+    status: 'readback_verified',
+    owner_index: 2,
+    owner_swipe_id: 0,
+  }))
+  let savedRecords = null
+  const fixture = createFixture({
+    getProjectionDeliveryRecords: async () => deliveries,
+    saveProjectionDeliveryResponseBatch: async ({records}) => { savedRecords = records; return {status: 'appended'} },
+  })
+  const result = await fixture.runtime.recordCompletedResponse({target: {index: 3, version}, execution: {generation_id: 'generation-batch'}})
+  assert.equal(result.status, 'observed')
+  assert.equal(result.observed, 23)
+  assert.equal(savedRecords.length, 23)
+  assert.equal(new Set(savedRecords.map(record => record.delivery_id)).size, 23)
+})
+
+test('Projection Runtime keeps the legacy single delivery response fallback', async () => {
+  const deliveries = [{
+    delivery_record_id: 'delivery-record-legacy', delivery_id: 'delivery-legacy', projection_id: 'projection-legacy',
+    aggregation_id: 'aggregation-legacy', subject_id: subject, pregnancy_id: null, cycle_id: 'cycle-legacy',
+    submitted_floor_version: version, context_fingerprint: 'context-legacy', status: 'readback_verified', owner_index: 2, owner_swipe_id: 0,
+  }]
+  const savedRecords = []
+  const fixture = createFixture({
+    getProjectionDeliveryRecords: async () => deliveries,
+    saveProjectionDeliveryResponse: async ({deliveryRecord}) => { savedRecords.push(deliveryRecord); return {status: 'appended'} },
+  })
+  const result = await fixture.runtime.recordCompletedResponse({target: {index: 3, version}, execution: {generation_id: 'generation-legacy'}})
+  assert.equal(result.observed, 1)
+  assert.equal(savedRecords.length, 1)
+  assert.equal(savedRecords[0].delivery_id, 'delivery-legacy')
+})
+
+test('Projection Runtime shares the post-analysis input and delivery snapshots', async () => {
+  let deliveryReads = 0
+  const timing = {
+    timing_instance_id: 'timing-shared-snapshot', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-shared-snapshot',
+    source_event_ids: ['event-1'], reference_story_time: {day_index: 0, display: '第 0 天'}, effective_min_story_days: 14, effective_max_story_days: 42,
+  }
+  const aggregation = {
+    aggregation_id: 'aggregation-shared-snapshot', subject_id: subject, pregnancy_id: null, mechanism_key: 'fertilization', cycle_id: timing.cycle_id,
+    status: 'succeeded', accepted_exposure_event_ids: ['event-1'],
+  }
+  const fixture = createFixture({
+    getProjectionDeliveryRecords: async () => { deliveryReads += 1; return [] },
+    saveProjectionDeliveryResponseBatch: async () => ({status: 'deduped'}),
+    archiveAndReleasePregnancy: async () => ({status: 'deduped'}),
+    resolvePreConfirmationTiming: async () => ({
+      enabled: true,
+      instances: [timing],
+      windows: [{tracking_window_id: 'window-shared-snapshot', subject_id: subject, mechanism_key: timing.mechanism_key, cycle_id: timing.cycle_id, status: 'open', source_event_ids: ['event-1']}],
+      aggregations: [aggregation],
+    }),
+  })
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: []}, currentStoryTime: {day_index: 17, display: '第 17 天'}})
+  const result = await fixture.runtime.handleAnalysisSuccess({
+    target: {index: 3, version},
+    execution: {pipeline_run_id: 'pipeline-shared-snapshot'},
+  })
+  assert.equal(result.projection.status, 'success')
+  assert.equal(fixture.collectInputsCalls, 2)
+  assert.equal(deliveryReads, 1)
+})
 
 test('Projection Runtime correlates real stages to one bounded pipeline run', async () => {
   const diagnostics = createRuntimeDiagnostics()
@@ -102,6 +250,67 @@ test('Projection Runtime correlates real stages to one bounded pipeline run', as
   assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_AI_SCHEDULING'))
   assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_PERSISTENCE'))
   assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_READBACK' && stage.readback_succeeded === true))
+})
+
+test('Projection Runtime records automatic performance stages without changing manual timing operations', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const fixture = createFixture({diagnostics, resolvePreConfirmationTiming: async () => null})
+  const result = await fixture.runtime.process({reason: 'automatic-performance-test', trigger: 'automatic'})
+  assert.equal(result.status, 'success')
+
+  const performance = diagnostics.getTimingPerformanceDiagnostics()
+  assert.equal(performance.recent_operations.length, 0)
+  assert.equal(performance.automatic_projection_runs.length, 1)
+  const run = performance.automatic_projection_runs[0]
+  assert.equal(run.status, 'SUCCEEDED')
+  assert.equal(typeof run.total_duration_ms, 'number')
+  assert.ok(run.stages.some(stage => stage.stage === 'INPUT_COLLECTION' && stage.call_count === 1))
+  assert.ok(run.stages.some(stage => stage.stage === 'INITIAL_PROJECTION_VIEWS' && stage.read_count === 1))
+  assert.ok(run.stages.some(stage => stage.stage === 'TIMING_RESOLUTION'))
+  assert.ok(run.stages.some(stage => stage.stage === 'ELIGIBILITY_EVALUATION'))
+  assert.ok(run.stages.some(stage => stage.stage === 'PROJECTION_PERSISTENCE'))
+  assert.ok(run.stages.some(stage => stage.stage === 'FINAL_PROJECTION_READBACK'))
+  assert.ok(run.stages.some(stage => stage.stage === 'PROJECTION_CONTEXT_REFRESH'))
+  assert.equal(run.ai_called, true)
+})
+
+test('Projection Runtime closes automatic performance diagnostics for stale and in-flight paths', async () => {
+  const staleDiagnostics = createRuntimeDiagnostics()
+  const staleFixture = createFixture({diagnostics: staleDiagnostics})
+  staleFixture.setInputs({...inputs(), floor: {...inputs().floor, version: {...version, message_id: 'changed'}}})
+  const staleResult = await staleFixture.runtime.handleAnalysisSuccess({
+    target: {index: 3, version},
+    execution: {pipeline_run_id: 'pipeline-stale-performance'},
+  })
+  assert.equal(staleResult.status, 'stale')
+  const staleRun = staleDiagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0]
+  assert.equal(staleRun.status, 'CANCELLED_STALE_CONTEXT')
+  assert.equal(typeof staleRun.total_duration_ms, 'number')
+
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const inFlightDiagnostics = createRuntimeDiagnostics()
+  const inFlightFixture = createFixture({
+    diagnostics: inFlightDiagnostics,
+    analyzer: {generateProjection: async () => {
+      await gate
+      return {development: {kind: 'possible_detection', description: '可能出现检测迹象。'}}
+    }},
+  })
+  const first = inFlightFixture.runtime.process({trigger: 'in-flight-test'})
+  while (inFlightDiagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs.length < 1
+    || !inFlightDiagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0].stages.some(stage => stage.stage === 'ELIGIBILITY_EVALUATION')) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  const second = inFlightFixture.runtime.process({trigger: 'in-flight-test'})
+  const runsBeforeRelease = inFlightDiagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs
+  assert.equal(runsBeforeRelease.length, 2)
+  release()
+  await Promise.all([first, second])
+  const runsAfterRelease = inFlightDiagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs
+  const skippedRun = runsAfterRelease.find(run => run.status === 'SKIPPED')
+  assert.ok(skippedRun)
+  assert.equal(typeof skippedRun.total_duration_ms, 'number')
 })
 
 test('Projection Runtime business output is unchanged when diagnostics are absent', async () => {
@@ -124,7 +333,7 @@ test('Projection Runtime marks authoritative readback failures without changing 
     diagnostics,
     getProjectionViews: async () => {
       viewReads += 1
-      if (viewReads > 2) throw Object.assign(new Error('PROJECTION_READBACK_UNAVAILABLE'), {code: 'PROJECTION_READBACK_UNAVAILABLE'})
+      if (viewReads > 1) throw Object.assign(new Error('PROJECTION_READBACK_UNAVAILABLE'), {code: 'PROJECTION_READBACK_UNAVAILABLE'})
       return {all: fixture?.saved?.map(item => ({...item, factual_status: 'active', deleted: false, context_visible: true})) ?? []}
     },
   })
@@ -372,6 +581,9 @@ test('Projection Runtime creates time-eligible built-in branches for every compl
 
   assert.equal(result.status, 'success')
   assert.equal(fixture.saved.length, 8)
+  assert.equal(fixture.collectInputsCalls, 2)
+  assert.equal(fixture.batchPersistenceCalls, 1)
+  assert.deepEqual(fixture.batchRecordCounts, [8])
   assert.deepEqual(
     Object.fromEntries([subject, secondSubject].map(subjectId => [subjectId, fixture.saved.filter(item => item.subject_id === subjectId).length])),
     {[subject]: 4, [secondSubject]: 4},
@@ -478,7 +690,7 @@ test('lifecycle-only Projection refresh receives the business snapshot built for
     collectInputs: async () => ({...inputs(), businessData}),
     resolveCurrentFloor: async () => ({version}),
     getProjectionViews: async request => { viewRequests.push(request); return {all: []}; },
-    saveGeneratedProjection: async () => { throw new Error('GENERATION_MUST_NOT_RUN'); },
+    saveProjectionBatch: async () => { throw new Error('GENERATION_MUST_NOT_RUN'); },
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     refreshProjectionContext: async options => { refreshes.push(options); },
   });
@@ -529,7 +741,7 @@ test('timeout closes an unconfirmed aggregation even when no response delivery e
     }),
     resolveCurrentFloor: async () => ({index: 4, version}),
     getProjectionViews: async () => ({all: []}),
-    saveGeneratedProjection: async () => ({status: 'committed'}),
+    saveProjectionBatch: async () => ({status: 'committed'}),
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords: async request => { deliveryRequests.push(request); return []; },
     archiveAndReleasePregnancy: lifecyclePersistence.archiveAndRelease,
@@ -568,7 +780,7 @@ test('timeout identity matching does not treat a different concrete pregnancy as
     }),
     resolveCurrentFloor: async () => ({index: 4, version}),
     getProjectionViews: async () => ({all: []}),
-    saveGeneratedProjection: async () => ({status: 'committed'}),
+    saveProjectionBatch: async () => ({status: 'committed'}),
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords: async () => [],
     archiveAndReleasePregnancy: async request => { closed.push(request); return {status: 'released'}; },
@@ -604,7 +816,7 @@ test('timeout identity matching does not treat a different cycle as the same obs
     }),
     resolveCurrentFloor: async () => ({index: 4, version}),
     getProjectionViews: async () => ({all: []}),
-    saveGeneratedProjection: async () => ({status: 'committed'}),
+    saveProjectionBatch: async () => ({status: 'committed'}),
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords: async () => [],
     archiveAndReleasePregnancy: async request => { closed.push(request); return {status: 'released'}; },
@@ -639,7 +851,7 @@ test('timeout without delivery uses a distinct operation key for each Aggregatio
     }),
     resolveCurrentFloor: async () => ({index: 4, version}),
     getProjectionViews: async () => ({all: []}),
-    saveGeneratedProjection: async () => ({status: 'committed'}),
+    saveProjectionBatch: async () => ({status: 'committed'}),
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords: async () => [],
     archiveAndReleasePregnancy: async request => { closed.push(request); return {status: 'released'}; },

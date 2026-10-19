@@ -608,6 +608,8 @@ export function createRuntimeDiagnostics({
   const nsfwPipelineStages = [];
   const timingPerformanceOperations = [];
   const timingPerformanceClocks = new Map();
+  const automaticProjectionRuns = [];
+  const automaticProjectionClocks = new Map();
   const maxRunCount = Number.isInteger(maxNsfwPipelineRuns) && maxNsfwPipelineRuns > 0
     ? maxNsfwPipelineRuns
     : NSFW_PIPELINE_RUN_LIMIT;
@@ -625,6 +627,7 @@ export function createRuntimeDiagnostics({
   let lifecycleTraceTruncated = false;
   let nsfwPipelineTruncated = false;
   let timingPerformanceTruncated = false;
+  let automaticProjectionTruncated = false;
   let recorderFailed = false;
 
   function appendPersistenceTraceEntry(entry) {
@@ -872,9 +875,12 @@ export function createRuntimeDiagnostics({
       source_type: "EXECUTION_TRACE",
       collection_status: recorderFailed ? "PARTIAL" : "OK",
       diagnostic_error_code: recorderFailed ? "DIAGNOSTIC_RECORDER_FAILED" : null,
-      trace_buffer_status: timingPerformanceOperations.length ? "SESSION_ONLY" : "EMPTY",
-      trace_truncated: timingPerformanceTruncated ? true : timingPerformanceOperations.length ? false : null,
+      trace_buffer_status: timingPerformanceOperations.length || automaticProjectionRuns.length ? "SESSION_ONLY" : "EMPTY",
+      trace_truncated: timingPerformanceTruncated || automaticProjectionTruncated
+        ? true
+        : timingPerformanceOperations.length || automaticProjectionRuns.length ? false : null,
       recent_operations: timingPerformanceOperations.map(cloneSafeTraceValue),
+      automatic_projection_runs: automaticProjectionRuns.map(cloneSafeTraceValue),
     }), {
       schema_version: 1,
       source_type: "EXECUTION_TRACE",
@@ -883,7 +889,80 @@ export function createRuntimeDiagnostics({
       trace_buffer_status: "UNKNOWN",
       trace_truncated: null,
       recent_operations: [],
+      automatic_projection_runs: [],
     });
+  }
+
+  function startAutomaticProjectionRun(input = {}) {
+    return safeCall(() => {
+      const runId = `projection_perf_${Date.now().toString(36)}_${++timingPerformanceSequence}`;
+      const run = {
+        run_id: runId,
+        operation: "AUTOMATIC_PROJECTION",
+        chat_id: diagnosticScalar(input.chat_id) ?? safeCall(() => diagnosticScalar(getChatId())),
+        floor_version: normalizeFloorVersion(input.floor_version),
+        trigger: diagnosticScalar(input.trigger, 120),
+        status: "ATTEMPTED",
+        started_at: diagnosticNow(),
+        completed_at: null,
+        total_duration_ms: null,
+        ai_called: false,
+        stages: [],
+        stages_truncated: false,
+        source_type: "EXECUTION_TRACE",
+      };
+      automaticProjectionRuns.push(run);
+      automaticProjectionClocks.set(runId, monotonicNow());
+      while (automaticProjectionRuns.length > maxTimingPerformanceOperationCount) {
+        const removed = automaticProjectionRuns.shift();
+        if (removed) automaticProjectionClocks.delete(removed.run_id);
+        automaticProjectionTruncated = true;
+      }
+      return runId;
+    }, null);
+  }
+
+  function recordAutomaticProjectionStage(input = {}) {
+    return safeCall(() => {
+      const runId = diagnosticScalar(input.run_id, 120);
+      const run = runId ? [...automaticProjectionRuns].reverse().find(item => item.run_id === runId) : null;
+      if (!run) return false;
+      const status = String(input.status ?? "UNKNOWN").toUpperCase();
+      const stage = {
+        stage: diagnosticScalar(input.stage, 120) ?? "UNKNOWN",
+        status: ["ATTEMPTED", "FAILED", "SUCCEEDED", "SKIPPED", "UNKNOWN"].includes(status) ? status : "UNKNOWN",
+        duration_ms: Number.isFinite(input.duration_ms) ? Math.max(0, input.duration_ms) : null,
+        call_count: Number.isFinite(Number(input.call_count)) ? Math.max(0, Math.trunc(Number(input.call_count))) : 0,
+        read_count: Number.isFinite(Number(input.read_count)) ? Math.max(0, Math.trunc(Number(input.read_count))) : 0,
+        output_count: Number.isFinite(Number(input.output_count)) ? Math.max(0, Math.trunc(Number(input.output_count))) : null,
+        ai_called: typeof input.ai_called === "boolean" ? input.ai_called : null,
+        reason_code: diagnosticScalar(input.reason_code, 120),
+        error_code: diagnosticScalar(input.error_code, 120),
+      };
+      run.stages.push(stage);
+      while (run.stages.length > TIMING_PERFORMANCE_STAGE_LIMIT) {
+        run.stages.shift();
+        run.stages_truncated = true;
+      }
+      if (stage.ai_called === true) run.ai_called = true;
+      return true;
+    }, false);
+  }
+
+  function finishAutomaticProjectionRun(input = {}) {
+    return safeCall(() => {
+      const runId = diagnosticScalar(input.run_id, 120);
+      const run = runId ? [...automaticProjectionRuns].reverse().find(item => item.run_id === runId) : null;
+      if (!run) return false;
+      const status = String(input.status ?? "SUCCEEDED").toUpperCase();
+      run.status = ["ATTEMPTED", "SUCCEEDED", "FAILED", "PARTIAL", "SKIPPED", "CANCELLED_STALE_CONTEXT", "UNKNOWN"].includes(status) ? status : "UNKNOWN";
+      run.reason_code = diagnosticScalar(input.reason_code, 120);
+      run.error_code = diagnosticScalar(input.error_code, 120);
+      run.completed_at = diagnosticNow();
+      run.total_duration_ms = durationMs(automaticProjectionClocks.get(runId));
+      automaticProjectionClocks.delete(runId);
+      return true;
+    }, false);
   }
 
   function createSafeRunId() {
@@ -1402,6 +1481,9 @@ export function createRuntimeDiagnostics({
     recordTimingOfficialIo,
     finishTimingPerformanceOperation,
     getTimingPerformanceDiagnostics,
+    startAutomaticProjectionRun,
+    recordAutomaticProjectionStage,
+    finishAutomaticProjectionRun,
     getDiagnosticMetadata,
     sanitizePersistenceTracePayload,
     cloneSafeTraceValue,

@@ -578,6 +578,7 @@ export function createEventAnalysisCoordinator({
   let diagnostics;
   let trackingRefresh;
   let generationLifecycle;
+  let generationAutomaticWorkDeferred = false;
   let projectionPostProcessor = null;
   const persistence = floorPersistence ?? createFloorPersistenceCoordinator({
     store,
@@ -2601,10 +2602,17 @@ export function createEventAnalysisCoordinator({
         }
       },
       onGenerationSettled: (target, options) =>
-        handoffSettledCharacterFloor(target, {
-          ...options,
-          lifecycleOutcome: {status: "generation-settled"},
-        }),
+        generationAutomaticWorkDeferred
+          ? {
+              skipped: true,
+              reason: "generation-post-processing-deferred",
+              target,
+              generation: options?.generation ?? null,
+            }
+          : handoffSettledCharacterFloor(target, {
+              ...options,
+              lifecycleOutcome: {status: "generation-settled"},
+            }),
     },
     tracking: {
       collectTrackingInputs,
@@ -4671,6 +4679,11 @@ export function createEventAnalysisCoordinator({
         return { skipped: true, status: "disabled", reason: event?.type };
       }
       const type = event?.type;
+      if (event?.deferAutomaticWork === true && type !== "GENERATION_STARTED" &&
+          type !== "GENERATION_ENDED" && type !== "GENERATION_STOPPED" &&
+          type !== "GENERATION_CANCELLED" && type !== "CHARACTER_MESSAGE_RENDERED") {
+        return {skipped: true, reason: "generation-post-processing-deferred", event: type};
+      }
       if (type === "CHAT_CHANGED") {
         await primeLifecycleSnapshot();
         await reconcileSchedulerState({reason: "chat-changed"});
@@ -5014,6 +5027,10 @@ export function createEventAnalysisCoordinator({
     handleLifecycleEvent,
     primeLifecycleSnapshot,
     getLifecycleSnapshot: () => lifecycleSnapshot,
+    setGenerationAutomaticWorkDeferred: deferred => {
+      generationAutomaticWorkDeferred = deferred === true;
+    },
+    handoffSettledCharacterFloor,
     invalidateForClear,
     completeClear,
     refreshTrackingRegistry,

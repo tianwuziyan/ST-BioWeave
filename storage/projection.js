@@ -97,38 +97,116 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
   }
 
   async function saveGeneratedProjection({chatId, ownerFloor, floorVersion, projectionCandidate, traceContext = {}} = {}) {
-    const validation = validateProjection(projectionCandidate, {expectedChatId: chatId})
-    if (!validation.ok) throw error(validation.errors[0])
-    assertRecordVersion(projectionCandidate, floorVersion)
-    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, timeline => appendProjectionCreation(projectionCandidate, {timeline, expectedChatId: chatId}))
+    return saveProjectionBatch({chatId, ownerFloor, floorVersion, traceContext, records: [{projectionCandidate}]})
   }
 
   async function saveProjectionEvidence({chatId, ownerFloor, floorVersion, evidenceRecord, traceContext = {}} = {}) {
-    const record = createProjectionEvidenceRecord(evidenceRecord)
-    if (evidenceRecord?.evidence_record_id && evidenceRecord.evidence_record_id !== record.evidence_record_id) throw error('evidence_record_id:not_deterministic')
-    assertRecordVersion(record, floorVersion)
-    const knownProjectionIds = new Set((await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.map(item => item.projection_id))
-    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, timeline => appendProjectionEvidence(record, {timeline, expectedChatId: chatId, knownProjectionIds}))
+    return saveProjectionBatch({chatId, ownerFloor, floorVersion, traceContext, records: [{evidenceRecord}]})
   }
 
-  async function saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord} = {}) {
-    const record = createProjectionLifecycleRecord(lifecycleRecord)
-    if (lifecycleRecord?.lifecycle_id && lifecycleRecord.lifecycle_id !== record.lifecycle_id) throw error('lifecycle_id:not_deterministic')
-    assertRecordVersion(record, floorVersion)
-    const knownProjectionIds = new Set((await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.map(item => item.projection_id))
-    return mutateFloor({chatId, ownerFloor, floorVersion}, timeline => appendProjectionLifecycle(record, {timeline, expectedChatId: chatId, knownProjectionIds}))
+  async function saveProjectionBatch({chatId, ownerFloor, floorVersion, records = [], traceContext = {}} = {}) {
+    if (!Array.isArray(records) || records.length === 0) throw error('PROJECTION_BATCH_RECORDS_REQUIRED')
+    const normalizedRecords = records.map(item => {
+      const projectionCandidate = item?.projectionCandidate ?? null
+      const evidenceInput = item?.evidenceRecord ?? null
+      if (projectionCandidate) {
+        const validation = validateProjection(projectionCandidate, {expectedChatId: chatId})
+        if (!validation.ok) throw error(validation.errors[0])
+        assertRecordVersion(projectionCandidate, floorVersion)
+      }
+      let evidenceRecord = null
+      if (evidenceInput) {
+        evidenceRecord = createProjectionEvidenceRecord(evidenceInput)
+        if (evidenceInput.evidence_record_id && evidenceInput.evidence_record_id !== evidenceRecord.evidence_record_id) throw error('evidence_record_id:not_deterministic')
+        assertRecordVersion(evidenceRecord, floorVersion)
+      }
+      if (!projectionCandidate && !evidenceRecord) throw error('PROJECTION_BATCH_RECORD_REQUIRED')
+      return {projectionCandidate, evidenceRecord}
+    })
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => {
+      let nextTimeline = timeline
+      let changed = false
+      for (const {projectionCandidate, evidenceRecord} of normalizedRecords) {
+        if (projectionCandidate) {
+          const creation = appendProjectionCreation(projectionCandidate, {timeline: nextTimeline, expectedChatId: chatId})
+          if (creation.status === 'rejected' || creation.status === 'conflict') return creation
+          nextTimeline = creation.timeline
+          if (creation.status === 'appended') changed = true
+          knownProjectionIds.add(projectionCandidate.projection_id)
+        }
+        if (evidenceRecord) {
+          const evidence = appendProjectionEvidence(evidenceRecord, {timeline: nextTimeline, expectedChatId: chatId, knownProjectionIds})
+          if (evidence.status === 'rejected' || evidence.status === 'conflict') return evidence
+          nextTimeline = evidence.timeline
+          if (evidence.status === 'appended') changed = true
+        }
+      }
+      return {status: changed ? 'appended' : 'deduped', timeline: nextTimeline}
+    })
+  }
+
+  async function saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, records = [], traceContext = {}} = {}) {
+    if (!Array.isArray(records) || records.length === 0) throw error('PROJECTION_LIFECYCLE_BATCH_RECORDS_REQUIRED')
+    const normalizedRecords = records.map(lifecycleRecord => {
+      const record = createProjectionLifecycleRecord(lifecycleRecord)
+      if (lifecycleRecord?.lifecycle_id && lifecycleRecord.lifecycle_id !== record.lifecycle_id) throw error('lifecycle_id:not_deterministic')
+      assertRecordVersion(record, floorVersion)
+      return record
+    })
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => {
+      let nextTimeline = timeline
+      let changed = false
+      for (const record of normalizedRecords) {
+        const result = appendProjectionLifecycle(record, {timeline: nextTimeline, expectedChatId: chatId, knownProjectionIds})
+        if (result.status === 'rejected' || result.status === 'conflict') return result
+        nextTimeline = result.timeline
+        if (result.status === 'appended') changed = true
+      }
+      return {status: changed ? 'appended' : 'deduped', timeline: nextTimeline}
+    })
+  }
+
+  async function saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord, traceContext = {}} = {}) {
+    return saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, traceContext, records: [lifecycleRecord]})
+  }
+
+  async function saveProjectionDeliveryBatch({chatId, ownerFloor, floorVersion, records = [], status, traceContext = {}} = {}) {
+    if (!Array.isArray(records) || records.length === 0) throw error('PROJECTION_DELIVERY_BATCH_RECORDS_REQUIRED')
+    const normalizedRecords = records.map(deliveryRecord => {
+      const record = createProjectionDeliveryRecord({...deliveryRecord, status})
+      if (deliveryRecord?.delivery_record_id && deliveryRecord.delivery_record_id !== record.delivery_record_id) throw error('delivery_record_id:not_deterministic')
+      if (status === 'response_observed' && !record.response_id) throw error('delivery_response_id:required')
+      assertRecordVersion(record, floorVersion)
+      if (status === 'response_observed' && !sameFloorVersion(record.response_floor_version, floorVersion)) throw error('FLOOR_VERSION_STALE')
+      return record
+    })
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => {
+      let nextTimeline = timeline
+      let changed = false
+      for (const record of normalizedRecords) {
+        const result = appendProjectionDelivery(record, {timeline: nextTimeline, expectedChatId: chatId, knownProjectionIds})
+        if (result.status === 'rejected' || result.status === 'conflict') return result
+        nextTimeline = result.timeline
+        if (result.status === 'appended') changed = true
+      }
+      return {status: changed ? 'appended' : 'deduped', timeline: nextTimeline}
+    })
+  }
+
+  async function saveProjectionDeliverySubmissionBatch({chatId, ownerFloor, floorVersion, records, traceContext = {}} = {}) {
+    return saveProjectionDeliveryBatch({chatId, ownerFloor, floorVersion, records, status: 'readback_verified', traceContext})
+  }
+
+  async function saveProjectionDeliveryResponseBatch({chatId, ownerFloor, floorVersion, records, traceContext = {}} = {}) {
+    return saveProjectionDeliveryBatch({chatId, ownerFloor, floorVersion, records, status: 'response_observed', traceContext})
   }
 
   async function saveProjectionDeliverySubmission({chatId, ownerFloor, floorVersion, deliveryRecord, traceContext = {}} = {}) {
-    const record = createProjectionDeliveryRecord({...deliveryRecord, status: 'readback_verified'});
-    if (deliveryRecord?.delivery_record_id && deliveryRecord.delivery_record_id !== record.delivery_record_id) throw error('delivery_record_id:not_deterministic');
-    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => appendProjectionDelivery(record, {timeline, expectedChatId: chatId, knownProjectionIds}));
+    return saveProjectionDeliverySubmissionBatch({chatId, ownerFloor, floorVersion, records: [deliveryRecord], traceContext})
   }
 
   async function saveProjectionDeliveryResponse({chatId, ownerFloor, floorVersion, deliveryRecord, traceContext = {}} = {}) {
-    const record = createProjectionDeliveryRecord({...deliveryRecord, status: 'response_observed'});
-    if (!record.response_id) throw error('delivery_response_id:required');
-    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => appendProjectionDelivery(record, {timeline, expectedChatId: chatId, knownProjectionIds}));
+    return saveProjectionDeliveryResponseBatch({chatId, ownerFloor, floorVersion, records: [deliveryRecord], traceContext})
   }
 
   async function saveEvolutionDecision({chatId, ownerFloor, floorVersion, projectionId, decision, evidenceRefs = []} = {}) {
@@ -200,5 +278,5 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     return {...result, view: (await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.find(item => item.projection_id === projectionId) ?? null}
   }
 
-  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
+  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionBatch, saveProjectionLifecycleBatch, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmissionBatch, saveProjectionDeliveryResponseBatch, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
 }

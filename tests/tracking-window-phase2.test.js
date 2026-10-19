@@ -204,7 +204,7 @@ test('lifecycle-only Projection bridge expires bound pre-confirmation Projection
     collectInputs: async () => ({floor: {version}, currentState: {}, currentStateStatus: 'ready', events: [], sourceCandidates: [], trackingWindows: [{...expiredWindow, status: 'expired', terminal_reason: 'tracking_window_horizon_reached'}], worldModel: {projection_rules: []}, currentStoryTime: {day_index: 8}}),
     resolveCurrentFloor: async () => ({version}),
     getProjectionViews: async () => ({all: [{...projection, factual_status: 'active', deleted: false}]}),
-    saveGeneratedProjection: async () => { throw new Error('GENERATION_MUST_NOT_RUN'); },
+    saveProjectionBatch: async () => { throw new Error('GENERATION_MUST_NOT_RUN'); },
     saveEvolutionDecision: async value => decisions.push(value),
     refreshProjectionContext: async () => { refreshes += 1; },
   });

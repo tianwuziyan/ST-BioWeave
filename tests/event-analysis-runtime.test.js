@@ -343,7 +343,7 @@ function createFixture({
   };
 }
 
-test("GENERATION_STARTED awaits projection context refresh before prompt read", async () => {
+test("GENERATION_STARTED preserves the existing Projection Context slot before prompt read", async () => {
   const order = [];
   const fixture = createFixture({
     setExtensionPromptHook: payload => {
@@ -359,15 +359,11 @@ test("GENERATION_STARTED awaits projection context refresh before prompt read", 
   await lifecycle;
   order.push("prompt-read");
 
-  assert.deepEqual(order, ["projection-refresh", "projection-refresh", "prompt-read"]);
+  assert.deepEqual(order, ["prompt-read"]);
   assert.equal(fixture.calls(), 0);
   const sequence = fixture.runtime.getPersistenceTrace().sequence;
-  const started = sequence.findIndex(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED');
-  const settled = sequence.findIndex(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED');
-  assert.ok(started >= 0);
-  assert.ok(settled > started);
-  assert.equal(sequence[settled].settled_before_listener_resolve, true);
-  assert.equal(sequence[settled].context_ready_before_prompt_read, true);
+  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED'), false);
+  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED'), false);
   fixture.runtime.destroy();
 });
 
@@ -418,7 +414,7 @@ test("real Runtime does not create a Projection submission receipt when setExten
   fixture.runtime.destroy();
 });
 
-test("GENERATION_STARTED refresh failure is handled without an unhandled rejection", async () => {
+test("GENERATION_STARTED does not refresh Projection Context when prompt writing would fail", async () => {
   const fixture = createFixture({
     setExtensionPromptHook: () => {
       throw new Error("PROMPT_WRITE_FAILED");
@@ -429,13 +425,11 @@ test("GENERATION_STARTED refresh failure is handled without an unhandled rejecti
 
   await assert.doesNotReject(() => listener({generation_type: "normal"}));
   assert.equal(fixture.calls(), 0);
-  const settled = fixture.runtime.getPersistenceTrace().sequence.find(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED');
-  assert.equal(settled.refresh_outcome, 'unavailable');
-  assert.equal(settled.context_ready_before_prompt_read, false);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED'), false);
   fixture.runtime.destroy();
 });
 
-test("repeated GENERATION_STARTED refreshes preserve queue ordering", async () => {
+test("repeated GENERATION_STARTED events do not refresh Projection Context", async () => {
   const writes = [];
   const fixture = createFixture({
     setExtensionPromptHook: payload => {
@@ -451,8 +445,144 @@ test("repeated GENERATION_STARTED refreshes preserve queue ordering", async () =
     listener({generation_type: "regenerate"}),
   ]);
 
-  assert.equal(writes.length, 4);
+  assert.equal(writes.length, 0);
   assert.equal(fixture.calls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("generation-time automatic triggers are deferred and the final Character Floor analyzes once", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [{message_id: "generation-gated-floor", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        eventCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {genType: "regenerate", message_id: "generation-gated-floor"});
+  fixture.emit("message-received", {message_id: "generation-gated-floor"});
+  await settle();
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+
+  fixture.context.chat[0].content = "最终正文";
+  fixture.emit("generation-ended", {message_id: "generation-gated-floor"});
+  fixture.emit("character-message-rendered", {message_id: "generation-gated-floor"});
+  await settle();
+  await settle();
+  assert.equal(eventCalls, 1);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.filter(entry => entry.stage === "AUTO_ANALYSIS_TRIGGERED").length,
+    1,
+  );
+  fixture.runtime.destroy();
+});
+
+test("a Chat boundary during generation cannot refresh or write the old Floor", async () => {
+  let eventCalls = 0;
+  const promptWrites = [];
+  const fixture = createFixture({
+    messages: [{message_id: "old-chat-floor", floor: 1, content: "旧 Chat 正文", role: "assistant"}],
+    setExtensionPromptHook: payload => {
+      if (payload?.key === "bioweave_projection_context") promptWrites.push(payload.content);
+    },
+    analyzer: {
+      async analyzeFloor() {
+        eventCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  promptWrites.length = 0;
+  fixture.emit("generation-started", {genType: "normal", message_id: "old-chat-floor"});
+  fixture.context.chatId = "new-chat";
+  fixture.emit("chat-changed", {chat_id: "new-chat"});
+  await settle();
+
+  assert.equal(eventCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.equal(promptWrites.length, 1);
+  assert.equal(promptWrites[0], "");
+  fixture.runtime.destroy();
+});
+
+test("generation gate replays deferred message and Swipe signals after stop", async () => {
+  const message = {
+    message_id: "deferred-lifecycle-target",
+    floor: 1,
+    swipe_id: 0,
+    swipes: ["原 Swipe"],
+    swipe_info: [{}],
+    role: "assistant",
+  };
+  const fixture = createFixture({messages: [message]});
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {
+    genType: "normal",
+    message_id: message.message_id,
+  });
+  message.swipes.push("新 Swipe");
+  message.swipe_info.push({});
+  message.swipe_id = 1;
+  fixture.emit("message-updated", {message_id: message.message_id});
+  fixture.emit("message-edited", {message_id: message.message_id});
+  fixture.emit("message-swiped", {
+    message_id: message.message_id,
+    swipe_id: 1,
+    pendingGeneration: true,
+  });
+  fixture.emit("generation-stopped", {message_id: message.message_id});
+  await settle();
+
+  const replayed = fixture.runtime.getPersistenceTrace().sequence
+    .filter(entry => entry.stage === "GENERATION_DEFERRED_EVENT_REPLAY");
+  assert.deepEqual(
+    replayed
+      .filter(entry => entry.execution_status === "SUCCEEDED")
+      .map(entry => entry.host_event_key),
+    ["MESSAGE_UPDATED", "MESSAGE_EDITED", "MESSAGE_SWIPED"],
+  );
+  assert.equal(replayed.some(entry => entry.execution_status !== "SUCCEEDED"), false);
+  fixture.runtime.destroy();
+});
+
+test("generation gate replays a deferred deletion after the generation stops", async () => {
+  const removed = {
+    message_id: "deferred-deleted-floor",
+    floor: 1,
+    content: "生成期间删除的楼层",
+    role: "assistant",
+  };
+  const survivor = {
+    message_id: "deferred-surviving-floor",
+    floor: 2,
+    content: "仍然存在的楼层",
+    role: "assistant",
+  };
+  const fixture = createFixture({messages: [removed, survivor]});
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {
+    genType: "normal",
+    message_id: survivor.message_id,
+  });
+  fixture.context.chat.splice(0, 1);
+  fixture.emit("message-deleted", {message_id: removed.message_id});
+  fixture.emit("generation-stopped", {message_id: survivor.message_id});
+  await settle();
+
+  const replay = fixture.runtime.getPersistenceTrace().sequence.find(entry =>
+    entry.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    entry.host_event_key === "MESSAGE_DELETED",
+  );
+  assert.equal(replay?.execution_status, "SUCCEEDED");
   fixture.runtime.destroy();
 });
 

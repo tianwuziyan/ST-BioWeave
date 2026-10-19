@@ -272,6 +272,21 @@ test('coordinator updates one injection slot and clears when no visible projecti
   assert.equal(writes.at(-1).content, '');
 });
 
+test('coordinator reuses a caller-provided Projection snapshot without rereading it', async () => {
+  let reads = 0;
+  const snapshot = {all: [view()]};
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => { reads += 1; return {all: []}; },
+    resolveCurrentFloor: async () => ({version: {chat_id: 'chat-a', floor: 2}}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => {},
+  });
+  const result = await coordinator.refreshProjectionContext({projectionViews: snapshot});
+  assert.equal(result.status, 'updated');
+  assert.equal(reads, 0);
+  assert.equal(result.dto.length, 1);
+});
+
 test('coordinator combines Health Guidance with projections and clears both from the same slot', async () => {
   const writes = [];
   let guidance = [{

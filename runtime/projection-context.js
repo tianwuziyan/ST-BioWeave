@@ -164,7 +164,7 @@ function floorReadStillMatches(left, right) {
       : {ok: true, status: 'cleared', reason, ...extra};
   }
 
-  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null} = {}) {
+  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null, projectionViews: suppliedProjectionViews = null, performanceRunId = null} = {}) {
     diagnostic('PROJECTION_CONTEXT_REFRESH_STARTED', {
       ...generationFields(generation),
       slot: PROJECTION_CONTEXT_INJECTION_KEY,
@@ -185,7 +185,7 @@ function floorReadStillMatches(left, right) {
       return clearFor('invalid_floor', {dto: [], prompt: ''}, generation);
     }
     try {
-      let views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      let views = suppliedProjectionViews ?? await getProjectionViews({chatId, endpointFloor: floor.version.floor});
       let businessData;
       let businessDataError = null;
       let businessDataResolved = false;
@@ -314,6 +314,7 @@ function floorReadStillMatches(left, right) {
             views,
             contextFingerprint: context.prompt ? diagnosticFingerprint(context.prompt) : null,
             generation,
+            performanceRunId,
           });
         } catch (error) {
           diagnostic('PROJECTION_DELIVERY_RECEIPT_FAILED', {

@@ -33,12 +33,219 @@ active Swipe, verify each current six-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
 and stale versions are never fallback sources.
 
+### Projection generation batch persistence contract
+
+#### 1. Scope / Trigger
+
+This contract applies when one Projection Runtime execution generates one or
+more candidate creations and their evidence records from the same captured
+business input. It optimizes one generation wave; it does not change Projection
+identity, eligibility, timeline schema, lifecycle, or factual status.
+
+#### 2. Signatures
+
+The Runtime generation boundary requires:
+
+```js
+createProjectionRuntime({ saveProjectionBatch })
+```
+
+The Projection storage boundary is:
+
+```js
+saveProjectionBatch({
+  chatId,
+  ownerFloor,
+  floorVersion,
+  records: [{ projectionCandidate?, evidenceRecord? }],
+  traceContext?,
+})
+```
+
+`records` must be a non-empty array. Every item must contain at least one of
+the two documented record fields. The single-creation and single-evidence APIs,
+when retained, are thin wrappers over this batch boundary rather than separate
+persistence implementations.
+
+#### 3. Contracts
+
+- Runtime collects successfully generated records in memory. Built-in local
+  candidates use execution-local liveness checks; AI candidates retain the
+  request-before and response-after full stale checks.
+- Runtime performs one complete current-input comparison immediately before a
+  non-empty batch is submitted.
+- Storage validates every candidate, deterministic evidence ID, and record
+  Floor Version before calling `mutateFloor()`.
+- Storage appends every creation and its evidence in deterministic input order
+  on one normalized timeline, then submits exactly one Projection owner patch
+  through the existing `FloorPersistenceCoordinator`.
+- Any validation, append conflict, owner, Swipe, Chat, or Floor Version failure
+  rejects the whole batch before a partial timeline can be committed.
+- Coordinator dispatch-time guards, sibling preservation, official save, and
+  authoritative readback remain mandatory. Runtime performs the final
+  Projection views read and Context refresh only after the batch attempt.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `records` missing, non-array, or empty | Reject with `PROJECTION_BATCH_RECORDS_REQUIRED`; no Floor read/write |
+| Item has neither documented record field | Reject with `PROJECTION_BATCH_RECORD_REQUIRED`; no Floor write |
+| Candidate schema or record Floor Version invalid | Reject the whole batch; no Floor write |
+| Supplied evidence ID is not deterministic | Reject with `evidence_record_id:not_deterministic`; no Floor write |
+| Creation/evidence append conflicts | Reject the whole batch; no Floor write |
+| Exact duplicate batch | Return deduped/no-op; do not call Host save |
+| Chat, owner, active Swipe, or six-field Floor Version changed | Fail closed through the existing Projection/Coordinator guards |
+
+#### 5. Good / Base / Bad Cases
+
+- **Good**: two subjects generate eight built-in candidates; Runtime collects
+  the input at start and once before persistence, then Storage saves all eight
+  creations and evidence records in one confirmed Floor transaction.
+- **Base**: no candidate is generated; Runtime does not call the batch API and
+  continues to the ordinary final read model.
+- **Bad**: each candidate rereads all business inputs or separately saves its
+  creation and evidence, producing multiple Host saves/readbacks for one wave.
+
+#### 6. Tests Required
+
+- Runtime: two subjects/eight built-in candidates cause exactly two complete
+  input collections, one batch call carrying eight records, and zero AI calls.
+- Storage: eight creation/evidence pairs produce one `saveFloor()` and the
+  confirmed timeline contains all sixteen append-only records.
+- Storage: duplicate, empty, unsupported, invalid, conflicting, stale,
+  wrong-Chat, wrong-owner, and wrong-Swipe inputs assert both the returned error
+  semantics and absence of an unauthorized/partial Floor write.
+- Integration: existing Coordinator sibling, queue, save, and authoritative
+  readback tests remain green without modifying the Coordinator implementation.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: one generation wave becomes repeated business reads and Host writes.
+for (const candidate of candidates) {
+  await collectInputs();
+  await saveGeneratedProjection(candidate);
+  await saveProjectionEvidence(candidate.evidence);
+}
+
+// Correct: validate freshness once, then commit one owner-scoped timeline patch.
+const records = candidates.map(toProjectionBatchRecord);
+if (await currentInputsMatch(executionId)) {
+  await saveProjectionBatch({chatId, ownerFloor, floorVersion, records});
+}
+```
+
 Runtime Context Injection is downstream of this read. It consumes only the
 current `getProjectionViews()` result with `context_visible === true`, through
 the stable `bioweave_projection_context` extension slot. It does not read raw
 timeline arrays, persist a Chat-level prompt, or make the prompt part of Event
 evidence. When the current Character Floor, Chat, Swipe, or Floor Version is
 missing or changes, the slot is refreshed or explicitly cleared.
+
+### Projection delivery batch persistence contract
+
+#### 1. Scope / Trigger
+
+Projection Context delivery submissions and response observations use explicit
+delivery-only batch boundaries; they are not mixed with candidate/evidence
+generation batches. The contract applies to one Context submission wave or one
+completed-response observation wave.
+
+#### 2. Signatures
+
+```js
+saveProjectionDeliverySubmissionBatch({chatId, ownerFloor, floorVersion, records, traceContext?})
+saveProjectionDeliveryResponseBatch({chatId, ownerFloor, floorVersion, records, traceContext?})
+```
+
+#### 3. Contracts
+
+- Each boundary requires a non-empty `records` array, validates every normalized
+  delivery identity and Floor Version before mutation, appends records in input
+  order, and submits at most one `projection_timeline` owner patch.
+- A submission uses `readback_verified`; a response uses `response_observed` and
+  must carry a current `response_floor_version`.
+- Runtime builds the complete wave in memory. A successful analysis
+  post-processor shares one captured business-input snapshot and one delivery
+  read between response observation, timeout evaluation, and the following
+  Projection generation. It may recapture only when timeout closure changes the
+  business state; AI request/response stale guards remain the explicit
+  exception to the normal one-snapshot path.
+- Coordinator dispatch guards, official save, sibling preservation, and
+  authoritative readback remain unchanged.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `records` missing, non-array, or empty | Reject with `PROJECTION_DELIVERY_BATCH_RECORDS_REQUIRED`; no Floor write |
+| Any delivery identity, referenced Projection, or Floor Version invalid | Reject the complete batch; no partial write |
+| Response has no `response_id` or current `response_floor_version` | Reject the complete batch; no partial write |
+| Owner, Chat, active Swipe, or six-field Floor Version is stale | Fail closed through the existing Coordinator boundary |
+| Exact duplicate batch | Return `deduped`; do not call Host save |
+
+#### 5. Good / Base / Bad Cases
+
+- **Good**: 23 Context deliveries are normalized in memory and appended by one
+  submission batch; 23 completed responses are appended by one response batch.
+- **Base**: no context-visible delivery exists; Runtime performs no delivery
+  write.
+- **Bad**: each Projection invokes a separate delivery save and repeats the
+  Floor read, Host save, and authoritative readback.
+
+#### 6. Tests Required
+
+- Storage: 23 submissions and 23 responses each cause exactly one `saveFloor()`;
+  exact repeats are no-ops and invalid/stale records cause zero saves.
+- Runtime: a completed response wave produces one response batch call; an old
+  single-response dependency remains usable through the compatibility fallback.
+- Runtime post-processing: response observation, timeout evaluation, and normal
+  built-in generation share the input and delivery snapshots.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: one Floor transaction per Context delivery.
+for (const view of visibleViews) {
+  await saveProjectionDeliverySubmission({deliveryRecord: toDelivery(view)});
+}
+
+// Correct: construct first, then use one owner-scoped batch boundary.
+const records = visibleViews.map(toDelivery);
+if (records.length) {
+  await saveProjectionDeliverySubmissionBatch({chatId, ownerFloor, floorVersion, records});
+}
+```
+
+The existing single-delivery submission and response APIs remain thin one-record
+wrappers over these batch boundaries.
+
+### Projection lifecycle batch persistence contract
+
+Projection deletion upgrades and factual evolution updates are append-only
+lifecycle records. Runtime collects each semantic kind for one execution before
+persisting it; deletion records and factual records remain separate batches when
+both are present. The storage boundary is:
+
+```js
+saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, records, traceContext?})
+```
+
+The boundary requires a non-empty record array, normalizes and validates every
+lifecycle identity and six-field Floor Version before mutation, appends records
+in input order, and submits at most one Projection owner patch. Any invalid,
+stale, unknown-Projection, owner, Chat, active-Swipe, or append-conflict record
+rejects the whole batch before a partial timeline can be committed. Exact
+duplicates return `deduped` without Host save. The existing
+`saveProjectionLifecycle()` and `saveEvolutionDecision()` APIs remain thin
+single-record wrappers for compatibility.
+
+After the lifecycle batches complete, Runtime performs one authoritative
+Projection views read for the execution when any batch changed the timeline.
+The existing Coordinator owner/version guards, sibling preservation, official
+save, and readback confirmation remain mandatory; lifecycle batching does not
+change factual status, deletion visibility, Projection DTOs, or time semantics.
 
 ## 1. Source of Truth
 
@@ -91,6 +298,94 @@ reload, deletion/rollback, active Swipe or version replacement, and successful m
 reanalysis they are rebuilt from the current active Floor/Swipe/version owners.
 Reroll, regenerate, and new Swipe identity do not by themselves force automatic AI;
 after the final Floor Version settles they enter the ordinary interval path.
+
+While SillyTavern is generating the response body, `GENERATION_STARTED` only advances the
+Generation Lifecycle. `runtime/events.js` must not run Projection lifecycle,
+Tracking/timeout calculation, Floor persistence, or a full Projection Context
+refresh during that interval; automatic Chat/message/Swipe triggers are
+coalesced behind a non-blocking gate. After the final Character Floor is
+confirmed, or generation is explicitly stopped/cancelled, the gate is released,
+deferred lifecycle signals are replayed once, and the current Chat, active Swipe,
+and complete Floor Version are revalidated before one post-generation handoff.
+Signals from an old Chat are dropped. A Chat boundary clears the old Context
+slot first; stale old-Chat/Floor work must fail closed.
+
+### Generation settle gate contract
+
+#### 1. Scope / Trigger
+
+This contract applies to automatic BioWeave work triggered by a SillyTavern
+generation lifecycle. It delays derived reads, Projection/Tracking lifecycle
+work, timeout evaluation, Floor persistence, and Context refresh until the
+generation has a final Character Floor or an explicit stop/cancel outcome.
+
+#### 2. Signatures
+
+```js
+handleLifecycleEvent({type, eventType, payload, chatId, deferAutomaticWork?})
+setGenerationAutomaticWorkDeferred(trueOrFalse)
+```
+
+The Host boundary is `runtime/events.js`; the business lifecycle handler is
+`runtime/event-analysis.js`. Deferred event entries retain their original
+`type`, `eventType`, `payload`, and captured Chat ID.
+
+#### 3. Contracts
+
+- `GENERATION_STARTED` advances only Generation Lifecycle state and preserves
+  the existing Projection Context slot.
+- During the gate, automatic message, Chat, and Swipe triggers perform no
+  business calculation or persistence; the latest event of each type is kept.
+- After final Character Floor confirmation or stop/cancel, deferred lifecycle
+  events are replayed once, then current Chat, active Swipe, and complete
+  six-field Floor Version are checked before one post-generation handoff.
+- Deferred events captured from a different Chat are skipped as stale; they
+  must not mutate the new Chat or restore the old Context.
+- Repeated generation-start signals reuse the current gate and must not erase
+  already deferred events.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Body generation is active | No Projection/Tracking/timeout/Floor save/Context recompute |
+| Deferred event belongs to the active Chat | Replay once after the gate releases |
+| Deferred event belongs to an old Chat | Skip with stale-context diagnostic |
+| Final Floor or lifecycle owner changed | Existing Floor/Chat/Swipe guard fails closed |
+| Duplicate generation or lifecycle event | Coalesce; no duplicate handoff |
+
+#### 5. Good / Base / Bad Cases
+
+- **Good**: `GENERATION_STARTED`, several message edits, and final Character
+  Floor occur; edits are coalesced, replayed after finalization, and one
+  current-Floor handoff runs.
+- **Base**: no deferred event exists; finalization directly performs the
+  guarded handoff once.
+- **Bad**: run Tracking or save a Projection while the response body is still
+  generating, or silently discard a deletion/Swipe event after deferring it.
+
+#### 6. Tests Required
+
+- Generation-time triggers assert zero analyzer calls, Floor saves, lifecycle
+  writes, and full Context refreshes before the final boundary.
+- Message update/edit/delete and Swipe signals assert one post-boundary replay
+  with the correct event type; repeated signals remain coalesced.
+- Chat switch during generation asserts the old Context is cleared and old-Chat
+  events are skipped.
+- Final Character Floor plus duplicate end/render signals assert one handoff.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: calculate or silently drop the event while ST is generating.
+await processProjection();
+return; // MESSAGE_DELETED / MESSAGE_SWIPED is lost
+
+// Correct: defer, then replay under the current owner after generation settles.
+deferByType({type, eventType, payload, chatId});
+await replayDeferredEventsAfterGeneration();
+await handoffCurrentCharacterFloor();
+```
 
 The active-message `extra` projection that a host may maintain while changing
 Swipes is a host mirror. It does not create a second owner. A Chat-level map

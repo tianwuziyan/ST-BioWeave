@@ -197,9 +197,13 @@ Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSES
 复用 persisted Assessment 或同进程请求。Recovery stage 与 Guidance trace 观察 Health-owned
 deterministic 结果和 persisted profile selection，不重新计算 lifecycle 或调用 AI。Projection
 trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除和 fingerprint；
-`GENERATION_PROJECTION_REFRESH_SETTLED` 只能证明 slot 在 BioWeave 的
-`GENERATION_STARTED` listener resolve 前 ready，不能在没有 Host request-payload hook 时声称
-最终模型已经消费该 slot。
+生成正文期间，`GENERATION_STARTED` 只推进
+`runtime/generation-lifecycle.js`，保留已有 Projection Context slot，不执行完整 Context
+刷新、Projection lifecycle、Tracking、超时判断或 Floor 保存。期间的 Chat/消息/Swipe 自动触发由
+`runtime/events.js` 合并暂存；最终 Character Floor 确认，或明确停止/取消后，才解除非阻塞
+Generation gate，并通过当前 Chat、active Swipe 和完整 Floor Version guard 重放一次后处理。
+若发生 Chat 边界，旧 slot 会先清空；属于旧 Chat 的延后事件会丢弃，新的 Context 只能在
+gate 解除后重建。
 
 NSFW 自动聚合诊断也复用 `runtime/diagnostics.js` 的有限 Runtime buffer，不创建业务状态或
 新的 Floor 持久化根。自动调度、Projection process 与
