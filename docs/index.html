@@ -1,0 +1,327 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 人物优先的受孕可能性推演页
+  这是单一 UI 方案：先选人物，再查看该人物自己的观察时间线。
+  只使用内存中的示例数据，不连接 Runtime、不写入 Chat。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BioWeave · 人物推演 UI 原型</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bw-host: #0b1116;
+        --bw-panel: #171f25;
+        --bw-raised: #1d272e;
+        --bw-soft: #202c34;
+        --bw-text: #edf3f6;
+        --bw-text-2: #c2cdd2;
+        --bw-muted: #87959d;
+        --bw-line: #33444e;
+        --bw-line-soft: #293840;
+        --bw-accent: #83c7ef;
+        --bw-accent-soft: #203b4b;
+        --bw-good: #7bd5ae;
+        --bw-good-soft: #19372f;
+        --bw-warn: #f1be72;
+        --bw-warn-soft: #41331d;
+        --bw-panel-border: #42545e;
+        --bw-header: #19232a;
+        --bw-routebar: #141d23;
+        --bw-hover: #1a2830;
+        --bw-card: #1a252c;
+        --bw-card-selected: #203744;
+        --bw-input-bg: #141d23;
+      }
+
+      .bw-shell[data-theme='light'] {
+        color-scheme: light;
+        --bw-host: #cbd6db;
+        --bw-panel: #dbe4e8;
+        --bw-raised: #e5ecef;
+        --bw-soft: #d3dfe4;
+        --bw-text: #1b2a33;
+        --bw-text-2: #3c4d56;
+        --bw-muted: #61727c;
+        --bw-line: #8fa2ac;
+        --bw-line-soft: #b9c8cf;
+        --bw-accent: #356f91;
+        --bw-accent-soft: #c9dde6;
+        --bw-good: #2b755d;
+        --bw-good-soft: #d3e5dd;
+        --bw-warn: #86651f;
+        --bw-warn-soft: #eee5ce;
+        --bw-panel-border: #7e949f;
+        --bw-header: #d4dfe3;
+        --bw-routebar: #cbd8de;
+        --bw-hover: #d8e5e9;
+        --bw-card: #e1e9ec;
+        --bw-card-selected: #cbdfe8;
+        --bw-input-bg: #d9e4e8;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        min-height: 100vh;
+        background: radial-gradient(circle at 20% 0%, #1a303c 0, var(--bw-host) 42%, #080d11 100%);
+        color: var(--bw-text);
+        font: 14px/1.5 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      button { color: inherit; font: inherit; cursor: pointer; }
+      h1, h2, h3, h4, p { margin: 0; }
+
+      .bw-shell {
+        width: min(960px, 94vw);
+        min-height: min(760px, 90vh);
+        margin: 5vh auto 40px;
+        overflow: hidden;
+        border: 1px solid var(--bw-panel-border);
+        border-radius: 11px;
+        background: var(--bw-panel);
+        box-shadow: 0 24px 60px rgb(0 0 0 / 36%);
+      }
+      .bw-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 50px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--bw-line);
+        background: var(--bw-header);
+      }
+      .bw-brand { font-size: 16px; font-weight: 700; white-space: nowrap; }
+      .bw-scope { min-width: 0; overflow: hidden; color: var(--bw-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .bw-header-spacer { flex: 1; }
+      .bw-icon-button,
+      .bw-routebar button {
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--bw-muted);
+      }
+      .bw-icon-button { width: 32px; height: 32px; font-size: 16px; }
+      .bw-icon-button:hover, .bw-routebar button:hover { background: var(--bw-hover); color: var(--bw-text); }
+
+      .bw-routebar { display: flex; min-width: 0; overflow-x: auto; border-bottom: 1px solid var(--bw-line-soft); background: var(--bw-routebar); }
+      .bw-route-items { display: flex; flex: 0 0 auto; min-width: 100%; }
+      .bw-routebar button { flex: 0 0 72px; min-height: 42px; border-radius: 0; border-bottom: 2px solid transparent; font-size: 14px; }
+      .bw-routebar button.active { border-bottom-color: var(--bw-accent); color: var(--bw-accent); }
+
+      .bw-main { min-width: 0; padding: 16px 18px 22px; }
+      .bw-page { max-width: 900px; margin: 0 auto; }
+      .bw-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+      .bw-page-head h1 { font-size: 22px; line-height: 1.25; }
+      .bw-page-head p { margin-top: 4px; color: var(--bw-muted); font-size: 12px; }
+      .bw-page-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .bw-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); color: var(--bw-text-2); font-size: 12px; }
+      .bw-button:hover { border-color: var(--bw-accent); color: var(--bw-text); }
+      .bw-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--bw-line); border-radius: 99px; background: var(--bw-raised); color: var(--bw-muted); font-size: 11px; white-space: nowrap; }
+      .bw-badge.accent { border-color: color-mix(in srgb, var(--bw-accent) 55%, var(--bw-line) 45%); background: var(--bw-accent-soft); color: var(--bw-accent); }
+      .bw-badge.good { border-color: color-mix(in srgb, var(--bw-good) 45%, var(--bw-line) 55%); background: var(--bw-good-soft); color: var(--bw-good); }
+      .bw-badge.warn { border-color: color-mix(in srgb, var(--bw-warn) 45%, var(--bw-line) 55%); background: var(--bw-warn-soft); color: var(--bw-warn); }
+      .bw-muted { color: var(--bw-muted); }
+      .bw-small { color: var(--bw-muted); font-size: 11px; }
+
+      .bw-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--bw-accent) 42%, var(--bw-line) 58%); border-radius: 8px; background: var(--bw-accent-soft); color: var(--bw-text-2); }
+      .bw-notice strong { color: var(--bw-accent); font-size: 12px; }
+      .bw-notice p { margin-top: 2px; font-size: 12px; }
+
+      .bw-overview-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 2px 7px; }
+      .bw-overview-line h2 { font-size: 15px; }
+      .bw-overview-line span { color: var(--bw-muted); font-size: 11px; }
+      .bw-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 10px; align-items: start; }
+
+      .bw-people-panel, .bw-detail-panel { min-width: 0; border: 1px solid var(--bw-line); border-radius: 9px; background: var(--bw-card); }
+      .bw-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 11px; border-bottom: 1px solid var(--bw-line); }
+      .bw-panel-head h2 { font-size: 14px; }
+      .bw-panel-head span { color: var(--bw-muted); font-size: 11px; }
+      .bw-people-list { display: grid; gap: 5px; padding: 7px; }
+      .bw-person-card { width: 100%; padding: 10px; border: 1px solid var(--bw-line); border-radius: 8px; background: var(--bw-raised); text-align: left; }
+      .bw-person-card:hover { border-color: var(--bw-accent); }
+      .bw-person-card.selected { border-color: var(--bw-accent); background: var(--bw-card-selected); }
+      .bw-person-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+      .bw-person-name { font-size: 14px; font-weight: 700; }
+      .bw-person-status { margin-top: 2px; color: var(--bw-muted); font-size: 11px; }
+      .bw-person-days { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px; }
+      .bw-person-stat { padding-top: 6px; border-top: 1px solid var(--bw-line); }
+      .bw-person-stat span { display: block; color: var(--bw-muted); font-size: 10px; }
+      .bw-person-stat strong { display: block; margin-top: 1px; color: var(--bw-text-2); font-size: 12px; }
+      .bw-person-progress { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin-top: 10px; }
+      .bw-person-progress i { display: block; height: 4px; border-radius: 99px; background: var(--bw-line); }
+      .bw-person-progress i.done { background: var(--bw-muted); }
+      .bw-person-progress i.current { background: var(--bw-accent); }
+      .bw-person-route { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-person-route b { color: var(--bw-accent); font-weight: 600; }
+
+      .bw-detail-panel { overflow: hidden; }
+      .bw-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 13px; border-bottom: 1px solid var(--bw-line); background: linear-gradient(90deg, var(--bw-card-selected), var(--bw-card)); }
+      .bw-detail-head h2 { font-size: 18px; }
+      .bw-detail-head p { margin-top: 3px; color: var(--bw-muted); font-size: 11px; }
+      .bw-detail-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+      .bw-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--bw-line); border-bottom: 1px solid var(--bw-line); }
+      .bw-detail-summary div { padding: 9px 11px; background: var(--bw-card); }
+      .bw-detail-summary span { display: block; color: var(--bw-muted); font-size: 10px; }
+      .bw-detail-summary strong { display: block; margin-top: 2px; color: var(--bw-text-2); font-size: 12px; }
+      .bw-detail-section { padding: 12px 13px; border-bottom: 1px solid var(--bw-line-soft); }
+      .bw-detail-section:last-child { border-bottom: 0; }
+      .bw-detail-section.current { background: color-mix(in srgb, var(--bw-card-selected) 50%, var(--bw-card) 50%); }
+      .bw-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+      .bw-section-title h3 { font-size: 13px; }
+      .bw-section-title span { color: var(--bw-muted); font-size: 11px; }
+      .bw-section-copy { margin-bottom: 8px; color: var(--bw-muted); font-size: 11px; }
+      .bw-signals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .bw-signal { min-width: 0; padding: 9px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); }
+      .bw-signal strong { display: block; font-size: 12px; }
+      .bw-signal p { margin-top: 3px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-signal em { display: block; margin-top: 7px; color: var(--bw-muted); font-size: 10px; font-style: normal; }
+      .bw-route-row { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--bw-line-soft); }
+      .bw-route-row:first-of-type { border-top: 0; padding-top: 0; }
+      .bw-route-day { color: var(--bw-muted); font-size: 11px; }
+      .bw-route-content strong { font-size: 12px; }
+      .bw-route-content p { margin-top: 2px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .bw-outcome { padding: 9px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); }
+      .bw-outcome strong { display: block; font-size: 12px; }
+      .bw-outcome p { margin-top: 3px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-outcome.end { border-color: color-mix(in srgb, var(--bw-warn) 42%, var(--bw-line) 58%); background: var(--bw-warn-soft); }
+      .bw-detail-foot { padding: 9px 13px; color: var(--bw-muted); font-size: 11px; background: var(--bw-card); }
+
+      @media (max-width: 1199px) {
+        .bw-shell { width: min(900px, 94vw); }
+        .bw-main { padding-inline: 14px; }
+      }
+      @media (max-width: 767px) {
+        body { background: var(--bw-host); }
+        .bw-shell { width: 100%; min-height: 100vh; margin: 0 0 25px; border: 0; border-radius: 0; box-shadow: none; }
+        .bw-header { min-height: 48px; padding-inline: 12px; }
+        .bw-routebar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+        .bw-route-items { display: contents; min-width: 0; }
+        .bw-routebar button { min-width: 0; min-height: 38px; font-size: 13px; }
+        .bw-main { padding: 13px 12px 18px; }
+        .bw-page-head { flex-direction: column; }
+        .bw-page-head h1 { font-size: 20px; }
+        .bw-page-actions { justify-content: space-between; }
+        .bw-workspace { grid-template-columns: 1fr; }
+        .bw-people-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .bw-people-list .bw-person-card:last-child { grid-column: 1 / -1; }
+        .bw-signals, .bw-outcomes { grid-template-columns: 1fr; }
+        .bw-detail-summary { grid-template-columns: 1fr 1fr; }
+        .bw-detail-summary div:last-child { grid-column: 1 / -1; }
+        .bw-detail-head { flex-direction: column; }
+        .bw-detail-meta { justify-content: flex-start; }
+        .bw-route-row { grid-template-columns: 80px minmax(0, 1fr); gap: 7px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bw-shell" data-theme="dark" id="prototype-shell">
+      <header class="bw-header">
+        <span class="bw-brand">BioWeave</span>
+        <span class="bw-scope">受孕可能性观察 · 人物优先 UI 原型</span>
+        <span class="bw-header-spacer"></span>
+        <button class="bw-icon-button" type="button" data-action="theme" title="切换主题" aria-label="切换主题">◐</button>
+        <button class="bw-icon-button" type="button" title="关闭原型" aria-label="关闭原型">×</button>
+      </header>
+      <nav class="bw-routebar" aria-label="BioWeave 页面导航">
+        <div class="bw-route-items">
+          <button type="button">总览</button><button type="button">人物</button><button type="button">事件</button><button class="active" type="button">推演</button><button type="button">家系</button><button type="button">世界</button><button type="button">设置</button><button type="button">状态</button>
+        </div>
+      </nav>
+      <main class="bw-main" id="app"></main>
+    </div>
+
+    <script>
+      const people = [
+        {
+          id: 'qiyuan', name: '祁鸢', day: 23, range: '第 21–27 天', phase: '早期反应出现', daysLeft: 19, candidates: 4, progress: 1,
+          route: '恶心 · 闻到气味不舒服 · 情绪变化 · 食欲变化',
+          current: [
+            ['恶心', '闻到油烟、浓烈香气或某些食物时出现反胃感。', '当前可能出现'],
+            ['闻到气味不舒服', '闻到某些气味时觉得不舒服，想要避开。', '当前可能出现'],
+            ['情绪变化', '情绪比平时更容易波动。', '当前可能出现'],
+            ['食欲变化', '食量或对食物的偏好发生变化。', '当前可能出现']
+          ],
+          later: [
+            ['第 28–42 天', '恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应', '只有正文继续写出变化，才会成为已观察表现。']
+          ]
+        },
+        {
+          id: 'shenwei', name: '沈微', day: 16, range: '第 14–20 天', phase: '早期细微变化', daysLeft: 26, candidates: 4, progress: 0,
+          route: '嗜睡或疲倦 · 乳房敏感 · 对气味或食物产生轻微变化 · 暂时没有明显反应',
+          current: [
+            ['嗜睡或疲倦', '比平时更早想休息，白天注意力下降。', '当前可能出现'],
+            ['乳房敏感', '衣物摩擦或触碰时，比平时更容易不适。', '当前可能出现'],
+            ['对气味或食物产生轻微变化', '对平时的气味或食物出现轻微的不适或偏好变化。', '当前可能出现'],
+            ['暂时没有明显反应', '日常状态和平时一样，暂时没有明显身体表现。', '始终可能']
+          ],
+          later: [
+            ['第 21–27 天', '恶心 / 闻到气味不舒服 / 情绪变化 / 食欲变化', '时间推进后才开放这些方向。'],
+            ['第 28–42 天', '恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应', '不把任何一条路线当成必然结果。']
+          ]
+        },
+        {
+          id: 'atang', name: '阿棠', day: 35, range: '第 28–42 天', phase: '反应逐渐明显', daysLeft: 7, candidates: 4, progress: 2,
+          route: '恶心加重 · 可能出现孕吐 · 持续疲倦 · 一直没有明显反应',
+          current: [
+            ['恶心加重', '恶心从偶尔出现，变成更容易被气味或进食触发。', '当前可能出现'],
+            ['可能出现孕吐', '恶心进一步升级，在特定时间或气味刺激下呕吐。', '当前可能出现'],
+            ['持续疲倦', '疲倦持续存在，休息后仍觉得乏力。', '当前可能出现'],
+            ['一直没有明显反应', '一直没有明显身体反应，不能因为没有反应就确认结果。', '始终可能']
+          ],
+          later: [
+            ['超过观察期', '没有确认怀孕 → 本轮结束并按未怀孕处理', '结束后不再继续沿用本轮 NSFW 事件。']
+          ]
+        }
+      ];
+      let selectedId = 'qiyuan';
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      const selectedPerson = () => people.find((person) => person.id === selectedId) ?? people[0];
+
+      function personCard(person) {
+        const segments = [0, 1, 2].map((index) => `<i class="${index < person.progress ? 'done' : index === person.progress ? 'current' : ''}"></i>`).join('');
+        return `<button class="bw-person-card ${person.id === selectedId ? 'selected' : ''}" type="button" data-person="${person.id}">
+          <div class="bw-person-top"><div><div class="bw-person-name">${escapeHtml(person.name)}</div><div class="bw-person-status">观察中 · 名单已完成</div></div><span class="bw-badge ${person.daysLeft <= 7 ? 'warn' : 'accent'}">第 ${person.day} 天</span></div>
+          <div class="bw-person-days"><div class="bw-person-stat"><span>当前阶段</span><strong>${escapeHtml(person.phase)}</strong></div><div class="bw-person-stat"><span>距离结算</span><strong>${person.daysLeft} 天</strong></div></div>
+          <div class="bw-person-progress" aria-hidden="true">${segments}</div>
+          <div class="bw-person-route"><b>可能：</b>${escapeHtml(person.route)}</div>
+        </button>`;
+      }
+
+      function signalCard(signal) {
+        return `<article class="bw-signal"><strong>${escapeHtml(signal[0])}</strong><p>${escapeHtml(signal[1])}</p><em>${escapeHtml(signal[2])}</em></article>`;
+      }
+
+      function detail(person) {
+        return `<section class="bw-detail-panel" aria-label="${escapeHtml(person.name)} 的推演详情">
+          <header class="bw-detail-head"><div><h2>${escapeHtml(person.name)}</h2><p>这条时间线只属于 ${escapeHtml(person.name)}，不与其他人物共用天数。</p></div><div class="bw-detail-meta"><span class="bw-badge good">观察中</span><span class="bw-badge accent">当前第 ${person.day} 天</span></div></header>
+          <div class="bw-detail-summary"><div><span>当前阶段</span><strong>${escapeHtml(person.range)} · ${escapeHtml(person.phase)}</strong></div><div><span>已聚合候选</span><strong>${person.candidates} 人</strong></div><div><span>距离本轮结算</span><strong>${person.daysLeft} 天</strong></div></div>
+          <section class="bw-detail-section current"><div class="bw-section-title"><h3>现在可能出现</h3><span>${escapeHtml(person.range)}</span></div><p class="bw-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="bw-signals">${person.current.map(signalCard).join('')}</div></section>
+          <section class="bw-detail-section"><div class="bw-section-title"><h3>之后可能出现</h3><span>跟着 ${escapeHtml(person.name)} 自己的时间走</span></div>${person.later.map((route) => `<div class="bw-route-row"><div class="bw-route-day">${escapeHtml(route[0])}</div><div class="bw-route-content"><strong>${escapeHtml(route[1])}</strong><p>${escapeHtml(route[2])}</p></div></div>`).join('')}</section>
+          <section class="bw-detail-section"><div class="bw-section-title"><h3>最后怎么结束</h3><span>第 42 天</span></div><div class="bw-outcomes"><article class="bw-outcome"><strong>正文明确确认怀孕</strong><p>正文出现验孕、停经后确认或明确的怀孕事实，才进入确认阶段。</p></article><article class="bw-outcome end"><strong>超过周期仍无确认</strong><p>本轮结束并按“未怀孕”处理，当前周期的 NSFW 事件不再带入下一轮。</p></article></div></section>
+          <footer class="bw-detail-foot">插件自动生成候选路线；正文没有写出，就不会把路线记成已经发生。</footer>
+        </section>`;
+      }
+
+      function render() {
+        const person = selectedPerson();
+        document.querySelector('#app').innerHTML = `<section class="bw-page" data-bioweave-page="projection">
+          <header class="bw-page-head"><div><h1>人物推演</h1><p>先选人物，再查看这个人物自己的潜在剧情时间线</p></div><div class="bw-page-actions"><span class="bw-badge accent">${people.length} 位人物观察中</span><button class="bw-button" type="button" data-action="refresh">重新读取</button></div></header>
+          <div class="bw-notice"><span aria-hidden="true">✦</span><div><strong>每个人单独计算时间</strong><p>人物之间不共用第几天；只有正文明确写出某种表现，才会把它记为已观察到。</p></div></div>
+          <div class="bw-overview-line"><h2>观察人物</h2><span>点击人物查看详情</span></div>
+          <div class="bw-workspace"><aside class="bw-people-panel"><header class="bw-panel-head"><h2>人物列表</h2><span>${people.length} 人</span></header><div class="bw-people-list">${people.map(personCard).join('')}</div></aside>${detail(person)}</div>
+        </section>`;
+        document.querySelectorAll('[data-person]').forEach((button) => button.addEventListener('click', () => { selectedId = button.dataset.person; render(); }));
+        document.querySelector('[data-action="refresh"]')?.addEventListener('click', (event) => { event.currentTarget.textContent = '已重新读取'; setTimeout(() => { event.currentTarget.textContent = '重新读取'; }, 900); });
+      }
+
+      document.querySelector('[data-action="theme"]').addEventListener('click', () => {
+        const shell = document.querySelector('#prototype-shell');
+        shell.dataset.theme = shell.dataset.theme === 'dark' ? 'light' : 'dark';
+      });
+      render();
+    </script>
+  </body>
+</html>

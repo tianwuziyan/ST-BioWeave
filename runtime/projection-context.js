@@ -9,6 +9,31 @@ import {attributionBySubjectFromCurrentState} from '../core/reproductive-attribu
 import {sameFloorVersion} from './floor.js';
 import {diagnosticFingerprint} from './diagnostics.js';
 
+function text(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function displayNamesFromBusinessData(businessData = null, floorVersion = null) {
+  if (!businessData?.current_floor?.version || !sameFloorVersion(businessData.current_floor.version, floorVersion)) {
+    return {};
+  }
+  const names = {};
+  const addEntries = entries => {
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return;
+    for (const [key, value] of Object.entries(entries)) {
+      const subjectId = text(value?.character_id) || text(key);
+      const displayName = text(value?.display_name) || text(value?.identity?.display_name);
+      if (subjectId && displayName && !names[subjectId]) names[subjectId] = displayName;
+    }
+  };
+
+  addEntries(businessData?.tracking_subjects);
+  addEntries(businessData?.tracking_candidates);
+  addEntries(businessData?.character_profiles);
+  addEntries(businessData?.current_state?.characters);
+  return names;
+}
+
 export function createCurrentStateAttributionResolver({collectActiveBusinessData} = {}) {
   if (typeof collectActiveBusinessData !== 'function') throw new TypeError('CURRENT_STATE_REQUIRED');
   return async ({chatId, floor, businessData, businessDataError, businessDataResolved = false} = {}) => {
@@ -237,7 +262,11 @@ function floorReadStillMatches(left, right) {
       if (!currentFloor?.version || !floorReadStillMatches(currentFloor.version, floor.version)) {
         return {ok: false, status: 'stale', reason: 'FLOOR_CHANGED', dto: [], prompt: ''};
       }
-      const context = buildProjectionContext(views?.all ?? views, {attributionBySubject, healthGuidance});
+      const context = buildProjectionContext(views?.all ?? views, {
+        attributionBySubject,
+        healthGuidance,
+        displayNameBySubject: displayNamesFromBusinessData(businessData, floor.version),
+      });
       const result = write(context.prompt);
       const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;
       const healthGuidanceCount = context.dto.filter(item => item?.context_type === 'health_recovery_guidance').length;

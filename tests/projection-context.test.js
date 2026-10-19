@@ -64,8 +64,107 @@ test('context ordering is stable and input views remain unchanged', () => {
   assert.deepEqual(views, original);
   assert.deepEqual(result.dto.map(item => item.subject_id), ['char_000001', 'char_000002']);
   assert.match(result.prompt, /不是已经发生的事实/);
-  assert.match(result.prompt, /不要默认让它们同时发生/);
+  assert.match(result.prompt, /属于潜在生理表现参考/);
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
+});
+
+test('Projection Context renders the exact built-in direction format without changing the DTO', () => {
+  const result = buildProjectionContext([
+    view({
+      projection_id: 'built-in-fatigue',
+      development_concern_key: 'pre_confirmation_observation:fatigue',
+      development: {
+        kind: 'possible_symptom',
+        next_signal: '比平时更早想休息，白天注意力下降；这只是备选剧情方向，不是已确认怀孕事实。',
+      },
+    }),
+  ], {displayNameBySubject: {char_000002: '林月'}});
+
+  assert.deepEqual(result.dto, [{
+    subject_id: 'char_000002',
+    development_kind: 'possible_symptom',
+    description: '比平时更早想休息，白天注意力下降；这只是备选剧情方向，不是已确认怀孕事实。',
+    mechanism: {key: 'mechanism-a'},
+  }]);
+  assert.equal(result.prompt.startsWith('\nBioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：\n'), true);
+  assert.equal(result.prompt.endsWith('\n————————————\n'), true);
+  assert.match(result.prompt, /以下内容描述角色可能出现的身体状态，属于潜在生理表现参考。可选择性参考用于辅助日常描写和角色表现，不构成剧情目标，也不要求主动推进或兑现。/);
+  assert.match(result.prompt, /- 角色 林月：\n  - 可能的发展方向1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
+  assert.doesNotMatch(result.prompt, /这只是备选剧情方向，不是已确认怀孕事实。/);
+  assert.match(result.prompt, /各状态为独立备选，不要求同时出现。可根据剧情节奏自然选择其中一种，也可以不触发任何变化。不得仅凭这些状态推断或确认特定生理原因。/);
+  assert.doesNotMatch(result.prompt, /发展类型|机制背景|Context 中的 Projection/);
+});
+
+test('Projection Context keeps custom content readable without exposing an internal key as title', () => {
+  const {prompt} = buildProjectionContext([view({
+    development_concern_key: 'custom_internal_key',
+    development: {kind: 'possible_change', next_signal: '自定义内容保持原样。'},
+  })]);
+  assert.match(prompt, /可能的发展方向1：自定义内容保持原样。/);
+  assert.doesNotMatch(prompt, /custom_internal_key|；自定义内容/);
+});
+
+test('Projection Context prompt uses current display names without changing the DTO contract', () => {
+  const result = buildProjectionContext([view()], {
+    displayNameBySubject: {char_000002: '林月'},
+  });
+  assert.deepEqual(result.dto, [{
+    subject_id: 'char_000002',
+    development_kind: 'possible_detection',
+    description: '可能出现可观察的检测迹象。',
+    mechanism: {key: 'mechanism-a'},
+  }]);
+  assert.match(result.prompt, /角色 林月：/);
+  assert.doesNotMatch(result.prompt, /char_000002/);
+});
+
+test('Projection Context groups directions by subject and keeps the DTO contract', () => {
+  const result = buildProjectionContext([
+    view({
+      projection_id: 'projection-b',
+      development_concern_key: 'concern-b',
+      development: {kind: 'possible_symptom', next_signal: '可能出现轻微恶心。'},
+    }),
+    view({
+      projection_id: 'projection-c',
+      subject_id: 'char_000003',
+      development: {kind: 'possible_change', next_signal: '可能出现情绪变化。'},
+    }),
+    view({
+      projection_id: 'projection-a',
+      development: {kind: 'possible_detection', next_signal: '可能出现可观察的检测迹象。'},
+    }),
+  ], {
+    displayNameBySubject: {char_000002: '祁鸢', char_000003: '沈微'},
+  });
+
+  assert.deepEqual(result.dto.map(({subject_id, development_kind, description, mechanism}) => ({
+    subject_id, development_kind, description, mechanism,
+  })), [
+    {
+      subject_id: 'char_000002',
+      development_kind: 'possible_detection',
+      description: '可能出现可观察的检测迹象。',
+      mechanism: {key: 'mechanism-a'},
+    },
+    {
+      subject_id: 'char_000002',
+      development_kind: 'possible_symptom',
+      description: '可能出现轻微恶心。',
+      mechanism: {key: 'mechanism-a'},
+    },
+    {
+      subject_id: 'char_000003',
+      development_kind: 'possible_change',
+      description: '可能出现情绪变化。',
+      mechanism: {key: 'mechanism-a'},
+    },
+  ]);
+  assert.equal((result.prompt.match(/- 角色 祁鸢：/g) ?? []).length, 1);
+  assert.equal((result.prompt.match(/- 角色 沈微：/g) ?? []).length, 1);
+  assert.match(result.prompt, /角色 祁鸢：\n  - 可能的发展方向1：可能出现可观察的检测迹象。\n  - 可能的发展方向2：可能出现轻微恶心。/);
+  assert.match(result.prompt, /角色 沈微：\n  - 可能的发展方向1：可能出现情绪变化。/);
+  assert.doesNotMatch(result.prompt, /发展类型|机制背景/);
 });
 
 test('health recovery guidance shares the projection context slot without exposing timing internals', () => {
@@ -83,6 +182,32 @@ test('health recovery guidance shares the projection context slot without exposi
   assert.match(result.prompt, /无关场景可以完全不提/);
   assert.match(result.prompt, /不要机械重复健康问题/);
   assert.doesNotMatch(result.prompt, /remaining_days\s*=|deadline\s*=|story_days\s*=|assessment_id\s*=|event_id\s*=|recovering/);
+});
+
+test('health recovery guidance uses the current display name and safely falls back when absent', () => {
+  const named = buildProjectionContext([], {
+    displayNameBySubject: {char_000002: '林月'},
+    healthGuidance: [{
+      subject_id: 'char_000002',
+      body_site: '左手腕',
+      stage: 'recovering',
+      guidance: '仍可能引起不适。',
+    }],
+  });
+  assert.match(named.prompt, /角色 林月 的左手腕/);
+  assert.doesNotMatch(named.prompt, /char_000002/);
+
+  const unnamed = buildProjectionContext([view({subject_id: 'char_000003'})], {
+    healthGuidance: [{
+      subject_id: 'char_000004',
+      body_site: '右肩',
+      stage: 'early',
+      guidance: '可能出现明显身体反应。',
+    }],
+  });
+  assert.match(unnamed.prompt, /角色 相关人物：/);
+  assert.match(unnamed.prompt, /角色 相关人物 的右肩/);
+  assert.doesNotMatch(unnamed.prompt, /char_000003|char_000004/);
 });
 
 test('multiple unresolved source candidates are not selected or ranked', () => {
@@ -149,6 +274,32 @@ test('coordinator combines Health Guidance with projections and clears both from
   const clearedHealth = await coordinator.refreshProjectionContext();
   assert.equal(clearedHealth.dto.length, 1);
   assert.doesNotMatch(clearedHealth.prompt, /左手腕/);
+});
+
+test('coordinator derives prompt display names from the current business snapshot', async () => {
+  const writes = [];
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    healthGuidanceResolver: async () => [],
+    collectActiveBusinessData: async () => ({
+      current_floor: {version: floorVersion},
+      current_state_status: 'ready',
+      tracking_subjects: {char_000002: {character_id: 'char_000002', display_name: '林月'}},
+    }),
+  });
+
+  const result = await coordinator.refreshProjectionContext();
+
+  assert.equal(result.status, 'updated');
+  assert.match(writes.at(-1).content, /角色 林月：/);
+  assert.doesNotMatch(writes.at(-1).content, /char_000002/);
 });
 
 test('coordinator keeps Health Guidance when Projection views are empty', async () => {
@@ -485,6 +636,36 @@ test('coordinator rejects a caller-provided business snapshot from another Floor
   assert.match(result.prompt, /CURRENT_FALLBACK_SNAPSHOT/);
   assert.doesNotMatch(result.prompt, /STALE_CALLER_SNAPSHOT/);
   assert.equal(fallbackReads, 1);
+});
+
+test('coordinator does not use display names from a business snapshot from another Floor', async () => {
+  const currentVersion = {
+    chat_id: 'chat-a', message_id: 'message-current', floor: 3, swipe_id: 0,
+    content_hash: 'hash-current', message_version: 'v2',
+  };
+  const writes = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: currentVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    collectActiveBusinessData: async () => ({
+      current_floor: {version: currentVersion},
+      tracking_subjects: {},
+    }),
+    healthGuidanceResolver: async () => [],
+  });
+
+  await coordinator.refreshProjectionContext({
+    chatId: 'chat-a',
+    businessData: {
+      current_floor: {version: {...currentVersion, floor: 2, message_id: 'message-old'}},
+      tracking_subjects: {char_000002: {character_id: 'char_000002', display_name: '旧名字'}},
+    },
+  });
+
+  assert.match(writes.at(-1).content, /角色 相关人物：/);
+  assert.doesNotMatch(writes.at(-1).content, /旧名字|char_000002/);
 });
 
 test('current State attribution resolver fails closed for chat, Floor, Swipe, and state mismatches', async () => {
