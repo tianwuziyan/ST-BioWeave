@@ -178,3 +178,25 @@ test('same presentation group preserves distinct persisted guidance strings', ()
   assert.match(result[0].guidance, /EARLY_OBSERVATION_GUIDANCE/);
   assert.match(result[0].guidance, /SECOND_EARLY/);
 });
+
+test('guidance does not duplicate a direction already present in factual body_site', () => {
+  const rightIndexFinger = observation({body_site: '右手食指', laterality: 'right', source_event_id: 'right-index-finger'});
+  const leftKnee = observation({body_site: '左膝', laterality: 'left', source_event_id: 'left-knee'});
+  const rightWrist = observation({body_site: 'right wrist', laterality: 'right', source_event_id: 'right-wrist'});
+  const missingBodySite = observation({body_site: null, laterality: null, source_event_id: 'general'});
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {
+      characters: {
+        char_a: {active_observations: [rightIndexFinger, leftKnee, rightWrist, missingBodySite]},
+      },
+    },
+    currentStoryTime: story(1),
+  });
+
+  assert.deepEqual(new Set(result.map(item => item.body_site)), new Set(['右手食指', '左膝', 'right wrist', '全身']));
+  assert.doesNotMatch(JSON.stringify(result), /右右手食指|左左膝|右right wrist/);
+  assert.equal(rightIndexFinger.body_site, '右手食指');
+  assert.equal(rightIndexFinger.laterality, 'right');
+  assert.equal(leftKnee.body_site, '左膝');
+  assert.equal(missingBodySite.body_site, null);
+});

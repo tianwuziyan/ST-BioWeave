@@ -82,7 +82,9 @@ function siteLabel(observation) {
     chest: '胸部',
     abdomen: '腹部',
   };
-  return side + (names[site.toLowerCase()] ?? site);
+  const localizedSite = names[site.toLowerCase()] ?? site;
+  const factualDirection = /(?:左|右|双侧|中线|正中)|(?:^|[\s_-])(?:left|right|bilateral|midline)(?=$|[\s_-])/iu.test(site);
+  return (factualDirection ? '' : side) + localizedSite;
 }
 
 function issueLabel(observation) {

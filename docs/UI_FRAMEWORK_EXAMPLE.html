@@ -792,7 +792,7 @@
       }
       .bw-character-detail-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
       .bw-character-health-button { min-height: 32px; padding: 5px 10px; border: 1px solid #75623e; border-radius: 7px; background: #41331d; color: var(--bw-warn); font-size: 12px; font-weight: 600; white-space: nowrap; }
-      .bw-character-health-popover { position: absolute; z-index: 7; top: 63px; right: 12px; width: min(440px, calc(100% - 24px)); border: 1px solid #526671; border-radius: 8px; background: var(--bw-soft); box-shadow: 0 15px 36px #0009; }
+      .bw-character-health-popover { position: absolute; z-index: 8; top: 63px; right: 12px; width: min(440px, calc(100% - 24px)); max-height: min(70vh, 520px); overflow-y: auto; border: 1px solid #526671; border-radius: 8px; background: var(--bw-soft); box-shadow: 0 15px 36px #0009; }
       .bw-character-health-body { padding: 0 12px 8px; }
       .bw-character-health-overview { min-height: 30px; height: 30px; margin-bottom: 6px; padding: 0; align-items: center; }
       .bw-character-health-overview strong { padding: 2px 8px; line-height: 1.2; }
@@ -800,6 +800,11 @@
       .bw-character-health-issue-site { min-width: 0; padding-right: 10px; overflow-wrap: anywhere; border-right: 1px solid var(--bw-line); white-space: normal; }
       .bw-character-health-observations { display: grid; gap: 3px; min-width: 0; }
       .bw-character-health-subtitle { color: var(--bw-text-2); font-size: 10px; line-height: 1.35; }
+      .bw-character-health-sources { position: relative; z-index: 9; margin: 0; }
+      .bw-character-health-sources > summary { width: max-content; cursor: pointer; list-style: none; }
+      .bw-character-health-sources > summary::-webkit-details-marker { display: none; }
+      .bw-character-health-source-list { position: relative; z-index: 9; top: auto; right: auto; width: auto; max-width: 100%; margin-top: 5px; padding: 6px 8px; display: grid; gap: 4px; border: 1px solid #526671; border-radius: 6px; background: var(--bw-panel-raised); box-shadow: 0 8px 20px #0009; }
+      .bw-character-health-source-list .bw-text-button { text-align: left; }
       .bw-character-alias-editor {
         margin: 0 12px 10px;
         overflow: hidden;

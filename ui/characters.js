@@ -361,7 +361,8 @@ function healthDisplaySite(issue) {
   const bodySite = String(issue?.body_site ?? '').trim()
   const displaySite = String(issue?.display_site ?? '').trim()
   const site = bodySite || displaySite
-  if (!site || (site === 'general' && !bodySite)) return '未标明部位'
+  if (!bodySite && displaySite === 'general') return '全身'
+  if (!site) return '未标明部位'
   return site
 }
 

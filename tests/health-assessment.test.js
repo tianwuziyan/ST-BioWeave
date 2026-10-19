@@ -266,6 +266,27 @@ test('eligibility is conservative and excludes reproductive exposure', () => {
   assert.equal(healthAssessmentEligibility(event({status: 'negated'})).eligible, false);
 });
 
+test('non-health other_biological facts fail closed while fracture observations remain eligible', () => {
+  const swordResonance = event({
+    type: 'other_biological',
+    state_fact: {subject_id: 'char_000001', payload: {fact: {
+      kind: 'sword_resonance',
+      description: '剑灵精神共鸣',
+      health_role: 'observation',
+    }}},
+  });
+  const fracture = event({
+    type: 'other_biological',
+    state_fact: {subject_id: 'char_000001', payload: {fact: {
+      kind: 'fracture',
+      description: '右臂骨折',
+      health_role: 'observation',
+    }}},
+  });
+  assert.equal(healthAssessmentEligibility(swordResonance).eligible, false);
+  assert.equal(healthAssessmentEligibility(fracture).eligible, true);
+});
+
 test('medical intervention is not eligible for Health Assessment', async () => {
   const intervention = event({
     event_id: 'evt-treatment',

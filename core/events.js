@@ -54,6 +54,42 @@ export const HEALTH_ROLES = Object.freeze([
   'observation', 'intervention',
 ]);
 
+// `other_biological` is intentionally not a free-form fallback for arbitrary
+// narrative facts. Add a new kind here before allowing it through the AI Event
+// boundary.
+export const HEALTH_FACT_KINDS = Object.freeze([
+  'abrasion',
+  'amputation',
+  'bleeding',
+  'bruise',
+  'burn',
+  'contusion',
+  'disease',
+  'diagnosed_disease',
+  'fatigue',
+  'fever',
+  'fracture',
+  'heart_disease',
+  'infection',
+  'injury',
+  'laceration',
+  'nausea',
+  'pain',
+  'pain_and_soreness',
+  'soreness',
+  'sprain',
+  'swelling',
+  'vomiting',
+  'wound',
+]);
+
+const HEALTH_FACT_KIND_SET = new Set(HEALTH_FACT_KINDS);
+
+export function isSupportedHealthFactKind(value) {
+  return typeof value === 'string'
+    && HEALTH_FACT_KIND_SET.has(value.trim().toLowerCase());
+}
+
 export const STATE_FACT_EVENT_TYPES = Object.freeze([
   'conception',
   'pregnancy_suspicion',

@@ -195,8 +195,10 @@ aggregation rule 仍为 Deferred；当前 `severity_summary` 仅是固定排序�
 currentness；condition-level 的连续性与高级 provenance semantics 仍 Deferred。
 
 `physical_symptom` 只是现有候选入口之一，不是唯一或中心入口。`medical_event`、
-`other_biological`、reproductive/other 已有 Event contract 中能够表达的事实，同样
-可以成为映射来源；未来是否需要更细的事实 payload 另行审计和设计。
+以及 fact kind 明确属于健康/生理事实的 `other_biological` 同样可以成为映射来源；
+精神/灵力/能量共鸣、法器效果、能力觉醒、关系变化和普通物品递送等非健康叙事，
+不应在 Event Analysis 边界创建 Event，也不应映射到 Health State。未来是否需要更细的
+事实 payload 另行审计和设计。
 
 ### 6.3 long_term_conditions
 
@@ -728,8 +730,9 @@ Health State 仍可包含手腕问题。地点只在具体 Event/history detail 
 
 ## 13. Existing Event contract and gaps
 
-本轮审计结论是：现有 `physical_symptom`、`medical_event`、`other_biological` 和
-已有 reproductive Event/state facts 足以作为设计阶段的事实候选入口；不需要现在增加
+本轮审计结论是：现有 `physical_symptom`、`medical_event`、明确健康/生理 fact kind 的
+`other_biological` 和已有 reproductive Event/state facts 足以作为设计阶段的事实候选入口；
+不需要现在增加
 `injury_event`、`disease_event`、`chronic_event`、`recovery_event`、`health_event`
 或 `condition_event`。
 
@@ -993,8 +996,9 @@ Health State injection
   trajectory expectation；explicit recovery fact 同样优先于自然演化。
 - 正文明确“接受治疗”时，未来 reducer/read model 可以引用该 factual Event 并将
   condition view 标为 improving；没有正文支持时不自动治疗成功。
-- `physical_symptom`、`medical_event` 和 `other_biological` 都可作为候选事实来源，
-  映射由经验证的 payload/evidence 决定。
+- `physical_symptom`、`medical_event` 和明确健康/生理 fact kind 的
+  `other_biological` 都可作为候选事实来源，映射由经验证的 payload/evidence 决定；
+  非健康叙事不创建 Event。
 - Floor 删除或 Swipe 切换后，Health State 从 surviving active Events rebuild，
   不从旧 Chat cache 复活事实。
 - Projection 只提出可能性；正文后来真的写出恢复，才产生新的 recovery-supporting
@@ -1499,7 +1503,8 @@ identity、reference resolver、recurrence graph 与 pregnancy redesign 仍不�
 Phase 5A 在既有 Character Analysis / Character Details 页面展示 Runtime 已提供的
 current_health_state。人物详情按 canonical character_id 读取对应人物的
 grouped_issues，使用 read model 提供的 display_site、laterality 与 factual_kind
-做用户可读呈现；缺少部位时显示为展示层的“未标明部位”，不回写 Event。
+做用户可读呈现；当 read model 使用 `display_site: general` 表示没有具体部位时，展示层显示“全身”；
+只有 body site 与 display site 都缺失时才显示“未标明部位”，不回写 Event。
 
 UI 不推导 overall severity，只消费 read model 提供的 presentation-only `severity_summary`，
 不消费或显示 active_observations 的生命周期字段，
@@ -1618,7 +1623,9 @@ alias for Event `type`.
   Medical interventions are not consumed by the current-state DTO/UI; they remain available in
   Event history for later navigation.
 - Missing body sites use per-Event presentation fallback rather than a single global
-  “未标明部位” group. No description-based body-site inference occurs.
+  group. The derived `general` display label is shown as “全身” in Character Health;
+  a truly absent display value may still show “未标明部位”. No description-based body-site
+  inference occurs.
 - Intervention display lifecycle remains `DEFERRED / UNRESOLVED`: v1 does not display intervention
   facts in Character Health current state and introduces no treatment TTL, Assessment, expiry,
   synthetic state, or “recent N days” rule.

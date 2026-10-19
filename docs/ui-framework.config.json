@@ -365,6 +365,12 @@
           },
           "desktopPlacement": "below identity action area",
           "mobilePlacement": "fixed bottom surface",
+          "layering": {
+            "popoverZIndex": 8,
+            "sourceMenuZIndex": 9,
+            "sourceMenuPosition": "relative normal flow inside the scrollable health popover",
+            "overflow": "source list contributes to the popover scroll area; no absolute child escape"
+          },
           "issueColumns": ["body site", "content", "canonical source action"],
           "closeBehavior": ["toggle button", "outside click", "Escape before panel close"],
           "sourceLabels": {"single": "查看来源", "multiple": "N 条来源"},

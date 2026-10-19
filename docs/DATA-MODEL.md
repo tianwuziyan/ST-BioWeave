@@ -156,8 +156,9 @@ Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Eve
 Character Health State 的领域设计见 [CHARACTER-HEALTH-STATE.md](./CHARACTER-HEALTH-STATE.md)。
 它是从 surviving authoritative BiologicalEvents、valid persisted Assessments 与当前 Story Time
 派生的生产 read model，不是 Chat-level fact store 或 Event 替代品。
-`physical_symptom` 只是候选事实入口之一；`medical_event`、`other_biological` 和其他
-已验证事实同样可能映射到健康视图。Condition identity 与 currentness policy 暂不冻结。
+`physical_symptom` 只是候选事实入口之一；`medical_event` 与明确属于健康事实的
+`other_biological` 也可能映射到健康视图。非生理、非健康叙事不得使用
+`other_biological` 作为自由兜底。Condition identity 与 currentness policy 暂不冻结。
 设计上允许 `short_term`、`long_term`、`permanent` persistence class；只有明确属于
 short-term 且 `natural_recovery=eligible` 的 observation 才能由 Story Time 驱动 derived
 natural evolution，且自然演化不得创建恢复 Event。当前已实现 observation-level `severity`、
@@ -423,7 +424,7 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 
 `state_fact` 是事实契约，不是 Current State，也不是 Projection。其有效时间直接引用同一 Event 的结构化 `story_time`，不复制第二份时间字段；缺少可靠 `day_index` 时不得进行时间数学。`conception`、`pregnancy_confirmation`、终止、分娩和产后事实通过最小类型 payload 引用稳定的 Chat-local `pregnancy_id`；conception 与后续 pregnancy facts 共用该 episode identity，不另建 `conception_id`。AI 只声明 `new` / `existing` reference，Runtime 以 Floor Version、Event ordinal、subject 和 fact kind 生成确定性 ID。不得使用随机数、系统时间或 UUID。
 
-对于 `physical_symptom` 的 `state_fact.payload.symptom` 以及 `medical_event` / `other_biological` 的 `state_fact.payload.fact`，health-related factual record 可声明同级 `health_role: observation | intervention`。`observation` 表示当前身体状态，才可进入 Health Assessment；`intervention` 表示已经发生的医疗行为，仍是独立 BiologicalEvent，但不产生 Assessment、severity、persistence、natural recovery、Health Evolution、Recovery Guidance 或 Character Health current presentation。health_role 不是 Event type 别名；缺失的 legacy role 不触发新的 Assessment，也不能由已有 Assessment 反向赋予 observation 身份。intervention 继续保留在 Event history。检查/治疗与发现的独立身体状态必须拆成独立 Event，不建立 Event reference graph。
+对于 `physical_symptom` 的 `state_fact.payload.symptom` 以及 `medical_event` / `other_biological` 的 `state_fact.payload.fact`，health-related factual record 可声明同级 `health_role: observation | intervention`。`other_biological` 只有在 fact kind 明确属于受支持的生理/健康事实时才通过 AI Event contract；精神/灵力/能量共鸣、法器效果、能力觉醒、关系变化和普通物品递送等内容不得生成该类型。`observation` 表示当前身体状态，才可进入 Health Assessment；`intervention` 表示已经发生的医疗行为，仍是独立 BiologicalEvent，但不产生 Assessment、severity、persistence、natural recovery、Health Evolution、Recovery Guidance 或 Character Health current presentation。health_role 不是 Event type 别名；缺失的 legacy role 不触发新的 Assessment，也不能由已有 Assessment 反向赋予 observation 身份。intervention 继续保留在 Event history。检查/治疗与发现的独立身体状态必须拆成独立 Event，不建立 Event reference graph。
 
 `pregnancy_suspicion` 保留 suspicion fact，不等价于 confirmed pregnancy；`possible_conception: true` 也不创建 conception fact。`confirmed`、`probable`、`ambiguous`、`negated`、`fictional` 保持独立的 Event status 维度，后两者不能改变 factual Current State。相同 `event_id` 的完全相同事实可以去重；同 ID 不同事实必须报告 conflict，禁止 last-write-wins。
 

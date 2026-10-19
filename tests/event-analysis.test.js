@@ -186,6 +186,13 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.match(prompt, /生理性别.*不能单独授权(?:或补齐)? capability/);
   assert.match(prompt, /physical_symptom.*payload.*symptom.*kind.*description/);
   assert.match(prompt, /health_role.*observation\|intervention/);
+  assert.match(prompt, /other_biological 不是自由兜底/);
+  assert.match(prompt, /sword_resonance|剑灵.*法器效果/);
+  assert.match(prompt, /精神.*灵力.*能量共鸣/);
+  assert.match(prompt, /能力觉醒/);
+  assert.match(prompt, /关系变化/);
+  assert.match(prompt, /普通物品递送/);
+  assert.match(prompt, /events=\[\]/);
   assert.match(prompt, /检查\/治疗行为与其发现的独立身体状态必须拆成多个 Event/);
   assert.match(prompt, /正文明确给出症状或伤势所在身体部位时，必须提取该 factual body_site/);
   assert.match(prompt, /individual evidence/);
@@ -916,6 +923,34 @@ test('Event parser preserves independent observation and intervention roles', ()
   assert.equal(parsed.events[1].state_fact.payload.fact.health_role, 'observation');
 });
 
+test('Event parser drops non-health other_biological facts instead of creating Events', () => {
+  const parsed = parseEventAnalysisResponse(
+    response([
+      event({
+        event_id: 'sword-resonance-1',
+        type: 'other_biological',
+        participants: [participant('character_subject')],
+        pregnancy_relevance: {
+          relevant: false,
+          possible_conception: false,
+          gestational_subject_ids: [],
+          counterpart_ids: [],
+          confidence: 1,
+        },
+        state_fact: {subject_id: 'character_subject', payload: {
+          fact: {
+            kind: 'sword_resonance',
+            description: '剑灵与持有者发生精神共鸣',
+            health_role: 'observation',
+          },
+        }},
+      }),
+    ]),
+    floorVersion,
+  );
+  assert.deepEqual(parsed, {schema_version: 1, events: []});
+});
+
 test('physical_symptom requires the canonical typed symptom payload', () => {
   const base = event({
     event_id: 'physical-symptom-contract',
@@ -951,7 +986,7 @@ test('physical_symptom requires the canonical typed symptom payload', () => {
   assert.deepEqual(parsed.events[0].state_fact.payload.symptom, canonical.state_fact.payload.symptom);
 });
 
-test('real reroll Event output fails at the strict top-level exposure evidence contract', () => {
+test('real reroll Event output rejects missing exposure evidence and drops non-health delivery facts', () => {
   const raw = JSON.parse(readFileSync(new URL('./fixtures/real-event-output-reroll.json', import.meta.url), 'utf8'));
   const mentionToCharacterId = new Map([
     ['mention_1', 'character_subject'],
@@ -989,7 +1024,17 @@ test('real reroll Event output fails at the strict top-level exposure evidence c
     kind: PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
     text: '顶层结构化暴露证据',
   });
-  assert.equal(parseEventAnalysisResponse(repaired).events.length, 3);
+  const repairedResult = parseEventAnalysisResponse(repaired);
+  assert.deepEqual(
+    repairedResult.events.map((item) => item.type),
+    ['sexual_activity', 'physical_symptom'],
+  );
+  assert.equal(
+    repairedResult.events.some(
+      (item) => item.state_fact?.payload?.fact?.kind === 'medical_supply_receipt',
+    ),
+    false,
+  );
 });
 
 test('Event parser accepts zero, one, and multiple Events while rejecting duplicate pregnancy subjects', () => {

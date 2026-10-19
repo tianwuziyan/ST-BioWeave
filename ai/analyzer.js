@@ -3565,9 +3565,16 @@ export function parseEventAnalysisResponse(
   ) {
     throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
   }
-  const events = payload.events.map((event, index) =>
-    normalizeEventRecord(event, index, { deferIdentityValidation }),
-  );
+  const events = payload.events
+    .map((event, index) =>
+      normalizeEventRecord(event, index, { deferIdentityValidation }),
+    )
+    .filter((event) =>
+      event.type !== 'other_biological'
+      || eventDomain.isSupportedHealthFactKind(
+        event.state_fact?.payload?.fact?.kind,
+      ),
+    );
   if (
     deferIdentityValidation ||
     events.some((event) =>

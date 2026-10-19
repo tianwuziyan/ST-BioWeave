@@ -628,9 +628,10 @@ Projection generated after a factual execution back into that same execution.
 Character Health State remains **PARTIAL / Phase 4 active observation read model**. Its proposed boundary,
 condition identity deferrals, currentness boundary, and UI/Context separation are documented
 in [CHARACTER-HEALTH-STATE.md](../../docs/CHARACTER-HEALTH-STATE.md). This design does not
-change the existing Event contract: `physical_symptom` is only one candidate fact source;
-`medical_event`, `other_biological`, reproductive facts, and other validated Events remain
-eligible inputs according to their own contracts. Phase 4 evaluates each observation independently
+change the storage owner or Event identity contract. `physical_symptom` is only one candidate
+fact source; `medical_event` and explicitly health-scoped `other_biological` facts remain
+eligible inputs according to their own contracts. Non-physiological resonance, energy, artifact,
+ability, relationship, and ordinary delivery narratives are not BiologicalEvents. Phase 4 evaluates each observation independently
 and only performs presentation-only grouping by structured `body_site + laterality` values;
 when `body_site` is absent, the implementation uses a per-event source Event ID fallback while
 retaining a neutral `general` display label, so unrelated no-site observations are not globally merged;

@@ -7498,7 +7498,7 @@
 .bioweave-character-health-dot { width: 7px !important; height: 7px !important; flex: 0 0 auto !important; border-radius: 50% !important; background: var(--bioweave-text-muted) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-text-muted) 14%, transparent) !important; }
 .bioweave-character-health-dot.warning { background: var(--bioweave-warn) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-warn) 18%, transparent) !important; }
 .bioweave-character-health-dot.good { background: var(--bioweave-success) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--bioweave-success) 18%, transparent) !important; }
-.bioweave-character-health-popover { position: absolute !important; z-index: 7 !important; top: 63px !important; right: 12px !important; width: min(440px, calc(100% - 24px)) !important; max-height: min(70vh, 520px) !important; margin: 0 !important; overflow-y: auto !important; border: 1px solid var(--bioweave-border) !important; border-radius: 10px !important; background: var(--bioweave-surface-soft) !important; box-shadow: 0 22px 50px rgb(0 0 0 / 42%) !important; font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif !important; }
+.bioweave-character-health-popover { position: absolute !important; z-index: 8 !important; top: 63px !important; right: 12px !important; width: min(440px, calc(100% - 24px)) !important; max-height: min(70vh, 520px) !important; margin: 0 !important; overflow-y: auto !important; border: 1px solid var(--bioweave-border) !important; border-radius: 10px !important; background: var(--bioweave-surface-soft) !important; box-shadow: 0 22px 50px rgb(0 0 0 / 42%) !important; font-family: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif !important; }
 .bioweave-character-health-popover-head { display: flex !important; align-items: flex-start !important; justify-content: space-between !important; gap: 10px !important; padding: 13px 14px 11px !important; border-bottom: 1px solid var(--bioweave-border) !important; }
 .bioweave-character-health-popover-title { display: flex !important; align-items: center !important; gap: 8px !important; }
 .bioweave-character-health-popover-title h3 { color: var(--bioweave-text) !important; font-size: 15px !important; font-weight: 650 !important; }
@@ -7541,7 +7541,7 @@
 .bioweave-character-health-sources { position: relative !important; margin: 0 !important; }
 .bioweave-character-health-sources > summary { width: max-content !important; cursor: pointer !important; list-style: none !important; }
 .bioweave-character-health-sources > summary::-webkit-details-marker { display: none !important; }
-.bioweave-character-health-source-list { position: absolute !important; z-index: 2 !important; top: calc(100% + 5px) !important; right: 0 !important; width: 142px !important; padding: 6px 8px !important; display: grid !important; gap: 4px !important; border: 1px solid var(--bioweave-border) !important; border-radius: 6px !important; background: var(--bioweave-surface-raised) !important; box-shadow: 0 8px 20px rgb(0 0 0 / 46%) !important; }
+.bioweave-character-health-source-list { position: relative !important; z-index: 9 !important; top: auto !important; right: auto !important; width: auto !important; max-width: 100% !important; margin-top: 5px !important; padding: 6px 8px !important; display: grid !important; gap: 4px !important; border: 1px solid var(--bioweave-border) !important; border-radius: 6px !important; background: var(--bioweave-surface-raised) !important; box-shadow: 0 8px 20px rgb(0 0 0 / 46%) !important; }
 .bioweave-character-health-source-list .bioweave-text-button { text-align: left !important; }
 .bioweave-character-detail-head { align-items: center !important; min-height: 58px !important; padding: 10px 12px !important; border-bottom: 1px solid var(--bioweave-border-soft) !important; }
 .bioweave-character-detail-head h2 { font-size: 17px !important; }
@@ -7609,6 +7609,7 @@
 @media (max-width: 767px) {
   .bioweave-character-list-pane { position: static !important; }
   .bioweave-character-detail-pane { padding: 0 !important; }
+  .bioweave-character-health-popover { position: fixed !important; top: auto !important; right: 10px !important; bottom: 10px !important; left: 10px !important; width: auto !important; max-height: min(72vh, 560px) !important; border-radius: 10px !important; }
   .bioweave-character-editor-popover { top: 58px !important; right: 8px !important; width: calc(100% - 16px) !important; max-height: min(76vh, 560px) !important; }
   .bioweave-character-detail-placeholder { min-height: 98px !important; padding: 16px !important; }
   .bioweave-character-detail-head { min-height: 54px !important; padding: 9px 10px !important; }

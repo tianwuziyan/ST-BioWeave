@@ -149,7 +149,7 @@ export function buildProjectionContextPrompt(context = []) {
       const direction = promptDirection(entry)
       if (direction.content) {
         const title = direction.title ? `${direction.title}；` : ''
-        lines.push(`  - 可能的发展方向${directionIndex}：${title}${direction.content}`)
+        lines.push(`  - 发展方向${directionIndex}：${title}${direction.content}`)
         directionIndex += 1
       }
     }

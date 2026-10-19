@@ -1,5 +1,8 @@
-import {normalizeEvent} from './events.js';
-import {HEALTH_ROLES} from './events.js';
+import {
+  HEALTH_ROLES,
+  isSupportedHealthFactKind,
+  normalizeEvent,
+} from './events.js';
 import {normalizeStoryTime} from '../story/time.js';
 import {hashText} from '../runtime/floor.js';
 
@@ -59,7 +62,10 @@ export function healthRoleOfEvent(rawEvent) {
 export function healthAssessmentEligibility(rawEvent) {
   const event = normalizeEvent(rawEvent);
   const role = healthRoleOfEvent(event);
+  const supportedOtherFact = event.type !== 'other_biological'
+    || isSupportedHealthFactKind(healthFact(event).kind);
   const factualValid = HEALTH_EVENT_TYPES.has(event.type)
+    && supportedOtherFact
     && !['negated', 'fictional'].includes(event.status)
     && Boolean(event.state_fact?.subject_id)
     && Array.isArray(event.source_evidence)

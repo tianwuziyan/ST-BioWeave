@@ -1138,6 +1138,8 @@ test('character details consume grouped Health State issues without rebuilding l
 })
 
 test('Character Health displays factual body sites without laterality or localization rewrites', () => {
+  const generalIssue = { group_key: 'general|unspecified|cough', display_site: 'general', body_site: null, laterality: 'right', description: '咳嗽', health_observations: [{description: '咳嗽'}] }
+  const missingSiteIssue = { group_key: 'missing|unspecified|dizziness', display_site: null, body_site: null, laterality: null, description: '头晕', health_observations: [{description: '头晕'}] }
   const html = charactersPage({
     characterId: 'char-a',
     trackingSubjects: [{ character_id: 'char-a', display_name: '角色甲', exposure_event_ids: [] }],
@@ -1149,7 +1151,8 @@ test('Character Health displays factual body sites without laterality or localiz
             { group_key: '左膝|left|pain', display_site: '左膝', body_site: '左膝', laterality: 'left', description: '酸痛', health_observations: [{description: '酸痛'}] },
             { group_key: 'upper-arm|right|pain', display_site: '上臂外侧', body_site: '上臂外侧', laterality: 'right', description: '不补方向', health_observations: [{description: '不补方向'}] },
             { group_key: 'full-body|unspecified|fever', display_site: '全身', body_site: '全身', laterality: null, description: '发热', health_observations: [{description: '发热'}] },
-            { group_key: 'general|unspecified|cough', display_site: 'general', body_site: null, laterality: 'right', description: '咳嗽', health_observations: [{description: '咳嗽'}] },
+            generalIssue,
+            missingSiteIssue,
           ],
         },
       },
@@ -1162,6 +1165,8 @@ test('Character Health displays factual body sites without laterality or localiz
   assert.match(html, />上臂外侧<\/strong>/)
   assert.match(html, />全身<\/strong>/)
   assert.match(html, />未标明部位<\/strong>/)
+  assert.equal(generalIssue.body_site, null)
+  assert.equal(missingSiteIssue.body_site, null)
   assert.doesNotMatch(html, /右右臂外侧|左左膝|右上臂外侧/)
 
   const source = readFileSync(new URL('../ui/characters.js', import.meta.url), 'utf8')
@@ -1193,8 +1198,8 @@ test('character Health State is scoped by canonical character id and supports co
   const htmlA = charactersPage({ ...base, characterId: 'char-a', currentStateStatus: 'ready', healthPopoverOpen: true })
   const htmlB = charactersPage({ ...base, characterId: 'char-b', currentStateStatus: 'ready' })
   const missing = charactersPage({ ...base, characterId: 'char-a', currentHealthState: null, currentStateStatus: 'STATE_ERROR', healthPopoverOpen: true })
-  assert.match(htmlA, /未标明部位/)
-  assert.doesNotMatch(htmlA, /全身/)
+  assert.match(htmlA, /全身/)
+  assert.doesNotMatch(htmlA, /未标明部位/)
   assert.match(htmlA, /发热/)
   assert.doesNotMatch(htmlB, /发热/)
   assert.match(htmlB, /健康 · 正常/)
@@ -1355,8 +1360,8 @@ test('Character Health UI consumes canonical observations and never exposes mach
   })
   assert.match(html, /大腿根部与腰侧肌肉钝痛，下腹沉坠淤痛，胯骨酸软且体虚无力/)
   assert.doesNotMatch(html, /pain_and_soreness|pain and soreness/)
-  assert.match(html, /未标明部位/)
-  assert.doesNotMatch(html, /全身/)
+  assert.match(html, /全身/)
+  assert.doesNotMatch(html, /未标明部位/)
 })
 
 test('Character Health source actions use current canonical Event ids and isolate characters', () => {

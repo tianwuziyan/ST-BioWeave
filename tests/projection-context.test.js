@@ -95,7 +95,7 @@ test('Projection Context renders the exact built-in direction format without cha
   assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
   assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
   assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。/);
-  assert.match(result.prompt, /- 角色 林月：\n  - 可能的发展方向1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
+  assert.match(result.prompt, /- 角色 林月：\n  - 发展方向1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
   assert.doesNotMatch(result.prompt, /这只是备选剧情方向，不是已确认怀孕事实。/);
   assert.match(result.prompt, /本模块仅提供潜在表现，不得据此确认特定生理原因，也不得与其他身体问题擅自建立因果关系。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景|Context 中的 Projection/);
@@ -106,7 +106,7 @@ test('Projection Context keeps custom content readable without exposing an inter
     development_concern_key: 'custom_internal_key',
     development: {kind: 'possible_change', next_signal: '自定义内容保持原样。'},
   })]);
-  assert.match(prompt, /可能的发展方向1：自定义内容保持原样。/);
+  assert.match(prompt, /发展方向1：自定义内容保持原样。/);
   assert.doesNotMatch(prompt, /custom_internal_key|；自定义内容/);
 });
 
@@ -168,8 +168,8 @@ test('Projection Context groups directions by subject and keeps the DTO contract
   ]);
   assert.equal((result.prompt.match(/- 角色 祁鸢：/g) ?? []).length, 1);
   assert.equal((result.prompt.match(/- 角色 沈微：/g) ?? []).length, 1);
-  assert.match(result.prompt, /角色 祁鸢：\n  - 可能的发展方向1：可能出现可观察的检测迹象。\n  - 可能的发展方向2：可能出现轻微恶心。/);
-  assert.match(result.prompt, /角色 沈微：\n  - 可能的发展方向1：可能出现情绪变化。/);
+  assert.match(result.prompt, /角色 祁鸢：\n  - 发展方向1：可能出现可观察的检测迹象。\n  - 发展方向2：可能出现轻微恶心。/);
+  assert.match(result.prompt, /角色 沈微：\n  - 发展方向1：可能出现情绪变化。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景/);
 });
 
@@ -218,6 +218,21 @@ test('health recovery guidance uses the current display name and safely falls ba
   assert.match(unnamed.prompt, /角色 相关人物：/);
   assert.match(unnamed.prompt, /角色 相关人物 的右肩/);
   assert.doesNotMatch(unnamed.prompt, /char_000003|char_000004/);
+});
+
+test('health recovery guidance prompt does not duplicate a factual body-site direction', () => {
+  const result = buildProjectionContext([], {
+    displayNameBySubject: {char_000002: '林月'},
+    healthGuidance: [{
+      subject_id: 'char_000002',
+      body_site: '右手食指',
+      stage: 'early',
+      guidance: '受到刺激时可能出现不适。',
+    }],
+  });
+
+  assert.match(result.prompt, /角色 林月 的右手食指：受到刺激时可能出现不适。/);
+  assert.doesNotMatch(result.prompt, /右右手食指/);
 });
 
 test('multiple unresolved source candidates are not selected or ranked', () => {

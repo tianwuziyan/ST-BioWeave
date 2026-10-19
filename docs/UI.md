@@ -29,8 +29,9 @@ Details 在身份标题栏以 A 方案只读紧凑浮层消费 Runtime 提供的
 read model；Desktop/iPad 浮层位于按钮下方，Mobile 使用底部浮层。
 健康问题逐 observation 展示 read model 提供的 `current_description`；有合法当前阶段
 guidance 时使用对应的 persisted guidance，否则回退 factual Event `description`。
-`kind` 仅作为内部稳定语义，不能直接成为普通用户文案。缺少 `body_site` 时使用“未标明部位”，不把缺失部位解释为“全身”；UI 不从
-description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI 重算 lifecycle/aggregation，
+`kind` 仅作为内部稳定语义，不能直接成为普通用户文案。当 read model 的 `display_site` 为
+`general` 且 factual `body_site` 缺失时显示“全身”；只有两个显示字段都缺失时才显示“未标明部位”，
+UI 不从 description 反推部位。Phase 5A 不新增顶级 Health 页面，不在 UI 重算 lifecycle/aggregation，
 不显示内部 provenance 或 recovery timing。当前健康问题可以通过 read model 提供的
 `grouped_issues[].source_observation_ids` 按 canonical Event ID 跳转到当前 Events 页面；
 UI 不通过描述、部位、kind 或人物文本匹配来源，且失效/不存在的 Event 不生成来源入口。
