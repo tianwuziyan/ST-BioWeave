@@ -70,6 +70,7 @@ const LIFECYCLE_EVENTS = [
   "GENERATION_STOPPED",
   "GENERATION_CANCELLED",
   "GENERATION_STARTED",
+  "STREAM_TOKEN_RECEIVED",
   "CHARACTER_MESSAGE_RENDERED",
 ];
 
@@ -1813,6 +1814,9 @@ export function createRuntime({
   projectionTimingBaselineResolver = null,
   projectionTimingRandom = Math.random,
   healthRecoveryStabilityDelayMs = 2000,
+  generationLeaseMs = 3000,
+  generationStreamLeaseMs = 1500,
+  generationHardWatchdogMs = 120000,
   participantAggregationLockCapability = false,
 } = {}) {
   const st = adapter;
@@ -1831,6 +1835,15 @@ export function createRuntime({
   const timingRandomSource = timingRandom === Math.random
     ? 'RUNTIME_DEFAULT_MATH_RANDOM'
     : 'RUNTIME_INJECTED_RNG';
+  const generationLeaseDurationMs = Number.isFinite(generationLeaseMs) && generationLeaseMs > 0
+    ? generationLeaseMs
+    : 3000;
+  const generationStreamLeaseDurationMs = Number.isFinite(generationStreamLeaseMs) && generationStreamLeaseMs > 0
+    ? generationStreamLeaseMs
+    : 1500;
+  const generationHardWatchdogDurationMs = Number.isFinite(generationHardWatchdogMs) && generationHardWatchdogMs > 0
+    ? generationHardWatchdogMs
+    : 120000;
 
   function isBioWeaveEnabled() {
     return store.getChat(chat.current()).settings?.enabled !== false;
@@ -2738,6 +2751,7 @@ export function createRuntime({
     resolveCurrentFloor: () => eventAnalysis.resolveCurrentBioWeaveFloor(),
     getChatId: () => chat.current(),
     setExtensionPrompt: st.setExtensionPrompt,
+    trace: payload => recordPersistenceTrace(payload),
     enabledResolver: isBioWeaveEnabled,
     collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
     attributionResolver: createCurrentStateAttributionResolver({
@@ -2745,16 +2759,113 @@ export function createRuntime({
     }),
     projectionEvidenceResolver: async ({chatId, floor, views, businessData, businessDataError, businessDataResolved = false}) => {
       const projectionViews = Array.isArray(views?.all) ? views.all : (Array.isArray(views) ? views : []);
-      if (!projectionViews.some(view => view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence)) return views;
+      const uniqueIds = values => [...new Set((Array.isArray(values) ? values : [])
+        .map(value => typeof value === 'string' ? value.trim() : value == null ? null : String(value))
+        .filter(Boolean))].slice(0, 128);
+      const inputProjectionIds = uniqueIds(projectionViews.map(view => view?.projection_id));
+      const inputSubjectIds = uniqueIds(projectionViews.map(view => view?.subject_id));
+      const inputAggregationIds = uniqueIds(projectionViews.map(view => view?.aggregation_evidence?.aggregation_id));
+      const aggregationProjection = projectionViews.some(view => view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence);
+      const recordResolution = ({status, reasonCode = null, decisions = [], aggregationIds = inputAggregationIds} = {}) => {
+        const safeDecisions = decisions.map(decision => {
+          const nonAggregation = decision?.reason_code === 'NON_AGGREGATION_PROJECTION';
+          const resolvedReasonCode = reasonCode && !nonAggregation ? reasonCode : decision?.reason_code ?? null;
+          return {
+            projection_id: decision?.projection_id ?? null,
+            subject_id: decision?.subject_id ?? null,
+            aggregation_id: decision?.aggregation_id ?? null,
+            status: decision?.valid === true ? 'VALID' : 'FILTERED',
+            reason_code: resolvedReasonCode,
+          };
+        });
+        const validIds = uniqueIds(safeDecisions.filter(item => item.status === 'VALID').map(item => item.projection_id));
+        const filteredIds = uniqueIds(safeDecisions.filter(item => item.status === 'FILTERED').map(item => item.projection_id));
+        try {
+          recordPersistenceTrace({
+            stage: 'PROJECTION_EVIDENCE_RESOLVED',
+            chat_id: chatId,
+            projection_evidence_status: status,
+            projection_evidence_reason_code: reasonCode,
+            projection_evidence_input_count: inputProjectionIds.length,
+            projection_evidence_valid_count: validIds.length,
+            projection_evidence_filtered_count: filteredIds.length,
+            projection_evidence_input_ids: inputProjectionIds,
+            projection_evidence_subject_ids: inputSubjectIds,
+            projection_evidence_aggregation_ids: uniqueIds(aggregationIds),
+            projection_evidence_valid_ids: validIds,
+            projection_evidence_filtered_ids: filteredIds,
+            projection_evidence_decisions: safeDecisions,
+          });
+        } catch {
+          // Diagnostic collection is fail-open and must not affect context filtering.
+        }
+      };
+      if (!aggregationProjection) {
+        recordResolution({
+          status: 'NO_AGGREGATION_PROJECTIONS',
+          decisions: projectionViews.map(view => ({
+            projection_id: view?.projection_id ?? null,
+            subject_id: view?.subject_id ?? null,
+            aggregation_id: null,
+            valid: true,
+            reason_code: 'NON_AGGREGATION_PROJECTION',
+          })),
+        });
+        return views;
+      }
+      const filterWithDiagnostics = ({aggregations = [], events = [], status = 'VALIDATED', reasonCode = null} = {}) => {
+        const decisions = [];
+        const filtered = filterProjectionViewsByAggregationEvidence({
+          views,
+          aggregations,
+          events,
+          diagnosticCollector: decision => decisions.push(decision),
+        });
+        recordResolution({
+          status: status === 'VALIDATED'
+            ? decisions.some(decision => decision.valid !== true) ? 'FILTERED' : status
+            : status,
+          reasonCode,
+          decisions,
+          aggregationIds: [
+            ...inputAggregationIds,
+            ...(Array.isArray(aggregations) ? aggregations.map(item => item?.aggregation_id) : []),
+          ],
+        });
+        return filtered;
+      };
       try {
         const aggregationTimeline = await participantAggregationPersistence.getParticipantAggregations({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
         if (businessDataError) throw businessDataError;
         const business = businessDataResolved ? businessData : await eventAnalysis.collectActiveBusinessData();
         if (!business?.current_floor?.version || !sameFloorVersion(business.current_floor.version, floor.version)) {
-          return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
+          return filterWithDiagnostics({
+            aggregations: [],
+            events: [],
+            status: 'FLOOR_VERSION_MISMATCH',
+            reasonCode: 'CURRENT_EVIDENCE_UNAVAILABLE',
+          });
         }
-        return filterProjectionViewsByAggregationEvidence({views, aggregations: aggregationTimeline.items, events: business.active_events ?? []});
+        return filterWithDiagnostics({
+          aggregations: aggregationTimeline.items,
+          events: business.active_events ?? [],
+        });
       } catch {
+        const decisions = projectionViews.map(view => ({
+          projection_id: view?.projection_id ?? null,
+          subject_id: view?.subject_id ?? null,
+          aggregation_id: view?.aggregation_evidence?.aggregation_id ?? null,
+          valid: !(view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence),
+          reason_code: view?.aggregation_path === 'participant_aggregation' || view?.aggregation_evidence
+            ? 'CURRENT_EVIDENCE_UNAVAILABLE'
+            : 'NON_AGGREGATION_PROJECTION',
+        }));
+        recordResolution({
+          status: 'FAIL_CLOSED',
+          reasonCode: 'RESOLVER_EXCEPTION_FAIL_CLOSED',
+          decisions,
+          aggregationIds: inputAggregationIds,
+        });
         return filterProjectionViewsByAggregationEvidence({views, aggregations: [], events: []});
       }
     },
@@ -2864,6 +2975,8 @@ export function createRuntime({
     resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     getProjectionViews: projectionPersistence.getProjectionViews,
     saveProjectionBatch: projectionPersistence.saveProjectionBatch,
+    ensureProjectionFloorOwner: ({target, reason, trigger}) =>
+      eventAnalysis.ensureCurrentProjectionFloorOwner({target, reason, trigger}),
     saveProjectionLifecycleBatch: projectionPersistence.saveProjectionLifecycleBatch,
     saveProjectionDeliveryResponseBatch: projectionPersistence.saveProjectionDeliveryResponseBatch,
     saveProjectionDeliveryResponse: projectionPersistence.saveProjectionDeliveryResponse,
@@ -3890,6 +4003,13 @@ export function createRuntime({
     activity,
   });
   eventAnalysis.setProjectionPostProcessor?.(({target, execution}) => projectionRuntime.handleAnalysisSuccess({target, execution}));
+  eventAnalysis.setSettledProjectionProcessor?.(({target, reason, generation, analysisExecutionId, schedulerDecision}) =>
+    projectionRuntime.processInternal({
+      reason: `settled-floor:${reason}`,
+      trigger: schedulerDecision ?? "automatic-internal",
+      generation,
+      analysisExecutionId,
+    }));
 
   async function updateEventWithProjection(...args) {
     const result = await eventAnalysis.updateEvent(...args);
@@ -3956,12 +4076,14 @@ export function createRuntime({
   let pendingStartNewChat = null;
   const failedSourceClears = new Map();
   let generationGate = null;
+  let generationLeaseExpiredBoundary = null;
 
   const generationBoundaryEvents = new Set([
     "GENERATION_STARTED",
     "GENERATION_ENDED",
     "GENERATION_STOPPED",
     "GENERATION_CANCELLED",
+    "STREAM_TOKEN_RECEIVED",
     "CHARACTER_MESSAGE_RENDERED",
   ]);
 
@@ -3970,16 +4092,53 @@ export function createRuntime({
       !generationBoundaryEvents.has(key);
   }
 
+  function createGenerationGate({
+    generationIntentId = null,
+    pendingEvents = new Map(),
+    active = false,
+    startPending = false,
+    actualGenerationEvidence = false,
+  } = {}) {
+    return {
+      active,
+      startPending,
+      pending: pendingEvents.size > 0,
+      pendingEvents: new Map(pendingEvents),
+      leaseTimer: null,
+      leaseToken: 0,
+      hardWatchdogTimer: null,
+      hardWatchdogToken: 0,
+      streamConfirmed: false,
+      actualGenerationEvidence,
+      generationIntentId,
+    };
+  }
+
   function markGenerationPending(key, eventType, payload, chatId) {
     if (!generationGate?.active && !generationGate?.startPending) return;
     generationGate.pending = true;
     generationGate.pendingEvents.set(key, {eventType, payload, chatId});
   }
 
-  async function replayDeferredGenerationEvents(pendingEvents) {
+  async function replayDeferredGenerationEvents(pendingEvents, {safeOnly = false} = {}) {
     const entries = [...pendingEvents.entries()];
-    const chatChanges = entries.filter(([key]) => key === "CHAT_CHANGED");
-    const otherEvents = entries.filter(([key]) => key !== "CHAT_CHANGED");
+    const replayableEntries = safeOnly
+      ? entries.filter(([key]) => key === "CHAT_CHANGED")
+      : entries;
+    if (safeOnly) {
+      for (const [key, deferredEvent] of entries.filter(([eventKey]) => eventKey !== "CHAT_CHANGED")) {
+        recordPersistenceTrace({
+          stage: "GENERATION_DEFERRED_EVENT_REPLAY",
+          host_event_key: key,
+          execution_status: "SKIPPED",
+          reason: "LEASE_EXPIRED_UNSAFE_EVENT",
+          deferred_chat_id: deferredEvent?.chatId ?? null,
+          active_chat_id: chat.current(),
+        });
+      }
+    }
+    const chatChanges = replayableEntries.filter(([key]) => key === "CHAT_CHANGED");
+    const otherEvents = replayableEntries.filter(([key]) => key !== "CHAT_CHANGED");
     for (const [key, deferredEvent] of [...chatChanges, ...otherEvents]) {
       // A Chat switch invalidates events captured from the old Chat. Only
       // replay an event when its captured Chat is still the active owner.
@@ -3995,6 +4154,48 @@ export function createRuntime({
           active_chat_id: chat.current(),
         });
         continue;
+      }
+      if (key === "MESSAGE_DELETED" &&
+          (pendingEvents.has("MESSAGE_RECEIVED") || pendingEvents.has("CHARACTER_MESSAGE_RENDERED"))) {
+        const payload = deferredEvent?.payload;
+        const deletedMessageId = payload && typeof payload === "object"
+          ? payload.message_id ?? payload.messageId
+          : payload;
+        const requestedIndex = payload && typeof payload === "object"
+          ? payload.messageIndex ?? payload.message_index ?? payload.index
+          : null;
+        const receivedPayload = pendingEvents.get("MESSAGE_RECEIVED")?.payload ??
+          pendingEvents.get("CHARACTER_MESSAGE_RENDERED")?.payload;
+        const receivedMessageId = receivedPayload && typeof receivedPayload === "object"
+          ? receivedPayload.message_id ?? receivedPayload.messageId
+          : receivedPayload;
+        const currentTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+        const currentMessageId = currentTarget?.version?.message_id ?? null;
+        const sameCurrentSlot = requestedIndex != null &&
+          Number.isInteger(Number(requestedIndex)) &&
+          Number(currentTarget?.index) === Number(requestedIndex);
+        const currentIsReceivedReplacement = receivedMessageId != null &&
+          currentMessageId !== null &&
+          String(receivedMessageId) === String(currentMessageId);
+        const replacementMessageIdMatches = deletedMessageId == null ||
+          (receivedMessageId != null &&
+            String(deletedMessageId) === String(receivedMessageId));
+        const sameCurrentReplacement = (sameCurrentSlot && replacementMessageIdMatches) ||
+          (requestedIndex == null && currentIsReceivedReplacement &&
+            (deletedMessageId == null || String(deletedMessageId) === String(receivedMessageId)));
+        if (sameCurrentReplacement && currentMessageId !== null) {
+          recordPersistenceTrace({
+            stage: "GENERATION_DEFERRED_EVENT_REPLAY",
+            host_event_key: key,
+            execution_status: "SKIPPED",
+            reason: "REPLACED_BY_CURRENT_CHARACTER_FLOOR",
+            deferred_message_id: deletedMessageId ?? null,
+            current_message_id: currentMessageId,
+            deferred_chat_id: deferredEvent?.chatId ?? null,
+            active_chat_id: chat.current(),
+          });
+          continue;
+        }
       }
       try {
         await eventAnalysis.handleLifecycleEvent({
@@ -4029,10 +4230,196 @@ export function createRuntime({
     }
   }
 
+  function clearGenerationLeaseTimer(gate) {
+    if (!gate) return;
+    if (gate.leaseTimer != null) {
+      clearTimeout(gate.leaseTimer);
+      gate.leaseTimer = null;
+    }
+    if (gate.hardWatchdogTimer != null) {
+      clearTimeout(gate.hardWatchdogTimer);
+      gate.hardWatchdogTimer = null;
+    }
+  }
+
+  function clearGenerationActivityLease(gate) {
+    if (gate?.leaseTimer == null) return;
+    clearTimeout(gate.leaseTimer);
+    gate.leaseTimer = null;
+  }
+
+  function expireGenerationGate(gate, {reason, hardStale = false} = {}) {
+    if (destroyed || generationGate !== gate) return;
+    const expired = lifecycleTail.then(async () => {
+      if (destroyed || generationGate !== gate) return;
+      clearGenerationLeaseTimer(gate);
+      const deferredEvents = new Map(gate.pendingEvents);
+      const pendingEventsAfterSafeReplay = new Map(
+        [...deferredEvents].filter(([key]) => key !== "CHAT_CHANGED"),
+      );
+      const generationState = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
+      const pendingGeneration = cloneValue(generationState.pendingGeneration);
+      const pendingSwipeGeneration = cloneValue(generationState.pendingSwipeGeneration);
+      const cancelledGeneration = eventAnalysis.cancelPendingGeneration?.(reason);
+      generationLeaseExpiredBoundary = {
+        chatId: chat.current(),
+        epoch: chat.getEpoch(),
+        generationIntentId: gate.generationIntentId ?? null,
+        hardStale,
+        pendingEvents: pendingEventsAfterSafeReplay,
+        pendingGeneration,
+        pendingSwipeGeneration,
+        terminalKind: null,
+      };
+      generationGate = null;
+      eventAnalysis.setGenerationAutomaticWorkDeferred?.(false);
+      recordPersistenceTrace({
+        stage: hardStale ? "GENERATION_GATE_HARD_WATCHDOG_EXPIRED" : "GENERATION_GATE_LEASE_EXPIRED",
+        reason,
+        generation_intent_id: gate.generationIntentId ?? null,
+        deferred_event_count: deferredEvents.size,
+        cancelled_generation_count: cancelledGeneration?.cancelled_count ?? 0,
+        pending_generation_preserved: Boolean(pendingGeneration || pendingSwipeGeneration),
+      });
+      // A timer is only evidence that the START signal went stale. It is
+      // safe to restore a read-only Chat binding, but never to authorize
+      // analysis, lifecycle persistence, or Projection processing.
+      await replayDeferredGenerationEvents(deferredEvents, {safeOnly: true});
+      const deferredChatChange = deferredEvents.get("CHAT_CHANGED");
+      if (!hardStale && deferredChatChange &&
+          (deferredChatChange.chatId == null ||
+            String(deferredChatChange.chatId) === String(chat.current()))) {
+        await projectionContext.refreshProjectionContext({
+          chatId: chat.current(),
+          readOnly: true,
+        });
+      }
+    }).catch(error => {
+      if (!destroyed) console.error("[BioWeave] generation lease recovery failed", error);
+    });
+    lifecycleTail = expired;
+  }
+
+  function armGenerationLease(gate, {reason, streamConfirmed = false} = {}) {
+    if (!gate || generationGate !== gate || destroyed) return;
+    clearGenerationActivityLease(gate);
+    if (streamConfirmed) {
+      gate.streamConfirmed = true;
+      gate.actualGenerationEvidence = true;
+    }
+    const leaseToken = ++gate.leaseToken;
+    const durationMs = gate.streamConfirmed
+      ? generationStreamLeaseDurationMs
+      : generationLeaseDurationMs;
+    recordPersistenceTrace({
+      stage: "GENERATION_GATE_LEASE_RENEWED",
+      reason,
+      lease_ms: gate.actualGenerationEvidence ? null : durationMs,
+      expiry_disabled: false,
+      hard_watchdog_ms: gate.hardWatchdogTimer == null ? generationHardWatchdogDurationMs : null,
+      generation_intent_id: gate.generationIntentId ?? null,
+    });
+    if (!gate.actualGenerationEvidence) {
+      gate.leaseTimer = setTimeout(() => {
+        if (destroyed || generationGate !== gate || gate.leaseToken !== leaseToken) return;
+        expireGenerationGate(gate, {reason: "generation-activity-lease-expired"});
+      }, durationMs);
+      gate.leaseTimer.unref?.();
+    }
+    if (gate.hardWatchdogTimer == null) {
+      const hardWatchdogToken = gate.hardWatchdogToken;
+      gate.hardWatchdogTimer = setTimeout(() => {
+        if (destroyed || generationGate !== gate || gate.hardWatchdogToken !== hardWatchdogToken) return;
+        expireGenerationGate(gate, {
+          reason: "generation-hard-watchdog-expired",
+          hardStale: true,
+        });
+      }, generationHardWatchdogDurationMs);
+      gate.hardWatchdogTimer.unref?.();
+    }
+  }
+
   function generationHasSettled() {
     const state = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
     return !state.pendingGeneration && !state.pendingSwipeGeneration &&
       Boolean(state.completedGeneration || state.completedSwipeGeneration);
+  }
+
+  function generationEventSelector(payload) {
+    if (Number.isInteger(payload))
+      return {__messageIndex: true, index: payload};
+    if (!payload || typeof payload !== "object") return null;
+    const index = payload.message_index ?? payload.messageIndex ?? payload.index;
+    if (Number.isInteger(index)) return {__messageIndex: true, index};
+    const messageId = payload.message_id ?? payload.messageId;
+    return messageId == null ? null : {message_id: messageId};
+  }
+
+  function generationIntentOwnsTarget(intent, target) {
+    if (!intent || !target?.version) return false;
+    if (intent.chatId != null && String(intent.chatId) !== String(chat.current()))
+      return false;
+    if (intent.messageId != null &&
+        String(intent.messageId) !== String(target.version.message_id))
+      return false;
+    if (intent.swipeId != null &&
+        String(intent.swipeId) !== String(target.version.swipe_id))
+      return false;
+    return true;
+  }
+
+  async function lateGenerationActivityConfirmed(boundary, key, payload) {
+    if (!boundary || boundary.hardStale === true) return false;
+    if (["GENERATION_STOPPED", "GENERATION_CANCELLED"].includes(boundary.terminalKind))
+      return false;
+    const intent = boundary.pendingGeneration ?? boundary.pendingSwipeGeneration;
+    if (!intent) return false;
+    if (key === "CHARACTER_MESSAGE_RENDERED" &&
+        boundary.pendingEvents?.has("MESSAGE_RECEIVED"))
+      return true;
+    let target;
+    try {
+      target = await eventAnalysis.resolveCurrentBioWeaveFloor?.(
+        generationEventSelector(payload),
+      );
+    } catch {
+      return false;
+    }
+    if (!generationIntentOwnsTarget(intent, target)) return false;
+    if (!intent.baselineVersion) {
+      return intent.messageId != null &&
+        String(intent.messageId) === String(target.version.message_id);
+    }
+    return !sameFloorVersion(intent.baselineVersion, target.version);
+  }
+
+  async function reviveExpiredGeneration(boundary, key, payload) {
+    if (!await lateGenerationActivityConfirmed(boundary, key, payload))
+      return false;
+    const restored = eventAnalysis.restorePendingGeneration?.(
+      boundary.pendingGeneration ?? boundary.pendingSwipeGeneration,
+      {ended: boundary.terminalKind === "GENERATION_ENDED"},
+    );
+    if (restored?.reason !== "generation-restored")
+      return false;
+    generationGate = createGenerationGate({
+      generationIntentId: boundary.generationIntentId,
+      pendingEvents: boundary.pendingEvents,
+      active: true,
+      actualGenerationEvidence: true,
+    });
+    generationLeaseExpiredBoundary = null;
+    eventAnalysis.setGenerationAutomaticWorkDeferred?.(true);
+    armGenerationLease(generationGate, {reason: "late-generation-activity"});
+    recordPersistenceTrace({
+      stage: "GENERATION_GATE_ACTIVITY_CONFIRMED",
+      reason: key === "MESSAGE_RECEIVED"
+        ? "late-message-received"
+        : "late-character-message-rendered",
+      generation_intent_id: generationGate.generationIntentId ?? null,
+      restored_after_lease_expiry: true,
+    });
+    return true;
   }
 
   function cloneValue(value) {
@@ -4243,7 +4630,11 @@ export function createRuntime({
       });
       let result;
       try {
-        result = await projectionRuntime.process({reason, trigger: processTrigger});
+        result = await projectionRuntime.process({
+          reason,
+          trigger: processTrigger,
+          dedupeCompleted: true,
+        });
       } catch (error) {
         recordLifecycleRecoveryTrace({
           status: "FAILED",
@@ -4732,22 +5123,28 @@ export function createRuntime({
     }[key];
     if (lifecycleTraceStage) diagnostics.recordLifecycleTrace(lifecycleTraceStage, payload, chatId);
     const chatChanged = chat.getEpoch() !== epochBefore;
+    if (key === "CHAT_CHANGED") {
+      generationLeaseExpiredBoundary = null;
+      projectionRuntime.clearCompletedAutomaticExecutions?.();
+    }
     if (key === "GENERATION_STARTED" && !generationGate?.active && !generationGate?.startPending) {
       // Reserve the non-blocking gate synchronously so a Chat/message event
       // arriving before this listener's promise runs is still coalesced. The
       // gate becomes active only after Generation Lifecycle accepts the
       // payload, and is discarded for an unrecognized start signal.
-      generationGate = {
-        active: false,
+      generationGate = createGenerationGate({
         startPending: true,
-        pending: false,
-        pendingEvents: new Map(),
-      };
+        generationIntentId: payload?.generation_id ?? payload?.generationId ?? null,
+      });
+      generationLeaseExpiredBoundary = null;
+      armGenerationLease(generationGate, {reason: "generation-started-provisional"});
     }
     if (generationAutomaticWorkIsDeferred(key)) {
       markGenerationPending(key, eventType, payload, chatId);
       if (key === "CHAT_CHANGED") projectionContext.clearProjectionContext();
     }
+    const ordinaryChatRebind = key === "CHAT_CHANGED" && !generationAutomaticWorkIsDeferred(key);
+    if (ordinaryChatRebind) projectionContext.clearProjectionContext();
     let sourceTransition = null;
     if (key === "CHAT_CHANGED" && chatChanged) {
       prepareStartNewChatTransition(
@@ -4788,6 +5185,7 @@ export function createRuntime({
         const result = await projectionContext.refreshProjectionContext({
           chatId: chat.current(),
           generation: key === "GENERATION_STARTED" ? payload : null,
+          readOnly: ordinaryChatRebind,
         });
         if (key === "GENERATION_STARTED") {
           const refreshSucceeded = result?.ok !== false && !["unavailable", "failed"].includes(result?.status);
@@ -4832,6 +5230,71 @@ export function createRuntime({
           chatId,
         });
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
+        if (key === "STREAM_TOKEN_RECEIVED") {
+          if (generationGate?.active) {
+            armGenerationLease(generationGate, {
+              reason: "stream-token-received",
+              streamConfirmed: true,
+            });
+          }
+          notifyLifecycleSettled(key, eventType, payload);
+          return;
+        }
+        const expiredBoundary = generationLeaseExpiredBoundary;
+        const expiredBoundaryMatches = expiredBoundary &&
+          String(expiredBoundary.chatId) === String(chat.current()) &&
+          expiredBoundary.epoch === chat.getEpoch();
+        let revivedExpiredGeneration = false;
+        if (expiredBoundaryMatches && !expiredBoundary.hardStale && [
+          "MESSAGE_RECEIVED",
+          "CHARACTER_MESSAGE_RENDERED",
+        ].includes(key)) {
+          revivedExpiredGeneration = await reviveExpiredGeneration(
+            expiredBoundary,
+            key,
+            payload,
+          );
+          if (revivedExpiredGeneration && key === "MESSAGE_RECEIVED")
+            markGenerationPending(key, eventType, payload, chatId);
+        }
+        const leaseExpiredTerminal = expiredBoundaryMatches && [
+          "GENERATION_ENDED",
+          "GENERATION_STOPPED",
+          "GENERATION_CANCELLED",
+        ].includes(key);
+        const hardWatchdogCharacterRender = expiredBoundaryMatches &&
+          expiredBoundary.hardStale === true && key === "CHARACTER_MESSAGE_RENDERED";
+        if (leaseExpiredTerminal) {
+          if (!expiredBoundary.hardStale)
+            expiredBoundary.terminalKind = key;
+          eventAnalysis.cancelPendingGeneration?.("generation-lease-expired-terminal");
+          recordPersistenceTrace({
+            stage: "GENERATION_LEASE_EXPIRED_EVENT_IGNORED",
+            host_event_key: key,
+            reason: "activity-lease-expired",
+            generation_intent_id: expiredBoundary.generationIntentId,
+            deferred_chat_id: expiredBoundary.chatId,
+            active_chat_id: chat.current(),
+          });
+          notifyLifecycleSettled(key, eventType, payload);
+          return;
+        }
+        if (hardWatchdogCharacterRender ||
+            (expiredBoundaryMatches && !revivedExpiredGeneration)) {
+          recordPersistenceTrace({
+            stage: "GENERATION_LEASE_EXPIRED_EVENT_IGNORED",
+            host_event_key: key,
+            reason: hardWatchdogCharacterRender
+              ? "activity-lease-expired"
+              : "activity-lease-quarantine",
+            generation_intent_id: expiredBoundary.generationIntentId,
+            deferred_chat_id: expiredBoundary.chatId,
+            active_chat_id: chat.current(),
+          });
+          notifyLifecycleSettled(key, eventType, payload);
+          return;
+        }
+        let runtimeResult = null;
         if (!runtimeHandlerPresent) {
           recordPersistenceTrace({
             stage: "HOST_EVENT_FORWARD_RESULT",
@@ -4841,19 +5304,43 @@ export function createRuntime({
           });
         } else {
           try {
-            const runtimeResult = await eventAnalysis.handleLifecycleEvent({
+            runtimeResult = await eventAnalysis.handleLifecycleEvent({
               type: key,
               eventType,
               payload,
               chatId,
               deferAutomaticWork: generationAutomaticWorkIsDeferred(key),
             });
+            if (key === "CHARACTER_MESSAGE_RENDERED" && generationGate?.active &&
+                ["generation-awaiting-end", "generation-already-settled"].includes(runtimeResult?.reason)) {
+              generationGate.actualGenerationEvidence = true;
+              clearGenerationActivityLease(generationGate);
+              recordPersistenceTrace({
+                stage: "GENERATION_GATE_ACTIVITY_CONFIRMED",
+                reason: "character-message-rendered",
+                generation_intent_id: generationGate.generationIntentId ?? null,
+              });
+            }
             if (key === "GENERATION_STARTED" &&
                 runtimeResult?.reason === "generation-pending") {
+              // A previous terminal event may have released the provisional
+              // gate while this async START continuation was awaiting the
+              // lifecycle coordinator. Recreate the gate only when no newer
+              // gate exists; never dereference the released global value.
+              if (!generationGate) {
+                generationGate = createGenerationGate({
+                  generationIntentId: payload?.generation_id ?? payload?.generationId ?? null,
+                });
+              }
               generationGate.active = true;
               generationGate.startPending = false;
+              armGenerationLease(generationGate, {reason: "generation-started"});
               eventAnalysis.setGenerationAutomaticWorkDeferred?.(true);
+            } else if (key === "GENERATION_STARTED" &&
+                runtimeResult?.reason === "generation-intent-already-pending") {
+              armGenerationLease(generationGate, {reason: "generation-started-duplicate"});
             } else if (key === "GENERATION_STARTED") {
+              clearGenerationLeaseTimer(generationGate);
               generationGate = null;
               eventAnalysis.setGenerationAutomaticWorkDeferred?.(false);
             }
@@ -4876,17 +5363,30 @@ export function createRuntime({
               console.error("[BioWeave] event analysis lifecycle failed", error);
           }
         }
+        const generationEndedWithoutIntent = key === "GENERATION_ENDED" &&
+          runtimeResult?.reason === "generation-ended-without-intent";
+        const generationLifecycleIntentCleared = generationEndedWithoutIntent && (() => {
+          const state = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
+          return !state.pendingGeneration && !state.pendingSwipeGeneration &&
+            !state.completedGeneration && !state.completedSwipeGeneration;
+        })();
         let generationReleased = false;
         if (generationGate?.active) {
           const canRelease = key === "GENERATION_STOPPED" ||
             key === "GENERATION_CANCELLED" ||
             ((key === "GENERATION_ENDED" || key === "CHARACTER_MESSAGE_RENDERED") &&
-              generationHasSettled());
+              (generationHasSettled() || generationLifecycleIntentCleared));
           if (!canRelease) {
             notifyLifecycleSettled(key, eventType, payload);
             return;
           }
           const deferredEvents = generationGate.pendingEvents;
+          clearGenerationLeaseTimer(generationGate);
+          recordPersistenceTrace({
+            stage: "GENERATION_GATE_RELEASED",
+            reason: key,
+            generation_intent_id: generationGate.generationIntentId ?? null,
+          });
           generationGate.active = false;
           generationGate = null;
           eventAnalysis.setGenerationAutomaticWorkDeferred?.(false);
@@ -4904,19 +5404,33 @@ export function createRuntime({
                 generation: state.completedGeneration ?? state.completedSwipeGeneration ?? null,
                 lifecycleOutcome: {status: "generation-settled"},
               });
+              await eventAnalysis.flushDeferredProjectionPostProcessor?.({target: finalTarget});
               generationReleased = true;
+            } else {
+              eventAnalysis.clearDeferredProjectionPostProcessor?.();
             }
+          } else {
+            eventAnalysis.clearDeferredProjectionPostProcessor?.();
           }
         }
-        try {
-          await projectionRuntime.tickLifecycleOnly({reason: `story-time:${key}`});
-        } catch (error) {
-          if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
-            console.error("[BioWeave] projection lifecycle tick failed", error);
+        if (!generationReleased && generationLifecycleIntentCleared) {
+          const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+          if (finalTarget?.version) {
+            const flushResult = await eventAnalysis.flushDeferredProjectionPostProcessor?.({target: finalTarget});
+            generationReleased = flushResult?.status === "released";
+          }
+        }
+        if (!ordinaryChatRebind) {
+          try {
+            await projectionRuntime.tickLifecycleOnly({reason: `story-time:${key}`});
+          } catch (error) {
+            if (!["STALE_CHAT", "MESSAGE_NOT_FOUND"].includes(error?.message))
+              console.error("[BioWeave] projection lifecycle tick failed", error);
+          }
         }
         if (key === "CHAT_CHANGED") await recordReloadFloorSlotAudit("chat-changed");
         await refreshActiveOwner(chat.current());
-        if (["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED", "GENERATION_ENDED", "GENERATION_STOPPED", "GENERATION_CANCELLED", "CHARACTER_MESSAGE_RENDERED"].includes(key) && !generationReleased) {
+        if (!ordinaryChatRebind && ["CHAT_CHANGED", "CHAT_CREATED", "MESSAGE_RECEIVED", "GENERATION_ENDED", "GENERATION_STOPPED", "GENERATION_CANCELLED", "CHARACTER_MESSAGE_RENDERED"].includes(key) && !generationReleased) {
           const recovery = runLifecycleRecovery({
             trigger: `lifecycle-${key.toLowerCase()}`,
             reason: key === "MESSAGE_RECEIVED"
@@ -5635,10 +6149,47 @@ export function createRuntime({
     );
     let persistenceTrace = null;
     try { persistenceTrace = diagnostics.getPersistenceTrace?.() ?? null; } catch { persistenceTrace = null; }
+    const projectionTraceFloorMatches = entry => {
+      const entryFloor = entry?.floor_version;
+      if (!entryFloor || !floor?.version) return false;
+      return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+        .every(field => String(entryFloor[field] ?? '') === String(floor.version[field] ?? ''));
+    };
     const projectionAiRequestEntries = (persistenceTrace?.sequence ?? []).filter(entry =>
       entry?.stage === "PROJECTION_AI_REQUEST_STARTED"
+      && projectionTraceFloorMatches(entry)
       && (!currentTraceRunId || entry?.run_id === currentTraceRunId),
     );
+    const projectionStatusStages = new Set([
+      'PROJECTION_INTERNAL_TRIGGERED', 'PROJECTION_FLOOR_OWNER_READY',
+      'PROJECTION_PROCESS_STARTED', 'PROJECTION_PROCESS_FAILED',
+      'PROJECTION_TIMING_EVALUATED', 'PROJECTION_ELIGIBILITY',
+      'PROJECTION_STAGE_REUSED', 'PROJECTION_AI_PLAN', 'PROJECTION_AI_SKIPPED',
+      'PROJECTION_BUILT_IN_CANDIDATE', 'PROJECTION_BUILT_IN_CANDIDATE_COMPLETED',
+      'PROJECTION_AI_REQUEST_STARTED', 'PROJECTION_AI_REQUEST_COMPLETED',
+      'PROJECTION_STAGE_SNAPSHOT', 'PROJECTION_PERSISTENCE', 'PROJECTION_READBACK',
+    ]);
+    const projectionStatusTrace = (persistenceTrace?.sequence ?? [])
+      .filter(entry => projectionStatusStages.has(entry?.stage) && projectionTraceFloorMatches(entry))
+      .slice(-16);
+    const latestProjectionStatus = projectionStatusTrace.at(-1) ?? null;
+    const latestProjectionRoute = [...projectionStatusTrace]
+      .reverse()
+      .find(entry => entry?.projection_route != null || entry?.external_api_allowed != null)
+      ?? projectionAiSchedulingStage
+      ?? null;
+    const latestInternalTrigger = [...projectionStatusTrace]
+      .reverse()
+      .find(entry => entry?.stage === 'PROJECTION_INTERNAL_TRIGGERED')
+      ?? null;
+    const latestStageReuse = [...projectionStatusTrace]
+      .reverse()
+      .find(entry => entry?.stage === 'PROJECTION_STAGE_REUSED')
+      ?? null;
+    const latestStageSnapshot = [...projectionStatusTrace]
+      .reverse()
+      .find(entry => entry?.stage === 'PROJECTION_STAGE_SNAPSHOT')
+      ?? null;
     return {
       status: "ok",
       chat_id: chatId,
@@ -5678,6 +6229,53 @@ export function createRuntime({
         ai_scheduling_reason_code: projectionAiSchedulingStage?.reason_code ?? (rules.length ? "TRACE_UNAVAILABLE" : "NO_ELIGIBLE_PROJECTION"),
         projection_ai_request_started: projectionAiRequestEntries.length > 0,
         projection_ai_request_count: projectionAiRequestEntries.length,
+        last_projection_route: latestProjectionRoute?.projection_route ?? null,
+        last_external_api_allowed: typeof latestProjectionRoute?.external_api_allowed === 'boolean'
+          ? latestProjectionRoute.external_api_allowed
+          : null,
+        last_status_stage: latestProjectionStatus?.stage ?? null,
+        last_status_state: latestProjectionStatus?.state ?? null,
+        last_internal_trigger: latestInternalTrigger
+          ? {
+              reason: latestInternalTrigger.reason ?? null,
+              analysis_execution_id: latestInternalTrigger.analysis_execution_id ?? null,
+            }
+          : null,
+        scheduler_decision: latestInternalTrigger?.scheduler_decision ?? null,
+        stage_reuse: latestStageReuse
+          ? {
+              subject_count: latestStageReuse.subject_count ?? null,
+              reused_candidate_count: latestStageReuse.reused_candidate_count ?? null,
+              stage_keys: latestStageReuse.stage_keys ?? [],
+            }
+          : null,
+        stage_snapshot: latestStageSnapshot
+          ? {
+              status: latestStageSnapshot.snapshot_status ?? null,
+              candidate_count: latestStageSnapshot.candidate_count ?? null,
+              subject_count: latestStageSnapshot.subject_count ?? null,
+              stage_keys: latestStageSnapshot.stage_keys ?? [],
+              failure_reason: latestStageSnapshot.failure_reason ?? null,
+            }
+          : null,
+        status_trace: projectionStatusTrace.map(entry => ({
+          stage: entry.stage ?? null,
+          state: entry.state ?? null,
+          phase: entry.phase ?? null,
+          reason: entry.reason ?? null,
+          projection_route: entry.projection_route ?? null,
+          external_api_allowed: typeof entry.external_api_allowed === 'boolean'
+            ? entry.external_api_allowed
+            : null,
+          scheduler_decision: entry.scheduler_decision ?? null,
+          analysis_execution_id: entry.analysis_execution_id ?? null,
+          snapshot_status: entry.snapshot_status ?? null,
+          candidate_count: entry.candidate_count ?? null,
+          subject_count: entry.subject_count ?? null,
+          reused_candidate_count: entry.reused_candidate_count ?? null,
+          deferred_external_api_candidate_count: entry.deferred_external_api_candidate_count ?? null,
+          failure_reason: entry.failure_reason ?? null,
+        })),
       },
       projection_ids: (projections?.all ?? []).map(item => item.projection_id).filter(Boolean),
       authoritative_readback: {
@@ -6393,6 +6991,9 @@ export function createRuntime({
 
   function destroy() {
     if (destroyed) return;
+    clearGenerationLeaseTimer(generationGate);
+    generationGate = null;
+    generationLeaseExpiredBoundary = null;
     versionChainByExecution.clear();
     projectionRuntime.destroy();
     projectionContext.destroy();

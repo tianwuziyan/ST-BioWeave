@@ -19,7 +19,12 @@ import {cloneValue, emptyFloor} from './schema.js'
 import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js'
 
 function error(code) { const result = new Error(code); result.code = code; return result }
-function ownerSelector(owner = {}) { return owner.message_id ?? owner.messageId ?? owner.message_index ?? owner.messageIndex ?? owner.index }
+function ownerSelector(owner = {}) {
+  // The Floor store addresses the chat-array slot; message_id is provenance
+  // and must remain a fallback rather than an array index.
+  return owner.message_index ?? owner.messageIndex ?? owner.index
+    ?? owner.message_id ?? owner.messageId;
+}
 function ownerSwipe(owner = {}, version = {}) { return Number(owner.swipe_id ?? owner.swipeId ?? version.swipe_id) }
 function assertRecordVersion(record, version) {
   if (!sameFloorVersion(record?.created_at_floor_version, version)) throw error('FLOOR_VERSION_STALE')
@@ -70,7 +75,15 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     for (const collection of ['creations', 'evidence_records', 'lifecycle_records', 'delivery_records']) {
       for (const record of existingRoot?.[collection] ?? []) assertRecordVersion(record, resolved.version)
     }
-    const knownProjectionIds = new Set((await getProjectionViews({chatId: resolved.chatId, endpointFloor: resolved.version.floor})).all.map(item => item.projection_id))
+    // Delivery/lifecycle records may still point at a historical stage that
+    // the endpoint resolver hides from the current product view. Validation
+    // must therefore use all surviving historical creation IDs, not only the
+    // latest visible stage.
+    const {historicalProjectionIds: knownProjectionIds} = await readProjectionTimelineEntries({
+      chatId: resolved.chatId,
+      endpointIndex: resolved.selector,
+      endpointFloor: resolved.version.floor,
+    })
     const normalized = normalizeProjectionTimeline(resolved.floorData.projection_timeline, {expectedChatId: resolved.chatId, knownProjectionIds})
     if (normalized.conflicts.length || normalized.rejected.length) throw error('PROJECTION_TIMELINE_INVALID')
     const currentTimeline = normalized.timeline
@@ -215,23 +228,22 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     return saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord: record})
   }
 
-  async function getProjectionViews({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
+  async function readProjectionTimelineEntries({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
     if (!chatId) throw error('CHAT_OWNER_REQUIRED')
     const ownerSnapshot = store.getCurrentChatOwnerSnapshot(chatId)
     const entries = []
+    const historicalProjectionIds = new Set()
     for (let index = 0; index < ownerSnapshot.messages.length; index += 1) {
       const message = ownerSnapshot.messages[index]
-      const selector = index
-      const swipeId = store.getActiveSwipeId?.(selector)
+      const swipeId = store.getActiveSwipeId?.(index)
       if (swipeId === null || swipeId === undefined) continue
-      const floor = store.getFloor(selector, swipeId)
+      const floor = store.getFloor(index, swipeId)
       const version = floorVersionFromData(floor)
-      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor)) continue
+      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor) || Number(version.swipe_id) !== Number(swipeId)) continue
       const messageId = message?.message_id ?? message?.messageId ?? message?.id ?? version.message_id
-      if (version.swipe_id !== swipeId || String(version.message_id) !== String(messageId)) continue
+      if (String(version.message_id) !== String(messageId)) continue
       if (typeof resolveVersion !== 'function') continue
-      let currentVersion
-      try { currentVersion = await resolveVersion({chatId, ownerFloor: {message_index: index, message_id: messageId}, floorVersion: version, swipeId}) } catch { continue }
+      const currentVersion = await resolveVersion({chatId, ownerFloor: {message_index: index, message_id: messageId}, floorVersion: version, swipeId}).catch(() => null)
       if (!sameFloorVersion(currentVersion, version)) continue
       const timeline = floor.projection_timeline && typeof floor.projection_timeline === 'object'
         ? {
@@ -242,30 +254,30 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
           delivery_records: Array.isArray(floor.projection_timeline.delivery_records) ? cloneValue(floor.projection_timeline.delivery_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
         }
         : emptyProjectionTimeline()
-      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length) continue
-      entries.push({floor_version: version, ...timeline})
+      for (const creation of timeline.creations) if (creation?.projection_id) historicalProjectionIds.add(creation.projection_id)
+      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length && !timeline.delivery_records.length) continue
+      entries.push({floor_version: version, owner_index: index, owner_swipe_id: swipeId, ...timeline})
     }
-    return resolveProjectionTimeline(entries)
+    return {entries, historicalProjectionIds}
+  }
+
+  async function getProjectionViews({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
+    const {entries} = await readProjectionTimelineEntries({chatId, endpointIndex, endpointFloor})
+    return resolveProjectionTimeline(entries.filter(entry => entry.creations.length || entry.evidence_records.length || entry.lifecycle_records.length))
   }
 
   async function getProjectionDeliveryRecords({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
-    if (!chatId) throw error('CHAT_OWNER_REQUIRED');
-    const ownerSnapshot = store.getCurrentChatOwnerSnapshot(chatId);
-    const projectionViews = await getProjectionViews({chatId, endpointIndex, endpointFloor});
-    const knownProjectionIds = new Set((projectionViews.all || []).map(item => item.projection_id));
-    const records = [];
-    for (let index = 0; index < ownerSnapshot.messages.length; index += 1) {
-      const swipeId = store.getActiveSwipeId?.(index);
-      if (swipeId === null || swipeId === undefined) continue;
-      const floor = store.getFloor(index, swipeId);
-      const version = floorVersionFromData(floor);
-      if (!hasCompleteFloorVersion(version) || String(version.chat_id) !== String(chatId) || index > Number(endpointIndex) || Number(version.floor) > Number(endpointFloor) || Number(version.swipe_id) !== Number(swipeId)) continue;
-      const currentVersion = await resolveVersion({chatId, ownerFloor: {message_index: index, message_id: version.message_id}, floorVersion: version, swipeId}).catch(() => null);
-      if (!sameFloorVersion(currentVersion, version)) continue;
-      const timeline = normalizeProjectionTimeline(floor.projection_timeline, {expectedChatId: chatId, knownProjectionIds});
-      records.push(...timeline.timeline.delivery_records.map(record => ({...cloneValue(record), owner_index: index, owner_swipe_id: swipeId})));
-    }
-    return records.sort((left, right) => Number(left.owner_index) - Number(right.owner_index) || String(left.delivery_record_id).localeCompare(String(right.delivery_record_id)));
+    // Delivery replay needs historical creation IDs even when the product
+    // view intentionally hides an earlier built-in stage snapshot. Do not use
+    // getProjectionViews() here: its endpoint resolver returns only the latest
+    // stage and would make valid historical A deliveries look unknown after B
+    // replaces A.
+    const {entries, historicalProjectionIds} = await readProjectionTimelineEntries({chatId, endpointIndex, endpointFloor})
+    const records = entries.flatMap(entry => {
+      const timeline = normalizeProjectionTimeline(entry, {expectedChatId: chatId, knownProjectionIds: historicalProjectionIds})
+      return timeline.timeline.delivery_records.map(record => ({...cloneValue(record), owner_index: entry.owner_index, owner_swipe_id: entry.owner_swipe_id}))
+    })
+    return records.sort((left, right) => Number(left.owner_index) - Number(right.owner_index) || String(left.delivery_record_id).localeCompare(String(right.delivery_record_id)))
   }
 
   async function deleteProjection({chatId, ownerFloor, floorVersion, projectionId, evidenceRefs = []} = {}) {

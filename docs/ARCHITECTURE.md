@@ -54,7 +54,7 @@ flowchart TD
     Event --> Core
 ```
 
-依赖方向的硬规则：Adapter 不依赖业务 feature；feature 不直接依赖 UI 或 SillyTavern transport；Storage 不依赖 runtime feature；Generation Lifecycle 不反向导入 `events.js`；普通 Floor 写入不绕过 Coordinator；Host/Floor Recognition 不依赖 Automatic Scheduler；Automatic Scheduler 只依赖 Shared Analysis Execution port，不依赖 World/Event/Tracking/Projection 具体实现；Shared Analysis Execution 不依赖 Automatic Scheduler；Manual Analysis 不修改 Automatic Scheduler 内部状态。
+依赖方向的硬规则：Adapter 不依赖业务 feature；feature 不直接依赖 UI 或 SillyTavern transport；Storage 不依赖 runtime feature；Generation Lifecycle 不反向导入 `events.js`；普通 Floor 写入不绕过 Coordinator；Host/Floor Recognition 不依赖 Automatic Scheduler；Automatic Scheduler 的 interval/due gate 只依赖 Shared Analysis Execution port，不直接依赖 World/Event/Tracking/Projection 具体实现；settled Character Floor 的内部 Projection 同步通过注入的窄 bridge 调用，不属于 interval/due gate，也不调用外部 API；Shared Analysis Execution 不依赖 Automatic Scheduler；Manual Analysis 不修改 Automatic Scheduler 内部状态。
 
 ## Feature-to-file map
 
@@ -65,14 +65,14 @@ flowchart TD
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
-| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、generation、stale guard、Floor persistence readback、Runtime DTO 和 Projection Refresh |
+| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、自动路径 completed-input 去重、settled-floor 内部内置阶段同步、外部 API Projection 路由、generation、stale guard、Floor persistence readback、Runtime DTO 和 Projection Refresh |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
-| Automatic Analysis Port | `runtime/automatic-analysis.js` | settled Character Floor 的自动观察入口、只读 scheduler state 和 lifecycle reset；不拥有 scheduler implementation |
+| Automatic Analysis Port | `runtime/automatic-analysis.js` | settled Character Floor 的自动观察入口、只读 scheduler state 和 lifecycle reset；interval/due 只控制外部 World/Event/Projection API 路由，不拥有 scheduler implementation |
 | Shared Analysis Execution Port | `runtime/analysis-execution.js` | automatic/manual 共用的单一 execution seam；不拥有 scheduler state |
 | Manual Analysis Port | `runtime/manual-analysis.js` | 用户主动 refresh、Character/Event 和 current-floor 分析入口；不修改 scheduler state |
 | SillyTavern Adapter | `runtime/sillytavern-adapter.js` | 原始 Host context、Chat/Floor slot I/O、HTTP transport、listener subscribe |
 | Runtime Composition | `runtime/runtime.js` | create / inject / assemble / return；不拥有业务状态 |
-| Analysis Pipeline Coordinator | `runtime/event-analysis.js` | execution ownership、runAnalysis、generic retry、scheduler、World→Event pipeline、terminal 和 shared bridges |
+| Analysis Pipeline Coordinator | `runtime/event-analysis.js` | execution ownership、runAnalysis、generic retry、scheduler、World→Event 外部分析 pipeline、settled-floor 内部 Projection bridge、terminal 和 shared bridges |
 | ST integration / compatibility facade | `runtime/events.js` | 顶层 bootstrap、public facade、lifecycle orchestration、source cleanup 和冻结的 persistence-policy bridge |
 | Floor Persistence Coordinator | `storage/floor-persistence-coordinator.js` | ordinary owner-scoped Floor transaction、merge、save、readback、confirmed decision |
 | Projection | `storage/projection.js`、`storage/projection-timing.js`、`runtime/projection-runtime.js` | `projection_timeline` 与 `projection_timing_snapshot` 的 Floor-owned owner workflow；Runtime post-processing 与 readback |
@@ -202,8 +202,37 @@ trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除
 刷新、Projection lifecycle、Tracking、超时判断或 Floor 保存。期间的 Chat/消息/Swipe 自动触发由
 `runtime/events.js` 合并暂存；最终 Character Floor 确认，或明确停止/取消后，才解除非阻塞
 Generation gate，并通过当前 Chat、active Swipe 和完整 Floor Version guard 重放一次后处理。
+若自动 Event Analysis 在 gate 内先完成，`runtime/event-analysis.js` 只暂存其 Projection
+postprocessor；匹配的最终 Character Floor settle 后才释放。自动 factual-success 与 lifecycle
+recovery 还共享有界的完整输入完成态去重，避免第一个 process 已结束后，后到的终止/渲染通知
+再次处理同一份事实输入；partial、failed 与 stale 结果不进入完成态缓存。
+如果最终 Character Floor 已经先完成交接、旧 generation intent 随后被 supersede 清理，
+匹配的 `GENERATION_ENDED` 仍会释放当前 gate，并只按当前完整 Floor Version 放出暂存的
+Projection postprocessor；清理 intent 不能静默丢弃暂存推演，也不能产生第二次交接。
+settled Character Floor 之后还有一条独立的内部 Projection 路径：它每个合法 settled Floor
+都可以重新读取 Timing/Aggregation、判断当前内置观察阶段并复用或替换当前阶段快照；它只处理
+插件内置分支，不调用 Projection/World/Event 外部 API，也不消耗 `analysis_interval`。
+`analysis_interval` 仍只限制外部 World/Event 分析及其外部 Projection 路径。
 若发生 Chat 边界，旧 slot 会先清空；属于旧 Chat 的延后事件会丢弃，新的 Context 只能在
-gate 解除后重建。
+gate 解除后重建。该 gate 使用有界 activity lease：普通 start 约 3000ms，
+`STREAM_TOKEN_RECEIVED`（宿主提供时）或匹配的最终 `CHARACTER_MESSAGE_RENDERED` 一旦确认真实生成活动，就停止 provisional expiry；重复 start 只续租不清空 pending
+事件，终止事件与最终 settle 后立即释放，但 real activity 仍保留一个不续租的 hard watchdog。lease 超时只允许安全恢复 deferred `CHAT_CHANGED` 的只读结果，
+会丢弃其他业务触发，绝不单独授权 Analyzer、Projection/Tracking persistence 或 Context
+重算。hard watchdog 到期时仅 fail-closed 放弃本轮，不计算 partial text，并释放 gate；timer 带 gate identity/token guard，并在 release/destroy 时清理；start/renew/expire/release/restore
+原因进入 Debug trace。lease 超时时会先保存并取消 Generation Lifecycle 的 stale pending intent，
+随后只忽略同一 Chat/epoch 中未被新正文证实的 `ENDED/STOPPED/CANCELLED`、渲染和其他业务事件。
+如果同一 Chat/epoch 后续通过 `MESSAGE_RECEIVED` 或匹配的
+`CHARACTER_MESSAGE_RENDERED` 证明出现了新的 Character Floor，Runtime 才恢复这个 pending intent
+并重新打开 deferred gate；之后仍必须同时满足最终 Character Floor 和 `GENERATION_ENDED`，才进入既有
+guarded final-floor handoff 一次。hard watchdog 后永不复活。Chat 切换或新的
+`GENERATION_STARTED` 会清除 quarantine，避免影响无关生命周期；后续真实 start 建立新 intent，
+stop/cancel 可以立即释放新 gate。
+
+普通 `CHAT_CHANGED`（不在 Generation gate 内）是独立的 Chat rebind 边界：
+`runtime/events.js` 清理旧 Context 槽位，保留当前 Chat/active Swipe/Floor 的正常绑定和
+registry/scheduler 只读重建，再通过 `runtime/projection-context.js` 的只读恢复路径显示已有
+Projection/Health Guidance。该路径不调用 Projection process、lifecycle tick、自动 recovery
+或 Analyzer，也不产生 Projection/Tracking/Lifecycle/Delivery Floor 写入。
 
 NSFW 自动聚合诊断也复用 `runtime/diagnostics.js` 的有限 Runtime buffer，不创建业务状态或
 新的 Floor 持久化根。自动调度、Projection process 与
@@ -267,7 +296,10 @@ Exposure、候选/accepted Exposure、最终 Cycle 及 `cycle_id_source`；`cycl
 与未创建；其中 readback succeeded 只表示
 只读权威读取成功，结果是否存在由 result_present 表示。`projection_diagnostics` 单独报告
 规则可用性、Eligibility、Timing Window 和 Projection 调度，不把空规则解释为 Timing
-或 Aggregation 的阻断；诊断还标记内置候选来源与是否实际调用 AI。
+或 Aggregation 的阻断；诊断还标记内置候选来源与是否实际调用 AI。Projection Debug
+同时显示当前走的是 `internal` 还是 `analysis` 路线、外部 API 是否允许、scheduler 判定、
+阶段复用数量、阶段快照 planned/succeeded/failed、阶段键和失败原因；这些字段来自同一
+transient trace，不新增业务状态或持久化字段。
 
 ## Feature module creation rule
 
@@ -544,6 +576,22 @@ popup shell，再异步填充 read projection。v1 state modifier 固定为 0；
 Chat/message/Floor/Swipe 与编辑开始时捕获的 live authoritative version 完全一致，
 显式 Timing 编辑/当前 Aggregation 重评估可在严格 live six-field 校验通过后修复该
 槽位元数据；历史 Floor 与普通写入不走此路径，且 Debug read 仍然只读。
+
+内置 pre-confirmation Projection 按人物、`pregnancy_id|null`、cycle 形成
+Story Time 阶段快照；机制元数据不参与阶段身份分组。Runtime 在同阶段复用完整四条候选；跨阶段先
+在内存中准备完整新阶段，再通过一次 `saveProjectionBatch()` 写入当前 Floor，并只做
+一次最终 readback。阶段切换不会为旧阶段追加 `deleted` 或 `expired` lifecycle；Resolver
+在 endpoint 读取时按内置阶段顺序选择最高的完整阶段；同阶段才按最近完成 Floor 选择。旧格式若四个分支分布在多个合法 Floor，Resolver 会按同一
+人物、pregnancy、cycle 与 stage identity 重建完整阶段，且不会混合不同身份；迟到的旧阶段分支不能覆盖已完成的新阶段。回退到较早 Floor 时自然恢复旧快照。真实 factual
+lifecycle、用户删除、Delivery 和 World Model Projection 仍使用各自既有语义。
+Delivery replay 的引用校验独立读取 surviving historical Floor creations，不能复用只含
+当前阶段的产品 views；因此旧阶段 Delivery 仍可参与 response observation 与 timeout，
+但不会重新暴露旧 Projection creation。
+当外部 Event API 因 interval 尚未到期而跳过、而当前 Character Floor 尚无合法 owner slot
+时，内部阶段同步会通过现有 Event/Floor Coordinator 先建立当前 Floor 的合法快照，继承最近
+有效的 `events` 与 `character_registry`，但不伪造 `analysis.status=success`、不重置外部
+scheduler 基线，也不创建第二套事实源。这个 owner seed 只是 Projection 写入的前置条件；
+同阶段复用不写入，跨阶段仍只提交一次 Projection creation/evidence batch。
 
 ### Feature Delivery Completeness
 

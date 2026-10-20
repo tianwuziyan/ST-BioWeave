@@ -1,4 +1,5 @@
-import { builtInPreConfirmationBranchForConcern } from './projection-eligibility.js'
+import { differenceStoryTime } from '../story/time.js'
+import { builtInPreConfirmationBranchForConcern, getBuiltInPreConfirmationSchedule } from './projection-eligibility.js'
 
 export const PROJECTION_CONTEXT_INJECTION_KEY = 'bioweave_projection_context'
 export const PROJECTION_CONTEXT_POSITION = 'IN_CHAT'
@@ -58,6 +59,71 @@ function sortViews(left, right) {
   )
 }
 
+function elapsedStoryDays(view, currentStoryTime) {
+  if (!currentStoryTime || !view?.timing?.reference_story_time) return null
+  const elapsed = differenceStoryTime(currentStoryTime, view.timing.reference_story_time)
+  if (!elapsed || !Number.isFinite(Number(elapsed.value))) return null
+  return elapsed.unit === 'minute' ? Number(elapsed.value) / 1440 : Number(elapsed.value)
+}
+
+function builtInSnapshotIdentity(view) {
+  const evidence = view?.aggregation_evidence ?? {}
+  return JSON.stringify([text(view?.subject_id), evidence.pregnancy_id ?? null, evidence.cycle_id ?? null])
+}
+
+function completeBuiltInStage(views, stageKey) {
+  const branchKeys = new Set(
+    getBuiltInPreConfirmationSchedule()
+      .find(stage => stage.key === stageKey)
+      ?.branches.map(branch => branch.key) ?? [],
+  )
+  const present = new Set(
+    list(views)
+      .filter(view => view?.context_visible === true && view?.deleted !== true)
+      .map(view => builtInPreConfirmationBranchForConcern(view?.development_concern_key)?.key)
+      .filter(branchKey => branchKeys.has(branchKey)),
+  )
+  return branchKeys.size > 0 && present.size === branchKeys.size
+}
+
+function filterViewsForCurrentBuiltInStage(views, { currentStoryTime = null } = {}) {
+  const source = list(views)
+  if (!currentStoryTime) return source
+  const builtIn = source.filter(view => builtInPreConfirmationBranchForConcern(view?.development_concern_key))
+  const groups = new Map()
+  for (const view of builtIn) {
+    const identity = builtInSnapshotIdentity(view)
+    if (!groups.has(identity)) groups.set(identity, [])
+    groups.get(identity).push(view)
+  }
+  const retained = new Set()
+  for (const group of groups.values()) {
+    const timedView = group.find(view => elapsedStoryDays(view, currentStoryTime) !== null)
+    if (!timedView) {
+      group.forEach(view => retained.add(view))
+      continue
+    }
+    const elapsedDays = elapsedStoryDays(timedView, currentStoryTime)
+    const schedule = getBuiltInPreConfirmationSchedule()
+    const currentStage = schedule.find(stage => elapsedDays >= stage.min_elapsed_story_days && elapsedDays <= stage.max_elapsed_story_days)
+    if (!currentStage) continue
+    const completeStages = schedule.filter(stage => completeBuiltInStage(group, stage.key)).map(stage => stage.key)
+    const selectedStage = completeStages.includes(currentStage.key)
+      ? currentStage.key
+      : completeStages.filter(stageKey => schedule.findIndex(stage => stage.key === stageKey) < schedule.indexOf(currentStage)).at(-1)
+    if (selectedStage) {
+      group
+        .filter(view => builtInPreConfirmationBranchForConcern(view?.development_concern_key)?.stage_key === selectedStage)
+        .forEach(view => retained.add(view))
+    }
+  }
+  return source.filter(view => {
+    const branch = builtInPreConfirmationBranchForConcern(view?.development_concern_key)
+    if (!branch) return true
+    return retained.has(view)
+  })
+}
+
 function normalizeAttribution(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   if (value.conflict === true || value.status === 'conflicted' || list(value.conflicts).length) {
@@ -83,9 +149,9 @@ function normalizeAttribution(value) {
   }
 }
 
-export function buildProjectionContextDTO(views = [], { attributionBySubject = {} } = {}) {
+export function buildProjectionContextDTO(views = [], { attributionBySubject = {}, currentStoryTime = null } = {}) {
   const seen = new Set()
-  return list(views)
+  return filterViewsForCurrentBuiltInStage(views, { currentStoryTime })
     .filter(view => view?.context_visible === true)
     .sort(sortViews)
     .filter(view => {
@@ -132,7 +198,7 @@ export function buildProjectionContextPrompt(context = []) {
   if (projectionEntries.length) {
     lines.push(
       'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
-      '本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。请将其纳入后续剧情推演，从备选方向中为各角色选择适合的状态，并通过日常行为、身体感受、人物互动或自然衍生的小情节逐步呈现。允许围绕这些状态设计合理情节，使其融入正文，而非仅作为背景信息。',
+      '本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。请将其纳入后续剧情推演，从生理反应中为各角色选择适合的状态，并通过日常行为、身体感受、人物互动或自然衍生的小情节逐步呈现。允许围绕这些状态设计合理情节，使其融入正文，而非仅作为背景信息。',
     )
   }
   const groupedProjections = new Map()
@@ -149,7 +215,7 @@ export function buildProjectionContextPrompt(context = []) {
       const direction = promptDirection(entry)
       if (direction.content) {
         const title = direction.title ? `${direction.title}；` : ''
-        lines.push(`  - 发展方向${directionIndex}：${title}${direction.content}`)
+        lines.push(`  - 生理反应${directionIndex}：${title}${direction.content}`)
         directionIndex += 1
       }
     }
@@ -189,11 +255,12 @@ export function buildProjectionContextPrompt(context = []) {
 }
 
 export function buildProjectionContext(views, options = {}) {
-  const projectionDTO = buildProjectionContextDTO(views, options)
+  const filteredViews = filterViewsForCurrentBuiltInStage(views, options)
+  const projectionDTO = buildProjectionContextDTO(filteredViews, { ...options, currentStoryTime: null })
   const dto = [...projectionDTO, ...healthGuidanceDTO(options.healthGuidance)]
   const displayNameBySubject = options.displayNameBySubject ?? {}
   const seen = new Set()
-  const promptProjectionMetadata = list(views)
+  const promptProjectionMetadata = list(filteredViews)
     .filter(view => view?.context_visible === true)
     .sort(sortViews)
     .filter(view => {
@@ -209,5 +276,12 @@ export function buildProjectionContext(views, options = {}) {
       ? { development_concern_key: promptProjectionMetadata[projectionDTO.indexOf(entry)]?.development_concern_key }
       : {}),
   }))
-  return { dto: clone(dto), prompt: buildProjectionContextPrompt(promptContext) }
+  return {
+    dto: clone(dto),
+    prompt: buildProjectionContextPrompt(promptContext),
+    contextVisibleProjectionIds: filteredViews
+      .filter(view => view?.context_visible === true)
+      .map(view => view?.projection_id)
+      .filter(Boolean),
+  }
 }

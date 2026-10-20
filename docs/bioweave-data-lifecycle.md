@@ -298,11 +298,44 @@ with the Character domain. It contains only `creations`, `evidence_records`, and
 active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
+Built-in pre-confirmation creations are complete stage snapshots. For each
+`subject_id + pregnancy_id|null + cycle_id`, a read selects the highest
+complete built-in schedule stage at or before the endpoint Floor; within that
+stage, the latest complete four-branch snapshot wins. Legacy
+timelines whose four branches are distributed across multiple valid Floors are
+reconstructed by the same identity and stage before this selection; cycle,
+pregnancy, and stage identities are never mixed, and a late branch from an
+older stage cannot regress a newer complete stage. A stage
+transition therefore writes only the new creation/evidence batch to the current
+Floor; it does not write synthetic deletion or expiry lifecycle records for the
+previous stage. The previous stage remains append-only on its original Floor,
+so endpoint rollback restores it without a migration or extra persistence root.
+Delivery replay separately validates references against surviving historical
+Floor creations rather than the current product view. Historical submissions
+and responses therefore remain available for timeout/observation processing
+without making the replaced creation visible in the current Projection view.
+
+The external automatic-analysis interval does not gate the internal built-in
+stage route. After a settled Character Floor, the Runtime may reuse the current
+stage or persist the next complete built-in stage even when the external
+World/Event API route is skipped. If that current Floor has no complete owner
+slot, the internal route first uses the existing Event/Floor Coordinator to
+inherit only the nearest valid `events` and `character_registry` snapshot with
+the current Floor Version. It leaves `analysis` unchanged, does not reset the
+external scheduler baseline, and does not add a Chat-level cache or second
+fact source. Same-stage reuse remains write-free; a stage change still uses one
+Projection creation/evidence batch after the owner prerequisite succeeds.
 
 The transient Projection Context is a separate Runtime read projection. Its
 ordinary Projection input comes only from `getProjectionViews()` results whose
-`context_visible` is true; Health Recovery Guidance is read from the current
-derived Health State. It never scans the raw timeline and never becomes a
+`context_visible` is true. Built-in pre-confirmation views are selected
+independently for each `subject_id + pregnancy_id|null + cycle_id` identity;
+mechanism metadata does not split one subject's stage branches: a complete four-branch snapshot for the current Story
+Time schedule stage takes priority; during a stage transition, the latest
+complete prior stage remains temporarily available until the new snapshot is
+ready; after the 42-day observation window, the prior stage is no longer
+injected. Generic/world-model projections are unchanged. Health Recovery
+Guidance is read from the current derived Health State. It never scans the raw timeline and never becomes a
 persistent Chat field. The
 fixed SillyTavern extension slot is `bioweave_projection_context`, injected with
 `setExtensionPrompt()` at `IN_CHAT`, depth 4, SYSTEM role. Updating the slot
@@ -320,9 +353,34 @@ Chat/message triggers are coalesced behind a non-blocking Generation gate; after
 the final Character Floor is confirmed, or generation is explicitly stopped or
 cancelled, the runtime revalidates the current Chat, active Swipe, and complete
 Floor Version before replaying the deferred lifecycle signals once and running
-one post-generation handoff. Deferred signals from an old Chat are discarded. A
+one post-generation handoff. Automatic factual-success Projection postprocessing
+that finishes while this gate is active is deferred to that exact final Floor.
+Automatic factual-success and lifecycle recovery also use a bounded, Runtime-only
+completed-input guard so later terminal/render notifications cannot rerun the same
+successful complete factual basis; partial, failed, stale, manually requested,
+and event-edit/delete executions remain retryable or retain their explicit path.
+Deferred signals from an old Chat are discarded. A
 Chat boundary clears the old slot first and rebuilds Context only after that
-handoff.
+handoff. The gate is time-bounded: a start arms a provisional lease of about
+3000 ms. A stream token (when exposed by the host as `STREAM_TOKEN_RECEIVED`)
+or matching final Floor activity confirms real generation and disables
+provisional expiry but leaves a bounded hard watchdog armed; terminal events and the final settled handoff release
+immediately. Repeated starts reuse the same gate without dropping pending events. Lease
+expiry is only stale-start recovery: it may replay a deferred ordinary
+`CHAT_CHANGED` read-only restore, while unsafe message/Swipe/business triggers
+are dropped. Expiry snapshots and cancels the stale Generation Lifecycle
+pending intent. A later same-Chat/epoch `MESSAGE_RECEIVED` or matching
+`CHARACTER_MESSAGE_RENDERED` may restore that intent only when it proves a new
+Character Floor; the reopened gate still waits for both the final render and
+`GENERATION_ENDED` before the one guarded final-floor handoff. Unconfirmed
+late renders, orphan terminal signals, and unrelated lifecycle events remain
+quarantined. If the hard watchdog expires after real activity, later signals
+remain quarantined and the run is abandoned fail-closed without partial-text
+calculation. Chat change or a new start clears this quarantine, so expiry never
+authorizes work by itself and cannot poison unrelated lifecycle events. Timer
+identity/token guards prevent an old Chat or generation from releasing a newer
+gate, and destroy/release clears timer state. The Debug trace records
+start/renew/expire/release/restore reasons without raw content.
 Chat changes, active Swipe changes, Floor Version changes, Floor deletion, no
 Character Floor, or a read failure all resolve again or clear the slot. The
 prompt is transient narrative guidance, not factual evidence; Event Analysis
@@ -935,7 +993,13 @@ The following paths preserve their source Chat and load only the target owner:
 The storage read is scoped by `chat_scope.chat_id`. A target with no matching
 BioWeave root receives the clean default shape; a source Chat remains stored
 exactly as it was. Pending work owned by the old Chat is aborted/invalidated,
-and a late result fails its owner/epoch guard.
+and a late result fails its owner/epoch guard. Outside the Generation gate, the
+Host `CHAT_CHANGED` path performs only Chat/owner rebinding, read-only
+registry/scheduler reconstruction, and restoration of existing Projection and
+Health Guidance views. It does not run Projection processing or lifecycle
+ticks, automatic recovery, Analyzer work, Tracking/Lifecycle/Projection
+persistence, or delivery submission. The old `bioweave_projection_context`
+slot is cleared before the target Chat is restored.
 
 ### 8.2 Verified Start New Chat A to B
 
@@ -1264,17 +1328,11 @@ of the core persistence, generation and Swipe baseline. Desktop/Tablet/Mobile
 and broader product acceptance remains separate because Node fixtures cannot
 prove every installed host lifecycle or UI behavior.
 
-For the current release baseline, the persistence issue is closed, but the
-checkout is not a full-check pass: `npm run check` reports `1098` tests, with
-`1063` passing, `35` failing, and `0` skipped. The failures are `32` World
-Model prompt/debug/fixture contract regressions and `3` Phase 2A UI contract
-regressions. The two previously identified failures remain among them:
-`tests/world-model.test.js:7021` expects an obsolete core prompt phrase, while
-`tests/world-model.test.js:8035` detects the fixture-specific term `妖修` in
-`ai/prompts.js`. The first is not yet shown to be a production runtime
-failure; the second is a current fixture-isolation violation in production
-prompt text. All `35` remain release-validation blockers until resolved. This
-does not reopen the verified World Persistence F5/reload issue.
+For the current release baseline, the persistence issue is closed and the
+current checkout passes `npm run check`: `1680` tests were collected, `1664`
+passed, `16` were explicitly skipped, and `0` failed. This automated result
+does not replace real SillyTavern lifecycle or installed-client acceptance,
+and it does not reopen the verified World Persistence F5/reload issue.
 
 When the final code differs from a planned name or path, update the registry
 and this document to the actual path. When the host lifecycle differs from the

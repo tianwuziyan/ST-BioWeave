@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/index.md","reason":"定位本任务必须遵循的 Floor ownership 与生命周期规范"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"约束 Projection timeline、六字段 Floor Version、Generation gate 与批量保存"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 Runtime 到 Storage 再到 Context 的跨层数据流和原子性"}
+{"file":"docs/ARCHITECTURE.md","reason":"保持 Projection feature owner、Generation Lifecycle 和冻结 persistence 主线一致"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认没有新增持久化字段并保持 clear/invalidation 规则"}

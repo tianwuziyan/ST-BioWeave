@@ -87,6 +87,12 @@ function requiresParticipantAggregation(view) {
   return view?.tracking_scope === 'pre_confirmation' || view?.aggregation_path === 'participant_aggregation';
 }
 
+function isBuiltInStageProjection(view) {
+  return view?.tracking_scope === 'pre_confirmation'
+    && view?.aggregation_path === 'participant_aggregation'
+    && Boolean(builtInPreConfirmationBranchForConcern(view?.development_concern_key));
+}
+
 function toProjectionDTO(view) {
   if (!view || typeof view !== "object") return null;
   if (requiresParticipantAggregation(view) && !isParticipantAggregationEvidenceComplete(view.aggregation_evidence)) return null;
@@ -226,6 +232,7 @@ export function createProjectionRuntime({
   resolveCurrentFloor,
   getProjectionViews,
   saveProjectionBatch,
+  ensureProjectionFloorOwner = null,
   saveEvolutionDecision,
   saveProjectionLifecycleBatch = null,
   resolvePreConfirmationTiming = null,
@@ -245,6 +252,7 @@ export function createProjectionRuntime({
   if (typeof saveEvolutionDecision !== "function") throw new TypeError("PROJECTION_EVOLUTION_SAVE_REQUIRED");
 
   const inFlight = new Map();
+  let completedAutomaticExecution = null;
   const lifecycleInFlight = new Map();
   let destroyed = false;
 
@@ -280,6 +288,41 @@ export function createProjectionRuntime({
       payload,
       chatId: payload?.chat_id ?? getChatId?.(),
     });
+  }
+
+  function builtInStageStatus(items = []) {
+    const candidates = (Array.isArray(items) ? items : [])
+      .map(item => item?.projectionCandidate ?? item)
+      .filter(isBuiltInStageProjection)
+    return {
+      subject_count: new Set(candidates.map(item => item.subject_id).filter(Boolean)).size,
+      stage_keys: [...new Set(candidates
+        .map(item => builtInPreConfirmationBranchForConcern(item.development_concern_key)?.stage_key)
+        .filter(Boolean))].sort(),
+      candidate_count: candidates.length,
+    }
+  }
+
+  function completeBuiltInStageKeys(items = []) {
+    const groups = new Map()
+    for (const item of (Array.isArray(items) ? items : [])) {
+      const candidate = item?.projectionCandidate ?? item
+      if (!isBuiltInStageProjection(candidate)) continue
+      const branch = builtInPreConfirmationBranchForConcern(candidate.development_concern_key)
+      const evidence = candidate.aggregation_evidence
+      const key = JSON.stringify([
+        candidate.subject_id,
+        evidence?.pregnancy_id ?? null,
+        evidence?.cycle_id ?? null,
+        candidate.mechanism?.key ?? null,
+        branch?.stage_key ?? null,
+      ])
+      if (!groups.has(key)) groups.set(key, new Set())
+      groups.get(key).add(branch?.key ?? null)
+    }
+    return new Set([...groups.entries()]
+      .filter(([, branches]) => branches.size === 4)
+      .map(([key]) => key))
   }
 
   function recordPipelineStage(payload = {}) {
@@ -475,7 +518,7 @@ export function createProjectionRuntime({
         : null;
       const response = await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE', () => recordCompletedResponse({target, execution, inputs, deliveries}), {call_count: 1, output_count: deliveries?.length ?? 0});
       const timeout = await evaluateTimeoutNoPregnancy(target, {inputs, deliveries: response.deliveries ?? deliveries});
-      const projection = await process({reason: 'factual-success', runId, inputs: timeout.closed ? null : inputs, performanceRunId});
+      const projection = await process({reason: 'factual-success', runId, inputs: timeout.closed ? null : inputs, performanceRunId, dedupeCompleted: true});
       finishAutomaticPerformance({run_id: performanceRunId, status: projection.status === 'failed' ? 'FAILED' : projection.status === 'partial' ? 'PARTIAL' : 'SUCCEEDED'});
       return {response, timeout, projection};
     } catch (error) {
@@ -489,10 +532,10 @@ export function createProjectionRuntime({
     }
   }
 
-  async function runExecution(inputs, identity, reason, trigger) {
+  async function runExecution(inputs, identity, reason, trigger, {allowExternalApi = true} = {}) {
     const startedAt = new Date().toISOString();
     startActivity(identity);
-    emitStatus({stage: "PROJECTION_PROCESS_STARTED", state: "running", phase: "process", reason, trigger, current_story_time: inputs.currentStoryTime ?? null, ...identity, started_at: startedAt});
+    emitStatus({stage: "PROJECTION_PROCESS_STARTED", state: "running", phase: "process", reason, trigger, projection_route: allowExternalApi ? "analysis" : "internal", external_api_allowed: allowExternalApi, current_story_time: inputs.currentStoryTime ?? null, ...identity, started_at: startedAt});
     recordPipelineStage({
       stage: "EVENT_SNAPSHOT_RESOLUTION",
       execution_status: "SUCCEEDED",
@@ -531,8 +574,8 @@ export function createProjectionRuntime({
     });
     let partial = false;
     const errors = [];
-    const generatedRecords = [];
-    const generatedResults = [];
+    let generatedRecords = [];
+    let generatedResults = [];
     try {
       let views = await measureAutomaticStage(identity.performance_run_id, 'INITIAL_PROJECTION_VIEWS', () => getProjectionViews({
         chatId: identity.chat_id,
@@ -571,7 +614,10 @@ export function createProjectionRuntime({
 
       let viewsChanged = false;
       for (const view of views?.all ?? []) {
-        if (view?.deleted || ["realized", "contradicted", "expired"].includes(view?.factual_status)) continue;
+        // A Story Time stage replacement is a snapshot change, not a factual
+        // lifecycle event. The old stage remains in its original Floor and is
+        // hidden by the endpoint resolver; never expire/delete it here.
+        if (view?.deleted || isBuiltInStageProjection(view) || ["realized", "contradicted", "expired"].includes(view?.factual_status)) continue;
         const evolution = evaluateProjectionEvolution({
           projection: view,
           currentView: view,
@@ -596,6 +642,7 @@ export function createProjectionRuntime({
           rule.projection_rule_id,
         ]));
         const staleBuiltInViews = (views?.all ?? []).filter(view => {
+          if (isBuiltInStageProjection(view)) return false;
           const branch = builtInPreConfirmationBranchForConcern(view?.development_concern_key);
           if (!branch || view?.deleted || view?.aggregation_path !== 'participant_aggregation') return false;
           const expectedRuleId = expectedRuleIds.get(`${view?.mechanism?.key ?? ''}\u001f${view.development_concern_key}`);
@@ -718,34 +765,65 @@ export function createProjectionRuntime({
           ai_call_will_start: decision.eligibility === 'eligible' && !decision.existing_projection_id,
         })),
       });
+      const reusableBuiltIn = eligibility.decisions.filter(decision =>
+        decision.projection_source === 'built_in_pre_confirmation'
+        && decision.eligibility === 'eligible'
+        && decision.existing_projection_id,
+      )
+      const eligibleBuiltIn = eligibility.decisions.filter(decision =>
+        decision.projection_source === 'built_in_pre_confirmation'
+        && decision.eligibility === 'eligible',
+      )
+      if (eligibleBuiltIn.length >= 4 && reusableBuiltIn.length === eligibleBuiltIn.length) {
+        emitStatus({
+          stage: 'PROJECTION_STAGE_REUSED', state: 'success', phase: 'reuse', reason, trigger,
+          ...identity,
+          subject_count: new Set(reusableBuiltIn.map(decision => decision.subject_id).filter(Boolean)).size,
+          reused_candidate_count: reusableBuiltIn.length,
+          stage_keys: [...new Set(reusableBuiltIn
+            .map(decision => builtInPreConfirmationBranchForConcern(decision.development_concern_key)?.stage_key)
+            .filter(Boolean))].sort(),
+        })
+      }
       if (eligibility.diagnostics?.some(item => item.code === "projection_rule_conflict")) {
         throw Object.assign(new Error("PROJECTION_ELIGIBILITY_FAILED"), {code: "PROJECTION_ELIGIBILITY_FAILED"});
       }
 
       const generationDecisions = eligibility.decisions.filter(item => item.eligibility === "eligible" && !item.existing_projection_id);
-      const aiGenerationDecisions = generationDecisions.filter(item => item.projection_source !== 'built_in_pre_confirmation');
-      emitStatus({stage: "PROJECTION_AI_PLAN", state: "running", phase: "generation", reason, trigger, candidate_count: 0, ai_call_will_start: aiGenerationDecisions.length > 0, built_in_candidate_count: generationDecisions.length - aiGenerationDecisions.length, ...identity, started_at: startedAt});
+      const deferredExternalApiDecisions = allowExternalApi
+        ? []
+        : generationDecisions.filter(item => item.projection_source !== 'built_in_pre_confirmation');
+      const generationDecisionsToProcess = allowExternalApi
+        ? generationDecisions
+        : generationDecisions.filter(item => item.projection_source === 'built_in_pre_confirmation');
+      const aiGenerationDecisions = generationDecisionsToProcess.filter(item => item.projection_source !== 'built_in_pre_confirmation');
+      for (const decision of deferredExternalApiDecisions) {
+        emitStatus({stage: "PROJECTION_AI_SKIPPED", state: "running", phase: "generation", reason, trigger, projection_rule_id: decision.projection_rule_id, development_concern_key: decision.development_concern_key, rejection_reason: "EXTERNAL_API_DEFERRED_TO_ANALYSIS_ROUTE", ai_call_will_start: false, projection_route: "internal", external_api_allowed: false, ...identity});
+      }
+      emitStatus({stage: "PROJECTION_AI_PLAN", state: "running", phase: "generation", reason, trigger, candidate_count: 0, ai_call_will_start: aiGenerationDecisions.length > 0, built_in_candidate_count: generationDecisionsToProcess.length - aiGenerationDecisions.length, deferred_external_api_candidate_count: deferredExternalApiDecisions.length, projection_route: allowExternalApi ? "analysis" : "internal", external_api_allowed: allowExternalApi, ...identity, started_at: startedAt});
       recordPipelineStage({
         stage: "PROJECTION_AI_SCHEDULING",
-        execution_status: generationDecisions.length > 0 ? "ATTEMPTED" : "BLOCKED",
-        reason_code: generationDecisions.length > 0 ? "ELIGIBLE_DECISION_FOUND" : "NO_ELIGIBLE_PROJECTION",
+        execution_status: generationDecisionsToProcess.length > 0 ? "ATTEMPTED" : deferredExternalApiDecisions.length > 0 ? "SKIPPED" : "BLOCKED",
+        reason_code: generationDecisionsToProcess.length > 0 ? "ELIGIBLE_DECISION_FOUND" : deferredExternalApiDecisions.length > 0 ? "EXTERNAL_API_DEFERRED" : "NO_ELIGIBLE_PROJECTION",
         invoked: true,
         run_id: identity.run_id ?? null,
         chat_id: identity.chat_id,
         floor_version: identity.floor_version,
         input_count: eligibility.decisions.length,
-        output_count: generationDecisions.length,
+        output_count: generationDecisionsToProcess.length,
         projection_rules_available: rules.length > 0,
         projection_rules_count: rules.length,
-        projection_eligibility: generationDecisions.length > 0
+        projection_eligibility: generationDecisionsToProcess.length > 0
           ? (aiGenerationDecisions.length > 0 ? "ELIGIBLE_DECISION_FOUND" : "BUILT_IN_PRE_CONFIRMATION")
-          : "NO_ELIGIBLE_PROJECTION",
-        projection_candidate_source: generationDecisions.some(decision => decision.projection_source === 'built_in_pre_confirmation') ? 'built_in_pre_confirmation' : null,
+          : deferredExternalApiDecisions.length > 0 ? "EXTERNAL_API_DEFERRED" : "NO_ELIGIBLE_PROJECTION",
+        projection_candidate_source: generationDecisionsToProcess.some(decision => decision.projection_source === 'built_in_pre_confirmation') ? 'built_in_pre_confirmation' : null,
         timing_window_status: eligibility.decisions.map(decision => decision.timing_status).filter(Boolean).join(",") || null,
         projection_ai_request_started: false,
+        projection_route: allowExternalApi ? "analysis" : "internal",
+        external_api_allowed: allowExternalApi,
         source_type: "EXECUTION_TRACE",
       });
-      for (const decision of generationDecisions) {
+      for (const decision of generationDecisionsToProcess) {
         const rule = ruleByKey.get(`${decision.projection_rule_id}\u001f${decision.development_concern_key}`);
         if (!rule) {
           partial = true;
@@ -800,7 +878,7 @@ export function createProjectionRuntime({
             return analyzer.generateProjection(generationInput);
           },
           isStillCurrent: async ({phase}) => {
-            if (destroyed || inFlight.get(identity.execution_id) === undefined) return false;
+            if (destroyed || inFlight.get(identity.in_flight_key) === undefined) return false;
             if (builtInCandidate) return true;
             return currentInputsMatch(identity.execution_id);
           },
@@ -838,7 +916,37 @@ export function createProjectionRuntime({
         });
       }
       if (generatedRecords.length) {
-        if (!(await currentInputsMatch(identity.execution_id))) {
+        const builtInRecords = generatedRecords.filter(item => isBuiltInStageProjection(item?.projectionCandidate))
+        const completeBuiltInKeys = completeBuiltInStageKeys(generatedRecords)
+        const incompleteBuiltInRecords = builtInRecords.filter(item => {
+          const candidate = item.projectionCandidate
+          const branch = builtInPreConfirmationBranchForConcern(candidate.development_concern_key)
+          const evidence = candidate.aggregation_evidence
+          const key = JSON.stringify([
+            candidate.subject_id,
+            evidence?.pregnancy_id ?? null,
+            evidence?.cycle_id ?? null,
+            candidate.mechanism?.key ?? null,
+            branch?.stage_key ?? null,
+          ])
+          return !completeBuiltInKeys.has(key)
+        })
+        if (incompleteBuiltInRecords.length) {
+          partial = true
+          errors.push({reason: 'built_in_stage_incomplete', output_count: incompleteBuiltInRecords.length})
+          generatedRecords = generatedRecords.filter(item => !incompleteBuiltInRecords.includes(item))
+          generatedResults = generatedResults.filter(result => !incompleteBuiltInRecords.some(item => item.projectionCandidate?.projection_id === result.projection?.projection_id))
+        }
+        const builtInSnapshot = builtInStageStatus(generatedRecords)
+        if (builtInSnapshot.candidate_count) emitStatus({
+          stage: 'PROJECTION_STAGE_SNAPSHOT', state: 'planned', phase: 'persistence', reason, trigger,
+          ...identity, snapshot_status: 'planned', ...builtInSnapshot,
+        })
+        if (generatedRecords.length && !(await currentInputsMatch(identity.execution_id))) {
+          if (builtInSnapshot.candidate_count) emitStatus({
+            stage: 'PROJECTION_STAGE_SNAPSHOT', state: 'failed', phase: 'persistence', reason, trigger,
+            ...identity, snapshot_status: 'failed', failure_reason: 'stale', ...builtInSnapshot,
+          })
           emitStatus({state: "stale", phase: "before_persistence", reason, ...identity, started_at: startedAt});
           finishPipelineRun(identity.run_id, {
             execution_status: "BLOCKED",
@@ -847,7 +955,19 @@ export function createProjectionRuntime({
           finishAutomaticPerformance({run_id: identity.performance_run_id, status: 'CANCELLED_STALE_CONTEXT', reason_code: 'FLOOR_VERSION_CHANGED'});
           return {status: "stale", execution_id: identity.execution_id, run_id: identity.run_id, results: generatedResults};
         }
-        try {
+        if (generatedRecords.length) try {
+          if (!allowExternalApi && typeof ensureProjectionFloorOwner === "function") {
+            await measureAutomaticStage(
+              identity.performance_run_id,
+              'PROJECTION_FLOOR_OWNER_SEED',
+              () => ensureProjectionFloorOwner({
+                target: inputs.floor,
+                reason,
+                trigger,
+              }),
+              {call_count: 1, write_count: 1},
+            );
+          }
           await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_PERSISTENCE', () => saveProjectionBatch({
             chatId: identity.chat_id,
             ownerFloor: floorOwner(inputs.floor),
@@ -866,9 +986,17 @@ export function createProjectionRuntime({
             output_count: generatedRecords.length,
             source_type: "EXECUTION_TRACE",
           });
+          if (builtInSnapshot.candidate_count) emitStatus({
+            stage: 'PROJECTION_STAGE_SNAPSHOT', state: 'success', phase: 'persistence', reason, trigger,
+            ...identity, snapshot_status: 'succeeded', ...builtInSnapshot,
+          })
         } catch (error) {
           partial = true;
           errors.push({reason: error?.code ?? error?.message ?? "persistence_failed", output_count: generatedRecords.length});
+          if (builtInSnapshot.candidate_count) emitStatus({
+            stage: 'PROJECTION_STAGE_SNAPSHOT', state: 'failed', phase: 'persistence', reason, trigger,
+            ...identity, snapshot_status: 'failed', failure_reason: error?.code ?? error?.message ?? 'persistence_failed', ...builtInSnapshot,
+          })
           recordPipelineStage({
             stage: "PROJECTION_PERSISTENCE",
             execution_status: "PERSIST_FAILED",
@@ -951,7 +1079,7 @@ export function createProjectionRuntime({
     }
   }
 
-  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null, inputs: suppliedInputs = null, performanceRunId = null} = {}) {
+  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null, inputs: suppliedInputs = null, performanceRunId = null, dedupeCompleted = false, allowExternalApi = true} = {}) {
     if (destroyed) return {status: "destroyed"};
     if (enabledResolver() === false) return {status: "disabled"};
     const ownPerformanceRunId = performanceRunId ?? startAutomaticPerformance({chat_id: getChatId?.(), trigger});
@@ -983,7 +1111,8 @@ export function createProjectionRuntime({
       chat_id: inputs.floor.version.chat_id,
       floor_version: inputs.floor.version,
     });
-    if (inFlight.has(execution_id)) {
+    const inFlightKey = `${execution_id}\u001f${allowExternalApi ? "analysis" : "internal"}`;
+    if (inFlight.has(inFlightKey)) {
       recordPipelineStage({
         stage: "PIPELINE_SCHEDULING",
         execution_status: "SKIPPED",
@@ -1001,7 +1130,28 @@ export function createProjectionRuntime({
         reason_code: "PROJECTION_ALREADY_IN_FLIGHT",
       });
       finishAutomaticPerformance({run_id: ownPerformanceRunId, status: 'SKIPPED', reason_code: 'PROJECTION_ALREADY_IN_FLIGHT'});
-      return inFlight.get(execution_id);
+      return inFlight.get(inFlightKey);
+    }
+    if (dedupeCompleted && completedAutomaticExecution?.execution_id === execution_id &&
+        (allowExternalApi || completedAutomaticExecution.allowExternalApi === true)) {
+      recordPipelineStage({
+        stage: "PIPELINE_SCHEDULING",
+        execution_status: "SKIPPED",
+        reason_code: "PROJECTION_ALREADY_COMPLETED",
+        invoked: true,
+        run_id: resolvedRunId,
+        chat_id: inputs.floor.version.chat_id,
+        floor_version: inputs.floor.version,
+        input_count: 1,
+        output_count: 0,
+        source_type: "EXECUTION_TRACE",
+      });
+      finishPipelineRun(resolvedRunId, {
+        execution_status: "SKIPPED",
+        reason_code: "PROJECTION_ALREADY_COMPLETED",
+      });
+      finishAutomaticPerformance({run_id: ownPerformanceRunId, status: "SKIPPED", reason_code: "PROJECTION_ALREADY_COMPLETED"});
+      return completedAutomaticExecution.result;
     }
     const identity = {
       execution_id,
@@ -1009,10 +1159,27 @@ export function createProjectionRuntime({
       floor_version: inputs.floor.version,
       run_id: resolvedRunId,
       performance_run_id: ownPerformanceRunId,
+      in_flight_key: inFlightKey,
     };
-    const promise = runExecution(inputs, identity, reason, trigger).finally(() => inFlight.delete(execution_id));
-    inFlight.set(execution_id, promise);
+    const promise = runExecution(inputs, identity, reason, trigger, {allowExternalApi})
+      .then(result => {
+        if (dedupeCompleted && result?.status === "success")
+          completedAutomaticExecution = {execution_id, allowExternalApi, result};
+        return result;
+      })
+      .finally(() => inFlight.delete(inFlightKey));
+    inFlight.set(inFlightKey, promise);
     return promise;
+  }
+
+  async function processInternal({reason = "settled-floor-internal", trigger = "automatic-internal", ...options} = {}) {
+    return process({
+      ...options,
+      reason,
+      trigger,
+      dedupeCompleted: true,
+      allowExternalApi: false,
+    });
   }
 
   /** Deterministic lifecycle-only path. It may append Projection lifecycle
@@ -1115,10 +1282,16 @@ export function createProjectionRuntime({
   function destroy() {
     destroyed = true;
     inFlight.clear();
+    completedAutomaticExecution = null;
+  }
+
+  function clearCompletedAutomaticExecutions() {
+    completedAutomaticExecution = null;
   }
 
   return {
     process,
+    processInternal,
     tickLifecycleOnly,
     refreshProjection: () => process({reason: "projection-refresh"}),
     getBusinessData,
@@ -1126,6 +1299,7 @@ export function createProjectionRuntime({
     recordCompletedResponse,
     evaluateTimeoutNoPregnancy,
     handleAnalysisSuccess,
+    clearCompletedAutomaticExecutions,
     destroy,
   };
 }

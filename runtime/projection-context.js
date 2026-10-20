@@ -34,6 +34,55 @@ function displayNamesFromBusinessData(businessData = null, floorVersion = null) 
   return names;
 }
 
+function projectionViewsFrom(value) {
+  return Array.isArray(value?.all) ? value.all : Array.isArray(value) ? value : [];
+}
+
+function projectionSlotWriteSummary({views = [], context = null, displayNameBySubject = {}} = {}) {
+  const visibleProjectionIds = new Set(
+    (Array.isArray(context?.contextVisibleProjectionIds) ? context.contextVisibleProjectionIds : [])
+      .filter(id => text(id)),
+  );
+  const writtenProjectionSubjects = new Set(
+    (Array.isArray(context?.dto) ? context.dto : [])
+      .filter(item => item?.context_type !== 'health_recovery_guidance')
+      .map(item => text(item?.subject_id))
+      .filter(Boolean),
+  );
+  const writtenProjectionIds = [];
+  const subjectCounts = new Map();
+  for (const view of projectionViewsFrom(views)) {
+    const projectionId = text(view?.projection_id);
+    const subjectId = text(view?.subject_id);
+    if (!projectionId || !subjectId || !visibleProjectionIds.has(projectionId) || !writtenProjectionSubjects.has(subjectId)) continue;
+    if (writtenProjectionIds.includes(projectionId)) continue;
+    writtenProjectionIds.push(projectionId);
+    subjectCounts.set(subjectId, (subjectCounts.get(subjectId) ?? 0) + 1);
+  }
+  const writtenSubjects = [...subjectCounts.entries()].map(([subjectId, projectionCount]) => ({
+    subject_id: subjectId,
+    display_name: text(displayNameBySubject?.[subjectId]) || null,
+    projection_count: projectionCount,
+  }));
+  return {
+    st_written_subject_ids: writtenSubjects.map(item => item.subject_id),
+    st_written_subject_count: writtenSubjects.length,
+    st_written_subjects: writtenSubjects,
+    st_written_projection_ids: writtenProjectionIds,
+    st_written_projection_count: writtenProjectionIds.length,
+  };
+}
+
+function emptyProjectionSlotWriteSummary() {
+  return {
+    st_written_subject_ids: [],
+    st_written_subject_count: 0,
+    st_written_subjects: [],
+    st_written_projection_ids: [],
+    st_written_projection_count: 0,
+  };
+}
+
 export function createCurrentStateAttributionResolver({collectActiveBusinessData} = {}) {
   if (typeof collectActiveBusinessData !== 'function') throw new TypeError('CURRENT_STATE_REQUIRED');
   return async ({chatId, floor, businessData, businessDataError, businessDataResolved = false} = {}) => {
@@ -156,6 +205,7 @@ function floorReadStillMatches(left, right) {
         slot_nonempty: false,
         projection_contribution_count: 0,
         health_guidance_count: 0,
+        ...emptyProjectionSlotWriteSummary(),
         clear_reason: reason,
       });
     }
@@ -164,7 +214,7 @@ function floorReadStillMatches(left, right) {
       : {ok: true, status: 'cleared', reason, ...extra};
   }
 
-  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null, projectionViews: suppliedProjectionViews = null, performanceRunId = null} = {}) {
+  async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null, projectionViews: suppliedProjectionViews = null, performanceRunId = null, readOnly = false} = {}) {
     diagnostic('PROJECTION_CONTEXT_REFRESH_STARTED', {
       ...generationFields(generation),
       slot: PROJECTION_CONTEXT_INJECTION_KEY,
@@ -186,7 +236,7 @@ function floorReadStillMatches(left, right) {
     }
     try {
       let views = suppliedProjectionViews ?? await getProjectionViews({chatId, endpointFloor: floor.version.floor});
-      let businessData;
+      let businessData = suppliedBusinessData;
       let businessDataError = null;
       let businessDataResolved = false;
       if (
@@ -262,10 +312,12 @@ function floorReadStillMatches(left, right) {
       if (!currentFloor?.version || !floorReadStillMatches(currentFloor.version, floor.version)) {
         return {ok: false, status: 'stale', reason: 'FLOOR_CHANGED', dto: [], prompt: ''};
       }
+      const displayNameBySubject = displayNamesFromBusinessData(businessData, floor.version);
       const context = buildProjectionContext(views?.all ?? views, {
         attributionBySubject,
         healthGuidance,
-        displayNameBySubject: displayNamesFromBusinessData(businessData, floor.version),
+        currentStoryTime: businessData?.current_story_time ?? businessData?.currentStoryTime ?? null,
+        displayNameBySubject,
       });
       const result = write(context.prompt);
       const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;
@@ -274,6 +326,9 @@ function floorReadStillMatches(left, right) {
       const guidanceFingerprints = (Array.isArray(healthGuidance) ? healthGuidance : [])
         .flatMap(item => Array.isArray(item?.guidance_fingerprints) ? item.guidance_fingerprints : [])
         .filter(Boolean);
+      const actualSlotWriteSummary = result.ok === false || !context.prompt
+        ? emptyProjectionSlotWriteSummary()
+        : projectionSlotWriteSummary({views, context, displayNameBySubject});
       const contextDetails = {
         ...generationFields(generation),
         slot: PROJECTION_CONTEXT_INJECTION_KEY,
@@ -281,11 +336,12 @@ function floorReadStillMatches(left, right) {
         slot_nonempty: Boolean(context.prompt),
         projection_contribution_count: projectionContributionCount,
         projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).map(item => item?.projection_id).filter(Boolean),
-        context_visible_projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).filter(item => item?.context_visible === true).map(item => item?.projection_id).filter(Boolean),
+        context_visible_projection_ids: context.contextVisibleProjectionIds,
         health_guidance_count: healthGuidanceCount,
         selected_stage_summary: selectedStageSummary,
         guidance_fingerprints: guidanceFingerprints,
         context_fingerprint: context.prompt ? diagnosticFingerprint(context.prompt) : null,
+        ...actualSlotWriteSummary,
       };
       if (result.ok === false) {
         diagnostic('PROJECTION_CONTEXT_SLOT_WRITE_FAILED', {
@@ -306,7 +362,7 @@ function floorReadStillMatches(left, right) {
         return {...result, dto: context.dto, prompt: '', ...contextDetails};
       }
       let submission = null;
-      if (context.prompt && typeof recordProjectionSubmission === 'function') {
+      if (!readOnly && context.prompt && typeof recordProjectionSubmission === 'function') {
         try {
           submission = await recordProjectionSubmission({
             chatId,

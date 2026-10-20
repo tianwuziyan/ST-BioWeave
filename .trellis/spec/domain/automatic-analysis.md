@@ -59,14 +59,21 @@ CHARACTER_MESSAGE_RENDERED
   -> resolveFloorAtIndex()
   -> generationLifecycle.onCharacterMessageRendered()
   -> automaticAnalysis.observeSettledCharacterFloor()
+  -> settled-floor 内部 Projection 阶段同步（内置分支，无外部 API）
   -> counter / retryPaused / observed-key / interval due decision
-  -> analysisExecution.run()
+  -> interval due 时才进入 analysisExecution.run()
   -> analyzeFloor() [compatibility-owned implementation]
   -> runAnalysis()
   -> World resolution and execution
   -> Character/Event execution
   -> Floor persistence and derived refresh
 ```
+
+`analysis_interval` 只控制最后这条外部 World/Event 分析路线。每个已经通过
+Generation settle 的有效 Character Floor 都可以进入内部 Projection 阶段同步：它重新读取
+Timing/Aggregation，按人物与 Story Time 判断当前内置观察阶段，同阶段复用，跨阶段保存新的
+完整阶段快照；内部路线不调用外部 API，也不消耗 scheduler counter。打开角色卡或普通只读
+Chat rebind 没有 settled Character Floor，因此不会启动内部业务计算。
 
 `core/message-role.js` and `storage/store.js` remain the host-role/Floor
 recognition boundary. The exact `assistant_message` Character support is part of
@@ -391,8 +398,9 @@ StoryTime failures 合并处理。
   而忽略隔离边界。
 - `docs/ARCHITECTURE.md`：production extraction 完成后才同步实际文件 owner；本
   轮不写未实现的模块名。
-- `docs/bioweave-data-lifecycle.md` 与 `floor-state.md`：只有迁移新增/改变持久
-  化或 runtime state ownership 时才同步；本轮不改变这些 contract。
+- `docs/bioweave-data-lifecycle.md` 与 `floor-state.md`：本轮已同步说明 settled-floor
+  内部 Projection 路线及其在外部 Event API 跳过时的合法 Floor owner seed；没有新增
+  持久化字段或第二套 runtime state ownership。
 
 ## 10. Validation / Error Matrix
 
@@ -400,7 +408,7 @@ StoryTime failures 合并处理。
 | --- | --- | --- | --- |
 | 非 Character host message | Floor Recognition | 返回 rejected/not-a-floor | scheduler 计数或分析 |
 | Character Floor 未 settle | Generation Lifecycle | 保留 pending | scheduler 计数 |
-| 有效 Floor，未到 interval | Automatic Gate | counter + 1 | 调用 World/Event |
+| 有效 Floor，未到 interval | Automatic Gate + settled-floor bridge | counter + 1；运行 internal built-in stage sync | external World/Event/API |
 | 有效 Floor，due | Automatic Gate → Shared Execution | 启动一次执行 | scheduler 自己组 World/Event 输入 |
 | World 不可用/未 Ready | Shared Execution | fail closed，按现有 retry 结果回传 | 调用 Character/Event |
 | manual-character | Manual → Shared Execution | 复用已验证 World，执行 Event | 触发 World AI 或绕过 Floor authority |
@@ -410,11 +418,11 @@ StoryTime failures 合并处理。
 ## 11. Good / Base / Bad examples
 
 **Good**：host bridge 把 `assistant_message` 正规化成已验证 Character Floor，
-settled barrier 调用 automatic port；automatic port 达到 interval 后调用 shared
-execution；shared execution 完成 World → Event → canonical save/read-back。
+settled barrier 先调用内部 Projection bridge；automatic port 达到 interval 后再调用
+shared execution，shared execution 完成 World → Event → canonical save/read-back。
 
-**Base**：普通有效 Character Floor 尚未 due；automatic port 只递增 counter，
-没有 AI 调用，下一楼继续观察。
+**Base**：普通有效 Character Floor 尚未 due；内部内置 Projection 仍可按当前 Story Time
+复用或替换阶段快照，automatic port 只递增 counter，没有外部 AI 调用，下一楼继续观察。
 
 **Bad**：scheduler 读取 `message.extra.type` 自己判断 Character、直接调用
 `store.saveFloor`、直接修改 scheduler 内部处理状态，或 UI/Tracking 通过

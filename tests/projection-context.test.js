@@ -95,7 +95,7 @@ test('Projection Context renders the exact built-in direction format without cha
   assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
   assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
   assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。/);
-  assert.match(result.prompt, /- 角色 林月：\n  - 发展方向1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
+  assert.match(result.prompt, /- 角色 林月：\n  - 生理反应1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
   assert.doesNotMatch(result.prompt, /这只是备选剧情方向，不是已确认怀孕事实。/);
   assert.match(result.prompt, /本模块仅提供潜在表现，不得据此确认特定生理原因，也不得与其他身体问题擅自建立因果关系。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景|Context 中的 Projection/);
@@ -106,7 +106,7 @@ test('Projection Context keeps custom content readable without exposing an inter
     development_concern_key: 'custom_internal_key',
     development: {kind: 'possible_change', next_signal: '自定义内容保持原样。'},
   })]);
-  assert.match(prompt, /发展方向1：自定义内容保持原样。/);
+  assert.match(prompt, /生理反应1：自定义内容保持原样。/);
   assert.doesNotMatch(prompt, /custom_internal_key|；自定义内容/);
 });
 
@@ -168,9 +168,217 @@ test('Projection Context groups directions by subject and keeps the DTO contract
   ]);
   assert.equal((result.prompt.match(/- 角色 祁鸢：/g) ?? []).length, 1);
   assert.equal((result.prompt.match(/- 角色 沈微：/g) ?? []).length, 1);
-  assert.match(result.prompt, /角色 祁鸢：\n  - 发展方向1：可能出现可观察的检测迹象。\n  - 发展方向2：可能出现轻微恶心。/);
-  assert.match(result.prompt, /角色 沈微：\n  - 发展方向1：可能出现情绪变化。/);
+  assert.match(result.prompt, /角色 祁鸢：\n  - 生理反应1：可能出现可观察的检测迹象。\n  - 生理反应2：可能出现轻微恶心。/);
+  assert.match(result.prompt, /角色 沈微：\n  - 生理反应1：可能出现情绪变化。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景/);
+});
+
+test('Projection Context includes only the current built-in observation stage', async () => {
+  const floorVersion = {chat_id: 'chat-stage', floor: 25, message_id: 'message-stage', swipe_id: 0, content_hash: 'hash-stage', message_version: 1};
+  const subjectIds = ['char_000002', 'char_000003'];
+  const oldViews = subjectIds.flatMap(subjectId => [
+    'fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early',
+  ].map(key => view({
+    projection_id: `old-${subjectId}-${key}`,
+    subject_id: subjectId,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `old-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  })));
+  const currentViews = subjectIds.flatMap(subjectId => [
+    'nausea', 'odor_discomfort', 'mood_change', 'appetite_change',
+  ].map(key => view({
+    projection_id: `current-${subjectId}-${key}`,
+    subject_id: subjectId,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `current-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 24},
+  })));
+  const promptWrites = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [...oldViews, ...currentViews]}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-stage',
+    setExtensionPrompt: payload => {
+      promptWrites.push(payload.content);
+      return true;
+    },
+  });
+
+  const result = await coordinator.refreshProjectionContext({
+    chatId: 'chat-stage',
+    businessData: {
+      current_floor: {version: floorVersion},
+      current_story_time: {day_index: 25},
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dto.length, 8);
+  assert.equal(result.dto.every(item => item.description.startsWith('current-')), true);
+  assert.equal(result.dto.filter(item => item.subject_id === 'char_000002').length, 4);
+  assert.equal(result.dto.filter(item => item.subject_id === 'char_000003').length, 4);
+  assert.deepEqual(result.context_visible_projection_ids, currentViews.map(item => item.projection_id));
+  assert.equal(result.prompt.includes('第 14–20 天'), false);
+  assert.equal(result.prompt.includes('恶心'), true);
+  assert.equal(promptWrites.at(-1).includes('嗜睡或疲倦'), false);
+  coordinator.destroy();
+});
+
+test('Projection Context keeps the complete previous built-in stage until the current stage is generated', async () => {
+  const floorVersion = {chat_id: 'chat-stage-fallback', floor: 25, message_id: 'message-stage-fallback', swipe_id: 0, content_hash: 'hash-stage-fallback', message_version: 1};
+  const oldViews = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'].map(key => view({
+    projection_id: `old-${key}`,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `old-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  }));
+  const writes = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: oldViews}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-stage-fallback',
+    setExtensionPrompt: payload => {
+      writes.push(payload);
+      return true;
+    },
+  });
+
+  const result = await coordinator.refreshProjectionContext({
+    chatId: 'chat-stage-fallback',
+    businessData: {
+      current_floor: {version: floorVersion},
+      current_story_time: {day_index: 25},
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'updated');
+  assert.equal(result.dto.length, 4);
+  assert.deepEqual(result.context_visible_projection_ids, oldViews.map(item => item.projection_id));
+  assert.equal(writes.at(-1).content.includes('old-fatigue'), true);
+  coordinator.destroy();
+});
+
+test('Projection Context resolves built-in stage fallback independently per subject', () => {
+  const oldKeys = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'];
+  const currentKeys = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change'];
+  const oldViews = oldKeys.map(key => view({
+    projection_id: `old-subject-a-${key}`,
+    subject_id: 'char_000002',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `old-a-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  })).concat(oldKeys.map(key => view({
+    projection_id: `old-subject-b-${key}`,
+    subject_id: 'char_000003',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `old-b-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  })));
+  const currentViews = currentKeys.map(key => view({
+    projection_id: `current-subject-a-${key}`,
+    subject_id: 'char_000002',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `current-a-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 24},
+  }));
+
+  const result = buildProjectionContext([...oldViews, ...currentViews], {currentStoryTime: {day_index: 25}});
+
+  assert.equal(result.dto.length, 8);
+  assert.deepEqual(result.contextVisibleProjectionIds.sort(), [
+    ...currentViews.map(item => item.projection_id),
+    ...oldViews.filter(item => item.subject_id === 'char_000003').map(item => item.projection_id),
+  ].sort());
+  assert.equal(result.dto.filter(item => item.description.startsWith('current-a-')).length, 4);
+  assert.equal(result.dto.filter(item => item.description.startsWith('old-b-')).length, 4);
+  assert.equal(result.dto.some(item => item.description.startsWith('old-a-')), false);
+});
+
+test('Projection Context keeps a split historical stage for a subject while another subject uses its new stage', () => {
+  const oldKeys = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'];
+  const currentKeys = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change'];
+  const currentViews = currentKeys.map(key => view({
+    projection_id: `current-a-${key}`,
+    subject_id: 'char_000002',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `current-a-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 24},
+  }));
+  const splitHistoricalViews = oldKeys.map(key => view({
+    projection_id: `old-b-${key}`,
+    subject_id: 'char_000003',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `old-b-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  }));
+
+  const result = buildProjectionContext([...currentViews, ...splitHistoricalViews], {currentStoryTime: {day_index: 25}});
+
+  assert.equal(result.dto.filter(item => item.subject_id === 'char_000002').length, 4);
+  assert.equal(result.dto.filter(item => item.subject_id === 'char_000003').length, 4);
+  assert.equal(result.dto.filter(item => item.description.startsWith('current-a-')).length, 4);
+  assert.equal(result.dto.filter(item => item.description.startsWith('old-b-')).length, 4);
+});
+
+test('Projection Context keeps one subject together when stage branches have different mechanism metadata', () => {
+  const oldKeys = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'];
+  const oldViews = oldKeys.map((key, index) => view({
+    projection_id: `old-subject-b-mixed-${key}`,
+    subject_id: 'char_000003',
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    mechanism: {key: index % 2 === 0 ? 'mechanism-a' : 'mechanism-b'},
+    development: {kind: 'possible_symptom', next_signal: `old-b-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  }));
+
+  const result = buildProjectionContext(oldViews, {currentStoryTime: {day_index: 25}});
+
+  assert.equal(result.dto.length, 4);
+  assert.deepEqual(result.contextVisibleProjectionIds.sort(), oldViews.map(item => item.projection_id).sort());
+  assert.equal(result.dto.every(item => item.description.startsWith('old-b-')), true);
+});
+
+test('Projection Context keeps distinct pregnancy identities isolated for one subject', () => {
+  const oldKeys = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'];
+  const currentKeys = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change'];
+  const oldViews = oldKeys.map(key => view({
+    projection_id: `old-cycle-a-${key}`,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    aggregation_evidence: {pregnancy_id: null, cycle_id: 'cycle-a'},
+    mechanism: {key: 'mechanism-a'},
+    development: {kind: 'possible_symptom', next_signal: `old-cycle-a-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  }));
+  const currentViews = currentKeys.map(key => view({
+    projection_id: `current-cycle-b-${key}`,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    aggregation_evidence: {pregnancy_id: 'pregnancy-b', cycle_id: 'cycle-b'},
+    mechanism: {key: 'mechanism-b'},
+    development: {kind: 'possible_symptom', next_signal: `current-cycle-b-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 24},
+  }));
+
+  const result = buildProjectionContext([...oldViews, ...currentViews], {currentStoryTime: {day_index: 25}});
+
+  assert.equal(result.dto.length, 8);
+  assert.equal(result.dto.filter(item => item.description.startsWith('old-cycle-a-')).length, 4);
+  assert.equal(result.dto.filter(item => item.description.startsWith('current-cycle-b-')).length, 4);
+});
+
+test('Projection Context does not retain a previous built-in stage after the observation window', () => {
+  const oldViews = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early'].map(key => view({
+    projection_id: `expired-${key}`,
+    development_concern_key: `pre_confirmation_observation:${key}`,
+    development: {kind: 'possible_symptom', next_signal: `expired-${key}`},
+    timing: {reference_story_time: {day_index: 1}, elapsed_story_days: 19},
+  }));
+
+  const result = buildProjectionContext(oldViews, {currentStoryTime: {day_index: 44}});
+
+  assert.deepEqual(result.dto, []);
+  assert.deepEqual(result.contextVisibleProjectionIds, []);
 });
 
 test('health recovery guidance shares the projection context slot without exposing timing internals', () => {
@@ -272,6 +480,49 @@ test('coordinator updates one injection slot and clears when no visible projecti
   assert.equal(writes.at(-1).content, '');
 });
 
+test('coordinator diagnostics report the subjects and projections actually written to ST', async () => {
+  const writes = [];
+  const diagnostics = [];
+  const floorVersion = {
+    chat_id: 'chat-debug', message_id: 'message-debug', floor: 2, swipe_id: 0,
+    content_hash: 'hash-debug', message_version: 1,
+  };
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [
+      view({projection_id: 'projection-a', subject_id: 'char_000002'}),
+      view({projection_id: 'projection-b', subject_id: 'char_000003'}),
+      view({projection_id: 'projection-hidden', subject_id: 'char_000003', context_visible: false}),
+    ]}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-debug',
+    setExtensionPrompt: payload => writes.push(payload),
+    trace: item => diagnostics.push(item),
+  });
+
+  const result = await coordinator.refreshProjectionContext({
+    businessData: {
+      current_floor: {version: floorVersion},
+      tracking_subjects: {
+        char_000002: {character_id: 'char_000002', display_name: '甲'},
+        char_000003: {character_id: 'char_000003', display_name: '乙'},
+      },
+    },
+  });
+
+  const slot = diagnostics.find(item => item.stage === 'PROJECTION_CONTEXT_SLOT_WRITTEN');
+  assert.equal(result.status, 'updated');
+  assert.equal(writes.at(-1).content, result.prompt);
+  assert.deepEqual(slot.st_written_subject_ids, ['char_000002', 'char_000003']);
+  assert.equal(slot.st_written_subject_count, 2);
+  assert.deepEqual(slot.st_written_subjects, [
+    {subject_id: 'char_000002', display_name: '甲', projection_count: 1},
+    {subject_id: 'char_000003', display_name: '乙', projection_count: 1},
+  ]);
+  assert.deepEqual(slot.st_written_projection_ids, ['projection-a', 'projection-b']);
+  assert.equal(slot.st_written_projection_count, 2);
+  coordinator.destroy();
+});
+
 test('coordinator reuses a caller-provided Projection snapshot without rereading it', async () => {
   let reads = 0;
   const snapshot = {all: [view()]};
@@ -285,6 +536,29 @@ test('coordinator reuses a caller-provided Projection snapshot without rereading
   assert.equal(result.status, 'updated');
   assert.equal(reads, 0);
   assert.equal(result.dto.length, 1);
+});
+
+test('coordinator read-only restore refreshes the slot without recording delivery', async () => {
+  const submissions = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [view()]}),
+    resolveCurrentFloor: async () => ({version: {
+      chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+      content_hash: 'hash-a', message_version: 'v1',
+    }}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => {},
+    recordProjectionSubmission: async payload => {
+      submissions.push(payload);
+      return {status: 'readback_verified'};
+    },
+  });
+
+  const result = await coordinator.refreshProjectionContext({readOnly: true});
+
+  assert.equal(result.status, 'updated');
+  assert.equal(result.submission, null);
+  assert.equal(submissions.length, 0);
 });
 
 test('coordinator combines Health Guidance with projections and clears both from the same slot', async () => {

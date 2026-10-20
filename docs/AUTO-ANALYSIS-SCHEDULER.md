@@ -35,6 +35,13 @@ Supplement 的事实语义；完整规则以 [World Model and World Analysis Con
 `analysis_interval` 表示“每 N 个新的有效 Character Floor 执行一次正常
 Auto Analysis”，不是 SillyTavern 的物理 message floor 差值。
 
+这里的“正常 Auto Analysis”只指需要 World/Event 或 Projection 外部 API 的分析路线。
+每个已经通过 Generation settle 的有效 Character Floor，还会独立进入一次插件内部的
+Projection 阶段同步：重新读取 Timing/Aggregation，按人物自己的 Story Time 判断当前
+内置观察阶段，同阶段复用，跨阶段保存新的完整阶段快照。这条内部路线不调用外部 API，
+也不增加 `analysis_interval` counter；因此“每三楼一次”不会阻止内置推演随每个已完成正文
+推进。打开角色卡或普通只读重绑没有 settled Character Floor，不会启动这条内部路线。
+
 因此 `interval=N` 的 N 只统计新的、有效的 Character Floor：User 消息不计数；
 `MESSAGE_SENT`、`MESSAGE_RECEIVED`、`GENERATION_ENDED` 等指向 User Floor 的宿主
 事件不得增加 counter；N 也不是原始 SillyTavern message index、Floor 编号，或
@@ -125,7 +132,12 @@ Character/Event API。它们只允许 Runtime 正确更新当前正文签名、F
                                   └──── idle ──────┘
 ```
 
-完整业务链是：
+调度结论 `character-interval` 的含义是“本楼跳过外部 API 分析”，不代表本楼跳过
+内部 Projection 阶段同步。内部同步若发现当前楼层缺少合法 Floor owner slot，会先通过
+现有 Floor Coordinator 继承最近有效的 `events` 与 `character_registry` 建立当前快照；
+这不会伪造分析成功状态，也不会改变 scheduler 的 counter/baseline。
+
+完整业务链是（外部路线）：
 
 ```text
 World Full / Patch / Reuse
@@ -136,6 +148,16 @@ World Full / Patch / Reuse
   -> Character/Event Analysis
   -> validation
   -> Floor persistence and derived refresh
+```
+
+内部路线是：
+
+```text
+settled Character Floor
+  -> Timing/Aggregation 与当前阶段判断
+  -> 同阶段复用，或准备完整内置阶段
+  -> 当前 Floor Projection batch persistence（仅跨阶段）
+  -> Projection read-back 与 Context refresh
 ```
 
 ### 阶段 Ready 边界

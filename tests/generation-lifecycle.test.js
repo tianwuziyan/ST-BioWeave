@@ -97,6 +97,30 @@ test("a new normal generation supersedes an older reroll intent", () => {
   );
 });
 
+test("a lease-quarantined generation can restore its intent before final settle", async () => {
+  const settled = [];
+  const fixture = createFixture({
+    onGenerationSettled: async (...args) => {
+      settled.push(args);
+      return {skipped: true, reason: "test-settled"};
+    },
+  });
+  fixture.lifecycle.onGenerationStarted({
+    generation_type: "normal",
+    message_id: "message-1",
+  });
+  const snapshot = fixture.lifecycle.getState().pendingGeneration;
+  fixture.lifecycle.cancelPendingGeneration("test-lease-expired");
+
+  const restored = fixture.lifecycle.restorePendingGeneration(snapshot);
+  assert.equal(restored.reason, "generation-restored");
+  const rendered = await fixture.lifecycle.onCharacterMessageRendered(target(1));
+  assert.equal(rendered.reason, "generation-awaiting-end");
+  const ended = await fixture.lifecycle.onGenerationEnded();
+  assert.equal(ended.reason, "test-settled");
+  assert.equal(settled.length, 1);
+});
+
 test("completed generation ownership requires the same Chat, Swipe, Floor Version, and intent", async () => {
   let chatId = "chat";
   let settledGeneration = null;

@@ -254,6 +254,101 @@ test('Settings debug trace retains Story Time Projection stages and safe IDs', (
   assert.deepEqual(trace.summary.projection_context.projection_ids, ['projection-a'])
 })
 
+test('Projection evidence decisions and final ST subjects survive safe trace export', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'PROJECTION_EVIDENCE_RESOLVED',
+    projection_evidence_status: 'FILTERED',
+    projection_evidence_reason_code: 'CURRENT_EVIDENCE_UNAVAILABLE',
+    projection_evidence_input_count: 2,
+    projection_evidence_valid_count: 1,
+    projection_evidence_filtered_count: 1,
+    projection_evidence_input_ids: ['projection-a', 'projection-b'],
+    projection_evidence_subject_ids: ['char-1', 'char-2'],
+    projection_evidence_aggregation_ids: ['aggregation-a'],
+    projection_evidence_valid_ids: ['projection-a'],
+    projection_evidence_filtered_ids: ['projection-b'],
+    projection_evidence_decisions: [{projection_id: 'projection-b', subject_id: 'char-2', aggregation_id: 'aggregation-a', status: 'FILTERED', reason_code: 'CURRENT_EVIDENCE_UNAVAILABLE'}],
+    narrative_text: '不应进入诊断',
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'PROJECTION_CONTEXT_SLOT_WRITTEN',
+    slot: 'bioweave_projection_context',
+    context_nonempty: true,
+    st_written_subject_ids: ['char-1', 'char-2'],
+    st_written_subject_count: 2,
+    st_written_subjects: [
+      {subject_id: 'char-1', display_name: '甲', projection_count: 1},
+      {subject_id: 'char-2', display_name: null, projection_count: 2},
+    ],
+    st_written_projection_ids: ['projection-a', 'projection-b', 'projection-c'],
+    st_written_projection_count: 3,
+  }})
+
+  const trace = diagnostics.getPersistenceTrace()
+  const evidence = trace.sequence.find(item => item.stage === 'PROJECTION_EVIDENCE_RESOLVED')
+  assert.equal(evidence.projection_evidence_status, 'FILTERED')
+  assert.deepEqual(evidence.projection_evidence_filtered_ids, ['projection-b'])
+  assert.equal(evidence.narrative_text, undefined)
+  assert.deepEqual(trace.summary.projection_context.subject_ids, ['char-1', 'char-2'])
+  assert.equal(trace.summary.projection_context.subject_count, 2)
+  assert.deepEqual(trace.summary.projection_context.written_projection_ids, ['projection-a', 'projection-b', 'projection-c'])
+  const exported = JSON.parse(buildDebugExportText({historyTrace: trace}))
+  assert.deepEqual(exported.history_trace.summary.projection_context.subject_ids, ['char-1', 'char-2'])
+})
+
+test('Projection route and stage snapshot diagnostics survive trace and pipeline export', () => {
+  const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat-debug'})
+  const floorVersion = {
+    chat_id: 'chat-debug', message_id: 'message-8', floor: 8,
+    swipe_id: 0, content_hash: 'hash-8', message_version: 1,
+  }
+  diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {
+    stage: 'PROJECTION_STAGE_SNAPSHOT', state: 'success', phase: 'persistence',
+    reason: 'character-interval', projection_route: 'internal', external_api_allowed: false,
+    snapshot_status: 'succeeded', candidate_count: 4, subject_count: 1,
+    stage_keys: ['early_reactions'], reused_candidate_count: 0,
+    failure_reason: null, floor_version: floorVersion,
+  }})
+  diagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload: {
+    stage: 'PROJECTION_INTERNAL_TRIGGERED', reason: 'character-interval',
+    scheduler_decision: {external_api: 'interval_not_due', internal_projection: 'allowed'},
+    analysis_execution_id: 'analysis-8', floor_version: floorVersion,
+  }})
+
+  const trace = diagnostics.getPersistenceTrace()
+  const snapshot = trace.sequence.find(item => item.stage === 'PROJECTION_STAGE_SNAPSHOT')
+  const trigger = trace.sequence.find(item => item.stage === 'PROJECTION_INTERNAL_TRIGGERED')
+  assert.equal(snapshot.projection_route, 'internal')
+  assert.equal(snapshot.external_api_allowed, false)
+  assert.equal(snapshot.snapshot_status, 'succeeded')
+  assert.equal(snapshot.candidate_count, 4)
+  assert.deepEqual(snapshot.stage_keys, ['early_reactions'])
+  assert.deepEqual(trigger.scheduler_decision, {external_api: 'interval_not_due', internal_projection: 'allowed'})
+
+  const runId = diagnostics.startNsfwPipelineRun({chat_id: 'chat-debug', floor_version: floorVersion})
+  diagnostics.recordNsfwPipelineStage({
+    run_id: runId, floor_version: floorVersion, stage: 'PROJECTION_AI_SCHEDULING',
+    execution_status: 'SKIPPED', invoked: true, projection_route: 'internal',
+    external_api_allowed: false, phase: 'generation', built_in_candidate_count: 4,
+    deferred_external_api_candidate_count: 2, scheduler_decision: 'interval_not_due',
+    subject_count: 1, stage_keys: ['early_reactions'], reused_candidate_count: 0,
+    candidate_count: 4, snapshot_status: null, failure_reason: null,
+  })
+  const pipeline = diagnostics.getNsfwPipelineDiagnostics({run_id: runId})
+  const stage = pipeline.stages[0]
+  assert.equal(stage.projection_route, 'internal')
+  assert.equal(stage.external_api_allowed, false)
+  assert.equal(stage.built_in_candidate_count, 4)
+  assert.equal(stage.deferred_external_api_candidate_count, 2)
+  assert.equal(stage.scheduler_decision, 'interval_not_due')
+  assert.deepEqual(stage.stage_keys, ['early_reactions'])
+
+  const exported = JSON.parse(buildDebugExportText({historyTrace: trace, nsfwPipelineDiagnostics: pipeline}))
+  assert.equal(exported.history_trace.sequence.find(item => item.stage === 'PROJECTION_STAGE_SNAPSHOT').snapshot_status, 'succeeded')
+  assert.equal(exported.nsfw_pipeline_diagnostics.stages[0].projection_route, 'internal')
+})
+
 test('NSFW pipeline recorder preserves explicit execution status and source semantics', () => {
   const diagnostics = createRuntimeDiagnostics()
   const floorVersion = {

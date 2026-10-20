@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {createProjection, createProjectionEvidenceRecord, createProjectionLifecycleRecord} from '../core/projection.js'
+import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord} from '../core/projection.js'
 import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
 import {createProjectionPersistence} from '../storage/projection.js'
 
@@ -13,6 +13,23 @@ function projection(floor = 10, chat_id = 'chat-a', subject_id = 'char_000001', 
     development: {kind: 'possible_biological_change', current_basis: {event_ids: ['event-1'], state_refs: ['state:char_000001'], mechanism_rule_refs: ['projection-rule:rule:change-v1']}, next_signal: '未来可能出现变化。'},
     timing: {trigger_kind: 'immediate_after_event', reference_event_id: 'event-1', reference_story_time: null, current_story_time: null, elapsed_story_days: null},
     created_at_floor_version: floorVersion, evidence_refs: ['event:event-1'],
+  })
+}
+
+function builtInProjection(floor, branch, subject_id = 'char_000001', cycle_id = 'cycle-a') {
+  return createProjection({
+    ...projection(floor, 'chat-a', subject_id, `pre_confirmation_observation:${branch}`),
+    tracking_scope: 'pre_confirmation',
+    tracking_window_id: `window-${cycle_id}`,
+    aggregation_path: 'participant_aggregation',
+    aggregation_evidence: {
+      subject_id,
+      aggregation_id: `aggregation-${cycle_id}`,
+      pregnancy_id: null,
+      cycle_id,
+      accepted_exposure_event_ids: ['event-1'],
+      participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}],
+    },
   })
 }
 
@@ -53,10 +70,172 @@ test('Projection timeline separates creation, evidence, and lifecycle records', 
   assert.equal(resolveProjectionTimeline([{floor_version: version(10), ...timeline}]).all[0].factual_status, 'realized')
 })
 
+test('built-in stage snapshots replace only the latest complete stage at the endpoint', () => {
+  const branchesA = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+  const branchesB = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+  const stageA = branchesA.map(branch => builtInProjection(20, branch))
+  const stageB = branchesB.map(branch => builtInProjection(26, branch))
+  const at26 = resolveProjectionTimeline([
+    {floor_version: version(20), creations: stageA, evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: version(26), creations: stageB, evidence_records: [], lifecycle_records: [], delivery_records: []},
+  ])
+  assert.deepEqual(at26.all.map(item => item.development_concern_key).sort(), branchesB.map(branch => `pre_confirmation_observation:${branch}`).sort())
+  assert.equal(at26.all.some(item => item.projection_id === stageA[0].projection_id), false)
+  assert.deepEqual(at26.all.flatMap(item => item.lifecycle_records), [])
+
+  const at23 = resolveProjectionTimeline([{floor_version: version(20), creations: stageA, evidence_records: [], lifecycle_records: [], delivery_records: []}])
+  assert.deepEqual(at23.all.map(item => item.development_concern_key).sort(), branchesA.map(branch => `pre_confirmation_observation:${branch}`).sort())
+})
+
+test('built-in stage snapshots rebuild a legacy split stage per subject without mixing identities', () => {
+  const oldBranches = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+  const currentBranches = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+  const splitOld = oldBranches.map((branch, index) => builtInProjection(20 + index, branch, 'char-old', 'cycle-old'))
+  const current = currentBranches.map(branch => builtInProjection(26, branch, 'char-current', 'cycle-current'))
+  const incompleteNew = currentBranches.slice(0, 2).map(branch => builtInProjection(26, branch, 'char-old', 'cycle-old'))
+
+  const resolved = resolveProjectionTimeline([
+    ...splitOld.map((creation, index) => ({floor_version: version(20 + index), creations: [creation], evidence_records: [], lifecycle_records: [], delivery_records: []})),
+    {floor_version: version(26), creations: [...current, ...incompleteNew], evidence_records: [], lifecycle_records: [], delivery_records: []},
+  ])
+  const at23 = resolveProjectionTimeline(splitOld.map((creation, index) => ({floor_version: version(20 + index), creations: [creation], evidence_records: [], lifecycle_records: [], delivery_records: []})))
+
+  assert.deepEqual(resolved.all.map(item => item.projection_id).sort(), [...splitOld, ...current].map(item => item.projection_id).sort())
+  assert.equal(resolved.all.some(item => incompleteNew.some(candidate => candidate.projection_id === item.projection_id)), false)
+  assert.deepEqual(at23.all.map(item => item.projection_id).sort(), splitOld.map(item => item.projection_id).sort())
+})
+
+test('built-in stage snapshot keeps one subject together when branch mechanisms differ', () => {
+  const branches = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+  const stage = branches.map((branch, index) => createProjection({
+    ...builtInProjection(20, branch, 'char_000003', 'cycle-mixed'),
+    mechanism: {key: index % 2 === 0 ? 'mechanism-a' : 'mechanism-b'},
+  }))
+  const unrelatedCompleteStage = branches.map(branch => builtInProjection(20, branch, 'char_000001', 'cycle-complete'))
+
+  const resolved = resolveProjectionTimeline([{
+    floor_version: version(20),
+    creations: [...stage, ...unrelatedCompleteStage],
+    evidence_records: [],
+    lifecycle_records: [],
+    delivery_records: [],
+  }])
+
+  assert.deepEqual(resolved.all.map(item => item.projection_id).sort(), [...stage, ...unrelatedCompleteStage].map(item => item.projection_id).sort())
+})
+
+test('a late branch from an older stage cannot replace a newer complete stage', () => {
+  const stageA = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+    .map(branch => builtInProjection(20, branch, 'char-late-old', 'cycle-late-old'))
+  const stageB = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+    .map(branch => builtInProjection(26, branch, 'char-late-old', 'cycle-late-old'))
+  const lateOldBranch = builtInProjection(30, 'no_reaction_early', 'char-late-old', 'cycle-late-old')
+
+  const resolved = resolveProjectionTimeline([
+    {floor_version: version(20), creations: stageA, evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: version(26), creations: stageB, evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: version(30), creations: [lateOldBranch], evidence_records: [], lifecycle_records: [], delivery_records: []},
+  ])
+
+  assert.deepEqual(resolved.all.map(item => item.development_concern_key).sort(), stageB.map(item => item.development_concern_key).sort())
+})
+
+test('stage snapshot filtering preserves later evidence and lifecycle for current and generic projections', () => {
+  const branchesA = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+  const branchesB = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+  const stageA = branchesA.map(branch => builtInProjection(20, branch))
+  const stageB = branchesB.map(branch => builtInProjection(26, branch))
+  const generic = projection(20)
+  const laterVersion = version(30)
+  const stageBEvidence = createProjectionEvidenceRecord({
+    projection_id: stageB[0].projection_id,
+    source_event_ids: ['event-stage-b-later'],
+    created_at_floor_version: laterVersion,
+    evidence_refs: ['event:event-stage-b-later'],
+  })
+  const stageBLifecycle = createProjectionLifecycleRecord({
+    projection_id: stageB[0].projection_id,
+    action: 'realized',
+    created_at_floor_version: laterVersion,
+    evidence_refs: ['event:event-stage-b-later'],
+  })
+  const genericLifecycle = createProjectionLifecycleRecord({
+    projection_id: generic.projection_id,
+    action: 'realized',
+    created_at_floor_version: laterVersion,
+    evidence_refs: ['event:event-generic-later'],
+  })
+
+  const resolved = resolveProjectionTimeline([
+    {floor_version: version(20), creations: [...stageA, generic], evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: version(26), creations: stageB, evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: laterVersion, creations: [], evidence_records: [stageBEvidence], lifecycle_records: [stageBLifecycle, genericLifecycle], delivery_records: []},
+  ])
+
+  const currentStage = resolved.all.filter(item => item.tracking_scope === 'pre_confirmation')
+  const resolvedGeneric = resolved.all.find(item => item.projection_id === generic.projection_id)
+  assert.deepEqual(currentStage.map(item => item.projection_id).sort(), stageB.map(item => item.projection_id).sort())
+  assert.equal(resolved.all.some(item => stageA.some(previous => previous.projection_id === item.projection_id)), false)
+  assert.equal(resolved.all.find(item => item.projection_id === stageB[0].projection_id)?.evidence_records.some(record => record.evidence_record_id === stageBEvidence.evidence_record_id), true)
+  assert.equal(resolved.all.find(item => item.projection_id === stageB[0].projection_id)?.factual_status, 'realized')
+  assert.equal(resolvedGeneric?.factual_status, 'realized')
+})
+
+test('historical Delivery records remain readable after product views replace an earlier built-in stage', async () => {
+  const branchesA = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+  const branchesB = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+  const stageA = branchesA.map(branch => builtInProjection(20, branch))
+  const stageB = branchesB.map(branch => builtInProjection(26, branch))
+  const submission = createProjectionDeliveryRecord({
+    delivery_id: 'delivery-stage-a', projection_id: stageA[0].projection_id, aggregation_id: 'aggregation-cycle-a',
+    subject_id: 'char_000001', pregnancy_id: null, cycle_id: 'cycle-a', submitted_floor_version: version(20),
+    created_at_floor_version: version(20), context_fingerprint: 'fingerprint-a', status: 'readback_verified',
+  })
+  const response = createProjectionDeliveryRecord({
+    ...submission, status: 'response_observed', response_id: 'response-stage-a', response_floor_version: version(20),
+    analysis_status: 'success', analysis_execution_id: 'analysis-stage-a', explicit_lifecycle_fact_ids: [],
+  })
+  const messages = [{message_id: 'message-20', role: 'assistant'}, {message_id: 'message-26', role: 'assistant'}]
+  const store = fakeStore({
+    messages,
+    activeSwipes: {0: 0, 1: 0},
+    floors: {
+      '0:0': {floor_version: version(20), projection_timeline: {schema_version: 1, creations: stageA, evidence_records: [], lifecycle_records: [], delivery_records: [submission, response]}},
+      '1:0': {floor_version: version(26), projection_timeline: {schema_version: 1, creations: stageB, evidence_records: [], lifecycle_records: [], delivery_records: []}},
+    },
+  })
+  const persistence = createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion})
+
+  const views = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 26})
+  assert.deepEqual(views.all.map(item => item.development_concern_key).sort(), branchesB.map(branch => `pre_confirmation_observation:${branch}`).sort())
+  const deliveries = await persistence.getProjectionDeliveryRecords({chatId: 'chat-a', endpointFloor: 26})
+  assert.deepEqual(deliveries.map(item => item.projection_id), [stageA[0].projection_id, stageA[0].projection_id])
+  assert.deepEqual(deliveries.map(item => item.status).sort(), ['readback_verified', 'response_observed'])
+
+  const responseAfterStageReplacement = createProjectionDeliveryRecord({
+    ...submission,
+    status: 'response_observed',
+    response_id: 'response-stage-a-after-stage-b',
+    response_floor_version: version(26),
+    created_at_floor_version: version(26),
+    analysis_execution_id: 'analysis-stage-a-after-stage-b',
+    analysis_status: 'success',
+    explicit_lifecycle_fact_ids: [],
+  })
+  assert.equal((await persistence.saveProjectionDeliveryResponse({
+    chatId: 'chat-a',
+    ownerFloor: {message_index: 1, swipe_id: 0},
+    floorVersion: version(26),
+    deliveryRecord: responseAfterStageReplacement,
+  })).status, 'appended')
+  assert.equal(store.state.floors['1:0'].projection_timeline.delivery_records.length, 1)
+  assert.deepEqual((await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 26})).all.map(item => item.development_concern_key).sort(), branchesB.map(branch => `pre_confirmation_observation:${branch}`).sort())
+})
+
 test('Character Floor creation persists only in its active Swipe, including Swipe 0', async () => {
   const created = projection()
   const setupState = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: emptyProjectionTimeline()}}})
-  const result = await setupState.persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), projectionCandidate: created})
+  const result = await setupState.persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, message_id: version(10).message_id, swipe_id: 0}, floorVersion: version(10), projectionCandidate: created})
   assert.equal(result.status, 'appended')
   assert.equal(setupState.store.state.floors['0:0'].projection_timeline.creations.length, 1)
 })

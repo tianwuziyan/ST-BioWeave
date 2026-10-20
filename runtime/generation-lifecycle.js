@@ -384,6 +384,42 @@ export function createGenerationLifecycle({
     };
   }
 
+  function cancelPendingGeneration(reason = "generation-activity-lease-expired") {
+    const pending = [state.pendingGeneration, state.pendingSwipeGeneration].filter(Boolean);
+    for (const intent of pending) {
+      intent.superseded = true;
+      trace("GENERATION_INTENT_SUPERSEDED", intent, null, {
+        supersede_reason: reason,
+      });
+    }
+    state.pendingGeneration = null;
+    state.pendingSwipeGeneration = null;
+    return {skipped: true, reason, cancelled_count: pending.length};
+  }
+
+  function restorePendingGeneration(snapshot, {ended = false} = {}) {
+    if (!snapshot || snapshot.chatId !== getChatId?.())
+      return {skipped: true, reason: "generation-restore-unavailable"};
+    if (state.pendingGeneration || state.pendingSwipeGeneration)
+      return {skipped: true, reason: "generation-intent-already-pending"};
+
+    const pending = {
+      ...snapshot,
+      superseded: false,
+      ended: ended === true || snapshot.ended === true,
+      settled: false,
+    };
+    if (pending.generation_type === "swipe" || pending.force === true)
+      state.pendingSwipeGeneration = pending;
+    else
+      state.pendingGeneration = pending;
+    trace("GENERATION_INTENT_RESTORED", pending, null, {
+      restored_after_activity_lease: true,
+      ended_before_restore: pending.ended,
+    });
+    return {skipped: true, reason: "generation-restored"};
+  }
+
   function clear() {
     state.pendingGeneration = null;
     state.pendingSwipeGeneration = null;
@@ -412,6 +448,8 @@ export function createGenerationLifecycle({
       };
     },
     getState,
+    cancelPendingGeneration,
+    restorePendingGeneration,
     isGenerationOwnerCurrent(generation, target) {
       const completed = [state.completedGeneration, state.completedSwipeGeneration]
         .find(item => item?.intent_id === generation?.intent_id);

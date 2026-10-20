@@ -116,6 +116,9 @@ function createFixture({
   notify = null,
   onWorldCandidate = null,
   healthRecoveryStabilityDelayMs = 2000,
+  generationLeaseMs = undefined,
+  generationStreamLeaseMs = undefined,
+  generationHardWatchdogMs = undefined,
   participantAggregationLockCapability = false,
   reliableStoryTime = false,
   messageLookupById = false,
@@ -151,6 +154,7 @@ function createFixture({
       GENERATION_STOPPED: "generation-stopped",
       GENERATION_CANCELLED: "generation-cancelled",
       GENERATION_STARTED: "generation-started",
+      STREAM_TOKEN_RECEIVED: "stream-token-received",
       CHARACTER_MESSAGE_RENDERED: "character-message-rendered",
     },
     eventSource: {
@@ -320,6 +324,9 @@ function createFixture({
     storyTimeDebug,
     storyTimeTrace,
     healthRecoveryStabilityDelayMs,
+    ...(generationLeaseMs == null ? {} : {generationLeaseMs}),
+    ...(generationStreamLeaseMs == null ? {} : {generationStreamLeaseMs}),
+    ...(generationHardWatchdogMs == null ? {} : {generationHardWatchdogMs}),
     participantAggregationLockCapability,
   });
   runtime.subscribe(fixtureNotify);
@@ -429,24 +436,351 @@ test("GENERATION_STARTED does not refresh Projection Context when prompt writing
   fixture.runtime.destroy();
 });
 
-test("repeated GENERATION_STARTED events do not refresh Projection Context", async () => {
-  const writes = [];
+test("duplicate normal GENERATION_STARTED keeps the active gate and deferred Chat event", async () => {
   const fixture = createFixture({
+    analyzer: {async analyzeFloor() { throw new Error("DUPLICATE_START_MUST_NOT_ANALYZE"); }},
+  });
+  await fixture.runtime.init();
+  const listener = fixture.listeners.get("generation-started");
+  const generation = {generation_type: "normal"};
+
+  await listener(generation);
+  fixture.emit("chat-changed", {chat_id: "chat-runtime"});
+  await listener(generation);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.analysisCalls().length, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  let sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const startForwardResults = sequence.filter(item =>
+    item.stage === "HOST_EVENT_FORWARD_RESULT" &&
+    item.host_event_key === "GENERATION_STARTED",
+  );
+  assert.equal(startForwardResults.length, 2);
+  assert.equal(startForwardResults[0].forward_result?.reason, "generation-pending");
+  assert.equal(startForwardResults[1].forward_result?.reason, "generation-intent-already-pending");
+  assert.equal(sequence.some(item => item.stage === "GENERATION_PROJECTION_REFRESH_STARTED"), false);
+  assert.equal(sequence.some(item => item.stage === "GENERATION_DEFERRED_EVENT_REPLAY"), false);
+
+  fixture.emit("generation-stopped", {generation_type: "normal"});
+  await settle();
+
+  sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const chatReplay = sequence.filter(item =>
+    item.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    item.host_event_key === "CHAT_CHANGED",
+  );
+  assert.equal(chatReplay.length, 1);
+  assert.equal(chatReplay[0].execution_status, "SUCCEEDED");
+  fixture.runtime.destroy();
+});
+
+test("quiet repeated GENERATION_STARTED self-heals after the activity lease and reuses the gate", async () => {
+  const promptWrites = [];
+  const fixture = createFixture({
+    generationLeaseMs: 25,
+    generationStreamLeaseMs: 12,
     setExtensionPromptHook: payload => {
-      if (payload?.key === "bioweave_projection_context") writes.push(payload.content);
+      if (payload?.key === "bioweave_projection_context") promptWrites.push(payload.content);
+    },
+    analyzer: {async analyzeFloor() { throw new Error("QUIET_START_MUST_NOT_ANALYZE"); }},
+  });
+  await fixture.runtime.init();
+  const generation = {generation_type: "normal"};
+
+  await fixture.emit("generation-started", generation);
+  fixture.emit("chat-changed", {chat_id: "chat-runtime"});
+  await fixture.emit("generation-started", generation);
+  await new Promise(resolve => setTimeout(resolve, 45));
+  await settle();
+
+  let sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const expired = sequence.filter(item => item.stage === "GENERATION_GATE_LEASE_EXPIRED");
+  const firstReplay = sequence.filter(item =>
+    item.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    item.host_event_key === "CHAT_CHANGED",
+  );
+  assert.equal(expired.length, 1);
+  assert.equal(firstReplay.length, 1);
+  assert.equal(firstReplay[0].execution_status, "SUCCEEDED");
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.analysisCalls().length, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  assert.ok(promptWrites.length >= 2);
+  assert.equal(promptWrites.at(-1), "");
+  assert.equal(sequence.some(item => item.stage === "PROJECTION_PROCESS_STARTED"), false);
+  assert.equal(sequence.some(item => item.stage === "LEGACY_PROJECTION_LIFECYCLE"), false);
+  assert.equal(sequence.some(item => item.stage === "NSFW_LIFECYCLE_RECOVERY" && item.entered_recovery === true), false);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration, null);
+
+  await fixture.emit("generation-started", generation);
+  const secondStartResult = fixture.runtime.getPersistenceTrace().sequence.filter(item =>
+    item.stage === "HOST_EVENT_FORWARD_RESULT" && item.host_event_key === "GENERATION_STARTED",
+  ).at(-1);
+  assert.equal(secondStartResult?.forward_result?.reason, "generation-pending");
+  fixture.emit("chat-changed", {chat_id: "chat-runtime"});
+  fixture.emit("generation-stopped", generation);
+  await settle();
+
+  sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const allReplays = sequence.filter(item =>
+    item.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    item.host_event_key === "CHAT_CHANGED",
+  );
+  assert.equal(allReplays.length, 2);
+  assert.equal(sequence.filter(item => item.stage === "GENERATION_GATE_LEASE_EXPIRED").length, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration, null);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().pendingSwipeGeneration, null);
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.analysisCalls().length, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("STREAM_TOKEN_RECEIVED renews the active generation lease when the host exposes it", async () => {
+  const fixture = createFixture({generationLeaseMs: 25, generationStreamLeaseMs: 20});
+  await fixture.runtime.init();
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  await new Promise(resolve => setTimeout(resolve, 15));
+  fixture.emit("stream-token-received", {text_length: 1});
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.some(item => item.stage === "GENERATION_GATE_LEASE_EXPIRED"), false);
+  assert.ok(sequence.some(item =>
+    item.stage === "GENERATION_GATE_LEASE_RENEWED" &&
+    item.reason === "stream-token-received",
+  ));
+  fixture.emit("generation-stopped", {generation_type: "normal"});
+  await settle();
+  fixture.runtime.destroy();
+});
+
+test("terminal signals after lease expiry cannot re-enter automatic business work", async () => {
+  const fixture = createFixture({generationLeaseMs: 20});
+  await fixture.runtime.init();
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await settle();
+
+  fixture.emit("generation-stopped", {generation_type: "normal"});
+  fixture.emit("generation-ended", {generation_type: "normal"});
+  await settle();
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.filter(item => item.stage === "GENERATION_LEASE_EXPIRED_EVENT_IGNORED").length, 2);
+  assert.equal(sequence.some(item => item.stage === "PROJECTION_PROCESS_STARTED"), false);
+  assert.equal(sequence.some(item => item.stage === "LEGACY_PROJECTION_LIFECYCLE"), false);
+  assert.equal(sequence.some(item => item.stage === "NSFW_LIFECYCLE_RECOVERY" && item.entered_recovery === true), false);
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+  fixture.runtime.destroy();
+});
+
+test("post-lease final Character Floor waits for GENERATION_ENDED before one handoff", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{message_id: "quiet-final-floor", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  analysisCalls = 0;
+  const traceBeforeGeneration = fixture.runtime.getPersistenceTrace().sequence.length;
+
+  await fixture.emit("generation-started", {generation_type: "normal", message_id: "quiet-final-floor"});
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await settle();
+  assert.equal(analysisCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+
+  fixture.context.chat[0].content = "最终正文";
+  await fixture.emit("character-message-rendered", {message_id: "quiet-final-floor"});
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 0);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER"),
+    false,
+  );
+
+  await fixture.emit("generation-ended", {message_id: "quiet-final-floor"});
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 1);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence.slice(traceBeforeGeneration);
+  assert.equal(sequence.filter(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER").length, 1);
+  assert.equal(sequence.filter(item => item.stage === "GENERATION_LEASE_EXPIRED_EVENT_IGNORED").length, 0);
+  fixture.runtime.destroy();
+});
+
+test("post-lease MESSAGE_RECEIVED restores the gate and waits for the final Floor", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{message_id: "pre-lease-floor", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await settle();
+
+  fixture.context.chat.push({
+    message_id: "late-final-floor",
+    floor: 2,
+    content: "新正文",
+    role: "assistant",
+  });
+  await fixture.emit("message-received", {message_id: "late-final-floor"});
+  await settle();
+  assert.equal(analysisCalls, 0);
+
+  await fixture.emit("character-message-rendered", {message_id: "late-final-floor"});
+  await fixture.emit("generation-ended", {message_id: "late-final-floor"});
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 1);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(
+    sequence.some(item => item.stage === "GENERATION_INTENT_RESTORED"),
+    true,
+  );
+  assert.equal(
+    sequence.some(item =>
+      item.stage === "GENERATION_GATE_ACTIVITY_CONFIRMED" &&
+      item.reason === "late-message-received",
+    ),
+    true,
+  );
+  assert.equal(sequence.filter(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER").length, 1);
+  fixture.runtime.destroy();
+});
+
+test("post-lease render of the unchanged Floor stays quarantined", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{message_id: "unchanged-after-lease", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+
+  await fixture.emit("generation-started", {
+    generation_type: "normal",
+    message_id: "unchanged-after-lease",
+  });
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await fixture.emit("character-message-rendered", {message_id: "unchanged-after-lease"});
+  await fixture.emit("generation-ended", {message_id: "unchanged-after-lease"});
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 0);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(item =>
+      item.stage === "GENERATION_LEASE_EXPIRED_EVENT_IGNORED" &&
+      item.reason === "activity-lease-quarantine",
+    ),
+    true,
+  );
+  fixture.runtime.destroy();
+});
+
+test("real non-streaming generation keeps its lease after final-floor activity until ENDED", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{message_id: "long-generation-floor", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  analysisCalls = 0;
+
+  await fixture.emit("generation-started", {generation_type: "normal", message_id: "long-generation-floor"});
+  await new Promise(resolve => setTimeout(resolve, 8));
+  fixture.context.chat[0].content = "最终正文";
+  await fixture.emit("character-message-rendered", {message_id: "long-generation-floor"});
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await fixture.emit("generation-ended", {generation_type: "normal", message_id: "long-generation-floor"});
+  await settle();
+  await settle();
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.some(item => item.stage === "GENERATION_GATE_LEASE_EXPIRED"), false);
+  assert.equal(analysisCalls, 1);
+  assert.equal(fixture.saveFloorCalls() > 0, true);
+  assert.equal(sequence.filter(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER").length, 1);
+  fixture.runtime.destroy();
+});
+
+test("hard generation watchdog abandons an evidenced run without terminal event", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 10,
+    generationStreamLeaseMs: 10,
+    generationHardWatchdogMs: 30,
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
     },
   });
   await fixture.runtime.init();
-  writes.length = 0;
-  const listener = fixture.listeners.get("generation-started");
 
-  await Promise.all([
-    listener({generation_type: "normal"}),
-    listener({generation_type: "regenerate"}),
-  ]);
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  fixture.emit("stream-token-received", {text_length: 1});
+  await new Promise(resolve => setTimeout(resolve, 45));
+  await settle();
 
-  assert.equal(writes.length, 0);
-  assert.equal(fixture.calls(), 0);
+  fixture.emit("character-message-rendered", {message_id: "missing-terminal"});
+  fixture.emit("generation-ended", {generation_type: "normal"});
+  await settle();
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.filter(item => item.stage === "GENERATION_GATE_HARD_WATCHDOG_EXPIRED").length, 1);
+  assert.equal(sequence.filter(item => item.stage === "GENERATION_LEASE_EXPIRED_EVENT_IGNORED").length, 2);
+  assert.equal(analysisCalls, 0);
+  assert.equal(fixture.saveFloorCalls(), 0);
+
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  const restarted = fixture.runtime.getPersistenceTrace().sequence.filter(item =>
+    item.stage === "HOST_EVENT_FORWARD_RESULT" && item.host_event_key === "GENERATION_STARTED",
+  ).at(-1);
+  assert.equal(restarted?.forward_result?.reason, "generation-pending");
+  fixture.emit("generation-stopped", {generation_type: "normal"});
+  await settle();
   fixture.runtime.destroy();
 });
 
@@ -509,6 +843,75 @@ test("a Chat boundary during generation cannot refresh or write the old Floor", 
   assert.equal(fixture.saveFloorCalls(), 0);
   assert.equal(promptWrites.length, 1);
   assert.equal(promptWrites[0], "");
+  fixture.runtime.destroy();
+});
+
+test("ordinary CHAT_CHANGED only rebinds the Chat and restores read-only context", async () => {
+  const promptWrites = [];
+  const fixture = createFixture({
+    setExtensionPromptHook: payload => {
+      if (payload?.key === "bioweave_projection_context") promptWrites.push(payload.content);
+    },
+    analyzer: {
+      async analyzeFloor() {
+        throw new Error("CHAT_CHANGED_MUST_NOT_ANALYZE");
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  const floor = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const projection = createProjection({
+    subject_id: "char_000001",
+    projection_rule_id: "rule:chat-rebind",
+    development_concern_key: "concern:chat-rebind",
+    mechanism: {key: "mechanism:chat-rebind", world_model_rule_refs: []},
+    source_event_ids: ["event:chat-rebind"],
+    development: {
+      kind: "possible_biological_change",
+      current_basis: {event_ids: ["event:chat-rebind"], state_refs: [], mechanism_rule_refs: []},
+      next_signal: "只读恢复内容",
+    },
+    timing: {
+      trigger_kind: "immediate_after_event",
+      reference_event_id: "event:chat-rebind",
+      reference_story_time: null,
+      current_story_time: null,
+      elapsed_story_days: null,
+    },
+    created_at_floor_version: floor.version,
+    evidence_refs: ["event:chat-rebind"],
+  });
+  const currentFloor = fixture.runtime.store.getFloor(floor.index, floor.swipeId);
+  await fixture.runtime.store.saveFloor(floor.index, floor.swipeId, {
+    ...currentFloor,
+    floor_version: floor.version,
+    projection_timeline: {
+      schema_version: 1,
+      creations: [projection],
+      evidence_records: [],
+      lifecycle_records: [],
+      delivery_records: [],
+    },
+  });
+  assert.equal((await fixture.runtime.getProjectionViews({chatId: "chat-runtime"})).all.length, 1);
+  promptWrites.length = 0;
+  const saveFloorCallsBefore = fixture.saveFloorCalls();
+  const traceBefore = fixture.runtime.getPersistenceTrace().sequence.length;
+
+  await fixture.emit("chat-changed", {chat_id: "chat-runtime"});
+  await settle();
+
+  assert.equal(fixture.calls(), 0);
+  assert.equal(fixture.analysisCalls().length, 0);
+  assert.equal(fixture.saveFloorCalls(), saveFloorCallsBefore);
+  const trace = fixture.runtime.getPersistenceTrace().sequence.slice(traceBefore);
+  assert.equal(trace.some(entry => entry.stage === "PROJECTION_PROCESS_STARTED"), false);
+  assert.equal(trace.some(entry => entry.stage === "LEGACY_PROJECTION_LIFECYCLE"), false);
+  assert.equal(trace.some(entry => entry.stage === "NSFW_LIFECYCLE_RECOVERY" && entry.entered_recovery === true), false);
+  assert.equal(trace.some(entry => entry.stage === "PROJECTION_CONTEXT_REFRESH_STARTED"), true);
+  assert.equal(promptWrites[0], "");
+  assert.match(promptWrites.at(-1), /只读恢复内容/u);
   fixture.runtime.destroy();
 });
 
@@ -8011,6 +8414,94 @@ test("interval counts only new Character Floors and ignores User lifecycle event
   fixture.runtime.destroy();
 });
 
+test("Character interval does not block internal built-in Projection stage advancement", async () => {
+  let eventCalls = 0;
+  const exposure = eventResult("internal-stage-exposure", {
+    story_time: {
+      display: "2026-01-01",
+      normalized: "2026-01-01",
+      day_index: null,
+      calendar_id: null,
+      precision: "day",
+      confidence: 1,
+    },
+    pregnancy_relevance: {
+      ...eventResult("internal-stage-exposure").pregnancy_relevance,
+      reproductive_mechanism: {kind: "fertilization"},
+    },
+  });
+  const worldModel = normalizeWorldModel({
+    schema_version: 1,
+    species: [{name: "species-a", biological_types: [{name: "type-a", capabilities: {can_carry_pregnancy: true}}]}],
+    projection_rules: [],
+  });
+  const storyTime = day => ({
+    display: `2026-01-${String(day + 1).padStart(2, "0")}`,
+    normalized: `2026-01-${String(day + 1).padStart(2, "0")}`,
+    day_index: null,
+    calendar_id: null,
+    precision: "day",
+    confidence: 1,
+  });
+  const fixture = createFixture({
+    messages: [{message_id: "internal-stage-17", floor: 17, content: "第 17 天正文", role: "assistant", story_time: storyTime(17)}],
+    projectionTimingBaselineResolver: async () => ({
+      schema_version: 1,
+      config_version: 1,
+      base_min_story_days: 0,
+      base_max_story_days: 42,
+      variance_ratio: 0,
+      variance_cap_story_days: 0,
+      total_adjustment_cap_story_days: 0,
+    }),
+    analyzer: {
+      async analyzeWorldModel() {
+        return worldModel;
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return {events: [exposure]};
+      },
+      async generateProjection() {
+        throw new Error("INTERNAL_BUILT_IN_ROUTE_MUST_NOT_CALL_PROJECTION_API");
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 3});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshProjection();
+
+  fixture.context.chat.push({message_id: "internal-stage-23", floor: 23, content: "第 23 天正文", role: "assistant", story_time: storyTime(23)});
+  fixture.emit("character-message-rendered", {message_id: "internal-stage-23"});
+  await settle();
+  await settle();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const completed = fixture.runtime.getPersistenceTrace().sequence.some(entry =>
+      entry.stage === "PROJECTION_READBACK" && entry.floor === 23,
+    );
+    if (completed) break;
+    await settle();
+  }
+
+  assert.equal(eventCalls, 1);
+  assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
+  const current = await fixture.runtime.getProjectionViews({chatId: "chat-runtime", endpointFloor: 23, endpointIndex: 1});
+  assert.deepEqual(
+    current.all.map(item => item.development_concern_key).sort(),
+    [
+      "pre_confirmation_observation:appetite_change",
+      "pre_confirmation_observation:mood_change",
+      "pre_confirmation_observation:nausea",
+      "pre_confirmation_observation:odor_discomfort",
+    ].sort(),
+  );
+  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(entry =>
+    entry.stage === "AUTO_SCHEDULER_DECISION" && entry.decision === "character-interval",
+  ));
+  fixture.runtime.destroy();
+});
+
 test("scheduler rebases on the current valid timeline after a successful baseline", async () => {
   const fixture = createFixture({
     messages: [{ message_id: "timeline-58", floor: 58, content: "Floor 58", role: "assistant" }],
@@ -8400,6 +8891,197 @@ test("normal generation also waits for the settle barrier", async () => {
   fixture.emit("generation-ended", { message_id: "normal-barrier" });
   await settle();
   assert.equal(calls, 1);
+  fixture.runtime.destroy();
+});
+
+test("automatic factual success waits for generation settle and completes Projection once", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "projection-settle-gate", floor: 100, content: "最终正文", role: "assistant" }],
+    analyzer: { async analyzeFloor() { return { events: [] }; } },
+  });
+  await fixture.runtime.init();
+  const traceBeforeGeneration = fixture.runtime.getPersistenceTrace().sequence.length;
+
+  await fixture.emit("generation-started", { generation_type: "normal", message_id: "projection-settle-gate" });
+  assert.ok(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration);
+  await fixture.runtime.analyzeFloor(null, { force: false, reason: "automatic" });
+  assert.ok(fixture.runtime.getAutoAnalysisSchedulerState().pendingGeneration);
+  await settle();
+  let trace = fixture.runtime.getPersistenceTrace().sequence.slice(traceBeforeGeneration);
+  assert.equal(trace.filter(entry => entry.stage === "PROJECTION_PROCESS_STARTED").length, 0);
+  assert.equal(trace.filter(entry => entry.stage === "PROJECTION_POSTPROCESS_DEFERRED").length, 1);
+
+  await fixture.emit("character-message-rendered", { message_id: "projection-settle-gate" });
+  await fixture.emit("generation-ended", { message_id: "projection-settle-gate" });
+  await settle();
+  await settle();
+
+  trace = fixture.runtime.getPersistenceTrace().sequence.slice(traceBeforeGeneration);
+  assert.equal(trace.filter(entry => entry.stage === "PROJECTION_PROCESS_STARTED").length, 1);
+  assert.equal(trace.filter(entry => entry.stage === "PROJECTION_POSTPROCESS_RELEASED").length, 1);
+  fixture.runtime.destroy();
+});
+
+test("cleared generation intent releases deferred Projection post-processing once", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "deferred-floor-98", floor: 98, content: "旧正文", role: "assistant" }],
+    analyzer: { async analyzeFloor() { return { events: [] }; } },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+
+  await fixture.emit("generation-started", {
+    genType: "regenerate",
+    message_id: "deferred-floor-98",
+  });
+  await fixture.emit("character-message-rendered", { message_id: "deferred-floor-98" });
+
+  fixture.context.chat.push({
+    message_id: "deferred-floor-99",
+    floor: 99,
+    content: "新正文",
+    role: "assistant",
+  });
+  await fixture.runtime.analyzeFloor(
+    { __messageIndex: true, index: 1 },
+    { force: false, reason: "automatic" },
+  );
+  await settle();
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.filter(
+      entry => entry.stage === "PROJECTION_POSTPROCESS_DEFERRED",
+    ).length,
+    1,
+  );
+
+  await fixture.emit("character-message-rendered", { message_id: "deferred-floor-99" });
+  await fixture.emit("generation-ended", { message_id: "deferred-floor-99" });
+  await settle();
+  await settle();
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(
+    sequence.filter(entry => entry.stage === "PROJECTION_POSTPROCESS_RELEASED").length,
+    1,
+  );
+  assert.equal(
+    sequence.filter(entry => entry.stage === "PROJECTION_PROCESS_STARTED").length,
+    1,
+  );
+  fixture.emit("generation-ended", { message_id: "deferred-floor-99" });
+  await settle();
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.filter(
+      entry => entry.stage === "PROJECTION_POSTPROCESS_RELEASED",
+    ).length,
+    1,
+  );
+  fixture.runtime.destroy();
+});
+
+test("deferred deletion of a replaced Character message does not clear the settled Floor", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "replaced-floor-slot", floor: 98, content: "旧正文", role: "assistant" }],
+    analyzer: { async analyzeFloor() { return { events: [] }; } },
+  });
+  configureScheduler(fixture, { interval: 1 });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {
+    generation_type: "normal",
+    message_id: "replaced-floor-slot",
+  });
+  await settle();
+  fixture.context.chat.splice(0, 1);
+  fixture.emit("message-deleted", {
+    message_id: "replaced-floor-slot",
+    messageIndex: 0,
+  });
+  fixture.context.chat.push({
+    message_id: "replaced-floor-slot",
+    floor: 98,
+    content: "新正文",
+    role: "assistant",
+  });
+  fixture.emit("message-received", {message_id: "replaced-floor-slot"});
+  const rendered = waitForLifecycleSettled(fixture, "CHARACTER_MESSAGE_RENDERED");
+  fixture.emit("character-message-rendered", {message_id: "replaced-floor-slot"});
+  await rendered;
+  await fixture.emit("generation-ended", {message_id: "replaced-floor-slot"});
+  await settle();
+  await settle();
+  await fixture.emit("generation-ended", {message_id: "replaced-floor-slot"});
+  await fixture.emit("generation-stopped", {message_id: "replaced-floor-slot"});
+  await settle();
+
+  const current = await fixture.runtime.resolveCurrentBioWeaveFloor();
+  assert.equal(current.version.message_id, "replaced-floor-slot");
+  assert.equal(fixture.runtime.store.getFloor(0).analysis?.status, "success");
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.some(entry =>
+    entry.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    entry.host_event_key === "MESSAGE_DELETED" &&
+    entry.reason === "REPLACED_BY_CURRENT_CHARACTER_FLOOR",
+  ), true);
+  fixture.runtime.destroy();
+});
+
+test("deferred deletion of another message in the same slot is still replayed", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "same-slot-current", floor: 98, content: "旧正文", role: "assistant" }],
+    analyzer: { async analyzeFloor() { return { events: [] }; } },
+  });
+  await fixture.runtime.init();
+
+  fixture.emit("generation-started", {
+    generation_type: "normal",
+    message_id: "same-slot-current",
+  });
+  fixture.context.chat[0].content = "新正文";
+  fixture.emit("message-deleted", {
+    message_id: "different-old-message",
+    messageIndex: 0,
+  });
+  fixture.emit("message-received", { message_id: "same-slot-current" });
+  fixture.emit("character-message-rendered", { message_id: "same-slot-current" });
+  await fixture.emit("generation-ended", { message_id: "same-slot-current" });
+  await settle();
+  await settle();
+
+  const replay = fixture.runtime.getPersistenceTrace().sequence.find(entry =>
+    entry.stage === "GENERATION_DEFERRED_EVENT_REPLAY" &&
+    entry.host_event_key === "MESSAGE_DELETED",
+  );
+  assert.equal(replay?.execution_status, "SUCCEEDED");
+  assert.notEqual(replay?.reason, "REPLACED_BY_CURRENT_CHARACTER_FLOOR");
+  fixture.runtime.destroy();
+});
+
+test("a late GENERATION_STARTED continuation cannot dereference a released gate", async () => {
+  const fixture = createFixture({
+    messages: [{ message_id: "generation-race-floor", floor: 1, content: "正文", role: "assistant" }],
+  });
+  await fixture.runtime.init();
+
+  await fixture.emit("generation-started", {
+    generation_id: "generation-4",
+    generation_type: "normal",
+    message_id: "generation-race-floor",
+  });
+  await fixture.emit("generation-ended", {message_id: "generation-race-floor"});
+  await fixture.emit("generation-started", {
+    generation_id: "generation-5",
+    generation_type: "normal",
+    message_id: "generation-race-floor",
+  });
+  await settle();
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(sequence.some(entry =>
+    entry.stage === "HOST_EVENT_FORWARD_RESULT" &&
+    entry.host_event_key === "GENERATION_STARTED" &&
+    entry.forward_error === "Cannot set properties of null (setting active)",
+  ), false);
   fixture.runtime.destroy();
 });
 

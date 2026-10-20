@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {resolveProjectionTimingInstance} from '../core/projection-timing.js';
-import {buildParticipantAggregationEvidence, deriveParticipantList, emptyParticipantAggregationSnapshot, filterProjectionViewsByAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, normalizeParticipantAggregation, normalizeParticipantAggregationSnapshot, resolveParticipantAggregationTrigger, upsertParticipantAggregation} from '../core/participant-aggregation.js';
+import {buildParticipantAggregationEvidence, deriveParticipantList, emptyParticipantAggregationSnapshot, filterProjectionViewsByAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, normalizeParticipantAggregation, normalizeParticipantAggregationSnapshot, projectionAggregationEvidenceDecision, resolveParticipantAggregationTrigger, upsertParticipantAggregation} from '../core/participant-aggregation.js';
 import {createParticipantAggregationPersistence} from '../storage/participant-aggregation.js';
 import {emptyFloor} from '../storage/schema.js';
 
@@ -163,6 +163,47 @@ test('legacy projections without aggregation evidence remain visible while inval
   assert.equal(result.all[0].context_visible, true);
   assert.equal(result.all[1].context_visible, false);
   assert.equal(result.all[1].aggregation_evidence_invalid, true);
+});
+
+test('projection evidence diagnostics distinguish every fail-closed identity and source decision', () => {
+  const events = [exposure('exposure-1', 1, ['source-1']), exposure('exposure-2', 2, ['source-1', 'source-2'])];
+  const instance = timing();
+  const aggregation = normalizeParticipantAggregation({
+    aggregation_id: 'aggregation-diagnostics', subject_id: 'subject-1', mechanism_key: instance.mechanism_key,
+    cycle_id: 'cycle-diagnostics', timing_instance_id: instance.timing_instance_id,
+    reference_story_time: instance.reference_story_time, aggregation_story_time: {day_index: 18},
+    elapsed_story_days: 17, effective_min_story_days: instance.effective_min_story_days,
+    effective_max_story_days: instance.effective_max_story_days,
+    sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
+    config_snapshot: instance.config_snapshot, accepted_exposure_event_ids: ['exposure-1', 'exposure-2'],
+    source_basis_refs: instance.source_basis_refs, created_at_floor_version: version,
+  });
+  const evidence = buildParticipantAggregationEvidence({aggregation, events, subjectId: 'subject-1'});
+  const validProjection = {projection_id: 'projection-diagnostics', subject_id: 'subject-1', aggregation_path: 'participant_aggregation', aggregation_evidence: evidence};
+  const decision = projection => projectionAggregationEvidenceDecision({projection, aggregation, events});
+  const currentMappingChanged = [events[0], exposure('exposure-2', 2, ['source-3'])];
+
+  assert.equal(decision({projection_id: 'legacy', subject_id: 'subject-1'}).reason_code, 'NON_AGGREGATION_PROJECTION');
+  assert.equal(decision({projection_id: 'missing', subject_id: 'subject-1', aggregation_path: 'participant_aggregation'}).reason_code, 'MISSING_EVIDENCE');
+  assert.equal(decision({projection_id: 'incomplete', subject_id: 'subject-1', aggregation_path: 'participant_aggregation', aggregation_evidence: {subject_id: 'subject-1'}}).reason_code, 'EVIDENCE_INCOMPLETE');
+  assert.equal(decision(validProjection).reason_code, 'VALID');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation: null, events}).reason_code, 'AGGREGATION_NOT_FOUND');
+  assert.equal(decision({...validProjection, subject_id: 'subject-2'}).reason_code, 'SUBJECT_ID_MISMATCH');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation: {...aggregation, aggregation_id: 'aggregation-other'}, events}).reason_code, 'AGGREGATION_ID_MISMATCH');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation: {...aggregation, cycle_id: 'cycle-other'}, events}).reason_code, 'CYCLE_ID_MISMATCH');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation: {...aggregation, pregnancy_id: 'pregnancy-other'}, events}).reason_code, 'PREGNANCY_ID_MISMATCH');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation, events: []}).reason_code, 'CURRENT_EVIDENCE_UNAVAILABLE');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation, events: [events[0]]}).reason_code, 'EXPOSURE_ID_MISMATCH');
+  assert.equal(projectionAggregationEvidenceDecision({projection: validProjection, aggregation, events: currentMappingChanged}).reason_code, 'PARTICIPANT_MAPPING_MISMATCH');
+
+  const collected = [];
+  const filtered = filterProjectionViewsByAggregationEvidence({
+    views: {all: [{...validProjection, context_visible: true}]}, aggregations: [aggregation], events, diagnosticCollector: decision => collected.push(decision),
+  });
+  assert.equal(filtered.all[0].context_visible, true);
+  assert.deepEqual(collected.map(item => ({projection_id: item.projection_id, valid: item.valid, reason_code: item.reason_code})), [
+    {projection_id: 'projection-diagnostics', valid: true, reason_code: 'VALID'},
+  ]);
 });
 
 test('aggregation success survives Projection AI failure and retry does not resample or duplicate', async () => {

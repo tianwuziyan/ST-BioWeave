@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"验收批量写入仍保持 Floor/Swipe/六字段版本和 append-only Projection provenance。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"验收 Coordinator、authoritative readback、sibling preservation 和 stale guard 未被绕过。"}
+{"file":"docs/ARCHITECTURE.md","reason":"验收 Runtime/Storage/Coordinator 责任未漂移，未引入第二持久化实现。"}
+{"file":".trellis/tasks/10-19-projection-batch-persistence-performance/design.md","reason":"对照确认读取次数、批量事务、失败语义和明确不改范围。"}

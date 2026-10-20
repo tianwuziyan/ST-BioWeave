@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/index.md","reason":"质量审查时定位适用领域规范"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"核对 owner、Swipe、Floor Version、原子写入和 readback 契约"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对跨层接口、错误传播、诊断和文档同步"}
+{"file":"docs/ARCHITECTURE.md","reason":"核对修改没有侵入冻结 Coordinator 或错误 feature owner"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"核对持久化生命周期和清理行为未产生第二事实源"}

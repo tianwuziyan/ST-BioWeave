@@ -33,6 +33,27 @@ active Swipe, verify each current six-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
 and stale versions are never fallback sources.
 
+Built-in pre-confirmation creations are complete Story Time stage snapshots.
+Their snapshot identity is `subject_id + pregnancy_id|null + cycle_id`;
+mechanism metadata does not split one subject's four branches into separate
+stage snapshots. For each identity, the endpoint read selects the latest valid
+Character Floor containing a complete four-branch stage snapshot and excludes
+earlier stages from the product view. For legacy timelines, the resolver may
+reconstruct that complete snapshot from the latest valid records for the same
+identity and stage across multiple Character Floors; it never mixes cycle,
+pregnancy, or stage identities. Stage selection is monotonic in the built-in
+schedule: a late legacy branch from an older stage cannot regress a newer
+complete stage; within one stage, the latest complete snapshot wins. Thus Floor 20 may own `[A]` and Floor 26
+may own `[B]`; the endpoint at 26 returns only `[B]`, while an endpoint at 23
+returns only `[A]`. A stage change appends only the new complete creation and
+evidence batch to the current Floor: it does not append a synthetic `deleted`
+or `expired` lifecycle record for the old stage. Factual lifecycle and user
+deletion records retain their existing replay semantics.
+Delivery replay is a separate historical read: it validates references against
+surviving Floor creations, not the current product view, so an earlier-stage
+submission or response remains available for timeout/observation processing
+without re-exposing that creation as a current Projection.
+
 ### Projection generation batch persistence contract
 
 #### 1. Scope / Trigger
@@ -140,8 +161,44 @@ Runtime Context Injection is downstream of this read. It consumes only the
 current `getProjectionViews()` result with `context_visible === true`, through
 the stable `bioweave_projection_context` extension slot. It does not read raw
 timeline arrays, persist a Chat-level prompt, or make the prompt part of Event
-evidence. When the current Character Floor, Chat, Swipe, or Floor Version is
-missing or changes, the slot is refreshed or explicitly cleared.
+evidence. Built-in pre-confirmation views are selected independently for each
+`subject_id + pregnancy_id|null + cycle_id` identity; mechanism metadata does
+not split one subject's stage branches. When a
+complete four-branch snapshot for the current Story Time schedule stage is
+available, only that stage is injected. During a stage transition, while the
+new complete snapshot is not available yet, the latest complete prior stage is
+temporarily retained so the next API request does not lose its context. After
+the 42-day observation window, the prior stage is no longer injected.
+Generic/world-model projections are unchanged. When the current Character
+Floor, Chat, Swipe, or Floor Version is missing or changes, the slot is
+refreshed or explicitly cleared.
+
+### Internal settled-floor Projection stage synchronization
+
+The automatic scheduler's `analysis_interval` gates only the external
+World/Event/Projection API route. After every valid Character Floor has passed
+the Generation settle barrier, the Runtime may run an internal built-in
+pre-confirmation stage synchronization independently of that interval. It
+re-reads the authoritative Timing/Aggregation inputs and current Story Time;
+the same complete stage is reused without generation or persistence, while a
+stage transition prepares the complete built-in batch in memory and persists
+only the new current-Floor creation/evidence batch. It does not call an
+external analyzer and does not create a lifecycle deletion/expiry record for
+the previous stage.
+
+If the external Event API was skipped by the interval and the current
+Character Floor has no complete owner slot yet, the internal route may first
+use the existing Event/Floor Coordinator to seed that current slot from the
+nearest valid prior Event snapshot (`events` and `character_registry`) with
+the current six-field Floor Version. This seed does not copy or invent
+`analysis.status=success`, does not reset the scheduler baseline, and does
+not create Chat-level or Runtime-derived fact storage. The Projection batch
+owner guard and authoritative readback remain unchanged; the seed is only a
+legal Floor-owner prerequisite for a new internal Projection batch.
+
+Opening a Character Card, ordinary Chat rebind, or a read-only UI refresh is
+not a settled Character Floor and must not create this owner slot or run the
+internal stage synchronization.
 
 ### Projection delivery batch persistence contract
 
@@ -310,6 +367,32 @@ and complete Floor Version are revalidated before one post-generation handoff.
 Signals from an old Chat are dropped. A Chat boundary clears the old Context
 slot first; stale old-Chat/Floor work must fail closed.
 
+The gate is an activity lease, not an unbounded boolean. A normal
+`GENERATION_STARTED` arms a provisional lease of about 3000 ms. If
+`STREAM_TOKEN_RECEIVED` or matching final `CHARACTER_MESSAGE_RENDERED`
+confirms real generation activity and disables provisional expiry, while a
+separate bounded hard watchdog remains armed; repeated
+starts coalesce pending events without dropping them. `GENERATION_ENDED`,
+`GENERATION_STOPPED`, `GENERATION_CANCELLED`, and the final settled handoff
+release the gate. A matching render may arrive before `GENERATION_ENDED`, so
+it confirms activity but does not by itself settle the lifecycle.
+Lease timers carry both the gate identity and a generation token, and are
+cleared on release or runtime destroy, so an old timer cannot release a newer
+Chat or generation. Lease expiry is recovery from an uncorroborated/stale
+start only: it may replay a deferred ordinary `CHAT_CHANGED` read-only
+restore, but it must drop unsafe message/Swipe/business triggers and must not
+authorize analysis, Projection/Tracking lifecycle work, Context recomputation,
+or Floor persistence. Expiry snapshots and cancels the stale Generation
+Lifecycle pending intent. If the same Chat/epoch later proves real new
+Character activity through `MESSAGE_RECEIVED` or a matching
+`CHARACTER_MESSAGE_RENDERED`, the Runtime may restore that pending intent and
+reopen the deferred gate; it must still wait for both the final Character
+Floor and `GENERATION_ENDED` before the one post-generation handoff.
+Unconfirmed late renders, orphan terminal signals, and other lifecycle events
+remain quarantined. A Chat change, new generation start, or hard-watchdog
+expiry clears/fails closed quarantine. Start/renew/expire/release/restore are
+recorded as concise diagnostic stages without raw content.
+
 ### Generation settle gate contract
 
 #### 1. Scope / Trigger
@@ -343,6 +426,19 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
   must not mutate the new Chat or restore the old Context.
 - Repeated generation-start signals reuse the current gate and must not erase
   already deferred events.
+- A start arms a bounded provisional lease; stream tokens or matching final
+  Floor activity disable only provisional expiry. The non-renewed hard
+  watchdog still abandons an evidenced run with no terminal signal fail-closed,
+  without calculating partial text, and releases the gate safely.
+- Lease expiry only replays a deferred `CHAT_CHANGED` read-only restore. Other
+  deferred event classes fail closed. A later same-Chat/epoch
+  `MESSAGE_RECEIVED` or matching `CHARACTER_MESSAGE_RENDERED` may restore the
+  quarantined intent only when it proves a new Character Floor; the restored
+  gate still waits for both final-floor render and `GENERATION_ENDED` before
+  the existing guarded handoff. Orphan terminal signals, unconfirmed renders,
+  and unrelated lifecycle events remain ignored. A Chat change or new start
+  clears the quarantine; hard-watchdog expiry never revives it and expiry
+  itself never authorizes business calculation or persistence.
 
 #### 4. Validation & Error Matrix
 
@@ -350,9 +446,12 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 | --- | --- |
 | Body generation is active | No Projection/Tracking/timeout/Floor save/Context recompute |
 | Deferred event belongs to the active Chat | Replay once after the gate releases |
+| Deferred `MESSAGE_DELETED` for a regenerated slot | Skip only when its supplied `message_id` also identifies the regenerated Character Floor; a same-index deletion for another message is still replayed |
 | Deferred event belongs to an old Chat | Skip with stale-context diagnostic |
 | Final Floor or lifecycle owner changed | Existing Floor/Chat/Swipe guard fails closed |
 | Duplicate generation or lifecycle event | Coalesce; no duplicate handoff |
+| Start has no corroborating activity or terminal event | Expire the lease and replay only safe read-only Chat restore |
+| Old lease callback runs after a new gate/Chat exists | Identity/token guard ignores the callback |
 
 #### 5. Good / Base / Bad Cases
 
@@ -392,6 +491,79 @@ Swipes is a host mirror. It does not create a second owner. A Chat-level map
 such as `chatMetadata.floors[mesId]`, a registry, or an in-memory cache is not
 a historical source of Floor facts. BioWeave does not add a permanent Floor ID
 database.
+
+### Chat rebind read-only restore contract
+
+#### 1. Scope / Trigger
+
+This contract applies to an ordinary `CHAT_CHANGED` outside the Generation
+gate. It changes only the current Chat binding and the transient
+`bioweave_projection_context` display; it does not start a new business
+execution.
+
+#### 2. Signatures
+
+```js
+refreshProjectionContext({chatId?, generation?, businessData?, projectionViews?, readOnly?})
+```
+
+`readOnly: true` is reserved for Chat rebind restoration. The default remains
+`false` so generation-settle and ordinary post-analysis paths retain their
+delivery-observation behavior.
+
+#### 3. Contracts
+
+- `runtime/events.js` clears the old Context slot before the Chat rebind work.
+- Chat rebind may read the current valid Floor, Projection Views, Health
+  Guidance, registry, and scheduler state, but it must not call Projection
+  processing, lifecycle ticking, automatic recovery, or Analyzer code.
+- A read-only Context refresh may write the transient host injection slot, but
+  must not call `recordProjectionSubmission` or append a delivery record.
+- Chat/active Swipe/Floor Version guards still apply; stale current data fails
+  closed and must not restore the old Chat's Context.
+- A `CHAT_CHANGED` captured while the Generation gate is active remains a
+  deferred signal and is handled only by the existing post-generation handoff.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Ordinary Chat rebind | Clear old slot, restore current read-only views, no Floor write |
+| `readOnly: true` with a visible Projection | Update slot, return no delivery submission |
+| Missing/invalid current Floor | Clear or leave the slot in the existing fail-closed state; no delivery write |
+| Chat, Swipe, or Floor Version changes during restore | Return stale/clear result; never inject old data |
+| Chat change during Generation gate | Defer to settle handoff; do not run ordinary rebind inline |
+
+#### 5. Good / Base / Bad Cases
+
+- **Good**: Chat rebind clears the old slot, reads the current stored view,
+  writes it to the transient slot, and leaves `delivery_records` unchanged.
+- **Base**: the target Chat has no valid Floor; the slot is cleared and no
+  Projection/Tracking/Lifecycle fact is created.
+- **Bad**: Chat rebind calls `projectionRuntime.process()` or records a new
+  delivery merely because an existing view was displayed again.
+
+#### 6. Tests Required
+
+- Runtime Chat rebind asserts zero Analyzer calls, zero Floor saves, no
+  `PROJECTION_PROCESS_STARTED`, no lifecycle tick/recovery trace, and a
+  clear-then-restore slot sequence for an existing Projection.
+- Projection Context unit coverage asserts `readOnly: true` returns no
+  submission and does not invoke the delivery callback.
+- Generation-gated Chat changes continue to assert stale old-Chat clearing and
+  one post-generation handoff.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: displaying an existing view starts business processing or a receipt.
+await projectionRuntime.process({reason: "chat-changed"});
+await refreshProjectionContext();
+
+// Correct: restore only the current persisted read model.
+clearProjectionContext();
+await refreshProjectionContext({chatId, readOnly: true});
+```
 
 Chat Metadata may still own independent configuration: user choices, role or
 plugin settings, current Character Card/Persona context, and other explicitly
@@ -1133,8 +1305,92 @@ registry-driven rules:
   destructive source clear requires an immutable source identity, a one-shot
   transition token, official lifecycle evidence, and post-save owner checks;
   a bare `CHAT_CREATED` never supplies that proof.
+- Outside the Generation gate, ordinary `CHAT_CHANGED` is a read-only Chat
+  rebind: clear the old Projection Context slot first, rebuild current
+  read-only registry/scheduler state, and restore existing Projection/Health
+  Guidance views without Projection processing, lifecycle ticks, automatic
+  recovery, Analyzer work, delivery submission, or any Floor persistence.
+  Generation-gated Chat changes remain deferred to the existing settle handoff.
 - Edit, deletion, Swipe changes, and async completions continue to use the
   complete six-field Floor Version and reject stale provenance or late writes.
+
+## 13.1 Generation-settled automatic Projection execution
+
+### 13.1.1 Scope / Trigger
+
+This contract applies when automatic Character/Event analysis reaches factual
+success while a SillyTavern generation intent is still pending. Factual success
+does not authorize Projection processing until the final Character Floor has
+passed the Generation settle barrier.
+
+### 13.1.2 Signatures
+
+- `setGenerationAutomaticWorkDeferred(deferred)` marks automatic post-analysis
+  work as generation-gated Runtime state.
+- `flushDeferredProjectionPostProcessor({target})` releases at most the deferred
+  execution whose complete Floor Version exactly matches `target.version`.
+- `projectionRuntime.process({..., dedupeCompleted: true})` is used only by
+  automatic factual-success and lifecycle-recovery paths.
+
+### 13.1.3 Contracts
+
+The deferred execution is Runtime-transient, keeps only the newest automatic
+Floor execution, and is cleared on Chat boundary, stop/cancel without a final
+Floor, stale final Floor, or Runtime destroy. After a successful automatic
+Projection process, only the latest complete execution identity/result may be
+retained for immediate sequential duplicate suppression. The identity includes
+Chat, active Swipe, complete Floor Version, Events, source candidates, current
+state, Story Time, and World projection rules. It is not persisted and cannot
+authorize a write after any of those inputs change.
+
+If a newer Character Floor has already caused the lifecycle intent to be
+superseded, the matching deferred postprocessor remains releasable: the later
+`GENERATION_ENDED` signal may release the active host gate when no newer
+generation intent remains, then flushes only the current exact Floor Version.
+Clearing the intent must not silently discard a deferred Projection or create a
+second handoff.
+
+### 13.1.4 Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Generation still pending | Defer automatic postprocessor; no Projection process or Floor write |
+| Final render already superseded the lifecycle intent, then matching `GENERATION_ENDED` arrives | Release the active gate and flush the exact current deferred Floor once; do not require a stale completed-intent marker |
+| Final target is absent or version-mismatched | Clear deferred work and fail closed |
+| Same successful automatic execution arrives sequentially | Skip with `PROJECTION_ALREADY_COMPLETED` |
+| Prior execution was partial, failed, or stale | Do not cache as complete; permit guarded retry |
+| Manual analysis or event edit/delete | Preserve its explicit existing behavior; do not apply automatic completed-input dedupe |
+| Chat change or Runtime destroy | Clear deferred and completed Runtime hints |
+
+### 13.1.5 Good / Base / Bad Cases
+
+- Good: factual success arrives before `GENERATION_ENDED`; Projection remains
+  idle until the matching final Character Floor settles, then runs once.
+- Base: factual success occurs outside generation; the postprocessor runs
+  immediately with the normal owner/version guards.
+- Bad: run once at factual success and again at `GENERATION_ENDED`, causing two
+  Projection lifecycle passes and duplicate Host save opportunities.
+
+### 13.1.6 Tests Required
+
+- Assert generation-active factual success emits a deferred trace and zero
+  `PROJECTION_PROCESS_STARTED` records before settle.
+- Assert the matching final Floor emits one release and one Projection process
+  across both Character-rendered/Generation-ended event orders.
+- Assert a sequential duplicate with identical complete inputs performs one
+  persistence batch, while a partial result remains retryable.
+- Assert Chat/Floor/version change, stop/cancel, lease expiry, Swipe/reroll, and
+  destroy cannot release stale deferred work.
+
+### 13.1.7 Wrong vs Correct
+
+Wrong: invoke Projection immediately from factual success and rely only on an
+in-flight map; a later terminal event can run the same input again after the
+first promise settles.
+
+Correct: defer the automatic postprocessor behind the Generation settle
+barrier, release only the exact final Floor once, and use bounded completed-input
+dedupe as a secondary guard for automatic lifecycle notifications.
 
 The lifecycle registry is the source of truth for any future persisted field;
 new fields require domain, exact owner/location, clear and mutation behavior,

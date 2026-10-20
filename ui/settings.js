@@ -1194,9 +1194,25 @@ function renderNsfwPipelineDiagnostics(debug = {}) {
   const aggregationDiagnostics = Array.isArray(pipeline.aggregation_diagnostics)
     ? pipeline.aggregation_diagnostics
     : Array.isArray(debug?.aggregation_diagnostics) ? debug.aggregation_diagnostics : [];
+  const projectionDiagnostics = pipeline.projection_diagnostics ?? {};
   const traceStages = Array.isArray(trace.stages) ? trace.stages : [];
+  const projectionStatusCards = (Array.isArray(projectionDiagnostics.status_trace)
+    ? projectionDiagnostics.status_trace
+    : []).slice(-16).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.stage ?? 'UNKNOWN') + '</h5>' + renderBusinessDebugRows([
+    ['state / phase', [item.state, item.phase]], ['reason', item.reason],
+    ['Projection 路线 / 外部 API', [item.projection_route, item.external_api_allowed]],
+    ['scheduler 判定 / analysis execution', [item.scheduler_decision, item.analysis_execution_id]],
+    ['阶段快照 / 候选数', [item.snapshot_status, item.candidate_count]],
+    ['阶段人物 / 复用候选数', [item.subject_count, item.reused_candidate_count]],
+    ['延后 API 候选数', item.deferred_external_api_candidate_count], ['failure_reason', item.failure_reason],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 Projection 状态 Trace。</p>';
   const stageCards = traceStages.slice(-16).map(stage => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(stage.stage ?? 'UNKNOWN') + '</h5>' + renderBusinessDebugRows([
     ['execution_status', stage.execution_status], ['reason_code', stage.reason_code], ['invoked', stage.invoked],
+    ['Projection 路线 / 外部 API', [stage.projection_route, stage.external_api_allowed]], ['phase', stage.phase],
+    ['scheduler 判定', stage.scheduler_decision], ['阶段快照状态', stage.snapshot_status],
+    ['阶段人物 / 阶段键', [stage.subject_count, stage.stage_keys]], ['复用候选数', stage.reused_candidate_count],
+    ['内置候选 / 延后 API 候选', [stage.built_in_candidate_count, stage.deferred_external_api_candidate_count]],
+    ['候选数 / 失败原因', [stage.candidate_count, stage.failure_reason]],
     ['run_id', stage.run_id], ['Chat', stage.chat_id], ['Floor / Swipe', [stage.floor, stage.active_swipe_id]],
     ['subject_id', stage.subject_id], ['mechanism_key', stage.mechanism_key], ['Tracking Window', stage.tracking_window_id],
     ['Tracking Window Cycle', stage.tracking_window_cycle_id], ['final cycle_id', stage.final_cycle_id ?? stage.cycle_id], ['cycle_id 来源', stage.cycle_id_source], ['Cycle 一致性', [stage.cycle_id_consistent, stage.cycle_id_consistency_reason_code]],
@@ -1256,13 +1272,18 @@ function renderNsfwPipelineDiagnostics(debug = {}) {
       ['Event 数量', current.event_count], ['有效 Exposure 数量', current.authoritative_exposure_count], ['pregnancy-relevant Exposure 数量', current.pregnancy_relevant_exposure_count],
       ['Exposure 候选 Subject / mechanism', [current.candidate_subject_ids, current.candidate_mechanism_keys]], ['Tracking 人物数量', current.tracking_subject_count], ['Tracking Window 数量', current.tracking_window_count], ['Timing Instance 数量', current.timing_instance_count],
       ['Participant Aggregation 数量', current.participant_aggregation_count], ['Projection 数量', current.projection_count], ['Projection Rule 数量', current.projection_rules_count],
-      ['Projection Eligibility / AI', pipeline.projection_diagnostics],
+      ['Projection 路线 / 外部 API', [projectionDiagnostics.last_projection_route, projectionDiagnostics.last_external_api_allowed]],
+      ['Projection 最近状态', [projectionDiagnostics.last_status_stage, projectionDiagnostics.last_status_state]],
+      ['内部触发 / scheduler 判定', [projectionDiagnostics.last_internal_trigger, projectionDiagnostics.scheduler_decision]],
+      ['阶段复用', projectionDiagnostics.stage_reuse], ['阶段快照', projectionDiagnostics.stage_snapshot],
+      ['Projection Eligibility / AI', [projectionDiagnostics.eligibility_status, projectionDiagnostics.ai_scheduling_status, projectionDiagnostics.projection_ai_request_count]],
       ['NSFW Lock Gate', current.nsfw_lock?.gate], ['Lock 对聚合创建的影响', derived.capability_flag_effect?.aggregation_creation_control],
     ]) +
     '<h6>最近一次聚合尝试</h6>' + renderBusinessDebugRows([
       ['状态', derived.latest_aggregation_attempt?.aggregation_status], ['原因', derived.latest_aggregation_attempt?.aggregation_reason_code],
       ['aggregation_id', derived.latest_aggregation_attempt?.aggregation_id], ['last_attempt_at', derived.latest_aggregation_attempt?.last_attempt_at],
     ]) +
+    '<h6>Projection 路由与阶段状态（最近 16 条）</h6>' + projectionStatusCards +
     '<h6>人物级 Timing / Aggregation</h6>' + personCards +
     '<h6>执行阶段（最近 16 条）</h6>' + stageCards +
     '</section>',

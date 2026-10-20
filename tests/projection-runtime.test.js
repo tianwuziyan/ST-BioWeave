@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createProjectionRuntime} from '../runtime/projection-runtime.js'
-import {buildProjectionRuleId} from '../core/projection-eligibility.js'
+import {buildBuiltInPreConfirmationRules, buildProjectionRuleId} from '../core/projection-eligibility.js'
+import {createProjection} from '../core/projection.js'
 import {createRuntimeDiagnostics} from '../runtime/diagnostics.js'
 import {deriveTrackingWindows} from '../core/tracking-window.js'
 import {emptyFloor} from '../storage/schema.js'
@@ -56,7 +57,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, archiveAndReleasePregnancy = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
   let current = inputs()
   const saved = []
   let collectInputsCalls = 0
@@ -77,8 +78,9 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     },
     resolveCurrentFloor: async () => current.floor,
     getProjectionViews: getProjectionViews ?? views,
-    saveProjectionBatch: async ({records}) => {
+    saveProjectionBatch: async ({records, ...payload}) => {
       batchPersistenceCalls += 1
+      if (saveProjectionBatchHook) return saveProjectionBatchHook({records, ...payload})
       batchRecordCounts.push(records.length)
       for (const {projectionCandidate} of records) saved.push(projectionCandidate)
       return {status: 'appended'}
@@ -495,6 +497,107 @@ test('Projection Runtime creates the current staged built-in candidates after pa
   assert.equal(fixture.statuses.some(event => event.payload?.stage === 'PROJECTION_BUILT_IN_CANDIDATE'), true)
 })
 
+test('Projection Runtime reuses a complete built-in stage without generation or persistence', async () => {
+  let analyzerCalls = 0
+  const timing = {
+    timing_instance_id: 'timing-stage-reuse', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-reuse',
+    source_event_ids: ['event-1'], reference_story_time: {day_index: 0, display: '第 0 天'}, effective_min_story_days: 14, effective_max_story_days: 42,
+  }
+  const aggregation = {aggregation_id: 'aggregation-stage-reuse', subject_id: subject, pregnancy_id: null, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-reuse', status: 'succeeded', accepted_exposure_event_ids: ['event-1']}
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => { analyzerCalls += 1; throw new Error('SAME_STAGE_MUST_REUSE') }},
+    resolvePreConfirmationTiming: async () => ({enabled: true, instances: [timing], windows: [{tracking_window_id: 'window-stage-reuse', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-reuse', status: 'open', source_event_ids: ['event-1']}], aggregations: [aggregation]}),
+  })
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: []}, currentStoryTime: {day_index: 17, display: '第 17 天'}})
+  assert.equal((await fixture.runtime.process({reason: 'stage-reuse-first'})).status, 'success')
+  assert.equal((await fixture.runtime.process({reason: 'stage-reuse-second'})).status, 'success')
+  assert.equal(analyzerCalls, 0)
+  assert.equal(fixture.batchPersistenceCalls, 1)
+  assert.equal(fixture.saved.length, 4)
+  assert.equal(fixture.statuses.filter(event => event.payload?.stage === 'PROJECTION_STAGE_REUSED').length, 1)
+  assert.equal(fixture.statuses.find(event => event.payload?.stage === 'PROJECTION_STAGE_REUSED')?.payload?.reused_candidate_count, 4)
+})
+
+test('Projection Runtime internal route defers custom Projection API work', async () => {
+  let analyzerCalls = 0
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => {
+      analyzerCalls += 1
+      return {development: {kind: 'possible_detection', description: '不应在内部路线调用。'}}
+    }},
+  })
+
+  const result = await fixture.runtime.processInternal({reason: 'settled-floor-internal'})
+
+  assert.equal(result.status, 'success')
+  assert.equal(analyzerCalls, 0)
+  assert.equal(fixture.saved.length, 0)
+})
+
+test('Projection Runtime replaces a built-in stage with one batch and no old-stage lifecycle', async () => {
+  const lifecycleRecords = []
+  const timing = {
+    timing_instance_id: 'timing-stage-replacement', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-replacement',
+    source_event_ids: ['event-1'], reference_story_time: {day_index: 0, display: '第 0 天'}, effective_min_story_days: 14, effective_max_story_days: 42,
+  }
+  const aggregation = {aggregation_id: 'aggregation-stage-replacement', subject_id: subject, pregnancy_id: null, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-replacement', status: 'succeeded', accepted_exposure_event_ids: ['event-1']}
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => { throw new Error('BUILT_IN_MUST_NOT_USE_ANALYZER') }},
+    saveProjectionLifecycleBatch: async ({records}) => { lifecycleRecords.push(...records); return {status: 'appended'} },
+    resolvePreConfirmationTiming: async () => ({enabled: true, instances: [timing], windows: [{tracking_window_id: 'window-stage-replacement', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-replacement', status: 'open', source_event_ids: ['event-1']}], aggregations: [aggregation]}),
+  })
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: []}, currentStoryTime: {day_index: 17, display: '第 17 天'}})
+  assert.equal((await fixture.runtime.process({reason: 'stage-replacement-before'})).status, 'success')
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: []}, currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  const result = await fixture.runtime.process({reason: 'stage-replacement-after'})
+  assert.equal(result.status, 'success')
+  assert.equal(fixture.batchPersistenceCalls, 2)
+  assert.equal(fixture.saved.length, 8)
+  assert.equal(fixture.batchRecordCounts[1], 4)
+  assert.equal(lifecycleRecords.length, 0)
+  assert.ok(fixture.saved.slice(4).every(item => ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change'].some(branch => item.development_concern_key.endsWith(branch))))
+  const snapshots = fixture.statuses.filter(event => event.payload?.stage === 'PROJECTION_STAGE_SNAPSHOT')
+  assert.deepEqual(snapshots.map(event => event.payload?.snapshot_status), ['planned', 'succeeded', 'planned', 'succeeded'])
+})
+
+test('Projection Runtime does not persist an incomplete built-in stage batch', async () => {
+  const timing = {
+    timing_instance_id: 'timing-stage-incomplete', subject_id: subject, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-incomplete',
+    source_event_ids: ['event-1'], reference_story_time: {day_index: 0, display: '第 0 天'}, effective_min_story_days: 14, effective_max_story_days: 42,
+  }
+  const aggregation = {aggregation_id: 'aggregation-stage-incomplete', subject_id: subject, pregnancy_id: null, mechanism_key: 'fertilization', cycle_id: 'cycle-stage-incomplete', status: 'succeeded', accepted_exposure_event_ids: ['event-1']}
+  const earlyRules = buildBuiltInPreConfirmationRules({enabled: true, instances: [timing], windows: [], aggregations: [aggregation]})
+  const existingRule = earlyRules.find(rule => rule.development_concern_key.endsWith('fatigue'))
+  const existing = createProjection({
+    subject_id: subject,
+    projection_rule_id: existingRule.projection_rule_id,
+    development_concern_key: existingRule.development_concern_key,
+    mechanism: {key: 'fertilization', world_model_rule_refs: []},
+    source_event_ids: ['event-1'],
+    development: {kind: existingRule.development_kind, current_basis: {event_ids: ['event-1'], state_refs: [], mechanism_rule_refs: []}, next_signal: '已有分支'},
+    timing: {trigger_kind: 'elapsed_after_event', reference_event_id: 'event-1', reference_story_time: {day_index: 0, display: '第 0 天'}, current_story_time: {day_index: 17, display: '第 17 天'}, elapsed_story_days: 17},
+    created_at_floor_version: version,
+    evidence_refs: ['event:event-1'],
+    tracking_scope: 'pre_confirmation',
+    tracking_window_id: 'window-stage-incomplete',
+    aggregation_path: 'participant_aggregation',
+    aggregation_evidence: {subject_id: subject, aggregation_id: aggregation.aggregation_id, pregnancy_id: null, cycle_id: aggregation.cycle_id, accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+  })
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => { throw new Error('BUILT_IN_MUST_NOT_USE_ANALYZER') }},
+    getProjectionViews: async () => ({all: [{...existing, factual_status: 'active', deleted: false, context_visible: true}]}),
+    resolvePreConfirmationTiming: async () => ({enabled: true, instances: [timing], windows: [{tracking_window_id: 'window-stage-incomplete', subject_id: subject, mechanism_key: 'fertilization', cycle_id: timing.cycle_id, status: 'open', source_event_ids: ['event-1']}], aggregations: [aggregation]}),
+  })
+  fixture.setInputs({...inputs(), worldModel: {projection_rules: []}, currentStoryTime: {day_index: 17, display: '第 17 天'}})
+
+  const result = await fixture.runtime.process({reason: 'stage-incomplete'})
+
+  assert.equal(result.status, 'partial')
+  assert.equal(fixture.batchPersistenceCalls, 0)
+  assert.equal(fixture.saved.length, 0)
+  assert.equal(fixture.statuses.some(event => event.payload?.snapshot_status === 'succeeded'), false)
+})
+
 test('Projection Runtime changes the built-in candidate set with the current observation stage', async () => {
   const runAt = async day => {
     const timing = {
@@ -906,6 +1009,39 @@ test('duplicate Projection execution is single-flight', async () => {
   release()
   await Promise.all([first, second])
   assert.equal(calls, 1)
+})
+
+test('completed automatic Projection execution is skipped for a sequential duplicate', async () => {
+  let calls = 0
+  const fixture = createFixture({analyzer: {generateProjection: async () => {
+    calls += 1
+    return {development: {kind: 'possible_detection', description: '只应生成一次。'}}
+  }}})
+  const first = await fixture.runtime.process({reason: 'factual-success', dedupeCompleted: true})
+  const second = await fixture.runtime.process({reason: 'lifecycle-generation-ended', dedupeCompleted: true})
+  assert.equal(first.status, 'success')
+  assert.equal(second.status, 'success')
+  assert.equal(calls, 1)
+  assert.equal(fixture.batchPersistenceCalls, 1)
+})
+
+test('partial automatic Projection execution remains retryable', async () => {
+  let calls = 0
+  const fixture = createFixture({
+    analyzer: {generateProjection: async () => {
+      calls += 1
+      return {development: {kind: 'possible_detection', description: '重试候选。'}}
+    }},
+    saveProjectionBatchHook: async () => {
+      throw new Error('PROJECTION_PERSISTENCE_RETRYABLE')
+    },
+  })
+  const first = await fixture.runtime.process({reason: 'factual-success', dedupeCompleted: true})
+  const second = await fixture.runtime.process({reason: 'lifecycle-generation-ended', dedupeCompleted: true})
+  assert.equal(first.status, 'partial')
+  assert.equal(second.status, 'partial')
+  assert.equal(calls, 2)
+  assert.equal(fixture.batchPersistenceCalls, 2)
 })
 
 test('stale factual basis fails closed before persistence', async () => {

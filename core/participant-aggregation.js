@@ -240,25 +240,103 @@ function sameIds(left = [], right = []) {
   return JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
 }
 
-export function projectionAggregationEvidenceMatches({projection = null, aggregation = null, events = []} = {}) {
-  const evidence = projection?.aggregation_evidence;
-  if (!evidence) return projection?.aggregation_path !== 'participant_aggregation';
-  if (!isParticipantAggregationEvidenceComplete(evidence)) return false;
-  if (!aggregation || evidence.subject_id !== projection.subject_id || evidence.aggregation_id !== aggregation.aggregation_id || evidence.cycle_id !== aggregation.cycle_id) return false;
-  if ((evidence.pregnancy_id ?? null) !== (aggregation.pregnancy_id ?? null)) return false;
-  const current = buildParticipantAggregationEvidence({aggregation, events, subjectId: projection.subject_id, allowPartial: true});
-  if (!current || !sameIds(evidence.accepted_exposure_event_ids, current.accepted_exposure_event_ids)) return false;
-  return JSON.stringify(evidence.participant_exposure_mapping ?? []) === JSON.stringify(current.participant_exposure_mapping ?? []);
+export const PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES = Object.freeze({
+  NON_AGGREGATION_PROJECTION: 'NON_AGGREGATION_PROJECTION',
+  MISSING_EVIDENCE: 'MISSING_EVIDENCE',
+  EVIDENCE_INCOMPLETE: 'EVIDENCE_INCOMPLETE',
+  AGGREGATION_NOT_FOUND: 'AGGREGATION_NOT_FOUND',
+  AGGREGATION_ID_MISMATCH: 'AGGREGATION_ID_MISMATCH',
+  SUBJECT_ID_MISMATCH: 'SUBJECT_ID_MISMATCH',
+  CYCLE_ID_MISMATCH: 'CYCLE_ID_MISMATCH',
+  PREGNANCY_ID_MISMATCH: 'PREGNANCY_ID_MISMATCH',
+  CURRENT_EVIDENCE_UNAVAILABLE: 'CURRENT_EVIDENCE_UNAVAILABLE',
+  EXPOSURE_ID_MISMATCH: 'EXPOSURE_ID_MISMATCH',
+  PARTICIPANT_MAPPING_MISMATCH: 'PARTICIPANT_MAPPING_MISMATCH',
+  VALID: 'VALID',
+});
+
+function reportProjectionAggregationDecision(diagnosticCollector, decision) {
+  if (typeof diagnosticCollector === 'function') {
+    diagnosticCollector(decision);
+    return;
+  }
+  if (Array.isArray(diagnosticCollector)) diagnosticCollector.push(decision);
 }
 
-export function filterProjectionViewsByAggregationEvidence({views, aggregations = [], events = []} = {}) {
+export function projectionAggregationEvidenceDecision({projection = null, aggregation = null, events = []} = {}) {
+  const evidence = projection?.aggregation_evidence;
+  const participantAggregationProjection = Boolean(
+    evidence || projection?.aggregation_path === 'participant_aggregation',
+  );
+  if (!participantAggregationProjection) {
+    return {
+      projection_id: projection?.projection_id ?? null,
+      subject_id: projection?.subject_id ?? null,
+      aggregation_id: null,
+      valid: true,
+      reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.NON_AGGREGATION_PROJECTION,
+    };
+  }
+  if (!evidence) {
+    return {
+      projection_id: projection?.projection_id ?? null,
+      subject_id: projection?.subject_id ?? null,
+      aggregation_id: null,
+      valid: false,
+      reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.MISSING_EVIDENCE,
+    };
+  }
+  const base = {
+    projection_id: projection?.projection_id ?? null,
+    subject_id: projection?.subject_id ?? null,
+    aggregation_id: evidence.aggregation_id ?? null,
+  };
+  if (!isParticipantAggregationEvidenceComplete(evidence)) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.EVIDENCE_INCOMPLETE};
+  }
+  if (!aggregation) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.AGGREGATION_NOT_FOUND};
+  }
+  if (evidence.aggregation_id !== aggregation.aggregation_id) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.AGGREGATION_ID_MISMATCH};
+  }
+  if (evidence.subject_id !== projection.subject_id) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.SUBJECT_ID_MISMATCH};
+  }
+  if (evidence.cycle_id !== aggregation.cycle_id) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.CYCLE_ID_MISMATCH};
+  }
+  if ((evidence.pregnancy_id ?? null) !== (aggregation.pregnancy_id ?? null)) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.PREGNANCY_ID_MISMATCH};
+  }
+  const current = buildParticipantAggregationEvidence({aggregation, events, subjectId: projection.subject_id, allowPartial: true});
+  if (!current) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.CURRENT_EVIDENCE_UNAVAILABLE};
+  }
+  if (!sameIds(evidence.accepted_exposure_event_ids, current.accepted_exposure_event_ids)) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.EXPOSURE_ID_MISMATCH};
+  }
+  if (JSON.stringify(evidence.participant_exposure_mapping ?? []) !== JSON.stringify(current.participant_exposure_mapping ?? [])) {
+    return {...base, valid: false, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.PARTICIPANT_MAPPING_MISMATCH};
+  }
+  return {...base, valid: true, reason_code: PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.VALID};
+}
+
+export function projectionAggregationEvidenceMatches({projection = null, aggregation = null, events = [], diagnosticCollector = null} = {}) {
+  const decision = projectionAggregationEvidenceDecision({projection, aggregation, events});
+  reportProjectionAggregationDecision(diagnosticCollector, decision);
+  return decision.valid;
+}
+
+export function filterProjectionViewsByAggregationEvidence({views, aggregations = [], events = [], diagnosticCollector = null} = {}) {
   const source = Array.isArray(views?.all) ? views : {all: Array.isArray(views) ? views : []};
   const aggregationById = new Map((Array.isArray(aggregations) ? aggregations : []).map(item => [item?.aggregation_id, item]));
   const all = source.all.map(view => {
-    if (!view?.aggregation_evidence && view?.aggregation_path !== 'participant_aggregation') return view;
     const aggregation = aggregationById.get(view?.aggregation_evidence?.aggregation_id);
-    const valid = projectionAggregationEvidenceMatches({projection: view, aggregation, events});
-    return valid ? view : {...view, context_visible: false, aggregation_evidence_invalid: true};
+    const decision = projectionAggregationEvidenceDecision({projection: view, aggregation, events});
+    reportProjectionAggregationDecision(diagnosticCollector, decision);
+    if (decision.reason_code === PROJECTION_AGGREGATION_EVIDENCE_REASON_CODES.NON_AGGREGATION_PROJECTION) return view;
+    return decision.valid ? view : {...view, context_visible: false, aggregation_evidence_invalid: true};
   });
   return {...source, all, active: all.filter(item => item?.context_visible === true)};
 }

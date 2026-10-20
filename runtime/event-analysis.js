@@ -580,6 +580,8 @@ export function createEventAnalysisCoordinator({
   let generationLifecycle;
   let generationAutomaticWorkDeferred = false;
   let projectionPostProcessor = null;
+  let settledProjectionProcessor = null;
+  const deferredProjectionPostProcesses = new Map();
   const persistence = floorPersistence ?? createFloorPersistenceCoordinator({
     store,
     enabledResolver,
@@ -859,6 +861,7 @@ export function createEventAnalysisCoordinator({
       swipeId: target?.swipeId ?? target?.version?.swipe_id ?? 0,
       floorVersion: target?.version,
       patch,
+      patchResolver: input.patchResolver,
       operation_type: input.operation_type ?? `${owner}-patch`,
       execution: input.execution,
       execution_attempt: input.execution_attempt,
@@ -871,6 +874,97 @@ export function createEventAnalysisCoordinator({
         advanceCanonicalGeneration(`confirmed:${owner}:${input.operation_type ?? "patch"}`, target);
       return result;
     });
+  }
+
+  async function ensureCurrentProjectionFloorOwner({
+    target: suppliedTarget = null,
+    reason = "projection-internal",
+    trigger = null,
+  } = {}) {
+    const target = suppliedTarget?.version && Number.isInteger(suppliedTarget.index)
+      ? suppliedTarget
+      : await resolveCurrentBioWeaveFloor();
+    const token = chat.token();
+    const current = await resolveFloorAtIndex({
+      __messageIndex: true,
+      index: target.index,
+    });
+    if (!sameFloorVersion(current.version, target.version)) {
+      const error = new Error("FLOOR_VERSION_STALE");
+      error.code = "FLOOR_VERSION_STALE";
+      throw error;
+    }
+    const currentData = store.getFloor?.(current.index, current.swipeId) ?? {};
+    const currentVersion = floorVersionFromData(currentData);
+    if (sameFloorVersion(currentVersion, current.version)) {
+      emitPersistenceTrace("PROJECTION_FLOOR_OWNER_READY", null, current, {
+        reason,
+        trigger,
+        source: "CURRENT_FLOOR",
+        slot_present: true,
+        floor_version_match: true,
+      }, "projection");
+      return {status: "existing", wrote: false, floor: currentData};
+    }
+    if (hasCompleteFloorVersion(currentVersion)) {
+      const error = new Error("FLOOR_VERSION_STALE");
+      error.code = "FLOOR_VERSION_STALE";
+      throw error;
+    }
+
+    const inheritedState = await resolveCompleteEventStateAtOrBefore(current, {
+      strictBefore: true,
+    });
+    const inheritedEvents = sortEvents(inheritedState?.events ?? []);
+    const inheritedRegistry = normalizedCharacterRegistrySnapshot(
+      inheritedState?.floorData?.character_registry,
+    ) ?? normalizeCharacterRegistry(null);
+    const inheritedPatch = {
+      events: inheritedEvents,
+      character_registry: inheritedRegistry,
+    };
+    const result = await commitFloorPatch(current, "event", null, {
+      operation_type: "projection-internal-floor-owner-seed",
+      patchResolver: ({latest}) => {
+        const latestVersion = floorVersionFromData(latest);
+        if (sameFloorVersion(latestVersion, current.version)) {
+          return {__floor_tx_noop: true};
+        }
+        if (hasCompleteFloorVersion(latestVersion)) {
+          const error = new Error("FLOOR_VERSION_STALE");
+          error.code = "FLOOR_VERSION_STALE";
+          throw error;
+        }
+        return inheritedPatch;
+      },
+      assertCurrent: async () => {
+        chat.assert(token);
+        const latestTarget = await resolveFloorAtIndex({
+          __messageIndex: true,
+          index: current.index,
+        });
+        return sameFloorVersion(latestTarget.version, current.version);
+      },
+      traceContext: {
+        persistence_kind: "projection_internal_floor_owner_seed",
+        reason,
+        trigger,
+      },
+    });
+    chat.assert(token);
+    emitPersistenceTrace("PROJECTION_FLOOR_OWNER_READY", null, current, {
+      reason,
+      trigger,
+      source: result?.status === "noop" ? "CONCURRENT_CURRENT_FLOOR" : "INHERITED_EVENT_SNAPSHOT",
+      slot_present: true,
+      floor_version_match: true,
+      commitState: result?.commitState ?? null,
+    }, "projection");
+    return {
+      status: result?.status ?? "confirmed",
+      wrote: result?.status !== "noop",
+      floor: result?.floor ?? store.getFloor?.(current.index, current.swipeId) ?? null,
+    };
   }
 
   function emitPersistenceTrace(stage, execution, target, details = {}, domain = "analysis") {
@@ -3573,22 +3667,76 @@ export function createEventAnalysisCoordinator({
         chatId: execution.version.chat_id,
       });
       if (typeof projectionPostProcessor === "function") {
-        void projectionPostProcessor({target: execution.target, execution, run_id: execution.pipeline_run_id ?? null}).catch((error) => {
-          notify({
-            type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
-            payload: {
-              state: "failed",
-              phase: "post_processing",
-              error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
-              floor_version: execution.version,
-              run_id: execution.pipeline_run_id ?? null,
-            },
-            chatId: execution.version.chat_id,
-          });
-        });
+        const isManualExecution = execution.analysis_intent === "manual-character" ||
+          execution.analysis_intent === "manual-refresh" ||
+          execution.reason === "manual-refresh";
+        const generationState = generationLifecycle?.getState?.() ?? {};
+        const generationActive = generationAutomaticWorkDeferred ||
+          generationState.pendingGeneration || generationState.pendingSwipeGeneration;
+        if (generationActive && !isManualExecution) {
+          deferredProjectionPostProcesses.clear();
+          deferredProjectionPostProcesses.set(execution.key, execution);
+          emitPersistenceTrace("PROJECTION_POSTPROCESS_DEFERRED", null, execution.target, {
+            reason: "generation-active",
+            analysis_execution_id: execution.analysis_execution_id,
+          }, "scheduler");
+        } else {
+          void runProjectionPostProcessor(execution);
+        }
       }
     }
     return terminal;
+  }
+  async function runProjectionPostProcessor(execution) {
+    try {
+      return await projectionPostProcessor({
+        target: execution.target,
+        execution,
+        run_id: execution.pipeline_run_id ?? null,
+      });
+    } catch (error) {
+      notify({
+        type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
+        payload: {
+          state: "failed",
+          phase: "post_processing",
+          error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+          floor_version: execution.version,
+          run_id: execution.pipeline_run_id ?? null,
+        },
+        chatId: execution.version.chat_id,
+      });
+      return null;
+    }
+  }
+  async function runSettledProjectionProcessor({target, reason, generation = null, analysisExecutionId = null, schedulerDecision = null} = {}) {
+    if (typeof settledProjectionProcessor !== "function") return null;
+    emitPersistenceTrace("PROJECTION_INTERNAL_TRIGGERED", null, target, {
+      reason,
+      scheduler_decision: schedulerDecision,
+      analysis_execution_id: analysisExecutionId,
+    }, "scheduler");
+    try {
+      return await settledProjectionProcessor({
+        target,
+        reason,
+        generation,
+        analysisExecutionId,
+        schedulerDecision,
+      });
+    } catch (error) {
+      notify({
+        type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
+        payload: {
+          state: "failed",
+          phase: "automatic_internal",
+          error_code: error?.code ?? error?.message ?? "PROJECTION_INTERNAL_FAILED",
+          floor_version: target?.version ?? null,
+        },
+        chatId: target?.version?.chat_id ?? target?.chatId ?? null,
+      });
+      return null;
+    }
   }
   function invalidateExecution(
     execution,
@@ -4532,6 +4680,13 @@ export function createEventAnalysisCoordinator({
         reason,
         analysis_execution_id: resolvedAnalysisExecutionId,
       }, "scheduler");
+      await runSettledProjectionProcessor({
+        target,
+        reason,
+        generation,
+        analysisExecutionId: resolvedAnalysisExecutionId,
+        schedulerDecision: "retry-paused",
+      });
       return { skipped: true, reason: "retry-paused" };
     }
     schedulerState.counter = Math.min(interval, schedulerState.counter + 1);
@@ -4561,6 +4716,13 @@ export function createEventAnalysisCoordinator({
         reason,
         analysis_execution_id: resolvedAnalysisExecutionId,
       }, "scheduler");
+      await runSettledProjectionProcessor({
+        target,
+        reason,
+        generation,
+        analysisExecutionId: resolvedAnalysisExecutionId,
+        schedulerDecision: "character-interval",
+      });
       return {
         skipped: true,
         reason: "character-interval",
@@ -4604,7 +4766,28 @@ export function createEventAnalysisCoordinator({
       output_count: 1,
       source_type: "EXECUTION_TRACE",
     });
-    return runScheduledAnalysis(target, { reason, generation, analysisExecutionId: resolvedAnalysisExecutionId, pipelineRunId });
+    try {
+      const result = await runScheduledAnalysis(target, { reason, generation, analysisExecutionId: resolvedAnalysisExecutionId, pipelineRunId });
+      if (result?.status !== "success" && result?.reason !== "stale-scheduler-completion") {
+        await runSettledProjectionProcessor({
+          target,
+          reason,
+          generation,
+          analysisExecutionId: resolvedAnalysisExecutionId,
+          schedulerDecision: "interval-due-external-analysis-incomplete",
+        });
+      }
+      return result;
+    } catch (error) {
+      await runSettledProjectionProcessor({
+        target,
+        reason,
+        generation,
+        analysisExecutionId: resolvedAnalysisExecutionId,
+        schedulerDecision: "interval-due-external-analysis-failed",
+      });
+      throw error;
+    }
   }
   function handoffSettledCharacterFloor(
     target,
@@ -4943,6 +5126,7 @@ export function createEventAnalysisCoordinator({
     cancelPendingHealthRecoveryChecks();
     clearWorldbookCache(sourceCache);
     if (signal?.changed) {
+      deferredProjectionPostProcesses.clear();
       advanceCanonicalGeneration(`chat-boundary:${signal?.reason ?? "changed"}`);
       lastTerminal.clear();
       invalidatedFloors.clear();
@@ -4965,6 +5149,8 @@ export function createEventAnalysisCoordinator({
     inFlight.clear();
     canonicalBuilds.clear();
     completedCanonicalBuilds.clear();
+    deferredProjectionPostProcesses.clear();
+    settledProjectionProcessor = null;
     worldAnalysis.clear();
     automaticAnalysis.reset("destroy");
   }
@@ -4986,10 +5172,37 @@ export function createEventAnalysisCoordinator({
     automaticAnalysis,
     analysisExecution,
     manualAnalysis,
+    ensureCurrentProjectionFloorOwner,
     getAutoAnalysisSchedulerState: automaticAnalysis.getState,
     reconcileSchedulerState,
     setProjectionPostProcessor: handler => {
       projectionPostProcessor = typeof handler === "function" ? handler : null;
+    },
+    setSettledProjectionProcessor: handler => {
+      settledProjectionProcessor = typeof handler === "function" ? handler : null;
+    },
+    flushDeferredProjectionPostProcessor: async ({target = null} = {}) => {
+      if (!target?.version) return {status: "skipped", reason: "target-unavailable"};
+      const key = floorExecutionKey(target.version);
+      const execution = deferredProjectionPostProcesses.get(key);
+      if (!execution) return {status: "skipped", reason: "none-deferred"};
+      deferredProjectionPostProcesses.delete(key);
+      if (!sameFloorVersion(execution.version, target.version) ||
+          execution.version.chat_id !== chat.current()) {
+        deferredProjectionPostProcesses.clear();
+        return {status: "skipped", reason: "stale-floor"};
+      }
+      emitPersistenceTrace("PROJECTION_POSTPROCESS_RELEASED", null, target, {
+        reason: "generation-settled",
+        analysis_execution_id: execution.analysis_execution_id,
+      }, "scheduler");
+      await runProjectionPostProcessor(execution);
+      return {status: "released"};
+    },
+    clearDeferredProjectionPostProcessor: () => {
+      const count = deferredProjectionPostProcesses.size;
+      deferredProjectionPostProcesses.clear();
+      return count;
     },
     getCurrentFloorEvents: async () =>
       (await statusForCurrentFloor()).current_floor_events,
@@ -5030,6 +5243,9 @@ export function createEventAnalysisCoordinator({
     setGenerationAutomaticWorkDeferred: deferred => {
       generationAutomaticWorkDeferred = deferred === true;
     },
+    cancelPendingGeneration: reason => generationLifecycle.cancelPendingGeneration?.(reason),
+    restorePendingGeneration: (snapshot, options) =>
+      generationLifecycle.restorePendingGeneration?.(snapshot, options),
     handoffSettledCharacterFloor,
     invalidateForClear,
     completeClear,

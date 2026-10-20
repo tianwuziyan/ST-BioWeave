@@ -13,6 +13,7 @@ import {
   validateProjectionDeliveryRecord,
   validateProjectionLifecycleRecord,
 } from './projection.js'
+import {BUILT_IN_PRE_CONFIRMATION_STAGES, builtInPreConfirmationBranchForConcern} from './projection-eligibility.js'
 
 export const PROJECTION_TIMELINE_SCHEMA_VERSION = 1
 
@@ -123,7 +124,95 @@ export function resolveProjectionTimeline(timelineEntries = []) {
       delivery_records: clone(entry.delivery_records ?? []),
     }))
     .sort((left, right) => Number(left.floor_version?.floor) - Number(right.floor_version?.floor) || String(left.floor_version?.message_id).localeCompare(String(right.floor_version?.message_id)))
-  return resolveProjectionView({timeline: entries})
+  return resolveProjectionView({timeline: resolveBuiltInStageSnapshots(entries)})
+}
+
+function builtInStageIdentity(projection) {
+  if (projection?.tracking_scope !== 'pre_confirmation' || projection?.aggregation_path !== 'participant_aggregation') return null
+  const branch = builtInPreConfirmationBranchForConcern(projection.development_concern_key)
+  const stage = BUILT_IN_PRE_CONFIRMATION_STAGES.find(item => item.key === branch?.stage_key)
+  const evidence = projection.aggregation_evidence
+  if (!stage || !evidence || evidence.subject_id !== projection.subject_id) return null
+  return {
+    key: JSON.stringify([projection.subject_id, evidence.pregnancy_id ?? null, evidence.cycle_id]),
+    stageKey: stage.key,
+    branch: branch.key,
+  }
+}
+
+/**
+ * Built-in pre-confirmation creations are stage snapshots, not a cumulative
+ * list. Keep the latest complete snapshot for each subject/cycle identity
+ * while leaving factual and delivery replay untouched. Mechanism metadata is
+ * projection content, not a second stage identity for one subject.
+ */
+function resolveBuiltInStageSnapshots(entries) {
+  const candidates = new Map()
+  for (const entry of entries) {
+    for (const projection of entry.projections ?? []) {
+      const identity = builtInStageIdentity(projection)
+      if (!identity) continue
+      if (!candidates.has(identity.key)) candidates.set(identity.key, new Map())
+      const byStage = candidates.get(identity.key)
+      if (!byStage.has(identity.stageKey)) byStage.set(identity.stageKey, new Map())
+      const branches = byStage.get(identity.stageKey)
+      const existing = branches.get(identity.branch)
+      if (!existing || Number(entry.floor_version?.floor) >= existing.floor) {
+        branches.set(identity.branch, {floor: Number(entry.floor_version?.floor), projectionId: projection.projection_id})
+      }
+    }
+  }
+  const selectedSnapshots = new Map()
+  for (const [identityKey, stages] of candidates) {
+    for (const [stageKey, branches] of stages) {
+      const expected = BUILT_IN_PRE_CONFIRMATION_STAGES.find(stage => stage.key === stageKey)?.branches.map(branch => branch.key) ?? []
+      if (expected.length === 0 || expected.some(branch => !branches.has(branch))) continue
+      const completionFloor = Math.max(...expected.map(branch => branches.get(branch).floor))
+      const previous = selectedSnapshots.get(identityKey)
+      const stageIndex = BUILT_IN_PRE_CONFIRMATION_STAGES.findIndex(stage => stage.key === stageKey)
+      const previousStageIndex = previous ? BUILT_IN_PRE_CONFIRMATION_STAGES.findIndex(stage => stage.key === previous.stageKey) : -1
+      // Story Time stages advance monotonically. A late legacy branch from an
+      // older stage must not make that older stage current again merely because
+      // it completes at a higher Floor than the already complete newer stage.
+      // Within the same stage, the latest complete snapshot still wins.
+      if (!previous || stageIndex > previousStageIndex || (stageIndex === previousStageIndex && completionFloor > previous.completionFloor)) {
+        selectedSnapshots.set(identityKey, {
+          stageKey,
+          completionFloor,
+          projections: expected.map(branch => branches.get(branch)),
+        })
+      }
+    }
+  }
+  const selectedIds = new Set([...selectedSnapshots.values()].flatMap(snapshot => snapshot.projections.map(item => item.projectionId)))
+  if (!selectedSnapshots.size) return entries
+  // Stage replacement changes which creations are current, not which later
+  // evidence/lifecycle records are valid. Build one endpoint-wide allowlist
+  // before filtering every collection so records owned by later Floors survive.
+  const allowedProjectionIds = new Set()
+  for (const entry of entries) {
+    for (const projection of entry.projections ?? []) {
+      const identity = builtInStageIdentity(projection)
+      if (!identity) {
+        allowedProjectionIds.add(projection.projection_id)
+        continue
+      }
+      if (selectedIds.has(projection.projection_id)) {
+        allowedProjectionIds.add(projection.projection_id)
+      }
+    }
+  }
+  return entries.map(entry => {
+    const projections = (entry.projections ?? []).filter(projection => allowedProjectionIds.has(projection.projection_id))
+    const filterRecords = records => (records ?? []).filter(record => allowedProjectionIds.has(record.projection_id))
+    return {
+      ...entry,
+      projections,
+      evidence_records: filterRecords(entry.evidence_records),
+      lifecycle_records: filterRecords(entry.lifecycle_records),
+      delivery_records: filterRecords(entry.delivery_records),
+    }
+  }).filter(entry => entry.projections.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.delivery_records.length)
 }
 
 export function projectionTimelineHasAction(timeline, projectionId, action) {

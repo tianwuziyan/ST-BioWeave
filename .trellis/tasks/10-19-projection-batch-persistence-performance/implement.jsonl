@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"约束 Projection timeline 的 Floor/Swipe/六字段版本、append-only provenance 和 Coordinator 写入边界。"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认 Floor Persistence Coordinator 已冻结，批量优化必须继续通过现有 owner patch 和 authoritative readback。"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Projection Runtime、Projection Storage 与 Coordinator 的模块责任，禁止把批量业务逻辑下沉到 Coordinator。"}
+{"file":".trellis/tasks/10-19-projection-batch-persistence-performance/design.md","reason":"提供本任务确认后的批量生成、批量持久化和失败语义。"}
+{"file":"runtime/events.js","reason":"修复 quiet/background GENERATION_STARTED 无终止信号时 generation gate 永久 active：增加 activity lease、stream token 续租、超时安全 Chat restore、identity/token guard 和诊断。"}
+{"file":"tests/event-analysis-runtime.test.js","reason":"回归覆盖重复 normal GENERATION_STARTED、无 token/终止事件超时恢复、零业务写入与 gate 可复用。"}
