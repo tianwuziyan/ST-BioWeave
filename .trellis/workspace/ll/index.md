@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
-- **Last Active**: 2026-09-30
+- **Total Sessions**: 39
+- **Last Active**: 2026-10-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~869 | Active |
+| `journal-1.md` | ~891 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-10-21 | 修正稳定生理证据误判 | `86ec7644cde9e5df82eacc91dd7ce1b78c793a88` | `fix/world-model-prompt-baseline` |
 | 38 | 2026-09-30 | 归档 Species 永久删除与 GitHub 同步 | `1ea3032a4392c165a7bc189ca870dd4eb6ae9411` | `fix/world-model-prompt-baseline` |
 | 37 | 2026-09-29 | 完成 World Supplement 集合与 Unknown 生命周期 | `506ab70` | `fix/world-model-prompt-baseline` |
 | 36 | 2026-09-26 | 恢复 World Analysis Prompt 生物类型证据边界 | `7a13dfe` | `fix/world-model-prompt-baseline` |

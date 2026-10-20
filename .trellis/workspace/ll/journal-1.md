@@ -867,3 +867,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Next Steps
 
 - 在真实 SillyTavern 中完成归档永久删除与重载 smoke。
+
+
+## Session 39: 修正稳定生理证据误判
+<!-- trellis-session: v=2 fp=953434bb4900f691 -->
+
+**Date**: 2026-10-21
+**Task**: 修正稳定生理证据误判
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+收紧 Character Evidence 分类，排除生理性泪水等短暂反应，保留稳定身体结构，并补充 Event Prompt 回归测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `86ec7644cde9e5df82eacc91dd7ce1b78c793a88` | 修正普通生理反应被误判为稳定人物证据 |
+
+### Status
+
+[OK] **Completed**
