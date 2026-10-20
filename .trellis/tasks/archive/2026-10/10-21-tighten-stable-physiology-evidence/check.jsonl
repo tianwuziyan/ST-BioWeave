@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "复核稳定生理证据分类和回归测试是否符合领域契约"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "复核无 Floor、Registry、Tracking 或持久化边界变化"}

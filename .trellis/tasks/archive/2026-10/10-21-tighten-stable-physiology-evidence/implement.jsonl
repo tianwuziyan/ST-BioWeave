@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Character Evidence 分类、来源边界与稳定人物事实契约"}
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "确认本次输入筛选不改变 Floor/API provenance 与持久化所有权"}
