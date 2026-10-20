@@ -834,6 +834,46 @@ test('B: Persona evidence is projected to the Persona subject and old experience
   assert.doesNotMatch(narrative, /曾经经历过旧事件/u);
 });
 
+test('B1: Transient physiological reactions do not become Persona or Character Evidence', () => {
+  const input = eventInput({
+    character: {description: '眼角沁出生理性的泪水。'},
+    meta: {user_name: 'persona_subject'},
+    persona: {
+      name: 'persona_subject',
+      description: '眼角沁出生理性的泪水。',
+    },
+  });
+
+  buildEventAnalysisMessages(input);
+
+  assert.equal(input.individual_evidence.some(item =>
+    item.subject_kind === 'persona' || item.subject_kind === 'current_character',
+  ), false);
+  assert.equal(input.individual_evidence.some(item =>
+    item.stable_biological_evidence.some(evidence => evidence.kind === 'stable_physiology'),
+  ), false);
+});
+
+test('B2: Stable physiological structure remains Character Evidence', () => {
+  const input = eventInput({
+    character: {description: '该角色具有稳定的身体结构特征。'},
+  });
+
+  assert.equal(input.individual_evidence.length, 1);
+  assert.equal(input.individual_evidence[0].stable_biological_evidence[0].kind, 'stable_physiology');
+});
+
+test('B3: Stable evidence in a mixed sentence is not discarded with a transient reaction', () => {
+  const input = eventInput({
+    character: {description: '该角色具有稳定的身体结构特征并且眼角沁出生理性的泪水。'},
+  });
+
+  buildEventAnalysisMessages(input);
+
+  assert.equal(input.individual_evidence.length, 1);
+  assert.equal(input.individual_evidence[0].stable_biological_evidence[0].kind, 'stable_physiology');
+});
+
 test('C: Existing canonical profile remains individual evidence with capabilities and evidence', () => {
   const input = eventInput({
     characterContext: {

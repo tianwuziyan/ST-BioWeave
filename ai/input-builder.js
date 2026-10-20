@@ -1006,6 +1006,8 @@ const STABLE_BIOLOGICAL_EVIDENCE_KINDS = Object.freeze([
   'explicit_capability',
   'other_stable_biological',
 ])
+const TRANSIENT_PHYSIOLOGICAL_REACTION_PATTERN = /(?:生理性(?:的)?\s*(?:泪水|眼泪|汗液|汗|分泌物|反应|反射|痉挛|颤抖|潮红|心跳|呼吸|疼痛|不适|变化))/iu
+const STABLE_PHYSIOLOGICAL_PATTERN = /(?:生理(?!性(?:的)?\s*(?:泪水|眼泪|汗液|汗|分泌物|反应|反射|痉挛|颤抖|潮红|心跳|呼吸|疼痛|不适|变化))|physiology|解剖|anatomy|身体结构|reproductive|生殖)/iu
 
 function classifyStableBiologicalEvidence(text) {
   const value = safeText(text).trim()
@@ -1018,8 +1020,10 @@ function classifyStableBiologicalEvidence(text) {
     return 'species'
   if (/(?:can_[a-z_]+|明确能力|生殖能力|可承载|可导致受孕|可被受精|可产生精子|可产生卵子|capability)/iu.test(value))
     return 'explicit_capability'
-  if (/(?:生理|physiology|解剖|anatomy|身体结构|reproductive|生殖)/iu.test(value))
+  if (STABLE_PHYSIOLOGICAL_PATTERN.test(value))
     return 'stable_physiology'
+  if (TRANSIENT_PHYSIOLOGICAL_REACTION_PATTERN.test(value))
+    return null
   if (/(?:稳定|先天|发育|妊娠史|曾经怀孕|pregnan|fertil)/iu.test(value))
     return 'other_stable_biological'
   return null

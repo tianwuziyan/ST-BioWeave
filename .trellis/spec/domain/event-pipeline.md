@@ -276,6 +276,12 @@ background. It is not a current-Floor Event, a World Model rule, a Tracking
 eligibility result, a replacement for Character Registry identity candidates,
 a Chat-level fact, or a Characters UI list source.
 
+The word `生理` / `physiology` alone does not make a sentence stable Character
+Evidence. Ordinary transient reactions such as physiological tears, sweating,
+or immediate reflexes are excluded unless the same evidence also contains an
+explicit stable anatomy, body-structure, or long-term physiological fact; that
+stable fact remains eligible and must not be discarded with the transient part.
+
 Source rules are: Character Card may provide stable evidence for the current
 Character; Persona may provide stable evidence for the Persona subject;
 existing canonical/derived profiles retain their canonical ID, species/type,
