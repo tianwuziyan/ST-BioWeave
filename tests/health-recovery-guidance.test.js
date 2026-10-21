@@ -53,6 +53,24 @@ test('guidance reads the persisted string for each deterministic stage', () => {
   }), []);
 });
 
+test('guidance follows the stage already selected in Current Health State', () => {
+  const result = buildHealthRecoveryGuidance({
+    currentHealthState: {
+      characters: {
+        char_a: {
+          active_observations: [observation({recovery_stage: 'recovering'})],
+        },
+      },
+    },
+    // The current stage is already selected by the canonical health state.
+    // A mismatched Story Time must not make the API context fall back to early.
+    currentStoryTime: story(1),
+  });
+
+  assert.equal(result[0].stage, 'recovering');
+  assert.equal(result[0].guidance, 'RECOVERING_OBSERVATION_GUIDANCE');
+});
+
 test('guidance diagnostics observe deterministic stage and persisted profile selection', () => {
   const diagnostics = [];
   const result = buildHealthRecoveryGuidance({

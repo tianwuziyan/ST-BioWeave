@@ -404,8 +404,9 @@ Assessment 应保存并作为该 observation 后续 Health Evolution 的稳定�
 则可以产生新的 Assessment，更新该 observation 的后续 derived evaluation；这不是 ordinary replay reassessment。
 
 Assessment 失败时不视为成功保存；普通 replay 不得为了补齐缺失 Assessment 而隐式调用
-AI。未来如允许显式重试，必须是当前源事实仍有效且有明确 owner/epoch/版本校验的独立
-Assessment operation，不是普通 state rebuild 的副作用。
+AI。当前显式 Character/Event manual analysis 可以在当前源事实仍有效且完整
+owner/epoch/Floor Version 匹配时重试缺失 Assessment；它是独立 Assessment operation，
+不是普通 state rebuild 的副作用。已有合法 Assessment 时只复用，不重复请求 API。
 
 ### 10.3 Ownership and Floor Version binding
 
@@ -813,6 +814,8 @@ schema v3 Assessment 还保存由同一次 AI 生成的 `recovery_stage_guidance
 `.recovering`、`.near_recovery`。Health Evolution / Guidance 只使用
 `reference_story_time`、earliest/expected boundary、persistence 和 natural-recovery
 eligibility 计算 elapsed time 与当前粗粒度 recovery stage，再读取对应 persisted profile。
+Current Health State 生成后，UI 与注入给剧情 AI 的 Guidance 共用其中已选的
+`recovery_stage`；注入端只链接同一 profile 的对应阶段文字，不再次按另一份时间输入选阶段。
 具体时间是 BioWeave 内部推演参数，不是
 应该复述给用户的剧情内容。注入给剧情 AI 的 Guidance 禁止要求或诱导输出：具体剩余天数、
 恢复日期、百分比、deadline、elapsed/remaining day count、Assessment 字段或内部预测参数，
@@ -949,10 +952,13 @@ lifecycle/aggregation、不显示内部 ID、Floor Version 或恢复时间。Pha
 窄范围 deterministic Health Recovery Guidance：它复用唯一
 `bioweave_projection_context` 槽位，属于 non-factual guidance，不创建 Event、不修改
 Assessment、不修改 Current Health State，也不成为 factual evidence。完整 Health
-Projection 仍为 Deferred。Native SillyTavern `GENERATION_STARTED` 到达时，BioWeave
-会等待既有 Projection Context refresh queue 完成，再由 Host 读取该 generation 的
-extension prompt；这只是现有 context injection 的 freshness guarantee，不是新的
-Health feature。
+Projection 仍为 Deferred。Native SillyTavern `GENERATION_STARTED` 在 prompt 读取前可以
+基于最新 fully completed、valid Character Floor 做一次 read-only Context rebuild；它只
+更新 transient extension slot，不记录 delivery submission，不执行 Analyzer/Projection
+processing、Tracking/timeout calculation、automatic recovery 或 Floor write。当前 request
+仍读取上一份 completed Floor；response 完成并 settle 新 Story Time 后，下一次 request
+才读取新 stage。body generation active 后，Generation gate 继续阻止所有业务工作；这项
+refresh 是 Health Guidance freshness guarantee，不是新的 Health factual feature。
 
 如果人物设定明确写出长期或永久健康事实，未来产品可以支持它进入 factual pipeline。
 但当前项目没有已验证的 Worldbook/Character Card → Health Event authoritative ingress；
@@ -1311,7 +1317,7 @@ valid Assessment already saved
 
 no valid Assessment saved
   → factual Event remains valid
-  → optional explicit retry only
+  → explicit manual/analysis action may retry
 ```
 
 推荐最小策略：
@@ -1319,8 +1325,7 @@ no valid Assessment saved
 - API failure、timeout、malformed result、validation failure 不影响 Event Analysis success；
 - 普通 reload、replay、Snapshot restore、Projection refresh 不 retry；
 - 不建立每次打开 Chat 自动重试的 job system；
-- 未来只允许 explicit manual/analysis action 在 source Event 与 Floor Version 仍有效时
-  retry；
+- 只允许 explicit manual/analysis action 在 source Event 与 Floor Version 仍有效时 retry；
 - retry 前再次 lookup composite key，已有成功 Assessment 时直接 dedupe；
 - retry 结果成功后保存为该 source observation 的唯一有效 Assessment；
 - failed attempt 可以记录在 diagnostics/attempt status，但不得伪装成 Assessment result。

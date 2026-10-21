@@ -420,7 +420,12 @@ export function createProjectionRuntime({
       const currentByConcept = new Map(resolveProjectionObservationRecords(view.observation_records ?? []).map(record => [record.reaction_concept, record]));
       if (result.matched === true && result.projection_concept && result.matched_event_ids?.length) {
         const existing = currentByConcept.get(result.projection_concept);
-        if (existing?.action === 'triggered') continue;
+        const currentEventIds = new Set(result.matched_event_ids);
+        const existingEventIds = new Set(existing?.event_ids ?? []);
+        const sameMatchedEvents = existing
+          && currentEventIds.size === existingEventIds.size
+          && [...currentEventIds].every(eventId => existingEventIds.has(eventId));
+        if (sameMatchedEvents && !explicitRecompute) continue;
         records.push(createProjectionObservationRecord({projection_id: view.projection_id, subject_id: view.subject_id, action: 'triggered', reaction_concept: result.projection_concept, event_ids: result.matched_event_ids, created_at_floor_version: inputs.floor.version}));
       } else if (explicitRecompute && result.projection_concept) {
         const existing = currentByConcept.get(result.projection_concept);

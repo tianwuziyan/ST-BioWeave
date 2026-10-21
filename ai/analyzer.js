@@ -2230,7 +2230,16 @@ function diagnosticEdge(value, fromStart) {
   return JSON.stringify(edge);
 }
 
-function healthAssessmentParserDiagnostics(raw, response) {
+function healthAssessmentJsonCandidate(response) {
+  const value = String(response ?? '').trim();
+  const fenced = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/iu);
+  return {
+    text: fenced?.[1]?.trim() ?? value,
+    extractionMode: fenced ? 'single_json_fence' : 'direct_json',
+  };
+}
+
+function healthAssessmentParserDiagnostics(raw, response, extractionMode = null) {
   const text = String(response ?? '');
   const trimmed = text.trim();
   return {
@@ -2241,6 +2250,7 @@ function healthAssessmentParserDiagnostics(raw, response) {
     extractedTextFingerprint: diagnosticTextFingerprint(text),
     extractedTextLength: text.length,
     codeFenceDetected: /```/u.test(text),
+    extractionMode,
     firstNonWhitespaceChar: trimmed[0] ?? null,
     lastNonWhitespaceChar: trimmed.at(-1) ?? null,
     extractedPrefix: diagnosticEdge(text, true),
@@ -5612,11 +5622,16 @@ export function createAnalyzer({
       requestOptions(input),
     )
     const response = responseText(raw)
-    const parserDiagnostics = healthAssessmentParserDiagnostics(raw, response)
+    const candidate = healthAssessmentJsonCandidate(response)
+    const parserDiagnostics = healthAssessmentParserDiagnostics(
+      raw,
+      response,
+      candidate.extractionMode,
+    )
     traceApi('health-assessment-parser-start', parserDiagnostics)
     let parsed
     try {
-      parsed = JSON.parse(response)
+      parsed = JSON.parse(candidate.text)
     } catch (cause) {
       traceApi('health-assessment-parser-error', {
         ...parserDiagnostics,

@@ -5186,7 +5186,7 @@ export function createRuntime({
         const result = await projectionContext.refreshProjectionContext({
           chatId: chat.current(),
           generation: key === "GENERATION_STARTED" ? payload : null,
-          readOnly: ordinaryChatRebind,
+          readOnly: ordinaryChatRebind || key === "GENERATION_STARTED",
         });
         if (key === "GENERATION_STARTED") {
           const refreshSucceeded = result?.ok !== false && !["unavailable", "failed"].includes(result?.status);
@@ -5378,6 +5378,9 @@ export function createRuntime({
             ((key === "GENERATION_ENDED" || key === "CHARACTER_MESSAGE_RENDERED") &&
               (generationHasSettled() || generationLifecycleIntentCleared));
           if (!canRelease) {
+            if (key === "GENERATION_STARTED" &&
+                runtimeResult?.reason === "generation-pending")
+              await refreshGenerationProjectionContext();
             notifyLifecycleSettled(key, eventType, payload);
             return;
           }
@@ -5397,7 +5400,9 @@ export function createRuntime({
           // state during the host request.
           await replayDeferredGenerationEvents(deferredEvents);
           if (key === "GENERATION_ENDED" || key === "CHARACTER_MESSAGE_RENDERED") {
-            const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+            const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor(
+              key === "CHARACTER_MESSAGE_RENDERED" ? generationEventSelector(payload) : null,
+            ).catch(() => null);
             if (finalTarget?.version) {
               const state = eventAnalysis.getAutoAnalysisSchedulerState?.() ?? {};
               await eventAnalysis.handoffSettledCharacterFloor(finalTarget, {
@@ -5415,7 +5420,9 @@ export function createRuntime({
           }
         }
         if (!generationReleased && generationLifecycleIntentCleared) {
-          const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor().catch(() => null);
+          const finalTarget = await eventAnalysis.resolveCurrentBioWeaveFloor(
+            key === "CHARACTER_MESSAGE_RENDERED" ? generationEventSelector(payload) : null,
+          ).catch(() => null);
           if (finalTarget?.version) {
             const flushResult = await eventAnalysis.flushDeferredProjectionPostProcessor?.({target: finalTarget});
             generationReleased = flushResult?.status === "released";

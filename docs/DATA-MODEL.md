@@ -199,7 +199,9 @@ Health Recovery Guidance Phase 5B 已消费同一 `current_health_state` 与 act
 根据 Story Time 与各自 Assessment 计算粗粒度 `early` / `recovering` / `near_recovery`
 阶段，并通过唯一 `bioweave_projection_context` 槽位注入非事实身体表现指导。duration、
 remaining time、deadline、百分比和 Assessment 字段只属于内部推演，不应作为剧情倒计时或
-事实注入；Guidance 不创建 Event、不修改 read model，也不回流为 Event evidence。完整
+事实注入；发送 Guidance 时复用 Current Health State 已选的阶段，只从同一 Assessment
+profile 取对应阶段文字，不在注入端重新选择阶段。Guidance 不创建 Event、不修改 read model，
+也不回流为 Event evidence。完整
 Health Projection、long-term progression 与 explicit recovery reference 仍为
 `DESIGN / NOT IMPLEMENTED`；Projection Context 本身不是未实现项。
 当前按 `(source_event_id, source_floor_version, source_observation_fingerprint)` 进行

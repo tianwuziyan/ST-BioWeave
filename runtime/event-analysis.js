@@ -1616,6 +1616,22 @@ export function createEventAnalysisCoordinator({
       typeof payload === "object"
         ? (payload?.message_id ?? payload?.messageId)
         : payload;
+    if (event?.type === "CHARACTER_MESSAGE_RENDERED" &&
+        ((requestedId !== undefined && requestedId !== null) || index !== null)) {
+      const entries = currentSnapshot?.entries ?? [];
+      const idMatches = requestedId === undefined || requestedId === null
+        ? []
+        : entries.filter(entry => String(entry.message_id) === String(requestedId));
+      const idIndex = idMatches.length === 1 ? entries.indexOf(idMatches[0]) : null;
+      if (requestedId !== undefined && requestedId !== null &&
+          (idIndex === null || (index !== null && index !== idIndex))) return -1;
+      const explicitIndex = idIndex ?? index;
+      const explicitEntry = Number.isInteger(explicitIndex) && explicitIndex >= 0
+        ? entries[explicitIndex]
+        : null;
+      if (explicitEntry?.role === "assistant") return explicitIndex;
+      return -1;
+    }
     if (index === null && requestedId !== undefined && requestedId !== null) {
       index = currentSnapshot.entries.findIndex(
         (entry) => String(entry.message_id) === String(requestedId),
@@ -4627,6 +4643,9 @@ export function createEventAnalysisCoordinator({
       sourceKind: "scheduler_target",
       analysisExecutionId: resolvedAnalysisExecutionId,
     });
+    if (lifecycleOutcome?.status === "generation-settled") {
+      scheduleHealthRecoveryCheck(target, {reason: "generation-settled"});
+    }
     if (alreadyObserved) {
       recordPipelineDiagnostic({
         stage: "PIPELINE_SCHEDULING",
@@ -4915,9 +4934,14 @@ export function createEventAnalysisCoordinator({
               lifecycleSnapshot?.entries?.[targetIndex]
           : null) ?? null;
       const latestMessage = messages().at(-1) ?? null;
+      const hasExplicitCharacterRenderTarget = type === "CHARACTER_MESSAGE_RENDERED" &&
+        event?.payload != null &&
+        (typeof event.payload !== "object" ||
+          event.payload.message_id != null || event.payload.messageId != null ||
+          event.payload.messageIndex != null || event.payload.index != null);
       const mutationIsUserOnly =
         (mutationEntry && mutationEntry.role === "user") ||
-        (!mutationEntry && latestMessage && !isCharacterMessage(latestMessage));
+        (!hasExplicitCharacterRenderTarget && !mutationEntry && latestMessage && !isCharacterMessage(latestMessage));
       if (mutationIsUserOnly) {
         lifecycleSnapshot = currentSnapshot;
         return { skipped: true, reason: "user-message-not-a-bioweave-floor" };

@@ -1098,6 +1098,28 @@ export function createCharacterEventAnalysis({
     const registryChanged = execution.reason === "manual-refresh" &&
       JSON.stringify(characterRegistry) !== JSON.stringify(currentStoredRegistry);
     if (unchanged && hasExistingState && !registryChanged) {
+      const assessmentRetryCandidates = events.filter(event =>
+        sameFloorVersion(event?.source, target.version),
+      );
+      if (
+        assessmentRetryCandidates.length > 0 &&
+        healthAssessment?.assessFloor &&
+        typeof analyzer?.analyzeHealthAssessment === "function"
+      ) {
+        try {
+          await healthAssessment.assessFloor({
+            target,
+            execution,
+            token,
+            events: assessmentRetryCandidates,
+            signal: execution.controller.signal,
+          });
+        } catch (assessmentError) {
+          emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
+            code: assessmentError?.code ?? assessmentError?.message ?? "HEALTH_ASSESSMENT_FAILED",
+          }, "health");
+        }
+      }
       try {
         await maybeCreateSnapshot(target, token);
       } catch (snapshotError) {

@@ -60,3 +60,32 @@
 - [x] 扩展既有 `projection_observed_reaction_links`，区分当前派生识别、持久化记录/最新 action 与 Product/历史/Context 最终使用状态。
 - [x] 复用既有 Projection pipeline trace，记录 observation 保存尝试、追加/去重、读回及失败状态；继续限制为安全字段。
 - [x] 补充 focused Runtime 测试，确认 TXT 可携带安全 DTO 且不泄漏原始正文。
+
+## 7. Health recovery stage regression fix（本轮追加）
+
+- [x] 在新 prompt 读取前允许 `GENERATION_STARTED` 基于最新 fully completed、valid
+  Character Floor 做一次 read-only Context rebuild；仅更新 transient extension slot，
+  不记录 delivery submission，不执行 Analyzer/Projection processing、Tracking、recovery
+  或 Floor write。body generation active 后继续由 Generation gate 阻止所有业务工作。
+- [x] 保留 crossing-floor 语义：当前 request 读取上一份 completed Floor；response 完成并
+  settle 新 Story Time 后，下一次 request 才读取新 stage。
+- [x] 修复显式 `CHARACTER_MESSAGE_RENDERED` target 在更早 User snapshot difference 存在时
+  被误判为 user-only 的问题；显式 target 保持严格 ID/index 与 assistant 校验，歧义时 fail closed。
+- [x] 将 generation-settled 的 health recovery scheduling 保留在
+  `scheduleRenderedCharacter` 的业务 owner 内，并置于 `alreadyObserved` 去重返回之前，
+  使 completed response/render path 直接触发当前 Floor 的 recovered Event cleanup。
+- [x] 回归验证：generation-start read-only refresh 的 zero persistence/AI/delivery writes；
+  explicit Character render 在 earlier User snapshot difference 下完成 settle 与 recovered
+  Event cleanup；focused tests、full `npm test`、`node --check` 与 `git diff --check` 均通过。
+
+## 8. Health Assessment 成功响应解析修复（本轮追加）
+
+- [x] 复现 API transport 成功但单个 `json` code fence 导致
+  `HEALTH_ASSESSMENT_INVALID_JSON`、健康指导为 0 的失败。
+- [x] Health Assessment parser 仅解包完整响应范围内的单个 JSON code fence；继续拒绝
+  解释文字、多个响应块和无效 schema，不采用任意 substring repair。
+- [x] 保留安全 parser diagnostics，并增加 extraction mode 便于区分 direct JSON 与 code fence。
+- [x] 显式 Character/Event manual analysis 对同 Floor 缺失结果进行受版本保护的 Assessment
+  重试；已有合法结果只复用，普通 reload/replay 不自动补评估。
+- [x] 验证 Health Assessment、Health Recovery Guidance、Projection Context 与 Projection Runtime
+  focused tests，确认已保存健康指导可继续通过既有共享 Context slot 发送给 ST/API。

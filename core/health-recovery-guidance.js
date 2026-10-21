@@ -67,6 +67,16 @@ export function selectHealthRecoveryGuidance(observation, currentStoryTime) {
   return {stage, guidance: guidance || null};
 }
 
+function selectCurrentHealthStateGuidance(observation, currentStoryTime) {
+  // A canonical Current Health State already carries the stage chosen for
+  // this Floor.  Only legacy/incomplete read models need the pure fallback.
+  const stage = HEALTH_RECOVERY_STAGES.includes(observation?.recovery_stage)
+    ? observation.recovery_stage
+    : evaluateHealthRecoveryStage(observation, currentStoryTime);
+  const guidance = text(observation?.recovery_stage_guidance?.[stage]);
+  return {stage, guidance: guidance || null};
+}
+
 function siteLabel(observation) {
   const site = text(observation?.body_site);
   if (!site || site === 'general') return '全身';
@@ -111,7 +121,10 @@ function presentationKey(observation) {
 function groupGuidance(observations, currentStoryTime, subjectId, trace) {
   const groups = new Map();
   for (const observation of observations) {
-    const selection = selectHealthRecoveryGuidance(observation, currentStoryTime);
+    // The Current Health State already selected the stage for this Floor.
+    // Projection context must reuse that selection and only link it to the
+    // corresponding persisted Assessment guidance string.
+    const selection = selectCurrentHealthStateGuidance(observation, currentStoryTime);
     const stage = selection.stage;
     const profileAvailable = Boolean(observation?.recovery_stage_guidance);
     trace?.({

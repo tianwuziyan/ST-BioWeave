@@ -848,7 +848,64 @@ Health Assessment 对每个新 factual health observation 只执行一次恢复�
 的优先级为：已保存 factual evidence 中的明确 timing → 一次性 AI-derived 粗粒度估计 →
 确实无法可靠评估时的 null。AI-derived timing 是 persisted derived Assessment，不是
 BiologicalEvent factual truth；Story Time 后续推进只消费已保存 Assessment，不重新调用
-Health Assessment AI。
+Health Assessment AI。Assessment Analyzer 接受纯 JSON 对象，也允许宿主或模型仅用一个
+`json` code fence 包裹该对象；不得从解释文字、多个代码块或任意正文 substring 中猜取 JSON，
+解包后仍必须通过完整 Health Assessment schema 校验才能持久化。
+
+### Health Assessment response envelope contract
+
+#### 1. Scope / Trigger
+
+当 `analyzeHealthAssessment()` 接收独立 Health Assessment API 返回值时适用。该兼容仅处理
+传输层包裹，不改变 Assessment schema、Floor owner 或 factual Event。
+
+#### 2. Signatures
+
+- `analyzeHealthAssessment({event, signal?}) -> Promise<HealthAssessment>`
+- 输入响应由既有 `responseText(raw)` 提取为字符串。
+
+#### 3. Contracts
+
+- Base：响应是一个直接 JSON 对象字符串。
+- Compatible：完整响应仅由一个无语言标记或 `json` 标记的 code fence 包裹该 JSON 对象。
+- 解包后仍调用 `validateHealthAssessment()`；只有完整 schema 合法才返回 normalized Assessment。
+- 不持久化原始响应，Debug 只保留安全 shape、fingerprint、边界字符与 extraction mode。
+- 响应失败不回滚 factual Event。显式 Character/Event manual analysis 遇到同 Floor 有效事实但
+  缺少合法 Assessment 时可以重试；普通 reload/replay 不触发，已有合法 Assessment 只复用。
+
+#### 4. Validation & Error Matrix
+
+| 输入 | 结果 |
+| --- | --- |
+| 直接合法 JSON + 合法 schema | 接受 |
+| 单个完整 code fence + 合法 JSON/schema | 解包后接受 |
+| 解释文字 + code fence | `HEALTH_ASSESSMENT_INVALID_JSON` |
+| 多个 code fence、截断 JSON、非法 JSON | `HEALTH_ASSESSMENT_INVALID_JSON` |
+| JSON 可解析但 schema 不合法 | `HEALTH_ASSESSMENT_INVALID` |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：```` ```json\n{"schema_version":3,...}\n``` ````。
+- Base：`{"schema_version":3,...}`。
+- Bad：`分析结果如下：` 后再附 code fence；不得从中截取对象。
+
+#### 6. Tests Required
+
+- Analyzer unit：直接 JSON 与单 code fence 返回相同 normalized recovery profile。
+- Analyzer rejection：解释文字包裹仍报 `HEALTH_ASSESSMENT_INVALID_JSON`。
+- Schema regression：缺失 `recovery_stage_guidance` 等必填内容仍报 `HEALTH_ASSESSMENT_INVALID`。
+- Downstream focused tests：persisted Assessment 可继续生成当前阶段 Guidance 并进入共享
+  `bioweave_projection_context` slot。
+- Runtime regression：首次 Assessment 失败后，同 Floor 显式 manual analysis 重试一次；成功后
+  后续相同 analysis 不再调用 Assessment API。
+
+#### 7. Wrong vs Correct
+
+Wrong：对完整 response 直接 `JSON.parse()`，把仅有 code fence 包裹的成功响应丢弃；或用
+首尾花括号 substring 猜取夹杂解释文字的结果。
+
+Correct：只在整个 trimmed response 匹配单个 code fence 时解包，然后执行原有完整 schema
+校验；其他包装失败关闭。
 
 ## 3. Contracts
 

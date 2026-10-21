@@ -497,10 +497,12 @@ test('Projection Runtime persists triggered and manual revoked observations, but
     source_event_ids: [], observation_records: [],
   }
   const saved = []
+  let observationSaveCalls = 0
   const fixture = createFixture({
     diagnostics,
     getProjectionViews: async () => ({all: [view], observation_records: view.observation_records}),
     saveProjectionObservationBatch: async ({records}) => {
+      observationSaveCalls += 1
       saved.push(...records)
       view.observation_records.push(...records)
       return {status: 'appended'}
@@ -510,12 +512,35 @@ test('Projection Runtime persists triggered and manual revoked observations, but
   await fixture.runtime.process({reason: 'event-edit'})
   assert.deepEqual(saved.map(record => record.action), ['triggered'])
 
+  const editedEvent = {...event, state_fact: {...event.state_fact, payload: {...event.state_fact.payload, symptom: {...event.state_fact.payload.symptom, description: '轻微恶心'}}}}
+  fixture.setInputs({...inputs(), events: [editedEvent], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  await fixture.runtime.process({reason: 'event-edit'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered'])
+  assert.equal(observationSaveCalls, 2)
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered'])
+  assert.equal(observationSaveCalls, 2)
+
   fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
   await fixture.runtime.process({reason: 'health-recovery-expiration'})
-  assert.deepEqual(saved.map(record => record.action), ['triggered'])
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered'])
 
+  fixture.setInputs({...inputs(), floor: {index: 4, swipeId: 0, version: {...version, floor: 4, message_id: 'message-4'}}, events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
   await fixture.runtime.process({reason: 'event-delete'})
-  assert.deepEqual(saved.map(record => record.action), ['triggered', 'revoked'])
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered', 'revoked'])
+
+  fixture.setInputs({...inputs(), floor: {index: 5, swipeId: 0, version: {...version, floor: 5, message_id: 'message-5'}}, events: [event], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  const unchangedResult = await fixture.runtime.process({reason: 'projection-refresh'})
+  assert.equal(unchangedResult.status, 'success')
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered', 'revoked'])
+  assert.equal(observationSaveCalls, 3)
+
+  fixture.setInputs({...inputs(), floor: {index: 6, swipeId: 0, version: {...version, floor: 6, message_id: 'message-6'}}, events: [{...event, event_id: 'event-runtime-observation-updated'}], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'triggered', 'revoked', 'triggered'])
+  assert.equal(observationSaveCalls, 4)
+
   const trace = diagnostics.getNsfwPipelineDiagnostics({chat_id: version.chat_id, floor_version: version})
   assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_PERSISTENCE' && stage.reason_code === 'PROJECTION_OBSERVATION_PERSISTED'))
   assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_PERSISTENCE' && stage.reason_code === 'PROJECTION_OBSERVATION_PERSISTED' && stage.output_count === 1))

@@ -197,11 +197,14 @@ Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSES
 复用 persisted Assessment 或同进程请求。Recovery stage 与 Guidance trace 观察 Health-owned
 deterministic 结果和 persisted profile selection，不重新计算 lifecycle 或调用 AI。Projection
 trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除和 fingerprint；
-生成正文期间，`GENERATION_STARTED` 只推进
-`runtime/generation-lifecycle.js`，保留已有 Projection Context slot，不执行完整 Context
-刷新、Projection lifecycle、Tracking、超时判断或 Floor 保存。期间的 Chat/消息/Swipe 自动触发由
-`runtime/events.js` 合并暂存；最终 Character Floor 确认，或明确停止/取消后，才解除非阻塞
-Generation gate，并通过当前 Chat、active Swipe 和完整 Floor Version guard 重放一次后处理。
+在 Host 读取新 prompt 之前，`GENERATION_STARTED` 可以基于最近一份已完成且仍有效的
+Character Floor 做一次只读 Projection Context 刷新；它只更新 transient slot，不记录
+delivery submission，也不执行 Analyzer、Projection processing、Tracking、超时判断、自动恢复
+或 Floor 保存。当前请求仍读取上一份已完成 Floor；新正文完成并确定新的 Story Time 后，下一次请求
+才读取新阶段。正文生成真正开始后，`runtime/generation-lifecycle.js` 只推进生命周期并保留
+已有 Projection Context slot，所有业务工作继续由 Generation gate 暂存。期间的 Chat/消息/Swipe
+自动触发由 `runtime/events.js` 合并暂存；最终 Character Floor 确认，或明确停止/取消后，才解除
+非阻塞 Generation gate，并通过当前 Chat、active Swipe 和完整 Floor Version guard 重放一次后处理。
 若自动 Event Analysis 在 gate 内先完成，`runtime/event-analysis.js` 只暂存其 Projection
 postprocessor；匹配的最终 Character Floor settle 后才释放。自动 factual-success 与 lifecycle
 recovery 还共享有界的完整输入完成态去重，避免第一个 process 已结束后，后到的终止/渲染通知

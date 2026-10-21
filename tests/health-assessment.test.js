@@ -158,7 +158,7 @@ test('Health Assessment analyzer preserves a valid v3 profile and rejects missin
   });
 });
 
-test('Health Assessment invalid JSON diagnostics expose parser input without repairing it', async () => {
+test('Health Assessment accepts one fenced JSON object without weakening schema validation', async () => {
   const previousFlag = globalThis.__BIOWEAVE_API_TRACE__;
   const previousDebug = console.debug;
   const traces = [];
@@ -171,20 +171,26 @@ test('Health Assessment invalid JSON diagnostics expose parser input without rep
       profileResolver: () => SILLYTAVERN_CURRENT_API,
       contextResolver: () => ({generateRaw: () => ' ```json\n' + JSON.stringify(response()) + '\n``` '}),
     });
-    await assert.rejects(() => analyzer.analyzeHealthAssessment({event: event()}), error => {
-      assert.equal(error.code, 'HEALTH_ASSESSMENT_INVALID_JSON');
-      return true;
+    const parsed = await analyzer.analyzeHealthAssessment({event: event()});
+    assert.deepEqual(parsed.recovery_stage_guidance, response().recovery_stage_guidance);
+    const parserStart = traces.find(args => args[1] === 'health-assessment-parser-start')?.[2];
+    assert.equal(parserStart.rawResponseShape, 'string');
+    assert.equal(parserStart.codeFenceDetected, true);
+    assert.equal(parserStart.firstNonWhitespaceChar, '`');
+    assert.equal(parserStart.lastNonWhitespaceChar, '`');
+    assert.equal(typeof parserStart.responseFingerprint, 'string');
+    assert.equal(typeof parserStart.extractedTextFingerprint, 'string');
+    assert.equal(parserStart.extractedTextLength > 0, true);
+    assert.equal(traces.some(args => args[1] === 'health-assessment-parser-error'), false);
+
+    const proseWrapped = createAnalyzer({
+      profileResolver: () => SILLYTAVERN_CURRENT_API,
+      contextResolver: () => ({generateRaw: () => '分析结果如下：\n```json\n' + JSON.stringify(response()) + '\n```'}),
     });
-    const parserError = traces.find(args => args[1] === 'health-assessment-parser-error')?.[2];
-    assert.equal(parserError.rawResponseShape, 'string');
-    assert.equal(parserError.codeFenceDetected, true);
-    assert.equal(parserError.firstNonWhitespaceChar, '`');
-    assert.equal(parserError.lastNonWhitespaceChar, '`');
-    assert.equal(parserError.parseErrorName, 'SyntaxError');
-    assert.match(parserError.parseErrorMessage, /JSON|Unexpected/u);
-    assert.equal(typeof parserError.responseFingerprint, 'string');
-    assert.equal(typeof parserError.extractedTextFingerprint, 'string');
-    assert.equal(parserError.extractedTextLength > 0, true);
+    await assert.rejects(
+      () => proseWrapped.analyzeHealthAssessment({event: event()}),
+      error => error.code === 'HEALTH_ASSESSMENT_INVALID_JSON',
+    );
   } finally {
     console.debug = previousDebug;
     if (previousFlag === undefined) delete globalThis.__BIOWEAVE_API_TRACE__;

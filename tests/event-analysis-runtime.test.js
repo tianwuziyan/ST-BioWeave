@@ -350,7 +350,7 @@ function createFixture({
   };
 }
 
-test("GENERATION_STARTED preserves the existing Projection Context slot before prompt read", async () => {
+test("GENERATION_STARTED refreshes health guidance read-only before prompt read", async () => {
   const order = [];
   const fixture = createFixture({
     setExtensionPromptHook: payload => {
@@ -358,6 +358,9 @@ test("GENERATION_STARTED preserves the existing Projection Context slot before p
     },
   });
   await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const callsBeforeGeneration = fixture.calls();
+  const writesBeforeGeneration = fixture.saveFloorCalls();
   order.length = 0;
 
   const listener = fixture.listeners.get("generation-started");
@@ -366,11 +369,13 @@ test("GENERATION_STARTED preserves the existing Projection Context slot before p
   await lifecycle;
   order.push("prompt-read");
 
-  assert.deepEqual(order, ["prompt-read"]);
-  assert.equal(fixture.calls(), 0);
+  assert.deepEqual(order, ["projection-refresh", "prompt-read"]);
+  assert.equal(fixture.calls(), callsBeforeGeneration);
   const sequence = fixture.runtime.getPersistenceTrace().sequence;
-  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED'), false);
-  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED'), false);
+  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED'), true);
+  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED' && item.context_ready_before_prompt_read === true), true);
+  assert.equal(sequence.some(item => item.stage === 'PROJECTION_PROCESS_STARTED'), false);
+  assert.equal(fixture.saveFloorCalls(), writesBeforeGeneration);
   fixture.runtime.destroy();
 });
 
@@ -421,7 +426,7 @@ test("real Runtime does not create a Projection submission receipt when setExten
   fixture.runtime.destroy();
 });
 
-test("GENERATION_STARTED does not refresh Projection Context when prompt writing would fail", async () => {
+test("GENERATION_STARTED records a failed read-only Projection Context refresh", async () => {
   const fixture = createFixture({
     setExtensionPromptHook: () => {
       throw new Error("PROMPT_WRITE_FAILED");
@@ -432,7 +437,7 @@ test("GENERATION_STARTED does not refresh Projection Context when prompt writing
 
   await assert.doesNotReject(() => listener({generation_type: "normal"}));
   assert.equal(fixture.calls(), 0);
-  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED'), false);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED'), true);
   fixture.runtime.destroy();
 });
 
@@ -460,7 +465,10 @@ test("duplicate normal GENERATION_STARTED keeps the active gate and deferred Cha
   assert.equal(startForwardResults.length, 2);
   assert.equal(startForwardResults[0].forward_result?.reason, "generation-pending");
   assert.equal(startForwardResults[1].forward_result?.reason, "generation-intent-already-pending");
-  assert.equal(sequence.some(item => item.stage === "GENERATION_PROJECTION_REFRESH_STARTED"), false);
+  assert.equal(
+    sequence.filter(item => item.stage === "GENERATION_PROJECTION_REFRESH_STARTED").length,
+    1,
+  );
   assert.equal(sequence.some(item => item.stage === "GENERATION_DEFERRED_EVENT_REPLAY"), false);
 
   fixture.emit("generation-stopped", {generation_type: "normal"});
@@ -841,8 +849,8 @@ test("a Chat boundary during generation cannot refresh or write the old Floor", 
 
   assert.equal(eventCalls, 0);
   assert.equal(fixture.saveFloorCalls(), 0);
-  assert.equal(promptWrites.length, 1);
-  assert.equal(promptWrites[0], "");
+  assert.equal(promptWrites.length, 2);
+  assert.equal(promptWrites.every(prompt => prompt === ""), true);
   fixture.runtime.destroy();
 });
 
@@ -4945,6 +4953,174 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
   assert.equal(saved.events.some(event => event.event_id === persistentEventId), true);
   assert.equal(fixture.saveFloorCalls(), beforeAnalysis + 1);
   assert.equal(eventCalls, 2);
+  fixture.runtime.destroy();
+});
+
+test("an unchanged Floor retries a missing Health Assessment and reuses it after success", async () => {
+  let eventCalls = 0;
+  let healthCalls = 0;
+  const healthEvent = eventResult("health-assessment-retry", {
+    type: "physical_symptom",
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+    },
+    state_fact: {
+      subject_id: "health-assessment-retry-subject",
+      payload: {
+        symptom: {
+          kind: "nausea",
+          description: "恶心",
+          health_role: "observation",
+        },
+      },
+    },
+  });
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({schema_version: 1, species: [{name: "人类", biological_types: []}]});
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        return {events: [structuredClone(healthEvent)]};
+      },
+      async analyzeHealthAssessment() {
+        healthCalls += 1;
+        if (healthCalls === 1) {
+          const error = new Error("HEALTH_ASSESSMENT_INVALID_JSON");
+          error.code = "HEALTH_ASSESSMENT_INVALID_JSON";
+          throw error;
+        }
+        return {
+          schema_version: 3,
+          severity: "mild",
+          persistence: "short_term",
+          natural_recovery: "eligible",
+          earliest_recovery: {duration: {story_days: 1}, boundary: null},
+          expected_recovery: {duration: {story_days: 3}, boundary: null},
+          assessment_source: "ai_derived_assessment",
+          recovery_stage_guidance: {
+            early: "早期指导",
+            recovering: "恢复中指导",
+            near_recovery: "接近恢复指导",
+          },
+        };
+      },
+    },
+  });
+
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(healthCalls, 1);
+  assert.equal(
+    fixture.context.chat[0].extra.bioweave.health_assessment_timeline?.assessments?.length ?? 0,
+    0,
+  );
+
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(eventCalls, 2);
+  assert.equal(healthCalls, 2);
+  assert.equal(
+    fixture.context.chat[0].extra.bioweave.health_assessment_timeline.assessments.length,
+    1,
+  );
+
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  assert.equal(eventCalls, 3);
+  assert.equal(healthCalls, 2);
+  fixture.runtime.destroy();
+});
+
+test("explicit rendered Character target survives an earlier User snapshot change and cleans recovered health", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    messages: [
+      {message_id: "user-before-render", floor: 3, content: "用户原文", role: "user"},
+      {
+        message_id: "health-render-target",
+        floor: 4,
+        content: "角色回复",
+        role: "assistant",
+        story_time: {
+          display: "第4日",
+          normalized: null,
+          day_index: 4,
+          calendar_id: null,
+          precision: "day",
+        },
+      },
+    ],
+    healthRecoveryStabilityDelayMs: 0,
+    analyzer: {
+      async analyzeFloor({analysisInput} = {}) {
+        eventCalls += 1;
+        if (analysisInput?.existing_events?.length)
+          return {events: structuredClone(analysisInput.existing_events)};
+        return {
+          events: [identityEventForCharacters({}, "Alice", "Bob", "recovered-fever")],
+        };
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const storedBeforeRender = fixture.runtime.store.getFloor(1, 0);
+  const recoveredEvent = storedBeforeRender.events[0];
+  recoveredEvent.type = "physical_symptom";
+  recoveredEvent.state_fact = {
+    subject_id: recoveredEvent.participants[0].character_id,
+    payload: {symptom: {kind: "fever", description: "发热", health_role: "observation"}},
+  };
+  recoveredEvent.pregnancy_relevance = {
+    relevant: false,
+    possible_conception: false,
+    gestational_subject_ids: [],
+    counterpart_ids: [],
+  };
+  storedBeforeRender.health_assessment_timeline = {
+    schema_version: 1,
+    assessments: [{
+      assessment_id: "assessment-recovered-fever",
+      source_event_id: recoveredEvent.event_id,
+      source_floor_version: structuredClone(storedBeforeRender.analysis.floor_version),
+      source_observation_fingerprint: healthObservationFingerprint(recoveredEvent),
+      request_key: "assessment-recovered-fever-key",
+      reference_story_time: structuredClone(recoveredEvent.story_time),
+      persistence: "short_term",
+      natural_recovery: "eligible",
+      expected_recovery: {
+        duration: null,
+        boundary: {display: "第3日", normalized: null, day_index: 3, calendar_id: null, precision: "day"},
+      },
+      earliest_recovery: {duration: null, boundary: null},
+      recovery_stage_guidance: {early: "early", recovering: "recovering", near_recovery: "near"},
+      assessment_source: "fixture",
+    }],
+  };
+  await fixture.adapter.saveFloorBioWeave(1, 0, storedBeforeRender);
+  const writesBeforeGeneration = fixture.saveFloorCalls();
+
+  fixture.context.chat[0].content = "用户编辑后的无关快照";
+  await fixture.emit("generation-started", {generation_type: "normal", message_id: "health-render-target"});
+  await fixture.emit("generation-ended", {message_id: "health-render-target"});
+  await fixture.emit("character-message-rendered", {message_id: "health-render-target"});
+  await settle();
+  await settle();
+
+  const current = fixture.runtime.store.getFloor(1, 0);
+  assert.equal(eventCalls, 1);
+  assert.equal(current.events.some(event => event.event_id === recoveredEvent.event_id), false);
+  assert.equal(fixture.saveFloorCalls() > writesBeforeGeneration, true);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(item =>
+      item.stage === "GENERATION_FINAL_FLOOR_SEEN" && item.message_index === 1,
+    ),
+    true,
+  );
   fixture.runtime.destroy();
 });
 

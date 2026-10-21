@@ -357,11 +357,19 @@ reanalysis they are rebuilt from the current active Floor/Swipe/version owners.
 Reroll, regenerate, and new Swipe identity do not by themselves force automatic AI;
 after the final Floor Version settles they enter the ordinary interval path.
 
-While SillyTavern is generating the response body, `GENERATION_STARTED` only advances the
-Generation Lifecycle. `runtime/events.js` must not run Projection lifecycle,
-Tracking/timeout calculation, Floor persistence, or a full Projection Context
-refresh during that interval; automatic Chat/message/Swipe triggers are
-coalesced behind a non-blocking gate. After the final Character Floor is
+Before SillyTavern reads a new generation prompt, `GENERATION_STARTED` may perform
+one read-only Projection Context rebuild from the latest fully completed valid
+Character Floor. This may update only the transient extension slot; it records no
+delivery submission and must not run Analyzer/Projection processing,
+Tracking/timeout calculation, automatic recovery, or Floor persistence. The
+current request still sees the previous completed Floor; only after the response
+completes and its new Story Time is settled can the following request see the new
+stage. Once body generation is active, `GENERATION_STARTED` only advances the
+Generation Lifecycle and all business work remains gated. `runtime/events.js`
+must not run Projection lifecycle, Tracking/timeout calculation, Floor
+persistence, or another full Projection Context refresh during that interval;
+automatic Chat/message/Swipe triggers are coalesced behind a non-blocking gate.
+After the final Character Floor is
 confirmed, or generation is explicitly stopped/cancelled, the gate is released,
 deferred lifecycle signals are replayed once, and the current Chat, active Swipe,
 and complete Floor Version are revalidated before one post-generation handoff.
@@ -416,8 +424,14 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 
 #### 3. Contracts
 
-- `GENERATION_STARTED` advances only Generation Lifecycle state and preserves
-  the existing Projection Context slot.
+- Before the prompt is read, `GENERATION_STARTED` may perform one read-only
+  Context rebuild from the latest fully completed valid Character Floor. It may
+  update only the transient extension slot; it records no delivery submission
+  and performs no Analyzer/Projection processing, Tracking/timeout calculation,
+  automatic recovery, or Floor write. The current request sees the previous
+  completed Floor; the completed response affects the following request.
+- Once body generation is active, `GENERATION_STARTED` advances only Generation
+  Lifecycle state and all business work remains gated.
 - During the gate, automatic message, Chat, and Swipe triggers perform no
   business calculation or persistence; the latest event of each type is kept.
 - After final Character Floor confirmation or stop/cancel, deferred lifecycle
@@ -467,7 +481,8 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 #### 6. Tests Required
 
 - Generation-time triggers assert zero analyzer calls, Floor saves, lifecycle
-  writes, and full Context refreshes before the final boundary.
+  writes, and non-read-only/full business refreshes before the final boundary;
+  the pre-prompt boundary may perform at most one read-only Context refresh.
 - Message update/edit/delete and Swipe signals assert one post-boundary replay
   with the correct event type; repeated signals remain coalesced.
 - Chat switch during generation asserts the old Context is cleared and old-Chat
@@ -508,8 +523,9 @@ execution.
 refreshProjectionContext({chatId?, generation?, businessData?, projectionViews?, readOnly?})
 ```
 
-`readOnly: true` is reserved for Chat rebind restoration. The default remains
-`false` so generation-settle and ordinary post-analysis paths retain their
+`readOnly: true` is used for Chat rebind restoration and the pre-prompt
+`GENERATION_STARTED` Context rebuild. The default remains `false` so
+generation-settle and ordinary post-analysis paths retain their
 delivery-observation behavior.
 
 #### 3. Contracts
@@ -518,6 +534,10 @@ delivery-observation behavior.
 - Chat rebind may read the current valid Floor, Projection Views, Health
   Guidance, registry, and scheduler state, but it must not call Projection
   processing, lifecycle ticking, automatic recovery, or Analyzer code.
+- The pre-prompt `GENERATION_STARTED` rebuild reads only the latest fully
+  completed valid Character Floor and may update only the transient extension
+  slot. It records no delivery submission and performs no Analyzer/Projection
+  processing, Tracking/timeout calculation, automatic recovery, or Floor write.
 - A read-only Context refresh may write the transient host injection slot, but
   must not call `recordProjectionSubmission` or append a delivery record.
 - Chat/active Swipe/Floor Version guards still apply; stale current data fails
@@ -796,7 +816,9 @@ Guidance、不自动回写/backfill，也不因缺字段重新调用 AI。上述
 fingerprint 或 request key。
 
 Health Recovery Guidance Phase 5B 是 derived non-factual guidance：它可将每条 active
-observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段，但不得把具体 duration、
+observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段；Current Health State 生成后，
+Projection Context 复用其中已选的阶段，只链接对应的 persisted guidance，不在注入端重新选阶段。
+但不得把具体 duration、
 deadline、百分比或 Assessment 字段当作剧情事实，也不得写回 Floor、关闭 observation 或
 成为 Event evidence。它复用现有 `bioweave_projection_context` 槽位，不新增 persistence root
 或第二套 Context framework。完整 Health Projection 仍为 DESIGN / PLANNED；recovery-stage UI

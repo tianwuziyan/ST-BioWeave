@@ -254,7 +254,9 @@ natural-recovery 是否到期，并复用同一通用写回机制；缺少有效
 当前已实现 Health Assessment schema v3（observation-level severity 与一次性 recovery-stage profile）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
 它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，
 在源 Event/owner 失效时一同失效，并在 replay/reload 时消费已保存结果而不是重新调用
-AI。旧 v1/v2 Assessment 缺少 severity 或 recovery profile 时，运行时不重跑、不自动 backfill；
+AI。显式 Character/Event manual analysis 可对当前同 Floor、同 source fingerprint 且仍缺少
+合法结果的 Assessment 重试；已有合法结果时只做 key lookup/reuse，不再次调用 API。
+旧 v1/v2 Assessment 缺少 severity 或 recovery profile 时，运行时不重跑、不自动 backfill；
 缺少 profile 的旧记录仍可参与既有 lifecycle，但不产生 staged Guidance。非法 severity 只在
 Assessment normalization 中降级为 `unknown`，非法 v3 recovery profile 则 fail conservative。
 这里的保存稳定性针对同一 source factual observation；新的 authoritative health
@@ -357,11 +359,14 @@ visible Projection Views and active Health Recovery Guidance; an empty
 Projection view alone does not clear the slot when Health Guidance remains.
 Only when both inputs are empty is the slot explicitly cleared. Concurrent
 refreshes are serialized before replacing the shared slot.
-At native `GENERATION_STARTED`, the runtime only advances the Generation
-Lifecycle and preserves the existing slot while SillyTavern generates the
-response body. It does not perform a full Projection Context refresh,
-Projection lifecycle tick,
-Tracking/timeout calculation, or Floor save during generation. Automatic
+Before the native prompt read, `GENERATION_STARTED` may perform one read-only
+Context rebuild from the latest fully completed valid Character Floor. This may
+update only the transient extension slot; it records no delivery submission and
+performs no Analyzer/Projection processing, Tracking/timeout calculation,
+automatic recovery, or Floor write. The current request sees the previous
+completed Floor; after its response completes and new Story Time is settled,
+the following request sees the new stage. Once the response body is being
+generated, the Generation gate keeps all business work deferred. Automatic
 Chat/message triggers are coalesced behind a non-blocking Generation gate; after
 the final Character Floor is confirmed, or generation is explicitly stopped or
 cancelled, the runtime revalidates the current Chat, active Swipe, and complete
