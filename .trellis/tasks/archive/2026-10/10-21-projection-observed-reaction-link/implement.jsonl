@@ -1,0 +1,8 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"约束 Event 与 Projection 的 Floor/Swipe 所有权、endpoint 读取和失效行为"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"约束结构化 BiologicalEvent 与 Projection 非事实边界"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"约束 Projection 页面模块、DTO 消费和响应式组件实现"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Projection feature owner 与 Runtime 模块边界"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"约束生产 UI 结构、徽标样式和三端同步"}
+{"file":".trellis/tasks/10-21-projection-observed-reaction-link/research/domain-linkage.md","reason":"提供 Event 到 Projection DTO 的现状审计与推荐 owner"}
+{"file":".trellis/tasks/10-21-projection-observed-reaction-link/research/ui-badge.md","reason":"提供候选卡右上角 badge 的现有结构和三端约束"}
+{"file":".trellis/tasks/10-21-projection-observed-reaction-link/research/tests-debug.md","reason":"提供回归测试矩阵和 Debug DTO 边界"}

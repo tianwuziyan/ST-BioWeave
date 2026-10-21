@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"复核最终实现未新增旁路事实源且正确随 Floor/Swipe 失效"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核 UI 自动化检查和 Desktop/Tablet/Mobile 验收要求"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"复核无新持久化字段且读模型生命周期描述仍准确"}
+{"file":".trellis/tasks/10-21-projection-observed-reaction-link/design.md","reason":"按定稿数据流、DTO、UI、失效和兼容设计审查实现"}
+{"file":".trellis/tasks/10-21-projection-observed-reaction-link/implement.md","reason":"按完整实施与验证清单执行最终质量检查"}
